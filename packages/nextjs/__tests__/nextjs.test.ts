@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
 // cts.test.ts
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, type Mock, vi } from 'vitest'
 
 // ---------------------------------------------
 // 1) Mock next/headers before importing it
@@ -65,7 +65,7 @@ describe('getCtsToken', () => {
       accessToken: 'fake_token',
       expiry: 999999,
     }
-    ;(cookies as unknown as vi.Mock).mockReturnValueOnce({
+    ;(cookies as unknown as Mock).mockReturnValueOnce({
       get: vi.fn().mockReturnValue({ value: JSON.stringify(mockCookieValue) }),
     })
 
@@ -78,7 +78,7 @@ describe('getCtsToken', () => {
   })
 
   it('should return null if the cookie is not present', async () => {
-    ;(cookies as unknown as vi.Mock).mockReturnValueOnce({
+    ;(cookies as unknown as Mock).mockReturnValueOnce({
       get: vi.fn().mockReturnValue(undefined),
     })
 
