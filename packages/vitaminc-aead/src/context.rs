@@ -668,6 +668,14 @@ mod tests {
             None
         }
 
+        fn decrypt_any<'a, V, A>(self, _visitor: V, _aad: A) -> Self::Ok<V::Value>
+        where
+            V: DecipherVisitor<'c> + Send + 'c,
+            A: IntoAad<'a>,
+        {
+            None
+        }
+
         fn decrypt_passthrough(self) -> Self::Ok<Self::Passthrough> {
             None
         }

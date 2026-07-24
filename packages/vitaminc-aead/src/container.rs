@@ -54,3 +54,40 @@ pub enum CipherText<Leaf, P> {
     /// Non-sensitive data only — see the trait docs.
     Passthrough(P),
 }
+
+impl<Leaf, P> CipherText<Leaf, P> {
+    /// Recursively convert the passthrough payload type, leaving the sealed
+    /// structure untouched.
+    ///
+    /// This is the bridge between ciphers with different passthrough
+    /// currencies — e.g. re-homing a tree between the Rust-native
+    /// `Box<dyn Any + Send>` currency and an owned FFI value type at an FFI
+    /// boundary. The conversion is fallible so payloads that cannot be
+    /// represented in the target currency surface an error instead of being
+    /// silently dropped; a tree containing no passthrough values never
+    /// invokes `f`.
+    pub fn map_passthrough<Q, E, F>(self, f: &mut F) -> Result<CipherText<Leaf, Q>, E>
+    where
+        F: FnMut(P) -> Result<Q, E>,
+    {
+        Ok(match self {
+            CipherText::Single(leaf) => CipherText::Single(leaf),
+            CipherText::None(leaf) => CipherText::None(leaf),
+            CipherText::EmptySequence(leaf) => CipherText::EmptySequence(leaf),
+            CipherText::EmptyMap(leaf) => CipherText::EmptyMap(leaf),
+            CipherText::Sequence(items) => CipherText::Sequence(
+                items
+                    .into_iter()
+                    .map(|item| item.map_passthrough(f))
+                    .collect::<Result<_, E>>()?,
+            ),
+            CipherText::Map(entries) => CipherText::Map(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| value.map_passthrough(f).map(|value| (key, value)))
+                    .collect::<Result<_, E>>()?,
+            ),
+            CipherText::Passthrough(value) => CipherText::Passthrough(f(value)?),
+        })
+    }
+}

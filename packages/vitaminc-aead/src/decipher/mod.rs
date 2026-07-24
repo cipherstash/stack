@@ -80,6 +80,28 @@ pub trait Decipher<'c>: Sized {
         V: DecipherVisitor<'c> + Send + 'c,
         A: IntoAad<'a>;
 
+    /// Decrypt a ciphertext whose structural shape is **not** known to the
+    /// caller, dispatching to the visitor method matching the actual shape:
+    /// [`visit_bytes_vec`](DecipherVisitor::visit_bytes_vec) for a single
+    /// sealed value, [`visit_seq`](DecipherVisitor::visit_seq) for a
+    /// sequence, [`visit_map`](DecipherVisitor::visit_map) for a map, and
+    /// [`visit_none`](DecipherVisitor::visit_none) for an authenticated
+    /// absent marker (whose AAD binding must be verified before the visitor
+    /// is called).
+    ///
+    /// This is the analog of serde's `deserialize_any`, for self-describing
+    /// values such as dynamically typed FFI values, where the plaintext type
+    /// is recovered from the ciphertext's shape rather than fixed by the
+    /// caller.
+    ///
+    /// Passthrough ciphertexts are **not** dispatched — recovering one
+    /// requires [`decrypt_passthrough`](Decipher::decrypt_passthrough) —
+    /// and must report failure ([`Unspecified`]).
+    fn decrypt_any<'a, V, A>(self, visitor: V, aad: A) -> Self::Ok<V::Value>
+    where
+        V: DecipherVisitor<'c> + Send + 'c,
+        A: IntoAad<'a>;
+
     /// Recover a value stored via [`Cipher::passthrough`](crate::Cipher::passthrough).
     /// Returns an error if the ciphertext is not a passthrough.
     ///
@@ -134,6 +156,17 @@ pub trait DecipherVisitor<'c>: Sized {
 
     /// Called when the decipher produced a map. Default returns an error.
     fn visit_map<A: MapAccess<'c>>(self, _map: A) -> Result<Self::Value, Unspecified> {
+        Err(Unspecified)
+    }
+
+    /// Called when [`Decipher::decrypt_any`] hit an authenticated absent
+    /// marker (see [`Cipher::encrypt_none`](crate::Cipher::encrypt_none)).
+    /// The marker's AAD binding has already been verified by the decipher
+    /// when this is called. Default returns an error.
+    ///
+    /// Self-describing visitors (e.g. a dynamically typed FFI value) can
+    /// override this to map absence onto their own null representation.
+    fn visit_none(self) -> Result<Self::Value, Unspecified> {
         Err(Unspecified)
     }
 }
