@@ -59,13 +59,12 @@ impl<Leaf, P> CipherText<Leaf, P> {
     /// Recursively convert the passthrough payload type, leaving the sealed
     /// structure untouched.
     ///
-    /// This is the bridge between ciphers with different passthrough
-    /// currencies — e.g. re-homing a tree between the Rust-native
-    /// `Box<dyn Any + Send>` currency and an owned FFI value type at an FFI
-    /// boundary. The conversion is fallible so payloads that cannot be
-    /// represented in the target currency surface an error instead of being
-    /// silently dropped; a tree containing no passthrough values never
-    /// invokes `f`.
+    /// This is the bridge between ciphers with different passthrough payload
+    /// types — e.g. re-homing a tree between the Rust-native
+    /// `Box<dyn Any + Send>` and an owned FFI value type at an FFI boundary.
+    /// The conversion is fallible so payloads that cannot be represented in
+    /// the target type surface an error instead of being silently dropped; a
+    /// tree containing no passthrough values never invokes `f`.
     pub fn map_passthrough<Q, E, F>(self, f: &mut F) -> Result<CipherText<Leaf, Q>, E>
     where
         F: FnMut(P) -> Result<Q, E>,
