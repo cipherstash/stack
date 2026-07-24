@@ -127,6 +127,34 @@ describe('#1b — DynamoDB adapter reads a stored EQL v2 item', () => {
 // their client is v3-configured and knows nothing about the v2 table — but the
 // rows already in their database are v2.
 describe('#1c — a v3-configured client reads stored EQL v2 payloads', () => {
+  // The precondition every other case in this block rests on. Without it the
+  // whole describe can pass vacuously: if v3 detection regressed,
+  // `resolveEqlVersion` would return `undefined` rather than throw, leaving
+  // `v3Client` on the FFI's v2 default — and a v2-mode client reads v2 payloads
+  // natively, so every assertion below would still be green while the thing
+  // under test (a *v3* client reading v2) was never exercised. `v3Client` is
+  // typed through a thunk, so the overload collapse wouldn't surface as a type
+  // error either. The credential-free half of this guard — the detection matrix
+  // itself — is `__tests__/resolve-eql-version.test.ts`.
+  it('is genuinely in EQL v3 mode, or the cases below prove nothing', async () => {
+    const v3Payload = unwrapResult(
+      await v3Client.encrypt('a v3-authored note', {
+        table: unrelatedV3,
+        column: unrelatedV3.note,
+      }),
+    )
+
+    expect(v3Payload).toMatchObject({
+      v: 3,
+      i: { t: 'v2_read_compat_unrelated_v3', c: 'note' },
+    })
+    // The structural discriminator, and the stronger half of this guard: a v2
+    // scalar carries `k: 'ct'`, a v3 scalar carries no `k` at all (see the
+    // narrowing note in `src/types.ts`). This still catches a regression that
+    // somehow preserved `v`.
+    expect(v3Payload).not.toHaveProperty('k')
+  }, 30000)
+
   it('decrypts a v2 ciphertext minted before the upgrade', async () => {
     const encrypted = unwrapResult(
       await v2Client.encrypt(SECRET, { table: usersV2, column: usersV2.email }),
