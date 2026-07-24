@@ -104,13 +104,12 @@ export const installEqlStep: InitStep = {
     // --drizzle`) rather than routing through `eql install`.
     //
     // `eql install --drizzle` is v2-only — under the v3 default it rejects the
-    // flag outright, so init used to pin `eqlVersion: '2'` to get a migration
-    // at all. That pin made `stash init --drizzle` the one flow that provisions
-    // a v2 database while every other integration (and a bare `stash eql
-    // install`) gets v3, and it contradicted the stash-drizzle skill we install
-    // into the very same project — that skill documents the v3 surface
-    // (`types.*` domains, `Encryption`) and would have the user's agent
-    // author v3 code against a v2 database.
+    // flag outright, so routing Drizzle through it would provision a v2
+    // database while every other integration (and a bare `stash eql install`)
+    // gets v3. That also contradicts the stash-drizzle skill installed into the
+    // very same project, which documents the v3 surface (`types.*` domains,
+    // `Encryption`) and would have the user's agent author v3 code against a v2
+    // database.
     //
     // `stash eql migration --drizzle` (added in #691) closes that gap: v3 SQL,
     // still migration-first, and it bundles the `cs_migrations` tracking schema
