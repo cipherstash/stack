@@ -3,6 +3,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
+      "outputs": ["dist/**"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "env": ["STASH_POSTHOG_KEY"]
     },
