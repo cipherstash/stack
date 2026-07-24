@@ -14,6 +14,7 @@ import type { LockContextInput } from '@/identity'
 import type {
   BulkDecryptPayload,
   BulkEncryptPayload,
+  Decrypted,
   Encrypted,
   EncryptedReturnType,
   EncryptOptions,
@@ -116,11 +117,31 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
     lockContext?: LockContextInput,
   ): AuditableDecryptModelOperation<V3DecryptedModel<Table, T>>
 
+  /**
+   * Table-less form, mirroring the nominal {@link EncryptionClient}: decrypt
+   * whatever encrypted fields the model carries, with no `Date` reconstruction
+   * (there is no `cast_as` to reconstruct from) and no precise plaintext shape.
+   *
+   * This is the read path for rows that predate this client's schemas — legacy
+   * **EQL v2** models above all, whose table is not, and cannot be, a member of
+   * `S`. The runtime has always accepted the one-arg call; without this
+   * signature the type layer forbids the very compatibility the client
+   * promises. Prefer the two-arg form whenever the table IS registered.
+   */
+  decryptModel<T extends Record<string, unknown>>(
+    input: T,
+  ): AuditableDecryptModelOperation<Decrypted<T>>
+
   bulkDecryptModels<Table extends S[number], T extends Record<string, unknown>>(
     input: Array<T>,
     table: Table,
     lockContext?: LockContextInput,
   ): AuditableDecryptModelOperation<Array<V3DecryptedModel<Table, T>>>
+
+  /** Table-less bulk form — see the one-arg {@link decryptModel} overload. */
+  bulkDecryptModels<T extends Record<string, unknown>>(
+    input: Array<T>,
+  ): AuditableDecryptModelOperation<Array<Decrypted<T>>>
 
   // Parity passthroughs — not v3-strengthened, delegated as-is.
   bulkEncrypt(
@@ -258,6 +279,80 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
     return client.encryptQuery(plaintextOrTerms as never, opts as never)
   }
 
+  // Overloaded declarations for the same reason as `encryptQuery` above: the
+  // table-ful and table-less forms have different return types, and a single
+  // arrow in the object literal cannot present both.
+  function decryptModel<
+    Table extends S[number],
+    T extends Record<string, unknown>,
+  >(
+    input: T,
+    table: Table,
+    lockContext?: LockContextInput,
+  ): AuditableDecryptModelOperation<V3DecryptedModel<Table, T>>
+  function decryptModel<T extends Record<string, unknown>>(
+    input: T,
+  ): AuditableDecryptModelOperation<Decrypted<T>>
+  function decryptModel(
+    input: Record<string, unknown>,
+    table?: AnyV3Table,
+    lockContext?: LockContextInput,
+  ): AuditableDecryptModelOperation<never> {
+    // `table` is absent on a nominal-style one-arg call (see `passthroughRow`).
+    // Given a table: reconstruct dates from its cast_as, or — if it was never
+    // registered — leave `map` undefined so the mapped op resolves to
+    // `unknownTableFailure` on execute.
+    const reconstruct = table
+      ? reconstructors.get(table.tableName)
+      : passthroughRow
+    const op = client.decryptModel(input)
+    const base = lockContext ? op.withLockContext(lockContext) : op
+    return new MappedDecryptOperation(
+      base,
+      reconstruct,
+      unknownTableFailure,
+    ) as never
+  }
+
+  function bulkDecryptModels<
+    Table extends S[number],
+    T extends Record<string, unknown>,
+  >(
+    input: Array<T>,
+    table: Table,
+    lockContext?: LockContextInput,
+  ): AuditableDecryptModelOperation<Array<V3DecryptedModel<Table, T>>>
+  function bulkDecryptModels<T extends Record<string, unknown>>(
+    input: Array<T>,
+  ): AuditableDecryptModelOperation<Array<Decrypted<T>>>
+  function bulkDecryptModels(
+    input: Array<Record<string, unknown>>,
+    table?: AnyV3Table,
+    lockContext?: LockContextInput,
+  ): AuditableDecryptModelOperation<never> {
+    const op = client.bulkDecryptModels(input)
+    const base = lockContext ? op.withLockContext(lockContext) : op
+    // No table → pass rows through (nominal behaviour). Registered table →
+    // reconstruct each row. Unregistered table → `undefined` map →
+    // `unknownTableFailure` on execute.
+    let mapRows:
+      | ((
+          rows: Array<Record<string, unknown>>,
+        ) => Array<Record<string, unknown>>)
+      | undefined
+    if (!table) {
+      mapRows = passthroughRows
+    } else {
+      const reconstruct = reconstructors.get(table.tableName)
+      mapRows = reconstruct ? (rows) => rows.map(reconstruct) : undefined
+    }
+    return new MappedDecryptOperation(
+      base,
+      mapRows,
+      unknownTableFailure,
+    ) as never
+  }
+
   return {
     encrypt: (plaintext, opts) =>
       client.encrypt(plaintext as never, opts as never),
@@ -267,52 +362,44 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
     bulkEncryptModels: (input, table) =>
       client.bulkEncryptModels(input as never, table as never) as never,
     decrypt: (encrypted) => client.decrypt(encrypted),
-    decryptModel: (input, table, lockContext) => {
-      // `table` is absent on a nominal-style one-arg call (see `passthroughRow`).
-      // Given a table: reconstruct dates from its cast_as, or — if it was never
-      // registered — leave `map` undefined so the mapped op resolves to
-      // `unknownTableFailure` on execute.
-      const maybeTable = table as AnyV3Table | undefined
-      const reconstruct = maybeTable
-        ? reconstructors.get(maybeTable.tableName)
-        : passthroughRow
-      const op = client.decryptModel(input as never)
-      const base = lockContext ? op.withLockContext(lockContext) : op
-      return new MappedDecryptOperation(
-        base,
-        reconstruct,
-        unknownTableFailure,
-      ) as never
-    },
-    bulkDecryptModels: (input, table, lockContext) => {
-      const maybeTable = table as AnyV3Table | undefined
-      const op = client.bulkDecryptModels(input as never)
-      const base = lockContext ? op.withLockContext(lockContext) : op
-      // No table → pass rows through (nominal behaviour). Registered table →
-      // reconstruct each row. Unregistered table → `undefined` map →
-      // `unknownTableFailure` on execute.
-      let mapRows:
-        | ((
-            rows: Array<Record<string, unknown>>,
-          ) => Array<Record<string, unknown>>)
-        | undefined
-      if (!maybeTable) {
-        mapRows = passthroughRows
-      } else {
-        const reconstruct = reconstructors.get(maybeTable.tableName)
-        mapRows = reconstruct ? (rows) => rows.map(reconstruct) : undefined
-      }
-      return new MappedDecryptOperation(
-        base,
-        mapRows,
-        unknownTableFailure,
-      ) as never
-    },
+    decryptModel,
+    bulkDecryptModels,
     bulkEncrypt: (plaintexts, opts) => client.bulkEncrypt(plaintexts, opts),
     bulkDecrypt: (payloads) => client.bulkDecrypt(payloads),
     getEncryptConfig: () => client.getEncryptConfig(),
   } satisfies TypedEncryptionClient<S>
 }
+
+/**
+ * The client type {@link Encryption} resolves to for the schema tuple `S`.
+ *
+ * **Use this instead of `Awaited<ReturnType<typeof Encryption>>`.** `Encryption`
+ * is overloaded, and TypeScript's `ReturnType` reads the LAST overload — the
+ * nominal one — so that expression yields `EncryptionClient` even for an all-v3
+ * schema set, and assigning the real (typed) client to it is an error:
+ *
+ * ```
+ * Type 'TypedEncryptionClient<…>' is missing the following properties
+ * from type 'EncryptionClient': client, encryptConfig, init
+ * ```
+ *
+ * Overload order cannot fix that — whichever signature is last wins, so one of
+ * the two forms is always mis-resolved. Name the schema tuple instead:
+ *
+ * ```typescript
+ * const users = encryptedTable("users", { email: types.TextSearch("email") })
+ * let client: EncryptionClientFor<readonly [typeof users]>
+ * client = await Encryption({ schemas: [users] })
+ * ```
+ *
+ * The equivalent inline workaround — inferring through a single-signature
+ * helper, `Awaited<ReturnType<typeof makeClient>>` — also works, and is what
+ * `packages/bench` does.
+ */
+export type EncryptionClientFor<S extends readonly unknown[]> =
+  S extends readonly [AnyV3Table, ...AnyV3Table[]]
+    ? TypedEncryptionClient<S>
+    : EncryptionClient
 
 /**
  * @deprecated Use {@link Encryption} instead — it is now overloaded so an array

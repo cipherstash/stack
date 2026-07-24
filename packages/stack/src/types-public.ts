@@ -45,6 +45,7 @@ export type {
   QueryTypeName,
   ScalarQueryTerm,
   SearchTerm,
+  V3ClientConfig,
 } from '@/types'
 
 // Runtime values
