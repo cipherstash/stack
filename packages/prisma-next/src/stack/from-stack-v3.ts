@@ -89,11 +89,8 @@ export async function cipherstashFromStack(
     )
   }
 
-  // Destructured rather than length-checked so the non-emptiness survives into
-  // the type layer: `Encryption` requires a non-empty schema tuple (an empty one
-  // used to type-check and then throw at runtime).
-  const [firstDerived, ...restDerived] = deriveStackSchemasV3(opts.contractJson)
-  if (firstDerived === undefined) {
+  const derived = deriveStackSchemasV3(opts.contractJson)
+  if (derived.length === 0) {
     throw new Error(
       'cipherstashFromStack: no v3 cipherstash columns found in contract.json. ' +
         'Declare at least one v3 `cipherstash.*()` column (e.g. `cipherstash.TextSearch()`) in prisma/schema.prisma ' +
@@ -101,10 +98,7 @@ export async function cipherstashFromStack(
     )
   }
 
-  const schemas = resolveV3Schemas(
-    [firstDerived, ...restDerived],
-    opts.schemasV3,
-  )
+  const schemas = resolveV3Schemas(derived, opts.schemasV3)
 
   const encryptionClient = await EncryptionV3({
     schemas,
@@ -144,18 +138,15 @@ function collectNonV3CipherstashCodecIds(
   return [...ids].sort()
 }
 
-/** A schema list carrying its non-emptiness in the type, as `Encryption` wants. */
-type NonEmptyV3Schemas = readonly [AnyV3Table, ...AnyV3Table[]]
-
 /**
  * Validate contract-declared tables against their overrides (exact
  * domain identity) and append override-only tables — same merge
  * semantics as the v2 `resolveSchemas`.
  */
 function resolveV3Schemas(
-  derived: NonEmptyV3Schemas,
+  derived: ReadonlyArray<AnyV3Table>,
   override: ReadonlyArray<AnyV3Table> | undefined,
-): NonEmptyV3Schemas {
+): ReadonlyArray<AnyV3Table> {
   if (override === undefined || override.length === 0) return derived
 
   const derivedByName = new Map(derived.map((t) => [t.tableName, t]))
@@ -168,8 +159,7 @@ function resolveV3Schemas(
   }
 
   return [
-    derived[0],
-    ...derived.slice(1),
+    ...derived,
     ...override.filter((t) => !derivedByName.has(t.tableName)),
   ]
 }
