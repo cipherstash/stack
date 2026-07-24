@@ -107,7 +107,11 @@ if (!enc.failure) await db.insert(users).values(enc.data)
 const rows = await db
   .select()
   .from(users)
-  .where(await ops.eq(users.email, 'alice@example.com'))
+  .where(await ops.and(
+    ops.matches(users.email, 'alice'), // free-text token match over ciphertext
+    ops.between(users.age, 18, 65),
+  ))
+  .orderBy(ops.asc(users.age))
 
 // Decrypt after select
 const dec = await client.bulkDecryptModels(rows, schema)

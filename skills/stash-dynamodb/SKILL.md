@@ -517,10 +517,11 @@ const result = await encryptionClient.encryptQuery(
 if (result.failure) throw new Error(result.failure.message)
 const hmac = result.data.hm  // Use this in DynamoDB key conditions
 
-// EQL v2 — pass queryType explicitly:
+// EQL v2 — pass queryType explicitly (`usersV2` is the legacy table declared
+// in the v2 read section above; `users` is the v3 one and infers its queryType):
 const v2Result = await encryptionClient.encryptQuery(
   "search-value",
-  { table: users, column: users.email, queryType: "equality" }
+  { table: usersV2, column: usersV2.email, queryType: "equality" }
 )
 if (v2Result.failure) throw new Error(v2Result.failure.message)
 const v2Hmac = v2Result.data.hm
