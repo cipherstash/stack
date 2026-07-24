@@ -377,7 +377,7 @@ if (!decrypted.failure) {
 Drizzle emits the encrypted query operators, but **no index DDL** — without functional indexes over the `eql_v3.*` term extractors, every encrypted predicate sequential-scans. `encryptedIndexes` derives the recommended indexes for every encrypted column in the table from its domain, so a schema column can't be forgotten:
 
 ```typescript
-import { encryptedIndexes, types } from "@cipherstash/stack-drizzle/v3"
+import { encryptedIndexes, types } from "@cipherstash/stack-drizzle"
 import { integer, pgTable } from "drizzle-orm/pg-core"
 
 export const users = pgTable(
