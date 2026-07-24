@@ -7,6 +7,7 @@
  */
 import { unwrapResult } from '@cipherstash/test-kit'
 import { beforeAll, describe, expect, it } from 'vitest'
+import type { EncryptionClientFor } from '@/encryption/v3'
 import { EncryptionV3, encryptedTable, types } from '@/encryption/v3'
 
 const people = encryptedTable('v3_bulk_people', {
@@ -15,7 +16,7 @@ const people = encryptedTable('v3_bulk_people', {
 })
 
 describe('v3 typed client bulk-at-scale (live)', () => {
-  let client: Awaited<ReturnType<typeof EncryptionV3<[typeof people]>>>
+  let client: EncryptionClientFor<readonly [typeof people]>
 
   beforeAll(async () => {
     client = await EncryptionV3({ schemas: [people] })

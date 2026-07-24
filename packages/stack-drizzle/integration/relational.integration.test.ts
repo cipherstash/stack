@@ -19,7 +19,11 @@
  * `stash eql install`. This suite throws rather than skips when unconfigured.
  */
 
-import { EncryptionV3 } from '@cipherstash/stack/v3'
+import {
+  type AnyV3Table,
+  type EncryptionClientFor,
+  EncryptionV3,
+} from '@cipherstash/stack/v3'
 import {
   type DomainSpec,
   databaseUrl,
@@ -136,7 +140,7 @@ type RowKey = (typeof ROWS)[number]
 type MatrixPlainRow = Record<string, PlainValue | null | string>
 type SelectRow = { rowKey: string }
 type Db = ReturnType<typeof drizzle>
-type Client = Awaited<ReturnType<typeof EncryptionV3>>
+type Client = EncryptionClientFor<readonly AnyV3Table[]>
 type Ops = ReturnType<typeof createEncryptionOperators>
 type ComparisonOperator = 'gt' | 'gte' | 'lt' | 'lte'
 

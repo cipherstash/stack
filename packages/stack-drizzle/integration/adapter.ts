@@ -1,4 +1,8 @@
-import { EncryptionV3 } from '@cipherstash/stack/v3'
+import {
+  type AnyV3Table,
+  type EncryptionClientFor,
+  EncryptionV3,
+} from '@cipherstash/stack/v3'
 import {
   databaseUrl,
   type IntegrationAdapter,
@@ -57,7 +61,7 @@ type AnyTable = any
 export function makeDrizzleAdapter(): IntegrationAdapter {
   let sqlClient: postgres.Sql
   let db: ReturnType<typeof drizzle>
-  let client: Awaited<ReturnType<typeof EncryptionV3>>
+  let client: EncryptionClientFor<readonly AnyV3Table[]>
   let ops: ReturnType<typeof createEncryptionOperators>
   let table: AnyTable
   let schema: ReturnType<typeof extractEncryptionSchema>
