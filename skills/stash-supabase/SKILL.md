@@ -598,11 +598,11 @@ alias of its unsuffixed counterpart above.
 
 The hard case: a Supabase table that already exists with live data in a plaintext column you want to encrypt. You can't just change the column type — that would drop the data.
 
-CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code) and an **encryption cutover** (backfill + rename + drop). The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Supabase-specific shape.
+CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code) and an **encryption cutover** (backfill + switch reads to the encrypted column + drop — under EQL v3, which this section's schema uses, the switch is an application-side change with no rename; under legacy EQL v2 it is a rename). The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Supabase-specific shape.
 
 > **EQL version note.** The `stash encrypt *` tooling works with **both EQL versions** and detects a column's generation from its Postgres domain type — there is no flag. Detection is one-sided: a `public.eql_v3_*` domain classifies as **v3**; anything else — a plaintext column, or a legacy `eql_v2_encrypted` one — classifies as *unknown* and falls through to the **v2** lifecycle, which is the correct default for a v2 column. Only a v3 column has its version recorded in the migration manifest. The lifecycles differ at the end: **v3** (the default, and what this section's schema uses) is `rollout → deploy gate → backfill → switch the app to the encrypted column by name → drop`, with **no cut-over rename**; **v2** finishes with `stash encrypt cutover` (a rename swap plus an `eql_v2_configuration` promotion) before the drop. Running `stash encrypt cutover` on a **backfilled** v3 column reports "not applicable" and exits 0 (it exits 1 if the backfill hasn't finished).
 
-> **Using CipherStash Proxy?** If you query encrypted data through [CipherStash Proxy](https://github.com/cipherstash/proxy) instead of the SDK, also run `stash db push` after schema-add and again before cutover to register the encrypted column shape with EQL.
+> **Using CipherStash Proxy?** `stash db push` and `stash db activate` manage the `eql_v2_configuration` table, so they only apply to a database that has EQL v2 installed. EQL v3 ships no configuration table — on the v3-only database this section's schema assumes, `stash db push` reports "Nothing to do." and exits 0, and there is no cutover to run it before. If you query encrypted data through [CipherStash Proxy](https://github.com/cipherstash/proxy) against a legacy EQL v2 database instead of the SDK, run `stash db push` after schema-add to register the encrypted column shape with EQL.
 
 > **Runner note.** `stash init` adds `stash` to the project as a dev dependency, so `stash <command>` runs through whichever package manager the project uses (Bun, pnpm, Yarn, or npm) — examples below show this bare form. Before init has run, prefix with your package manager's one-shot runner: `bunx`, `pnpm dlx`, `yarn dlx`, or `npx`. The CLI's behaviour is identical across all of them.
 
@@ -658,13 +658,13 @@ export const users = encryptedTable('users', {
 })
 ```
 
-> **Using CipherStash Proxy?** Register the new encryption config with EQL:
+> **Using CipherStash Proxy?** `stash db push` registers the encryption config in `eql_v2_configuration` — an EQL v2 + Proxy artifact. The `public.eql_v3_text_search` column added above needs nothing registered: EQL v3 keeps a column's config in its domain type and ships no configuration table, so on a v3-only database `db push` prints "Nothing to do." and exits 0.
 >
 > ```bash
-> stash db push
+> stash db push   # EQL v2 + Proxy databases only
 > ```
 >
-> If this is the project's first encrypted column, `db push` writes directly to the active EQL config. If an active config already exists, it writes the new config as `pending` — that's expected. Cutover (later) will promote it.
+> On a legacy EQL v2 database: if this is the project's first encrypted column, `db push` writes directly to the active EQL config. If an active config already exists, it writes the new config as `pending` — that's expected, and `stash db activate` promotes it to active.
 >
 > **SDK users:** Skip this step. Your encryption config lives in app code.
 
@@ -748,7 +748,7 @@ stash encrypt drop --table users --column email
 
 The CLI emits a Supabase migration file with the drop. **Which column it drops depends on the EQL version**, which the CLI auto-detects:
 
-- **v3** — drops the original plaintext column, `ALTER TABLE users DROP COLUMN email;`. There was no rename, so no `email_plaintext` exists. Requires the `backfilled` phase plus a live coverage check.
+- **v3** — drops the original plaintext column, `email`. There was no rename, so no `email_plaintext` exists. The SQL is not a bare `ALTER TABLE`: it's a `DO $stash_drop$` block that takes `LOCK TABLE users IN ACCESS EXCLUSIVE MODE`, re-counts rows where `email IS NOT NULL AND email_encrypted IS NULL` *at apply time*, `RAISE EXCEPTION`s if any remain, and only then executes the `ALTER TABLE ... DROP COLUMN` — so a row written after generation can't be silently destroyed. Requires the `backfilled` phase plus a live coverage check at generation time.
 - **v2** — drops the post-rename leftover, `ALTER TABLE users DROP COLUMN email_plaintext;`. Requires the `cut-over` phase.
 
 Review and apply with `supabase migration up` (or `supabase db reset` locally). Then remove the dual-write code from app paths — the plaintext column is gone; only the encrypted column is written now, through the wrapper.
