@@ -30,6 +30,7 @@ import type {
   KeysetIdentifier,
   Plaintext,
   ScalarQueryTerm,
+  V3ClientConfig,
 } from '@/types'
 import { hasBuildColumnKeyMap } from '@/types'
 import { logger } from '@/utils/logger'
@@ -864,9 +865,15 @@ export function __resetStrategyDeprecationWarningForTests(): void {
 // Overload 1 — v3-typed: an array literal of concrete EQL v3 tables (from
 // `@cipherstash/stack/v3`) yields the strongly-typed {@link TypedEncryptionClient},
 // the collapse of the former `EncryptionV3`. The wire format is forced to v3.
-export function Encryption<const S extends readonly AnyV3Table[]>(config: {
+//
+// The schema tuple is constrained NON-EMPTY: `readonly AnyV3Table[]` admits
+// `readonly []`, so `Encryption({ schemas: [] })` type-checked and then threw at
+// runtime. The nominal overload has always required at least one table.
+export function Encryption<
+  const S extends readonly [AnyV3Table, ...AnyV3Table[]],
+>(config: {
   schemas: S
-  config?: ClientConfig
+  config?: V3ClientConfig
 }): Promise<TypedEncryptionClient<S>>
 // Overload 2 — nominal: loose/dynamic schemas (introspection-derived, e.g.
 // stack-supabase) or EQL v2 tables yield the generation-neutral
