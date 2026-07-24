@@ -124,12 +124,195 @@ function trimStatementPreamble(statement: string): string {
   return statement.replace(STATEMENT_PREAMBLE_RE, '').trim()
 }
 
+/**
+ * True when the character at `index` sits inside a SQL comment — a `--` line
+ * comment, or a (nestable) `/* … *\/` block comment.
+ *
+ * **Why the rewrite needs this:** {@link ALTER_COLUMN_TO_ENCRYPTED_RE} is
+ * comment-blind and {@link renderSafeAlter} returns MULTIPLE lines. Rewriting a
+ * commented-out `-- ALTER TABLE … SET DATA TYPE …;` therefore leaves the
+ * author's `-- ` prefix on line 1 only — lines 2+, including `DROP COLUMN`,
+ * become live executable SQL and destroy the column. Commented SQL is inert by
+ * definition, so the only correct move is to leave it exactly as written.
+ *
+ * Single-quoted literals are skipped so a `'--'` inside a string cannot open a
+ * phantom comment. Dollar-quoted bodies are NOT tracked: a `--` inside one
+ * reads as a comment here, which can only make us skip a rewrite (the statement
+ * then fails loudly at migrate time), never perform a destructive one.
+ */
+function isInsideComment(sql: string, index: number): boolean {
+  let i = 0
+  while (i < index) {
+    if (sql.startsWith('--', i)) {
+      const eol = sql.indexOf('\n', i)
+      if (eol === -1 || eol >= index) return true
+      i = eol + 1
+    } else if (sql.startsWith('/*', i)) {
+      // Postgres block comments nest, so track depth rather than stopping at
+      // the first `*/` — a nested close would otherwise end the comment early
+      // and let the text after it read as live SQL.
+      let depth = 1
+      let j = i + 2
+      while (j < sql.length && depth > 0) {
+        if (sql.startsWith('/*', j)) {
+          depth += 1
+          j += 2
+        } else if (sql.startsWith('*/', j)) {
+          depth -= 1
+          j += 2
+        } else {
+          j += 1
+        }
+      }
+      if (j > index) return true
+      i = j
+    } else if (sql[i] === "'") {
+      const close = sql.indexOf("'", i + 1)
+      // Unterminated, or the literal runs past `index`: `index` is inside a
+      // string, which is not a comment.
+      if (close === -1 || close >= index) return false
+      i = close + 1
+    } else {
+      i += 1
+    }
+  }
+  return false
+}
+
+/** A table reference, bare (`"users"`) or schema-qualified (`"app"."users"`). */
+const TABLE_REF = String.raw`"([^"]+)"(?:\."([^"]+)")?`
+
+/**
+ * An encrypted type in any of the {@link MANGLED_TYPE_FORMS}, pinned to end at a
+ * delimiter so a bare domain cannot match a prefix of a longer identifier.
+ */
+const ENCRYPTED_TYPE_REF = String.raw`(?:${MANGLED_TYPE_FORMS})(?=[\s,;)]|$)`
+
+/** `ALTER TABLE … ADD COLUMN "col" <encrypted>` — $1/$2 table, $3 column. */
+const ADD_ENCRYPTED_COLUMN_RE = new RegExp(
+  String.raw`ALTER TABLE\s+${TABLE_REF}\s+ADD COLUMN\s+(?:IF NOT EXISTS\s+)?"([^"]+)"\s+${ENCRYPTED_TYPE_REF}`,
+  'gi',
+)
+
+/** `ALTER TABLE … RENAME COLUMN "a" TO "b"` — $1/$2 table, $3 from, $4 to. */
+const RENAME_COLUMN_RE = new RegExp(
+  String.raw`ALTER TABLE\s+${TABLE_REF}\s+RENAME COLUMN\s+"([^"]+)"\s+TO\s+"([^"]+)"`,
+  'gi',
+)
+
+/** `CREATE TABLE … ( … );` — $1/$2 table, $3 the column-definition body. */
+const CREATE_TABLE_RE = new RegExp(
+  String.raw`CREATE TABLE\s+(?:IF NOT EXISTS\s+)?${TABLE_REF}\s*\(([\s\S]*?)\)\s*;`,
+  'gi',
+)
+
+/** `"col" <encrypted>` inside a CREATE TABLE body — $1 column. */
+const CREATE_TABLE_ENCRYPTED_COLUMN_RE = new RegExp(
+  String.raw`"([^"]+)"\s+${ENCRYPTED_TYPE_REF}`,
+  'gi',
+)
+
+/** Splits a `TABLE_REF` capture pair into its schema and table halves. */
+function tableOf(
+  first: string,
+  second: string | undefined,
+): { schema?: string; table: string } {
+  // When schema-qualified (`"app"."users"`) the first capture is the schema and
+  // the second is the table; otherwise the first is the table.
+  return second === undefined
+    ? { table: first }
+    : { schema: first, table: second }
+}
+
+/** Identity of a column across the corpus, for {@link indexEncryptedColumns}. */
+function columnKey(table: string, column: string, schema?: string): string {
+  return JSON.stringify([schema ?? '', table, column])
+}
+
+/**
+ * Index every column the migration corpus gives an ENCRYPTED type, so the
+ * rewrite can tell the change it exists for (plaintext → encrypted) from one it
+ * must never touch (encrypted → encrypted).
+ *
+ * **Why (#772 review, W-3):** the strict matcher captures only the TARGET type.
+ * A column whose encrypted domain merely changes (`types.TextEq` →
+ * `types.TextSearch`) matches just as well as a plaintext column, and the
+ * ADD+DROP+RENAME then drops a column full of CIPHERTEXT — with no plaintext
+ * left anywhere to backfill from, so unlike the plaintext case the data is not
+ * recoverable from the application at all. Changing an encrypted column's domain
+ * changes its index terms, so the data has to be re-encrypted through the client
+ * regardless; the sweep flags the statement and leaves it for the user.
+ *
+ * The index is corpus-wide rather than ordered by migration: over-detecting
+ * "encrypted" costs a flagged statement the user must handle by hand, while
+ * under-detecting costs irrecoverable ciphertext. Only comment-free statements
+ * count, for the same reason {@link isInsideComment} exists.
+ */
+function indexEncryptedColumns(contents: readonly string[]): Set<string> {
+  const encrypted = new Set<string>()
+
+  for (const sql of contents) {
+    for (const created of sql.matchAll(CREATE_TABLE_RE)) {
+      if (isInsideComment(sql, created.index)) continue
+      const { schema, table } = tableOf(created[1], created[2])
+      for (const column of created[3].matchAll(
+        CREATE_TABLE_ENCRYPTED_COLUMN_RE,
+      )) {
+        encrypted.add(columnKey(table, column[1], schema))
+      }
+    }
+
+    for (const added of sql.matchAll(ADD_ENCRYPTED_COLUMN_RE)) {
+      if (isInsideComment(sql, added.index)) continue
+      const { schema, table } = tableOf(added[1], added[2])
+      encrypted.add(columnKey(table, added[3], schema))
+    }
+
+    // A rename carries the column's type with it — and `<col>__cipherstash_tmp`
+    // renamed onto the real name is exactly what a previous sweep of this very
+    // directory emitted. Run after ADD so that tmp column is already indexed.
+    for (const renamed of sql.matchAll(RENAME_COLUMN_RE)) {
+      if (isInsideComment(sql, renamed.index)) continue
+      const { schema, table } = tableOf(renamed[1], renamed[2])
+      if (encrypted.has(columnKey(table, renamed[3], schema))) {
+        encrypted.add(columnKey(table, renamed[4], schema))
+      }
+    }
+  }
+
+  return encrypted
+}
+
+/** Why a recognised ALTER-to-encrypted statement was left alone. */
+export type SkipReason =
+  /** Outside the strict matcher — hand-authored `USING`, or an unknown form. */
+  | 'unrecognised-form'
+  /** The column already holds an encrypted domain; rewriting drops ciphertext. */
+  | 'already-encrypted'
+
 /** A statement the sweep recognised as ALTER-to-encrypted but did NOT rewrite. */
 export interface SkippedAlter {
   /** Absolute path of the migration file the statement lives in. */
   file: string
   /** The offending statement, verbatim (trimmed), for the user to review. */
   statement: string
+  /** Why it was left alone — the caller turns this into user-facing guidance. */
+  reason: SkipReason
+}
+
+/**
+ * One-line explanation of a {@link SkipReason}, for the CLI/wizard to print
+ * next to the statement. Lives here so every caller says the same thing — the
+ * two reasons need very different action from the user, and a single generic
+ * "could not rewrite automatically" hides that.
+ */
+export function describeSkipReason(reason: SkipReason): string {
+  switch (reason) {
+    case 'already-encrypted':
+      return "the column is ALREADY encrypted, so the ADD+DROP+RENAME rewrite would DROP the ciphertext with no plaintext left to backfill from. Changing an encrypted column's domain changes its index terms, so the data must be re-encrypted through the staged `stash encrypt` lifecycle"
+    case 'unrecognised-form':
+      return 'it falls outside the strict matcher (a hand-authored `SET DATA TYPE ... USING ...`, or a drizzle-kit form the sweep does not recognise) and an in-place cast to an encrypted domain fails at migrate time'
+  }
 }
 
 /** Outcome of a sweep: the files rewritten, and near-misses left for review. */
@@ -162,27 +345,57 @@ export interface RewriteResult {
  * which keeps both columns alive across deploys. Each rewritten file carries a
  * header comment saying exactly this.
  *
- * Returns {@link RewriteResult}: the files rewritten, plus `skipped` near-misses
- * — statements that look like an ALTER-to-encrypted but fall outside the strict
- * matcher (a hand-authored `SET DATA TYPE … USING …;`, or a future drizzle-kit
- * form). Near-misses are left untouched on disk and surfaced non-fatally so the
- * caller can tell the user to review them, rather than silently shipping broken
- * SQL.
+ * Returns {@link RewriteResult}: the files rewritten, plus `skipped` statements
+ * left for a human — ones outside the strict matcher (a hand-authored
+ * `SET DATA TYPE … USING …;`, or a future drizzle-kit form), and ones targeting
+ * a column that is ALREADY encrypted, where the rewrite would drop ciphertext.
+ * Both are left untouched on disk and surfaced non-fatally so the caller can
+ * tell the user to review them, rather than silently shipping broken SQL or
+ * destroying data. Statements sitting inside a SQL comment are inert and are
+ * neither rewritten nor reported.
  */
 export async function rewriteEncryptedAlterColumns(
   outDir: string,
   options: { skip?: string } = {},
 ): Promise<RewriteResult> {
-  const entries = await readdir(outDir).catch(() => [])
+  const entries = await readdir(outDir).catch(
+    (error: NodeJS.ErrnoException) => {
+      // A missing directory is simply nothing to sweep. Anything else — EACCES
+      // above all — is a sweep that did NOT happen, and the caller reports it
+      // rather than letting the user believe their migrations were checked.
+      if (error.code === 'ENOENT') return [] as string[]
+      throw error
+    },
+  )
   const rewritten: string[] = []
   const skipped: SkippedAlter[] = []
+  const seen = new Set<string>()
 
-  for (const entry of entries) {
-    if (!entry.endsWith('.sql')) continue
+  /** Record a skip once — the strict pass and the broad scan can both find it. */
+  const skip = (file: string, statement: string, reason: SkipReason): void => {
+    // Keyed on collapsed whitespace: the two passes trim the same statement
+    // by slightly different rules, and the strict pass runs first so its
+    // more specific reason is the one kept.
+    const key = `${file} :: ${statement.replace(/\s+/g, ' ')}`
+    if (seen.has(key)) return
+    seen.add(key)
+    skipped.push({ file, statement, reason })
+  }
+
+  const sqlFiles = entries.filter((entry) => entry.endsWith('.sql')).sort()
+  const contents = new Map<string, string>()
+  for (const entry of sqlFiles) {
     const filePath = join(outDir, entry)
-    if (options.skip && filePath === options.skip) continue
+    contents.set(filePath, await readFile(filePath, 'utf-8'))
+  }
 
-    const original = await readFile(filePath, 'utf-8')
+  // Built from the WHOLE corpus, including `options.skip`: a column's current
+  // type comes from the migrations that ran before this one, not just the files
+  // we are allowed to edit.
+  const encryptedColumns = indexEncryptedColumns([...contents.values()])
+
+  for (const [filePath, original] of contents) {
+    if (options.skip && filePath === options.skip) continue
 
     // Reset the regex's lastIndex — it's stateful on /g
     ALTER_COLUMN_TO_ENCRYPTED_RE.lastIndex = 0
@@ -195,11 +408,21 @@ export async function rewriteEncryptedAlterColumns(
         second: string | undefined,
         column: string,
         mangledType: string,
+        offset: number,
       ) => {
-        // When schema-qualified (`"app"."users"`) the first capture is the
-        // schema and the second is the table; otherwise the first is the table.
-        const schema = second === undefined ? undefined : first
-        const table = second === undefined ? first : second
+        // Commented-out SQL never runs, and a multi-line replacement would only
+        // inherit the `-- ` on its first line — leaving the rest live.
+        if (isInsideComment(original, offset)) return match
+
+        const { schema, table } = tableOf(first, second)
+
+        // Already encrypted: the ADD+DROP+RENAME would drop the ciphertext and
+        // there is no plaintext left to backfill from. Flag, never guess.
+        if (encryptedColumns.has(columnKey(table, column, schema))) {
+          skip(filePath, match.trim(), 'already-encrypted')
+          return match
+        }
+
         const domain = DOMAIN_RE.exec(mangledType)?.[0]?.toLowerCase()
         // Unreachable — the outer regex only matches when a domain is present —
         // but leave the statement alone rather than emit a broken rewrite.
@@ -218,10 +441,14 @@ export async function rewriteEncryptedAlterColumns(
     // matcher. Flag it — non-fatally — rather than leave the user shipping SQL
     // that fails at migrate time.
     for (const nearMiss of updated.matchAll(NEAR_MISS_RE)) {
-      skipped.push({
-        file: filePath,
-        statement: trimStatementPreamble(nearMiss[0]),
-      })
+      const statement = trimStatementPreamble(nearMiss[0])
+      // Anchor the comment test on the `SET DATA TYPE` itself: the match starts
+      // at the previous `;`, so its own offset sits before any preamble.
+      const keyword = nearMiss[0].search(/\bSET\s+DATA\s+TYPE\b/i)
+      if (isInsideComment(updated, nearMiss.index + Math.max(keyword, 0))) {
+        continue
+      }
+      skip(filePath, statement, 'unrecognised-form')
     }
   }
 
