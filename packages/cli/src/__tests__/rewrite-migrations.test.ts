@@ -939,6 +939,37 @@ describe('rewriteEncryptedAlterColumns', () => {
       expect(skipped).toHaveLength(1)
       expect(skipped[0].reason).toBe('already-encrypted')
     })
+
+    // A commented-out encrypted column line inside an otherwise LIVE
+    // CREATE TABLE must still count as encrypted. The comment check applies
+    // only to the DECLARED scan (over-detecting plaintext costs data); the
+    // ENCRYPTED scan never re-checks comments inside a live CREATE TABLE, so
+    // this stays over-detecting — the safe direction — exactly as it was
+    // before the corpus learned to track declarations at all.
+    it('still counts a commented-out encrypted column inside a live CREATE TABLE as encrypted', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_create.sql'),
+        [
+          'CREATE TABLE "users" (',
+          '\t"id" integer,',
+          '\t-- "email" "public"."eql_v3_text_eq",',
+          '\t"email" text',
+          ');',
+          '',
+        ].join('\n'),
+      )
+      const alter = path.join(tmpDir, '0001_encrypt.sql')
+      fs.writeFileSync(
+        alter,
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+      )
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toHaveLength(1)
+      expect(skipped[0].reason).toBe('already-encrypted')
+    })
   })
 
   it('handles multiple ALTER statements in one file', async () => {
@@ -1067,9 +1098,12 @@ describe('rewriteEncryptedAlterColumns', () => {
       expect(skipped).toEqual([])
     })
 
-    // A name inside a table/key constraint is a MENTION, not a declaration —
-    // it is followed by `)` or `,`, never by a type token. Counting one would
-    // put the rewrite back on the fail-open path.
+    // A name inside a table/key constraint is a MENTION, not a declaration.
+    // Here every mention is followed by `)` or `,`, which the declaration
+    // regex's tail alone already rejects. A mention followed by a SQL keyword
+    // instead (e.g. `CHECK ("email" IS NOT NULL)`) is a separate case, closed
+    // by the regex's keyword lookahead and pinned by its own tests below.
+    // Counting either would put the rewrite back on the fail-open path.
     it('does not treat a name inside PRIMARY KEY / REFERENCES as a declaration', async () => {
       fs.writeFileSync(
         path.join(tmpDir, '0000_create.sql'),
@@ -1121,6 +1155,92 @@ describe('rewriteEncryptedAlterColumns', () => {
       expect(rewritten).toEqual([])
       expect(skipped).toHaveLength(1)
       expect(skipped[0].reason).toBe('source-unknown')
+    })
+
+    // A CHECK predicate mentioning a column has the same `"name" <letter>`
+    // shape as a declaration — `"email" IS` — but IS is a predicate keyword,
+    // not a type token. Without the keyword lookahead this would read as a
+    // declaration and rewrite the column, dropping any ciphertext it already
+    // holds via a declaration this sweep never sees.
+    it('does not treat a CHECK predicate mention as a declaration', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_create.sql'),
+        [
+          'CREATE TABLE "users" (',
+          '\t"id" integer PRIMARY KEY,',
+          '\tCONSTRAINT "c1" CHECK ("email" IS NOT NULL)',
+          ');',
+          '',
+        ].join('\n'),
+      )
+      const alterSql =
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;'
+      const alter = path.join(tmpDir, '0001_encrypt.sql')
+      fs.writeFileSync(alter, `${alterSql}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      const updated = fs.readFileSync(alter, 'utf-8')
+      expect(updated).toBe(`${alterSql}\n`)
+      expect(updated).not.toContain('DROP COLUMN')
+      expect(skipped).toEqual([
+        { file: alter, statement: alterSql, reason: 'source-unknown' },
+      ])
+    })
+
+    // A constraint's NAME can coincide with a column's name — drizzle's
+    // `<table>_<col>_unique` convention makes this contrived, but the keyword
+    // lookahead closes it regardless: a constraint name is always followed
+    // immediately by its constraint-type keyword (UNIQUE here), which the
+    // lookahead excludes.
+    it('does not let a same-named constraint declare the column', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_create.sql'),
+        [
+          'CREATE TABLE "users" (',
+          '\t"id" integer PRIMARY KEY,',
+          '\tCONSTRAINT "email" UNIQUE("id")',
+          ');',
+          '',
+        ].join('\n'),
+      )
+      const alterSql =
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;'
+      const alter = path.join(tmpDir, '0001_encrypt.sql')
+      fs.writeFileSync(alter, `${alterSql}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([
+        { file: alter, statement: alterSql, reason: 'source-unknown' },
+      ])
+    })
+
+    // The keyword lookahead is pinned to a word boundary specifically so it
+    // does not eat real type names that merely START WITH a blocked
+    // keyword's letters: `interval`/`inet` both start "in" (colliding with
+    // IN) but must still count as genuine declarations.
+    it('still declares a column whose type name starts with a blocked keyword', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_create.sql'),
+        'CREATE TABLE "events" ("email" interval, "note" inet);\n',
+      )
+      const alter = path.join(tmpDir, '0001_encrypt.sql')
+      fs.writeFileSync(
+        alter,
+        [
+          'ALTER TABLE "events" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;',
+          'ALTER TABLE "events" ALTER COLUMN "note" SET DATA TYPE eql_v3_text_search;',
+          '',
+        ].join('\n'),
+      )
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([alter])
+      expect(skipped).toEqual([])
     })
   })
 })
