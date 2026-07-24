@@ -117,7 +117,7 @@ export const db = postgres<Contract>({
 
 `cipherstashFromStack({ contractJson })` derives the v3 encryption schemas from
 the contract (one `public.eql_v3_*` domain per column), constructs the
-`@cipherstash/stack` `EncryptionV3` client from your `CS_*` env vars or local
+`@cipherstash/stack` `Encryption` client from your `CS_*` env vars or local
 profile, builds the SDK adapter, and returns ready-to-spread `extensions` and
 `middleware`.
 

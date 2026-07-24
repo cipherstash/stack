@@ -336,3 +336,7 @@ export const EncryptionV3 = Encryption
 // helpers so `@cipherstash/stack/v3` provides everything needed to author and
 // use a schema.
 export * from '@/eql/v3'
+// `Encryption` comes along for the same reason — it is the current name for
+// what `EncryptionV3` aliases, so authoring a v3 schema and building its
+// client should not need a second import specifier.
+export { Encryption }

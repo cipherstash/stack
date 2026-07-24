@@ -4,14 +4,18 @@
 are transparently encrypted on mutations, `::jsonb`-cast on selects, encrypted
 in filter terms, and decrypted in results.
 
-Two entry points, one query mechanism:
+One entry point, EQL v3 only:
 
 | Entry point | Schema DSL | Column storage |
 |---|---|---|
-| `encryptedSupabase` | `@cipherstash/stack/schema` (EQL v2) | `eql_v2_encrypted` composite |
-| `encryptedSupabaseV3` | `@cipherstash/stack/eql/v3` (EQL v3) | native `public.eql_v3_*` domains |
+| `encryptedSupabase` | `@cipherstash/stack/eql/v3` (EQL v3) | native `public.eql_v3_*` domains |
 
-Both filter via **direct EQL operators over PostgREST**: the wrapper encrypts
+`encryptedSupabaseV3` remains as a `@deprecated`, type-identical alias. The old
+EQL v2 authoring wrapper — `encryptedSupabase({ encryptionClient,
+supabaseClient })` — has been removed; the name now binds to the v3 factory
+below.
+
+It filters via **direct EQL operators over PostgREST**: the wrapper encrypts
 the filter term and emits an ordinary `col <op> term` filter, which resolves
 to the custom operator defined on the encrypted type (equality by HMAC, range
 by the ordering term — CLLW-OPE on `_ord` domains, block-ORE on `_ord_ore` —
@@ -19,7 +23,7 @@ free-text by bloom-filter containment).
 
 ## Quick start (EQL v3)
 
-`encryptedSupabaseV3` is an async factory that **introspects the database at
+`encryptedSupabase` is an async factory that **introspects the database at
 connect time**: it detects EQL v3 columns by their Postgres domain, derives
 each column's encryption config from the domain, and builds the encryption
 client internally. Introspection needs a direct Postgres connection
@@ -27,14 +31,14 @@ client internally. Introspection needs a direct Postgres connection
 run in a Worker or the browser.
 
 ```typescript
-import { encryptedSupabaseV3 } from '@cipherstash/stack-supabase'
+import { encryptedSupabase } from '@cipherstash/stack-supabase'
 
 // Introspects the database via options.databaseUrl or DATABASE_URL
-const es = await encryptedSupabaseV3(
+const es = await encryptedSupabase(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_ANON_KEY!,
 )
-// or wrap an existing client: await encryptedSupabaseV3(supabaseClient, options)
+// or wrap an existing client: await encryptedSupabase(supabaseClient, options)
 
 await es.from('users').insert({ email: 'a@b.com', amount: 30 })
 
@@ -49,16 +53,14 @@ await es.from('users').select('id, amount').gte('amount', 10).lte('amount', 100)
 `from(tableName)` takes only the table name — no schema argument; column
 capabilities come from the introspected domains.
 
-The builder surface is shared across v2 and v3:
-`.select/.insert/.update/.upsert/.delete`,
+The builder surface is `.select/.insert/.update/.upsert/.delete`,
 `.eq/.neq/.in/.is/.gt/.gte/.lt/.lte/.match/.or/.not/.filter`,
 transforms (`.order/.limit/.range/.single/.maybeSingle/.csv/.abortSignal/.throwOnError`),
-plus `.withLockContext(lockContext)` and `.audit(config)` — with one fork:
-free-text search. v2 exposes `.like/.ilike` (SQL wildcard matching); v3
-exposes `.matches()` (fuzzy bloom token search) on encrypted columns, keeps
-`.contains()` for native (exact) containment on plaintext columns, and treats
-`like`/`ilike` on an encrypted column as an approximate shim that delegates to
-`.matches()` (see "v3 encoding details" below).
+plus `.withLockContext(lockContext)` and `.audit(config)`. For free-text
+search it exposes `.matches()` (fuzzy bloom token search) on encrypted
+columns, keeps `.contains()` for native (exact) containment on plaintext
+columns, and treats `like`/`ilike` on an encrypted column as an approximate
+shim that delegates to `.matches()` (see "v3 encoding details" below).
 
 ### Typing (v3)
 
@@ -68,14 +70,14 @@ tables against the database at construction:
 
 ```typescript
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
-import { encryptedSupabaseV3 } from '@cipherstash/stack-supabase'
+import { encryptedSupabase } from '@cipherstash/stack-supabase'
 
 const users = encryptedTable('users', {
   email:  types.TextSearch('email'),   // public.eql_v3_text_search
   amount: types.IntegerOrd('amount'),  // public.eql_v3_integer_ord
 })
 
-const es = await encryptedSupabaseV3(
+const es = await encryptedSupabase(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_ANON_KEY!,
   { schemas: { users } },

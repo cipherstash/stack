@@ -43,7 +43,7 @@ Creates `cipherstash.cs_migrations` idempotently. Normally called by `stash eql 
 Chunked, resumable, idempotent backfill of plaintext → encrypted. Per chunk, in a single transaction: select next page → encrypt via `client.bulkEncryptModels` → `UPDATE … FROM (VALUES …)` → `INSERT` a `backfill_checkpoint` event. Guards with `encrypted IS NULL` so re-runs never double-write.
 
 - `db`: a `pg.PoolClient` (the runner drives transactions on it).
-- `encryptionClient`: your initialised `@cipherstash/stack` client (or anything that exposes `bulkEncryptModels(models, table)` returning `{ data } | { failure }`). For an EQL v3 column pass an `EncryptionV3` client (from `@cipherstash/stack/v3`) — it pins the v3 wire format; the engine itself is version-agnostic and writes whatever envelope the client produces.
+- `encryptionClient`: your initialised `@cipherstash/stack` client (or anything that exposes `bulkEncryptModels(models, table)` returning `{ data } | { failure }`). For an EQL v3 column pass an `Encryption` client (from `@cipherstash/stack/v3`) — it pins the v3 wire format; the engine itself is version-agnostic and writes whatever envelope the client produces.
 - `tableSchema`: the `EncryptedTable` for the target table from your encryption client file.
 - `signal`: optional `AbortSignal`. If aborted between chunks, the backfill exits cleanly and leaves a resumable checkpoint.
 

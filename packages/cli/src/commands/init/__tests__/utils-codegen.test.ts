@@ -20,7 +20,12 @@ describe('generateClientFromSchemas', () => {
     expect(out).toContain("age: types.IntegerOrd('age'),")
     expect(out).toContain("verified: types.Boolean('verified'),")
     expect(out).toContain("from '@cipherstash/stack/v3'")
-    expect(out).toContain('EncryptionV3(')
+    // `Encryption` is the current name; `EncryptionV3` is a deprecated alias.
+    // Same reasoning as the drizzle negatives below — this is a template
+    // literal written into the user's repo as real source, so nothing but an
+    // assertion here catches a scaffold that teaches the deprecated name.
+    expect(out).toContain('Encryption(')
+    expect(out).not.toContain('EncryptionV3')
   })
 
   it('emits the chosen v3 domain factory per column (drizzle)', () => {
@@ -54,6 +59,7 @@ describe('generateClientFromSchemas', () => {
     const out = generateClientFromSchemas('supabase', schemas)
     expect(out).toContain("email: types.TextSearch('email'),")
     expect(out).toContain("from '@cipherstash/stack/v3'")
+    expect(out).not.toContain('EncryptionV3')
     expect(out).not.toContain('@cipherstash/stack-drizzle')
   })
 
