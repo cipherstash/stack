@@ -154,9 +154,12 @@ pub trait MapAccess<'c> {
     /// Returns the next decrypted `(key, value)` entry, or `None` when the map is exhausted.
     ///
     /// As with [`SeqAccess::next_element`], implementations **must authenticate each value
-    /// against the map's associated data** — thread the AAD supplied to
-    /// [`Decipher::decrypt_map`] into the value's [`Decrypt::decrypt_with_aad`], mirroring
-    /// [`MapCipher::encrypt_value`](crate::MapCipher::encrypt_value).
+    /// against the map's associated data** — and additionally against the entry's own key.
+    /// Derive the effective AAD by passing the AAD supplied to [`Decipher::decrypt_map`]
+    /// through [`Aad::for_map_entry`](crate::Aad::for_map_entry) with the entry key, mirroring
+    /// the binding [`MapCipher::encrypt_value`](crate::MapCipher::encrypt_value) performs at
+    /// encrypt time. An implementation that decrypts values against the bare map AAD leaves
+    /// keys swappable in stored ciphertext (and will fail to decrypt conforming ciphertexts).
     fn next_entry<T: Decrypt<'c> + 'c>(&mut self) -> Result<Option<(String, T)>, Self::Error>;
 }
 

@@ -89,6 +89,30 @@ where
     }
 }
 
+/// The runtime-keyed counterpart of the `HashMap<&'static str, T>` impl above,
+/// for maps whose keys are not known at compile time (e.g. values arriving
+/// across an FFI boundary). Round-trips with the `Decrypt` impl for
+/// `HashMap<String, T>`.
+impl<T> Encrypt for HashMap<String, T>
+where
+    T: Encrypt,
+{
+    fn encrypt_with_aad<'a, C: Cipher, A: IntoAad<'a>>(
+        self,
+        cipher: C,
+        aad: A,
+    ) -> Result<C::Ok, C::Error> {
+        let aad: Aad = aad.into_aad();
+
+        self.into_iter()
+            .try_fold(cipher.encrypt_map(), |c, (k, v)| {
+                c.encrypt_key(k)
+                    .and_then(|c| c.encrypt_value(v, aad.clone()))
+            })?
+            .end()
+    }
+}
+
 impl<T> Encrypt for Protected<T>
 where
     T: Encrypt + Zeroize,

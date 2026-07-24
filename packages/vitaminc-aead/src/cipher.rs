@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::borrow::Cow;
 
 use vitaminc_protected::{Controlled, Protected};
 
@@ -162,14 +163,22 @@ pub trait SeqCipher: Sized {
 /// The expected call order is key → value → key → value → … → `end`, or use
 /// the [`encrypt_entry`](MapCipher::encrypt_entry) convenience method.
 ///
-/// # Static keys only
+/// Keys may be `&'static str` or owned `String`s (anything
+/// `Into<Cow<'static, str>>`), so maps with runtime-derived keys — e.g. values
+/// crossing an FFI boundary — can be encrypted as well as decrypted.
 ///
-/// [`encrypt_key`](MapCipher::encrypt_key) takes a `&'static str`, so maps can
-/// only be *encrypted* when their keys are known at compile time. A
-/// `HashMap<String, T>` with runtime-derived keys can be *decrypted* (the
-/// [`Decrypt`](crate::Decrypt) impl yields `HashMap<String, T>`) but cannot be
-/// encrypted directly — only `HashMap<&'static str, T>` implements
-/// [`Encrypt`](crate::Encrypt).
+/// # Key authentication
+///
+/// Keys travel in the clear, but they are **not** unauthenticated:
+/// implementations must bind each entry's key into the AAD its value is sealed
+/// against, via [`Aad::for_map_entry`](crate::Aad::for_map_entry). Swapping or
+/// renaming keys in a stored ciphertext therefore causes the affected values to
+/// fail decryption. [`MapAccess`](crate::MapAccess) implementations perform the
+/// symmetric binding on decrypt.
+///
+/// The exception is [`passthrough_entry`](MapCipher::passthrough_entry): a
+/// passthrough value is neither encrypted nor authenticated, so nothing seals
+/// its key either.
 pub trait MapCipher: Sized {
     /// The final encrypted output produced by [`end`](MapCipher::end).
     type Ok;
@@ -177,16 +186,24 @@ pub trait MapCipher: Sized {
     type Error;
 
     /// Record the next key. Keys are stored in the clear — only values are
-    /// encrypted.
+    /// encrypted — but each key is bound into its value's AAD (see the
+    /// trait-level *Key authentication* notes).
     ///
     /// Must be followed by exactly one [`encrypt_value`](MapCipher::encrypt_value)
     /// before the next `encrypt_key` or [`end`](MapCipher::end). Calling
     /// `encrypt_key` twice with no intervening `encrypt_value` is a trait-contract
     /// violation; implementations should return an error rather than silently
     /// dropping the first key.
-    fn encrypt_key(self, key: &'static str) -> Result<Self, Self::Error>;
+    fn encrypt_key<K>(self, key: K) -> Result<Self, Self::Error>
+    where
+        K: Into<Cow<'static, str>>;
 
     /// Encrypt the value associated with the most recently supplied key.
+    ///
+    /// Implementations **must not** seal the value against `aad` directly:
+    /// they must bind the pending key alongside it via
+    /// [`Aad::for_map_entry`](crate::Aad::for_map_entry), so that key and value
+    /// are cryptographically inseparable in the stored ciphertext.
     fn encrypt_value<'a, T, A>(self, value: T, aad: A) -> Result<Self, Self::Error>
     where
         T: Encrypt,
@@ -194,13 +211,9 @@ pub trait MapCipher: Sized {
 
     /// Convenience for [`encrypt_key`](MapCipher::encrypt_key) followed by
     /// [`encrypt_value`](MapCipher::encrypt_value).
-    fn encrypt_entry<'a, T, A>(
-        self,
-        key: &'static str,
-        value: T,
-        aad: A,
-    ) -> Result<Self, Self::Error>
+    fn encrypt_entry<'a, K, T, A>(self, key: K, value: T, aad: A) -> Result<Self, Self::Error>
     where
+        K: Into<Cow<'static, str>>,
         T: Encrypt,
         A: IntoAad<'a>,
         Self: Sized,
@@ -214,9 +227,11 @@ pub trait MapCipher: Sized {
     /// without AEAD treatment.
     ///
     /// See [`Cipher::passthrough`] — passthrough values are non-sensitive by
-    /// design and must not carry secret data.
-    fn passthrough_entry<T>(self, key: &'static str, value: T) -> Result<Self, Self::Error>
+    /// design and must not carry secret data. Neither the value nor its key is
+    /// authenticated.
+    fn passthrough_entry<K, T>(self, key: K, value: T) -> Result<Self, Self::Error>
     where
+        K: Into<Cow<'static, str>>,
         T: Any + Send + 'static;
 
     /// Finalise the map and return the produced ciphertext container.

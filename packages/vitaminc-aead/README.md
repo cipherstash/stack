@@ -104,16 +104,22 @@ impl<'c> MapCipher for MyMapCipher<'c> {
     type Ok = MyCipherText;
     type Error = Unspecified;
 
-    fn encrypt_key(self, _key: &'static str) -> Result<Self, Self::Error> { unimplemented!() }
+    fn encrypt_key<K>(self, _key: K) -> Result<Self, Self::Error>
+    where
+        K: Into<std::borrow::Cow<'static, str>>,
+    { unimplemented!() }
 
+    // Must seal the value against `Aad::for_map_entry(aad, key)` — see the
+    // `MapCipher` docs on key authentication.
     fn encrypt_value<'a, T, A>(self, _value: T, _aad: A) -> Result<Self, Self::Error>
     where
         T: vitaminc_aead::Encrypt,
         A: IntoAad<'a>,
     { unimplemented!() }
 
-    fn passthrough_entry<T>(self, _key: &'static str, _value: T) -> Result<Self, Self::Error>
+    fn passthrough_entry<K, T>(self, _key: K, _value: T) -> Result<Self, Self::Error>
     where
+        K: Into<std::borrow::Cow<'static, str>>,
         T: Any + Send + 'static,
     { unimplemented!() }
 
@@ -160,7 +166,7 @@ let plaintext: String = cipher.decrypt_with_aad(ciphertext, "context data")?;
 
 `String`, `Vec<u8>`, `[u8; N]`, `u32`, `Vec<T: Decrypt>`, `HashMap<String, T: Decrypt>`, and `Protected<T: Decrypt>` all implement `Decrypt` out of the box.
 
-> **Note on maps:** `HashMap` decryption yields `HashMap<String, T>`, but map *encryption* requires statically known keys — only `HashMap<&'static str, T>` implements `Encrypt`. Map keys are passed to [`MapCipher::encrypt_key`], which takes a `&'static str`. A `HashMap<String, T>` with runtime-derived keys can therefore be decrypted but not encrypted directly.
+> **Note on maps:** both `HashMap<&'static str, T>` and `HashMap<String, T>` implement `Encrypt` (keys are anything `Into<Cow<'static, str>>`), and decryption yields `HashMap<String, T>`. Map keys travel in the clear but are bound into each value's AAD via [`Aad::for_map_entry`], so swapping or renaming keys inside a stored ciphertext causes decryption to fail.
 
 ### Additional Authenticated Data (AAD)
 

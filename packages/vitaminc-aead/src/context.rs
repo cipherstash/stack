@@ -420,7 +420,10 @@ mod tests {
         type Ok = Vec<u8>;
         type Error = Unspecified;
 
-        fn encrypt_key(self, _key: &'static str) -> Result<Self, Self::Error> {
+        fn encrypt_key<K>(self, _key: K) -> Result<Self, Self::Error>
+        where
+            K: Into<std::borrow::Cow<'static, str>>,
+        {
             Ok(self)
         }
 
@@ -432,8 +435,9 @@ mod tests {
             Ok(self)
         }
 
-        fn passthrough_entry<T>(self, _key: &'static str, _value: T) -> Result<Self, Self::Error>
+        fn passthrough_entry<K, T>(self, _key: K, _value: T) -> Result<Self, Self::Error>
         where
+            K: Into<std::borrow::Cow<'static, str>>,
             T: Any + Send + 'static,
         {
             Ok(self)

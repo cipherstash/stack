@@ -51,6 +51,27 @@ impl<'a> Aad<'a> {
     pub(crate) fn pae(pieces: &[&[u8]]) -> Self {
         pae::encode(pieces)
     }
+
+    /// Derives the AAD a map entry's value must be sealed against, binding the
+    /// entry `key` to this (caller-supplied) AAD.
+    ///
+    /// Map keys travel in the clear inside a ciphertext container, so without
+    /// this binding an attacker holding a stored ciphertext could swap or
+    /// rename keys undetected, silently reassigning values to different
+    /// fields. [`MapCipher::encrypt_value`](crate::MapCipher::encrypt_value)
+    /// and [`MapAccess::next_entry`](crate::MapAccess::next_entry)
+    /// implementations are required to derive each entry's effective AAD
+    /// through this method — both sides must use it, or nothing decrypts.
+    ///
+    /// The encoding is `PAE(domain, aad, key)`. The leading domain-separation
+    /// label keeps the result disjoint from user-supplied composite AAD: a
+    /// caller binding the tuple `(aad, key)` at the top level (e.g. via
+    /// [`ContextTag`](crate::ContextTag)) encodes `PAE(aad, key)`, which can
+    /// never collide with a map entry's three-piece, labelled encoding.
+    pub fn for_map_entry(&self, key: &str) -> Aad<'static> {
+        const MAP_ENTRY_DOMAIN: &[u8] = b"vitaminc/aead/map-entry/v1";
+        pae::encode(&[MAP_ENTRY_DOMAIN, self.as_bytes(), key.as_bytes()])
+    }
 }
 
 /// Types that can be canonically converted into an [`Aad`].
@@ -243,6 +264,38 @@ mod tests {
         // `None` is PAE-encoded as zero pieces: LE64(0) = 8 zero bytes.
         assert_eq!(none_aad.as_bytes(), &[0u8; 8]);
         assert_ne!(none_aad.as_bytes(), some_aad.as_bytes());
+    }
+
+    #[test]
+    fn for_map_entry_pins_encoding() {
+        // The exact bytes are a wire-format commitment: PAE(domain, aad, key).
+        // Changing them breaks decryption of existing ciphertexts.
+        let bound = Aad::from_slice(b"ctx").for_map_entry("name");
+        let expected = Aad::pae(&[b"vitaminc/aead/map-entry/v1", b"ctx", b"name"]);
+        assert_eq!(bound.as_bytes(), expected.as_bytes());
+    }
+
+    #[test]
+    fn for_map_entry_differs_from_tuple_aad() {
+        // The domain label keeps map-entry AAD disjoint from a user binding
+        // the same (aad, key) pair as tuple AAD at the top level.
+        let bound = Aad::from_slice(b"ctx").for_map_entry("name");
+        let tuple = (Aad::from_slice(b"ctx"), "name").into_aad();
+        assert_ne!(bound.as_bytes(), tuple.as_bytes());
+    }
+
+    #[test]
+    fn for_map_entry_is_key_sensitive() {
+        let aad = Aad::from_slice(b"ctx");
+        assert_ne!(
+            aad.for_map_entry("a").as_bytes(),
+            aad.for_map_entry("b").as_bytes()
+        );
+        // Moving bytes between AAD and key must not collide (PAE injectivity).
+        assert_ne!(
+            Aad::from_slice(b"ctxa").for_map_entry("").as_bytes(),
+            Aad::from_slice(b"ctx").for_map_entry("a").as_bytes()
+        );
     }
 
     #[test]
