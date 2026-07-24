@@ -389,32 +389,45 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
 /**
  * The client type {@link Encryption} resolves to for the schema tuple `S`.
  *
- * **Use this instead of `Awaited<ReturnType<typeof Encryption>>`.** `Encryption`
- * is overloaded, and TypeScript's `ReturnType` reads the LAST overload — the
- * nominal one — so that expression yields `EncryptionClient` even for an all-v3
- * schema set, and assigning the real (typed) client to it is an error:
- *
- * ```
- * Type 'TypedEncryptionClient<…>' is missing the following properties
- * from type 'EncryptionClient': client, encryptConfig, init
- * ```
- *
- * Overload order cannot fix that — whichever signature is last wins, so one of
- * the two forms is always mis-resolved. Name the schema tuple instead:
+ * This is **the** way to name the client — reach for it whenever you need to
+ * declare a variable, field or return type before the `await` that produces it:
  *
  * ```typescript
  * const users = encryptedTable("users", { email: types.TextSearch("email") })
+ *
  * let client: EncryptionClientFor<readonly [typeof users]>
  * client = await Encryption({ schemas: [users] })
  * ```
  *
- * The equivalent inline workaround — inferring through a single-signature
- * helper, `Awaited<ReturnType<typeof makeClient>>` — also works, and is what
- * `packages/bench` does.
+ * For code that is generic over its schemas — integration adapters that build a
+ * table per test family, say — name the loose array and keep the typed surface:
+ *
+ * ```typescript
+ * let client: EncryptionClientFor<readonly AnyV3Table[]>
+ * ```
+ *
+ * **Do not use `Awaited<ReturnType<typeof Encryption>>`.** `Encryption` is
+ * overloaded, and TypeScript's `ReturnType` reads the LAST overload — the
+ * nominal one — so that expression yields `EncryptionClient` even for an all-v3
+ * schema set, and assigning the real client to it is an error:
+ *
+ * ```
+ * Type 'TypedEncryptionClient<…>' is missing the following properties
+ * from type 'EncryptionClient': client, encryptConfig
+ * ```
+ *
+ * Overload order cannot fix that — whichever signature is last wins, so one of
+ * the two forms is always mis-resolved, and putting the nominal signature first
+ * mis-resolves v3 schemas instead (a v3 table structurally satisfies
+ * `BuildableTable`). A named extraction type is what every comparable library
+ * does for the same reason: `z.infer`, arktype's `typeof T.infer`, hono's
+ * `Client<T>`.
  */
 export type EncryptionClientFor<S extends readonly unknown[]> =
-  S extends readonly [AnyV3Table, ...AnyV3Table[]]
-    ? TypedEncryptionClient<S>
+  S extends readonly AnyV3Table[]
+    ? S['length'] extends 0
+      ? EncryptionClient
+      : TypedEncryptionClient<S>
     : EncryptionClient
 
 /**
