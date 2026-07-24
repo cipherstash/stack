@@ -255,29 +255,57 @@ const CREATE_TABLE_ENCRYPTED_COLUMN_RE = new RegExp(
  * A column name in a DECLARATION position — `"email" text`,
  * `"email" "public"."eql_v3_text_search"`, `"amount" numeric(10, 2)`.
  *
- * The `\s+["a-z]` tail is the whole trick, and it is what separates a
- * declaration from a MENTION. Every SQL type token begins with a letter or a
- * double quote, so a name followed by `)`, `,` or an operator does not match:
+ * The `\s+["a-z]` tail is what separates a declaration from a MENTION. Most
+ * mentions are followed by `)`, `,`, or an operator, which the tail alone
+ * already rejects:
  *
  * ```sql
  * PRIMARY KEY ("id", "name")
  * FOREIGN KEY ("org_id") REFERENCES "orgs"("id")
- * CHECK ("age" > 0)
  * ```
+ *
+ * But a mention inside a predicate or a table-level constraint is often
+ * followed by whitespace and a SQL KEYWORD — which has exactly the same
+ * `\s+[a-z]` shape as a real declaration, and drizzle-kit emits both forms
+ * inside a `CREATE TABLE` (a `CONSTRAINT … CHECK (<user sql>)` body is
+ * user-authored, so the predicate form is reachable too):
+ *
+ * ```sql
+ * CHECK ("email" IS NOT NULL)
+ * CONSTRAINT "users_email_unique" UNIQUE ("email")
+ * ```
+ *
+ * The negative lookahead rejects the keywords reachable this way: predicate
+ * keywords (`IS`, `IN`, `NOT`, `LIKE`, `ILIKE`, `BETWEEN`, `AND`, `OR`),
+ * ordering/collation (`COLLATE`, `ASC`, `DESC`, `NULLS`), and every
+ * table/column-constraint keyword (`UNIQUE`, `PRIMARY`, `FOREIGN`, `CHECK`,
+ * `EXCLUDE`, `REFERENCES`, `CONSTRAINT`, `USING`, `WITH`) — the last six also
+ * close the constraint-NAME case above, since Postgres always puts one of
+ * them immediately after a constraint's name.
+ *
+ * A real type token still matches because the lookahead is pinned to a word
+ * boundary (`\b`) right after each keyword, so it only rejects a keyword when
+ * that keyword is the WHOLE next word: `interval` and `inet` both start with
+ * `IN`'s letters, but their third character keeps them inside one word, so
+ * `\bIN\b` never matches there; the same reasoning clears `int`,
+ * `char`/`citext` against `CHECK`, and `eql_v2_encrypted`/`eql_v3_*` against
+ * `EXCLUDE`.
  *
  * Deliberately NOT pinned to the encrypted domains. A column the corpus
  * declares but does not give an encrypted type is, by residue, plaintext — so
  * the fail-closed rule needs no type classification and no SQL parsing, only
  * the known encrypted list that {@link ENCRYPTED_TYPE_REF} already provides.
  *
- * **Known false positive, accepted.** In
- * `CONSTRAINT "users_email_unique" UNIQUE("email")` the constraint NAME is
- * followed by whitespace and a letter, so it registers as a declared column. It
- * is inert unless a constraint name exactly equals the name of a column that is
- * also encrypted and undeclared, which drizzle's `<table>_<col>_unique`
- * convention makes contrived.
+ * **Residue, accepted.** The lookahead is a fixed keyword list, not a parser:
+ * a predicate keyword it does not enumerate (`SIMILAR`, `ISNULL`, `NOTNULL`,
+ * `OVERLAPS`, …) still lets a bare mention through, e.g.
+ * `CHECK ("email" SIMILAR TO '...')`. This is inert unless that mention's name
+ * exactly matches a DIFFERENT column that is both encrypted and genuinely
+ * undeclared anywhere else in the corpus — contrived, and strictly narrower
+ * than the gap this replaces.
  */
-const DECLARED_COLUMN_RE = /"([^"]+)"\s+["a-z]/gi
+const DECLARED_COLUMN_RE =
+  /"([^"]+)"\s+(?!(?:IS|IN|NOT|LIKE|ILIKE|BETWEEN|AND|OR|COLLATE|ASC|DESC|NULLS|UNIQUE|PRIMARY|FOREIGN|CHECK|EXCLUDE|REFERENCES|CONSTRAINT|USING|WITH)\b)["a-z]/gi
 
 /** `ALTER TABLE … ADD COLUMN "col" <any type>` — $1/$2 table, $3 column. */
 const ADD_COLUMN_RE = new RegExp(
@@ -336,10 +364,10 @@ interface ColumnIndex {
  *
  * The index is corpus-wide rather than ordered by migration: over-detecting
  * "encrypted" costs a flagged statement the user handles by hand, while
- * under-detecting costs irrecoverable ciphertext. Only live statements count,
- * for the same reason {@link isInsideCommentOrString} exists — inside a
- * `CREATE TABLE` the check is applied per column line, so a commented-out
- * column in an otherwise live table declares nothing.
+ * under-detecting costs irrecoverable ciphertext. That asymmetry is why the
+ * two per-column scans inside a `CREATE TABLE` body are deliberately
+ * inconsistent about comments (see the comment at the loops themselves) —
+ * do not "fix" that inconsistency, it is the point.
  */
 function indexColumnDeclarations(contents: readonly string[]): ColumnIndex {
   const encrypted = new Set<string>()
@@ -354,8 +382,16 @@ function indexColumnDeclarations(contents: readonly string[]): ColumnIndex {
       // The body is scanned as its own document: a `--` earlier in it comments
       // out the rest of that line, and a CREATE inside a block comment or a
       // string literal was already skipped above.
+      //
+      // Asymmetric on purpose. ENCRYPTED does NOT re-check comments here: a
+      // commented-out encrypted column inside an otherwise live CREATE TABLE
+      // still counts, exactly as it did before this sweep learned to declare
+      // anything — over-detecting "encrypted" only costs a flagged statement.
+      // DECLARED DOES re-check: a commented-out plaintext line never ran, so
+      // it must not count as a declaration — over-detecting "declared" is
+      // what would put a truly-undeclared, possibly already-encrypted column
+      // back on the fail-open path.
       for (const column of body.matchAll(CREATE_TABLE_ENCRYPTED_COLUMN_RE)) {
-        if (isInsideCommentOrString(body, column.index)) continue
         encrypted.add(columnKey(table, column[1], schema))
       }
 
@@ -415,7 +451,7 @@ export interface SkippedAlter {
 /**
  * One-line explanation of a {@link SkipReason}, for the CLI/wizard to print
  * next to the statement. Lives here so every caller says the same thing — the
- * two reasons need very different action from the user, and a single generic
+ * three reasons need very different action from the user, and a single generic
  * "could not rewrite automatically" hides that.
  */
 export function describeSkipReason(reason: SkipReason): string {
@@ -461,13 +497,16 @@ export interface RewriteResult {
  *
  * Returns {@link RewriteResult}: the files rewritten, plus `skipped` statements
  * left for a human — ones outside the strict matcher (a hand-authored
- * `SET DATA TYPE … USING …;`, or a future drizzle-kit form), and ones targeting
- * a column that is ALREADY encrypted, where the rewrite would drop ciphertext.
- * Both are left untouched on disk and surfaced non-fatally so the caller can
- * tell the user to review them, rather than silently shipping broken SQL or
- * destroying data. Statements sitting inside a SQL comment — or inside a
- * single-quoted string literal, where they are data rather than SQL — are inert
- * and are neither rewritten nor reported.
+ * `SET DATA TYPE … USING …;`, or a future drizzle-kit form); ones targeting a
+ * column that is ALREADY encrypted, where the rewrite would drop ciphertext;
+ * and ones targeting a column the corpus never DECLARES anywhere, where the
+ * rewrite would be guessing at a type it cannot see (likely the most common
+ * skip on a real corpus, since the sweep only ever reads part of the
+ * migration history). All three are left untouched on disk and surfaced
+ * non-fatally so the caller can tell the user to review them, rather than
+ * silently shipping broken SQL or destroying data. Statements sitting inside a
+ * SQL comment — or inside a single-quoted string literal, where they are data
+ * rather than SQL — are inert and are neither rewritten nor reported.
  */
 export async function rewriteEncryptedAlterColumns(
   outDir: string,
@@ -539,7 +578,7 @@ export async function rewriteEncryptedAlterColumns(
           return match
         }
 
-        // Fail closed. Absence from `encryptedColumns` does not mean the column
+        // Fail closed. Absence from `declaredColumns` does not mean the column
         // is plaintext — it means the corpus never said. The declaration can
         // sit in a directory this sweep does not read (the wizard ships with
         // three candidates and indexes each separately), so rewriting on the
