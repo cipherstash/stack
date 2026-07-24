@@ -24,6 +24,18 @@ The sweep also refuses to rewrite a column the migration corpus already gives an
 encrypted type, so changing a column's encrypted domain no longer drops a column
 full of ciphertext. Skipped statements report why they were left alone.
 
+The sweep is now fail-closed about the columns it does not recognise at all.
+Previously a column missing from the corpus index was assumed to be plaintext
+and rewritten; absence is not evidence, and the declaration can simply live in a
+migration directory the sweep never reads — the wizard ships scanning three of
+them and indexes each separately. Such a statement is now reported for review
+rather than rewritten, so the ADD+DROP+RENAME can no longer drop a column that
+already holds ciphertext. If your migration history is squashed, or the column's
+`CREATE TABLE` lives outside the directory being swept, you will see the
+statement flagged instead of repaired: check the column's current type and
+either apply the rewrite by hand on an empty table, or use the staged
+`stash encrypt` lifecycle.
+
 An unreadable migration directory (`EACCES`) is reported rather than silently
 treated as empty, and the wizard's `Run the migration now?` prompt defaults to No
 whenever the sweep rewrote anything, flagged anything, or could not check a
