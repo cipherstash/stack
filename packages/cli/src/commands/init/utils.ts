@@ -286,11 +286,11 @@ const ${schemaVarName} = extractEncryptionSchema(${varName})`
 
   return `import { pgTable, integer, timestamp } from 'drizzle-orm/pg-core'
 import { types, extractEncryptionSchema } from '@cipherstash/stack-drizzle'
-import { EncryptionV3 } from '@cipherstash/stack/v3'
+import { Encryption } from '@cipherstash/stack/v3'
 
 ${tableDefs.join('\n\n')}
 
-export const encryptionClient = await EncryptionV3({
+export const encryptionClient = await Encryption({
   schemas: [${schemaVarNames.join(', ')}],
 })
 `
@@ -311,11 +311,11 @@ ${columnDefs.join('\n')}
 
   const tableVarNames = schemas.map((s) => `${toCamelCase(s.tableName)}Table`)
 
-  return `import { EncryptionV3, encryptedTable, types } from '@cipherstash/stack/v3'
+  return `import { Encryption, encryptedTable, types } from '@cipherstash/stack/v3'
 
 ${tableDefs.join('\n\n')}
 
-export const encryptionClient = await EncryptionV3({
+export const encryptionClient = await Encryption({
   schemas: [${tableVarNames.join(', ')}],
 })
 `
@@ -366,7 +366,7 @@ export function generateClientFromSchemas(
  * schemas yet, and explicitly tells the agent that the user's existing
  * schema files remain authoritative. The agent's job during the handoff
  * is to declare encrypted columns directly in those files and update the
- * `EncryptionV3({ schemas: [...] })` call below to reference them.
+ * `Encryption({ schemas: [...] })` call below to reference them.
  */
 export function generatePlaceholderClient(integration: Integration): string {
   if (integration === 'drizzle') {
@@ -381,7 +381,7 @@ const DRIZZLE_PLACEHOLDER = `/**
  * \`stash init\` wrote this file. It is intentionally NOT a real Drizzle
  * schema. Your existing schema files (typically under \`src/db/\`) remain
  * authoritative — your agent will edit those directly when you encrypt a
- * column, then update the \`EncryptionV3({ schemas: [...] })\` call below
+ * column, then update the \`Encryption({ schemas: [...] })\` call below
  * to reference the encrypted tables you declared there.
  *
  * Until that happens, the encryption client is initialised with no
@@ -419,19 +419,19 @@ const DRIZZLE_PLACEHOLDER = `/**
  *     billing_address: types.TextEq('billing_address'),
  *   })
  *
- * Once you have encrypted tables declared, harvest them and pass to EncryptionV3():
+ * Once you have encrypted tables declared, harvest them and pass to Encryption():
  *
  *   import { extractEncryptionSchema } from '@cipherstash/stack-drizzle'
- *   import { EncryptionV3 } from '@cipherstash/stack/v3'
+ *   import { Encryption } from '@cipherstash/stack/v3'
  *   import { users, orders } from './db/schema'
  *
- *   export const encryptionClient = await EncryptionV3({
+ *   export const encryptionClient = await Encryption({
  *     schemas: [extractEncryptionSchema(users), extractEncryptionSchema(orders)],
  *   })
  */
-import { EncryptionV3 } from '@cipherstash/stack/v3'
+import { Encryption } from '@cipherstash/stack/v3'
 
-export const encryptionClient = await EncryptionV3({ schemas: [] })
+export const encryptionClient = await Encryption({ schemas: [] })
 `
 
 const GENERIC_PLACEHOLDER = `/**
@@ -440,7 +440,7 @@ const GENERIC_PLACEHOLDER = `/**
  * \`stash init\` wrote this file. It is intentionally NOT a real schema
  * definition. Your existing schema files remain authoritative — your
  * agent will declare encrypted columns there and update the
- * \`EncryptionV3({ schemas: [...] })\` call below to reference them.
+ * \`Encryption({ schemas: [...] })\` call below to reference them.
  *
  * Until that happens, the encryption client is initialised with no
  * schemas, and \`stash encrypt\` commands will surface a clear error
@@ -474,16 +474,16 @@ const GENERIC_PLACEHOLDER = `/**
  *     billing_address: types.TextEq('billing_address'),
  *   })
  *
- * Once you have encrypted tables declared, pass them to EncryptionV3():
+ * Once you have encrypted tables declared, pass them to Encryption():
  *
- *   import { EncryptionV3 } from '@cipherstash/stack/v3'
+ *   import { Encryption } from '@cipherstash/stack/v3'
  *   import { users, orders } from './db/schema'
  *
- *   export const encryptionClient = await EncryptionV3({
+ *   export const encryptionClient = await Encryption({
  *     schemas: [users, orders],
  *   })
  */
-import { EncryptionV3 } from '@cipherstash/stack/v3'
+import { Encryption } from '@cipherstash/stack/v3'
 
-export const encryptionClient = await EncryptionV3({ schemas: [] })
+export const encryptionClient = await Encryption({ schemas: [] })
 `

@@ -152,6 +152,14 @@ jobs:
       - name: Typecheck (wizard)
         run: pnpm --filter @cipherstash/wizard run typecheck
 
+      # `examples/*` are standalone apps outside the `./packages/*` filter that
+      # root `build`/`test` use, so nothing in CI compiled them. `examples/basic`
+      # had been broken since the v2 removal deleted `encryptedType` and the v2
+      # `encryptedSupabase` — on a fully green board. Gate it through turbo so
+      # `^build` builds stack/stack-drizzle/stash first.
+      - name: Typecheck (examples/basic — guards the v3 stack/stack-drizzle importers)
+        run: pnpm exec turbo run typecheck --filter @cipherstash/basic-example
+
       - name: Lint — no hardcoded package-manager runners
         run: pnpm run lint:runners
 

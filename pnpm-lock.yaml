@@ -117,12 +117,12 @@ importers:
       '@cipherstash/stack-drizzle':
         specifier: workspace:*
         version: link:../../packages/stack-drizzle
-      '@cipherstash/stack-supabase':
-        specifier: workspace:*
-        version: link:../../packages/stack-supabase
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.22.0)(postgres@3.4.9)
       pg:
         specifier: 8.22.0
         version: 8.22.0
