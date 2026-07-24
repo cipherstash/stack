@@ -594,6 +594,78 @@ describe('rewriteEncryptedAlterColumns', () => {
         'ALTER TABLE "users" DROP COLUMN "email";',
       )
     })
+
+    // An apostrophe inside a DOUBLE-QUOTED identifier is not a string
+    // delimiter. Reading it as one opens a phantom literal whose "closing"
+    // quote is the apostrophe in the SAME identifier further down the file —
+    // PAST the commented-out ALTER — so the scan concludes the ALTER is live
+    // and rewrites it into a real DROP COLUMN. The CREATE that declared the
+    // column always sits above the ALTER, so a real corpus produces exactly
+    // this shape.
+    it('leaves a commented-out ALTER untouched when an earlier identifier holds an apostrophe', async () => {
+      const original = [
+        'CREATE TABLE "users" (',
+        '\t"id" serial PRIMARY KEY NOT NULL,',
+        '\t"o\'brien_data" text',
+        ');',
+        '--> statement-breakpoint',
+        '-- ALTER TABLE "users" ALTER COLUMN "o\'brien_data" SET DATA TYPE eql_v3_text_search;',
+        '',
+      ].join('\n')
+      const filePath = path.join(tmpDir, '0031_apostrophe.sql')
+      fs.writeFileSync(filePath, original)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([])
+      const updated = fs.readFileSync(filePath, 'utf-8')
+      expect(updated).toBe(original)
+      expect(updated).not.toContain('DROP COLUMN')
+    })
+
+    // A statement inside a single-quoted literal is DATA, not SQL. Rewriting it
+    // splices `--> statement-breakpoint` markers INSIDE the literal, so
+    // splitting the file the way drizzle's migrator does yields a bare, live
+    // `ALTER TABLE ... DROP COLUMN ...;` as a chunk of its own.
+    it('leaves an ALTER inside a string literal untouched', async () => {
+      const original = [
+        `INSERT INTO "audit_log" ("note") VALUES ('the reverted migration read:`,
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;',
+        `(do not run it again)');`,
+        '',
+      ].join('\n')
+      const filePath = path.join(tmpDir, '0032_string-literal.sql')
+      fs.writeFileSync(filePath, original)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([])
+      const updated = fs.readFileSync(filePath, 'utf-8')
+      expect(updated).toBe(original)
+      expect(updated).not.toContain('DROP COLUMN')
+      expect(updated).not.toContain('--> statement-breakpoint')
+    })
+
+    // Regression pin, not a bug fix — this already behaves. A commented-out
+    // ALTER in a CRLF file must come back byte-identical.
+    it('leaves a commented-out ALTER with CRLF line endings byte-identical', async () => {
+      const original = [
+        'CREATE TABLE "users" ("id" integer PRIMARY KEY);',
+        '--> statement-breakpoint',
+        '-- ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;',
+        '',
+      ].join('\r\n')
+      const filePath = path.join(tmpDir, '0033_crlf.sql')
+      fs.writeFileSync(filePath, original)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([])
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe(original)
+    })
   })
 
   // ADD+DROP+RENAME on a column that is ALREADY encrypted drops CIPHERTEXT, and
@@ -788,5 +860,26 @@ describe('rewriteEncryptedAlterColumns', () => {
     expect(updated.match(/DROP COLUMN/g)?.length).toBe(2)
     // Non-matching statement preserved
     expect(updated).toContain('CREATE INDEX "a_z" ON "a" ("z");')
+  })
+
+  // Regression pin, not a bug fix — the matchers carry `/gi`, so a
+  // hand-lowercased migration is rewritten just like drizzle-kit's output.
+  it('rewrites a lowercase alter table ... set data type', async () => {
+    const filePath = path.join(tmpDir, '0034_lowercase.sql')
+    fs.writeFileSync(
+      filePath,
+      'alter table "users" alter column "email" set data type eql_v3_text_search;\n',
+    )
+
+    const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+    expect(rewritten).toEqual([filePath])
+    expect(skipped).toEqual([])
+    const updated = fs.readFileSync(filePath, 'utf-8')
+    expect(updated).toContain(
+      'ALTER TABLE "users" ADD COLUMN "email__cipherstash_tmp" "public"."eql_v3_text_search";',
+    )
+    expect(updated).toContain('ALTER TABLE "users" DROP COLUMN "email";')
+    expect(updated).not.toMatch(/set data type/i)
   })
 })
