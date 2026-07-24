@@ -58,5 +58,10 @@
       // depend on `build`, so CI can run type tests against an older dist).
       "@cipherstash/stack/errors": ["./src/errors/index.ts"]
     }
-  }
+  },
+  // `dist-types/` deliberately typechecks against the EMITTED declarations, so
+  // it has its own tsconfig with none of the `@/*` source paths above. Checking
+  // it here too would resolve its imports differently and report failures that
+  // say nothing about what ships. Run it with `pnpm test:types:dist`.
+  "exclude": ["dist-types"]
 }
