@@ -1,5 +1,7 @@
 import { expect, it } from 'vitest'
+import type { EncryptionClientFor } from '@/encryption/v3'
 import { EncryptionV3 } from '@/encryption/v3'
+import type { AnyV3Table } from '@/eql/v3'
 import { encryptedTable, types } from '@/eql/v3'
 
 /**
@@ -36,7 +38,7 @@ const docs = encryptedTable('match_bloom_probe', {
 const HAYSTACK = 'ada@example.com'
 
 async function bloomOf(
-  client: Awaited<ReturnType<typeof EncryptionV3>>,
+  client: EncryptionClientFor<readonly AnyV3Table[]>,
   value: string,
 ) {
   const result = await client.encrypt(value, { column: docs.bio, table: docs })

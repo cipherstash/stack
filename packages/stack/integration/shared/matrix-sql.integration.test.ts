@@ -67,7 +67,12 @@ import {
 } from '@cipherstash/test-kit'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { EncryptionV3, encryptedTable } from '@/encryption/v3'
+import {
+  type EncryptionClientFor,
+  EncryptionV3,
+  encryptedTable,
+} from '@/encryption/v3'
+import type { AnyV3Table } from '@/eql/v3'
 
 // Previously force-skipped (CI run 28569708268, PR #540): `beforeAll` crashed
 // with `PostgresError: invalid input syntax for type json` on the dynamic
@@ -203,7 +208,7 @@ const comparePlaintext = (a: unknown, b: unknown): number => {
 
 type Row = { id: number }
 
-let client: Awaited<ReturnType<typeof EncryptionV3>>
+let client: EncryptionClientFor<readonly AnyV3Table[]>
 let idA: number
 let idB: number
 // Separate run id for the multi-row ordering rows. Kept DISTINCT from
@@ -399,7 +404,9 @@ describe('v3 matrix live Postgres coverage (all covered domains)', () => {
     const col = slug(eqlType)
     const column = (table as unknown as Record<string, unknown>)[col] as never
     const encrypted = unwrapResult(
-      await client.encrypt('', {
+      // The matrix table is built from a dynamic column map, so `column` is
+      // already erased above and the plaintext cannot be derived from it.
+      await client.encrypt('' as never, {
         table: table as never,
         column,
       }),
@@ -416,7 +423,9 @@ describe('v3 matrix live Postgres coverage (all covered domains)', () => {
     const col = slug(eqlType)
     const column = (table as unknown as Record<string, unknown>)[col] as never
     const encrypted = unwrapResult(
-      await client.encrypt('', {
+      // The matrix table is built from a dynamic column map, so `column` is
+      // already erased above and the plaintext cannot be derived from it.
+      await client.encrypt('' as never, {
         table: table as never,
         column,
       }),

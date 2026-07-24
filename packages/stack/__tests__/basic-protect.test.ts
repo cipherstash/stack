@@ -1,5 +1,6 @@
 import 'dotenv/config'
 import { beforeAll, describe, expect, it } from 'vitest'
+import type { EncryptionClient } from '@/encryption'
 import { Encryption } from '@/index'
 import { encryptedColumn, encryptedTable } from '@/schema'
 
@@ -9,7 +10,7 @@ const users = encryptedTable('users', {
   json: encryptedColumn('json').dataType('json'),
 })
 
-let protectClient: Awaited<ReturnType<typeof Encryption>>
+let protectClient: EncryptionClient
 
 beforeAll(async () => {
   protectClient = await Encryption({

@@ -40,6 +40,7 @@ vi.mock('@cipherstash/protect-ffi', () => ({
 }))
 
 import * as ffi from '@cipherstash/protect-ffi'
+import type { EncryptionClientFor } from '@/encryption/v3'
 // Imported after the mock so the v3 table builder is available; `Encryption`
 // returns the typed client for an all-v3 schema set.
 import { encryptedTable, types } from '@/encryption/v3'
@@ -66,7 +67,7 @@ const lastDecryptOpts = () => (ffi.decryptBulk as any).mock.calls.at(-1)[1]
 const lastCiphertextLockContext = () =>
   lastDecryptOpts().ciphertexts[0]?.lockContext
 
-let client: Awaited<ReturnType<typeof Encryption<readonly [typeof users]>>>
+let client: EncryptionClientFor<readonly [typeof users]>
 let prevWorkspaceCrn: string | undefined
 
 beforeEach(async () => {
