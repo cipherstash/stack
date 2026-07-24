@@ -170,9 +170,9 @@ type Simplify<T> = { [K in keyof T]: T[K] }
  *
  * A declared column `email` does NOT survive as `email`: the adapter deletes it
  * and writes `email__source` (plus `email__hmac` for equality domains). Typing
- * the result as the input model — what the removed v2 write overload did — is a
- * lie that type-checks `result.data.email` (always `undefined` at runtime) and
- * rejects `result.data.email__source` (the value you actually want).
+ * the result as the input model is a lie that type-checks `result.data.email`
+ * (always `undefined` at runtime) and rejects `result.data.email__source` (the
+ * value you actually want).
  *
  * Keys that name no column pass through untouched — partition/sort keys, GSI
  * attributes, anything else on the item.
