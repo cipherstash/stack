@@ -1,7 +1,7 @@
 import { databaseUrl, unwrapResult } from '@cipherstash/test-kit'
 import postgres from 'postgres'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { EncryptionClient } from '@/encryption'
+import type { EncryptionClientFor } from '@/encryption/v3'
 import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
 import type { Encrypted } from '@/types'
@@ -28,7 +28,9 @@ type InsertedRow = {
 
 type EncryptionPayload = postgres.JSONValue
 
-let protectClient: EncryptionClient
+let protectClient: EncryptionClientFor<
+  readonly [typeof table, typeof typedTable]
+>
 
 async function encryptValue(value: string): Promise<EncryptionPayload> {
   return unwrapResult(
@@ -48,7 +50,7 @@ async function encryptValue(value: string): Promise<EncryptionPayload> {
 // term, so which SQL function you call selects which term is compared.
 async function encryptOperand(
   value: unknown,
-  opts: Parameters<EncryptionClient['encrypt']>[1],
+  opts: Parameters<typeof protectClient.encrypt>[1],
 ): Promise<EncryptionPayload> {
   return unwrapResult(
     await protectClient.encrypt(value as never, opts),

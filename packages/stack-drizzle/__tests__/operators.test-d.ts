@@ -4,7 +4,7 @@ import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import type { EncryptionError } from '@cipherstash/stack/errors'
 import type { LockContext } from '@cipherstash/stack/identity'
 import type { EncryptedQueryResult } from '@cipherstash/stack/types'
-import type { EncryptionV3 } from '@cipherstash/stack/v3'
+import type { AnyV3Table, EncryptionClientFor } from '@cipherstash/stack/v3'
 import { describe, expectTypeOf, it } from 'vitest'
 import { createEncryptionOperators } from '../src/index.js'
 
@@ -21,7 +21,7 @@ import { createEncryptionOperators } from '../src/index.js'
  * existing typecheck scope without dragging the loose-typed runtime suites in.
  */
 describe('createEncryptionOperators - client parameter (M1)', () => {
-  type V3Client = Awaited<ReturnType<typeof EncryptionV3>>
+  type V3Client = EncryptionClientFor<readonly AnyV3Table[]>
 
   // A query operation resolving `Result<T, …>` — the surface the factory drives.
   type QueryOp<T> = {

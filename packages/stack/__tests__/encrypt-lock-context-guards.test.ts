@@ -19,6 +19,8 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { EncryptionClient } from '@/encryption'
+import type { EncryptionClientFor } from '@/encryption/v3'
 import { encryptedTable as encryptedTableV3, types } from '@/eql/v3'
 import { LockContext } from '@/identity'
 import { Encryption } from '@/index'
@@ -53,8 +55,8 @@ const usersV3 = encryptedTableV3('users_v3', {
 // biome-ignore lint/suspicious/noExplicitAny: test helper reads the Result union
 const failure = (result: any) => result.failure
 
-let clientV2: Awaited<ReturnType<typeof Encryption>>
-let clientV3: Awaited<ReturnType<typeof Encryption>>
+let clientV2: EncryptionClient
+let clientV3: EncryptionClientFor<readonly [typeof usersV3]>
 
 beforeEach(async () => {
   vi.clearAllMocks()
@@ -66,8 +68,13 @@ beforeEach(async () => {
   clientV3 = await Encryption({ schemas: [usersV3] })
 })
 
-const clientFor = (variant: 'v2' | 'v3') =>
-  variant === 'v2' ? clientV2 : clientV3
+// The two clients have different `encrypt` signatures — `clientV3` pins the
+// plaintext to each column's domain — so the shared `describe.each` call below
+// cannot resolve against their union. The guards under test are runtime value
+// checks that predate both surfaces and behave identically on each, so the
+// dispatch (and only the dispatch) erases to the nominal shape.
+const clientFor = (variant: 'v2' | 'v3'): EncryptionClient =>
+  variant === 'v2' ? clientV2 : (clientV3 as unknown as EncryptionClient)
 
 describe.each([
   ['v2', { column: users.score, table: users }],
