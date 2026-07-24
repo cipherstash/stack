@@ -150,6 +150,21 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
   ): BulkEncryptOperation
   bulkDecrypt(payloads: BulkDecryptPayload): BulkDecryptOperation
   getEncryptConfig(): ReturnType<EncryptionClient['getEncryptConfig']>
+
+  /**
+   * Re-initialize the underlying client.
+   *
+   * @internal Present for runtime parity with {@link EncryptionClient}, not as
+   * part of the typed authoring surface. `Encryption` picks its return value by
+   * inspecting the *schemas* while overload resolution inspects the *config*, so
+   * the two can disagree: a config hoisted into a `ClientConfig`-typed variable
+   * selects the nominal overload but still yields this client at runtime. Every
+   * other `EncryptionClient` method already existed here; without `init` that
+   * mismatch turned into `TypeError: client.init is not a function`.
+   */
+  init(
+    config: Parameters<EncryptionClient['init']>[0],
+  ): ReturnType<EncryptionClient['init']>
 }
 
 /**
@@ -367,6 +382,7 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
     bulkEncrypt: (plaintexts, opts) => client.bulkEncrypt(plaintexts, opts),
     bulkDecrypt: (payloads) => client.bulkDecrypt(payloads),
     getEncryptConfig: () => client.getEncryptConfig(),
+    init: (config) => client.init(config),
   } satisfies TypedEncryptionClient<S>
 }
 
