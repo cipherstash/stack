@@ -16,8 +16,9 @@ literal, where an `ALTER` is data rather than SQL. (Rewriting one splices
 the way drizzle's migrator does yields a bare, live `DROP COLUMN` as a chunk of
 its own.) Quoting is tokenised properly in the process: a `--` inside a string
 no longer opens a comment, an apostrophe inside a quoted identifier such as
-`"o'brien_data"` no longer opens a phantom string literal, and a doubled `''` or
-`""` reads as an escape rather than a delimiter.
+`"o'brien_data"` no longer opens a phantom string literal, a doubled `''` or
+`""` reads as an escape rather than a delimiter, and an unterminated quote of
+either kind makes the rest of the file inert rather than live.
 
 The sweep also refuses to rewrite a column the migration corpus already gives an
 encrypted type, so changing a column's encrypted domain no longer drops a column
