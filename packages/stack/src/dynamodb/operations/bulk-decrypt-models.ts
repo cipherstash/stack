@@ -4,6 +4,7 @@ import { logger } from '@/utils/logger'
 import {
   buildReadContext,
   handleError,
+  isV3Table,
   resolveDecryptResult,
   throwPreservingCode,
   toItemWithEqlPayloads,
@@ -53,9 +54,13 @@ export class BulkDecryptModelsOperation<
 
         const client = this.encryptionClient as CallableEncryptionClient
         const decryptResult = await resolveDecryptResult<Decrypted<T>[]>(
-          // The second argument is required by the typed client and ignored by
-          // the nominal one, which derives the table from the payloads.
-          client.bulkDecryptModels(itemsWithEqlPayloads, this.table),
+          // Conditional for the same reason as `decryptModel` — see the note
+          // there. A v2 table forwarded to a v3-configured typed client is
+          // rejected by its reconstructor lookup, breaking the v2 read path
+          // this adapter documents as supported.
+          isV3Table(this.table)
+            ? client.bulkDecryptModels(itemsWithEqlPayloads, this.table)
+            : client.bulkDecryptModels(itemsWithEqlPayloads),
           this.getAuditData(),
         )
 

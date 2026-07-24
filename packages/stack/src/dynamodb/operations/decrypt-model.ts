@@ -3,6 +3,7 @@ import type { Decrypted, EncryptedValue } from '@/types'
 import { logger } from '@/utils/logger'
 import {
   handleError,
+  isV3Table,
   resolveDecryptResult,
   throwPreservingCode,
   toItemWithEqlPayloads,
@@ -47,9 +48,15 @@ export class DecryptModelOperation<
 
         const client = this.encryptionClient as CallableEncryptionClient
         const decryptResult = await resolveDecryptResult<Decrypted<T>>(
-          // The second argument is required by the typed client and ignored by
-          // the nominal one, which derives the table from the payloads.
-          client.decryptModel(withEqlPayloads, this.table),
+          // The typed client REQUIRES the table; the nominal one derives it
+          // from the payloads and needs no second argument. Forwarding a v2
+          // table unconditionally breaks this adapter's documented v2 read
+          // path: a v3-configured typed client looks the table up in its own
+          // reconstructor map, does not find it, and fails. Only a v3 table is
+          // ever meaningful to that lookup, so only a v3 table is passed.
+          isV3Table(this.table)
+            ? client.decryptModel(withEqlPayloads, this.table)
+            : client.decryptModel(withEqlPayloads),
           this.getAuditData(),
         )
 
