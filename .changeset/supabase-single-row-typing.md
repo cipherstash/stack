@@ -21,12 +21,18 @@ awaits to `EncryptedSupabaseResponse<T>` (`data: T | null`). That covers the
 zero-row case for `maybeSingle()` and the error case for both, so no separate
 null modelling was needed.
 
-Filters and transforms are not chainable after `single()`/`maybeSingle()`,
+Filters and transforms are no longer chainable after `single()`/`maybeSingle()`,
 matching supabase-js — applying one afterwards would change the query the
-single-row promise was made about. `returns<U>()` preserves the awaited shape,
-so `.single().returns<U>()` still awaits one row.
+single-row promise was made about. `.single().eq(...)`, `.single().limit(...)`
+and friends were previously accepted and are now compile errors. What only
+re-types or re-configures the pending request is carried over: `returns<U>()`
+(preserving the awaited shape, so `.single().returns<U>()` awaits one row),
+`abortSignal()`, `throwOnError()`, `withLockContext()` and `audit()`.
+`EncryptedSingleQueryBuilder<T>` is exported so a stored builder can be
+annotated.
 
 **Migration:** delete the cast. Code that worked around the old typing with
 `data as unknown as Row` (or read `data![0]`) should now use `data` directly;
 the cast still compiles but is no longer needed, and `data![0]` becomes a type
-error.
+error. Move any filter or transform chained after `single()`/`maybeSingle()` to
+before it.
