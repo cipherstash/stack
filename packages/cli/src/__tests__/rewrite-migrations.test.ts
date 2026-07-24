@@ -484,6 +484,29 @@ describe('rewriteEncryptedAlterColumns', () => {
     expect(skipped[0].statement).toBe(statement)
   })
 
+  // A statement the STRICT matcher already matched but skipped (here:
+  // source-unknown) is left on disk unchanged, so it still contains
+  // `SET DATA TYPE` and the broad near-miss scan finds it again. Before the
+  // preamble regex stripped a leading block comment, that second pass reported
+  // a DIFFERENT statement string (comment glued to the front) than the strict
+  // pass's `match.trim()`, so the dedup key never matched and the same
+  // statement came back twice: once correctly as `source-unknown`, once as
+  // `unrecognised-form` — contradictory advice (look for a hand-authored
+  // `USING` clause) for a statement that has none.
+  it('reports a block-comment-prefixed statement once, not twice', async () => {
+    const alterSql =
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;'
+    const filePath = path.join(tmpDir, '0040_block-preamble.sql')
+    fs.writeFileSync(filePath, `/* note */\n${alterSql}\n`)
+
+    const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+    expect(rewritten).toEqual([])
+    expect(skipped).toEqual([
+      { file: filePath, statement: alterSql, reason: 'source-unknown' },
+    ])
+  })
+
   it('reports a near-miss without a preceding statement-breakpoint marker', async () => {
     const statement =
       'ALTER TABLE "users" ALTER COLUMN "meta" SET DATA TYPE eql_v3_json USING (meta)::jsonb;'
@@ -592,9 +615,10 @@ describe('rewriteEncryptedAlterColumns', () => {
       const filePath = path.join(tmpDir, '0030_nested.sql')
       fs.writeFileSync(filePath, original)
 
-      const { rewritten } = await rewriteEncryptedAlterColumns(tmpDir)
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
 
       expect(rewritten).toEqual([])
+      expect(skipped).toEqual([])
       expect(fs.readFileSync(filePath, 'utf-8')).toBe(original)
     })
 

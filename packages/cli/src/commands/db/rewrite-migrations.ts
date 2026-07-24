@@ -96,8 +96,9 @@ const NEAR_MISS_RE =
   /[^;]*?\bSET\s+DATA\s+TYPE\b[^;]*?\beql_v[23][a-z0-9_]*[^;]*?;/gi
 
 /**
- * Blank lines and `--` line comments (including drizzle-kit's
- * `--> statement-breakpoint`) at the head of a {@link NEAR_MISS_RE} match.
+ * Blank lines, a leading `/* … *\/` block comment, and `--` line comments
+ * (including drizzle-kit's `--> statement-breakpoint`) at the head of a
+ * {@link NEAR_MISS_RE} match.
  *
  * That regex opens with a lazy `[^;]*?`, whose only left boundary is the
  * previous `;` — or the start of the file when there is no preceding statement.
@@ -106,10 +107,21 @@ const NEAR_MISS_RE =
  * with that whole block glued to its front. Strip the preamble so the statement
  * we quote back reads as the offending statement alone.
  *
- * Only line comments are handled — `/* … *\/` block comments are not something
- * drizzle-kit emits, and a stray one costs cosmetics, not correctness.
+ * The leading block comment is NOT cosmetic: a statement the strict
+ * {@link ALTER_COLUMN_TO_ENCRYPTED_RE} matched but skipped (`already-encrypted`
+ * or `source-unknown`) is left on disk unchanged, so it still contains
+ * `SET DATA TYPE` and the broad scan below finds it again. Without stripping
+ * the block comment here, that second pass reports a DIFFERENT statement string
+ * (comment glued to the front) than the strict pass's `match.trim()`, so
+ * {@link rewriteEncryptedAlterColumns}'s dedup key never matches and the same
+ * statement is reported twice — once with the correct reason, once as
+ * `unrecognised-form`, whose guidance (look for a hand-authored `USING`) is
+ * wrong for a statement the strict matcher already matched. Stripping the
+ * comment here makes both passes agree on the statement text so the second
+ * report collapses into the first.
  */
-const STATEMENT_PREAMBLE_RE = /^(?:[^\S\n]*(?:--[^\n]*)?\n)+/
+const STATEMENT_PREAMBLE_RE =
+  /^(?:\/\*[\s\S]*?\*\/\s*)?(?:[^\S\n]*(?:--[^\n]*)?\n)*/
 
 /** Drop the leading blank/comment lines a `[^;]*?`-anchored match dragged in. */
 function trimStatementPreamble(statement: string): string {
@@ -295,6 +307,18 @@ const CREATE_TABLE_ENCRYPTED_COLUMN_RE = new RegExp(
  * declares but does not give an encrypted type is, by residue, plaintext — so
  * the fail-closed rule needs no type classification and no SQL parsing, only
  * the known encrypted list that {@link ENCRYPTED_TYPE_REF} already provides.
+ *
+ * **The residue claim depends on {@link MANGLED_TYPE_FORMS} covering every
+ * encrypted shape.** "By residue, plaintext" is only as good as the encrypted
+ * side's coverage: a declaration {@link ENCRYPTED_TYPE_REF} fails to recognise
+ * falls to the plaintext residue and gets rewritten. Two forms do this: a
+ * domain installed into a non-`public` schema (`"email" "app"."eql_v3_text_search"`,
+ * since the mangled forms only special-case the literal `public` schema), and
+ * an array of the domain (`ADD COLUMN "email" public.eql_v3_text_search[]`,
+ * since {@link ENCRYPTED_TYPE_REF}'s trailing delimiter lookahead does not
+ * include `[`). Neither is a layout EQL installs into or a shape drizzle-kit
+ * emits, and both behaved identically before this branch — so this is a
+ * documentation gap, not a regression this branch introduced.
  *
  * **Residue, accepted.** The lookahead is a fixed keyword list, not a parser:
  * a predicate keyword it does not enumerate (`SIMILAR`, `ISNULL`, `NOTNULL`,
