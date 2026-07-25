@@ -845,6 +845,34 @@ export interface DirRewriteResult extends RewriteResult {
   dir: string
   /** Set when this directory's sweep threw; the sweep continues regardless. */
   error?: string
+  /**
+   * Set when the directory holds `.sql` files but no drizzle-kit journal, so
+   * nothing was swept. Reported rather than silent: a genuine drizzle output
+   * directory whose `meta/` was deleted would otherwise look clean.
+   */
+  notDrizzleOutput?: true
+}
+
+/**
+ * Whether `abs` is a drizzle-kit output directory.
+ *
+ * drizzle-kit writes `meta/_journal.json` there on the first `generate` and
+ * maintains it for every migration after; nothing else in the candidate list's
+ * ecosystem does. Knex, node-pg-migrate and Flyway all track state in the
+ * database, not in a sibling file.
+ */
+function isDrizzleOutputDir(abs: string): boolean {
+  return existsSync(join(abs, 'meta', '_journal.json'))
+}
+
+/** Whether the directory holds anything this sweep could have acted on. */
+async function holdsSqlFiles(abs: string): Promise<boolean> {
+  try {
+    const entries = await readdir(abs)
+    return entries.some((entry) => entry.endsWith('.sql'))
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -867,6 +895,15 @@ export interface DirRewriteResult extends RewriteResult {
  *
  * A directory that throws mid-sweep is reported via `error` rather than
  * aborting — one unreadable candidate must not strand the others.
+ *
+ * **Why only drizzle-kit output directories:** the candidate list is a guess,
+ * and two of its three entries are generic names that Knex, node-pg-migrate,
+ * Flyway and hand-rolled psql also use. This sweep emits `DROP COLUMN`, so
+ * rewriting a directory it was never pointed at is the worst thing it can do —
+ * and the fail-closed `declared` rule is no defence there, because a real
+ * migration history declares its own columns. Requiring the `meta/_journal.json`
+ * that drizzle-kit maintains keeps the reach to directories drizzle-kit owns
+ * (#772 review, finding 5).
  */
 export async function sweepMigrationDirs(
   cwd: string,
@@ -877,6 +914,20 @@ export async function sweepMigrationDirs(
   for (const dir of dirs) {
     const abs = resolve(cwd, dir)
     if (!existsSync(abs)) continue
+
+    if (!isDrizzleOutputDir(abs)) {
+      // Only worth surfacing when there was something here to act on; an empty
+      // or non-SQL directory is noise.
+      if (await holdsSqlFiles(abs)) {
+        results.push({
+          dir,
+          rewritten: [],
+          skipped: [],
+          notDrizzleOutput: true,
+        })
+      }
+      continue
+    }
 
     try {
       const { rewritten, skipped } = await rewriteEncryptedAlterColumns(abs)

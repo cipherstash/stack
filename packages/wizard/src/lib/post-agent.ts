@@ -170,9 +170,21 @@ async function rewriteEncryptedMigrations(cwd: string): Promise<{
   const results = await sweepMigrationDirs(cwd, DRIZZLE_OUT_DIRS)
   const totals = { rewritten: 0, skipped: 0, failedDirs: [] as string[] }
 
-  for (const { dir, rewritten, skipped, error } of results) {
+  for (const { dir, rewritten, skipped, error, notDrizzleOutput } of results) {
     totals.rewritten += rewritten.length
     totals.skipped += skipped.length
+
+    // Not a failure and not a risk — the directory belongs to some other tool,
+    // so `drizzle-kit migrate` will not run it and the prompt below is
+    // unaffected. Said out loud anyway, so a user whose drizzle output really
+    // does live here (meta/ deleted, or a hand-assembled directory) can see why
+    // nothing was repaired instead of assuming it was clean.
+    if (notDrizzleOutput) {
+      p.log.info(
+        `Left ${dir}/ alone — it holds .sql files but no drizzle-kit journal (meta/_journal.json), so it is not a drizzle output directory. If it IS your drizzle \`out\`, run \`drizzle-kit generate\` once to create the journal, then re-run the wizard.`,
+      )
+      continue
+    }
 
     // Presence, not truthiness: `error` is `err.message` for a thrown `Error`,
     // and `new Error()` has an empty message. Testing `if (error)` would put a
