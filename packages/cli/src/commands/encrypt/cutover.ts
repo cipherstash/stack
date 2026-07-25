@@ -70,7 +70,7 @@ export async function cutoverCommand(options: CutoverCommandOptions) {
     // DOMAIN TYPES (manifest name as a hint; the `<col>_encrypted` naming is
     // a convention, never relied upon) before any phase/config checks so v3
     // users get the real answer, not a confusing precondition error.
-    const { info, candidates } = await resolveColumnLifecycle(
+    const { info, candidates, unresolvedHint } = await resolveColumnLifecycle(
       client,
       options.table,
       options.column,
@@ -86,6 +86,7 @@ export async function cutoverCommand(options: CutoverCommandOptions) {
       options.table,
       options.column,
       candidates,
+      unresolvedHint,
     )
     if (!info && unresolved) {
       p.log.error(unresolved)
@@ -96,6 +97,21 @@ export async function cutoverCommand(options: CutoverCommandOptions) {
 
     if (info?.version === 3) {
       const encryptedColumn = info.column
+
+      // `via: 'sole'` means only that this is the table's ONE EQL v3 column —
+      // nothing ties it to the plaintext column the user named. On a mixed
+      // table (a v2 pair the classifier no longer sees, plus one unrelated v3
+      // column) that guess is simply wrong, and reporting "nothing to do for
+      // EQL v3" for it told a scripted rollout the cut-over had succeeded when
+      // the v2 rename never ran. `drop.ts` already refuses a `'sole'` match for
+      // the same reason (#772 review, finding 7).
+      if (info.via === 'sole') {
+        p.log.error(
+          `${options.table}.${encryptedColumn} (${info.domain}) is the table's only EQL v3 column, but nothing confirms it encrypts "${options.column}" — refusing to report a cut-over outcome on that guess. If "${options.column}" pairs with a legacy eql_v2_encrypted column, this release no longer manages that lifecycle. Otherwise record the pairing: re-run \`stash encrypt backfill --table ${options.table} --column ${options.column} --encrypted-column <the column that actually encrypts ${options.column}>\`.`,
+        )
+        exitCode = 1
+        return
+      }
       if (state?.phase === 'dropped') {
         // Terminal phase — the lifecycle already finished. Not an error and
         // not "finish the backfill": there is nothing left to backfill.
