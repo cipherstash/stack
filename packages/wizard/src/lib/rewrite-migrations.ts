@@ -264,8 +264,17 @@ const TABLE_REF = String.raw`"([^"]+)"(?:\."([^"]+)")?`
 /**
  * An encrypted type in any of the {@link MANGLED_TYPE_FORMS}, pinned to end at a
  * delimiter so a bare domain cannot match a prefix of a longer identifier.
+ *
+ * Two shapes {@link MANGLED_TYPE_FORMS} does not enumerate are folded in here so
+ * the encrypted index recognises them and the ADD+DROP+RENAME cannot drop their
+ * ciphertext: a domain in ANY quoted schema (`"app"."eql_v3_text_search"`, not
+ * just the literal `public` the mangled forms special-case), and a `[` in the
+ * trailing lookahead so an ARRAY of the domain (`public.eql_v3_text_search[]`)
+ * ends at a delimiter too. Both feed only the encrypted index — never the
+ * rewrite matcher — so the worst case of admitting one is a flagged statement,
+ * the same safe asymmetry the fail-closed rule already relies on.
  */
-const ENCRYPTED_TYPE_REF = String.raw`(?:${MANGLED_TYPE_FORMS})(?=[\s,;)]|$)`
+const ENCRYPTED_TYPE_REF = String.raw`(?:${MANGLED_TYPE_FORMS}|"[^"]+"\."(?:${ENCRYPTED_DOMAIN})")(?=[\s,;)[]|$)`
 
 /** `ALTER TABLE … ADD COLUMN "col" <encrypted>` — $1/$2 table, $3 column. */
 const ADD_ENCRYPTED_COLUMN_RE = new RegExp(
@@ -336,17 +345,17 @@ const CREATE_TABLE_ENCRYPTED_COLUMN_RE = new RegExp(
  * the fail-closed rule needs no type classification and no SQL parsing, only
  * the known encrypted list that {@link ENCRYPTED_TYPE_REF} already provides.
  *
- * **The residue claim depends on {@link MANGLED_TYPE_FORMS} covering every
+ * **The residue claim depends on {@link ENCRYPTED_TYPE_REF} recognising every
  * encrypted shape.** "By residue, plaintext" is only as good as the encrypted
  * side's coverage: a declaration {@link ENCRYPTED_TYPE_REF} fails to recognise
- * falls to the plaintext residue and gets rewritten. Two forms do this: a
- * domain installed into a non-`public` schema (`"email" "app"."eql_v3_text_search"`,
- * since the mangled forms only special-case the literal `public` schema), and
- * an array of the domain (`ADD COLUMN "email" public.eql_v3_text_search[]`,
- * since {@link ENCRYPTED_TYPE_REF}'s trailing delimiter lookahead does not
- * include `[`). Neither is a layout EQL installs into or a shape drizzle-kit
- * emits, and both behaved identically before this branch — so this is a
- * documentation gap, not a regression this branch introduced.
+ * falls to the plaintext residue and gets rewritten. Two such shapes are now
+ * covered explicitly by {@link ENCRYPTED_TYPE_REF} — a domain in a non-`public`
+ * schema (`"email" "app"."eql_v3_text_search"`) and an array of the domain
+ * (`"email" public.eql_v3_text_search[]`) — because both name ciphertext the
+ * corpus can see, so rewriting them is the exact drop this rule exists to
+ * prevent. The dependency itself remains: any encrypted shape a future EQL
+ * install introduces must be added to {@link ENCRYPTED_TYPE_REF} or it too will
+ * fall to the plaintext residue.
  *
  * **Residue, accepted.** The lookahead is a fixed keyword list, not a parser:
  * a predicate keyword it does not enumerate (`SIMILAR`, `ISNULL`, `NOTNULL`,
