@@ -5,14 +5,14 @@
 ---
 
 Two new bundled agent skills for the integrations that don't use an ORM —
-`stash-sql` and `stash-edge` (#754).
+`stash-postgres` and `stash-edge` (#754).
 
 Everything a raw-SQL or edge integration needed was reachable only from
 `dist/*.d.ts` JSDoc, the Postgres catalog, or experiment: grepping the skills
 `stash init` installs for `postgres-js|::jsonb::eql|sql.json|query_text_search`
 returned a single hit, in an unrelated code comment.
 
-**`stash-sql`** — hand-written SQL over `pg` / `postgres-js`, no ORM. The
+**`stash-postgres`** — hand-written SQL over `pg` / `postgres-js`, no ORM. The
 column-domain-to-query-domain operator matrix (which of `=`, `<>`, `<`, `>=`,
 `@@`, `@>` each encrypted domain accepts, and against which `eql_v3.query_*`
 operand), the storage-vs-query payload distinction, per-driver parameter

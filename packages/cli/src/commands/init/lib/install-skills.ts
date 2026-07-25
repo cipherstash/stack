@@ -20,7 +20,7 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
     'stash-encryption',
     'stash-supabase',
     'stash-indexing',
-    'stash-sql',
+    'stash-postgres',
     'stash-edge',
     'stash-cli',
   ],
@@ -30,13 +30,13 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
     'stash-indexing',
     'stash-cli',
   ],
-  // The no-ORM path: `stash-sql` (binding + predicate forms) and `stash-edge`
+  // The no-ORM path: `stash-postgres` (binding + predicate forms) and `stash-edge`
   // (WASM entry, CS_* credentials) are the two skills this integration has no
   // other source for — everything else assumes an ORM emits the operands.
   postgresql: [
     'stash-encryption',
     'stash-indexing',
-    'stash-sql',
+    'stash-postgres',
     'stash-edge',
     'stash-cli',
   ],

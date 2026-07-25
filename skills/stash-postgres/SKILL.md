@@ -1,9 +1,9 @@
 ---
-name: stash-sql
-description: Query EQL v3 encrypted columns from hand-written SQL over `pg` (node-postgres) or `postgres` (postgres-js) — no ORM. Covers the column-domain-to-query-domain operator matrix (which of `=`, `<>`, `<`, `>=`, `@@`, `@>` each encrypted domain accepts), minting search needles with `encryptQuery`, the per-driver parameter-binding rules for encrypted payloads, and the double-encoding failure that trips the domain CHECK with a message naming neither JSON nor encoding. Use when writing INSERT/SELECT against an encrypted column without an ORM, when a predicate returns zero rows or raises "operator does not exist", or when a domain CHECK constraint rejects an encrypted value on write.
+name: stash-postgres
+description: Query EQL v3 encrypted columns from hand-written Postgres SQL over `pg` (node-postgres) or `postgres` (postgres-js) — no ORM. Covers the column-domain-to-query-domain operator matrix (which of `=`, `<>`, `<`, `>=`, `@@`, `@>` each encrypted domain accepts), minting search needles with `encryptQuery`, the per-driver parameter-binding rules for encrypted payloads, and the double-encoding failure that trips the domain CHECK with a message naming neither JSON nor encoding. Use when writing INSERT/SELECT against an encrypted column without an ORM, when a predicate returns zero rows or raises "operator does not exist", or when a domain CHECK constraint rejects an encrypted value on write.
 ---
 
-# Raw SQL Against Encrypted Columns (EQL v3)
+# Raw Postgres SQL Against Encrypted Columns (EQL v3)
 
 An EQL v3 encrypted column is a **Postgres domain over `jsonb`** (`public.eql_v3_text_search`,
 `public.eql_v3_bigint_ord`, …). Reading and writing it from raw SQL is two rules:

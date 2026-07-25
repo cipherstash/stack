@@ -13,13 +13,13 @@ import type { Integration } from './types.js'
  */
 const SKILL_MAP: Record<Integration, readonly string[]> = {
   drizzle: ['stash-encryption', 'stash-drizzle', 'stash-indexing', 'stash-cli'],
-  // `stash-sql` / `stash-edge` mirror the CLI's SKILL_MAP — see the comments
+  // `stash-postgres` / `stash-edge` mirror the CLI's SKILL_MAP — see the comments
   // there for why Supabase and the generic (no-ORM) path get them (#754).
   supabase: [
     'stash-encryption',
     'stash-supabase',
     'stash-indexing',
-    'stash-sql',
+    'stash-postgres',
     'stash-edge',
     'stash-cli',
   ],
@@ -27,7 +27,7 @@ const SKILL_MAP: Record<Integration, readonly string[]> = {
   generic: [
     'stash-encryption',
     'stash-indexing',
-    'stash-sql',
+    'stash-postgres',
     'stash-edge',
     'stash-cli',
   ],

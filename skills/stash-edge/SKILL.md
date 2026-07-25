@@ -14,7 +14,7 @@ and nothing for a bundler to externalise.
 
 This skill covers that entry and the deployment shape around it. It is EQL v3
 throughout. For the SQL that actually queries the encrypted columns — the
-predicate forms and driver binding rules — see `stash-sql`; edge functions
+predicate forms and driver binding rules — see `stash-postgres`; edge functions
 almost always talk to Postgres over a raw driver, so the two are usually read
 together.
 
@@ -352,7 +352,7 @@ const rows = await sql`
 ```
 
 The predicate forms, the per-driver binding rules, and the query-domain names
-are the subject of `stash-sql` — read it before writing the first query. The
+are the subject of `stash-postgres` — read it before writing the first query. The
 two rules that bite immediately: the operand must be **cast to the column's
 `eql_v3.query_*` domain**, and on `postgres-js` payloads must be bound with
 `sql.json(...)`, never pre-stringified.
@@ -375,7 +375,7 @@ opaquely; the example in `examples/supabase-worker` does exactly this.
 **Encryption works, search returns zero rows** — the credential-identity rule
 above. Second most likely: a missing index (see `stash-indexing`) makes it
 slow, not empty, so empty results point at credentials or an untyped operand
-(`stash-sql`).
+(`stash-postgres`).
 
 **Search needle rejected** — free-text needles must be at least 3 characters;
 shorter ones tokenize to nothing.
@@ -386,7 +386,7 @@ user-scoped, so it is reused across invocations on a warm isolate.
 
 ## Reference
 
-- `stash-sql` — the raw-SQL predicate cookbook and driver binding rules.
+- `stash-postgres` — the raw-SQL predicate cookbook and driver binding rules.
 - `stash-encryption` — schema authoring, the `types.*` domain catalog, and the
   rollout/cutover lifecycle.
 - `stash-cli` — `stash env`, `stash eql install`, `stash encrypt backfill`.

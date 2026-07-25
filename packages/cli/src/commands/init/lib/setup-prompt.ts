@@ -110,8 +110,8 @@ const SKILL_PURPOSES: Record<string, string> = {
     'Prisma Next-specific patterns: `cipherstash.*` field constructors, migration flow, encrypted query operators',
   'stash-indexing':
     'index recipes for encrypted columns — the `eql_v3` extractor functional indexes, Supabase/managed-Postgres constraints, EXPLAIN verification',
-  'stash-sql':
-    'hand-written SQL over `pg` / `postgres-js`: the encrypted predicate matrix, `eql_v3.query_*` operand casts, per-driver parameter binding',
+  'stash-postgres':
+    'hand-written Postgres SQL over `pg` / `postgres-js`: the encrypted predicate matrix, `eql_v3.query_*` operand casts, per-driver parameter binding',
   'stash-edge':
     'the `@cipherstash/stack/wasm-inline` entry for Deno / Supabase Edge Functions / Workers: imports, `CS_*` credentials, the credential-identity rule',
   'stash-dynamodb':

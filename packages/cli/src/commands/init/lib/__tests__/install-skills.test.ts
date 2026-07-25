@@ -92,7 +92,7 @@ describe('SKILL_MAP', () => {
     'postgresql',
     'supabase',
   ] as const)('%s includes the raw-SQL and edge skills', (integration) => {
-    expect(SKILL_MAP[integration]).toContain('stash-sql')
+    expect(SKILL_MAP[integration]).toContain('stash-postgres')
     expect(SKILL_MAP[integration]).toContain('stash-edge')
   })
 
@@ -102,7 +102,7 @@ describe('SKILL_MAP', () => {
     'drizzle',
     'prisma-next',
   ] as const)('%s does not install the raw-SQL skill', (integration) => {
-    expect(SKILL_MAP[integration]).not.toContain('stash-sql')
+    expect(SKILL_MAP[integration]).not.toContain('stash-postgres')
   })
 })
 

@@ -62,7 +62,7 @@ this is also how **Supabase Edge Functions** get credentials in local dev —
 > That includes `stash encrypt backfill`, seed scripts, and Edge Functions.
 > Encryption *inside* an Edge Function (Deno, no native modules) uses the
 > `@cipherstash/stack/wasm-inline` entry — see the `stash-edge` skill; SQL
-> written by hand in a migration or RPC is covered by `stash-sql`.
+> written by hand in a migration or RPC is covered by `stash-postgres`.
 
 ### 1. Install EQL v3 on the database
 

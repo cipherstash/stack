@@ -181,7 +181,7 @@ model — which domains take which index, engagement rules, `EXPLAIN`
 verification, rollout timing — see the `stash-indexing` skill. For encrypted
 predicates written as raw SQL rather than through the `cipherstash:*`
 operators — operand casts to `eql_v3.query_*`, per-driver parameter binding —
-see the `stash-sql` skill.
+see the `stash-postgres` skill.
 
 In a migration, the recipes ride a raw-SQL operation (`rawSql` from
 `@prisma-next/postgres/migration`) in the migration's `operations`:
