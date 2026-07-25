@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
+  describeSkipReason,
   rewriteEncryptedAlterColumns,
   sweepMigrationDirs,
 } from '../lib/rewrite-migrations.js'
@@ -1450,5 +1451,42 @@ describe('sweepMigrationDirs', () => {
     const updated = fs.readFileSync(alter, 'utf-8')
     expect(updated).toBe(`${alterSql}\n`)
     expect(updated).not.toContain('DROP COLUMN')
+  })
+})
+
+// The three reasons drive very different user action — re-encrypt through the
+// staged lifecycle, fix a hand-authored cast, or go check the database. A
+// switch with no `default` arm means a missing case fails the build, but a
+// mis-MAPPED case (wiring `source-unknown` to the `already-encrypted` string)
+// compiles fine and ships wrong remediation into a data-loss decision. Pin the
+// mapping so that swap is caught.
+describe('describeSkipReason', () => {
+  it('describes already-encrypted as a re-encrypt-through-the-lifecycle action', () => {
+    const text = describeSkipReason('already-encrypted')
+    expect(text).toContain('ALREADY encrypted')
+    expect(text).toContain('DROP the ciphertext')
+    expect(text).toContain('`stash encrypt` lifecycle')
+  })
+
+  it('describes unrecognised-form as a hand-authored / unknown cast', () => {
+    const text = describeSkipReason('unrecognised-form')
+    expect(text).toContain('SET DATA TYPE ... USING')
+    expect(text).toContain('fails at migrate time')
+  })
+
+  it('describes source-unknown as a go-check-the-database action', () => {
+    const text = describeSkipReason('source-unknown')
+    expect(text).toContain('could not find where this column was declared')
+    expect(text).toContain("Check the column's current type in the database")
+  })
+
+  it('gives each reason a distinct description', () => {
+    const reasons = [
+      'already-encrypted',
+      'unrecognised-form',
+      'source-unknown',
+    ] as const
+    const described = reasons.map(describeSkipReason)
+    expect(new Set(described).size).toBe(reasons.length)
   })
 })
