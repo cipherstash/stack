@@ -68,7 +68,6 @@ function buildStateFromContext(
     agents,
     mode: 'plan',
     planStep,
-    usesProxy: ctx.usesProxy ?? false,
   }
 }
 

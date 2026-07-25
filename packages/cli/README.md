@@ -101,10 +101,10 @@ The full pipeline state — integration, columns, env-key names, paths, versions
 
 `CIPHERSTASH_WIZARD_URL` overrides the gateway endpoint for the rulebook fetch. Useful for local-dev against a wizard gateway running on `localhost`.
 
-**Running `init` non-interactively** (CI, agents, pipes): every prompt has an escape hatch, so `init` never blocks waiting on a TTY. Provide the region up front (`--region` / `STASH_REGION`) if you aren't already logged in, the database URL (`--database-url` / `DATABASE_URL`), the proxy choice (`--proxy` / `--no-proxy`), and — for the closing agent handoff — nothing is required (init exits at a clean checkpoint and points you at `stash plan --target …`). When a required value is missing in a non-TTY context the command exits non-zero with an actionable message rather than hanging.
+**Running `init` non-interactively** (CI, agents, pipes): every prompt has an escape hatch, so `init` never blocks waiting on a TTY. Provide the region up front (`--region` / `STASH_REGION`) if you aren't already logged in, the database URL (`--database-url` / `DATABASE_URL`), and — for the closing agent handoff — nothing is required (init exits at a clean checkpoint and points you at `stash plan --target …`). When a required value is missing in a non-TTY context the command exits non-zero with an actionable message rather than hanging.
 
 ```bash
-STASH_REGION=us-east-1 DATABASE_URL=postgres://… npx stash init --no-proxy
+STASH_REGION=us-east-1 DATABASE_URL=postgres://… npx stash init
 ```
 
 ---

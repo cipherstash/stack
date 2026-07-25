@@ -38,13 +38,10 @@ export function readContextFile(cwd: string): ContextFile | undefined {
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf-8')) as unknown
     if (!isContextFile(parsed)) return undefined
-    // Normalize usesProxy to a strict boolean: older files lack it and a
-    // hand-edited file could hold any JSON value, so coerce to `true` only
-    // when it is exactly `true` and `false` otherwise.
-    return {
-      ...parsed,
-      usesProxy: parsed.usesProxy === true,
-    }
+    // A context.json written by an older CLI may still carry `usesProxy`.
+    // It is no longer part of `ContextFile` and nothing reads it, so it
+    // rides along as an ignored extra property rather than failing the read.
+    return parsed
   } catch {
     return undefined
   }

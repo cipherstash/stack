@@ -130,7 +130,6 @@ There is **no global `--non-interactive` or `--json` flag** (and no global `--ye
 | Region (`auth login`, `init`) | `--region <slug>` or `STASH_REGION` |
 | Database URL (all `db` / `eql` / `schema` commands) | `--database-url <url>` or `DATABASE_URL` |
 | Agent target (`plan`, `impl`) | `--target <claude-code\|codex\|agents-md\|wizard>` |
-| Proxy choice (`init`) | `--proxy` / `--no-proxy` (default) |
 | Dual-write confirmation (`encrypt backfill`) | `--confirm-dual-writes-deployed` |
 | Machine-readable output | `--json` on `status`, `manifest`, `auth login`, `auth regions` |
 
@@ -216,22 +215,21 @@ Four explicit save-points. Each runs standalone; chain prompts make first-time s
 
 ### `init` — scaffold
 
-Seven mechanical steps, no agent handoff. It prompts only when it can't pick a sensible default.
+Six mechanical steps, no agent handoff. It prompts only when it can't pick a sensible default.
 
 1. **Authenticate** — silent when a valid token exists.
 2. **Resolve database** — per the resolution order above; verifies the connection.
-3. **Resolve proxy choice** — CipherStash Proxy or direct SDK access (the default). Stored as `usesProxy` in `context.json`. Set by `--proxy` / `--no-proxy`; non-TTY without a flag defaults to SDK.
-4. **Build schema** — auto-detects Drizzle (`drizzle.config.*`, `drizzle-orm`/`drizzle-kit`), Supabase (from the `DATABASE_URL` host), and Prisma Next. Writes a placeholder encryption client; prompts only if a file already exists there.
-5. **Install dependencies** — one combined prompt for `@cipherstash/stack` and `stash`. Skipped when both are present.
-6. **Install EQL** — always EQL v3. **Drizzle** projects generate a v3 install migration (the same output as `eql migration --drizzle`, including the `cs_migrations` tracking schema) so the install lands in your migration history — apply it with `drizzle-kit migrate`; requires `drizzle-kit` to be installed and configured. **Prisma Next** is skipped (it installs EQL via `prisma-next migrate`). Everything else runs `eql install` directly against the resolved database, and is skipped when EQL is already installed.
-7. **Gather context** — detects available coding agents and writes `.cipherstash/context.json`.
+3. **Build schema** — auto-detects Drizzle (`drizzle.config.*`, `drizzle-orm`/`drizzle-kit`), Supabase (from the `DATABASE_URL` host), and Prisma Next. Writes a placeholder encryption client; prompts only if a file already exists there.
+4. **Install dependencies** — one combined prompt for `@cipherstash/stack` and `stash`. Skipped when both are present.
+5. **Install EQL** — always EQL v3. **Drizzle** projects generate a v3 install migration (the same output as `eql migration --drizzle`, including the `cs_migrations` tracking schema) so the install lands in your migration history — apply it with `drizzle-kit migrate`; requires `drizzle-kit` to be installed and configured. **Prisma Next** is skipped (it installs EQL via `prisma-next migrate`). Everything else runs `eql install` directly against the resolved database, and is skipped when EQL is already installed.
+6. **Gather context** — detects available coding agents and writes `.cipherstash/context.json`.
 
-Flags: `--supabase`, `--drizzle`, `--prisma-next`, `--proxy` / `--no-proxy`, `--region <slug>`.
+Flags: `--supabase`, `--drizzle`, `--prisma-next`, `--region <slug>`.
 
 | Generated file | Purpose |
 |---|---|
 | `./src/encryption/index.ts` | Placeholder encryption client — declare encrypted columns here, or let `plan`/`impl` do it |
-| `.cipherstash/context.json` | Detected facts: integration, package manager, schemas, env key names, agents, `usesProxy`. CLI-owned; never hand-edit |
+| `.cipherstash/context.json` | Detected facts: integration, package manager, schemas, env key names, agents. CLI-owned; never hand-edit |
 | `stash.config.ts` | Scaffolded if missing |
 
 ### `plan` — draft for review

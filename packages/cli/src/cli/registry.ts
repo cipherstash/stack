@@ -131,15 +131,6 @@ export const registry: CommandGroup[] = [
               'Use Prisma Next-specific setup flow (EQL bundle installed via prisma-next migrate).',
           },
           {
-            name: '--proxy',
-            description: 'Query encrypted data via CipherStash Proxy.',
-          },
-          {
-            name: '--no-proxy',
-            description: 'Query encrypted data directly via the SDK.',
-            default: 'true',
-          },
-          {
             ...REGION_FLAG,
             description:
               'Region to authenticate against (e.g. us-east-1). Skips the interactive region picker. Required for non-interactive init when not already logged in.',

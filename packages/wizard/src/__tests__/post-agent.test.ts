@@ -41,7 +41,7 @@ describe('runPostAgentSteps execution commands', () => {
     vi.mocked(childProcess.execSync).mockImplementation(() => Buffer.from(''))
   })
 
-  it('executes eql install/db push using the detected runner (bun → bunx) when usesProxy=true', async () => {
+  it('executes eql install using the detected runner (bun → bunx)', async () => {
     await runPostAgentSteps({
       cwd: '/tmp/fake',
       integration: 'supabase',
@@ -49,7 +49,6 @@ describe('runPostAgentSteps execution commands', () => {
       gathered: {
         installCommand: 'bun add @cipherstash/stack',
         hasStashConfig: false,
-        usesProxy: true,
         // Other GatheredContext fields aren't read in this code path; cast for the test.
       } as never,
     })
@@ -58,14 +57,13 @@ describe('runPostAgentSteps execution commands', () => {
       .mocked(childProcess.execSync)
       .mock.calls.map((c) => c[0] as string)
     expect(commands).toContain('bunx stash eql install')
-    expect(commands).toContain('bunx stash db push')
     // Sanity: no leftover npx forms for the cipherstash binaries.
     for (const cmd of commands) {
       expect(cmd).not.toMatch(/^npx @cipherstash/)
     }
   })
 
-  it('skips eql install when hasStashConfig=true and still uses bunx for db push when usesProxy=true', async () => {
+  it('skips eql install when hasStashConfig=true', async () => {
     await runPostAgentSteps({
       cwd: '/tmp/fake',
       integration: 'supabase',
@@ -73,17 +71,15 @@ describe('runPostAgentSteps execution commands', () => {
       gathered: {
         installCommand: 'bun add @cipherstash/stack',
         hasStashConfig: true,
-        usesProxy: true,
       } as never,
     })
     const commands = vi
       .mocked(childProcess.execSync)
       .mock.calls.map((c) => c[0] as string)
-    expect(commands).toContain('bunx stash db push')
     expect(commands).not.toContain('bunx stash eql install')
   })
 
-  it('falls back to npx when packageManager is undefined and usesProxy=true', async () => {
+  it('falls back to npx when packageManager is undefined', async () => {
     await runPostAgentSteps({
       cwd: '/tmp/fake',
       integration: 'supabase',
@@ -91,33 +87,37 @@ describe('runPostAgentSteps execution commands', () => {
       gathered: {
         installCommand: 'npm install @cipherstash/stack',
         hasStashConfig: false,
-        usesProxy: true,
       } as never,
     })
     const commands = vi
       .mocked(childProcess.execSync)
       .mock.calls.map((c) => c[0] as string)
     expect(commands).toContain('npx stash eql install')
-    expect(commands).toContain('npx stash db push')
   })
 
-  it('skips db push when usesProxy=false', async () => {
-    await runPostAgentSteps({
-      cwd: '/tmp/fake',
-      integration: 'supabase',
-      packageManager: bun,
-      gathered: {
-        installCommand: 'bun add @cipherstash/stack',
-        hasStashConfig: false,
-        usesProxy: false,
-      } as never,
-    })
-
-    const commands = vi
-      .mocked(childProcess.execSync)
-      .mock.calls.map((c) => c[0] as string)
-    expect(commands).not.toContain('bunx stash db push')
-    expect(commands).toContain('bunx stash eql install')
+  // `stash db push` writes `eql_v2_configuration`, which only ever applied to
+  // EQL v2 with CipherStash Proxy. The wizard used to run it whenever the
+  // removed `usesProxy` flag was set; with no v2 surface left there is no
+  // condition under which post-agent should shell out to it.
+  it('never runs `stash db push`', async () => {
+    for (const hasStashConfig of [false, true]) {
+      vi.mocked(childProcess.execSync).mockClear()
+      await runPostAgentSteps({
+        cwd: '/tmp/fake',
+        integration: 'supabase',
+        packageManager: bun,
+        gathered: {
+          installCommand: 'bun add @cipherstash/stack',
+          hasStashConfig,
+        } as never,
+      })
+      const commands = vi
+        .mocked(childProcess.execSync)
+        .mock.calls.map((c) => c[0] as string)
+      for (const cmd of commands) {
+        expect(cmd).not.toMatch(/stash db push/)
+      }
+    }
   })
 })
 
@@ -135,7 +135,6 @@ describe('drizzle migrate prompt after a destructive rewrite', () => {
       gathered: {
         installCommand: 'bun add @cipherstash/stack',
         hasStashConfig: true,
-        usesProxy: false,
       } as never,
     })
 
