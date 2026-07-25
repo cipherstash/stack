@@ -5,6 +5,7 @@ import type {
 } from '@cipherstash/protect-ffi'
 import type { CryptoBackend } from '@/encryption/backend'
 import { getErrorCode } from '@/encryption/helpers/error-code'
+import { toError } from '@/encryption/helpers/to-error'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import type { Context } from '@/identity'
 import {
@@ -119,6 +120,7 @@ export class BulkDecryptOperation extends EncryptionOperation<BulkDecryptedData>
           code: getErrorCode(error),
         }
       },
+      { onException: toError },
     )
     log.emit()
     return result
@@ -194,6 +196,7 @@ export class BulkDecryptOperationWithLockContext extends EncryptionOperation<Bul
           code: getErrorCode(error),
         }
       },
+      { onException: toError },
     )
     log.emit()
     return result
