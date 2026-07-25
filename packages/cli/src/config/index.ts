@@ -238,5 +238,27 @@ export async function loadEncryptConfig(
     )
     process.exit(1)
   }
+
+  // `stash init` scaffolds a client holding one placeholder table, because
+  // `Encryption` requires a non-empty schema set and the scaffold has no real
+  // tables to name yet. Reaching here with only that table means the user never
+  // replaced it — which used to surface as a confusing "table not found" from
+  // whichever command ran next.
+  const tables = Object.keys(config.tables ?? {})
+  if (tables.length === 1 && tables[0] === PLACEHOLDER_TABLE_NAME) {
+    console.error(
+      `Error: ${encryptClientPath} still contains the placeholder table \`${PLACEHOLDER_TABLE_NAME}\` that \`stash init\` wrote.\n\nDeclare your encrypted columns and pass those tables to Encryption({ schemas: [...] }) in that file, then re-run this command.`,
+    )
+    process.exit(1)
+  }
+
   return config
 }
+
+/**
+ * The table name `stash init`'s scaffold uses so the file it writes compiles.
+ *
+ * Kept in sync with the templates in `commands/init/utils.ts` by
+ * `__tests__/placeholder-client-fixture.test.ts`, which also typechecks them.
+ */
+export const PLACEHOLDER_TABLE_NAME = '__stash_placeholder__'
