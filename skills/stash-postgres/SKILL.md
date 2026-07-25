@@ -47,9 +47,29 @@ Supabase client, those integrations emit correct operands for you: see
 
 ## The Two Halves
 
-Assume `users.email` is a `types.TextEq` column — the domain names below
-follow the column, so a `types.TextSearch` column would use
-`eql_v3.query_text_search` in exactly the same places.
+Assume `users.email` is declared in the database as `public.eql_v3_text_eq` —
+a Postgres **domain over `jsonb`**. The domain is the authority: it is what
+the column actually *is*, what the CHECK constraint enforces, and what decides
+which operators the column admits.
+
+Everything else is a mapping onto that domain, and the names rhyme closely
+enough to blur together:
+
+- **`types.TextEq('email')`** — the schema factory from
+  `@cipherstash/stack/eql/v3` that *declares* the column. A TypeScript builder,
+  not the column's type.
+- **`TextEq` / `TextEqQuery`** — the wire shapes, exported as TypeScript types
+  by `@cipherstash/eql`. These and the JSON Schemas are generated from the Rust
+  `eql-bindings` crate, and the SQL bundle is built from the same commit, so
+  the payload shape and the domain CHECK cannot drift apart. Each type's doc
+  comment names the domain it maps to and the operators that domain admits.
+- **`eql_v3.query_text_eq`** — the *query* domain, also a database type, that a
+  search needle is cast to.
+
+That `TextEq` / `TextEqQuery` pairing is precisely the split this section is
+about. The domain names below follow the column, so a
+`public.eql_v3_text_search` column would use `eql_v3.query_text_search` in
+exactly the same places.
 
 ```ts
 // 1. Encrypt for storage — the payload includes the ciphertext (`c`).
