@@ -341,11 +341,46 @@ const RENAME_COLUMN_RE = new RegExp(
   'gi',
 )
 
-/** `CREATE TABLE … ( … );` — $1/$2 table, $3 the column-definition body. */
-const CREATE_TABLE_RE = new RegExp(
-  String.raw`CREATE TABLE\s+(?:IF NOT EXISTS\s+)?${TABLE_REF}\s*\(([\s\S]*?)\)\s*;`,
+/**
+ * `CREATE TABLE … (` — $1/$2 table. The body's END is found by
+ * {@link endOfCreateTableBody} rather than by the matcher.
+ *
+ * This used to carry a lazy `([\s\S]*?)\)\s*;` body, which stopped at the FIRST
+ * `);` in the file — and that can sit inside a `--` comment or a string DEFAULT
+ * (`"id" text, -- pk (uuid);`). The body was then truncated and every column
+ * declared after that point vanished from both indexes, including an ENCRYPTED
+ * one — which is how a later domain change on a ciphertext column got past the
+ * already-encrypted guard (#772 review, finding 2).
+ */
+const CREATE_TABLE_HEAD_RE = new RegExp(
+  String.raw`CREATE TABLE\s+(?:IF NOT EXISTS\s+)?${TABLE_REF}\s*\(`,
   'gi',
 )
+
+/** Candidate body terminators, filtered by {@link isInsideCommentOrString}. */
+const CREATE_TABLE_BODY_END_RE = /\)\s*;/g
+
+/**
+ * The offset of the `)` closing the CREATE TABLE body that opens at
+ * `bodyStart`, or `undefined` when the statement is never closed.
+ *
+ * Parens nested inside the body (`numeric(10,2)`, `CHECK (x > 0)`) are not
+ * followed by `;`, so requiring the terminator keeps them from matching.
+ */
+function endOfCreateTableBody(
+  sql: string,
+  bodyStart: number,
+): number | undefined {
+  CREATE_TABLE_BODY_END_RE.lastIndex = bodyStart
+  for (
+    let end = CREATE_TABLE_BODY_END_RE.exec(sql);
+    end !== null;
+    end = CREATE_TABLE_BODY_END_RE.exec(sql)
+  ) {
+    if (!isInsideCommentOrString(sql, end.index)) return end.index
+  }
+  return undefined
+}
 
 /** `"col" <encrypted>` inside a CREATE TABLE body — $1 column. */
 const CREATE_TABLE_ENCRYPTED_COLUMN_RE = new RegExp(
@@ -519,10 +554,15 @@ function indexColumnDeclarations(contents: readonly string[]): ColumnIndex {
   const declared = new Set<string>()
 
   for (const sql of contents) {
-    for (const created of sql.matchAll(CREATE_TABLE_RE)) {
+    for (const created of sql.matchAll(CREATE_TABLE_HEAD_RE)) {
       if (isInsideCommentOrString(sql, created.index)) continue
       const { schema, table } = tableOf(created[1], created[2])
-      const body = created[3]
+      const bodyStart = created.index + created[0].length
+      const bodyEnd = endOfCreateTableBody(sql, bodyStart)
+      // Never closed — treat the statement as absent rather than index a body
+      // that runs to the end of the file.
+      if (bodyEnd === undefined) continue
+      const body = sql.slice(bodyStart, bodyEnd)
 
       // The body is scanned as its own document: a `--` earlier in it comments
       // out the rest of that line, and a CREATE inside a block comment or a
