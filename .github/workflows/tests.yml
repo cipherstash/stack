@@ -193,6 +193,15 @@ jobs:
       - name: Typecheck (stack — emitted declarations, not source)
         run: pnpm exec turbo run test:types:dist --filter @cipherstash/stack
 
+      # `stash init` writes a client file into the user's project and tells them
+      # not to hand-edit it. Nothing compiled that file, so tightening
+      # `Encryption` to require a non-empty schema set left every `stash init`
+      # emitting a project that fails its first `tsc` — with CI green (#772
+      # review). The fixtures are pinned byte-for-byte to the generator by
+      # `placeholder-client-fixture.test.ts`.
+      - name: Typecheck (stash init's scaffolded client)
+        run: pnpm --filter stash run typecheck:scaffold
+
       - name: Lint — no hardcoded package-manager runners
         run: pnpm run lint:runners
 
