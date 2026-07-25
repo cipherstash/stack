@@ -155,6 +155,15 @@ describe('drizzle migrate prompt after a destructive rewrite', () => {
 
     const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
     expect(options?.initialValue).toBe(true)
+    // The clean arm is the last of a 4-way nested ternary; the negative
+    // assertions that guard the other arms' wording never run against this one.
+    // A mis-nested arm here would ship a destruction/flag/unchecked warning to a
+    // user with nothing to sweep, and asserting only `initialValue` would miss
+    // it — so pin that the clean message carries none of those phrases.
+    const message = String(options?.message)
+    expect(message).not.toContain('DESTROYS data')
+    expect(message).not.toContain('flagged for review')
+    expect(message).not.toContain('could not check')
   })
 
   it('defaults to No, and says why, when a file was rewritten', async () => {
@@ -246,5 +255,78 @@ describe('drizzle migrate prompt after a destructive rewrite', () => {
     const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
     expect(options?.initialValue).toBe(false)
     expect(String(options?.message)).toContain('could not check 1 directory')
+  })
+
+  // The wizard ships scanning drizzle/, migrations/ and src/db/migrations/ and
+  // indexes each SEPARATELY — the per-directory index is the mechanism the
+  // fail-closed rule exists to make safe. Every test above uses only drizzle/,
+  // so shrinking the shipped constant to ['drizzle'], or short-circuiting the
+  // aggregation loop after the first directory, leaves them all green. These two
+  // put the actionable content in a NON-first directory so those regressions
+  // fail.
+  it('sweeps a candidate directory other than the first', async () => {
+    // drizzle/ exists but has nothing to do; the rewrite lives in migrations/.
+    fs.mkdirSync(path.join(cwd, 'drizzle'))
+    fs.writeFileSync(
+      path.join(cwd, 'drizzle', '0000_init.sql'),
+      'CREATE TABLE "widgets" ("id" integer PRIMARY KEY);\n',
+    )
+    fs.mkdirSync(path.join(cwd, 'migrations'))
+    fs.writeFileSync(
+      path.join(cwd, 'migrations', '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text);\n',
+    )
+    fs.writeFileSync(
+      path.join(cwd, 'migrations', '0001_encrypt.sql'),
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+    )
+
+    await runDrizzle()
+
+    // The migrations/ ALTER was rewritten — proof the second directory was
+    // swept, not just drizzle/.
+    const swept = fs.readFileSync(
+      path.join(cwd, 'migrations', '0001_encrypt.sql'),
+      'utf-8',
+    )
+    expect(swept).toContain('DROP COLUMN')
+    expect(swept).not.toContain('SET DATA TYPE')
+    const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
+    expect(options?.initialValue).toBe(false)
+    expect(String(options?.message)).toContain('DESTROYS data')
+  })
+
+  it('aggregates a rewrite in one directory with a flag in another', async () => {
+    // drizzle/ declares email, so its ALTER is rewritten.
+    fs.mkdirSync(path.join(cwd, 'drizzle'))
+    fs.writeFileSync(
+      path.join(cwd, 'drizzle', '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text);\n',
+    )
+    fs.writeFileSync(
+      path.join(cwd, 'drizzle', '0001_encrypt.sql'),
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+    )
+    // migrations/ never declares its column, so its ALTER is source-unknown.
+    fs.mkdirSync(path.join(cwd, 'migrations'))
+    const flagged = path.join(cwd, 'migrations', '0001_encrypt.sql')
+    const flaggedSql =
+      'ALTER TABLE "orders" ALTER COLUMN "total" SET DATA TYPE eql_v3_text_search;\n'
+    fs.writeFileSync(flagged, flaggedSql)
+
+    await runDrizzle()
+
+    // drizzle/ was rewritten...
+    const rewritten = fs.readFileSync(
+      path.join(cwd, 'drizzle', '0001_encrypt.sql'),
+      'utf-8',
+    )
+    expect(rewritten).toContain('DROP COLUMN')
+    // ...and migrations/ was left untouched, flagged rather than rewritten.
+    expect(fs.readFileSync(flagged, 'utf-8')).toBe(flaggedSql)
+    // A rewrite anywhere makes the prompt destructive and defaults it to No.
+    const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
+    expect(options?.initialValue).toBe(false)
+    expect(String(options?.message)).toContain('DESTROYS data')
   })
 })

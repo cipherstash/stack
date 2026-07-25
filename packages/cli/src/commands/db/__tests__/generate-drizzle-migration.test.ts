@@ -17,7 +17,15 @@ import { messages } from '../../../messages.js'
 // through. The spinner instance doubles as the `s` argument.
 const clack = vi.hoisted(() => ({
   spinnerInstance: { start: vi.fn(), stop: vi.fn() },
-  log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn() },
+  // `step` is on the real clack `log`; the sweep's per-statement report calls
+  // it, so it must be present or the report throws into the catch unseen.
+  log: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    success: vi.fn(),
+    step: vi.fn(),
+  },
   intro: vi.fn(),
   note: vi.fn(),
   outro: vi.fn(),
@@ -163,6 +171,71 @@ describe('generateDrizzleMigration', () => {
 
     const written = readFileSync(join(out, '0000_add-eql.sql'), 'utf-8')
     expect(written).toContain('cs_migrations')
+  })
+
+  // Step 5 of the generator sweeps sibling migrations. This block had no test at
+  // all: every other test's out dir contains only the file the generator wrote
+  // (which is `skip`ped), so the sweep never had anything to act on. A sibling
+  // ALTER on a plaintext column the corpus declares must be rewritten.
+  it('rewrites a sibling ALTER on a declared plaintext column', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    writeFileSync(
+      join(out, '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text);\n',
+    )
+    const sibling = join(out, '0001_encrypt-email.sql')
+    writeFileSync(
+      sibling,
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE "public"."eql_v3_text_search";\n',
+    )
+    spawnMock.mockImplementation(() => {
+      writeFileSync(join(out, '0002_install-eql.sql'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+
+    await generateDrizzleMigration(spinner, { out })
+
+    const rewritten = readFileSync(sibling, 'utf-8')
+    expect(rewritten).toContain(
+      'ALTER TABLE "users" ADD COLUMN "email__cipherstash_tmp" "public"."eql_v3_text_search";',
+    )
+    expect(rewritten).not.toContain('SET DATA TYPE')
+    const info = clack.log.info.mock.calls.map((c) => String(c[0]))
+    expect(info.some((msg) => msg.includes('Rewrote 1 migration file'))).toBe(
+      true,
+    )
+  })
+
+  // A sibling ALTER on a column the corpus never declares is fail-closed to
+  // `source-unknown`: left on disk and reported with its remediation. Exercises
+  // the skip branch of the step-5 report, which no db-install test reached.
+  it('reports source-unknown for a sibling ALTER on an undeclared column', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    const sibling = join(out, '0001_encrypt-email.sql')
+    const unsafeAlter =
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE "public"."eql_v3_text_search";\n'
+    writeFileSync(sibling, unsafeAlter)
+    spawnMock.mockImplementation(() => {
+      writeFileSync(join(out, '0002_install-eql.sql'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+
+    await generateDrizzleMigration(spinner, { out })
+
+    // Never rewritten — its current type is unknown and could be ciphertext.
+    expect(readFileSync(sibling, 'utf-8')).toBe(unsafeAlter)
+    const stepped = clack.log.step.mock.calls.map((c) => String(c[0]))
+    expect(
+      stepped.some((msg) =>
+        msg.includes("Check the column's current type in the database"),
+      ),
+    ).toBe(true)
+    const warned = clack.log.warn.mock.calls.map((c) => String(c[0]))
+    expect(warned.some((msg) => msg.includes('did not fully complete'))).toBe(
+      true,
+    )
   })
 
   it('includes --out in the dry-run preview', async () => {
