@@ -28,10 +28,22 @@ export const benchTable = pgTable('bench', {
  */
 export const encryptionBenchTable = extractEncryptionSchema(benchTable)
 
+/**
+ * A seed row, keyed by the Drizzle table's **JS property** names.
+ *
+ * That is what model encryption matches on: `extractEncryptionSchema` keys the
+ * encrypted-table column map by property (`encText`), not by DB column name
+ * (`enc_text`). A row keyed by DB name matches nothing — `bulkEncryptModels`
+ * returns it untouched, with no failure, and the plaintext then goes into an
+ * `eql_v3_*` column (#772 review, finding 12).
+ *
+ * Derived from the table so the two cannot drift again;
+ * `__unit__/seed-keys.test.ts` checks the row actually fills it.
+ */
 export type BenchPlaintextRow = {
-  enc_text: string
-  enc_int: number
-  enc_jsonb: { idx: number; group: number }
+  encText: string
+  encInt: number
+  encJsonb: { idx: number; group: number }
 }
 
 /**
