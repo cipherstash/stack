@@ -105,6 +105,45 @@ describe('renderSetupPrompt — orient + route (implement mode)', () => {
     expect(out).toContain('pnpm exec drizzle-kit migrate')
   })
 
+  // The "wire the column through" step names the query API by hand. It used to
+  // name `protectOps.eq`, which exists nowhere; naming `createEncryptionOperators`
+  // unconditionally is the same mistake one step smaller — that symbol is
+  // exported only by `@cipherstash/stack-drizzle`, which a Supabase or Prisma
+  // project does not even have in its dependency tree. Each integration gets
+  // the API it can actually import.
+  describe('query-operator guidance is per-integration', () => {
+    const render = (integration: SetupPromptContext['integration']) =>
+      renderSetupPrompt({ ...baseCtx, integration })
+
+    it('names the Drizzle operators for drizzle', () => {
+      const out = render('drizzle')
+      expect(out).toContain('createEncryptionOperators(client)')
+      expect(out).toContain('ops.eq')
+    })
+
+    it('names the wrapper builder for supabase, not the Drizzle operators', () => {
+      const out = render('supabase')
+      expect(out).not.toContain('createEncryptionOperators')
+      expect(out).toContain('encryptedSupabase')
+    })
+
+    it('names the eql* column operators for prisma-next', () => {
+      const out = render('prisma-next')
+      expect(out).not.toContain('createEncryptionOperators')
+      expect(out).toContain('eqlEq')
+    })
+
+    // `postgresql` is the default when nothing is detected, and it gets no
+    // integration skill at all (install-skills.ts) — so "see the integration
+    // skill" is a dangling pointer for it too.
+    it('names the core encryptQuery path for plain postgresql', () => {
+      const out = render('postgresql')
+      expect(out).not.toContain('createEncryptionOperators')
+      expect(out).toContain('encryptQuery')
+      expect(out).toContain('stash-encryption')
+    })
+  })
+
   it('emits supabase migration commands for supabase integration', () => {
     const out = renderSetupPrompt({
       ...baseCtx,

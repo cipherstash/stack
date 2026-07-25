@@ -68,6 +68,30 @@ function migrationCommands(
   return undefined
 }
 
+/**
+ * How this integration filters on an encrypted column. Named per-integration
+ * rather than generically because the APIs are not interchangeable and only one
+ * of them is importable from any given project: `createEncryptionOperators` is
+ * exported by `@cipherstash/stack-drizzle` alone, so naming it for a Supabase
+ * or Prisma project sends the agent after a package that is not installed.
+ *
+ * `postgresql` is the fallback integration and is installed with no integration
+ * skill (see `SKILL_MAP` in `install-skills.ts`), so it is pointed at
+ * `stash-encryption` instead of "the integration skill".
+ */
+function queryOperatorGuidance(integration: Integration): string {
+  if (integration === 'supabase') {
+    return 'query paths filter through the `encryptedSupabase` wrapper (`es.from("users").select(...).eq("email", value)`) — it encrypts filter operands for encrypted columns automatically; see the integration skill'
+  }
+  if (integration === 'prisma-next') {
+    return 'query paths use the `eql*` operators on the column inside `.where()` (`u.email.eqlEq(value)`, `eqlMatch`, `eqlGt`, …) — see the integration skill'
+  }
+  if (integration === 'postgresql') {
+    return 'query paths encrypt the search term first with `client.encryptQuery(value, { table, column, queryType })` and compare against the encrypted column — see the `stash-encryption` skill (a plain Postgres project gets no integration skill)'
+  }
+  return 'query paths use the right operator (`ops.eq`, from `createEncryptionOperators(client)`) — see the integration skill'
+}
+
 function bullet(line: string): string {
   return `- ${line}`
 }
@@ -280,7 +304,7 @@ export function renderImplementPrompt(ctx: SetupPromptContext): string {
     "2. Edit the user's real schema file (`src/db/schema.ts` or wherever they keep it) to declare the new encrypted column. Use the patterns in the integration skill — the `types.*` domain factories from `@cipherstash/stack-drizzle` for Drizzle, and the `types.*` factories from `@cipherstash/stack/eql/v3` (via `encryptedTable`, passed as `schemas`) for Supabase. Encrypted columns must be **nullable `jsonb`** at creation time. Never `.notNull()`.",
     `3. Generate the schema migration${migration ? ` — \`${migration.generate}\` (${migration.tool})` : " using the project's existing migration tooling"}.`,
     `4. Show the user the generated SQL before applying${migration ? ` — \`${migration.apply}\`` : ''}.`,
-    '5. Wire the column through the application code: insert paths encrypt before write, select paths decrypt after read, query paths use the right operator (`ops.eq`, from `createEncryptionOperators(client)` — see the integration skill).',
+    `5. Wire the column through the application code: insert paths encrypt before write, select paths decrypt after read, ${queryOperatorGuidance(ctx.integration)}.`,
     '6. Verify with a round-trip: insert a record, select it back, confirm the value decrypts and the search ops work.',
     '',
     '### Migrate an existing column to encrypted',

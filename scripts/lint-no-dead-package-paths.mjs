@@ -37,8 +37,9 @@ const SKIP_DIRS = new Set([
   'plans',
   'superpowers',
   '.git',
-  // Fixtures for this linter's own self-tests deliberately reference deleted
-  // packages; scanning them would make the suite unrunnable.
+  // This linter's own self-tests deliberately reference deleted packages —
+  // in the fixtures, and in the prose comments of the test files themselves.
+  // Scanning them would make the suite unrunnable.
   '__tests__',
 ])
 const SKIP_FILES = new Set(['CHANGELOG.md'])
@@ -58,7 +59,7 @@ const TEXT_EXT = /\.(md|ya?ml|json|mjs|ts|txt)$/
 // (#772 review, finding 15).
 const PACKAGE_REF = /packages\/([a-zA-Z0-9](?:[a-zA-Z0-9._-]*[a-zA-Z0-9])?)/g
 
-// Live packages come from what git TRACKS, not from what is on disk.
+// Live packages come from git, not from what is on disk.
 //
 // `readdirSync` was wrong in the direction that matters: deleting a package
 // leaves its `dist/` and `node_modules/` behind, so the directory still exists
@@ -71,17 +72,60 @@ const PACKAGE_REF = /packages\/([a-zA-Z0-9](?:[a-zA-Z0-9._-]*[a-zA-Z0-9])?)/g
 // Note this deliberately does NOT require a `package.json`: `packages/utils` has
 // none (it is two loose files consumed by relative path from `packages/nextjs`)
 // yet is tracked, live, and referenced from AGENTS.md.
+//
+// Shelling out to git is a dependency this linter has to own: git missing, or a
+// tree with no `.git`, must not read as "every package is dead".
+function gitPackagePaths(...args) {
+  try {
+    return execFileSync('git', args, {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+    })
+      .split('\0')
+      .filter(Boolean)
+  } catch (err) {
+    const detail = String(err.stderr || err.message || '').trim()
+    console.error(
+      `Could not list packages via \`git ${args.join(' ')}\`:\n\n  ${detail}\n\n` +
+        'This linter derives the live package set from git, so it cannot run\n' +
+        'without git on PATH or outside a git checkout.',
+    )
+    // Exit 2, not 1: the linter failed to run. Exit 1 means it ran and found
+    // dead references, which is a different thing to go and fix.
+    process.exit(2)
+  }
+}
+
 const livePackages = new Set(
-  execFileSync('git', ['ls-files', '-z', 'packages'], {
-    cwd: REPO_ROOT,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-  })
-    .split('\0')
-    .filter(Boolean)
+  [
+    ...gitPackagePaths('ls-files', '-z', 'packages'),
+    // Untracked but not ignored. A package scaffolded a minute ago is live
+    // even though nothing about it is staged yet, and reporting it as "does
+    // not exist" is the sentence-final false alarm all over again, pointed the
+    // other way. `--directory` is deliberately NOT passed: it collapses an
+    // all-ignored directory to a single entry, which would resurrect exactly
+    // the `dist/`-and-`node_modules/` shells this linter exists to catch.
+    ...gitPackagePaths(
+      'ls-files',
+      '--others',
+      '--exclude-standard',
+      '-z',
+      'packages',
+    ),
+  ]
     .map((file) => file.split('/')[1])
     .filter(Boolean),
 )
+
+if (livePackages.size === 0) {
+  console.error(
+    'git reported no packages at all under `packages/`. Refusing to run —\n' +
+      'every reference would be flagged. Check that `packages/` is present and\n' +
+      'not wholly ignored.',
+  )
+  process.exit(2)
+}
 
 function* walk(abs) {
   const stat = statSync(abs)

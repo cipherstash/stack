@@ -13,11 +13,11 @@ the typed client from `EncryptionV3` and the nominal client from
 
 EQL v2 tables continue to be **readable** — `decryptModel` /
 `bulkDecryptModels` still accept one, so existing items stay accessible. Writing
-through a v2 table is a separate matter: the encrypt overloads for it are
-removed in this same release (see the DynamoDB v2 write-removal entry), so a
-caller that still encrypts through a v2 table does need to change. The table
-decides which wire format is used, so a DynamoDB table populated under one
-version must keep being read with that version.
+through a v2 table is a separate matter: `encryptModel` / `bulkEncryptModels`
+narrowed to EQL v3 tables in this same release, so a caller that still encrypts
+through a v2 table does need to change. The table decides which wire format is
+used, so a DynamoDB table populated under one version must keep being read with
+that version.
 
 This fixes a latent bug that made v3 unusable: the write path detected an
 encrypted value by its `k: 'ct'` tag, but EQL v3 scalars carry no `k`
