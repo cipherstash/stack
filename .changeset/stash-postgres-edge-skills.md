@@ -28,7 +28,11 @@ is otherwise left to infer: **CipherStash Proxy** (where you write plaintext
 SQL and none of the skill applies — the `usesProxy` fork `stash init` already
 asked about), and the provenance of the operator surface itself (the EQL
 bundle from `cipherstash/encrypt-query-language`, version-checkable with
-`SELECT eql_v3.version()`, and where operator gaps should be filed).
+`SELECT eql_v3.version()`, and where operator gaps should be filed). Its
+domain and operator tables are explicitly marked as a snapshot of a versioned
+surface, with a ranked list of authorities to confirm current types against —
+the EQL skill first, then the generated `@cipherstash/eql` types and install
+SQL, both of which need only `node_modules` and no database.
 
 **`stash-edge`** — the `@cipherstash/stack/wasm-inline` entry for Deno,
 Supabase Edge Functions, Cloudflare Workers, and Bun. Import specifier per
