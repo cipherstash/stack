@@ -23,5 +23,9 @@ with no lock-context argument.
 
 Also fixes the setup prompt `stash init` writes for coding agents, which
 referenced `protectOps.eq` — an API that does not exist anywhere in the repo.
-The operators come from `createEncryptionOperators(client)`, conventionally
-bound to `ops`.
+The step now names the query API each integration can actually import:
+`createEncryptionOperators(client)` (conventionally `ops`) for Drizzle, the
+`encryptedSupabase` wrapper's own filters for Supabase, the `eql*` column
+operators for Prisma Next, and `client.encryptQuery(...)` for a plain Postgres
+project — which is also pointed at `stash-encryption`, since it is installed
+with no integration skill.
