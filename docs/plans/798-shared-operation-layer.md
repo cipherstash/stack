@@ -1,7 +1,9 @@
 # Sharing one operation layer across both entries (#798)
 
-Plan for removing the native/WASM client split. Stage 1 has landed; stages 2–5
-are proposed and not yet started.
+Plan for removing the native/WASM client split.
+
+**Status:** stages 1–3 landed. Stage 5 turned out to be already complete (see
+below — the plan was wrong to list it). Stage 4 is the remaining work.
 
 ## The finding that changes the shape of this work
 
@@ -101,19 +103,33 @@ closes **#797**, the capability half of **#793**, and **#792** by construction.
 **Verify:** the WASM entry's own suite; a cross-entry round-trip test
 (encrypt native → decrypt WASM and back, with and without a lock context).
 
-## Stage 5 — enforce the boundary
+## Stage 5 — enforce the boundary (ALREADY DONE)
 
-A build test asserting the shipped `packages/stack/dist/wasm-inline.js`
-contains no reference to the Node-API specifier. Today that property holds and
-is verified by hand; once operations are shared it must be enforced, because a
-single stray import silently reintroduces a native load into an edge bundle.
+**Correction: this stage was already complete when the plan was written.**
+`__tests__/wasm-inline-bundle-isolation.test.ts` was added during #741 and is
+stricter than what this plan proposed. It extracts every module specifier from
+the built `dist/wasm-inline.js` and asserts three things:
 
-Model it on `runtime-versions-embed.e2e.test.ts`, which asserts against the
-built artifact rather than source for the same reason.
+1. `protect-ffi` is reached only via `/wasm-inline`, never the native root.
+2. `@cipherstash/auth` likewise — it also ships a native entry.
+3. An allowlist of *every* external the bundle imports, so any addition is a
+   deliberate change rather than a silent transitive leak.
 
-**This is the one stage that must not be deferred.** Everything else degrades
-into ordinary bugs; this one degrades into a WASM entry that fails only at
-runtime, in a customer's Worker.
+It also gates on freshness — rebuilding when `dist` is older than `src` or
+`tsup.config.ts` — so it can never pass against a stale artifact.
+
+Its header records that this exact leak already happened once: during #741,
+importing `@/encryption/helpers/error-code` pulled the native `ProtectError`
+class in for an `instanceof` narrow, and it was caught only in review.
+
+**That is a direct constraint on stage 4**, and corroborates deferring
+`error-code.ts` in stage 3: the shared operation path must not reach it from
+the WASM entry, which is exactly why `wasm-inline.ts:392` carries its own
+structural error-code reader. Converging the two means the *structural* reader
+wins; the `instanceof` one cannot be shared.
+
+So the boundary is enforced today, and stage 4 will be caught by an existing
+test if it regresses. Nothing to build here.
 
 ## Open questions
 
