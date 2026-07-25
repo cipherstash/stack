@@ -5,9 +5,9 @@ description: Run CipherStash encryption on edge and non-Node runtimes with the `
 
 # Encryption on the Edge (WASM entry)
 
-`@cipherstash/stack` has two runtime entries. The default one binds
-`@cipherstash/protect-ffi`, a Node-API native module, and must be loaded by
-Node's own `require`. **`@cipherstash/stack/wasm-inline` is the entry for
+`@cipherstash/stack` has two runtime entries. The default one binds a
+Node-API native module and must be loaded by Node's own `require`.
+**`@cipherstash/stack/wasm-inline` is the entry for
 everywhere else** — it carries the WASM build of the same engine as a base64
 blob inside the JS, so there is no native binding, no separate `.wasm` fetch,
 and nothing for a bundler to externalise.
@@ -34,7 +34,7 @@ together.
 
 | Runtime | Entry | Why |
 |---|---|---|
-| Node server, Next.js server code | `@cipherstash/stack` (+ `/v3`) | Native NAPI is faster; keep `@cipherstash/protect-ffi` external (e.g. Next's `serverExternalPackages`) |
+| Node server, Next.js server code | `@cipherstash/stack` (+ `/v3`) | Native NAPI is faster; the native module must be excluded from bundling — see the [bundling guide](https://cipherstash.com/docs/stack/deploy/bundling) |
 | Supabase Edge Functions | `@cipherstash/stack/wasm-inline` | Deno, V8-only, no native modules |
 | Cloudflare Workers | `@cipherstash/stack/wasm-inline` | V8 isolate, no native modules |
 | Deno (any) | `@cipherstash/stack/wasm-inline` | No NAPI under Deno's default permissions |
@@ -99,8 +99,8 @@ import { Encryption, encryptedTable, types } from '@cipherstash/stack/wasm-inlin
 ```
 
 No `externals`, no `nodeExternals`, no `serverExternalPackages` entry. If a
-build config already externalises `@cipherstash/protect-ffi` for the native
-entry, that config does not apply here and can be left alone.
+build config already externalises the native module for the default entry,
+that config does not apply here and can be left alone.
 
 ## Credentials
 
