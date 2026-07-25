@@ -92,11 +92,17 @@ describe('overload selection', () => {
     client.encrypt('2020-01-01', { table: users, column: users.createdAt })
   })
 
-  // S-4: forcing v2 wire over v3 schemas returns the NOMINAL client at runtime
-  // (the typed client cannot author v3 columns in v2 mode). The types used to
-  // claim the typed client, so `decryptModel(row, table, lockContext)` compiled
-  // and then silently dropped `table` and `lockContext`.
-  it('forcing eqlVersion 2 over v3 schemas yields the nominal client', async () => {
+  // S-4: `eqlVersion: 2` selects the NOMINAL overload, because the typed client
+  // cannot author v3 columns in v2 mode. The types used to claim the typed
+  // client, so `decryptModel(row, table, lockContext)` compiled and then
+  // silently dropped `table` and `lockContext`.
+  //
+  // Over an all-v3 schema set this combination is now REJECTED AT RUNTIME
+  // (#772 review, finding 8) — v2 wire into `eql_v3_*` columns is a
+  // contradiction, and `EncryptionV3` used to force `eqlVersion: 3` precisely
+  // to stop it. This assertion therefore records overload resolution only; the
+  // call itself throws. `init-strategy.test.ts` pins the throw.
+  it('forcing eqlVersion 2 selects the nominal overload (and is refused at runtime for v3 schemas)', async () => {
     const client = await Encryption({
       schemas: [users],
       config: { eqlVersion: 2 },

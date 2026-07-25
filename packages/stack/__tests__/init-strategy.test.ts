@@ -228,8 +228,23 @@ describe('Encryption config.eqlVersion', () => {
     expect(lastNewClientOpts().eqlVersion).toBe(3)
   })
 
-  it('lets an explicit eqlVersion 2 override v3 auto-detection (migration escape hatch)', async () => {
-    await Encryption({ schemas: [v3Table()], config: { eqlVersion: 2 } })
+  // #772 review, finding 8. This used to be honoured, and the resulting client
+  // wrote `eql_v2_encrypted` payloads into `eql_v3_*` columns with no
+  // diagnostic at any layer — the type surface types it as the nominal client,
+  // which matches what the runtime returns, so nothing disagreed loudly enough
+  // to notice.
+  it('rejects an explicit eqlVersion 2 over a v3 schema set before constructing the FFI client', async () => {
+    await expect(
+      Encryption({ schemas: [v3Table()], config: { eqlVersion: 2 } }),
+    ).rejects.toThrow(/entirely EQL v3/)
+
+    expect(ffi.newClient).not.toHaveBeenCalled()
+  })
+
+  // The escape hatch survives where it is actually used: minting v2 wire from
+  // a v2 schema set, which is how the v2-read-compat fixtures are produced.
+  it('still honours an explicit eqlVersion 2 for a v2 schema set', async () => {
+    await Encryption({ schemas: [users], config: { eqlVersion: 2 } })
 
     expect(lastNewClientOpts().eqlVersion).toBe(2)
   })
@@ -254,17 +269,20 @@ describe('Encryption config.eqlVersion', () => {
     expect(lastNewClientOpts().eqlVersion).toBe(3)
   })
 
-  it('EncryptionV3 is a deprecated alias of Encryption — it honours an explicit eqlVersion identically', async () => {
-    // Post-collapse `EncryptionV3` IS `Encryption` (a deprecated alias), so it no
-    // longer independently pins the wire format: an explicit `eqlVersion: 2` over
-    // a v3 schema set is honoured exactly as `Encryption` honours it (the
-    // migration escape hatch above). A v2-mode client still cannot encrypt v3
-    // concrete-type columns — this only pins the wire flag reaching the FFI.
-    await EncryptionV3({
-      schemas: [v3Table() as never],
-      config: { eqlVersion: 2 },
-    })
+  it('EncryptionV3 rejects an explicit eqlVersion 2 identically', async () => {
+    // Post-collapse `EncryptionV3` IS `Encryption` (a deprecated alias), so it
+    // no longer independently pins the wire format. The invariant it used to
+    // enforce by forcing `eqlVersion: 3` now lives in `resolveEqlVersion`, so
+    // the outcome for a caller upgrading from the old `EncryptionV3` is the
+    // same in the case that matters: the contradiction is refused rather than
+    // silently building a v2-wire client over v3 concrete domains.
+    await expect(
+      EncryptionV3({
+        schemas: [v3Table() as never],
+        config: { eqlVersion: 2 },
+      }),
+    ).rejects.toThrow(/entirely EQL v3/)
 
-    expect(lastNewClientOpts().eqlVersion).toBe(2)
+    expect(ffi.newClient).not.toHaveBeenCalled()
   })
 })
