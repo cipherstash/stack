@@ -663,6 +663,21 @@ const INTERNAL_CONSTRUCT = Symbol('cs-wasm-client')
  * prevent callers from wrapping arbitrary objects in this type.
  */
 export class WasmEncryptionClient {
+  /**
+   * This client's `decryptModel` / `bulkDecryptModels` REQUIRE the table — they
+   * resolve date fields from a per-table map and throw without it. The native
+   * clients derive the table from the payloads instead, so callers that hold a
+   * client structurally cannot tell the two apart.
+   *
+   * `encryptedDynamoDB` is the caller that cares: its legacy EQL v2 read path
+   * deliberately omits the table (a v2 table means nothing to a v3
+   * reconstructor map), which reached `requireTable` with `undefined` and threw
+   * a TypeError about `tableName` pointing nowhere near the cause. Declared
+   * rather than sniffed so the check is a stated capability, not a guess about
+   * arity or constructor name (#772 review, finding 10).
+   */
+  readonly requiresTableForDecrypt = true
+
   /** @internal */
   private readonly client: unknown
 

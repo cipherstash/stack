@@ -41,7 +41,24 @@ function assertClientTableVersionMatch(
   table: AnyEncryptedTable,
 ): void {
   // Only v3 tables carry the strict wire-format requirement this guards.
-  if (!isV3Table(table)) return
+  if (!isV3Table(table)) {
+    // The v2 read path calls `decryptModel(item)` with NO table on purpose —
+    // a v2 table means nothing to a v3 client's reconstructor map. That is
+    // fine for the native clients, which derive the table from the payloads,
+    // and impossible for the WASM client, whose decrypt requires the table and
+    // otherwise throws a TypeError about `tableName` from deep inside
+    // `requireTable`. Refuse the pairing here, where the message can name it
+    // (#772 review, finding 10).
+    if (
+      (encryptionClient as { requiresTableForDecrypt?: boolean })
+        .requiresTableForDecrypt
+    ) {
+      throw new Error(
+        `encryptedDynamoDB: the @cipherstash/stack/wasm-inline client cannot read legacy EQL v2 items. Its decrypt requires the table, and a v2 table carries none of the information it needs — so "${table.tableName}" would fail at the first read. Use the default @cipherstash/stack entry for tables that still hold EQL v2 items, or migrate the table to an EQL v3 schema (types.* domains) and pass that.`,
+      )
+    }
+    return
+  }
 
   const getEncryptConfig = (
     encryptionClient as {

@@ -106,3 +106,81 @@ describe('bulkDecryptModels table forwarding', () => {
     expect(calls[0]?.table).toBe(usersV3)
   })
 })
+
+/**
+ * #772 review, finding 10.
+ *
+ * The table-less v2 decrypt above is correct for the native clients, which
+ * derive the table from the payloads. `WasmEncryptionClient` cannot: its
+ * decrypt requires the table and resolves date fields from a per-table map, so
+ * the omitted argument reached `requireTable(undefined)` and threw a TypeError
+ * about reading `tableName` — a message pointing nowhere near the cause, on the
+ * documented entry for Deno / Workers / Supabase Edge Functions, which
+ * satisfies `DynamoDBEncryptionClient` structurally and so is accepted with no
+ * cast.
+ */
+describe('a client whose decrypt requires the table', () => {
+  /** The shape `WasmEncryptionClient` presents: declared capability, no `.audit()`. */
+  function wasmShapedClient(knownTables: string[]) {
+    const calls: { method: string; argCount: number }[] = []
+    const record =
+      (method: string) =>
+      (...args: unknown[]) => {
+        calls.push({ method, argCount: args.length })
+        // Mirrors requireTable: throws rather than returning a Result.
+        if (args[1] === undefined) {
+          throw new TypeError(
+            "Cannot read properties of undefined (reading 'tableName')",
+          )
+        }
+        return Promise.resolve({ data: {} })
+      }
+    const client = {
+      requiresTableForDecrypt: true,
+      getEncryptConfig: () => ({
+        v: 1,
+        tables: Object.fromEntries(knownTables.map((t) => [t, {}])),
+      }),
+      encryptModel: record('encryptModel'),
+      bulkEncryptModels: record('bulkEncryptModels'),
+      decryptModel: record('decryptModel'),
+      bulkDecryptModels: record('bulkDecryptModels'),
+    }
+    return { calls, client }
+  }
+
+  it('is refused for an EQL v2 table, naming the entry to use instead', () => {
+    const { calls, client } = wasmShapedClient([])
+    const dynamo = encryptedDynamoDB({ encryptionClient: client as never })
+
+    // Synchronous: the guard runs when the operation is built, so the failure
+    // lands at the call site rather than as a rejected promise later.
+    expect(() => dynamo.decryptModel({ pk: 'a' }, usersV2)).toThrow(
+      /wasm-inline client cannot read legacy EQL v2 items/,
+    )
+    // Refused before the client is touched, so the user never sees the
+    // TypeError about `tableName`.
+    expect(calls).toHaveLength(0)
+  })
+
+  it('is refused on the bulk v2 path too', () => {
+    const { client } = wasmShapedClient([])
+    const dynamo = encryptedDynamoDB({ encryptionClient: client as never })
+
+    expect(() => dynamo.bulkDecryptModels([{ pk: 'a' }], usersV2)).toThrow(
+      /wasm-inline client cannot read legacy EQL v2 items/,
+    )
+  })
+
+  // v3 tables ARE forwarded the table, so this client works there — the guard
+  // must not turn into a blanket rejection of the wasm entry.
+  it('is accepted for an EQL v3 table, which is always given the table', async () => {
+    const { calls, client } = wasmShapedClient(['users_v3'])
+    const dynamo = encryptedDynamoDB({ encryptionClient: client as never })
+
+    await dynamo.decryptModel({ pk: 'a' }, usersV3)
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.argCount).toBe(2)
+  })
+})

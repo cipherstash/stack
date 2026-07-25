@@ -86,11 +86,16 @@ export function handleError(
 /**
  * Resolve a decrypt call against either client shape.
  *
- * Both the nominal `EncryptionClient` and the typed client return a chainable
+ * The nominal `EncryptionClient` and the typed client both return a chainable
  * operation carrying `.audit()` on decrypt (the typed client's is a
- * `MappedDecryptOperation`). Chain the audit metadata onto it; the branch that
- * awaits a bare promise remains only for a non-conforming custom client that
- * exposes no `.audit()`. Audit metadata is forwarded regardless of client shape.
+ * `MappedDecryptOperation`). Chain the audit metadata onto it.
+ *
+ * NOT every client this package accepts does that. `WasmEncryptionClient`
+ * (`@cipherstash/stack/wasm-inline` — the documented entry for Deno, Workers
+ * and Supabase Edge Functions) returns a bare promise from decrypt, so it takes
+ * the branch below and its audit metadata is dropped. It ships in this package
+ * and satisfies `DynamoDBEncryptionClient` structurally, so it is accepted
+ * without a cast (#772 review, finding 10).
  */
 export async function resolveDecryptResult<T>(
   operation: unknown,
@@ -103,12 +108,11 @@ export async function resolveDecryptResult<T>(
   }
 
   if (typeof chainable?.audit !== 'function' && auditData.metadata) {
-    // Every client this package ships carries `.audit()` on decrypt, so this
-    // only fires for a custom client whose decrypt returns something else —
-    // there is then nowhere to put the metadata. Make the drop observable
-    // rather than silent.
+    // Reached by the wasm-inline client (bare promise, no `.audit()`) and by
+    // any custom client whose decrypt returns something else. There is nowhere
+    // to put the metadata, so make the drop observable rather than silent.
     logger.debug(
-      "DynamoDB: decrypt audit metadata ignored — this client's decrypt does not return a chainable operation with .audit(). Audited decrypts need a client built with Encryption({ schemas }).",
+      "DynamoDB: decrypt audit metadata ignored — this client's decrypt does not return a chainable operation with .audit(). Audited decrypts need a client from the default @cipherstash/stack entry; the wasm-inline client's decrypt returns a plain promise.",
     )
   }
 

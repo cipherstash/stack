@@ -37,12 +37,16 @@ export type AnyEncryptedTable =
  * nominal `TypedEncryptionClient<S>` parameter would reject a client built for
  * a narrower schema tuple.
  *
- * Both clients now return a chainable operation on the decrypt paths — the
+ * Both NATIVE clients return a chainable operation on the decrypt paths — the
  * nominal client's `DecryptModelOperation` and the typed wrapper's
  * `MappedDecryptOperation` each carry `.audit()` (the typed wrapper also takes
  * the table as a second argument). The operation classes handle both; see
- * `DecryptModelOperation` and `resolveDecryptResult`. Audit metadata on decrypt
- * is therefore forwarded regardless of which client shape is supplied.
+ * `DecryptModelOperation` and `resolveDecryptResult`.
+ *
+ * The wasm-inline client does not: its decrypt is a plain `async` method, so
+ * audit metadata is dropped (observably — `resolveDecryptResult` logs it) and
+ * its EQL v2 read path is refused outright by `assertClientTableVersionMatch`,
+ * because that path relies on calling decrypt WITHOUT a table.
  */
 export type DynamoDBEncryptionClient = {
   encryptModel(input: never, table: never): unknown
