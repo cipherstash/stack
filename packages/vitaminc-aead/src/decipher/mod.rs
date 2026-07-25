@@ -1,5 +1,7 @@
 pub mod impls;
 
+use std::any::Any;
+
 use vitaminc_protected::Protected;
 
 use crate::{Aad, IntoAad, Unspecified};
@@ -113,9 +115,14 @@ pub trait Decipher<'c>: Sized {
     /// is recovered from the ciphertext's shape rather than fixed by the
     /// caller.
     ///
-    /// Passthrough ciphertexts are **not** dispatched — recovering one
-    /// requires [`decrypt_passthrough`](Decipher::decrypt_passthrough) —
-    /// and must report failure ([`Unspecified`]).
+    /// A passthrough ciphertext is dispatched to
+    /// [`visit_passthrough`](DecipherVisitor::visit_passthrough), delivering
+    /// the stored payload type-erased as `Box<dyn Any + Send>`. Visitors that
+    /// do not expect passthrough inherit the default (which errors), so this
+    /// remains a rejection for every decoder except a self-describing one that
+    /// overrides `visit_passthrough`. A passthrough value is **not**
+    /// authenticated, so — unlike [`visit_none`](DecipherVisitor::visit_none) —
+    /// there is no AAD binding to verify before the visitor is called.
     fn decrypt_any<'a, V, A>(self, visitor: V, aad: A) -> Self::Ok<V::Value>
     where
         V: DecipherVisitor<'c> + Send + 'c,
@@ -186,6 +193,24 @@ pub trait DecipherVisitor<'c>: Sized {
     /// Self-describing visitors (e.g. a dynamically typed FFI value) can
     /// override this to map absence onto their own null representation.
     fn visit_none(self) -> Result<Self::Value, Unspecified> {
+        Err(Unspecified)
+    }
+
+    /// Called when [`Decipher::decrypt_any`] hit a passthrough value (see
+    /// [`Cipher::passthrough`](crate::Cipher::passthrough)). The payload is
+    /// delivered **type-erased** as `Box<dyn Any + Send>` — a self-describing
+    /// visitor downcasts it to its own value type, returning [`Unspecified`]
+    /// for a foreign payload rather than panicking. Default returns an error,
+    /// so decoders that do not expect passthrough reject it.
+    ///
+    /// # ⚠️ Unauthenticated
+    ///
+    /// The payload is covered by no AEAD tag; a stored passthrough value can be
+    /// altered undetectably. Never treat it as authenticated input.
+    fn visit_passthrough(
+        self,
+        _value: Box<dyn Any + Send + 'static>,
+    ) -> Result<Self::Value, Unspecified> {
         Err(Unspecified)
     }
 }

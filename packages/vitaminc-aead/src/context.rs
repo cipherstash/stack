@@ -393,6 +393,13 @@ mod tests {
         fn passthrough(self, _value: Self::Passthrough) -> Result<Self::Ok, Self::Error> {
             Ok(Vec::new())
         }
+
+        fn passthrough_boxed(
+            self,
+            _value: Box<dyn std::any::Any + Send + 'static>,
+        ) -> Result<Self::Ok, Self::Error> {
+            Ok(Vec::new())
+        }
     }
 
     impl SeqCipher for UnusedSeq {

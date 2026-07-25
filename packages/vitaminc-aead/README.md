@@ -88,6 +88,15 @@ impl<'c> Cipher for &'c MyCipher {
     fn passthrough(self, _value: Self::Passthrough) -> Result<Self::Ok, Self::Error> {
         unimplemented!("store `value` unencrypted inside the cipher's output container")
     }
+
+    fn passthrough_boxed(
+        self,
+        _value: Box<dyn Any + Send + 'static>,
+    ) -> Result<Self::Ok, Self::Error> {
+        // Type-erased passthrough for self-describing encoders (e.g. FfiValue).
+        // When the currency IS `Box<dyn Any + Send>`, forward to `passthrough`.
+        unimplemented!("store the boxed value unencrypted (or downcast to an owned currency)")
+    }
 }
 
 impl<'c> SeqCipher for MySeqCipher<'c> {

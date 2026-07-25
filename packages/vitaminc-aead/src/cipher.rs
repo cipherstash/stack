@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::borrow::Cow;
 
 use vitaminc_protected::{Controlled, Protected};
@@ -149,6 +150,33 @@ pub trait Cipher: Sized {
     /// [`Encrypt`](crate::Encrypt) trait) or wrap in
     /// [`vitaminc_protected::Protected`].
     fn passthrough(self, value: Self::Passthrough) -> Result<Self::Ok, Self::Error>;
+
+    /// Pass a **type-erased** value through the output container without
+    /// encrypting it — the entry point for self-describing
+    /// [`Encrypt`](crate::Encrypt) implementations that cannot name this
+    /// cipher's [`Passthrough`](Cipher::Passthrough) currency at the call
+    /// site.
+    ///
+    /// A tree-shaped, dynamically typed value (e.g. `FfiValue`) implements
+    /// `Encrypt` generically over *every* cipher, so its impl has no way to
+    /// construct a specific cipher's currency — the trait method signature
+    /// forbids the extra bound (`impl has stricter requirements than trait`).
+    /// This method closes that gap: the value is delivered as
+    /// `Box<dyn Any + Send>`, and each cipher decides how to absorb it. A
+    /// Rust-native cipher whose currency *is* `Box<dyn Any + Send>` stores the
+    /// box directly; a cipher with an owned currency downcasts it (returning an
+    /// error for a foreign payload type). The decrypt-side counterpart is
+    /// [`DecipherVisitor::visit_passthrough`](crate::DecipherVisitor::visit_passthrough).
+    ///
+    /// # ⚠️ Non-sensitive data only
+    ///
+    /// Identical contract to [`passthrough`](Cipher::passthrough): the value
+    /// travels **in the clear** and is **not authenticated**. Never route
+    /// secret-bearing data through it.
+    fn passthrough_boxed(
+        self,
+        value: Box<dyn Any + Send + 'static>,
+    ) -> Result<Self::Ok, Self::Error>;
 }
 
 /// Sub-cipher driving the encryption of a sequence of values.
