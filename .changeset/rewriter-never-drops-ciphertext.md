@@ -80,3 +80,17 @@ Four further ways the sweep could still reach a ciphertext column are closed:
 The two copies of this rewriter — one in `stash`, one in `@cipherstash/wizard` —
 are now compared by a repo test, so a fix can no longer land in one and silently
 miss the other.
+
+**The wizard now sweeps only drizzle-kit output directories.** It cannot
+discover a project's configured `out`, so it tries `drizzle/`, `migrations/` and
+`src/db/migrations/` — but the last two are generic names that Knex,
+node-pg-migrate, Flyway and hand-rolled psql also use. A project whose drizzle
+`out` is `drizzle/` and which also keeps a hand-maintained `migrations/` had
+that second directory rewritten into ADD+DROP+RENAME, in a directory the wizard
+was never pointed at. The fail-closed rule is no defence there: a real migration
+history declares its own columns, so the rewrite proceeds. A candidate is now
+swept only if it carries the `meta/_journal.json` drizzle-kit maintains. A
+directory that holds `.sql` files but no journal is reported rather than passed
+over in silence, so a genuine drizzle output whose `meta/` went missing is
+visible instead of looking clean. `stash eql migration` and `stash eql install`
+are unaffected — both already take a single explicit `--out`.
