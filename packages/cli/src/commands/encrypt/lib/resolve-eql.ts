@@ -23,6 +23,17 @@ export interface ResolvedLifecycle {
    * identifiable — callers name them instead of erroring blind.
    */
   candidates: EncryptedColumnInfo[]
+  /**
+   * The manifest's recorded `encryptedColumn` when it named a column that is
+   * NOT among `candidates` — i.e. the pairing is on record but the column it
+   * names is not an EQL v3 column (typically legacy `eql_v2_encrypted`, which
+   * `classifyEqlDomain` no longer recognises).
+   *
+   * Distinct from a stale hint. It means the answer IS known and disagrees
+   * with anything resolution could otherwise guess, so callers must fail closed
+   * naming it rather than fall through to `via: 'sole'` (#772 review, finding 7).
+   */
+  unresolvedHint?: string
 }
 
 /**
@@ -59,11 +70,45 @@ export async function resolveColumnLifecycle(
   )?.encryptedColumn
 
   const candidates = await listEncryptedColumns(client, table)
-  let info = hint ? pickEncryptedColumn(candidates, column, hint) : null
-  // A stale hint (column since renamed/retyped) must not mask a resolvable
-  // counterpart — fall back to convention + sole-EQL-column resolution.
-  if (!info) info = pickEncryptedColumn(candidates, column)
-  return { info, candidates }
+  const hinted = hint ? pickEncryptedColumn(candidates, column, hint) : null
+  if (hinted) return { info: hinted, candidates }
+
+  // The hint named a column that is not a candidate. Two very different
+  // reasons, and they must not share an outcome:
+  //
+  // - the column no longer exists (renamed, dropped) — a genuinely STALE hint,
+  //   which must not mask a resolvable counterpart, so fall through;
+  // - the column exists but is not an EQL v3 column — the usual shape being a
+  //   legacy `eql_v2_encrypted` counterpart, which `classifyEqlDomain` stopped
+  //   recognising. Here the pairing IS known and falling through would discard
+  //   it in favour of a guess: on a mixed table the sole-EQL-column rule then
+  //   claims an unrelated v3 column, `cutover` reports success for a rename it
+  //   never performed, and `drop`'s remedy tells the user to record the guess
+  //   (#772 review, finding 7).
+  if (hint && (await columnExists(client, table, hint))) {
+    return { info: null, candidates, unresolvedHint: hint }
+  }
+
+  return { info: pickEncryptedColumn(candidates, column), candidates }
+}
+
+/** Whether `column` exists on `table` at all, whatever its type. */
+async function columnExists(
+  client: pg.ClientBase,
+  table: string,
+  column: string,
+): Promise<boolean> {
+  const { rows } = await client.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM pg_attribute
+       WHERE attrelid = to_regclass($1)
+         AND attname = $2
+         AND attnum > 0
+         AND NOT attisdropped
+     ) AS exists`,
+    [table, column],
+  )
+  return rows[0]?.exists === true
 }
 
 /**
@@ -87,7 +132,16 @@ export function explainUnresolved(
   table: string,
   column: string,
   candidates: readonly EncryptedColumnInfo[],
+  unresolvedHint?: string,
 ): string | null {
+  // The recorded pairing points at a real column that is not an EQL v3 column
+  // — almost always a legacy `eql_v2_encrypted` counterpart. Say exactly that:
+  // listing the v3 candidates here would invite the user to record one of them,
+  // which is how the guess used to get laundered into a `via: 'hint'` match.
+  if (unresolvedHint !== undefined) {
+    return `${table}.${column} is recorded as pairing with "${unresolvedHint}", but ${unresolvedHint} is not an EQL v3 column — it is most likely a legacy eql_v2_encrypted column, which this command no longer manages. Finish the EQL v2 lifecycle for this column with a stash release that still supports it, or drop the recorded pairing from .cipherstash/migrations.json if it is wrong.`
+  }
+
   if (candidates.length === 0) return null
   const listed = candidates
     .map((c) => `  - ${c.column} (${c.domain})`)
