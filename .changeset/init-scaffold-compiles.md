@@ -1,0 +1,24 @@
+---
+'stash': patch
+---
+
+The client file `stash init` writes now compiles.
+
+Both placeholder templates emitted `await Encryption({ schemas: [] })`, and
+`Encryption` requires at least one table — an empty schema set is a deliberate
+compile error, so it cannot be relaxed. Every `stash init` therefore left a
+project whose first `tsc` or `next build` failed, in a file the CLI had just
+told the user not to hand-edit. (The previous scaffold called `EncryptionV3`,
+whose looser bound accepted `[]`; collapsing that into an alias of `Encryption`
+tightened it.)
+
+The scaffold now declares a single sentinel table, `__stash_placeholder__`, so
+the file typechecks as written. `stash encrypt` commands refuse to run while
+that table is still the only one declared, and say so — rather than failing
+later with a confusing "table not found".
+
+Nothing in the repo compiled this output before: `packages/cli` has no
+typecheck step, the codegen tests only string-match fragments of the template,
+and the step test stubs the generator out entirely. Both templates are now
+committed as fixtures that CI typechecks, pinned byte-for-byte to the generator
+so they cannot drift.
