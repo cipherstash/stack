@@ -43,6 +43,34 @@ describe('lint-no-dead-package-paths', () => {
     expect(r.output).toMatch(/packages\/protect/)
   })
 
+  // #772 review, finding 15. The name capture had no right anchor, so a
+  // sentence-final `packages/stack.` swallowed the period and the linter
+  // reported a LIVE package as dead — failing the build with a message naming a
+  // directory that plainly exists. Never fired in 400 commits only because the
+  // repo's backtick convention happened to dodge it.
+  it('does not flag a live package followed by sentence punctuation', () => {
+    const r = run(fx('sentence-final.md'))
+    expect(r.output).toBe('')
+    expect(r.exitCode).toBe(0)
+  })
+
+  // The character class excluded uppercase, so `packages/Foo` was never checked
+  // at all — a silent hole rather than a false alarm.
+  it('checks a package name containing uppercase', () => {
+    const r = run(fx('uppercase.md'))
+    expect(r.exitCode).toBe(1)
+    expect(r.output).toMatch(/packages\/Foo/)
+  })
+
+  // The linters carry package paths of their own; `scripts/` was not scanned,
+  // so a `packages/drizzle` allowlist entry for a package that never existed in
+  // git history sat there unnoticed. Its own fixtures must stay exempt.
+  it('scans scripts/ but not its fixtures', () => {
+    const r = run()
+    expect(r.exitCode).toBe(0)
+    expect(r.output).toBe('')
+  })
+
   it('names the file and line of each offender', () => {
     const r = run(fx('dead-ref.md'))
     expect(r.output).toMatch(/dead-ref\.md:3/)
