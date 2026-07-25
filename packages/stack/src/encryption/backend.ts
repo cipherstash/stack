@@ -15,6 +15,14 @@ import type {
 import type { Client } from '@/types'
 
 /**
+ * The FFI requires a live client handle. `Client` from `@/types` is
+ * `… | undefined`, because the public client may not have initialised yet —
+ * every operation already guards with `noClientError()` before reaching the
+ * backend, so the narrowed handle is what actually crosses this boundary.
+ */
+type LiveClient = NonNullable<Client>
+
+/**
  * The cryptographic primitives an operation needs, as an injected dependency
  * rather than a module import.
  *
@@ -50,12 +58,15 @@ import type { Client } from '@/types'
  * — a backend is stateless and safe to share across clients.
  */
 export interface CryptoBackend {
-  encrypt(client: Client, opts: FfiEncryptOptions): Promise<EncryptedPayload>
+  encrypt(
+    client: LiveClient,
+    opts: FfiEncryptOptions,
+  ): Promise<EncryptedPayload>
 
-  decrypt(client: Client, opts: DecryptOptions): Promise<JsPlaintext>
+  decrypt(client: LiveClient, opts: DecryptOptions): Promise<JsPlaintext>
 
   encryptBulk(
-    client: Client,
+    client: LiveClient,
     opts: EncryptBulkOptions,
   ): Promise<EncryptedPayload[]>
 
@@ -64,17 +75,17 @@ export interface CryptoBackend {
    * per-item errors, unlike bulk encrypt which ZeroKMS rejects as a whole.
    */
   decryptBulkFallible(
-    client: Client,
+    client: LiveClient,
     opts: DecryptBulkOptions,
   ): Promise<DecryptResult[]>
 
   encryptQuery(
-    client: Client,
+    client: LiveClient,
     opts: EncryptQueryOptions,
   ): Promise<FfiEncrypted | EncryptedQuery | EncryptedV3Query>
 
   encryptQueryBulk(
-    client: Client,
+    client: LiveClient,
     opts: EncryptQueryBulkOptions,
   ): Promise<(FfiEncrypted | EncryptedQuery | EncryptedV3Query)[]>
 }
