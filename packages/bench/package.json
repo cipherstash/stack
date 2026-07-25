@@ -1,28 +1,29 @@
 {
-  "name": "@cipherstash/bench",
-  "version": "0.0.5-rc.4",
-  "private": true,
-  "description": "Performance / index-engagement benchmarks for stack integrations (Drizzle, encryptedSupabase, Prisma).",
-  "type": "module",
-  "scripts": {
-    "build": "tsc --noEmit",
-    "db:setup": "tsx src/cli/setup.ts",
-    "db:reset": "tsx src/cli/reset.ts",
-    "test:local": "vitest run",
-    "bench:local": "vitest bench --run"
-  },
-  "dependencies": {
-    "@cipherstash/stack": "workspace:*",
-    "@cipherstash/stack-drizzle": "workspace:*",
-    "drizzle-orm": "0.45.2",
-    "pg": "^8.22.0"
-  },
-  "devDependencies": {
-    "@cipherstash/test-kit": "workspace:*",
-    "@types/node": "^22.20.1",
-    "@types/pg": "^8.20.0",
-    "tsx": "catalog:repo",
-    "typescript": "catalog:repo",
-    "vitest": "catalog:repo"
-  }
+	"name": "@cipherstash/bench",
+	"version": "0.0.5-rc.4",
+	"private": true,
+	"description": "Performance / index-engagement benchmarks for stack integrations (Drizzle, encryptedSupabase, Prisma).",
+	"type": "module",
+	"scripts": {
+		"build": "tsc --noEmit",
+		"test:unit": "vitest run --config vitest.unit.config.ts",
+		"db:setup": "tsx src/cli/setup.ts",
+		"db:reset": "tsx src/cli/reset.ts",
+		"test:local": "vitest run",
+		"bench:local": "vitest bench --run"
+	},
+	"dependencies": {
+		"@cipherstash/stack": "workspace:*",
+		"@cipherstash/stack-drizzle": "workspace:*",
+		"drizzle-orm": "0.45.2",
+		"pg": "^8.22.0"
+	},
+	"devDependencies": {
+		"@cipherstash/test-kit": "workspace:*",
+		"@types/node": "^22.20.1",
+		"@types/pg": "^8.20.0",
+		"tsx": "catalog:repo",
+		"typescript": "catalog:repo",
+		"vitest": "catalog:repo"
+	}
 }
