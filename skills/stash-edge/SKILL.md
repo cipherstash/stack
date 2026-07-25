@@ -237,15 +237,23 @@ Available: `encrypt`, `decrypt`, `isEncrypted`, `encryptQuery`,
 | Config | discovered from env / `~/.cipherstash` | all four `CS_*` passed explicitly |
 | Typing | signatures derived from the schema | schema-aware, but not the full typed client |
 | `.audit()` | chainable on operations | **not available** |
-| `.withLockContext()` | chainable on operations | **not available** — see below |
+| `.withLockContext()` | chainable on operations | chainable on operations — see below |
 | `bulkEncrypt` shape | `(plaintexts, { table, column })`, `{ id, plaintext }` envelopes | per-item `{ plaintext, table, column }`, plain index-aligned array |
 | Module format | ESM + CJS | **ESM only** |
 
-**Identity-bound encryption is configured, not chained.** There is no
-`.withLockContext()` on this entry. Build an `OidcFederationStrategy` (or
-`AccessKeyStrategy` for service-to-service) and pass it as
-`config.authStrategy`, so the client is authenticated *as the end user* for
-its whole lifetime:
+**Authentication and key binding are two different things**, and conflating
+them is the standard mistake. Identity-bound encryption needs both:
+
+1. **Authenticate as the user** — build an `OidcFederationStrategy` (or
+   `AccessKeyStrategy` for service-to-service) and pass it as
+   `config.authStrategy`. The client then acts as that user for its lifetime.
+2. **Bind the data key to a claim** — chain `.withLockContext({ identityClaim })`
+   on the operation. *This* is what changes key derivation.
+
+An auth strategy on its own gives you a client authenticated as the end user,
+writing data that is **not** identity-bound. The strategy replaced the old
+per-operation token ceremony (`LockContext.identify()`, deprecated); it did
+not replace the lock context.
 
 ```ts
 import { Encryption, OidcFederationStrategy } from '@cipherstash/stack/wasm-inline'
@@ -262,7 +270,18 @@ const client = await Encryption({
   schemas: [users],
   config: { authStrategy: strategy.data, clientId, clientKey },
 })
+
+// Step 2: bind the data key to a claim. Without this the value is encrypted
+// under the workspace key, not the user's.
+const enc = await client
+  .encrypt('alice@example.com', { table: users, column: users.email })
+  .withLockContext({ identityClaim: ['sub'] })
 ```
+
+**The same claim must be supplied on decrypt.** A value encrypted under a lock
+context and decrypted without one — or under a different claim — does not come
+back. This is the single most common identity-aware encryption bug, and it
+does not surface as a key error; it surfaces as a failed decrypt.
 
 `AccessKeyStrategy.create(workspaceCrn, accessKey)` has the same
 Result-returning shape, for service-to-service use with a custom token store.
