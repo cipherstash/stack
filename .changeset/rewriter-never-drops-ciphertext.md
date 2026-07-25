@@ -22,7 +22,10 @@ either kind makes the rest of the file inert rather than live.
 
 The sweep also refuses to rewrite a column the migration corpus already gives an
 encrypted type, so changing a column's encrypted domain no longer drops a column
-full of ciphertext. Skipped statements report why they were left alone.
+full of ciphertext. Skipped statements report why they were left alone. This
+recognises the encrypted forms drizzle-kit emits, a domain installed into a
+non-`public` schema, and an array of a domain — so a corpus that shows a column
+as encrypted in any of those shapes is flagged, not rewritten.
 
 The sweep is now fail-closed about the columns it does not recognise at all.
 Previously a column missing from the corpus index was assumed to be plaintext

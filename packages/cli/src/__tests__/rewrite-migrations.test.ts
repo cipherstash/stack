@@ -865,6 +865,54 @@ describe('rewriteEncryptedAlterColumns', () => {
       expect(skipped[0].reason).toBe('already-encrypted')
     })
 
+    // An EQL domain installed into a NON-`public` schema is still ciphertext.
+    // The mangled forms special-case the literal `public`, so without the
+    // extra alternative this column falls to the plaintext residue and the
+    // ALTER drops a column full of ciphertext.
+    it('refuses to rewrite a domain change on a column encrypted in a non-public schema', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_create.sql'),
+        [
+          'CREATE TABLE "users" (',
+          '\t"id" integer PRIMARY KEY,',
+          '\t"email" "app"."eql_v3_text_eq"',
+          ');',
+          '',
+        ].join('\n'),
+      )
+      const alter = path.join(tmpDir, '0001_domain-change.sql')
+      fs.writeFileSync(
+        alter,
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+      )
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toHaveLength(1)
+      expect(skipped[0].reason).toBe('already-encrypted')
+    })
+
+    // An ARRAY of an EQL domain is still ciphertext. The trailing delimiter
+    // lookahead must admit `[` or the column falls to the plaintext residue.
+    it('refuses to rewrite a domain change on a column encrypted as a domain array', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_add.sql'),
+        'ALTER TABLE "users" ADD COLUMN "email" public.eql_v3_text_eq[];\n',
+      )
+      const alter = path.join(tmpDir, '0001_domain-change.sql')
+      fs.writeFileSync(
+        alter,
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+      )
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toHaveLength(1)
+      expect(skipped[0].reason).toBe('already-encrypted')
+    })
+
     // A previous sweep of this directory leaves ADD tmp + RENAME behind. The
     // column it renamed onto is encrypted, so a later domain change on it is
     // just as destructive.
