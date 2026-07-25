@@ -819,6 +819,98 @@ describe('rewriteEncryptedAlterColumns', () => {
       expect(skipped).toEqual([])
       expect(fs.readFileSync(filePath, 'utf-8')).toBe(original)
     })
+
+    // #772 review, finding 1. Quote parity is a whole-file property: anything
+    // that makes the scanner disagree with Postgres about where a literal ENDS
+    // shifts every following token, so a commented-out ALTER downstream reads
+    // as live and is rewritten into a live DROP COLUMN.
+    //
+    // The two shapes below both do that. A `$$ … $$` body was documented as
+    // safe on the grounds that mis-reading one can only make us SKIP — that
+    // holds for an unterminated literal, but an odd apostrophe count inside the
+    // body ends a literal EARLY, which is the opposite direction.
+    it('leaves a commented-out ALTER alone after a dollar-quoted body with an odd apostrophe count', async () => {
+      declarePlaintext('"users"', 'email')
+      const original = [
+        "CREATE FUNCTION note() RETURNS text AS $$ don't $$ LANGUAGE sql;",
+        '--> statement-breakpoint',
+        '-- it\'s ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;',
+        '',
+      ].join('\n')
+      const filePath = path.join(tmpDir, '0033_dollar-quoted.sql')
+      fs.writeFileSync(filePath, original)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([])
+      const updated = fs.readFileSync(filePath, 'utf-8')
+      expect(updated).toBe(original)
+      expect(updated).not.toContain('DROP COLUMN')
+    })
+
+    it('leaves a commented-out ALTER alone after a tagged dollar-quoted body', async () => {
+      declarePlaintext('"users"', 'email')
+      const original = [
+        "CREATE FUNCTION note() RETURNS text AS $fn$ don't $fn$ LANGUAGE sql;",
+        '--> statement-breakpoint',
+        '-- it\'s ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;',
+        '',
+      ].join('\n')
+      const filePath = path.join(tmpDir, '0033_tagged-dollar.sql')
+      fs.writeFileSync(filePath, original)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([])
+      expect(fs.readFileSync(filePath, 'utf-8')).toBe(original)
+    })
+
+    // A backslash-escaped quote inside an E'' string does not close it. Reading
+    // it as a close shifts parity for the rest of the file the same way.
+    it('leaves a commented-out ALTER alone after an E-string with a backslash-escaped quote', async () => {
+      declarePlaintext('"users"', 'email')
+      const original = [
+        'CREATE TABLE "notes" ("body" text);',
+        '--> statement-breakpoint',
+        "INSERT INTO \"notes\" VALUES (E'a\\'b');",
+        '--> statement-breakpoint',
+        '-- it\'s ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;',
+        '',
+      ].join('\n')
+      const filePath = path.join(tmpDir, '0033_estring.sql')
+      fs.writeFileSync(filePath, original)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([])
+      const updated = fs.readFileSync(filePath, 'utf-8')
+      expect(updated).toBe(original)
+      expect(updated).not.toContain('DROP COLUMN')
+    })
+
+    // The dollar-quote skip must not swallow live SQL: a `$$` body sitting
+    // BEFORE a genuine plaintext ALTER still leaves that ALTER rewritable.
+    it('still rewrites a live ALTER that follows a dollar-quoted body', async () => {
+      declarePlaintext('"users"', 'email')
+      const filePath = path.join(tmpDir, '0033_dollar-then-live.sql')
+      fs.writeFileSync(
+        filePath,
+        [
+          "CREATE FUNCTION note() RETURNS text AS $$ don't $$ LANGUAGE sql;",
+          '--> statement-breakpoint',
+          'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;',
+          '',
+        ].join('\n'),
+      )
+
+      const { rewritten } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([filePath])
+      expect(fs.readFileSync(filePath, 'utf-8')).toContain('DROP COLUMN')
+    })
   })
 
   // ADD+DROP+RENAME on a column that is ALREADY encrypted drops CIPHERTEXT, and
