@@ -1684,8 +1684,27 @@ describe('sweepMigrationDirs', () => {
     '',
   ].join('\n')
 
-  /** Create `dir` under the sandbox, optionally seeding `name` with `sql`. */
+  /**
+   * Create a drizzle-kit OUTPUT directory under the sandbox, optionally seeding
+   * `name` with `sql`.
+   *
+   * The `meta/_journal.json` is what makes it drizzle-kit's: the sweep now
+   * requires it, because `migrations/` and `src/db/migrations/` are generic
+   * names that Knex, Flyway, node-pg-migrate and raw psql also use, and this
+   * sweep emits `DROP COLUMN`. Use {@link seedForeignDir} for the other case.
+   */
   const seedDir = (dir: string, name?: string, sql?: string): string => {
+    const abs = seedForeignDir(dir, name, sql)
+    fs.mkdirSync(path.join(abs, 'meta'), { recursive: true })
+    fs.writeFileSync(
+      path.join(abs, 'meta', '_journal.json'),
+      JSON.stringify({ version: '7', dialect: 'postgresql', entries: [] }),
+    )
+    return abs
+  }
+
+  /** A migration directory belonging to some OTHER tool — no drizzle journal. */
+  const seedForeignDir = (dir: string, name?: string, sql?: string): string => {
     const abs = path.join(tmpDir, dir)
     fs.mkdirSync(abs, { recursive: true })
     if (name) fs.writeFileSync(path.join(abs, name), sql ?? ALTER)
@@ -1812,6 +1831,69 @@ describe('sweepMigrationDirs', () => {
     const updated = fs.readFileSync(alter, 'utf-8')
     expect(updated).toBe(`${alterSql}\n`)
     expect(updated).not.toContain('DROP COLUMN')
+  })
+
+  // #772 review, finding 5. `migrations/` and `src/db/migrations/` are generic
+  // names — Knex, node-pg-migrate, Flyway and hand-rolled psql all use them.
+  // Sweeping every candidate that merely EXISTS meant a project whose drizzle
+  // `out` is `drizzle/` but which also keeps a hand-maintained `migrations/`
+  // had that second directory rewritten into ADD+DROP+RENAME, in a directory
+  // this tool was never pointed at. The fail-closed `declared` rule does not
+  // help: a real migration history declares its own columns.
+  //
+  // drizzle-kit always writes `meta/_journal.json` into its output directory;
+  // none of the other tools do. That is the discriminator.
+  it('does not sweep a directory that is not a drizzle-kit output', async () => {
+    const foreign = seedForeignDir('migrations', '0001_alter.sql')
+    const alter = path.join(foreign, '0001_alter.sql')
+
+    const results = await sweepMigrationDirs(tmpDir, ['migrations'])
+
+    expect(results.find((r) => r.dir === 'migrations')?.rewritten).toEqual([])
+    const updated = fs.readFileSync(alter, 'utf-8')
+    expect(updated).toBe(ALTER)
+    expect(updated).not.toContain('DROP COLUMN')
+  })
+
+  // Silence would be its own failure: a genuine drizzle directory whose meta/
+  // was deleted must not simply do nothing without saying so.
+  it('reports a skipped directory that holds SQL but no drizzle journal', async () => {
+    seedForeignDir('migrations', '0001_alter.sql')
+
+    const results = await sweepMigrationDirs(tmpDir, ['migrations'])
+
+    expect(results.find((r) => r.dir === 'migrations')?.notDrizzleOutput).toBe(
+      true,
+    )
+  })
+
+  // An empty foreign directory is not worth mentioning — there is nothing in it
+  // the sweep could have repaired.
+  it('does not report a journal-less directory that holds no SQL', async () => {
+    seedForeignDir('migrations')
+
+    const results = await sweepMigrationDirs(tmpDir, ['migrations'])
+
+    expect(results.find((r) => r.dir === 'migrations')?.notDrizzleOutput).toBe(
+      undefined,
+    )
+  })
+
+  // The blast-radius fix must not shrink the legitimate reach: a real drizzle
+  // output directory that is NOT the first candidate is still swept.
+  it('still sweeps a drizzle output directory that is not the first candidate', async () => {
+    seedDir(
+      'drizzle',
+      '0000_noop.sql',
+      'CREATE TABLE "widgets" ("id" integer);\n',
+    )
+    const migrations = seedDir('migrations', '0001_alter.sql')
+
+    const results = await sweepMigrationDirs(tmpDir, ['drizzle', 'migrations'])
+
+    expect(results.find((r) => r.dir === 'migrations')?.rewritten).toEqual([
+      path.join(migrations, '0001_alter.sql'),
+    ])
   })
 })
 
