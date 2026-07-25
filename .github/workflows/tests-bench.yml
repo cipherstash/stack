@@ -88,3 +88,13 @@ jobs:
       - name: Run bench smoke tests
         working-directory: packages/bench
         run: pnpm test:local db-only
+
+      # Separate config, no globalSetup: these need neither a database nor
+      # credentials, so they cannot be skipped for want of either. The seed
+      # keying they check was wrong for the whole v2 -> v3 port precisely
+      # because every suite that would have caught it needs credentials, and
+      # `tsc --noEmit` passes on a hand-written row type that agrees with
+      # itself (#772 review, finding 12).
+      - name: Run bench unit checks (no database, no credentials)
+        working-directory: packages/bench
+        run: pnpm test:unit
