@@ -154,18 +154,17 @@ pub trait Cipher: Sized {
     /// Pass a **type-erased** value through the output container without
     /// encrypting it — the entry point for self-describing
     /// [`Encrypt`](crate::Encrypt) implementations that cannot name this
-    /// cipher's [`Passthrough`](Cipher::Passthrough) currency at the call
-    /// site.
+    /// cipher's [`Passthrough`](Cipher::Passthrough) type at the call site.
     ///
     /// A tree-shaped, dynamically typed value (e.g. `FfiValue`) implements
     /// `Encrypt` generically over *every* cipher, so its impl has no way to
-    /// construct a specific cipher's currency — the trait method signature
+    /// construct a specific cipher's payload type — the trait method signature
     /// forbids the extra bound (`impl has stricter requirements than trait`).
     /// This method closes that gap: the value is delivered as
     /// `Box<dyn Any + Send>`, and each cipher decides how to absorb it. A
-    /// Rust-native cipher whose currency *is* `Box<dyn Any + Send>` stores the
-    /// box directly; a cipher with an owned currency downcasts it (returning an
-    /// error for a foreign payload type). The decrypt-side counterpart is
+    /// Rust-native cipher whose payload type *is* `Box<dyn Any + Send>` stores
+    /// the box directly; a cipher with an owned payload type downcasts it
+    /// (returning an error for a foreign payload type). The decrypt-side counterpart is
     /// [`DecipherVisitor::visit_passthrough`](crate::DecipherVisitor::visit_passthrough).
     ///
     /// # ⚠️ Non-sensitive data only

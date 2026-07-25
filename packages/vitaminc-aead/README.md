@@ -94,8 +94,8 @@ impl<'c> Cipher for &'c MyCipher {
         _value: Box<dyn Any + Send + 'static>,
     ) -> Result<Self::Ok, Self::Error> {
         // Type-erased passthrough for self-describing encoders (e.g. FfiValue).
-        // When the currency IS `Box<dyn Any + Send>`, forward to `passthrough`.
-        unimplemented!("store the boxed value unencrypted (or downcast to an owned currency)")
+        // When the payload type IS `Box<dyn Any + Send>`, forward to `passthrough`.
+        unimplemented!("store the boxed value unencrypted (or downcast to an owned type)")
     }
 }
 
