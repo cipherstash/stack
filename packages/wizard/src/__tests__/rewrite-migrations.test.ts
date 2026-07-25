@@ -1036,6 +1036,188 @@ describe('rewriteEncryptedAlterColumns', () => {
       expect(skipped).toHaveLength(1)
       expect(skipped[0].reason).toBe('already-encrypted')
     })
+
+    // #772 review, finding 3. The index reads CREATE TABLE, ADD COLUMN and
+    // RENAME, but never the strict matcher's OWN target. So a corpus where an
+    // earlier migration already converted the column — realistic wherever a
+    // previous stack version's ALTER ran before this sweep existed — leaves
+    // that column looking plaintext, and the SECOND conversion rewrites a
+    // column that now holds ciphertext. `declared` cannot catch it: the column
+    // IS declared, as plaintext, by the original CREATE TABLE.
+    it('rewrites only the first conversion when two ALTERs chain on one column', async () => {
+      declarePlaintext('"users"', 'email')
+      const first = path.join(tmpDir, '0002_v2.sql')
+      fs.writeFileSync(
+        first,
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v2_encrypted;\n',
+      )
+      const secondSql =
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;'
+      const second = path.join(tmpDir, '0003_v3.sql')
+      fs.writeFileSync(second, `${secondSql}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      // The first conversion is the legitimate plaintext -> encrypted one and
+      // must still happen — flagging it too would be the naive fix.
+      expect(rewritten).toEqual([first])
+      expect(fs.readFileSync(first, 'utf-8')).toContain('DROP COLUMN')
+      // The second targets ciphertext. Left byte-identical on disk.
+      expect(fs.readFileSync(second, 'utf-8')).toBe(`${secondSql}\n`)
+      expect(skipped).toEqual([
+        { file: second, statement: secondSql, reason: 'already-encrypted' },
+      ])
+    })
+
+    it('flags the second of two chained ALTERs inside a single file', async () => {
+      declarePlaintext('"users"', 'email')
+      const secondSql =
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;'
+      const filePath = path.join(tmpDir, '0002_chain.sql')
+      fs.writeFileSync(
+        filePath,
+        [
+          'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v2_encrypted;',
+          secondSql,
+          '',
+        ].join('\n'),
+      )
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([filePath])
+      const updated = fs.readFileSync(filePath, 'utf-8')
+      // Exactly one conversion was applied, and the v3 statement survives verbatim.
+      expect(updated.match(/DROP COLUMN/g)?.length).toBe(1)
+      expect(updated).toContain(secondSql)
+      expect(skipped).toEqual([
+        { file: filePath, statement: secondSql, reason: 'already-encrypted' },
+      ])
+    })
+
+    // A chain on DIFFERENT columns is not a chain — each is its own first
+    // conversion and both must be rewritten.
+    it('rewrites both when chained ALTERs target different columns', async () => {
+      declarePlaintext('"users"', 'email', 'name')
+      const first = path.join(tmpDir, '0002_email.sql')
+      fs.writeFileSync(
+        first,
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+      )
+      const second = path.join(tmpDir, '0003_name.sql')
+      fs.writeFileSync(
+        second,
+        'ALTER TABLE "users" ALTER COLUMN "name" SET DATA TYPE eql_v3_text_search;\n',
+      )
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([first, second])
+      expect(skipped).toEqual([])
+    })
+
+    // A commented-out first conversion never ran, so the column is still
+    // plaintext and the live second conversion is the legitimate one.
+    it('does not treat a commented-out earlier ALTER as having encrypted the column', async () => {
+      declarePlaintext('"users"', 'email')
+      fs.writeFileSync(
+        path.join(tmpDir, '0002_v2.sql'),
+        '-- ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v2_encrypted;\n',
+      )
+      const live = path.join(tmpDir, '0003_v3.sql')
+      fs.writeFileSync(
+        live,
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+      )
+
+      const { rewritten } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([live])
+      expect(fs.readFileSync(live, 'utf-8')).toContain('DROP COLUMN')
+    })
+
+    // #772 review, finding 4. `columnKey` keys on the schema exactly as written,
+    // but Postgres resolves an unqualified name through `search_path` — so
+    // `"users"` and `"public"."users"` are the SAME table. drizzle-kit emits
+    // unqualified; hand-written SQL and this sweep's own output are qualified.
+    // A corpus mixing the two split the index across two keys.
+    it('treats "public"."users" and "users" as the same table when checking encryption', async () => {
+      // 0000 declares the column unqualified — drizzle-kit's default output.
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_declare.sql'),
+        'CREATE TABLE "users" ("email" text);\n',
+      )
+      // 0001 is a previous sweep's output, schema-qualified. The RENAME leaves
+      // `email` holding ciphertext, recorded under the QUALIFIED key.
+      fs.writeFileSync(
+        path.join(tmpDir, '0001_encrypt.sql'),
+        [
+          'ALTER TABLE "public"."users" ADD COLUMN "email__cipherstash_tmp" "public"."eql_v3_text_eq";',
+          'ALTER TABLE "public"."users" DROP COLUMN "email";',
+          'ALTER TABLE "public"."users" RENAME COLUMN "email__cipherstash_tmp" TO "email";',
+          '',
+        ].join('\n'),
+      )
+      // 0002 changes the domain, written unqualified.
+      const alterSql =
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;'
+      const alter = path.join(tmpDir, '0002_domain-change.sql')
+      fs.writeFileSync(alter, `${alterSql}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(fs.readFileSync(alter, 'utf-8')).toBe(`${alterSql}\n`)
+      expect(skipped).toEqual([
+        { file: alter, statement: alterSql, reason: 'already-encrypted' },
+      ])
+    })
+
+    // The mirror direction: declared/encrypted unqualified, altered qualified.
+    // Before the fix this reported `source-unknown` — a WRONG reason, telling
+    // the user the corpus never declares a column it declares two files up.
+    it('resolves an unqualified declaration against a schema-qualified ALTER', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_create.sql'),
+        'CREATE TABLE "users" ("email" "public"."eql_v3_text_eq");\n',
+      )
+      const alterSql =
+        'ALTER TABLE "public"."users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;'
+      const alter = path.join(tmpDir, '0001_domain-change.sql')
+      fs.writeFileSync(alter, `${alterSql}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([
+        { file: alter, statement: alterSql, reason: 'already-encrypted' },
+      ])
+    })
+
+    // Only the IMPLICIT schema collapses. A real non-public schema is a
+    // genuinely different table and must not be conflated with the bare name.
+    it('does not conflate a non-public schema with the unqualified table', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_app.sql'),
+        'CREATE TABLE "app"."users" ("email" "public"."eql_v3_text_eq");\n',
+      )
+      fs.writeFileSync(
+        path.join(tmpDir, '0001_public.sql'),
+        'CREATE TABLE "users" ("email" text);\n',
+      )
+      const alter = path.join(tmpDir, '0002_encrypt.sql')
+      fs.writeFileSync(
+        alter,
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+      )
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      // public.users.email is plaintext — app.users.email being encrypted is
+      // about a different table entirely.
+      expect(rewritten).toEqual([alter])
+      expect(skipped).toEqual([])
+    })
   })
 
   it('handles multiple ALTER statements in one file', async () => {

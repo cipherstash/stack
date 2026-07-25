@@ -397,9 +397,29 @@ function tableOf(
     : { schema: first, table: second }
 }
 
-/** Identity of a column across the corpus, for {@link indexColumnDeclarations}. */
+/**
+ * Identity of a column across the corpus, for {@link indexColumnDeclarations}.
+ *
+ * `public` and no schema at all are the SAME table: Postgres resolves an
+ * unqualified name through `search_path`, which starts at `public`. The two
+ * spellings coexist in one corpus routinely — drizzle-kit emits unqualified,
+ * while hand-written SQL and this sweep's own {@link renderSafeAlter} output
+ * are qualified. Keying on the literal text split one column across two keys,
+ * so a column already encrypted under one spelling looked plaintext when
+ * altered under the other and the ADD+DROP+RENAME dropped its ciphertext
+ * (#772 review, finding 4).
+ *
+ * Only the IMPLICIT schema collapses. `"app"."users"` is a genuinely different
+ * table from `"users"` and keeps its own key. No case folding either:
+ * `TABLE_REF` matches quoted identifiers only, and those are case-sensitive in
+ * Postgres — `"PUBLIC"` really is a different schema from `"public"`.
+ */
 function columnKey(table: string, column: string, schema?: string): string {
-  return JSON.stringify([schema ?? '', table, column])
+  return JSON.stringify([
+    schema === 'public' ? '' : (schema ?? ''),
+    table,
+    column,
+  ])
 }
 
 /** What the migration corpus says about the columns it mentions. */
@@ -665,6 +685,24 @@ export async function rewriteEncryptedAlterColumns(
         // Unreachable — the outer regex only matches when a domain is present —
         // but leave the statement alone rather than emit a broken rewrite.
         if (!domain) return match
+
+        // This statement converts the column, so from here on in the corpus it
+        // holds CIPHERTEXT. `indexColumnDeclarations` cannot know that: it
+        // reads CREATE TABLE, ADD COLUMN and RENAME, never the strict matcher's
+        // own target. Without this, a corpus carrying an earlier conversion
+        // (`... SET DATA TYPE eql_v2_encrypted` from a stack version that
+        // predates this sweep) leaves the column looking plaintext, and the
+        // NEXT domain change drops the ciphertext — `declared` cannot catch it,
+        // because the column really is declared, as plaintext, by the original
+        // CREATE TABLE.
+        //
+        // Recorded here rather than in the corpus-wide index on purpose: the
+        // index has no order, so it would flag THIS conversion — the legitimate
+        // plaintext -> encrypted one — as already-encrypted too. Files are
+        // walked in sorted order and matches within a file in source order, so
+        // "already converted" means "converted by a statement that runs before
+        // this one".
+        encryptedColumns.add(columnKey(table, column, schema))
         return renderSafeAlter(table, column, domain, schema)
       },
     )
