@@ -385,7 +385,11 @@ export class EncryptionClient {
     // are supplied — an explicit EncryptQueryOptions forces the single-plaintext
     // path even if the plaintext value happens to be an array.
     if (!opts && isScalarQueryTermArray(plaintextOrTerms)) {
-      return new BatchEncryptQueryOperation(this.client, plaintextOrTerms)
+      return new BatchEncryptQueryOperation(
+        this.client,
+        this.backend,
+        plaintextOrTerms,
+      )
     }
 
     // Handle empty arrays: if opts provided, treat as single value; otherwise batch mode
@@ -398,6 +402,7 @@ export class EncryptionClient {
     ) {
       return new BatchEncryptQueryOperation(
         this.client,
+        this.backend,
         [] as readonly ScalarQueryTerm[],
       )
     }
@@ -408,6 +413,7 @@ export class EncryptionClient {
 
     return new EncryptQueryOperation(
       this.client,
+      this.backend,
       plaintextOrTerms as Plaintext,
       opts,
     )
@@ -453,7 +459,7 @@ export class EncryptionClient {
    * @see {@link DecryptOperation}
    */
   decrypt(encryptedData: Encrypted): DecryptOperation {
-    return new DecryptOperation(this.client, encryptedData)
+    return new DecryptOperation(this.client, this.backend, encryptedData)
   }
 
   /**
@@ -680,7 +686,7 @@ export class EncryptionClient {
     plaintexts: BulkEncryptPayload,
     opts: EncryptOptions,
   ): BulkEncryptOperation {
-    return new BulkEncryptOperation(this.client, plaintexts, opts)
+    return new BulkEncryptOperation(this.client, this.backend, plaintexts, opts)
   }
 
   /**
@@ -714,7 +720,11 @@ export class EncryptionClient {
    * ```
    */
   bulkDecrypt(encryptedPayloads: BulkDecryptPayload): BulkDecryptOperation {
-    return new BulkDecryptOperation(this.client, encryptedPayloads)
+    return new BulkDecryptOperation(
+      this.client,
+      this.backend,
+      encryptedPayloads,
+    )
   }
 
   /**

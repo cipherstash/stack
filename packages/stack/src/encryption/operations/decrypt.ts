@@ -1,8 +1,6 @@
 import { type Result, withResult } from '@byteslice/result'
-import {
-  decrypt as ffiDecrypt,
-  type JsPlaintext,
-} from '@cipherstash/protect-ffi'
+import type { JsPlaintext } from '@cipherstash/protect-ffi'
+import type { CryptoBackend } from '@/encryption/backend'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import { type LockContextInput, resolveLockContext } from '@/identity'
@@ -17,15 +15,21 @@ import { EncryptionOperation } from './base-operation'
  */
 export class DecryptOperation extends EncryptionOperation<JsPlaintext> {
   private client: Client
+  private backend: CryptoBackend
   // Internally widened to allow null so the runtime guard below can
   // short-circuit on legacy / manually-NULLed rows. The public
   // `Encryption.decrypt()` signature still rejects null at the type
   // layer; this is defense in depth for direct construction.
   private encryptedData: Encrypted | null
 
-  constructor(client: Client, encryptedData: Encrypted | null) {
+  constructor(
+    client: Client,
+    backend: CryptoBackend,
+    encryptedData: Encrypted | null,
+  ) {
     super()
     this.client = client
+    this.backend = backend
     this.encryptedData = encryptedData
   }
 
@@ -55,7 +59,7 @@ export class DecryptOperation extends EncryptionOperation<JsPlaintext> {
 
         const { metadata } = this.getAuditData()
 
-        return await ffiDecrypt(this.client, {
+        return await this.backend.decrypt(this.client, {
           ciphertext: this.encryptedData,
           unverifiedContext: metadata,
         })
@@ -75,11 +79,13 @@ export class DecryptOperation extends EncryptionOperation<JsPlaintext> {
 
   public getOperation(): {
     client: Client
+    backend: CryptoBackend
     encryptedData: Encrypted | null
     auditData?: Record<string, unknown>
   } {
     return {
       client: this.client,
+      backend: this.backend,
       encryptedData: this.encryptedData,
       auditData: this.getAuditData(),
     }
@@ -109,7 +115,7 @@ export class DecryptOperationWithLockContext extends EncryptionOperation<JsPlain
 
     const result = await withResult(
       async () => {
-        const { client, encryptedData } = this.operation.getOperation()
+        const { client, backend, encryptedData } = this.operation.getOperation()
 
         if (!client) {
           throw noClientError()
@@ -123,7 +129,7 @@ export class DecryptOperationWithLockContext extends EncryptionOperation<JsPlain
 
         const lockContext = resolveLockContext(this.lockContext)
 
-        return await ffiDecrypt(client, {
+        return await backend.decrypt(client, {
           ciphertext: encryptedData,
           unverifiedContext: metadata,
           lockContext,

@@ -1,9 +1,9 @@
 import { type Result, withResult } from '@byteslice/result'
-import {
-  type Encrypted as CipherStashEncrypted,
-  type DecryptResult,
-  decryptBulkFallible,
+import type {
+  Encrypted as CipherStashEncrypted,
+  DecryptResult,
 } from '@cipherstash/protect-ffi'
+import type { CryptoBackend } from '@/encryption/backend'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import {
@@ -59,11 +59,17 @@ const mapDecryptedDataToResult = (
 
 export class BulkDecryptOperation extends EncryptionOperation<BulkDecryptedData> {
   private client: Client
+  private backend: CryptoBackend
   private encryptedPayloads: BulkDecryptPayload
 
-  constructor(client: Client, encryptedPayloads: BulkDecryptPayload) {
+  constructor(
+    client: Client,
+    backend: CryptoBackend,
+    encryptedPayloads: BulkDecryptPayload,
+  ) {
     super()
     this.client = client
+    this.backend = backend
     this.encryptedPayloads = encryptedPayloads
   }
 
@@ -95,10 +101,13 @@ export class BulkDecryptOperation extends EncryptionOperation<BulkDecryptedData>
 
         const { metadata } = this.getAuditData()
 
-        const decryptedData = await decryptBulkFallible(this.client, {
-          ciphertexts: nonNullPayloads,
-          unverifiedContext: metadata,
-        })
+        const decryptedData = await this.backend.decryptBulkFallible(
+          this.client,
+          {
+            ciphertexts: nonNullPayloads,
+            unverifiedContext: metadata,
+          },
+        )
 
         return mapDecryptedDataToResult(this.encryptedPayloads, decryptedData)
       },
@@ -117,10 +126,12 @@ export class BulkDecryptOperation extends EncryptionOperation<BulkDecryptedData>
 
   public getOperation(): {
     client: Client
+    backend: CryptoBackend
     encryptedPayloads: BulkDecryptPayload
   } {
     return {
       client: this.client,
+      backend: this.backend,
       encryptedPayloads: this.encryptedPayloads,
     }
   }
@@ -141,7 +152,7 @@ export class BulkDecryptOperationWithLockContext extends EncryptionOperation<Bul
   }
 
   public async execute(): Promise<Result<BulkDecryptedData, EncryptionError>> {
-    const { client, encryptedPayloads } = this.operation.getOperation()
+    const { client, backend, encryptedPayloads } = this.operation.getOperation()
 
     const log = createRequestLogger()
     log.set({
@@ -168,7 +179,7 @@ export class BulkDecryptOperationWithLockContext extends EncryptionOperation<Bul
 
         const { metadata } = this.getAuditData()
 
-        const decryptedData = await decryptBulkFallible(client, {
+        const decryptedData = await backend.decryptBulkFallible(client, {
           ciphertexts: nonNullPayloads,
           unverifiedContext: metadata,
         })

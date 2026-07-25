@@ -46,7 +46,7 @@ describe('runtime null guards (defense in depth)', () => {
   })
 
   it('decrypt(null) short-circuits without an FFI call', async () => {
-    const op = new DecryptOperation(stubClient, null)
+    const op = new DecryptOperation(stubClient, forbiddenBackend, null)
     const result = await op.execute()
     if (result.failure) throw new Error(result.failure.message)
     expect(result.data).toBeNull()
@@ -57,6 +57,7 @@ describe('runtime null guards (defense in depth)', () => {
     // fast path returns a {data: null} placeholder per element.
     const op = new BulkEncryptOperation(
       stubClient,
+      forbiddenBackend,
       [{ id: 'a', plaintext: null }],
       { column: table.metadata, table },
     )
@@ -66,14 +67,16 @@ describe('runtime null guards (defense in depth)', () => {
   })
 
   it('bulkDecrypt preserves null positions in mixed arrays', async () => {
-    const op = new BulkDecryptOperation(stubClient, [{ id: 'a', data: null }])
+    const op = new BulkDecryptOperation(stubClient, forbiddenBackend, [
+      { id: 'a', data: null },
+    ])
     const result = await op.execute()
     if (result.failure) throw new Error(result.failure.message)
     expect(result.data).toEqual([{ id: 'a', data: null }])
   })
 
   it('encryptQuery(null) short-circuits to { data: null }', async () => {
-    const op = new EncryptQueryOperation(stubClient, null, {
+    const op = new EncryptQueryOperation(stubClient, forbiddenBackend, null, {
       column: table.metadata,
       table,
       queryType: 'steVecSelector',
@@ -85,12 +88,17 @@ describe('runtime null guards (defense in depth)', () => {
   })
 
   it('encryptQuery(undefined) short-circuits to { data: null }', async () => {
-    const op = new EncryptQueryOperation(stubClient, undefined, {
-      column: table.metadata,
-      table,
-      queryType: 'steVecSelector',
-      returnType: 'composite-literal',
-    } as any)
+    const op = new EncryptQueryOperation(
+      stubClient,
+      forbiddenBackend,
+      undefined,
+      {
+        column: table.metadata,
+        table,
+        queryType: 'steVecSelector',
+        returnType: 'composite-literal',
+      } as any,
+    )
     const result = await op.execute()
     if (result.failure) throw new Error(result.failure.message)
     expect(result.data).toBeNull()
@@ -98,7 +106,7 @@ describe('runtime null guards (defense in depth)', () => {
 
   it('batchEncryptQuery preserves null/undefined slots position-stably', async () => {
     // All-null/undefined batch — no FFI call needed.
-    const op = new BatchEncryptQueryOperation(stubClient, [
+    const op = new BatchEncryptQueryOperation(stubClient, forbiddenBackend, [
       {
         column: table.metadata,
         table,

@@ -1,5 +1,6 @@
 import { type Result, withResult } from '@byteslice/result'
-import { encryptBulk, type JsPlaintext } from '@cipherstash/protect-ffi'
+import type { JsPlaintext } from '@cipherstash/protect-ffi'
+import type { CryptoBackend } from '@/encryption/backend'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { assertValidNumericValue } from '@/encryption/helpers/validation'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
@@ -72,17 +73,20 @@ const mapEncryptedDataToResult = (
 
 export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData> {
   private client: Client
+  private backend: CryptoBackend
   private plaintexts: BulkEncryptPayload
   private column: BuildableColumn
   private table: BuildableTable
 
   constructor(
     client: Client,
+    backend: CryptoBackend,
     plaintexts: BulkEncryptPayload,
     opts: EncryptOptions,
   ) {
     super()
     this.client = client
+    this.backend = backend
     this.plaintexts = plaintexts
     this.column = opts.column
     this.table = opts.table
@@ -125,7 +129,7 @@ export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData>
 
         const { metadata } = this.getAuditData()
 
-        const encryptedData = await encryptBulk(this.client, {
+        const encryptedData = await this.backend.encryptBulk(this.client, {
           plaintexts: nonNullPayloads,
           unverifiedContext: metadata,
         })
@@ -147,12 +151,14 @@ export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData>
 
   public getOperation(): {
     client: Client
+    backend: CryptoBackend
     plaintexts: BulkEncryptPayload
     column: BuildableColumn
     table: BuildableTable
   } {
     return {
       client: this.client,
+      backend: this.backend,
       plaintexts: this.plaintexts,
       column: this.column,
       table: this.table,
@@ -175,7 +181,8 @@ export class BulkEncryptOperationWithLockContext extends EncryptionOperation<Bul
   }
 
   public async execute(): Promise<Result<BulkEncryptedData, EncryptionError>> {
-    const { client, plaintexts, column, table } = this.operation.getOperation()
+    const { client, backend, plaintexts, column, table } =
+      this.operation.getOperation()
 
     const log = createRequestLogger()
     log.set({
@@ -210,7 +217,7 @@ export class BulkEncryptOperationWithLockContext extends EncryptionOperation<Bul
 
         const { metadata } = this.getAuditData()
 
-        const encryptedData = await encryptBulk(client, {
+        const encryptedData = await backend.encryptBulk(client, {
           plaintexts: nonNullPayloads,
           unverifiedContext: metadata,
         })

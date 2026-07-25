@@ -1,9 +1,6 @@
 import { type Result, withResult } from '@byteslice/result'
-import {
-  encryptQueryBulk as ffiEncryptQueryBulk,
-  type JsPlaintext,
-  type QueryPayload,
-} from '@cipherstash/protect-ffi'
+import type { JsPlaintext, QueryPayload } from '@cipherstash/protect-ffi'
+import type { CryptoBackend } from '@/encryption/backend'
 import { formatEncryptedResult } from '@/encryption/helpers'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
@@ -82,7 +79,7 @@ function assembleResults(
   totalLength: number,
   // Typed as the FFI bulk-query return so it tracks scalar, SteVec containment,
   // selector-hash, value-selector, and selector-ordering query shapes.
-  encryptedValues: Awaited<ReturnType<typeof ffiEncryptQueryBulk>>,
+  encryptedValues: Awaited<ReturnType<CryptoBackend['encryptQueryBulk']>>,
   nonNullTerms: { term: ScalarQueryTerm; originalIndex: number }[],
 ): EncryptedQueryResult[] {
   const results: EncryptedQueryResult[] = new Array(totalLength).fill(null)
@@ -100,6 +97,7 @@ export class BatchEncryptQueryOperation extends EncryptionOperation<
 > {
   constructor(
     private client: Client,
+    private backend: CryptoBackend,
     private terms: readonly ScalarQueryTerm[],
   ) {
     super()
@@ -110,6 +108,7 @@ export class BatchEncryptQueryOperation extends EncryptionOperation<
   ): BatchEncryptQueryOperationWithLockContext {
     return new BatchEncryptQueryOperationWithLockContext(
       this.client,
+      this.backend,
       this.terms,
       lockContext,
       this.auditMetadata,
@@ -148,7 +147,7 @@ export class BatchEncryptQueryOperation extends EncryptionOperation<
           buildQueryPayload(term),
         )
 
-        const encrypted = await ffiEncryptQueryBulk(this.client, {
+        const encrypted = await this.backend.encryptQueryBulk(this.client, {
           queries,
           unverifiedContext: metadata,
         })
@@ -174,6 +173,7 @@ export class BatchEncryptQueryOperationWithLockContext extends EncryptionOperati
 > {
   constructor(
     private client: Client,
+    private backend: CryptoBackend,
     private terms: readonly ScalarQueryTerm[],
     private lockContext: LockContextInput,
     auditMetadata?: Record<string, unknown>,
@@ -216,7 +216,7 @@ export class BatchEncryptQueryOperationWithLockContext extends EncryptionOperati
           buildQueryPayload(term, context),
         )
 
-        const encrypted = await ffiEncryptQueryBulk(this.client, {
+        const encrypted = await this.backend.encryptQueryBulk(this.client, {
           queries,
           unverifiedContext: metadata,
         })

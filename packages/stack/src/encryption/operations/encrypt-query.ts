@@ -1,8 +1,6 @@
 import { type Result, withResult } from '@byteslice/result'
-import {
-  encryptQuery as ffiEncryptQuery,
-  type JsPlaintext,
-} from '@cipherstash/protect-ffi'
+import type { JsPlaintext } from '@cipherstash/protect-ffi'
+import type { CryptoBackend } from '@/encryption/backend'
 import { formatEncryptedResult } from '@/encryption/helpers'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
@@ -26,6 +24,7 @@ import { EncryptionOperation } from './base-operation'
 export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryResult> {
   constructor(
     private client: Client,
+    private backend: CryptoBackend,
     private plaintext: Plaintext | null | undefined,
     private opts: EncryptQueryOptions,
   ) {
@@ -37,6 +36,7 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
   ): EncryptQueryOperationWithLockContext {
     return new EncryptQueryOperationWithLockContext(
       this.client,
+      this.backend,
       this.plaintext,
       this.opts,
       lockContext,
@@ -89,7 +89,7 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
         )
         assertMatchNeedleQueryable(plaintext, indexType, this.opts.column)
 
-        const encrypted = await ffiEncryptQuery(this.client, {
+        const encrypted = await this.backend.encryptQuery(this.client, {
           // `Plaintext` widens the FFI `JsPlaintext` with `Date` (serialized via
           // `toJSON` at the boundary); cast until the upstream input union is
           // corrected to include it.
@@ -124,6 +124,7 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
 export class EncryptQueryOperationWithLockContext extends EncryptionOperation<EncryptedQueryResult> {
   constructor(
     private client: Client,
+    private backend: CryptoBackend,
     private plaintext: Plaintext | null | undefined,
     private opts: EncryptQueryOptions,
     private lockContext: LockContextInput,
@@ -180,7 +181,7 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
         )
         assertMatchNeedleQueryable(plaintext, indexType, this.opts.column)
 
-        const encrypted = await ffiEncryptQuery(this.client, {
+        const encrypted = await this.backend.encryptQuery(this.client, {
           // `Plaintext` widens the FFI `JsPlaintext` with `Date` (serialized via
           // `toJSON` at the boundary); cast until the upstream input union is
           // corrected to include it.

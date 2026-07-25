@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { CryptoBackend } from '@/encryption/backend'
 import {
   BulkEncryptOperation,
   BulkEncryptOperationWithLockContext,
@@ -9,6 +10,15 @@ import type {
   BulkEncryptPayload,
   Client,
 } from '@/types'
+
+// Validation must reject BEFORE the FFI is reached. Injecting a backend that
+// throws on contact makes that a positive assertion rather than something
+// inferred from the error message (#798).
+const forbiddenBackend = new Proxy({} as CryptoBackend, {
+  get: (_target, name) => () => {
+    throw new Error(`FFI ${String(name)}() must not be reached by validation`)
+  },
+})
 
 /**
  * `EncryptOperation` rejects NaN / ±Infinity / out-of-int64 `bigint` values
@@ -48,10 +58,15 @@ describe('BulkEncryptOperation numeric validation', () => {
     [2n ** 70n, 'Cannot encrypt bigint value out of int64 range'],
     [-(2n ** 70n), 'Cannot encrypt bigint value out of int64 range'],
   ])('rejects %s before reaching the FFI', async (value, message) => {
-    const op = new BulkEncryptOperation(client, payload(value), {
-      column,
-      table,
-    })
+    const op = new BulkEncryptOperation(
+      client,
+      forbiddenBackend,
+      payload(value),
+      {
+        column,
+        table,
+      },
+    )
 
     const result = await op.execute()
 
@@ -59,10 +74,15 @@ describe('BulkEncryptOperation numeric validation', () => {
   })
 
   it('rejects an invalid value anywhere in the list, not just the first', async () => {
-    const op = new BulkEncryptOperation(client, payload(30, 42, Number.NaN), {
-      column,
-      table,
-    })
+    const op = new BulkEncryptOperation(
+      client,
+      forbiddenBackend,
+      payload(30, 42, Number.NaN),
+      {
+        column,
+        table,
+      },
+    )
 
     const result = await op.execute()
 
@@ -70,10 +90,15 @@ describe('BulkEncryptOperation numeric validation', () => {
   })
 
   it('still passes null entries through without tripping validation', async () => {
-    const op = new BulkEncryptOperation(client, [{ plaintext: null }], {
-      column,
-      table,
-    })
+    const op = new BulkEncryptOperation(
+      client,
+      forbiddenBackend,
+      [{ plaintext: null }],
+      {
+        column,
+        table,
+      },
+    )
 
     const result = await op.execute()
 
@@ -82,10 +107,15 @@ describe('BulkEncryptOperation numeric validation', () => {
   })
 
   it('accepts in-range bigints at the int64 boundary', async () => {
-    const op = new BulkEncryptOperation(client, payload(9223372036854775807n), {
-      column,
-      table,
-    })
+    const op = new BulkEncryptOperation(
+      client,
+      forbiddenBackend,
+      payload(9223372036854775807n),
+      {
+        column,
+        table,
+      },
+    )
 
     const result = await op.execute()
 
@@ -96,7 +126,10 @@ describe('BulkEncryptOperation numeric validation', () => {
 
   it('enforces the same guard on the lock-context variant', async () => {
     const op = new BulkEncryptOperationWithLockContext(
-      new BulkEncryptOperation(client, payload(Number.NaN), { column, table }),
+      new BulkEncryptOperation(client, forbiddenBackend, payload(Number.NaN), {
+        column,
+        table,
+      }),
       lockContext,
     )
 
