@@ -28,16 +28,14 @@ Supabase client, those integrations emit correct operands for you: see
 > [CipherStash Proxy](https://github.com/cipherstash/proxy) the split is the
 > opposite — you write *plaintext* SQL and Proxy encrypts on write and
 > decrypts on read, so there is no `encryptQuery`, no `eql_v3.query_*` cast,
-> and no payload to bind. `stash init` already asked which path you are on
-> (`--proxy` / `--no-proxy`) and recorded the answer as `usesProxy` in
-> `.cipherstash/context.json` — read it there if you are unsure.
+> and no payload to bind.
 >
-> Proxy also has its own schema lifecycle — `stash db push` into
-> `eql_v2_configuration`, promoted at cutover — and that lifecycle is the EQL
-> **v2** one. This skill is EQL v3, where a column's encryption config lives
-> in its domain and there is no configuration table to push (`stash db push`
-> against a v3 database says exactly that and refuses). See `stash-encryption`
-> § If you use CipherStash Proxy for the Proxy-side rollout.
+> Proxy's schema lifecycle — `stash db push` into `eql_v2_configuration`,
+> promoted at cutover — belongs to EQL **v2**. This skill is EQL v3, where a
+> column's encryption config lives in its own domain and there is no
+> configuration table to push. The `stash` CLI does not track a
+> Proxy-versus-SDK choice; it targets the direct-connection path this skill
+> describes.
 
 ## When to Use This Skill
 
@@ -408,8 +406,7 @@ SELECT column_name, domain_schema, domain_name
   `EXPLAIN` checklist.
 - `stash-edge` — the WASM entry, `CS_*` credentials, and the
   credential-identity rule.
-- `stash-cli` — `stash eql install`, `stash db validate`, `stash encrypt backfill`,
-  and the `--proxy` / `--no-proxy` choice behind `usesProxy`.
+- `stash-cli` — `stash eql install`, `stash db validate`, `stash encrypt backfill`.
 
 Upstream:
 
