@@ -176,9 +176,15 @@ function trimStatementPreamble(statement: string): string {
  * it into a real `DROP COLUMN`. A doubled delimiter (`''` in a literal, `""` in
  * an identifier) is an escape and does not close the token.
  *
- * Dollar-quoted bodies are NOT tracked: a `--` or `'` inside one reads as a
- * comment/literal here, which can only make us skip a rewrite (the statement
- * then fails loudly at migrate time), never perform a destructive one.
+ * Dollar-quoted bodies (`$$ … $$`, `$fn$ … $fn$`) are skipped whole, and an
+ * `E''` literal gives backslash its escape meaning. Both are quote-PARITY
+ * concerns, not merely "we might skip a rewrite": an apostrophe inside an
+ * untracked `$$` body, or a `\'` read as a close, ends a literal EARLY, and
+ * every token after it is then misread — including a commented-out ALTER, which
+ * reads as live and gets rewritten into a live DROP COLUMN. That is the same
+ * failure mode as the apostrophe-in-identifier case below, and it is why the
+ * earlier reasoning here ("can only make us skip") was wrong: it holds for an
+ * UNDER-terminated literal, not an over-terminated one (#772 review, finding 1).
  */
 function isInsideCommentOrString(sql: string, index: number): boolean {
   let i = 0
@@ -206,6 +212,20 @@ function isInsideCommentOrString(sql: string, index: number): boolean {
       }
       if (j > index) return true
       i = j
+    } else if (sql[i] === '$') {
+      // A `$tag$ … $tag$` body is opaque: its content is not SQL, so a `'` or
+      // `--` inside it means nothing. Skipping the whole body is what keeps the
+      // rest of the file's quote parity aligned with Postgres.
+      const delimiter = dollarQuoteDelimiter(sql, i)
+      if (delimiter === undefined) {
+        i += 1
+      } else {
+        const close = sql.indexOf(delimiter, i + delimiter.length)
+        // Unterminated: inert to the end of the file, like the cases below.
+        const end = close === -1 ? sql.length : close + delimiter.length
+        if (end > index) return true
+        i = end
+      }
     } else if (sql[i] === '"') {
       // A quoted identifier is live SQL, but its body is not: consuming it here
       // — before the `'` branch below — is what stops an apostrophe inside one
@@ -219,7 +239,7 @@ function isInsideCommentOrString(sql: string, index: number): boolean {
       if (end > index) return true
       i = end
     } else if (sql[i] === "'") {
-      const end = endOfQuoted(sql, i, "'")
+      const end = endOfQuoted(sql, i, "'", isEscapeStringOpener(sql, i))
       // Unterminated, or the literal runs past `index`: `index` is inside a
       // string literal, which is every bit as inert as a comment.
       if (end > index) return true
@@ -232,14 +252,55 @@ function isInsideCommentOrString(sql: string, index: number): boolean {
 }
 
 /**
+ * The `$tag$` delimiter opening at `open`, or `undefined` when what sits there
+ * is just a `$`. The tag is empty (`$$`) or an SQL identifier (`$fn$`); a digit
+ * cannot start one, so a positional parameter (`$1`) is never mistaken for a
+ * dollar-quote opener.
+ */
+function dollarQuoteDelimiter(sql: string, open: number): string | undefined {
+  DOLLAR_QUOTE_OPEN_RE.lastIndex = open
+  return DOLLAR_QUOTE_OPEN_RE.exec(sql)?.[0]
+}
+
+/** Sticky, so the scan never has to slice the file to test one position. */
+const DOLLAR_QUOTE_OPEN_RE = /\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/y
+
+/**
+ * Whether the `'` at `open` starts an `E''` escape-string, in which a backslash
+ * escapes the following character. Plain literals give backslash no special
+ * meaning under the default `standard_conforming_strings = on`.
+ *
+ * The character before the `E` must not be part of an identifier, so a column
+ * or type name that merely ends in `e` does not turn the literal after it into
+ * an escape-string.
+ */
+function isEscapeStringOpener(sql: string, open: number): boolean {
+  const prefix = sql[open - 1]
+  if (prefix !== 'E' && prefix !== 'e') return false
+  return !/[A-Za-z0-9_]/.test(sql[open - 2] ?? '')
+}
+
+/**
  * The index just past the `quote`-delimited token that opens at `open`, or
  * `sql.length` when it is never closed. A doubled delimiter inside the token is
  * an escaped one (`''`, `""`) and does not end it.
+ *
+ * With `backslashEscapes`, a `\` also escapes the next character — the `E''`
+ * form. Getting this wrong ends the literal EARLY, which shifts quote parity
+ * for the whole rest of the file and can make a commented-out ALTER downstream
+ * read as live (#772 review, finding 1).
  */
-function endOfQuoted(sql: string, open: number, quote: "'" | '"'): number {
+function endOfQuoted(
+  sql: string,
+  open: number,
+  quote: "'" | '"',
+  backslashEscapes = false,
+): number {
   let i = open + 1
   while (i < sql.length) {
-    if (sql[i] !== quote) {
+    if (backslashEscapes && sql[i] === '\\') {
+      i += 2
+    } else if (sql[i] !== quote) {
       i += 1
     } else if (sql[i + 1] === quote) {
       i += 2
