@@ -834,6 +834,11 @@ export async function rewriteEncryptedAlterColumns(
   return { rewritten, skipped }
 }
 
+// #region wizard-only — deliberately has no counterpart in
+// packages/cli/src/commands/db/rewrite-migrations.ts. Everything OUTSIDE this
+// region is mirrored there byte-for-byte and is checked by
+// scripts/__tests__/rewriter-copies-in-sync.test.mjs. Only the wizard sweeps
+// several candidate directories; both CLI call sites pass one explicit --out.
 /** One candidate migration directory's outcome from {@link sweepMigrationDirs}. */
 export interface DirRewriteResult extends RewriteResult {
   /** The candidate directory as supplied (relative to `cwd`), for reporting. */
@@ -884,6 +889,7 @@ export async function sweepMigrationDirs(
 
   return results
 }
+// #endregion wizard-only
 
 /**
  * The rewrite is identical for v2 and v3, and the ADD+DROP+RENAME sequence is
