@@ -1,6 +1,6 @@
 ---
 name: stash-postgres
-description: Query EQL v3 encrypted columns from hand-written Postgres SQL over `pg` (node-postgres) or `postgres` (postgres-js) — no ORM. Covers the column-domain-to-query-domain operator matrix (which of `=`, `<>`, `<`, `>=`, `@@`, `@>` each encrypted domain accepts), minting search needles with `encryptQuery`, the per-driver parameter-binding rules for encrypted payloads, and the double-encoding failure that trips the domain CHECK with a message naming neither JSON nor encoding. Use when writing INSERT/SELECT against an encrypted column without an ORM, when a predicate returns zero rows or raises "operator does not exist", or when a domain CHECK constraint rejects an encrypted value on write.
+description: Query EQL v3 encrypted columns from hand-written Postgres SQL over `pg` (node-postgres) or `postgres` (postgres-js) — no ORM. Covers the column-domain-to-query-domain operator matrix (which of `=`, `<>`, `<`, `>=`, `@@`, `@>` each encrypted domain accepts), minting search needles with `encryptQuery`, the per-driver parameter-binding rules for encrypted payloads, and the double-encoding failure that trips the domain CHECK with a message naming neither JSON nor encoding. Use when writing INSERT/SELECT against an encrypted column without an ORM, when a predicate returns zero rows or raises "operator does not exist", or when a domain CHECK constraint rejects an encrypted value on write. Assumes a direct Postgres connection with client-side encryption — CipherStash Proxy encrypts on the wire and needs none of this.
 ---
 
 # Raw Postgres SQL Against Encrypted Columns (EQL v3)
@@ -21,6 +21,23 @@ This covers the `pg` and `postgres-js` drivers with no ORM — plain Node
 services, Hono, edge functions. If you use Drizzle, Prisma Next, or the
 Supabase client, those integrations emit correct operands for you: see
 `stash-drizzle`, `stash-prisma-next`, `stash-supabase` instead.
+
+> **Using CipherStash Proxy? None of this applies.** This skill assumes the
+> app connects to Postgres **directly** and encrypts **client-side**: Stack
+> mints the payloads and the query terms, and your SQL carries them. Through
+> [CipherStash Proxy](https://github.com/cipherstash/proxy) the split is the
+> opposite — you write *plaintext* SQL and Proxy encrypts on write and
+> decrypts on read, so there is no `encryptQuery`, no `eql_v3.query_*` cast,
+> and no payload to bind. `stash init` already asked which path you are on
+> (`--proxy` / `--no-proxy`) and recorded the answer as `usesProxy` in
+> `.cipherstash/context.json` — read it there if you are unsure.
+>
+> Proxy also has its own schema lifecycle — `stash db push` into
+> `eql_v2_configuration`, promoted at cutover — and that lifecycle is the EQL
+> **v2** one. This skill is EQL v3, where a column's encryption config lives
+> in its domain and there is no configuration table to push (`stash db push`
+> against a v3 database says exactly that and refuses). See `stash-encryption`
+> § If you use CipherStash Proxy for the Proxy-side rollout.
 
 ## When to Use This Skill
 
@@ -114,6 +131,30 @@ leaving the operand as bare `jsonb` (see [Traps](#traps)).
 Every operator has a function twin, useful when an operator is awkward to
 emit: `eql_v3.eq(col, term)`, `eql_v3.matches(col, term)`, and the comparison
 functions. `col = term` and `eql_v3.eq(col, term)` are equivalent.
+
+### Where this surface is defined
+
+Nothing in the matrix above is authored by the client library. The domains,
+operators, CHECKs, and extractor functions all come from the **EQL SQL
+bundle** that `stash eql install` applies — published as the `@cipherstash/eql`
+package and developed at
+[`cipherstash/encrypt-query-language`](https://github.com/cipherstash/encrypt-query-language).
+The CLI pins an exact version, so a database is only ever on one bundle.
+
+That makes the matrix a snapshot of a *versioned* surface. Check it against
+the bundle actually installed before concluding an operator is missing:
+
+```sql
+SELECT eql_v3.version();   -- e.g. '3.0.2'
+```
+
+If an operator is absent from both this matrix and your installed bundle,
+that is an upstream question, not a client-library one — the operator set
+lives in `encrypt-query-language`. The bundle is also readable locally — the
+`stash` CLI depends on `@cipherstash/eql`, which ships the install SQL at
+`dist/sql/cipherstash-encrypt.sql` (under `node_modules`, wherever your
+package manager resolves it). That file is the last word on which overloads
+exist.
 
 ## Binding Parameters: The Driver Rules
 
@@ -325,7 +366,10 @@ The Credential-Identity Rule.
 **`operator does not exist: public.eql_v3_… = eql_v3.query_…`** — the domain
 pair has no such operator. Check the [matrix](#the-predicate-matrix): the
 column's domain may not support that predicate (e.g. `<` on an `_eq` column),
-or the query domain does not match the column's domain.
+or the query domain does not match the column's domain. If the matrix says
+the operator *should* exist, check the installed bundle version
+(`SELECT eql_v3.version()`) — an older EQL install can predate an overload
+documented here. See [Where this surface is defined](#where-this-surface-is-defined).
 
 **`value for domain … violates check constraint`** on write — double-encoded
 payload; run `SELECT jsonb_typeof($1::jsonb)` and see
@@ -349,6 +393,8 @@ rather than a `Seq Scan`.
 have drifted:
 
 ```sql
+SELECT eql_v3.version();   -- which bundle defines the operators available
+
 SELECT column_name, domain_schema, domain_name
   FROM information_schema.columns
  WHERE table_name = 'users' AND domain_name LIKE 'eql_v3%';
@@ -362,4 +408,15 @@ SELECT column_name, domain_schema, domain_name
   `EXPLAIN` checklist.
 - `stash-edge` — the WASM entry, `CS_*` credentials, and the
   credential-identity rule.
-- `stash-cli` — `stash eql install`, `stash db validate`, `stash encrypt backfill`.
+- `stash-cli` — `stash eql install`, `stash db validate`, `stash encrypt backfill`,
+  and the `--proxy` / `--no-proxy` choice behind `usesProxy`.
+
+Upstream:
+
+- [`cipherstash/encrypt-query-language`](https://github.com/cipherstash/encrypt-query-language)
+  — EQL itself: the authoritative definition of every domain, operator, CHECK,
+  and extractor named in this skill, shipped as `@cipherstash/eql`. Operator
+  gaps and domain-level bugs belong there, not against the client library.
+- [`cipherstash/proxy`](https://github.com/cipherstash/proxy) — CipherStash
+  Proxy, the alternative to this entire skill: plaintext SQL, encryption on
+  the wire.

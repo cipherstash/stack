@@ -23,7 +23,12 @@ on postgres-js double-encodes it into a jsonb *string* scalar, tripping the
 domain CHECK with a message naming neither JSON nor encoding; and leaving an
 operand as bare `jsonb` silently selects a different operator overload — one
 that coerces to the *storage* domain and so rejects the ciphertext-free query
-term.
+term. It also scopes itself against the two things a hand-written-SQL reader
+is otherwise left to infer: **CipherStash Proxy** (where you write plaintext
+SQL and none of the skill applies — the `usesProxy` fork `stash init` already
+asked about), and the provenance of the operator surface itself (the EQL
+bundle from `cipherstash/encrypt-query-language`, version-checkable with
+`SELECT eql_v3.version()`, and where operator gaps should be filed).
 
 **`stash-edge`** — the `@cipherstash/stack/wasm-inline` entry for Deno,
 Supabase Edge Functions, Cloudflare Workers, and Bun. Import specifier per
