@@ -528,8 +528,10 @@ same claim must be supplied to encrypt and decrypt. Lock contexts work with all
 operations: `encrypt`, `decrypt`, `encryptModel`, `decryptModel`,
 `bulkEncryptModels`, `bulkDecryptModels`, `bulkEncrypt`, `bulkDecrypt`,
 `encryptQuery`. `.withLockContext()` also accepts a `LockContext` instance.
-On the typed client, `decryptModel` / `bulkDecryptModels` take the lock
-context as an optional third argument instead of chaining.
+On the typed client, `decryptModel` / `bulkDecryptModels` additionally accept
+the lock context as an optional third argument. Use that or `.withLockContext()`,
+not both — chaining onto a decrypt that already took a positional lock context
+throws.
 
 > **Deprecated: `LockContext.identify()`.** Per-operation CTS tokens were removed
 > in `protect-ffi` 0.25; the token `identify()` fetches is no longer used by
@@ -707,14 +709,14 @@ Method signatures are derived from your schemas: plaintext arguments are pinned 
 `returnType` controls the encrypted query term's shape: `'eql'` (default, the EQL JSON payload for the ORM adapters), `'composite-literal'` (a Postgres composite string for `.eq()`/string-based APIs), or `'escaped-composite-literal'` (the same, escaped for embedding). Most users take the default; the adapters set it as needed.
 | `encryptQuery` | `(terms: ScalarQueryTerm[])` | `BatchEncryptQueryOperation` (thenable) |
 | `encryptModel` | `(model, table)` | `EncryptModelOperation` (thenable) |
-| `decryptModel` | `(encryptedModel, table, lockContext?)` | `Promise<Result<...>>` |
+| `decryptModel` | `(encryptedModel, table, lockContext?)` | `AuditableDecryptModelOperation` (thenable) |
 | `bulkEncryptModels` | `(models, table)` | `BulkEncryptModelsOperation` (thenable) |
-| `bulkDecryptModels` | `(encryptedModels, table, lockContext?)` | `Promise<Result<...>>` |
+| `bulkDecryptModels` | `(encryptedModels, table, lockContext?)` | `AuditableDecryptModelOperation` (thenable) |
 | `bulkEncrypt` | `(plaintexts, { column, table })` | `BulkEncryptOperation` (thenable) |
 | `bulkDecrypt` | `(encryptedPayloads)` | `BulkDecryptOperation` (thenable) |
 | `getEncryptConfig` | `()` | The resolved encrypt config |
 
-The thenable operations support `.withLockContext(lockContext)` for identity-aware encryption. `decryptModel` / `bulkDecryptModels` return a plain `Promise` instead — pass the lock context as the optional third argument. `decrypt` of a single value cannot be strongly typed (a lone ciphertext carries no column identity), and `encryptQuery` rejects storage-only columns at compile time.
+The thenable operations support `.withLockContext(lockContext)` for identity-aware encryption, and `decryptModel` / `bulkDecryptModels` also support `.audit({ metadata })`. Those two additionally accept the lock context as an optional third argument — use one form or the other. `decrypt` of a single value cannot be strongly typed (a lone ciphertext carries no column identity), and `encryptQuery` rejects storage-only columns at compile time.
 
 ### `LockContext` (legacy)
 
