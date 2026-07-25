@@ -171,6 +171,33 @@ impl<'a> Aad<'a> {
     pub fn for_none(&self) -> Aad<'static> {
         self.for_marker(b"none")
     }
+
+    /// Derives the AAD a leaf must be sealed against when a **schema-aware**
+    /// caller wants to bind the leaf's expected *type* into authentication.
+    ///
+    /// This is the expectation-side type binding. A caller that knows what
+    /// type a field must hold (the future `EqlCipher`) mixes the expected
+    /// leaf tag into the AAD at **both** encrypt and decrypt, so a wrong-type
+    /// hypothesis fails authentication before any plaintext is released —
+    /// turning a type confusion into an ordinary AEAD failure.
+    ///
+    /// It is **not** wired into [`FfiValue`](crate::Encrypt)'s own
+    /// self-describing sealing: that path recovers the type from the inner,
+    /// authenticated `[tag] ++ payload` leaf, which is knowable only *after*
+    /// decryption. AAD, by contrast, must be known *before* decryption, so it
+    /// can only carry an *expectation* the caller already holds — not the
+    /// value's actual, self-described type. The two mechanisms are
+    /// complementary: the inner tag makes a value self-describing; this AAD
+    /// binding lets a schema enforce a type up front.
+    ///
+    /// The encoding is `PAE(domain, aad, [tag])`. The leading
+    /// domain-separation label keeps the result disjoint from
+    /// [`for_map_entry`](Aad::for_map_entry) and from user-supplied composite
+    /// AAD.
+    pub fn for_leaf_type(&self, tag: u8) -> Aad<'static> {
+        const LEAF_TYPE_DOMAIN: &[u8] = b"vitaminc/aead/leaf-type/v1";
+        pae::encode(&[LEAF_TYPE_DOMAIN, self.as_bytes(), &[tag]])
+    }
 }
 
 /// Types that can be canonically converted into an [`Aad`].
@@ -479,6 +506,36 @@ mod tests {
         assert_ne!(
             Aad::from_slice(b"ctxa").for_map_entry("").as_bytes(),
             Aad::from_slice(b"ctx").for_map_entry("a").as_bytes()
+        );
+    }
+
+    #[test]
+    fn for_leaf_type_pins_encoding() {
+        // The exact bytes are the expectation-side type-binding commitment:
+        // PAE(domain, aad, [tag]). Changing them breaks decryption of
+        // existing schema-bound ciphertexts.
+        let bound = Aad::from_slice(b"ctx").for_leaf_type(0x05);
+        let expected = Aad::pae(&[b"vitaminc/aead/leaf-type/v1", b"ctx", &[0x05]]);
+        assert_eq!(bound.as_bytes(), expected.as_bytes());
+    }
+
+    #[test]
+    fn for_leaf_type_differs_from_map_entry_and_tuple_aad() {
+        // The domain label keeps leaf-type AAD disjoint from the map-entry
+        // binding and from a user binding (aad, tag) as tuple AAD.
+        let leaf = Aad::from_slice(b"ctx").for_leaf_type(b'n');
+        let map_entry = Aad::from_slice(b"ctx").for_map_entry("n");
+        assert_ne!(leaf.as_bytes(), map_entry.as_bytes());
+        let tuple = (Aad::from_slice(b"ctx"), [b'n']).into_aad();
+        assert_ne!(leaf.as_bytes(), tuple.as_bytes());
+    }
+
+    #[test]
+    fn for_leaf_type_is_tag_sensitive() {
+        let aad = Aad::from_slice(b"ctx");
+        assert_ne!(
+            aad.for_leaf_type(0x05).as_bytes(),
+            aad.for_leaf_type(0x09).as_bytes()
         );
     }
 
