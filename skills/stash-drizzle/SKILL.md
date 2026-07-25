@@ -417,7 +417,7 @@ import { index } from "drizzle-orm/pg-core"
 
 Run `ANALYZE <table>` after the migration applies — an expression index gathers no statistics at `CREATE INDEX` time. For when to create indexes during a rollout (after backfill, before switching reads), engagement rules, and `EXPLAIN` verification, see the `stash-indexing` skill.
 
-> **Dropping to raw SQL?** `db.execute(sql\`…\`)` bypasses the operators this integration emits, so you own the operand casts yourself — an encrypted predicate needs its needle cast to the column's `eql_v3.query_*` domain, and the driver's parameter-binding rules differ between `pg` and `postgres-js`. The `stash-postgres` skill is the reference for both.
+> **Dropping to raw SQL?** ``db.execute(sql`…`)`` bypasses the operators this integration emits, so you own the operand casts yourself — an encrypted predicate needs its needle cast to the column's `eql_v3.query_*` domain, and the driver's parameter-binding rules differ between `pg` and `postgres-js`. The `stash-postgres` skill is the reference for both.
 
 ## Migrating an Existing Column to Encrypted
 

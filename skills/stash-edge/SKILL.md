@@ -313,7 +313,7 @@ round trip per call.
 A schema authored with `@cipherstash/stack/v3` **will not typecheck**
 against the WASM entry's `Encryption`, and the reverse fails too:
 
-```
+```text
 Type 'EncryptedTextSearchColumn' is not assignable to type 'AnyEncryptedV3Column'.
   Types have separate declarations of a private property 'columnName'.
 ```

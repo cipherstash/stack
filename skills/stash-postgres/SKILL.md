@@ -1,6 +1,6 @@
 ---
 name: stash-postgres
-description: Query EQL v3 encrypted columns from hand-written Postgres SQL over `pg` (node-postgres) or `postgres` (postgres-js) — no ORM. Covers the column-domain-to-query-domain operator matrix (which of `=`, `<>`, `<`, `>=`, `@@`, `@>` each encrypted domain accepts), minting search needles with `encryptQuery`, the per-driver parameter-binding rules for encrypted payloads, and the double-encoding failure that trips the domain CHECK with a message naming neither JSON nor encoding. Use when writing INSERT/SELECT against an encrypted column without an ORM, when a predicate returns zero rows or raises "operator does not exist", or when a domain CHECK constraint rejects an encrypted value on write. Assumes a direct Postgres connection with client-side encryption — CipherStash Proxy encrypts on the wire and needs none of this.
+description: Query EQL v3 encrypted columns from hand-written Postgres SQL over `pg` (node-postgres) or `postgres` (postgres-js) — no ORM. Covers the column-domain-to-query-domain operator matrix (which of `=`, `<>`, `<`, `<=`, `>`, `>=`, `@@`, `@>` each encrypted domain accepts), minting search needles with `encryptQuery`, the per-driver parameter-binding rules for encrypted payloads, and the double-encoding failure that trips the domain CHECK with a message naming neither JSON nor encoding. Use when writing INSERT/SELECT against an encrypted column without an ORM, when a predicate returns zero rows or raises "operator does not exist", or when a domain CHECK constraint rejects an encrypted value on write. Assumes a direct Postgres connection with client-side encryption — CipherStash Proxy encrypts on the wire and needs none of this.
 ---
 
 # Raw Postgres SQL Against Encrypted Columns (EQL v3)
@@ -99,7 +99,7 @@ be explicit on multi-index domains like `types.TextSearch`.
 
 Strip `public.`, insert `query_`, move to the `eql_v3` schema:
 
-```
+```text
 public.eql_v3_text_eq       →  eql_v3.query_text_eq
 public.eql_v3_text_search   →  eql_v3.query_text_search
 public.eql_v3_bigint_ord    →  eql_v3.query_bigint_ord
@@ -239,7 +239,7 @@ silently breaks if the project ever moves to `postgres-js`.
 
 `${JSON.stringify(payload)}::jsonb` on postgres-js produces:
 
-```
+```text
 value for domain eql_v3_text_search violates check constraint "eql_v3_text_search_check"
 ```
 
@@ -259,6 +259,17 @@ running `jsonb_typeof` on the parameter; `'string'` means double-encoded.
 ## Query Recipes
 
 Assume `sql` is a postgres-js tag; for `pg` use numbered placeholders as above.
+
+**The recipes below omit the `Result` guard for brevity — your code must not.**
+`encryptQuery` returns `{ data } | { failure }`, so reading `.data` without
+first checking `.failure` binds `undefined` into the query, which fails as a
+domain CHECK violation rather than as the encryption error it actually is.
+Every recipe should be read as though it were written:
+
+```ts
+const term = await client.encryptQuery(/* … */)
+if (term.failure) throw new Error(term.failure.message)
+```
 
 ### Equality
 
