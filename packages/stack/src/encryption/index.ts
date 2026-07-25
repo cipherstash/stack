@@ -56,6 +56,9 @@ import { EncryptQueryOperation } from './operations/encrypt-query'
 // observed uninitialised regardless of which module evaluates first.
 import { type TypedEncryptionClient, typedClient } from './v3'
 
+// Defined in its own module so operations can reach it without importing this
+// one (the native composition root). Re-exported here to keep the public path.
+export { noClientError } from './no-client-error'
 // Re-export the operation classes returned by EncryptionClient methods so they
 // are part of the public API and appear in the generated reference, allowing
 // TSDoc {@link} references and method return types to resolve to real pages.
@@ -71,11 +74,6 @@ export {
   EncryptOperation,
   EncryptQueryOperation,
 }
-
-export const noClientError = () =>
-  new Error(
-    'The Encryption client has not been initialized. Please call init() before using the client.',
-  )
 
 /**
  * Resolve the EQL wire version for a client from its schema set.

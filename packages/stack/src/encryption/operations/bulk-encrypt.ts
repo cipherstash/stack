@@ -4,11 +4,11 @@ import type { CryptoBackend } from '@/encryption/backend'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { assertValidNumericValue } from '@/encryption/helpers/validation'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
+import type { Context } from '@/identity'
 import {
-  type Context,
   type LockContextInput,
   resolveLockContext,
-} from '@/identity'
+} from '@/identity/resolve-lock-context'
 import type {
   BuildableColumn,
   BuildableTable,
@@ -19,7 +19,7 @@ import type {
   EncryptOptions,
 } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
-import { noClientError } from '../index'
+import { noClientError } from '../no-client-error'
 import { EncryptionOperation } from './base-operation'
 
 // Drops nulls so they don't reach protect-ffi (which would otherwise

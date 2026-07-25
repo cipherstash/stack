@@ -4,11 +4,11 @@ import type { CryptoBackend } from '@/encryption/backend'
 import { formatEncryptedResult } from '@/encryption/helpers'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
+import type { Context } from '@/identity'
 import {
-  type Context,
   type LockContextInput,
   resolveLockContext,
-} from '@/identity'
+} from '@/identity/resolve-lock-context'
 import type { Client, EncryptedQueryResult, ScalarQueryTerm } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import { resolveIndexType } from '../helpers/infer-index-type'
@@ -17,7 +17,7 @@ import {
   assertValidNumericValue,
   assertValueIndexCompatibility,
 } from '../helpers/validation'
-import { noClientError } from '../index'
+import { noClientError } from '../no-client-error'
 import { EncryptionOperation } from './base-operation'
 
 // Separates null/undefined values from non-null terms in the input array

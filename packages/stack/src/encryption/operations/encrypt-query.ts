@@ -4,7 +4,10 @@ import type { CryptoBackend } from '@/encryption/backend'
 import { formatEncryptedResult } from '@/encryption/helpers'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
-import { type LockContextInput, resolveLockContext } from '@/identity'
+import {
+  type LockContextInput,
+  resolveLockContext,
+} from '@/identity/resolve-lock-context'
 import type {
   Client,
   EncryptedQueryResult,
@@ -18,7 +21,7 @@ import {
   assertValueIndexCompatibility,
   validateNumericValue,
 } from '../helpers/validation'
-import { noClientError } from '../index'
+import { noClientError } from '../no-client-error'
 import { EncryptionOperation } from './base-operation'
 
 export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryResult> {

@@ -1,6 +1,6 @@
 import type { Result } from '@byteslice/result'
 import type { EncryptionError } from '@/errors'
-import type { LockContextInput } from '@/identity'
+import type { LockContextInput } from '@/identity/resolve-lock-context'
 import { type AuditConfig, EncryptionOperation } from './base-operation'
 
 /**

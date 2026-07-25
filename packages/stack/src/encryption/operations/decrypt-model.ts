@@ -1,14 +1,17 @@
 import { type Result, withResult } from '@byteslice/result'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
-import { type LockContextInput, resolveLockContext } from '@/identity'
+import {
+  type LockContextInput,
+  resolveLockContext,
+} from '@/identity/resolve-lock-context'
 import type { Client, Decrypted } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import {
   decryptModelFields,
   decryptModelFieldsWithLockContext,
 } from '../helpers/model-helpers'
-import { noClientError } from '../index'
+import { noClientError } from '../no-client-error'
 import { EncryptionOperation } from './base-operation'
 
 export class DecryptModelOperation<

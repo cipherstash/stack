@@ -3,10 +3,13 @@ import type { JsPlaintext } from '@cipherstash/protect-ffi'
 import type { CryptoBackend } from '@/encryption/backend'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
-import { type LockContextInput, resolveLockContext } from '@/identity'
+import {
+  type LockContextInput,
+  resolveLockContext,
+} from '@/identity/resolve-lock-context'
 import type { Client, Encrypted } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
-import { noClientError } from '../index'
+import { noClientError } from '../no-client-error'
 import { EncryptionOperation } from './base-operation'
 
 /**
