@@ -1286,6 +1286,93 @@ describe('rewriteEncryptedAlterColumns', () => {
       ])
     })
 
+    // #772 review, finding 2. CREATE_TABLE_RE's body is lazy up to the first
+    // `)\s*;`, which can sit inside a `--` comment or a string DEFAULT. The
+    // body is then truncated and every column declared after that point is
+    // lost from BOTH indexes — so an encrypted column reads as undeclared.
+    it('indexes columns declared after a ");" inside a comment in the CREATE TABLE body', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_create.sql'),
+        [
+          'CREATE TABLE "users" (',
+          '\t"id" text, -- pk (uuid);',
+          '\t"email" "public"."eql_v3_text_eq"',
+          ');',
+          '',
+        ].join('\n'),
+      )
+      const alterSql =
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;'
+      const alter = path.join(tmpDir, '0001_domain-change.sql')
+      fs.writeFileSync(alter, `${alterSql}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([
+        { file: alter, statement: alterSql, reason: 'already-encrypted' },
+      ])
+    })
+
+    it('indexes columns declared after a ");" inside a string DEFAULT', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_create.sql'),
+        [
+          'CREATE TABLE "users" (',
+          '\t"note" text DEFAULT \'see (ticket);\',',
+          '\t"email" "public"."eql_v3_text_eq"',
+          ');',
+          '',
+        ].join('\n'),
+      )
+      const alterSql =
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;'
+      const alter = path.join(tmpDir, '0001_domain-change.sql')
+      fs.writeFileSync(alter, `${alterSql}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([
+        { file: alter, statement: alterSql, reason: 'already-encrypted' },
+      ])
+    })
+
+    // The destructive composition: the truncated body loses the encrypted
+    // column, but a LATER migration re-declares the table so `declared` is
+    // satisfied from elsewhere — the fail-closed rule passes and the ALTER
+    // drops a column full of ciphertext.
+    it('does not drop ciphertext when a truncated CREATE TABLE body hides the encrypted column', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_declare.sql'),
+        'CREATE TABLE "users" ("email" text);\n',
+      )
+      fs.writeFileSync(
+        path.join(tmpDir, '0001_recreate.sql'),
+        [
+          'DROP TABLE "users";',
+          '--> statement-breakpoint',
+          'CREATE TABLE "users" (',
+          '\t"id" text, -- pk (uuid);',
+          '\t"email" "public"."eql_v3_text_eq"',
+          ');',
+          '',
+        ].join('\n'),
+      )
+      const alterSql =
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;'
+      const alter = path.join(tmpDir, '0002_domain-change.sql')
+      fs.writeFileSync(alter, `${alterSql}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(fs.readFileSync(alter, 'utf-8')).toBe(`${alterSql}\n`)
+      expect(skipped).toEqual([
+        { file: alter, statement: alterSql, reason: 'already-encrypted' },
+      ])
+    })
+
     // Only the IMPLICIT schema collapses. A real non-public schema is a
     // genuinely different table and must not be conflated with the bare name.
     it('does not conflate a non-public schema with the unqualified table', async () => {
