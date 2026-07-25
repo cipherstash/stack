@@ -1,8 +1,6 @@
 import { type Result, withResult } from '@byteslice/result'
-import {
-  encrypt as ffiEncrypt,
-  type JsPlaintext,
-} from '@cipherstash/protect-ffi'
+import type { JsPlaintext } from '@cipherstash/protect-ffi'
+import type { CryptoBackend } from '@/encryption/backend'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { assertValidNumericValue } from '@/encryption/helpers/validation'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
@@ -21,6 +19,7 @@ import { EncryptionOperation } from './base-operation'
 
 export class EncryptOperation extends EncryptionOperation<Encrypted> {
   private client: Client
+  private backend: CryptoBackend
   // Internally widened to allow null so the runtime guard below can
   // short-circuit. The public `Encryption.encrypt()` signature still
   // rejects null at the type layer; this is defense in depth for callers
@@ -31,11 +30,13 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
 
   constructor(
     client: Client,
+    backend: CryptoBackend,
     plaintext: Plaintext | null,
     opts: EncryptOptions,
   ) {
     super()
     this.client = client
+    this.backend = backend
     this.plaintext = plaintext
     this.column = opts.column
     this.table = opts.table
@@ -76,7 +77,7 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
 
         const { metadata } = this.getAuditData()
 
-        return await ffiEncrypt(this.client, {
+        return await this.backend.encrypt(this.client, {
           // `Plaintext` widens the FFI `JsPlaintext` with `Date` (serialized via
           // `toJSON` at the boundary); cast until the upstream `JsPlaintext` input
           // union is corrected to include it.
@@ -101,12 +102,14 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
 
   public getOperation(): {
     client: Client
+    backend: CryptoBackend
     plaintext: Plaintext | null
     column: BuildableColumn
     table: BuildableTable
   } {
     return {
       client: this.client,
+      backend: this.backend,
       plaintext: this.plaintext,
       column: this.column,
       table: this.table,
@@ -129,7 +132,8 @@ export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypt
   }
 
   public async execute(): Promise<Result<Encrypted, EncryptionError>> {
-    const { client, plaintext, column, table } = this.operation.getOperation()
+    const { client, backend, plaintext, column, table } =
+      this.operation.getOperation()
 
     const log = createRequestLogger()
     log.set({
@@ -154,7 +158,7 @@ export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypt
         const { metadata } = this.getAuditData()
         const lockContext = resolveLockContext(this.lockContext)
 
-        return await ffiEncrypt(client, {
+        return await backend.encrypt(client, {
           plaintext: plaintext as JsPlaintext,
           column: column.getName(),
           table: table.tableName,

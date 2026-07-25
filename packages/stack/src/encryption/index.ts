@@ -34,6 +34,8 @@ import type {
 } from '@/types'
 import { hasBuildColumnKeyMap } from '@/types'
 import { logger } from '@/utils/logger'
+import type { CryptoBackend } from './backend'
+import { nativeBackend } from './backend-native'
 import { toFfiKeysetIdentifier } from './helpers'
 import { isScalarQueryTermArray } from './helpers/type-guards'
 import { BatchEncryptQueryOperation } from './operations/batch-encrypt-query'
@@ -161,6 +163,9 @@ export function resolveEqlVersion(
  */
 export class EncryptionClient {
   private client: Client
+  /** Injected FFI backend — see `encryption/backend.ts` (#798). The native
+   *  entry binds the Node-API implementation; `wasm-inline` will bind its own. */
+  private backend: CryptoBackend = nativeBackend
   private encryptConfig: EncryptConfig | undefined
 
   /**
@@ -304,7 +309,7 @@ export class EncryptionClient {
    * @see {@link EncryptOperation}
    */
   encrypt(plaintext: Plaintext, opts: EncryptOptions): EncryptOperation {
-    return new EncryptOperation(this.client, plaintext, opts)
+    return new EncryptOperation(this.client, this.backend, plaintext, opts)
   }
 
   /**

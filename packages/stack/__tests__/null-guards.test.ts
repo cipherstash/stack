@@ -6,6 +6,7 @@
 // encryption operations` for context.
 
 import { describe, expect, it } from 'vitest'
+import type { CryptoBackend } from '@/encryption/backend'
 import { BatchEncryptQueryOperation } from '@/encryption/operations/batch-encrypt-query'
 import { BulkDecryptOperation } from '@/encryption/operations/bulk-decrypt'
 import { BulkEncryptOperation } from '@/encryption/operations/bulk-encrypt'
@@ -21,9 +22,21 @@ const table = encryptedTable('null-guards-test', {
 // Any truthy stand-in — the guard returns before the client is touched.
 const stubClient = {} as any
 
+// An injected backend whose every method throws. The guard's whole job is to
+// return before reaching the FFI, so reaching it should fail the test loudly
+// rather than show up as an unexpected network call. Injecting this is only
+// possible because operations take their backend rather than importing it
+// (#798); the module-import version of this test could assert absence, but
+// not presence of a violation.
+const forbiddenBackend = new Proxy({} as CryptoBackend, {
+  get: (_target, name) => () => {
+    throw new Error(`FFI ${String(name)}() must not be reached by a null guard`)
+  },
+})
+
 describe('runtime null guards (defense in depth)', () => {
   it('encrypt(null) short-circuits without an FFI call', async () => {
-    const op = new EncryptOperation(stubClient, null, {
+    const op = new EncryptOperation(stubClient, forbiddenBackend, null, {
       column: table.metadata,
       table,
     })
