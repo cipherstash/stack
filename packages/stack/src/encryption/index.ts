@@ -124,6 +124,28 @@ export function resolveEqlVersion(
     )
   }
 
+  // An explicit 2 over a set that is ENTIRELY v3 is a contradiction, and a
+  // silent one: the FFI client emits `eql_v2_encrypted` payloads for columns
+  // whose Postgres domain is `eql_v3_*`, so the write either trips the domain
+  // CHECK or lands v2 wire wherever the check is looser.
+  //
+  // `EncryptionV3` used to prevent this by forcing `eqlVersion: 3` over
+  // whatever the caller passed — its comment said so explicitly. It is now a
+  // bare alias of `Encryption`, so a caller upgrading from
+  // `EncryptionV3({ schemas: [v3Table], config: { eqlVersion: 2 } })` — which
+  // was silently corrected and worked — now gets a v2-wire client with no
+  // diagnostic at any layer (#772 review, finding 8).
+  //
+  // The escape hatch itself stays: an explicit 2 over a V2 schema set is how
+  // `integration/shared/v2-decrypt-compat.integration.test.ts` mints the
+  // fixtures that prove v2 payloads still decrypt. That is the only shape that
+  // uses it — nothing mints v2 wire from a v3 table.
+  if (explicit === 2 && schemas.length > 0 && v3Count === schemas.length) {
+    throw new Error(
+      "[encryption]: cannot emit EQL v2 wire for a schema set that is entirely EQL v3 — the payloads would not match the columns' eql_v3_* domains. Drop `config.eqlVersion` to emit v3, or build the client from the EQL v2 schema you actually want to write.",
+    )
+  }
+
   if (explicit !== undefined) {
     return explicit
   }

@@ -1,4 +1,17 @@
 {
+  // The typecheck gate CI runs (`test:types` -> vitest typecheck) covers the
+  // `.test-d.ts` files plus the two `integration/**` adapters that #772's
+  // review found were erroring in a file nothing compiled.
+  //
+  // `src/`, the runtime `__tests__/*.test.ts` and the rest of `integration/**`
+  // are still ungated: 63 errors under the full `tsconfig.json`, most of them
+  // one root cause — `V3_MATRIX`'s `indexes` union in `@cipherstash/test-kit`
+  // (#778). Widen this `include` as that count comes down; do not widen it to
+  // the whole project until it is zero, or the gate is useless.
   "extends": "./tsconfig.json",
-  "include": ["__tests__/**/*.test-d.ts"]
+  "include": [
+    "__tests__/**/*.test-d.ts",
+    "integration/adapter.ts",
+    "integration/json-adapter.ts"
+  ]
 }
