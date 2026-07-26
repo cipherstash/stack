@@ -17,9 +17,13 @@ function levelFromEnv(): LogLevel {
   // `process` is absent in a Worker or Deno isolate. This module is reachable
   // from `@cipherstash/stack/adapter-kit` (`src/adapter-kit.ts:60`), which the
   // Supabase, Drizzle and Prisma Next adapters all value-import — an unguarded
-  // read here is a ReferenceError at import time on those runtimes.
+  // read here is a ReferenceError at import time on those runtimes. Guard
+  // `process.env` too: some partial polyfills define `process` without `env`,
+  // where `process.env.STASH_STACK_LOG` would throw just the same.
   const env =
-    typeof process === 'undefined' ? undefined : process.env.STASH_STACK_LOG
+    typeof process === 'undefined' || !process.env
+      ? undefined
+      : process.env.STASH_STACK_LOG
   if (env && validLevels.includes(env as LogLevel)) return env as LogLevel
   return 'error'
 }
