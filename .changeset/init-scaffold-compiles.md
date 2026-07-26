@@ -13,9 +13,12 @@ whose looser bound accepted `[]`; collapsing that into an alias of `Encryption`
 tightened it.)
 
 The scaffold now declares a single sentinel table, `__stash_placeholder__`, so
-the file typechecks as written. `stash encrypt` commands refuse to run while
-that table is still the only one declared, and say so — rather than failing
-later with a confusing "table not found".
+the file typechecks as written. Every command that reads the encryption client
+— `stash db push`, `stash db validate`, and `stash encrypt backfill` — refuses
+to run while that table is still the only one declared, and names it, rather
+than failing later with a confusing "table not found". (`stash encrypt cutover`
+and `stash encrypt drop` do not read the client file at all; they resolve
+against the database.)
 
 Nothing in the repo compiled this output before: `packages/cli` has no
 typecheck step, the codegen tests only string-match fragments of the template,
