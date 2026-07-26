@@ -165,9 +165,10 @@ Two consequences follow, and they are the same root cause:
   type-checking at all. The one interface that was supposed to keep the two
   bindings honest checks only one of them.
 
-**The fix is upstream, in protect-ffi**: have the WASM `.d.ts` use the same
-named option types as the Node-API one, rather than `any`. Failing that, a
-runtime-free `./types` subpath both entries re-export. Either makes
+**The fix is upstream, in protect-ffi** — filed as
+cipherstash/protectjs-ffi#142: have the WASM `.d.ts` use the same named option
+types as the Node-API one, rather than `any`. Failing that, a runtime-free
+`./types` subpath both entries re-export. Either makes
 `CryptoBackend` a genuinely shared contract instead of the native types being
 borrowed to describe both bindings — which is what this whole issue is after.
 Until then, stage 4 either ships unresolvable types or duplicates the operation
