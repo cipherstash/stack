@@ -14,8 +14,23 @@ import { noClientError } from '../no-client-error'
 import { EncryptionOperation } from './base-operation'
 
 /**
- * Decrypts an encrypted payload using the provided client.
- * This is the type returned by the {@link EncryptionClient.decrypt | decrypt} method of the {@link EncryptionClient}.
+ * Decrypts a single encrypted payload.
+ *
+ * Returned by the {@link EncryptionClient.decrypt | decrypt} method of the
+ * {@link EncryptionClient}. Both a builder and a promise: chain `.audit()` /
+ * `.withLockContext()`, then `await` for a `Result` — see
+ * {@link EncryptionOperation}.
+ *
+ * Reads both EQL v2 and v3 payloads; the client only writes v3.
+ *
+ * ## One implementation, both entries
+ *
+ * The FFI arrives as an injected {@link CryptoBackend} rather than a module
+ * import, so this class runs unchanged on the native entry and on
+ * `@cipherstash/stack/wasm-inline` (cipherstash/stack#798).
+ *
+ * A `null` payload resolves to `null` without an FFI call, which is what makes
+ * this safe to run over rows that predate encryption.
  */
 export class DecryptOperation extends EncryptionOperation<JsPlaintext> {
   private client: Client
@@ -37,6 +52,16 @@ export class DecryptOperation extends EncryptionOperation<JsPlaintext> {
     this.encryptedData = encryptedData
   }
 
+  /**
+   * Supply the identity claim the payload was encrypted under.
+   *
+   * Returns a new operation rather than mutating this one. Audit metadata
+   * already set is carried across; metadata added to *this* operation
+   * afterwards is not.
+   *
+   * @param lockContext The claim used at encrypt time. It must match exactly —
+   * a mismatch fails the decrypt, it does not fall back to an unbound key.
+   */
   public withLockContext(
     lockContext: LockContextInput,
   ): DecryptOperationWithLockContext {
@@ -82,6 +107,10 @@ export class DecryptOperation extends EncryptionOperation<JsPlaintext> {
     return result
   }
 
+  /**
+   * The operation's inputs, including its backend, so the lock-context variant
+   * can run the same call with a context added. Internal to that handoff.
+   */
   public getOperation(): {
     client: Client
     backend: CryptoBackend
@@ -97,6 +126,14 @@ export class DecryptOperation extends EncryptionOperation<JsPlaintext> {
   }
 }
 
+/**
+ * {@link DecryptOperation} supplying the identity claim the payload was
+ * encrypted under.
+ *
+ * Constructed by `DecryptOperation.withLockContext()`, not directly. It reads
+ * the source operation's inputs at execute time and adds `lockContext` to the
+ * FFI call; everything else is the same path, deliberately.
+ */
 export class DecryptOperationWithLockContext extends EncryptionOperation<JsPlaintext> {
   private operation: DecryptOperation
   private lockContext: LockContextInput

@@ -21,6 +21,25 @@ import { createRequestLogger } from '@/utils/logger'
 import { noClientError } from '../no-client-error'
 import { EncryptionOperation } from './base-operation'
 
+/**
+ * Encrypts a single value for a single column.
+ *
+ * Returned by `Encryption.encrypt()`. Both a builder and a promise: chain
+ * `.audit()` / `.withLockContext()`, then `await` for a `Result` — see
+ * {@link EncryptionOperation}.
+ *
+ * ## One implementation, both entries
+ *
+ * The FFI arrives as an injected {@link CryptoBackend} rather than a module
+ * import, so this class runs unchanged on the native entry (Node-API backend)
+ * and on `@cipherstash/stack/wasm-inline` (WASM backend). The two entries
+ * behave identically because they *are* the same code, not because two
+ * implementations are kept in step — which is what they previously were, and
+ * how they drifted (cipherstash/stack#798).
+ *
+ * A `null` plaintext resolves to `null` without an FFI call, so a NULL column
+ * stays NULL rather than becoming an encrypted JSON null.
+ */
 export class EncryptOperation extends EncryptionOperation<Encrypted> {
   private client: Client
   private backend: CryptoBackend
@@ -46,6 +65,16 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
     this.table = opts.table
   }
 
+  /**
+   * Bind the data key to an identity claim.
+   *
+   * Returns a new operation rather than mutating this one. Audit metadata
+   * already set is carried across; metadata added to *this* operation
+   * afterwards is not.
+   *
+   * @param lockContext The claim to bind to — a `{ identityClaim }` object, or
+   * a `LockContext`. The same claim is required to decrypt.
+   */
   public withLockContext(
     lockContext: LockContextInput,
   ): EncryptOperationWithLockContext {
@@ -105,6 +134,10 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
     return result
   }
 
+  /**
+   * The operation's inputs, including its backend, so the lock-context variant
+   * can run the same call with a context added. Internal to that handoff.
+   */
   public getOperation(): {
     client: Client
     backend: CryptoBackend
@@ -122,6 +155,18 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
   }
 }
 
+/**
+ * {@link EncryptOperation} with the data key bound to an identity claim.
+ *
+ * Constructed by `EncryptOperation.withLockContext()`, not directly. It reads
+ * the source operation's inputs at execute time and adds `lockContext` to the
+ * FFI call — the null short-circuit, validation, and error mapping are the
+ * same, deliberately.
+ *
+ * The resulting value can ONLY be decrypted by supplying the same claim: the
+ * context changes key derivation, so it is not a filter that can be skipped on
+ * the way back out.
+ */
 export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypted> {
   private operation: EncryptOperation
   private lockContext: LockContextInput

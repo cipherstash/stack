@@ -72,6 +72,33 @@ const mapEncryptedDataToResult = (
   return result
 }
 
+/**
+ * Encrypts many values in one ZeroKMS round trip — the fast path, and the
+ * reason to prefer this over looping `encrypt()`.
+ *
+ * Returned by `Encryption.bulkEncrypt()`. Both a builder and a promise: chain
+ * `.audit()` / `.withLockContext()`, then `await` for a `Result` — see
+ * {@link EncryptionOperation}.
+ *
+ * ## One implementation, both entries
+ *
+ * The FFI arrives as an injected {@link CryptoBackend} rather than a module
+ * import, so this class runs unchanged on the native entry and on
+ * `@cipherstash/stack/wasm-inline` (cipherstash/stack#798).
+ *
+ * ## Nulls and position
+ *
+ * Nulls never reach the FFI — they are filtered out before the call and
+ * re-inserted at their original indices afterwards. So the result is always
+ * the same length and order as the input, and a NULL column stays NULL rather
+ * than becoming an encrypted JSON null. That re-insertion depends on
+ * {@link CryptoBackend.encryptBulk} returning results in the order it was
+ * given them.
+ *
+ * All-or-nothing: bulk encrypt has no per-item error channel, so one invalid
+ * value fails the batch. (Bulk *decrypt* does report per item — see
+ * `BulkDecryptOperation`.)
+ */
 export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData> {
   private client: Client
   private backend: CryptoBackend
@@ -93,6 +120,16 @@ export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData>
     this.table = opts.table
   }
 
+  /**
+   * Bind every value in the batch to an identity claim.
+   *
+   * Returns a new operation rather than mutating this one. Audit metadata
+   * already set is carried across; metadata added to *this* operation
+   * afterwards is not.
+   *
+   * @param lockContext The claim to bind to. It applies to the whole batch —
+   * per-value contexts would require separate calls.
+   */
   public withLockContext(
     lockContext: LockContextInput,
   ): BulkEncryptOperationWithLockContext {
@@ -151,6 +188,10 @@ export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData>
     return result
   }
 
+  /**
+   * The operation's inputs, including its backend, so the lock-context variant
+   * can run the same call with a context added. Internal to that handoff.
+   */
   public getOperation(): {
     client: Client
     backend: CryptoBackend
@@ -168,6 +209,17 @@ export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData>
   }
 }
 
+/**
+ * {@link BulkEncryptOperation} with every data key bound to an identity claim.
+ *
+ * Constructed by `BulkEncryptOperation.withLockContext()`, not directly.
+ *
+ * Note where the context goes: {@link CryptoBackend.encryptBulk} takes it on
+ * each payload item, not at the top level of the call, so it is threaded
+ * through `createEncryptPayloads` rather than passed alongside
+ * `unverifiedContext`. Everything else is the same path as the unbound
+ * operation.
+ */
 export class BulkEncryptOperationWithLockContext extends EncryptionOperation<BulkEncryptedData> {
   private operation: BulkEncryptOperation
   private lockContext: LockContextInput

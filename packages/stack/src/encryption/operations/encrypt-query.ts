@@ -25,6 +25,31 @@ import {
 import { noClientError } from '../no-client-error'
 import { EncryptionOperation } from './base-operation'
 
+/**
+ * Encrypts a single value into a **query term** — something to search *with*,
+ * not something to store.
+ *
+ * Returned by `Encryption.encryptQuery()`. Both a builder and a promise: chain
+ * `.audit()` / `.withLockContext()`, then `await` for a `Result` — see
+ * {@link EncryptionOperation}.
+ *
+ * ## One implementation, both entries
+ *
+ * The FFI arrives as an injected {@link CryptoBackend} rather than a module
+ * import, so this class runs unchanged on the native entry and on
+ * `@cipherstash/stack/wasm-inline` (cipherstash/stack#798).
+ *
+ * ## What it validates before encrypting
+ *
+ * The term must be one the column can actually answer. `resolveIndexType`
+ * picks the index from the column's declared type and the requested
+ * `queryType`, then the value is checked against it — asking for a range term
+ * on an equality-only column, or a match needle the column cannot search,
+ * fails here rather than returning a term the database will silently never
+ * match.
+ *
+ * `null` and `undefined` resolve to `{ data: null }` without an FFI call.
+ */
 export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryResult> {
   constructor(
     private client: Client,
@@ -35,6 +60,16 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
     super()
   }
 
+  /**
+   * Derive the query term under an identity claim.
+   *
+   * Returns a new operation rather than mutating this one; audit metadata
+   * already set is passed across.
+   *
+   * @param lockContext The claim the target values were encrypted under. A
+   * term derived under a different claim will not match them — the context is
+   * part of key derivation, so it changes the term itself.
+   */
   public withLockContext(
     lockContext: LockContextInput,
   ): EncryptQueryOperationWithLockContext {
@@ -126,6 +161,14 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
   }
 }
 
+/**
+ * {@link EncryptQueryOperation} deriving its term under an identity claim.
+ *
+ * Constructed by `EncryptQueryOperation.withLockContext()`, not directly.
+ * Unlike the encrypt/decrypt operations this takes its inputs by constructor
+ * rather than reading them back from the source operation, but the executed
+ * path — validation, index resolution, error mapping — is the same.
+ */
 export class EncryptQueryOperationWithLockContext extends EncryptionOperation<EncryptedQueryResult> {
   constructor(
     private client: Client,

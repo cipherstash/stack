@@ -93,6 +93,32 @@ function assembleResults(
   return results
 }
 
+/**
+ * Encrypts many query terms in one ZeroKMS round trip.
+ *
+ * Returned by `Encryption.encryptQuery()` when given an array of terms. Both a
+ * builder and a promise: chain `.audit()` / `.withLockContext()`, then `await`
+ * for a `Result` — see {@link EncryptionOperation}.
+ *
+ * Terms are independent: each names its own table, column, and query type, so
+ * one batch can span columns and tables. This is the call to reach for when
+ * building a `WHERE` clause with several encrypted predicates — one round trip
+ * instead of one per predicate.
+ *
+ * ## One implementation, both entries
+ *
+ * The FFI arrives as an injected {@link CryptoBackend} rather than a module
+ * import, so this class runs unchanged on the native entry and on
+ * `@cipherstash/stack/wasm-inline` (cipherstash/stack#798).
+ *
+ * ## Nulls and position
+ *
+ * Null and undefined terms are filtered out before the FFI call and re-slotted
+ * as `null` at their original indices, so the result always lines up
+ * index-for-index with the input. That depends on
+ * {@link CryptoBackend.encryptQueryBulk} returning terms in the order it was
+ * given them.
+ */
 export class BatchEncryptQueryOperation extends EncryptionOperation<
   EncryptedQueryResult[]
 > {
@@ -104,6 +130,16 @@ export class BatchEncryptQueryOperation extends EncryptionOperation<
     super()
   }
 
+  /**
+   * Derive every term in the batch under an identity claim.
+   *
+   * Returns a new operation rather than mutating this one; audit metadata
+   * already set is passed across.
+   *
+   * @param lockContext The claim the target values were encrypted under. It
+   * applies to the whole batch — terms against columns bound to different
+   * claims need separate calls.
+   */
   public withLockContext(
     lockContext: LockContextInput,
   ): BatchEncryptQueryOperationWithLockContext {
@@ -170,6 +206,17 @@ export class BatchEncryptQueryOperation extends EncryptionOperation<
   }
 }
 
+/**
+ * {@link BatchEncryptQueryOperation} deriving its terms under an identity
+ * claim.
+ *
+ * Constructed by `BatchEncryptQueryOperation.withLockContext()`, not directly.
+ *
+ * Note where the context goes: {@link CryptoBackend.encryptQueryBulk} takes it
+ * on each `QueryPayload`, not at the top level of the call, so it is threaded
+ * through `buildQueryPayload`. Everything else is the same path as the unbound
+ * operation.
+ */
 export class BatchEncryptQueryOperationWithLockContext extends EncryptionOperation<
   EncryptedQueryResult[]
 > {

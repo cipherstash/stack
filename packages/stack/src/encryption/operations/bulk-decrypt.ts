@@ -58,6 +58,30 @@ const mapDecryptedDataToResult = (
   return result
 }
 
+/**
+ * Decrypts many payloads in one ZeroKMS round trip.
+ *
+ * Returned by `Encryption.bulkDecrypt()`. Both a builder and a promise: chain
+ * `.audit()` / `.withLockContext()`, then `await` for a `Result` — see
+ * {@link EncryptionOperation}.
+ *
+ * ## One implementation, both entries
+ *
+ * The FFI arrives as an injected {@link CryptoBackend} rather than a module
+ * import, so this class runs unchanged on the native entry and on
+ * `@cipherstash/stack/wasm-inline` (cipherstash/stack#798).
+ *
+ * ## Two kinds of "no value", kept distinct
+ *
+ * - **Null input** — filtered out before the FFI call and re-inserted at its
+ *   original index as `{ id, data: null }`. A NULL column reads back as NULL.
+ * - **Failed decrypt** — comes back as `{ id, error }` for that item only.
+ *   This uses {@link CryptoBackend.decryptBulkFallible}, so one unreadable row
+ *   (wrong lock context, say) does not cost the caller the whole batch.
+ *
+ * Either way the result is the same length and order as the input, which
+ * depends on the backend returning results in the order it was given them.
+ */
 export class BulkDecryptOperation extends EncryptionOperation<BulkDecryptedData> {
   private client: Client
   private backend: CryptoBackend
@@ -74,6 +98,17 @@ export class BulkDecryptOperation extends EncryptionOperation<BulkDecryptedData>
     this.encryptedPayloads = encryptedPayloads
   }
 
+  /**
+   * Supply the identity claim the payloads were encrypted under.
+   *
+   * Returns a new operation rather than mutating this one. Audit metadata
+   * already set is carried across; metadata added to *this* operation
+   * afterwards is not.
+   *
+   * @param lockContext The claim used at encrypt time. It applies to the whole
+   * batch, so payloads bound to different claims must be decrypted separately
+   * — mixing them yields per-item errors for the ones that do not match.
+   */
   public withLockContext(
     lockContext: LockContextInput,
   ): BulkDecryptOperationWithLockContext {
@@ -126,6 +161,10 @@ export class BulkDecryptOperation extends EncryptionOperation<BulkDecryptedData>
     return result
   }
 
+  /**
+   * The operation's inputs, including its backend, so the lock-context variant
+   * can run the same call with a context added. Internal to that handoff.
+   */
   public getOperation(): {
     client: Client
     backend: CryptoBackend
@@ -139,6 +178,17 @@ export class BulkDecryptOperation extends EncryptionOperation<BulkDecryptedData>
   }
 }
 
+/**
+ * {@link BulkDecryptOperation} supplying the identity claim its payloads were
+ * encrypted under.
+ *
+ * Constructed by `BulkDecryptOperation.withLockContext()`, not directly.
+ *
+ * Note where the context goes: {@link CryptoBackend.decryptBulkFallible} takes
+ * it on each payload item, not at the top level of the call, so it is threaded
+ * through `createDecryptPayloads`. Everything else is the same path as the
+ * unbound operation, including per-item error reporting.
+ */
 export class BulkDecryptOperationWithLockContext extends EncryptionOperation<BulkDecryptedData> {
   private operation: BulkDecryptOperation
   private lockContext: LockContextInput
