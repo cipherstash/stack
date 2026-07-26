@@ -142,11 +142,22 @@ export class ColumnMap {
     // otherwise resolve truthy for a plaintext column of that name.
     this.v3Columns = Object.create(null) as Record<string, V3ColumnLike>
     for (const [property, builder] of Object.entries(table.columnBuilders)) {
-      if (isV3ColumnLike(builder)) {
-        const col = builder
-        this.v3Columns[property] = col
-        this.v3Columns[col.getName()] = col
+      // FAIL CLOSED. `columnBuilders` is typed `EncryptedV3TableColumn`
+      // (`eql/v3/table.ts:18-25`), so every entry is meant to be an encrypted v3
+      // column. A builder that fails the structural probe is malformed input —
+      // and silently skipping it is the one thing we must not do here: the
+      // column would drop out of `v3Columns`, `isEncryptedColumn()` would return
+      // false for it, and its filter operands would go to PostgREST as
+      // PLAINTEXT. Refuse to construct instead, mirroring `build()`'s
+      // fail-loudly-on-malformed stance (`eql/v3/table.ts:47-51`).
+      if (!isV3ColumnLike(builder)) {
+        throw new Error(
+          `[supabase v3]: column "${property}" on table "${tableName}" is not a recognised EQL v3 column builder. Its filter operands would otherwise be sent to PostgREST unencrypted, so construction is refused. Author the table with \`encryptedTable\`/\`types\` from \`@cipherstash/stack/eql/v3\` or \`@cipherstash/stack/wasm-inline\`.`,
+        )
       }
+      const col = builder
+      this.v3Columns[property] = col
+      this.v3Columns[col.getName()] = col
     }
 
     this.encryptedColumnNames = Object.keys(this.v3Columns)

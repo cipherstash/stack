@@ -249,3 +249,34 @@ describe('a structurally-v3 table still encrypts the filter operand', () => {
     expect(JSON.parse(value)).toMatchObject({ c: 'ct:ada@example.com' })
   })
 })
+
+describe('an unrecognised column builder fails closed', () => {
+  // The mirror image of the leak above: a builder that does NOT present the v3
+  // surface must never be silently demoted to plaintext passthrough, because
+  // then its filter operands would reach PostgREST in the clear. `ColumnMap` is
+  // built eagerly in the query-builder constructor, so construction throws
+  // BEFORE any request — this pins that no query string is ever emitted.
+  it('throws at construction, so no PostgREST request is issued', () => {
+    const wire = createWirePostgrest([])
+    const malformed = {
+      tableName: 'users',
+      columnBuilders: {
+        email: { getName: () => 'email', build: () => ({}) },
+      },
+      buildColumnKeyMap: () => ({ email: 'email' }),
+      build: () => ({ tableName: 'users', columns: {} }),
+    }
+
+    expect(
+      () =>
+        new EncryptedQueryBuilderV3Impl(
+          'users',
+          malformed as never,
+          createMockEncryptionClient(),
+          wire.client,
+          ['id', 'email'],
+        ),
+    ).toThrow(/\[supabase v3\]/)
+    expect(wire.urls).toEqual([])
+  })
+})
