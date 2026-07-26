@@ -212,3 +212,43 @@ export function createMockSupabase(resultData: unknown = []) {
 
   return { client, calls, callsFor }
 }
+
+/**
+ * A table whose column builders are structurally EQL v3 but are NOT instances
+ * of the `EncryptedV3Column` this package imports — which is exactly how a
+ * table authored from `@cipherstash/stack/wasm-inline` presents, because tsup
+ * emits that class twice (see `isV3ColumnLike` in `src/column-map.ts`).
+ *
+ * Object literals, not the real classes: reproducing the split with the real
+ * ones needs a built `dist/`, and `vitest.shared.ts:4-14` keeps `pnpm test`
+ * free of that. The dist-level version lives in the portable-entry plan.
+ */
+export function wasmAuthoredV3Table(tableName: string, columnNames: string[]) {
+  const columnBuilders = Object.fromEntries(
+    columnNames.map((name) => [
+      name,
+      {
+        getName: () => name,
+        getEqlType: () => 'public.eql_v3_text_eq',
+        getQueryCapabilities: () => ({
+          equality: true,
+          orderAndRange: false,
+          freeTextSearch: false,
+        }),
+        build: () => ({ cast_as: 'text', indexes: {} }),
+      },
+    ]),
+  )
+  return {
+    tableName,
+    columnBuilders,
+    buildColumnKeyMap: () =>
+      Object.fromEntries(columnNames.map((name) => [name, name])),
+    build: () => ({
+      tableName,
+      columns: Object.fromEntries(
+        columnNames.map((name) => [name, columnBuilders[name].build()]),
+      ),
+    }),
+  }
+}
