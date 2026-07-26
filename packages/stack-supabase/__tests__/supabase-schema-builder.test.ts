@@ -1,8 +1,10 @@
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
 import { describe, expect, it } from 'vitest'
+import { ColumnMap } from '../src/column-map'
 import type { IntrospectionResult } from '../src/introspect'
 import { groupUnmodelledRows } from '../src/introspect'
 import { mergeDeclaredTables, synthesizeTables } from '../src/schema-builder'
+import { wasmAuthoredV3Table } from './helpers/supabase-mock'
 
 const introspection: IntrospectionResult = [
   {
@@ -240,5 +242,69 @@ describe('groupUnmodelledRows', () => {
 
   it('returns an empty map when nothing is unmodelled', () => {
     expect(groupUnmodelledRows([]).size).toBe(0)
+  })
+})
+
+describe('ColumnMap recognises v3 columns structurally, not by class identity', () => {
+  // tsup emits `EncryptedV3Column` TWICE — once into the chunk
+  // `dist/adapter-kit.js` imports, once inline in `dist/wasm-inline.js` (a
+  // separate esbuild run). A table authored from `@cipherstash/stack/wasm-inline`
+  // therefore failed `builder instanceof EncryptedV3Column` for EVERY column,
+  // leaving `v3Columns` empty — so the filter collector skipped every term and
+  // the RAW PLAINTEXT operand went into the PostgREST query string, while
+  // `::jsonb` casts and decryption kept working.
+  //
+  // These two assert the MECHANISM (`v3Columns` is populated / not
+  // over-populated). The HARM — what PostgREST actually receives — is asserted
+  // in `supabase-v3-wire.test.ts` by Step 2, because a check that merely
+  // probed `getName` would satisfy the two below.
+  it('accepts a builder that merely has the v3 column surface', () => {
+    const table = wasmAuthoredV3Table('users', ['email'])
+
+    const columns = new ColumnMap('users', table as never, null)
+
+    expect(columns.isEncryptedV3Column('email')).toBe(true)
+    expect(columns.encryptedColumnNames).toContain('email')
+  })
+
+  it('still rejects a v2 column builder', () => {
+    // v2 columns have `build()` and `getName()` (`packages/stack/src/schema/
+    // index.ts:257,264`) but neither `getEqlType()` nor
+    // `getQueryCapabilities()` (`eql/v3/columns.ts:445,450`). Four probes, not
+    // two, is what keeps the predicate honest.
+    const v2 = { getName: () => 'email', build: () => ({}) }
+    const table = {
+      tableName: 'users',
+      columnBuilders: { email: v2 },
+      buildColumnKeyMap: () => ({ email: 'email' }),
+      build: () => ({ tableName: 'users', columns: {} }),
+    }
+
+    const columns = new ColumnMap('users', table as never, null)
+
+    expect(columns.isEncryptedV3Column('email')).toBe(false)
+    expect(columns.encryptedColumnNames).toEqual([])
+  })
+})
+
+describe('every types.* domain satisfies the structural v3 probe', () => {
+  // `isV3ColumnLike` is module-private, so the property is stated through the
+  // public consequence: whatever the catalog grows to, ColumnMap must see the
+  // column as encrypted. A domain whose builder lost one of the four methods
+  // would be silently treated as PLAINTEXT — the PF2 failure again, from a
+  // different direction. Enumerated, not hardcoded (40 domains today), so a new
+  // one is covered the day it is added.
+  it('recognises a column built by any factory in the catalog', () => {
+    // Deterministic iteration over the WHOLE catalog, not a probabilistic
+    // sample: the guarantee this pins is "every domain", so every domain must
+    // actually run. `fc.constantFrom` would leave that to chance across its
+    // default run count.
+    for (const domain of Object.keys(types) as (keyof typeof types)[]) {
+      const table = encryptedTable('t', { c: types[domain]('c') })
+
+      const columns = new ColumnMap('t', table as never, null)
+
+      expect(columns.isEncryptedV3Column('c')).toBe(true)
+    }
   })
 })
