@@ -31,21 +31,20 @@ export type GetLockContextResponse = {
 /**
  * The accepted argument to `.withLockContext()` — either a {@link LockContext}
  * or a plain identity-claim spec (e.g. `{ identityClaim: ['sub'] }`).
+ *
+ * Re-exported from `./resolve-lock-context` rather than declared here, so there
+ * is exactly one definition. That module owns it because it must stay free of
+ * this one's `@/utils/config` import (`fs` / `path`, fatal on an edge runtime),
+ * and the operation classes need to reach it — see #798.
+ *
+ * The canonical type is structural (`{ identityContext } | Context`) where this
+ * module's was nominal (`LockContext | Context`). Every `LockContext` satisfies
+ * it, since `identityContext` is a public getter, so nothing that compiled
+ * before stops compiling. Two same-named exported types that quietly disagreed
+ * is the thing worth avoiding.
  */
-export type LockContextInput = LockContext | Context
-
-/**
- * Resolve a {@link LockContextInput} to the {@link Context} (identity claim)
- * that protect-ffi expects. Synchronous — no token round-trip.
- */
-export function resolveLockContext(input: LockContextInput): Context {
-  // Use a structural check as well as `instanceof` so a `LockContext`
-  // constructed in another realm (or from a duplicate module instance) is still
-  // resolved rather than slipping through as a raw `Context`.
-  return input instanceof LockContext || 'identityContext' in input
-    ? (input as LockContext).identityContext
-    : input
-}
+export type { LockContextInput } from './resolve-lock-context'
+export { resolveLockContext } from './resolve-lock-context'
 
 /**
  * Binds an encryption/decryption operation to a user's identity by selecting

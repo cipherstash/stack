@@ -99,7 +99,6 @@ import {
   isEncrypted as wasmIsEncrypted,
   newClient as wasmNewClient,
 } from '@cipherstash/protect-ffi/wasm-inline'
-import { wasmBackend } from '@/encryption/backend-wasm'
 import { resolveIndexType } from '@/encryption/helpers/infer-index-type'
 import {
   prepareBulkModelsForOperation,
@@ -110,7 +109,6 @@ import {
   assertValidNumericValue,
   assertValueIndexCompatibility,
 } from '@/encryption/helpers/validation'
-import { EncryptOperation } from '@/encryption/operations/encrypt'
 import {
   type AnyV3Table,
   buildEncryptConfig,
@@ -762,25 +760,23 @@ export class WasmEncryptionClient {
     return dateFields
   }
 
-  /**
-   * Encrypt one value.
-   *
-   * Returns the SHARED {@link EncryptOperation} rather than a bare promise —
-   * the first method migrated under #798. Source-compatible: the operation
-   * satisfies `Promise<Result<…>>` structurally, so `await client.encrypt(…)`
-   * still yields `{ data } | { failure }` and an existing `Promise<…>`
-   * annotation still accepts it. What is new is that `.audit()` and
-   * `.withLockContext()` exist on this entry, because they live on the shared
-   * operation instead of being reimplemented per entry.
-   */
-  encrypt(plaintext: WasmPlaintext, opts: EncryptOptions): EncryptOperation {
-    return new EncryptOperation(
-      // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
-      this.client as never,
-      wasmBackend,
-      plaintext as Plaintext,
-      opts,
-    )
+  async encrypt(
+    plaintext: WasmPlaintext,
+    opts: EncryptOptions,
+  ): Promise<WasmResult<Encrypted>> {
+    return wasmResult(async () => {
+      const ffiOpts = {
+        plaintext: toWasmFfiPlaintext(plaintext),
+        table: opts.table.tableName,
+        column: getColumnName(opts.column),
+      }
+      return (await wasmEncrypt(
+        // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
+        this.client as never,
+        // biome-ignore lint/plugin: the opts cross the serde boundary, whose shape protect-ffi types as `any`
+        ffiOpts as never,
+      )) as Encrypted
+    }, EncryptionErrorTypes.EncryptionError)
   }
 
   async decrypt(encrypted: Encrypted): Promise<WasmResult<WasmPlaintext>> {

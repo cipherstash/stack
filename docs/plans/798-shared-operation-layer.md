@@ -3,7 +3,9 @@
 Plan for removing the native/WASM client split.
 
 **Status:** stages 1–3 landed. Stage 5 turned out to be already complete (see
-below — the plan was wrong to list it). Stage 4 is the remaining work.
+below — the plan was wrong to list it). **Stage 4 was attempted, reverted, and
+is blocked on an upstream change** — see "What stage 4 hit" before restarting
+it.
 
 ## The finding that changes the shape of this work
 
@@ -103,6 +105,95 @@ closes **#797**, the capability half of **#793**, and **#792** by construction.
 **Verify:** the WASM entry's own suite; a cross-entry round-trip test
 (encrypt native → decrypt WASM and back, with and without a lock context).
 
+### What stage 4 hit (attempted, then reverted)
+
+The `encrypt` migration was written and reverted. Five problems, four of them
+confirmed against the built artifact rather than reasoned about. None was
+caught by the suite, which is the more useful finding: **1073 unit tests and
+the bundle-isolation test all passed while the WASM entry was broken on
+import.**
+
+1. **The logger crashed the entry.** `EncryptOperation` imports
+   `@/utils/logger`, whose `initStackLogger()` runs at module scope and read
+   `process.env.STASH_STACK_LOG` unguarded. So `import`ing
+   `@cipherstash/stack/wasm-inline` threw `ReferenceError: process is not
+   defined` in any runtime without the Node global — a Worker without
+   `nodejs_compat`, or a browser. The guard is now in place (see the JSDoc on
+   `levelFromEnv`), so this specific trap is disarmed, but the general shape
+   recurs: **anything the operations transitively import ships to the edge.**
+   The bundle-isolation test checks import *specifiers*, so it cannot see a
+   global; the Deno e2e cannot either, because Deno provides `process`.
+2. **The single-encrypt path lost `toWasmFfiPlaintext`.** A JS `Date` has no
+   enumerable own properties, so wasm-bindgen carries it across as `{}` —
+   silent corruption of every date/timestamp column. The bulk and query paths
+   kept the call; encrypt became the only one without it. Any shared operation
+   must apply this normalisation, which means it belongs *in* the operation (or
+   in the backend), not in the entry's own method body.
+3. **Guards moved outside `withResult`.** `execute()` calls
+   `log.set({ column: this.column.getName() })` before the `withResult`
+   wrapper, so a malformed column rejects instead of returning `{ failure }`.
+   The old WASM body ran `getColumnName()` *inside* `wasmResult`, with a named
+   error message. This breaks the contract
+   `wasm-inline-result-contract.test.ts` exists to protect, and that test did
+   not catch it because it only covers FFI rejections.
+4. **The published types stopped being self-contained.** See the section below
+   — this is the blocker.
+5. **`unverifiedContext: undefined` reached the serde boundary** for the first
+   time on this entry (the WASM client had never sent the field). Unconfirmed
+   whether the Rust rejects it, but `toFfiQueryTerm`'s comment records exactly
+   this failure for `queryOp`: "serde on the WASM side rejects
+   explicitly-undefined fields … the native NAPI layer tolerates undefined; the
+   WASM one does not." Omit the key when there is no metadata.
+
+### The blocker: protect-ffi's option types are native-only
+
+`dist/wasm/protect_ffi.d.ts` types every binding function as
+`(client: WasmClient, opts: any)`. It exports none of `EncryptOptions`,
+`DecryptOptions`, `Context`, `ProtectErrorCode`, `JsPlaintext`, or
+`EncryptedPayload` — those exist only in the Node-API `.d.ts`.
+
+Two consequences follow, and they are the same root cause:
+
+- `CryptoBackend` must import those types from `@cipherstash/protect-ffi`, the
+  native specifier. Emitting a WASM-entry `.d.ts` that references
+  `CryptoBackend` therefore puts that specifier into the published types of the
+  bundle whose whole purpose is to avoid the native binding. `wasm-inline.ts`
+  already documents this class of regression: `WasmResult` is declared locally
+  rather than re-exported precisely so `@byteslice/result` stays out of the
+  emitted `.d.ts`.
+- `backend-wasm.ts` needs six `as never` casts, so the WASM call sites get no
+  type-checking at all. The one interface that was supposed to keep the two
+  bindings honest checks only one of them.
+
+**The fix is upstream, in protect-ffi**: have the WASM `.d.ts` use the same
+named option types as the Node-API one, rather than `any`. Failing that, a
+runtime-free `./types` subpath both entries re-export. Either makes
+`CryptoBackend` a genuinely shared contract instead of the native types being
+borrowed to describe both bindings — which is what this whole issue is after.
+Until then, stage 4 either ships unresolvable types or duplicates the operation
+type declarations for the WASM entry, and neither is worth it.
+
+Note the four protect-ffi type names still in the reverted `.d.ts`
+(`EncryptedPayload`, `EncryptedQuery`, `EncryptedV3Query`, `ProtectErrorCode`)
+predate this work — they arrive through `@/types` re-exports. So the upstream
+change is worth making regardless of #798; it just becomes load-bearing here.
+
+### Also still outstanding
+
+- `model-helpers.ts` value-imports `decryptBulk` / `encryptBulk` from the
+  native binding, so the four model operations cannot join the shared path. The
+  non-fallible `decryptBulk` is deliberately absent from `CryptoBackend`, so
+  this needs a decision about widening the interface, not just a mechanical
+  edit. The commit message for stage 3 overstated this as "migrate the
+  remaining operations" — the model operations were never migrated.
+- `wasm-inline.ts` still carries its own `toError`, `readErrorCode`, and
+  `safeString`. They should be shared, but `helpers/error-code.ts` is back on
+  `instanceof` (see its JSDoc), so it is not WASM-reachable again until stage 4.
+- Operations re-execute per settlement. Stage 2 added `.catch()` / `.finally()`
+  without memoising `execute()`, so `op.catch(h)` then `await op` is two round
+  trips. Documented in the changeset; memoising would change existing native
+  semantics for double-await, so it deserves its own decision.
+
 ## Stage 5 — enforce the boundary (ALREADY DONE)
 
 **Correction: this stage was already complete when the plan was written.**
@@ -140,7 +231,12 @@ test if it regresses. Nothing to build here.
 2. **Does the WASM binding accept `lockContext`?** Its `opts` are typed `any`
    across serde into the same Rust core, and the NAPI types declare
    `lockContext?: Context` on both single and bulk paths. Confirm against the
-   Rust before stage 4 — #793.
+   Rust before stage 4 — #793. **Still open.** Stage 4 shipped `.withLockContext()`
+   on the WASM entry with this unresolved, which is a large part of why it was
+   reverted: if serde drops the field, the caller gets a successful-looking
+   payload whose key is not bound to the claim they asked for. Failing loudly
+   would be fine; succeeding quietly is not. Settle this with a live call
+   before re-attempting, and add a WASM lock-context test — there is none.
 3. **Bulk shape convergence direction.** #792 argues for widening native to
    per-item routing via an overload. That is additive; the reverse is not.
 4. **Release sequencing.** Stages 1–3 are internal. Stage 4 changes the WASM

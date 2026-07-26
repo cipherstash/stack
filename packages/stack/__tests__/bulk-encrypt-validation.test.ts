@@ -21,6 +21,31 @@ const forbiddenBackend = new Proxy({} as CryptoBackend, {
 })
 
 /**
+ * A backend that records what reached the FFI and returns one ciphertext per
+ * input.
+ *
+ * For the cases where validation is expected to PASS, `forbiddenBackend` is the
+ * wrong tool: it makes the operation fail, so the only thing left to assert is
+ * that the message differs from the rejection message — which would also hold
+ * if the guard broke and rejected with different wording, or if the call failed
+ * for an unrelated reason. Recording the call lets those tests assert what they
+ * actually mean: the value got through, and got through unchanged.
+ */
+const recordingBackend = () => {
+  const calls: { plaintext: unknown }[][] = []
+  const backend = {
+    encryptBulk: async (
+      _client: unknown,
+      opts: { plaintexts: { plaintext: unknown }[] },
+    ) => {
+      calls.push(opts.plaintexts)
+      return opts.plaintexts.map((_, i) => ({ c: `ct-${i}` }))
+    },
+  } as unknown as CryptoBackend
+  return { backend, calls }
+}
+
+/**
  * `EncryptOperation` rejects NaN / ±Infinity / out-of-int64 `bigint` values
  * client-side, before they reach protect-ffi (whose behaviour on such a value
  * is unobservable — see `helpers/validation.ts`). `BulkEncryptOperation` must
@@ -107,21 +132,32 @@ describe('BulkEncryptOperation numeric validation', () => {
   })
 
   it('accepts in-range bigints at the int64 boundary', async () => {
-    const op = new BulkEncryptOperation(
-      client,
-      forbiddenBackend,
-      payload(9223372036854775807n),
-      {
-        column,
-        table,
-      },
-    )
+    const { backend, calls } = recordingBackend()
+    const boundary = 9223372036854775807n
+
+    const op = new BulkEncryptOperation(client, backend, payload(boundary), {
+      column,
+      table,
+    })
 
     const result = await op.execute()
 
-    // Validation passes, so the stub client is reached — proving the boundary
-    // value was NOT rejected by the numeric guard.
-    expect(result.failure?.message).not.toContain('out of int64 range')
+    // Three separate claims, none of which the old
+    // `expect(failure?.message).not.toContain('out of int64 range')` could
+    // make: the guard let it through, the FFI was reached, and the value
+    // arrived intact rather than coerced on the way.
+    expect(result.failure).toBeUndefined()
+    expect(calls).toEqual([
+      [
+        {
+          id: undefined,
+          plaintext: boundary,
+          column: 'age',
+          table: 'users',
+        },
+      ],
+    ])
+    expect(result.data).toEqual([{ id: undefined, data: { c: 'ct-0' } }])
   })
 
   it('enforces the same guard on the lock-context variant', async () => {

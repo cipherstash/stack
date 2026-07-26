@@ -1,6 +1,5 @@
 import { type Result, withResult } from '@byteslice/result'
 import { getErrorCode } from '@/encryption/helpers/error-code'
-import { toError } from '@/encryption/helpers/to-error'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import {
   type LockContextInput,
@@ -58,7 +57,6 @@ export class DecryptModelOperation<
           code: getErrorCode(error),
         }
       },
-      { onException: toError },
     )
     log.emit()
     return result
@@ -128,7 +126,6 @@ export class DecryptModelOperationWithLockContext<
           code: getErrorCode(error),
         }
       },
-      { onException: toError },
     )
     log.emit()
     return result

@@ -2,7 +2,6 @@ import { type Result, withResult } from '@byteslice/result'
 import type { JsPlaintext } from '@cipherstash/protect-ffi'
 import type { CryptoBackend } from '@/encryption/backend'
 import { getErrorCode } from '@/encryption/helpers/error-code'
-import { toError } from '@/encryption/helpers/to-error'
 import { assertValidNumericValue } from '@/encryption/helpers/validation'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import type { Context } from '@/identity'
@@ -182,7 +181,6 @@ export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData>
           code: getErrorCode(error),
         }
       },
-      { onException: toError },
     )
     log.emit()
     return result
@@ -286,7 +284,6 @@ export class BulkEncryptOperationWithLockContext extends EncryptionOperation<Bul
           code: getErrorCode(error),
         }
       },
-      { onException: toError },
     )
     log.emit()
     return result

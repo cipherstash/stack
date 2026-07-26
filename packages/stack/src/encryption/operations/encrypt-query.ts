@@ -3,7 +3,6 @@ import type { JsPlaintext } from '@cipherstash/protect-ffi'
 import type { CryptoBackend } from '@/encryption/backend'
 import { formatEncryptedResult } from '@/encryption/helpers'
 import { getErrorCode } from '@/encryption/helpers/error-code'
-import { toError } from '@/encryption/helpers/to-error'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import {
   type LockContextInput,
@@ -150,7 +149,6 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
           code: getErrorCode(error),
         }
       },
-      { onException: toError },
     )
     log.emit()
     return result
@@ -252,7 +250,6 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
           code: getErrorCode(error),
         }
       },
-      { onException: toError },
     )
     log.emit()
     return result

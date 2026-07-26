@@ -13,6 +13,25 @@ export type LogLevel = 'debug' | 'info' | 'error'
 
 const validLevels: readonly LogLevel[] = ['debug', 'info', 'error'] as const
 
+/**
+ * Read the configured level, defaulting to `'error'`.
+ *
+ * The `typeof process` guard is not defensive noise. `initStackLogger()` runs
+ * at module scope (bottom of this file), so this executes on *import* — and a
+ * bare `process.env` read throws `ReferenceError: process is not defined` in a
+ * runtime without the Node global: a Cloudflare Worker without `nodejs_compat`,
+ * or a browser. Any such consumer would crash before reaching its own code.
+ *
+ * That is not hypothetical. This module is one `import` away from the shared
+ * operation classes, so it lands in `dist/wasm-inline.js` the moment anything
+ * on the WASM path reaches an operation — which is exactly what #798 sets out
+ * to do. It happened, and was caught only in review of that work; evlog's own
+ * two `process` reads are guarded, ours was the one that was not.
+ *
+ * The bundle-isolation test cannot catch this, since it checks import
+ * specifiers rather than globals, and the Deno e2e cannot either, since Deno
+ * provides `process`.
+ */
 function levelFromEnv(): LogLevel {
   // `process` is absent in a Worker or Deno isolate. This module is reachable
   // from `@cipherstash/stack/adapter-kit` (`src/adapter-kit.ts:60`), which the

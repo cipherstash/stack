@@ -1,39 +1,35 @@
-import type { ProtectErrorCode } from '@cipherstash/protect-ffi'
+import {
+  ProtectError as FfiProtectError,
+  type ProtectErrorCode,
+} from '@cipherstash/protect-ffi'
 
 /**
- * Extract an FFI error code from a thrown value, or `undefined`.
+ * Extracts FFI error code from an error if it's an FFI error, otherwise returns undefined.
+ * Used to preserve specific error codes in ProtectError responses.
  *
- * ## Why this reads structurally rather than with `instanceof`
+ * ## Why this still uses `instanceof`, and what has to change for #798
  *
- * This used to narrow with `error instanceof ProtectError`, which is a *value*
- * import of `@cipherstash/protect-ffi` — the Node-API entry. That made this
- * module unusable from `@cipherstash/stack/wasm-inline`: importing it put a
+ * `FfiProtectError` is a *value* import of the Node-API entry, so this module
+ * cannot be reached from `@cipherstash/stack/wasm-inline` — importing it puts a
  * bare `@cipherstash/protect-ffi` specifier into `dist/wasm-inline.js`, the one
- * bundle that exists to avoid the native binding. It happened once already
- * (#741) and was caught only in review, which is why
- * `__tests__/wasm-inline-bundle-isolation.test.ts` now asserts against the
- * built artifact.
+ * bundle that exists to avoid the native binding. That happened once already
+ * (#741), which is why `__tests__/wasm-inline-bundle-isolation.test.ts` asserts
+ * against the built artifact.
  *
- * Sharing the operation classes across both entries (#798) makes that
- * unavoidable rather than merely untidy: the operations call this, so it must
- * be reachable from the WASM bundle. A structural read is the only version that
- * can be — and on that path it is the only version that could ever work, since
- * the WASM build ships no error class for `instanceof` to match. A `code`
- * string is all there is to find.
+ * Sharing the operation classes with the WASM entry therefore requires a
+ * structural read of `code` instead (the WASM build ships no error class for
+ * `instanceof` to match, so a `code` string is all there is to find). That was
+ * written and then reverted with the rest of stage 4: it widens what reaches
+ * `failure.code`, because any object with a string `code` matches — a Node
+ * `ECONNRESET` from inside the FFI would surface as a `ProtectErrorCode` it is
+ * not, and `dynamodb/helpers.ts` copies `failure.code` verbatim onto the errors
+ * it throws.
  *
- * ## The behavioural difference, stated plainly
- *
- * `instanceof` matched only genuine `ProtectError`s. This matches any object
- * carrying a string `code`, so a non-FFI error that happens to have one (a Node
- * `ENOENT`, say) now yields that string where it previously yielded
- * `undefined`. Call sites use the value for reporting, not control flow, so a
- * mislabelled code degrades an error message rather than changing behaviour —
- * and every call site wraps an FFI call, so a non-FFI error arriving here is
- * already the unusual case. The WASM entry has always accepted this tradeoff;
- * this makes both entries accept it identically rather than silently differing.
+ * That widening is acceptable *if* it is a deliberate, released change. It is
+ * not acceptable as a silent side effect of an internal refactor, which is what
+ * it would have been here. Restore the structural version when stage 4 lands,
+ * and say so in the changeset.
  */
 export function getErrorCode(error: unknown): ProtectErrorCode | undefined {
-  if (typeof error !== 'object' || error === null) return undefined
-  const { code } = error as { code?: unknown }
-  return typeof code === 'string' ? (code as ProtectErrorCode) : undefined
+  return error instanceof FfiProtectError ? error.code : undefined
 }
