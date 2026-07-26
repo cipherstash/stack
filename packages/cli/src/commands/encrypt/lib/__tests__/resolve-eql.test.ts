@@ -4,12 +4,17 @@
  *
  * `listEncryptedColumns` can no longer emit `version: 2` — a legacy
  * `eql_v2_encrypted` column is not classified as an EQL column at all, so it
- * never reaches this function as a candidate. The post-cutover v2 state (the
- * ciphertext renamed onto the plaintext column's own name) therefore arrives
- * here as an EMPTY candidate list, which the first guard already falls through
- * on. These tests exist so removing the now-unreachable `version === 2` branch
- * is provably behaviour-preserving, and so a future v2 sweep cannot delete the
- * empty-list guard the v2 lifecycle actually depends on.
+ * never reaches this function as a candidate. Every pure-v2 table therefore
+ * arrives here as an EMPTY candidate list, both pre-cutover (`<col>` /
+ * `<col>_encrypted`) and post-cutover (the ciphertext renamed onto the
+ * plaintext column's own name), and the first guard falls through on it.
+ *
+ * These tests exist so removing the now-unreachable `version === 2` branch is
+ * provably behaviour-preserving, and so a future v2 sweep cannot delete the
+ * empty-list guard the v2 lifecycle actually depends on. That guard has to hold
+ * even when the manifest recorded an `encryptedColumn` — `backfill` records one
+ * for v2 columns too — which is the `candidates.length > 0` gate on the
+ * fail-closed path (#787 review).
  */
 
 import type { EncryptedColumnInfo } from '@cipherstash/migrate'
@@ -62,6 +67,15 @@ describe('explainUnresolved', () => {
     // Both the not-yet-backfilled case and the post-cutover v2 same-name case
     // land here: the caller's own preconditions produce the accurate error.
     expect(explainUnresolved('users', 'email', [])).toBeNull()
+  })
+
+  it('still falls through when no EQL v3 columns exist BUT a hint was recorded', () => {
+    // The pure-v2 table. `encrypt backfill` records `encryptedColumn` for v2
+    // columns too, so a hint is present on every table backfilled with this
+    // release — it must not flip the empty-candidate fall-through into a
+    // refusal, because `cutover` / `drop` in this same build still implement
+    // the v2 ladder this falls through to (#787 review).
+    expect(explainUnresolved('users', 'ssn', [], 'ssn_encrypted')).toBeNull()
   })
 
   it('fails closed, naming every candidate, when none is identifiable', () => {
@@ -131,6 +145,36 @@ describe('resolveColumnLifecycle — a recorded hint that is not a v3 candidate'
 
     expect(info).toBeNull()
     expect(unresolvedHint).toBe('ssn_encrypted')
+  })
+
+  // The pure-v2 shape, and the regression the `candidates.length > 0` gate
+  // exists to prevent (#787 review). `backfill` records `encryptedColumn`
+  // unconditionally — v2 included — so EVERY pure-v2 table backfilled with this
+  // release carries a hint naming a real, existing, non-v3 column. Without the
+  // gate, `columnExists` returned true, `unresolvedHint` was set, and
+  // `cutover` / `drop` refused a lifecycle this same build still performs.
+  it('does not fail closed on a pure-v2 table, where no v3 column can be mis-claimed', async () => {
+    // No v3 columns at all: just the `ssn` / `ssn_encrypted` v2 pair, which the
+    // classifier does not see.
+    listEncryptedColumns.mockResolvedValue([])
+    readManifest.mockResolvedValue({
+      tables: { users: [{ column: 'ssn', encryptedColumn: 'ssn_encrypted' }] },
+    })
+
+    const { info, candidates, unresolvedHint } = await resolveColumnLifecycle(
+      clientWithColumns('ssn', 'ssn_encrypted'),
+      'users',
+      'ssn',
+    )
+
+    expect(info).toBeNull()
+    expect(candidates).toEqual([])
+    // The fall-through signal: no hint reported, so `explainUnresolved` returns
+    // null and the caller reaches its own v2 preconditions.
+    expect(unresolvedHint).toBeUndefined()
+    expect(
+      explainUnresolved('users', 'ssn', candidates, unresolvedHint),
+    ).toBeNull()
   })
 
   it('explains the recorded counterpart by name rather than listing candidates', async () => {

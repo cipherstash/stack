@@ -35,5 +35,10 @@ all now fixed:
   column that actually encrypts the named one, and says explicitly not to record
   the guess.
 
-Pure-v2 and pure-v3 tables are unaffected, as are tables with two or more EQL v3
-columns (resolution already failed closed there).
+The new refusal is scoped to the mixed table it was written for: it applies only
+when the table actually holds EQL v3 columns that a guess could wrongly claim. A
+pure-v2 table has none, so it still falls through to the EQL v2 lifecycle exactly
+as before — including when `encrypt backfill` recorded an `encryptedColumn` for
+it, which it does for v2 columns too. Pure-v2 and pure-v3 tables are therefore
+unaffected, as are tables with two or more EQL v3 columns (resolution already
+failed closed there).

@@ -1,7 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
-import { loadStashConfig, type ResolvedStashConfig } from '@/config/index.js'
+import {
+  loadStashConfig,
+  PLACEHOLDER_TABLE_NAME,
+  type ResolvedStashConfig,
+} from '@/config/index.js'
 
 /**
  * Structural shape of `@cipherstash/stack`'s `EncryptedTable` class.
@@ -134,6 +138,20 @@ export async function loadEncryptionContext(): Promise<EncryptionContext> {
   if (!client) {
     console.error(
       `Error: No EncryptionClient export found in ${stashConfig.client}.`,
+    )
+    process.exit(1)
+  }
+
+  // Same guard `loadEncryptConfig` applies for `stash db push` / `db validate`,
+  // repeated here because `stash encrypt` does not go through that loader. The
+  // scaffold `stash init` writes declares one sentinel table so the file
+  // compiles; reaching here with only that table means it was never replaced.
+  // Without this, `requireTable` reported `Table "users" was not found …
+  // Available: __stash_placeholder__`, which names the symptom and not the
+  // cause (#787 review).
+  if (tables.size === 1 && tables.has(PLACEHOLDER_TABLE_NAME)) {
+    console.error(
+      `Error: ${stashConfig.client} still contains the placeholder table \`${PLACEHOLDER_TABLE_NAME}\` that \`stash init\` wrote.\n\nDeclare your encrypted columns and pass those tables to Encryption({ schemas: [...] }) in that file, then re-run this command.`,
     )
     process.exit(1)
   }

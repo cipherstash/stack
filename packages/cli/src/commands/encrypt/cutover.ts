@@ -107,7 +107,7 @@ export async function cutoverCommand(options: CutoverCommandOptions) {
       // the same reason (#772 review, finding 7).
       if (info.via === 'sole') {
         p.log.error(
-          `${options.table}.${encryptedColumn} (${info.domain}) is the table's only EQL v3 column, but nothing confirms it encrypts "${options.column}" — refusing to report a cut-over outcome on that guess. If "${options.column}" pairs with a legacy eql_v2_encrypted column, this release no longer manages that lifecycle. Otherwise record the pairing: re-run \`stash encrypt backfill --table ${options.table} --column ${options.column} --encrypted-column <the column that actually encrypts ${options.column}>\`.`,
+          `${options.table}.${encryptedColumn} (${info.domain}) is the table's only EQL v3 column, but nothing confirms it encrypts "${options.column}" — refusing to report a cut-over outcome on that guess. If "${options.column}" pairs with a legacy eql_v2_encrypted column, resolution cannot see it (this command resolves EQL v3 counterparts only) — drive that column's v2 lifecycle against its own encrypted column directly. Otherwise record the pairing: re-run \`stash encrypt backfill --table ${options.table} --column ${options.column} --encrypted-column <the column that actually encrypts ${options.column}>\`.`,
         )
         exitCode = 1
         return
