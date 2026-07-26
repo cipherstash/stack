@@ -267,11 +267,17 @@ describe('ColumnMap recognises v3 columns structurally, not by class identity', 
     expect(columns.encryptedColumnNames).toContain('email')
   })
 
-  it('still rejects a v2 column builder', () => {
+  it('throws on a builder missing the v3 column surface', () => {
     // v2 columns have `build()` and `getName()` (`packages/stack/src/schema/
     // index.ts:257,264`) but neither `getEqlType()` nor
     // `getQueryCapabilities()` (`eql/v3/columns.ts:445,450`). Four probes, not
     // two, is what keeps the predicate honest.
+    //
+    // `columnBuilders` on an `AnyV3Table` must hold ONLY encrypted v3 columns,
+    // so a builder that fails the probe is malformed input. Silently skipping it
+    // is not a safe default: the column would drop out of `v3Columns` and its
+    // filter operands would go to PostgREST as PLAINTEXT. Fail closed at
+    // construction instead.
     const v2 = { getName: () => 'email', build: () => ({}) }
     const table = {
       tableName: 'users',
@@ -280,10 +286,9 @@ describe('ColumnMap recognises v3 columns structurally, not by class identity', 
       build: () => ({ tableName: 'users', columns: {} }),
     }
 
-    const columns = new ColumnMap('users', table as never, null)
-
-    expect(columns.isEncryptedV3Column('email')).toBe(false)
-    expect(columns.encryptedColumnNames).toEqual([])
+    expect(() => new ColumnMap('users', table as never, null)).toThrow(
+      /\[supabase v3\]/,
+    )
   })
 })
 
