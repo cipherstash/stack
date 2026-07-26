@@ -113,7 +113,7 @@ export async function dropCommand(options: DropCommandOptions) {
     // live `DROP COLUMN` on the plaintext at exit 0 (#772 review, finding 7).
     if (info?.via === 'sole') {
       p.log.error(
-        `${options.table}.${info.column} (${info.domain}) is the table's only encrypted column, but nothing confirms it encrypts "${options.column}" — refusing to generate an irreversible drop on that guess. Identify the column that actually encrypts "${options.column}" and record that pairing: re-run \`stash encrypt backfill --table ${options.table} --column ${options.column} --encrypted-column <name>\` (which writes it to the manifest), or set "encryptedColumn" for this column in .cipherstash/migrations.json. If "${options.column}" pairs with a legacy eql_v2_encrypted column, this release no longer manages that lifecycle — do not record ${info.column}.`,
+        `${options.table}.${info.column} (${info.domain}) is the table's only encrypted column, but nothing confirms it encrypts "${options.column}" — refusing to generate an irreversible drop on that guess. Identify the column that actually encrypts "${options.column}" and record that pairing: re-run \`stash encrypt backfill --table ${options.table} --column ${options.column} --encrypted-column <name>\` (which writes it to the manifest), or set "encryptedColumn" for this column in .cipherstash/migrations.json. If "${options.column}" pairs with a legacy eql_v2_encrypted column, resolution cannot see it (this command resolves EQL v3 counterparts only) — drive that column's v2 lifecycle against its own encrypted column directly, and do not record ${info.column}.`,
       )
       exitCode = 1
       return
