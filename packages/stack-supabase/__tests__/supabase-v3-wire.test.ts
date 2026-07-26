@@ -12,7 +12,10 @@ import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
 import { describe, expect, it } from 'vitest'
 import { EncryptedQueryBuilderImpl as EncryptedQueryBuilderV3Impl } from '../src/query-builder'
 import { createWirePostgrest } from './helpers/postgrest-wire'
-import { createMockEncryptionClient } from './helpers/supabase-mock'
+import {
+  createMockEncryptionClient,
+  wasmAuthoredV3Table,
+} from './helpers/supabase-mock'
 
 const users = encryptedTable('users', {
   email: types.TextSearch('email'),
@@ -213,5 +216,36 @@ describe('plaintext not(col, contains, …) emits a parseable containment litera
     await builder().select('id').not('note', 'contains', ['vip'])
 
     expect(wire.operandFor('note')).toBe('not.cs.{vip}')
+  })
+})
+
+describe('a structurally-v3 table still encrypts the filter operand', () => {
+  // The regression this plan exists to stop, at the layer where it hurt: with
+  // the `instanceof` gate, a table that is structurally v3 but not an instance
+  // of THIS package's copy of `EncryptedV3Column` sent `eq.<plaintext>` to
+  // PostgREST.
+  it('emits an envelope, not the bare plaintext', async () => {
+    const wire = createWirePostgrest([])
+    const builder = new EncryptedQueryBuilderV3Impl(
+      'users',
+      wasmAuthoredV3Table('users', ['email']) as never,
+      createMockEncryptionClient(),
+      wire.client,
+      ['id', 'email'],
+    )
+
+    await builder.select('id').eq('email', 'ada@example.com')
+
+    const operand = wire.operandFor('email')
+    expect(operand.startsWith('eq.')).toBe(true)
+    const value = operand.slice('eq.'.length)
+
+    // NOT `expect(operand).not.toContain('ada@example.com')`: the encryption
+    // double deliberately carries the plaintext in the envelope's `pt` field so
+    // its fake decrypt can undo it (`helpers/supabase-mock.ts`). The contract
+    // being pinned is that the operand is an ENVELOPE rather than the raw
+    // value — unfixed, `value` is literally `ada@example.com`.
+    expect(value).not.toBe('ada@example.com')
+    expect(JSON.parse(value)).toMatchObject({ c: 'ct:ada@example.com' })
   })
 })

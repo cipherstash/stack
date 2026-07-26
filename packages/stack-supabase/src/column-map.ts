@@ -1,13 +1,14 @@
-import { EncryptedV3Column } from '@cipherstash/stack/adapter-kit'
 import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
 import type { ColumnSchema } from '@cipherstash/stack/schema'
 import type { BuildableQueryColumn } from '@cipherstash/stack/types'
 import type { DbName } from './types'
 
 /**
- * The subset of a v3 column builder the dialect relies on. Structural rather
- * than the concrete class union so the runtime `instanceof EncryptedV3Column`
- * gate and this type stay independent.
+ * The subset of a v3 column builder the dialect relies on.
+ *
+ * This is BOTH the type and the runtime gate: `isV3ColumnLike` below probes
+ * exactly these members. It must not become an `instanceof` check — see that
+ * function's comment.
  */
 export type V3ColumnLike = {
   getName(): string
@@ -20,6 +21,45 @@ export type V3ColumnLike = {
     searchableJson?: boolean
   }
   build(): ColumnSchema
+}
+
+/**
+ * Whether a column builder is an EQL v3 column, checked STRUCTURALLY.
+ *
+ * NOT `instanceof EncryptedV3Column`. tsup emits that class twice — once into
+ * the chunk `dist/adapter-kit.js` imports, and once inline in
+ * `dist/wasm-inline.js`, a separate esbuild run
+ * (`packages/stack/tsup.config.ts:43-52`). A table authored with
+ * `encryptedTable`/`types` from `@cipherstash/stack/wasm-inline` is built from
+ * the second copy, so an `instanceof` against the first returned `false` for
+ * every column: `v3Columns` came out empty and the adapter treated encrypted
+ * columns as plaintext — filter operands reached PostgREST in the clear, while
+ * `::jsonb` casts and decryption kept working (they read `buildColumnKeyMap()`
+ * and the encrypt config, not this map).
+ *
+ * Mirrors `hasBuildColumnKeyMap` (`packages/stack/src/types.ts:276-283`), the
+ * repo's canonical answer to the same problem, used identically at
+ * `wasm-inline.ts:1361` — including its spelling: `'k' in obj && typeof (obj as
+ * { k?: unknown }).k === 'function'`, one narrowed probe per member, rather
+ * than one blanket `as Record<string, unknown>` over the whole object.
+ *
+ * Four probes, not two: a v2 column builder has `build()` and `getName()`
+ * (`packages/stack/src/schema/index.ts:257,264`) but neither `getEqlType()` nor
+ * `getQueryCapabilities()` (`eql/v3/columns.ts:445,450`).
+ */
+function isV3ColumnLike(builder: unknown): builder is V3ColumnLike {
+  if (typeof builder !== 'object' || builder === null) return false
+  return (
+    'getName' in builder &&
+    typeof (builder as { getName?: unknown }).getName === 'function' &&
+    'getEqlType' in builder &&
+    typeof (builder as { getEqlType?: unknown }).getEqlType === 'function' &&
+    'getQueryCapabilities' in builder &&
+    typeof (builder as { getQueryCapabilities?: unknown })
+      .getQueryCapabilities === 'function' &&
+    'build' in builder &&
+    typeof (builder as { build?: unknown }).build === 'function'
+  )
 }
 
 /**
@@ -102,8 +142,8 @@ export class ColumnMap {
     // otherwise resolve truthy for a plaintext column of that name.
     this.v3Columns = Object.create(null) as Record<string, V3ColumnLike>
     for (const [property, builder] of Object.entries(table.columnBuilders)) {
-      if (builder instanceof EncryptedV3Column) {
-        const col = builder as unknown as V3ColumnLike
+      if (isV3ColumnLike(builder)) {
+        const col = builder
         this.v3Columns[property] = col
         this.v3Columns[col.getName()] = col
       }
@@ -213,6 +253,12 @@ export class ColumnMap {
 
   /** The encrypted builders as the term collector's column lookup. */
   queryColumnMap(): Record<string, BuildableQueryColumn> {
+    // `V3ColumnLike` omits `isQueryable(): true`, which `BuildableV3QueryableColumn`
+    // requires — and `v3Columns` intentionally holds storage-only columns, for which
+    // `isQueryable()` is `false`. The collector consults `getQueryCapabilities()`
+    // before using an entry (`query-encrypt.ts:513`), so the widening is safe;
+    // narrowing the type would mean narrowing the map.
+    // biome-ignore lint/plugin: storage-only v3 columns lack `isQueryable(): true`; widening is safe (see above).
     return this.v3Columns as unknown as Record<string, BuildableQueryColumn>
   }
 }
