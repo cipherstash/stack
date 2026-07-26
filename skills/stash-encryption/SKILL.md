@@ -434,16 +434,34 @@ import { Encryption, encryptedTable, types } from "@cipherstash/stack/wasm-inlin
 
 const users = encryptedTable("users", { email: types.TextEq("email") })
 
-const client = await Encryption({
-  schemas: [users],
-  config: {
-    workspaceCrn: Deno.env.get("CS_WORKSPACE_CRN")!,
-    accessKey: Deno.env.get("CS_CLIENT_ACCESS_KEY")!,
-    clientId: Deno.env.get("CS_CLIENT_ID")!,
-    clientKey: Deno.env.get("CS_CLIENT_KEY")!,
-  },
-})
+// In Deno, Node, or Bun the four `CS_*` vars are read for you — `config` can
+// be omitted entirely, or used to override individual fields.
+const client = await Encryption({ schemas: [users] })
 ```
+
+**Cloudflare Workers and browsers have no `process.env`**, so the fallback is
+unavailable there and every field must be passed. A Worker gets its environment
+as the fetch handler's `env` argument:
+
+```typescript
+export default {
+  async fetch(req: Request, env: Env) {
+    const client = await Encryption({
+      schemas: [users],
+      config: {
+        workspaceCrn: env.CS_WORKSPACE_CRN,
+        accessKey: env.CS_CLIENT_ACCESS_KEY,
+        clientId: env.CS_CLIENT_ID,
+        clientKey: env.CS_CLIENT_KEY,
+      },
+    })
+  },
+}
+```
+
+Never rely on the env fallback in a **browser** build: bundlers routinely inline
+`process.env` at build time, which would ship your access key to every visitor.
+Pass a pre-built `authStrategy` instead.
 
 ```typescript
 const encrypted = await client.bulkEncrypt([

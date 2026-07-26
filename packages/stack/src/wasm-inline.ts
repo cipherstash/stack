@@ -214,10 +214,16 @@ export type WasmPlaintext =
  * `strategy` is retained as a deprecated alias (see below).
  */
 export type WasmClientConfig = {
-  /** Workspace client identifier — required by the WASM client. */
-  clientId: string
-  /** Workspace client key — required by the WASM client. */
-  clientKey: string
+  /**
+   * Workspace client identifier.
+   *
+   * Optional only because it falls back to `CS_CLIENT_ID`; one or the other
+   * must resolve. See {@link WasmEncryptionConfig} for the env table and the
+   * runtimes the fallback works in.
+   */
+  clientId?: string
+  /** Workspace client key. Falls back to `CS_CLIENT_KEY`. */
+  clientKey?: string
   // Provide exactly one of `accessKey` (we build the strategy) or a
   // pre-built auth strategy — never both, never neither.
 } & (
@@ -227,9 +233,12 @@ export type WasmClientConfig = {
        * `"crn:ap-southeast-2.aws:my-workspace-id"`. Required on the
        * access-key path — it is the single source of truth for workspace
        * identity and `AccessKeyStrategy` derives the region from it.
+       *
+       * Falls back to `CS_WORKSPACE_CRN`.
        */
-      workspaceCrn: string
-      accessKey: string
+      workspaceCrn?: string
+      /** Falls back to `CS_CLIENT_ACCESS_KEY`. */
+      accessKey?: string
       authStrategy?: never
       strategy?: never
     }
@@ -282,7 +291,33 @@ export type WasmEncryptionConfig = {
   /** One or more EQL v3 tables, authored with `types` / `encryptedTable` from
    *  this entry. The WASM entry is EQL v3 only. */
   schemas: [AnyV3Table, ...AnyV3Table[]]
-  config: WasmClientConfig
+  /**
+   * Credentials and auth. Every field falls back to an environment variable,
+   * so this can be omitted entirely when the environment supplies all four:
+   *
+   * | Field | Environment variable |
+   * | --- | --- |
+   * | `clientId` | `CS_CLIENT_ID` |
+   * | `clientKey` | `CS_CLIENT_KEY` |
+   * | `workspaceCrn` | `CS_WORKSPACE_CRN` |
+   * | `accessKey` | `CS_CLIENT_ACCESS_KEY` |
+   *
+   * An explicit value always wins; the environment only fills gaps. This is
+   * the WASM analogue of the native entry's default credential path, which
+   * resolves from env or `~/.cipherstash` — with the difference that there is
+   * no profile store here, only env.
+   *
+   * **The fallback needs a `process.env`**, so it works in Deno, Node, and
+   * Bun, and does NOT work in Cloudflare Workers or a browser. Workers pass
+   * their environment to the fetch handler rather than exposing a global, so
+   * read it there and pass the values explicitly. A missing credential is
+   * reported by name either way.
+   *
+   * Do not rely on the fallback in browser-targeted builds: bundlers commonly
+   * inline `process.env` at build time, which would bake the access key into
+   * client-side JavaScript. Pass a pre-built `authStrategy` instead.
+   */
+  config?: WasmClientConfig
 }
 
 /**
@@ -1370,7 +1405,24 @@ export async function Encryption(
     buildEncryptConfig(...schemas),
   )
 
-  const strategy = resolveStrategy(clientConfig)
+  // Fill credential gaps from the environment before anything reads them, so
+  // `resolveStrategy` and the client construction below see one resolved
+  // config rather than each applying its own fallback.
+  const resolvedConfig = withEnvCredentials(clientConfig ?? ({} as never))
+
+  if (!resolvedConfig.clientId || !resolvedConfig.clientKey) {
+    const missing = [
+      !resolvedConfig.clientId && '`config.clientId` (or `CS_CLIENT_ID`)',
+      !resolvedConfig.clientKey && '`config.clientKey` (or `CS_CLIENT_KEY`)',
+    ].filter(Boolean)
+    throw new Error(
+      `[encryption]: ${missing.join(' and ')} ${
+        missing.length > 1 ? 'are' : 'is'
+      } required.${envHint()} Note that \`CS_CLIENT_ID\` and \`CS_CLIENT_KEY\` are read as a pair — setting only one is ignored.`,
+    )
+  }
+
+  const strategy = resolveStrategy(resolvedConfig)
 
   // protect-ffi 0.25 takes a single options object with the strategy nested
   // under `strategy` (0.24 passed the strategy as a separate first argument).
@@ -1380,8 +1432,8 @@ export async function Encryption(
   const client = await wasmNewClient({
     strategy,
     encryptConfig: normalizeCastAs(encryptConfig),
-    clientId: clientConfig.clientId,
-    clientKey: clientConfig.clientKey,
+    clientId: resolvedConfig.clientId,
+    clientKey: resolvedConfig.clientKey,
     eqlVersion: 3,
   } as never)
 
@@ -1546,6 +1598,78 @@ export function __resetStrategyDeprecationWarningForTests(): void {
 }
 
 /**
+ * Read one environment variable, or `undefined` where there is no environment
+ * to read.
+ *
+ * The `typeof process` guard is the whole reason this is a function. This
+ * module is the edge entry: it runs in Cloudflare Workers and browsers, where
+ * `process` is not defined and a bare `process.env` read is a
+ * `ReferenceError`, not a miss. Optional chaining alone would not save it —
+ * `process?.env` still throws on an undeclared identifier.
+ */
+function readEnv(name: string): string | undefined {
+  return typeof process !== 'undefined' ? process.env?.[name] : undefined
+}
+
+/**
+ * Appended to a missing-credential error. Without it, a Worker developer sees
+ * "set `CS_CLIENT_ID`" and reasonably tries exactly that — in a runtime where
+ * it can never be read, because Workers hand their environment to the fetch
+ * handler instead of exposing a global. Say so at the point of failure.
+ */
+function envHint(): string {
+  return typeof process !== 'undefined'
+    ? ''
+    : ' (no `process.env` in this runtime, so the environment-variable fallback is unavailable — pass the value on `config`, e.g. from the Worker `env` argument)'
+}
+
+/**
+ * Fill missing credentials from the environment.
+ *
+ * The WASM analogue of what the native entry gets for free: there, an omitted
+ * credential resolves from env or `~/.cipherstash` inside protect-ffi. This
+ * entry has no filesystem and no profile store, so env is the only fallback —
+ * and it is a real one, since Deno, Node, and Bun all provide `process.env`.
+ *
+ * An explicit config value always wins. Only gaps are filled, so passing a
+ * pre-built `authStrategy` and nothing else still works: `accessKey` stays
+ * unset because the strategy path never reads it.
+ *
+ * `clientId` and `clientKey` are a KEYPAIR — filled only when the environment
+ * supplies both. Half a keypair is a misconfiguration, and mixing one env
+ * value with one config value would produce a client that fails inside
+ * ZeroKMS with something far less obvious than "you set one of two".
+ *
+ * `CS_CLIENT_ACCESS_KEY` is the name this repo documents and the one this
+ * file's own example uses. `CS_ACCESS_KEY` is accepted after it because
+ * protect-ffi's native JS credential reader uses that spelling, so both names
+ * are in circulation; taking the documented one first keeps the docs true.
+ */
+export function withEnvCredentials(cfg: WasmClientConfig): WasmClientConfig {
+  const envClientId = readEnv('CS_CLIENT_ID')
+  const envClientKey = readEnv('CS_CLIENT_KEY')
+  const hasEnvKeypair = envClientId !== undefined && envClientKey !== undefined
+
+  return {
+    ...cfg,
+    clientId: cfg.clientId ?? (hasEnvKeypair ? envClientId : undefined),
+    clientKey: cfg.clientKey ?? (hasEnvKeypair ? envClientKey : undefined),
+    workspaceCrn: cfg.workspaceCrn ?? readEnv('CS_WORKSPACE_CRN'),
+    // Only on the access-key arm: `accessKey` is `never` on the strategy arm,
+    // and filling it there would trip the mutual-exclusion guard below for a
+    // caller who set an env var they are not using.
+    ...(cfg.authStrategy || cfg.strategy
+      ? {}
+      : {
+          accessKey:
+            cfg.accessKey ??
+            readEnv('CS_CLIENT_ACCESS_KEY') ??
+            readEnv('CS_ACCESS_KEY'),
+        }),
+  } as WasmClientConfig
+}
+
+/**
  * Resolve the auth strategy for the WASM client from its config: an explicit
  * `config.authStrategy` (or the deprecated `config.strategy` alias), or — for
  * the access-key path — an `AccessKeyStrategy` built from the workspace CRN
@@ -1583,8 +1707,14 @@ export function resolveStrategy(cfg: WasmClientConfig): WasmAuthStrategy {
   // so plain JS / Deno callers that bypass the compile-time union fail loudly
   // instead of forwarding `undefined` into `AccessKeyStrategy.create`.
   if (!cfg.workspaceCrn || !cfg.accessKey) {
+    const missing = [
+      !cfg.workspaceCrn && '`config.workspaceCrn` (or `CS_WORKSPACE_CRN`)',
+      !cfg.accessKey && '`config.accessKey` (or `CS_CLIENT_ACCESS_KEY`)',
+    ].filter(Boolean)
     throw new Error(
-      '[encryption]: `config.workspaceCrn` and `config.accessKey` are required when no auth strategy is provided.',
+      `[encryption]: ${missing.join(' and ')} ${
+        missing.length > 1 ? 'are' : 'is'
+      } required when no auth strategy is provided.${envHint()}`,
     )
   }
   // `AccessKeyStrategy.create` takes the full workspace CRN — the region is
