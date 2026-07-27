@@ -48,8 +48,13 @@ const { explainUnresolved, resolveColumnLifecycle } = await import(
  */
 const clientWithColumns = (...columns: string[]): pg.ClientBase =>
   ({
+    // `columnExists` binds [table, schema, column] — it splits schema-qualified
+    // names and quotes with `format('%I')` so the lookup is case-EXACT. This
+    // double matches case-exactly for the same reason: a case-insensitive
+    // fixture would keep passing if the probe regressed to a bare
+    // `to_regclass($1)`, which case-folds (#787 review).
     query: async (_sql: string, params: unknown[]) => ({
-      rows: [{ exists: columns.includes(String(params[1])) }],
+      rows: [{ exists: columns.includes(String(params[2])) }],
     }),
   }) as unknown as pg.ClientBase
 
@@ -175,6 +180,29 @@ describe('resolveColumnLifecycle — a recorded hint that is not a v3 candidate'
     expect(
       explainUnresolved('users', 'ssn', candidates, unresolvedHint),
     ).toBeNull()
+  })
+
+  // #787 review. `columnExists` used to be a local copy using a bare
+  // `to_regclass($1)`, which PARSES and case-folds its argument — so on a
+  // Prisma-style `"User"` table the probe reported "missing", the hint was
+  // treated as stale, and the fail-closed above silently did not fire. It fell
+  // through to the sole/convention rules and resolved a guess, which is exactly
+  // what #772 finding 7 exists to prevent. Now delegated to
+  // `@cipherstash/migrate`'s shared, case-exact probe.
+  it('fires the fail-closed on a mixed-case table name too', async () => {
+    listEncryptedColumns.mockResolvedValue([V3_OTHER])
+    readManifest.mockResolvedValue({
+      tables: { User: [{ column: 'ssn', encryptedColumn: 'ssn_encrypted' }] },
+    })
+
+    const { info, unresolvedHint } = await resolveColumnLifecycle(
+      clientWithColumns('ssn', 'ssn_encrypted', 'email_enc'),
+      'User',
+      'ssn',
+    )
+
+    expect(info).toBeNull()
+    expect(unresolvedHint).toBe('ssn_encrypted')
   })
 
   it('explains the recorded counterpart by name rather than listing candidates', async () => {

@@ -35,10 +35,25 @@ all now fixed:
   column that actually encrypts the named one, and says explicitly not to record
   the guess.
 
-The new refusal is scoped to the mixed table it was written for: it applies only
-when the table actually holds EQL v3 columns that a guess could wrongly claim. A
-pure-v2 table has none, so it still falls through to the EQL v2 lifecycle exactly
-as before — including when `encrypt backfill` recorded an `encryptedColumn` for
-it, which it does for v2 columns too. Pure-v2 and pure-v3 tables are therefore
-unaffected, as are tables with two or more EQL v3 columns (resolution already
-failed closed there).
+The `unresolvedHint` refusal is scoped to tables that actually hold EQL v3
+columns a guess could wrongly claim. A **pure-v2** table has none, so it still
+falls through to the EQL v2 lifecycle exactly as before — including when
+`encrypt backfill` recorded an `encryptedColumn` for it, which it does for v2
+columns too.
+
+Two cases DO newly exit 1, both deliberately:
+
+- Any table with at least one EQL v3 column where the manifest records an
+  `encryptedColumn` that exists but is not one of them — not only the
+  v2-pair-plus-one-v3 shape. The recorded pairing is authoritative and
+  disagrees with every candidate, so guessing past it is the bug.
+
+- A column whose encrypted counterpart could only be identified **by
+  elimination** — no recorded `encryptedColumn`, no `<col>_encrypted` name
+  match, one EQL column left once the plaintext column itself is excluded.
+  `cutover` now refuses this as `drop` already did. Note `.cipherstash/` is
+  gitignored, so `migrations.json` is machine-local: a fresh clone or CI runner
+  can hit this on a **pure-v3** table whose encrypted column is named
+  unconventionally, where `cutover` previously exited 0 with "not applicable".
+  Re-run `stash encrypt backfill --table T --column C --encrypted-column <name>`
+  to record the pairing.
