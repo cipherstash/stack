@@ -1,3 +1,4 @@
+import { hasBuildColumnKeyMap } from '@cipherstash/stack/adapter-kit'
 import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
 import type { ColumnSchema } from '@cipherstash/stack/schema'
 import type { BuildableQueryColumn } from '@cipherstash/stack/types'
@@ -134,6 +135,22 @@ export class ColumnMap {
     table: AnyV3Table,
     allColumns: string[] | null,
   ) {
+    // FAIL CLOSED at the table level, for the same reason the column loop does
+    // below. `buildColumnKeyMap()` is the canonical v2/v3 discriminator
+    // (`packages/stack/src/types.ts:276`), and it is also the very first thing
+    // this constructor calls — so a v2 table died on the next line with
+    // `table.buildColumnKeyMap is not a function`, naming an internal method
+    // instead of the version mismatch. The column-level probe cannot cover
+    // this: it runs after the constructor has already crashed.
+    //
+    // Routed through `hasBuildColumnKeyMap` rather than hand-spelled, per that
+    // function's own doctrine — a second spelling is how the marker drifts.
+    if (!hasBuildColumnKeyMap(table)) {
+      throw new Error(
+        `[supabase v3]: table "${tableName}" is an EQL v2 table — it has no buildColumnKeyMap(), the marker every v3 table carries. This adapter is EQL v3 only. Author the table with \`encryptedTable\`/\`types\` from \`@cipherstash/stack/eql/v3\` or \`@cipherstash/stack/wasm-inline\`.`,
+      )
+    }
+
     this.propToDb = table.buildColumnKeyMap()
     this.columnSchemas = table.build().columns
 

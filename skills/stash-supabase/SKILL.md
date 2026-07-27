@@ -778,6 +778,17 @@ and queries EQL v3 only, via the introspecting `encryptedSupabase(url, key)` /
 `encryptedSupabase(client, options)` factory described above. There is no longer
 a code path in this package that emits or reads `eql_v2_encrypted` columns.
 
+Passing a v2 table in `schemas` is rejected by name:
+
+```
+[supabase v3]: schemas entry "users" is an EQL v2 table — it has no
+buildColumnKeyMap(), the marker every v3 table carries.
+```
+
+A v2 `encryptedTable` is structurally identical to a v3 one apart from that
+marker, so TypeScript alone will not always catch the swap — re-author the table
+with `encryptedTable`/`types` from `@cipherstash/stack/eql/v3`.
+
 Existing v2 deployments have two options:
 
 - **Migrate to EQL v3** (recommended): add an `eql_v3_*` twin column and run the

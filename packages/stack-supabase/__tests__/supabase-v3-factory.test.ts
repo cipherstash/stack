@@ -1,4 +1,8 @@
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
+import {
+  encryptedColumn,
+  encryptedTable as v2EncryptedTable,
+} from '@cipherstash/stack/schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SupabaseClientLike } from '../src/index.js'
 import { encryptedSupabaseV3 } from '../src/index.js'
@@ -98,6 +102,29 @@ describe('encryptedSupabaseV3 factory', () => {
       }),
     ).rejects.toThrow(/text_eq|text_search/)
     // ...and Encryption must never be reached.
+    expect(encryptionMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a v2 table in schemas before introspection results are used', async () => {
+    // The realistic caller mistake this guards: migrating from v2 and passing
+    // the old `schemas` through. A v2 table has `tableName` and
+    // `columnBuilders` just like a v3 one, so it sails past the record-key
+    // check and dies deeper in — previously at `verify.ts`, as
+    // `builder.getEqlType is not a function`, which names an internal method
+    // rather than the version mismatch.
+    const users = v2EncryptedTable('users', {
+      email: encryptedColumn('email').equality(),
+    })
+
+    await expect(
+      encryptedSupabaseV3(fakeClient, {
+        databaseUrl: 'postgres://x',
+        schemas: { users } as never,
+      }),
+    ).rejects.toThrow(
+      /\[supabase v3\]: schemas entry "users" is an EQL v2 table/,
+    )
+    // The client must never be built from a schema set we could not validate.
     expect(encryptionMock).not.toHaveBeenCalled()
   })
 
