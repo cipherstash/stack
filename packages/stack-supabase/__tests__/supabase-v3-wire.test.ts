@@ -12,7 +12,10 @@ import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
 import { describe, expect, it } from 'vitest'
 import { EncryptedQueryBuilderImpl as EncryptedQueryBuilderV3Impl } from '../src/query-builder'
 import { createWirePostgrest } from './helpers/postgrest-wire'
-import { createMockEncryptionClient } from './helpers/supabase-mock'
+import {
+  createMockEncryptionClient,
+  wasmAuthoredV3Table,
+} from './helpers/supabase-mock'
 
 const users = encryptedTable('users', {
   email: types.TextSearch('email'),
@@ -213,5 +216,73 @@ describe('plaintext not(col, contains, …) emits a parseable containment litera
     await builder().select('id').not('note', 'contains', ['vip'])
 
     expect(wire.operandFor('note')).toBe('not.cs.{vip}')
+  })
+})
+
+describe('a structurally-v3 table still encrypts the filter operand', () => {
+  // The regression this plan exists to stop, at the layer where it hurt: with
+  // the `instanceof` gate, a table that is structurally v3 but not an instance
+  // of THIS package's copy of `EncryptedV3Column` sent `eq.<plaintext>` to
+  // PostgREST.
+  it('emits an envelope, not the bare plaintext', async () => {
+    const wire = createWirePostgrest([])
+    const builder = new EncryptedQueryBuilderV3Impl(
+      'users',
+      wasmAuthoredV3Table('users', ['email']) as never,
+      createMockEncryptionClient(),
+      wire.client,
+      ['id', 'email'],
+    )
+
+    await builder.select('id').eq('email', 'ada@example.com')
+
+    const operand = wire.operandFor('email')
+    expect(operand.startsWith('eq.')).toBe(true)
+    const value = operand.slice('eq.'.length)
+
+    // NOT `expect(operand).not.toContain('ada@example.com')`: the encryption
+    // double deliberately carries the plaintext in the envelope's `pt` field so
+    // its fake decrypt can undo it (`helpers/supabase-mock.ts`). The contract
+    // being pinned is that the operand is an ENVELOPE rather than the raw
+    // value — unfixed, `value` is literally `ada@example.com`.
+    expect(value).not.toBe('ada@example.com')
+    expect(JSON.parse(value)).toMatchObject({ c: 'ct:ada@example.com' })
+  })
+})
+
+describe('an unrecognised column builder fails closed', () => {
+  // The mirror image of the leak above: a builder that does NOT present the v3
+  // surface must never be silently demoted to plaintext passthrough, because
+  // then its filter operands would reach PostgREST in the clear. `ColumnMap` is
+  // built eagerly in the query-builder constructor, so construction throws
+  // BEFORE any request — this pins that no query string is ever emitted.
+  it('throws at construction, so no PostgREST request is issued', () => {
+    const wire = createWirePostgrest([])
+    const malformed = {
+      tableName: 'users',
+      columnBuilders: {
+        email: { getName: () => 'email', build: () => ({}) },
+      },
+      buildColumnKeyMap: () => ({ email: 'email' }),
+      build: () => ({ tableName: 'users', columns: {} }),
+    }
+
+    expect(
+      () =>
+        new EncryptedQueryBuilderV3Impl(
+          'users',
+          malformed as never,
+          createMockEncryptionClient(),
+          wire.client,
+          ['id', 'email'],
+        ),
+      // Prefix-only would not discriminate — see the matching note in
+      // `supabase-schema-builder.test.ts`. This test guards the HARM, so it is
+      // the one that most needs to fail if the fail-closed probe stops firing
+      // and some other `[supabase v3]` error surfaces in its place.
+    ).toThrow(
+      /\[supabase v3\]: column "email" on table "users" is not a recognised EQL v3 column builder/,
+    )
+    expect(wire.urls).toEqual([])
   })
 })

@@ -1,13 +1,15 @@
-import { EncryptedV3Column } from '@cipherstash/stack/adapter-kit'
+import { hasBuildColumnKeyMap } from '@cipherstash/stack/adapter-kit'
 import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
 import type { ColumnSchema } from '@cipherstash/stack/schema'
 import type { BuildableQueryColumn } from '@cipherstash/stack/types'
 import type { DbName } from './types'
 
 /**
- * The subset of a v3 column builder the dialect relies on. Structural rather
- * than the concrete class union so the runtime `instanceof EncryptedV3Column`
- * gate and this type stay independent.
+ * The subset of a v3 column builder the dialect relies on.
+ *
+ * This is BOTH the type and the runtime gate: `isV3ColumnLike` below probes
+ * exactly these members. It must not become an `instanceof` check — see that
+ * function's comment.
  */
 export type V3ColumnLike = {
   getName(): string
@@ -20,6 +22,52 @@ export type V3ColumnLike = {
     searchableJson?: boolean
   }
   build(): ColumnSchema
+}
+
+/**
+ * Whether a column builder is an EQL v3 column, checked STRUCTURALLY.
+ *
+ * NOT `instanceof EncryptedV3Column`. tsup emits that class twice — once into
+ * the chunk `dist/adapter-kit.js` imports, and once inline in
+ * `dist/wasm-inline.js`, a separate esbuild run
+ * (`packages/stack/tsup.config.ts:43-52`). A table authored with
+ * `encryptedTable`/`types` from `@cipherstash/stack/wasm-inline` is built from
+ * the second copy, so an `instanceof` against the first returned `false` for
+ * every column: `v3Columns` came out empty and the adapter treated encrypted
+ * columns as plaintext — filter operands reached PostgREST in the clear, while
+ * `::jsonb` casts and decryption kept working (they read `buildColumnKeyMap()`
+ * and the encrypt config, not this map).
+ *
+ * Mirrors `hasBuildColumnKeyMap` (`packages/stack/src/types.ts:276-283`), the
+ * repo's canonical answer to the same problem, used identically at
+ * `wasm-inline.ts:1361` — including its spelling: `'k' in obj && typeof (obj as
+ * { k?: unknown }).k === 'function'`, one narrowed probe per member, rather
+ * than one blanket `as Record<string, unknown>` over the whole object.
+ *
+ * Four probes, not two: a v2 column builder has `build()` and `getName()`
+ * (`EncryptedColumn`, `packages/stack/src/schema/index.ts:442,449`) but neither
+ * `getEqlType()` nor `getQueryCapabilities()` (`eql/v3/columns.ts:445,450`).
+ *
+ * Exported for `__tests__/column-map-predicate.test.ts` only — `column-map.ts`
+ * is not re-exported from `src/index.ts` and the package publishes just `.`, so
+ * this does not widen the published surface (`V3ColumnLike` above is exported
+ * on the same terms). Testing it through `ColumnMap` cannot distinguish a
+ * four-probe gate from a two-probe one: every builder that reaches the
+ * constructor either passes every probe or fails two at once.
+ */
+export function isV3ColumnLike(builder: unknown): builder is V3ColumnLike {
+  if (typeof builder !== 'object' || builder === null) return false
+  return (
+    'getName' in builder &&
+    typeof (builder as { getName?: unknown }).getName === 'function' &&
+    'getEqlType' in builder &&
+    typeof (builder as { getEqlType?: unknown }).getEqlType === 'function' &&
+    'getQueryCapabilities' in builder &&
+    typeof (builder as { getQueryCapabilities?: unknown })
+      .getQueryCapabilities === 'function' &&
+    'build' in builder &&
+    typeof (builder as { build?: unknown }).build === 'function'
+  )
 }
 
 /**
@@ -87,6 +135,22 @@ export class ColumnMap {
     table: AnyV3Table,
     allColumns: string[] | null,
   ) {
+    // FAIL CLOSED at the table level, for the same reason the column loop does
+    // below. `buildColumnKeyMap()` is the canonical v2/v3 discriminator
+    // (`packages/stack/src/types.ts:276`), and it is also the very first thing
+    // this constructor calls — so a v2 table died on the next line with
+    // `table.buildColumnKeyMap is not a function`, naming an internal method
+    // instead of the version mismatch. The column-level probe cannot cover
+    // this: it runs after the constructor has already crashed.
+    //
+    // Routed through `hasBuildColumnKeyMap` rather than hand-spelled, per that
+    // function's own doctrine — a second spelling is how the marker drifts.
+    if (!hasBuildColumnKeyMap(table)) {
+      throw new Error(
+        `[supabase v3]: table "${tableName}" is an EQL v2 table — it has no buildColumnKeyMap(), the marker every v3 table carries. This adapter is EQL v3 only. Author the table with \`encryptedTable\`/\`types\` from \`@cipherstash/stack/eql/v3\` or \`@cipherstash/stack/wasm-inline\`.`,
+      )
+    }
+
     this.propToDb = table.buildColumnKeyMap()
     this.columnSchemas = table.build().columns
 
@@ -102,11 +166,22 @@ export class ColumnMap {
     // otherwise resolve truthy for a plaintext column of that name.
     this.v3Columns = Object.create(null) as Record<string, V3ColumnLike>
     for (const [property, builder] of Object.entries(table.columnBuilders)) {
-      if (builder instanceof EncryptedV3Column) {
-        const col = builder as unknown as V3ColumnLike
-        this.v3Columns[property] = col
-        this.v3Columns[col.getName()] = col
+      // FAIL CLOSED. `columnBuilders` is typed `EncryptedV3TableColumn`
+      // (`eql/v3/table.ts:18-25`), so every entry is meant to be an encrypted v3
+      // column. A builder that fails the structural probe is malformed input —
+      // and silently skipping it is the one thing we must not do here: the
+      // column would drop out of `v3Columns`, `isEncryptedColumn()` would return
+      // false for it, and its filter operands would go to PostgREST as
+      // PLAINTEXT. Refuse to construct instead, mirroring `build()`'s
+      // fail-loudly-on-malformed stance (`eql/v3/table.ts:47-51`).
+      if (!isV3ColumnLike(builder)) {
+        throw new Error(
+          `[supabase v3]: column "${property}" on table "${tableName}" is not a recognised EQL v3 column builder. Its filter operands would otherwise be sent to PostgREST unencrypted, so construction is refused. Author the table with \`encryptedTable\`/\`types\` from \`@cipherstash/stack/eql/v3\` or \`@cipherstash/stack/wasm-inline\`.`,
+        )
       }
+      const col = builder
+      this.v3Columns[property] = col
+      this.v3Columns[col.getName()] = col
     }
 
     this.encryptedColumnNames = Object.keys(this.v3Columns)
@@ -213,6 +288,12 @@ export class ColumnMap {
 
   /** The encrypted builders as the term collector's column lookup. */
   queryColumnMap(): Record<string, BuildableQueryColumn> {
+    // `V3ColumnLike` omits `isQueryable(): true`, which `BuildableV3QueryableColumn`
+    // requires — and `v3Columns` intentionally holds storage-only columns, for which
+    // `isQueryable()` is `false`. The collector consults `getQueryCapabilities()`
+    // before using an entry (`query-encrypt.ts:513`), so the widening is safe;
+    // narrowing the type would mean narrowing the map.
+    // biome-ignore lint/plugin: storage-only v3 columns lack `isQueryable(): true`; widening is safe (see above).
     return this.v3Columns as unknown as Record<string, BuildableQueryColumn>
   }
 }

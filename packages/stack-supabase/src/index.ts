@@ -1,4 +1,5 @@
 import { Encryption } from '@cipherstash/stack'
+import { hasBuildColumnKeyMap } from '@cipherstash/stack/adapter-kit'
 import type { UnmodelledColumn } from './introspect'
 import { eqlRequiresQueryDomains, introspect } from './introspect'
 import { EncryptedQueryBuilderImpl } from './query-builder'
@@ -167,6 +168,18 @@ export async function encryptedSupabase(
       if (key !== table.tableName) {
         throw new Error(
           `[supabase v3]: schemas key "${key}" does not match its table name "${table.tableName}" — the record key must equal the table's name`,
+        )
+      }
+      // A v2 `EncryptedTable` carries `tableName` and `columnBuilders` exactly
+      // as a v3 one does, so nothing above this distinguishes them and the
+      // types only catch it for callers who are actually type-checking. Left
+      // unguarded it reached `verifyDeclaredSchemas`, which calls
+      // `builder.getEqlType()` — absent on a v2 column — and died as
+      // `builder.getEqlType is not a function`: an internal method name, from
+      // a caller's perspective unrelated to the mistake they made.
+      if (!hasBuildColumnKeyMap(table)) {
+        throw new Error(
+          `[supabase v3]: schemas entry "${key}" is an EQL v2 table — it has no buildColumnKeyMap(), the marker every v3 table carries. This adapter is EQL v3 only. Author the table with \`encryptedTable\`/\`types\` from \`@cipherstash/stack/eql/v3\`.`,
         )
       }
       assertTableIsModelled(key, unmodelled)
