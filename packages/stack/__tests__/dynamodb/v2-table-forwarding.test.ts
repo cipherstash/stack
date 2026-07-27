@@ -18,10 +18,18 @@
  * the adapter makes rather than on a live decrypt. That matters because the only
  * other coverage of this path is an integration suite requiring live ZeroKMS.
  */
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { encryptedDynamoDB } from '@/dynamodb'
 import { encryptedTable as encryptedTableV3, types } from '@/eql/v3'
 import { encryptedColumn, encryptedTable as encryptedTableV2 } from '@/schema'
+import { logger } from '@/utils/logger'
+
+// The audit-drop tests spy on the shared `logger` singleton, which other suites
+// in this directory also patch. Each restores its own spy in a `finally`; this
+// is the safety net so a patched method can never survive a test boundary.
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 const usersV2 = encryptedTableV2('users_v2', {
   email: encryptedColumn('email').equality(),
@@ -253,18 +261,71 @@ describe('a client whose decrypt requires the table', () => {
 
   /**
    * Audit metadata has nowhere to go on this client shape, so it is dropped —
-   * but the encrypt must still succeed rather than failing the whole write.
-   * Mirrors the decrypt path's documented behaviour.
+   * but the encrypt must still succeed rather than failing the whole write, and
+   * the drop must be OBSERVABLE rather than silent. Asserting only that the
+   * result succeeded would pass even with the debug log deleted, and that log is
+   * the half that makes a missing audit record diagnosable.
    */
-  it('drops audit metadata on that client rather than failing the encrypt', async () => {
-    const { client } = wasmShapedClient(['users_v3'])
-    const dynamo = encryptedDynamoDB({ encryptionClient: client as never })
+  it('drops audit metadata observably, without failing the encrypt', async () => {
+    const spy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
 
-    const result = await dynamo
-      .encryptModel({ pk: 'a' } as never, usersV3)
-      .audit({ metadata: { requestId: 'r-1' } })
+    try {
+      const { client } = wasmShapedClient(['users_v3'])
+      const dynamo = encryptedDynamoDB({ encryptionClient: client as never })
 
-    expect(result.failure).toBeUndefined()
+      const result = await dynamo
+        .encryptModel({ pk: 'a' } as never, usersV3)
+        .audit({ metadata: { requestId: 'r-1' } })
+
+      expect(result.failure).toBeUndefined()
+      expect(spy).toHaveBeenCalledWith(
+        expect.stringContaining('encryptModel audit metadata ignored'),
+      )
+      // It must name the entry to switch to, not merely report a loss.
+      expect(spy.mock.calls.at(-1)?.[0]).toMatch(/@cipherstash\/stack/)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  /**
+   * The mirror: a client that DOES carry `.audit()` must not trip the drop path.
+   * Without this, a "fix" that logged unconditionally — or that stopped chaining
+   * `.audit()` at all — would leave every test green while silently discarding
+   * the native clients' audit trail.
+   */
+  it('does not report a drop when the client can carry the metadata', async () => {
+    const spy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+
+    try {
+      let seen: unknown
+      const chainable = {
+        audit(config: { metadata?: Record<string, unknown> }) {
+          seen = config.metadata
+          return Promise.resolve({ data: {} })
+        },
+      }
+      const client = {
+        getEncryptConfig: () => ({ v: 1, tables: { users_v3: {} } }),
+        encryptModel: () => chainable,
+        bulkEncryptModels: () => chainable,
+        decryptModel: () => Promise.resolve({ data: {} }),
+        bulkDecryptModels: () => Promise.resolve({ data: {} }),
+      }
+      const dynamo = encryptedDynamoDB({ encryptionClient: client as never })
+
+      const result = await dynamo
+        .encryptModel({ pk: 'a' } as never, usersV3)
+        .audit({ metadata: { requestId: 'r-1' } })
+
+      expect(result.failure).toBeUndefined()
+      expect(seen).toEqual({ requestId: 'r-1' })
+      expect(spy).not.toHaveBeenCalledWith(
+        expect.stringContaining('audit metadata ignored'),
+      )
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   /**

@@ -75,11 +75,13 @@ describe('resolveDecryptResult', () => {
     // A non-conforming client that resolves to a bare value (or `{}`) has
     // neither `data` nor `failure`. Casting it straight through would surface a
     // fake success carrying `undefined`; the shape must be rejected instead.
-    for (const malformed of [{}, 42, undefined]) {
+    // `null` and `[]` pin the two clauses that are otherwise untested: without
+    // the `resolved === null` guard, `'data' in null` throws a TypeError, and an
+    // array passes `typeof === 'object'` so it must be rejected on the key checks.
+    for (const malformed of [{}, 42, undefined, null, []]) {
       const result = await resolveDecryptResult(Promise.resolve(malformed), {})
 
-      expect(result.failure).toBeDefined()
-      expect(typeof result.failure?.message).toBe('string')
+      expect(result.failure?.message).toMatch(/malformed result/)
       expect(result.data).toBeUndefined()
     }
   })
@@ -201,26 +203,67 @@ describe('resolveDecryptResult', () => {
  * must resolve instead of throwing.
  */
 describe('resolveEncryptResult', () => {
-  it('chains .audit and forwards metadata when present (native clients)', async () => {
-    let seen: unknown
-    let calls = 0
-    const operation = {
-      audit(config: { metadata?: Record<string, unknown> }) {
-        calls += 1
-        seen = config.metadata
-        return Promise.resolve({ data: { encrypted: true } })
-      },
+  /**
+   * The NATIVE shape, not a hand-rolled lookalike.
+   *
+   * `EncryptionOperation.audit()` returns `this` and the operation is a thenable
+   * whose `then()` calls `execute()` — so the metadata is read back out of the
+   * operation at execution time, not passed forward as an argument. A stub whose
+   * `audit()` returns a promise satisfies the helper while testing none of that:
+   * break `audit()` so it stops recording, or break `then()` so it never
+   * executes, and such a stub still passes while every native encrypt loses its
+   * audit trail. Subclass the real base class instead, exactly as the decrypt
+   * half of this file does with `MappedDecryptOperation`.
+   */
+  it('forwards metadata into a real native operation and executes it once', async () => {
+    let seenMetadata: Record<string, unknown> | undefined
+    let executions = 0
+
+    class NativeEncrypt extends EncryptionOperation<{ encrypted: boolean }> {
+      override async execute(): Promise<
+        Result<{ encrypted: boolean }, EncryptionError>
+      > {
+        executions += 1
+        seenMetadata = this.getAuditData().metadata
+        return { data: { encrypted: true } }
+      }
     }
 
     const result = await resolveEncryptResult(
-      operation,
+      new NativeEncrypt(),
       { metadata: { sub: 'u1' } },
       'encryptModel',
     )
 
     expect(result).toEqual({ data: { encrypted: true } })
-    expect(seen).toEqual({ sub: 'u1' })
-    expect(calls).toBe(1)
+    // The metadata reached `execute()` — the only place it can reach ZeroKMS.
+    expect(seenMetadata).toEqual({ sub: 'u1' })
+    // Awaiting a thenable that `.audit()` returned as `this` must not run it twice.
+    expect(executions).toBe(1)
+  })
+
+  it('propagates a native operation failure without unwrapping it', async () => {
+    class FailingEncrypt extends EncryptionOperation<{ encrypted: boolean }> {
+      override async execute(): Promise<
+        Result<{ encrypted: boolean }, EncryptionError>
+      > {
+        return {
+          failure: {
+            type: EncryptionErrorTypes.EncryptionError,
+            message: 'ffi exploded',
+          },
+        }
+      }
+    }
+
+    const result = await resolveEncryptResult(
+      new FailingEncrypt(),
+      { metadata: { sub: 'u1' } },
+      'encryptModel',
+    )
+
+    expect(result.failure?.message).toBe('ffi exploded')
+    expect(result.data).toBeUndefined()
   })
 
   it('awaits a bare promise instead of throwing (wasm-inline encrypt)', async () => {
@@ -242,16 +285,19 @@ describe('resolveEncryptResult', () => {
   })
 
   it('returns a failure — not a fake success — for a malformed result', async () => {
-    // Fail closed. A bare value cast straight through would hand the caller an
-    // "encrypted" item that was never encrypted.
-    for (const malformed of [{}, 42, undefined]) {
+    // Fail closed on every non-Result shape. `null` and `[]` are here
+    // deliberately: `null` is what makes the `resolved === null` clause
+    // load-bearing (without it, `'data' in null` throws a TypeError rather than
+    // returning the intended message), and `typeof [] === 'object'` means an
+    // array reaches the property checks and must still be rejected.
+    for (const malformed of [{}, 42, undefined, null, []]) {
       const result = await resolveEncryptResult(
         Promise.resolve(malformed),
         {},
         'encryptModel',
       )
 
-      expect(result.failure).toBeDefined()
+      expect(result.failure?.message).toMatch(/malformed result/)
       expect(result.data).toBeUndefined()
     }
   })

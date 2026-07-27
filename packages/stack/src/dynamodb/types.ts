@@ -62,15 +62,6 @@ export type DynamoDBEncryptionClient = {
   bulkDecryptModels(input: never, table: never): unknown
 }
 
-type ChainableEncryptOperation<T> = {
-  audit(data: {
-    metadata?: Record<string, unknown>
-  }): PromiseLike<
-    | { data: T; failure?: never }
-    | { data?: never; failure: { message: string; code?: string } }
-  >
-}
-
 /**
  * @internal Callable view of {@link DynamoDBEncryptionClient}.
  *
@@ -80,21 +71,28 @@ type ChainableEncryptOperation<T> = {
  * satisfy. The operation classes therefore cast to this shape at the call site
  * — the same split the Drizzle v3 operators use.
  *
- * `decryptModel` is intentionally untyped in its return: both shipped clients
- * return a chainable operation, but different classes of one (the nominal
- * client's `DecryptModelOperation`, the typed client's `MappedDecryptOperation`),
- * and a custom client may return something else entirely. See
- * `resolveDecryptResult`, which normalises all three.
+ * The returns are intentionally untyped on ALL FOUR members. The clients
+ * disagree about what an operation even is: the nominal client returns a
+ * chainable `EncryptModelOperation` / `DecryptModelOperation`, the typed client
+ * a `MappedDecryptOperation`, and the wasm-inline client a bare
+ * `Promise<WasmResult>` with no `.audit()` anywhere on it.
+ *
+ * Declaring a chainable shape here asserts an `.audit()` that the wasm entry
+ * does not have, and that assertion was not academic — it is exactly what let
+ * the write path chain `.audit()` unconditionally and fail EVERY EQL v3 write on
+ * that entry (#788 review follow-up). `unknown` forces each call site through
+ * `resolveEncryptResult` / `resolveDecryptResult`, which normalise all three
+ * shapes and fail closed on anything else.
  */
 export type CallableEncryptionClient = {
   encryptModel(
     input: Record<string, unknown>,
     table: AnyEncryptedTable,
-  ): ChainableEncryptOperation<Record<string, unknown>>
+  ): unknown
   bulkEncryptModels(
     input: Record<string, unknown>[],
     table: AnyEncryptedTable,
-  ): ChainableEncryptOperation<Record<string, unknown>[]>
+  ): unknown
   decryptModel(
     input: Record<string, unknown>,
     table?: AnyEncryptedTable,
