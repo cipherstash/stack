@@ -38,13 +38,19 @@ SQL, both of which need only `node_modules` and no database.
 Supabase Edge Functions, Cloudflare Workers, and Bun. Import specifier per
 runtime, the four mandatory `CS_*` variables and minting them with
 `stash env`, how the WASM client surface differs from the native typed client
-(no `.audit()`, per-item bulk shape, a required `table` argument on
-`decryptModel` / `bulkDecryptModels`, ESM-only), and the auth-strategy
-`Result` that must be unwrapped before it reaches `config.authStrategy`. It
-also separates the two mechanisms behind identity-bound encryption, which are
-routinely conflated: an auth strategy decides *who the client is*, a lock
-context decides *which key the value is encrypted under*, and a strategy on
-its own writes data that is not identity-bound.
+(no `.audit()`, no `.withLockContext()`, per-item bulk shape, a required
+`table` argument on `decryptModel` / `bulkDecryptModels`, ESM-only), and the
+auth-strategy `Result` that must be unwrapped before it reaches
+`config.authStrategy`.
+
+It also separates the two mechanisms behind identity-bound encryption, which
+are routinely conflated — and which the source comment on the entry itself got
+wrong. An auth strategy decides *who the client is*; a lock context decides
+*which key the value is encrypted under*. Only the first exists on this entry,
+so an `authStrategy` alone still writes values encrypted under the workspace
+key, and the entry cannot read what the native one wrote under a lock context.
+That is a silent read split between the two entries, and the skill says so
+rather than leaving it to be discovered as a failed decrypt.
 
 Both carry **the credential-identity rule**, a silent data-loss footgun now
 also stated in `stash-cli` (under `env` and `encrypt backfill`) and

@@ -237,7 +237,7 @@ Available: `encrypt`, `decrypt`, `isEncrypted`, `encryptQuery`,
 | Config | discovered from env / `~/.cipherstash` | all four `CS_*` passed explicitly |
 | Typing | signatures derived from the schema | schema-aware, but not the full typed client |
 | `.audit()` | chainable on operations | **not available** |
-| `.withLockContext()` | chainable on operations | chainable on operations — see below |
+| `.withLockContext()` | chainable on operations | **not available** — see below |
 | `bulkEncrypt` shape | `(plaintexts, { table, column })`, `{ id, plaintext }` envelopes | per-item `{ plaintext, table, column }`, plain index-aligned array |
 | `decryptModel` / `bulkDecryptModels` | `(model, table, lockContext?)`, **plus** a table-less `(model)` overload for legacy rows | `(model, table)` only — the table is **required** |
 | Module format | ESM + CJS | **ESM only** |
@@ -248,13 +248,29 @@ them is the standard mistake. Identity-bound encryption needs both:
 1. **Authenticate as the user** — build an `OidcFederationStrategy` (or
    `AccessKeyStrategy` for service-to-service) and pass it as
    `config.authStrategy`. The client then acts as that user for its lifetime.
+   **Available on this entry**, and shown below.
 2. **Bind the data key to a claim** — chain `.withLockContext({ identityClaim })`
-   on the operation. *This* is what changes key derivation.
+   on the operation. *This* is what changes key derivation. **Not available on
+   this entry** ([#797](https://github.com/cipherstash/stack/issues/797)).
 
-An auth strategy on its own gives you a client authenticated as the end user,
-writing data that is **not** identity-bound. The strategy replaced the old
-per-operation token ceremony (`LockContext.identify()`, deprecated); it did
-not replace the lock context.
+> [!IMPORTANT]
+> **An auth strategy alone does not produce identity-bound data.** It decides
+> *who the client is*; a lock context decides *which key the value is encrypted
+> under*. Only the first exists here, so on this entry today:
+>
+> - Values you write are encrypted under the **workspace key**, not the user's
+>   — even with a per-user `authStrategy`.
+> - You **cannot read** anything the native entry wrote under a lock context,
+>   because decrypt needs the same context. That is a silent split in what the
+>   two entries can read, on top of the schema incompatibility below.
+>
+> If a value must be bound to an end-user claim, encrypt and decrypt it on the
+> native entry. Don't reach for `as any` to force a lock context through here —
+> there is nothing on the other side to receive it.
+
+The strategy replaced the old per-operation token ceremony
+(`LockContext.identify()`, deprecated) — it did **not** replace the lock
+context, and the native entry still chains `.withLockContext()` for that.
 
 ```ts
 import { Encryption, OidcFederationStrategy } from '@cipherstash/stack/wasm-inline'
@@ -272,17 +288,21 @@ const client = await Encryption({
   config: { authStrategy: strategy.data, clientId, clientKey },
 })
 
-// Step 2: bind the data key to a claim. Without this the value is encrypted
-// under the workspace key, not the user's.
-const enc = await client
-  .encrypt('alice@example.com', { table: users, column: users.email })
-  .withLockContext({ identityClaim: ['sub'] })
+// Authenticated as the end user — but the value is still encrypted under the
+// workspace key. There is no `.withLockContext()` on this entry to bind it.
+const enc = await client.encrypt('alice@example.com', {
+  table: users,
+  column: users.email,
+})
+if (enc.failure) throw new Error(enc.failure.message)
 ```
 
-**The same claim must be supplied on decrypt.** A value encrypted under a lock
-context and decrypted without one — or under a different claim — does not come
-back. This is the single most common identity-aware encryption bug, and it
-does not surface as a key error; it surfaces as a failed decrypt.
+**On the native entry, where lock contexts do exist, the same claim must be
+supplied on decrypt.** A value encrypted under a lock context and decrypted
+without one — or under a different claim — does not come back. This is the
+single most common identity-aware encryption bug, and it does not surface as a
+key error; it surfaces as a failed decrypt. It is also why an edge function
+cannot read what a lock-context-using Node service wrote.
 
 `AccessKeyStrategy.create(workspaceCrn, accessKey)` has the same
 Result-returning shape, for service-to-service use with a custom token store.

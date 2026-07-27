@@ -662,9 +662,28 @@ const INTERNAL_CONSTRUCT = Symbol('cs-wasm-client')
  * ZeroKMS round trip regardless of how many fields or models it covers. What
  * still differs from the native surface is deliberate and local: failures come
  * back as this entry's `{ failure }` Results (rather than a thenable operation
- * with `.audit()`), and there is no `.withLockContext()` — identity-bound
- * encryption on the edge is configured at client construction via
- * `config.authStrategy` instead (#663 context).
+ * with `.audit()`).
+ *
+ * There is also no `.withLockContext()` here, and that one is a **gap, not a
+ * design decision** (#797). An earlier version of this comment said
+ * identity-bound encryption is "configured at client construction via
+ * `config.authStrategy` instead" (#663 context). That is wrong, and the
+ * conflation is worth naming because it is the one people arrive with:
+ * an auth strategy decides WHO THE CLIENT IS; a lock context decides WHICH
+ * KEY THE VALUE IS ENCRYPTED UNDER. They are orthogonal, and only the first
+ * exists on this entry.
+ *
+ * The consequences are silent, which is why they are stated here rather than
+ * left to a failed decrypt: values written from this entry are encrypted under
+ * the workspace key even when the client is authenticated as an end user, and
+ * this entry cannot read anything the native entry wrote under a lock context,
+ * since decrypt requires the same context. `skills/stash-edge` documents both.
+ *
+ * The binding accepts a lock context on both paths — `lockContext` is an
+ * option field on the single calls and per-payload-item on the bulk ones — so
+ * closing this is plumbing rather than a new capability. It is not plumbed
+ * here yet, and shipping it would want a live round-trip test first: a wrong
+ * or missing claim surfaces as a failed decrypt, not a key error.
  *
  * Construct via {@link Encryption} — the constructor is private to
  * prevent callers from wrapping arbitrary objects in this type.
