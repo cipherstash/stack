@@ -44,10 +44,17 @@ export type V3ColumnLike = {
  * than one blanket `as Record<string, unknown>` over the whole object.
  *
  * Four probes, not two: a v2 column builder has `build()` and `getName()`
- * (`packages/stack/src/schema/index.ts:257,264`) but neither `getEqlType()` nor
- * `getQueryCapabilities()` (`eql/v3/columns.ts:445,450`).
+ * (`EncryptedColumn`, `packages/stack/src/schema/index.ts:442,449`) but neither
+ * `getEqlType()` nor `getQueryCapabilities()` (`eql/v3/columns.ts:445,450`).
+ *
+ * Exported for `__tests__/column-map-predicate.test.ts` only — `column-map.ts`
+ * is not re-exported from `src/index.ts` and the package publishes just `.`, so
+ * this does not widen the published surface (`V3ColumnLike` above is exported
+ * on the same terms). Testing it through `ColumnMap` cannot distinguish a
+ * four-probe gate from a two-probe one: every builder that reaches the
+ * constructor either passes every probe or fails two at once.
  */
-function isV3ColumnLike(builder: unknown): builder is V3ColumnLike {
+export function isV3ColumnLike(builder: unknown): builder is V3ColumnLike {
   if (typeof builder !== 'object' || builder === null) return false
   return (
     'getName' in builder &&
