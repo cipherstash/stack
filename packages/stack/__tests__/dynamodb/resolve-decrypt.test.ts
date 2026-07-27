@@ -1,15 +1,28 @@
 /**
- * Pure unit tests for the two client-shape helpers behind the DynamoDB adapter's
- * decrypt path. Both shipped clients — nominal `EncryptionClient` and the typed
- * EQL v3 client (whose decrypt returns a `MappedDecryptOperation`) — are
- * chainable and carry `.audit()`; the bare-promise branch remains only for a
- * non-conforming custom client. Every branch was previously reachable only
- * through a live ZeroKMS decrypt; these move that assurance onto the pure CI
- * lane. No credentials, no network.
+ * Pure unit tests for the client-shape helpers behind the DynamoDB adapter's
+ * decrypt AND encrypt paths.
+ *
+ * On decrypt, both native clients — nominal `EncryptionClient` and the typed EQL
+ * v3 client (whose decrypt returns a `MappedDecryptOperation`) — are chainable
+ * and carry `.audit()`; the bare-promise branch is taken by the wasm-inline
+ * client and by a non-conforming custom one.
+ *
+ * The same split exists on encrypt, and only the decrypt half handled it: the
+ * encrypt operations chained `.audit()` unconditionally, so the wasm-inline
+ * client failed every write (#788 review follow-up). `resolveEncryptResult` is
+ * the mirror, and the chainable half of its coverage matters most — the native
+ * clients' encrypt audit trail has no other credential-free test.
+ *
+ * Every branch was previously reachable only through live ZeroKMS; these move
+ * that assurance onto the pure CI lane. No credentials, no network.
  */
 import type { Result } from '@byteslice/result'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { resolveDecryptResult, throwPreservingCode } from '@/dynamodb/helpers'
+import {
+  resolveDecryptResult,
+  resolveEncryptResult,
+  throwPreservingCode,
+} from '@/dynamodb/helpers'
 import { EncryptionOperation } from '@/encryption/operations/base-operation'
 import { MappedDecryptOperation } from '@/encryption/operations/mapped-decrypt'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
@@ -175,6 +188,97 @@ describe('resolveDecryptResult', () => {
 
     expect(result.failure?.message).toBe('unknown table')
     expect(result.data).toBeUndefined()
+  })
+})
+
+/**
+ * The write-path mirror (#788 review follow-up). The encrypt operations used
+ * to chain `.audit()` unconditionally, so a client returning a bare promise
+ * (the wasm-inline entry) failed every encrypt with
+ * `.audit is not a function`. These pin BOTH directions: the chainable path
+ * must still forward metadata — the native clients' audit trail depends on it,
+ * and its only other coverage is a live-credential suite — and the bare path
+ * must resolve instead of throwing.
+ */
+describe('resolveEncryptResult', () => {
+  it('chains .audit and forwards metadata when present (native clients)', async () => {
+    let seen: unknown
+    let calls = 0
+    const operation = {
+      audit(config: { metadata?: Record<string, unknown> }) {
+        calls += 1
+        seen = config.metadata
+        return Promise.resolve({ data: { encrypted: true } })
+      },
+    }
+
+    const result = await resolveEncryptResult(
+      operation,
+      { metadata: { sub: 'u1' } },
+      'encryptModel',
+    )
+
+    expect(result).toEqual({ data: { encrypted: true } })
+    expect(seen).toEqual({ sub: 'u1' })
+    expect(calls).toBe(1)
+  })
+
+  it('awaits a bare promise instead of throwing (wasm-inline encrypt)', async () => {
+    const result = await resolveEncryptResult(
+      Promise.resolve({ data: { encrypted: true } }),
+      { metadata: { dropped: true } },
+      'encryptModel',
+    )
+
+    expect(result).toEqual({ data: { encrypted: true } })
+  })
+
+  it('propagates a failure result unchanged', async () => {
+    const failure = { failure: { message: 'boom', code: 'X' } }
+
+    await expect(
+      resolveEncryptResult(Promise.resolve(failure), {}, 'bulkEncryptModels'),
+    ).resolves.toEqual(failure)
+  })
+
+  it('returns a failure — not a fake success — for a malformed result', async () => {
+    // Fail closed. A bare value cast straight through would hand the caller an
+    // "encrypted" item that was never encrypted.
+    for (const malformed of [{}, 42, undefined]) {
+      const result = await resolveEncryptResult(
+        Promise.resolve(malformed),
+        {},
+        'encryptModel',
+      )
+
+      expect(result.failure).toBeDefined()
+      expect(result.data).toBeUndefined()
+    }
+  })
+
+  it('names the operation in the dropped-metadata log, and stays silent without metadata', async () => {
+    const spy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+
+    try {
+      await resolveEncryptResult(
+        Promise.resolve({ data: {} }),
+        { metadata: { m: 1 } },
+        'bulkEncryptModels',
+      )
+      expect(spy).toHaveBeenCalledWith(
+        expect.stringContaining('bulkEncryptModels audit metadata ignored'),
+      )
+
+      spy.mockClear()
+      await resolveEncryptResult(
+        Promise.resolve({ data: {} }),
+        {},
+        'encryptModel',
+      )
+      expect(spy).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
   })
 })
 
