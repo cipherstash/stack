@@ -20,13 +20,33 @@ import cliVitestConfig from '../../packages/cli/vitest.config.ts'
 
 const aliases = cliVitestConfig.resolve.alias
 
+/**
+ * Vite also accepts the array form (`[{ find, replacement }]`). This guard
+ * reads the object-of-strings form; on the array form every check below would
+ * throw `TypeError: target.endsWith is not a function` from a helper, which
+ * reads as "the guard is broken" rather than "the config changed shape".
+ * Fail here instead, naming the offender.
+ */
+const nonStringTargets = Object.entries(aliases).filter(
+  ([, target]) => typeof target !== 'string',
+)
+
 /** Directory aliases are written with a trailing slash (`'@/'`). */
-const targets = Object.entries(aliases).map(([specifier, target]) => [
-  specifier,
-  target.endsWith('/') ? target.slice(0, -1) : target,
-])
+const targets = Object.entries(aliases)
+  .filter(([, target]) => typeof target === 'string')
+  .map(([specifier, target]) => [
+    specifier,
+    target.endsWith('/') ? target.slice(0, -1) : target,
+  ])
 
 describe('packages/cli vitest alias map', () => {
+  it('is the object-of-strings form this guard can read', () => {
+    expect(
+      nonStringTargets.map(([specifier]) => specifier),
+      'packages/cli/vitest.config.ts switched away from the object-of-strings alias form. Update this guard to walk the new shape — do not delete it.',
+    ).toEqual([])
+  })
+
   it('still aliases @cipherstash/migrate to source', () => {
     // migrate publishes `./dist` only. Drop this entry — or re-introduce an
     // `importOriginal()` spread that needs the built package — and the unit
