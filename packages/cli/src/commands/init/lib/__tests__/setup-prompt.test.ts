@@ -142,6 +142,78 @@ describe('renderSetupPrompt — orient + route (implement mode)', () => {
       expect(out).toContain('encryptQuery')
       expect(out).toContain('stash-encryption')
     })
+
+    // `EncryptQueryOptions` takes the schema OBJECTS — `usersSchema` and
+    // `usersSchema.email` — not their names as strings, and `queryType` is
+    // inferred from the column's indexes when omitted. The object-shorthand
+    // `{ table, column, queryType }` reads as three required string fields:
+    // the same species of plausible-but-wrong API as the `protectOps.eq` this
+    // PR exists to have removed.
+    it('shows encryptQuery taking schema objects, not string names', () => {
+      const out = render('postgresql')
+      expect(out).toContain('column: usersSchema.email')
+      expect(out).not.toContain('{ table, column, queryType }')
+    })
+
+    // `packages/cli` builds with tsup, which transpiles without type-checking,
+    // and has no `typecheck` script — so `Record<Integration, …>` buys nothing
+    // at build time here. An if-chain ending in a bare Drizzle `return` hands a
+    // future fifth integration the exact string this helper exists to stop it
+    // getting. Degrade to neutral guidance, as `skillsFor()` degrades to
+    // BASE_SKILLS.
+    it('degrades to neutral guidance for an unrecognised integration', () => {
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        integration: 'mystery-orm' as SetupPromptContext['integration'],
+      })
+      expect(out).not.toContain('createEncryptionOperators')
+      expect(out).not.toContain('encryptedSupabase')
+      expect(out).toContain('encryptQuery')
+    })
+  })
+
+  // Step 2 named the Drizzle and Supabase schema APIs unconditionally — the
+  // identical defect step 5 above was just fixed for. A prisma-next project was
+  // sent at `types.*` / `encryptedTable`, which `stash schema build` explicitly
+  // refuses to scaffold for that integration; a plain-Postgres project was
+  // given no named path at all.
+  describe('schema-authoring guidance is per-integration', () => {
+    const render = (integration: SetupPromptContext['integration']) =>
+      renderSetupPrompt({ ...baseCtx, integration })
+
+    it('names the Drizzle column factories for drizzle', () => {
+      const out = render('drizzle')
+      expect(out).toContain('`types.*` column factories')
+      expect(out).toContain('@cipherstash/stack-drizzle')
+    })
+
+    it('names the eql_v3 domain for supabase', () => {
+      expect(render('supabase')).toContain('eql_v3_encrypted')
+    })
+
+    it('names the cipherstash.* field constructors for prisma-next', () => {
+      const out = render('prisma-next')
+      expect(out).toContain('cipherstash.TextSearch()')
+      expect(out).toContain('prisma/schema.prisma')
+      // The `types.*` client is precisely what `stash schema build` refuses to
+      // emit for prisma-next.
+      expect(out).not.toContain('`types.*` column factories')
+    })
+
+    it('names encryptedTable for plain postgresql', () => {
+      const out = render('postgresql')
+      expect(out).toContain('encryptedTable')
+      expect(out).toContain('@cipherstash/stack/v3')
+    })
+  })
+
+  // `postgresql` installs no integration-specific skill (SKILL_MAP), so every
+  // unconditional "see the integration skill" is a pointer at a file that was
+  // never written. Step 5's was fixed; two more survived elsewhere.
+  it('never points plain postgresql at "the integration skill"', () => {
+    const out = renderSetupPrompt({ ...baseCtx, integration: 'postgresql' })
+    expect(out).not.toMatch(/the integration skill/i)
+    expect(out).toContain('stash-encryption')
   })
 
   it('emits supabase migration commands for supabase integration', () => {
@@ -477,7 +549,12 @@ describe('renderSetupPrompt — no db push recommendations', () => {
     expect(out).toMatch(/1\.\s*\*\*Schema-add/)
     expect(out).toMatch(/2\.\s*\*\*Dual-write/)
     // Cutover is still covered, just without a db push workaround note.
-    const cutoverSection = out.substring(out.indexOf('#### Encryption cutover'))
+    // The heading has to be one that exists: `indexOf` returning -1 makes
+    // `substring(-1)` the whole document, so this scoped assertion was
+    // silently asserting nothing at all.
+    const heading = '#### Backfill and switch'
+    expect(out).toContain(heading)
+    const cutoverSection = out.substring(out.indexOf(heading))
     expect(cutoverSection).toMatch(/encrypt cutover/)
   })
 

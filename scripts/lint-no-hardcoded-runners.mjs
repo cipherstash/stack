@@ -116,10 +116,28 @@ if (staleAllowlist.length > 0) {
 const offenders = []
 for (const target of TARGETS) {
   const abs = resolve(REPO_ROOT, target)
-  const stat = statSync(abs)
+  let stat
+  try {
+    stat = statSync(abs)
+  } catch {
+    // Was an uncaught throw: exit 1 plus a raw stack trace, which reads to
+    // anything checking the exit code exactly like a genuine `npx` finding.
+    // Exit 2 says the linter could not run — the same contract the allowlist
+    // self-check above already uses.
+    console.error(
+      `Target \`${target}\` does not exist.\n\n` +
+        'Update the scan roots in this script if it was renamed or removed,\n' +
+        'or check the path passed on the command line.',
+    )
+    process.exit(2)
+  }
   const files = stat.isDirectory() ? walk(abs) : [abs]
   for await (const file of files) {
+    // `rel` stays repo-relative for the allowlist lookup; only the rendering
+    // falls back to the absolute path, for a target outside the repo root that
+    // would otherwise print a `../../../../..` chain instead of a filename.
     const rel = relative(REPO_ROOT, file)
+    const shown = rel.startsWith('..') ? file : rel
     if (ALLOWLISTED_PATHS.has(rel)) continue
     if (/\.(test|spec)\.(ts|tsx|mts|cts)$/.test(file)) continue
     const lines = readFileSync(file, 'utf8').split('\n')
@@ -129,7 +147,7 @@ for (const target of TARGETS) {
       if (isCommentLine(line)) return
       if (isAllowedFallback(line)) return
       if (isAllowedRunnerSwitch(line)) return
-      offenders.push(`${rel}:${idx + 1}: ${line.trim()}`)
+      offenders.push(`${shown}:${idx + 1}: ${line.trim()}`)
     })
   }
 }
