@@ -142,14 +142,25 @@ export async function loadEncryptionContext(): Promise<EncryptionContext> {
     process.exit(1)
   }
 
-  // Same guard `loadEncryptConfig` applies for `stash db push` / `db validate`,
+  // The guard `loadEncryptConfig` applies for `stash db push` / `db validate`,
   // repeated here because `stash encrypt` does not go through that loader. The
   // scaffold `stash init` writes declares one sentinel table so the file
   // compiles; reaching here with only that table means it was never replaced.
   // Without this, `requireTable` reported `Table "users" was not found …
   // Available: __stash_placeholder__`, which names the symptom and not the
   // cause (#787 review).
-  if (tables.size === 1 && tables.has(PLACEHOLDER_TABLE_NAME)) {
+  //
+  // Read from `getEncryptConfig()` — the SAME source `loadEncryptConfig` uses —
+  // not from the harvested export map, or the two commands disagree on one
+  // file. `schemas: [placeholderTable]` with the `export` keyword dropped is
+  // still the un-replaced scaffold but exports nothing; conversely a stale
+  // `export const placeholderTable` beside real tables that are imported
+  // rather than re-exported is NOT (#787 review).
+  const configuredTables = Object.keys(client.getEncryptConfig()?.tables ?? {})
+  if (
+    configuredTables.length === 1 &&
+    configuredTables[0] === PLACEHOLDER_TABLE_NAME
+  ) {
     console.error(
       `Error: ${stashConfig.client} still contains the placeholder table \`${PLACEHOLDER_TABLE_NAME}\` that \`stash init\` wrote.\n\nDeclare your encrypted columns and pass those tables to Encryption({ schemas: [...] }) in that file, then re-run this command.`,
     )

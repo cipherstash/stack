@@ -95,23 +95,32 @@ export async function cutoverCommand(options: CutoverCommandOptions) {
     }
     const state = await progress(client, options.table, options.column)
 
+    // `via: 'sole'` means only that this is the table's one remaining EQL
+    // candidate once the plaintext column itself is excluded — nothing ties it
+    // to the plaintext column the user named. On a mixed table (a v2 pair the
+    // classifier no longer sees, plus one unrelated v3 column) that guess is
+    // simply wrong, and reporting "nothing to do for EQL v3" for it told a
+    // scripted rollout the cut-over had succeeded when the v2 rename never ran
+    // (#772 review, finding 7).
+    //
+    // Deliberately at TOP LEVEL, not inside the `version === 3` branch, so it
+    // mirrors `drop.ts` exactly. Equivalent today — `classifyEqlDomain`
+    // recognises `eql_v3_*` only, so a non-null `info` is always version 3 —
+    // but the v2 ladder below performs an irreversible rename plus config
+    // promotion. Were v2 classification restored, or a v4 family added, a
+    // nested guard would let `cutover` rename on a guess that `drop` refuses
+    // (#787 review).
+    if (info?.via === 'sole') {
+      p.log.error(
+        `${options.table}.${info.column} (${info.domain}) is the only EQL column left on ${options.table} once "${options.column}" itself is excluded, but nothing confirms it encrypts "${options.column}" — refusing to report a cut-over outcome on that guess. If "${options.column}" pairs with a legacy eql_v2_encrypted column, resolution cannot see it (this command resolves EQL v3 counterparts only): complete that column's v2 lifecycle yourself with the eql_v2 SQL — \`SELECT eql_v2.rename_encrypted_columns();\` plus the config promotion — since no stash command can drive it here. Otherwise record the pairing: re-run \`stash encrypt backfill --table ${options.table} --column ${options.column} --encrypted-column <the column that actually encrypts ${options.column}>\`.`,
+      )
+      exitCode = 1
+      return
+    }
+
     if (info?.version === 3) {
       const encryptedColumn = info.column
 
-      // `via: 'sole'` means only that this is the table's ONE EQL v3 column —
-      // nothing ties it to the plaintext column the user named. On a mixed
-      // table (a v2 pair the classifier no longer sees, plus one unrelated v3
-      // column) that guess is simply wrong, and reporting "nothing to do for
-      // EQL v3" for it told a scripted rollout the cut-over had succeeded when
-      // the v2 rename never ran. `drop.ts` already refuses a `'sole'` match for
-      // the same reason (#772 review, finding 7).
-      if (info.via === 'sole') {
-        p.log.error(
-          `${options.table}.${encryptedColumn} (${info.domain}) is the table's only EQL v3 column, but nothing confirms it encrypts "${options.column}" — refusing to report a cut-over outcome on that guess. If "${options.column}" pairs with a legacy eql_v2_encrypted column, resolution cannot see it (this command resolves EQL v3 counterparts only) — drive that column's v2 lifecycle against its own encrypted column directly. Otherwise record the pairing: re-run \`stash encrypt backfill --table ${options.table} --column ${options.column} --encrypted-column <the column that actually encrypts ${options.column}>\`.`,
-        )
-        exitCode = 1
-        return
-      }
       if (state?.phase === 'dropped') {
         // Terminal phase — the lifecycle already finished. Not an error and
         // not "finish the backfill": there is nothing left to backfill.
