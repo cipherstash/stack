@@ -268,10 +268,10 @@ describe('ColumnMap recognises v3 columns structurally, not by class identity', 
   })
 
   it('throws on a builder missing the v3 column surface', () => {
-    // v2 columns have `build()` and `getName()` (`packages/stack/src/schema/
-    // index.ts:257,264`) but neither `getEqlType()` nor
-    // `getQueryCapabilities()` (`eql/v3/columns.ts:445,450`). Four probes, not
-    // two, is what keeps the predicate honest.
+    // v2 columns have `build()` and `getName()` (`EncryptedColumn`,
+    // `packages/stack/src/schema/index.ts:442,449`) but neither `getEqlType()`
+    // nor `getQueryCapabilities()` (`eql/v3/columns.ts:445,450`). Four probes,
+    // not two, is what keeps the predicate honest.
     //
     // `columnBuilders` on an `AnyV3Table` must hold ONLY encrypted v3 columns,
     // so a builder that fails the probe is malformed input. Silently skipping it
@@ -286,19 +286,29 @@ describe('ColumnMap recognises v3 columns structurally, not by class identity', 
       build: () => ({ tableName: 'users', columns: {} }),
     }
 
+    // Pin the SPECIFIC message, not just the `[supabase v3]` prefix: 32 errors
+    // across this package share that prefix, two of them thrown by `ColumnMap`
+    // itself. A prefix-only matcher stays green whenever a DIFFERENT one of
+    // those fires first — measured: with `assertNoPropertyDbNameCollision`
+    // throwing unconditionally, so the fail-closed probe below is never
+    // reached, this test still passed. It could not tell which error it caught.
+    // (Deleting the probe outright does turn it red — construction then
+    // succeeds and nothing throws. It is the bypass, not the deletion, that the
+    // loose matcher was blind to.)
     expect(() => new ColumnMap('users', table as never, null)).toThrow(
-      /\[supabase v3\]/,
+      /\[supabase v3\]: column "email" on table "users" is not a recognised EQL v3 column builder/,
     )
   })
 })
 
 describe('every types.* domain satisfies the structural v3 probe', () => {
-  // `isV3ColumnLike` is module-private, so the property is stated through the
-  // public consequence: whatever the catalog grows to, ColumnMap must see the
-  // column as encrypted. A domain whose builder lost one of the four methods
-  // would be silently treated as PLAINTEXT — the PF2 failure again, from a
-  // different direction. Enumerated, not hardcoded (40 domains today), so a new
-  // one is covered the day it is added.
+  // Stated through the public consequence rather than against the predicate:
+  // whatever the catalog grows to, ColumnMap must see the column as encrypted.
+  // A domain whose builder lost one of the four methods would be silently
+  // treated as PLAINTEXT — the PF2 failure again, from a different direction.
+  // Enumerated, not hardcoded (40 domains today), so a new one is covered the
+  // day it is added. The predicate's own shape is pinned separately, one probe
+  // at a time, in `column-map-predicate.test.ts`.
   it('recognises a column built by any factory in the catalog', () => {
     // Deterministic iteration over the WHOLE catalog, not a probabilistic
     // sample: the guarantee this pins is "every domain", so every domain must
