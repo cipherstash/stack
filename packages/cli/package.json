@@ -41,6 +41,7 @@
 		"postbuild": "chmod +x ./dist/bin/stash.js",
 		"dev": "tsup --watch",
 		"test": "vitest run",
+		"typecheck:scaffold": "tsc -p tsconfig.scaffold.json",
 		"test:e2e": "vitest run --config vitest.integration.config.ts",
 		"lint": "biome check ."
 	},

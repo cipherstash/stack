@@ -384,9 +384,11 @@ const DRIZZLE_PLACEHOLDER = `/**
  * column, then update the \`Encryption({ schemas: [...] })\` call below
  * to reference the encrypted tables you declared there.
  *
- * Until that happens, the encryption client is initialised with no
- * schemas, and \`stash encrypt\` commands will surface a clear error
- * pointing at this file.
+ * Until that happens, the encryption client is initialised with a single
+ * placeholder table so that this file compiles, and \`stash db push\`,
+ * \`stash db validate\` and \`stash encrypt backfill\` refuse to run and point
+ * back here. (\`stash encrypt cutover\` / \`drop\` resolve against the database
+ * and never read this file.)
  *
  * This project uses EQL v3. Encrypted columns are concrete Postgres domains
  * built with the \`types.*\` factories from \`@cipherstash/stack-drizzle\`.
@@ -429,9 +431,17 @@ const DRIZZLE_PLACEHOLDER = `/**
  *     schemas: [extractEncryptionSchema(users), extractEncryptionSchema(orders)],
  *   })
  */
-import { Encryption } from '@cipherstash/stack/v3'
+import { Encryption, encryptedTable, types } from '@cipherstash/stack/v3'
 
-export const encryptionClient = await Encryption({ schemas: [] })
+// REPLACE THIS. It exists only so this file compiles before you have declared
+// any encrypted tables — \`Encryption\` requires at least one. Swap it for your
+// real tables (see the patterns above); \`stash db push\`, \`stash db validate\`
+// and \`stash encrypt backfill\` refuse to run while the placeholder is still here.
+export const placeholderTable = encryptedTable('__stash_placeholder__', {
+  replace_me: types.Text('replace_me'),
+})
+
+export const encryptionClient = await Encryption({ schemas: [placeholderTable] })
 `
 
 const GENERIC_PLACEHOLDER = `/**
@@ -442,9 +452,11 @@ const GENERIC_PLACEHOLDER = `/**
  * agent will declare encrypted columns there and update the
  * \`Encryption({ schemas: [...] })\` call below to reference them.
  *
- * Until that happens, the encryption client is initialised with no
- * schemas, and \`stash encrypt\` commands will surface a clear error
- * pointing at this file.
+ * Until that happens, the encryption client is initialised with a single
+ * placeholder table so that this file compiles, and \`stash db push\`,
+ * \`stash db validate\` and \`stash encrypt backfill\` refuse to run and point
+ * back here. (\`stash encrypt cutover\` / \`drop\` resolve against the database
+ * and never read this file.)
  *
  * This project uses EQL v3. Encrypted columns are concrete Postgres domains
  * built with the \`types.*\` factories from \`@cipherstash/stack/eql/v3\`
@@ -483,7 +495,15 @@ const GENERIC_PLACEHOLDER = `/**
  *     schemas: [users, orders],
  *   })
  */
-import { Encryption } from '@cipherstash/stack/v3'
+import { Encryption, encryptedTable, types } from '@cipherstash/stack/v3'
 
-export const encryptionClient = await Encryption({ schemas: [] })
+// REPLACE THIS. It exists only so this file compiles before you have declared
+// any encrypted tables — \`Encryption\` requires at least one. Swap it for your
+// real tables (see the patterns above); \`stash db push\`, \`stash db validate\`
+// and \`stash encrypt backfill\` refuse to run while the placeholder is still here.
+export const placeholderTable = encryptedTable('__stash_placeholder__', {
+  replace_me: types.Text('replace_me'),
+})
+
+export const encryptionClient = await Encryption({ schemas: [placeholderTable] })
 `

@@ -1,4 +1,9 @@
+import type {
+  EncryptedColumnInfo,
+  ResolvedEncryptedColumn,
+} from '@cipherstash/migrate'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ResolvedLifecycle } from '../lib/resolve-eql.js'
 
 // The EQL-v3 lifecycle branches (#648/#649): v3 has no cut-over rename —
 // `encrypt cutover` must short-circuit with guidance instead of running the
@@ -23,9 +28,14 @@ vi.mock('pg', () => ({
   },
 }))
 
-type ColumnInfo = { column: string; domain: string; version: 2 | 3 }
-type ResolvedInfo = ColumnInfo & { via: 'hint' | 'convention' | 'sole' }
-type Lifecycle = { info: ResolvedInfo | null; candidates: ColumnInfo[] }
+// Imported, never re-declared. These stubs stand in for the real
+// `resolveColumnLifecycle`, so a structural copy would let a renamed or added
+// field compile on both sides while the commands read something the resolver no
+// longer returns — the exact seam `v2-lifecycle-composition.integration.test.ts`
+// exercises at runtime, pinned here at compile time (#787 review follow-up).
+type ColumnInfo = EncryptedColumnInfo
+type ResolvedInfo = ResolvedEncryptedColumn
+type Lifecycle = ResolvedLifecycle
 
 const migrateMocks = vi.hoisted(() => ({
   listEncryptedColumns: vi.fn(async (): Promise<ColumnInfo[]> => []),
@@ -216,6 +226,36 @@ describe('encrypt cutover — EQL version awareness', () => {
     )
   })
 
+  // #772 review, finding 7. `drop` gated on `via === 'sole'`; `cutover` did
+  // not, and its v3 branch `return`s without setting exitCode — so a mixed
+  // table (a v2 pair the classifier no longer sees, plus one unrelated v3
+  // column) produced a success-shaped message and exit 0 while the v2 rename
+  // never ran. A scripted rollout read that as done.
+  it("refuses a by-elimination ('sole') match rather than reporting success", async () => {
+    lifecycleMock.mockResolvedValue(
+      resolved(
+        { column: 'email_enc', domain: 'eql_v3_text_search', version: 3 },
+        'sole',
+      ),
+    )
+    migrateMocks.progress.mockResolvedValue({ phase: 'backfilled' })
+    const exitSpy = spyExit()
+
+    await cutoverCommand({ table: 'users', column: 'ssn' })
+
+    expect(p.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('nothing confirms it encrypts "ssn"'),
+    )
+    // The old message told the user to point their application at the guessed
+    // column, as though the lifecycle were complete.
+    expect(p.log.info).not.toHaveBeenCalledWith(
+      expect.stringContaining('point your application at email_enc'),
+    )
+    expect(migrateMocks.renameEncryptedColumns).not.toHaveBeenCalled()
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    exitSpy.mockRestore()
+  })
+
   it('fails closed when EQL columns exist but none is identifiable', async () => {
     lifecycleMock.mockResolvedValue({
       info: null,
@@ -372,8 +412,20 @@ describe('encrypt drop — EQL version awareness', () => {
     expect(p.log.error).toHaveBeenCalledWith(
       expect.stringContaining('nothing confirms it encrypts "email"'),
     )
-    expect(p.log.error).toHaveBeenCalledWith(
+    // The remedy must not prescribe the GUESS. Recording `secret_blob` makes
+    // the next resolution `via: 'hint'`, which walks past this very gate — and
+    // the coverage check then passes vacuously, because an unrelated but
+    // legitimately-backfilled column is non-NULL on every row. Following that
+    // advice generated a live DROP COLUMN on the plaintext at exit 0
+    // (#772 review, finding 7).
+    expect(p.log.error).not.toHaveBeenCalledWith(
       expect.stringContaining('--encrypted-column secret_blob'),
+    )
+    expect(p.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('--encrypted-column <name>'),
+    )
+    expect(p.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('do not record secret_blob'),
     )
     expect(migrateMocks.countUnencrypted).not.toHaveBeenCalled()
     expect(writeFileMock).not.toHaveBeenCalled()

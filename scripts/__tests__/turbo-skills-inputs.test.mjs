@@ -21,44 +21,9 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { readJsonc } from './lib/read-jsonc.mjs'
 
 const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
-
-/** Strip comments so `JSON.parse` accepts turbo.json (it is JSONC). */
-function readJsonc(path) {
-  const raw = readFileSync(path, 'utf8')
-  let out = ''
-  let inString = false
-  let escaped = false
-  for (let i = 0; i < raw.length; i++) {
-    const ch = raw[i]
-    if (inString) {
-      out += ch
-      if (escaped) escaped = false
-      else if (ch === '\\') escaped = true
-      else if (ch === '"') inString = false
-      continue
-    }
-    if (ch === '"') {
-      inString = true
-      out += ch
-      continue
-    }
-    if (ch === '/' && raw[i + 1] === '/') {
-      while (i < raw.length && raw[i] !== '\n') i++
-      out += '\n'
-      continue
-    }
-    if (ch === '/' && raw[i + 1] === '*') {
-      i += 2
-      while (i < raw.length && !(raw[i] === '*' && raw[i + 1] === '/')) i++
-      i++
-      continue
-    }
-    out += ch
-  }
-  return JSON.parse(out.replace(/,(\s*[}\]])/g, '$1'))
-}
 
 /** Packages whose tsup config copies the repo-root `skills/` into `dist/`. */
 function packagesCopyingSkills() {

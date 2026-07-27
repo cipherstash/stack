@@ -193,6 +193,21 @@ jobs:
       - name: Typecheck (stack — emitted declarations, not source)
         run: pnpm exec turbo run test:types:dist --filter @cipherstash/stack
 
+      # `stash init` writes a client file into the user's project and tells them
+      # not to hand-edit it. Nothing compiled that file, so tightening
+      # `Encryption` to require a non-empty schema set left every `stash init`
+      # emitting a project that fails its first `tsc` — with CI green (#772
+      # review). The fixtures are pinned byte-for-byte to the generator by
+      # `placeholder-client-fixture.test.ts`.
+      # Through turbo, not `pnpm run` — the fixtures import `@cipherstash/stack/v3`,
+      # so this needs that package BUILT. Invoked directly it passed only because
+      # earlier steps in this job happen to build it via their own `^build`; drop
+      # or reorder those (they read as guards for other packages, so they look
+      # independently removable) and this fails `TS2307`, which reads as "the
+      # scaffold is broken" rather than "you forgot to build" (#787 review).
+      - name: Typecheck (stash init's scaffolded client)
+        run: pnpm exec turbo run typecheck:scaffold --filter stash
+
       - name: Lint — no hardcoded package-manager runners
         run: pnpm run lint:runners
 

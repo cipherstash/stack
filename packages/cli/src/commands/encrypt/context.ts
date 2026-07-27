@@ -1,7 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
-import { loadStashConfig, type ResolvedStashConfig } from '@/config/index.js'
+import {
+  loadStashConfig,
+  type ResolvedStashConfig,
+  requireUsableEncryptConfig,
+} from '@/config/index.js'
 
 /**
  * Structural shape of `@cipherstash/stack`'s `EncryptedTable` class.
@@ -137,6 +141,14 @@ export async function loadEncryptionContext(): Promise<EncryptionContext> {
     )
     process.exit(1)
   }
+
+  // The same refusal `stash db push` / `db validate` get from
+  // `loadEncryptConfig`, applied here because `stash encrypt` does not go
+  // through that loader. Called, not re-implemented: it guards one file, so the
+  // two commands must say one thing about it. Without this, `requireTable`
+  // reported `Table "users" was not found … Available: __stash_placeholder__`,
+  // naming the symptom and not the cause (#787 review).
+  requireUsableEncryptConfig(client.getEncryptConfig(), stashConfig.client)
 
   return { stashConfig, client, tables }
 }

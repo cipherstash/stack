@@ -73,6 +73,7 @@ export {
 } from './state.js'
 export {
   classifyEqlDomain,
+  columnExists,
   detectColumnEqlVersion,
   type EncryptedColumnInfo,
   type EncryptedColumnResolution,

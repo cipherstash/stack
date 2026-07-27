@@ -74,7 +74,7 @@ export async function dropCommand(options: DropCommandOptions) {
     // column, droppable straight after `backfilled`. The version and the
     // encrypted column's name are resolved from the DOMAIN TYPES (manifest
     // name as a hint) — the `<col>_encrypted` naming is a convention only.
-    const { info, candidates } = await resolveColumnLifecycle(
+    const { info, candidates, unresolvedHint } = await resolveColumnLifecycle(
       client,
       options.table,
       options.column,
@@ -91,6 +91,7 @@ export async function dropCommand(options: DropCommandOptions) {
       options.table,
       options.column,
       candidates,
+      unresolvedHint,
     )
     if (!info && unresolved) {
       p.log.error(unresolved)
@@ -103,9 +104,16 @@ export async function dropCommand(options: DropCommandOptions) {
     // that destroys the only copy of this data. Dropping is the single
     // irreversible step in the lifecycle, so it demands a positively
     // asserted pairing (manifest hint or the naming convention).
+    //
+    // The remedy must NOT name `info.column`. That is the guess itself, and
+    // recording it turns the next resolution into `via: 'hint'`, which walks
+    // straight past this gate — while the coverage check below passes
+    // vacuously, because a legitimately-backfilled unrelated column is
+    // non-NULL on every row. Following the old message verbatim generated a
+    // live `DROP COLUMN` on the plaintext at exit 0 (#772 review, finding 7).
     if (info?.via === 'sole') {
       p.log.error(
-        `${options.table}.${info.column} (${info.domain}) is the table's only encrypted column, but nothing confirms it encrypts "${options.column}" — refusing to generate an irreversible drop on that guess. Record the pairing and retry: re-run \`stash encrypt backfill --table ${options.table} --column ${options.column} --encrypted-column ${info.column}\` (which writes it to the manifest), or set "encryptedColumn": "${info.column}" for this column in .cipherstash/migrations.json.`,
+        `${options.table}.${info.column} (${info.domain}) is the only EQL column left on ${options.table} once "${options.column}" itself is excluded, but nothing confirms it encrypts "${options.column}" — refusing to generate an irreversible drop on that guess. Identify the column that actually encrypts "${options.column}" and record that pairing: re-run \`stash encrypt backfill --table ${options.table} --column ${options.column} --encrypted-column <name>\` (which writes it to the manifest), or set "encryptedColumn" for this column in .cipherstash/migrations.json. If "${options.column}" pairs with a legacy eql_v2_encrypted column, resolution cannot see it (this command resolves EQL v3 counterparts only): complete that column's v2 lifecycle yourself with the eql_v2 SQL, since no stash command can drive it here — and do not record ${info.column}.`,
       )
       exitCode = 1
       return

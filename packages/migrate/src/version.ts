@@ -106,6 +106,38 @@ export async function detectColumnEqlVersion(
 }
 
 /**
+ * Whether `columnName` exists on `tableName` at all, whatever its type.
+ *
+ * Distinct from {@link detectColumnEqlVersion}, which answers "and is it an EQL
+ * column?". Callers need the difference to tell a STALE reference (the column
+ * is gone) from a live one the classifier simply does not recognise — most
+ * often a legacy `eql_v2_encrypted` counterpart.
+ *
+ * Lives here rather than in the CLI so it shares {@link REGCLASS_SQL} with the
+ * other catalog probes: a hand-rolled `to_regclass($1)` case-folds unquoted
+ * identifiers and silently reports "missing" for a Prisma-style `"User"` table
+ * (#787 review).
+ */
+export async function columnExists(
+  client: ClientBase,
+  tableName: string,
+  columnName: string,
+): Promise<boolean> {
+  const { schema, table } = splitTableName(tableName)
+  const { rows } = await client.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM pg_attribute
+       WHERE attrelid = ${REGCLASS_SQL}
+         AND attname = $3
+         AND attnum > 0
+         AND NOT attisdropped
+     ) AS exists`,
+    [table, schema, columnName],
+  )
+  return rows[0]?.exists === true
+}
+
+/**
  * Every EQL-domain column on a table, classified. The EQL types are
  * self-describing, so this is the ground truth for "which columns on this
  * table are encrypted, and under which generation" — no naming convention
