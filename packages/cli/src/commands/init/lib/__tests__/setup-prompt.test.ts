@@ -105,6 +105,117 @@ describe('renderSetupPrompt — orient + route (implement mode)', () => {
     expect(out).toContain('pnpm exec drizzle-kit migrate')
   })
 
+  // The "wire the column through" step names the query API by hand. It used to
+  // name `protectOps.eq`, which exists nowhere; naming `createEncryptionOperators`
+  // unconditionally is the same mistake one step smaller — that symbol is
+  // exported only by `@cipherstash/stack-drizzle`, which a Supabase or Prisma
+  // project does not even have in its dependency tree. Each integration gets
+  // the API it can actually import.
+  describe('query-operator guidance is per-integration', () => {
+    const render = (integration: SetupPromptContext['integration']) =>
+      renderSetupPrompt({ ...baseCtx, integration })
+
+    it('names the Drizzle operators for drizzle', () => {
+      const out = render('drizzle')
+      expect(out).toContain('createEncryptionOperators(client)')
+      expect(out).toContain('ops.eq')
+    })
+
+    it('names the wrapper builder for supabase, not the Drizzle operators', () => {
+      const out = render('supabase')
+      expect(out).not.toContain('createEncryptionOperators')
+      expect(out).toContain('encryptedSupabase')
+    })
+
+    it('names the eql* column operators for prisma-next', () => {
+      const out = render('prisma-next')
+      expect(out).not.toContain('createEncryptionOperators')
+      expect(out).toContain('eqlEq')
+    })
+
+    // `postgresql` is the default when nothing is detected, and it gets no
+    // integration skill at all (install-skills.ts) — so "see the integration
+    // skill" is a dangling pointer for it too.
+    it('names the core encryptQuery path for plain postgresql', () => {
+      const out = render('postgresql')
+      expect(out).not.toContain('createEncryptionOperators')
+      expect(out).toContain('encryptQuery')
+      expect(out).toContain('stash-encryption')
+    })
+
+    // `EncryptQueryOptions` takes the schema OBJECTS — `usersSchema` and
+    // `usersSchema.email` — not their names as strings, and `queryType` is
+    // inferred from the column's indexes when omitted. The object-shorthand
+    // `{ table, column, queryType }` reads as three required string fields:
+    // the same species of plausible-but-wrong API as the `protectOps.eq` this
+    // PR exists to have removed.
+    it('shows encryptQuery taking schema objects, not string names', () => {
+      const out = render('postgresql')
+      expect(out).toContain('column: usersSchema.email')
+      expect(out).not.toContain('{ table, column, queryType }')
+    })
+
+    // `packages/cli` builds with tsup, which transpiles without type-checking,
+    // and has no `typecheck` script — so `Record<Integration, …>` buys nothing
+    // at build time here. An if-chain ending in a bare Drizzle `return` hands a
+    // future fifth integration the exact string this helper exists to stop it
+    // getting. Degrade to neutral guidance, as `skillsFor()` degrades to
+    // BASE_SKILLS.
+    it('degrades to neutral guidance for an unrecognised integration', () => {
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        integration: 'mystery-orm' as SetupPromptContext['integration'],
+      })
+      expect(out).not.toContain('createEncryptionOperators')
+      expect(out).not.toContain('encryptedSupabase')
+      expect(out).toContain('encryptQuery')
+    })
+  })
+
+  // Step 2 named the Drizzle and Supabase schema APIs unconditionally — the
+  // identical defect step 5 above was just fixed for. A prisma-next project was
+  // sent at `types.*` / `encryptedTable`, which `stash schema build` explicitly
+  // refuses to scaffold for that integration; a plain-Postgres project was
+  // given no named path at all.
+  describe('schema-authoring guidance is per-integration', () => {
+    const render = (integration: SetupPromptContext['integration']) =>
+      renderSetupPrompt({ ...baseCtx, integration })
+
+    it('names the Drizzle column factories for drizzle', () => {
+      const out = render('drizzle')
+      expect(out).toContain('`types.*` column factories')
+      expect(out).toContain('@cipherstash/stack-drizzle')
+    })
+
+    it('names the eql_v3 domain for supabase', () => {
+      expect(render('supabase')).toContain('eql_v3_encrypted')
+    })
+
+    it('names the cipherstash.* field constructors for prisma-next', () => {
+      const out = render('prisma-next')
+      expect(out).toContain('cipherstash.TextSearch()')
+      expect(out).toContain('prisma/schema.prisma')
+      // The `types.*` client is precisely what `stash schema build` refuses to
+      // emit for prisma-next.
+      expect(out).not.toContain('`types.*` column factories')
+    })
+
+    it('names encryptedTable for plain postgresql', () => {
+      const out = render('postgresql')
+      expect(out).toContain('encryptedTable')
+      expect(out).toContain('@cipherstash/stack/v3')
+    })
+  })
+
+  // `postgresql` installs no integration-specific skill (SKILL_MAP), so every
+  // unconditional "see the integration skill" is a pointer at a file that was
+  // never written. Step 5's was fixed; two more survived elsewhere.
+  it('never points plain postgresql at "the integration skill"', () => {
+    const out = renderSetupPrompt({ ...baseCtx, integration: 'postgresql' })
+    expect(out).not.toMatch(/the integration skill/i)
+    expect(out).toContain('stash-encryption')
+  })
+
   it('emits supabase migration commands for supabase integration', () => {
     const out = renderSetupPrompt({
       ...baseCtx,
@@ -438,7 +549,12 @@ describe('renderSetupPrompt — no db push recommendations', () => {
     expect(out).toMatch(/1\.\s*\*\*Schema-add/)
     expect(out).toMatch(/2\.\s*\*\*Dual-write/)
     // Cutover is still covered, just without a db push workaround note.
-    const cutoverSection = out.substring(out.indexOf('#### Encryption cutover'))
+    // The heading has to be one that exists: `indexOf` returning -1 makes
+    // `substring(-1)` the whole document, so this scoped assertion was
+    // silently asserting nothing at all.
+    const heading = '#### Backfill and switch'
+    expect(out).toContain(heading)
+    const cutoverSection = out.substring(out.indexOf(heading))
     expect(cutoverSection).toMatch(/encrypt cutover/)
   })
 
@@ -447,6 +563,66 @@ describe('renderSetupPrompt — no db push recommendations', () => {
       const out = renderSetupPrompt({ ...baseCtx, mode: 'plan', planStep })
       expect(out).not.toMatch(/db push/)
     }
+  })
+})
+
+// The rename swap is an EQL v2 operation. `stash encrypt cutover` refuses a v3
+// column outright ("Cut-over is not applicable to EQL v3 columns … there is no
+// rename step", `encrypt/cutover.ts`) and refuses entirely on a v3-only
+// install, where `eql_v2_configuration` does not exist. v3 is the default, so
+// a template presenting the rename as the only path drafts a plan around a
+// command that will decline to run. The implement prompt already splits the
+// two; these templates did not.
+describe('renderSetupPrompt — plan templates split EQL v3 from v2', () => {
+  const plan = (planStep: 'cutover' | 'complete') =>
+    renderSetupPrompt({ ...baseCtx, mode: 'plan', planStep })
+
+  for (const planStep of ['cutover', 'complete'] as const) {
+    describe(`${planStep} plan`, () => {
+      it('names both versions and states v3 has no rename', () => {
+        const out = plan(planStep)
+        expect(out).toContain('EQL v3')
+        expect(out).toContain('EQL v2')
+        expect(out).toMatch(/no rename/i)
+      })
+
+      it('does not present the rename swap unconditionally', () => {
+        const out = plan(planStep)
+        // Every mention of the rename swap has to sit next to the v2 label.
+        for (const line of out.split('\n')) {
+          if (/_plaintext/.test(line)) {
+            expect(line).toMatch(/v2|v3/)
+          }
+        }
+      })
+
+      it('tells the agent how to determine the version per column', () => {
+        // The version is per-column — a database can hold both — so this
+        // cannot be decided once for the whole plan.
+        expect(plan(planStep)).toMatch(/encrypt status|encrypt backfill/)
+      })
+    })
+  }
+
+  // The stop-and-ask trigger for "already encrypted" named the v2 UDT alone.
+  // v3 is the default and its columns carry `eql_v3_*` domains, so on the
+  // default path the check silently never fired. The agent reads the schema
+  // itself, so this half is fixable here; `introspect.ts`'s `isEqlEncrypted`
+  // has the same gap and is a separate behavioural change.
+  it('recognises v3 domains in the already-encrypted stop-and-ask', () => {
+    for (const mode of ['implement', 'plan'] as const) {
+      const out = renderSetupPrompt({ ...baseCtx, mode })
+      expect(out).toMatch(/eql_v3_/)
+    }
+  })
+
+  it('keeps the cutover invocation scoped to v2', () => {
+    const out = plan('cutover')
+    const cutoverLine = out
+      .split('\n')
+      .find((l) => l.includes('encrypt cutover --table'))
+    expect(cutoverLine).toBeDefined()
+    expect(cutoverLine).toMatch(/v2/)
   })
 })
 

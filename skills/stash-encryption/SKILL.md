@@ -390,7 +390,7 @@ if (!enc.failure) {
 
 Typed-client model notes:
 
-- `decryptModel` / `bulkDecryptModels` take the **table as a second argument** and return a plain `Promise<Result<...>>` (not a chainable operation) — pass a lock context as the optional third argument instead of chaining `.withLockContext()`.
+- `decryptModel` / `bulkDecryptModels` take the **table as a second argument** and return a chainable `AuditableDecryptModelOperation` — await it for the `Result`, or chain `.audit({ metadata })` / `.withLockContext(lockContext)` first. A lock context may instead be passed as the optional third argument; use one form or the other, not both (chaining `.withLockContext()` onto a decrypt that already took a positional lock context throws).
 - `Date` columns are reconstructed to real `Date` instances on decrypt; `bigint` columns round-trip as native `bigint`.
 - Nullable schema fields stay nullable through the round trip.
 
@@ -698,7 +698,7 @@ Every operation returns a `Result`. Narrow on `.failure` before touching `.data`
 
 `identityClaim` is an array of JWT claim *names*, not values: `["sub"]` (the default) or `["sub", "org_id"]`. ZeroKMS resolves each claim's value from the JWT the strategy federated. **The same claim must be supplied to encrypt and decrypt** — it is baked into the data key's tag, so decrypting without it fails with `Failed to retrieve key`.
 
-Lock contexts work with every operation: `encrypt`, `decrypt`, `encryptModel`, `decryptModel`, `bulkEncrypt`, `bulkDecrypt`, `bulkEncryptModels`, `bulkDecryptModels`, `encryptQuery`. On the typed client, `decryptModel` and `bulkDecryptModels` take the lock context as their optional **third argument** (they return a plain `Promise<Result<...>>`, so there is no `.withLockContext()` to chain):
+Lock contexts work with every operation: `encrypt`, `decrypt`, `encryptModel`, `decryptModel`, `bulkEncrypt`, `bulkDecrypt`, `bulkEncryptModels`, `bulkDecryptModels`, `encryptQuery`. On the typed client, `decryptModel` and `bulkDecryptModels` additionally accept the lock context as an optional **third argument**, which is the form shown here — `.withLockContext()` chains on them too, but use one or the other, not both:
 
 ```typescript
 const dec = await client.decryptModel(enc.data, users, IDENTITY)
@@ -747,7 +747,7 @@ const result = await client
   .audit({ metadata: { action: "create" } }) // optional: audit trail
 ```
 
-(The typed client's `decryptModel` / `bulkDecryptModels` are the exception: they return a plain `Promise<Result<...>>` and take the lock context as an argument — see "Model Operations".)
+(The typed client's `decryptModel` / `bulkDecryptModels` may also take the lock context as a positional argument instead of chaining — see "Model Operations".)
 
 ## Error Handling
 

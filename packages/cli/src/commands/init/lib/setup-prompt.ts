@@ -68,6 +68,94 @@ function migrationCommands(
   return undefined
 }
 
+/**
+ * Where this integration's rules were actually written.
+ *
+ * `postgresql` is the fallback integration and installs no integration-specific
+ * skill (see `SKILL_MAP` in `install-skills.ts`), so "the integration skill" is
+ * a pointer at a file that was never created. Point it at `stash-encryption`,
+ * which it does get.
+ */
+function integrationSkillRef(integration: Integration): string {
+  switch (integration) {
+    case 'drizzle':
+    case 'supabase':
+    case 'prisma-next':
+      return 'the integration skill'
+    default:
+      return 'the `stash-encryption` skill'
+  }
+}
+
+/**
+ * How this integration declares an encrypted column in the schema.
+ *
+ * Per-integration for the same reason the query operators are: the APIs are not
+ * interchangeable, and `stash schema build` (`utils.ts`) refuses outright to
+ * scaffold a `types.*` client for prisma-next — that integration authors its
+ * columns with `cipherstash.*` constructors in `schema.prisma` instead.
+ */
+function schemaAuthoringGuidance(integration: Integration): string {
+  switch (integration) {
+    case 'drizzle':
+      return 'Declare it with the `types.*` column factories from `@cipherstash/stack-drizzle` on the existing `pgTable`'
+    case 'supabase':
+      return 'Declare the column with the `eql_v3_encrypted` domain in the migration SQL (`encryptedSupabase` derives its encryption config by introspecting those domains)'
+    case 'prisma-next':
+      return 'Declare the field with the `cipherstash.*` constructors in `prisma/schema.prisma` (`cipherstash.TextSearch()`, `cipherstash.DoubleOrd()`, …), with the `cipherstash` extension pack wired up per `@cipherstash/prisma-next/control`'
+    default:
+      return 'Declare the table with `encryptedTable` and the `types.*` domain factories from `@cipherstash/stack/v3`, then pass it to `Encryption({ schemas })`'
+  }
+}
+
+/**
+ * How this integration filters on an encrypted column. Named per-integration
+ * rather than generically because the APIs are not interchangeable and only one
+ * of them is importable from any given project: `createEncryptionOperators` is
+ * exported by `@cipherstash/stack-drizzle` alone, so naming it for a Supabase
+ * or Prisma project sends the agent after a package that is not installed.
+ *
+ * A `switch` with a neutral `default`, not an if-chain ending in the Drizzle
+ * string: `packages/cli` is built by tsup, which transpiles without
+ * type-checking, and the package has no `typecheck` script — so nothing would
+ * catch a fifth `Integration` variant silently inheriting Drizzle's answer.
+ * `skillsFor()` in `install-skills.ts` degrades the same way, for the same
+ * reason.
+ */
+function queryOperatorGuidance(integration: Integration): string {
+  switch (integration) {
+    case 'supabase':
+      return 'query paths filter through the `encryptedSupabase` wrapper (`es.from("users").select(...).eq("email", value)`) — it encrypts filter operands for encrypted columns automatically; see the integration skill'
+    case 'prisma-next':
+      return 'query paths use the `eql*` operators on the column inside `.where()` (`u.email.eqlEq(value)`, `eqlMatch`, `eqlGt`, …) — see the integration skill'
+    case 'drizzle':
+      return 'query paths use the right operator (`ops.eq`, from `createEncryptionOperators(client)`) — see the integration skill'
+    default:
+      // `table` and `column` are the schema OBJECTS, not their names as
+      // strings, and `queryType` is inferred from the column's configured
+      // indexes unless it is passed to override the inference.
+      return 'query paths encrypt the search term first — `client.encryptQuery(value, { table: usersSchema, column: usersSchema.email })`, passing the schema objects themselves rather than their names — and compare that against the encrypted column; see the `stash-encryption` skill (a plain Postgres project gets no integration-specific skill)'
+  }
+}
+
+/**
+ * How this integration turns ciphertext back into values on the read path.
+ *
+ * Named per-integration for the third time in this file, and for the third
+ * time because the answer is not portable: `decryptModel` is the typed
+ * client's, transparent decryption is the Supabase wrapper's.
+ */
+function readPathGuidance(integration: Integration): string {
+  switch (integration) {
+    case 'supabase':
+      return 'selects through the `encryptedSupabase` wrapper decrypt transparently'
+    case 'prisma-next':
+      return 'the encrypted fields decrypt through the Prisma Next client'
+    default:
+      return 'call `decryptModel(row, usersSchema)` — or `bulkDecryptModels` for a set — before returning the value to callers'
+  }
+}
+
 function bullet(line: string): string {
   return `- ${line}`
 }
@@ -274,13 +362,13 @@ export function renderImplementPrompt(ctx: SetupPromptContext): string {
     '',
     '### Add a new encrypted column',
     '',
-    'Use when the column **does not yet exist** in the database (no plaintext predecessor to preserve). This is normal Drizzle / Supabase work plus the encryption client patterns from the integration skill.',
+    `Use when the column **does not yet exist** in the database (no plaintext predecessor to preserve). This is normal schema work in the project's own ORM or migration tooling, plus the encryption client patterns from ${integrationSkillRef(ctx.integration)}.`,
     '',
     "1. **If this is the first encrypted column in the project, configure the bundler exclusion first.** `@cipherstash/stack` cannot be bundled (it wraps a native FFI module). Next.js: add `serverExternalPackages: ['@cipherstash/stack', '@cipherstash/protect-ffi']` to `next.config.*`. Webpack: `externals`. esbuild: `external`. Vite SSR: `ssr.external`. Without this, the encryption client crashes at runtime with `Cannot find module '@cipherstash/protect-ffi-*'`. See the `stash-encryption` skill's Installation section for the full snippets.",
-    "2. Edit the user's real schema file (`src/db/schema.ts` or wherever they keep it) to declare the new encrypted column. Use the patterns in the integration skill — the `types.*` domain factories from `@cipherstash/stack-drizzle` for Drizzle, and the `types.*` factories from `@cipherstash/stack/eql/v3` (via `encryptedTable`, passed as `schemas`) for Supabase. Encrypted columns must be **nullable `jsonb`** at creation time. Never `.notNull()`.",
+    `2. Edit the user's real schema file (\`src/db/schema.ts\` or wherever they keep it) to declare the new encrypted column. ${schemaAuthoringGuidance(ctx.integration)} — the patterns are in ${integrationSkillRef(ctx.integration)}. Encrypted columns must be **nullable \`jsonb\`** at creation time (the \`eql_v3_*\` domains are over \`jsonb\`). Never \`.notNull()\`.`,
     `3. Generate the schema migration${migration ? ` — \`${migration.generate}\` (${migration.tool})` : " using the project's existing migration tooling"}.`,
     `4. Show the user the generated SQL before applying${migration ? ` — \`${migration.apply}\`` : ''}.`,
-    '5. Wire the column through the application code: insert paths encrypt before write, select paths decrypt after read, query paths use the right operator (`protectOps.eq`, etc. — see the integration skill).',
+    `5. Wire the column through the application code: insert paths encrypt before write, select paths decrypt after read, ${queryOperatorGuidance(ctx.integration)}.`,
     '6. Verify with a round-trip: insert a record, select it back, confirm the value decrypts and the search ops work.',
     '',
     '### Migrate an existing column to encrypted',
@@ -304,7 +392,7 @@ export function renderImplementPrompt(ctx: SetupPromptContext): string {
     '',
     `3. **Backfill.** Run \`${cli} encrypt backfill --table <T> --column <c>\`. The CLI prompts the user (or accepts \`--confirm-dual-writes-deployed\` non-interactively) to confirm dual-writes are live, then chunks through the existing rows. Resumable; checkpoints to \`cs_migrations\` after every chunk. SIGINT-safe.`,
     `4. **Switch reads to the encrypted column.** The step depends on the EQL version (\`${cli} encrypt backfill\` prints it; \`${cli} encrypt status\` shows it). **EQL v3 (the default):** there is no rename — update the schema and queries to read/write the encrypted column by its own name, and wire decryption through the encryption client. **EQL v2 (legacy data only):** update the schema file to declare the encrypted column under its final name (drop the twin suffix), then \`${cli} encrypt cutover --table <T> --column <c>\` runs the rename in one transaction (\`<col>\` → \`<col>_plaintext\`, twin → \`<col>\`). Do **not** declare a v2 column with a \`types.*\` domain — those are EQL v3 only. The adapters no longer author v2 (\`@cipherstash/stack-drizzle\` removed \`encryptedType\`), so a v2 column is a read path: declare it with the deprecated \`@cipherstash/stack/schema\` builders and decrypt through \`@cipherstash/stack\`.`,
-    '5. **Wire the read path through the encryption client.** The read column now holds ciphertext. Read code paths must decrypt before returning the value to callers — `decryptModel(row, table)` for Drizzle, the `encryptedSupabase` wrapper for Supabase, or the equivalent `decrypt`/`bulkDecryptModels` calls. Without this step, your read paths return raw encrypted payloads to end users. The integration skill has the exact API.',
+    `5. **Wire the read path through the encryption client.** The read column now holds ciphertext — ${readPathGuidance(ctx.integration)}. Without this step, your read paths return raw encrypted payloads to end users. See ${integrationSkillRef(ctx.integration)} for the exact API.`,
     '6. **Remove the dual-write code.** The plaintext column (still `<col>` on v3; renamed `<col>_plaintext` on v2) is no longer authoritative. Delete the dual-write logic from the persistence layer.',
     `7. **Drop.** Run \`${cli} encrypt drop --table <T> --column <c>\`. Generates a migration that removes the now-unused plaintext column (on v3 it first verifies no rows are still plaintext-only). Apply with the project's normal migration tooling.`,
     '',
@@ -326,7 +414,7 @@ export function renderImplementPrompt(ctx: SetupPromptContext): string {
       "The user asks to convert a populated column in place. Explain why it doesn't work and offer the migrate-existing-column flow instead.",
     ),
     bullet(
-      "A column the user names is already encrypted (`eql_v2_encrypted` udt) but with a different EQL config than they've described. This is the post-cutover re-encryption case (`stash encrypt update`, not yet shipped) — surface it instead of guessing.",
+      "A column the user names is already encrypted — an `eql_v3_*` domain (`eql_v3_text_search`, `eql_v3_integer_ord`, …) on the default path, or the legacy `eql_v2_encrypted` udt — but with a different EQL config than they've described. This is the post-cutover re-encryption case (`stash encrypt update`, not yet shipped) — surface it instead of guessing.",
     ),
     bullet(
       'The schema migration would change the data type of a column the user has already filled.',
@@ -428,7 +516,7 @@ function planSharedStopAndAsk(): string[] {
       "The user asks to convert a populated column in place. Explain why it doesn't work and offer the migrate-existing-column flow instead.",
     ),
     bullet(
-      "A column the user names is already encrypted (`eql_v2_encrypted` udt) but with a different EQL config than they've described. This is the post-cutover re-encryption case (`stash encrypt update`, not yet shipped) — surface it in the plan as a flagged risk.",
+      "A column the user names is already encrypted — an `eql_v3_*` domain (`eql_v3_text_search`, `eql_v3_integer_ord`, …) on the default path, or the legacy `eql_v2_encrypted` udt — but with a different EQL config than they've described. This is the post-cutover re-encryption case (`stash encrypt update`, not yet shipped) — surface it in the plan as a flagged risk.",
     ),
     bullet(
       'You discover existing partial CipherStash setup that disagrees with what the user is describing — someone else may have run `stash init` earlier with different choices. Note this in the plan and ask the user to clarify before writing prescriptive steps.',
@@ -556,19 +644,16 @@ function renderCutoverPlanPrompt(ctx: SetupPromptContext): string {
       '**Backfill.** Encrypt the historical rows that pre-date the rollout deploy. Resumable; chunked; SIGINT-safe.',
     ),
     bullet(
-      '**Schema rename.** Update the schema declaration so the original column points at the encrypted type.',
+      `**Switch reads to the encrypted column.** This step depends on the column's EQL version, so establish it per column first — \`${cli} encrypt backfill\` prints it and \`${cli} encrypt status\` shows it. **EQL v3 (the default):** there is no rename. Update the schema declaration and the queries to read and write \`<col>_encrypted\` under its own name. **EQL v2 (legacy data only):** declare the encrypted column under its final name (drop the twin suffix), then a single \`${cli} encrypt cutover\` transaction renames \`<col>\` → \`<col>_plaintext\` and \`<col>_encrypted\` → \`<col>\`.`,
     ),
     bullet(
-      '**Cutover.** A single transaction renames `<col>` → `<col>_plaintext` and `<col>_encrypted` → `<col>`.',
+      '**Read path.** Reads of the encrypted column return ciphertext until the read path decrypts via the encryption client. The plan must specify what changes per read site.',
     ),
     bullet(
-      '**Read path.** Application reads of `<col>` now return ciphertext until the read path decrypts via the encryption client. The plan must specify what changes per read site.',
+      '**Remove dual-writes.** The plaintext column — still `<col>` on v3, renamed `<col>_plaintext` on v2 — is no longer authoritative. Delete the dual-write code paths.',
     ),
     bullet(
-      '**Remove dual-writes.** The plaintext column is now `<col>_plaintext` and is no longer authoritative. Delete the dual-write code paths.',
-    ),
-    bullet(
-      "**Drop plaintext.** `stash encrypt drop` emits a migration that removes `<col>_plaintext`. Apply with the project's normal migration tooling.",
+      `**Drop plaintext.** \`${cli} encrypt drop\` emits a migration that removes the now-unused plaintext column; on v3 it first verifies no rows are still plaintext-only. Apply with the project's normal migration tooling.`,
     ),
     '',
     '## Your task: produce the cutover plan file',
@@ -591,12 +676,12 @@ function renderCutoverPlanPrompt(ctx: SetupPromptContext): string {
         ' encrypt backfill` invocation with concrete `--table` / `--column` values.',
     ),
     bullet(
-      'The schema-edit step, with the exact rename pattern (drop `_encrypted` suffix on the encrypted column, switch the original column declaration off `text`/`varchar` and onto the encrypted type).',
+      'The schema-edit step, stated per column against its EQL version. **v3:** point the declaration and queries at `<col>_encrypted` under its own name — there is no rename, and no `_encrypted` suffix to drop. **v2:** drop the `_encrypted` suffix and switch the original column declaration off `text`/`varchar` and onto the encrypted type.',
     ),
     bullet(
-      'The cutover invocation per column: `' +
+      'For EQL v2 columns only, the cutover invocation per column: `' +
         cli +
-        ' encrypt cutover --table <T> --column <c>`.',
+        ' encrypt cutover --table <T> --column <c>`. It refuses v3 columns — there is nothing to rename — so do not schedule it for them.',
     ),
     bullet(
       'Read-path code changes: every site that reads `<col>` from this table must decrypt via the encryption client. Enumerate the sites you can find via grep so the user can verify nothing was missed.',
@@ -608,7 +693,7 @@ function renderCutoverPlanPrompt(ctx: SetupPromptContext): string {
         ' encrypt drop --table <T> --column <c>`, plus the schema-migration apply step that follows.',
     ),
     bullet(
-      `Risks specific to cutover: row-count for the backfill (use \`${cli} eql status\` to estimate if helpful), tables under heavy write load (cutover holds a brief lock on the rename), application code that constructs SQL by string (those reads won't transparently decrypt).`,
+      `Risks specific to cutover: row-count for the backfill (use \`${cli} eql status\` to estimate if helpful), tables under heavy write load (on v2, cutover holds a brief lock for the rename), application code that constructs SQL by string (those reads won't transparently decrypt).`,
     ),
     bullet(
       "Open questions for the user — anything you can't determine from the schema, context.json, or the skills.",
@@ -653,7 +738,7 @@ function renderCompletePlanPrompt(ctx: SetupPromptContext): string {
       '**Add new encrypted columns** — declared encrypted from the start; single-deploy.',
     ),
     bullet(
-      '**Migrate existing columns** — schema-add → dual-write code → backfill → schema rename → cutover → read-path switch → remove dual-write code → drop plaintext. No deploy gate between rollout and cutover steps because there is no deployed application to gate on.',
+      `**Migrate existing columns** — schema-add → dual-write code → backfill → switch reads to the encrypted column → remove dual-write code → drop plaintext. The switch step depends on the column's EQL version (\`${cli} encrypt status\` shows it): on **EQL v3**, the default, there is no rename — point the schema and queries at \`<col>_encrypted\` by name; on **EQL v2** only, \`${cli} encrypt cutover\` renames the twin into \`<col>\` first. No deploy gate between rollout and cutover steps because there is no deployed application to gate on.`,
     ),
     '',
     '## Your task: produce the complete-rollout plan file',

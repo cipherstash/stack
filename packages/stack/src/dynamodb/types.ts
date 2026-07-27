@@ -21,9 +21,14 @@ import type { EncryptModelOperation } from './operations/encrypt-model'
  * `encryptedColumn`/`encryptedField` from `@cipherstash/stack/schema`) or an
  * EQL v3 one (`encryptedTable` + `types.*` from `@cipherstash/stack/eql/v3`).
  *
- * Both are supported deliberately. DynamoDB shares none of the v2 Postgres
- * machinery — there is no EQL extension to install and no migration to run —
- * so accepting v3 is purely additive and no existing caller has to change.
+ * This union is the adapter's widest input type — the erased view the internal
+ * `CallableEncryptionClient` is declared against. It is NOT the public contract:
+ * the surface split the two versions apart. `encryptModel` /
+ * `bulkEncryptModels` narrowed to `AnyV3Table` (the v2 write overloads were
+ * removed, so a v2 encrypt call site does have to change); `decryptModel` /
+ * `bulkDecryptModels` still take either, so items stored under v2 stay
+ * readable. See {@link EncryptedDynamoDBInstance} for the overloads that decide
+ * this per method.
  */
 export type AnyEncryptedTable =
   | EncryptedTable<EncryptedTableColumn>
