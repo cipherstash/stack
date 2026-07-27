@@ -118,24 +118,53 @@ describe('loadEncryptionContext — the un-replaced init scaffold', () => {
        export const placeholderTable = ${table(PLACEHOLDER_TABLE_NAME)}`,
     )
 
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit')
+    })
+
     const { loadEncryptionContext } = await import('../context.js')
     const ctx = await loadEncryptionContext()
 
+    // The silence this test is named for. Without the `exit` spy the guard
+    // firing here would kill the worker instead of failing an assertion.
+    expect(exit).not.toHaveBeenCalled()
+    expect(error.mock.calls.flat().join('\n')).not.toContain(
+      'still contains the placeholder table',
+    )
     expect(ctx.tables.has(PLACEHOLDER_TABLE_NAME)).toBe(true)
   })
 
   it('allows the sentinel through once a real table sits alongside it', async () => {
     // Only the SOLE-placeholder case is the un-replaced scaffold. A user who
-    // has added real tables must not be blocked by a leftover sentinel export.
+    // has added real tables must not be blocked by a leftover sentinel.
+    //
+    // The sentinel is declared FIRST in the config deliberately: the guard
+    // reads `configuredTables[0]`, so a placeholder-last fixture passes even
+    // with the arity check deleted. Ordered this way, dropping
+    // `configuredTables.length === 1` makes this test fail — which is the only
+    // thing that pins that clause anywhere in the suite (#787 review follow-up).
     writeProject(
-      `export const encryptionClient = { getEncryptConfig: () => ({}) }
+      `export const encryptionClient = {
+         getEncryptConfig: () => ({
+           tables: { '${PLACEHOLDER_TABLE_NAME}': {}, users: {} },
+         }),
+       }
        export const placeholderTable = ${table(PLACEHOLDER_TABLE_NAME)}
        export const users = ${table('users')}`,
     )
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit')
+    })
 
     const { loadEncryptionContext } = await import('../context.js')
     const ctx = await loadEncryptionContext()
 
+    expect(exit).not.toHaveBeenCalled()
+    expect(error.mock.calls.flat().join('\n')).not.toContain(
+      'still contains the placeholder table',
+    )
     expect(ctx.tables.has('users')).toBe(true)
   })
 })

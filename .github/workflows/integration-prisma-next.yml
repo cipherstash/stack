@@ -114,7 +114,7 @@ jobs:
       # `stash eql install --eql-version 3`, so an installer regression fails
       # here rather than hiding behind a test-only SQL apply.
       - name: prisma-next v3 family suites
-        run: pnpm --filter @cipherstash/prisma-next run test:integration
+        run: pnpm exec turbo run test:integration --filter @cipherstash/prisma-next --env-mode=loose
         env:
           # Step env, not a `.env` file: `dotenv/config` does not override an
           # already-set `process.env`, so these win and no secret hits disk.
