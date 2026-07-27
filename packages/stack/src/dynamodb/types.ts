@@ -37,16 +37,23 @@ export type AnyEncryptedTable =
  * nominal `TypedEncryptionClient<S>` parameter would reject a client built for
  * a narrower schema tuple.
  *
- * Both NATIVE clients return a chainable operation on the decrypt paths — the
- * nominal client's `DecryptModelOperation` and the typed wrapper's
+ * Both NATIVE clients return a chainable operation on every path — the nominal
+ * client's `DecryptModelOperation` and the typed wrapper's
  * `MappedDecryptOperation` each carry `.audit()` (the typed wrapper also takes
  * the table as a second argument). The operation classes handle both; see
  * `DecryptModelOperation` and `resolveDecryptResult`.
  *
- * The wasm-inline client does not: its decrypt is a plain `async` method, so
- * audit metadata is dropped (observably — `resolveDecryptResult` logs it) and
- * its EQL v2 read path is refused outright by `assertClientTableVersionMatch`,
- * because that path relies on calling decrypt WITHOUT a table.
+ * The wasm-inline client does not, on EITHER path: its encrypt and decrypt are
+ * plain `async` methods returning a bare `Promise<WasmResult>`, so audit
+ * metadata is dropped (observably — `resolveDecryptResult` and
+ * `resolveEncryptResult` log it). Chaining `.audit()` unconditionally is
+ * therefore a bug, not just a lost audit record; the encrypt path made exactly
+ * that mistake and failed every v3 write on this entry (#788 review follow-up).
+ *
+ * Its EQL v2 path is refused outright by `assertClientTableVersionMatch` — the
+ * v2 read relies on calling decrypt WITHOUT a table, and that entry's
+ * `Encryption()` rejects a v2 schema anyway, so the pairing is wrong in both
+ * directions.
  */
 export type DynamoDBEncryptionClient = {
   encryptModel(input: never, table: never): unknown

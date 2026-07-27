@@ -5,6 +5,7 @@ import {
   deepClone,
   handleError,
   isV3Table,
+  resolveEncryptResult,
   throwPreservingCode,
   toEncryptedDynamoItem,
 } from '../helpers'
@@ -43,9 +44,13 @@ export class EncryptModelOperation<
     return await withResult(
       async () => {
         const client = this.encryptionClient as CallableEncryptionClient
-        const encryptResult = await client
-          .encryptModel(deepClone(this.item), this.table)
-          .audit(this.getAuditData())
+        const encryptResult = await resolveEncryptResult<
+          Record<string, unknown>
+        >(
+          client.encryptModel(deepClone(this.item), this.table),
+          this.getAuditData(),
+          'encryptModel',
+        )
 
         if (encryptResult.failure) {
           throwPreservingCode(encryptResult.failure)

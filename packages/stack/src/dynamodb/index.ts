@@ -49,12 +49,20 @@ function assertClientTableVersionMatch(
     // otherwise throws a TypeError about `tableName` from deep inside
     // `requireTable`. Refuse the pairing here, where the message can name it
     // (#772 review, finding 10).
+    //
+    // The message is deliberately operation-NEUTRAL. This guard runs on all
+    // four operations, so a plain-JS caller (the write overloads are
+    // `AnyV3Table`-only, so TypeScript never reaches this) hits it on encrypt
+    // too — where "would fail at the first read" names an operation that never
+    // ran. The pairing is wrong in both directions anyway: `Encryption()` on
+    // that entry rejects a v2 schema outright, so the client can never hold
+    // this table (#788 review).
     if (
       (encryptionClient as { requiresTableForDecrypt?: boolean })
         .requiresTableForDecrypt
     ) {
       throw new Error(
-        `encryptedDynamoDB: the @cipherstash/stack/wasm-inline client cannot read legacy EQL v2 items. Its decrypt requires the table, and a v2 table carries none of the information it needs — so "${table.tableName}" would fail at the first read. Use the default @cipherstash/stack entry for tables that still hold EQL v2 items, or migrate the table to an EQL v3 schema (types.* domains) and pass that.`,
+        `encryptedDynamoDB: the @cipherstash/stack/wasm-inline client cannot be paired with the legacy EQL v2 table "${table.tableName}". That entry is EQL v3 only — Encryption() there rejects a v2 schema, and its model operations require a table it was initialized with — so both encrypt and decrypt would fail on this table. Use the default @cipherstash/stack entry for tables that still hold EQL v2 items, or migrate the table to an EQL v3 schema (types.* domains) and pass that.`,
       )
     }
     return
