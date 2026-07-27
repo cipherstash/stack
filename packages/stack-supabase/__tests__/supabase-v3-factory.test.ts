@@ -259,9 +259,9 @@ describe('encryptedSupabaseV3 factory', () => {
     })
   })
 
-  // `eqlVersion` is forced, not defaulted. A caller who passes `eqlVersion: 2`
-  // against v3 domains would otherwise get a v2 encryption client and fail at
-  // runtime with a 23514 CHECK violation, far from the cause.
+  // `eqlVersion` is forced, not defaulted. Without the force a caller's
+  // `eqlVersion: 2` would now make `Encryption` throw at setup, against the
+  // all-v3 schema set introspection synthesizes.
   it('forces eqlVersion 3 over a caller-supplied config, passing other keys through', async () => {
     await encryptedSupabaseV3(fakeClient, {
       databaseUrl: 'postgres://x',

@@ -31,10 +31,10 @@ import type {
  * hand: the operation methods below, when a table is supplied. `encryptedDynamoDB`
  * itself receives no table, so it cannot check earlier.
  *
- * RESIDUAL GAP: a client explicitly forced to `eqlVersion: 2` over a v3 schema
- * set (a deliberate migration path) DOES register the table yet emits v2 wire;
- * that is not detectable without a wire-version accessor the client does not
- * provide, so it is out of scope here.
+ * The one case this could not detect — a client forced to `eqlVersion: 2` while
+ * registering a v3 table, emitting v2 wire for an `eql_v3_*` domain — is now
+ * refused by `resolveEqlVersion` at client construction, so no such client can
+ * reach here.
  */
 function assertClientTableVersionMatch(
   encryptionClient: EncryptedDynamoDBConfig['encryptionClient'],

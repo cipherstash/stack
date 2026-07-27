@@ -312,12 +312,11 @@ const client = await Encryption({ schemas: [users] })
 - `EncryptionV3` (from `@cipherstash/stack/v3`) is a **deprecated, type-identical alias** of `Encryption`, kept for backwards compatibility. New code should use `Encryption`.
 - `typedClient(client, ...schemas)` (exported from `@cipherstash/stack/v3`) wraps an already-built untyped `EncryptionClient` in the typed surface, if you built one via a lower-level path.
 - **v2 and v3 tables cannot be mixed in one client** — a mixed schema set throws at init. Create separate clients if you need both.
-- `schemas` takes any non-empty array of v3 tables — a shared `export const schemas: AnyV3Table[]`, a `ReadonlyArray`, one built at runtime. It does not have to be an array literal. An empty array is a compile error.
+- `schemas` takes any non-empty array of v3 tables — a shared `export const schemas: AnyV3Table[]`, a `ReadonlyArray`, one built at runtime. It does not have to be an array literal. Writing `Encryption({ schemas: [] })` is a compile error, but an array typed `AnyV3Table[]` that is empty at runtime compiles and throws on init instead.
 - **To name the client's type, use `EncryptionClientFor<S>`** (from `@cipherstash/stack/v3`), not `Awaited<ReturnType<typeof Encryption>>`. `Encryption` is overloaded and `ReturnType` reads the last overload, so that idiom always resolves to the untyped nominal client:
 
 ```typescript
-import { Encryption, type EncryptionClientFor, encryptedTable, types } from "@cipherstash/stack/v3"
-import type { AnyV3Table } from "@cipherstash/stack/eql/v3"
+import { type AnyV3Table, Encryption, type EncryptionClientFor, encryptedTable, types } from "@cipherstash/stack/v3"
 
 const users = encryptedTable("users", { email: types.TextSearch("email") })
 
@@ -328,7 +327,6 @@ client = await Encryption({ schemas: [users] })
 // Code that is generic over its schemas keeps the typed surface too.
 function withClient(c: EncryptionClientFor<readonly AnyV3Table[]>) { /* … */ }
 ```
-
 
 ```typescript
 // Error handling

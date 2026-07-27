@@ -1,3 +1,4 @@
+import type { Result } from '@byteslice/result'
 import type {
   AnyV3Table,
   ColumnsOf,
@@ -152,7 +153,7 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
   getEncryptConfig(): ReturnType<EncryptionClient['getEncryptConfig']>
 
   /**
-   * Re-initialize the underlying client.
+   * Re-initialize the underlying client, staying on EQL v3.
    *
    * @internal Present for runtime parity with {@link EncryptionClient}, not as
    * part of the typed authoring surface. `Encryption` picks its return value by
@@ -161,10 +162,25 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
    * selects the nominal overload but still yields this client at runtime. Every
    * other `EncryptionClient` method already existed here; without `init` that
    * mismatch turned into `TypeError: client.init is not a function`.
+   *
+   * This is NOT a bare passthrough, because `EncryptionClient.init` would
+   * otherwise be a way around the guard `Encryption` applies at construction.
+   * `init` takes its own `eqlVersion`, forwards `undefined` to the FFI (whose
+   * default is **v2**), and never consults `resolveEqlVersion` — so delegating
+   * verbatim would let a typed v3 client be re-initialized into v2 wire while
+   * keeping this v3 surface, the exact contradiction `resolveEqlVersion`
+   * refuses. The wire version is pinned to `3` and an explicit `2` is rejected.
+   *
+   * It also resolves to the TYPED client rather than the underlying nominal one,
+   * so `client = (await client.init(cfg)).data` — the natural idiom, since
+   * `EncryptionClient.init` resolves `{ data: this }` — keeps the typed surface
+   * instead of silently degrading to the nominal one.
    */
   init(
-    config: Parameters<EncryptionClient['init']>[0],
-  ): ReturnType<EncryptionClient['init']>
+    config: Omit<Parameters<EncryptionClient['init']>[0], 'eqlVersion'> & {
+      eqlVersion?: 3
+    },
+  ): Promise<Result<TypedEncryptionClient<S>, EncryptionError>>
 }
 
 /**
@@ -368,7 +384,11 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
     ) as never
   }
 
-  return {
+  // Annotated rather than `satisfies`, because `init` resolves to `typed`
+  // itself and a self-referencing initializer has no inferrable type. The
+  // annotation checks the same shape the `satisfies` did, and the function's
+  // declared return type is this type anyway, so nothing is widened.
+  const typed: TypedEncryptionClient<S> = {
     encrypt: (plaintext, opts) =>
       client.encrypt(plaintext as never, opts as never),
     encryptQuery,
@@ -382,8 +402,28 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
     bulkEncrypt: (plaintexts, opts) => client.bulkEncrypt(plaintexts, opts),
     bulkDecrypt: (payloads) => client.bulkDecrypt(payloads),
     getEncryptConfig: () => client.getEncryptConfig(),
-    init: (config) => client.init(config),
-  } satisfies TypedEncryptionClient<S>
+    // See the interface member for why this is not `client.init(config)`:
+    // `init` bypasses `resolveEqlVersion` and defaults the FFI to v2 wire, so a
+    // verbatim delegation would reopen the contradiction A-8 closes. Pin v3,
+    // refuse an explicit 2, and resolve to the typed client so the surface
+    // survives the round trip.
+    init: async (config) => {
+      if (config.eqlVersion !== undefined && config.eqlVersion !== 3) {
+        return {
+          failure: {
+            type: EncryptionErrorTypes.EncryptionError,
+            message:
+              "[eql/v3]: cannot re-initialize a typed EQL v3 client at eqlVersion 2 — the payloads would not match the columns' eql_v3_* domains. Build a separate client from the EQL v2 schema you want to write.",
+          },
+        }
+      }
+
+      const result = await client.init({ ...config, eqlVersion: 3 })
+      return result.failure ? result : { data: typed }
+    },
+  }
+
+  return typed
 }
 
 /**

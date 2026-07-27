@@ -1,0 +1,4 @@
+{
+  "name": "@fixture/excludes-dist",
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" }
+}

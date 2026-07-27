@@ -1,0 +1,4 @@
+{
+  "name": "@fixture/jsonc-paths",
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" }
+}
