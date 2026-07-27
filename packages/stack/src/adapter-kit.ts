@@ -26,7 +26,6 @@ export {
 
 // Audit config carried by chainable operations.
 export type { AuditConfig } from './encryption/operations/base-operation.js'
-
 // v3 column model + the date-like cast set the Supabase builder uses to
 // reconstruct `Date` values from PostgREST select aliases.
 export {
@@ -34,7 +33,6 @@ export {
   DATE_LIKE_CASTS,
   EncryptedV3Column,
 } from './eql/v3/columns.js'
-
 // Domain registry: the Supabase adapter classifies introspected columns by their
 // Postgres domain and rebuilds each column's encryption config from it.
 export {
@@ -42,7 +40,6 @@ export {
   factoryForDomain,
   stripDomainSchema,
 } from './eql/v3/domain-registry.js'
-
 // Shared JSONPath-selector path handling (parse/validate, needle-document
 // reconstruction, scalar-leaf guard) for encrypted-JSON querying — used by the
 // Drizzle selector operators (#651) and the Supabase selector filters (#650) so
@@ -53,8 +50,15 @@ export {
   reconstructSelectorDocument,
   unsupportedLeafReason,
 } from './eql/v3/selector-path.js'
-
 // Shared match-index guard (short-needle rejection), reused by both adapters.
 export { matchNeedleError } from './schema/match-defaults.js'
+// The canonical EQL v2/v3 table discriminator. Added because the adapters must
+// make the same routing decision core does, and that function's own doctrine is
+// that every site routes through it — "a second hand-written spelling of the
+// check is how a v2 envelope eventually gets built for a v3 table once the
+// marker drifts" (`types.ts:268-275`). Re-exported here rather than promoted to
+// `./types`: deciding which wire version a table targets is adapter plumbing,
+// not something an end user should be reaching for.
+export { hasBuildColumnKeyMap } from './types.js'
 // Shared structured logger (adapters log rejections through the same instance).
 export { logger } from './utils/logger/index.js'

@@ -1,4 +1,8 @@
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
+import {
+  encryptedColumn,
+  encryptedTable as v2EncryptedTable,
+} from '@cipherstash/stack/schema'
 import { describe, expect, it } from 'vitest'
 import { ColumnMap } from '../src/column-map'
 import type { IntrospectionResult } from '../src/introspect'
@@ -297,6 +301,25 @@ describe('ColumnMap recognises v3 columns structurally, not by class identity', 
     // loose matcher was blind to.)
     expect(() => new ColumnMap('users', table as never, null)).toThrow(
       /\[supabase v3\]: column "email" on table "users" is not a recognised EQL v3 column builder/,
+    )
+  })
+
+  it('throws a diagnosis, not a raw TypeError, on a whole v2 table', () => {
+    // A v2 `EncryptedTable` is structurally identical to a v3 one at the table
+    // level — same `tableName`, same `columnBuilders`. The only discriminator
+    // is `buildColumnKeyMap()`, which the constructor calls UNGUARDED as its
+    // first statement, so a v2 table died with `table.buildColumnKeyMap is not
+    // a function` — naming an internal method, not the version mismatch that
+    // caused it.
+    //
+    // The column-level probe above cannot catch this: it runs later, and by
+    // then the constructor has already crashed.
+    const v2Table = v2EncryptedTable('users', {
+      email: encryptedColumn('email').equality(),
+    })
+
+    expect(() => new ColumnMap('users', v2Table as never, null)).toThrow(
+      /\[supabase v3\]: table "users" is an EQL v2 table/,
     )
   })
 })
