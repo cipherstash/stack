@@ -5,8 +5,11 @@
  * Uses `node:vm`'s `SourceTextModule` with a linker that COMPILES each relative
  * import into the same sandbox context, rather than `import()`ing it in the host
  * realm (which would hand the module the host's `process` and prove nothing).
- * Bare specifiers are rejected: the graphs this is pointed at have none, and a
- * new one appearing is itself a finding.
+ * Bare specifiers are rejected. The graphs this is pointed at have none today
+ * only because everything they reach is bundled (`noExternal` in
+ * `packages/stack/tsup.config.ts`) — a property of the build config, not of
+ * module resolution. So a new one is a SIGNAL, not automatically a defect: if
+ * it is a legitimate external the target runtime resolves, allow it here.
  *
  * Run with `node --experimental-vm-modules`; callers spawn it that way, as a
  * CHILD PROCESS, so no vitest configuration or flag is involved.
@@ -50,7 +53,7 @@ async function loadInProcessFreeRealm(entryPath) {
   const link = (specifier, referencing) => {
     if (!specifier.startsWith('.') && !specifier.startsWith('/')) {
       throw new Error(
-        `unexpected bare specifier "${specifier}" in ${referencing.identifier} — this graph is supposed to be self-contained`,
+        `unexpected bare specifier "${specifier}" in ${referencing.identifier} — this graph is bundled (tsup \`noExternal\`) and should have none. If this is a legitimate new external, allow it in this harness.`,
       )
     }
     const base = dirname(fileURLToPath(referencing.identifier))
