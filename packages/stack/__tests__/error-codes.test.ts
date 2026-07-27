@@ -1,7 +1,8 @@
 import 'dotenv/config'
-import { ProtectError as FfiProtectError } from '@cipherstash/protect-ffi'
+import { isProtectErrorCode } from '@cipherstash/protect-ffi'
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
+import { getErrorCode } from '@/encryption/helpers/error-code'
 import { EncryptionErrorTypes } from '@/errors'
 import { Encryption } from '@/index'
 import { encryptedColumn, encryptedTable } from '@/schema'
@@ -11,9 +12,12 @@ import type { BulkDecryptPayload } from '@/types'
 const FFI_TEST_TIMEOUT = 30_000
 
 /**
- * Tests for FFI error code preservation in ProtectError.
- * These tests verify that specific FFI error codes are preserved when errors occur,
- * enabling programmatic error handling.
+ * Tests for FFI error code preservation.
+ *
+ * These verify that a code set by Rust survives all the way out to the
+ * `{ failure }` Result, so callers can branch on it — and, just as importantly,
+ * that errors raised by this library's own pre-FFI validation carry no code,
+ * since a caller cannot tell the two apart otherwise.
  */
 describe('FFI Error Code Preservation', () => {
   let protectClient: EncryptionClient
@@ -39,14 +43,33 @@ describe('FFI Error Code Preservation', () => {
     protectClient = await Encryption({ schemas: [testSchema, noIndexSchema] })
   })
 
-  describe('FfiProtectError class', () => {
-    it('constructs with code and message', () => {
-      const error = new FfiProtectError({
+  // protect-ffi 0.31 removed the `ProtectError` class these tests used to
+  // construct. Both bindings now throw an ordinary `Error` with `code` set by
+  // Rust, and `isProtectErrorCode` is the whole of the error API, so
+  // `getErrorCode` reads the field structurally instead of narrowing by class.
+  describe('getErrorCode', () => {
+    it('reads a code off an ordinary Error', () => {
+      const error = Object.assign(new Error('Test error'), {
         code: 'UNKNOWN_COLUMN',
-        message: 'Test error',
       })
-      expect(error.code).toBe('UNKNOWN_COLUMN')
-      expect(error.message).toBe('Test error')
+      expect(getErrorCode(error)).toBe('UNKNOWN_COLUMN')
+    })
+
+    it('ignores a code that is not one of protect-ffi’s', () => {
+      // The reason the value is checked and not just the field's presence:
+      // Node sets `code` on its own errors, so a connection reset would
+      // otherwise be reported as though it were an encryption failure.
+      const error = Object.assign(new Error('socket hang up'), {
+        code: 'ECONNRESET',
+      })
+      expect(isProtectErrorCode('ECONNRESET')).toBe(false)
+      expect(getErrorCode(error)).toBeUndefined()
+    })
+
+    it('returns undefined for errors carrying no code at all', () => {
+      expect(getErrorCode(new Error('plain'))).toBeUndefined()
+      expect(getErrorCode('not an object')).toBeUndefined()
+      expect(getErrorCode(null)).toBeUndefined()
     })
   })
 

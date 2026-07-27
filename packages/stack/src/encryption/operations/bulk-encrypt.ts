@@ -30,6 +30,12 @@ import { EncryptionOperation } from './base-operation'
 // client-side, because protect-ffi's behaviour on such a value is unobservable.
 // Callers that batch instead of looping (the v3 Drizzle `inArray`, for one)
 // must not lose that guard by choosing the bulk path.
+// The caller's `id` is deliberately NOT forwarded. `mapEncryptedDataToResult`
+// re-associates against the original `plaintexts` array positionally, so the
+// binding never needed it — and since protect-ffi 0.31 it actively rejects it:
+// unknown option keys are an error rather than silently dropped
+// (protectjs-ffi#147), so passing it through fails the call with ``unknown
+// field `id` ``.
 const createEncryptPayloads = (
   plaintexts: BulkEncryptPayload,
   column: BuildableColumn,
@@ -38,10 +44,9 @@ const createEncryptPayloads = (
 ) => {
   return plaintexts
     .filter(({ plaintext }) => plaintext !== null)
-    .map(({ id, plaintext }) => {
+    .map(({ plaintext }) => {
       assertValidNumericValue(plaintext)
       return {
-        id,
         plaintext: plaintext as JsPlaintext,
         column: column.getName(),
         table: table.tableName,

@@ -11,16 +11,22 @@ import { describe, expect, it } from 'vitest'
 // `@cipherstash/protect-ffi` specifier into the bundle and breaks it there:
 //
 //   - Workers / Edge resolve the non-`node` condition to `dist/wasm/…`, which
-//     exports no `ProtectError` → missing-named-export at build/link time, and
-//     top-level-imports a raw `.wasm` asset (the loading mode this entry avoids).
+//     top-level-imports a raw `.wasm` asset (the loading mode this entry
+//     avoids), and exports only what that build declares — a name it lacks is a
+//     missing-named-export at build/link time.
 //   - Deno's `node` condition resolves it to the NAPI loader — the native
 //     dependency this entry avoids. `e2e/wasm/deno.json` maps only the
 //     `/wasm-inline` subpaths, so it is unresolvable there at all.
 //
-// This is not hypothetical: importing `@/encryption/helpers/error-code` (a
-// value-import of the native `ProtectError` class, for an `instanceof` narrow)
-// did exactly this during #741 and was caught only in review. Unit tests can't
-// see it — they mock the `/wasm-inline` subpath and run under Node, where the
+// This is not hypothetical: importing `@/encryption/helpers/error-code` did
+// exactly this during #741 and was caught only in review. Note the helper is
+// still a value-import of the root specifier — it now calls
+// `isProtectErrorCode` where it once narrowed on the `ProtectError` class that
+// protect-ffi 0.31 removed — so the hazard is unchanged even though the symbol
+// is different. (0.31's wasm build does re-export `isProtectErrorCode` from a
+// pure-JS module, so that ONE name would resolve; the raw-`.wasm` and Deno
+// problems above still make the root import wrong here.) Unit tests can't see
+// it — they mock the `/wasm-inline` subpath and run under Node, where the
 // native root resolves fine — so the assertion has to be on the built artifact.
 //
 // Mirrors `packages/prisma-next/test/bundling-isolation.test.ts`.

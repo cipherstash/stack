@@ -2,8 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EncryptionV3 } from '@/encryption/v3'
 import { encryptedTable, types } from '@/eql/v3'
 
-vi.mock('@cipherstash/protect-ffi', () => ({
-  ProtectError: class ProtectError extends Error {},
+// Spread the real module rather than enumerating what the code under test
+// happens to reach for — `getErrorCode` calls `isProtectErrorCode`, and the
+// `ProtectError` class this used to need was removed in protect-ffi 0.31.
+// `importActual` loads the binding's pure-JS helpers; nothing contacts ZeroKMS,
+// because `newClient` and the operations below are still overridden.
+vi.mock('@cipherstash/protect-ffi', async (importActual) => ({
+  ...(await importActual<typeof import('@cipherstash/protect-ffi')>()),
   newClient: vi.fn(async () => ({ __mock: 'client' })),
   encryptQuery: vi.fn(async () => ({ v: 3, bf: [1] })),
   encryptQueryBulk: vi.fn(async () => [{ v: 3, bf: [1] }]),

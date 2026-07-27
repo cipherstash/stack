@@ -23,7 +23,13 @@ import { encryptedColumn, encryptedTable } from '@/schema'
 // `isEncryptedPayload` check so model decrypt detects encrypted fields).
 const enc = () => ({ v: 2, i: { t: 'users', c: 'email' }, c: 'ciphertext' })
 
-vi.mock('@cipherstash/protect-ffi', () => ({
+// Spread the real module rather than enumerating what the code under test
+// happens to reach for — `getErrorCode` calls `isProtectErrorCode`, and the
+// `ProtectError` class this used to need was removed in protect-ffi 0.31.
+// `importActual` loads the binding's pure-JS helpers; nothing contacts ZeroKMS,
+// because `newClient` and the operations below are still overridden.
+vi.mock('@cipherstash/protect-ffi', async (importActual) => ({
+  ...(await importActual<typeof import('@cipherstash/protect-ffi')>()),
   newClient: vi.fn(async () => ({ __mock: 'client' })),
   encrypt: vi.fn(async () => enc()),
   decrypt: vi.fn(async () => 'decrypted'),

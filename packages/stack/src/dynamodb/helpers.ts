@@ -1,5 +1,5 @@
 import type { ProtectErrorCode } from '@cipherstash/protect-ffi'
-import { ProtectError as FfiProtectError } from '@cipherstash/protect-ffi'
+import { getErrorCode } from '@/encryption/helpers/error-code'
 import { resolveEncryptColumnMap } from '@/encryption/helpers/model-helpers'
 import type { AnyV3Table } from '@/eql/v3'
 import type { EncryptedValue } from '@/types'
@@ -46,18 +46,18 @@ export function handleError(
     errorHandler?: (error: EncryptedDynamoDBError) => void
   },
 ): EncryptedDynamoDBError {
-  // Preserve FFI error code if available, otherwise use generic DynamoDB error code
-  // Check for FfiProtectError instance or plain error objects with code property
+  // Preserve the FFI error code when there is one, otherwise fall back to the
+  // generic DynamoDB code. Read structurally via `getErrorCode` — protect-ffi
+  // 0.31 removed the `ProtectError` class this used to narrow against, and both
+  // bindings now set `code` on an ordinary `Error`.
+  //
+  // This also drops an unchecked `as ProtectErrorCode` on the old fallback
+  // branch, which accepted ANY string `code`. Node sets `code` on its own
+  // errors, so a connection reset used to be recorded as though it were an
+  // encryption failure code; `getErrorCode` validates against the known set.
   const errorObj = error as Record<string, unknown>
-  const errorCode =
-    error instanceof FfiProtectError
-      ? error.code
-      : errorObj &&
-          typeof errorObj === 'object' &&
-          'code' in errorObj &&
-          typeof errorObj.code === 'string'
-        ? (errorObj.code as ProtectErrorCode)
-        : 'DYNAMODB_ENCRYPTION_ERROR'
+  const errorCode: ProtectErrorCode | 'DYNAMODB_ENCRYPTION_ERROR' =
+    getErrorCode(error) ?? 'DYNAMODB_ENCRYPTION_ERROR'
 
   const errorMessage =
     error instanceof Error

@@ -84,6 +84,25 @@ interface BulkOperationKeyMap {
 }
 
 /**
+ * Strip the local `id` before a payload crosses the FFI boundary.
+ *
+ * `id` is bookkeeping for THIS module: callers build it so the payload is
+ * readable at the call site, but every re-association below is POSITIONAL —
+ * `keyMap[index]`, against the order the payloads went in. The binding never
+ * reads it.
+ *
+ * It has to be removed rather than merely ignored. protect-ffi 0.31 rejects
+ * unknown option keys instead of dropping them (protectjs-ffi#147), so an extra
+ * `id` now fails the whole call with ``unknown field `id` `` — a serde error
+ * naming a field the caller never wrote, on a payload that had been valid for
+ * every prior release.
+ */
+const withoutId = <T extends BulkOperationPayload>({
+  id: _id,
+  ...payload
+}: T): Omit<T, 'id'> => payload
+
+/**
  * Helper function to handle single model bulk operations with mapping
  */
 async function handleSingleModelBulkOperation<
@@ -91,14 +110,14 @@ async function handleSingleModelBulkOperation<
   R,
 >(
   items: T[],
-  operation: (items: T[]) => Promise<R[]>,
+  operation: (items: Omit<T, 'id'>[]) => Promise<R[]>,
   keyMap: Record<string, string>,
 ): Promise<Record<string, R>> {
   if (items.length === 0) {
     return {}
   }
 
-  const results = await operation(items)
+  const results = await operation(items.map(withoutId))
   const mappedResults: Record<string, R> = {}
 
   results.forEach((result, index) => {
@@ -114,14 +133,14 @@ async function handleSingleModelBulkOperation<
  */
 async function handleMultiModelBulkOperation<T extends BulkOperationPayload, R>(
   items: T[],
-  operation: (items: T[]) => Promise<R[]>,
+  operation: (items: Omit<T, 'id'>[]) => Promise<R[]>,
   keyMap: Record<string, BulkOperationKeyMap>,
 ): Promise<Record<string, R>> {
   if (items.length === 0) {
     return {}
   }
 
-  const results = await operation(items)
+  const results = await operation(items.map(withoutId))
   const mappedResults: Record<string, R> = {}
 
   results.forEach((result, index) => {

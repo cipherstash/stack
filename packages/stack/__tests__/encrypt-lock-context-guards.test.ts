@@ -26,10 +26,15 @@ import { LockContext } from '@/identity'
 import { Encryption } from '@/index'
 import { encryptedColumn, encryptedTable } from '@/schema'
 
-vi.mock('@cipherstash/protect-ffi', () => ({
-  // `getErrorCode` does `error instanceof ProtectError` on the failure path,
-  // so the mock must export the class even though the guards throw plain Errors.
-  ProtectError: class ProtectError extends Error {},
+// Spread the real module rather than enumerating what the code under test
+// happens to reach for. `getErrorCode` calls `isProtectErrorCode`, which this
+// mock did not export — and before that it needed `ProtectError`, a class
+// protect-ffi 0.31 removed. Enumerating means every upstream export this path
+// starts using breaks the mock with an error naming vitest, not the change.
+// `importActual` loads the binding's pure-JS helpers; nothing here contacts
+// ZeroKMS, because `newClient` and the operations below are still overridden.
+vi.mock('@cipherstash/protect-ffi', async (importActual) => ({
+  ...(await importActual<typeof import('@cipherstash/protect-ffi')>()),
   newClient: vi.fn(async () => ({ __mock: 'client' })),
   encrypt: vi.fn(async () => ({ v: 2, c: 'ciphertext' })),
   // The model / bulk-model path funnels through `encryptBulk`. Return one

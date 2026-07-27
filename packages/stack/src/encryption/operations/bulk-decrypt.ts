@@ -18,14 +18,20 @@ import { EncryptionOperation } from './base-operation'
 
 // Drops nulls so they don't reach protect-ffi's bulk decrypt. The
 // dropped positions are re-inserted as null in `mapDecryptedDataToResult`.
+//
+// The caller's `id` is deliberately NOT forwarded, mirroring the encrypt side:
+// `mapDecryptedDataToResult` re-associates against the original
+// `encryptedPayloads` positionally, so the binding never read it — and since
+// protect-ffi 0.31 it rejects unknown option keys rather than dropping them
+// (protectjs-ffi#147), so forwarding it fails the call with ``unknown field
+// `id` ``.
 const createDecryptPayloads = (
   encryptedPayloads: BulkDecryptPayload,
   lockContext?: Context,
 ) => {
   return encryptedPayloads
     .filter(({ data }) => data !== null)
-    .map(({ id, data }) => ({
-      id,
+    .map(({ data }) => ({
       ciphertext: data as CipherStashEncrypted,
       ...(lockContext && { lockContext }),
     }))

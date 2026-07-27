@@ -126,10 +126,12 @@ describe('wasm-inline Result contract — failure path', () => {
   // this entry passes the `onException` hook, which takes precedence.
   //
   // This is not hypothetical on WASM: wasm-bindgen rejects with the raw
-  // `JsValue` from Rust (`throw takeFromExternrefTable0(...)`), and the WASM
-  // build exports no `ProtectError` class, so a real FFI failure can arrive as
-  // a bare string or object. Losing it would be worse than the throwing
-  // behaviour this entry had before, which propagated the raw value.
+  // `JsValue` from Rust (`throw takeFromExternrefTable0(...)`), so a real FFI
+  // failure can arrive as a bare string or object rather than an `Error`.
+  // Losing it would be worse than the throwing behaviour this entry had
+  // before, which propagated the raw value. (Neither binding ships an error
+  // class since protect-ffi 0.31 dropped `ProtectError`; what is specific to
+  // this entry is rejecting with non-`Error` values in the first place.)
   it.each([
     ['a string', 'boom from rust', 'boom from rust'],
     [

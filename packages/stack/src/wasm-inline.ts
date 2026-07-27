@@ -391,17 +391,21 @@ export type WasmResult<T> =
 /**
  * Read an FFI error code STRUCTURALLY.
  *
- * Deliberately not `@/encryption/helpers/error-code`: that narrows with
- * `instanceof` against the native `ProtectError`, which is a runtime VALUE
- * import of `@cipherstash/protect-ffi`. protect-ffi is not in tsup's
- * `noExternal`, so importing it here put a bare `@cipherstash/protect-ffi`
- * specifier into `dist/wasm-inline.js` — the native NAPI entry, in the one
- * bundle that exists to avoid it. On Workers / Edge the non-`node` condition
- * resolves that specifier to a module exporting no `ProtectError` at all.
+ * Deliberately not `@/encryption/helpers/error-code`, though the two now agree
+ * on the READ: since protect-ffi 0.31 removed the `ProtectError` class, that
+ * helper is structural too (both bindings throw an ordinary `Error` with `code`
+ * set by Rust). What still separates them is the import, not the logic — the
+ * helper calls `isProtectErrorCode`, a runtime VALUE import of
+ * `@cipherstash/protect-ffi`. protect-ffi is not in tsup's `noExternal`, so
+ * importing it here would put a bare `@cipherstash/protect-ffi` specifier into
+ * `dist/wasm-inline.js` — the native NAPI entry, in the one bundle that exists
+ * to avoid it. `wasm-inline-bundle-isolation.test.ts` fails the build if it
+ * reappears.
  *
- * A structural read is also the only thing that could ever work here: the WASM
- * build ships no error class, so `instanceof` never matches on this path
- * regardless. A `code` string is all there is to find.
+ * The cost of duplicating rather than importing is that this reader accepts any
+ * `code` string, where the helper validates against the known set. Worth
+ * revisiting if the shared-operation seam (#798) gives both entries one
+ * backend-agnostic path to call.
  */
 function readErrorCode(error: unknown): EncryptionError['code'] {
   if (typeof error !== 'object' || error === null) return undefined
@@ -435,11 +439,13 @@ function toFailure(
  *
  * Supplying it matters more here than on the native entry. wasm-bindgen
  * rejects with the raw `JsValue` the Rust side produced (`throw
- * takeFromExternrefTable0(...)` in the generated glue), and the WASM build
- * exports no `ProtectError` class, so a genuine FFI failure can arrive as a
- * plain string or object rather than an `Error`. Without this hook its message
- * would be replaced by boilerplate — strictly worse than the throwing
- * behaviour this entry had before, which at least propagated the raw value.
+ * takeFromExternrefTable0(...)` in the generated glue), so a genuine FFI
+ * failure can arrive as a plain string or object rather than an `Error`.
+ * Without this hook its message would be replaced by boilerplate — strictly
+ * worse than the throwing behaviour this entry had before, which at least
+ * propagated the raw value. (Neither entry ships an error class any more —
+ * protect-ffi 0.31 removed `ProtectError` — but only this one rejects with
+ * non-`Error` values, which is what the hook is for.)
  */
 function toError(ex: unknown): Error {
   if (ex instanceof Error) return ex
