@@ -97,7 +97,10 @@ impl<'c> SeqCipher for MySeqCipher<'c> {
         T: Any + Send + 'static,
     { unimplemented!() }
 
-    fn end(self) -> Result<Self::Ok, Self::Error> { unimplemented!() }
+    fn end<'a, A>(self, _aad: A) -> Result<Self::Ok, Self::Error>
+    where
+        A: IntoAad<'a>,
+    { unimplemented!() }
 }
 
 impl<'c> MapCipher for MyMapCipher<'c> {
@@ -123,7 +126,10 @@ impl<'c> MapCipher for MyMapCipher<'c> {
         T: Any + Send + 'static,
     { unimplemented!() }
 
-    fn end(self) -> Result<Self::Ok, Self::Error> { unimplemented!() }
+    fn end<'a, A>(self, _aad: A) -> Result<Self::Ok, Self::Error>
+    where
+        A: IntoAad<'a>,
+    { unimplemented!() }
 }
 ```
 
@@ -227,13 +233,14 @@ impl Encrypt for User {
         C: Cipher,
         A: IntoAad<'a>,
     {
+        let aad = aad.into_aad();
         // Encrypt the user as a map of named fields, encrypting only the
         // password hash. id and email are not stored here for brevity —
         // a real implementation would also encrypt or pass them through.
         cipher
             .encrypt_map()
-            .encrypt_entry("password_hash", self.password_hash, aad)?
-            .end()
+            .encrypt_entry("password_hash", self.password_hash, aad.clone())?
+            .end(aad)
     }
 }
 

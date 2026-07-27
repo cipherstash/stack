@@ -55,7 +55,7 @@ where
             .try_fold(cipher.encrypt_seq(Some(len)), |c, item| {
                 c.encrypt_next(item, aad.clone())
             })?
-            .end()
+            .end(aad)
     }
 }
 
@@ -85,7 +85,7 @@ where
                 c.encrypt_key(k)
                     .and_then(|c| c.encrypt_value(v, aad.clone()))
             })?
-            .end()
+            .end(aad)
     }
 }
 
@@ -109,7 +109,7 @@ where
                 c.encrypt_key(k)
                     .and_then(|c| c.encrypt_value(v, aad.clone()))
             })?
-            .end()
+            .end(aad)
     }
 }
 

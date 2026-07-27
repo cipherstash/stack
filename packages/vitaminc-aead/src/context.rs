@@ -411,7 +411,10 @@ mod tests {
             Ok(self)
         }
 
-        fn end(self) -> Result<Self::Ok, Self::Error> {
+        fn end<'a, A>(self, _aad: A) -> Result<Self::Ok, Self::Error>
+        where
+            A: IntoAad<'a>,
+        {
             Ok(Vec::new())
         }
     }
@@ -443,7 +446,10 @@ mod tests {
             Ok(self)
         }
 
-        fn end(self) -> Result<Self::Ok, Self::Error> {
+        fn end<'a, A>(self, _aad: A) -> Result<Self::Ok, Self::Error>
+        where
+            A: IntoAad<'a>,
+        {
             Ok(Vec::new())
         }
     }

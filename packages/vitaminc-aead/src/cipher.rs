@@ -132,7 +132,9 @@ pub trait Cipher: Sized {
 ///
 /// Obtained from [`Cipher::encrypt_seq`]. Each element is encrypted with
 /// [`encrypt_next`](SeqCipher::encrypt_next); the caller finalises the sequence
-/// with [`end`](SeqCipher::end) to produce the cipher's `Ok` output.
+/// with [`end`](SeqCipher::end) to produce the cipher's `Ok` output. The AAD is
+/// supplied again at finalisation so an empty sequence, which has no element
+/// ciphertexts to authenticate it, can still produce an authenticated marker.
 pub trait SeqCipher: Sized {
     /// The final encrypted output produced by [`end`](SeqCipher::end).
     type Ok;
@@ -154,7 +156,14 @@ pub trait SeqCipher: Sized {
         T: Any + Send + 'static;
 
     /// Finalise the sequence and return the produced ciphertext container.
-    fn end(self) -> Result<Self::Ok, Self::Error>;
+    ///
+    /// Implementations must authenticate `aad` even when no encrypted elements
+    /// were appended. Otherwise an empty sequence used as a map value would not
+    /// authenticate the map entry's derived AAD, allowing its cleartext key to
+    /// be renamed without detection.
+    fn end<'a, A>(self, aad: A) -> Result<Self::Ok, Self::Error>
+    where
+        A: IntoAad<'a>;
 }
 
 /// Sub-cipher driving the encryption of a map of key/value pairs.
@@ -235,5 +244,12 @@ pub trait MapCipher: Sized {
         T: Any + Send + 'static;
 
     /// Finalise the map and return the produced ciphertext container.
-    fn end(self) -> Result<Self::Ok, Self::Error>;
+    ///
+    /// Implementations must authenticate `aad` even when no encrypted entries
+    /// were appended. Otherwise an empty map used as a map value would not
+    /// authenticate the outer entry's derived AAD, allowing its cleartext key
+    /// to be renamed without detection.
+    fn end<'a, A>(self, aad: A) -> Result<Self::Ok, Self::Error>
+    where
+        A: IntoAad<'a>;
 }
