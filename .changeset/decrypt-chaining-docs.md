@@ -61,3 +61,12 @@ than deciding once for the whole plan.
 The "already encrypted" stop-and-ask now recognises `eql_v3_*` domains
 alongside the legacy `eql_v2_encrypted` udt, so it can fire on the default
 path at all.
+
+**`stash init` now detects already-encrypted columns on EQL v3.** Database
+introspection marked a column as CipherStash-managed only when its udt was
+exactly `eql_v2_encrypted`. v3 columns carry per-domain types
+(`eql_v3_text_search`, `eql_v3_integer_ord`, …), so on the default path every
+encrypted column was reported as plaintext — shown with its `dataType` and left
+unticked in the column picker, inviting a re-run to encrypt it a second time.
+The picker also labelled any encrypted column with the literal string
+`eql_v2_encrypted`; it now shows the column's real domain.
