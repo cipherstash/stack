@@ -1,4 +1,9 @@
+import type {
+  EncryptedColumnInfo,
+  ResolvedEncryptedColumn,
+} from '@cipherstash/migrate'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ResolvedLifecycle } from '../lib/resolve-eql.js'
 
 // The EQL-v3 lifecycle branches (#648/#649): v3 has no cut-over rename —
 // `encrypt cutover` must short-circuit with guidance instead of running the
@@ -23,9 +28,14 @@ vi.mock('pg', () => ({
   },
 }))
 
-type ColumnInfo = { column: string; domain: string; version: 2 | 3 }
-type ResolvedInfo = ColumnInfo & { via: 'hint' | 'convention' | 'sole' }
-type Lifecycle = { info: ResolvedInfo | null; candidates: ColumnInfo[] }
+// Imported, never re-declared. These stubs stand in for the real
+// `resolveColumnLifecycle`, so a structural copy would let a renamed or added
+// field compile on both sides while the commands read something the resolver no
+// longer returns — the exact seam `v2-lifecycle-composition.integration.test.ts`
+// exercises at runtime, pinned here at compile time (#787 review follow-up).
+type ColumnInfo = EncryptedColumnInfo
+type ResolvedInfo = ResolvedEncryptedColumn
+type Lifecycle = ResolvedLifecycle
 
 const migrateMocks = vi.hoisted(() => ({
   listEncryptedColumns: vi.fn(async (): Promise<ColumnInfo[]> => []),

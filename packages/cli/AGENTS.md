@@ -18,10 +18,12 @@ workspace fails at collection with `Failed to resolve entry for package …`
 rather than at an assertion. `vitest.config.ts` aliases `@cipherstash/migrate`
 to its source to remove one such coupling; `@cipherstash/stack` remains, reached
 via `packages/migrate/src/backfill.ts` and a direct import in
-`init/lib/introspect.test.ts`. Deleting `packages/stack/dist` fails 10 files.
-Closing it needs `vitest.shared.ts`'s `stackSourceAlias`, which cannot be spread
-into this config — its `'@/'` entry points at `packages/stack/src` and would
-clobber this package's own `'@/'` (#787 review).
+`init/lib/__tests__/introspect.test.ts`. Deleting `packages/stack/dist` fails 10
+files. Closing it needs `vitest.shared.ts`'s `stackSourceAlias`, which cannot be
+spread into this config: its `'@/'` points at `packages/stack/src` while this
+package's points at `packages/cli/src`, and a flat alias map admits only one —
+spread it after and stack's entry clobbers the CLI's, spread it before and the
+CLI's breaks stack's own source imports (#787 review).
 
 ## When to add or update an E2E test
 
