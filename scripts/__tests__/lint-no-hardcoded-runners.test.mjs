@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
@@ -38,6 +39,32 @@ describe('lint-no-hardcoded-runners', () => {
     expect(r.exitCode).toBe(1)
     expect(r.output).toContain('offender.ts')
     expect(r.output).toMatch(/\bnpx\b/)
+  })
+
+  // `statSync` on a missing target threw uncaught: exit 1 plus a raw stack
+  // trace, indistinguishable from "found a hardcoded npx" to anything reading
+  // the exit code. Exit 2 means the linter could not run.
+  it('exits 2 when a target does not exist', () => {
+    const r = run(fx('no-such-fixture.ts'))
+    expect(r.exitCode).toBe(2)
+    expect(r.output).toContain('no-such-fixture.ts')
+    expect(r.output).not.toMatch(/at ModuleJob/)
+  })
+
+  // Matches the sibling linter: a target outside the repo rendered as a
+  // `../../../../..` chain out of the root instead of naming the file.
+  it('renders an absolute path for an offender outside the repo root', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lint-hardcoded-runners-'))
+    try {
+      const file = join(dir, 'outside.ts')
+      writeFileSync(file, "export const cmd = 'npx drizzle-kit generate'\n")
+      const r = run(file)
+      expect(r.exitCode).toBe(1)
+      expect(r.output).toContain(file)
+      expect(r.output).not.toMatch(/\.\.\//)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it("ignores `?? 'npx'` fallback expressions", () => {

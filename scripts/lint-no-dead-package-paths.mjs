@@ -152,19 +152,39 @@ for (const target of TARGETS) {
   } catch {
     exists = false
   }
-  // A default target that doesn't exist is not an error — the list covers
-  // optional files (CONTRIBUTE.md, per-package AGENTS.md).
-  if (!exists) continue
+  // A target that isn't there used to be skipped in silence, on the theory
+  // that the default list covered optional files. It doesn't — all of TARGETS
+  // is tracked and present — and the silence was the same rot this linter
+  // exists to catch, one level up: rename a target and it drops out of
+  // coverage forever with a green build. `lint-no-hardcoded-runners.mjs`
+  // already exits 2 on a stale allowlist entry; this is that rule applied to
+  // this linter's own configuration.
+  if (!exists) {
+    console.error(
+      `Target \`${target}\` does not exist.\n\n` +
+        'Either it was renamed or removed — in which case update TARGETS in\n' +
+        'this script, since a target that is silently skipped is coverage\n' +
+        'quietly lost — or it was mistyped on the command line.',
+    )
+    // Exit 2, not 1: the linter could not check what it was asked to check.
+    process.exit(2)
+  }
 
   for (const file of walk(abs)) {
+    // A target outside the repo (only reachable via an argv override — every
+    // default is repo-relative) renders as a `../../../../..` chain climbing
+    // out of the root, which buries the filename it exists to point at.
     const rel = relative(REPO_ROOT, file)
+    const shown = rel.startsWith('..') ? file : rel
     if (SKIP_FILES.has(rel.split('/').pop())) continue
     const lines = readFileSync(file, 'utf8').split('\n')
     lines.forEach((line, idx) => {
       PACKAGE_REF.lastIndex = 0
       for (const m of line.matchAll(PACKAGE_REF)) {
         if (livePackages.has(m[1])) continue
-        offenders.push(`${rel}:${idx + 1}: \`packages/${m[1]}\` does not exist`)
+        offenders.push(
+          `${shown}:${idx + 1}: \`packages/${m[1]}\` does not exist`,
+        )
       }
     })
   }
