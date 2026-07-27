@@ -37,7 +37,7 @@ strings needs updating.
 The v3 overload takes a `V3ClientConfig` — `ClientConfig` without the deprecated
 `eqlVersion` escape hatch. So `Encryption({ schemas: [] })` no longer type-checks
 (it used to compile and then throw), and `config: { eqlVersion: 2 }` selects the
-nominal overload, which is the client you actually get back.
+nominal overload — though over an all-v3 schema set that call now throws at setup.
 `Awaited<ReturnType<typeof Encryption>>` names the nominal client whatever you
 pass, because `ReturnType` reads the last overload; use the exported
 `EncryptionClientFor<S>` to name the client for a schema tuple.

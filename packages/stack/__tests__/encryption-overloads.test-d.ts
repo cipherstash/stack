@@ -49,6 +49,60 @@ describe('overload selection', () => {
     Encryption({ schemas: [] })
   })
 
+  // ...but only when the ARGUMENT'S TYPE has a statically known length of 0.
+  // `NonEmptyV3<S>` keys off `S['length'] extends 0`, so once the type widens to
+  // `AnyV3Table[]` the length is `number` and emptiness stops being visible —
+  // including for a literal at the call site, because a spread erases the tuple.
+  // These compile ON PURPOSE: rejecting them is what the A-4 tuple constraint
+  // did, and it broke every non-literal caller. The runtime guard is what
+  // catches them; `empty-schemas-boundary.test.ts` pins that half, and
+  // `skills/stash-encryption` documents the split for users.
+  // A generic passthrough is the shape `EncryptionClientFor` and the skill both
+  // advertise ("code that is generic over its schemas"), and it is the one form
+  // a WIDENING change must not break. It compiled before A-4 and must still.
+  //
+  // A deferred conditional on the property is what broke it: `S` is assignable
+  // to `NonEmptyV3<S>` only if it is assignable to BOTH branches, and one branch
+  // is `never`. The emptiness rejection does not need it — overload 2's
+  // `AtLeastOneCsTable` rejects `[]` on its own.
+  it('accepts schemas from a generic wrapper function', async () => {
+    async function makeTypedClient<
+      S extends readonly [AnyV3Table, ...AnyV3Table[]],
+    >(schemas: S) {
+      return await Encryption({ schemas })
+    }
+
+    expectTypeOf(await makeTypedClient([users])).toEqualTypeOf<
+      TypedEncryptionClient<readonly [typeof users]>
+    >()
+
+    // A wrapper generic over a LOOSE `readonly AnyV3Table[]` is still rejected,
+    // here and on the pre-A-4 signature alike. That is the honest answer rather
+    // than a gap: such an `S` admits `readonly []`, so the wrapper cannot
+    // promise what `Encryption` requires. Constrain it to a non-empty tuple, as
+    // above, and it compiles.
+    async function makeLooseClient<S extends readonly AnyV3Table[]>(
+      schemas: S,
+    ) {
+      // @ts-expect-error - a loose `S` cannot prove it is non-empty
+      return await Encryption({ schemas })
+    }
+    void makeLooseClient
+  })
+
+  it('accepts arrays whose type cannot prove non-emptiness', () => {
+    const shared: AnyV3Table[] = []
+    expectTypeOf(Encryption).toBeCallableWith({ schemas: shared })
+
+    const frozen: ReadonlyArray<AnyV3Table> = []
+    expectTypeOf(Encryption).toBeCallableWith({ schemas: frozen })
+
+    expectTypeOf(Encryption).toBeCallableWith({ schemas: [...shared] })
+    expectTypeOf(Encryption).toBeCallableWith({
+      schemas: shared.filter(() => false),
+    })
+  })
+
   // A-4: closing S-6 with a non-empty TUPLE constraint rejected every schema
   // array that is not a literal, which is most real code — a shared module
   // export, anything built from introspection, anything `readonly`. The

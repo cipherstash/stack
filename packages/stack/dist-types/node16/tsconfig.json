@@ -1,0 +1,26 @@
+{
+  // The sibling gate resolves `../dist/*.js` by RELATIVE path under
+  // `moduleResolution: bundler`, which never consults the `exports` map. This
+  // one resolves `@cipherstash/stack/*` BY PACKAGE NAME under `node16` — the
+  // way a customer does — so the conditions in `exports` select the artifact.
+  //
+  // The package is `"type": "module"`, so the file extension picks the mode:
+  // `.cts` is CommonJS and takes the `require` branch (`*.d.cts`), `.mts` is
+  // ESM and takes the `import` branch (`*.d.ts`). Both must be probed: tsup
+  // emits the two declaration sets in separate passes, and a third for
+  // `wasm-inline`.
+  //
+  // No `customConditions` here: `node` is implicit under node16, and this
+  // package's own `exports` map does not branch on it.
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "target": "ES2022",
+    "module": "node16",
+    "moduleResolution": "node16",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": []
+  },
+  "include": ["**/*.cts", "**/*.mts"]
+}

@@ -34,3 +34,19 @@ its schemas — an adapter that builds a table per request, say — can now writ
 
 If you narrowed a schema array to `readonly [AnyV3Table, ...AnyV3Table[]]` to
 satisfy the old signature, that narrowing is no longer needed.
+
+A wrapper that is itself generic over its schemas keeps working too:
+
+```ts
+async function makeClient<S extends readonly [AnyV3Table, ...AnyV3Table[]]>(
+  schemas: S,
+) {
+  return await Encryption({ schemas })
+}
+```
+
+Note the non-empty tuple constraint. A wrapper generic over a loose
+`readonly AnyV3Table[]` is still rejected — that type admits `readonly []`, so
+the wrapper cannot promise what `Encryption` requires. Constrain it as above, or
+take `EncryptionClientFor<readonly AnyV3Table[]>` as a parameter instead of
+building the client inside the generic function.

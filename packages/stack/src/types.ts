@@ -208,10 +208,10 @@ export type ClientConfig = {
  * minus the legacy `eqlVersion: 2` escape hatch.
  *
  * `Encryption` accepts this (not the full `ClientConfig`) alongside an all-v3
- * schema set. Forcing v2 wire over v3 schemas returns the NOMINAL client at
- * runtime, so admitting `2` there typed the call as `TypedEncryptionClient`
- * while handing back a client that silently ignores the typed client's extra
- * `decryptModel` arguments. Adapters that are v3-only (`@cipherstash/prisma-next`,
+ * schema set. Forcing v2 wire over v3 schemas THROWS at setup — v2 payloads
+ * cannot satisfy an `eql_v3_*` domain — so admitting `2` there typed the call
+ * as `TypedEncryptionClient` for a call that returns no client at all.
+ * Adapters that are v3-only (`@cipherstash/prisma-next`,
  * `@cipherstash/stack-drizzle`) should take this type for their pass-through
  * config for the same reason.
  */

@@ -16,9 +16,9 @@ const cipherstash = await cipherstashFromStack({
 ```
 
 The option never did what it looked like it did. This package is EQL v3 only,
-and `eqlVersion: 2` selects `Encryption`'s nominal (untyped) overload at
-runtime — not the `TypedEncryptionClient` that `cipherstashFromStack` returns as
-`encryptionClient`. The field disagreed with the client you got back.
+and `cipherstashFromStack` always builds from an all-v3 schema set, over which
+`eqlVersion: 2` is refused at setup — v2 payloads cannot satisfy the columns'
+`eql_v3_*` domains. The field promised a client it could never return.
 
 **Migration:** drop the `eqlVersion` field. Every other `ClientConfig` option
 (`workspaceCrn`, `clientId`, `clientKey`, `accessKey`, `authStrategy`, logging,

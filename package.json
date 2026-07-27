@@ -31,6 +31,7 @@
     "code:check": "biome check",
     "lint:package-paths": "node scripts/lint-no-dead-package-paths.mjs",
     "lint:runners": "node scripts/lint-no-hardcoded-runners.mjs",
+    "lint:typecheck-scope": "node scripts/lint-typecheck-scope.mjs",
     "lint:workflow-cache": "node scripts/lint-no-workflow-caching.mjs",
     "release": "pnpm run build && changeset publish",
     "test": "turbo test --filter './packages/*'",

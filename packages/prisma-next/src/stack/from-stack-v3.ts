@@ -59,8 +59,8 @@ export interface CipherstashFromStackV3Options {
    * Pass-through to `EncryptionV3({ config })` (keyset overrides, logging, …).
    *
    * `V3ClientConfig`, not `ClientConfig`: this package is EQL v3 only, and the
-   * legacy `eqlVersion: 2` escape hatch returns the nominal (untyped) client at
-   * runtime, which is not what this entry point hands back.
+   * legacy `eqlVersion: 2` escape hatch throws at setup over the all-v3 schema
+   * set this entry point derives.
    */
   readonly encryptionConfig?: V3ClientConfig
 }
