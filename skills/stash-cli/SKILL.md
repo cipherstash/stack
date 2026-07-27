@@ -199,7 +199,7 @@ export default defineConfig({
 | Option | Required | Default | Purpose |
 |---|---|---|---|
 | `databaseUrl` | yes | — | PostgreSQL connection string |
-| `client` | no | `./src/encryption/index.ts` | Encryption client, loaded by `db validate`, `schema build`, `encrypt *` |
+| `client` | no | `./src/encryption/index.ts` | Encryption client, loaded by `db push`, `db validate`, `encrypt backfill` (`schema build` only *writes* here; `encrypt cutover`/`drop` resolve against the database) |
 
 Resolved by walking up from `process.cwd()`, like `tsconfig.json`. `stash init` scaffolds it; `stash eql install` offers to.
 
@@ -473,7 +473,7 @@ Backfill **detects a `public.eql_v3_*` target column as EQL v3** from its Postgr
 stash encrypt cutover --table users --column email
 ```
 
-**EQL v2 only** — v3 has no cut-over: the application switches to the encrypted column by name. Running this command on a **backfilled** v3 column reports "not applicable" (exit 0) with the next step; before backfill completes it exits 1 and says to finish the backfill (never "switch now" onto a half-populated column). For v2, the preconditions are: the column is in the `backfilled` phase, **and** a pending EQL configuration exists (on a v3-only database — no `eql_v2_configuration` table — it explains that and exits 1).
+**EQL v2 only** — v3 has no cut-over: the application switches to the encrypted column by name. Running this command on a **backfilled** v3 column reports "not applicable" (exit 0) with the next step — *provided the encrypted column can be identified*. If it was resolved only by elimination (the table's one remaining EQL column, with no `encryptedColumn` recorded in `.cipherstash/migrations.json` and no `<col>_encrypted` name match), it refuses and exits 1 rather than report an outcome for a column it guessed. `.cipherstash/` is gitignored, so a clone or CI runner without that manifest can hit this on a table whose encrypted column is named unconventionally; re-run `stash encrypt backfill … --encrypted-column <name>` to record the pairing; before backfill completes it exits 1 and says to finish the backfill (never "switch now" onto a half-populated column). For v2, the preconditions are: the column is in the `backfilled` phase, **and** a pending EQL configuration exists (on a v3-only database — no `eql_v2_configuration` table — it explains that and exits 1).
 
 In one transaction it renames `<col>` → `<col>_plaintext` and `<col>_encrypted` → `<col>`, advances the pending config to `encrypting`, activates it, and appends a `cut_over` event. With a Proxy URL configured (`--proxy-url` or `CIPHERSTASH_PROXY_URL`) it then calls `eql_v2.reload_config()` so Proxy picks up the new shape.
 

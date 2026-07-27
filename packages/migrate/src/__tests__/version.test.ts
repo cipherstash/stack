@@ -2,6 +2,7 @@ import type { ClientBase } from 'pg'
 import { describe, expect, it, vi } from 'vitest'
 import {
   classifyEqlDomain,
+  columnExists,
   detectColumnEqlVersion,
   type EncryptedColumnInfo,
   listEncryptedColumns,
@@ -200,5 +201,38 @@ describe('resolveEncryptedColumn', () => {
       version: 3,
       via: 'convention',
     })
+  })
+})
+
+describe('columnExists', () => {
+  it('returns true when the catalog reports the column', async () => {
+    const { client } = mockClient([{ exists: true }])
+    expect(await columnExists(client, 'users', 'ssn_encrypted')).toBe(true)
+  })
+
+  it('returns false when it does not', async () => {
+    const { client } = mockClient([{ exists: false }])
+    expect(await columnExists(client, 'users', 'gone')).toBe(false)
+  })
+
+  it('preserves identifier case — no bare to_regclass($1)', async () => {
+    // Same guard as `detectColumnEqlVersion` above. A bare `to_regclass($1)`
+    // parses its argument and case-folds it, so a Prisma-style `"User"` table
+    // silently resolves to `user` and the probe reports "column missing" for a
+    // column that plainly exists. In `resolveColumnLifecycle` that turns the
+    // #772 fail-closed into a silent no-op (#787 review).
+    const { client, query } = mockClient([{ exists: true }])
+    await columnExists(client, 'User', 'ssn_encrypted')
+    const [sql, values] = query.mock.calls[0] as [string, unknown[]]
+    expect(sql).toContain("format('%I'")
+    expect(sql).not.toMatch(/to_regclass\(\$1\)/)
+    expect(values).toEqual(['User', null, 'ssn_encrypted'])
+  })
+
+  it('splits schema-qualified names on the first dot, like qualifyTable', async () => {
+    const { client, query } = mockClient([{ exists: true }])
+    await columnExists(client, 'app.users', 'ssn_encrypted')
+    const [, values] = query.mock.calls[0] as [string, unknown[]]
+    expect(values).toEqual(['users', 'app', 'ssn_encrypted'])
   })
 })

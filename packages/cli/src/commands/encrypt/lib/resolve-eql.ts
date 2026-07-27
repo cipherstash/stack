@@ -1,4 +1,5 @@
 import {
+  columnExists,
   type EncryptedColumnInfo,
   listEncryptedColumns,
   pickEncryptedColumn,
@@ -111,25 +112,6 @@ export async function resolveColumnLifecycle(
   return { info: pickEncryptedColumn(candidates, column), candidates }
 }
 
-/** Whether `column` exists on `table` at all, whatever its type. */
-async function columnExists(
-  client: pg.ClientBase,
-  table: string,
-  column: string,
-): Promise<boolean> {
-  const { rows } = await client.query<{ exists: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1 FROM pg_attribute
-       WHERE attrelid = to_regclass($1)
-         AND attname = $2
-         AND attnum > 0
-         AND NOT attisdropped
-     ) AS exists`,
-    [table, column],
-  )
-  return rows[0]?.exists === true
-}
-
 /**
  * Explain a failed resolution (`info === null`) to the user, or return
  * `null` when the failure is fine to fall through to the v2 lifecycle.
@@ -171,7 +153,7 @@ export function explainUnresolved(
   // that: listing the v3 candidates here would invite the user to record one of
   // them, which is how the guess used to get laundered into a `via: 'hint'` match.
   if (unresolvedHint !== undefined) {
-    return `${table}.${column} is recorded as pairing with "${unresolvedHint}", but ${unresolvedHint} is not an EQL v3 column — it is most likely a legacy eql_v2_encrypted column. ${table} also holds EQL v3 columns, and none of them is a confirmed counterpart for ${column}, so this command cannot tell which lifecycle applies and will not guess.\n\nIf that pairing is wrong, correct or remove "encryptedColumn" for ${column} in .cipherstash/migrations.json and re-run. If it is right, ${column} is on the EQL v2 lifecycle: drive it against ${unresolvedHint} directly rather than through this command, which resolves EQL v3 counterparts only.`
+    return `${table}.${column} is recorded as pairing with "${unresolvedHint}", but ${unresolvedHint} is not an EQL v3 column — it is most likely a legacy eql_v2_encrypted column. ${table} also holds EQL v3 columns, and none of them is a confirmed counterpart for ${column}, so this command cannot tell which lifecycle applies and will not guess.\n\nIf that pairing is wrong, correct or remove "encryptedColumn" for ${column} in .cipherstash/migrations.json and re-run. If it is right, ${column} is on the EQL v2 lifecycle, which no stash command can drive on this table — complete it yourself against ${unresolvedHint} with the eql_v2 SQL.`
   }
 
   const listed = candidates

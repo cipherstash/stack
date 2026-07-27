@@ -6,11 +6,22 @@ This package has **two** Vitest configs. Run the right one for the change.
 
 | Command | Config | Scope | Needs build? |
 | --- | --- | --- | --- |
-| `pnpm --filter stash test` | `vitest.config.ts` | Unit tests under `src/__tests__/**` and `src/**/__tests__/**` | No |
+| `pnpm --filter stash test` | `vitest.config.ts` | Unit tests under `src/__tests__/**` and `src/**/__tests__/**` | **Partly** — needs `@cipherstash/stack` built (see below). Turbo's `^build` supplies it in CI. |
 | `pnpm --filter stash test:e2e` | `vitest.integration.config.ts` | E2E tests under `tests/e2e/**.e2e.test.ts` driving the built `dist/bin/stash.js` through a real pty (`node-pty`) | **Yes** — run `pnpm --filter stash build` first, or use the turbo `test:e2e` task which depends on `build`. |
 
 The unit config explicitly excludes `tests/e2e/**` so the default `pnpm test`
-stays fast and self-contained.
+stays fast.
+
+It is **not** fully self-contained, despite running standalone in CI. Some `src`
+modules import workspace packages that publish `./dist` only, so an unbuilt
+workspace fails at collection with `Failed to resolve entry for package …`
+rather than at an assertion. `vitest.config.ts` aliases `@cipherstash/migrate`
+to its source to remove one such coupling; `@cipherstash/stack` remains, reached
+via `packages/migrate/src/backfill.ts` and a direct import in
+`init/lib/introspect.test.ts`. Deleting `packages/stack/dist` fails 10 files.
+Closing it needs `vitest.shared.ts`'s `stackSourceAlias`, which cannot be spread
+into this config — its `'@/'` entry points at `packages/stack/src` and would
+clobber this package's own `'@/'` (#787 review).
 
 ## When to add or update an E2E test
 
