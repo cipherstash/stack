@@ -1,3 +1,4 @@
+import type { Result } from '@byteslice/result'
 import type {
   AnyV3Table,
   ColumnsOf,
@@ -150,6 +151,36 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
   ): BulkEncryptOperation
   bulkDecrypt(payloads: BulkDecryptPayload): BulkDecryptOperation
   getEncryptConfig(): ReturnType<EncryptionClient['getEncryptConfig']>
+
+  /**
+   * Re-initialize the underlying client, staying on EQL v3.
+   *
+   * @internal Present for runtime parity with {@link EncryptionClient}, not as
+   * part of the typed authoring surface. `Encryption` picks its return value by
+   * inspecting the *schemas* while overload resolution inspects the *config*, so
+   * the two can disagree: a config hoisted into a `ClientConfig`-typed variable
+   * selects the nominal overload but still yields this client at runtime. Every
+   * other `EncryptionClient` method already existed here; without `init` that
+   * mismatch turned into `TypeError: client.init is not a function`.
+   *
+   * This is NOT a bare passthrough, because `EncryptionClient.init` would
+   * otherwise be a way around the guard `Encryption` applies at construction.
+   * `init` takes its own `eqlVersion`, forwards `undefined` to the FFI (whose
+   * default is **v2**), and never consults `resolveEqlVersion` — so delegating
+   * verbatim would let a typed v3 client be re-initialized into v2 wire while
+   * keeping this v3 surface, the exact contradiction `resolveEqlVersion`
+   * refuses. The wire version is pinned to `3` and an explicit `2` is rejected.
+   *
+   * It also resolves to the TYPED client rather than the underlying nominal one,
+   * so `client = (await client.init(cfg)).data` — the natural idiom, since
+   * `EncryptionClient.init` resolves `{ data: this }` — keeps the typed surface
+   * instead of silently degrading to the nominal one.
+   */
+  init(
+    config: Omit<Parameters<EncryptionClient['init']>[0], 'eqlVersion'> & {
+      eqlVersion?: 3
+    },
+  ): Promise<Result<TypedEncryptionClient<S>, EncryptionError>>
 }
 
 /**
@@ -353,7 +384,11 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
     ) as never
   }
 
-  return {
+  // Annotated rather than `satisfies`, because `init` resolves to `typed`
+  // itself and a self-referencing initializer has no inferrable type. The
+  // annotation checks the same shape the `satisfies` did, and the function's
+  // declared return type is this type anyway, so nothing is widened.
+  const typed: TypedEncryptionClient<S> = {
     encrypt: (plaintext, opts) =>
       client.encrypt(plaintext as never, opts as never),
     encryptQuery,
@@ -367,38 +402,72 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
     bulkEncrypt: (plaintexts, opts) => client.bulkEncrypt(plaintexts, opts),
     bulkDecrypt: (payloads) => client.bulkDecrypt(payloads),
     getEncryptConfig: () => client.getEncryptConfig(),
-  } satisfies TypedEncryptionClient<S>
+    // See the interface member for why this is not `client.init(config)`:
+    // `init` bypasses `resolveEqlVersion` and defaults the FFI to v2 wire, so a
+    // verbatim delegation would reopen the contradiction A-8 closes. Pin v3,
+    // refuse an explicit 2, and resolve to the typed client so the surface
+    // survives the round trip.
+    init: async (config) => {
+      if (config.eqlVersion !== undefined && config.eqlVersion !== 3) {
+        return {
+          failure: {
+            type: EncryptionErrorTypes.EncryptionError,
+            message:
+              "[eql/v3]: cannot re-initialize a typed EQL v3 client at eqlVersion 2 — the payloads would not match the columns' eql_v3_* domains. Build a separate client from the EQL v2 schema you want to write.",
+          },
+        }
+      }
+
+      const result = await client.init({ ...config, eqlVersion: 3 })
+      return result.failure ? result : { data: typed }
+    },
+  }
+
+  return typed
 }
 
 /**
  * The client type {@link Encryption} resolves to for the schema tuple `S`.
  *
- * **Use this instead of `Awaited<ReturnType<typeof Encryption>>`.** `Encryption`
- * is overloaded, and TypeScript's `ReturnType` reads the LAST overload — the
- * nominal one — so that expression yields `EncryptionClient` even for an all-v3
- * schema set, and assigning the real (typed) client to it is an error:
- *
- * ```
- * Type 'TypedEncryptionClient<…>' is missing the following properties
- * from type 'EncryptionClient': client, encryptConfig, init
- * ```
- *
- * Overload order cannot fix that — whichever signature is last wins, so one of
- * the two forms is always mis-resolved. Name the schema tuple instead:
+ * This is **the** way to name the client — reach for it whenever you need to
+ * declare a variable, field or return type before the `await` that produces it:
  *
  * ```typescript
  * const users = encryptedTable("users", { email: types.TextSearch("email") })
+ *
  * let client: EncryptionClientFor<readonly [typeof users]>
  * client = await Encryption({ schemas: [users] })
  * ```
  *
- * The equivalent inline workaround — inferring through a single-signature
- * helper, `Awaited<ReturnType<typeof makeClient>>` — also works, and is what
- * `packages/bench` does.
+ * For code that is generic over its schemas — integration adapters that build a
+ * table per test family, say — name the loose array and keep the typed surface:
+ *
+ * ```typescript
+ * let client: EncryptionClientFor<readonly AnyV3Table[]>
+ * ```
+ *
+ * **Do not use `Awaited<ReturnType<typeof Encryption>>`.** `Encryption` is
+ * overloaded, and TypeScript's `ReturnType` reads the LAST overload — the
+ * nominal one — so that expression yields `EncryptionClient` even for an all-v3
+ * schema set, and assigning the real client to it is an error:
+ *
+ * ```
+ * Type 'TypedEncryptionClient<…>' is missing the following properties
+ * from type 'EncryptionClient': client, encryptConfig
+ * ```
+ *
+ * Overload order cannot fix that — whichever signature is last wins, so one of
+ * the two forms is always mis-resolved, and putting the nominal signature first
+ * mis-resolves v3 schemas instead (a v3 table structurally satisfies
+ * `BuildableTable`). A named extraction type is what every comparable library
+ * does for the same reason: `z.infer`, arktype's `typeof T.infer`, hono's
+ * `Client<T>`.
  */
 export type EncryptionClientFor<S extends readonly unknown[]> =
-  S extends readonly [AnyV3Table, ...AnyV3Table[]]
-    ? TypedEncryptionClient<S>
+  S extends readonly AnyV3Table[]
+    ? S['length'] extends 0
+      ? EncryptionClient
+      : TypedEncryptionClient<S>
     : EncryptionClient
 
 /**

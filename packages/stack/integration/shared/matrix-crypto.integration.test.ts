@@ -26,7 +26,12 @@ import {
   V3_MATRIX,
 } from '@cipherstash/test-kit'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { EncryptionV3, encryptedTable } from '@/encryption/v3'
+import {
+  type EncryptionClientFor,
+  EncryptionV3,
+  encryptedTable,
+} from '@/encryption/v3'
+import type { AnyV3Table } from '@/eql/v3'
 
 // `as const satisfies Record<...>` gives `V3_MATRIX` a narrower type than
 // `Record<EqlV3TypeName, DomainSpec>` (rows that omit the optional
@@ -70,7 +75,7 @@ const errorCases = domains.flatMap(([t, spec]) =>
 )
 
 describe('v3 matrix live round-trip (all domains × samples)', () => {
-  let client: Awaited<ReturnType<typeof EncryptionV3>>
+  let client: EncryptionClientFor<readonly AnyV3Table[]>
   let encrypted: Array<Record<string, unknown>>
   let decrypted: Array<Record<string, unknown>>
 

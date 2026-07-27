@@ -33,6 +33,7 @@
 	},
 	"scripts": {
 		"build": "tsup",
+		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"dev": "tsup --watch",
 		"release": "tsup"
 	},

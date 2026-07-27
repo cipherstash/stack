@@ -1,0 +1,4 @@
+{
+  "name": "@fixture/unscoped",
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" }
+}

@@ -3,6 +3,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
+      "outputs": ["dist/**"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "env": ["STASH_POSTHOG_KEY"]
     },
@@ -18,6 +19,37 @@
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "cache": false
+    },
+    // `packages/bench`'s "build" is `tsc --noEmit` — a typecheck, not a bundle —
+    // so it emits nothing and the repo-wide `dist/**` would warn on every run.
+    "@cipherstash/bench#build": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    // These two builds `cpSync('../../skills', 'dist/skills')` — they consume a
+    // directory OUTSIDE their own package, which `$TURBO_DEFAULT$` does not
+    // cover. Without naming it here a skills-only edit does not invalidate the
+    // build, and since `build` now declares `outputs: ["dist/**"]`, the cache
+    // hit actively RESTORES the previous `dist/skills`. `skills/` ships inside
+    // the `stash` and `@cipherstash/wizard` tarballs and is copied into
+    // customer repos by `stash init`, so that silently publishes stale guidance.
+    "stash#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/skills/**", ".env*"],
+      "env": ["STASH_POSTHOG_KEY"]
+    },
+    "@cipherstash/wizard#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/skills/**", ".env*"],
+      "env": ["STASH_POSTHOG_KEY"]
+    },
+    // Typechecks `packages/stack/dist-types` against the BUILT declarations, so
+    // it must run after `build` — unlike `test:types`, which reads source.
+    "test:types:dist": {
+      "dependsOn": ["build"],
+      "inputs": ["$TURBO_DEFAULT$"]
     },
     "typecheck": {
       "dependsOn": ["^build"],

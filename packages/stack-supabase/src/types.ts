@@ -464,8 +464,10 @@ export interface TypedEncryptedSupabaseInstance<S extends V3Schemas> {
  *
  * What IS carried is exactly: `then` (via `PromiseLike`), `abortSignal`,
  * `throwOnError`, `returns`, `withLockContext` and `audit`. That is a
- * hand-written list, not a passthrough — `single()`/`maybeSingle()` return the
- * same builder instance, so a method absent here is absent at runtime too.
+ * hand-written list, not a passthrough. It narrows the static API only:
+ * `single()`/`maybeSingle()` return the same builder instance, so a method
+ * omitted here is still a property of that object at runtime — the type is what
+ * stops you reaching it, not the implementation.
  *
  * It is therefore NOT parity with postgrest-js, which carries a different set:
  * its `single()` returns a `PostgrestBuilder`, carrying

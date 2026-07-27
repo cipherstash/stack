@@ -86,12 +86,45 @@ describe('resolveEqlVersion — legacy v2 searchable JSON', () => {
 })
 
 describe('resolveEqlVersion — explicit config.eqlVersion', () => {
-  it('honours an explicit 2 over v3 schemas, for minting v2 wire during a migration', () => {
-    expect(resolveEqlVersion([usersV3], 2)).toBe(2)
+  // #772 review, finding 8. `EncryptionV3` used to force `eqlVersion: 3` over
+  // whatever the caller passed, with a comment saying it existed to stop
+  // exactly this. It is now a bare alias of `Encryption`, so the override is
+  // gone and nothing rejected the combination — the client built v2-wire over
+  // v3 concrete domains, which writes an `eql_v2_encrypted` payload into an
+  // `eql_v3_*` column. `resolveEqlVersion` already throws for a mixed set and
+  // for v2 SteVec; this was the one contradiction it let through.
+  it('rejects an explicit 2 over an all-v3 schema set', () => {
+    expect(() => resolveEqlVersion([usersV3], 2)).toThrow(
+      /cannot emit EQL v2 wire for a schema set that is entirely EQL v3/,
+    )
+  })
+
+  it('rejects an explicit 2 over several v3 tables', () => {
+    expect(() => resolveEqlVersion([usersV3, ordersV3], 2)).toThrow(
+      /entirely EQL v3/,
+    )
+  })
+
+  // The escape hatch itself survives, and this is the shape that actually uses
+  // it: `integration/shared/v2-decrypt-compat.integration.test.ts` mints its v2
+  // fixtures from a v2 schema set. Nothing mints v2 wire from a v3 table.
+  it('still honours an explicit 2 over a v2 schema set', () => {
+    expect(resolveEqlVersion([usersV2], 2)).toBe(2)
   })
 
   it('honours an explicit 3 over a v2 schema set', () => {
     expect(resolveEqlVersion([usersV2], 3)).toBe(3)
+  })
+
+  it('honours an explicit 3 over a v3 schema set', () => {
+    expect(resolveEqlVersion([usersV3], 3)).toBe(3)
+  })
+
+  // An empty set never reaches here through `Encryption` — the caller throws
+  // first — but the function is exported, so pin that it does not invent a
+  // wire version for a set with no evidence in it either way.
+  it('does not reject an explicit 2 for an empty schema set', () => {
+    expect(resolveEqlVersion([], 2)).toBe(2)
   })
 
   it('does not let an explicit version rescue a mixed schema set', () => {

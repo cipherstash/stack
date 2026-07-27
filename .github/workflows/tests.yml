@@ -160,8 +160,49 @@ jobs:
       - name: Typecheck (examples/basic — guards the v3 stack/stack-drizzle importers)
         run: pnpm exec turbo run typecheck --filter @cipherstash/basic-example
 
+      # The rest of the surfaces that were compiling nowhere. Each of these has
+      # a `tsconfig.json` that covers its `src` and tests, and each was already
+      # clean — so they are gated now, before they drift. They resolve their
+      # workspace dependencies through `dist/*.d.ts`, hence the turbo filters
+      # (`^build` builds the dependencies first).
+      #
+      # NOT gated yet, and deliberately: `@cipherstash/stack` (147 errors under
+      # its own tsconfig), `@cipherstash/stack-drizzle` (63), `stash` (21) and
+      # `@cipherstash/stack-supabase` (11). Their `test:types` scripts only
+      # cover `__tests__/**/*.test-d.ts`, so `src`, the runtime test suites and
+      # `integration/**` compile nowhere. Most of the drizzle and supabase count
+      # is one root cause — `V3_MATRIX`'s `indexes` union in
+      # `@cipherstash/test-kit` — see #778.
+      - name: Typecheck (migrate)
+        run: pnpm exec turbo run typecheck --filter @cipherstash/migrate
+
+      - name: Typecheck (nextjs)
+        run: pnpm exec turbo run typecheck --filter @cipherstash/nextjs
+
+      - name: Typecheck (examples/prisma — guards the prisma-next importers)
+        run: pnpm exec turbo run typecheck --filter @cipherstash/prisma-next-example
+
+      - name: Typecheck (e2e)
+        run: pnpm exec turbo run typecheck --filter @cipherstash/e2e
+
+      # Everything else typechecks against SOURCE. This one reads the emitted
+      # `.d.ts`, which is what customers consume — and where typed `encryptQuery`
+      # sat broken for every column through the whole rc series, because `tsc`
+      # strips private member types and that was the only place the column's
+      # domain parameter appeared bare.
+      - name: Typecheck (stack — emitted declarations, not source)
+        run: pnpm exec turbo run test:types:dist --filter @cipherstash/stack
+
       - name: Lint — no hardcoded package-manager runners
         run: pnpm run lint:runners
+
+      # The gates above only mean something if they compile source. A tsconfig
+      # with no `include` globs `**/*`, which sweeps the package's own `dist/`
+      # into the program — and whether `dist/` exists during a gate depends on
+      # what an earlier step built transitively, so the gate compiles a
+      # different program in CI than it does locally.
+      - name: Lint — typecheck gates compile source, not build output
+        run: pnpm run lint:typecheck-scope
 
       # Deleting or renaming a package leaves `packages/<name>` references
       # dangling in docs and CI config. Nothing else catches it (#760 review).

@@ -33,7 +33,11 @@
  * control.
  */
 import { OidcFederationStrategy } from '@cipherstash/stack'
-import { EncryptionV3 } from '@cipherstash/stack/v3'
+import {
+  type AnyV3Table,
+  type EncryptionClientFor,
+  EncryptionV3,
+} from '@cipherstash/stack/v3'
 import { databaseUrl, unwrapResult, V3_MATRIX } from '@cipherstash/test-kit'
 import { clerkJwtProvider } from '@cipherstash/test-kit/integration-clerk'
 import { and, asc as drizzleAsc, eq as drizzleEq, type SQL } from 'drizzle-orm'
@@ -71,7 +75,7 @@ const schema = extractEncryptionSchema(secretTable)
 
 type SelectRow = { rowKey: string }
 
-let client: Awaited<ReturnType<typeof EncryptionV3>>
+let client: EncryptionClientFor<readonly AnyV3Table[]>
 let ops: ReturnType<typeof createEncryptionOperators>
 let db: ReturnType<typeof drizzle>
 

@@ -1,4 +1,4 @@
-import { EncryptionV3 } from '@cipherstash/stack/v3'
+import { type EncryptionClientFor, EncryptionV3 } from '@cipherstash/stack/v3'
 import { extractEncryptionSchema, types } from '@cipherstash/stack-drizzle'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { pgTable, serial } from 'drizzle-orm/pg-core'
@@ -34,19 +34,9 @@ export type BenchPlaintextRow = {
   enc_jsonb: { idx: number; group: number }
 }
 
-/**
- * Build the typed EQL v3 client this bench drives. Wrapped in a
- * single-signature helper because `EncryptionV3` is now overloaded (typed v3
- * vs. nominal) — `ReturnType<typeof EncryptionV3>` resolves to the *last*
- * (nominal) overload, so we infer the return type through this helper instead.
- */
-function makeEncryptionClient() {
-  return EncryptionV3({ schemas: [encryptionBenchTable] })
-}
-
 /** The typed EQL v3 client this bench drives. */
-export type BenchEncryptionClient = Awaited<
-  ReturnType<typeof makeEncryptionClient>
+export type BenchEncryptionClient = EncryptionClientFor<
+  readonly [typeof encryptionBenchTable]
 >
 
 export type BenchHandle = {
@@ -69,7 +59,9 @@ export async function buildBench(): Promise<BenchHandle> {
 
   const db = drizzle(pool)
 
-  const encryptionClient = await makeEncryptionClient()
+  const encryptionClient = await EncryptionV3({
+    schemas: [encryptionBenchTable],
+  })
 
   return { pgClient, pool, db, encryptionClient }
 }

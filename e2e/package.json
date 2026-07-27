@@ -5,7 +5,8 @@
   "description": "End-to-end tests that exercise built CipherStash binaries and cross-package behaviour.",
   "type": "module",
   "scripts": {
-    "test:e2e": "vitest run"
+    "test:e2e": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "stash": "workspace:*",

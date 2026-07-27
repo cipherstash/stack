@@ -1,10 +1,9 @@
 import 'dotenv/config'
 import { beforeAll, describe, expect, it } from 'vitest'
+import type { EncryptionClient } from '@/encryption'
 import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
 import { expectFailure, unwrapResult } from './fixtures'
-
-type EncryptionClient = Awaited<ReturnType<typeof Encryption>>
 
 const documents = encryptedTable('documents', {
   metadata: types.Json('metadata'),
@@ -27,10 +26,20 @@ function expectOrderingTerm(value: unknown): void {
 }
 
 describe('encryptQuery with protect-ffi 0.30 SteVec operations', () => {
+  // NOTE: this suite holds the client through the NOMINAL surface on purpose.
+  // The typed client derives `encryptQuery`'s plaintext from the column's domain,
+  // so every query type on a `types.Json()` column is typed `JsonDocument` — but
+  // the SteVec query types take a JSONPath string (`steVecSelector`), a
+  // `{ path, value }` pair (`steVecValueSelector`) or a bare scalar
+  // (`steVecTerm`). This file exercises exactly those, so typing it against the
+  // typed client would mean casting away the argument type at every call and
+  // hiding the gap. Cast once, here, where it is visible and explained.
   let client: EncryptionClient
 
   beforeAll(async () => {
-    client = await Encryption({ schemas: [documents, plain] })
+    client = (await Encryption({
+      schemas: [documents, plain],
+    })) as unknown as EncryptionClient
   })
 
   it('returns a bare selector hash for a JSONPath', async () => {

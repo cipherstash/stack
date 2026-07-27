@@ -312,6 +312,21 @@ const client = await Encryption({ schemas: [users] })
 - `EncryptionV3` (from `@cipherstash/stack/v3`) is a **deprecated, type-identical alias** of `Encryption`, kept for backwards compatibility. New code should use `Encryption`.
 - `typedClient(client, ...schemas)` (exported from `@cipherstash/stack/v3`) wraps an already-built untyped `EncryptionClient` in the typed surface, if you built one via a lower-level path.
 - **v2 and v3 tables cannot be mixed in one client** — a mixed schema set throws at init. Create separate clients if you need both.
+- `schemas` takes any non-empty array of v3 tables — a shared `export const schemas: AnyV3Table[]`, a `ReadonlyArray`, one built at runtime. It does not have to be an array literal. Writing `Encryption({ schemas: [] })` is a compile error, but an array typed `AnyV3Table[]` that is empty at runtime compiles and throws on init instead.
+- **To name the client's type, use `EncryptionClientFor<S>`** (from `@cipherstash/stack/v3`), not `Awaited<ReturnType<typeof Encryption>>`. `Encryption` is overloaded and `ReturnType` reads the last overload, so that idiom always resolves to the untyped nominal client:
+
+```typescript
+import { type AnyV3Table, Encryption, type EncryptionClientFor, encryptedTable, types } from "@cipherstash/stack/v3"
+
+const users = encryptedTable("users", { email: types.TextSearch("email") })
+
+// A named schema tuple keeps per-column typing.
+let client: EncryptionClientFor<readonly [typeof users]>
+client = await Encryption({ schemas: [users] })
+
+// Code that is generic over its schemas keeps the typed surface too.
+function withClient(c: EncryptionClientFor<readonly AnyV3Table[]>) { /* … */ }
+```
 
 ```typescript
 // Error handling
@@ -858,7 +873,7 @@ Once dual-writes are recorded as live in `cs_migrations`:
 |---|---|
 | `stash encrypt backfill` | Walks the table in keyset-pagination order, encrypts each chunk, writes a single transactional `UPDATE` per chunk plus a `cs_migrations` checkpoint. SIGINT-safe; idempotent re-runs converge. |
 | Schema rename (**v2 only**) | Update the schema file: drop the `_encrypted` suffix; switch the original column declaration onto the encrypted type. **v3:** there is no rename — leave `<col>_encrypted` under its own name and point the schema/queries at that name instead. |
-| `stash encrypt cutover` (**v2 only**) | One transaction: renames `<col>` → `<col>_plaintext`, `<col>_encrypted` → `<col>`, and promotes the `eql_v2_configuration` row `pending` → `active`. Application reads of `<col>` now return decrypted ciphertext transparently. **v3:** cutover does not apply — on a backfilled v3 column it reports "not applicable" and exits 0 without changing anything; skip this row. |
+| `stash encrypt cutover` (**v2 only**) | One transaction: renames `<col>` → `<col>_plaintext`, `<col>_encrypted` → `<col>`, and promotes the `eql_v2_configuration` row `pending` → `active`. Reads of `<col>` through **CipherStash Proxy** are decrypted on the wire; SDK/ORM reads still return ciphertext and need the decrypt path in the next row. **v3:** cutover does not apply — on a backfilled v3 column it reports "not applicable" and exits 0 without changing anything; skip this row. |
 | Wire reads through the encryption client | Read paths must decrypt before returning the value to callers (`decryptModel(row, table)` for Drizzle; the Supabase wrapper for Supabase; `decrypt`/`bulkDecryptModels` otherwise). Without this step, reads return raw EQL payloads to end users (a `public.eql_v3_*` jsonb document on v3; an `eql_v2_encrypted` composite on a legacy v2 column). |
 | Remove dual-write code | The plaintext column is no longer authoritative — **v2:** it is now `<col>_plaintext` (the cutover renamed it); **v3:** it is still the original `<col>`, since nothing was renamed. Either way, delete the dual-write logic once reads are served from the encrypted column. |
 | `stash encrypt drop` | Emits a migration that drops the plaintext column — and *which* column that is depends on the generation. **v2** (precondition: phase `cut-over`): a plain `ALTER TABLE … DROP COLUMN "<col>_plaintext"`. **v3** (precondition: phase `backfilled`): it drops the **original `<col>`** — there is no `<col>_plaintext` — and the generated SQL is a `DO` block that takes `ACCESS EXCLUSIVE` on the table, re-counts rows with `<col>` set and `<col>_encrypted` NULL *at apply time*, and raises instead of dropping if any remain. Apply with the project's normal migration tooling. |

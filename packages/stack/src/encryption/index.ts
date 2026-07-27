@@ -89,9 +89,10 @@ export const noClientError = () =>
  *   columns and the v3 tables target `eql_v3` domains, so no single wire
  *   format serves both. Split them across two clients.
  *
- * An explicit `config.eqlVersion` bypasses version detection (the wire format
- * is then unambiguous — e.g. writing v2 wire from a v3 schema set during a
- * migration), but mixed schemas and legacy v2 SteVec schemas still throw.
+ * An explicit `config.eqlVersion` bypasses DETECTION, not validation: mixed
+ * schemas and legacy v2 SteVec schemas still throw, and so does an explicit `2`
+ * over an all-v3 set. What survives is `2` over a v2 schema set — minting v2
+ * wire during a migration.
  *
  * @internal exported for unit-test coverage of the detection matrix.
  */
@@ -121,6 +122,28 @@ export function resolveEqlVersion(
   ) {
     throw new Error(
       '[encryption]: searchableJson() on the legacy EQL v2 schema is not supported by protect-ffi 0.30. Migrate the column to the EQL v3 types.Json() domain.',
+    )
+  }
+
+  // An explicit 2 over a set that is ENTIRELY v3 is a contradiction, and a
+  // silent one: the FFI client emits `eql_v2_encrypted` payloads for columns
+  // whose Postgres domain is `eql_v3_*`, so the write either trips the domain
+  // CHECK or lands v2 wire wherever the check is looser.
+  //
+  // `EncryptionV3` used to prevent this by forcing `eqlVersion: 3` over
+  // whatever the caller passed — its comment said so explicitly. It is now a
+  // bare alias of `Encryption`, so a caller upgrading from
+  // `EncryptionV3({ schemas: [v3Table], config: { eqlVersion: 2 } })` — which
+  // was silently corrected and worked — now gets a v2-wire client with no
+  // diagnostic at any layer (#772 review, finding 8).
+  //
+  // The escape hatch itself stays: an explicit 2 over a V2 schema set is how
+  // `integration/shared/v2-decrypt-compat.integration.test.ts` mints the
+  // fixtures that prove v2 payloads still decrypt. That is the only shape that
+  // uses it — nothing mints v2 wire from a v3 table.
+  if (explicit === 2 && schemas.length > 0 && v3Count === schemas.length) {
+    throw new Error(
+      "[encryption]: cannot emit EQL v2 wire for a schema set that is entirely EQL v3 — the payloads would not match the columns' eql_v3_* domains. Drop `config.eqlVersion` to emit v3, or build the client from the EQL v2 schema you actually want to write.",
     )
   }
 
@@ -862,17 +885,56 @@ export function __resetStrategyDeprecationWarningForTests(): void {
  * @see {@link ClientConfig.authStrategy} for the auth strategy field.
  * @see {@link EncryptionClient} for available methods after initialization.
  */
+/**
+ * The schema-tuple guard for {@link Encryption}'s v3 overload.
+ *
+ * Resolves to `S` for any non-empty array of v3 tables and to `never` for
+ * `readonly []`, so `Encryption({ schemas: [] })` stays a compile error while
+ * every non-literal form (a shared `AnyV3Table[]`, a `ReadonlyArray`, a
+ * push-built or spread array) still selects this overload.
+ */
+type NonEmptyV3<S extends readonly AnyV3Table[]> = S['length'] extends 0
+  ? never
+  : S
+
 // Overload 1 — v3-typed: an array literal of concrete EQL v3 tables (from
 // `@cipherstash/stack/v3`) yields the strongly-typed {@link TypedEncryptionClient},
 // the collapse of the former `EncryptionV3`. The wire format is forced to v3.
 //
-// The schema tuple is constrained NON-EMPTY: `readonly AnyV3Table[]` admits
-// `readonly []`, so `Encryption({ schemas: [] })` type-checked and then threw at
-// runtime. The nominal overload has always required at least one table.
+// `S` is the ARRAY, not a non-empty tuple. Constraining the type parameter to
+// `readonly [AnyV3Table, ...AnyV3Table[]]` — which is how the `[]` case was
+// first closed — rejected every form that is not an array literal: a shared
+// `export const all: AnyV3Table[]`, the `ReadonlyArray` prisma-next exposes,
+// anything push-built or spread. Non-emptiness is enforced on the PROPERTY via
+// {@link NonEmptyV3} instead, which leaves `Encryption({ schemas: [] })` a
+// compile error without constraining the rest.
+//
+// `NonEmptyV3<S>` must sit on `schemas` and nowhere else: wrapping the whole
+// config in a conditional alias defeats `const` inference, degrading the tuple
+// to an array and erasing per-column plaintext typing on the literal path.
+//
+// It also cannot be the ONLY v3 signature, which is why there are two. A type
+// parameter is assignable to a deferred conditional only if it is assignable to
+// BOTH branches, and one branch here is `never` — so `NonEmptyV3<S>` rejects
+// every caller that is itself generic over its schemas:
+//
+//   async function make<S extends readonly [AnyV3Table, ...AnyV3Table[]]>(schemas: S) {
+//     return await Encryption({ schemas })   // TS2769 against `NonEmptyV3<S>`
+//   }
+//
+// That shape compiled before A-4 and is the one the `EncryptionClientFor` docs
+// point generic code at, so it must keep compiling. The overload below carries
+// the non-emptiness in its CONSTRAINT instead of a conditional, which a generic
+// `S` can satisfy; the widened one after it then only has to serve arrays that
+// are concrete at the call site, where the conditional resolves eagerly.
 export function Encryption<
   const S extends readonly [AnyV3Table, ...AnyV3Table[]],
 >(config: {
   schemas: S
+  config?: V3ClientConfig
+}): Promise<TypedEncryptionClient<S>>
+export function Encryption<const S extends readonly AnyV3Table[]>(config: {
+  schemas: NonEmptyV3<S>
   config?: V3ClientConfig
 }): Promise<TypedEncryptionClient<S>>
 // Overload 2 — nominal: loose/dynamic schemas (introspection-derived, e.g.
@@ -923,9 +985,10 @@ export async function Encryption(
   const isV3Only = schemas.every(hasBuildColumnKeyMap)
 
   // Resolve the wire format: an explicit `config.eqlVersion` wins (the retained
-  // migration escape hatch — e.g. deliberately writing v2 wire from a v3 schema
-  // set), otherwise it is auto-detected (v3 tables → 3, v2 tables → the FFI's v2
-  // default). A mixed v2 + v3 schema set throws inside `resolveEqlVersion`.
+  // migration escape hatch — `2` over a v2 schema set), otherwise it is
+  // auto-detected (v3 tables → 3, v2 tables → the FFI's v2 default). A mixed
+  // v2 + v3 set, and an explicit `2` over an all-v3 set, throw inside
+  // `resolveEqlVersion`.
   const eqlVersion = resolveEqlVersion(schemas, clientConfig?.eqlVersion)
 
   const result = await client.init({
@@ -940,10 +1003,9 @@ export async function Encryption(
   }
 
   // Return the typed client only when the client is genuinely in EQL v3 mode: an
-  // all-v3 schema set that resolved to the v3 wire format. A caller that forced
-  // `eqlVersion: 2` over v3 schemas gets the nominal client for that deliberate,
-  // low-level v2-wire migration path (the typed client cannot encrypt v3 columns
-  // in v2 mode anyway).
+  // all-v3 schema set that resolved to the v3 wire format. The `eqlVersion === 3`
+  // conjunct is now belt-and-braces: `resolveEqlVersion` refuses an explicit `2`
+  // over an all-v3 set, so an all-v3 set cannot reach here in v2 mode.
   if (isV3Only && eqlVersion === 3) {
     // biome-ignore lint/plugin: the runtime `isV3Only` guard (every schema has
     // buildColumnKeyMap) proves these are AnyV3Table — the compiler can't see it.
