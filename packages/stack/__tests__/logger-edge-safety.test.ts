@@ -12,9 +12,10 @@
  * guard from `src/utils/logger/index.ts`, rebuild, and this test fails.
  *
  * It reads `dist/`, so it SKIPS when the package has not been built — run
- * `pnpm --filter @cipherstash/stack build` first for it to mean anything. The
- * portable-entry plan's `bundling-isolation.test.ts` spawns the same harness
- * against the WASM entry.
+ * `pnpm --filter @cipherstash/stack build` first for it to mean anything.
+ * (`turbo.json` wires `test` to `build`, so the turbo path cannot skip it; a
+ * bare `pnpm --filter … test` on a clean checkout still can.) The
+ * portable-entry plan will point the same harness at the WASM entry.
  */
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
