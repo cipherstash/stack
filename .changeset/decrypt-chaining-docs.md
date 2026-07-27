@@ -47,3 +47,17 @@ other two to guess:
 (`{ table: usersSchema, column: usersSchema.email }`) rather than an
 object-shorthand that read as three required strings — `queryType` is inferred
 from the column's configured indexes.
+
+The cutover and complete-rollout **plan templates** now split EQL v3 from v2.
+Both described the v2 rename swap (`<col>` → `<col>_plaintext`, twin → `<col>`)
+as the only cutover path, so on the default v3 install `stash plan` drafted a
+plan built around `stash encrypt cutover` — a command that refuses v3 columns
+outright ("there is no rename step") and refuses entirely on a v3-only
+database, where `eql_v2_configuration` does not exist. The implement prompt
+already carried this split; the plan templates did not. The version is
+per-column, so the templates tell the agent to establish it per column rather
+than deciding once for the whole plan.
+
+The "already encrypted" stop-and-ask now recognises `eql_v3_*` domains
+alongside the legacy `eql_v2_encrypted` udt, so it can fire on the default
+path at all.

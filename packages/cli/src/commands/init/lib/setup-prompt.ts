@@ -414,7 +414,7 @@ export function renderImplementPrompt(ctx: SetupPromptContext): string {
       "The user asks to convert a populated column in place. Explain why it doesn't work and offer the migrate-existing-column flow instead.",
     ),
     bullet(
-      "A column the user names is already encrypted (`eql_v2_encrypted` udt) but with a different EQL config than they've described. This is the post-cutover re-encryption case (`stash encrypt update`, not yet shipped) — surface it instead of guessing.",
+      "A column the user names is already encrypted — an `eql_v3_*` domain (`eql_v3_text_search`, `eql_v3_integer_ord`, …) on the default path, or the legacy `eql_v2_encrypted` udt — but with a different EQL config than they've described. This is the post-cutover re-encryption case (`stash encrypt update`, not yet shipped) — surface it instead of guessing.",
     ),
     bullet(
       'The schema migration would change the data type of a column the user has already filled.',
@@ -516,7 +516,7 @@ function planSharedStopAndAsk(): string[] {
       "The user asks to convert a populated column in place. Explain why it doesn't work and offer the migrate-existing-column flow instead.",
     ),
     bullet(
-      "A column the user names is already encrypted (`eql_v2_encrypted` udt) but with a different EQL config than they've described. This is the post-cutover re-encryption case (`stash encrypt update`, not yet shipped) — surface it in the plan as a flagged risk.",
+      "A column the user names is already encrypted — an `eql_v3_*` domain (`eql_v3_text_search`, `eql_v3_integer_ord`, …) on the default path, or the legacy `eql_v2_encrypted` udt — but with a different EQL config than they've described. This is the post-cutover re-encryption case (`stash encrypt update`, not yet shipped) — surface it in the plan as a flagged risk.",
     ),
     bullet(
       'You discover existing partial CipherStash setup that disagrees with what the user is describing — someone else may have run `stash init` earlier with different choices. Note this in the plan and ask the user to clarify before writing prescriptive steps.',
@@ -644,19 +644,16 @@ function renderCutoverPlanPrompt(ctx: SetupPromptContext): string {
       '**Backfill.** Encrypt the historical rows that pre-date the rollout deploy. Resumable; chunked; SIGINT-safe.',
     ),
     bullet(
-      '**Schema rename.** Update the schema declaration so the original column points at the encrypted type.',
+      `**Switch reads to the encrypted column.** This step depends on the column's EQL version, so establish it per column first — \`${cli} encrypt backfill\` prints it and \`${cli} encrypt status\` shows it. **EQL v3 (the default):** there is no rename. Update the schema declaration and the queries to read and write \`<col>_encrypted\` under its own name. **EQL v2 (legacy data only):** declare the encrypted column under its final name (drop the twin suffix), then a single \`${cli} encrypt cutover\` transaction renames \`<col>\` → \`<col>_plaintext\` and \`<col>_encrypted\` → \`<col>\`.`,
     ),
     bullet(
-      '**Cutover.** A single transaction renames `<col>` → `<col>_plaintext` and `<col>_encrypted` → `<col>`.',
+      '**Read path.** Reads of the encrypted column return ciphertext until the read path decrypts via the encryption client. The plan must specify what changes per read site.',
     ),
     bullet(
-      '**Read path.** Application reads of `<col>` now return ciphertext until the read path decrypts via the encryption client. The plan must specify what changes per read site.',
+      '**Remove dual-writes.** The plaintext column — still `<col>` on v3, renamed `<col>_plaintext` on v2 — is no longer authoritative. Delete the dual-write code paths.',
     ),
     bullet(
-      '**Remove dual-writes.** The plaintext column is now `<col>_plaintext` and is no longer authoritative. Delete the dual-write code paths.',
-    ),
-    bullet(
-      "**Drop plaintext.** `stash encrypt drop` emits a migration that removes `<col>_plaintext`. Apply with the project's normal migration tooling.",
+      `**Drop plaintext.** \`${cli} encrypt drop\` emits a migration that removes the now-unused plaintext column; on v3 it first verifies no rows are still plaintext-only. Apply with the project's normal migration tooling.`,
     ),
     '',
     '## Your task: produce the cutover plan file',
@@ -679,12 +676,12 @@ function renderCutoverPlanPrompt(ctx: SetupPromptContext): string {
         ' encrypt backfill` invocation with concrete `--table` / `--column` values.',
     ),
     bullet(
-      'The schema-edit step, with the exact rename pattern (drop `_encrypted` suffix on the encrypted column, switch the original column declaration off `text`/`varchar` and onto the encrypted type).',
+      'The schema-edit step, stated per column against its EQL version. **v3:** point the declaration and queries at `<col>_encrypted` under its own name — there is no rename, and no `_encrypted` suffix to drop. **v2:** drop the `_encrypted` suffix and switch the original column declaration off `text`/`varchar` and onto the encrypted type.',
     ),
     bullet(
-      'The cutover invocation per column: `' +
+      'For EQL v2 columns only, the cutover invocation per column: `' +
         cli +
-        ' encrypt cutover --table <T> --column <c>`.',
+        ' encrypt cutover --table <T> --column <c>`. It refuses v3 columns — there is nothing to rename — so do not schedule it for them.',
     ),
     bullet(
       'Read-path code changes: every site that reads `<col>` from this table must decrypt via the encryption client. Enumerate the sites you can find via grep so the user can verify nothing was missed.',
@@ -696,7 +693,7 @@ function renderCutoverPlanPrompt(ctx: SetupPromptContext): string {
         ' encrypt drop --table <T> --column <c>`, plus the schema-migration apply step that follows.',
     ),
     bullet(
-      `Risks specific to cutover: row-count for the backfill (use \`${cli} eql status\` to estimate if helpful), tables under heavy write load (cutover holds a brief lock on the rename), application code that constructs SQL by string (those reads won't transparently decrypt).`,
+      `Risks specific to cutover: row-count for the backfill (use \`${cli} eql status\` to estimate if helpful), tables under heavy write load (on v2, cutover holds a brief lock for the rename), application code that constructs SQL by string (those reads won't transparently decrypt).`,
     ),
     bullet(
       "Open questions for the user — anything you can't determine from the schema, context.json, or the skills.",
@@ -741,7 +738,7 @@ function renderCompletePlanPrompt(ctx: SetupPromptContext): string {
       '**Add new encrypted columns** — declared encrypted from the start; single-deploy.',
     ),
     bullet(
-      '**Migrate existing columns** — schema-add → dual-write code → backfill → schema rename → cutover → read-path switch → remove dual-write code → drop plaintext. No deploy gate between rollout and cutover steps because there is no deployed application to gate on.',
+      `**Migrate existing columns** — schema-add → dual-write code → backfill → switch reads to the encrypted column → remove dual-write code → drop plaintext. The switch step depends on the column's EQL version (\`${cli} encrypt status\` shows it): on **EQL v3**, the default, there is no rename — point the schema and queries at \`<col>_encrypted\` by name; on **EQL v2** only, \`${cli} encrypt cutover\` renames the twin into \`<col>\` first. No deploy gate between rollout and cutover steps because there is no deployed application to gate on.`,
     ),
     '',
     '## Your task: produce the complete-rollout plan file',
