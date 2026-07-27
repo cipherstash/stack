@@ -13,6 +13,5 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     include: ['__unit__/**/*.test.ts'],
-    server: { deps: { inline: [/packages\/test-kit/] } },
   },
 })

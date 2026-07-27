@@ -68,6 +68,18 @@ jobs:
       - name: Build stack + adapter packages
         run: pnpm exec turbo run build --filter @cipherstash/stack --filter @cipherstash/stack-drizzle
 
+      # Deliberately BEFORE Postgres. Separate config, no globalSetup: these
+      # need neither a database nor credentials, so they must not be reachable
+      # only after the steps that do — a docker failure below would otherwise
+      # skip the one check whose whole rationale is that it cannot be skipped.
+      # The seed keying they check was wrong for the entire v2 -> v3 port
+      # precisely because every suite that would have caught it needs
+      # credentials, and `tsc --noEmit` passes on a hand-written row type that
+      # agrees with itself (#772 review, finding 12).
+      - name: Run bench unit checks (no database, no credentials)
+        working-directory: packages/bench
+        run: pnpm test:unit
+
       # Service-scoped `postgres`: local/docker-compose.yml also defines a
       # PostgREST that bench never talks to.
       #
@@ -88,13 +100,3 @@ jobs:
       - name: Run bench smoke tests
         working-directory: packages/bench
         run: pnpm test:local db-only
-
-      # Separate config, no globalSetup: these need neither a database nor
-      # credentials, so they cannot be skipped for want of either. The seed
-      # keying they check was wrong for the whole v2 -> v3 port precisely
-      # because every suite that would have caught it needs credentials, and
-      # `tsc --noEmit` passes on a hand-written row type that agrees with
-      # itself (#772 review, finding 12).
-      - name: Run bench unit checks (no database, no credentials)
-        working-directory: packages/bench
-        run: pnpm test:unit

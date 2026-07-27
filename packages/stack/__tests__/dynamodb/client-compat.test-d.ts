@@ -14,6 +14,7 @@
 import { describe, expectTypeOf, it } from 'vitest'
 import type { EncryptedAttributes, EncryptedDynamoDBInstance } from '@/dynamodb'
 import { encryptedDynamoDB } from '@/dynamodb'
+import type { CallableEncryptionClient } from '@/dynamodb/types'
 import type { EncryptionClient } from '@/encryption'
 import type { EncryptionClientFor } from '@/encryption/v3'
 import { encryptedTable as encryptedTableV3, types } from '@/eql/v3'
@@ -386,5 +387,39 @@ describe('operations chain and resolve', () => {
     // ...and the failure arm is unreachable in this one.
     expectTypeOf(result.failure).toEqualTypeOf<undefined>()
     expectTypeOf(result.data.email__source).toEqualTypeOf<string>()
+  })
+})
+
+/**
+ * The INTERNAL client view, `CallableEncryptionClient` — the shape the operation
+ * classes cast to. Distinct from everything above, which is the PUBLIC instance.
+ *
+ * All four members must return `unknown`. The shipped clients disagree about
+ * what an operation is: the nominal client returns a chainable
+ * `EncryptModelOperation`, the typed client a `MappedDecryptOperation`, and the
+ * wasm-inline client a bare `Promise<WasmResult>` carrying no `.audit()` at all.
+ * Declaring a chainable shape here asserts an `.audit()` that entry does not
+ * have — and that assertion is not academic: it is what let the write path chain
+ * `.audit()` unconditionally and fail EVERY EQL v3 write on the wasm entry
+ * (#788 review follow-up).
+ *
+ * `unknown` forces every call site through `resolveEncryptResult` /
+ * `resolveDecryptResult`, which normalise all three shapes and fail closed. The
+ * encrypt members were the last two still declaring the lie.
+ */
+describe('the internal callable client view is shape-agnostic', () => {
+  it('returns unknown from all four members, so no shape is presumed', () => {
+    expectTypeOf<
+      ReturnType<CallableEncryptionClient['encryptModel']>
+    >().toBeUnknown()
+    expectTypeOf<
+      ReturnType<CallableEncryptionClient['bulkEncryptModels']>
+    >().toBeUnknown()
+    expectTypeOf<
+      ReturnType<CallableEncryptionClient['decryptModel']>
+    >().toBeUnknown()
+    expectTypeOf<
+      ReturnType<CallableEncryptionClient['bulkDecryptModels']>
+    >().toBeUnknown()
   })
 })

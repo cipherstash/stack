@@ -37,8 +37,16 @@ export const encryptionBenchTable = extractEncryptionSchema(benchTable)
  * returns it untouched, with no failure, and the plaintext then goes into an
  * `eql_v3_*` column (#772 review, finding 12).
  *
- * Derived from the table so the two cannot drift again;
- * `__unit__/seed-keys.test.ts` checks the row actually fills it.
+ * HAND-WRITTEN — it cannot be derived from `benchTable` without getting weaker,
+ * so `__unit__/seed-keys.test.ts` is the real drift guard, not the type.
+ * Drizzle's `InferInsertModel` describes the ENCRYPTED column (the custom type's
+ * `data` is the EQL envelope, not the plaintext) and degrades these three to
+ * optional `any`. Deriving from `encryptionBenchTable` is no better:
+ * `extractEncryptionSchema` returns the widened `AnyV3Table`, whose column map
+ * is an index signature — a type that admits `encTxt: 'x'` and `encText: 12345`
+ * alike, both of which the literal below rejects.
+ *
+ * Update it by hand when `benchTable` changes; the unit test will tell you.
  */
 export type BenchPlaintextRow = {
   encText: string

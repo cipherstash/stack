@@ -101,7 +101,7 @@ export async function resolveDecryptResult<T>(
   operation: unknown,
   auditData: { metadata?: Record<string, unknown> },
 ): Promise<
-  { data: T; failure?: never } | { data?: never; failure: DecryptFailure }
+  { data: T; failure?: never } | { data?: never; failure: ResultFailure }
 > {
   const chainable = operation as {
     audit?: (data: { metadata?: Record<string, unknown> }) => unknown
@@ -139,10 +139,16 @@ export async function resolveDecryptResult<T>(
 
   return resolved as
     | { data: T; failure?: never }
-    | { data?: never; failure: DecryptFailure }
+    | { data?: never; failure: ResultFailure }
 }
 
-type DecryptFailure = { message: string; code?: string }
+/**
+ * The failure member both resolvers hand back — shared, because the encrypt and
+ * decrypt paths return structurally identical failures and `throwPreservingCode`
+ * consumes either. `code` is the FFI error code, preserved so `handleError` can
+ * read it back off the rethrown Error (the error-code contract in AGENTS.md).
+ */
+type ResultFailure = { message: string; code?: string }
 
 /**
  * Resolve an encrypt call against either client shape — the write-path mirror
@@ -165,7 +171,7 @@ export async function resolveEncryptResult<T>(
   auditData: { metadata?: Record<string, unknown> },
   context: 'encryptModel' | 'bulkEncryptModels',
 ): Promise<
-  { data: T; failure?: never } | { data?: never; failure: DecryptFailure }
+  { data: T; failure?: never } | { data?: never; failure: ResultFailure }
 > {
   const chainable = operation as {
     audit?: (data: { metadata?: Record<string, unknown> }) => unknown
@@ -199,7 +205,7 @@ export async function resolveEncryptResult<T>(
 
   return resolved as
     | { data: T; failure?: never }
-    | { data?: never; failure: DecryptFailure }
+    | { data?: never; failure: ResultFailure }
 }
 
 /**
