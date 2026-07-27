@@ -566,6 +566,66 @@ describe('renderSetupPrompt — no db push recommendations', () => {
   })
 })
 
+// The rename swap is an EQL v2 operation. `stash encrypt cutover` refuses a v3
+// column outright ("Cut-over is not applicable to EQL v3 columns … there is no
+// rename step", `encrypt/cutover.ts`) and refuses entirely on a v3-only
+// install, where `eql_v2_configuration` does not exist. v3 is the default, so
+// a template presenting the rename as the only path drafts a plan around a
+// command that will decline to run. The implement prompt already splits the
+// two; these templates did not.
+describe('renderSetupPrompt — plan templates split EQL v3 from v2', () => {
+  const plan = (planStep: 'cutover' | 'complete') =>
+    renderSetupPrompt({ ...baseCtx, mode: 'plan', planStep })
+
+  for (const planStep of ['cutover', 'complete'] as const) {
+    describe(`${planStep} plan`, () => {
+      it('names both versions and states v3 has no rename', () => {
+        const out = plan(planStep)
+        expect(out).toContain('EQL v3')
+        expect(out).toContain('EQL v2')
+        expect(out).toMatch(/no rename/i)
+      })
+
+      it('does not present the rename swap unconditionally', () => {
+        const out = plan(planStep)
+        // Every mention of the rename swap has to sit next to the v2 label.
+        for (const line of out.split('\n')) {
+          if (/_plaintext/.test(line)) {
+            expect(line).toMatch(/v2|v3/)
+          }
+        }
+      })
+
+      it('tells the agent how to determine the version per column', () => {
+        // The version is per-column — a database can hold both — so this
+        // cannot be decided once for the whole plan.
+        expect(plan(planStep)).toMatch(/encrypt status|encrypt backfill/)
+      })
+    })
+  }
+
+  // The stop-and-ask trigger for "already encrypted" named the v2 UDT alone.
+  // v3 is the default and its columns carry `eql_v3_*` domains, so on the
+  // default path the check silently never fired. The agent reads the schema
+  // itself, so this half is fixable here; `introspect.ts`'s `isEqlEncrypted`
+  // has the same gap and is a separate behavioural change.
+  it('recognises v3 domains in the already-encrypted stop-and-ask', () => {
+    for (const mode of ['implement', 'plan'] as const) {
+      const out = renderSetupPrompt({ ...baseCtx, mode })
+      expect(out).toMatch(/eql_v3_/)
+    }
+  })
+
+  it('keeps the cutover invocation scoped to v2', () => {
+    const out = plan('cutover')
+    const cutoverLine = out
+      .split('\n')
+      .find((l) => l.includes('encrypt cutover --table'))
+    expect(cutoverLine).toBeDefined()
+    expect(cutoverLine).toMatch(/v2/)
+  })
+})
+
 describe('renderSetupPrompt — honours what the handoff actually wrote', () => {
   for (const mode of ['implement', 'plan'] as const) {
     it(`claude-code with no skills points at neither a skills dir nor AGENTS.md (${mode})`, () => {
