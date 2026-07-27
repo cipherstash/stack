@@ -21,12 +21,17 @@ export default defineConfig({
       // before mocking runs.
       //
       // This removes the `@cipherstash/migrate` build coupling ONLY. The suite
-      // is still not self-contained: `packages/migrate/src/backfill.ts` imports
-      // `@cipherstash/stack`, so removing `packages/stack/dist` still fails 10
-      // files. Closing that needs `stackSourceAlias`, which cannot be spread
-      // here — its `'@/'` entry (pointing at `packages/stack/src`) would
-      // clobber this package's own `'@/'`. That is why `vitest.shared.ts` is
-      // not imported by this config (#787 review).
+      // is still not self-contained: removing `packages/stack/dist` still
+      // fails 10 files, via TWO independent routes —
+      //   1. `packages/migrate/src/backfill.ts` imports `@cipherstash/stack`,
+      //      so this alias reaches it transitively; and
+      //   2. `init/lib/__tests__/introspect.test.ts` imports
+      //      `@cipherstash/stack/eql/v3` directly, never touching migrate.
+      // Route 2 means decoupling `backfill.ts` would NOT make the suite
+      // standalone. Closing both needs `stackSourceAlias`, which cannot be
+      // spread here — its `'@/'` entry (pointing at `packages/stack/src`)
+      // would clobber this package's own `'@/'`. That is why
+      // `vitest.shared.ts` is not imported by this config (#787 review).
       '@cipherstash/migrate': resolve(__dirname, '../migrate/src/index.ts'),
     },
   },
