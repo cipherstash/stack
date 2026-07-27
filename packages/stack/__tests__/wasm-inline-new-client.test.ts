@@ -2,16 +2,21 @@
  * Offline coverage for the WASM `Encryption` factory's `newClient` call shape.
  *
  * protect-ffi 0.25 changed `newClient` from a two-argument form
- * (`newClient(strategy, options)`) to a single options object with the
- * strategy nested under `strategy`:
- *   `newClient({ strategy, encryptConfig, clientId, clientKey })`.
+ * (`newClient(strategy, options)`) to a single options object. 0.31 then
+ * converged the wasm and Neon option shapes (protectjs-ffi#143) and began
+ * REJECTING unknown keys rather than dropping them (#147), which moved
+ * credentials under `clientOpts` and made the SDK `cast_as` vocabulary the
+ * thing to send:
+ *   `newClient({ authStrategy, encryptConfig, clientOpts, eqlVersion })`.
  *
- * `wasm-inline.ts` performs that migration, but the only end-to-end exercise
- * of the factory is the Deno e2e (`e2e/wasm/roundtrip.test.ts`), which skips
- * without real `CS_*` secrets — so a regression in the call shape (e.g.
- * reverting to the two-arg form, dropping `clientId`/`clientKey`, or failing to
- * normalise `cast_as`) would pass the normal suite. These tests mock the WASM
- * bindings and assert the exact argument object handed to `wasmNewClient`.
+ * `wasm-inline.ts` performs those migrations, and the only end-to-end exercise
+ * of the factory is the Deno e2e (`e2e/wasm/roundtrip.test.ts`), which needs
+ * real `CS_*` secrets — so a regression in the call shape passes the normal
+ * suite. That is not hypothetical: the top-level `clientId` these tests used to
+ * assert on became ``unknown field `clientId` `` under 0.31, failing every
+ * client construction, and only the Deno job caught it. These tests mock the
+ * WASM bindings and assert the exact argument object handed to
+ * `wasmNewClient`.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -65,7 +70,7 @@ describe('wasm-inline Encryption → newClient (protect-ffi 0.25 single-object f
     expect(call).toHaveLength(1)
   })
 
-  it('nests the resolved strategy and forwards clientId / clientKey', async () => {
+  it('nests the resolved strategy and puts credentials under clientOpts', async () => {
     await Encryption({
       schemas: [users],
       config: {
@@ -78,15 +83,24 @@ describe('wasm-inline Encryption → newClient (protect-ffi 0.25 single-object f
 
     // biome-ignore lint/suspicious/noExplicitAny: reading the recorded single options object
     const arg = vi.mocked(wasmNewClient).mock.calls[0][0] as any
-    expect(arg.strategy).toEqual({ __mock: 'access-key-strategy' })
-    expect(arg.clientId).toBe('cid')
-    expect(arg.clientKey).toBe('ckey')
+    expect(arg.authStrategy).toEqual({ __mock: 'access-key-strategy' })
+
+    // Under `clientOpts`, NOT at the top level. 0.31 rejects unknown keys, so
+    // the old placement fails every construction with `unknown field
+    // `clientId``.
+    expect(arg.clientOpts).toEqual({ clientId: 'cid', clientKey: 'ckey' })
+    expect(arg).not.toHaveProperty('clientId')
+    expect(arg).not.toHaveProperty('clientKey')
   })
 
-  it('passes a cast_as-normalised encryptConfig (SDK "string" → EQL "text")', async () => {
-    // `types.TextSearch('email')` carries `cast_as: 'string'`; the WASM client
-    // only accepts EQL-native variants, so the factory must run the config
-    // through `normalizeCastAs` before handing it to `newClient`.
+  it('passes encryptConfig in the SDK vocabulary, untranslated', async () => {
+    // `types.TextSearch('email')` carries `cast_as: 'string'`. This entry used
+    // to rewrite that to the EQL-native `'text'`, because the wasm build —
+    // unlike the Neon one — did not normalise and rejected SDK spellings.
+    // 0.31 normalises both entries inside Rust, and keeping the translation
+    // would now be wrong rather than redundant: `'double'` and `'jsonb'`, which
+    // the old mapping emitted, are in neither the public `CastAs` union nor the
+    // canonical one (`'float'` and `'json'`), and unknown values are rejected.
     await Encryption({
       schemas: [users],
       config: {
@@ -100,7 +114,7 @@ describe('wasm-inline Encryption → newClient (protect-ffi 0.25 single-object f
     // biome-ignore lint/suspicious/noExplicitAny: navigating the recorded encryptConfig
     const arg = vi.mocked(wasmNewClient).mock.calls[0][0] as any
     expect(arg.encryptConfig).toBeDefined()
-    expect(arg.encryptConfig.tables.users.email.cast_as).toBe('text')
+    expect(arg.encryptConfig.tables.users.email.cast_as).toBe('string')
   })
 
   it('uses an explicit config.authStrategy verbatim on the strategy path', async () => {
@@ -117,6 +131,6 @@ describe('wasm-inline Encryption → newClient (protect-ffi 0.25 single-object f
 
     // biome-ignore lint/suspicious/noExplicitAny: reading the recorded single options object
     const arg = vi.mocked(wasmNewClient).mock.calls[0][0] as any
-    expect(arg.strategy).toBe(explicit)
+    expect(arg.authStrategy).toBe(explicit)
   })
 })

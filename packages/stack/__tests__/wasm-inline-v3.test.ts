@@ -65,12 +65,15 @@ describe('wasm-inline is EQL v3 only (#614)', () => {
     expect(newClientOpts().eqlVersion).toBe(3)
   })
 
-  it('normalises cast_as on the v3 path (SDK "string" → EQL "text")', async () => {
+  it('sends cast_as on the v3 path untranslated (SDK "string" stays "string")', async () => {
     await Encryption({ schemas: [users], config })
-    // `types.TextSearch` carries `cast_as: 'string'`; the WASM client only
-    // accepts EQL-native variants, so the factory must map it to `'text'`.
+    // `types.TextSearch` carries `cast_as: 'string'`. The factory used to map
+    // that to the EQL-native `'text'` because the wasm build rejected SDK
+    // spellings; protect-ffi 0.31 normalises inside Rust for both entries, so
+    // the vocabulary crosses as authored. See `wasm-inline-new-client.test.ts`
+    // for why translating would now be wrong rather than merely redundant.
     expect(newClientOpts().encryptConfig.tables.users.email.cast_as).toBe(
-      'text',
+      'string',
     )
   })
 

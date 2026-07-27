@@ -31,5 +31,22 @@ Codes are now validated against protect-ffi's known set via
 `isProtectErrorCode`, and anything else falls back to
 `DYNAMODB_ENCRYPTION_ERROR` as intended.
 
+**The WASM entry's client construction moved.** protectjs-ffi#143 converged both
+entries onto one `NewClientOptions`, so credentials now nest under `clientOpts`
+rather than sitting at the top level — combined with #147 above, the old
+placement failed *every* `@cipherstash/stack/wasm-inline` client construction
+with ``unknown field `clientId` ``. Fixed, and the `as never` cast at that call
+site is gone: 0.31 types the wasm `newClient` as `(opts: NewClientOptions)`, so
+the compiler checks the object rather than being asserted past — the cast is
+precisely why the misplacement was invisible.
+
+**`cast_as` is no longer pre-translated on the WASM path.** That entry used to
+rewrite the SDK vocabulary (`'string'` → `'text'`, `'number'` → `'double'`)
+because the wasm build, unlike the Neon one, did not normalise and rejected the
+SDK spellings. 0.31 normalises both entries inside Rust, and keeping the
+translation would now be wrong rather than redundant: `'double'` and `'jsonb'`
+are in neither the public nor the canonical vocabulary (those are `'float'` and
+`'json'`), and unknown values are now rejected. The config crosses as authored.
+
 No public API changes. Error `code` values that were already surfacing continue
 to surface identically.

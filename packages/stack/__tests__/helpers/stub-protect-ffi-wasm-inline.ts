@@ -4,7 +4,7 @@
  * The installed `@cipherstash/protect-ffi` only exports `.` — the `/wasm-inline`
  * subpath does not exist, so Vitest cannot resolve `src/wasm-inline` (which
  * imports it). These no-op stubs let the unit tests that only exercise pure
- * helpers (`getColumnName`, `normalizeCastAs`) load the module. Aliased in via
+ * helpers (`getColumnName`) load the module. Aliased in via
  * `vitest.config.ts`. Any test that actually needs WASM behaviour must mock it
  * explicitly (see `wasm-inline-column-name.test.ts`).
  */

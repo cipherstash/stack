@@ -111,12 +111,7 @@ import {
 } from '@/eql/v3'
 import { DATE_LIKE_CASTS } from '@/eql/v3/columns'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
-import {
-  type CastAs,
-  type EncryptConfig,
-  encryptConfigSchema,
-  toEqlCastAs,
-} from '@/schema'
+import { type EncryptConfig, encryptConfigSchema } from '@/schema'
 import type {
   BuildableV3QueryableColumn,
   Encrypted,
@@ -162,11 +157,10 @@ export function isEncrypted(value: unknown): boolean {
 }
 
 // Note: the raw `newClient` / `encrypt` / `decrypt` from
-// `@cipherstash/protect-ffi/wasm-inline` are intentionally NOT
-// re-exported. The raw `newClient` does not normalise SDK-facing
-// `cast_as` values (see `normalizeCastAs` below) and a re-export would
-// invite consumers to build configs that this normaliser rejects. Import
-// those names directly from their source package if you need raw access.
+// `@cipherstash/protect-ffi/wasm-inline` are intentionally NOT re-exported —
+// they take the binding's option shapes rather than this entry's, and a
+// re-export would invite callers to mix the two. Import those names directly
+// from their source package if you need raw access.
 
 // -----------------------------------------------------------------------
 // High-level `Encryption` factory + client.
@@ -1398,60 +1392,43 @@ export async function Encryption(
   // `eqlVersion: 3` pins the EQL v3 wire format — this entry is v3 only, so
   // every encrypt/query emits v3 (a v2-mode client cannot resolve the concrete
   // `eql_v3_*` domains and would fail every encrypt).
+  //
+  // Credentials go under `clientOpts`, NOT at the top level. protect-ffi 0.31
+  // converged both entries onto one `NewClientOptions` (protectjs-ffi#143), and
+  // rejects unknown keys rather than dropping them (#147) — so the top-level
+  // `clientId` / `clientKey` this used to pass, which the wasm build's own
+  // looser options struct had silently ignored, now fails every client
+  // construction with ``unknown field `clientId` ``.
+  //
+  // No `as never` either: that build's `newClient` is typed
+  // `(opts: NewClientOptions)` as of 0.31, so this object is checked rather
+  // than asserted past the compiler. The cast is exactly why the misplacement
+  // above survived — the Deno e2e was the only thing that could see it.
+  //
+  // `encryptConfig` goes across in the SDK-facing vocabulary, unmodified. This
+  // entry used to pre-translate it (`'string'` → `'text'`, `'number'` →
+  // `'double'`) because the wasm build, unlike the Neon one, did not normalise
+  // and rejected the SDK spellings. 0.31 normalises both entries inside Rust,
+  // at the deserialization boundary, and its docs are explicit that callers
+  // pass the public vocabulary. Keeping the translation would now be actively
+  // wrong: `'double'` and `'jsonb'` are in neither the public nor the canonical
+  // union (those are `'float'` and `'json'`), and unknown values are rejected
+  // rather than ignored.
   const client = await wasmNewClient({
-    strategy,
-    encryptConfig: normalizeCastAs(encryptConfig),
-    clientId: clientConfig.clientId,
-    clientKey: clientConfig.clientKey,
+    authStrategy: strategy,
+    encryptConfig,
+    clientOpts: {
+      clientId: clientConfig.clientId,
+      clientKey: clientConfig.clientKey,
+    },
     eqlVersion: 3,
-  } as never)
+  })
 
   // `INTERNAL_CONSTRUCT` is module-scoped, so this factory is the only
   // code that can build a `WasmEncryptionClient` — external callers hit
   // the constructor guard. `schemas` lets the client precompute per-table
   // date paths and validate model-op tables against what it was built with.
   return new WasmEncryptionClient(INTERNAL_CONSTRUCT, client, schemas)
-}
-
-/**
- * Convert SDK-facing `cast_as` values (`'string'`, `'number'`, …) to the
- * EQL-native variants (`'text'`, `'double'`, …) that the WASM
- * `newClient` accepts.
- *
- * The Node entry of protect-ffi performs this normalization internally
- * via `normalizeEncryptConfig.js`; the WASM bindings do not. Without
- * this, the WASM client rejects an `encryptedColumn('email')` (which
- * defaults to `cast_as: 'string'`) with
- * `unknown variant `string`, expected one of `big_int`, …`.
- *
- * `toEqlCastAs` is exhaustive over the current `CastAs` union; if a new
- * SDK-facing variant is added without updating that switch, this
- * function throws synchronously at startup with a clear message rather
- * than handing `undefined` to the WASM serde (which surfaces as an
- * opaque `unknown variant 'null'` error).
- *
- * @internal exported for unit-test coverage of the drift-guard branch.
- */
-export function normalizeCastAs(config: EncryptConfig): unknown {
-  const tables: Record<string, Record<string, unknown>> = {}
-  for (const [tableName, columns] of Object.entries(config.tables)) {
-    const normalised: Record<string, unknown> = {}
-    for (const [colName, col] of Object.entries(columns)) {
-      if (col.cast_as) {
-        const eqlCastAs = toEqlCastAs(col.cast_as as CastAs)
-        if (eqlCastAs === undefined) {
-          throw new Error(
-            `[encryption]: unrecognised cast_as value "${col.cast_as}" on ${tableName}.${colName} — update toEqlCastAs() to map it to an EQL variant.`,
-          )
-        }
-        normalised[colName] = { ...col, cast_as: eqlCastAs }
-      } else {
-        normalised[colName] = col
-      }
-    }
-    tables[tableName] = normalised
-  }
-  return { ...config, tables }
 }
 
 /**
