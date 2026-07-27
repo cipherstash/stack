@@ -276,7 +276,13 @@ describe('an unrecognised column builder fails closed', () => {
           wire.client,
           ['id', 'email'],
         ),
-    ).toThrow(/\[supabase v3\]/)
+      // Prefix-only would not discriminate — see the matching note in
+      // `supabase-schema-builder.test.ts`. This test guards the HARM, so it is
+      // the one that most needs to fail if the fail-closed probe stops firing
+      // and some other `[supabase v3]` error surfaces in its place.
+    ).toThrow(
+      /\[supabase v3\]: column "email" on table "users" is not a recognised EQL v3 column builder/,
+    )
     expect(wire.urls).toEqual([])
   })
 })
