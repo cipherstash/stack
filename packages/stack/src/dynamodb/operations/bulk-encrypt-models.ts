@@ -5,6 +5,7 @@ import {
   deepClone,
   handleError,
   isV3Table,
+  resolveEncryptResult,
   throwPreservingCode,
   toEncryptedDynamoItem,
 } from '../helpers'
@@ -43,12 +44,16 @@ export class BulkEncryptModelsOperation<
     return await withResult(
       async () => {
         const client = this.encryptionClient as CallableEncryptionClient
-        const encryptResult = await client
-          .bulkEncryptModels(
+        const encryptResult = await resolveEncryptResult<
+          Record<string, unknown>[]
+        >(
+          client.bulkEncryptModels(
             this.items.map((item) => deepClone(item)),
             this.table,
-          )
-          .audit(this.getAuditData())
+          ),
+          this.getAuditData(),
+          'bulkEncryptModels',
+        )
 
         if (encryptResult.failure) {
           throwPreservingCode(encryptResult.failure)

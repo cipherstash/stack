@@ -190,8 +190,8 @@ The SDK never logs plaintext data.
 | `@cipherstash/stack/types` | All TypeScript types |
 | `@cipherstash/stack-drizzle` | Drizzle ORM integration for EQL v3 schemas — the package root, EQL v3 only (see the `stash-drizzle` skill) |
 | `@cipherstash/stack-supabase` | `encryptedSupabase` wrapper for Supabase — EQL v3 only (see the `stash-supabase` skill) |
-| `@cipherstash/stack/wasm-inline` | The **edge** entry — Deno, Bun, Cloudflare Workers, Supabase Edge Functions. Its own `Encryption` factory plus the v3 authoring surface, `EncryptionErrorTypes`, and the WASM build of protect-ffi inlined into the bundle. No native binding, so no bundler externalisation needed. |
-| `@cipherstash/stack/dynamodb` | `encryptedDynamoDB` — encrypt/write is **EQL v3 only** (`types.*`); decrypt still reads existing v2 items. See the `stash-dynamodb` skill |
+| `@cipherstash/stack/wasm-inline` | The **edge** entry — Deno, Bun, Cloudflare Workers, Supabase Edge Functions. Its own `Encryption` factory plus the v3 authoring surface, `EncryptionErrorTypes`, and the WASM build of protect-ffi inlined into the bundle. No native binding, so no bundler externalisation needed. **EQL v3 only** — `Encryption()` here rejects a v2 schema, and its operations return plain Results with no `.audit()` or `.withLockContext()` chaining. |
+| `@cipherstash/stack/dynamodb` | `encryptedDynamoDB` — encrypt/write is **EQL v3 only** (`types.*`); decrypt still reads existing v2 items, on the native entry only. See the `stash-dynamodb` skill |
 | `@cipherstash/stack/schema`, `@cipherstash/stack/client`, `@cipherstash/stack/encryption` | Legacy v2 schema builders and client surface — see "Legacy: EQL v2" below |
 
 ## Schema Definition

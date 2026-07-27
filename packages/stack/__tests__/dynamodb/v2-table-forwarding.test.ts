@@ -133,7 +133,13 @@ describe('a client whose decrypt requires the table', () => {
             "Cannot read properties of undefined (reading 'tableName')",
           )
         }
-        return Promise.resolve({ data: {} })
+        // A bare promise — NOT a thenable operation with `.audit()`. That is
+        // the whole point of this stub: it is the shape `WasmEncryptionClient`
+        // returns from `wasmResult`. The bulk methods resolve to an array,
+        // index-aligned with their input, as the real client does.
+        return Promise.resolve(
+          method.startsWith('bulk') ? { data: [{}] } : { data: {} },
+        )
       }
     const client = {
       requiresTableForDecrypt: true,
@@ -156,7 +162,7 @@ describe('a client whose decrypt requires the table', () => {
     // Synchronous: the guard runs when the operation is built, so the failure
     // lands at the call site rather than as a rejected promise later.
     expect(() => dynamo.decryptModel({ pk: 'a' }, usersV2)).toThrow(
-      /wasm-inline client cannot read legacy EQL v2 items/,
+      /wasm-inline client cannot be paired with the legacy EQL v2 table/,
     )
     // Refused before the client is touched, so the user never sees the
     // TypeError about `tableName`.
@@ -168,8 +174,39 @@ describe('a client whose decrypt requires the table', () => {
     const dynamo = encryptedDynamoDB({ encryptionClient: client as never })
 
     expect(() => dynamo.bulkDecryptModels([{ pk: 'a' }], usersV2)).toThrow(
-      /wasm-inline client cannot read legacy EQL v2 items/,
+      /wasm-inline client cannot be paired with the legacy EQL v2 table/,
     )
+  })
+
+  /**
+   * #788 review, minor finding.
+   *
+   * The guard runs on all four operations, not just the two read ones, so a
+   * plain-JS caller reaching the write path with a v2 table hits the SAME
+   * message. It must therefore not be phrased for reads only — "would fail at
+   * the first read" names an operation that never ran.
+   *
+   * Typed callers cannot get here (the write overloads are `AnyV3Table`-only,
+   * pinned by `client-compat.test-d.ts`), so this is about the message a JS
+   * caller or a cast lands on, not about reachable behaviour changing.
+   */
+  it('is refused on the v2 WRITE path, with a message that does not claim a read', () => {
+    const { calls, client } = wasmShapedClient([])
+    const dynamo = encryptedDynamoDB({ encryptionClient: client as never })
+
+    for (const call of [
+      () => dynamo.encryptModel({ pk: 'a' } as never, usersV2 as never),
+      () => dynamo.bulkEncryptModels([{ pk: 'a' }] as never, usersV2 as never),
+    ]) {
+      expect(call).toThrow(
+        /wasm-inline client cannot be paired with the legacy EQL v2 table/,
+      )
+      // The read-path phrasing must not survive on a write.
+      expect(call).not.toThrow(/would fail at the first read/)
+      expect(call).not.toThrow(/cannot read legacy EQL v2 items/)
+    }
+
+    expect(calls).toHaveLength(0)
   })
 
   // v3 tables ARE forwarded the table, so this client works there — the guard
@@ -182,5 +219,71 @@ describe('a client whose decrypt requires the table', () => {
 
     expect(calls).toHaveLength(1)
     expect(calls[0]?.argCount).toBe(2)
+  })
+
+  /**
+   * #788 review follow-up: the same "v3 tables are unaffected" promise, on the
+   * WRITE path.
+   *
+   * The encrypt operations chained `.audit()` onto the client's result
+   * unconditionally. The native clients return a thenable operation carrying
+   * it; `WasmEncryptionClient.encryptModel` returns a plain
+   * `Promise<WasmResult>` from `wasmResult` (it has no `.audit()` anywhere),
+   * so every v3 encrypt through this adapter died with
+   * `client.encryptModel(...).audit is not a function` — surfaced as a
+   * `DYNAMODB_ENCRYPTION_ERROR` failure, not a crash, so it read as a genuine
+   * encryption fault. The decrypt path already tolerates the bare promise via
+   * `resolveDecryptResult`; the write path must match.
+   */
+  it('encrypts an EQL v3 table even though its encrypt returns a bare promise', async () => {
+    const { calls, client } = wasmShapedClient(['users_v3'])
+    const dynamo = encryptedDynamoDB({ encryptionClient: client as never })
+
+    const single = await dynamo.encryptModel({ pk: 'a' } as never, usersV3)
+    expect(single.failure).toBeUndefined()
+
+    const bulk = await dynamo.bulkEncryptModels([{ pk: 'a' }] as never, usersV3)
+    expect(bulk.failure).toBeUndefined()
+
+    expect(calls.map((c) => c.method)).toEqual([
+      'encryptModel',
+      'bulkEncryptModels',
+    ])
+  })
+
+  /**
+   * Audit metadata has nowhere to go on this client shape, so it is dropped —
+   * but the encrypt must still succeed rather than failing the whole write.
+   * Mirrors the decrypt path's documented behaviour.
+   */
+  it('drops audit metadata on that client rather than failing the encrypt', async () => {
+    const { client } = wasmShapedClient(['users_v3'])
+    const dynamo = encryptedDynamoDB({ encryptionClient: client as never })
+
+    const result = await dynamo
+      .encryptModel({ pk: 'a' } as never, usersV3)
+      .audit({ metadata: { requestId: 'r-1' } })
+
+    expect(result.failure).toBeUndefined()
+  })
+
+  /**
+   * The tolerance must not swallow a malformed result into a fake success —
+   * the same guard `resolveDecryptResult` applies on read.
+   */
+  it('rejects a bare encrypt result that is not { data } or { failure }', async () => {
+    const client = {
+      requiresTableForDecrypt: true,
+      getEncryptConfig: () => ({ v: 1, tables: { users_v3: {} } }),
+      encryptModel: () => Promise.resolve('not-a-result'),
+      bulkEncryptModels: () => Promise.resolve('not-a-result'),
+      decryptModel: () => Promise.resolve({ data: {} }),
+      bulkDecryptModels: () => Promise.resolve({ data: {} }),
+    }
+    const dynamo = encryptedDynamoDB({ encryptionClient: client as never })
+
+    const result = await dynamo.encryptModel({ pk: 'a' } as never, usersV3)
+
+    expect(result.failure?.message).toMatch(/malformed result/)
   })
 })
