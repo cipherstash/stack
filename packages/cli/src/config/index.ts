@@ -231,7 +231,31 @@ export async function loadEncryptConfig(
     process.exit(1)
   }
 
-  const config = encryptClient.getEncryptConfig()
+  return requireUsableEncryptConfig(
+    encryptClient.getEncryptConfig(),
+    encryptClientPath,
+  )
+}
+
+/**
+ * Refuse an encryption client that cannot drive any command yet, naming the
+ * cause.
+ *
+ * Shared rather than duplicated because it guards ONE file reached by two
+ * loaders — `loadEncryptConfig` for `stash db push` / `db validate`, and
+ * `loadEncryptionContext` for `stash encrypt backfill`. When the copies were
+ * separate they had already drifted on the nullish-config case, so one command
+ * named the cause while the other fell through to `requireTable`'s `Table
+ * "users" was not found … Available: (none)` — the symptom-not-cause message
+ * this guard exists to replace (#787 review follow-up).
+ *
+ * Both refusals are hard exits: there is no partially-usable state here, and
+ * every caller would otherwise have to re-derive that.
+ */
+export function requireUsableEncryptConfig(
+  config: EncryptConfig | undefined,
+  encryptClientPath: string,
+): EncryptConfig {
   if (!config) {
     console.error(
       `Error: Encryption client in ${encryptClientPath} has no initialized encrypt config.`,
@@ -242,8 +266,12 @@ export async function loadEncryptConfig(
   // `stash init` scaffolds a client holding one placeholder table, because
   // `Encryption` requires a non-empty schema set and the scaffold has no real
   // tables to name yet. Reaching here with only that table means the user never
-  // replaced it — which used to surface as a confusing "table not found" from
-  // whichever command ran next.
+  // replaced it.
+  //
+  // Read from the built encrypt config, never from the module's export map: a
+  // scaffold whose `export` keyword was dropped is still un-replaced, while a
+  // stale `export const placeholderTable` beside real tables that are imported
+  // rather than re-exported is not (#787 review).
   const tables = Object.keys(config.tables ?? {})
   if (tables.length === 1 && tables[0] === PLACEHOLDER_TABLE_NAME) {
     console.error(
