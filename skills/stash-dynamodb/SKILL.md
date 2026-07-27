@@ -52,8 +52,14 @@ Non-encrypted attributes pass through unchanged. On decryption, the `__source` a
 | Schema | `encryptedTable` + `types.*` | `encryptedTable` + `encryptedColumn` |
 | Client | `Encryption({ schemas })` (or the deprecated `EncryptionV3`) | `Encryption({ schemas })` |
 | encrypt | ✅ | ❌ removed — write is v3 only |
-| decrypt | ✅ | ✅ reads stored v2 items |
+| decrypt | ✅ | ✅ reads stored v2 items — **native entry only** |
 | Nested fields | Flat dotted path (`"profile.ssn"`) | Nested group + `encryptedField` |
+
+> **v2 reads need the native entry.** A client from `@cipherstash/stack/wasm-inline`
+> (the documented entry for Deno, Bun, Cloudflare Workers and Supabase Edge Functions)
+> is EQL v3 only: `encryptedDynamoDB` throws at the call site if you pass it a v2
+> table. Read legacy v2 items with a client from the default `@cipherstash/stack`
+> entry. EQL v3 tables work on both entries.
 
 There is no infrastructure migration between the versions — DynamoDB has no EQL extension to install and no schema to alter — and there is no automatic *data* migration either. The two use **different wire formats**; a stored v2 item still decrypts through a v2 table, but new writes are v3. To fully move a table to v3, re-encrypt every item with a v3 schema.
 
@@ -180,6 +186,14 @@ A v2 table is **read-only** through this adapter now: pass it to `decryptModel` 
 `bulkDecryptModels` to read items written before the v3 cutover. `encryptModel` /
 `bulkEncryptModels` no longer accept a v2 table — author new writes with an EQL v3
 table.
+
+**Not on the WASM entry.** This whole section requires a client from the default
+`@cipherstash/stack` entry. `@cipherstash/stack/wasm-inline` is EQL v3 only —
+`Encryption()` there rejects a v2 schema outright, and `encryptedDynamoDB` refuses
+the pairing at the call site with a message naming the fix. So on Deno, Bun,
+Workers and Supabase Edge Functions, legacy v2 items are not readable through this
+adapter; re-encrypt them to a v3 schema, or read them from a Node process using the
+native entry.
 
 ```typescript
 import { encryptedTable, encryptedColumn, encryptedField } from "@cipherstash/stack/schema"
@@ -497,7 +511,7 @@ Let `T` be inferred from the argument; do not pass explicit type arguments on th
 | `decryptModel` | `(item: Record<string, unknown>, v2Table)` | `T` |
 | `bulkDecryptModels` | `(items: Record<string, unknown>[], v2Table)` | `T[]` |
 
-All operations are thenable (awaitable) and support `.audit({ metadata })` chaining — including the decrypt methods, whose metadata now forwards to ZeroKMS regardless of client shape (see the Setup note).
+All operations are thenable (awaitable) and support `.audit({ metadata })` chaining. On the default `@cipherstash/stack` entry the metadata forwards to ZeroKMS on every operation, encrypt and decrypt alike (see the Setup note). The `@cipherstash/stack/wasm-inline` client has no `.audit()` — its operations return a plain promise — so audit metadata is **dropped** there (logged at debug level). The operation itself still succeeds; only the audit record is lost. Use the native entry when audit trails matter.
 
 Types exported from `@cipherstash/stack/dynamodb`: `EncryptedDynamoDBInstance`, `EncryptedDynamoDBConfig`, `EncryptedDynamoDBError`, `AnyEncryptedTable`, `DynamoDBEncryptionClient`, `EncryptedAttributes`, `DecryptedAttributes`, `AuditConfig`.
 

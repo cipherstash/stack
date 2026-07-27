@@ -37,27 +37,29 @@ export type AnyEncryptedTable =
  * nominal `TypedEncryptionClient<S>` parameter would reject a client built for
  * a narrower schema tuple.
  *
- * Both clients now return a chainable operation on the decrypt paths — the
- * nominal client's `DecryptModelOperation` and the typed wrapper's
+ * Both NATIVE clients return a chainable operation on every path — the nominal
+ * client's `DecryptModelOperation` and the typed wrapper's
  * `MappedDecryptOperation` each carry `.audit()` (the typed wrapper also takes
  * the table as a second argument). The operation classes handle both; see
- * `DecryptModelOperation` and `resolveDecryptResult`. Audit metadata on decrypt
- * is therefore forwarded regardless of which client shape is supplied.
+ * `DecryptModelOperation` and `resolveDecryptResult`.
+ *
+ * The wasm-inline client does not, on EITHER path: its encrypt and decrypt are
+ * plain `async` methods returning a bare `Promise<WasmResult>`, so audit
+ * metadata is dropped (observably — `resolveDecryptResult` and
+ * `resolveEncryptResult` log it). Chaining `.audit()` unconditionally is
+ * therefore a bug, not just a lost audit record; the encrypt path made exactly
+ * that mistake and failed every v3 write on this entry (#788 review follow-up).
+ *
+ * Its EQL v2 path is refused outright by `assertClientTableVersionMatch` — the
+ * v2 read relies on calling decrypt WITHOUT a table, and that entry's
+ * `Encryption()` rejects a v2 schema anyway, so the pairing is wrong in both
+ * directions.
  */
 export type DynamoDBEncryptionClient = {
   encryptModel(input: never, table: never): unknown
   bulkEncryptModels(input: never, table: never): unknown
   decryptModel(input: never, table: never): unknown
   bulkDecryptModels(input: never, table: never): unknown
-}
-
-type ChainableEncryptOperation<T> = {
-  audit(data: {
-    metadata?: Record<string, unknown>
-  }): PromiseLike<
-    | { data: T; failure?: never }
-    | { data?: never; failure: { message: string; code?: string } }
-  >
 }
 
 /**
@@ -69,21 +71,28 @@ type ChainableEncryptOperation<T> = {
  * satisfy. The operation classes therefore cast to this shape at the call site
  * — the same split the Drizzle v3 operators use.
  *
- * `decryptModel` is intentionally untyped in its return: both shipped clients
- * return a chainable operation, but different classes of one (the nominal
- * client's `DecryptModelOperation`, the typed client's `MappedDecryptOperation`),
- * and a custom client may return something else entirely. See
- * `resolveDecryptResult`, which normalises all three.
+ * The returns are intentionally untyped on ALL FOUR members. The clients
+ * disagree about what an operation even is: the nominal client returns a
+ * chainable `EncryptModelOperation` / `DecryptModelOperation`, the typed client
+ * a `MappedDecryptOperation`, and the wasm-inline client a bare
+ * `Promise<WasmResult>` with no `.audit()` anywhere on it.
+ *
+ * Declaring a chainable shape here asserts an `.audit()` that the wasm entry
+ * does not have, and that assertion was not academic — it is exactly what let
+ * the write path chain `.audit()` unconditionally and fail EVERY EQL v3 write on
+ * that entry (#788 review follow-up). `unknown` forces each call site through
+ * `resolveEncryptResult` / `resolveDecryptResult`, which normalise all three
+ * shapes and fail closed on anything else.
  */
 export type CallableEncryptionClient = {
   encryptModel(
     input: Record<string, unknown>,
     table: AnyEncryptedTable,
-  ): ChainableEncryptOperation<Record<string, unknown>>
+  ): unknown
   bulkEncryptModels(
     input: Record<string, unknown>[],
     table: AnyEncryptedTable,
-  ): ChainableEncryptOperation<Record<string, unknown>[]>
+  ): unknown
   decryptModel(
     input: Record<string, unknown>,
     table?: AnyEncryptedTable,

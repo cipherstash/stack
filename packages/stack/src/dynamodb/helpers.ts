@@ -86,29 +86,33 @@ export function handleError(
 /**
  * Resolve a decrypt call against either client shape.
  *
- * Both the nominal `EncryptionClient` and the typed client return a chainable
+ * The nominal `EncryptionClient` and the typed client both return a chainable
  * operation carrying `.audit()` on decrypt (the typed client's is a
- * `MappedDecryptOperation`). Chain the audit metadata onto it; the branch that
- * awaits a bare promise remains only for a non-conforming custom client that
- * exposes no `.audit()`. Audit metadata is forwarded regardless of client shape.
+ * `MappedDecryptOperation`). Chain the audit metadata onto it.
+ *
+ * NOT every client this package accepts does that. `WasmEncryptionClient`
+ * (`@cipherstash/stack/wasm-inline` — the documented entry for Deno, Workers
+ * and Supabase Edge Functions) returns a bare promise from decrypt, so it takes
+ * the branch below and its audit metadata is dropped. It ships in this package
+ * and satisfies `DynamoDBEncryptionClient` structurally, so it is accepted
+ * without a cast (#772 review, finding 10).
  */
 export async function resolveDecryptResult<T>(
   operation: unknown,
   auditData: { metadata?: Record<string, unknown> },
 ): Promise<
-  { data: T; failure?: never } | { data?: never; failure: DecryptFailure }
+  { data: T; failure?: never } | { data?: never; failure: ResultFailure }
 > {
   const chainable = operation as {
     audit?: (data: { metadata?: Record<string, unknown> }) => unknown
   }
 
   if (typeof chainable?.audit !== 'function' && auditData.metadata) {
-    // Every client this package ships carries `.audit()` on decrypt, so this
-    // only fires for a custom client whose decrypt returns something else —
-    // there is then nowhere to put the metadata. Make the drop observable
-    // rather than silent.
+    // Reached by the wasm-inline client (bare promise, no `.audit()`) and by
+    // any custom client whose decrypt returns something else. There is nowhere
+    // to put the metadata, so make the drop observable rather than silent.
     logger.debug(
-      "DynamoDB: decrypt audit metadata ignored — this client's decrypt does not return a chainable operation with .audit(). Audited decrypts need a client built with Encryption({ schemas }).",
+      "DynamoDB: decrypt audit metadata ignored — this client's decrypt does not return a chainable operation with .audit(). Audited decrypts need a client from the default @cipherstash/stack entry; the wasm-inline client's decrypt returns a plain promise.",
     )
   }
 
@@ -135,10 +139,74 @@ export async function resolveDecryptResult<T>(
 
   return resolved as
     | { data: T; failure?: never }
-    | { data?: never; failure: DecryptFailure }
+    | { data?: never; failure: ResultFailure }
 }
 
-type DecryptFailure = { message: string; code?: string }
+/**
+ * The failure member both resolvers hand back — shared, because the encrypt and
+ * decrypt paths return structurally identical failures and `throwPreservingCode`
+ * consumes either. `code` is the FFI error code, preserved so `handleError` can
+ * read it back off the rethrown Error (the error-code contract in AGENTS.md).
+ */
+type ResultFailure = { message: string; code?: string }
+
+/**
+ * Resolve an encrypt call against either client shape — the write-path mirror
+ * of {@link resolveDecryptResult}.
+ *
+ * Both paths face the same split, and only the read one handled it. The native
+ * clients return a thenable operation carrying `.audit()`; the WASM client's
+ * `encryptModel` / `bulkEncryptModels` return a plain `Promise<WasmResult>`
+ * from `wasmResult`, with no `.audit()` on this entry at all. Chaining it
+ * unconditionally threw `client.encryptModel(...).audit is not a function`,
+ * which `withResult` caught and reported as a `DYNAMODB_ENCRYPTION_ERROR` —
+ * so every v3 write through this adapter on the wasm entry looked like a
+ * genuine encryption fault (#788 review follow-up).
+ *
+ * Audit metadata still has nowhere to go on that shape, so it is dropped, and
+ * the drop is logged rather than silent — exactly as on decrypt.
+ */
+export async function resolveEncryptResult<T>(
+  operation: unknown,
+  auditData: { metadata?: Record<string, unknown> },
+  context: 'encryptModel' | 'bulkEncryptModels',
+): Promise<
+  { data: T; failure?: never } | { data?: never; failure: ResultFailure }
+> {
+  const chainable = operation as {
+    audit?: (data: { metadata?: Record<string, unknown> }) => unknown
+  }
+
+  if (typeof chainable?.audit !== 'function' && auditData.metadata) {
+    logger.debug(
+      `DynamoDB: ${context} audit metadata ignored — this client's encrypt does not return a chainable operation with .audit(). Audited encrypts need a client from the default @cipherstash/stack entry; the wasm-inline client's encrypt returns a plain promise.`,
+    )
+  }
+
+  const resolved =
+    typeof chainable?.audit === 'function'
+      ? await chainable.audit(auditData)
+      : await operation
+
+  // Same fail-closed check the read path applies: a bare value has neither
+  // `data` nor `failure`, and casting it through would surface a fake success
+  // carrying `undefined` — here, an "encrypted" item that was never encrypted.
+  if (
+    resolved === null ||
+    typeof resolved !== 'object' ||
+    (!('data' in resolved) && !('failure' in resolved))
+  ) {
+    return {
+      failure: {
+        message: `DynamoDB: ${context} returned a malformed result — expected { data } or { failure }.`,
+      },
+    }
+  }
+
+  return resolved as
+    | { data: T; failure?: never }
+    | { data?: never; failure: ResultFailure }
+}
 
 /**
  * Rethrow a Result failure as an `Error` that preserves the FFI error code.

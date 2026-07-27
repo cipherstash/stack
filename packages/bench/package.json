@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
     "db:setup": "tsx src/cli/setup.ts",
     "db:reset": "tsx src/cli/reset.ts",
     "test:local": "vitest run",
