@@ -176,9 +176,15 @@ function trimStatementPreamble(statement: string): string {
  * it into a real `DROP COLUMN`. A doubled delimiter (`''` in a literal, `""` in
  * an identifier) is an escape and does not close the token.
  *
- * Dollar-quoted bodies are NOT tracked: a `--` or `'` inside one reads as a
- * comment/literal here, which can only make us skip a rewrite (the statement
- * then fails loudly at migrate time), never perform a destructive one.
+ * Dollar-quoted bodies (`$$ … $$`, `$fn$ … $fn$`) are skipped whole, and an
+ * `E''` literal gives backslash its escape meaning. Both are quote-PARITY
+ * concerns, not merely "we might skip a rewrite": an apostrophe inside an
+ * untracked `$$` body, or a `\'` read as a close, ends a literal EARLY, and
+ * every token after it is then misread — including a commented-out ALTER, which
+ * reads as live and gets rewritten into a live DROP COLUMN. That is the same
+ * failure mode as the apostrophe-in-identifier case below, and it is why the
+ * earlier reasoning here ("can only make us skip") was wrong: it holds for an
+ * UNDER-terminated literal, not an over-terminated one (#772 review, finding 1).
  */
 function isInsideCommentOrString(sql: string, index: number): boolean {
   let i = 0
@@ -206,6 +212,20 @@ function isInsideCommentOrString(sql: string, index: number): boolean {
       }
       if (j > index) return true
       i = j
+    } else if (sql[i] === '$') {
+      // A `$tag$ … $tag$` body is opaque: its content is not SQL, so a `'` or
+      // `--` inside it means nothing. Skipping the whole body is what keeps the
+      // rest of the file's quote parity aligned with Postgres.
+      const delimiter = dollarQuoteDelimiter(sql, i)
+      if (delimiter === undefined) {
+        i += 1
+      } else {
+        const close = sql.indexOf(delimiter, i + delimiter.length)
+        // Unterminated: inert to the end of the file, like the cases below.
+        const end = close === -1 ? sql.length : close + delimiter.length
+        if (end > index) return true
+        i = end
+      }
     } else if (sql[i] === '"') {
       // A quoted identifier is live SQL, but its body is not: consuming it here
       // — before the `'` branch below — is what stops an apostrophe inside one
@@ -219,7 +239,7 @@ function isInsideCommentOrString(sql: string, index: number): boolean {
       if (end > index) return true
       i = end
     } else if (sql[i] === "'") {
-      const end = endOfQuoted(sql, i, "'")
+      const end = endOfQuoted(sql, i, "'", isEscapeStringOpener(sql, i))
       // Unterminated, or the literal runs past `index`: `index` is inside a
       // string literal, which is every bit as inert as a comment.
       if (end > index) return true
@@ -232,14 +252,55 @@ function isInsideCommentOrString(sql: string, index: number): boolean {
 }
 
 /**
+ * The `$tag$` delimiter opening at `open`, or `undefined` when what sits there
+ * is just a `$`. The tag is empty (`$$`) or an SQL identifier (`$fn$`); a digit
+ * cannot start one, so a positional parameter (`$1`) is never mistaken for a
+ * dollar-quote opener.
+ */
+function dollarQuoteDelimiter(sql: string, open: number): string | undefined {
+  DOLLAR_QUOTE_OPEN_RE.lastIndex = open
+  return DOLLAR_QUOTE_OPEN_RE.exec(sql)?.[0]
+}
+
+/** Sticky, so the scan never has to slice the file to test one position. */
+const DOLLAR_QUOTE_OPEN_RE = /\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/y
+
+/**
+ * Whether the `'` at `open` starts an `E''` escape-string, in which a backslash
+ * escapes the following character. Plain literals give backslash no special
+ * meaning under the default `standard_conforming_strings = on`.
+ *
+ * The character before the `E` must not be part of an identifier, so a column
+ * or type name that merely ends in `e` does not turn the literal after it into
+ * an escape-string.
+ */
+function isEscapeStringOpener(sql: string, open: number): boolean {
+  const prefix = sql[open - 1]
+  if (prefix !== 'E' && prefix !== 'e') return false
+  return !/[A-Za-z0-9_]/.test(sql[open - 2] ?? '')
+}
+
+/**
  * The index just past the `quote`-delimited token that opens at `open`, or
  * `sql.length` when it is never closed. A doubled delimiter inside the token is
  * an escaped one (`''`, `""`) and does not end it.
+ *
+ * With `backslashEscapes`, a `\` also escapes the next character — the `E''`
+ * form. Getting this wrong ends the literal EARLY, which shifts quote parity
+ * for the whole rest of the file and can make a commented-out ALTER downstream
+ * read as live (#772 review, finding 1).
  */
-function endOfQuoted(sql: string, open: number, quote: "'" | '"'): number {
+function endOfQuoted(
+  sql: string,
+  open: number,
+  quote: "'" | '"',
+  backslashEscapes = false,
+): number {
   let i = open + 1
   while (i < sql.length) {
-    if (sql[i] !== quote) {
+    if (backslashEscapes && sql[i] === '\\') {
+      i += 2
+    } else if (sql[i] !== quote) {
       i += 1
     } else if (sql[i + 1] === quote) {
       i += 2
@@ -256,8 +317,17 @@ const TABLE_REF = String.raw`"([^"]+)"(?:\."([^"]+)")?`
 /**
  * An encrypted type in any of the {@link MANGLED_TYPE_FORMS}, pinned to end at a
  * delimiter so a bare domain cannot match a prefix of a longer identifier.
+ *
+ * Two shapes {@link MANGLED_TYPE_FORMS} does not enumerate are folded in here so
+ * the encrypted index recognises them and the ADD+DROP+RENAME cannot drop their
+ * ciphertext: a domain in ANY quoted schema (`"app"."eql_v3_text_search"`, not
+ * just the literal `public` the mangled forms special-case), and a `[` in the
+ * trailing lookahead so an ARRAY of the domain (`public.eql_v3_text_search[]`)
+ * ends at a delimiter too. Both feed only the encrypted index — never the
+ * rewrite matcher — so the worst case of admitting one is a flagged statement,
+ * the same safe asymmetry the fail-closed rule already relies on.
  */
-const ENCRYPTED_TYPE_REF = String.raw`(?:${MANGLED_TYPE_FORMS})(?=[\s,;)]|$)`
+const ENCRYPTED_TYPE_REF = String.raw`(?:${MANGLED_TYPE_FORMS}|"[^"]+"\."(?:${ENCRYPTED_DOMAIN})")(?=[\s,;)[]|$)`
 
 /** `ALTER TABLE … ADD COLUMN "col" <encrypted>` — $1/$2 table, $3 column. */
 const ADD_ENCRYPTED_COLUMN_RE = new RegExp(
@@ -271,11 +341,46 @@ const RENAME_COLUMN_RE = new RegExp(
   'gi',
 )
 
-/** `CREATE TABLE … ( … );` — $1/$2 table, $3 the column-definition body. */
-const CREATE_TABLE_RE = new RegExp(
-  String.raw`CREATE TABLE\s+(?:IF NOT EXISTS\s+)?${TABLE_REF}\s*\(([\s\S]*?)\)\s*;`,
+/**
+ * `CREATE TABLE … (` — $1/$2 table. The body's END is found by
+ * {@link endOfCreateTableBody} rather than by the matcher.
+ *
+ * This used to carry a lazy `([\s\S]*?)\)\s*;` body, which stopped at the FIRST
+ * `);` in the file — and that can sit inside a `--` comment or a string DEFAULT
+ * (`"id" text, -- pk (uuid);`). The body was then truncated and every column
+ * declared after that point vanished from both indexes, including an ENCRYPTED
+ * one — which is how a later domain change on a ciphertext column got past the
+ * already-encrypted guard (#772 review, finding 2).
+ */
+const CREATE_TABLE_HEAD_RE = new RegExp(
+  String.raw`CREATE TABLE\s+(?:IF NOT EXISTS\s+)?${TABLE_REF}\s*\(`,
   'gi',
 )
+
+/** Candidate body terminators, filtered by {@link isInsideCommentOrString}. */
+const CREATE_TABLE_BODY_END_RE = /\)\s*;/g
+
+/**
+ * The offset of the `)` closing the CREATE TABLE body that opens at
+ * `bodyStart`, or `undefined` when the statement is never closed.
+ *
+ * Parens nested inside the body (`numeric(10,2)`, `CHECK (x > 0)`) are not
+ * followed by `;`, so requiring the terminator keeps them from matching.
+ */
+function endOfCreateTableBody(
+  sql: string,
+  bodyStart: number,
+): number | undefined {
+  CREATE_TABLE_BODY_END_RE.lastIndex = bodyStart
+  for (
+    let end = CREATE_TABLE_BODY_END_RE.exec(sql);
+    end !== null;
+    end = CREATE_TABLE_BODY_END_RE.exec(sql)
+  ) {
+    if (!isInsideCommentOrString(sql, end.index)) return end.index
+  }
+  return undefined
+}
 
 /** `"col" <encrypted>` inside a CREATE TABLE body — $1 column. */
 const CREATE_TABLE_ENCRYPTED_COLUMN_RE = new RegExp(
@@ -328,17 +433,17 @@ const CREATE_TABLE_ENCRYPTED_COLUMN_RE = new RegExp(
  * the fail-closed rule needs no type classification and no SQL parsing, only
  * the known encrypted list that {@link ENCRYPTED_TYPE_REF} already provides.
  *
- * **The residue claim depends on {@link MANGLED_TYPE_FORMS} covering every
+ * **The residue claim depends on {@link ENCRYPTED_TYPE_REF} recognising every
  * encrypted shape.** "By residue, plaintext" is only as good as the encrypted
  * side's coverage: a declaration {@link ENCRYPTED_TYPE_REF} fails to recognise
- * falls to the plaintext residue and gets rewritten. Two forms do this: a
- * domain installed into a non-`public` schema (`"email" "app"."eql_v3_text_search"`,
- * since the mangled forms only special-case the literal `public` schema), and
- * an array of the domain (`ADD COLUMN "email" public.eql_v3_text_search[]`,
- * since {@link ENCRYPTED_TYPE_REF}'s trailing delimiter lookahead does not
- * include `[`). Neither is a layout EQL installs into or a shape drizzle-kit
- * emits, and both behaved identically before this branch — so this is a
- * documentation gap, not a regression this branch introduced.
+ * falls to the plaintext residue and gets rewritten. Two such shapes are now
+ * covered explicitly by {@link ENCRYPTED_TYPE_REF} — a domain in a non-`public`
+ * schema (`"email" "app"."eql_v3_text_search"`) and an array of the domain
+ * (`"email" public.eql_v3_text_search[]`) — because both name ciphertext the
+ * corpus can see, so rewriting them is the exact drop this rule exists to
+ * prevent. The dependency itself remains: any encrypted shape a future EQL
+ * install introduces must be added to {@link ENCRYPTED_TYPE_REF} or it too will
+ * fall to the plaintext residue.
  *
  * **Residue, accepted.** The lookahead is a fixed keyword list, not a parser:
  * a predicate keyword it does not enumerate (`SIMILAR`, `ISNULL`, `NOTNULL`,
@@ -380,9 +485,29 @@ function tableOf(
     : { schema: first, table: second }
 }
 
-/** Identity of a column across the corpus, for {@link indexColumnDeclarations}. */
+/**
+ * Identity of a column across the corpus, for {@link indexColumnDeclarations}.
+ *
+ * `public` and no schema at all are the SAME table: Postgres resolves an
+ * unqualified name through `search_path`, which starts at `public`. The two
+ * spellings coexist in one corpus routinely — drizzle-kit emits unqualified,
+ * while hand-written SQL and this sweep's own {@link renderSafeAlter} output
+ * are qualified. Keying on the literal text split one column across two keys,
+ * so a column already encrypted under one spelling looked plaintext when
+ * altered under the other and the ADD+DROP+RENAME dropped its ciphertext
+ * (#772 review, finding 4).
+ *
+ * Only the IMPLICIT schema collapses. `"app"."users"` is a genuinely different
+ * table from `"users"` and keeps its own key. No case folding either:
+ * `TABLE_REF` matches quoted identifiers only, and those are case-sensitive in
+ * Postgres — `"PUBLIC"` really is a different schema from `"public"`.
+ */
 function columnKey(table: string, column: string, schema?: string): string {
-  return JSON.stringify([schema ?? '', table, column])
+  return JSON.stringify([
+    schema === 'public' ? '' : (schema ?? ''),
+    table,
+    column,
+  ])
 }
 
 /** What the migration corpus says about the columns it mentions. */
@@ -429,10 +554,15 @@ function indexColumnDeclarations(contents: readonly string[]): ColumnIndex {
   const declared = new Set<string>()
 
   for (const sql of contents) {
-    for (const created of sql.matchAll(CREATE_TABLE_RE)) {
+    for (const created of sql.matchAll(CREATE_TABLE_HEAD_RE)) {
       if (isInsideCommentOrString(sql, created.index)) continue
       const { schema, table } = tableOf(created[1], created[2])
-      const body = created[3]
+      const bodyStart = created.index + created[0].length
+      const bodyEnd = endOfCreateTableBody(sql, bodyStart)
+      // Never closed — treat the statement as absent rather than index a body
+      // that runs to the end of the file.
+      if (bodyEnd === undefined) continue
+      const body = sql.slice(bodyStart, bodyEnd)
 
       // The body is scanned as its own document: a `--` earlier in it comments
       // out the rest of that line, and a CREATE inside a block comment or a
@@ -648,6 +778,24 @@ export async function rewriteEncryptedAlterColumns(
         // Unreachable — the outer regex only matches when a domain is present —
         // but leave the statement alone rather than emit a broken rewrite.
         if (!domain) return match
+
+        // This statement converts the column, so from here on in the corpus it
+        // holds CIPHERTEXT. `indexColumnDeclarations` cannot know that: it
+        // reads CREATE TABLE, ADD COLUMN and RENAME, never the strict matcher's
+        // own target. Without this, a corpus carrying an earlier conversion
+        // (`... SET DATA TYPE eql_v2_encrypted` from a stack version that
+        // predates this sweep) leaves the column looking plaintext, and the
+        // NEXT domain change drops the ciphertext — `declared` cannot catch it,
+        // because the column really is declared, as plaintext, by the original
+        // CREATE TABLE.
+        //
+        // Recorded here rather than in the corpus-wide index on purpose: the
+        // index has no order, so it would flag THIS conversion — the legitimate
+        // plaintext -> encrypted one — as already-encrypted too. Files are
+        // walked in sorted order and matches within a file in source order, so
+        // "already converted" means "converted by a statement that runs before
+        // this one".
+        encryptedColumns.add(columnKey(table, column, schema))
         return renderSafeAlter(table, column, domain, schema)
       },
     )

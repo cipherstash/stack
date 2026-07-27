@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runPostAgentSteps } from '../lib/post-agent.js'
 import type { DetectedPackageManager } from '../lib/types.js'
 
@@ -139,13 +139,35 @@ describe('drizzle migrate prompt after a destructive rewrite', () => {
       } as never,
     })
 
+  /**
+   * Make `dir` a drizzle-kit OUTPUT directory. The sweep now requires the
+   * `meta/_journal.json` drizzle-kit maintains, because `migrations/` and
+   * `src/db/migrations/` are generic names other tools use and this sweep
+   * emits `DROP COLUMN`.
+   */
+  const makeDrizzleOut = (dir: string): string => {
+    const abs = path.join(cwd, dir)
+    fs.mkdirSync(path.join(abs, 'meta'), { recursive: true })
+    fs.writeFileSync(
+      path.join(abs, 'meta', '_journal.json'),
+      JSON.stringify({ version: '7', dialect: 'postgresql', entries: [] }),
+    )
+    return abs
+  }
+
   beforeEach(() => {
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'wizard-post-agent-'))
     vi.mocked(p.confirm).mockClear()
   })
 
+  afterEach(() => {
+    // Every test here writes a real temp tree; without this they accumulate in
+    // os.tmpdir() for the life of the machine.
+    fs.rmSync(cwd, { recursive: true, force: true })
+  })
+
   it('defaults to Yes when the sweep changed nothing', async () => {
-    fs.mkdirSync(path.join(cwd, 'drizzle'))
+    makeDrizzleOut('drizzle')
     fs.writeFileSync(
       path.join(cwd, 'drizzle', '0000_init.sql'),
       'CREATE TABLE "users" ("id" integer PRIMARY KEY);\n',
@@ -155,10 +177,19 @@ describe('drizzle migrate prompt after a destructive rewrite', () => {
 
     const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
     expect(options?.initialValue).toBe(true)
+    // The clean arm is the last of a 4-way nested ternary; the negative
+    // assertions that guard the other arms' wording never run against this one.
+    // A mis-nested arm here would ship a destruction/flag/unchecked warning to a
+    // user with nothing to sweep, and asserting only `initialValue` would miss
+    // it — so pin that the clean message carries none of those phrases.
+    const message = String(options?.message)
+    expect(message).not.toContain('DESTROYS data')
+    expect(message).not.toContain('flagged for review')
+    expect(message).not.toContain('could not check')
   })
 
   it('defaults to No, and says why, when a file was rewritten', async () => {
-    fs.mkdirSync(path.join(cwd, 'drizzle'))
+    makeDrizzleOut('drizzle')
     // The sweep is fail-closed: it rewrites a column only when the corpus
     // positively declares it (and it isn't already encrypted). A real drizzle
     // corpus carries this declaration in an earlier migration — supply it so
@@ -195,7 +226,7 @@ describe('drizzle migrate prompt after a destructive rewrite', () => {
   })
 
   it('defaults to No when a statement was flagged rather than rewritten', async () => {
-    fs.mkdirSync(path.join(cwd, 'drizzle'))
+    makeDrizzleOut('drizzle')
     fs.writeFileSync(
       path.join(cwd, 'drizzle', '0001_using.sql'),
       'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search USING (email)::eql_v3_text_search;\n',
@@ -217,7 +248,7 @@ describe('drizzle migrate prompt after a destructive rewrite', () => {
   // Yes over migrations nobody checked. Unknown is not the same as safe.
   it('defaults to No when a directory could not be swept at all', async () => {
     // A directory named `*.sql` makes readFile throw EISDIR mid-sweep.
-    fs.mkdirSync(path.join(cwd, 'drizzle'))
+    makeDrizzleOut('drizzle')
     fs.mkdirSync(path.join(cwd, 'drizzle', '0001_alter.sql'))
 
     await runDrizzle()
@@ -246,5 +277,119 @@ describe('drizzle migrate prompt after a destructive rewrite', () => {
     const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
     expect(options?.initialValue).toBe(false)
     expect(String(options?.message)).toContain('could not check 1 directory')
+  })
+
+  // The wizard ships scanning drizzle/, migrations/ and src/db/migrations/ and
+  // indexes each SEPARATELY — the per-directory index is the mechanism the
+  // fail-closed rule exists to make safe. Every test above uses only drizzle/,
+  // so shrinking the shipped constant to ['drizzle'], or short-circuiting the
+  // aggregation loop after the first directory, leaves them all green. These two
+  // put the actionable content in a NON-first directory so those regressions
+  // fail.
+  it('sweeps a candidate directory other than the first', async () => {
+    // drizzle/ exists but has nothing to do; the rewrite lives in migrations/.
+    makeDrizzleOut('drizzle')
+    fs.writeFileSync(
+      path.join(cwd, 'drizzle', '0000_init.sql'),
+      'CREATE TABLE "widgets" ("id" integer PRIMARY KEY);\n',
+    )
+    makeDrizzleOut('migrations')
+    fs.writeFileSync(
+      path.join(cwd, 'migrations', '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text);\n',
+    )
+    fs.writeFileSync(
+      path.join(cwd, 'migrations', '0001_encrypt.sql'),
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+    )
+
+    await runDrizzle()
+
+    // The migrations/ ALTER was rewritten — proof the second directory was
+    // swept, not just drizzle/.
+    const swept = fs.readFileSync(
+      path.join(cwd, 'migrations', '0001_encrypt.sql'),
+      'utf-8',
+    )
+    expect(swept).toContain('DROP COLUMN')
+    expect(swept).not.toContain('SET DATA TYPE')
+    const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
+    expect(options?.initialValue).toBe(false)
+    expect(String(options?.message)).toContain('DESTROYS data')
+  })
+
+  // The other half of the test above. `migrations/` is swept when it is a
+  // drizzle output directory — and must NOT be when it belongs to Knex,
+  // node-pg-migrate, Flyway or hand-rolled psql, all of which use that name.
+  // The wizard was never pointed at such a directory, and this sweep emits
+  // DROP COLUMN (#772 review, finding 5).
+  it('leaves a migrations/ directory that is not a drizzle output untouched', async () => {
+    makeDrizzleOut('drizzle')
+    fs.writeFileSync(
+      path.join(cwd, 'drizzle', '0000_init.sql'),
+      'CREATE TABLE "widgets" ("id" integer PRIMARY KEY);\n',
+    )
+    // A foreign migration history: self-contained, so the fail-closed
+    // `declared` rule would happily pass it.
+    fs.mkdirSync(path.join(cwd, 'migrations'), { recursive: true })
+    const foreign = path.join(cwd, 'migrations', '002_encrypt.sql')
+    const foreignSql = [
+      'CREATE TABLE "patients" ("ssn" text);',
+      'ALTER TABLE "patients" ALTER COLUMN "ssn" SET DATA TYPE eql_v3_text_search;',
+      '',
+    ].join('\n')
+    fs.writeFileSync(foreign, foreignSql)
+
+    // Only `confirm` is mocked at module level; spy on the log so the
+    // "passed over" notice can be asserted.
+    const info = vi.spyOn(p.log, 'info').mockImplementation(() => {})
+
+    await runDrizzle()
+
+    expect(fs.readFileSync(foreign, 'utf-8')).toBe(foreignSql)
+    expect(fs.readFileSync(foreign, 'utf-8')).not.toContain('DROP COLUMN')
+    // Nothing was rewritten or flagged, so the prompt stays on its clean arm.
+    const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
+    expect(options?.initialValue).toBe(true)
+    // But the user is told the directory was passed over, so a genuine drizzle
+    // output whose meta/ went missing does not just look clean.
+    const logged = info.mock.calls.flat().join('\n')
+    expect(logged).toContain('migrations/')
+    expect(logged).toContain('meta/_journal.json')
+    info.mockRestore()
+  })
+
+  it('aggregates a rewrite in one directory with a flag in another', async () => {
+    // drizzle/ declares email, so its ALTER is rewritten.
+    makeDrizzleOut('drizzle')
+    fs.writeFileSync(
+      path.join(cwd, 'drizzle', '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text);\n',
+    )
+    fs.writeFileSync(
+      path.join(cwd, 'drizzle', '0001_encrypt.sql'),
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+    )
+    // migrations/ never declares its column, so its ALTER is source-unknown.
+    makeDrizzleOut('migrations')
+    const flagged = path.join(cwd, 'migrations', '0001_encrypt.sql')
+    const flaggedSql =
+      'ALTER TABLE "orders" ALTER COLUMN "total" SET DATA TYPE eql_v3_text_search;\n'
+    fs.writeFileSync(flagged, flaggedSql)
+
+    await runDrizzle()
+
+    // drizzle/ was rewritten...
+    const rewritten = fs.readFileSync(
+      path.join(cwd, 'drizzle', '0001_encrypt.sql'),
+      'utf-8',
+    )
+    expect(rewritten).toContain('DROP COLUMN')
+    // ...and migrations/ was left untouched, flagged rather than rewritten.
+    expect(fs.readFileSync(flagged, 'utf-8')).toBe(flaggedSql)
+    // A rewrite anywhere makes the prompt destructive and defaults it to No.
+    const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
+    expect(options?.initialValue).toBe(false)
+    expect(String(options?.message)).toContain('DESTROYS data')
   })
 })
