@@ -196,6 +196,14 @@ jobs:
       - name: Lint — no hardcoded package-manager runners
         run: pnpm run lint:runners
 
+      # The gates above only mean something if they compile source. A tsconfig
+      # with no `include` globs `**/*`, which sweeps the package's own `dist/`
+      # into the program — and whether `dist/` exists during a gate depends on
+      # what an earlier step built transitively, so the gate compiles a
+      # different program in CI than it does locally.
+      - name: Lint — typecheck gates compile source, not build output
+        run: pnpm run lint:typecheck-scope
+
       # Deleting or renaming a package leaves `packages/<name>` references
       # dangling in docs and CI config. Nothing else catches it (#760 review).
       - name: Lint — no references to deleted package directories

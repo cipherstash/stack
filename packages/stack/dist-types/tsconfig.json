@@ -10,5 +10,9 @@
     "skipLibCheck": true,
     "noEmit": true
   },
+  // `node16/` is the same contract checked under Node's own resolution, by
+  // package name rather than relative path. It needs `module: node16`, so it
+  // carries its own tsconfig and must not be swept up by this one.
+  "exclude": ["node16"],
   "include": ["**/*.ts"]
 }

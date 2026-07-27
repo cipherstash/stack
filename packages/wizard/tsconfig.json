@@ -30,5 +30,10 @@
     "paths": {
       "@/*": ["./src/*"]
     }
-  }
+  },
+  // The `typecheck` gate must compile source, not build output. TypeScript's
+  // default `exclude` covers `node_modules` but NOT `dist`, and specifying
+  // `exclude` replaces that default — hence both. Enforced by
+  // `pnpm run lint:typecheck-scope`.
+  "exclude": ["dist", "node_modules"]
 }

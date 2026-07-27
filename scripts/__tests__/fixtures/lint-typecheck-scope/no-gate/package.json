@@ -1,0 +1,4 @@
+{
+  "name": "@fixture/no-gate",
+  "scripts": { "build": "tsup" }
+}

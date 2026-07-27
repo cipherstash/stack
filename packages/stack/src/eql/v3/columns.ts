@@ -431,6 +431,12 @@ function isQueryableCapabilities(capabilities: QueryCapabilities): boolean {
  * `EncryptedDateColumn`, both storage-only) are NOT mutually assignable. This
  * nominality is what keeps plaintext inference precise.
  */
+/**
+ * Key for {@link EncryptedV3Column}'s phantom domain carrier. Declared, never
+ * defined — it exists only in the type layer, and is deliberately not exported.
+ */
+declare const domainCarrier: unique symbol
+
 export class EncryptedV3Column<D extends V3DomainDefinition> {
   /**
    * Phantom carrier for `D`, and the reason this class is usable from the
@@ -453,10 +459,17 @@ export class EncryptedV3Column<D extends V3DomainDefinition> {
    * constructor change — but the declaration survives emit and gives `infer D`
    * the bare site it needs. Optional so no call site has to supply it.
    *
+   * Keyed by a non-exported `unique symbol` rather than a plain name. There is
+   * no `stripInternal` in this build, so `@internal` is documentation only — a
+   * `__domain` property would be reachable from customer code and show up in
+   * autocomplete on every column, typed `D | undefined` while being `undefined`
+   * always. The symbol is not exported, so the carrier is unnameable outside
+   * this module while remaining exactly as inferrable.
+   *
    * @internal Not for consumption; read the domain via `getEqlType()` /
    * `getQueryCapabilities()`.
    */
-  declare readonly __domain?: D
+  declare readonly [domainCarrier]?: D
 
   constructor(
     private readonly columnName: string,

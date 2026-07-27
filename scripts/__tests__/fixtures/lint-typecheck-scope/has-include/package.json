@@ -1,0 +1,4 @@
+{
+  "name": "@fixture/has-include",
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json" }
+}

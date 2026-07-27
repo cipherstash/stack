@@ -15,7 +15,7 @@ import { describe, expectTypeOf, it } from 'vitest'
 import type { EncryptedAttributes, EncryptedDynamoDBInstance } from '@/dynamodb'
 import { encryptedDynamoDB } from '@/dynamodb'
 import type { EncryptionClient } from '@/encryption'
-import type { EncryptionV3 } from '@/encryption/v3'
+import type { EncryptionClientFor } from '@/encryption/v3'
 import { encryptedTable as encryptedTableV3, types } from '@/eql/v3'
 import { encryptedColumn, encryptedTable as encryptedTableV2 } from '@/schema'
 
@@ -42,12 +42,17 @@ const searchV3 = encryptedTableV3('search_v3', {
 
 type V3Model = { pk: string; email?: string; age?: number; role?: string }
 
-// The two client shapes. `EncryptionV3` returns a `TypedEncryptionClient`
-// parameterised by its own schema tuple; `Encryption` returns the nominal
-// `EncryptionClient`. Both must be accepted by the factory WITHOUT a cast.
-declare const typedClient: Awaited<
-  ReturnType<typeof EncryptionV3<readonly [typeof usersV3]>>
->
+// The two client shapes. A v3 schema tuple yields a `TypedEncryptionClient`
+// parameterised by it; a v2 set yields the nominal `EncryptionClient`. Both must
+// be accepted by the factory WITHOUT a cast.
+//
+// Named with `EncryptionClientFor`, not `Awaited<ReturnType<typeof Encryption>>`
+// — `ReturnType` reads the LAST overload, so that idiom resolves to the nominal
+// client whatever schemas you pass. Supplying an explicit type argument happens
+// to dodge it today, but only because it filters the non-generic nominal
+// overload out of the instantiation; give that overload a type parameter and
+// this assertion would silently start checking the wrong client.
+declare const typedClient: EncryptionClientFor<readonly [typeof usersV3]>
 declare const nominalClient: EncryptionClient
 
 describe('encryptedDynamoDB accepts both client shapes without a cast', () => {
