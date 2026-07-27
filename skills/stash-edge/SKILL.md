@@ -239,6 +239,7 @@ Available: `encrypt`, `decrypt`, `isEncrypted`, `encryptQuery`,
 | `.audit()` | chainable on operations | **not available** |
 | `.withLockContext()` | chainable on operations | chainable on operations — see below |
 | `bulkEncrypt` shape | `(plaintexts, { table, column })`, `{ id, plaintext }` envelopes | per-item `{ plaintext, table, column }`, plain index-aligned array |
+| `decryptModel` / `bulkDecryptModels` | `(model, table, lockContext?)`, **plus** a table-less `(model)` overload for legacy rows | `(model, table)` only — the table is **required** |
 | Module format | ESM + CJS | **ESM only** |
 
 **Authentication and key binding are two different things**, and conflating
@@ -304,9 +305,29 @@ if (out.failure) throw new Error(out.failure.message)
 ```
 
 The model helpers (`encryptModel` / `decryptModel` and their bulk forms) *are*
-present on this entry and behave as they do natively — declared columns
-encrypted by JS property name, everything else passing through, one ZeroKMS
-round trip per call.
+present on this entry, and the traversal is the same one the native entry runs
+— declared columns encrypted by JS property name, everything else passing
+through, one ZeroKMS round trip per call.
+
+**The decrypt side has no table-less form.** Both entries take the table as the
+second argument, and on both that is the form to prefer. What the native client
+*also* offers is a one-arg `decryptModel(model)` overload — the read path for
+rows whose table isn't in the schema set, legacy EQL v2 above all, at the cost
+of `Date` reconstruction and a precise plaintext shape. This entry has no such
+overload: `decryptModel(model, table)` and `bulkDecryptModels(models, table)`
+**require** the table, because they resolve date fields from a per-table map
+built at client construction. Omitting it throws rather than returning a
+`{ failure }`, and a table the client was not initialized with is a defined
+failure:
+
+```ts
+const rows = await client.bulkDecryptModels(encryptedRows, users)
+if (rows.failure) throw new Error(rows.failure.message)
+```
+
+A wrapper written against the native signature will therefore compile against
+one entry and break on the other — one more reason to author against exactly
+one entry (see below).
 
 ## Schema Modules Do Not Cross Entries
 
