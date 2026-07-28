@@ -378,7 +378,7 @@ Pass exactly one of `--drizzle` / `--prisma`. The generated migration also insta
 
 After writing the migration, `--drizzle` sweeps sibling migrations containing an in-place `ALTER COLUMN … SET DATA TYPE <encrypted domain>`. When the source declaration is provably plaintext, it replaces the ALTER with an `ADD COLUMN` + `DROP` + `RENAME` sequence and lists the rewritten files. This is equivalent to DROP+ADD: it is safe only on an empty table and does not preserve data, constraints, defaults, or indexes. On a populated table, do not run that rewrite; use the staged EQL v3 rollout (add an encrypted twin, dual-write, backfill, switch the application to the encrypted column by name, then drop plaintext). If the source type cannot be proven, the statement remains unchanged and the command warns that the migration directory needs review.
 
-If the sweep itself fails part way through — an unwritable file, a full disk, a lock held by an editor or `drizzle-kit` — it still lists the files it rewrote before the failure, *and* warns that it did not fully complete. Both matter: the listed files already contain the `DROP COLUMN`, and the rest of the directory went unchecked. Treat that directory as needing review before you run `drizzle-kit migrate`.
+If the sweep itself fails part way through — an unwritable file, a full disk, a lock held by an editor or `drizzle-kit` — it still lists files it rewrote or attempted before the failure, *and* warns that it did not fully complete. An attempted write may already have partially modified, truncated, or left its destination unchanged, so inspect every listed file and the rest of the unchecked directory before you run `drizzle-kit migrate`.
 
 #### `eql upgrade`
 

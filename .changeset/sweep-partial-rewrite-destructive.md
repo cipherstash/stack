@@ -36,7 +36,7 @@ If a wizard sweep flags a raw ALTER and then fails before rewriting anything,
 the prompt now preserves both facts: it keeps the flagged-statement guidance
 and names the migration directory that the sweep could not finish checking.
 
-A sweep that fails before attempting any write is unchanged: it rejects with
-the original error, reports zeros, and keeps the softer "nothing is known about
-this directory" wording, because claiming data destruction there would be a
-guess.
+A sweep that fails before recording any attempted rewrite or skipped statement
+is unchanged: it rejects with the original error, reports zero rewrite/skip
+results, and keeps the softer "nothing is known about this directory" wording,
+because claiming data destruction there would be a guess.
