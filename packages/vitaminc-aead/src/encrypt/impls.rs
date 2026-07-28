@@ -3,7 +3,9 @@ use crate::{
     cipher::{MapCipher, SeqCipher},
     Aad, IntoAad,
 };
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::hash::Hash;
 use vitaminc_protected::{Controlled, Equatable, Protected};
 use zeroize::Zeroize;
 
@@ -69,32 +71,14 @@ impl<const N: usize> Encrypt for [u8; N] {
     }
 }
 
-impl<T> Encrypt for HashMap<&'static str, T>
+/// One impl covers both compile-time keys (`&'static str`) and runtime keys
+/// (`String`, e.g. values arriving across an FFI boundary) — anything
+/// [`MapCipher::encrypt_key`](crate::MapCipher::encrypt_key) accepts. A single
+/// impl keeps the two key shapes on one map-encryption protocol: a change
+/// applied to one cannot silently miss the other.
+impl<K, T> Encrypt for HashMap<K, T>
 where
-    T: Encrypt,
-{
-    fn encrypt_with_aad<'a, C: Cipher, A: IntoAad<'a>>(
-        self,
-        cipher: C,
-        aad: A,
-    ) -> Result<C::Ok, C::Error> {
-        let aad: Aad = aad.into_aad();
-
-        self.into_iter()
-            .try_fold(cipher.encrypt_map(), |c, (k, v)| {
-                c.encrypt_key(k)
-                    .and_then(|c| c.encrypt_value(v, aad.clone()))
-            })?
-            .end(aad)
-    }
-}
-
-/// The runtime-keyed counterpart of the `HashMap<&'static str, T>` impl above,
-/// for maps whose keys are not known at compile time (e.g. values arriving
-/// across an FFI boundary). Round-trips with the `Decrypt` impl for
-/// `HashMap<String, T>`.
-impl<T> Encrypt for HashMap<String, T>
-where
+    K: Into<Cow<'static, str>> + Eq + Hash,
     T: Encrypt,
 {
     fn encrypt_with_aad<'a, C: Cipher, A: IntoAad<'a>>(
