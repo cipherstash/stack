@@ -3,9 +3,26 @@
 Plan for removing the native/WASM client split.
 
 **Status:** stages 1–3 landed. Stage 5 turned out to be already complete (see
-below — the plan was wrong to list it). **Stage 4 was attempted, reverted, and
-is blocked on an upstream change** — see "What stage 4 hit" before restarting
-it.
+below — the plan was wrong to list it). Stage 4 was attempted and reverted;
+**its upstream blocker is now fixed and released**, so stage 4 is ready to
+restart once the bump lands. Read "What stage 4 hit" first — four of its five
+problems are still live and only one of them was the blocker.
+
+Before restarting, note what changed underneath:
+
+- **The blocker is gone.** protectjs-ffi#143 closed #142 and shipped in
+  protect-ffi **0.31.0**: the WASM `.d.ts` now imports the named option types
+  from a shared module instead of typing every `opts` as `any`. `CryptoBackend`
+  no longer has to borrow the native types, and the six `as never` casts in
+  `backend-wasm.ts` can go. **Stage 4 depends on the 0.31 bump landing** (#809).
+- **Problem 1 now has a test.** `wasm-inline-edge-safety.test.ts` evaluates the
+  built `dist/wasm-inline.js` in a realm with no `process`, so the failure that
+  forced the revert is caught automatically. That was the real gap: every gate
+  was green while the entry was broken on import.
+- **Problem 2 is partly pre-solved.** protect-ffi 0.31 normalises `cast_as` in
+  Rust for both entries, so `normalizeCastAs` is gone from `wasm-inline.ts`.
+  The `Date`-crossing normalisation (`toWasmFfiPlaintext`) is a separate
+  concern and still has to move into the operation or the backend.
 
 ## The finding that changes the shape of this work
 
@@ -165,14 +182,30 @@ Two consequences follow, and they are the same root cause:
   type-checking at all. The one interface that was supposed to keep the two
   bindings honest checks only one of them.
 
-**The fix is upstream, in protect-ffi** — filed as
+**The fix was upstream, in protect-ffi** — filed as
 cipherstash/protectjs-ffi#142: have the WASM `.d.ts` use the same named option
-types as the Node-API one, rather than `any`. Failing that, a runtime-free
-`./types` subpath both entries re-export. Either makes
-`CryptoBackend` a genuinely shared contract instead of the native types being
-borrowed to describe both bindings — which is what this whole issue is after.
-Until then, stage 4 either ships unresolvable types or duplicates the operation
-type declarations for the WASM entry, and neither is worth it.
+types as the Node-API one, rather than `any`.
+
+**RESOLVED.** protectjs-ffi#143 did exactly that and shipped in **0.31.0**:
+`dist/wasm/protect_ffi.d.ts` now imports `EncryptOptions`, `DecryptOptions`,
+`NewClientOptions`, `Context`, `JsPlaintext` and the rest from
+`../../lib/types.js` and re-exports them, so both builds describe themselves
+with one set of names. `CryptoBackend` can import from the `/wasm-inline`
+specifier on that side, and the `as never` casts become unnecessary.
+
+Two caveats for whoever restarts stage 4:
+
+- **It needs the bump.** The 0.31 upgrade is #809; stage 4 cannot land before
+  it. That upgrade is not free — 0.31 also rejects unknown option keys
+  (protectjs-ffi#147) and removes the `ProtectError` class (#150), both of
+  which this repo depended on.
+- **`@byteslice/result` is a separate leak.** The revert found the emitted
+  `.d.ts` gained imports of *both* the native protect-ffi root and
+  `@byteslice/result`. Only the first is fixed upstream. The second is why
+  `WasmResult` is declared locally, and a shared operation layer whose return
+  type comes from `@byteslice/result` reintroduces it — so stage 4 still has to
+  decide between inlining that type into the emitted declarations or keeping a
+  local structural alias.
 
 Note the four protect-ffi type names still in the reverted `.d.ts`
 (`EncryptedPayload`, `EncryptedQuery`, `EncryptedV3Query`, `ProtectErrorCode`)
