@@ -50,13 +50,13 @@ describe('rewriteEncryptedAlterColumns', () => {
     expect(rewritten).toEqual([filePath])
     const updated = fs.readFileSync(filePath, 'utf-8')
     expect(updated).toContain(
-      'ALTER TABLE "transactions" ADD COLUMN "amount__cipherstash_tmp" "public"."eql_v2_encrypted";',
+      'ALTER TABLE "transactions" ADD COLUMN "amount_encrypted" "public"."eql_v2_encrypted";',
     )
-    expect(updated).toContain(
+    expect(updated).not.toContain(
       'ALTER TABLE "transactions" DROP COLUMN "amount";',
     )
-    expect(updated).toContain(
-      'ALTER TABLE "transactions" RENAME COLUMN "amount__cipherstash_tmp" TO "amount";',
+    expect(updated).not.toContain(
+      'ALTER TABLE "transactions" RENAME COLUMN "amount_encrypted" TO "amount";',
     )
     expect(updated).not.toContain('SET DATA TYPE')
     // Wizard-branded header.
@@ -74,7 +74,7 @@ describe('rewriteEncryptedAlterColumns', () => {
     expect(rewritten).toEqual([filePath])
     const updated = fs.readFileSync(filePath, 'utf-8')
     expect(updated).toContain(
-      'ALTER TABLE "users" ADD COLUMN "email__cipherstash_tmp" "public"."eql_v3_text_search";',
+      'ALTER TABLE "users" ADD COLUMN "email_encrypted" "public"."eql_v3_text_search";',
     )
     expect(updated).not.toContain('SET DATA TYPE')
   })
@@ -90,7 +90,7 @@ describe('rewriteEncryptedAlterColumns', () => {
 
     const updated = fs.readFileSync(filePath, 'utf-8')
     expect(updated).toContain(
-      'ALTER TABLE "users" ADD COLUMN "email__cipherstash_tmp" "public"."eql_v3_text_search";',
+      'ALTER TABLE "users" ADD COLUMN "email_encrypted" "public"."eql_v3_text_search";',
     )
     expect(updated).not.toContain('SET DATA TYPE')
   })
@@ -110,11 +110,13 @@ describe('rewriteEncryptedAlterColumns', () => {
     const updated = fs.readFileSync(filePath, 'utf-8')
     // Every emitted statement keeps the schema qualifier.
     expect(updated).toContain(
-      'ALTER TABLE "app"."users" ADD COLUMN "email__cipherstash_tmp" "public"."eql_v3_text_search";',
+      'ALTER TABLE "app"."users" ADD COLUMN "email_encrypted" "public"."eql_v3_text_search";',
     )
-    expect(updated).toContain('ALTER TABLE "app"."users" DROP COLUMN "email";')
-    expect(updated).toContain(
-      'ALTER TABLE "app"."users" RENAME COLUMN "email__cipherstash_tmp" TO "email";',
+    expect(updated).not.toContain(
+      'ALTER TABLE "app"."users" DROP COLUMN "email";',
+    )
+    expect(updated).not.toContain(
+      'ALTER TABLE "app"."users" RENAME COLUMN "email_encrypted" TO "email";',
     )
     expect(updated).not.toContain('SET DATA TYPE')
   })
@@ -130,7 +132,7 @@ describe('rewriteEncryptedAlterColumns', () => {
 
     const updated = fs.readFileSync(filePath, 'utf-8')
     expect(updated).toContain(
-      'ALTER TABLE "transactions" ADD COLUMN "amount__cipherstash_tmp" "public"."eql_v2_encrypted";',
+      'ALTER TABLE "transactions" ADD COLUMN "amount_encrypted" "public"."eql_v2_encrypted";',
     )
     expect(updated).not.toContain('SET DATA TYPE')
   })
@@ -146,7 +148,7 @@ describe('rewriteEncryptedAlterColumns', () => {
 
     const updated = fs.readFileSync(filePath, 'utf-8')
     expect(updated).toContain(
-      'ALTER TABLE "transactions" ADD COLUMN "description__cipherstash_tmp" "public"."eql_v2_encrypted";',
+      'ALTER TABLE "transactions" ADD COLUMN "description_encrypted" "public"."eql_v2_encrypted";',
     )
     expect(updated).not.toContain('SET DATA TYPE')
   })
@@ -230,11 +232,11 @@ describe('rewriteEncryptedAlterColumns', () => {
     expect(rewritten).toEqual([filePath])
     const updated = fs.readFileSync(filePath, 'utf-8')
     expect(updated).toContain(
-      `ALTER TABLE "users" ADD COLUMN "email__cipherstash_tmp" "public"."${domain}";`,
+      `ALTER TABLE "users" ADD COLUMN "email_encrypted" "public"."${domain}";`,
     )
-    expect(updated).toContain('ALTER TABLE "users" DROP COLUMN "email";')
-    expect(updated).toContain(
-      'ALTER TABLE "users" RENAME COLUMN "email__cipherstash_tmp" TO "email";',
+    expect(updated).not.toContain('ALTER TABLE "users" DROP COLUMN "email";')
+    expect(updated).not.toContain(
+      'ALTER TABLE "users" RENAME COLUMN "email_encrypted" TO "email";',
     )
     expect(updated).not.toContain('SET DATA TYPE')
   })
@@ -258,7 +260,7 @@ describe('rewriteEncryptedAlterColumns', () => {
     expect(rewritten).toEqual([filePath])
     const updated = fs.readFileSync(filePath, 'utf-8')
     expect(updated).toContain(
-      `ALTER TABLE "t" ADD COLUMN "c__cipherstash_tmp" "public"."${domain}";`,
+      `ALTER TABLE "t" ADD COLUMN "c_encrypted" "public"."${domain}";`,
     )
     expect(updated).not.toContain('SET DATA TYPE')
   })
@@ -296,7 +298,7 @@ describe('rewriteEncryptedAlterColumns', () => {
 
     const updated = fs.readFileSync(filePath, 'utf-8')
     expect(updated).toContain(
-      'ALTER TABLE "users" ADD COLUMN "email__cipherstash_tmp" "public"."eql_v3_text_search";',
+      'ALTER TABLE "users" ADD COLUMN "email_encrypted" "public"."eql_v3_text_search";',
     )
     expect(updated).not.toContain('SET DATA TYPE')
   })
@@ -315,7 +317,7 @@ describe('rewriteEncryptedAlterColumns', () => {
     expect(updated).toContain('-- eql_v3_integer_ord.')
   })
 
-  it('warns that the rewrite is data-destroying / empty-table-only', async () => {
+  it('explains that the source column is preserved for the staged lifecycle', async () => {
     declarePlaintext('"users"', 'email')
     const filePath = path.join(tmpDir, '0016_warn.sql')
     fs.writeFileSync(
@@ -326,14 +328,13 @@ describe('rewriteEncryptedAlterColumns', () => {
     await rewriteEncryptedAlterColumns(tmpDir)
 
     const updated = fs.readFileSync(filePath, 'utf-8')
-    expect(updated).toContain('safe ONLY if')
-    expect(updated).toContain('constraints, defaults, and indexes')
-    expect(updated).toContain('EQL v3 path')
-    expect(updated).toContain('dual-write')
-    expect(updated).toContain('switch the app to the encrypted column')
+    expect(updated).toContain('source column "email" is deliberately preserved')
+    expect(updated).toContain('staged `stash encrypt` lifecycle')
+    expect(updated).toContain('switch the application to the')
+    expect(updated).not.toMatch(/\b(?:DROP|RENAME)\s+COLUMN\b/i)
   })
 
-  it('separates ADD/DROP/RENAME with --> statement-breakpoint', async () => {
+  it('emits one executable ADD and no cutover statements', async () => {
     declarePlaintext('"users"', 'email')
     const filePath = path.join(tmpDir, '0018_breakpoint.sql')
     fs.writeFileSync(
@@ -344,11 +345,14 @@ describe('rewriteEncryptedAlterColumns', () => {
     await rewriteEncryptedAlterColumns(tmpDir)
 
     const updated = fs.readFileSync(filePath, 'utf-8').trimEnd()
-    const chunks = updated.split('--> statement-breakpoint')
-    expect(chunks).toHaveLength(3)
-    expect(chunks[0]).toContain('ADD COLUMN')
-    expect(chunks[1]).toContain('DROP COLUMN')
-    expect(chunks[2]).toContain('RENAME COLUMN')
+    const execLines = updated
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith('--'))
+    expect(execLines).toEqual([
+      'ALTER TABLE "users" ADD COLUMN "email_encrypted" "public"."eql_v3_text_search";',
+    ])
+    expect(updated).not.toContain('--> statement-breakpoint')
   })
 
   it('rewrites each statement to its own domain when v2 and v3 are mixed', async () => {
@@ -366,10 +370,10 @@ describe('rewriteEncryptedAlterColumns', () => {
 
     const updated = fs.readFileSync(filePath, 'utf-8')
     expect(updated).toContain(
-      'ALTER TABLE "a" ADD COLUMN "x__cipherstash_tmp" "public"."eql_v2_encrypted";',
+      'ALTER TABLE "a" ADD COLUMN "x_encrypted" "public"."eql_v2_encrypted";',
     )
     expect(updated).toContain(
-      'ALTER TABLE "a" ADD COLUMN "y__cipherstash_tmp" "public"."eql_v3_json";',
+      'ALTER TABLE "a" ADD COLUMN "y_encrypted" "public"."eql_v3_json";',
     )
   })
 
@@ -647,9 +651,9 @@ describe('rewriteEncryptedAlterColumns', () => {
       const { rewritten } = await rewriteEncryptedAlterColumns(tmpDir)
 
       expect(rewritten).toEqual([filePath])
-      expect(fs.readFileSync(filePath, 'utf-8')).toContain(
-        'ALTER TABLE "users" DROP COLUMN "email";',
-      )
+      const updated = fs.readFileSync(filePath, 'utf-8')
+      expect(updated).toContain('ADD COLUMN "email_encrypted"')
+      expect(updated).not.toMatch(/\b(?:DROP|RENAME)\s+COLUMN\b/i)
     })
 
     // An apostrophe inside a DOUBLE-QUOTED identifier is not a string
@@ -839,12 +843,14 @@ describe('rewriteEncryptedAlterColumns', () => {
       const { rewritten } = await rewriteEncryptedAlterColumns(tmpDir)
 
       expect(rewritten).toEqual([filePath])
-      expect(fs.readFileSync(filePath, 'utf-8')).toContain('DROP COLUMN')
+      const updated = fs.readFileSync(filePath, 'utf-8')
+      expect(updated).toContain('ADD COLUMN "email_encrypted"')
+      expect(updated).not.toContain('DROP COLUMN')
     })
   })
 
-  // ADD+DROP+RENAME on a column that is ALREADY encrypted drops CIPHERTEXT, and
-  // unlike the plaintext case there is nothing left anywhere to backfill from.
+  // A domain change on a column that is ALREADY encrypted needs staged
+  // re-encryption; there is no plaintext source to backfill from.
   describe('columns that are already encrypted', () => {
     it('refuses to rewrite a domain change on a column created encrypted', async () => {
       const create = path.join(tmpDir, '0000_create.sql')
@@ -1131,6 +1137,25 @@ describe('rewriteEncryptedAlterColumns', () => {
       expect(skipped[0].reason).toBe('already-encrypted')
     })
 
+    it('fails closed when the staged encrypted twin already exists', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_create.sql'),
+        'CREATE TABLE "users" ("email" text, "email_encrypted" eql_v3_text_eq);\n',
+      )
+      const alterSql =
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;'
+      const alter = path.join(tmpDir, '0001_encrypt.sql')
+      fs.writeFileSync(alter, `${alterSql}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(fs.readFileSync(alter, 'utf-8')).toBe(`${alterSql}\n`)
+      expect(skipped).toEqual([
+        { file: alter, statement: alterSql, reason: 'target-exists' },
+      ])
+    })
+
     // #772 review, finding 3. The index reads CREATE TABLE, ADD COLUMN and
     // RENAME, but never the strict matcher's OWN target. So a corpus where an
     // earlier migration already converted the column — realistic wherever a
@@ -1155,11 +1180,13 @@ describe('rewriteEncryptedAlterColumns', () => {
       // The first conversion is the legitimate plaintext -> encrypted one and
       // must still happen — flagging it too would be the naive fix.
       expect(rewritten).toEqual([first])
-      expect(fs.readFileSync(first, 'utf-8')).toContain('DROP COLUMN')
-      // The second targets ciphertext. Left byte-identical on disk.
+      expect(fs.readFileSync(first, 'utf-8')).toContain(
+        'ADD COLUMN "email_encrypted"',
+      )
+      // The second would add the same target again. Left byte-identical.
       expect(fs.readFileSync(second, 'utf-8')).toBe(`${secondSql}\n`)
       expect(skipped).toEqual([
-        { file: second, statement: secondSql, reason: 'already-encrypted' },
+        { file: second, statement: secondSql, reason: 'target-exists' },
       ])
     })
 
@@ -1181,11 +1208,12 @@ describe('rewriteEncryptedAlterColumns', () => {
 
       expect(rewritten).toEqual([filePath])
       const updated = fs.readFileSync(filePath, 'utf-8')
-      // Exactly one conversion was applied, and the v3 statement survives verbatim.
-      expect(updated.match(/DROP COLUMN/g)?.length).toBe(1)
+      // Exactly one target was staged, and the v3 statement survives verbatim.
+      expect(updated.match(/ADD COLUMN/g)?.length).toBe(1)
+      expect(updated).not.toMatch(/\b(?:DROP|RENAME)\s+COLUMN\b/i)
       expect(updated).toContain(secondSql)
       expect(skipped).toEqual([
-        { file: filePath, statement: secondSql, reason: 'already-encrypted' },
+        { file: filePath, statement: secondSql, reason: 'target-exists' },
       ])
     })
 
@@ -1227,7 +1255,9 @@ describe('rewriteEncryptedAlterColumns', () => {
       const { rewritten } = await rewriteEncryptedAlterColumns(tmpDir)
 
       expect(rewritten).toEqual([live])
-      expect(fs.readFileSync(live, 'utf-8')).toContain('DROP COLUMN')
+      const updated = fs.readFileSync(live, 'utf-8')
+      expect(updated).toContain('ADD COLUMN "email_encrypted"')
+      expect(updated).not.toContain('DROP COLUMN')
     })
 
     // #772 review, finding 4. `columnKey` keys on the schema exactly as written,
@@ -1415,9 +1445,38 @@ describe('rewriteEncryptedAlterColumns', () => {
 
     const updated = fs.readFileSync(filePath, 'utf-8')
     expect(updated.match(/ADD COLUMN/g)?.length).toBe(2)
-    expect(updated.match(/DROP COLUMN/g)?.length).toBe(2)
+    expect(updated).not.toMatch(/\b(?:DROP|RENAME)\s+COLUMN\b/i)
     // Non-matching statement preserved
     expect(updated).toContain('CREATE INDEX "a_z" ON "a" ("z");')
+  })
+
+  it('reports files rewritten before a later write failure', async () => {
+    declarePlaintext('"users"', 'email', 'name')
+    const first = path.join(tmpDir, '0001_email.sql')
+    const failing = path.join(tmpDir, '0002_name.sql')
+    fs.writeFileSync(
+      first,
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+    )
+    fs.writeFileSync(
+      failing,
+      'ALTER TABLE "users" ALTER COLUMN "name" SET DATA TYPE eql_v3_text_search;\n',
+    )
+    fs.chmodSync(failing, 0o444)
+
+    try {
+      await rewriteEncryptedAlterColumns(tmpDir)
+      throw new Error('expected rewriteEncryptedAlterColumns to throw')
+    } catch (error) {
+      const partial = error as { rewritten?: string[]; skipped?: unknown[] }
+      expect(partial.rewritten).toEqual([first])
+      expect(partial.skipped).toEqual([])
+      expect(fs.readFileSync(first, 'utf-8')).toContain(
+        'ADD COLUMN "email_encrypted"',
+      )
+    } finally {
+      fs.chmodSync(failing, 0o644)
+    }
   })
 
   // Regression pin, not a bug fix — the matchers carry `/gi`, so a
@@ -1436,9 +1495,9 @@ describe('rewriteEncryptedAlterColumns', () => {
     expect(skipped).toEqual([])
     const updated = fs.readFileSync(filePath, 'utf-8')
     expect(updated).toContain(
-      'ALTER TABLE "users" ADD COLUMN "email__cipherstash_tmp" "public"."eql_v3_text_search";',
+      'ALTER TABLE "users" ADD COLUMN "email_encrypted" "public"."eql_v3_text_search";',
     )
-    expect(updated).toContain('ALTER TABLE "users" DROP COLUMN "email";')
+    expect(updated).not.toContain('ALTER TABLE "users" DROP COLUMN "email";')
     expect(updated).not.toMatch(/set data type/i)
   })
 
@@ -1692,8 +1751,8 @@ describe('sweepMigrationDirs', () => {
    *
    * The `meta/_journal.json` is what makes it drizzle-kit's: the sweep now
    * requires it, because `migrations/` and `src/db/migrations/` are generic
-   * names that Knex, Flyway, node-pg-migrate and raw psql also use, and this
-   * sweep emits `DROP COLUMN`. Use {@link seedForeignDir} for the other case.
+   * names that Knex, Flyway, node-pg-migrate and raw psql also use. Use
+   * {@link seedForeignDir} for the other case.
    */
   const seedDir = (dir: string, name?: string, sql?: string): string => {
     const abs = seedForeignDir(dir, name, sql)
@@ -1807,7 +1866,7 @@ describe('sweepMigrationDirs', () => {
   // A-2 trigger (b). The wizard ships scanning three candidate directories and
   // indexes each separately, so a declaration in `drizzle/` is invisible to the
   // sweep of `migrations/`. That column is already ciphertext; rewriting it
-  // emits a live DROP COLUMN with nothing anywhere to backfill from.
+  // must remain source-unknown rather than choosing a lifecycle by assumption.
   it('does not rewrite an ALTER whose column is declared in a sibling directory', async () => {
     seedDir(
       'drizzle',
@@ -1839,8 +1898,8 @@ describe('sweepMigrationDirs', () => {
   // names — Knex, node-pg-migrate, Flyway and hand-rolled psql all use them.
   // Sweeping every candidate that merely EXISTS meant a project whose drizzle
   // `out` is `drizzle/` but which also keeps a hand-maintained `migrations/`
-  // had that second directory rewritten into ADD+DROP+RENAME, in a directory
-  // this tool was never pointed at. The fail-closed `declared` rule does not
+  // had that second directory rewritten in a directory this tool was never
+  // pointed at. The fail-closed `declared` rule does not
   // help: a real migration history declares its own columns.
   //
   // drizzle-kit always writes `meta/_journal.json` into its output directory;
@@ -1909,8 +1968,14 @@ describe('describeSkipReason', () => {
   it('describes already-encrypted as a re-encrypt-through-the-lifecycle action', () => {
     const text = describeSkipReason('already-encrypted')
     expect(text).toContain('ALREADY encrypted')
-    expect(text).toContain('DROP the ciphertext')
+    expect(text).toContain('re-encrypted')
     expect(text).toContain('`stash encrypt` lifecycle')
+  })
+
+  it('describes an existing target as a duplicate-column failure', () => {
+    const text = describeSkipReason('target-exists')
+    expect(text).toContain('already exists')
+    expect(text).toContain('another ADD COLUMN would fail')
   })
 
   it('describes unrecognised-form as a hand-authored / unknown cast', () => {
@@ -1923,11 +1988,14 @@ describe('describeSkipReason', () => {
     const text = describeSkipReason('source-unknown')
     expect(text).toContain('could not find where this column was declared')
     expect(text).toContain("Check the column's current type in the database")
+    expect(text).toContain('staged `stash encrypt` lifecycle')
+    expect(text).not.toContain('table is empty')
   })
 
   it('gives each reason a distinct description', () => {
     const reasons = [
       'already-encrypted',
+      'target-exists',
       'unrecognised-form',
       'source-unknown',
     ] as const

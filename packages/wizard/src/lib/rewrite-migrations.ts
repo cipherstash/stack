@@ -327,8 +327,8 @@ const TABLE_REF = String.raw`"([^"]+)"(?:\."([^"]+)")?`
  * delimiter so a bare domain cannot match a prefix of a longer identifier.
  *
  * Two shapes {@link MANGLED_TYPE_FORMS} does not enumerate are folded in here so
- * the encrypted index recognises them and the ADD+DROP+RENAME cannot drop their
- * ciphertext: a domain in ANY quoted schema (`"app"."eql_v3_text_search"`, not
+ * the encrypted index recognises them and never mistakes their ciphertext for
+ * plaintext: a domain in ANY quoted schema (`"app"."eql_v3_text_search"`, not
  * just the literal `public` the mangled forms special-case), and a `[` in the
  * trailing lookahead so an ARRAY of the domain (`public.eql_v3_text_search[]`)
  * ends at a delimiter too. Both feed only the encrypted index — never the
@@ -448,8 +448,8 @@ const CREATE_TABLE_ENCRYPTED_COLUMN_RE = new RegExp(
  * covered explicitly by {@link ENCRYPTED_TYPE_REF} — a domain in a non-`public`
  * schema (`"email" "app"."eql_v3_text_search"`) and an array of the domain
  * (`"email" public.eql_v3_text_search[]`) — because both name ciphertext the
- * corpus can see, so rewriting them is the exact drop this rule exists to
- * prevent. The dependency itself remains: any encrypted shape a future EQL
+ * corpus can see, so treating them as plaintext would choose the wrong staged
+ * lifecycle. The dependency itself remains: any encrypted shape a future EQL
  * install introduces must be added to {@link ENCRYPTED_TYPE_REF} or it too will
  * fall to the plaintext residue.
  *
@@ -502,7 +502,7 @@ function tableOf(
  * while hand-written SQL and this sweep's own {@link renderSafeAlter} output
  * are qualified. Keying on the literal text split one column across two keys,
  * so a column already encrypted under one spelling looked plaintext when
- * altered under the other and the ADD+DROP+RENAME dropped its ciphertext
+ * altered under the other and bypassed the encrypted-domain guard
  * (#772 review, finding 4).
  *
  * Only the IMPLICIT schema collapses. `"app"."users"` is a genuinely different
@@ -520,7 +520,7 @@ function columnKey(table: string, column: string, schema?: string): string {
 
 /** What the migration corpus says about the columns it mentions. */
 interface ColumnIndex {
-  /** Columns the corpus gives an ENCRYPTED type. Rewriting one drops ciphertext. */
+  /** Columns the corpus gives an ENCRYPTED type; these need re-encryption. */
   encrypted: Set<string>
   /** Columns the corpus DECLARES at all, whatever type it gives them. */
   declared: Set<string>
@@ -528,23 +528,22 @@ interface ColumnIndex {
 
 /**
  * Index what the migration corpus knows about each column, so the rewrite can
- * tell the change it exists for (plaintext → encrypted) from the two it must
- * never make: encrypted → encrypted, and a change to a column it knows nothing
- * about.
+ * tell the change it exists for (plaintext → staged encrypted twin) from the
+ * cases it must leave for review: encrypted → encrypted, a change to a column
+ * it knows nothing about, and a duplicate staged target.
  *
  * **Why `encrypted` (#772 review, W-3):** the strict matcher captures only the
  * TARGET type. A column whose encrypted domain merely changes (`types.TextEq` →
  * `types.TextSearch`) matches just as well as a plaintext column, and the
- * ADD+DROP+RENAME then drops a column full of CIPHERTEXT — with no plaintext
- * left anywhere to backfill from, so unlike the plaintext case the data is not
- * recoverable from the application at all.
+ * correct migration requires decrypting and re-encrypting the existing
+ * ciphertext; it cannot use the plaintext-to-twin rewrite.
  *
  * **Why `declared` (A-2):** absence from `encrypted` is not evidence of
  * plaintext. It is evidence of nothing. The sweep runs per directory, and the
  * shipped wizard default scans three of them, so a column's `CREATE TABLE` can
- * simply live somewhere this sweep never reads — the column is then rewritten
- * on an assumption, and the ADD+DROP+RENAME drops live ciphertext. Requiring a
- * POSITIVE declaration makes the unknown case a flagged statement instead.
+ * simply live somewhere this sweep never reads. Requiring a POSITIVE
+ * declaration makes the unknown case a flagged statement instead of choosing
+ * a lifecycle on an assumption.
  *
  * Because the encrypted side is matched against the known domain list, the
  * plaintext side needs no type classification: a column the corpus declares but
@@ -626,8 +625,10 @@ function indexColumnDeclarations(contents: readonly string[]): ColumnIndex {
 export type SkipReason =
   /** Outside the strict matcher — hand-authored `USING`, or an unknown form. */
   | 'unrecognised-form'
-  /** The column already holds an encrypted domain; rewriting drops ciphertext. */
+  /** The column already holds an encrypted domain and needs re-encryption. */
   | 'already-encrypted'
+  /** The conventional encrypted twin already exists or was staged earlier. */
+  | 'target-exists'
   /** The corpus never declares the column, so its current type is unknown. */
   | 'source-unknown'
 
@@ -644,17 +645,19 @@ export interface SkippedAlter {
 /**
  * One-line explanation of a {@link SkipReason}, for the CLI/wizard to print
  * next to the statement. Lives here so every caller says the same thing — the
- * three reasons need very different action from the user, and a single generic
+ * reasons need different action from the user, and a single generic
  * "could not rewrite automatically" hides that.
  */
 export function describeSkipReason(reason: SkipReason): string {
   switch (reason) {
     case 'already-encrypted':
-      return "the column is ALREADY encrypted, so the ADD+DROP+RENAME rewrite would DROP the ciphertext with no plaintext left to backfill from. Changing an encrypted column's domain changes its index terms, so the data must be re-encrypted through the staged `stash encrypt` lifecycle"
+      return "the column is ALREADY encrypted and has no plaintext source for the normal backfill. Changing an encrypted column's domain changes its index terms, so the ciphertext must be decrypted and re-encrypted through a reviewed staged `stash encrypt` lifecycle"
+    case 'target-exists':
+      return 'the staged encrypted target already exists (or was added by an earlier rewrite), so another ADD COLUMN would fail. Review the existing encrypted twin and use the staged `stash encrypt` lifecycle without creating a duplicate column'
     case 'unrecognised-form':
       return 'it falls outside the strict matcher (a hand-authored `SET DATA TYPE ... USING ...`, or a drizzle-kit form the sweep does not recognise) and an in-place cast to an encrypted domain fails at migrate time'
     case 'source-unknown':
-      return "the sweep could not find where this column was declared in this migration directory, so it cannot tell a plaintext column (safe to rewrite) from one that already holds ciphertext (where the rewrite would DROP it). Usually the column's `CREATE TABLE` / `ADD COLUMN` lives in a different directory, or the migration history was squashed. Check the column's current type in the database: if it is plaintext and the table is empty, apply the ADD/DROP/RENAME by hand; if it already holds ciphertext, use the staged `stash encrypt` lifecycle instead"
+      return "the sweep could not find where this column was declared in this migration directory, so it cannot tell a plaintext column (which needs an encrypted twin and staged backfill) from one that already holds ciphertext (which needs staged re-encryption). Usually the column's `CREATE TABLE` / `ADD COLUMN` lives in a different directory, or the migration history was squashed. Check the column's current type in the database, then use the staged `stash encrypt` lifecycle; never replace the source column in place"
   }
 }
 
@@ -666,9 +669,14 @@ export interface RewriteResult {
   skipped: SkippedAlter[]
 }
 
+interface RewriteSweepError extends Error {
+  rewritten?: string[]
+  skipped?: SkippedAlter[]
+}
+
 /**
  * Replace in-place `ALTER COLUMN ... SET DATA TYPE <encrypted domain>`
- * statements with an ADD + DROP + RENAME sequence.
+ * statements with a staged encrypted-column addition.
  *
  * **Why this exists (CIP-2991, CIP-2994, #693):** Postgres has no implicit cast
  * from `text`/`numeric` to an encrypted domain, so `ALTER COLUMN ... SET DATA
@@ -676,29 +684,25 @@ export interface RewriteResult {
  * `cannot cast type ... to <domain>`. This applies equally to the single EQL v2
  * type and the whole EQL v3 concrete-domain family.
  *
- * The rewrite is an ADD+DROP+RENAME, which is **equivalent to DROP+ADD**: it
- * makes the column type valid but does NOT preserve the column's data. It is
- * therefore safe ONLY on an EMPTY table. On a populated table the new column
- * starts NULL and the original is dropped in the same migration, so the
- * plaintext is destroyed. The commented UPDATE is a placeholder that can never
- * become real SQL (the encrypted value is the EQL envelope produced by ZeroKMS
- * via the client — there is no expression Postgres can evaluate to fill it), so
- * a populated table must instead use the staged EQL v3 lifecycle (add an
- * encrypted twin → dual-write → backfill via `@cipherstash/stack`'s
- * `encryptModel` → switch the application to the encrypted column by name →
- * drop plaintext), which keeps both columns alive across deploys. Each
- * rewritten file carries a header comment saying exactly this.
+ * The rewrite adds a separate encrypted column and preserves the source column.
+ * PostgreSQL cannot create the EQL envelope itself, so the application must use
+ * the staged EQL v3 lifecycle (add an encrypted twin → dual-write → backfill via
+ * `@cipherstash/stack`'s `encryptModel` → switch the application to the
+ * encrypted column by name → drop plaintext), which keeps both columns alive
+ * across deploys. The rewriter emits only the ADD: every later step is
+ * intentionally a separate, reviewed operation.
  *
  * Returns {@link RewriteResult}: the files rewritten, plus `skipped` statements
  * left for a human — ones outside the strict matcher (a hand-authored
  * `SET DATA TYPE … USING …;`, or a future drizzle-kit form); ones targeting a
- * column that is ALREADY encrypted, where the rewrite would drop ciphertext;
- * and ones targeting a column the corpus never DECLARES anywhere, where the
+ * column that is ALREADY encrypted and needs re-encryption; ones whose staged
+ * encrypted target already exists; and ones targeting a column the corpus
+ * never DECLARES anywhere, where the
  * rewrite would be guessing at a type it cannot see (likely the most common
  * skip on a real corpus, since the sweep only ever reads part of the
- * migration history). All three are left untouched on disk and surfaced
- * non-fatally so the caller can tell the user to review them, rather than
- * silently shipping broken SQL or destroying data. Statements sitting inside a
+ * migration history). All are left untouched on disk and surfaced to the
+ * caller; CLI and wizard callers then fail non-zero rather than silently
+ * shipping broken SQL. Statements sitting inside a
  * SQL comment — or inside a single-quoted string literal, where they are data
  * rather than SQL — are inert and are neither rewritten nor reported.
  */
@@ -718,6 +722,7 @@ export async function rewriteEncryptedAlterColumns(
   const rewritten: string[] = []
   const skipped: SkippedAlter[] = []
   const seen = new Set<string>()
+  const stagedTargets = new Set<string>()
 
   /** Record a skip once — the strict pass and the broad scan can both find it. */
   const skip = (file: string, statement: string, reason: SkipReason): void => {
@@ -743,93 +748,91 @@ export async function rewriteEncryptedAlterColumns(
   const { encrypted: encryptedColumns, declared: declaredColumns } =
     indexColumnDeclarations([...contents.values()])
 
-  for (const [filePath, original] of contents) {
-    if (options.skip && filePath === options.skip) continue
+  try {
+    for (const [filePath, original] of contents) {
+      if (options.skip && filePath === options.skip) continue
 
-    // Reset the regex's lastIndex — it's stateful on /g
-    ALTER_COLUMN_TO_ENCRYPTED_RE.lastIndex = 0
+      // Reset the regex's lastIndex — it's stateful on /g
+      ALTER_COLUMN_TO_ENCRYPTED_RE.lastIndex = 0
 
-    const updated = original.replace(
-      ALTER_COLUMN_TO_ENCRYPTED_RE,
-      (
-        match: string,
-        first: string,
-        second: string | undefined,
-        column: string,
-        mangledType: string,
-        offset: number,
-      ) => {
-        // Commented-out SQL never runs, and a multi-line replacement would only
-        // inherit the `-- ` on its first line — leaving the rest live.
-        if (isInsideCommentOrString(original, offset)) return match
+      const updated = original.replace(
+        ALTER_COLUMN_TO_ENCRYPTED_RE,
+        (
+          match: string,
+          first: string,
+          second: string | undefined,
+          column: string,
+          mangledType: string,
+          offset: number,
+        ) => {
+          // Commented-out SQL never runs, and a multi-line replacement would only
+          // inherit the `-- ` on its first line — leaving the rest live.
+          if (isInsideCommentOrString(original, offset)) return match
 
-        const { schema, table } = tableOf(first, second)
+          const { schema, table } = tableOf(first, second)
 
-        // Already encrypted: the ADD+DROP+RENAME would drop the ciphertext and
-        // there is no plaintext left to backfill from. Flag, never guess.
-        if (encryptedColumns.has(columnKey(table, column, schema))) {
-          skip(filePath, match.trim(), 'already-encrypted')
-          return match
-        }
+          // Already encrypted: an in-place domain conversion needs a staged
+          // re-encryption. Flag, never guess.
+          if (encryptedColumns.has(columnKey(table, column, schema))) {
+            skip(filePath, match.trim(), 'already-encrypted')
+            return match
+          }
 
-        // Fail closed. Absence from `declaredColumns` does not mean the column
-        // is plaintext — it means the corpus never said. The declaration can
-        // sit in a directory this sweep does not read (the wizard ships with
-        // three candidates and indexes each separately), so rewriting on the
-        // assumption is how a live `DROP COLUMN` reaches a populated — possibly
-        // already-encrypted — column. Flag it and let the user look.
-        if (!declaredColumns.has(columnKey(table, column, schema))) {
-          skip(filePath, match.trim(), 'source-unknown')
-          return match
-        }
+          // Fail closed. Absence from `declaredColumns` does not prove the source
+          // type, so leave the raw statement untouched and require review.
+          if (!declaredColumns.has(columnKey(table, column, schema))) {
+            skip(filePath, match.trim(), 'source-unknown')
+            return match
+          }
 
-        const domain = DOMAIN_RE.exec(mangledType)?.[0]?.toLowerCase()
-        // Unreachable — the outer regex only matches when a domain is present —
-        // but leave the statement alone rather than emit a broken rewrite.
-        if (!domain) return match
+          const target = columnKey(table, `${column}_encrypted`, schema)
+          if (declaredColumns.has(target) || stagedTargets.has(target)) {
+            skip(filePath, match.trim(), 'target-exists')
+            return match
+          }
 
-        // This statement converts the column, so from here on in the corpus it
-        // holds CIPHERTEXT. `indexColumnDeclarations` cannot know that: it
-        // reads CREATE TABLE, ADD COLUMN and RENAME, never the strict matcher's
-        // own target. Without this, a corpus carrying an earlier conversion
-        // (`... SET DATA TYPE eql_v2_encrypted` from a stack version that
-        // predates this sweep) leaves the column looking plaintext, and the
-        // NEXT domain change drops the ciphertext — `declared` cannot catch it,
-        // because the column really is declared, as plaintext, by the original
-        // CREATE TABLE.
-        //
-        // Recorded here rather than in the corpus-wide index on purpose: the
-        // index has no order, so it would flag THIS conversion — the legitimate
-        // plaintext -> encrypted one — as already-encrypted too. Files are
-        // walked in sorted order and matches within a file in source order, so
-        // "already converted" means "converted by a statement that runs before
-        // this one".
-        encryptedColumns.add(columnKey(table, column, schema))
-        return renderSafeAlter(table, column, domain, schema)
-      },
-    )
+          const domain = DOMAIN_RE.exec(mangledType)?.[0]?.toLowerCase()
+          // Unreachable — the outer regex only matches when a domain is present —
+          // but leave the statement alone rather than emit a broken rewrite.
+          if (!domain) return match
 
-    if (updated !== original) {
-      await writeFile(filePath, updated, 'utf-8')
-      rewritten.push(filePath)
-    }
+          stagedTargets.add(target)
+          return renderSafeAlter(table, column, domain, schema)
+        },
+      )
 
-    // Broad secondary scan on the POST-rewrite content: anything still carrying
-    // `SET DATA TYPE` near an eql_v2/eql_v3 token slipped past the strict
-    // matcher. Flag it — non-fatally — rather than leave the user shipping SQL
-    // that fails at migrate time.
-    for (const nearMiss of updated.matchAll(NEAR_MISS_RE)) {
-      const statement = trimStatementPreamble(nearMiss[0])
-      // Anchor the comment test on the `SET DATA TYPE` itself: the match starts
-      // at the previous `;`, so its own offset sits before any preamble.
-      const keyword = nearMiss[0].search(/\bSET\s+DATA\s+TYPE\b/i)
-      if (
-        isInsideCommentOrString(updated, nearMiss.index + Math.max(keyword, 0))
-      ) {
-        continue
+      if (updated !== original) {
+        await writeFile(filePath, updated, 'utf-8')
+        rewritten.push(filePath)
       }
-      skip(filePath, statement, 'unrecognised-form')
+
+      // Broad secondary scan on the POST-rewrite content: anything still carrying
+      // `SET DATA TYPE` near an eql_v2/eql_v3 token slipped past the strict
+      // matcher. Record it for the fail-closed caller rather than leave the user shipping SQL
+      // that fails at migrate time.
+      for (const nearMiss of updated.matchAll(NEAR_MISS_RE)) {
+        const statement = trimStatementPreamble(nearMiss[0])
+        // Anchor the comment test on the `SET DATA TYPE` itself: the match starts
+        // at the previous `;`, so its own offset sits before any preamble.
+        const keyword = nearMiss[0].search(/\bSET\s+DATA\s+TYPE\b/i)
+        if (
+          isInsideCommentOrString(
+            updated,
+            nearMiss.index + Math.max(keyword, 0),
+          )
+        ) {
+          continue
+        }
+        skip(filePath, statement, 'unrecognised-form')
+      }
     }
+  } catch (error) {
+    if (error instanceof Error) {
+      const partial = error as RewriteSweepError
+      partial.rewritten = rewritten
+      partial.skipped = skipped
+    }
+    throw error
   }
 
   return { rewritten, skipped }
@@ -899,8 +902,8 @@ async function holdsSqlFiles(abs: string): Promise<boolean> {
  *
  * **Why only drizzle-kit output directories:** the candidate list is a guess,
  * and two of its three entries are generic names that Knex, node-pg-migrate,
- * Flyway and hand-rolled psql also use. This sweep emits `DROP COLUMN`, so
- * rewriting a directory it was never pointed at is the worst thing it can do —
+ * Flyway and hand-rolled psql also use. Rewriting a directory it was never
+ * pointed at would still mutate migrations owned by another tool —
  * and the fail-closed `declared` rule is no defence there, because a real
  * migration history declares its own columns. Requiring the `meta/_journal.json`
  * that drizzle-kit maintains keeps the reach to directories drizzle-kit owns
@@ -935,7 +938,13 @@ export async function sweepMigrationDirs(
       results.push({ dir, rewritten, skipped })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      results.push({ dir, rewritten: [], skipped: [], error: message })
+      const partial = err as Partial<RewriteSweepError>
+      results.push({
+        dir,
+        rewritten: partial.rewritten ?? [],
+        skipped: partial.skipped ?? [],
+        error: message,
+      })
     }
   }
 
@@ -944,23 +953,11 @@ export async function sweepMigrationDirs(
 // #endregion wizard-only
 
 /**
- * The rewrite is identical for v2 and v3, and the ADD+DROP+RENAME sequence is
- * equivalent to DROP+ADD: it makes the column type valid but does NOT preserve
- * the column's data. It is therefore safe only on an EMPTY table. On a populated
- * table the new column starts NULL and the old one is dropped in the same
- * migration, so the plaintext is destroyed.
- *
- * The commented UPDATE is only a placeholder — it can never become real SQL. The
- * encrypted value is the EQL envelope produced by ZeroKMS via the client
- * (`encryptModel` / `bulkEncryptModels`); there is no expression Postgres can
- * evaluate to fill it. (v3 stores that envelope as jsonb rather than v2's
- * composite, but this is equally true on both surfaces.)
- *
- * So the guidance does NOT tell the user to backfill and run this migration —
- * that would still lose data. It points a populated table at the staged EQL v3
- * lifecycle (add an encrypted twin → dual-write → backfill → switch the
- * application to the encrypted column by name → drop plaintext), which keeps
- * both columns alive across deploys.
+ * The source column remains live. The encrypted value is an EQL envelope
+ * produced by ZeroKMS, so PostgreSQL cannot backfill it with an SQL expression.
+ * The generated comment directs the user to the staged EQL v3 lifecycle, whose
+ * later backfill, application switch, and plaintext drop are explicit
+ * operations outside this automatic rewrite.
  */
 function renderSafeAlter(
   table: string,
@@ -968,20 +965,17 @@ function renderSafeAlter(
   domain: string,
   schema?: string,
 ): string {
-  const tmp = `${column}__cipherstash_tmp`
+  const encrypted = `${column}_encrypted`
   // Preserve the schema qualifier drizzle-kit emitted for pgSchema() tables so
   // the rewritten statements target the same object.
   const qualifiedTable = schema ? `"${schema}"."${table}"` : `"${table}"`
   return [
     '-- Rewritten by @cipherstash/wizard: in-place ALTER COLUMN cannot cast to',
-    `-- ${domain}. This ADD+DROP+RENAME equals DROP+ADD and is safe ONLY if`,
-    `-- ${qualifiedTable} is empty. On a populated table it DESTROYS existing "${column}"`,
-    '-- data (the new column starts NULL) — do NOT run it there. Use the staged',
-    '-- EQL v3 path instead: add an encrypted twin -> dual-write -> backfill via',
-    '-- encryptModel -> switch the app to the encrypted column -> drop plaintext.',
-    '-- NOTE: constraints, defaults, and indexes on the original column are NOT',
-    '-- carried over by this ADD/DROP/RENAME — re-add any NOT NULL, DEFAULT,',
-    '-- UNIQUE, or index definitions manually.',
+    `-- ${domain}. The source column "${column}" is deliberately preserved.`,
+    '-- Use the staged `stash encrypt` lifecycle: backfill this new column via',
+    "-- @cipherstash/stack's encryptModel, then switch the application to the",
+    '-- encrypted column by name and drop the plaintext column — both separately',
+    '-- reviewed steps taken only after the backfill is complete.',
     // The domain is emitted as `"public"."<domain>"` unconditionally: EQL
     // installs its domains into `public` (both `stash eql install` and the
     // adapters' baseline migrations do), and the qualifier makes the rewrite
@@ -991,11 +985,6 @@ function renderSafeAlter(
     // the domain lives. If EQL ever supports installing into a non-`public`
     // schema, this needs the install schema threaded in, here and in the
     // sibling `packages/cli/src/commands/db/rewrite-migrations.ts`.
-    `ALTER TABLE ${qualifiedTable} ADD COLUMN "${tmp}" "public"."${domain}";`,
-    `-- UPDATE ${qualifiedTable} SET "${tmp}" = /* encrypted value for ${column} */ NULL`,
-    '--> statement-breakpoint',
-    `ALTER TABLE ${qualifiedTable} DROP COLUMN "${column}";`,
-    '--> statement-breakpoint',
-    `ALTER TABLE ${qualifiedTable} RENAME COLUMN "${tmp}" TO "${column}";`,
+    `ALTER TABLE ${qualifiedTable} ADD COLUMN "${encrypted}" "public"."${domain}";`,
   ].join('\n')
 }

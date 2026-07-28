@@ -9,6 +9,7 @@ import { printNextSteps, SAFE_MIGRATION_NAME } from '@/commands/db/install.js'
 import {
   describeSkipReason,
   rewriteEncryptedAlterColumns,
+  type SkippedAlter,
 } from '@/commands/db/rewrite-migrations.js'
 import {
   detectPackageManager,
@@ -255,15 +256,10 @@ async function generateDrizzleEqlMigration(
   // Step 4 — sweep for sibling migrations drizzle-kit emitted with an in-place
   // `ALTER COLUMN ... SET DATA TYPE <encrypted domain>`. Those fail in Postgres
   // (no implicit cast from text/numeric to an EQL domain), so rewrite them into
-  // an ADD+DROP+RENAME sequence that is runnable. That sequence is equivalent to
-  // DROP+ADD — safe on an EMPTY table but data-destroying on a populated one —
-  // so the rewritten file carries a comment steering populated tables to the
-  // staged `stash encrypt` path. `eql install --drizzle` has always done this
-  // for v2; without it the v3 migration-first path leaves the user with broken
-  // SQL and no repair (#693).
-  // Whether the sweep failed outright or left near-misses it couldn't rewrite.
-  // Either way the user must review sibling migrations before running migrate,
-  // so surface it again at the closing note (below) — not just inline here.
+  // a staged encrypted-column addition that preserves the source column.
+  // Whether the sweep failed outright or left near-misses it couldn't rewrite,
+  // the user must review sibling migrations before running migrate, so surface
+  // it again at the closing note (below) — not just inline here.
   let sweepIncomplete = false
   try {
     const { rewritten, skipped } = await rewriteEncryptedAlterColumns(outDir, {
@@ -271,7 +267,7 @@ async function generateDrizzleEqlMigration(
     })
     if (rewritten.length > 0) {
       p.log.info(
-        `Rewrote ${rewritten.length} migration file(s) into a runnable ADD+DROP+RENAME for encrypted columns (safe on empty tables; see each file's header before running against populated data):`,
+        `Rewrote ${rewritten.length} migration file(s) to add staged encrypted columns while preserving the source columns:`,
       )
       for (const file of rewritten) p.log.step(`  - ${file}`)
     }
@@ -288,6 +284,25 @@ async function generateDrizzleEqlMigration(
   } catch (error) {
     // Advisory: the install migration itself is already written and valid.
     sweepIncomplete = true
+    const partial = error as Partial<{
+      rewritten: string[]
+      skipped: SkippedAlter[]
+    }>
+    if ((partial.rewritten?.length ?? 0) > 0) {
+      p.log.info(
+        `Rewrote ${partial.rewritten.length} migration file(s) before the sweep stopped:`,
+      )
+      for (const file of partial.rewritten) p.log.step(`  - ${file}`)
+    }
+    if ((partial.skipped?.length ?? 0) > 0) {
+      p.log.warn(
+        `Found ${partial.skipped.length} ALTER-to-encrypted statement(s) the sweep left alone. Review and fix them before running your migrations:`,
+      )
+      for (const { file, statement, reason } of partial.skipped) {
+        p.log.step(`  - ${file}: ${statement}`)
+        p.log.step(`      ${describeSkipReason(reason)}`)
+      }
+    }
     p.log.warn(
       `Could not sweep ${outDir} for unsafe ALTER COLUMN statements: ${
         error instanceof Error ? error.message : String(error)
@@ -295,12 +310,13 @@ async function generateDrizzleEqlMigration(
     )
   }
 
-  p.log.success(`Migration created: ${migrationPath}`)
   if (sweepIncomplete) {
-    p.log.warn(
-      `The ALTER COLUMN sweep did not fully complete — review the sibling migrations in ${outDir} before running drizzle-kit migrate, or you may apply broken/unsafe SQL.`,
+    p.log.error(
+      `The ALTER COLUMN sweep found unsafe or unverified SQL. The generated migration remains at ${migrationPath}, but review the sibling migrations in ${outDir} and use the staged stash encrypt flow before running drizzle-kit migrate.`,
     )
+    throw new CliExit(1)
   }
+  p.log.success(`Migration created: ${migrationPath}`)
   p.note(
     `Run your Drizzle migrations to install EQL v3:\n\n  ${execCommand(pm)} drizzle-kit migrate`,
     'Next Steps',

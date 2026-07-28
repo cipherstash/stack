@@ -221,8 +221,8 @@ describe('eqlMigrationCommand — Drizzle', () => {
   // drizzle-kit emits an un-runnable in-place `ALTER COLUMN ... SET DATA TYPE`
   // when a plaintext column is changed to an encrypted one. `eql install
   // --drizzle` has always swept the out directory for these; the v3
-  // migration-first path must do the same, or a v3 user is left with a broken
-  // migration and nothing to fix it (#693).
+  // migration-first path must do the same, but the rewrite is now add-only and
+  // fails closed when it cannot prove the source column.
   it('rewrites a sibling migration with a broken v3 ALTER COLUMN', async () => {
     const out = join(tmp, 'drizzle')
     mkdirSync(out, { recursive: true })
@@ -248,7 +248,7 @@ describe('eqlMigrationCommand — Drizzle', () => {
 
     const rewritten = readFileSync(sibling, 'utf-8')
     expect(rewritten).toContain(
-      'ALTER TABLE "users" ADD COLUMN "email__cipherstash_tmp" "public"."eql_v3_text_search";',
+      'ALTER TABLE "users" ADD COLUMN "email_encrypted" "public"."eql_v3_text_search";',
     )
     expect(rewritten).not.toContain('SET DATA TYPE')
   })
@@ -311,14 +311,15 @@ describe('eqlMigrationCommand — Drizzle', () => {
       return { status: 0, stdout: '', stderr: '' }
     })
 
-    await eqlMigrationCommand({ drizzle: true, out })
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out }),
+    ).rejects.toBeInstanceOf(CliExit)
 
     // The near-miss statement is left untouched...
     expect(readFileSync(sibling, 'utf-8')).toContain('SET DATA TYPE')
-    // ...and the closing note warns the sweep did not fully complete.
-    const warned = clack.log.warn.mock.calls.map((c) => String(c[0]))
-    expect(warned.some((msg) => msg.includes('did not fully complete'))).toBe(
-      true,
+    // ...and the command fails closed with the sweep error.
+    expect(clack.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('unsafe or unverified SQL'),
     )
   })
 
@@ -340,12 +341,15 @@ describe('eqlMigrationCommand — Drizzle', () => {
       return { status: 0, stdout: '', stderr: '' }
     })
 
-    await eqlMigrationCommand({ drizzle: true, out })
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out }),
+    ).rejects.toBeInstanceOf(CliExit)
 
     // Left exactly as written — a source-unknown statement is never rewritten.
     expect(readFileSync(sibling, 'utf-8')).toBe(unsafeAlter)
     // The per-statement report reached the user with the source-unknown
-    // remediation (the whole point of the reason), not a crash into the catch.
+    // remediation (the whole point of the reason), and the command failed
+    // closed instead of continuing.
     const stepped = clack.log.step.mock.calls.map((c) => String(c[0]))
     expect(stepped.some((msg) => msg.includes(sibling))).toBe(true)
     expect(
@@ -353,10 +357,8 @@ describe('eqlMigrationCommand — Drizzle', () => {
         msg.includes("Check the column's current type in the database"),
       ),
     ).toBe(true)
-    // And the closing note warns the sweep did not fully complete.
-    const warned = clack.log.warn.mock.calls.map((c) => String(c[0]))
-    expect(warned.some((msg) => msg.includes('did not fully complete'))).toBe(
-      true,
+    expect(clack.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('unsafe or unverified SQL'),
     )
   })
 
