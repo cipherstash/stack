@@ -2,7 +2,7 @@
   {
     "id": "cipherstash.install-eql-v3-bundle",
     "label": "Install EQL v3 bundle (eql-3.0.2: public.eql_v3_* domains + eql_v3.* functions)",
-    "operationClass": "data",
+    "operationClass": "additive",
     "invariantId": "cipherstash:install-eql-v3-bundle-v1",
     "target": {
       "id": "postgres"
@@ -26,6 +26,23 @@
       {
         "description": "verify the eql_v3.eq operator function exists",
         "sql": "SELECT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'eql_v3' AND p.proname = 'eq')"
+      }
+    ]
+  },
+  {
+    "id": "cipherstash.install-provides-eql-v3-3-0-2",
+    "label": "EQL 3.0.2 invariant — provided by the install bundle above (no additional SQL)",
+    "operationClass": "additive",
+    "invariantId": "cipherstash:upgrade-eql-v3-bundle-3.0.2-v1",
+    "target": {
+      "id": "postgres"
+    },
+    "precheck": [],
+    "execute": [],
+    "postcheck": [
+      {
+        "description": "verify the eql_v3 operator schema exists (the 3.0.2 bundle was installed by the preceding op)",
+        "sql": "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'eql_v3')"
       }
     ]
   }

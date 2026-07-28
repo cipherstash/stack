@@ -89,8 +89,12 @@ const PUBLISHED_MIGRATIONS = [
     dirName: CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
     metadata: v3Metadata,
     ops: v3Ops,
+    // Re-pinned once on the 1.0 release branch: the pre-GA re-emit that
+    // reclassified the install op `data` → `additive` and added the 3.0.2
+    // invariant-carrier op (so fresh-database `db init` passes its
+    // additive-only policy). The baked SQL digest is unchanged.
     migrationHash:
-      'sha256:2c8739076699b81bcf515f1f8ff23501ff1f2582b933cfd80c5fb5bcc3de9e12',
+      'sha256:c74e5f48971b5cd9bf22a6b42fd89d95d3ee2d223650d8311338eaf9abc414cf',
     installSqlSha256:
       '05860ae47b3760cbba9842b22ddf89cf3f03aa49c33b6386f736c271784094b1',
   },
@@ -113,17 +117,30 @@ const MIGRATIONS_DIR = join(
 )
 
 describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
-  it('installs under the v3 invariant with a single data-class rawSql op', () => {
-    expect(v3Ops).toHaveLength(1)
-    const op = (v3Ops as Array<Record<string, unknown>>)[0]!
-    expect(op.id).toBe('cipherstash.install-eql-v3-bundle')
-    expect(op.invariantId).toBe(CIPHERSTASH_V3_INVARIANTS.installBundle)
-    expect(op.invariantId).toBe('cipherstash:install-eql-v3-bundle-v1')
-    // `data`, not `additive`: this genesis edge moves no contract
-    // storage, and the aggregate integrity checker rejects a
-    // no-storage-movement edge without a data-class op — see the
-    // rationale comment in the migration file.
-    expect(op.operationClass).toBe('data')
+  it('installs under the v3 invariants with two additive rawSql ops', () => {
+    // Two ops, both `additive`, so fresh-database `db init` (additive-only
+    // policy) can walk this genesis edge: the bundle install itself, plus a
+    // no-SQL carrier op that declares the 3.0.2 upgrade invariant (the baked
+    // bundle IS the pinned release, so a fresh install lands at 3.0.2 and
+    // the shortest-path planner never needs the data-classed upgrade
+    // self-edge). `additive` is safe on this edge because the checker's
+    // no-op self-edge rule only fires when from === to, and this edge runs
+    // from: null → the empty-storage hash — see the rationale comment in
+    // the migration file.
+    expect(v3Ops).toHaveLength(2)
+    const [installOp, carrierOp] = v3Ops as Array<Record<string, unknown>>
+    expect(installOp!.id).toBe('cipherstash.install-eql-v3-bundle')
+    expect(installOp!.invariantId).toBe(CIPHERSTASH_V3_INVARIANTS.installBundle)
+    expect(installOp!.invariantId).toBe('cipherstash:install-eql-v3-bundle-v1')
+    expect(installOp!.operationClass).toBe('additive')
+    expect(carrierOp!.id).toBe('cipherstash.install-provides-eql-v3-3-0-2')
+    expect(carrierOp!.invariantId).toBe(
+      CIPHERSTASH_V3_INVARIANTS.upgradeBundle302,
+    )
+    expect(carrierOp!.operationClass).toBe('additive')
+    // The carrier ships no SQL — the preceding install op's bundle is
+    // already the 3.0.2 release.
+    expect(carrierOp!.execute).toEqual([])
   })
 
   it('every published migration is frozen — artefact identity and baked-SQL provenance are pinned', () => {
@@ -237,9 +254,16 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     // so `to` is the empty-storage hash (the contract models no tables).
     expect(v3Metadata.from).toBeNull()
     expect(v3Metadata.to).toBe(headRef.hash)
-    expect(v3Metadata.providedInvariants).toEqual([
-      CIPHERSTASH_V3_INVARIANTS.installBundle,
-    ])
+    // Provides BOTH invariants (sorted): the install itself, and the 3.0.2
+    // upgrade invariant carried because the baked bundle is the 3.0.2
+    // release — this is what lets a fresh database satisfy the head ref
+    // from this single all-additive edge.
+    expect(v3Metadata.providedInvariants).toEqual(
+      [
+        CIPHERSTASH_V3_INVARIANTS.installBundle,
+        CIPHERSTASH_V3_INVARIANTS.upgradeBundle302,
+      ].sort(),
+    )
   })
 
   it('adds a distinct 3.0.2 upgrade edge for already-baselined databases', () => {
