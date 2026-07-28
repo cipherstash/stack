@@ -229,8 +229,8 @@ export type WasmPlaintext =
  * intersection below, so they are required on EVERY arm — including the
  * `authStrategy` arm, which exists precisely so an end user's OIDC JWT does
  * the authorising. That is not an over-declaration this entry could relax:
- * the core requires both regardless of strategy, and consumes `clientKey` as
- * encryption key material before the strategy is ever consulted. Since
+ * the core requires both regardless of strategy, and loads `clientKey` as
+ * encryption key material before it ever calls `strategy.getToken()`. Since
  * `clientKey` is a workspace secret, no configuration of this entry can be
  * shipped to a browser bundle. Hence no `browser` export condition.
  * `__tests__/wasm-inline-core-credential-contract.test.ts` pins that contract
@@ -247,9 +247,10 @@ export type WasmClientConfig = {
   /**
    * Workspace client key — required by the WASM client on every auth path,
    * including `authStrategy`. This is **secret key material**, not an
-   * identifier: the core decodes it into a key provider at construction and
-   * uses it to perform encryption, independently of how requests are
-   * authorised. Keep it server-side (see the type-level note above).
+   * identifier: the core decodes it into the keyed permutations the
+   * searchable-index schemes run on, and does so before authenticating,
+   * independently of how requests are authorised. Keep it server-side (see
+   * the type-level note above).
    */
   clientKey: string
   // Provide exactly one of `accessKey` (we build the strategy) or a
