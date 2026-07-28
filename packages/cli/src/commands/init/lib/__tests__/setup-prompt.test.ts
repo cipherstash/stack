@@ -24,6 +24,12 @@ const baseCtx: SetupPromptContext = {
   },
 }
 
+function hasCompletePlanSequence(prompt: string): boolean {
+  return /`pnpm dlx stash encrypt backfill`[\s\S]*application read switch.*encrypted column by name and deploy[\s\S]*`pnpm dlx stash encrypt drop`/i.test(
+    prompt,
+  )
+}
+
 describe('renderSetupPrompt — orient + route (implement mode)', () => {
   it('emits integration + package manager in the header', () => {
     const out = renderSetupPrompt(baseCtx)
@@ -594,10 +600,15 @@ describe('renderSetupPrompt — plan templates are EQL v3-only', () => {
 
   it('gives the complete plan the supported backfill, read-switch, and drop sequence', () => {
     const out = plan('complete')
-    expect(out).toContain('`pnpm dlx stash encrypt backfill`')
-    expect(out).toMatch(/application read switch.*encrypted column by name/i)
-    expect(out).toContain('`pnpm dlx stash encrypt drop`')
+    expect(hasCompletePlanSequence(out)).toBe(true)
     expect(out).not.toContain('`cutover`')
+  })
+
+  it('requires the application read switch to be deployed before drop', () => {
+    const missingDeploy =
+      '`pnpm dlx stash encrypt backfill`, an application read switch to the EQL v3 encrypted column by name, `pnpm dlx stash encrypt drop`'
+
+    expect(hasCompletePlanSequence(missingDeploy)).toBe(false)
   })
 })
 
