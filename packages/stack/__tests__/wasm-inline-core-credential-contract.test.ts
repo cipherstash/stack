@@ -13,11 +13,12 @@
  * browser-safe. That is why there is no `browser` export condition and no
  * browser smoke test.
  *
- * Nothing else in the suite could have caught this: every other wasm test
- * mocks `newClient`, and `vitest.shared.ts` aliases the whole
- * `@cipherstash/protect-ffi/wasm-inline` specifier to a stub that throws. So
- * this file resolves the REAL module through Node — which the Vite alias does
- * not intercept — and asserts against the actual core.
+ * Nothing else in the suite could have caught this: every wasm test that
+ * constructs a client mocks `newClient`, and `vitest.shared.ts` aliases the
+ * whole `@cipherstash/protect-ffi/wasm-inline` specifier to a stub whose
+ * `newClient` throws. So this file resolves the REAL module through Node —
+ * which the Vite alias does not intercept — and asserts against the actual
+ * core.
  *
  * IF THIS TEST FAILS, THAT IS GOOD NEWS. It means the core relaxed the
  * requirement and browser support should be re-examined: the `browser` export
@@ -28,11 +29,15 @@
  * Runs offline. Every failure asserted here happens during argument
  * deserialisation or key loading, before any ZeroKMS / CTS network call, so no
  * `CS_*` credentials are needed. The credentialed round-trip lives in
- * `e2e/wasm/roundtrip.test.ts` (Deno).
+ * `e2e/wasm/roundtrip.test.ts` (Deno) — note that it exercises the
+ * `accessKey` arm, so the federation arm reasoned about here has no live
+ * coverage anywhere.
  */
 
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { pathToFileURL } from 'node:url'
+import path from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 // Node's resolver, not Vite's — this is what dodges the stub alias. The
@@ -69,10 +74,28 @@ const HEX_BUT_NOT_KEY_MATERIAL = 'a'.repeat(64)
 // there is the point of the third test.
 const CBOR_KEY_WITH_BAD_P1 = 'a1627031' + '40'
 
+// Synthetic key material that is STRUCTURALLY complete — enough to clear the
+// key provider entirely, which is what makes the positive control below
+// possible. Derived from the core's own error messages, not from any real
+// credential: the struct is `{ p1, p2_from, p2_to, p3 }`, each a
+// `Permutation { permutation: [...] }`. Here every permutation is empty, so
+// this is well-formed but cryptographically worthless — it exists only to get
+// past key loading and observe what happens next.
+const WELL_FORMED_KEY_MATERIAL =
+  'a4627031a16b7065726d75746174696f6e80' + // p1:      { permutation: [] }
+  '6770325f66726f6da16b7065726d75746174696f6e80' + // p2_from: { permutation: [] }
+  '6570325f746fa16b7065726d75746174696f6e80' + // p2_to:   { permutation: [] }
+  '627033a16b7065726d75746174696f6e80' // p3:      { permutation: [] }
+
 /**
- * An `OidcFederationStrategy`-shaped stand-in. The core calls `getToken()` on
- * whatever it is handed, so a plain object is a faithful stand-in — and it
- * records whether the call happened, which is the point of these tests.
+ * An `OidcFederationStrategy`-shaped stand-in. The core duck-types the
+ * strategy — it checks `getToken` is a function and calls it — so a plain
+ * object is a faithful stand-in, and it records whether the call happened,
+ * which is the point of these tests.
+ *
+ * The token is deliberately not a well-formed JWT. That guarantees the one
+ * test that does reach auth stops at local token parsing, so this file stays
+ * offline no matter how far into the pipeline a future core gets.
  */
 function federationStrategy() {
   const calls = { getToken: 0 }
@@ -101,7 +124,9 @@ describe('protect-ffi WASM core: credential contract under OIDC federation (#804
     ).rejects.toThrow(/missing field `clientKey`/)
 
     // Rejected during deserialisation of the options struct — the strategy was
-    // never consulted, so federation cannot substitute for the key.
+    // never INVOKED, so federation cannot substitute for the key. (The core
+    // does look at `opts.strategy` before this point, to check it is present
+    // and carries a `getToken`; what never happens is the call.)
     expect(calls.getToken).toBe(0)
   })
 
@@ -145,7 +170,9 @@ describe('protect-ffi WASM core: credential contract under OIDC federation (#804
       }),
     ).rejects.toThrow(/Key provider error: Invalid client key/)
 
-    // Neither stage consulted the strategy: key loading strictly precedes auth.
+    // Neither stage invoked the strategy: key loading strictly precedes auth.
+    // The last test in this file supplies the other half of that claim, by
+    // getting past key loading and watching `getToken` fire.
     expect(hexStage.calls.getToken).toBe(0)
     expect(providerStage.calls.getToken).toBe(0)
   })
@@ -175,5 +202,75 @@ describe('protect-ffi WASM core: credential contract under OIDC federation (#804
     ).rejects.toThrow(/expected struct Permutation/)
 
     expect(calls.getToken).toBe(0)
+  })
+
+  it('reads the strategy off `opts.strategy`, before it deserialises the credentials', async () => {
+    // Fixes the meaning of every test above. They all assert "even when an
+    // auth strategy is supplied" — which is only worth anything if the core
+    // reads the field they supply it on. It does: omitting `strategy`
+    // entirely beats `missing field \`clientKey\`` to the punch, so the
+    // strategy is seen before the credentials are even deserialised.
+    //
+    // This is also the drift guard. If protect-ffi renamed the option, the
+    // tests above would be handing the core nothing and quietly testing the
+    // no-strategy path instead. They would fail rather than pass silently
+    // (`opts.strategy is required` matches none of their regexes), and this
+    // test names the reason.
+    await expect(
+      newClient({
+        clientId: CLIENT_ID,
+        clientKey: HEX_BUT_NOT_KEY_MATERIAL,
+        encryptConfig,
+        eqlVersion: 3,
+      }),
+    ).rejects.toThrow(/opts\.strategy is required/)
+  })
+
+  it('invokes `getToken` only after key loading succeeds', async () => {
+    const { calls, strategy } = federationStrategy()
+
+    // The positive control for every `toBe(0)` above. Without it those
+    // assertions could not tell "auth comes after key loading" apart from
+    // "auth never happens during `newClient` at all" — a counter that is
+    // never incremented reads as 0 either way.
+    //
+    // Structurally complete key material clears the key provider, and the
+    // core then calls `getToken` exactly once, failing on the deliberately
+    // malformed token this stand-in returns. So: auth IS reached during
+    // construction, it is reached only after the key is loaded, and the
+    // counter these tests rely on is live.
+    await expect(
+      newClient({
+        clientId: CLIENT_ID,
+        clientKey: WELL_FORMED_KEY_MATERIAL,
+        strategy,
+        encryptConfig,
+        eqlVersion: 3,
+      }),
+    ).rejects.toThrow(/Invalid token: JWT must have three segments/)
+
+    expect(calls.getToken).toBe(1)
+  })
+})
+
+describe('@cipherstash/stack declares no browser build (#804)', () => {
+  it('has no `browser` export condition on any subpath', () => {
+    // The consequence of everything above, and the one part of it a reader
+    // can act on by accident. `src/wasm-inline.ts` tells callers there is no
+    // `browser` condition and explains why; nothing enforced that, so adding
+    // one to fix a bundler complaint would ship a workspace secret to the
+    // browser and leave the doc silently wrong.
+    //
+    // Same rule as the rest of this file: if the core stops requiring
+    // `clientKey`, come back through #804 — don't just delete this.
+    const packageJson = JSON.parse(
+      readFileSync(
+        path.resolve(fileURLToPath(import.meta.url), '../../package.json'),
+        'utf8',
+      ),
+    ) as { browser?: unknown; exports: Record<string, unknown> }
+
+    expect(packageJson.browser).toBeUndefined()
+    expect(JSON.stringify(packageJson.exports)).not.toContain('"browser"')
   })
 })
