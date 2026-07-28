@@ -268,6 +268,16 @@ them is the standard mistake. Identity-bound encryption needs both:
 > native entry. Don't reach for `as any` to force a lock context through here —
 > there is nothing on the other side to receive it.
 
+> [!WARNING]
+> **A per-user `authStrategy` does not make this entry browser-safe.** `clientId`
+> and `clientKey` are required on *every* auth path, `authStrategy` included —
+> the client will not construct without them. `clientKey` is a workspace secret
+> that the core decodes into cryptographic key material, so it must never reach
+> a browser bundle. "Edge" here means a server-side runtime: a Deno service, a
+> Worker, an Edge Function. There is no `browser` export condition, and browser
+> support needs a change in the core, not in the SDK
+> ([#804](https://github.com/cipherstash/stack/issues/804)).
+
 The strategy replaced the old per-operation token ceremony
 (`LockContext.identify()`, deprecated) — it did **not** replace the lock
 context, and the native entry still chains `.withLockContext()` for that.
