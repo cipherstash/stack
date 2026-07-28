@@ -246,8 +246,8 @@ importers:
         specifier: catalog:repo
         version: 0.42.0(@cipherstash/auth-darwin-arm64@0.42.0)(@cipherstash/auth-darwin-x64@0.42.0)(@cipherstash/auth-linux-arm64-gnu@0.42.0)(@cipherstash/auth-linux-x64-gnu@0.42.0)(@cipherstash/auth-linux-x64-musl@0.42.0)(@cipherstash/auth-win32-x64-msvc@0.42.0)
       '@cipherstash/eql':
-        specifier: 3.0.2
-        version: 3.0.2
+        specifier: 3.0.4
+        version: 3.0.4
       '@cipherstash/migrate':
         specifier: workspace:*
         version: link:../migrate
@@ -396,8 +396,8 @@ importers:
         version: 3.25.76
     devDependencies:
       '@cipherstash/eql':
-        specifier: 3.0.2
-        version: 3.0.2
+        specifier: 3.0.4
+        version: 3.0.4
       '@clack/prompts':
         specifier: ^1.7.0
         version: 1.7.0
@@ -512,8 +512,8 @@ importers:
   packages/stack-prisma:
     dependencies:
       '@cipherstash/eql':
-        specifier: 3.0.2
-        version: 3.0.2
+        specifier: 3.0.4
+        version: 3.0.4
       '@cipherstash/stack':
         specifier: workspace:*
         version: link:../stack
@@ -985,8 +985,8 @@ packages:
       '@cipherstash/auth-win32-x64-msvc':
         optional: true
 
-  '@cipherstash/eql@3.0.2':
-    resolution: {integrity: sha512-E85o0aoOqgCW6RReLtJ0YLh/ExRlmDJo7LlJGpWPoMTVaw+CW8o11DJ4oJIF1vFtuxSVxNULuPzzBuVmpTvvcA==}
+  '@cipherstash/eql@3.0.4':
+    resolution: {integrity: sha512-h+/1bMCuglE9pTCZLpVfPTQY2nic5JRoNl+rMQX2B/5cHCWaN5p6Q3OjEOa4Wqf/a7XWn43S/vcJLvWYYvGJuQ==}
 
   '@cipherstash/protect-ffi-darwin-arm64@0.30.0':
     resolution: {integrity: sha512-MbUfH0em2ysQxEV8+ed6442Q/EPQbAh5p17p1p4+JLUgbQJwPvxP8gm0yjeVrYBuGnZodsMqZwgOgEGt7360Ig==}
@@ -4077,7 +4077,7 @@ snapshots:
       '@cipherstash/auth-linux-x64-musl': 0.42.0
       '@cipherstash/auth-win32-x64-msvc': 0.42.0
 
-  '@cipherstash/eql@3.0.2': {}
+  '@cipherstash/eql@3.0.4': {}
 
   '@cipherstash/protect-ffi-darwin-arm64@0.30.0':
     optional: true

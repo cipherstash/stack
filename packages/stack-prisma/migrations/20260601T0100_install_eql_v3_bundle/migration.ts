@@ -115,14 +115,16 @@ export default class M extends Migration {
       // Invariant carrier: the install op above already ships the pinned
       // release's bundle (eql-3.0.2 — `readVerifiedInstallSql()` is digest-
       // verified against the installed manifest), so a fresh database that
-      // walks this genesis edge IS at 3.0.2. Declaring the upgrade
-      // invariant here lets the shortest-path planner
-      // (`computeExtensionSpaceApplyPath` / `findPathWithDecision`) satisfy
-      // the head ref from this single all-additive edge, so fresh-database
-      // `db init` (additive-only policy) never needs to walk the
-      // `data`-classed 3.0.2 upgrade self-edge. Databases installed at
-      // 3.0.0 still reach 3.0.2 through that upgrade edge via `migrate`,
-      // whose policy allows all classes.
+      // walks this genesis edge IS at the pinned release (3.0.4, a
+      // superset of every earlier v3 surface, so the 3.0.2 invariant is
+      // honestly satisfied too). Declaring the upgrade invariants here
+      // lets the shortest-path planner (`computeExtensionSpaceApplyPath` /
+      // `findPathWithDecision`) satisfy the head ref from this single
+      // all-additive edge, so fresh-database `db init` (additive-only
+      // policy) never needs to walk the `data`-classed upgrade self-edges.
+      // Databases installed at an older bundle still reach the pinned
+      // release through those upgrade edges via `migrate`, whose policy
+      // allows all classes.
       rawSql({
         id: 'cipherstash.install-provides-eql-v3-3-0-2',
         label:
@@ -135,8 +137,24 @@ export default class M extends Migration {
         postcheck: [
           {
             description:
-              'verify the eql_v3 operator schema exists (the 3.0.2 bundle was installed by the preceding op)',
+              'verify the eql_v3 operator schema exists (the bundle was installed by the preceding op)',
             sql: "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'eql_v3')",
+          },
+        ],
+      }),
+      rawSql({
+        id: 'cipherstash.install-provides-eql-v3-3-0-4',
+        label:
+          'EQL 3.0.4 invariant — provided by the install bundle above (no additional SQL)',
+        operationClass: 'additive',
+        invariantId: CIPHERSTASH_V3_INVARIANTS.upgradeBundle304,
+        target: { id: 'postgres' },
+        precheck: [],
+        execute: [],
+        postcheck: [
+          {
+            description: `verify eql_v3.version() reports ${releaseManifest.eqlVersion}`,
+            sql: `SELECT eql_v3.version() = '${releaseManifest.eqlVersion}'`,
           },
         ],
       }),
