@@ -81,12 +81,22 @@ pub trait Cipher: Sized {
         self.encrypt_bytes_vec(copy, aad)
     }
 
-    /// Begin encrypting a sequence of values. `size_hint` lets the implementation
-    /// preallocate when known.
-    fn encrypt_seq(self, size_hint: Option<usize>) -> Self::SeqCipher;
+    /// Begin encrypting a sequence of values under `aad`. `size_hint` lets the
+    /// implementation preallocate when known.
+    ///
+    /// The AAD is captured **once**, here, and applies to every element and to
+    /// the empty marker. Sub-cipher methods therefore take no AAD of their
+    /// own: there is no second place to supply it, so an element and its
+    /// container can never end up sealed under different AAD.
+    fn encrypt_seq<'a, A>(self, size_hint: Option<usize>, aad: A) -> Self::SeqCipher
+    where
+        A: IntoAad<'a>;
 
-    /// Begin encrypting a map of key/value pairs.
-    fn encrypt_map(self) -> Self::MapCipher;
+    /// Begin encrypting a map of key/value pairs under `aad`, captured once —
+    /// see [`encrypt_seq`](Cipher::encrypt_seq).
+    fn encrypt_map<'a, A>(self, aad: A) -> Self::MapCipher
+    where
+        A: IntoAad<'a>;
 
     /// Encrypt a present optional value. Default forwards to the inner value's
     /// [`Encrypt`] impl — the `Some` discriminator is implicit in the structural
@@ -136,11 +146,10 @@ pub trait Cipher: Sized {
 
 /// Sub-cipher driving the encryption of a sequence of values.
 ///
-/// Obtained from [`Cipher::encrypt_seq`]. Each element is encrypted with
+/// Obtained from [`Cipher::encrypt_seq`], which fixes the AAD for the whole
+/// sequence. Each element is encrypted with
 /// [`encrypt_next`](SeqCipher::encrypt_next); the caller finalises the sequence
-/// with [`end`](SeqCipher::end) to produce the cipher's `Ok` output. The AAD is
-/// supplied again at finalisation so an empty sequence, which has no element
-/// ciphertexts to authenticate it, can still produce an authenticated marker.
+/// with [`end`](SeqCipher::end) to produce the cipher's `Ok` output.
 pub trait SeqCipher: Sized {
     /// The final encrypted output produced by [`end`](SeqCipher::end).
     type Ok;
@@ -148,10 +157,12 @@ pub trait SeqCipher: Sized {
     type Error;
 
     /// Encrypt the next element in the sequence, returning the updated cipher.
-    fn encrypt_next<'a, T, A>(self, data: T, aad: A) -> Result<Self, Self::Error>
+    ///
+    /// The element is sealed against the AAD supplied to
+    /// [`Cipher::encrypt_seq`].
+    fn encrypt_next<T>(self, data: T) -> Result<Self, Self::Error>
     where
-        T: Encrypt,
-        A: IntoAad<'a>;
+        T: Encrypt;
 
     /// Append a passthrough (unencrypted) element to the sequence.
     ///
@@ -163,27 +174,26 @@ pub trait SeqCipher: Sized {
 
     /// Finalise the sequence and return the produced ciphertext container.
     ///
-    /// Implementations must authenticate `aad` even when no encrypted elements
-    /// were appended. Otherwise an empty sequence used as a map value would not
-    /// authenticate the map entry's derived AAD, allowing its cleartext key to
-    /// be renamed without detection. The empty marker must be sealed against
-    /// [`Aad::for_empty_sequence`](crate::Aad::for_empty_sequence) of the
-    /// caller's AAD.
+    /// Implementations must authenticate the sequence's AAD even when no
+    /// encrypted elements were appended. Otherwise an empty sequence used as a
+    /// map value would not authenticate the map entry's derived AAD, allowing
+    /// its cleartext key to be renamed without detection. The empty marker
+    /// must be sealed against
+    /// [`Aad::for_empty_sequence`](crate::Aad::for_empty_sequence) of that AAD.
     ///
     /// A sequence whose elements are all passthrough must be **rejected**:
     /// passthrough elements authenticate nothing, so such a container would
-    /// carry no tag binding `aad` at all — decrypt implementations must
+    /// carry no tag binding the AAD at all — decrypt implementations must
     /// likewise refuse to open one.
-    fn end<'a, A>(self, aad: A) -> Result<Self::Ok, Self::Error>
-    where
-        A: IntoAad<'a>;
+    fn end(self) -> Result<Self::Ok, Self::Error>;
 }
 
 /// Sub-cipher driving the encryption of a map of key/value pairs.
 ///
-/// Obtained from [`Cipher::encrypt_map`]. Keys are not encrypted; values are.
-/// The expected call order is key → value → key → value → … → `end`, or use
-/// the [`encrypt_entry`](MapCipher::encrypt_entry) convenience method.
+/// Obtained from [`Cipher::encrypt_map`], which fixes the AAD for the whole
+/// map. Keys are not encrypted; values are. The expected call order is
+/// key → value → key → value → … → `end`, or use the
+/// [`encrypt_entry`](MapCipher::encrypt_entry) convenience method.
 ///
 /// Keys may be `&'static str` or owned `String`s (anything
 /// `Into<Cow<'static, str>>`), so maps with runtime-derived keys — e.g. values
@@ -222,26 +232,23 @@ pub trait MapCipher: Sized {
 
     /// Encrypt the value associated with the most recently supplied key.
     ///
-    /// Implementations **must not** seal the value against `aad` directly:
-    /// they must bind the pending key alongside it via
+    /// Implementations **must not** seal the value against the map's AAD
+    /// directly: they must bind the pending key alongside it via
     /// [`Aad::for_map_entry`](crate::Aad::for_map_entry), so that key and value
     /// are cryptographically inseparable in the stored ciphertext.
-    fn encrypt_value<'a, T, A>(self, value: T, aad: A) -> Result<Self, Self::Error>
+    fn encrypt_value<T>(self, value: T) -> Result<Self, Self::Error>
     where
-        T: Encrypt,
-        A: IntoAad<'a>;
+        T: Encrypt;
 
     /// Convenience for [`encrypt_key`](MapCipher::encrypt_key) followed by
     /// [`encrypt_value`](MapCipher::encrypt_value).
-    fn encrypt_entry<'a, K, T, A>(self, key: K, value: T, aad: A) -> Result<Self, Self::Error>
+    fn encrypt_entry<K, T>(self, key: K, value: T) -> Result<Self, Self::Error>
     where
         K: Into<Cow<'static, str>>,
         T: Encrypt,
-        A: IntoAad<'a>,
         Self: Sized,
     {
-        self.encrypt_key(key)
-            .and_then(|mc| mc.encrypt_value(value, aad))
+        self.encrypt_key(key).and_then(|mc| mc.encrypt_value(value))
     }
 
     /// Insert a passthrough (unencrypted) entry under `key`. Equivalent to
@@ -258,16 +265,13 @@ pub trait MapCipher: Sized {
 
     /// Finalise the map and return the produced ciphertext container.
     ///
-    /// Implementations must authenticate `aad` even when no encrypted entries
-    /// were appended. Otherwise an empty map used as a map value would not
-    /// authenticate the outer entry's derived AAD, allowing its cleartext key
-    /// to be renamed without detection. The empty marker must be sealed
-    /// against [`Aad::for_empty_map`](crate::Aad::for_empty_map) of the
-    /// caller's AAD.
+    /// Implementations must authenticate the map's AAD even when no encrypted
+    /// entries were appended. Otherwise an empty map used as a map value would
+    /// not authenticate the outer entry's derived AAD, allowing its cleartext
+    /// key to be renamed without detection. The empty marker must be sealed
+    /// against [`Aad::for_empty_map`](crate::Aad::for_empty_map) of that AAD.
     ///
     /// A map whose entries are all passthrough must be **rejected** — see
     /// [`SeqCipher::end`].
-    fn end<'a, A>(self, aad: A) -> Result<Self::Ok, Self::Error>
-    where
-        A: IntoAad<'a>;
+    fn end(self) -> Result<Self::Ok, Self::Error>;
 }

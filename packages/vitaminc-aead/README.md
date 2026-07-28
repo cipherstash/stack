@@ -59,12 +59,20 @@ impl<'c> Cipher for &'c MyCipher {
         unimplemented!("seal `data` with AAD and return a ciphertext")
     }
 
-    fn encrypt_seq(self, size_hint: Option<usize>) -> Self::SeqCipher {
-        unimplemented!("return a SeqCipher initialised with `size_hint` capacity")
+    // The AAD is captured here, once, and covers every element and the
+    // empty marker — the sub-cipher methods take none of their own.
+    fn encrypt_seq<'a, A>(self, size_hint: Option<usize>, aad: A) -> Self::SeqCipher
+    where
+        A: IntoAad<'a>,
+    {
+        unimplemented!("return a SeqCipher holding `aad`, sized by `size_hint`")
     }
 
-    fn encrypt_map(self) -> Self::MapCipher {
-        unimplemented!("return a MapCipher")
+    fn encrypt_map<'a, A>(self, aad: A) -> Self::MapCipher
+    where
+        A: IntoAad<'a>,
+    {
+        unimplemented!("return a MapCipher holding `aad`")
     }
 
     fn encrypt_none<'a, A>(self, _aad: A) -> Result<Self::Ok, Self::Error>
@@ -86,10 +94,9 @@ impl<'c> SeqCipher for MySeqCipher<'c> {
     type Ok = MyCipherText;
     type Error = Unspecified;
 
-    fn encrypt_next<'a, T, A>(self, _data: T, _aad: A) -> Result<Self, Self::Error>
+    fn encrypt_next<T>(self, _data: T) -> Result<Self, Self::Error>
     where
         T: vitaminc_aead::Encrypt,
-        A: IntoAad<'a>,
     { unimplemented!() }
 
     fn passthrough_next<T>(self, _value: T) -> Result<Self, Self::Error>
@@ -97,10 +104,7 @@ impl<'c> SeqCipher for MySeqCipher<'c> {
         T: Any + Send + 'static,
     { unimplemented!() }
 
-    fn end<'a, A>(self, _aad: A) -> Result<Self::Ok, Self::Error>
-    where
-        A: IntoAad<'a>,
-    { unimplemented!() }
+    fn end(self) -> Result<Self::Ok, Self::Error> { unimplemented!() }
 }
 
 impl<'c> MapCipher for MyMapCipher<'c> {
@@ -112,12 +116,12 @@ impl<'c> MapCipher for MyMapCipher<'c> {
         K: Into<std::borrow::Cow<'static, str>>,
     { unimplemented!() }
 
-    // Must seal the value against `Aad::for_map_entry(aad, key)` — see the
-    // `MapCipher` docs on key authentication.
-    fn encrypt_value<'a, T, A>(self, _value: T, _aad: A) -> Result<Self, Self::Error>
+    // Must seal the value against `Aad::for_map_entry(aad, key)` of the AAD
+    // this MapCipher was constructed with — see the `MapCipher` docs on key
+    // authentication.
+    fn encrypt_value<T>(self, _value: T) -> Result<Self, Self::Error>
     where
         T: vitaminc_aead::Encrypt,
-        A: IntoAad<'a>,
     { unimplemented!() }
 
     fn passthrough_entry<K, T>(self, _key: K, _value: T) -> Result<Self, Self::Error>
@@ -126,10 +130,7 @@ impl<'c> MapCipher for MyMapCipher<'c> {
         T: Any + Send + 'static,
     { unimplemented!() }
 
-    fn end<'a, A>(self, _aad: A) -> Result<Self::Ok, Self::Error>
-    where
-        A: IntoAad<'a>,
-    { unimplemented!() }
+    fn end(self) -> Result<Self::Ok, Self::Error> { unimplemented!() }
 }
 ```
 
@@ -233,14 +234,14 @@ impl Encrypt for User {
         C: Cipher,
         A: IntoAad<'a>,
     {
-        let aad = aad.into_aad();
         // Encrypt the user as a map of named fields, encrypting only the
         // password hash. id and email are not stored here for brevity —
         // a real implementation would also encrypt or pass them through.
+        // The AAD is supplied once, to `encrypt_map`.
         cipher
-            .encrypt_map()
-            .encrypt_entry("password_hash", self.password_hash, aad.clone())?
-            .end(aad)
+            .encrypt_map(aad)
+            .encrypt_entry("password_hash", self.password_hash)?
+            .end()
     }
 }
 

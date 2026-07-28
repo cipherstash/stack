@@ -40,11 +40,14 @@ impl<'a> Aad<'a> {
         self.0.is_empty()
     }
 
-    /// Converts a borrowed `Aad` into an owned one, copying the bytes if necessary.
-    pub fn into_owned(self) -> Aad<'a> {
+    /// Converts a borrowed `Aad` into an owned one, copying the bytes if
+    /// necessary. The result borrows nothing, so it can outlive the input —
+    /// which is what lets the sequence and map sub-ciphers hold the AAD they
+    /// were constructed with for the lifetime of the builder chain.
+    pub fn into_owned(self) -> Aad<'static> {
         match self.0 {
-            x @ Cow::Borrowed(_) => Self(x.into_owned().into()),
-            Cow::Owned(_) => self,
+            Cow::Borrowed(slice) => Aad(Cow::Owned(slice.to_vec())),
+            Cow::Owned(owned) => Aad(Cow::Owned(owned)),
         }
     }
 

@@ -368,11 +368,17 @@ mod tests {
             Ok(data.risky_unwrap())
         }
 
-        fn encrypt_seq(self, _size_hint: Option<usize>) -> Self::SeqCipher {
+        fn encrypt_seq<'a, A>(self, _size_hint: Option<usize>, _aad: A) -> Self::SeqCipher
+        where
+            A: IntoAad<'a>,
+        {
             UnusedSeq
         }
 
-        fn encrypt_map(self) -> Self::MapCipher {
+        fn encrypt_map<'a, A>(self, _aad: A) -> Self::MapCipher
+        where
+            A: IntoAad<'a>,
+        {
             UnusedMap
         }
 
@@ -396,10 +402,9 @@ mod tests {
         type Ok = Vec<u8>;
         type Error = Unspecified;
 
-        fn encrypt_next<'a, T, A>(self, _data: T, _aad: A) -> Result<Self, Self::Error>
+        fn encrypt_next<T>(self, _data: T) -> Result<Self, Self::Error>
         where
             T: Encrypt,
-            A: IntoAad<'a>,
         {
             Ok(self)
         }
@@ -411,10 +416,7 @@ mod tests {
             Ok(self)
         }
 
-        fn end<'a, A>(self, _aad: A) -> Result<Self::Ok, Self::Error>
-        where
-            A: IntoAad<'a>,
-        {
+        fn end(self) -> Result<Self::Ok, Self::Error> {
             Ok(Vec::new())
         }
     }
@@ -430,10 +432,9 @@ mod tests {
             Ok(self)
         }
 
-        fn encrypt_value<'a, T, A>(self, _value: T, _aad: A) -> Result<Self, Self::Error>
+        fn encrypt_value<T>(self, _value: T) -> Result<Self, Self::Error>
         where
             T: Encrypt,
-            A: IntoAad<'a>,
         {
             Ok(self)
         }
@@ -446,10 +447,7 @@ mod tests {
             Ok(self)
         }
 
-        fn end<'a, A>(self, _aad: A) -> Result<Self::Ok, Self::Error>
-        where
-            A: IntoAad<'a>,
-        {
+        fn end(self) -> Result<Self::Ok, Self::Error> {
             Ok(Vec::new())
         }
     }

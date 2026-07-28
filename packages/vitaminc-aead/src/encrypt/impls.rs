@@ -1,7 +1,7 @@
 use super::{Cipher, Encrypt};
 use crate::{
     cipher::{MapCipher, SeqCipher},
-    Aad, IntoAad,
+    IntoAad,
 };
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -43,21 +43,20 @@ impl<T> Encrypt for Vec<T>
 where
     T: Encrypt,
 {
-    /// All entries in the vec are encrypted with the same Aad.
-    /// Passing `aad` as a reference otherwise the value will be cloned for each element
+    /// Every element is encrypted under the sequence's AAD, which
+    /// [`Cipher::encrypt_seq`] captures once.
     fn encrypt_with_aad<'a, C: Cipher, A: IntoAad<'a>>(
         self,
         cipher: C,
         aad: A,
     ) -> Result<C::Ok, C::Error> {
-        let aad: Aad = aad.into_aad();
         let len = self.len();
 
         self.into_iter()
-            .try_fold(cipher.encrypt_seq(Some(len)), |c, item| {
-                c.encrypt_next(item, aad.clone())
+            .try_fold(cipher.encrypt_seq(Some(len), aad), |c, item| {
+                c.encrypt_next(item)
             })?
-            .end(aad)
+            .end()
     }
 }
 
@@ -86,14 +85,11 @@ where
         cipher: C,
         aad: A,
     ) -> Result<C::Ok, C::Error> {
-        let aad: Aad = aad.into_aad();
-
         self.into_iter()
-            .try_fold(cipher.encrypt_map(), |c, (k, v)| {
-                c.encrypt_key(k)
-                    .and_then(|c| c.encrypt_value(v, aad.clone()))
+            .try_fold(cipher.encrypt_map(aad), |c, (k, v)| {
+                c.encrypt_key(k).and_then(|c| c.encrypt_value(v))
             })?
-            .end(aad)
+            .end()
     }
 }
 
