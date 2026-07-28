@@ -143,6 +143,11 @@ import { hasBuildColumnKeyMap } from '@/types'
 // Re-exported so edge consumers don't need a separate `@cipherstash/auth`
 // import (pair `OidcFederationStrategy` with `cookieStore` from
 // `@cipherstash/auth/cookies` for cross-invocation token caching).
+//
+// "Edge" here means a server-side runtime — Deno, Bun, a Cloudflare Worker, a
+// Supabase Edge Function. `OidcFederationStrategy` changes who a request
+// authenticates AS; it does not remove the `clientKey` requirement, so it does
+// not make this entry safe to ship to a browser. See `WasmClientConfig` (#804).
 export {
   AccessKeyStrategy,
   OidcFederationStrategy,
@@ -219,11 +224,33 @@ export type WasmPlaintext =
  *
  * Mirrors the Node `ClientConfig`: `authStrategy` is the documented field,
  * `strategy` is retained as a deprecated alias (see below).
+ *
+ * NOT BROWSER-SAFE (#804). `clientId` and `clientKey` sit on the base of the
+ * intersection below, so they are required on EVERY arm — including the
+ * `authStrategy` arm, which exists precisely so an end user's OIDC JWT does
+ * the authorising. That is not an over-declaration this entry could relax:
+ * the core requires both regardless of strategy, and consumes `clientKey` as
+ * encryption key material before the strategy is ever consulted. Since
+ * `clientKey` is a workspace secret, no configuration of this entry can be
+ * shipped to a browser bundle. Hence no `browser` export condition.
+ * `__tests__/wasm-inline-core-credential-contract.test.ts` pins that contract
+ * against the real core — if it starts failing, the core changed and browser
+ * support is worth revisiting.
  */
 export type WasmClientConfig = {
-  /** Workspace client identifier — required by the WASM client. */
+  /**
+   * Workspace client identifier — required by the WASM client on every auth
+   * path, including `authStrategy`. Unlike the Node `ClientConfig`, which can
+   * fall back to `CS_CLIENT_ID`, this entry has no environment to read.
+   */
   clientId: string
-  /** Workspace client key — required by the WASM client. */
+  /**
+   * Workspace client key — required by the WASM client on every auth path,
+   * including `authStrategy`. This is **secret key material**, not an
+   * identifier: the core decodes it into a key provider at construction and
+   * uses it to perform encryption, independently of how requests are
+   * authorised. Keep it server-side (see the type-level note above).
+   */
   clientKey: string
   // Provide exactly one of `accessKey` (we build the strategy) or a
   // pre-built auth strategy — never both, never neither.
