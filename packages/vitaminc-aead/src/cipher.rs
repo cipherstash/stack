@@ -102,6 +102,12 @@ pub trait Cipher: Sized {
     /// Encrypt the absent case of an optional value. Must produce a
     /// cryptographically authenticated marker — distinguishable from any
     /// `Some(_)` ciphertext and bound to `aad` so it cannot be forged.
+    ///
+    /// Implementations must seal the marker against
+    /// [`Aad::for_none`](crate::Aad::for_none) of the caller's AAD (and the
+    /// decrypt side must verify the sealed plaintext is empty under the same
+    /// derivation), so a `Some(_)` leaf sealed under the bare AAD can never
+    /// be re-tagged as an authenticated absence.
     fn encrypt_none<'a, A>(self, aad: A) -> Result<Self::Ok, Self::Error>
     where
         A: IntoAad<'a>;
@@ -160,7 +166,14 @@ pub trait SeqCipher: Sized {
     /// Implementations must authenticate `aad` even when no encrypted elements
     /// were appended. Otherwise an empty sequence used as a map value would not
     /// authenticate the map entry's derived AAD, allowing its cleartext key to
-    /// be renamed without detection.
+    /// be renamed without detection. The empty marker must be sealed against
+    /// [`Aad::for_empty_sequence`](crate::Aad::for_empty_sequence) of the
+    /// caller's AAD.
+    ///
+    /// A sequence whose elements are all passthrough must be **rejected**:
+    /// passthrough elements authenticate nothing, so such a container would
+    /// carry no tag binding `aad` at all — decrypt implementations must
+    /// likewise refuse to open one.
     fn end<'a, A>(self, aad: A) -> Result<Self::Ok, Self::Error>
     where
         A: IntoAad<'a>;
@@ -248,7 +261,12 @@ pub trait MapCipher: Sized {
     /// Implementations must authenticate `aad` even when no encrypted entries
     /// were appended. Otherwise an empty map used as a map value would not
     /// authenticate the outer entry's derived AAD, allowing its cleartext key
-    /// to be renamed without detection.
+    /// to be renamed without detection. The empty marker must be sealed
+    /// against [`Aad::for_empty_map`](crate::Aad::for_empty_map) of the
+    /// caller's AAD.
+    ///
+    /// A map whose entries are all passthrough must be **rejected** — see
+    /// [`SeqCipher::end`].
     fn end<'a, A>(self, aad: A) -> Result<Self::Ok, Self::Error>
     where
         A: IntoAad<'a>;

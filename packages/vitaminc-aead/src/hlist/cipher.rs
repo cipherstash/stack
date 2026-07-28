@@ -70,6 +70,12 @@ where
     L: HList,
 {
     /// Add an encrypted entry.
+    ///
+    /// The value is sealed against [`Aad::for_map_entry`](crate::Aad::for_map_entry)
+    /// of the caller's AAD and `key` — the same contract as the dynamic
+    /// [`MapCipher`](crate::MapCipher) — so a stored entry's cleartext key
+    /// cannot be swapped or renamed undetected. Open with a counterpart that
+    /// derives the same binding (e.g. `Aes256Cipher::open_entry`).
     pub fn encrypt_entry<'a, A>(
         self,
         key: &'static str,
@@ -79,7 +85,8 @@ where
     where
         A: IntoAad<'a>,
     {
-        let encrypted = self.cipher.encrypt_bytes(value, aad)?;
+        let entry_aad = aad.into_aad().for_map_entry(key);
+        let encrypted = self.cipher.encrypt_bytes(value, entry_aad)?;
         Ok(StaticMapBuilder {
             cipher: self.cipher,
             list: HCons(
@@ -110,7 +117,8 @@ where
         }
     }
 
-    /// Add an authenticated absent entry.
+    /// Add an authenticated absent entry, key-bound like
+    /// [`encrypt_entry`](StaticMapBuilder::encrypt_entry).
     pub fn none_entry<'a, A>(
         self,
         key: &'static str,
@@ -119,7 +127,8 @@ where
     where
         A: IntoAad<'a>,
     {
-        let absent = self.cipher.encrypt_none(aad)?;
+        let entry_aad = aad.into_aad().for_map_entry(key);
+        let absent = self.cipher.encrypt_none(entry_aad)?;
         Ok(StaticMapBuilder {
             cipher: self.cipher,
             list: HCons(Entry { key, value: absent }, self.list),

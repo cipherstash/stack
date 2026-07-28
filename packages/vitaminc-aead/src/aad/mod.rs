@@ -72,6 +72,51 @@ impl<'a> Aad<'a> {
         const MAP_ENTRY_DOMAIN: &[u8] = b"vitaminc/aead/map-entry/v1";
         pae::encode(&[MAP_ENTRY_DOMAIN, self.as_bytes(), key.as_bytes()])
     }
+
+    /// Derives the AAD a structural marker must be sealed against.
+    ///
+    /// Markers are sealed empty plaintexts whose tag is the only thing
+    /// authenticating a structural fact — "this sequence is empty", "this
+    /// map is empty", "this value is absent". Like [`for_map_entry`], the
+    /// encoding is a labelled three-piece `PAE(domain, aad, kind)`: the
+    /// leading domain label keeps marker AAD disjoint from user-supplied
+    /// composite AAD (a two-piece `PAE(label, aad)` would collide with a
+    /// caller binding the tuple `(label, aad)` at the top level), and the
+    /// `kind` piece keeps the marker kinds disjoint from each other, so a
+    /// stored marker can never be replayed as a different structural claim.
+    ///
+    /// [`Cipher::encrypt_none`](crate::Cipher::encrypt_none),
+    /// [`SeqCipher::end`](crate::SeqCipher::end) and
+    /// [`MapCipher::end`](crate::MapCipher::end) implementations are
+    /// required to derive marker AAD through these methods — both sides
+    /// must use them, or nothing decrypts.
+    ///
+    /// [`for_map_entry`]: Aad::for_map_entry
+    fn for_marker(&self, kind: &[u8]) -> Aad<'static> {
+        const MARKER_DOMAIN: &[u8] = b"vitaminc/aead/marker/v1";
+        pae::encode(&[MARKER_DOMAIN, self.as_bytes(), kind])
+    }
+
+    /// Marker AAD for an empty sequence — see [`for_marker`](Aad::for_marker)
+    /// (private; this method and its siblings are the public surface).
+    pub fn for_empty_sequence(&self) -> Aad<'static> {
+        self.for_marker(b"empty-sequence")
+    }
+
+    /// Marker AAD for an empty map.
+    pub fn for_empty_map(&self) -> Aad<'static> {
+        self.for_marker(b"empty-map")
+    }
+
+    /// Marker AAD for an authenticated absent value (`Option::None`).
+    ///
+    /// Domain separation here is what stops a `Single` leaf sealed under the
+    /// bare AAD from being re-tagged as a `None` marker (silent authenticated
+    /// data deletion) — and, symmetrically, an absence marker from validating
+    /// as an encrypted empty byte string.
+    pub fn for_none(&self) -> Aad<'static> {
+        self.for_marker(b"none")
+    }
 }
 
 /// Types that can be canonically converted into an [`Aad`].
@@ -282,6 +327,45 @@ mod tests {
         let bound = Aad::from_slice(b"ctx").for_map_entry("name");
         let tuple = (Aad::from_slice(b"ctx"), "name").into_aad();
         assert_ne!(bound.as_bytes(), tuple.as_bytes());
+    }
+
+    #[test]
+    fn marker_aads_pin_encoding() {
+        // The exact bytes are a wire-format commitment: PAE(domain, aad, kind).
+        // Changing them breaks decryption of existing markers.
+        let aad = Aad::from_slice(b"ctx");
+        for (derived, kind) in [
+            (aad.for_empty_sequence(), b"empty-sequence".as_slice()),
+            (aad.for_empty_map(), b"empty-map"),
+            (aad.for_none(), b"none"),
+        ] {
+            let expected = Aad::pae(&[b"vitaminc/aead/marker/v1", b"ctx", kind]);
+            assert_eq!(derived.as_bytes(), expected.as_bytes());
+        }
+    }
+
+    #[test]
+    fn marker_aads_differ_from_tuple_aad_and_each_other() {
+        // The domain label keeps marker AAD disjoint from a user binding a
+        // matching (label, aad) tuple at the top level, and the kind piece
+        // keeps the three markers disjoint from one another.
+        let aad = Aad::from_slice(b"ctx");
+        let markers = [
+            aad.for_empty_sequence(),
+            aad.for_empty_map(),
+            aad.for_none(),
+        ];
+        for (i, m) in markers.iter().enumerate() {
+            let tuple = (
+                b"vitaminc/aead/marker/v1".as_slice(),
+                Aad::from_slice(b"ctx"),
+            )
+                .into_aad();
+            assert_ne!(m.as_bytes(), tuple.as_bytes());
+            for other in &markers[i + 1..] {
+                assert_ne!(m.as_bytes(), other.as_bytes());
+            }
+        }
     }
 
     #[test]
