@@ -48,5 +48,11 @@ translation would now be wrong rather than redundant: `'double'` and `'jsonb'`
 are in neither the public nor the canonical vocabulary (those are `'float'` and
 `'json'`), and unknown values are now rejected. The config crosses as authored.
 
+**Both entries now pass the auth strategy as `authStrategy`.** protect-ffi 0.31
+renamed the `newClient` option from `strategy`, keeping the old name honoured
+but documented as slated for removal. The native entry was still using it. This
+also makes the two entries spell it identically, and matches this package's own
+`config.authStrategy`.
+
 No public API changes. Error `code` values that were already surfacing continue
 to surface identically.

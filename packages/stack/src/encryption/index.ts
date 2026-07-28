@@ -197,8 +197,13 @@ export class EncryptionClient {
         // When `authStrategy` is supplied, protect-ffi invokes its getToken()
         // on every ZeroKMS request instead of building an AutoStrategy
         // from the credentials in clientOpts (the clientKey is still used
-        // for encryption). Passing `strategy: undefined` is equivalent to
+        // for encryption). Passing `authStrategy: undefined` is equivalent to
         // omitting it, so the default credentials path is unaffected.
+        //
+        // The field was `strategy` until protect-ffi 0.31 renamed it; the old
+        // name is still honoured but documented as "will be removed", so this
+        // uses the current one. Both entries now spell it the same way, and it
+        // matches this package's own `config.authStrategy`.
         // `eqlVersion` selects the wire format `encrypt`/`encryptQuery`
         // emit (protect-ffi 0.27+); `eqlVersion: undefined` is likewise
         // equivalent to omitting it, leaving the FFI's v2 default — and
@@ -212,7 +217,7 @@ export class EncryptionClient {
             clientKey: config.clientKey,
             keyset: toFfiKeysetIdentifier(config.keyset),
           },
-          strategy: config.authStrategy,
+          authStrategy: config.authStrategy,
           eqlVersion: config.eqlVersion,
         })
 

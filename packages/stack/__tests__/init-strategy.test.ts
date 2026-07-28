@@ -7,8 +7,10 @@
  * `@cipherstash/auth` strategy satisfies, including
  * `OidcFederationStrategy` for per-user identity-bound encryption).
  * `Encryption` exposes it via `config.authStrategy`; when provided it must
- * reach `newClient` as `opts.strategy` (the FFI's option name), and when
- * omitted the option must be absent so the default `auto` strategy is used.
+ * reach `newClient` as `opts.authStrategy` (the FFI's option name — it was
+ * `opts.strategy` until protect-ffi 0.31 renamed it, and the old spelling is
+ * honoured but slated for removal), and when omitted the option must be absent
+ * so the default `auto` strategy is used.
  * The legacy `config.strategy` field is still honoured (with a runtime
  * deprecation warning) until it is removed.
  */
@@ -61,7 +63,7 @@ describe('Encryption config.authStrategy', () => {
 
     // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
     const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
-    expect(opts.strategy).toBe(authStrategy)
+    expect(opts.authStrategy).toBe(authStrategy)
   })
 
   it('passes the authStrategy alongside the credential clientOpts', async () => {
@@ -81,7 +83,7 @@ describe('Encryption config.authStrategy', () => {
 
     // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
     const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
-    expect(opts.strategy).toBe(authStrategy)
+    expect(opts.authStrategy).toBe(authStrategy)
     // clientKey is still required even when an authStrategy is supplied.
     expect(opts.clientOpts.clientKey).toBe('client-key')
     expect(opts.clientOpts.workspaceCrn).toBe(
@@ -111,7 +113,7 @@ describe('Encryption config.authStrategy', () => {
 
     // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
     const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
-    expect(opts.strategy).toBe(oidcStrategy)
+    expect(opts.authStrategy).toBe(oidcStrategy)
   })
 
   it('leaves strategy undefined when none is supplied', async () => {
@@ -119,7 +121,7 @@ describe('Encryption config.authStrategy', () => {
 
     // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
     const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
-    expect(opts.strategy).toBeUndefined()
+    expect(opts.authStrategy).toBeUndefined()
   })
 })
 
@@ -133,7 +135,7 @@ describe('Encryption config.strategy (deprecated alias)', () => {
 
     // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
     const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
-    expect(opts.strategy).toBe(strategy)
+    expect(opts.authStrategy).toBe(strategy)
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('`config.strategy` is deprecated'),
     )
@@ -154,7 +156,7 @@ describe('Encryption config.strategy (deprecated alias)', () => {
 
     // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
     const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
-    expect(opts.strategy).toBe(authStrategy)
+    expect(opts.authStrategy).toBe(authStrategy)
     // The deprecated field is still present, so the nudge to remove it fires
     // even though `authStrategy` takes precedence.
     expect(warnSpy).toHaveBeenCalledWith(
