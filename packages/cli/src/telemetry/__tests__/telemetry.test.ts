@@ -5,6 +5,7 @@ import {
   PLACEHOLDER_KEY,
   resolveStatus,
   sanitize,
+  silentFetch,
   type TelemetryStatus,
 } from '../index.js'
 import type { TelemetryState } from '../state.js'
@@ -207,5 +208,76 @@ describe('sanitize (property allowlist)', () => {
     ]) {
       expect(ALLOWED_PROP_KEYS.has(forbidden)).toBe(false)
     }
+  })
+})
+
+describe('silentFetch (CIP-3587: failed sends must never print)', () => {
+  const request = {
+    method: 'POST' as const,
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('passes a successful response through untouched, forwarding url and options verbatim', async () => {
+    const real = { status: 200, text: async () => 'ok', json: async () => ({}) }
+    const fetchMock = vi.fn().mockResolvedValue(real)
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(silentFetch('https://t.example', request)).resolves.toBe(real)
+    // The options object (which carries the SDK's AbortSignal) must reach the
+    // real fetch unmodified — dropping it would unbind requestTimeout and break
+    // the bounded-flush guarantee the wrapper's doc comment promises.
+    expect(fetchMock).toHaveBeenCalledWith('https://t.example', request)
+  })
+
+  it('swallows a network error into a stub 200 (no throw, nothing for the SDK to log)', async () => {
+    // The repro: an unreachable endpoint. @posthog/core turns a rejected fetch
+    // into PostHogFetchNetworkError and console.errors the full stack trace.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockRejectedValue(new TypeError('fetch failed')),
+    )
+    const res = await silentFetch('https://t.example', request)
+    expect(res.status).toBe(200)
+    await expect(res.text()).resolves.toBe('')
+  })
+
+  it('swallows a timeout abort into a stub 200', async () => {
+    // The SDK aborts via AbortController after requestTimeout; fetch rejects
+    // with an AbortError DOMException, which must be swallowed like any other
+    // network failure.
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockRejectedValue(
+          new DOMException('This operation was aborted', 'AbortError'),
+        ),
+    )
+    const res = await silentFetch('https://t.example', request)
+    expect(res.status).toBe(200)
+  })
+
+  it('swallows an HTTP error status into a stub 200 and drains the real body', async () => {
+    // status >= 400 makes the SDK throw PostHogFetchHttpError → same log path.
+    // The discarded response's body must be cancelled so undici releases the
+    // connection — a held socket outlives the bounded flush and keeps the
+    // process alive after output.
+    const cancel = vi.fn(async () => {})
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        status: 503,
+        text: async () => '',
+        json: async () => ({}),
+        body: { cancel },
+      }),
+    )
+    const res = await silentFetch('https://t.example', request)
+    expect(res.status).toBe(200)
+    expect(cancel).toHaveBeenCalledTimes(1)
   })
 })

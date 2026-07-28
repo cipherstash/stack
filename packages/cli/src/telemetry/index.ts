@@ -1,4 +1,4 @@
-import type { PostHog } from 'posthog-node'
+import type { PostHog, PostHogOptions } from 'posthog-node'
 import { isCiEnvBroad, resolveCaller } from '../config/tty.js'
 import { messages } from '../messages.js'
 import { readState, type TelemetryState, writeState } from './state.js'
@@ -203,6 +203,49 @@ export function telemetryStatus(): TelemetryStatus {
   return init().status
 }
 
+/**
+ * Fetch wrapper that makes a failed send invisible to the SDK. On any network
+ * error or HTTP error status, `@posthog/core`'s `logFlushError` writes the full
+ * error — nested stack traces included — straight to `console.error`, from both
+ * the capture-triggered background flush and the shutdown flush. That happens
+ * INSIDE the SDK before it swallows the rejection, so our own `.catch(() => {})`
+ * swallows never see it (CIP-3587 / #740: an unreachable telemetry endpoint
+ * printed two stack-trace blocks per command). Returning a stub 200 for every
+ * failure means the SDK never observes an error, so it never logs.
+ * The SDK's per-request AbortSignal (requestTimeout) arrives via `options.signal`
+ * and is passed through, so the bounded-flush guarantee is preserved.
+ *
+ * Two deliberate trade-offs, both safe only under this client's config:
+ * - Faking success defeats the SDK's failure handling (queue retention on
+ *   network error, 413 batch-splitting). With `flushAt: 1` and
+ *   `fetchRetryCount: 0` those branches were already unreachable — the event
+ *   was dropped either way — but revisit this if batching is ever enabled.
+ * - This client must only ever send capture batches. The stub `{}` reads as a
+ *   valid success payload to the SDK's JSON-parsing endpoints (feature flags,
+ *   remote config), so adding those would return confidently wrong answers on
+ *   any failure.
+ */
+export const silentFetch: NonNullable<PostHogOptions['fetch']> = async (
+  url,
+  options,
+) => {
+  try {
+    const res = await fetch(url, options)
+    // Mirror the SDK's own success window (it throws outside 200–399).
+    if (res.status >= 200 && res.status < 400) return res
+    // Drain the discarded error response so undici releases the connection.
+    // The SDK's old error path did this via `await err.text`; without it the
+    // socket outlives the bounded flush and keeps the process alive.
+    await res.body?.cancel()
+  } catch {
+    // Anything that failed to produce a usable response falls through to the
+    // stub: unreachable endpoint, DNS failure, timeout abort — and also
+    // request-construction failures (e.g. a malformed STASH_POSTHOG_HOST),
+    // which are swallowed the same as network-down.
+  }
+  return { status: 200, text: async () => '', json: async () => ({}) }
+}
+
 async function getClient(): Promise<PostHog> {
   if (clientPromise === null) {
     clientPromise = import('posthog-node').then(
@@ -222,6 +265,8 @@ async function getClient(): Promise<PostHog> {
           requestTimeout: FLUSH_TIMEOUT_MS,
           // Never resolve IP → geo; we don't want or store location.
           disableGeoip: true,
+          // Failures must never print — see silentFetch.
+          fetch: silentFetch,
         }),
     )
   }
