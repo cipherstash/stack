@@ -464,6 +464,36 @@ describe('drizzle migrate prompt after a destructive rewrite', () => {
     expect(String(options?.message)).toContain('could not check 1 directory')
   })
 
+  // A failed directory can still carry near-misses found before the failure.
+  // Keep both safety facts in the prompt: the flagged ALTER remains broken,
+  // and the rest of that named directory was not verified.
+  it('keeps flagged guidance and names the unchecked directory when both states apply', async () => {
+    vi.mocked(sweepMigrationDirs).mockResolvedValueOnce([
+      {
+        dir: 'drizzle',
+        rewritten: [],
+        skipped: [
+          {
+            file: '/tmp/fake/drizzle/0001_using.sql',
+            statement:
+              'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search USING email::eql_v3_text_search;',
+            reason: 'unrecognised-form',
+          },
+        ],
+        error: 'EIO',
+      },
+    ])
+
+    await runDrizzle()
+
+    const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
+    expect(options?.initialValue).toBe(false)
+    expect(String(options?.message)).toContain('flagged for review')
+    expect(String(options?.message)).toContain('nothing was destroyed')
+    expect(String(options?.message)).toContain('could not check 1 directory')
+    expect(String(options?.message)).toContain('drizzle/')
+  })
+
   // The wizard ships scanning drizzle/, migrations/ and src/db/migrations/ and
   // indexes each SEPARATELY — the per-directory index is the mechanism the
   // fail-closed rule exists to make safe. Every test above uses only drizzle/,

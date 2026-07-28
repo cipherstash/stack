@@ -114,7 +114,7 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
       message: destructive
         ? `Run the migration now? (${runner} drizzle-kit migrate) — see the warnings above: this migration DESTROYS data on any table that already holds rows`
         : flaggedOnly
-          ? `Run the migration now? (${runner} drizzle-kit migrate) — statement(s) were flagged for review above rather than rewritten; nothing was destroyed, but the raw ALTER will fail at migrate time until they're resolved`
+          ? `Run the migration now? (${runner} drizzle-kit migrate) — statement(s) were flagged for review above rather than rewritten; nothing was destroyed, but the raw ALTER will fail at migrate time until they're resolved${unverified ? `; the sweep also could not check ${unverifiedCount} (${unverifiedList}), so review those migrations before migrating` : ''}`
           : unverified
             ? `Run the migration now? (${runner} drizzle-kit migrate) — the sweep could not check ${unverifiedCount} (${unverifiedList}); review those migrations before migrating, or you may apply broken/unsafe SQL`
             : `Run the migration now? (${runner} drizzle-kit migrate)`,

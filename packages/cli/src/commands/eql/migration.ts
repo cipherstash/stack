@@ -267,6 +267,7 @@ async function generateDrizzleEqlMigration(
   // Either way the user must review sibling migrations before running migrate,
   // so surface it again at the closing note (below) — not just inline here.
   let sweepIncomplete = false
+  let sweepFailure: string | undefined
   // Reported AFTER the try/catch rather than inside it, because a failed sweep
   // is not an empty one: it writes a file at a time, so a throw part way
   // through leaves earlier files already rewritten and holding a live
@@ -286,11 +287,9 @@ async function generateDrizzleEqlMigration(
       rewritten = error.rewritten
       skipped = error.skipped
     }
-    p.log.warn(
-      `Could not sweep ${outDir} for unsafe ALTER COLUMN statements: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    )
+    sweepFailure = `Could not sweep ${outDir} for unsafe ALTER COLUMN statements: ${
+      error instanceof Error ? error.message : String(error)
+    }`
   }
 
   if (rewritten.length > 0) {
@@ -309,6 +308,7 @@ async function generateDrizzleEqlMigration(
       p.log.step(`      ${describeSkipReason(reason)}`)
     }
   }
+  if (sweepFailure) p.log.warn(sweepFailure)
 
   p.log.success(`Migration created: ${migrationPath}`)
   if (sweepIncomplete) {

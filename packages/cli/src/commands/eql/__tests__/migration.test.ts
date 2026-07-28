@@ -450,6 +450,36 @@ describe('eqlMigrationCommand — Drizzle', () => {
     expect(warned.some((msg) => msg.includes('did not fully complete'))).toBe(
       true,
     )
+
+    // Put the potentially damaged paths and destructive context before the
+    // write failure, then close with the incomplete-sweep warning.
+    const rewriteInfoIndex = infos.findIndex((msg) =>
+      msg.includes('Rewrote 2 migration file'),
+    )
+    const rewrittenStepIndex = stepped.findIndex((msg) =>
+      msg.includes(rewritten),
+    )
+    const attemptedStepIndex = stepped.findIndex((msg) =>
+      msg.includes(attempted),
+    )
+    const failureWarnIndex = warned.findIndex((msg) => msg.includes('ENOSPC'))
+    const closingWarnIndex = warned.findIndex((msg) =>
+      msg.includes('did not fully complete'),
+    )
+    const failureOrder =
+      clack.log.warn.mock.invocationCallOrder[failureWarnIndex]
+    expect(
+      clack.log.info.mock.invocationCallOrder[rewriteInfoIndex],
+    ).toBeLessThan(failureOrder)
+    expect(
+      clack.log.step.mock.invocationCallOrder[rewrittenStepIndex],
+    ).toBeLessThan(failureOrder)
+    expect(
+      clack.log.step.mock.invocationCallOrder[attemptedStepIndex],
+    ).toBeLessThan(failureOrder)
+    expect(failureOrder).toBeLessThan(
+      clack.log.warn.mock.invocationCallOrder[closingWarnIndex],
+    )
   })
 
   it('aborts (exit 1) when drizzle-kit exits non-zero', async () => {

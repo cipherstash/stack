@@ -15,7 +15,9 @@ directory and printed "the sweep could not check 1 directory (drizzle/)" over a
 prompt that made no mention of data loss, while a live `DROP COLUMN` sat on
 disk. The CLI's `stash eql migration --drizzle` had the milder form: it warned
 about the directory but never named the files that had already become
-data-destroying.
+data-destroying. That CLI report now puts the completed and attempted file list
+before the filesystem failure, so users see the possible damage before the
+reason the sweep stopped.
 
 The work already attempted now travels with the failure.
 `rewriteEncryptedAlterColumns` rejects with a `PartialRewriteError` carrying
@@ -29,6 +31,10 @@ sibling migrations" warning still fires, because both are true. The `Run the
 migration now?` prompt takes the destructive arm — defaulting to No and saying
 the migration DESTROYS data on a populated table — since that is the fact a user
 cannot afford to miss.
+
+If a wizard sweep flags a raw ALTER and then fails before rewriting anything,
+the prompt now preserves both facts: it keeps the flagged-statement guidance
+and names the migration directory that the sweep could not finish checking.
 
 A sweep that fails before attempting any write is unchanged: it rejects with
 the original error, reports zeros, and keeps the softer "nothing is known about
