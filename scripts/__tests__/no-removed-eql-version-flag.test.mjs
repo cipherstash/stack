@@ -27,12 +27,24 @@ function obsoleteEqlInstallExamples(body) {
       match[1]
         .replace(/\\\r?\n[ \t]*/g, ' ')
         .match(
-          /^[ \t]*(?:\$[ \t]+)?(?:pnpm[ \t]+dlx[ \t]+|npx[ \t]+)?stash[ \t]+eql[ \t]+install\b[^\n]*--eql-version\b[^\n]*/gm,
+          /^[ \t]*(?:\$[ \t]+)?(?:(?:bunx|npx)[ \t]+|(?:pnpm|yarn)[ \t]+dlx[ \t]+)?stash[ \t]+eql[ \t]+install\b[^\n]*--eql-version\b[^\n]*/gm,
         ) ?? [],
   )
 }
 
 describe('obsolete eql install example detection', () => {
+  it.each([
+    'stash',
+    'npx stash',
+    'bunx stash',
+    'pnpm dlx stash',
+    'yarn dlx stash',
+  ])('detects the documented %s runner form', (runner) => {
+    const shellExample = `\`\`\`bash\n${runner} eql install --eql-version 3\n\`\`\``
+
+    expect(obsoleteEqlInstallExamples(shellExample)).toHaveLength(1)
+  })
+
   it('does not treat explanatory prose as an executable example', () => {
     const prose =
       'The removed stash eql install --eql-version flag is no longer accepted.'
