@@ -268,6 +268,12 @@ internally — there is no client-side schema to hand-maintain. Introspection
 needs a direct Postgres connection (`options.databaseUrl`, defaulting to
 `DATABASE_URL`), so the factory cannot run in a Worker or the browser.
 
+Introspection is not the only thing keeping this out of a browser. On the
+WASM entry, `config.clientKey` is a workspace secret and is required on
+*every* auth path — supplying a per-user `config.authStrategy` does not
+remove it ([#804](https://github.com/cipherstash/stack/issues/804)). Removing
+the `pg` dependency would unblock Workers, not browsers.
+
 Options: `{ schemas?, databaseUrl?, config? }` — `config` is the encryption
 client config (e.g. `config.authStrategy`, see Authentication below).
 
