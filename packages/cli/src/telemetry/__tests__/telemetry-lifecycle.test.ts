@@ -87,6 +87,10 @@ describe('telemetry lifecycle (emitter + flush)', () => {
     })
     await t.shutdownTelemetry()
     expect(h.PostHog).toHaveBeenCalledTimes(1)
+    // Pin the CIP-3587 fix: the client MUST be constructed with silentFetch,
+    // or a failed send prints the SDK's internal stack traces (logFlushError
+    // writes to console.error before our .catch() swallows can run).
+    expect(h.PostHog.mock.calls[0][1].fetch).toBe(t.silentFetch)
     expect(h.capture).toHaveBeenCalledTimes(1)
     const arg = h.capture.mock.calls[0][0]
     expect(arg.distinctId).toBe('anon-x')
