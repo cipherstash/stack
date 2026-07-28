@@ -24,6 +24,28 @@ vi.mock('../lib/rewrite-migrations.js', async (importOriginal) => {
   return { ...actual, sweepMigrationDirs: vi.fn(actual.sweepMigrationDirs) }
 })
 
+// `node:fs/promises` stays REAL by default — the sweep's own reads and writes
+// need it. Only `writeFile` is routed through a delegating spy, so one test can
+// fail the Nth write and drive the whole chain (rewriter → sweep → report)
+// through a genuine mid-directory failure rather than a mocked sweep result.
+const fsWrite = vi.hoisted(() => ({
+  real: (() => {
+    throw new Error(
+      'fsWrite.real not initialised: node:fs/promises mock factory did not run',
+    )
+  }) as typeof import('node:fs/promises').writeFile,
+  spy: vi.fn(),
+}))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  fsWrite.real = actual.writeFile
+  return { ...actual, default: actual, writeFile: fsWrite.spy }
+})
+
+beforeEach(() => {
+  fsWrite.spy.mockImplementation(fsWrite.real)
+})
+
 import * as childProcess from 'node:child_process'
 import * as p from '@clack/prompts'
 import { sweepMigrationDirs } from '../lib/rewrite-migrations.js'
@@ -297,6 +319,126 @@ describe('drizzle migrate prompt after a destructive rewrite', () => {
 
     const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
     expect(options?.initialValue).toBe(false)
+    expect(String(options?.message)).toContain('could not check 1 directory')
+  })
+
+  // A sweep that threw AFTER rewriting a file is both things at once: those
+  // migrations went unchecked from the failure point on, AND a live DROP COLUMN
+  // is already on disk. The reporting loop used to `continue` past the whole
+  // block on any error, so neither the file list nor the data-destruction
+  // warning printed, and the prompt took the softer "could not check" arm. The
+  // destructive fact is the one that must win the prompt (#786).
+  it('reports a directory that threw after rewriting as destructive', async () => {
+    const rewrittenFile = path.join(cwd, 'drizzle', '0001_encrypt.sql')
+    vi.mocked(sweepMigrationDirs).mockResolvedValueOnce([
+      {
+        dir: 'drizzle',
+        rewritten: [rewrittenFile],
+        skipped: [],
+        error: 'EACCES: permission denied, open ...0002_encrypt.sql',
+      },
+    ])
+    const warn = vi.spyOn(p.log, 'warn').mockImplementation(() => {})
+    const info = vi.spyOn(p.log, 'info').mockImplementation(() => {})
+    const step = vi.spyOn(p.log, 'step').mockImplementation(() => {})
+
+    await runDrizzle()
+
+    const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
+    expect(options?.initialValue).toBe(false)
+    expect(String(options?.message)).toContain('DESTROYS data')
+
+    // The user is told WHICH file now holds the DROP COLUMN...
+    const stepped = step.mock.calls.map((c) => String(c[0]))
+    expect(stepped.some((msg) => msg.includes(rewrittenFile))).toBe(true)
+    const logged = info.mock.calls.map((c) => String(c[0]))
+    expect(logged.some((msg) => msg.includes('Rewrote 1 migration file'))).toBe(
+      true,
+    )
+
+    const warned = warn.mock.calls.map((c) => String(c[0]))
+    // ...that it is data-destroying...
+    expect(warned.some((msg) => msg.includes('data-destroying'))).toBe(true)
+    // ...and that the sweep stopped early, so the rest went unchecked. Both
+    // facts are true; neither replaces the other.
+    expect(warned.some((msg) => msg.includes('did not fully complete'))).toBe(
+      true,
+    )
+    expect(warned.some((msg) => msg.includes('EACCES'))).toBe(true)
+
+    warn.mockRestore()
+    info.mockRestore()
+    step.mockRestore()
+  })
+
+  // The same outcome driven end to end — real files, a real failing write, the
+  // real sweep — rather than a hand-written sweep result. It is the seam
+  // between the rewriter, the directory sweep and this report that broke, so
+  // one test has to cross all three: a mocked `sweepMigrationDirs` would stay
+  // green even if the rewriter went back to swallowing its partial work.
+  it('reports a real mid-sweep write failure as destructive', async () => {
+    makeDrizzleOut('drizzle')
+    fs.writeFileSync(
+      path.join(cwd, 'drizzle', '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text, "name" text);\n',
+    )
+    const first = path.join(cwd, 'drizzle', '0001_encrypt_email.sql')
+    fs.writeFileSync(
+      first,
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+    )
+    fs.writeFileSync(
+      path.join(cwd, 'drizzle', '0002_encrypt_name.sql'),
+      'ALTER TABLE "users" ALTER COLUMN "name" SET DATA TYPE eql_v3_text_search;\n',
+    )
+    // Sorted order, and 0000 needs no write: write #1 is 0001, #2 is 0002.
+    let writes = 0
+    fsWrite.spy.mockImplementation(
+      (...args: Parameters<typeof import('node:fs/promises').writeFile>) => {
+        writes += 1
+        if (writes === 2) {
+          return Promise.reject(new Error('ENOSPC: no space left on device'))
+        }
+        return fsWrite.real(...args)
+      },
+    )
+    const warn = vi.spyOn(p.log, 'warn').mockImplementation(() => {})
+    const step = vi.spyOn(p.log, 'step').mockImplementation(() => {})
+
+    await runDrizzle()
+
+    // 0001 really is destructive now — this is the on-disk fact the report
+    // used to lose.
+    expect(fs.readFileSync(first, 'utf-8')).toContain('DROP COLUMN')
+    const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
+    expect(options?.initialValue).toBe(false)
+    expect(String(options?.message)).toContain('DESTROYS data')
+    expect(step.mock.calls.map((c) => String(c[0])).join('\n')).toContain(first)
+    const warned = warn.mock.calls.map((c) => String(c[0]))
+    expect(warned.some((msg) => msg.includes('data-destroying'))).toBe(true)
+    expect(warned.some((msg) => msg.includes('did not fully complete'))).toBe(
+      true,
+    )
+
+    warn.mockRestore()
+    step.mockRestore()
+  })
+
+  // The sibling of the case above, and the reason `destructive` cannot simply
+  // be "there was an error": a directory that threw with nothing rewritten
+  // knows nothing about its migrations, so claiming they destroy data would be
+  // a guess. Kept green by the existing EISDIR test too, but pinned here
+  // through the mocked shape so the two arms are visibly distinguished.
+  it('keeps an error with no rewritten files on the unverified arm', async () => {
+    vi.mocked(sweepMigrationDirs).mockResolvedValueOnce([
+      { dir: 'drizzle', rewritten: [], skipped: [], error: 'EISDIR' },
+    ])
+
+    await runDrizzle()
+
+    const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
+    expect(options?.initialValue).toBe(false)
+    expect(String(options?.message)).not.toContain('DESTROYS data')
     expect(String(options?.message)).toContain('could not check 1 directory')
   })
 

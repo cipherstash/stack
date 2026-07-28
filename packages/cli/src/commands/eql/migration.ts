@@ -8,7 +8,9 @@ import { CliExit } from '@/cli/exit.js'
 import { printNextSteps, SAFE_MIGRATION_NAME } from '@/commands/db/install.js'
 import {
   describeSkipReason,
+  PartialRewriteError,
   rewriteEncryptedAlterColumns,
+  type SkippedAlter,
 } from '@/commands/db/rewrite-migrations.js'
 import {
   detectPackageManager,
@@ -265,34 +267,47 @@ async function generateDrizzleEqlMigration(
   // Either way the user must review sibling migrations before running migrate,
   // so surface it again at the closing note (below) — not just inline here.
   let sweepIncomplete = false
+  // Reported AFTER the try/catch rather than inside it, because a failed sweep
+  // is not an empty one: it writes a file at a time, so a throw part way
+  // through leaves earlier files already rewritten and holding a live
+  // `DROP COLUMN`. Naming them is the whole point of the report — "review the
+  // sibling migrations in <dir>" does not tell a user which ones are already
+  // destructive (#786).
+  let rewritten: string[] = []
+  let skipped: SkippedAlter[] = []
   try {
-    const { rewritten, skipped } = await rewriteEncryptedAlterColumns(outDir, {
+    ;({ rewritten, skipped } = await rewriteEncryptedAlterColumns(outDir, {
       skip: migrationPath,
-    })
-    if (rewritten.length > 0) {
-      p.log.info(
-        `Rewrote ${rewritten.length} migration file(s) into a runnable ADD+DROP+RENAME for encrypted columns (safe on empty tables; see each file's header before running against populated data):`,
-      )
-      for (const file of rewritten) p.log.step(`  - ${file}`)
-    }
-    if (skipped.length > 0) {
-      sweepIncomplete = true
-      p.log.warn(
-        `Found ${skipped.length} ALTER-to-encrypted statement(s) the sweep left alone. Review and fix them before running your migrations:`,
-      )
-      for (const { file, statement, reason } of skipped) {
-        p.log.step(`  - ${file}: ${statement}`)
-        p.log.step(`      ${describeSkipReason(reason)}`)
-      }
-    }
+    }))
   } catch (error) {
     // Advisory: the install migration itself is already written and valid.
     sweepIncomplete = true
+    if (error instanceof PartialRewriteError) {
+      rewritten = error.rewritten
+      skipped = error.skipped
+    }
     p.log.warn(
       `Could not sweep ${outDir} for unsafe ALTER COLUMN statements: ${
         error instanceof Error ? error.message : String(error)
       }`,
     )
+  }
+
+  if (rewritten.length > 0) {
+    p.log.info(
+      `Rewrote ${rewritten.length} migration file(s) into a runnable ADD+DROP+RENAME for encrypted columns (safe on empty tables; see each file's header before running against populated data):`,
+    )
+    for (const file of rewritten) p.log.step(`  - ${file}`)
+  }
+  if (skipped.length > 0) {
+    sweepIncomplete = true
+    p.log.warn(
+      `Found ${skipped.length} ALTER-to-encrypted statement(s) the sweep left alone. Review and fix them before running your migrations:`,
+    )
+    for (const { file, statement, reason } of skipped) {
+      p.log.step(`  - ${file}: ${statement}`)
+      p.log.step(`      ${describeSkipReason(reason)}`)
+    }
   }
 
   p.log.success(`Migration created: ${migrationPath}`)

@@ -1,11 +1,52 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// `node:fs/promises` stays REAL by default — every fixture below relies on the
+// genuine readdir/readFile/writeFile. Only `writeFile` is routed through a spy
+// that delegates to the real implementation, so the partial-write tests can
+// make the Nth write fail. A deterministic call-counting spy is used rather
+// than chmod: chmod-based simulation silently passes as root and behaves
+// differently across platforms.
+const fsWrite = vi.hoisted(() => ({
+  real: (() => {
+    throw new Error(
+      'fsWrite.real not initialised: node:fs/promises mock factory did not run',
+    )
+  }) as typeof import('node:fs/promises').writeFile,
+  spy: vi.fn(),
+}))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  fsWrite.real = actual.writeFile
+  return { ...actual, default: actual, writeFile: fsWrite.spy }
+})
+
 import {
   describeSkipReason,
+  PartialRewriteError,
   rewriteEncryptedAlterColumns,
 } from '../commands/db/rewrite-migrations.js'
+
+beforeEach(() => {
+  fsWrite.spy.mockImplementation(fsWrite.real)
+})
+
+/**
+ * Arm the `writeFile` spy to throw on the `nth` (1-based) call, letting every
+ * other write through to the real implementation.
+ */
+const failWriteNumber = (nth: number, message: string): void => {
+  let calls = 0
+  fsWrite.spy.mockImplementation(
+    (...args: Parameters<typeof import('node:fs/promises').writeFile>) => {
+      calls += 1
+      if (calls === nth) return Promise.reject(new Error(message))
+      return fsWrite.real(...args)
+    },
+  )
+}
 
 describe('rewriteEncryptedAlterColumns', () => {
   let tmpDir: string
@@ -1741,6 +1782,117 @@ describe('rewriteEncryptedAlterColumns', () => {
       expect(rewritten).toEqual([alter])
       expect(skipped).toEqual([])
     })
+  })
+})
+
+// The sweep writes one file at a time. A throw on the SECOND file leaves the
+// first already rewritten on disk — holding a live `DROP COLUMN` — while the
+// call rejects. Every other failure path exercised here throws during the read
+// pass, BEFORE any write, so the partial case was invisible: the accumulated
+// `rewritten` array was discarded with the stack frame and both CLI callers
+// told the user to review the directory without naming the files that had
+// already become data-destroying (#786).
+describe('rewriteEncryptedAlterColumns — a write that fails mid-directory', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stash-partial-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  /** Two independently rewritable files, plus the declaration both need. */
+  const seedTwoRewritable = (): { first: string; second: string } => {
+    fs.writeFileSync(
+      path.join(tmpDir, '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text, "name" text);\n',
+    )
+    const first = path.join(tmpDir, '0001_encrypt_email.sql')
+    fs.writeFileSync(
+      first,
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+    )
+    const second = path.join(tmpDir, '0002_encrypt_name.sql')
+    fs.writeFileSync(
+      second,
+      'ALTER TABLE "users" ALTER COLUMN "name" SET DATA TYPE eql_v3_text_search;\n',
+    )
+    return { first, second }
+  }
+
+  it('rejects with the files it had already rewritten', async () => {
+    const { first, second } = seedTwoRewritable()
+    // Files are swept in sorted order and 0000 needs no write, so write #1 is
+    // 0001 and write #2 — the one that fails — is 0002.
+    failWriteNumber(2, 'ENOSPC: no space left on device')
+
+    const error = await rewriteEncryptedAlterColumns(tmpDir).catch(
+      (err: unknown) => err,
+    )
+
+    expect(error).toBeInstanceOf(PartialRewriteError)
+    // The original failure must survive the wrapping verbatim — the callers
+    // render `err.message` straight to the user.
+    expect((error as PartialRewriteError).message).toBe(
+      'ENOSPC: no space left on device',
+    )
+    expect((error as PartialRewriteError).rewritten).toEqual([first])
+    // Not a bookkeeping claim: that file really does hold a live DROP COLUMN.
+    expect(fs.readFileSync(first, 'utf-8')).toContain('DROP COLUMN')
+    expect(fs.readFileSync(second, 'utf-8')).toContain('SET DATA TYPE')
+  })
+
+  it('carries the near-misses it had already flagged', async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text, "name" text);\n',
+    )
+    const nearMiss = path.join(tmpDir, '0001_using.sql')
+    fs.writeFileSync(
+      nearMiss,
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search USING (email)::eql_v3_text_search;\n',
+    )
+    fs.writeFileSync(
+      path.join(tmpDir, '0002_encrypt_name.sql'),
+      'ALTER TABLE "users" ALTER COLUMN "name" SET DATA TYPE eql_v3_text_search;\n',
+    )
+    // 0001 is flagged, never written, so the FIRST write is 0002's.
+    failWriteNumber(1, 'EACCES: permission denied')
+
+    const error = await rewriteEncryptedAlterColumns(tmpDir).catch(
+      (err: unknown) => err,
+    )
+
+    expect(error).toBeInstanceOf(PartialRewriteError)
+    expect((error as PartialRewriteError).rewritten).toEqual([])
+    expect((error as PartialRewriteError).skipped).toEqual([
+      expect.objectContaining({ file: nearMiss, reason: 'unrecognised-form' }),
+    ])
+  })
+
+  // The other half of the contract. A throw with no work behind it must keep
+  // rejecting with the ORIGINAL error — its `code` and identity intact — so the
+  // "this directory went unchecked" path stays exactly as it was.
+  it('rethrows the original error when nothing had been done yet', async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text);\n',
+    )
+    fs.writeFileSync(
+      path.join(tmpDir, '0001_encrypt_email.sql'),
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+    )
+    failWriteNumber(1, 'EROFS: read-only file system')
+
+    const error = await rewriteEncryptedAlterColumns(tmpDir).catch(
+      (err: unknown) => err,
+    )
+
+    expect(error).toBeInstanceOf(Error)
+    expect(error).not.toBeInstanceOf(PartialRewriteError)
+    expect((error as Error).message).toBe('EROFS: read-only file system')
   })
 })
 

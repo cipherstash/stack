@@ -82,14 +82,22 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
     const destructive = sweep.rewritten > 0
     const flaggedOnly = !destructive && sweep.skipped > 0
 
-    // A directory whose sweep threw contributes 0 to both totals, so on its own
-    // it is indistinguishable from a clean sweep — except that it means the
-    // opposite: those migrations may still hold unrepaired `SET DATA TYPE`
-    // statements and nobody has looked. `stash eql migration` / `db install`
-    // treat "sweep failed outright" and "sweep left near-misses" as the same
-    // state for the same reason; unknown is not safe, so the default is NO here
-    // too. The wording differs from the destructive case on purpose: nothing is
-    // known about that directory, so claiming it destroys data would be a guess.
+    // A directory whose sweep threw before doing anything contributes 0 to both
+    // totals, so on its own it is indistinguishable from a clean sweep — except
+    // that it means the opposite: those migrations may still hold unrepaired
+    // `SET DATA TYPE` statements and nobody has looked. `stash eql migration` /
+    // `db install` treat "sweep failed outright" and "sweep left near-misses" as
+    // the same state for the same reason; unknown is not safe, so the default is
+    // NO here too. The wording differs from the destructive case on purpose:
+    // nothing is known about that directory, so claiming it destroys data would
+    // be a guess.
+    //
+    // This is orthogonal to `destructive`, not an alternative to it. A sweep
+    // that threw AFTER rewriting a file is both — those files hold a live
+    // `DROP COLUMN`, and the rest of the directory went unchecked — so it lands
+    // in both totals and both warnings fire. The prompt's ternary puts
+    // `destructive` first, which is the right precedence: data destruction is
+    // the fact the user cannot afford to miss (#786).
     const unverifiedDirs = sweep.failedDirs
     const unverified = unverifiedDirs.length > 0
     const unverifiedList = unverifiedDirs.map((dir) => `${dir}/`).join(', ')
@@ -147,8 +155,13 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
  * `failedDirs` names the directories that exist but whose sweep threw. It is a
  * third state, not a variant of "nothing to do": those migrations may still
  * contain unrepaired `SET DATA TYPE` statements and went unchecked, which the
- * `rewritten`/`skipped` counts cannot express — both stay 0 for such a
- * directory, exactly as they do for a clean one.
+ * `rewritten`/`skipped` counts cannot express — for a directory that threw
+ * before touching anything they stay 0, exactly as they do for a clean one.
+ *
+ * It is not exclusive with those counts either. A sweep that threw part way
+ * through reports what it had already rewritten, so such a directory lands in
+ * `failedDirs` AND contributes to `rewritten` — it is both destructive and
+ * incompletely checked, and the caller must say both (#786).
  */
 async function rewriteEncryptedMigrations(cwd: string): Promise<{
   rewritten: number
@@ -178,12 +191,18 @@ async function rewriteEncryptedMigrations(cwd: string): Promise<{
     // and `new Error()` has an empty message. Testing `if (error)` would put a
     // blank-message failure back on the fail-open path this whole branch exists
     // to close.
+    //
+    // Deliberately NOT a `continue`: the sweep writes one file at a time, so a
+    // directory that threw part way through can have rewritten files already on
+    // disk, each holding a live `DROP COLUMN`. Skipping the report below hid
+    // exactly those — the user was told the directory went unchecked and never
+    // that part of it was already data-destroying (#786). Both blocks below
+    // no-op when the failure came before any work, which is the common case.
     if (error !== undefined) {
       totals.failedDirs.push(dir)
       p.log.warn(
         `Could not rewrite migrations in ${dir}: ${error || 'unknown error'}`,
       )
-      continue
     }
 
     if (rewritten.length > 0) {

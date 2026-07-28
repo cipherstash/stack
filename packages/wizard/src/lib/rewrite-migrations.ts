@@ -667,6 +667,38 @@ export interface RewriteResult {
 }
 
 /**
+ * Thrown by {@link rewriteEncryptedAlterColumns} when it fails PART WAY through
+ * a directory it has already changed.
+ *
+ * The sweep writes one file at a time, so a failure on the third file leaves
+ * the first two rewritten on disk — each holding a live `DROP COLUMN`. A bare
+ * rejection discards that fact: the accumulated `rewritten` array dies with the
+ * stack frame, and every caller then reports the directory as merely
+ * *unchecked*, telling the user to review those migrations without saying that
+ * some of them now destroy data. That is the fail-open inversion this rewriter
+ * exists to prevent, so the work already done travels with the failure (#786).
+ *
+ * `message` is the underlying failure's, verbatim — callers render it straight
+ * to the user — and the original is kept as `cause`. Thrown ONLY when there is
+ * partial work to report: a sweep that fails before changing or flagging
+ * anything rejects with the original error untouched, because "nothing is known
+ * about this directory" is a different state, and not a destructive one.
+ */
+export class PartialRewriteError extends Error {
+  /** Absolute paths of the files already rewritten when the failure hit. */
+  readonly rewritten: string[]
+  /** Near-miss statements already flagged when the failure hit. */
+  readonly skipped: SkippedAlter[]
+
+  constructor(cause: unknown, rewritten: string[], skipped: SkippedAlter[]) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause })
+    this.name = 'PartialRewriteError'
+    this.rewritten = [...rewritten]
+    this.skipped = [...skipped]
+  }
+}
+
+/**
  * Replace in-place `ALTER COLUMN ... SET DATA TYPE <encrypted domain>`
  * statements with an ADD + DROP + RENAME sequence.
  *
@@ -743,93 +775,108 @@ export async function rewriteEncryptedAlterColumns(
   const { encrypted: encryptedColumns, declared: declaredColumns } =
     indexColumnDeclarations([...contents.values()])
 
-  for (const [filePath, original] of contents) {
-    if (options.skip && filePath === options.skip) continue
+  // Wrapped, not left to reject bare: from the first `writeFile` on, a failure
+  // anywhere in this loop leaves the directory PART rewritten. See
+  // {@link PartialRewriteError} — the reads above it cannot have changed
+  // anything, so they still reject with their own error.
+  try {
+    for (const [filePath, original] of contents) {
+      if (options.skip && filePath === options.skip) continue
 
-    // Reset the regex's lastIndex — it's stateful on /g
-    ALTER_COLUMN_TO_ENCRYPTED_RE.lastIndex = 0
+      // Reset the regex's lastIndex — it's stateful on /g
+      ALTER_COLUMN_TO_ENCRYPTED_RE.lastIndex = 0
 
-    const updated = original.replace(
-      ALTER_COLUMN_TO_ENCRYPTED_RE,
-      (
-        match: string,
-        first: string,
-        second: string | undefined,
-        column: string,
-        mangledType: string,
-        offset: number,
-      ) => {
-        // Commented-out SQL never runs, and a multi-line replacement would only
-        // inherit the `-- ` on its first line — leaving the rest live.
-        if (isInsideCommentOrString(original, offset)) return match
+      const updated = original.replace(
+        ALTER_COLUMN_TO_ENCRYPTED_RE,
+        (
+          match: string,
+          first: string,
+          second: string | undefined,
+          column: string,
+          mangledType: string,
+          offset: number,
+        ) => {
+          // Commented-out SQL never runs, and a multi-line replacement would only
+          // inherit the `-- ` on its first line — leaving the rest live.
+          if (isInsideCommentOrString(original, offset)) return match
 
-        const { schema, table } = tableOf(first, second)
+          const { schema, table } = tableOf(first, second)
 
-        // Already encrypted: the ADD+DROP+RENAME would drop the ciphertext and
-        // there is no plaintext left to backfill from. Flag, never guess.
-        if (encryptedColumns.has(columnKey(table, column, schema))) {
-          skip(filePath, match.trim(), 'already-encrypted')
-          return match
-        }
+          // Already encrypted: the ADD+DROP+RENAME would drop the ciphertext and
+          // there is no plaintext left to backfill from. Flag, never guess.
+          if (encryptedColumns.has(columnKey(table, column, schema))) {
+            skip(filePath, match.trim(), 'already-encrypted')
+            return match
+          }
 
-        // Fail closed. Absence from `declaredColumns` does not mean the column
-        // is plaintext — it means the corpus never said. The declaration can
-        // sit in a directory this sweep does not read (the wizard ships with
-        // three candidates and indexes each separately), so rewriting on the
-        // assumption is how a live `DROP COLUMN` reaches a populated — possibly
-        // already-encrypted — column. Flag it and let the user look.
-        if (!declaredColumns.has(columnKey(table, column, schema))) {
-          skip(filePath, match.trim(), 'source-unknown')
-          return match
-        }
+          // Fail closed. Absence from `declaredColumns` does not mean the column
+          // is plaintext — it means the corpus never said. The declaration can
+          // sit in a directory this sweep does not read (the wizard ships with
+          // three candidates and indexes each separately), so rewriting on the
+          // assumption is how a live `DROP COLUMN` reaches a populated — possibly
+          // already-encrypted — column. Flag it and let the user look.
+          if (!declaredColumns.has(columnKey(table, column, schema))) {
+            skip(filePath, match.trim(), 'source-unknown')
+            return match
+          }
 
-        const domain = DOMAIN_RE.exec(mangledType)?.[0]?.toLowerCase()
-        // Unreachable — the outer regex only matches when a domain is present —
-        // but leave the statement alone rather than emit a broken rewrite.
-        if (!domain) return match
+          const domain = DOMAIN_RE.exec(mangledType)?.[0]?.toLowerCase()
+          // Unreachable — the outer regex only matches when a domain is present —
+          // but leave the statement alone rather than emit a broken rewrite.
+          if (!domain) return match
 
-        // This statement converts the column, so from here on in the corpus it
-        // holds CIPHERTEXT. `indexColumnDeclarations` cannot know that: it
-        // reads CREATE TABLE, ADD COLUMN and RENAME, never the strict matcher's
-        // own target. Without this, a corpus carrying an earlier conversion
-        // (`... SET DATA TYPE eql_v2_encrypted` from a stack version that
-        // predates this sweep) leaves the column looking plaintext, and the
-        // NEXT domain change drops the ciphertext — `declared` cannot catch it,
-        // because the column really is declared, as plaintext, by the original
-        // CREATE TABLE.
-        //
-        // Recorded here rather than in the corpus-wide index on purpose: the
-        // index has no order, so it would flag THIS conversion — the legitimate
-        // plaintext -> encrypted one — as already-encrypted too. Files are
-        // walked in sorted order and matches within a file in source order, so
-        // "already converted" means "converted by a statement that runs before
-        // this one".
-        encryptedColumns.add(columnKey(table, column, schema))
-        return renderSafeAlter(table, column, domain, schema)
-      },
-    )
+          // This statement converts the column, so from here on in the corpus it
+          // holds CIPHERTEXT. `indexColumnDeclarations` cannot know that: it
+          // reads CREATE TABLE, ADD COLUMN and RENAME, never the strict matcher's
+          // own target. Without this, a corpus carrying an earlier conversion
+          // (`... SET DATA TYPE eql_v2_encrypted` from a stack version that
+          // predates this sweep) leaves the column looking plaintext, and the
+          // NEXT domain change drops the ciphertext — `declared` cannot catch it,
+          // because the column really is declared, as plaintext, by the original
+          // CREATE TABLE.
+          //
+          // Recorded here rather than in the corpus-wide index on purpose: the
+          // index has no order, so it would flag THIS conversion — the legitimate
+          // plaintext -> encrypted one — as already-encrypted too. Files are
+          // walked in sorted order and matches within a file in source order, so
+          // "already converted" means "converted by a statement that runs before
+          // this one".
+          encryptedColumns.add(columnKey(table, column, schema))
+          return renderSafeAlter(table, column, domain, schema)
+        },
+      )
 
-    if (updated !== original) {
-      await writeFile(filePath, updated, 'utf-8')
-      rewritten.push(filePath)
-    }
-
-    // Broad secondary scan on the POST-rewrite content: anything still carrying
-    // `SET DATA TYPE` near an eql_v2/eql_v3 token slipped past the strict
-    // matcher. Flag it — non-fatally — rather than leave the user shipping SQL
-    // that fails at migrate time.
-    for (const nearMiss of updated.matchAll(NEAR_MISS_RE)) {
-      const statement = trimStatementPreamble(nearMiss[0])
-      // Anchor the comment test on the `SET DATA TYPE` itself: the match starts
-      // at the previous `;`, so its own offset sits before any preamble.
-      const keyword = nearMiss[0].search(/\bSET\s+DATA\s+TYPE\b/i)
-      if (
-        isInsideCommentOrString(updated, nearMiss.index + Math.max(keyword, 0))
-      ) {
-        continue
+      if (updated !== original) {
+        await writeFile(filePath, updated, 'utf-8')
+        rewritten.push(filePath)
       }
-      skip(filePath, statement, 'unrecognised-form')
+
+      // Broad secondary scan on the POST-rewrite content: anything still carrying
+      // `SET DATA TYPE` near an eql_v2/eql_v3 token slipped past the strict
+      // matcher. Flag it — non-fatally — rather than leave the user shipping SQL
+      // that fails at migrate time.
+      for (const nearMiss of updated.matchAll(NEAR_MISS_RE)) {
+        const statement = trimStatementPreamble(nearMiss[0])
+        // Anchor the comment test on the `SET DATA TYPE` itself: the match starts
+        // at the previous `;`, so its own offset sits before any preamble.
+        const keyword = nearMiss[0].search(/\bSET\s+DATA\s+TYPE\b/i)
+        if (
+          isInsideCommentOrString(
+            updated,
+            nearMiss.index + Math.max(keyword, 0),
+          )
+        ) {
+          continue
+        }
+        skip(filePath, statement, 'unrecognised-form')
+      }
     }
+  } catch (error) {
+    // Nothing done yet means nothing to add: rethrow the original, `code` and
+    // identity intact, so the caller's "this directory went unchecked" wording
+    // stays exactly as it was.
+    if (rewritten.length === 0 && skipped.length === 0) throw error
+    throw new PartialRewriteError(error, rewritten, skipped)
   }
 
   return { rewritten, skipped }
@@ -844,7 +891,14 @@ export async function rewriteEncryptedAlterColumns(
 export interface DirRewriteResult extends RewriteResult {
   /** The candidate directory as supplied (relative to `cwd`), for reporting. */
   dir: string
-  /** Set when this directory's sweep threw; the sweep continues regardless. */
+  /**
+   * Set when this directory's sweep threw; the sweep continues regardless.
+   *
+   * It does NOT imply `rewritten` and `skipped` are empty — a sweep can fail
+   * after it has already rewritten files, and those files are reported here
+   * alongside the error. Both facts hold at once, so a caller must report the
+   * rewrites (data-destroying) as well as the failure (unchecked remainder).
+   */
   error?: string
   /**
    * Set when the directory holds `.sql` files but no drizzle-kit journal, so
@@ -935,7 +989,19 @@ export async function sweepMigrationDirs(
       results.push({ dir, rewritten, skipped })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      results.push({ dir, rewritten: [], skipped: [], error: message })
+      // Hard-coding zeros here would be a CLAIM — "this directory was not
+      // changed" — and it is false whenever the sweep threw after a write. The
+      // caller reads these arrays to decide whether to warn about data
+      // destruction, so emptying them downgrades a destructive outcome to a
+      // merely unchecked one (#786). A failure with nothing behind it still
+      // reports zeros, because for that directory they are true.
+      const partial = err instanceof PartialRewriteError
+      results.push({
+        dir,
+        rewritten: partial ? err.rewritten : [],
+        skipped: partial ? err.skipped : [],
+        error: message,
+      })
     }
   }
 

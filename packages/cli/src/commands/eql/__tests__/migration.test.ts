@@ -66,6 +66,24 @@ vi.mock('node:fs', async (importOriginal) => {
   return { ...actual, default: actual, writeFileSync: fsWrite.spy }
 })
 
+// Same seam on the async side. The ALTER-COLUMN sweep is the only thing in this
+// command that writes through `node:fs/promises`, so a call-counting spy here
+// makes a mid-sweep write failure deterministic — no chmod, which passes
+// silently as root and varies by platform.
+const fsWriteAsync = vi.hoisted(() => ({
+  real: (() => {
+    throw new Error(
+      'fsWriteAsync.real not initialised: node:fs/promises mock factory did not run',
+    )
+  }) as typeof import('node:fs/promises').writeFile,
+  spy: vi.fn(),
+}))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  fsWriteAsync.real = actual.writeFile
+  return { ...actual, default: actual, writeFile: fsWriteAsync.spy }
+})
+
 // `printNextSteps` lives in the install module, which drags in `pg`. Stub it;
 // the two helpers we reuse (`findGeneratedMigration`, `cleanupMigrationFile`)
 // stay real and act on the tmpdir.
@@ -76,6 +94,7 @@ vi.mock('../../db/install.js', async (importOriginal) => {
 
 beforeEach(() => {
   fsWrite.spy.mockImplementation(fsWrite.real)
+  fsWriteAsync.spy.mockImplementation(fsWriteAsync.real)
 })
 afterEach(() => {
   vi.clearAllMocks()
@@ -355,6 +374,65 @@ describe('eqlMigrationCommand — Drizzle', () => {
     ).toBe(true)
     // And the closing note warns the sweep did not fully complete.
     const warned = clack.log.warn.mock.calls.map((c) => String(c[0]))
+    expect(warned.some((msg) => msg.includes('did not fully complete'))).toBe(
+      true,
+    )
+  })
+
+  // The sweep writes one file at a time, so a failure part way through leaves
+  // earlier files already rewritten — each holding a live `DROP COLUMN`. The
+  // catch used to warn about the directory without naming them, so the user was
+  // sent to "review the sibling migrations" with no idea which ones had already
+  // become data-destroying (#786).
+  it('names the files it already rewrote when the sweep fails part way', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    writeFileSync(
+      join(out, '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text, "name" text);\n',
+    )
+    const rewritten = join(out, '0001_encrypt-email.sql')
+    writeFileSync(
+      rewritten,
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+    )
+    writeFileSync(
+      join(out, '0002_encrypt-name.sql'),
+      'ALTER TABLE "users" ALTER COLUMN "name" SET DATA TYPE eql_v3_text_search;\n',
+    )
+    spawnMock.mockImplementation(() => {
+      writeFileSync(join(out, '0003_install-eql.sql'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+    // The generated migration is `skip`ped, so the only writes through
+    // `node:fs/promises` are the sweep's: #1 rewrites 0001, #2 fails on 0002.
+    let asyncWrites = 0
+    fsWriteAsync.spy.mockImplementation(
+      (
+        ...args: Parameters<typeof import('node:fs/promises').writeFile>
+      ): Promise<void> => {
+        asyncWrites += 1
+        if (asyncWrites === 2) {
+          return Promise.reject(new Error('ENOSPC: no space left on device'))
+        }
+        return fsWriteAsync.real(...args)
+      },
+    )
+
+    await eqlMigrationCommand({ drizzle: true, out })
+
+    // The first file really was rewritten and is sitting there destructive.
+    expect(readFileSync(rewritten, 'utf-8')).toContain('DROP COLUMN')
+    // So it must be named, not just counted away by a directory-level warning.
+    const stepped = clack.log.step.mock.calls.map((c) => String(c[0]))
+    expect(stepped.some((msg) => msg.includes(rewritten))).toBe(true)
+    const infos = clack.log.info.mock.calls.map((c) => String(c[0]))
+    expect(infos.some((msg) => msg.includes('Rewrote 1 migration file'))).toBe(
+      true,
+    )
+    // And the failure itself is still reported, with the closing warning.
+    const warned = clack.log.warn.mock.calls.map((c) => String(c[0]))
+    expect(warned.some((msg) => msg.includes('ENOSPC'))).toBe(true)
     expect(warned.some((msg) => msg.includes('did not fully complete'))).toBe(
       true,
     )
