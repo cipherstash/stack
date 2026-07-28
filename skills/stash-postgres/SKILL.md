@@ -30,12 +30,11 @@ Supabase client, those integrations emit correct operands for you: see
 > decrypts on read, so there is no `encryptQuery`, no `eql_v3.query_*` cast,
 > and no payload to bind.
 >
-> Proxy's schema lifecycle — `stash db push` into `eql_v2_configuration`,
-> promoted at cutover — belongs to EQL **v2**. This skill is EQL v3, where a
-> column's encryption config lives in its own domain and there is no
-> configuration table to push. The `stash` CLI does not track a
-> Proxy-versus-SDK choice; it targets the direct-connection path this skill
-> describes.
+> Proxy's former schema lifecycle belongs to EQL **v2** and is no longer
+> installed or mutated by `stash`; legacy state remains visible through status
+> diagnostics only. This skill is EQL v3, where a column's encryption config
+> lives in its own domain and there is no configuration table to push. The
+> `stash` CLI targets the direct-connection path this skill describes.
 
 ## When to Use This Skill
 

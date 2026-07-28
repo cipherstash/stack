@@ -23,14 +23,14 @@ export type MigrationEvent =
 
 /**
  * The per-column lifecycle phase as surfaced in status/plan output and
- * driven by the `stash encrypt {backfill,cutover,drop}` commands.
+ * driven by the `stash encrypt {backfill,drop}` commands.
  *
  * ```
  * schema-added  → the <col>_encrypted column exists and is registered with EQL
  * dual-writing  → app writes both plaintext and encrypted on inserts/updates
  * backfilling   → runBackfill is (or has been) encrypting historical rows
  * backfilled    → all historical rows encrypted; safe to cut over reads
- * cut-over      → columns renamed (via eql_v2.rename_encrypted_columns)
+ * cut-over      → legacy EQL v2 history token (status compatibility only)
  * dropped       → old plaintext column removed
  * ```
  */

@@ -96,11 +96,8 @@ export async function resolveColumnLifecycle(
   //   reports success for a rename it never performed, and `drop`'s remedy
   //   tells the user to record the guess (#772 review, finding 7). Fail closed;
   // - the column exists, is not an EQL v3 column, and there are NO v3 columns
-  //   on the table — the pure-v2 table. Nothing here can be mis-claimed, and
-  //   `cutover` / `drop` still implement the v2 ladder, so fall through to it
-  //   exactly as before. Gating on `candidates.length` is what keeps the
-  //   protection above scoped to the mixed table it was written for (#787
-  //   review).
+  //   on the table — the pure-v2 table. Nothing here can be mis-claimed, so
+  //   fall through and let the caller emit its explicit v2-retirement error.
   if (
     hint &&
     candidates.length > 0 &&
@@ -153,7 +150,7 @@ export function explainUnresolved(
   // that: listing the v3 candidates here would invite the user to record one of
   // them, which is how the guess used to get laundered into a `via: 'hint'` match.
   if (unresolvedHint !== undefined) {
-    return `${table}.${column} is recorded as pairing with "${unresolvedHint}", but ${unresolvedHint} is not an EQL v3 column — it is most likely a legacy eql_v2_encrypted column. ${table} also holds EQL v3 columns, and none of them is a confirmed counterpart for ${column}, so this command cannot tell which lifecycle applies and will not guess.\n\nIf that pairing is wrong, correct or remove "encryptedColumn" for ${column} in .cipherstash/migrations.json and re-run. If it is right, ${column} is on the EQL v2 lifecycle, which no stash command can drive on this table — complete it yourself against ${unresolvedHint} with the eql_v2 SQL.`
+    return `${table}.${column} is recorded as pairing with "${unresolvedHint}", but ${unresolvedHint} is not an EQL v3 column — it is most likely a legacy eql_v2_encrypted column. ${table} also holds EQL v3 columns, and none of them is a confirmed counterpart for ${column}, so this command cannot tell which lifecycle applies and will not guess.\n\nIf that pairing is wrong, correct or remove "encryptedColumn" for ${column} in .cipherstash/migrations.json and re-run. If it is right, v2 mutation automation has been removed. For dump recovery, use the upstream EQL 2.3.1 SQL from https://github.com/cipherstash/encrypt-query-language/releases/tag/eql-2.3.1.`
   }
 
   const listed = candidates

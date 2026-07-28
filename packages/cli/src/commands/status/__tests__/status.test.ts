@@ -193,17 +193,21 @@ describe('buildColumnQuest — migrate path', () => {
     // Regression guard: the hint must be prefixed with whatever `cli` the
     // caller passed in (e.g. `pnpm dlx stash`), never a hard-coded
     // `npx stash` string.
-    const backfill = buildColumnQuest(obs({ phase: 'dual-writing' }), CLI)
+    const backfill = buildColumnQuest(
+      obs({ phase: 'dual-writing', eqlVersion: 3 }),
+      CLI,
+    )
     expect(backfill.nextMove).toContain(`${CLI} encrypt backfill`)
     expect(backfill.nextMove).toContain('--table users')
     expect(backfill.nextMove).toContain('--column email')
     expect(backfill.nextMove).not.toContain('npx stash')
 
     const cutover = buildColumnQuest(obs({ phase: 'backfilled' }), CLI)
-    expect(cutover.nextMove).toContain(`${CLI} encrypt cutover`)
+    expect(cutover.nextMove).toMatch(/Legacy EQL v2 rollout state/)
+    expect(cutover.nextMove).not.toContain('encrypt cutover')
 
     const drop = buildColumnQuest(obs({ phase: 'cut-over' }), CLI)
-    expect(drop.nextMove).toContain(`${CLI} encrypt drop`)
+    expect(drop.nextMove).toMatch(/Mutation commands for v2 have been removed/)
   })
 
   it('falls back to physical-column existence as a schema-add signal', () => {
@@ -231,7 +235,7 @@ describe('buildColumnQuest — new path', () => {
     expect(quest.objectives[0].status).toBe('active')
   })
 
-  it('EQL pending: 1/2, activate active, hint uses caller-supplied runner', () => {
+  it('EQL pending: 1/2, retains diagnostics without recommending activation', () => {
     const quest = buildColumnQuest(
       {
         table: 'orders',
@@ -243,7 +247,8 @@ describe('buildColumnQuest — new path', () => {
     )
     expect(quest.progress).toEqual({ done: 1, total: 2 })
     expect(quest.objectives[1].status).toBe('active')
-    expect(quest.nextMove).toContain(`${CLI} db activate`)
+    expect(quest.nextMove).toMatch(/Automatic activation has been removed/)
+    expect(quest.nextMove).not.toContain('db activate')
   })
 
   it('EQL active: 2/2, complete', () => {
@@ -347,7 +352,12 @@ describe('renderQuestLogTTY', () => {
       planExists: false,
       observedFromDb: true,
       observations: [
-        { table: 'users', column: 'email', phase: 'dual-writing' },
+        {
+          table: 'users',
+          column: 'email',
+          phase: 'dual-writing',
+          eqlVersion: 3,
+        },
       ],
       cli: CLI,
     })
@@ -355,7 +365,7 @@ describe('renderQuestLogTTY', () => {
     expect(out).toContain('CipherStash Quest Log')
     expect(out).toContain('ACTIVE QUEST')
     expect(out).toContain('Encrypt users.email')
-    expect(out).toMatch(/2\/5 objectives/)
+    expect(out).toMatch(/2\/4 objectives/)
     expect(out).toContain('▓')
     expect(out).toContain('░')
     expect(out).toMatch(/← you are here/)
@@ -419,14 +429,19 @@ describe('renderQuestLogPlain', () => {
       planExists: false,
       observedFromDb: true,
       observations: [
-        { table: 'users', column: 'email', phase: 'dual-writing' },
+        {
+          table: 'users',
+          column: 'email',
+          phase: 'dual-writing',
+          eqlVersion: 3,
+        },
       ],
       cli: CLI,
     })
     const out = renderQuestLogPlain(log, CLI)
     expect(out).not.toMatch(/⚔️|🏆|🔒|💡|▓|░/)
     expect(out).toContain('Encrypt users.email')
-    expect(out).toMatch(/Progress: 2\/5/)
+    expect(out).toMatch(/Progress: 2\/4/)
     expect(out).toContain('Next move:')
     expect(out).toContain(`${CLI} encrypt backfill`)
     expect(out).not.toContain('npx stash')
@@ -487,8 +502,13 @@ describe('renderQuestLogJSON', () => {
       planExists: false,
       observedFromDb: true,
       observations: [
-        { table: 'users', column: 'email', phase: 'dual-writing' },
-        { table: 'users', column: 'ssn', phase: 'dropped' },
+        {
+          table: 'users',
+          column: 'email',
+          phase: 'dual-writing',
+          eqlVersion: 3,
+        },
+        { table: 'users', column: 'ssn', phase: 'dropped', eqlVersion: 3 },
       ],
       cli: CLI,
     })
@@ -506,7 +526,7 @@ describe('renderQuestLogJSON', () => {
     expect(active.table).toBe('users')
     expect(active.column).toBe('email')
     expect(active.path).toBe('migrate')
-    expect(active.progress).toEqual({ done: 2, total: 5 })
+    expect(active.progress).toEqual({ done: 2, total: 4 })
     expect(active.complete).toBe(false)
     expect(active.nextMove).toContain(`${CLI} encrypt backfill`)
     expect(Array.isArray(active.objectives)).toBe(true)
@@ -557,7 +577,12 @@ describe('nextMoveHint', () => {
       planExists: false,
       observedFromDb: true,
       observations: [
-        { table: 'users', column: 'email', phase: 'dual-writing' },
+        {
+          table: 'users',
+          column: 'email',
+          phase: 'dual-writing',
+          eqlVersion: 3,
+        },
       ],
       cli: CLI,
     })

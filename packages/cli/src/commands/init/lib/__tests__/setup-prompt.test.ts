@@ -50,14 +50,13 @@ describe('renderSetupPrompt — orient + route (implement mode)', () => {
 
   it('frames the migrate-existing flow as rollout + backfill-and-switch with a deploy gate', () => {
     // The whole point of the rewrite. No "phase" jargon; explicit deploy
-    // gate banner; named sections. The switch step is EQL-version-aware:
-    // v3 (the default) has no rename — the app points at the encrypted
-    // column by name; cutover is the v2 rename path.
+    // gate banner; named sections. The v3 switch has no rename — the app
+    // points at the encrypted column by name.
     const out = renderSetupPrompt(baseCtx)
     expect(out).toMatch(/encryption rollout/i)
     expect(out).toMatch(/backfill and switch/i)
-    expect(out).toMatch(/EQL v3 \(the default\)/)
-    expect(out).toMatch(/encrypt cutover/)
+    expect(out).toMatch(/EQL v3/)
+    expect(out).not.toMatch(/encrypt cutover/)
     expect(out).toMatch(/deploy gate/i)
     expect(out).not.toMatch(/phase 1|phase 2|four-deploy/i)
   })
@@ -93,7 +92,7 @@ describe('renderSetupPrompt — orient + route (implement mode)', () => {
   it('names the lifecycle CLI commands inline in the migrate-existing flow', () => {
     const out = renderSetupPrompt(baseCtx)
     expect(out).toContain('pnpm dlx stash encrypt backfill')
-    expect(out).toContain('pnpm dlx stash encrypt cutover')
+    expect(out).not.toContain('pnpm dlx stash encrypt cutover')
     expect(out).toContain('pnpm dlx stash encrypt drop')
     expect(out).toContain('--confirm-dual-writes-deployed')
     expect(out).toContain('--force')
@@ -358,7 +357,7 @@ describe('renderSetupPrompt — plan mode (rollout, default)', () => {
     const out = renderSetupPrompt(planCtx)
     expect(out).toContain('## What you must NOT do')
     expect(out).toMatch(/encrypt backfill/)
-    expect(out).toMatch(/encrypt cutover/)
+    expect(out).not.toMatch(/encrypt cutover/)
     expect(out).toMatch(/encrypt drop/)
   })
 
@@ -539,7 +538,7 @@ describe('renderSetupPrompt — no db push recommendations', () => {
   // `db push` / `eql_v2_configuration` is a v2 + CipherStash Proxy artifact and
   // is redundant under EQL v3 (the default). The setup prompt no longer steers
   // the agent toward it in any mode.
-  it('omits db push from the add-new-column and cutover flows (implement mode)', () => {
+  it('omits db push and the removed cutover command (implement mode)', () => {
     const out = renderSetupPrompt(baseCtx)
     expect(out).not.toMatch(/db push/)
     expect(out).not.toMatch(/Register the encryption config/)
@@ -548,14 +547,10 @@ describe('renderSetupPrompt — no db push recommendations', () => {
     // The rollout path is schema-add → dual-write, with no push step between.
     expect(out).toMatch(/1\.\s*\*\*Schema-add/)
     expect(out).toMatch(/2\.\s*\*\*Dual-write/)
-    // Cutover is still covered, just without a db push workaround note.
-    // The heading has to be one that exists: `indexOf` returning -1 makes
-    // `substring(-1)` the whole document, so this scoped assertion was
-    // silently asserting nothing at all.
     const heading = '#### Backfill and switch'
     expect(out).toContain(heading)
     const cutoverSection = out.substring(out.indexOf(heading))
-    expect(cutoverSection).toMatch(/encrypt cutover/)
+    expect(cutoverSection).not.toMatch(/encrypt cutover/)
   })
 
   it('omits db push from every plan-mode template', () => {
@@ -566,40 +561,17 @@ describe('renderSetupPrompt — no db push recommendations', () => {
   })
 })
 
-// The rename swap is an EQL v2 operation. `stash encrypt cutover` refuses a v3
-// column outright ("Cut-over is not applicable to EQL v3 columns … there is no
-// rename step", `encrypt/cutover.ts`) and refuses entirely on a v3-only
-// install, where `eql_v2_configuration` does not exist. v3 is the default, so
-// a template presenting the rename as the only path drafts a plan around a
-// command that will decline to run. The implement prompt already splits the
-// two; these templates did not.
-describe('renderSetupPrompt — plan templates split EQL v3 from v2', () => {
+describe('renderSetupPrompt — plan templates are EQL v3-only', () => {
   const plan = (planStep: 'cutover' | 'complete') =>
     renderSetupPrompt({ ...baseCtx, mode: 'plan', planStep })
 
   for (const planStep of ['cutover', 'complete'] as const) {
     describe(`${planStep} plan`, () => {
-      it('names both versions and states v3 has no rename', () => {
+      it('states v3 has no rename and never schedules v2 mutation', () => {
         const out = plan(planStep)
         expect(out).toContain('EQL v3')
-        expect(out).toContain('EQL v2')
         expect(out).toMatch(/no rename/i)
-      })
-
-      it('does not present the rename swap unconditionally', () => {
-        const out = plan(planStep)
-        // Every mention of the rename swap has to sit next to the v2 label.
-        for (const line of out.split('\n')) {
-          if (/_plaintext/.test(line)) {
-            expect(line).toMatch(/v2|v3/)
-          }
-        }
-      })
-
-      it('tells the agent how to determine the version per column', () => {
-        // The version is per-column — a database can hold both — so this
-        // cannot be decided once for the whole plan.
-        expect(plan(planStep)).toMatch(/encrypt status|encrypt backfill/)
+        expect(out).not.toMatch(/encrypt cutover/)
       })
     })
   }
@@ -616,13 +588,8 @@ describe('renderSetupPrompt — plan templates split EQL v3 from v2', () => {
     }
   })
 
-  it('keeps the cutover invocation scoped to v2', () => {
-    const out = plan('cutover')
-    const cutoverLine = out
-      .split('\n')
-      .find((l) => l.includes('encrypt cutover --table'))
-    expect(cutoverLine).toBeDefined()
-    expect(cutoverLine).toMatch(/v2/)
+  it('does not emit the removed cutover invocation', () => {
+    expect(plan('cutover')).not.toMatch(/encrypt cutover/)
   })
 })
 

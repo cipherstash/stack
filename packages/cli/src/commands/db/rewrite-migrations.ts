@@ -675,10 +675,11 @@ export interface RewriteResult {
  * plaintext is destroyed. The commented UPDATE is a placeholder that can never
  * become real SQL (the encrypted value is the EQL envelope produced by ZeroKMS
  * via the client — there is no expression Postgres can evaluate to fill it), so
- * a populated table must instead use the staged `stash encrypt` lifecycle
- * (add → backfill via `@cipherstash/stack`'s `encryptModel` → cutover → drop),
- * which keeps both columns alive across deploys. Each rewritten file carries a
- * header comment saying exactly this.
+ * a populated table must instead use the staged EQL v3 lifecycle (add an
+ * encrypted twin → dual-write → backfill via `@cipherstash/stack`'s
+ * `encryptModel` → switch the application to the encrypted column by name →
+ * drop plaintext), which keeps both columns alive across deploys. Each
+ * rewritten file carries a header comment saying exactly this.
  *
  * Returns {@link RewriteResult}: the files rewritten, plus `skipped` statements
  * left for a human — ones outside the strict matcher (a hand-authored
@@ -840,9 +841,10 @@ export async function rewriteEncryptedAlterColumns(
  * composite, but this is equally true on both surfaces.)
  *
  * So the guidance does NOT tell the user to backfill and run this migration —
- * that would still lose data on cutover. It points a populated table at the
- * staged `stash encrypt` lifecycle (add → backfill → cutover → drop), which
- * keeps both columns alive across deploys.
+ * that would still lose data. It points a populated table at the staged EQL v3
+ * lifecycle (add an encrypted twin → dual-write → backfill → switch the
+ * application to the encrypted column by name → drop plaintext), which keeps
+ * both columns alive across deploys.
  */
 function renderSafeAlter(
   table: string,
@@ -859,8 +861,8 @@ function renderSafeAlter(
     `-- ${domain}. This ADD+DROP+RENAME equals DROP+ADD and is safe ONLY if`,
     `-- ${qualifiedTable} is empty. On a populated table it DESTROYS existing "${column}"`,
     '-- data (the new column starts NULL) — do NOT run it there. Use the staged',
-    "-- `stash encrypt` path instead: add -> backfill via @cipherstash/stack's",
-    '-- encryptModel in application code -> cutover -> drop.',
+    '-- EQL v3 path instead: add an encrypted twin -> dual-write -> backfill via',
+    '-- encryptModel -> switch the app to the encrypted column -> drop plaintext.',
     '-- NOTE: constraints, defaults, and indexes on the original column are NOT',
     '-- carried over by this ADD/DROP/RENAME — re-add any NOT NULL, DEFAULT,',
     '-- UNIQUE, or index definitions manually.',

@@ -131,15 +131,6 @@ export const registry: CommandGroup[] = [
               'Use Prisma Next-specific setup flow (EQL bundle installed via prisma-next migrate).',
           },
           {
-            name: '--proxy',
-            description: 'Query encrypted data via CipherStash Proxy.',
-          },
-          {
-            name: '--no-proxy',
-            description: 'Query encrypted data directly via the SDK.',
-            default: 'true',
-          },
-          {
             ...REGION_FLAG,
             description:
               'Region to authenticate against (e.g. us-east-1). Skips the interactive region picker. Required for non-interactive init when not already logged in.',
@@ -327,53 +318,6 @@ export const registry: CommandGroup[] = [
             description:
               'Use Supabase-compatible mode (auto-detected from DATABASE_URL).',
           },
-          {
-            name: '--drizzle',
-            description:
-              'Generate a Drizzle migration instead of direct install (auto-detected from project).',
-          },
-          {
-            name: '--migration',
-            description:
-              'Write a Supabase migration file instead of running SQL directly (requires --supabase).',
-          },
-          {
-            name: '--direct',
-            description:
-              'Run the SQL directly against the database (requires --supabase; mutually exclusive with --migration).',
-          },
-          {
-            name: '--migrations-dir',
-            value: '<path>',
-            description:
-              'Override the Supabase migrations directory (requires --supabase).',
-            default: 'supabase/migrations',
-          },
-          EXCLUDE_OPERATOR_FAMILY_FLAG,
-          {
-            name: '--eql-version',
-            value: '<2|3>',
-            description:
-              'EQL generation to target. v3 (native eql_v3.* domain schema) is the default; pass `2` for the legacy composite type. --drizzle, --migration, --migrations-dir, and --latest are v2-only and require `--eql-version 2`.',
-            default: '3',
-          },
-          {
-            name: '--latest',
-            description:
-              'Fetch the latest EQL from GitHub (v2 only — requires --eql-version 2).',
-          },
-          {
-            name: '--name',
-            value: '<name>',
-            description:
-              'With --drizzle: name for the generated migration (defaults to a scaffold name).',
-          },
-          {
-            name: '--out',
-            value: '<path>',
-            description:
-              'With --drizzle: directory to write the generated migration into.',
-          },
           DATABASE_URL_FLAG,
         ],
       },
@@ -419,24 +363,7 @@ export const registry: CommandGroup[] = [
       {
         name: 'eql upgrade',
         summary: 'Upgrade EQL extensions to the latest version',
-        flags: [
-          DRY_RUN_FLAG,
-          SUPABASE_COMPAT_FLAG,
-          EXCLUDE_OPERATOR_FAMILY_FLAG,
-          {
-            name: '--eql-version',
-            value: '<2|3>',
-            description:
-              'EQL generation to target. v3 is the default; pass `2` for the legacy composite type. --latest is v2-only and requires `--eql-version 2`.',
-            default: '3',
-          },
-          {
-            name: '--latest',
-            description:
-              'Fetch the latest EQL from GitHub (v2 only — requires --eql-version 2).',
-          },
-          DATABASE_URL_FLAG,
-        ],
+        flags: [DRY_RUN_FLAG, SUPABASE_COMPAT_FLAG, DATABASE_URL_FLAG],
       },
       {
         name: 'eql status',
@@ -448,18 +375,6 @@ export const registry: CommandGroup[] = [
   {
     title: 'Database',
     commands: [
-      {
-        name: 'db push',
-        summary:
-          'Push encryption schema (writes pending if active config already exists)',
-        flags: [DRY_RUN_FLAG, DATABASE_URL_FLAG],
-      },
-      {
-        name: 'db activate',
-        summary:
-          'Promote pending → active without renames (use after additive db push)',
-        flags: [DATABASE_URL_FLAG],
-      },
       {
         name: 'db validate',
         summary: 'Validate encryption schema',
@@ -541,24 +456,6 @@ export const registry: CommandGroup[] = [
           {
             name: '--force',
             description: 'Proceed past non-fatal safety checks.',
-          },
-        ],
-      },
-      {
-        name: 'encrypt cutover',
-        summary: 'Rename swap encrypted → primary column (EQL v2 only)',
-        flags: [
-          TABLE_FLAG,
-          COLUMN_FLAG,
-          {
-            name: '--proxy-url',
-            value: '<url>',
-            description: 'Proxy URL to verify against.',
-          },
-          {
-            name: '--migrations-dir',
-            value: '<path>',
-            description: 'Directory to write the rename migration into.',
           },
         ],
       },

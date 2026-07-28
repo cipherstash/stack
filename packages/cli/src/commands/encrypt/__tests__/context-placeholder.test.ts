@@ -78,7 +78,7 @@ describe('loadEncryptionContext — the un-replaced init scaffold', () => {
 
   /**
    * #787 review. The guard originally read the harvested EXPORT map, while the
-   * `db push` / `db validate` guard it mirrors reads `getEncryptConfig().tables`.
+   * The `db validate` guard it mirrors reads `getEncryptConfig().tables`.
    * Those disagree in both directions on the same client file, so the two
    * commands gave different answers for identical input.
    */
@@ -109,7 +109,7 @@ describe('loadEncryptionContext — the un-replaced init scaffold', () => {
     // The false POSITIVE, and the mirror of the case above: the user replaced
     // the schema set but left the sentinel `export` behind (or imports their
     // real tables without re-exporting them). Reading exports, the guard fired
-    // and told them to declare columns they had already declared. `db push`
+    // and told them to declare columns they had already declared. `db validate`
     // passes on this same file.
     writeProject(
       `export const encryptionClient = {

@@ -15,9 +15,8 @@ describe('renderCommandHelp', () => {
     )
     expect(out).toContain('Options:')
     expect(out).toContain('--force')
-    // Value-taking flag renders its placeholder + default annotation.
-    expect(out).toContain('--eql-version <2|3>')
-    expect(out).toContain('(default: 3)')
+    // Value-taking flags render their placeholder.
+    expect(out).toContain('--database-url <url>')
   })
 
   it('surfaces a flag env var alongside its description', () => {

@@ -11,3 +11,5 @@ stripped). v3 currently supports the direct install path only —
 `--drizzle`/`--migration`/`--migrations-dir`/`--latest` are rejected — and the
 installer keys `isInstalled`/version checks and Supabase grants to the `eql_v3`
 schema.
+
+Superseded later in this release: `--eql-version` and the v2 installer are removed; installs and upgrades are v3-only.

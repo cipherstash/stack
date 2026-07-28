@@ -8,14 +8,8 @@ import type { ClientBase } from 'pg'
  * All statements are `CREATE … IF NOT EXISTS` so running the installer
  * multiple times or alongside an existing deployment is safe.
  *
- * This table is intentionally kept separate from `eql_v2_configuration`:
- * - That table's `data` JSONB has a strict CHECK constraint that forbids
- *   custom metadata, so we cannot stuff backfill progress into it.
- * - Its `state` enum is global (`pending`/`encrypting`/`active`/`inactive`
- *   — only one of the first three at a time), which cannot represent
- *   multiple columns in different phases simultaneously.
- * - Checkpoint writes during backfill would collide with Proxy's 60s
- *   config refresh cycle.
+ * This table is intentionally independent of the installed EQL schemas, so
+ * checkpoint writes never depend on query-configuration state.
  */
 export const MIGRATIONS_SCHEMA_SQL = `
 CREATE SCHEMA IF NOT EXISTS cipherstash;

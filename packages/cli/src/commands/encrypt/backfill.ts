@@ -1,7 +1,6 @@
 import {
   appendEvent,
   detectColumnEqlVersion,
-  type EqlVersion,
   type ManifestColumn,
   progress,
   runBackfill,
@@ -138,24 +137,22 @@ export async function backfillCommand(options: BackfillCommandOptions) {
     const encryptedColumn =
       options.encryptedColumn ?? `${options.column}_encrypted`
 
-    // v2 or v3 changes the rest of the LIFECYCLE (v3 has no cut-over — the
-    // ladder is backfill → switch-by-name → drop), so detect it up front,
-    // record it in the manifest, and tell the user which path they're on.
-    // `null` means the target column doesn't exist, isn't an EQL domain, or is
-    // a legacy `eql_v2_encrypted` column (no longer classified — v3 is the sole
-    // authored generation). Every one of those falls through to the v2 ladder,
-    // which is the correct default for the v2 case and lets the existing checks
-    // below produce their specific errors for the other two.
+    // Backfill authors ciphertext, so it accepts only the current EQL v3
+    // domains. Legacy v2 remains visible to status/read diagnostics but is no
+    // longer a writable rollout target.
     const eqlVersion = await detectColumnEqlVersion(
       db,
       options.table,
       encryptedColumn,
     )
-    if (eqlVersion) {
-      p.log.info(
-        `${options.table}.${encryptedColumn} is EQL v${eqlVersion}${eqlVersion === 3 ? ' — lifecycle is backfill → switch the app to the encrypted column by name → drop (no cut-over rename).' : ''}`,
+    if (eqlVersion !== 3) {
+      throw new BackfillConfigError(
+        `${options.table}.${encryptedColumn} is not an EQL v3 domain. stash no longer backfills legacy EQL v2 columns; migrate the schema to an eql_v3_* domain first.`,
       )
     }
+    p.log.info(
+      `${options.table}.${encryptedColumn} is EQL v3 — lifecycle is backfill → switch the app to the encrypted column by name → drop (no cut-over rename).`,
+    )
 
     // Phase guard: backfill requires the application to already be writing
     // to both columns, otherwise rows inserted *during* the backfill land
@@ -277,12 +274,10 @@ export async function backfillCommand(options: BackfillCommandOptions) {
       return
     }
 
-    if (eqlVersion === 3) {
-      p.note(
-        `EQL v3 has no cut-over. Next:\n  1. Point your application at ${encryptedColumn} (schema + queries), deploy, verify reads.\n  2. Generate the plaintext drop: stash encrypt drop --table ${options.table} --column ${plaintextColumn}`,
-        'Next steps (EQL v3)',
-      )
-    }
+    p.note(
+      `EQL v3 has no cut-over. Next:\n  1. Point your application at ${encryptedColumn} (schema + queries), deploy, verify reads.\n  2. Generate the plaintext drop: stash encrypt drop --table ${options.table} --column ${plaintextColumn}`,
+      'Next steps (EQL v3)',
+    )
     p.outro(
       `Backfill complete. ${result.rowsProcessed.toLocaleString()} rows encrypted.`,
     )
@@ -529,11 +524,11 @@ function buildManifestEntry(
   plaintextColumn: string,
   encryptedColumn: string,
   pkColumn: string | undefined,
-  eqlVersion: EqlVersion | null,
+  eqlVersion: 3,
 ): ManifestColumn {
   // SDK `cast_as` ('string', 'number', …) and EQL `castAs` ('text',
   // 'double', …) are different vocabularies; translate via the same
-  // helper `stash db push` uses so the two stay aligned.
+  // shared schema translation helper so SDK and EQL vocabularies stay aligned.
   const castAs: ManifestColumn['castAs'] =
     column?.cast_as !== undefined
       ? translateCastAs(
@@ -551,25 +546,14 @@ function buildManifestEntry(
     column: plaintextColumn,
     castAs,
     indexes,
-    // Recorded so later commands (cutover/drop/status) don't have to guess
+    // Recorded so later commands (drop/status) don't have to guess
     // the name from the `<column>_encrypted` convention — the name is a
     // convention only, never relied upon.
     encryptedColumn,
-    // v2's ladder ends with the rename cut-over; v3 has none — its end
-    // state is the plaintext column dropped. An unclassified column (null,
-    // which now includes a legacy v2 domain) takes the v2 ladder.
-    targetPhase: eqlVersion === 3 ? 'dropped' : 'cut-over',
+    targetPhase: 'dropped',
+    eqlVersion,
   }
   if (pkColumn) entry.pkColumn = pkColumn
-  // Absent means the classifier returned null: the column isn't there, isn't
-  // an EQL domain, or carries the legacy `eql_v2_encrypted` domain (which
-  // `classifyEqlDomain` no longer recognises — v3 is the sole authored
-  // generation). Readers fall back to the live domain type, which yields null
-  // for those same three cases, so `encrypt status` reports no version rather
-  // than guessing one. Manifests written before v2 classification was dropped
-  // still carry `eqlVersion: 2`, so existing v2 columns keep their version;
-  // only a v2 column backfilled from here on records none.
-  if (eqlVersion) entry.eqlVersion = eqlVersion
   return entry
 }
 

@@ -25,3 +25,5 @@ case, expect the wrong column to be dropped.
 
 Skills ship inside the `stash` tarball and are copied into user projects at
 `stash init`, so this guidance was being installed into customer repos.
+
+Superseded later in this release: the bundled skills no longer document v2/Proxy mutation commands because those CLI paths are removed.

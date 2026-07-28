@@ -40,7 +40,8 @@ describe('per-command --help', () => {
     })
     expect(r.exitCode).toBe(0)
     expect(r.output).toContain('Usage: npx stash eql install [options]')
-    expect(r.output).toContain('--eql-version <2|3>')
+    expect(r.output).not.toContain('--eql-version')
+    expect(r.output).not.toContain('--latest')
     expect(r.output).toContain('Also settable via DATABASE_URL.')
   })
 
