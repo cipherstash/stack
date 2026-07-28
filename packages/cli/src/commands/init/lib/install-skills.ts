@@ -12,10 +12,16 @@ import { findBundledDir } from './bundled-paths.js'
  */
 export const SKILL_MAP: Record<Integration, readonly string[]> = {
   drizzle: ['stash-encryption', 'stash-drizzle', 'stash-indexing', 'stash-cli'],
+  // Supabase gets the raw-SQL and edge skills on top of its own: Edge
+  // Functions are the flagship use of the WASM entry, and Supabase projects
+  // write hand-written SQL in migrations and RPC even when the app itself
+  // goes through PostgREST (#754).
   supabase: [
     'stash-encryption',
     'stash-supabase',
     'stash-indexing',
+    'stash-postgres',
+    'stash-edge',
     'stash-cli',
   ],
   'prisma-next': [
@@ -24,7 +30,16 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
     'stash-indexing',
     'stash-cli',
   ],
-  postgresql: ['stash-encryption', 'stash-indexing', 'stash-cli'],
+  // The no-ORM path: `stash-postgres` (binding + predicate forms) and `stash-edge`
+  // (WASM entry, CS_* credentials) are the two skills this integration has no
+  // other source for — everything else assumes an ORM emits the operands.
+  postgresql: [
+    'stash-encryption',
+    'stash-indexing',
+    'stash-postgres',
+    'stash-edge',
+    'stash-cli',
+  ],
 }
 
 /** The skills every integration gets — the safe fallback for an unmapped one. */
