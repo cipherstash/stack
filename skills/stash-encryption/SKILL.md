@@ -190,7 +190,7 @@ The SDK never logs plaintext data.
 | `@cipherstash/stack/types` | All TypeScript types |
 | `@cipherstash/stack-drizzle` | Drizzle ORM integration for EQL v3 schemas — the package root, EQL v3 only (see the `stash-drizzle` skill) |
 | `@cipherstash/stack-supabase` | `encryptedSupabase` wrapper for Supabase — EQL v3 only (see the `stash-supabase` skill) |
-| `@cipherstash/stack/wasm-inline` | The **edge** entry — Deno, Bun, Cloudflare Workers, Supabase Edge Functions. Its own `Encryption` factory plus the v3 authoring surface, `EncryptionErrorTypes`, and the WASM build of protect-ffi inlined into the bundle. No native binding, so no bundler externalisation needed. **EQL v3 only** — `Encryption()` here rejects a v2 schema, and its operations return plain Results with no `.audit()` or `.withLockContext()` chaining. |
+| `@cipherstash/stack/wasm-inline` | The **edge** entry — Deno, Bun, Cloudflare Workers, Supabase Edge Functions. Its own `Encryption` factory plus its own copy of the v3 authoring surface, `EncryptionErrorTypes`, and the WASM build of protect-ffi inlined into the bundle. No native binding, so no bundler externalisation needed. **EQL v3 only** — `Encryption()` here rejects a v2 schema, and its operations return plain Results with no `.audit()` or `.withLockContext()` chaining, so **values written here cannot be identity-bound** and it cannot read what the native entry wrote under a lock context. **ESM-only, and its schema types do not interchange with the other entries'** — see the `stash-edge` skill. |
 | `@cipherstash/stack/dynamodb` | `encryptedDynamoDB` — encrypt/write is **EQL v3 only** (`types.*`); decrypt still reads existing v2 items, on the native entry only. See the `stash-dynamodb` skill |
 | `@cipherstash/stack/schema`, `@cipherstash/stack/client`, `@cipherstash/stack/encryption` | Legacy v2 schema builders and client surface — see "Legacy: EQL v2" below |
 
@@ -446,6 +446,9 @@ for (const item of decrypted.data) {
 > [!IMPORTANT]
 > The `client` below is a **different client** from the one used everywhere else in this skill. The edge entry has its own `Encryption` factory — the native `Encryption` client's `bulkEncrypt` takes `(plaintexts, { table, column })` and will fail at runtime if given the per-item shape below. Construct the WASM client explicitly:
 
+> [!IMPORTANT]
+> **The schema is not shareable between entries either.** Note that `encryptedTable` and `types` are imported *from the WASM entry* below, not from `@cipherstash/stack/eql/v3`. The entries ship independent type bundles whose column classes carry private fields, so TypeScript compares them **nominally**: a schema authored on one entry is rejected by the other's client, in both directions (`Types have separate declarations of a private property 'columnName'`). It works at runtime, which makes `as any` the tempting fix — don't. Author the shared schema module against exactly one entry and build that entry's client from it. See the `stash-edge` skill.
+
 ```typescript
 // Deno / Workers / Supabase Edge Functions — note the import path
 import { Encryption, encryptedTable, types } from "@cipherstash/stack/wasm-inline"
@@ -582,7 +585,7 @@ All values in the array must be non-null.
 
 ### On the Wire: Operators and Ordering
 
-Scalar filters compare through each domain's `eql_v3.*` operators (`col = term`, `col > term`, ...), and `ORDER BY` on an encrypted column goes through the ordering extractors — `eql_v3.ord_term(col)` for OPE-backed (`Ord`/`Search`) domains, `eql_v3.ord_term_ore(col)` for `OrdOre`. The Drizzle v3 integration emits all of this for you (including `asc`/`desc`, which emit `ORDER BY eql_v3.ord_term(col)`). Over Supabase/PostgREST, the adapter's `order()` works on OPE-backed ordering columns (plain `*_ord`, `text_ord`, `text_search`) by sorting on the column's `col->op` term; `OrdOre`-flavour (`*_ord_ore`) domains and columns with no ordering term are rejected. See the `stash-drizzle` and `stash-supabase` skills. These same extractor expressions are also what you index — the functional-index recipes are in the `stash-indexing` skill.
+Scalar filters compare through each domain's `eql_v3.*` operators (`col = term`, `col > term`, ...), and `ORDER BY` on an encrypted column goes through the ordering extractors — `eql_v3.ord_term(col)` for OPE-backed (`Ord`/`Search`) domains, `eql_v3.ord_term_ore(col)` for `OrdOre`. The Drizzle v3 integration emits all of this for you (including `asc`/`desc`, which emit `ORDER BY eql_v3.ord_term(col)`). Over Supabase/PostgREST, the adapter's `order()` works on OPE-backed ordering columns (plain `*_ord`, `text_ord`, `text_search`) by sorting on the column's `col->op` term; `OrdOre`-flavour (`*_ord_ore`) domains and columns with no ordering term are rejected. See the `stash-drizzle` and `stash-supabase` skills. These same extractor expressions are also what you index — the functional-index recipes are in the `stash-indexing` skill. Writing the SQL by hand instead (no ORM, `pg` / `postgres-js`)? The predicate matrix, the `eql_v3.query_*` operand casts, and the per-driver parameter-binding rules are in the `stash-postgres` skill; running on Deno / Workers / Supabase Edge Functions, the `stash-edge` skill.
 
 ## Encrypted JSON (`types.Json`)
 

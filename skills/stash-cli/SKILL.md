@@ -457,6 +457,8 @@ Backfill **detects a `public.eql_v3_*` target column as EQL v3** from its Postgr
 
 **Dual-write precondition.** The application must already write both `<col>` and `<col>_encrypted` on every insert and update. Otherwise rows written *during* the backfill land in plaintext only, silently. The first run prompts (interactive) or requires `--confirm-dual-writes-deployed` (non-interactive), then records `dual_writing`. Resumes don't re-prompt.
 
+**Credential precondition — run the backfill with the *application's* credentials.** Backfill encrypts through whichever `CS_*` credentials are in its environment, and EQL index terms derive from the ZeroKMS client key. Backfilling from a laptop on the local device profile, then querying from an app using credentials minted by `stash env`, produces rows that decrypt correctly and **never match a query** — with no error. Export the target environment's `CS_*` values in the shell running the backfill. See [`env`](#env) and `stash-edge` § The Credential-Identity Rule.
+
 | Flag | Description |
 |---|---|
 | `--table` / `--column` | Required |
@@ -515,6 +517,14 @@ CS_CLIENT_ID=<uuid>
 CS_CLIENT_KEY=<hex>
 CS_CLIENT_ACCESS_KEY=CSAK…
 ```
+
+> **Every writer of a searchable column must use these same credentials** —
+> including `stash encrypt backfill`, seed scripts, and admin tools — or their
+> rows decrypt but never match a query. EQL index terms derive from the ZeroKMS
+> client key, so a row written under one credential and queried under another
+> decrypts correctly and silently fails every search. Mint one credential per
+> environment and export it for **every** process that writes that
+> environment's data. See `stash-edge` § The Credential-Identity Rule.
 
 Things to know:
 
