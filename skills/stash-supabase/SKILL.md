@@ -67,7 +67,7 @@ this is also how **Supabase Edge Functions** get credentials in local dev —
 ### 1. Install EQL v3 on the database
 
 ```bash
-stash eql install --eql-version 3 --supabase
+stash eql install --supabase
 ```
 
 Since eql-3.0.0 there is **one** v3 SQL artifact for every target — there is

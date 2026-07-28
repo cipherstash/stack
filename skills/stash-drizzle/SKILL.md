@@ -49,7 +49,7 @@ EQL (Encrypt Query Language) provides the PostgreSQL functions and domains that 
 **Direct install** — run the SQL straight against the database (quick, good for dev):
 
 ```bash
-stash eql install --eql-version 3
+stash eql install
 ```
 
 **Migration (preferred for real projects)** — generate a Drizzle custom migration that carries the EQL v3 install SQL, so it lands in your migration history and ships to every environment through `drizzle-kit migrate`:

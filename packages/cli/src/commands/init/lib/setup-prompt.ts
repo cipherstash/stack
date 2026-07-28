@@ -760,7 +760,9 @@ function renderCompletePlanPrompt(ctx: SetupPromptContext): string {
     bullet(
       'For migrate columns: the full step list with the exact CLI invocations (`' +
         cli +
-        ' encrypt backfill`, `cutover`, `drop`) and concrete `--table` / `--column` values.',
+        ' encrypt backfill`, an application read switch to the EQL v3 encrypted column by name and deploy, `' +
+        cli +
+        ' encrypt drop`) and concrete `--table` / `--column` values.',
     ),
     bullet('For new columns: the additive single-deploy walkthrough.'),
     bullet(

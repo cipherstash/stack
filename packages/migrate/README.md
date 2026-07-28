@@ -34,7 +34,7 @@ Creates `cipherstash.cs_migrations` idempotently. Normally called by `stash eql 
 
 ### `runBackfill(options)`
 
-Runs a chunked, resumable, idempotent plaintext-to-encrypted backfill. Each chunk selects the next keyset page, encrypts through `bulkEncryptModels`, updates the encrypted column, and records a checkpoint in one transaction. The `encrypted IS NULL` guard makes retries converge.
+Runs a chunked, resumable, idempotent plaintext-to-encrypted backfill. For each chunk, it selects the next keyset page and encrypts it through `bulkEncryptModels` before `BEGIN`. The database transaction commits only the encrypted-column writes and the corresponding `cs_migrations` checkpoint. The `encrypted IS NULL` guard makes retries converge.
 
 Pass an initialized EQL v3 `Encryption` client and an EQL v3 `encryptedTable`. The lower-level runner writes the envelope produced by the supplied client; the `stash encrypt backfill` command additionally verifies that the destination is an `eql_v3_*` domain before invoking it.
 

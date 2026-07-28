@@ -591,6 +591,14 @@ describe('renderSetupPrompt — plan templates are EQL v3-only', () => {
   it('does not emit the removed cutover invocation', () => {
     expect(plan('cutover')).not.toMatch(/encrypt cutover/)
   })
+
+  it('gives the complete plan the supported backfill, read-switch, and drop sequence', () => {
+    const out = plan('complete')
+    expect(out).toContain('`pnpm dlx stash encrypt backfill`')
+    expect(out).toMatch(/application read switch.*encrypted column by name/i)
+    expect(out).toContain('`pnpm dlx stash encrypt drop`')
+    expect(out).not.toContain('`cutover`')
+  })
 })
 
 describe('renderSetupPrompt — honours what the handoff actually wrote', () => {
