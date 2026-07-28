@@ -257,7 +257,7 @@ Index not being used:
 - **Drizzle** — `encryptedIndexes(t)` from `@cipherstash/stack-drizzle` derives the recommended indexes for every encrypted column in the table, or declare individual expression indexes in the schema DSL. See `stash-drizzle` § Indexing Encrypted Columns.
 - **Prisma Next** — Prisma's schema language cannot express functional indexes; the DDL goes in a migration in the adapter's flow. See `stash-prisma-next`.
 - **Supabase** — a `supabase/migrations/` file; no superuser needed (see above). See `stash-supabase`.
-- **Raw SQL / plain PostgreSQL** — the recipes in this skill, in whatever migration tool owns the schema. Never ad-hoc in production.
+- **Raw SQL / plain PostgreSQL** — the recipes in this skill, in whatever migration tool owns the schema. Never ad-hoc in production. The predicates those indexes serve are in `stash-postgres`.
 
 ## When to Create Indexes During an Encryption Rollout
 
@@ -271,3 +271,5 @@ Index not being used:
 - `stash-encryption` — the `types.*` domain catalog, wire-format operators and ordering, and the rollout/cutover lifecycle.
 - `stash-cli` — `stash eql install`, `stash db validate` (its "No indexes on an encrypted column" Info finding is resolved by this skill), `stash encrypt backfill` / `cutover`.
 - `stash-drizzle`, `stash-supabase`, `stash-prisma-next` — per-integration query patterns; index DDL placement per the section above.
+- `stash-postgres` — the hand-written predicate forms these indexes serve (`pg` / `postgres-js`, no ORM).
+- `stash-edge` — the WASM entry, for apps whose queries run on Deno / Workers / Supabase Edge Functions.
