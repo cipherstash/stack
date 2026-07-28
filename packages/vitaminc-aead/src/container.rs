@@ -90,3 +90,132 @@ impl<Leaf, P> CipherText<Leaf, P> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A leaf stand-in — `map_passthrough` never inspects the leaf type, so
+    /// the tests only need it to be distinguishable.
+    type Leaf = &'static str;
+
+    /// Render a tree's shape and payloads as a string, so a converted tree can
+    /// be compared against the original structurally.
+    fn shape<P: std::fmt::Debug>(ct: &CipherText<Leaf, P>) -> String {
+        match ct {
+            CipherText::Single(l) => format!("Single({l})"),
+            CipherText::None(l) => format!("None({l})"),
+            CipherText::EmptySequence(l) => format!("EmptySeq({l})"),
+            CipherText::EmptyMap(l) => format!("EmptyMap({l})"),
+            CipherText::Sequence(items) => {
+                let inner: Vec<_> = items.iter().map(shape).collect();
+                format!("Seq[{}]", inner.join(","))
+            }
+            CipherText::Map(entries) => {
+                let inner: Vec<_> = entries
+                    .iter()
+                    .map(|(k, v)| format!("{k}:{}", shape(v)))
+                    .collect();
+                format!("Map{{{}}}", inner.join(","))
+            }
+            CipherText::Passthrough(p) => format!("Pass({p:?})"),
+        }
+    }
+
+    /// A tree exercising every variant, with passthrough payloads nested at
+    /// several depths (top level, inside a sequence, inside a map).
+    fn sample() -> CipherText<Leaf, u32> {
+        CipherText::Map(vec![
+            ("single".into(), CipherText::Single("a")),
+            ("none".into(), CipherText::None("b")),
+            ("empty_seq".into(), CipherText::EmptySequence("c")),
+            ("empty_map".into(), CipherText::EmptyMap("d")),
+            ("pass".into(), CipherText::Passthrough(1)),
+            (
+                "seq".into(),
+                CipherText::Sequence(vec![
+                    CipherText::Single("e"),
+                    CipherText::Passthrough(2),
+                    CipherText::Sequence(vec![CipherText::Passthrough(3)]),
+                ]),
+            ),
+        ])
+    }
+
+    #[test]
+    fn converts_every_passthrough_and_preserves_structure() {
+        let converted: CipherText<Leaf, String> = sample()
+            .map_passthrough::<_, (), _>(&mut |p| Ok(format!("v{p}")))
+            .expect("conversion should succeed");
+
+        // Structure and leaves are untouched; only payloads changed.
+        assert_eq!(
+            shape(&converted),
+            r#"Map{single:Single(a),none:None(b),empty_seq:EmptySeq(c),empty_map:EmptyMap(d),pass:Pass("v1"),seq:Seq[Single(e),Pass("v2"),Seq[Pass("v3")]]}"#
+        );
+    }
+
+    #[test]
+    fn visits_each_payload_exactly_once() {
+        let mut seen = Vec::new();
+        sample()
+            .map_passthrough::<_, (), _>(&mut |p| {
+                seen.push(p);
+                Ok(p)
+            })
+            .expect("conversion should succeed");
+        // Every passthrough in the tree, including the nested ones.
+        assert_eq!(seen, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn a_tree_without_passthrough_never_invokes_the_closure() {
+        let ct: CipherText<Leaf, u32> = CipherText::Sequence(vec![
+            CipherText::Single("a"),
+            CipherText::None("b"),
+            CipherText::EmptySequence("c"),
+            CipherText::EmptyMap("d"),
+            CipherText::Map(vec![("k".into(), CipherText::Single("e"))]),
+        ]);
+        let mut calls = 0;
+        let converted: CipherText<Leaf, String> = ct
+            .map_passthrough::<_, (), _>(&mut |_| {
+                calls += 1;
+                Ok(String::new())
+            })
+            .expect("conversion should succeed");
+        assert_eq!(calls, 0);
+        assert_eq!(
+            shape(&converted),
+            "Seq[Single(a),None(b),EmptySeq(c),EmptyMap(d),Map{k:Single(e)}]"
+        );
+    }
+
+    // A payload the target type cannot represent must surface the error rather
+    // than being dropped — the property the fallible signature exists for.
+
+    #[test]
+    fn a_failing_conversion_propagates_from_the_top_level() {
+        let ct: CipherText<Leaf, u32> = CipherText::Passthrough(1);
+        let result = ct.map_passthrough::<String, _, _>(&mut |_| Err("unrepresentable"));
+        assert_eq!(result.err(), Some("unrepresentable"));
+    }
+
+    #[test]
+    fn a_failing_conversion_propagates_from_inside_a_sequence() {
+        let ct: CipherText<Leaf, u32> =
+            CipherText::Sequence(vec![CipherText::Single("a"), CipherText::Passthrough(1)]);
+        let result = ct.map_passthrough::<String, _, _>(&mut |_| Err("unrepresentable"));
+        assert_eq!(result.err(), Some("unrepresentable"));
+    }
+
+    #[test]
+    fn a_failing_conversion_propagates_from_inside_a_map() {
+        let ct: CipherText<Leaf, u32> = CipherText::Map(vec![
+            ("ok".into(), CipherText::Single("a")),
+            ("bad".into(), CipherText::Passthrough(1)),
+        ]);
+        let result = ct.map_passthrough::<String, _, _>(&mut |_| Err("unrepresentable"));
+        assert_eq!(result.err(), Some("unrepresentable"));
+    }
+}
