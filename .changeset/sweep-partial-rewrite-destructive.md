@@ -17,17 +17,20 @@ disk. The CLI's `stash eql migration --drizzle` had the milder form: it warned
 about the directory but never named the files that had already become
 data-destroying.
 
-The work already done now travels with the failure. `rewriteEncryptedAlterColumns`
-rejects with a `PartialRewriteError` carrying `rewritten` and `skipped` whenever
-it fails part way through a directory it has already changed, and the wizard's
-directory sweep reports those arrays alongside the error instead of zeros. A
-directory in that state is reported as **both**: the rewritten files are listed
-with the existing data-destroying warning, *and* the "sweep did not fully
-complete — review the sibling migrations" warning still fires, because both are
-true. The `Run the migration now?` prompt takes the destructive arm — defaulting
-to No and saying the migration DESTROYS data on a populated table — since that
-is the fact a user cannot afford to miss.
+The work already attempted now travels with the failure.
+`rewriteEncryptedAlterColumns` rejects with a `PartialRewriteError` carrying
+`rewritten` and `skipped` whenever it fails part way through a directory. The
+attempted file is included because a rejected filesystem write may already have
+truncated or partially replaced its destination. The wizard's directory sweep
+reports those arrays alongside the error instead of zeros. A directory in that
+state is reported as **both**: the rewrite paths are listed with the existing
+data-destroying warning, *and* the "sweep did not fully complete — review the
+sibling migrations" warning still fires, because both are true. The `Run the
+migration now?` prompt takes the destructive arm — defaulting to No and saying
+the migration DESTROYS data on a populated table — since that is the fact a user
+cannot afford to miss.
 
-A sweep that fails before changing anything is unchanged: it rejects with the
-original error, reports zeros, and keeps the softer "nothing is known about this
-directory" wording, because claiming data destruction there would be a guess.
+A sweep that fails before attempting any write is unchanged: it rejects with
+the original error, reports zeros, and keeps the softer "nothing is known about
+this directory" wording, because claiming data destruction there would be a
+guess.

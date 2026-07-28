@@ -384,38 +384,45 @@ describe('eqlMigrationCommand — Drizzle', () => {
   // catch used to warn about the directory without naming them, so the user was
   // sent to "review the sibling migrations" with no idea which ones had already
   // become data-destroying (#786).
-  it('names the files it already rewrote when the sweep fails part way', async () => {
+  it('reports completed, attempted, and skipped files when the sweep fails part way', async () => {
     const out = join(tmp, 'drizzle')
     mkdirSync(out, { recursive: true })
     writeFileSync(
       join(out, '0000_declare.sql'),
       'CREATE TABLE "users" ("email" text, "name" text);\n',
     )
-    const rewritten = join(out, '0001_encrypt-email.sql')
+    const skipped = join(out, '0001_using-email.sql')
+    writeFileSync(
+      skipped,
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search USING (email)::eql_v3_text_search;\n',
+    )
+    const rewritten = join(out, '0002_encrypt-email.sql')
     writeFileSync(
       rewritten,
       'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
     )
+    const attempted = join(out, '0003_encrypt-name.sql')
     writeFileSync(
-      join(out, '0002_encrypt-name.sql'),
+      attempted,
       'ALTER TABLE "users" ALTER COLUMN "name" SET DATA TYPE eql_v3_text_search;\n',
     )
     spawnMock.mockImplementation(() => {
-      writeFileSync(join(out, '0003_install-eql.sql'), '')
+      writeFileSync(join(out, '0004_install-eql.sql'), '')
       return { status: 0, stdout: '', stderr: '' }
     })
-    // The generated migration is `skip`ped, so the only writes through
-    // `node:fs/promises` are the sweep's: #1 rewrites 0001, #2 fails on 0002.
+    // The generated migration is `skip`ped and 0001 is only flagged, so the
+    // writes are #1 for 0002 and #2 — the rejected one — for 0003.
     let asyncWrites = 0
     fsWriteAsync.spy.mockImplementation(
-      (
+      async (
         ...args: Parameters<typeof import('node:fs/promises').writeFile>
       ): Promise<void> => {
         asyncWrites += 1
         if (asyncWrites === 2) {
-          return Promise.reject(new Error('ENOSPC: no space left on device'))
+          await fsWriteAsync.real(args[0], '', 'utf-8')
+          throw new Error('ENOSPC: no space left on device')
         }
-        return fsWriteAsync.real(...args)
+        await fsWriteAsync.real(...args)
       },
     )
 
@@ -423,16 +430,23 @@ describe('eqlMigrationCommand — Drizzle', () => {
 
     // The first file really was rewritten and is sitting there destructive.
     expect(readFileSync(rewritten, 'utf-8')).toContain('DROP COLUMN')
-    // So it must be named, not just counted away by a directory-level warning.
+    // The rejected write really did mutate its destination too.
+    expect(readFileSync(attempted, 'utf-8')).toBe('')
+    // Both possible rewrites and the earlier near-miss must survive the catch.
     const stepped = clack.log.step.mock.calls.map((c) => String(c[0]))
     expect(stepped.some((msg) => msg.includes(rewritten))).toBe(true)
+    expect(stepped.some((msg) => msg.includes(attempted))).toBe(true)
+    expect(stepped.some((msg) => msg.includes(skipped))).toBe(true)
     const infos = clack.log.info.mock.calls.map((c) => String(c[0]))
-    expect(infos.some((msg) => msg.includes('Rewrote 1 migration file'))).toBe(
+    expect(infos.some((msg) => msg.includes('Rewrote 2 migration file'))).toBe(
       true,
     )
     // And the failure itself is still reported, with the closing warning.
     const warned = clack.log.warn.mock.calls.map((c) => String(c[0]))
     expect(warned.some((msg) => msg.includes('ENOSPC'))).toBe(true)
+    expect(
+      warned.some((msg) => msg.includes('1 ALTER-to-encrypted statement')),
+    ).toBe(true)
     expect(warned.some((msg) => msg.includes('did not fully complete'))).toBe(
       true,
     )

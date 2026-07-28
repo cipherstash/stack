@@ -48,6 +48,26 @@ const failWriteNumber = (nth: number, message: string): void => {
   )
 }
 
+/**
+ * Simulate a filesystem write that opens/truncates its destination before the
+ * operation rejects, as can happen when the device runs out of space.
+ */
+const failWriteAfterTruncatingNumber = (nth: number, message: string): void => {
+  let calls = 0
+  fsWrite.spy.mockImplementation(
+    async (
+      ...args: Parameters<typeof import('node:fs/promises').writeFile>
+    ) => {
+      calls += 1
+      if (calls === nth) {
+        await fsWrite.real(args[0], '', 'utf-8')
+        throw new Error(message)
+      }
+      await fsWrite.real(...args)
+    },
+  )
+}
+
 describe('rewriteEncryptedAlterColumns', () => {
   let tmpDir: string
 
@@ -1822,7 +1842,7 @@ describe('rewriteEncryptedAlterColumns — a write that fails mid-directory', ()
     return { first, second }
   }
 
-  it('rejects with the files it had already rewritten', async () => {
+  it('rejects with completed and attempted rewrite files', async () => {
     const { first, second } = seedTwoRewritable()
     // Files are swept in sorted order and 0000 needs no write, so write #1 is
     // 0001 and write #2 — the one that fails — is 0002.
@@ -1838,9 +1858,23 @@ describe('rewriteEncryptedAlterColumns — a write that fails mid-directory', ()
     expect((error as PartialRewriteError).message).toBe(
       'ENOSPC: no space left on device',
     )
-    expect((error as PartialRewriteError).rewritten).toEqual([first])
+    expect((error as PartialRewriteError).rewritten).toEqual([first, second])
     // Not a bookkeeping claim: that file really does hold a live DROP COLUMN.
     expect(fs.readFileSync(first, 'utf-8')).toContain('DROP COLUMN')
+    expect(fs.readFileSync(second, 'utf-8')).toContain('SET DATA TYPE')
+  })
+
+  it('reports an attempted file when its rejected write already truncated it', async () => {
+    const { first, second } = seedTwoRewritable()
+    failWriteAfterTruncatingNumber(1, 'ENOSPC: no space left on device')
+
+    const error = await rewriteEncryptedAlterColumns(tmpDir).catch(
+      (err: unknown) => err,
+    )
+
+    expect(error).toBeInstanceOf(PartialRewriteError)
+    expect((error as PartialRewriteError).rewritten).toEqual([first])
+    expect(fs.readFileSync(first, 'utf-8')).toBe('')
     expect(fs.readFileSync(second, 'utf-8')).toContain('SET DATA TYPE')
   })
 
@@ -1854,8 +1888,9 @@ describe('rewriteEncryptedAlterColumns — a write that fails mid-directory', ()
       nearMiss,
       'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search USING (email)::eql_v3_text_search;\n',
     )
+    const attempted = path.join(tmpDir, '0002_encrypt_name.sql')
     fs.writeFileSync(
-      path.join(tmpDir, '0002_encrypt_name.sql'),
+      attempted,
       'ALTER TABLE "users" ALTER COLUMN "name" SET DATA TYPE eql_v3_text_search;\n',
     )
     // 0001 is flagged, never written, so the FIRST write is 0002's.
@@ -1866,7 +1901,7 @@ describe('rewriteEncryptedAlterColumns — a write that fails mid-directory', ()
     )
 
     expect(error).toBeInstanceOf(PartialRewriteError)
-    expect((error as PartialRewriteError).rewritten).toEqual([])
+    expect((error as PartialRewriteError).rewritten).toEqual([attempted])
     expect((error as PartialRewriteError).skipped).toEqual([
       expect.objectContaining({ file: nearMiss, reason: 'unrecognised-form' }),
     ])
@@ -1876,15 +1911,7 @@ describe('rewriteEncryptedAlterColumns — a write that fails mid-directory', ()
   // rejecting with the ORIGINAL error — its `code` and identity intact — so the
   // "this directory went unchecked" path stays exactly as it was.
   it('rethrows the original error when nothing had been done yet', async () => {
-    fs.writeFileSync(
-      path.join(tmpDir, '0000_declare.sql'),
-      'CREATE TABLE "users" ("email" text);\n',
-    )
-    fs.writeFileSync(
-      path.join(tmpDir, '0001_encrypt_email.sql'),
-      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
-    )
-    failWriteNumber(1, 'EROFS: read-only file system')
+    fs.mkdirSync(path.join(tmpDir, '0001_broken.sql'))
 
     const error = await rewriteEncryptedAlterColumns(tmpDir).catch(
       (err: unknown) => err,
@@ -1892,7 +1919,7 @@ describe('rewriteEncryptedAlterColumns — a write that fails mid-directory', ()
 
     expect(error).toBeInstanceOf(Error)
     expect(error).not.toBeInstanceOf(PartialRewriteError)
-    expect((error as Error).message).toBe('EROFS: read-only file system')
+    expect((error as NodeJS.ErrnoException).code).toBe('EISDIR')
   })
 })
 

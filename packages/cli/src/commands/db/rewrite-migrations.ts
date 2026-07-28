@@ -660,24 +660,29 @@ export interface RewriteResult {
 
 /**
  * Thrown by {@link rewriteEncryptedAlterColumns} when it fails PART WAY through
- * a directory it has already changed.
+ * a directory where it has attempted a write.
  *
  * The sweep writes one file at a time, so a failure on the third file leaves
- * the first two rewritten on disk — each holding a live `DROP COLUMN`. A bare
- * rejection discards that fact: the accumulated `rewritten` array dies with the
- * stack frame, and every caller then reports the directory as merely
+ * the first two rewritten on disk — each holding a live `DROP COLUMN` — and may
+ * truncate or partially replace the third before rejecting. A bare rejection
+ * discards that fact: the accumulated `rewritten` array dies with the stack
+ * frame, and every caller then reports the directory as merely
  * *unchecked*, telling the user to review those migrations without saying that
  * some of them now destroy data. That is the fail-open inversion this rewriter
  * exists to prevent, so the work already done travels with the failure (#786).
  *
  * `message` is the underlying failure's, verbatim — callers render it straight
  * to the user — and the original is kept as `cause`. Thrown ONLY when there is
- * partial work to report: a sweep that fails before changing or flagging
- * anything rejects with the original error untouched, because "nothing is known
- * about this directory" is a different state, and not a destructive one.
+ * partial work to report: a sweep that fails before attempting a write or
+ * flagging anything rejects with the original error untouched, because
+ * "nothing is known about this directory" is a different state, and not a
+ * destructive one.
  */
 export class PartialRewriteError extends Error {
-  /** Absolute paths of the files already rewritten when the failure hit. */
+  /**
+   * Absolute paths of completed and attempted rewrites. A rejected write may
+   * already have mutated its destination, so its path is included.
+   */
   readonly rewritten: string[]
   /** Near-miss statements already flagged when the failure hit. */
   readonly skipped: SkippedAlter[]
@@ -839,8 +844,8 @@ export async function rewriteEncryptedAlterColumns(
       )
 
       if (updated !== original) {
-        await writeFile(filePath, updated, 'utf-8')
         rewritten.push(filePath)
+        await writeFile(filePath, updated, 'utf-8')
       }
 
       // Broad secondary scan on the POST-rewrite content: anything still carrying
@@ -864,9 +869,9 @@ export async function rewriteEncryptedAlterColumns(
       }
     }
   } catch (error) {
-    // Nothing done yet means nothing to add: rethrow the original, `code` and
-    // identity intact, so the caller's "this directory went unchecked" wording
-    // stays exactly as it was.
+    // No write attempted and nothing flagged means nothing to add: rethrow the
+    // original, `code` and identity intact, so the caller's "this directory went
+    // unchecked" wording stays exactly as it was.
     if (rewritten.length === 0 && skipped.length === 0) throw error
     throw new PartialRewriteError(error, rewritten, skipped)
   }

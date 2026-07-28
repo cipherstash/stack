@@ -376,51 +376,73 @@ describe('drizzle migrate prompt after a destructive rewrite', () => {
   // between the rewriter, the directory sweep and this report that broke, so
   // one test has to cross all three: a mocked `sweepMigrationDirs` would stay
   // green even if the rewriter went back to swallowing its partial work.
-  it('reports a real mid-sweep write failure as destructive', async () => {
+  it('reports completed, attempted, and skipped files after a real mid-sweep failure', async () => {
     makeDrizzleOut('drizzle')
     fs.writeFileSync(
       path.join(cwd, 'drizzle', '0000_declare.sql'),
       'CREATE TABLE "users" ("email" text, "name" text);\n',
     )
-    const first = path.join(cwd, 'drizzle', '0001_encrypt_email.sql')
+    const skipped = path.join(cwd, 'drizzle', '0001_using_email.sql')
+    fs.writeFileSync(
+      skipped,
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search USING (email)::eql_v3_text_search;\n',
+    )
+    const first = path.join(cwd, 'drizzle', '0002_encrypt_email.sql')
     fs.writeFileSync(
       first,
       'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
     )
+    const attempted = path.join(cwd, 'drizzle', '0003_encrypt_name.sql')
     fs.writeFileSync(
-      path.join(cwd, 'drizzle', '0002_encrypt_name.sql'),
+      attempted,
       'ALTER TABLE "users" ALTER COLUMN "name" SET DATA TYPE eql_v3_text_search;\n',
     )
-    // Sorted order, and 0000 needs no write: write #1 is 0001, #2 is 0002.
+    // Sorted order: 0001 is only flagged, write #1 is 0002, and the rejected
+    // write #2 is 0003.
     let writes = 0
     fsWrite.spy.mockImplementation(
-      (...args: Parameters<typeof import('node:fs/promises').writeFile>) => {
+      async (
+        ...args: Parameters<typeof import('node:fs/promises').writeFile>
+      ) => {
         writes += 1
         if (writes === 2) {
-          return Promise.reject(new Error('ENOSPC: no space left on device'))
+          await fsWrite.real(args[0], '', 'utf-8')
+          throw new Error('ENOSPC: no space left on device')
         }
-        return fsWrite.real(...args)
+        await fsWrite.real(...args)
       },
     )
     const warn = vi.spyOn(p.log, 'warn').mockImplementation(() => {})
+    const info = vi.spyOn(p.log, 'info').mockImplementation(() => {})
     const step = vi.spyOn(p.log, 'step').mockImplementation(() => {})
 
     await runDrizzle()
 
-    // 0001 really is destructive now — this is the on-disk fact the report
+    // 0002 really is destructive now — this is the on-disk fact the report
     // used to lose.
     expect(fs.readFileSync(first, 'utf-8')).toContain('DROP COLUMN')
+    expect(fs.readFileSync(attempted, 'utf-8')).toBe('')
     const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
     expect(options?.initialValue).toBe(false)
     expect(String(options?.message)).toContain('DESTROYS data')
-    expect(step.mock.calls.map((c) => String(c[0])).join('\n')).toContain(first)
+    const stepped = step.mock.calls.map((c) => String(c[0])).join('\n')
+    expect(stepped).toContain(first)
+    expect(stepped).toContain(attempted)
+    expect(stepped).toContain(skipped)
+    expect(info.mock.calls.flat().join('\n')).toContain(
+      'Rewrote 2 migration file',
+    )
     const warned = warn.mock.calls.map((c) => String(c[0]))
     expect(warned.some((msg) => msg.includes('data-destroying'))).toBe(true)
+    expect(warned.some((msg) => msg.includes('1 statement(s) look like'))).toBe(
+      true,
+    )
     expect(warned.some((msg) => msg.includes('did not fully complete'))).toBe(
       true,
     )
 
     warn.mockRestore()
+    info.mockRestore()
     step.mockRestore()
   })
 
