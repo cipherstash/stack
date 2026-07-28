@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
+import { detectPrismaNext } from '@/commands/db/detect.js'
 import {
   loadStashConfig,
   type ResolvedStashConfig,
@@ -49,6 +50,13 @@ export async function loadEncryptionContext(): Promise<EncryptionContext> {
   const resolvedPath = path.resolve(process.cwd(), stashConfig.client)
 
   if (!fs.existsSync(resolvedPath)) {
+    // Prisma Next projects have no hand-authored encryption client — the
+    // schema lives in the emitted contract.json and the runtime derives it
+    // via `cipherstashFromStack`. Mirror that derivation here so the encrypt
+    // commands work without asking users to author a bridge file.
+    const derived = await tryLoadPrismaNextContext(stashConfig)
+    if (derived) return derived
+
     console.error(
       `Error: Encrypt client file not found at ${resolvedPath}\n\nCheck the "client" path in your stash.config.ts.`,
     )
@@ -149,6 +157,123 @@ export async function loadEncryptionContext(): Promise<EncryptionContext> {
   // reported `Table "users" was not found … Available: __stash_placeholder__`,
   // naming the symptom and not the cause (#787 review).
   requireUsableEncryptConfig(client.getEncryptConfig(), stashConfig.client)
+
+  return { stashConfig, client, tables }
+}
+
+/**
+ * Well-known locations for a Prisma Next emitted contract, relative to the
+ * project root. `prisma-next contract emit` writes `contract.json` next to
+ * the authored contract, which the scaffolds place under `src/prisma/` or
+ * `prisma/`.
+ */
+const PRISMA_NEXT_CONTRACT_CANDIDATES = [
+  'src/prisma/contract.json',
+  'prisma/contract.json',
+  'contract.json',
+]
+
+/**
+ * Derive an `EncryptionContext` for a Prisma Next project — the fallback
+ * used when the configured encrypt client file does not exist.
+ *
+ * Prisma Next integrations deliberately have no client file: encrypted
+ * columns are declared in the PSL contract, and the runtime adapter derives
+ * the v3 schemas from the emitted `contract.json` (`deriveStackSchemasV3`)
+ * before constructing the same `Encryption` client this function builds.
+ * Reusing that derivation keeps the CLI's view of the schema identical to
+ * the application's.
+ *
+ * Returns `undefined` when the project doesn't look like Prisma Next, so
+ * the caller can fall through to its existing missing-client error. Inside
+ * a detected Prisma Next project, failures are hard errors (exit 1) with
+ * the specific missing piece named — falling through to "client file not
+ * found" from here would point users at a file they are not supposed to
+ * author.
+ *
+ * Both `@cipherstash/stack-prisma` and `@cipherstash/stack` are resolved
+ * from the *user's* project (via jiti anchored at their package.json), not
+ * from the CLI's own dependency tree, so the derived schemas and client
+ * always match the versions the application runs.
+ */
+async function tryLoadPrismaNextContext(
+  stashConfig: ResolvedStashConfig,
+): Promise<EncryptionContext | undefined> {
+  const cwd = process.cwd()
+  if (!detectPrismaNext(cwd)) return undefined
+
+  const contractPath = PRISMA_NEXT_CONTRACT_CANDIDATES.map((candidate) =>
+    path.resolve(cwd, candidate),
+  ).find((candidate) => fs.existsSync(candidate))
+  if (!contractPath) {
+    console.error(
+      `Error: This looks like a Prisma Next project, but no emitted contract was found.\n` +
+        `Searched: ${PRISMA_NEXT_CONTRACT_CANDIDATES.join(', ')}\n\n` +
+        'Run `prisma-next contract emit` first. (Or point "client" in stash.config.ts at an encryption client file to skip contract derivation.)',
+    )
+    process.exit(1)
+  }
+
+  const { createJiti } = await import('jiti')
+  const jiti = createJiti(path.join(cwd, 'package.json'), {
+    interopDefault: true,
+  })
+
+  let deriveStackSchemasV3: (contract: unknown) => readonly unknown[]
+  let Encryption: (opts: {
+    schemas: readonly unknown[]
+  }) => Promise<EncryptionClient>
+  try {
+    const stackPrismaV3 = (await jiti.import(
+      '@cipherstash/stack-prisma/v3',
+    )) as {
+      deriveStackSchemasV3: typeof deriveStackSchemasV3
+    }
+    deriveStackSchemasV3 = stackPrismaV3.deriveStackSchemasV3
+    const stackV3 = (await jiti.import('@cipherstash/stack/v3')) as {
+      Encryption: typeof Encryption
+    }
+    Encryption = stackV3.Encryption
+  } catch (error) {
+    console.error(
+      'Error: Failed to load @cipherstash/stack-prisma / @cipherstash/stack from this project.\n' +
+        'Both must be installed to run encrypt commands against a Prisma Next contract.\n',
+    )
+    console.error(error)
+    process.exit(1)
+  }
+
+  let schemas: readonly unknown[]
+  try {
+    const contractJson = JSON.parse(
+      fs.readFileSync(contractPath, 'utf-8'),
+    ) as unknown
+    schemas = deriveStackSchemasV3(contractJson)
+  } catch (error) {
+    // deriveStackSchemasV3's own errors are author-facing and name the
+    // offending column; JSON.parse errors name the broken file below.
+    console.error(
+      `Error: Failed to derive encryption schemas from ${contractPath}\n`,
+    )
+    console.error(error)
+    process.exit(1)
+  }
+
+  if (schemas.length === 0) {
+    console.error(
+      `Error: No cipherstash-encrypted columns found in ${contractPath}.\n\n` +
+        'Declare at least one `cipherstash.*()` column in your contract and re-run `prisma-next contract emit`.',
+    )
+    process.exit(1)
+  }
+
+  const client = await Encryption({ schemas })
+  requireUsableEncryptConfig(client.getEncryptConfig(), contractPath)
+
+  const tables = new Map<string, EncryptedTableLike>()
+  for (const schema of schemas as EncryptedTableLike[]) {
+    tables.set(schema.tableName, schema)
+  }
 
   return { stashConfig, client, tables }
 }

@@ -2,6 +2,7 @@ import {
   appendEvent,
   columnExists,
   detectColumnEqlVersion,
+  installMigrationsSchema,
   type ManifestColumn,
   progress,
   runBackfill,
@@ -131,6 +132,13 @@ export async function backfillCommand(options: BackfillCommandOptions) {
     process.on('SIGINT', onSignal)
     process.on('SIGTERM', onSignal)
     db = await pool.connect()
+
+    // `stash eql install` normally creates `cipherstash.cs_migrations`, but
+    // not every integration runs it — Prisma Next installs EQL through its
+    // own migration graph, which doesn't carry the tracking schema. The DDL
+    // is CREATE IF NOT EXISTS throughout, so this is a no-op everywhere else.
+    await installMigrationsSchema(db)
+
     const pkColumn =
       options.pkColumn ?? (await detectPkColumn(db, options.table))
 
