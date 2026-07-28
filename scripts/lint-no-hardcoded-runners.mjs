@@ -28,7 +28,26 @@ const TARGETS = process.argv.slice(2).length
 const NPX_TOKEN = /['"`]npx\b|(?:^|[^a-zA-Z0-9_$])npx\s+[@\w-]/
 
 async function* walk(dir) {
-  const entries = await readdir(dir, { withFileTypes: true })
+  // A directory can vanish between the parent's `readdir` and this call. The
+  // repo's own script self-tests create and delete probe packages under
+  // `packages/` (`lint-untracked-probe`, `lint-dead-shell-probe` in
+  // `lint-no-dead-package-paths.test.mjs`) while other suites run, so a walk of
+  // `packages/` can enumerate one and find it gone a moment later.
+  //
+  // Left unhandled this rejects with ENOENT, and Node exits **1** — the same
+  // code as "found a hardcoded npx". Every caller then reads a crash as a
+  // violation: CI fails naming a file that is perfectly clean, and re-running
+  // it passes. The missing-target case deliberately exits 2 for exactly this
+  // reason ("Exit 2 means the linter could not run"); this is the same
+  // distinction, one level down. There is nothing to lint in a directory that
+  // no longer exists, so skip it.
+  let entries
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch (err) {
+    if (err?.code === 'ENOENT') return
+    throw err
+  }
   for (const entry of entries) {
     const full = join(dir, entry.name)
     if (entry.isDirectory()) {
