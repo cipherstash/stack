@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -11,16 +11,12 @@ const SCRIPT = resolve(
 )
 
 function runScript(script, ...targets) {
-  try {
-    const output = execFileSync(process.execPath, [script, ...targets], {
-      encoding: 'utf8',
-    })
-    return { exitCode: 0, output }
-  } catch (err) {
-    return {
-      exitCode: err.status,
-      output: String(err.stdout) + String(err.stderr),
-    }
+  const result = spawnSync(process.execPath, [script, ...targets], {
+    encoding: 'utf8',
+  })
+  return {
+    exitCode: result.status,
+    output: String(result.stdout) + String(result.stderr),
   }
 }
 
@@ -97,6 +93,19 @@ describe('lint-no-hardcoded-runners', () => {
 
   it('passes on a clean file', () => {
     expect(run(fx('clean.ts')).exitCode).toBe(0)
+  })
+
+  it('captures stderr from a successful script', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lint-hardcoded-runners-stderr-'))
+    const probe = join(dir, 'stderr-probe.mjs')
+    try {
+      writeFileSync(probe, "process.stderr.write('successful warning\\n')\n")
+      const r = runScript(probe)
+      expect(r.exitCode).toBe(0)
+      expect(r.output).toContain('successful warning')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('fails on a hardcoded `npx ...` string literal', () => {
