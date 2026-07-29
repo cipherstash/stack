@@ -13,8 +13,10 @@ model, and other skills should point at it rather than restate it.
 What it documents:
 
 - The four-level key hierarchy (root key → per-keyset authority key →
-  per-client client key → per-value data key) and why revoking one client is
-  immediate and complete without re-encryption.
+  per-client client key → per-value data key) and why revoking one client
+  blocks all of its future key operations immediately, without
+  re-encryption (not retroactive — already-held plaintext is beyond recall,
+  but per-value keys bound the blast radius to what was already accessed).
 - The scoping rule: every encrypt, decrypt, and query is scoped to a keyset,
   and a client without a grant for that keyset fails **all three operations
   loudly** at the ZeroKMS round trip. In particular there is no failure mode

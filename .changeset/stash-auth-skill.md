@@ -21,8 +21,10 @@ What it documents:
   stays debug-only.
 - The three separable concerns (client credentials, end-user identity,
   key binding) and the canonical statement that an auth strategy decides who
-  the client is while a lock context decides which key a value is encrypted
-  under — orthogonal, and only combined deliberately.
+  the client is while a lock context decides who can retrieve a value's data
+  key — the claim from the encrypting caller's service token is bound to the
+  key, and retrieval requires presenting the same claim. Orthogonal, and
+  only combined deliberately.
 - The `@cipherstash/auth` strategies (`AutoStrategy`, `AccessKeyStrategy`,
   `OidcFederationStrategy`, `DeviceSessionStrategy`), including the Result
   trap: `create()` returns `Result<Strategy, AuthFailure>` and

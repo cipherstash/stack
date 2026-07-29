@@ -135,7 +135,9 @@ export type ClientConfig = {
    * use the default keyset of the ZeroKMS client behind your credentials — the
    * keyset it was created against, which is the workspace's `default` keyset if
    * using the profile credentials in a dev environment. A client is bound to
-   * one keyset for its lifetime, so use one client per tenant.
+   * one keyset for its lifetime — encrypt and query always use it, while
+   * decrypt follows each payload's own keyset (subject to grants) — so use one
+   * client per tenant.
    *
    * @see {@link Encryption} for the full keysets walkthrough.
    */

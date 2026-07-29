@@ -77,9 +77,14 @@ usable keys, and the client combines a seed with its own client key to derive
 each per-value data key. Because the data key requires both halves:
 
 - **ZeroKMS never possesses a usable data key** (zero-knowledge).
-- **Revoking one client is instant and complete.** ZeroKMS stops issuing
-  seeds to that client; its client key cannot derive data keys from seeds
-  issued to other clients. No re-encryption, no effect on other clients.
+- **Revoking one client blocks all of its future key operations, instantly
+  and without re-encryption.** ZeroKMS stops issuing seeds to that client;
+  its client key cannot derive data keys from seeds issued to other clients.
+  No effect on other clients. Like any key service, revocation is not
+  retroactive — plaintext or per-value data keys the client already held in
+  memory are beyond recall — but because keys are per *value*, the blast
+  radius is exactly the values that client already accessed, never the
+  keyspace.
 
 ## Keysets
 
