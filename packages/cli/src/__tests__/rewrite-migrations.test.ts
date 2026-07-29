@@ -356,6 +356,7 @@ describe('rewriteEncryptedAlterColumns', () => {
     const updated = fs.readFileSync(filePath, 'utf-8')
     expect(updated).toContain('source column "email" is deliberately preserved')
     expect(updated).toContain('staged `stash encrypt` lifecycle')
+    expect(updated).toContain('switch the application to the')
     expect(updated).not.toMatch(/\b(?:DROP|RENAME)\s+COLUMN\b/i)
   })
 
