@@ -166,11 +166,14 @@ jobs:
       # workspace dependencies through `dist/*.d.ts`, hence the turbo filters
       # (`^build` builds the dependencies first).
       #
-      # NOT fully gated yet, and deliberately: `@cipherstash/stack`, `stash`
-      # and `@cipherstash/stack-supabase` still have source/runtime-test files
-      # outside their type-test configs. stack-drizzle's type-test config now
-      # includes every `integration/**` source; its remaining runtime source
-      # sets are tracked separately.
+      # NOT fully gated yet, and deliberately: `@cipherstash/stack` (147 errors
+      # under its own tsconfig), `stash` (21) and `@cipherstash/stack-supabase`
+      # (11). Their `test:types` scripts only cover `__tests__/**/*.test-d.ts`,
+      # so `src` and the runtime test suites compile nowhere.
+      # `@cipherstash/stack-drizzle` now type-tests every `integration/**`
+      # source as well; its remaining `src` / runtime-test errors share one
+      # root cause — `V3_MATRIX`'s `indexes` union in `@cipherstash/test-kit`
+      # — see #778.
       - name: Typecheck (migrate)
         run: pnpm exec turbo run typecheck --filter @cipherstash/migrate
 

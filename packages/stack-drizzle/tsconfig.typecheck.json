@@ -3,9 +3,11 @@
   // `.test-d.ts` files plus every `integration/**` source that #772's review
   // found was otherwise compiled by no CI job.
   //
-  // `src/` and runtime `__tests__/*.test.ts` are still outside this explicit
-  // gate. Keep this include focused until those remaining source sets are
-  // clean under the full project config.
+  // `src/` and the runtime `__tests__/*.test.ts` are still ungated under the
+  // full `tsconfig.json`, most of it one root cause — `V3_MATRIX`'s `indexes`
+  // union in `@cipherstash/test-kit` (#778). Widen this `include` as that
+  // count comes down; do not widen it to the whole project until it is zero,
+  // or the gate is useless.
   "extends": "./tsconfig.json",
   "include": ["__tests__/**/*.test-d.ts", "integration/**/*.ts"]
 }
