@@ -370,7 +370,7 @@ if (!decrypted.failure) {
 }
 ```
 
-`Date` columns are reconstructed to real `Date` instances on decrypt; `bigint` columns round-trip as native `bigint`. Non-schema fields pass through unchanged.
+`Date` columns are reconstructed to real `Date` instances on decrypt; `bigint` columns round-trip as native `bigint`. Non-schema fields pass through unchanged. Drizzle decrypts through the same typed client as every other integration, so the one caveat applies here too: a stored value that does **not** parse as a date is handed back unchanged rather than as an `Invalid Date`, even though the declared type is `Date` — guard with `instanceof Date` before calling `Date` methods on a column whose stored values you don't control.
 
 ## Indexing Encrypted Columns
 

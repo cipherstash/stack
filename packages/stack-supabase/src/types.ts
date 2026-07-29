@@ -699,9 +699,9 @@ export type DbPendingMatchFilter = {
 }
 
 /** Retains the caller's ORIGINAL text for the verbatim fallback (which must be
- * forwarded byte-for-byte — `parseOrString`/`rebuildOrString` do not round-trip
- * nested `and()` or quoted values) alongside the parsed DB-space conditions
- * used by the encrypt-and-rebuild path. Parsing happens once, here. */
+ * forwarded byte-for-byte — `parseOrStringWithSpans`/`rebuildOrString` do not
+ * round-trip nested `and()` or quoted values) alongside the parsed DB-space
+ * conditions used by the encrypt-and-rebuild path. Parsing happens once, here. */
 export type DbPendingOrFilter =
   | {
       kind: 'structured'
@@ -976,6 +976,9 @@ export interface EncryptedQueryBuilderCore<
    * is a loud runtime failure rather than a missing method, and typed `Self`
    * only to keep the chain shape — it never returns. Select rows normally and
    * serialize the decrypted data yourself.
+   *
+   * @deprecated Always throws on an encrypted query — select the rows normally,
+   * then serialize the decrypted data to CSV yourself.
    */
   csv(): Self
   abortSignal(signal: AbortSignal): Self

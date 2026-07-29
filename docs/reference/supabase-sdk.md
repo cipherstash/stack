@@ -58,7 +58,9 @@ capabilities come from the introspected domains.
 
 The builder surface is `.select/.insert/.update/.upsert/.delete`,
 `.eq/.neq/.in/.is/.gt/.gte/.lt/.lte/.match/.or/.not/.filter`,
-transforms (`.order/.limit/.range/.single/.maybeSingle/.csv/.abortSignal/.throwOnError`),
+transforms (`.order/.limit/.range/.single/.maybeSingle/.abortSignal/.throwOnError`
+— `.csv()` is declared but always throws, since PostgREST serializes rows
+before the wrapper can decrypt them),
 plus `.withLockContext(lockContext)` and `.audit(config)`. For free-text
 search it exposes `.matches()` (fuzzy bloom token search) on encrypted
 columns, keeps `.contains()` for native (exact) containment on plaintext

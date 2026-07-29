@@ -391,7 +391,7 @@ if (!enc.failure) {
 Typed-client model notes:
 
 - `decryptModel` / `bulkDecryptModels` take the **table as a second argument** and return a chainable `AuditableDecryptModelOperation` — await it for the `Result`, or chain `.audit({ metadata })` / `.withLockContext(lockContext)` first. A lock context may instead be passed as the optional third argument; use one form or the other, not both (chaining `.withLockContext()` onto a decrypt that already took a positional lock context throws).
-- `Date` columns are reconstructed to real `Date` instances on decrypt; `bigint` columns round-trip as native `bigint`.
+- `Date` columns are reconstructed to real `Date` instances on decrypt; `bigint` columns round-trip as native `bigint`. A stored value that does **not** parse as a date (a legacy non-ISO string, say) is handed back unchanged rather than as an `Invalid Date`, even though the declared type is `Date` — guard with `instanceof Date` before calling `Date` methods on a column whose stored values you don't control.
 - Nullable schema fields stay nullable through the round trip.
 
 ## Bulk Operations
