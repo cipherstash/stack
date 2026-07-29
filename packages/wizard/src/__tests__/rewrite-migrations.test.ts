@@ -860,6 +860,30 @@ describe('rewriteEncryptedAlterColumns', () => {
       expect(updated).toContain('ADD COLUMN "email_encrypted"')
       expect(updated).not.toContain('DROP COLUMN')
     })
+
+    it.each([
+      ['tagged', 'price$usd$cents'],
+      ['untagged', 'price$$cents'],
+    ])('does not treat a %s dollar delimiter inside an unquoted identifier as a dollar-quoted body', async (_kind, identifier) => {
+      declarePlaintext('"users"', 'email')
+      const filePath = path.join(tmpDir, `0033_${_kind}-identifier.sql`)
+      fs.writeFileSync(
+        filePath,
+        [
+          `SELECT ${identifier} FROM "prices";`,
+          'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;',
+          '',
+        ].join('\n'),
+      )
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([filePath])
+      expect(skipped).toEqual([])
+      const updated = fs.readFileSync(filePath, 'utf-8')
+      expect(updated).toContain('ADD COLUMN "email_encrypted"')
+      expect(updated).not.toContain('SET DATA TYPE')
+    })
   })
 
   describe('issue #811 dollar-quoted DDL regression', () => {

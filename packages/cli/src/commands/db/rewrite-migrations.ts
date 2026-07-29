@@ -258,6 +258,11 @@ function isInsideCommentOrString(sql: string, index: number): boolean {
  * dollar-quote opener.
  */
 function dollarQuoteDelimiter(sql: string, open: number): string | undefined {
+  // PostgreSQL requires a dollar-quoted string following an identifier or
+  // keyword to be separated from it. `$` is legal inside an unquoted
+  // identifier, so `price$usd$cents` and `price$$cents` must not open phantom
+  // dollar-quoted bodies that hide later live SQL from the sweep.
+  if (/[A-Za-z0-9_$]/.test(sql[open - 1] ?? '')) return undefined
   DOLLAR_QUOTE_OPEN_RE.lastIndex = open
   return DOLLAR_QUOTE_OPEN_RE.exec(sql)?.[0]
 }
