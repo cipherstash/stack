@@ -71,7 +71,6 @@ function transformToDbSpace(t: TransformOp, columns: ColumnMap): DbTransformOp {
     case 'range':
     case 'single':
     case 'maybeSingle':
-    case 'csv':
     case 'abortSignal':
     case 'throwOnError':
     case 'returns':

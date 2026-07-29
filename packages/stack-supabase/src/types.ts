@@ -599,7 +599,8 @@ export type TransformOp =
     }
   | { kind: 'single' }
   | { kind: 'maybeSingle' }
-  | { kind: 'csv' }
+  // No `csv` member: `csv()` throws rather than recording a transform (see
+  // {@link EncryptedQueryBuilderCore.csv}), so nothing can ever push one.
   | { kind: 'abortSignal'; signal: AbortSignal }
   | { kind: 'throwOnError' }
   | { kind: 'returns' }
@@ -969,6 +970,13 @@ export interface EncryptedQueryBuilderCore<
    * error. Same `T | null` awaited shape — `single()` reports the missing row
    * through `error` instead. */
   maybeSingle(): EncryptedSingleQueryBuilder<T>
+  /**
+   * Always THROWS. PostgREST serializes rows server-side, so a CSV response
+   * carries ciphertext the adapter never gets to decrypt. Declared so the call
+   * is a loud runtime failure rather than a missing method, and typed `Self`
+   * only to keep the chain shape — it never returns. Select rows normally and
+   * serialize the decrypted data yourself.
+   */
   csv(): Self
   abortSignal(signal: AbortSignal): Self
   throwOnError(): Self

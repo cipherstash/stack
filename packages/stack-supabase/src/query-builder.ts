@@ -727,9 +727,6 @@ export class EncryptedQueryBuilderImpl<
         case 'maybeSingle':
           query = query.maybeSingle()
           break
-        case 'csv':
-          query = query.csv()
-          break
         case 'abortSignal':
           query = query.abortSignal(t.signal)
           break
