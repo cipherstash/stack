@@ -16,6 +16,16 @@ CLI commands — all confirmed current). Two real errors fixed:
   constructs the native stack client; there is no WASM variant), so the
   advice was a dead end. It now says so.
 
+The column-type section now carries the **complete 31-constructor catalog**
+(plaintext TS type × capability tier) instead of a six-row sample presented
+as the whole surface (#756): every family (`Text*`, `Integer*`, `Smallint*`,
+`BigInt*`, `Numeric*`, `Real*`, `Double*`, `Date*`, `Timestamp*`, `Boolean`,
+`Json`) with its plaintext type — the column that distinguishes
+`IntegerOrd` (JS `number`) from `BigIntOrd` (JS `bigint`) and would have
+prevented the integer-cents trap the issue reports. Also states that `*Ord`
+includes equality, `TextMatch` is free-text only, and the `*OrdOre` variants
+are deliberately unexposed.
+
 Also documented the `column-types` subpath (camelCase factories for
 TS-authored contracts), and fixed `stash init --prisma-next`'s next-steps
 message, which still told users to declare columns with the old

@@ -1,6 +1,6 @@
 ---
 name: stash-prisma-next
-description: Integrate CipherStash searchable field-level encryption with Prisma Next using @cipherstash/prisma-next (EQL v3). Covers the domain-named encrypted column types in schema.prisma (TextSearch, DoubleOrd, BigIntOrd, DateOrd, Boolean, Json), the one-call cipherstashFromStack wiring, the runtime value envelopes (EncryptedString/Number/BigInt/Date/Boolean/Json) and decryptAll, the eql* query operators (eqlEq, eqlMatch, eqlGt, eqlBetween, eqlIn, eqlJsonContains, eqlAsc/eqlDesc, eqlJsonPathAsc/eqlJsonPathDesc), EQL bundle installation via prisma-next migrate, and authentication. Use when adding encryption to a Prisma Next project or querying encrypted columns.
+description: Integrate CipherStash searchable field-level encryption with Prisma Next using @cipherstash/prisma-next (EQL v3). Covers the full 31-constructor catalog of domain-named encrypted column types in schema.prisma (per plaintext type × capability tier — Text/TextEq/TextOrd/TextMatch/TextSearch, Integer/Smallint/BigInt/Numeric/Real/Double × Eq/Ord, Date/Timestamp × Eq/Ord, Boolean, Json), the one-call cipherstashFromStack wiring, the runtime value envelopes (EncryptedString/Number/BigInt/Date/Boolean/Json) and decryptAll, the eql* query operators (eqlEq, eqlMatch, eqlGt, eqlBetween, eqlIn, eqlJsonContains, eqlAsc/eqlDesc, eqlJsonPathAsc/eqlJsonPathDesc), EQL bundle installation via prisma-next migrate, and authentication. Use when adding encryption to a Prisma Next project, choosing a column type, or querying encrypted columns.
 ---
 
 # CipherStash Stack — Prisma Next Integration
@@ -58,19 +58,45 @@ model User {
 }
 ```
 
-| Column type | Domain | Query capability |
-|---|---|---|
-| `TextSearch()` | `eql_v3_text_search` | equality, range, free-text, ORDER BY |
-| `DoubleOrd()` | `eql_v3_double_ord` | equality, range, ORDER BY |
-| `BigIntOrd()` | `eql_v3_bigint_ord` | equality, range, ORDER BY |
-| `DateOrd()` | `eql_v3_date_ord` | equality, range, ORDER BY |
-| `Boolean()` | `eql_v3_boolean` | storage-only (no operators) |
-| `Json()` | `eql_v3_json_search` | containment + JSONPath equality/range |
+The example shows six types; the **full catalog is 31 constructors** — one
+per exposed `public.eql_v3_*` domain, derived mechanically from the domain
+registry. Pick by **plaintext TypeScript type first**, then by the queries
+you need:
 
-Choose the column type by the queries you need: a value you only store and
-decrypt (never search) can use a storage-only domain; a value you filter or sort
-on needs the matching `*Ord` / `TextSearch` domain. The type is fixed at the
-column — there is no capability tuner.
+| Plaintext (TS type) | Storage-only | Equality | Order + range | Free-text | Everything |
+|---|---|---|---|---|---|
+| `string` | `Text()` | `TextEq()` | `TextOrd()` | `TextMatch()` | `TextSearch()` |
+| `number` (int4) | `Integer()` | `IntegerEq()` | `IntegerOrd()` | — | — |
+| `number` (int2) | `Smallint()` | `SmallintEq()` | `SmallintOrd()` | — | — |
+| `bigint` (int8) | `BigInt()` | `BigIntEq()` | `BigIntOrd()` | — | — |
+| `number` (numeric) | `Numeric()` | `NumericEq()` | `NumericOrd()` | — | — |
+| `number` (float4) | `Real()` | `RealEq()` | `RealOrd()` | — | — |
+| `number` (float8) | `Double()` | `DoubleEq()` | `DoubleOrd()` | — | — |
+| `Date` (date) | `Date()` | `DateEq()` | `DateOrd()` | — | — |
+| `Date` (timestamp) | `Timestamp()` | `TimestampEq()` | `TimestampOrd()` | — | — |
+| `boolean` | `Boolean()` | — | — | — | — |
+| JSON document | `Json()` — searchable JSON: containment + JSONPath equality/range/ORDER BY | | | | |
+
+Reading the table:
+
+- Each constructor maps 1:1 to the domain named after it:
+  `IntegerOrd()` → `eql_v3_integer_ord`, `Text()` → `eql_v3_text`, and so on
+  (`Json()` → `eql_v3_json_search`).
+- **Every `*Ord` domain includes equality** (equality + range + ORDER BY);
+  every `*Eq` domain is equality only; the bare family name is storage-only
+  (encrypt/decrypt, no operators). `TextMatch` is free-text **only** — no
+  equality. `TextSearch` carries all three text capabilities.
+- **The plaintext type matters as much as the capability.** Money stored as
+  integer cents wants `IntegerOrd()` (JS `number`) — not `DoubleOrd()`
+  (float semantics) and not `BigIntOrd()`, whose plaintext is a JS `bigint`
+  and rejects `number` values.
+- The `*OrdOre` variants exist in the database bundle but are deliberately
+  not exposed as constructors (their btree opclass is superuser-gated — see
+  `stash-indexing`).
+
+The type is fixed at the column — there is no capability tuner. A value you
+only store and decrypt can use a storage-only domain; a value you filter or
+sort needs the matching `*Eq` / `*Ord` / text-search domain.
 
 ### 2. Register the extension pack in `prisma-next.config.ts`
 
@@ -233,11 +259,12 @@ await decryptAll(rows)                          // batches one SDK round-trip pe
 console.log(await rows[0]?.email.decrypt())     // 'alice@example.com'
 ```
 
-The envelope for a `double` column is `EncryptedNumber` (JS `number`); the schema
-column type is `DoubleOrd`. Envelope ↔ column pairing: `EncryptedString`
-↔ `TextSearch`, `EncryptedNumber` ↔ `DoubleOrd`,
-`EncryptedBigInt` ↔ `BigIntOrd`, `EncryptedDate` ↔ `DateOrd`,
-`EncryptedBoolean` ↔ `Boolean`, `EncryptedJson` ↔ `Json`.
+Envelopes pair by **plaintext type**, not by column name — one envelope
+covers every domain of its family: `EncryptedString` ↔ all `Text*` columns,
+`EncryptedNumber` ↔ all `number` families (`Integer*`, `Smallint*`,
+`Numeric*`, `Real*`, `Double*`), `EncryptedBigInt` ↔ `BigInt*`,
+`EncryptedDate` ↔ `Date*` and `Timestamp*`, `EncryptedBoolean` ↔ `Boolean`,
+`EncryptedJson` ↔ `Json`.
 
 ## Query operators (`eql*`)
 
