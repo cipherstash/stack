@@ -208,13 +208,17 @@ and is shown exactly once. Give each environment its own minted set; see
 
 ## Client lifetime (user-scoped strategies)
 
-A strategy that authenticates *a user* makes the client user-scoped:
-construct **one `Encryption()` client per request/user**, not a module-level
-singleton. A shared client whose `OidcFederationStrategy` closed over one
-request's user keeps authenticating — and, with lock context, encrypting —
-as whoever arrived first. That is a cross-tenant data hazard, not a
-performance nuance. `AccessKeyStrategy` and `auto` are service-scoped and
-safe to share for the process lifetime.
+An `OidcFederationStrategy` instance holds **one cached CTS token**:
+`getToken()` federates once, then returns the cached token until it expires
+— `getJwt` is *not* consulted again while the cache is warm. That makes the
+strategy, and any client built on it, **scoped to a single user by design**.
+Share that client across requests and every caller rides whichever user's
+token is currently cached — initially the first user's, then whoever's JWT
+the next re-federation picks up. With lock context that means operating (and
+being audit-logged) under the wrong user's identity. That is a cross-tenant
+data hazard, not a performance nuance: construct **one `Encryption()` client
+per request/user**. `AccessKeyStrategy` and `auto` authenticate a service,
+not a user, and are safe to share for the process lifetime.
 
 ## Lock context
 
