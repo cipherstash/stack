@@ -272,8 +272,17 @@ describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
   })
 
   it('rejects a v2 table in schemas', async () => {
+    // Shaped like a real v2 `EncryptedTable`: `tableName`, `columnBuilders`
+    // (each a `{ getName, build }` v2 column builder), and `build()`. The v2
+    // builders were deleted with the v3-only collapse, so the shape has to be
+    // hand-rolled — but it must stay v2-SHAPED, otherwise this only proves that
+    // an arbitrary object is rejected and would keep passing even if v2-table
+    // rejection broke.
     const v2Table = {
       tableName: 'users',
+      columnBuilders: {
+        email: { getName: () => 'email', build: () => ({}) },
+      },
       build: () => ({ tableName: 'users', columns: {} }),
     }
     // The directive sits on the call, not the property: no overload accepts a

@@ -10,7 +10,11 @@
  */
 import { describe, expectTypeOf, it } from 'vitest'
 import { type AnyV3Table, encryptedTable, types } from '@/eql/v3'
-import { Encryption, type WasmEncryptionClient } from '@/wasm-inline'
+import {
+  Encryption,
+  type WasmEncryptionClient,
+  type WasmEncryptionConfig,
+} from '@/wasm-inline'
 
 const users = encryptedTable('users', {
   email: types.TextEq('email'),
@@ -57,5 +61,35 @@ describe('wasm-inline Encryption schema typing', () => {
   it('still rejects an empty literal', () => {
     // @ts-expect-error - at least one table is required
     Encryption({ schemas: [], config })
+  })
+})
+
+/**
+ * The exported config type must not launder an empty schema set.
+ *
+ * Widening `WasmEncryptionConfig.schemas` to `readonly AnyV3Table[]` so the
+ * factory would accept `.map()` results also made the EXPORTED type unable to
+ * prove non-emptiness: `const cfg: WasmEncryptionConfig = { schemas: [], config }`
+ * compiled, and `Encryption(cfg)` compiled too, because overload 2's
+ * `NonEmptyV3<readonly AnyV3Table[]>` resolves `S['length']` to `number` rather
+ * than `0`. Only the direct literal was rejected. A config object built once and
+ * passed around — the shape this type exists to serve — therefore reached the
+ * runtime throw with a clean typecheck.
+ *
+ * Non-emptiness belongs on the exported type. The factory keeps accepting
+ * widened arrays inline via its overloads, which is what A-4 was about.
+ */
+describe('wasm-inline WasmEncryptionConfig', () => {
+  it('rejects an empty schema set on the exported config type', () => {
+    // @ts-expect-error - at least one table is required
+    const cfg: WasmEncryptionConfig = { schemas: [], config }
+    void cfg
+  })
+
+  it('still accepts a widened array passed inline to the factory', async () => {
+    const widened: AnyV3Table[] = [users]
+    expectTypeOf(
+      await Encryption({ schemas: widened, config }),
+    ).toEqualTypeOf<WasmEncryptionClient>()
   })
 })

@@ -501,3 +501,53 @@ describe('deepClone preserves structured values', () => {
     expect(cloned.pk).toBe('u#1')
   })
 })
+
+describe('stored EQL v2 grouped fields', () => {
+  /**
+   * A v2 grouped column registered its build key on the BARE LEAF, so a field
+   * inside a group was stored as `<group>.<leaf>__source` while the schema knew
+   * it only as `<leaf>`. The v3 rewrite made matching exact-dotted-path only
+   * for both generations, which silently orphaned every such attribute: it
+   * reads back as raw base64 inside a `{ data }` success.
+   *
+   * The fallback is gated on the stored generation. A v3 table registers full
+   * dotted paths precisely so a nested leaf cannot collide with a top-level
+   * column ("does not rebuild a nested <leaf>__source whose leaf collides"
+   * above), and that guard must keep holding for v3.
+   */
+  const orders = encryptedTable('orders', {
+    amount: types.TextEq('amount'),
+  })
+
+  it('rebuilds a nested v2 attribute registered under its bare leaf', () => {
+    const item = {
+      pk: 'order#1',
+      details: { amount__source: 'BASE64CT', amount__hmac: 'HMAC' },
+    }
+
+    expect(
+      toItemWithEqlPayloads(item, orders, buildReadContext(orders, 2)),
+    ).toEqual({
+      pk: 'order#1',
+      details: {
+        amount: {
+          i: { c: 'amount', t: 'orders' },
+          v: 2,
+          k: 'ct',
+          c: 'BASE64CT',
+        },
+      },
+    })
+  })
+
+  it('leaves the same item untouched when the stored generation is v3', () => {
+    const item = {
+      pk: 'order#1',
+      details: { amount__source: 'BASE64CT', amount__hmac: 'HMAC' },
+    }
+
+    expect(
+      toItemWithEqlPayloads(item, orders, buildReadContext(orders, 3)),
+    ).toEqual(item)
+  })
+})

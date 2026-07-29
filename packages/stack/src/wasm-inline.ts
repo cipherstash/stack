@@ -301,11 +301,28 @@ export type WasmEncryptionConfig = {
   /** One or more EQL v3 tables, authored with `types` / `encryptedTable` from
    *  this entry. The WASM entry is EQL v3 only.
    *
-   *  Widened to `readonly AnyV3Table[]` for the same reason the native entry
-   *  was (A-4): a mutable non-empty tuple rejects every shape that is not an
-   *  array literal — a shared `export const all: AnyV3Table[]`, a
-   *  `ReadonlyArray`, anything `map`-built or spread. Non-emptiness is carried
-   *  by the {@link Encryption} overloads instead. */
+   *  `readonly` (not the mutable tuple this once was) for the same reason the
+   *  native entry was widened in A-4: a mutable tuple rejects every shape that
+   *  is not an array literal — a shared `export const all: AnyV3Table[]`, a
+   *  `ReadonlyArray`, anything spread. But non-emptiness stays HERE rather than
+   *  moving entirely onto the {@link Encryption} overloads: a loose
+   *  `readonly AnyV3Table[]` on the exported type laundered an empty set past
+   *  both overloads, because `NonEmptyV3<readonly AnyV3Table[]>` resolves
+   *  `S['length']` to `number`, not `0`. A config object built once and passed
+   *  around — precisely what this type exists for — then reached the runtime
+   *  throw with a clean typecheck. The overloads still accept widened arrays
+   *  passed INLINE, which is the case A-4 was actually about. */
+  schemas: readonly [AnyV3Table, ...AnyV3Table[]]
+  config: WasmClientConfig
+}
+
+/**
+ * The implementation's view of {@link WasmEncryptionConfig}: same shape, loose
+ * array. Deliberately not exported — it is what the overload implementation
+ * signature destructures, and exporting it would reopen the laundering path
+ * documented above.
+ */
+type WasmEncryptionConfigInput = {
   schemas: readonly AnyV3Table[]
   config: WasmClientConfig
 }
@@ -1425,7 +1442,7 @@ export function Encryption<const S extends readonly AnyV3Table[]>(config: {
   config: WasmClientConfig
 }): Promise<WasmEncryptionClient>
 export async function Encryption(
-  config: WasmEncryptionConfig,
+  config: WasmEncryptionConfigInput,
 ): Promise<WasmEncryptionClient> {
   const { schemas, config: clientConfig } = config
 

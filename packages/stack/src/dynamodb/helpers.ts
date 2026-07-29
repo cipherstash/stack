@@ -316,13 +316,28 @@ function isStoredEqlPayload(value: unknown): value is StoredEqlPayload {
  * Nested v3 fields are registered by their full dotted path (`profile.ssn`),
  * preventing a nested leaf from colliding with a top-level column.
  */
-export function makeColumnMatcher(columnPaths: string[]) {
+export function makeColumnMatcher(
+  columnPaths: string[],
+  // Stored EQL v2 only. A v2 grouped column registered its build key on the
+  // BARE LEAF, so a field inside a group was written as
+  // `<group>.<leaf>__source` while the schema knew it only as `<leaf>`. Exact
+  // dotted matching alone therefore orphans every such attribute, which reads
+  // back as raw base64 inside a `{ data }` success.
+  //
+  // Deliberately NOT enabled for v3: a v3 table registers full dotted paths so
+  // that a nested leaf CANNOT collide with a same-named top-level column, and
+  // matching by bare leaf there rewrote a plaintext sibling as an envelope and
+  // handed it to the FFI as a decrypt target.
+  allowBareLeaf = false,
+) {
+  const paths = new Set(columnPaths)
   return function matchColumn(
     leaf: string,
     prefix: string,
   ): string | undefined {
     const dotted = prefix ? `${prefix}.${leaf}` : leaf
-    if (columnPaths.includes(dotted)) return dotted
+    if (paths.has(dotted)) return dotted
+    if (allowBareLeaf && prefix && paths.has(leaf)) return leaf
     return undefined
   }
 }
@@ -472,7 +487,9 @@ export function toItemWithEqlPayloads(
   const { v, encryptConfig, columnPaths, toColumnName } = context
 
   // The same matcher the write path splits with, so the two stay symmetric.
-  const matchColumn = makeColumnMatcher(columnPaths)
+  // The bare-leaf fallback is read-only and v2-only: writes are EQL v3 only, so
+  // the write path never needs it and must stay strict.
+  const matchColumn = makeColumnMatcher(columnPaths, v === 2)
 
   function processValue(
     attrName: string,

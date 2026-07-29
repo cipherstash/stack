@@ -30,7 +30,13 @@ rejected.
 `EncryptionClient<S>` accepts the same schema parameter, so it names the client
 for a loose `readonly AnyV3Table[]` as well as for a tuple. Code that is generic
 over its schemas — an adapter that builds a table per request, say — can write
-`EncryptionClient<readonly AnyV3Table[]>` and keep the typed surface.
+`EncryptionClient<readonly AnyV3Table[]>`.
+
+That keeps the `table` and `column` arguments checked, but not the model input:
+with the schema parameter loose there is no per-column plaintext to resolve, so
+`encryptModel` / `bulkEncryptModels` still reject an untyped
+`Record<string, unknown>` model and an adapter holding untyped rows needs a cast
+at that one boundary. Full model typing requires a concrete schema tuple.
 
 If you narrowed a schema array to `readonly [AnyV3Table, ...AnyV3Table[]]` to
 satisfy the old signature, that narrowing is no longer needed.

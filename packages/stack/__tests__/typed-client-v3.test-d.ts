@@ -277,3 +277,35 @@ describe('typed v3 client — a lock context binds exactly once', () => {
     ).toBeFunction()
   })
 })
+
+/**
+ * The overload split that makes a double bind a compile error must not also
+ * reject an OPTIONAL lock context. `decryptModel(row, table, session?.lc)` —
+ * where the context is `LockContextInput | undefined` — is the ordinary shape
+ * for code that decrypts identity-bound rows only for signed-in users. It
+ * compiled against the single optional parameter this replaced, and nothing
+ * about binding-once requires breaking it: `undefined` binds nothing.
+ */
+describe('typed v3 client — an optional lock context still type-checks', () => {
+  it('accepts LockContextInput | undefined positionally', () => {
+    expectTypeOf(client.decryptModel).toBeCallableWith(
+      { email: {} as Encrypted },
+      users,
+      undefined,
+    )
+    expectTypeOf(client.bulkDecryptModels).toBeCallableWith(
+      [{ email: {} as Encrypted }],
+      users,
+      undefined,
+    )
+  })
+
+  it('accepts a union-typed context without narrowing at the call site', () => {
+    const maybe: typeof lockContext | undefined = undefined
+    expectTypeOf(client.decryptModel).toBeCallableWith(
+      { email: {} as Encrypted },
+      users,
+      maybe,
+    )
+  })
+})

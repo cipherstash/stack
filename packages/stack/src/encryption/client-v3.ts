@@ -168,7 +168,7 @@ export interface EncryptionClient<
   decryptModel<Table extends S[number], T extends Record<string, unknown>>(
     input: T,
     table: Table,
-    lockContext: LockContextInput,
+    lockContext: LockContextInput | undefined,
   ): LockBoundDecryptModelOperation<V3DecryptedModel<Table, T>>
   decryptModel<Table extends S[number], T extends Record<string, unknown>>(
     input: T,
@@ -193,7 +193,7 @@ export interface EncryptionClient<
   bulkDecryptModels<Table extends S[number], T extends Record<string, unknown>>(
     input: Array<T>,
     table: Table,
-    lockContext: LockContextInput,
+    lockContext: LockContextInput | undefined,
   ): LockBoundDecryptModelOperation<Array<V3DecryptedModel<Table, T>>>
   bulkDecryptModels<Table extends S[number], T extends Record<string, unknown>>(
     input: Array<T>,
@@ -340,7 +340,7 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
   >(
     input: T,
     table: Table,
-    lockContext: LockContextInput,
+    lockContext: LockContextInput | undefined,
   ): LockBoundDecryptModelOperation<V3DecryptedModel<Table, T>>
   function decryptModel<
     Table extends S[number],
@@ -379,7 +379,7 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
   >(
     input: Array<T>,
     table: Table,
-    lockContext: LockContextInput,
+    lockContext: LockContextInput | undefined,
   ): LockBoundDecryptModelOperation<Array<V3DecryptedModel<Table, T>>>
   function bulkDecryptModels<
     Table extends S[number],
@@ -453,11 +453,19 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
  * ```
  *
  * For code that is generic over its schemas — integration adapters that build a
- * table per test family, say — name the loose array and keep the typed surface:
+ * table per test family, say — name the loose array:
  *
  * ```typescript
  * let client: EncryptionClient<readonly AnyV3Table[]>
  * ```
+ *
+ * That keeps `table` and `column` arguments checked, but NOT the model input:
+ * with `S` loose, `V3ModelInput<AnyV3Table, T>` cannot resolve a per-column
+ * plaintext, so `encryptModel` / `bulkEncryptModels` reject a
+ * `Record<string, unknown>` model. An adapter holding untyped rows needs a cast
+ * at that boundary (`@cipherstash/stack-supabase` has exactly one, for exactly
+ * this reason). Name a concrete tuple wherever the schema IS known statically —
+ * that is the only form with full model typing.
  *
  * Prefer this named type to `Awaited<ReturnType<typeof Encryption>>` when the
  * concrete schema tuple matters: TypeScript's `ReturnType` reads the final

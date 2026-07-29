@@ -477,6 +477,16 @@ as you still need to read its v2 rows.
 | `decryptModel` | `(item, v3Table, { storedEqlVersion: 2 })` | `T` |
 | `bulkDecryptModels` | `(items, v3Table, { storedEqlVersion: 2 })` | `T[]` |
 
+**Grouped v2 fields.** A v2 column inside a group was stored as
+`<group>.<leaf>__source` while the v2 schema knew it only as `<leaf>`. On a
+`{ storedEqlVersion: 2 }` read the leaf is matched inside the group, so carrying
+the column forward as a plain top-level `amount: types.TextEq('amount')` reads
+those rows correctly. You can also name it by its full path, keeping the
+original DB name — `'details.amount': types.TextEq('amount')`. Note the two
+differ: the property is the dotted path, the argument is the v2 DB name. This
+applies to v2 storage only; a v3 nested field uses the same dotted path for
+both (`'profile.ssn': types.TextEq('profile.ssn')`).
+
 All operations are thenable (awaitable) and support `.audit({ metadata })` chaining. On the default `@cipherstash/stack` entry the metadata forwards to ZeroKMS on every operation, encrypt and decrypt alike (see the Setup note). The `@cipherstash/stack/wasm-inline` client has no `.audit()` — its operations return a plain promise — so audit metadata is **dropped** there (logged at debug level). The operation itself still succeeds; only the audit record is lost. Use the native entry when audit trails matter.
 
 Types exported from `@cipherstash/stack/dynamodb`: `EncryptedDynamoDBInstance`, `EncryptedDynamoDBConfig`, `EncryptedDynamoDBError`, `AnyEncryptedTable`, `DynamoDBReadOptions`, `DynamoDBEncryptionClient`, `EncryptedAttributes`, `DecryptedAttributes`, `AuditConfig`.
