@@ -181,6 +181,13 @@ export type ClientConfig = {
    *
    * `Encryption` keeps its runtime guard: JS and JSON callers bypass types
    * entirely, so this is defence in depth, not a replacement for it.
+   *
+   * One asymmetry the guard has to account for: without
+   * `exactOptionalPropertyTypes` — which this repo does not enable — `?: never`
+   * has declared type `undefined`, so `eqlVersion: undefined` is accepted here
+   * and no declaration can reject it. The runtime therefore tolerates exactly
+   * that value (it names no version) while still rejecting every real one,
+   * `eqlVersion: 3` included.
    */
   eqlVersion?: never
 }
@@ -247,8 +254,26 @@ export function hasBuildColumnKeyMap<T extends object>(
   )
 }
 
+/**
+ * The `Encryption({ schemas, config })` argument, as a named type.
+ *
+ * The default MUST be a non-empty tuple, not `readonly AnyV3Table[]`: with the
+ * widened default, `S['length']` resolves to `number`, `number extends 0` is
+ * false, and the conditional hands back the widened array — so
+ * `const cfg: EncryptionClientConfig = { schemas: [] }` typechecked clean and
+ * threw at `Encryption()`. Excess-property checking only catches the FRESH
+ * literal `Encryption({ schemas: [] })`; a config object built once and passed
+ * around, which is exactly what this type exists to serve, slipped through.
+ *
+ * The conditional stays for an explicit `EncryptionClientConfig<[]>`, and the
+ * type parameter stays so a caller can pin their own schema tuple. The factory
+ * keeps accepting widened arrays inline through its overloads — that is a
+ * separate concern from what this exported type can prove.
+ *
+ * Mirrors `WasmEncryptionConfig` on the `wasm-inline` entry.
+ */
 export type EncryptionClientConfig<
-  S extends readonly AnyV3Table[] = readonly AnyV3Table[],
+  S extends readonly AnyV3Table[] = readonly [AnyV3Table, ...AnyV3Table[]],
 > = {
   schemas: S['length'] extends 0 ? never : S
   config?: ClientConfig

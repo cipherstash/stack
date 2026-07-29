@@ -137,6 +137,21 @@ describe('wasm-inline is EQL v3 only (#614)', () => {
     expect(vi.mocked(wasmNewClient)).not.toHaveBeenCalled()
   })
 
+  // `eqlVersion?: never` accepts `eqlVersion: undefined` without
+  // `exactOptionalPropertyTypes` (not enabled in this repo) and cannot be made to
+  // reject it, so a bare presence check threw on a config the declarations had
+  // already accepted. Tolerating that one value keeps the type and the runtime in
+  // agreement — and, like every other rule here, must match the native entry.
+  it('tolerates an explicitly undefined eqlVersion, matching the native entry', async () => {
+    await expect(
+      Encryption({
+        schemas: [users],
+        config: { ...config, eqlVersion: undefined },
+      }),
+    ).resolves.toBeDefined()
+    expect(newClientOpts().eqlVersion).toBe(3)
+  })
+
   // The runtime `!schemas.length` guard was pinned only by a `@ts-expect-error`
   // type test (wasm-inline-schemas.test-d.ts), which never executes — deleting
   // the runtime throw left everything green. This executes it.

@@ -873,7 +873,17 @@ export async function Encryption(config: {
     )
   }
 
-  if (clientConfig && Object.hasOwn(clientConfig, 'eqlVersion')) {
+  // Reject the PRESENCE of the key, including an explicit `eqlVersion: 3`, so
+  // the removal is discovered at the source rather than lingering as a no-op
+  // that looks load-bearing. An explicit `undefined` is the one exception: it
+  // names no version, and `eqlVersion?: never` cannot reject it at the type
+  // level without `exactOptionalPropertyTypes` (not enabled here), so throwing
+  // on it would fail a config the emitted declarations already accepted.
+  if (
+    clientConfig &&
+    Object.hasOwn(clientConfig, 'eqlVersion') &&
+    clientConfig.eqlVersion !== undefined
+  ) {
     throw new Error(
       '[encryption]: `config.eqlVersion` has been removed — @cipherstash/stack always authors EQL v3. Remove the field.',
     )

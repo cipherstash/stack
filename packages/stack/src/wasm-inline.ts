@@ -235,6 +235,11 @@ export type WasmClientConfig = {
    * per arm would drift. Mirrors `ClientConfig.eqlVersion` on the native entry,
    * whose guard this one is a byte-for-byte mirror of — the type is defence in
    * depth for the JS/JSON callers that bypass it, not a replacement.
+   *
+   * As on the native entry, `?: never` still admits `eqlVersion: undefined`
+   * without `exactOptionalPropertyTypes` (not enabled in this repo) and cannot
+   * be made to reject it, so the runtime tolerates that one value and rejects
+   * every real one.
    */
   eqlVersion?: never
   // Provide exactly one of `accessKey` (we build the strategy) or a
@@ -1459,7 +1464,16 @@ export async function Encryption(
   // could honour. `Object.hasOwn` rejects the PRESENCE of the key, including an
   // explicit `eqlVersion: 3`, so the removal is discovered at the source rather
   // than the field lingering as a no-op that looks load-bearing.
-  if (clientConfig && Object.hasOwn(clientConfig, 'eqlVersion')) {
+  //
+  // An explicit `undefined` is the one exception, on both entries: it names no
+  // version, and `eqlVersion?: never` cannot reject it at the type level without
+  // `exactOptionalPropertyTypes` (not enabled here), so throwing on it would
+  // fail a config the emitted declarations already accepted.
+  if (
+    clientConfig &&
+    Object.hasOwn(clientConfig, 'eqlVersion') &&
+    clientConfig.eqlVersion !== undefined
+  ) {
     throw new Error(
       '[encryption]: `config.eqlVersion` has been removed — @cipherstash/stack always authors EQL v3. Remove the field.',
     )

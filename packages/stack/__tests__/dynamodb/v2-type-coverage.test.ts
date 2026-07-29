@@ -489,7 +489,7 @@ describe('nested columns on a legacy read', () => {
 })
 
 /**
- * CHARACTERISATION, not endorsement — and the one genuine gap this file found.
+ * The gap this file found, now closed.
  *
  * A v2 GROUPED column registered its build key on the bare leaf, so a field
  * inside a group was stored as `<group>.<leaf>__source` while the schema knew it
@@ -497,22 +497,20 @@ describe('nested columns on a legacy read', () => {
  * exists precisely so those attributes still rebuild — see the
  * `stored EQL v2 grouped fields` block in `helpers-v3.test.ts`.
  *
- * The envelope is rebuilt at the NESTED position (`details.birthday`), but date
- * reconstruction is keyed on the DECLARED path (`birthday`), so
- * `reconstructDatePaths` looks for a top-level `birthday`, does not find one,
- * and the value comes back as the FFI's string. The data is not lost and nothing
- * throws — it is simply not a `Date`.
- *
- * The fix available to a caller today is in the test above: declare the dotted
- * path (`'details.birthday': types.Date(...)`), which makes the exact-path match
- * fire and reconstruction follow it.
+ * The envelope is rebuilt at the NESTED position (`details.birthday`), but the
+ * clients key date reconstruction on the DECLARED path (`birthday`) — native via
+ * `rowReconstructor`, WASM via `dateFields` — so neither found it and the value
+ * came back as the FFI's string. The read path now reports the actual path it
+ * wrote to and the adapter reconstructs there, so a grouped date carries forward
+ * as a `Date` without the caller having to re-declare it as a dotted path.
  */
-describe('a v2 grouped date column decrypts but is not reconstructed', () => {
+describe('a v2 grouped date column reconstructs at its nested path', () => {
   const orders = encryptedTable('orders', {
     birthday: types.Date('birthday'),
+    label: types.Text('label'),
   })
 
-  it('rebuilds the envelope under the group but leaves the date a string', async () => {
+  it('rebuilds the envelope under the group and reconstructs the date', async () => {
     const { dynamo, received } = ffiStub({
       wire: { 'ct:grouped': '1990-04-05T00:00:00.000Z' },
       tables: [orders],
@@ -538,8 +536,55 @@ describe('a v2 grouped date column decrypts but is not reconstructed', () => {
       },
     })
     const details = (decrypted as { details: Record<string, unknown> }).details
-    expect(details.birthday).toBe('1990-04-05T00:00:00.000Z')
-    expect(details.birthday).not.toBeInstanceOf(Date)
+    expect(details.birthday).toBeInstanceOf(Date)
+    expect(details.birthday).toEqual(new Date('1990-04-05T00:00:00.000Z'))
+  })
+
+  it('reconstructs a grouped date on the bulk read too', async () => {
+    const { dynamo } = ffiStub({
+      wire: { 'ct:grouped': '1990-04-05T00:00:00.000Z' },
+      tables: [orders],
+    })
+
+    const rows = unwrapResult(
+      await dynamo.bulkDecryptModels(
+        [
+          { details: { birthday__source: 'ct:grouped' } },
+          { details: { birthday__source: 'ct:grouped' } },
+        ],
+        orders,
+        { storedEqlVersion: 2 },
+      ),
+    )
+
+    for (const row of rows) {
+      const details = (row as { details: Record<string, unknown> }).details
+      expect(details.birthday).toBeInstanceOf(Date)
+    }
+  })
+
+  /**
+   * A date-shaped STRING at a grouped non-date column must stay a string. The
+   * reconstruction is driven by the column's `cast_as`, not by whether the value
+   * happens to parse as a date, and this is the case that tells the two apart.
+   */
+  it('leaves a grouped text column alone even when its value parses as a date', async () => {
+    const { dynamo } = ffiStub({
+      wire: { 'ct:label': '1990-04-05T00:00:00.000Z' },
+      tables: [orders],
+    })
+
+    const decrypted = unwrapResult(
+      await dynamo.decryptModel(
+        { details: { label__source: 'ct:label' } },
+        orders,
+        { storedEqlVersion: 2 },
+      ),
+    )
+
+    const details = (decrypted as { details: Record<string, unknown> }).details
+    expect(details.label).toBe('1990-04-05T00:00:00.000Z')
+    expect(details.label).not.toBeInstanceOf(Date)
   })
 })
 

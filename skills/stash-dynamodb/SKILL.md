@@ -488,6 +488,10 @@ differ: the property is the dotted path, the argument is the v2 DB name. This
 applies to v2 storage only; a v3 nested field uses the same dotted path for
 both (`'profile.ssn': types.TextEq('profile.ssn')`).
 
+Type reconstruction follows either spelling: a grouped v2 `date` / `timestamp`
+column comes back as a `Date`, not an ISO string, whether you declare it as a
+plain top-level `placedAt: types.Date('placed_at')` or as the full dotted path.
+
 All operations are thenable (awaitable) and support `.audit({ metadata })` chaining. On the default `@cipherstash/stack` entry the metadata forwards to ZeroKMS on every operation, encrypt and decrypt alike (see the Setup note). The `@cipherstash/stack/wasm-inline` client has no `.audit()` — its operations return a plain promise — so audit metadata is **dropped** there (logged at debug level). The operation itself still succeeds; only the audit record is lost. Use the native entry when audit trails matter.
 
 Types exported from `@cipherstash/stack/dynamodb`: `EncryptedDynamoDBInstance`, `EncryptedDynamoDBConfig`, `EncryptedDynamoDBError`, `AnyEncryptedTable`, `DynamoDBReadOptions`, `DynamoDBEncryptionClient`, `EncryptedAttributes`, `DecryptedAttributes`, `AuditConfig`.

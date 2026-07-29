@@ -212,4 +212,31 @@ describe('Encryption v3 wire format', () => {
 
     expect(ffi.newClient).not.toHaveBeenCalled()
   })
+
+  it('rejects an explicit eqlVersion 3, which is a stale config and not a request', async () => {
+    await expect(
+      Encryption({
+        schemas: [users],
+        config: { eqlVersion: 3 } as never,
+      }),
+    ).rejects.toThrow(/config\.eqlVersion.*removed/)
+
+    expect(ffi.newClient).not.toHaveBeenCalled()
+  })
+
+  /**
+   * `eqlVersion?: never` on `ClientConfig` has declared type `undefined` without
+   * `exactOptionalPropertyTypes` — which this repo does not enable — so the type
+   * accepts `eqlVersion: undefined` and cannot be made to reject it. A bare
+   * `Object.hasOwn` check therefore threw on a config the emitted declarations
+   * had already accepted. An explicit `undefined` names no version and carries
+   * no migration hazard, so the runtime tolerates exactly that one value.
+   */
+  it('tolerates an explicitly undefined eqlVersion, which the type permits', async () => {
+    await expect(
+      Encryption({ schemas: [users], config: { eqlVersion: undefined } }),
+    ).resolves.toBeDefined()
+
+    expect(lastNewClientOpts().eqlVersion).toBe(3)
+  })
 })

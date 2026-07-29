@@ -1,6 +1,7 @@
 import type { ProtectErrorCode } from '@cipherstash/protect-ffi'
 import { ProtectError as FfiProtectError } from '@cipherstash/protect-ffi'
 import { resolveEncryptColumnMap } from '@/encryption/helpers/model-helpers'
+import { DATE_LIKE_CASTS } from '@/eql/v3/columns'
 import type { EncryptedValue } from '@/types'
 import { logger } from '@/utils/logger'
 import type { AnyEncryptedTable, EncryptedDynamoDBError } from './types'
@@ -483,6 +484,18 @@ export function toItemWithEqlPayloads(
   // Resolved once here for the single-item path; passed in by the bulk path so
   // it is not rebuilt per item.
   context: ReadContext = buildReadContext(encryptionSchema),
+  // Out-param: the ACTUAL dotted paths a bare-leaf-matched date-like column was
+  // written back to. A grouped v2 field matched as `placedAt` lands at
+  // `details.placedAt`, but both clients resolve their date columns from the
+  // REGISTERED paths alone (`rowReconstructor` in `encryption/client-v3.ts`,
+  // `dateFields` in `wasm-inline.ts`), so neither reconstructs it and the value
+  // reads back as an ISO string. This is the only layer that knows the alias
+  // happened; the decrypt operations reconstruct at what it reports.
+  //
+  // Per item, never shared across a bulk call: `details.placedAt` may be an
+  // encrypted date column in one item and an ordinary plaintext string in the
+  // next, and a shared set would convert the latter.
+  aliasedDatePaths?: Set<string>,
 ): Record<string, unknown> {
   const { v, encryptConfig, columnPaths, toColumnName } = context
 
@@ -543,6 +556,22 @@ export function toItemWithEqlPayloads(
       // path) is detected too. A v3 column builds the same `{ cast_as, indexes }`
       // shape as a v2 one, so this detection needs no version branch.
       const columnConfig = encryptConfig.columns[toColumnName(matched)]
+
+      // The bare-leaf fallback fired iff the match is not the attribute's own
+      // dotted path — an exact match returns `dotted`, the fallback returns the
+      // leaf under a non-empty prefix. Only date-like casts need this: every
+      // other kind decrypts to its final type with no per-path work.
+      const dotted = prefix ? `${prefix}.${columnName}` : columnName
+      if (
+        aliasedDatePaths &&
+        matched !== dotted &&
+        (DATE_LIKE_CASTS as readonly string[]).includes(
+          columnConfig?.cast_as as string,
+        )
+      ) {
+        aliasedDatePaths.add(dotted)
+      }
+
       if (columnConfig?.cast_as === 'json' && columnConfig.indexes.ste_vec) {
         const stored = attrValue as { h?: unknown; sv?: unknown }
         return {

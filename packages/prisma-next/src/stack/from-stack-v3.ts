@@ -61,9 +61,11 @@ export interface CipherstashFromStackV3Options {
    * `ClientConfig` no longer carries an `eqlVersion` field — `@cipherstash/stack`
    * always authors EQL v3 — so there is no v2 escape hatch to reach from here.
    * `Encryption()` throws on the mere PRESENCE of the key
-   * (`` `config.eqlVersion` has been removed ``), whatever its value and whatever
-   * the schema set, so a config object carrying a leftover `eqlVersion` fails at
-   * setup rather than silently selecting a wire format.
+   * (`` `config.eqlVersion` has been removed ``), whatever its value — an
+   * explicit `undefined` excepted, since the type admits that one and cannot
+   * reject it — and whatever the schema set, so a config object carrying a
+   * leftover `eqlVersion` fails at setup rather than silently selecting a wire
+   * format.
    */
   readonly encryptionConfig?: ClientConfig
 }

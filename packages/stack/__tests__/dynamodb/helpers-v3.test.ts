@@ -551,3 +551,96 @@ describe('stored EQL v2 grouped fields', () => {
     ).toEqual(item)
   })
 })
+
+/**
+ * The bare-leaf fallback matches `details.amount__source` against the REGISTERED
+ * path `amount`, but the rebuilt envelope is re-nested by the recursion, so the
+ * plaintext lands at `details.amount`. Both reconstructors resolve date columns
+ * from the registered paths alone (`client-v3.ts` `rowReconstructor`, and
+ * `wasm-inline.ts` `dateFields`), so neither sees `details.amount` and a legacy
+ * grouped date column reads back as an ISO string instead of a `Date`.
+ *
+ * The read path is the only layer that knows the alias happened, so it reports
+ * the ACTUAL path it wrote to and the adapter reconstructs there.
+ */
+describe('stored EQL v2 grouped date fields', () => {
+  const orders = encryptedTable('orders', {
+    placedAt: types.DateEq('placed_at'),
+    reference: types.TextEq('reference'),
+  })
+
+  const groupedItem = (leaf: string) => ({
+    pk: 'order#1',
+    details: { [`${leaf}__source`]: 'BASE64CT', [`${leaf}__hmac`]: 'HMAC' },
+  })
+
+  it('reports the actual nested path a bare-leaf-matched date column landed at', () => {
+    const aliasedDatePaths = new Set<string>()
+
+    toItemWithEqlPayloads(
+      groupedItem('placedAt'),
+      orders,
+      buildReadContext(orders, 2),
+      aliasedDatePaths,
+    )
+
+    expect([...aliasedDatePaths]).toEqual(['details.placedAt'])
+  })
+
+  it('reports nothing for a bare-leaf-matched column that is not date-like', () => {
+    const aliasedDatePaths = new Set<string>()
+
+    toItemWithEqlPayloads(
+      groupedItem('reference'),
+      orders,
+      buildReadContext(orders, 2),
+      aliasedDatePaths,
+    )
+
+    expect([...aliasedDatePaths]).toEqual([])
+  })
+
+  it('reports nothing for a stored v3 read, where the fallback never fires', () => {
+    const aliasedDatePaths = new Set<string>()
+
+    toItemWithEqlPayloads(
+      groupedItem('placedAt'),
+      orders,
+      buildReadContext(orders, 3),
+      aliasedDatePaths,
+    )
+
+    expect([...aliasedDatePaths]).toEqual([])
+  })
+
+  it('reports nothing for a top-level date column, which the client already reconstructs', () => {
+    const aliasedDatePaths = new Set<string>()
+
+    toItemWithEqlPayloads(
+      { pk: 'order#1', placedAt__source: 'BASE64CT' },
+      orders,
+      buildReadContext(orders, 2),
+      aliasedDatePaths,
+    )
+
+    expect([...aliasedDatePaths]).toEqual([])
+  })
+
+  it('reports nothing for a nested date column registered under its full dotted path', () => {
+    // Registered as `details.placedAt`, so the EXACT match fires, not the
+    // fallback — the client reconstructs this path itself.
+    const dotted = encryptedTable('orders', {
+      'details.placedAt': types.DateEq('placed_at'),
+    })
+    const aliasedDatePaths = new Set<string>()
+
+    toItemWithEqlPayloads(
+      groupedItem('placedAt'),
+      dotted,
+      buildReadContext(dotted, 2),
+      aliasedDatePaths,
+    )
+
+    expect([...aliasedDatePaths]).toEqual([])
+  })
+})

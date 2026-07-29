@@ -15,6 +15,7 @@
 
 import { Encryption, encryptedTable, types } from '../dist/encryption/v3.js'
 import type { AnyV3Table } from '../dist/eql/v3/index.js'
+import type { EncryptionClientConfig } from '../dist/types-public.js'
 
 const users = encryptedTable('users', {
   email: types.TextSearch('email'),
@@ -73,4 +74,22 @@ export async function configShapes() {
 
   // @ts-expect-error - at least one table is required
   await Encryption({ schemas: [] })
+}
+
+/**
+ * The same non-emptiness through the EXPORTED config type, which is the shape a
+ * caller actually holds when the config is built once and passed around. The
+ * inline rejection above only covers a fresh literal: with a default type
+ * argument of `readonly AnyV3Table[]`, `S['length']` widens to `number`, the
+ * non-empty conditional stops firing, and an empty set type-checked clean here
+ * before throwing at `Encryption()`. Asserted against the BUILT declarations
+ * because that is what ships.
+ */
+export async function exportedConfigTypeShapes() {
+  // @ts-expect-error - at least one table is required
+  const empty: EncryptionClientConfig = { schemas: [] }
+  void empty
+
+  const populated: EncryptionClientConfig = { schemas: [users, orders] }
+  await Encryption(populated)
 }
