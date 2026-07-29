@@ -490,6 +490,22 @@ describe('eqlMigrationCommand — Drizzle', () => {
     expect(clack.log.error).toHaveBeenCalledWith('boom')
   })
 
+  // The positive half of the `embedded` contract asserted below: standalone,
+  // every post-intro abort must CLOSE the banner it opened. `p.intro` without a
+  // matching `p.outro` leaves clack's box unterminated, so the abort renders as
+  // a half-drawn frame. Only the negative (embedded suppresses it) was pinned,
+  // which a regression dropping the outro entirely would still satisfy.
+  it('closes the intro banner with the abort outro when standalone', async () => {
+    spawnMock.mockReturnValue({ status: 1, stdout: '', stderr: 'boom' })
+
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out: join(tmp, 'drizzle') }),
+    ).rejects.toBeInstanceOf(CliExit)
+
+    expect(clack.intro).toHaveBeenCalled()
+    expect(clack.outro).toHaveBeenCalledWith('Migration aborted.')
+  })
+
   it('removes the scaffolded migration when writing the SQL fails', async () => {
     const out = join(tmp, 'drizzle')
     mkdirSync(out, { recursive: true })
