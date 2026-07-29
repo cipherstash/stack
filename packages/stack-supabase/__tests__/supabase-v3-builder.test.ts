@@ -1178,6 +1178,54 @@ describe('encryptedSupabaseV3 wire encoding', () => {
       expect(profile.createdAt).toBeInstanceOf(Date)
     })
 
+    // Two dotted paths under the SAME prefix. `postprocessDecryptedRow` now
+    // batches every dotted key into one `reconstructDatePaths` call instead of
+    // one call per key; within a single call the second path must clone the
+    // `profile` object the first already rebuilt, or one of the two Dates is
+    // silently thrown away along with any plaintext sibling.
+    it('reconstructs two dotted date paths sharing a prefix', async () => {
+      const nestedTable = encryptedTable('profiles', {
+        'profile.createdAt': types.Timestamp('profile_created_at'),
+        'profile.updatedAt': types.Timestamp('profile_updated_at'),
+      })
+      const supabase = createMockSupabase([
+        {
+          profile: {
+            createdAt: '2026-01-02T03:04:05.000Z',
+            updatedAt: '2026-03-04T05:06:07.000Z',
+            nickname: 'ada',
+          },
+        },
+      ])
+      const builder = new EncryptedQueryBuilderV3Impl(
+        'profiles',
+        nestedTable,
+        createMockEncryptionClient(),
+        supabase.client,
+        ['profile_created_at', 'profile_updated_at'],
+      )
+
+      const { data } = await builder.select(
+        'profile.createdAt, profile.updatedAt',
+      )
+
+      if (!data) throw new Error('Expected a decrypted row')
+      const profile = (data[0] as Record<string, unknown>).profile as Record<
+        string,
+        unknown
+      >
+      expect(profile.createdAt).toBeInstanceOf(Date)
+      expect((profile.createdAt as Date).toISOString()).toBe(
+        '2026-01-02T03:04:05.000Z',
+      )
+      expect(profile.updatedAt).toBeInstanceOf(Date)
+      expect((profile.updatedAt as Date).toISOString()).toBe(
+        '2026-03-04T05:06:07.000Z',
+      )
+      // The plaintext sibling rides along in the same nested object.
+      expect(profile.nickname).toBe('ada')
+    })
+
     // Selecting by raw DB name means the row comes back keyed `created_at`,
     // the only way to reach the `dbName` half of the two-key branch. It also
     // exercises the `value == null` skip on the absent `createdAt` key.

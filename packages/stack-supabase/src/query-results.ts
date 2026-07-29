@@ -63,17 +63,24 @@ function postprocessDecryptedRow(
     keyToDb[dbName] ??= dbName
   }
 
-  let out: Record<string, unknown> = { ...row }
+  const out: Record<string, unknown> = { ...row }
+  // Dotted paths are collected and reconstructed in ONE pass:
+  // `reconstructDatePaths` allocates a fresh shallow row copy per call, so
+  // calling it per key spent one clone on every nested date column. Batching
+  // is also what keeps two paths sharing a prefix (`profile.createdAt` /
+  // `profile.updatedAt`) correct — within a single call the second path clones
+  // the intermediate the first already rebuilt, rather than the raw source.
+  const dottedKeys: string[] = []
   for (const [key, dbName] of Object.entries(keyToDb)) {
     const castAs = ctx.columns.schemaFor(dbName)?.cast_as
     if (!DATE_LIKE_CAST_SET.has(castAs as string)) continue
     if (key.includes('.')) {
-      out = reconstructDatePaths(out, [key])
+      dottedKeys.push(key)
     } else if (Object.hasOwn(out, key)) {
       out[key] = reconstructDateValue(out[key])
     }
   }
-  return out
+  return dottedKeys.length > 0 ? reconstructDatePaths(out, dottedKeys) : out
 }
 
 /**
