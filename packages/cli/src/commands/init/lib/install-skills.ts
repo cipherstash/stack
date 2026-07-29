@@ -17,6 +17,7 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
     'stash-indexing',
     'stash-deployment',
     'stash-zerokms',
+    'stash-auth',
     'stash-cli',
   ],
   // Supabase gets the raw-SQL and edge skills on top of its own: Edge
@@ -31,6 +32,7 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
     'stash-edge',
     'stash-deployment',
     'stash-zerokms',
+    'stash-auth',
     'stash-cli',
   ],
   'prisma-next': [
@@ -39,6 +41,7 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
     'stash-indexing',
     'stash-deployment',
     'stash-zerokms',
+    'stash-auth',
     'stash-cli',
   ],
   // The no-ORM path: `stash-postgres` (binding + predicate forms) and `stash-edge`
@@ -51,6 +54,7 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
     'stash-edge',
     'stash-deployment',
     'stash-zerokms',
+    'stash-auth',
     'stash-cli',
   ],
 }
@@ -61,6 +65,7 @@ const BASE_SKILLS: readonly string[] = [
   'stash-indexing',
   'stash-deployment',
   'stash-zerokms',
+  'stash-auth',
   'stash-cli',
 ]
 

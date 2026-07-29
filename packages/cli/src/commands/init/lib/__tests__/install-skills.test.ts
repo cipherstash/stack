@@ -130,6 +130,7 @@ describe('skillsFor', () => {
       'stash-indexing',
       'stash-deployment',
       'stash-zerokms',
+      'stash-auth',
       'stash-cli',
     ])
   })
@@ -142,6 +143,7 @@ describe('skillsFor', () => {
       'stash-indexing',
       'stash-deployment',
       'stash-zerokms',
+      'stash-auth',
       'stash-cli',
     ])
   })
@@ -167,6 +169,7 @@ describe('installSkills', () => {
       'stash-indexing',
       'stash-deployment',
       'stash-zerokms',
+      'stash-auth',
       'stash-cli',
     ])
     expect(failed).toEqual([])
@@ -211,6 +214,7 @@ describe('installSkills', () => {
         'stash-indexing',
         'stash-deployment',
         'stash-zerokms',
+        'stash-auth',
         'stash-cli',
       ],
     })
@@ -238,6 +242,7 @@ describe('installSkills', () => {
       'stash-indexing',
       'stash-deployment',
       'stash-zerokms',
+      'stash-auth',
       'stash-cli',
     ])
     expect(failed).toEqual(['stash-drizzle'])
@@ -260,6 +265,7 @@ describe('installSkills', () => {
       'stash-indexing',
       'stash-deployment',
       'stash-zerokms',
+      'stash-auth',
       'stash-cli',
     ])
   })

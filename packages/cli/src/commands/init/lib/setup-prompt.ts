@@ -206,6 +206,8 @@ const SKILL_PURPOSES: Record<string, string> = {
     'taking a rollout to a live environment — the multi-deploy ladder and its gates, backfilling against a production database, `CS_*` credentials at build and run time, Prisma Postgres/Compute specifics',
   'stash-zerokms':
     'the ZeroKMS key model — keysets scope every encrypt/decrypt/query, clients and grants, the default keyset, multi-tenant `config.keyset`, and diagnosing keyset-access failures',
+  'stash-auth':
+    'authenticating to CipherStash — the CTS service-token model, `@cipherstash/auth` strategies (`config.authStrategy`), the four `CS_*` variables and `stash env`, lock context, and auth failure codes',
   'stash-dynamodb':
     'DynamoDB encryption: per-item encrypt/decrypt, HMAC attribute keys, audit logging',
   'stash-cli':

@@ -11,6 +11,22 @@ skill is the canonical description of its access model. Other skills
 `stash-supabase`) touch credentials and keysets in passing; where their
 wording and this skill disagree, **this skill wins**.
 
+## Authentication and regions (see `stash-auth`)
+
+ZeroKMS accepts exactly one credential: a **CipherStash service token** — a
+short-lived signed JWT minted by CTS, the CipherStash token service. Access
+keys and IdP JWTs are never sent to ZeroKMS directly; they are exchanged at
+CTS for a service token first. The auth strategies do this for you —
+`stash-auth` is the canonical skill for that whole surface (strategies,
+`CS_*` variables, token contents, failure codes).
+
+ZeroKMS runs in a number of regions. Your workspace's region is part of its
+CRN (`crn:<region>.<provider>:<workspace-id>`), and CTS resolves the
+matching ZeroKMS endpoint and stamps it into the service token — the client
+discovers where ZeroKMS is from the token itself. You never configure a
+ZeroKMS URL, which is also why the `CS_*_HOST` override variables are
+debug-only and must not appear in CI or examples.
+
 ## The model in one paragraph
 
 Every value is encrypted **under a keyset**. Encrypt, decrypt, and query are
@@ -129,7 +145,9 @@ it can reach.
 
 Scope strings in existing tokens may use the legacy `dataset:` prefix
 (`dataset:create`, `dataset:grant`, …) — it is the same permission family as
-`keyset:`; ZeroKMS accepts both spellings.
+`keyset:`; ZeroKMS accepts both spellings. Scopes are assigned by CTS when
+the service token is minted, based on the credential's role — see
+`stash-auth`.
 
 ## Keysets in the Stack
 
@@ -159,8 +177,9 @@ const client = await Encryption({
   can be centralized in one suitably-granted client while writes and
   queries still require the per-tenant client.)
 - Keysets are orthogonal to `authStrategy` and lock context: a keyset
-  isolates a whole keyspace (coarse, fixed per client); lock context binds an
-  individual value to an identity claim (fine-grained, per operation). They
+  isolates a whole keyspace (coarse, fixed per client); lock context binds
+  retrieval of an individual value's data key to a claim from the caller's
+  service token (fine-grained, per operation — see `stash-auth`). They
   compose.
 - `stash login` binds your device to the workspace's default keyset, which is
   why CLI operations (`stash encrypt backfill`, dev-time tooling) work
@@ -182,11 +201,12 @@ locate key material for the client:
 | Token missing scopes | `403 — "Not permitted"` | Operation failure; fix the credential's scopes, not the grants |
 
 **Gate 2 — lock context / decryption policy (value-level, per identity).**
-Only reached when gate 1 passes. A caller whose identity claims don't satisfy
-a value's lock context is denied **that value** (`403`, surfaced as a
-`{ failure }` on decrypt); encrypting and other values are unaffected, and
-every denial is recorded in the access log. See the lock-context sections of
-`stash-encryption` for usage.
+Only reached when gate 1 passes. A value encrypted under a lock context has
+its data key bound to a claim from the encrypting caller's service token; a
+caller whose token doesn't carry the same claim is refused **that value's
+data key** (`403`, surfaced as a `{ failure }` on decrypt). Encrypting and
+other values are unaffected, and every denial is recorded in the access
+log. See `stash-auth` for the lock-context model and usage.
 
 The practical tell: gate-1 failures are *total* (the client can do nothing
 under that keyset — encrypt, decrypt, and query all fail), gate-2 failures

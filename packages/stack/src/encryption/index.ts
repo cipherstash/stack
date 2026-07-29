@@ -731,10 +731,15 @@ export function __resetStrategyDeprecationWarningForTests(): void {
  * ```typescript
  * import { Encryption, AccessKeyStrategy } from "@cipherstash/stack"
  *
+ * // `create()` returns a `Result` — unwrap it; `config.authStrategy` takes the
+ * // strategy itself (the object with `getToken()`), not the `Result` envelope.
+ * const strategy = AccessKeyStrategy.create(workspaceCrn, accessKey)
+ * if (strategy.failure) throw new Error(strategy.failure.error.message)
+ *
  * const client = await Encryption({
  *   schemas: [users],
  *   config: {
- *     authStrategy: AccessKeyStrategy.create(workspaceCrn, accessKey),
+ *     authStrategy: strategy.data,
  *   },
  * })
  * ```
@@ -749,10 +754,14 @@ export function __resetStrategyDeprecationWarningForTests(): void {
  * import { Encryption, OidcFederationStrategy } from "@cipherstash/stack"
  *
  * // Authenticate every ZeroKMS request as the signed-in user.
+ * // `create()` returns a `Result` — unwrap it before passing the strategy.
+ * const federation = OidcFederationStrategy.create(workspaceCrn, () => getUserJwt())
+ * if (federation.failure) throw new Error(federation.failure.error.message)
+ *
  * const client = await Encryption({
  *   schemas: [users],
  *   config: {
- *     authStrategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt()),
+ *     authStrategy: federation.data,
  *   },
  * })
  * ```
