@@ -123,6 +123,20 @@ set of keyset grants.
 - Grants are per *(client, keyset)* pair. There is no wildcard and no
   transitive access.
 
+**The device client** is a special case worth knowing about: after
+`stash auth login`, the CLI generates a **device identity** (a device
+identifier and name, stored in the profile), provisions a client in ZeroKMS
+named after the device — bound to the workspace default keyset, at most one
+device client per device per workspace — and persists the resulting key to
+`~/.cipherstash/secretkey.json`. That key is a **standard client key**; only
+its encapsulation differs (a JSON profile file holding the client id and key
+material, rather than the hex `CS_CLIENT_KEY` form a deployed app uses). It
+is what makes local dev work with no environment variables: everything this
+skill says about clients — the default keyset, grants, revocation — applies
+to the device client like any other. The profile files are read only by the
+CLI and the auth strategies; agents never read them directly (see
+`stash-auth`).
+
 Manage all of this in the
 [dashboard](https://dashboard.cipherstash.com/workspaces/_/keysets) (the `_`
 resolves to your selected workspace). The underlying ZeroKMS API, for

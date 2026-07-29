@@ -50,8 +50,9 @@ service token:
 - **A CipherStash access key** (`CSAK…`) — machine identity, for
   services/CI.
 - **An OIDC JWT** from an identity provider configured for the workspace
-  (Clerk, Auth0, Okta, or CipherStash's own login) — end-user identity. CTS
-  verifies it against the provider's JWKS and checks workspace membership.
+  (Clerk, Supabase, Auth0, or Okta — or CipherStash's own login) — end-user
+  identity. CTS verifies it against the provider's JWKS and checks workspace
+  membership.
 
 The minted token carries: the subject (`CS|<user-id>` or `CS|CSAK<key-id>`),
 the workspace, scopes derived from the credential's role (member or admin —
@@ -112,6 +113,14 @@ IdP JWT, not a captured stale one. On the WASM/edge path,
 `createWithStore(workspaceCrn, getJwt, loadToken, saveToken)` persists the
 federated token (e.g. in an HTTP-only cookie) so it survives across
 requests.
+
+Federation only works if the JWT's **issuer is registered with the
+workspace**. Add your OIDC provider — Clerk, Supabase, Auth0, or Okta — in
+the [dashboard](https://dashboard.cipherstash.com) under the workspace's
+OIDC providers; the registered issuer URL must match the JWT's `iss` claim
+exactly. An unregistered issuer fails the exchange with `No OIDC provider
+found for issuer: …`. A workspace can register multiple OIDC providers,
+subject to billing conditions / plan level.
 
 ### The Result trap
 
