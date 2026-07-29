@@ -159,7 +159,17 @@ for (const target of TARGETS) {
     const shown = rel.startsWith('..') ? file : rel
     if (ALLOWLISTED_PATHS.has(rel)) continue
     if (/\.(test|spec)\.(ts|tsx|mts|cts)$/.test(file)) continue
-    const lines = readFileSync(file, 'utf8').split('\n')
+    let source
+    try {
+      source = readFileSync(file, 'utf8')
+    } catch (err) {
+      // A file can vanish after its directory was enumerated, just as a
+      // directory can vanish before the recursive readdir above. There is
+      // nothing left to lint; unexpected read failures must still surface.
+      if (err?.code === 'ENOENT') continue
+      throw err
+    }
+    const lines = source.split('\n')
     lines.forEach((line, idx) => {
       const matches = NPX_TOKEN.test(line)
       if (!matches) return

@@ -28,16 +28,60 @@ function run(target) {
   return runScript(SCRIPT, target)
 }
 
-function runWithReaddirError(code) {
+function runWithReaddirError(code, { afterParent = false } = {}) {
   const probe = resolve(
     fileURLToPath(import.meta.url),
     '../../walk-error-probe.mjs',
   )
   const dir = mkdtempSync(join(tmpdir(), 'lint-hardcoded-runners-walk-'))
+  const replacement = afterParent
+    ? `let readdirCalls = 0
+async function readdir() {
+  readdirCalls += 1
+  if (readdirCalls === 1) {
+    return [{ name: 'vanished', isDirectory: () => true }]
+  }
+  const err = new Error('readdir failed')
+  err.code = '${code}'
+  throw err
+}`
+    : `async function readdir() { const err = new Error('readdir failed'); err.code = '${code}'; throw err }`
   const src = readFileSync(SCRIPT, 'utf8').replace(
     "import { readdir } from 'node:fs/promises'",
-    `async function readdir() { const err = new Error('readdir failed'); err.code = '${code}'; throw err }`,
+    replacement,
   )
+  try {
+    writeFileSync(probe, src)
+    return runScript(probe, dir)
+  } finally {
+    rmSync(probe, { force: true })
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+function runWithReadFileError(code) {
+  const probe = resolve(
+    fileURLToPath(import.meta.url),
+    '../../read-error-probe.mjs',
+  )
+  const dir = mkdtempSync(join(tmpdir(), 'lint-hardcoded-runners-read-'))
+  const src = readFileSync(SCRIPT, 'utf8')
+    .replace(
+      "import { readFileSync, statSync } from 'node:fs'",
+      `import { readFileSync as realReadFileSync, statSync } from 'node:fs'
+function readFileSync(path, ...args) {
+  if (String(path).endsWith('vanished.ts')) {
+    const err = new Error('read failed')
+    err.code = '${code}'
+    throw err
+  }
+  return realReadFileSync(path, ...args)
+}`,
+    )
+    .replace(
+      "import { readdir } from 'node:fs/promises'",
+      "async function readdir() { return [{ name: 'vanished.ts', isDirectory: () => false }] }",
+    )
   try {
     writeFileSync(probe, src)
     return runScript(probe, dir)
@@ -72,14 +116,26 @@ describe('lint-no-hardcoded-runners', () => {
     expect(r.output).not.toMatch(/at ModuleJob/)
   })
 
-  it('skips a directory that vanished while being walked', () => {
-    const r = runWithReaddirError('ENOENT')
+  it('skips a directory that vanished after its parent was enumerated', () => {
+    const r = runWithReaddirError('ENOENT', { afterParent: true })
     expect(r.exitCode).toBe(0)
     expect(r.output).toContain('OK')
   })
 
   it('rethrows unexpected errors encountered while walking', () => {
     const r = runWithReaddirError('EACCES')
+    expect(r.exitCode).not.toBe(0)
+    expect(r.output).toContain('EACCES')
+  })
+
+  it('skips a file that vanished after its directory was enumerated', () => {
+    const r = runWithReadFileError('ENOENT')
+    expect(r.exitCode).toBe(0)
+    expect(r.output).toContain('OK')
+  })
+
+  it('rethrows unexpected errors reading an enumerated file', () => {
+    const r = runWithReadFileError('EACCES')
     expect(r.exitCode).not.toBe(0)
     expect(r.output).toContain('EACCES')
   })
