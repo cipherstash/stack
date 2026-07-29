@@ -1,5 +1,5 @@
 import { expect } from 'vitest'
-import { encryptedColumn, encryptedTable } from '@/schema'
+import { encryptedTable, types } from '@/eql/v3'
 
 // ============ Schema Fixtures ============
 
@@ -7,48 +7,48 @@ import { encryptedColumn, encryptedTable } from '@/schema'
  * Users table with multiple index types for testing
  */
 export const users = encryptedTable('users', {
-  email: encryptedColumn('email').equality(),
-  bio: encryptedColumn('bio').freeTextSearch(),
-  age: encryptedColumn('age').dataType('number').orderAndRange(),
+  email: types.TextEq('email'),
+  bio: types.TextSearch('bio'),
+  age: types.IntegerOrd('age'),
 })
 
 /**
  * Articles table with only freeTextSearch (for auto-inference test)
  */
 export const articles = encryptedTable('articles', {
-  content: encryptedColumn('content').freeTextSearch(),
+  content: types.TextSearch('content'),
 })
 
 /**
  * Products table with only orderAndRange (for auto-inference test)
  */
 export const products = encryptedTable('products', {
-  price: encryptedColumn('price').dataType('number').orderAndRange(),
+  price: types.IntegerOrd('price'),
 })
 
 /**
  * Metadata table with no indexes (for validation error test)
  */
 export const metadata = encryptedTable('metadata', {
-  raw: encryptedColumn('raw'),
+  raw: types.Text('raw'),
 })
 
 /**
  * Documents table with searchable JSON column (for STE Vec queries)
  */
 export const jsonbSchema = encryptedTable('documents', {
-  id: encryptedColumn('id'),
-  metadata: encryptedColumn('metadata').searchableJson(),
+  id: types.Text('id'),
+  metadata: types.Json('metadata'),
 })
 
 /**
  * Schema fixture with mixed column types including JSON.
  */
 export const mixedSchema = encryptedTable('records', {
-  id: encryptedColumn('id'),
-  email: encryptedColumn('email').equality(),
-  name: encryptedColumn('name').freeTextSearch(),
-  metadata: encryptedColumn('metadata').searchableJson(),
+  id: types.Text('id'),
+  email: types.TextEq('email'),
+  name: types.TextSearch('name'),
+  metadata: types.Json('metadata'),
 })
 
 // ============ Mock Factories ============

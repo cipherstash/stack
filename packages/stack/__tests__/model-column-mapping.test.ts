@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { resolveEncryptColumnMap } from '@/encryption/helpers/model-helpers'
 import { encryptedTable, types } from '@/eql/v3'
-import { encryptedColumn, encryptedTable as encryptedTableV2 } from '@/schema'
+import {
+  encryptedColumn,
+  encryptedTable as encryptedTableV2,
+} from '@/schema/internal'
 
 // `resolveEncryptColumnMap` is how the model path reconciles the two keyings a
 // table can use: models are matched by JS property name, but the FFI / encrypt

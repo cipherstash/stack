@@ -16,7 +16,10 @@
 import { describe, expect, it } from 'vitest'
 import { encryptedDynamoDB } from '@/dynamodb'
 import { encryptedTable as encryptedTableV3, types } from '@/eql/v3'
-import { encryptedColumn, encryptedTable as encryptedTableV2 } from '@/schema'
+import {
+  encryptedColumn,
+  encryptedTable as encryptedTableV2,
+} from '@/schema/internal'
 
 const usersV3 = encryptedTableV3('users_v3', {
   email: types.TextEq('email'),

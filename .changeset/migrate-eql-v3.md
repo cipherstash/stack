@@ -11,7 +11,7 @@ naming is a convention only, never enforced or relied upon — and follow the
 right lifecycle, no new flags:
 
 - **`encrypt backfill`** works on v3 columns unchanged (the engine was always
-  version-agnostic; pass an `EncryptionV3` client and real v3 envelopes land
+  version-agnostic; pass an `Encryption` client and real v3 envelopes land
   in the concrete `eql_v3_*` domain column — verified live against a real
   database, including the domain CHECK and a decrypt round-trip). The
   manifest records the detected version, the encrypted column's name, and the

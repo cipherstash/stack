@@ -1,6 +1,6 @@
 import { unwrapResult } from '@cipherstash/test-kit'
 import { beforeAll, describe, expect, it } from 'vitest'
-import type { EncryptionClientFor } from '@/encryption/v3'
+import type { EncryptionClient } from '@/encryption/v3'
 import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
 
@@ -19,7 +19,7 @@ const users = encryptedTable('schema_v3_client_users', {
 })
 
 describe('eql_v3 client integration', () => {
-  let protectClient: EncryptionClientFor<readonly [typeof users]>
+  let protectClient: EncryptionClient<readonly [typeof users]>
 
   beforeAll(async () => {
     protectClient = await Encryption({ schemas: [users] })

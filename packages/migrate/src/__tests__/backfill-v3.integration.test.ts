@@ -83,7 +83,7 @@ describe.skipIf(!runIntegration)('runBackfill with EQL v3 payloads', () => {
     await pool.end()
   })
 
-  /** v3 FLAT SCALAR marker — the shape `EncryptionV3` clients emit for
+  /** v3 FLAT SCALAR marker — the shape `Encryption` clients emit for
    * text/number columns: no `k` discriminator, top-level `c`. */
   const v3ScalarClient: EncryptionClientLike = {
     bulkEncryptModels(input) {

@@ -68,8 +68,8 @@ import {
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
-  type EncryptionClientFor,
-  EncryptionV3,
+  Encryption,
+  type EncryptionClient,
   encryptedTable,
 } from '@/encryption/v3'
 import type { AnyV3Table } from '@/eql/v3'
@@ -208,7 +208,7 @@ const comparePlaintext = (a: unknown, b: unknown): number => {
 
 type Row = { id: number }
 
-let client: EncryptionClientFor<readonly AnyV3Table[]>
+let client: EncryptionClient<readonly AnyV3Table[]>
 let idA: number
 let idB: number
 // Separate run id for the multi-row ordering rows. Kept DISTINCT from
@@ -232,7 +232,7 @@ const orderOperands: Record<string, unknown[]> = {}
 
 beforeAll(async () => {
   // EQL v3 is installed once per run by `global-setup.ts`.
-  client = await EncryptionV3({ schemas: [table] as never })
+  client = await Encryption({ schemas: [table] as never })
 
   const columnDefs = domains
     .map(([t]) => `"${slug(t)}" ${t} NOT NULL`)

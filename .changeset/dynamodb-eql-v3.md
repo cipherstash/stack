@@ -10,13 +10,9 @@ Pass a table built with `encryptedTable` + the `types.*` domains from
 `decryptModel`, or `bulkDecryptModels`. Build the typed client with
 `Encryption({ schemas: [table] })`.
 
-EQL v2 tables continue to be **readable** — `decryptModel` /
-`bulkDecryptModels` still accept one, so existing items stay accessible. Writing
-through a v2 table is a separate matter: `encryptModel` / `bulkEncryptModels`
-narrowed to EQL v3 tables in this same release, so a caller that still encrypts
-through a v2 table does need to change. The table decides which wire format is
-used, so a DynamoDB table populated under one version must keep being read with
-that version.
+Existing EQL v2 items continue to be **readable**: pass the corresponding EQL v3
+table plus `{ storedEqlVersion: 2 }` to `decryptModel` /
+`bulkDecryptModels`. Writes accept EQL v3 tables only.
 
 This fixes a latent bug that made v3 unusable: the write path detected an
 encrypted value by its `k: 'ct'` tag, but EQL v3 scalars carry no `k`
@@ -73,4 +69,5 @@ type, where a declared column `email` becomes `email__source` (plus
 `email`. `decryptModel` / `bulkDecryptModels` invert it via `DecryptedAttributes`.
 `AnyEncryptedTable`, `DynamoDBEncryptionClient` and `AuditConfig` are now
 exported from `@cipherstash/stack/dynamodb` so these signatures can be named.
-The EQL v2 **decrypt** overloads are unchanged; the v2 encrypt overloads are removed in this release.
+Legacy reads use the explicit storage-version option rather than an EQL v2 table
+overload; the v2 encrypt overloads are removed in this release.

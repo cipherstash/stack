@@ -41,8 +41,8 @@ packages/prisma-next/
 │   │   ├── query-term.ts                the query-term seam (mark / collect / route)
 │   │   ├── bulk-encrypt-v3.ts           bulkEncryptMiddlewareV3(sdk)
 │   │   ├── runtime-v3.ts                createCipherstashV3RuntimeDescriptor({ sdk })
-│   │   ├── derive-schemas-v3.ts         contract.json → EncryptedTable[] for EncryptionV3
-│   │   ├── sdk-adapter-v3.ts            EncryptionV3 client → CipherstashSdk adapter
+│   │   ├── derive-schemas-v3.ts         contract.json → EncryptedTable[] for Encryption
+│   │   ├── sdk-adapter-v3.ts            Encryption client → CipherstashSdk adapter
 │   │   ├── from-stack-v3-validate.ts    assertV3SchemasAgree (override-vs-contract check)
 │   │   └── barrel.ts                    user-facing envelope re-exports
 │   ├── stack/
@@ -283,7 +283,7 @@ params are invisible to the middleware.
 the one-call factory: it derives the v3 encryption schemas from the
 contract (`deriveStackSchemasV3` — one `public.eql_v3_*` domain per
 column, selected by `nativeType` via `V3_FACTORY_BY_NATIVE_TYPE`),
-constructs the `@cipherstash/stack` `EncryptionV3` client, adapts it to
+constructs the `@cipherstash/stack` `Encryption` client, adapts it to
 `CipherstashSdk` (`src/v3/sdk-adapter-v3.ts`), and returns ready-to-spread
 `extensions` / `middleware` for `postgres<Contract>({...})`. It rejects a
 contract carrying non-v3 cipherstash codec ids — the package is v3 only.
@@ -386,7 +386,7 @@ without an SDK round-trip.
 The interface declares three async methods (`decrypt`, `bulkEncrypt`,
 `bulkDecrypt`), each accepting an optional `AbortSignal`, with
 polymorphic (`unknown`) value types. It is deliberately smaller than the
-upstream `EncryptionV3` client, so real usage wraps that client behind a
+upstream `Encryption` client, so real usage wraps that client behind a
 thin adapter (`src/v3/sdk-adapter-v3.ts`) and the framework-side surface
 stays free of upstream-specific types.
 

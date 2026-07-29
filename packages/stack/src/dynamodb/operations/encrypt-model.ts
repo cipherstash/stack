@@ -4,7 +4,6 @@ import { logger } from '@/utils/logger'
 import {
   deepClone,
   handleError,
-  isV3Table,
   resolveEncryptResult,
   throwPreservingCode,
   toEncryptedDynamoItem,
@@ -66,11 +65,7 @@ export class EncryptModelOperation<
           this.table,
         )
 
-        return toEncryptedDynamoItem(
-          data,
-          encryptedAttrs,
-          isV3Table(this.table),
-        ) as T
+        return toEncryptedDynamoItem(data, encryptedAttrs) as T
       },
       (error) =>
         handleError(error, 'encryptModel', {

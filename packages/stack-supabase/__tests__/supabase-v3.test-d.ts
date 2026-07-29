@@ -3,10 +3,6 @@ import {
   type InferPlaintext,
   types,
 } from '@cipherstash/stack/eql/v3'
-import {
-  encryptedColumn,
-  encryptedTable as v2EncryptedTable,
-} from '@cipherstash/stack/schema'
 import { describe, expectTypeOf, it } from 'vitest'
 import {
   type EncryptedQueryBuilder,
@@ -276,9 +272,10 @@ describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
   })
 
   it('rejects a v2 table in schemas', async () => {
-    const v2Table = v2EncryptedTable('users', {
-      email: encryptedColumn('email').equality(),
-    })
+    const v2Table = {
+      tableName: 'users',
+      build: () => ({ tableName: 'users', columns: {} }),
+    }
     // The directive sits on the call, not the property: no overload accepts a
     // v2 table, so TypeScript reports the failure at the call expression.
     // @ts-expect-error — schemas only accepts v3 tables

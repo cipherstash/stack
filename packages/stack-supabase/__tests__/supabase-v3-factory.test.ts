@@ -1,8 +1,4 @@
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
-import {
-  encryptedColumn,
-  encryptedTable as v2EncryptedTable,
-} from '@cipherstash/stack/schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SupabaseClientLike } from '../src/index.js'
 import { encryptedSupabaseV3 } from '../src/index.js'
@@ -139,9 +135,11 @@ describe('encryptedSupabaseV3 factory', () => {
     // check and dies deeper in — previously at `verify.ts`, as
     // `builder.getEqlType is not a function`, which names an internal method
     // rather than the version mismatch.
-    const users = v2EncryptedTable('users', {
-      email: encryptedColumn('email').equality(),
-    })
+    const users = {
+      tableName: 'users',
+      columnBuilders: { email: { getName: () => 'email', build: () => ({}) } },
+      build: () => ({ tableName: 'users', columns: {} }),
+    }
 
     await expect(
       encryptedSupabaseV3(fakeClient, {
@@ -316,26 +314,23 @@ describe('encryptedSupabaseV3 factory', () => {
     })
   })
 
-  // `eqlVersion` is forced, not defaulted. Without the force a caller's
-  // `eqlVersion: 2` would now make `Encryption` throw at setup, against the
-  // all-v3 schema set introspection synthesizes.
-  it('forces eqlVersion 3 over a caller-supplied config, passing other keys through', async () => {
+  it('passes client configuration through without adding eqlVersion', async () => {
     await encryptedSupabaseV3(fakeClient, {
       databaseUrl: 'postgres://x',
-      config: { eqlVersion: 2, workspaceCrn: 'crn:test' } as never,
+      config: { workspaceCrn: 'crn:test' },
     })
 
     const arg = encryptionMock.mock.calls[0][0] as {
       config: Record<string, unknown>
     }
-    expect(arg.config.eqlVersion).toBe(3)
+    expect(arg.config).not.toHaveProperty('eqlVersion')
     expect(arg.config.workspaceCrn).toBe('crn:test')
   })
 
-  it('defaults config to { eqlVersion: 3 } when none is supplied', async () => {
+  it('leaves config undefined when none is supplied', async () => {
     await encryptedSupabaseV3(fakeClient, { databaseUrl: 'postgres://x' })
 
     const arg = encryptionMock.mock.calls[0][0] as { config: unknown }
-    expect(arg.config).toEqual({ eqlVersion: 3 })
+    expect(arg.config).toBeUndefined()
   })
 })

@@ -1,11 +1,11 @@
 import type { EncryptedValue } from '@/types'
-import { isV3Table } from './helpers'
 import { BulkDecryptModelsOperation } from './operations/bulk-decrypt-models'
 import { BulkEncryptModelsOperation } from './operations/bulk-encrypt-models'
 import { DecryptModelOperation } from './operations/decrypt-model'
 import { EncryptModelOperation } from './operations/encrypt-model'
 import type {
   AnyEncryptedTable,
+  DynamoDBReadOptions,
   EncryptedDynamoDBConfig,
   EncryptedDynamoDBInstance,
 } from './types'
@@ -20,7 +20,7 @@ import type {
  *
  * The client does not expose its EQL wire version directly (it is baked into the
  * FFI client at `newClient` time and neither the nominal `EncryptionClient` nor
- * the typed `EncryptionV3` wrapper re-surfaces it). The reliable, public signal
+ * the typed `Encryption` wrapper re-surfaces it). The reliable, public signal
  * both client shapes DO expose is `getEncryptConfig()`: a v3 table can only be
  * encrypted by a client that registered it, and a client built for v3 registers
  * it under its `tableName`. So the guard fires only when we can PROVE the table
@@ -39,30 +39,15 @@ import type {
 function assertClientTableVersionMatch(
   encryptionClient: EncryptedDynamoDBConfig['encryptionClient'],
   table: AnyEncryptedTable,
+  storedEqlVersion: 2 | 3 = 3,
 ): void {
-  // Only v3 tables carry the strict wire-format requirement this guards.
-  if (!isV3Table(table)) {
-    // The v2 read path calls `decryptModel(item)` with NO table on purpose —
-    // a v2 table means nothing to a v3 client's reconstructor map. That is
-    // fine for the native clients, which derive the table from the payloads,
-    // and impossible for the WASM client, whose decrypt requires the table and
-    // otherwise throws a TypeError about `tableName` from deep inside
-    // `requireTable`. Refuse the pairing here, where the message can name it
-    // (#772 review, finding 10).
-    //
-    // The message is deliberately operation-NEUTRAL. This guard runs on all
-    // four operations, so a plain-JS caller (the write overloads are
-    // `AnyV3Table`-only, so TypeScript never reaches this) hits it on encrypt
-    // too — where "would fail at the first read" names an operation that never
-    // ran. The pairing is wrong in both directions anyway: `Encryption()` on
-    // that entry rejects a v2 schema outright, so the client can never hold
-    // this table (#788 review).
+  if (storedEqlVersion === 2) {
     if (
       (encryptionClient as { requiresTableForDecrypt?: boolean })
         .requiresTableForDecrypt
     ) {
       throw new Error(
-        `encryptedDynamoDB: the @cipherstash/stack/wasm-inline client cannot be paired with the legacy EQL v2 table "${table.tableName}". That entry is EQL v3 only — Encryption() there rejects a v2 schema, and its model operations require a table it was initialized with — so both encrypt and decrypt would fail on this table. Use the default @cipherstash/stack entry for tables that still hold EQL v2 items, or migrate the table to an EQL v3 schema (types.* domains) and pass that.`,
+        'encryptedDynamoDB: the @cipherstash/stack/wasm-inline client cannot read DynamoDB attributes stored from EQL v2 because that entry requires registered table-aware decryption. Use the native @cipherstash/stack entry for legacy rows.',
       )
     }
     return
@@ -86,6 +71,16 @@ function assertClientTableVersionMatch(
   )
 }
 
+function resolveStoredEqlVersion(options: DynamoDBReadOptions): 2 | 3 {
+  const version = options.storedEqlVersion ?? 3
+  if (version !== 2 && version !== 3) {
+    throw new Error(
+      `encryptedDynamoDB: unsupported storedEqlVersion ${String(version)}; expected 2 or 3.`,
+    )
+  }
+  return version
+}
+
 /**
  * Create an encrypted DynamoDB helper bound to an `EncryptionClient`.
  *
@@ -93,11 +88,9 @@ function assertClientTableVersionMatch(
  * and `bulkDecryptModels` methods that transparently encrypt/decrypt DynamoDB
  * items according to the provided table schema.
  *
- * **Encrypt/write is EQL v3 only** — `encryptModel` / `bulkEncryptModels` accept
- * only EQL v3 tables (`types.*` domains). **Decrypt still reads existing EQL v2
- * items**: `decryptModel` / `bulkDecryptModels` continue to accept an EQL v2
- * table (`encryptedColumn`/`encryptedField`) so previously stored v2 data
- * remains readable. The table decides which wire format is reconstructed on read.
+ * Every operation uses an EQL v3 table. To read attributes stored as EQL v2,
+ * pass `{ storedEqlVersion: 2 }` to a decrypt method; the table still supplies
+ * current column identity and type reconstruction.
  *
  * Only equality is meaningful on DynamoDB: an `hm` term is stored alongside the
  * ciphertext as `<attr>__hmac` and can back a key condition. Ordering and
@@ -125,18 +118,13 @@ function assertClientTableVersionMatch(
  * const encrypted = await dynamo.encryptModel({ email: "a@b.com" }, users)
  * ```
  *
- * @example EQL v2 (reading existing deployments — decrypt only)
+ * @example EQL v2 storage (reading existing deployments)
  * ```typescript
  * import { Encryption } from "@cipherstash/stack"
  * import { encryptedDynamoDB } from "@cipherstash/stack/dynamodb"
- * import { encryptedTable, encryptedColumn } from "@cipherstash/stack/schema"
- *
- * const users = encryptedTable("users", {
- *   email: encryptedColumn("email").equality(),
+ * const decrypted = await dynamo.decryptModel(storedItem, users, {
+ *   storedEqlVersion: 2,
  * })
- *
- * const client = await Encryption({ schemas: [users] })
- * const dynamo = encryptedDynamoDB({ encryptionClient: client })
  * ```
  */
 export function encryptedDynamoDB(
@@ -185,20 +173,31 @@ export function encryptedDynamoDB(
   const decryptModel = <T extends Record<string, unknown>>(
     item: Record<string, EncryptedValue | unknown>,
     table: AnyEncryptedTable,
+    readOptions: DynamoDBReadOptions = {},
   ) => {
-    assertClientTableVersionMatch(encryptionClient, table)
-    return new DecryptModelOperation<T>(encryptionClient, item, table, options)
+    const storedEqlVersion = resolveStoredEqlVersion(readOptions)
+    assertClientTableVersionMatch(encryptionClient, table, storedEqlVersion)
+    return new DecryptModelOperation<T>(
+      encryptionClient,
+      item,
+      table,
+      readOptions,
+      options,
+    )
   }
 
   const bulkDecryptModels = <T extends Record<string, unknown>>(
     items: Record<string, EncryptedValue | unknown>[],
     table: AnyEncryptedTable,
+    readOptions: DynamoDBReadOptions = {},
   ) => {
-    assertClientTableVersionMatch(encryptionClient, table)
+    const storedEqlVersion = resolveStoredEqlVersion(readOptions)
+    assertClientTableVersionMatch(encryptionClient, table, storedEqlVersion)
     return new BulkDecryptModelsOperation<T>(
       encryptionClient,
       items,
       table,
+      readOptions,
       options,
     )
   }
@@ -220,6 +219,7 @@ export type {
   AnyEncryptedTable,
   DecryptedAttributes,
   DynamoDBEncryptionClient,
+  DynamoDBReadOptions,
   EncryptedAttributes,
   EncryptedDynamoDBConfig,
   EncryptedDynamoDBError,

@@ -2,10 +2,11 @@
 "@cipherstash/stack": minor
 ---
 
-Add a strongly-typed EQL v3 client surface on a new `@cipherstash/stack/v3`
-subpath (`EncryptionV3`, `typedClient`, `TypedEncryptionClient`). It re-exports
-the v3 `types` namespace and table API (from `@cipherstash/stack/eql/v3`), so a
-single import provides everything needed to author and use a v3 schema.
+Add a strongly typed EQL v3 client surface on `@cipherstash/stack/v3`.
+`Encryption` returns the generic `EncryptionClient<S>` type and the subpath
+re-exports the v3 `types` namespace and table API (from
+`@cipherstash/stack/eql/v3`), so one import provides everything needed to author
+and use a v3 schema.
 
 Every method derives its types from the concrete `table` / `column` builder
 arguments:
@@ -24,6 +25,6 @@ Because the typed methods bind to the concrete branded v3 classes, a hand-rolled
 structural table/column is rejected — closing the soundness gap where a non-branded
 table could be encrypted at runtime while typed as plaintext.
 
-Runtime behaviour is unchanged: the encrypt/query paths return the same operations
-as the base client; only the model-decrypt paths add a per-column `Date`
-reconstruction step. The v2 client surface (`Encryption`) is untouched.
+The model-decrypt paths add per-column `Date` reconstruction. New clients author
+EQL v3 only; native decrypt operations remain compatible with stored EQL v2
+payloads.

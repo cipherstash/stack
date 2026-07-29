@@ -3,17 +3,11 @@
 '@cipherstash/stack': patch
 ---
 
-De-suffix the v3 client name in generated code and shipped guidance.
+Use the consolidated v3 client name in generated code and shipped guidance.
 
-`stash init` scaffolded `import { EncryptionV3 } from '@cipherstash/stack/v3'`
-into the client file it writes. `EncryptionV3` is a deprecated alias of
-`Encryption`, so new projects were started on the deprecated name. The
-scaffold now emits `Encryption`.
-
-`@cipherstash/stack/v3` now re-exports `Encryption` alongside the deprecated
-`EncryptionV3` alias, so a v3 schema and its client come from one import
-specifier — the deprecation notice already documented this import, but it did
-not resolve.
+`stash init` now scaffolds `Encryption` from `@cipherstash/stack/v3`, so a v3
+schema and its client come from one import specifier. The former suffixed client
+alias has been removed from the public API.
 
 Corrects the bundled agent skills and package docs, which described
 `encryptedSupabase` as the legacy EQL v2 wrapper. It is the EQL v3 factory;

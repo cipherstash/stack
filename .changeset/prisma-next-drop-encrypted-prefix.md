@@ -11,16 +11,16 @@ the `cipherstash.` namespace already disambiguates. So
 `cipherstash.EncryptedBoolean()` → `cipherstash.Boolean()`, etc.
 
 The v3 one-call setup function is renamed `cipherstashFromStackV3` →
-`cipherstashFromStack` (v3 is the default), and the existing v2 setup function
-becomes `cipherstashFromStackV2`.
+`cipherstashFromStack`, the package's sole setup path.
 
 The camelCase TS-authoring factory exports move in lockstep:
 `encryptedTextSearch` → `textSearch`, `encryptedDoubleOrd` → `doubleOrd`, etc.
 (a property test enforces the PSL and TS names agree modulo first-letter case).
 
 Unchanged: the runtime value envelopes (`EncryptedString`, `EncryptedNumber`,
-`EncryptedBoolean`, …), the `cipherstash.*V2` legacy column constructors, the
-generated `contract.json` / codec ids, and the `eql*` query operators.
+`EncryptedBoolean`, …), the generated `contract.json` / codec ids, and the
+`eql*` query operators. The legacy v2 constructors are removed elsewhere in
+this release.
 
 The `stash-prisma-next` skill is updated to the new names (skills ship in the
 `stash` tarball).

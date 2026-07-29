@@ -19,9 +19,8 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AnyV3Table } from '@/eql/v3'
+import { type AnyV3Table, encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
-import { encryptedColumn, encryptedTable } from '@/schema'
 
 vi.mock('@cipherstash/protect-ffi', () => ({
   newClient: vi.fn(async () => ({ __mock: 'client' })),
@@ -69,9 +68,7 @@ describe('empty schema sets are refused at runtime', () => {
     ).rejects.toThrow(EMPTY_SCHEMAS)
   })
 
-  // The v2 builders reach the same guard — it predates the v3 typed client and
-  // is not part of the overload machinery.
-  it('rejects an empty v2 schema set', async () => {
+  it('rejects an empty concretely typed schema set', async () => {
     const v2: Array<ReturnType<typeof encryptedTable>> = []
 
     await expect(Encryption({ schemas: v2 })).rejects.toThrow(EMPTY_SCHEMAS)
@@ -90,8 +87,8 @@ describe('empty schema sets are refused at runtime', () => {
     const shared: AnyV3Table[] = []
     shared.push(
       encryptedTable('users', {
-        email: encryptedColumn('email'),
-      }) as unknown as AnyV3Table,
+        email: types.Text('email'),
+      }),
     )
 
     await expect(Encryption({ schemas: shared })).resolves.toBeDefined()

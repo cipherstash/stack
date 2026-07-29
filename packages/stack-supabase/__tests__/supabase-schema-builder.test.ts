@@ -1,8 +1,4 @@
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
-import {
-  encryptedColumn,
-  encryptedTable as v2EncryptedTable,
-} from '@cipherstash/stack/schema'
 import { describe, expect, it } from 'vitest'
 import { ColumnMap } from '../src/column-map'
 import type { IntrospectionResult } from '../src/introspect'
@@ -314,9 +310,11 @@ describe('ColumnMap recognises v3 columns structurally, not by class identity', 
     //
     // The column-level probe above cannot catch this: it runs later, and by
     // then the constructor has already crashed.
-    const v2Table = v2EncryptedTable('users', {
-      email: encryptedColumn('email').equality(),
-    })
+    const v2Table = {
+      tableName: 'users',
+      columnBuilders: { email: { getName: () => 'email', build: () => ({}) } },
+      build: () => ({ tableName: 'users', columns: {} }),
+    }
 
     expect(() => new ColumnMap('users', v2Table as never, null)).toThrow(
       /\[supabase v3\]: table "users" is an EQL v2 table/,

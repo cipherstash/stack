@@ -7,12 +7,10 @@
 have been removed, narrowing encrypt to `AnyV3Table`. The narrowing is
 type-level — treat the type as the contract, not a runtime guard.
 
-**Decrypt still reads existing v2 items.** `decryptModel` / `bulkDecryptModels`
-continue to accept an EQL v2 table (`encryptedColumn` / `encryptedField` from
-`@cipherstash/stack/schema`), so previously stored v2 DynamoDB items remain
-readable — the adapter keeps its v2 envelope reconstruction. Only the v2 write
-surface is gone.
+**Decrypt still reads existing v2 items.** Pass the corresponding EQL v3 table
+and `{ storedEqlVersion: 2 }` to `decryptModel` / `bulkDecryptModels`; the adapter
+uses that explicit storage-version hint for legacy envelope reconstruction.
 
 Migrate v2 write call sites to an EQL v3 table (`encryptedTable` + `types.*` from
-`@cipherstash/stack/eql/v3`). To keep reading old data, pass the v2 table to the
-decrypt methods.
+`@cipherstash/stack/eql/v3`) and reuse that table for reads, adding the explicit
+legacy-read option only while reading stored v2 data.

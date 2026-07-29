@@ -47,9 +47,9 @@ import { type ComparisonOp, type EqualityOp, v3Dialect } from './sql-dialect.js'
  * The client capability this factory consumes: `encryptQuery`, in both its
  * single (`value, opts`) and batch (`terms[]`) forms. Declared structurally —
  * with maximally-permissive operands — so it is satisfied by the nominal
- * `EncryptionClient`, by the `TypedEncryptionClient` that `EncryptionV3` returns
+ * `EncryptionClient`, by the `EncryptionClient` that `Encryption` returns
  * (whatever its schema tuple), AND by a hand-rolled test double, none needing a
- * cast. Typing the parameter to the nominal `TypedEncryptionClient<S>` would
+ * cast. Typing the parameter to the nominal `EncryptionClient<S>` would
  * reject a client built for a narrower schema tuple (it accepts fewer tables than
  * `readonly AnyV3Table[]`); the structural surface sidesteps that variance.
  *
@@ -182,14 +182,14 @@ type ChainableOperation<T> = {
  * (e.g. ordering a non-`ore` column).
  *
  * @param client - anything that can `encryptQuery` — the nominal
- *   `EncryptionClient` or the `TypedEncryptionClient` from `EncryptionV3` (no
+ *   `EncryptionClient` or the `EncryptionClient` from `Encryption` (no
  *   cast needed).
  * @param defaults - lock context / audit applied to every operand encryption
  *   unless a per-call override is supplied.
  *
  * @example
  * ```typescript
- * const ops = createEncryptionOperators(await EncryptionV3({ schemas: [users] }))
+ * const ops = createEncryptionOperators(await Encryption({ schemas: [users] }))
  * await db.select().from(users).where(await ops.eq(users.email, 'a@b.com'))
  * ```
  */

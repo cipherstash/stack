@@ -9,8 +9,8 @@ The Drizzle init flow pinned `--eql-version 2`, because `stash eql install
 v2-only. That made `stash init --drizzle` the single flow that provisioned a v2
 database — a bare `stash eql install`, and init for every other integration,
 already defaulted to v3. It also contradicted the `stash-drizzle` skill init
-copies into the same project, which documents the v3 `@cipherstash/stack-drizzle/v3`
-surface (`types.*` domains, `EncryptionV3`) and would have the user's agent
+copies into the same project, which documents the v3 `@cipherstash/stack-drizzle`
+surface (`types.*` domains, `Encryption`) and would have the user's agent
 author v3 code against a v2 database.
 
 Init's Drizzle flow now routes through `stash eql migration --drizzle`, so it

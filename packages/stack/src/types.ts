@@ -8,6 +8,7 @@ import type {
   newClient,
   QueryOpName,
 } from '@cipherstash/protect-ffi'
+import type { AnyV3Table } from '@/eql/v3'
 import type {
   ColumnSchema,
   EncryptedColumn,
@@ -16,7 +17,7 @@ import type {
   // Imported type-only for the TSDoc {@link} references in the comments below.
   encryptedColumn,
   encryptedField,
-} from '@/schema'
+} from '@/schema/internal'
 
 /**
  * A pluggable authentication strategy for ZeroKMS requests. Any object
@@ -169,57 +170,7 @@ export type ClientConfig = {
    * but it will be removed in a future release. Set `authStrategy` instead.
    */
   strategy?: AuthStrategy
-
-  /**
-   * @deprecated The client authors EQL v3 — an all-v3 schema set forces `3`
-   * automatically and yields the typed client. This field remains only to read
-   * or write legacy EQL v2 during migration (e.g. `eqlVersion: 2` with a v2
-   * schema set), and will be removed once the v2 adapters are gone. New code
-   * should not set it.
-   *
-   * The EQL wire version the client emits — one FFI client always emits
-   * exactly one wire format.
-   *
-   * - `2` (the protect-ffi default): payloads target the
-   *   `eql_v2_encrypted` column type.
-   * - `3`: payloads target the per-capability `eql_v3` domains
-   *   (`eql_v3.text_eq`, `eql_v3.integer_ord_ore`, `eql_v3.json`, …),
-   *   derived from each column's `cast_as` and indexes.
-   *
-   * When omitted, {@link Encryption} auto-detects from the schema set:
-   * EQL v3 tables (from `@cipherstash/stack/v3`, marked by
-   * `buildColumnKeyMap()`) select `3`; v2 tables leave the FFI default
-   * (`2`) untouched. Mixing v2 and v3 tables in one client is an error —
-   * split them across two clients instead.
-   *
-   * `decrypt` accepts BOTH formats regardless of this setting, so v2 and
-   * v3 data can coexist during a migration.
-   *
-   * Under `3`, `encryptQuery` returns EQL v3 query operands (protect-ffi
-   * 0.29+): term-only scalar operands for the `eql_v3.query_<name>` twins,
-   * the `eql_v3.query_json` containment needle, and bare selector-hash
-   * strings for JSON path queries.
-   */
-  eqlVersion?: 2 | 3
 }
-
-/**
- * {@link ClientConfig} for a client that authors EQL v3 — the same options
- * minus the legacy `eqlVersion: 2` escape hatch.
- *
- * `Encryption` accepts this (not the full `ClientConfig`) alongside an all-v3
- * schema set. Forcing v2 wire over v3 schemas THROWS at setup — v2 payloads
- * cannot satisfy an `eql_v3_*` domain — so admitting `2` there typed the call
- * as `TypedEncryptionClient` for a call that returns no client at all.
- * Adapters that are v3-only (`@cipherstash/prisma-next`,
- * `@cipherstash/stack-drizzle`) should take this type for their pass-through
- * config for the same reason.
- */
-export type V3ClientConfig = Omit<ClientConfig, 'eqlVersion'> & {
-  eqlVersion?: 3
-}
-
-type AtLeastOneCsTable<T> = [T, ...T[]]
 
 /** Structural contract for a column builder the client can consume for STORAGE
  *  (`encrypt`). Satisfied by v2 `EncryptedColumn` / `EncryptedField` AND v3
@@ -283,8 +234,10 @@ export function hasBuildColumnKeyMap<T extends object>(
   )
 }
 
-export type EncryptionClientConfig = {
-  schemas: AtLeastOneCsTable<BuildableTable>
+export type EncryptionClientConfig<
+  S extends readonly AnyV3Table[] = readonly AnyV3Table[],
+> = {
+  schemas: S['length'] extends 0 ? never : S
   config?: ClientConfig
 }
 

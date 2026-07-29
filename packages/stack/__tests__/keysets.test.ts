@@ -1,11 +1,11 @@
 import 'dotenv/config'
 import { ensureKeyset } from '@cipherstash/protect-ffi'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
-import { encryptedColumn, encryptedTable } from '@/schema'
 
 const users = encryptedTable('users', {
-  email: encryptedColumn('email'),
+  email: types.Text('email'),
 })
 
 let testKeysetId: string

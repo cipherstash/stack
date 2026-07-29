@@ -2,19 +2,13 @@ import { type Result, withResult } from '@byteslice/result'
 import { newClient } from '@cipherstash/protect-ffi'
 import { validate as uuidValidate } from 'uuid'
 import type { AnyV3Table } from '@/eql/v3'
+import { buildEncryptConfig } from '@/eql/v3'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 // `LockContext` is imported type-only so the TSDoc {@link} references in the
 // comments below resolve; it is erased at compile time.
 import type { LockContext } from '@/identity'
-import {
-  buildEncryptConfig,
-  type EncryptConfig,
-  encryptConfigSchema,
-  // Imported type-only for the TSDoc {@link} references in the comments below.
-  type encryptedColumn,
-  type encryptedField,
-  type encryptedTable,
-} from '@/schema'
+import type { EncryptConfig } from '@/schema'
+import { encryptConfigSchema } from '@/schema'
 import type {
   AuthStrategy,
   BuildableTable,
@@ -24,16 +18,21 @@ import type {
   ClientConfig,
   Encrypted,
   EncryptedFromBuildableTable,
-  EncryptionClientConfig,
   EncryptOptions,
   EncryptQueryOptions,
   KeysetIdentifier,
   Plaintext,
   ScalarQueryTerm,
-  V3ClientConfig,
 } from '@/types'
 import { hasBuildColumnKeyMap } from '@/types'
 import { logger } from '@/utils/logger'
+// `createEncryptionClient` wraps the internal FFI client with the public schema-derived API.
+// This is a deliberate circular import with `./v3` (which imports `Encryption`
+// from here): both `Encryption` and `createEncryptionClient` are hoisted `function`
+// declarations, and the only module-eval cross-reference — `Encryption =
+// Encryption` in `./v3` — reads the hoisted `Encryption`, so neither binding is
+// observed uninitialised regardless of which module evaluates first.
+import { createEncryptionClient, type EncryptionClient } from './client-v3'
 import { toFfiKeysetIdentifier } from './helpers'
 import { isScalarQueryTermArray } from './helpers/type-guards'
 import { BatchEncryptQueryOperation } from './operations/batch-encrypt-query'
@@ -46,15 +45,10 @@ import { DecryptModelOperation } from './operations/decrypt-model'
 import { EncryptOperation } from './operations/encrypt'
 import { EncryptModelOperation } from './operations/encrypt-model'
 import { EncryptQueryOperation } from './operations/encrypt-query'
-// `typedClient` wraps the nominal client into the strongly-typed EQL v3 client.
-// This is a deliberate circular import with `./v3` (which imports `Encryption`
-// from here): both `Encryption` and `typedClient` are hoisted `function`
-// declarations, and the only module-eval cross-reference — `EncryptionV3 =
-// Encryption` in `./v3` — reads the hoisted `Encryption`, so neither binding is
-// observed uninitialised regardless of which module evaluates first.
-import { type TypedEncryptionClient, typedClient } from './v3'
 
-// Re-export the operation classes returned by EncryptionClient methods so they
+export type { EncryptionClient } from './client-v3'
+
+// Re-export the operation classes returned by NativeEncryptionClient methods so they
 // are part of the public API and appear in the generated reference, allowing
 // TSDoc {@link} references and method return types to resolve to real pages.
 export {
@@ -71,105 +65,39 @@ export {
 }
 
 export const noClientError = () =>
-  new Error(
-    'The Encryption client has not been initialized. Please call init() before using the client.',
-  )
+  new Error('The Encryption client has not been initialized.')
 
-/**
- * Resolve the EQL wire version for a client from its schema set.
- *
- * One FFI client emits exactly one wire format, so the whole schema set must
- * agree. EQL v3 tables (from `@cipherstash/stack/v3`) are detected by their
- * `buildColumnKeyMap()` marker — v2 tables don't have one:
- *
- * - every schema is v3 → `3`;
- * - no schema is v3 → `undefined`, leaving scalar-only schemas on the FFI's v2
- *   default;
- * - a mix of the two → throws: the v2 tables target `eql_v2_encrypted`
- *   columns and the v3 tables target `eql_v3` domains, so no single wire
- *   format serves both. Split them across two clients.
- *
- * An explicit `config.eqlVersion` bypasses DETECTION, not validation: mixed
- * schemas and legacy v2 SteVec schemas still throw, and so does an explicit `2`
- * over an all-v3 set. What survives is `2` over a v2 schema set — minting v2
- * wire during a migration.
- *
- * @internal exported for unit-test coverage of the detection matrix.
- */
-export function resolveEqlVersion(
-  schemas: readonly BuildableTable[],
-  explicit?: 2 | 3,
-): 2 | 3 | undefined {
-  const v3Count = schemas.filter(hasBuildColumnKeyMap).length
-
-  if (v3Count > 0 && v3Count < schemas.length) {
-    throw new Error(
-      '[encryption]: cannot mix EQL v2 and EQL v3 tables in one client — one client emits exactly one wire format. Create separate clients for the v2 and v3 schemas.',
-    )
+/** Reject legacy or structurally invalid schemas at the runtime boundary. */
+function assertV3Schemas(schemas: readonly AnyV3Table[]): void {
+  for (const table of schemas) {
+    if (!hasBuildColumnKeyMap(table)) {
+      const name =
+        typeof (table as { tableName?: unknown }).tableName === 'string'
+          ? ` "${(table as { tableName: string }).tableName}"`
+          : ''
+      throw new Error(
+        `[encryption]: schema${name} is not an EQL v3 table. Author schemas with \`encryptedTable\` and \`types.*\` from \`@cipherstash/stack/v3\`.`,
+      )
+    }
   }
-
-  // cipherstash-client 0.42 removed the EQL v2 SteVec selector envelope.
-  // protect-ffi 0.30 therefore cannot emit v2 searchable-JSON values at all;
-  // allowing this legacy schema through would either fail opaquely in the FFI
-  // or emit v3 data for an eql_v2 column. Fail at setup with a migration steer.
-  if (
-    v3Count === 0 &&
-    schemas.some((schema) =>
-      Object.values(schema.build().columns).some(
-        (column) => column.indexes?.ste_vec !== undefined,
-      ),
-    )
-  ) {
-    throw new Error(
-      '[encryption]: searchableJson() on the legacy EQL v2 schema is not supported by protect-ffi 0.30. Migrate the column to the EQL v3 types.Json() domain.',
-    )
-  }
-
-  // An explicit 2 over a set that is ENTIRELY v3 is a contradiction, and a
-  // silent one: the FFI client emits `eql_v2_encrypted` payloads for columns
-  // whose Postgres domain is `eql_v3_*`, so the write either trips the domain
-  // CHECK or lands v2 wire wherever the check is looser.
-  //
-  // `EncryptionV3` used to prevent this by forcing `eqlVersion: 3` over
-  // whatever the caller passed — its comment said so explicitly. It is now a
-  // bare alias of `Encryption`, so a caller upgrading from
-  // `EncryptionV3({ schemas: [v3Table], config: { eqlVersion: 2 } })` — which
-  // was silently corrected and worked — now gets a v2-wire client with no
-  // diagnostic at any layer (#772 review, finding 8).
-  //
-  // The escape hatch itself stays: an explicit 2 over a V2 schema set is how
-  // `integration/shared/v2-decrypt-compat.integration.test.ts` mints the
-  // fixtures that prove v2 payloads still decrypt. That is the only shape that
-  // uses it — nothing mints v2 wire from a v3 table.
-  if (explicit === 2 && schemas.length > 0 && v3Count === schemas.length) {
-    throw new Error(
-      "[encryption]: cannot emit EQL v2 wire for a schema set that is entirely EQL v3 — the payloads would not match the columns' eql_v3_* domains. Drop `config.eqlVersion` to emit v3, or build the client from the EQL v2 schema you actually want to write.",
-    )
-  }
-
-  if (explicit !== undefined) {
-    return explicit
-  }
-
-  return v3Count === 0 ? undefined : 3
 }
 
-/** The EncryptionClient is the main entry point for interacting with the CipherStash Encryption library.
+/** The NativeEncryptionClient is the main entry point for interacting with the CipherStash Encryption library.
  * It provides methods for encrypting and decrypting individual values, as well as models (objects) and bulk operations.
  *
  * The client must be initialized using the {@link Encryption} function before it can be used.
  */
-export class EncryptionClient {
+class NativeEncryptionClient {
   private client: Client
   private encryptConfig: EncryptConfig | undefined
 
   /**
-   * Initializes the EncryptionClient with the provided configuration.
+   * Initializes the NativeEncryptionClient with the provided configuration.
    * @internal
    * @param config - The configuration object for initializing the client.
-   * @returns A promise that resolves to a {@link Result} containing the initialized EncryptionClient or an {@link EncryptionError}.
+   * @returns A promise that resolves to a {@link Result} containing the initialized NativeEncryptionClient or an {@link EncryptionError}.
    **/
-  async init(config: {
+  async initialize(config: {
     encryptConfig: EncryptConfig
     workspaceCrn?: string
     accessKey?: string
@@ -177,8 +105,7 @@ export class EncryptionClient {
     clientKey?: string
     keyset?: KeysetIdentifier
     authStrategy?: AuthStrategy
-    eqlVersion?: 2 | 3
-  }): Promise<Result<EncryptionClient, EncryptionError>> {
+  }): Promise<Result<NativeEncryptionClient, EncryptionError>> {
     return await withResult(
       async () => {
         const validated: EncryptConfig = encryptConfigSchema.parse(
@@ -199,10 +126,9 @@ export class EncryptionClient {
         // from the credentials in clientOpts (the clientKey is still used
         // for encryption). Passing `strategy: undefined` is equivalent to
         // omitting it, so the default credentials path is unaffected.
-        // `eqlVersion` selects the wire format `encrypt`/`encryptQuery`
-        // emit (protect-ffi 0.27+); `eqlVersion: undefined` is likewise
-        // equivalent to omitting it, leaving the FFI's v2 default — and
-        // its byte-identical v2 output — untouched.
+        // Public Stack authoring is EQL v3-only. Pin the FFI explicitly rather
+        // than relying on its default so dependency upgrades cannot change the
+        // emitted wire generation.
         this.client = await newClient({
           encryptConfig: validated,
           clientOpts: {
@@ -213,7 +139,7 @@ export class EncryptionClient {
             keyset: toFfiKeysetIdentifier(config.keyset),
           },
           strategy: config.authStrategy,
-          eqlVersion: config.eqlVersion,
+          eqlVersion: 3,
         })
 
         this.encryptConfig = validated
@@ -751,9 +677,9 @@ export function __resetStrategyDeprecationWarningForTests(): void {
  * columns to use:
  *
  * ```typescript
- * import { Encryption, encryptedTable, encryptedColumn } from "@cipherstash/stack"
+ * import { Encryption, encryptedTable, types } from "@cipherstash/stack/v3"
  *
- * const users = encryptedTable("users", { email: encryptedColumn("email") })
+ * const users = encryptedTable("users", { email: types.TextEq("email") })
  * const client = await Encryption({ schemas: [users] })
  * const result = await client.encrypt("alice@example.com", { column: users.email, table: users })
  * ```
@@ -875,8 +801,7 @@ export function __resetStrategyDeprecationWarningForTests(): void {
  * @param config - Initialization options. Must include `schemas`; optionally include `config` for
  *   credentials and authentication. Logging is configured via the `STASH_STACK_LOG` environment
  *   variable (`debug | info | error`, default: `error`).
- * @returns A Promise that resolves to an initialized {@link EncryptionClient} ready for
- *   {@link EncryptionClient.encrypt}, {@link EncryptionClient.decrypt}, and related operations.
+ * @returns A Promise that resolves to an initialized {@link EncryptionClient}.
  *
  * @throws Throws if `schemas` is empty, or if a keyset `id` is supplied but is not a valid UUID.
  *   Also throws if the client fails to initialize (e.g. invalid credentials or config).
@@ -898,8 +823,8 @@ type NonEmptyV3<S extends readonly AnyV3Table[]> = S['length'] extends 0
   : S
 
 // Overload 1 — v3-typed: an array literal of concrete EQL v3 tables (from
-// `@cipherstash/stack/v3`) yields the strongly-typed {@link TypedEncryptionClient},
-// the collapse of the former `EncryptionV3`. The wire format is forced to v3.
+// `@cipherstash/stack/v3`) yields the strongly-typed {@link NativeEncryptionClient},
+// the collapse of the former `Encryption`. The wire format is forced to v3.
 //
 // `S` is the ARRAY, not a non-empty tuple. Constraining the type parameter to
 // `readonly [AnyV3Table, ...AnyV3Table[]]` — which is how the `[]` case was
@@ -922,32 +847,22 @@ type NonEmptyV3<S extends readonly AnyV3Table[]> = S['length'] extends 0
 //     return await Encryption({ schemas })   // TS2769 against `NonEmptyV3<S>`
 //   }
 //
-// That shape compiled before A-4 and is the one the `EncryptionClientFor` docs
+// That shape compiled before A-4 and is the one the `EncryptionClient` docs
 // point generic code at, so it must keep compiling. The overload below carries
 // the non-emptiness in its CONSTRAINT instead of a conditional, which a generic
 // `S` can satisfy; the widened one after it then only has to serve arrays that
 // are concrete at the call site, where the conditional resolves eagerly.
 export function Encryption<
   const S extends readonly [AnyV3Table, ...AnyV3Table[]],
->(config: {
-  schemas: S
-  config?: V3ClientConfig
-}): Promise<TypedEncryptionClient<S>>
+>(config: { schemas: S; config?: ClientConfig }): Promise<EncryptionClient<S>>
 export function Encryption<const S extends readonly AnyV3Table[]>(config: {
   schemas: NonEmptyV3<S>
-  config?: V3ClientConfig
-}): Promise<TypedEncryptionClient<S>>
-// Overload 2 — nominal: loose/dynamic schemas (introspection-derived, e.g.
-// stack-supabase) or EQL v2 tables yield the generation-neutral
-// {@link EncryptionClient}, which auto-detects its wire version. Declared LAST
-// so `Parameters<typeof Encryption>` / `ReturnType<typeof Encryption>` resolve
-// to this signature (stack-supabase casts its schemas against it).
-export function Encryption(
-  config: EncryptionClientConfig,
-): Promise<EncryptionClient>
-export async function Encryption(
-  config: EncryptionClientConfig,
-): Promise<unknown> {
+  config?: ClientConfig
+}): Promise<EncryptionClient<S>>
+export async function Encryption(config: {
+  schemas: readonly AnyV3Table[]
+  config?: ClientConfig
+}): Promise<EncryptionClient<readonly AnyV3Table[]>> {
   const { schemas, config: clientConfig } = config
 
   if (!schemas.length) {
@@ -955,6 +870,14 @@ export async function Encryption(
       '[encryption]: At least one encryptedTable must be provided to initialize the encryption client',
     )
   }
+
+  if (clientConfig && Object.hasOwn(clientConfig, 'eqlVersion')) {
+    throw new Error(
+      '[encryption]: `config.eqlVersion` has been removed — @cipherstash/stack always authors EQL v3. Remove the field.',
+    )
+  }
+
+  assertV3Schemas(schemas)
 
   if (
     clientConfig?.keyset &&
@@ -975,42 +898,18 @@ export async function Encryption(
   }
   const authStrategy = clientConfig?.authStrategy ?? clientConfig?.strategy
 
-  const client = new EncryptionClient()
+  const client = new NativeEncryptionClient()
   const encryptConfig = buildEncryptConfig(...schemas)
 
-  // A schema set of exclusively concrete EQL v3 tables is the typed-client path
-  // (the collapse of the former `EncryptionV3`). Every other set — EQL v2 tables,
-  // or the introspection-derived loose tables stack-supabase passes — stays
-  // nominal.
-  const isV3Only = schemas.every(hasBuildColumnKeyMap)
-
-  // Resolve the wire format: an explicit `config.eqlVersion` wins (the retained
-  // migration escape hatch — `2` over a v2 schema set), otherwise it is
-  // auto-detected (v3 tables → 3, v2 tables → the FFI's v2 default). A mixed
-  // v2 + v3 set, and an explicit `2` over an all-v3 set, throw inside
-  // `resolveEqlVersion`.
-  const eqlVersion = resolveEqlVersion(schemas, clientConfig?.eqlVersion)
-
-  const result = await client.init({
+  const result = await client.initialize({
     encryptConfig,
     ...clientConfig,
     authStrategy,
-    eqlVersion,
   })
 
   if (result.failure) {
     throw new Error(`[encryption]: ${result.failure.message}`)
   }
 
-  // Return the typed client only when the client is genuinely in EQL v3 mode: an
-  // all-v3 schema set that resolved to the v3 wire format. The `eqlVersion === 3`
-  // conjunct is now belt-and-braces: `resolveEqlVersion` refuses an explicit `2`
-  // over an all-v3 set, so an all-v3 set cannot reach here in v2 mode.
-  if (isV3Only && eqlVersion === 3) {
-    // biome-ignore lint/plugin: the runtime `isV3Only` guard (every schema has
-    // buildColumnKeyMap) proves these are AnyV3Table — the compiler can't see it.
-    const v3Schemas = schemas as unknown as readonly AnyV3Table[]
-    return typedClient(result.data, ...v3Schemas)
-  }
-  return result.data
+  return createEncryptionClient(result.data, ...schemas)
 }

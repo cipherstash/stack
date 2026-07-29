@@ -10,11 +10,10 @@
  */
 import { describe, expectTypeOf, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
-import { encryptedTable, typedClient, types } from '@/encryption/v3'
+import { encryptedTable, types } from '@/encryption/v3'
 
 const users = encryptedTable('u', { email: types.TextEq('email') })
-declare const client: EncryptionClient
-const typed = typedClient(client, users)
+declare const typed: EncryptionClient<readonly [typeof users]>
 
 describe('v3 typed client audit/lock-context chainability (types)', () => {
   it('exposes .audit() and .withLockContext() on the encrypt operation', () => {

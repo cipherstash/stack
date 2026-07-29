@@ -2,24 +2,17 @@
 '@cipherstash/stack': patch
 ---
 
-`encryptedDynamoDB` now refuses a `@cipherstash/stack/wasm-inline` client paired
-with a legacy EQL v2 table, instead of failing at the first read with a
-misleading error.
+`encryptedDynamoDB` now refuses a `@cipherstash/stack/wasm-inline` client when a
+legacy read is requested with `{ storedEqlVersion: 2 }`, instead of failing at
+the first read with a misleading error.
 
-The adapter's v2 read path deliberately calls `decryptModel(item)` with **no**
-table — a v2 table means nothing to a v3 client's reconstructor map, and the
-native clients derive the table from the payloads anyway. `WasmEncryptionClient`
-cannot do that: its decrypt requires the table and resolves date fields from a
-per-table map, so the omitted argument surfaced as
-`TypeError: Cannot read properties of undefined (reading 'tableName')` thrown
-from deep inside the client — on the documented entry for Deno, Cloudflare
-Workers and Supabase Edge Functions, which satisfies the adapter's client type
-structurally and so was accepted with no cast.
+The adapter's native v2 read path relies on generation-agnostic payload decrypt.
+`WasmEncryptionClient` cannot perform that compatibility read, so the former
+path surfaced a deep client error on Deno, Cloudflare Workers and Supabase Edge
+Functions rather than explaining the unsupported combination.
 
-The pairing is now rejected at the call site, with a message naming both the
-combination and the fix. The message is operation-neutral: the guard runs on all
-four operations, so a plain-JS caller reaching the write path with a v2 table
-gets a message that does not claim a read it never attempted.
+The pairing is now rejected at the call site, with a message directing callers
+to the native entry for legacy reads. Writes remain EQL v3-only on both entries.
 
 `encryptModel` / `bulkEncryptModels` now also tolerate a client whose encrypt
 returns a plain promise. They chained `.audit()` onto the result

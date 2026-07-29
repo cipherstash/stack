@@ -25,8 +25,8 @@
  */
 
 import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
-import type { V3ClientConfig } from '@cipherstash/stack/types'
-import { EncryptionV3, type TypedEncryptionClient } from '@cipherstash/stack/v3'
+import type { ClientConfig } from '@cipherstash/stack/types'
+import { Encryption, type EncryptionClient } from '@cipherstash/stack/v3'
 import type {
   SqlMiddleware,
   SqlRuntimeExtensionDescriptor,
@@ -56,13 +56,13 @@ export interface CipherstashFromStackV3Options {
   readonly schemasV3?: ReadonlyArray<AnyV3Table>
 
   /**
-   * Pass-through to `EncryptionV3({ config })` (keyset overrides, logging, …).
+   * Pass-through to `Encryption({ config })` (keyset overrides, logging, …).
    *
-   * `V3ClientConfig`, not `ClientConfig`: this package is EQL v3 only, and the
+   * `ClientConfig`, not `ClientConfig`: this package is EQL v3 only, and the
    * legacy `eqlVersion: 2` escape hatch throws at setup over the all-v3 schema
    * set this entry point derives.
    */
-  readonly encryptionConfig?: V3ClientConfig
+  readonly encryptionConfig?: ClientConfig
 }
 
 export interface CipherstashFromStackV3Result {
@@ -71,10 +71,10 @@ export interface CipherstashFromStackV3Result {
   /** Ready to spread into `postgres<Contract>({ middleware })`. */
   readonly middleware: ReadonlyArray<SqlMiddleware>
   /**
-   * The initialised v3 `TypedEncryptionClient` for direct SDK access
+   * The initialised v3 `EncryptionClient` for direct SDK access
    * outside the ORM path (`encryptModel`, `encryptQuery`, …).
    */
-  readonly encryptionClient: TypedEncryptionClient<readonly AnyV3Table[]>
+  readonly encryptionClient: EncryptionClient<readonly AnyV3Table[]>
 }
 
 export async function cipherstashFromStack(
@@ -100,7 +100,7 @@ export async function cipherstashFromStack(
 
   const schemas = resolveV3Schemas(derived, opts.schemasV3)
 
-  const encryptionClient = await EncryptionV3({
+  const encryptionClient = await Encryption({
     schemas,
     ...(opts.encryptionConfig !== undefined
       ? { config: opts.encryptionConfig }

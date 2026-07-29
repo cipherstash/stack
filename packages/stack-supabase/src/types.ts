@@ -29,7 +29,7 @@ export type EncryptedSupabaseOptions<
   /** Postgres connection string for introspection. Defaults to
    * `process.env.DATABASE_URL`. */
   databaseUrl?: string
-  /** Passed through to the encryption client (`eqlVersion` is forced to 3). */
+  /** Passed through to the v3-only encryption client. */
   config?: ClientConfig
   /**
    * Optional declared v3 tables, keyed by table name (each record key MUST
@@ -817,11 +817,6 @@ export type {
   LockContext,
   LockContextInput,
 } from '@cipherstash/stack/identity'
-export type {
-  EncryptedColumn,
-  EncryptedTable,
-  EncryptedTableColumn,
-} from '@cipherstash/stack/schema'
 
 // ---------------------------------------------------------------------------
 // Forward declaration for query builder (avoids circular)

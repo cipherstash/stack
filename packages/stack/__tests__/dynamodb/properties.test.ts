@@ -38,17 +38,11 @@ import { describe, expect, it } from 'vitest'
 import {
   ciphertextAttrSuffix,
   deepClone,
-  isV3Table,
   searchTermAttrSuffix,
   toEncryptedDynamoItem,
   toItemWithEqlPayloads,
 } from '@/dynamodb/helpers'
 import { encryptedTable, types } from '@/eql/v3'
-import {
-  encryptedColumn,
-  encryptedField,
-  encryptedTable as encryptedTableV2,
-} from '@/schema'
 
 // ---------------------------------------------------------------------------
 // Generators
@@ -351,8 +345,6 @@ describe('property: the rebuilt wire version follows the table', () => {
     fc.assert(
       fc.property(safeName, ciphertext, (name, ct) => {
         const table = encryptedTable('t', { [name]: types.TextEq(name) })
-        expect(isV3Table(table)).toBe(true)
-
         const rebuilt = toItemWithEqlPayloads(
           { [`${name}${ciphertextAttrSuffix}`]: ct },
           table,
@@ -386,45 +378,6 @@ describe('property: the rebuilt wire version follows the table', () => {
           expect(rebuilt.sv).toEqual(entries)
         },
       ),
-    )
-  })
-
-  it('a v2 table always yields v: 2 with k: "ct"', () => {
-    fc.assert(
-      fc.property(safeName, ciphertext, (name, ct) => {
-        const table = encryptedTableV2('t', {
-          [name]: encryptedColumn(name).equality(),
-        })
-        expect(isV3Table(table)).toBe(false)
-
-        const rebuilt = toItemWithEqlPayloads(
-          { [`${name}${ciphertextAttrSuffix}`]: ct },
-          table,
-        )[name] as Record<string, unknown>
-
-        expect(rebuilt.v).toBe(2)
-        expect(rebuilt.k).toBe('ct')
-        expect(rebuilt.c).toBe(ct)
-      }),
-    )
-  })
-
-  it('a v2 table with a grouped field still yields v: 2 with k: "ct"', () => {
-    fc.assert(
-      fc.property(safeName, safeName, ciphertext, (group, leaf, ct) => {
-        const table = encryptedTableV2('t', {
-          [group]: { [leaf]: encryptedField(`${group}.${leaf}`) },
-        })
-        expect(isV3Table(table)).toBe(false)
-
-        const rebuilt = toItemWithEqlPayloads(
-          { [group]: { [`${leaf}${ciphertextAttrSuffix}`]: ct } },
-          table,
-        )[group] as Record<string, Record<string, unknown>>
-
-        expect(rebuilt[leaf]?.v).toBe(2)
-        expect(rebuilt[leaf]?.k).toBe('ct')
-      }),
     )
   })
 })
@@ -580,7 +533,7 @@ describe('property: a payload inside an array is stored and read whole', () => {
           [arrKey]: [{ v: 3, i: { t: 't', c: col }, c: ct, hm: 'H' }],
         }
 
-        const stored = toEncryptedDynamoItem(item, attrs, true)
+        const stored = toEncryptedDynamoItem(item, attrs)
         expect(stored).toEqual(item)
         expect(toItemWithEqlPayloads(stored, table)).toEqual(item)
       }),
@@ -607,7 +560,7 @@ describe('property: the write path never splits a payload naming no declared col
         const payload = { v: 3, i: { t: 't', c: other }, c: ct, hm: 'H' }
         const item = { [other]: payload, grp: { [other]: payload } }
 
-        const stored = toEncryptedDynamoItem(item, attrs, true)
+        const stored = toEncryptedDynamoItem(item, attrs)
         expect(stored).toEqual(item)
         expect(toItemWithEqlPayloads(stored, table)).toEqual(item)
       }),

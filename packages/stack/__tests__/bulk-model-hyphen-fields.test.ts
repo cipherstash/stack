@@ -12,8 +12,8 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
+import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
-import { encryptedColumn, encryptedTable } from '@/schema'
 
 // A protect-ffi-shaped encrypted payload carrying its plaintext in `c` so
 // the fake decrypt can undo it (and `isEncryptedPayload` detects it).
@@ -55,9 +55,9 @@ vi.mock('@cipherstash/protect-ffi', () => ({
 // DB column names deliberately contain hyphens — legal in (quoted) Postgres
 // identifiers and previously corrupted by the naive id split.
 const users = encryptedTable('users', {
-  'some-field': encryptedColumn('some-field').equality(),
-  'multi-part-name': encryptedColumn('multi-part-name').equality(),
-  plainName: encryptedColumn('plainName').equality(),
+  'some-field': types.TextEq('some-field'),
+  'multi-part-name': types.TextEq('multi-part-name'),
+  plainName: types.TextEq('plainName'),
 })
 
 let client: EncryptionClient

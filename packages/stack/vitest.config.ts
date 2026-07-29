@@ -34,7 +34,7 @@ export default defineConfig({
       // with `--typecheck.only` so the runtime suites do NOT also execute.
       tsconfig: './tsconfig.typecheck.json',
       // Type coverage lives in `*.test-d.ts`. M1 (the factory rejecting the
-      // `TypedEncryptionClient` that `EncryptionV3` returns) slipped through
+      // `EncryptionClient` that `Encryption` returns) slipped through
       // because the runtime `*.test.ts` suites are not typechecked. Rather than
       // widen to those files — the drizzle-v3 suites are pervasively loose-typed
       // by design (dynamic domain matrix: `as never` tables, untyped mock

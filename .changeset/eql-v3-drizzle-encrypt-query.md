@@ -16,7 +16,6 @@ operator overloads. This unifies the scalar/text operators with the JSON
 containment path (already on `encryptQuery`) and removes the previously-optional
 `encryptQuery` guard: it is now a required capability of the operand client.
 
-`@cipherstash/stack` gains a batch `encryptQuery(terms)` overload on
-`TypedEncryptionClient` (the type `EncryptionV3` returns), mirroring the nominal
-`EncryptionClient`. This is additive — it lets `inArray`/`notInArray` encrypt a
-whole list of query terms in one crossing.
+`@cipherstash/stack` gains a batch `encryptQuery(terms)` overload on the generic
+`EncryptionClient<S>` returned by `Encryption`. This is additive — it lets
+`inArray`/`notInArray` encrypt a whole list of query terms in one crossing.

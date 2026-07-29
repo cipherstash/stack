@@ -1,14 +1,14 @@
 import 'dotenv/config'
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
+import { encryptedTable, types } from '@/eql/v3'
 import { LockContext } from '@/identity'
 import { Encryption } from '@/index'
-import { encryptedColumn, encryptedTable } from '@/schema'
 
 const users = encryptedTable('users', {
-  auditable: encryptedColumn('auditable'),
-  email: encryptedColumn('email').freeTextSearch().equality().orderAndRange(),
-  address: encryptedColumn('address').freeTextSearch(),
+  auditable: types.Text('auditable'),
+  email: types.TextSearch('email'),
+  address: types.TextMatch('address'),
 })
 
 type User = {

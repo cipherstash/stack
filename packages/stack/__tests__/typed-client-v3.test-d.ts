@@ -4,7 +4,6 @@ import type { EncryptionClient } from '@/encryption'
 // from src/encryption/v3.ts), exercising the re-export at the same time.
 import {
   encryptedTable,
-  typedClient,
   types,
   type V3DecryptedModel,
   type V3EncryptedModel,
@@ -25,7 +24,7 @@ const other = encryptedTable('other', {
   weight: types.IntegerOrd('weight'),
 })
 
-const client = typedClient({} as EncryptionClient, users, other)
+declare const client: EncryptionClient<readonly [typeof users, typeof other]>
 
 describe('typed v3 client — encrypt plaintext is pinned to the column domain', () => {
   it('accepts the matching plaintext type per domain', () => {
@@ -89,6 +88,48 @@ describe('typed v3 client — encryptQuery constrains queryType to capabilities'
       // @ts-expect-error - storage-only text column is not queryable
       column: users.note,
     })
+  })
+
+  it('keeps batch values correlated with their table and column', () => {
+    client.encryptQuery([
+      { value: 'alice@example.com', table: users, column: users.email },
+      {
+        value: new Date(),
+        table: users,
+        column: users.createdAt,
+        queryType: 'orderAndRange',
+      },
+    ])
+
+    client.encryptQuery([
+      // @ts-expect-error - a timestamp column requires a Date
+      {
+        value: 'not-a-date',
+        table: users,
+        column: users.createdAt,
+      },
+    ])
+  })
+})
+
+describe('typed v3 client — bulk encrypt derives the column plaintext', () => {
+  it('accepts matching values and preserves nullable entries', () => {
+    client.bulkEncrypt(
+      [{ id: '1', plaintext: new Date() }, { plaintext: null }],
+      { table: users, column: users.createdAt },
+    )
+  })
+
+  it('rejects a value from the wrong domain', () => {
+    client.bulkEncrypt(
+      [
+        {
+          // @ts-expect-error - timestamp bulk values must be Date or null
+          plaintext: 'not-a-date',
+        },
+      ],
+      { table: users, column: users.createdAt },
+    )
   })
 })
 

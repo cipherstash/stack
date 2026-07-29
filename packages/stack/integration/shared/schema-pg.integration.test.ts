@@ -1,7 +1,7 @@
 import { databaseUrl, unwrapResult } from '@cipherstash/test-kit'
 import postgres from 'postgres'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { EncryptionClientFor } from '@/encryption/v3'
+import type { EncryptionClient } from '@/encryption/v3'
 import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
 import type { Encrypted } from '@/types'
@@ -28,9 +28,7 @@ type InsertedRow = {
 
 type EncryptionPayload = postgres.JSONValue
 
-let protectClient: EncryptionClientFor<
-  readonly [typeof table, typeof typedTable]
->
+let protectClient: EncryptionClient<readonly [typeof table, typeof typedTable]>
 
 async function encryptValue(value: string): Promise<EncryptionPayload> {
   return unwrapResult(
@@ -90,13 +88,8 @@ async function seedRows(): Promise<Record<string, number>> {
 
 beforeAll(async () => {
   // EQL v3 is installed once per run by `global-setup.ts`.
-  // `eqlVersion: 3` is required for v3 concrete-type schemas: protect-ffi's
-  // newClient defaults to v2, and a v2-mode client cannot encrypt these columns
-  // (it throws "Cannot convert undefined or null to object"). EncryptionV3 sets
-  // this automatically; the base `Encryption` factory does not, so pass it here.
   protectClient = await Encryption({
     schemas: [table, typedTable],
-    config: { eqlVersion: 3 },
   })
 
   // DROP first: these tables are created with IF NOT EXISTS and cleaned up by

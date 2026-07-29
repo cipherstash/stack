@@ -59,6 +59,14 @@ export type EncryptedFilterState = {
   termMap: TermMapping[]
 }
 
+type CollectedQueryTerm = {
+  value: ScalarQueryTerm['value']
+  column: V3ColumnLike
+  table: AnyV3Table
+  queryType?: QueryTypeName
+  returnType?: ScalarQueryTerm['returnType']
+}
+
 /**
  * Everything an encryption step needs from the builder. Assembled per
  * `execute()`, so `lockContext`/`auditConfig` are read at execution time — not
@@ -74,6 +82,26 @@ export type EncryptionContext = {
   /** EQL 3.0.2+ requires query-domain casts PostgREST cannot express. */
   queryDomainsRequired: boolean
 }
+
+type DynamicEncryptionClient = {
+  encrypt(
+    value: ScalarQueryTerm['value'],
+    options: { column: V3ColumnLike; table: AnyV3Table },
+  ): ReturnType<EncryptionClient['encrypt']>
+  encryptModel(
+    model: Record<string, unknown>,
+    table: AnyV3Table,
+  ): ReturnType<EncryptionClient['encryptModel']>
+  bulkEncryptModels(
+    models: Record<string, unknown>[],
+    table: AnyV3Table,
+  ): ReturnType<EncryptionClient['bulkEncryptModels']>
+}
+
+/** Dynamic adapter boundary for schemas discovered at runtime. */
+export const dynamicEncryptionClient = (
+  client: EncryptionClient,
+): DynamicEncryptionClient => client as DynamicEncryptionClient
 
 /**
  * Apply the builder's lock context and audit config to a pending operation.
@@ -251,7 +279,7 @@ export async function encryptFilterValues(
   ctx: EncryptionContext,
 ): Promise<EncryptedFilterState> {
   // Collect all terms that need encryption
-  const terms: ScalarQueryTerm[] = []
+  const terms: CollectedQueryTerm[] = []
   const termMap: TermMapping[] = []
 
   const tableColumns = ctx.columns.queryColumnMap()
@@ -259,7 +287,7 @@ export async function encryptFilterValues(
 
   const pushTerm = (
     value: JsPlaintext,
-    column: ScalarQueryTerm['column'],
+    column: V3ColumnLike,
     queryType: QueryTypeName,
     mapping: TermMapping,
   ) => {
@@ -288,7 +316,7 @@ export async function encryptFilterValues(
   const collectInListTerms = (
     op: FilterOp,
     values: readonly unknown[],
-    column: ScalarQueryTerm['column'],
+    column: V3ColumnLike,
     queryType: QueryTypeName,
     mappingFor: (inIndex: number) => TermMapping,
   ) => {
@@ -473,7 +501,7 @@ export async function encryptFilterValues(
  * must group a multi-column term array and preserve positions.
  */
 async function encryptCollectedTerms(
-  terms: ScalarQueryTerm[],
+  terms: CollectedQueryTerm[],
   ctx: EncryptionContext,
 ): Promise<EncryptedQueryResult[]> {
   const groups = new Map<
@@ -524,7 +552,7 @@ async function encryptCollectedTerms(
  * by calling this with a hand-built term.
  */
 export function assertTermQueryable(
-  term: ScalarQueryTerm,
+  term: CollectedQueryTerm,
   ctx: EncryptionContext,
 ): V3ColumnLike {
   const column = term.column as unknown as V3ColumnLike
@@ -659,10 +687,11 @@ async function encryptGroupPerTerm(
   values: ScalarQueryTerm['value'][],
   ctx: EncryptionContext,
 ): Promise<Encrypted[]> {
+  const client = dynamicEncryptionClient(ctx.encryptionClient)
   return Promise.all(
     values.map(async (value) => {
       const result = await withOpContext(
-        ctx.encryptionClient.encrypt(value, {
+        client.encrypt(value, {
           column,
           table: ctx.table,
         }),

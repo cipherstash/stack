@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
-import { encryptedTable, typedClient, types } from '@/encryption/v3'
+import {
+  createEncryptionClient,
+  encryptedTable,
+  types,
+} from '@/encryption/client-v3'
 
 const table = encryptedTable('t', {
   when: types.Timestamp('when'),
@@ -11,7 +15,7 @@ const table = encryptedTable('t', {
 })
 
 /**
- * A minimal operation stub resolving to a fixed `Result`. `typedClient` now
+ * A minimal operation stub resolving to a fixed `Result`. `createEncryptionClient` now
  * wraps the underlying decrypt op in a `MappedDecryptOperation` and calls
  * `.execute()` on it (rather than awaiting a bare promise), so the stub must be
  * operation-like: `.execute()` plus the chainable `.audit()` / `.withLockContext()`
@@ -40,9 +44,9 @@ function fakeClient(data: Record<string, unknown>): EncryptionClient {
   } as unknown as EncryptionClient
 }
 
-describe('typedClient — decrypt reconstruction', () => {
+describe('createEncryptionClient — decrypt reconstruction', () => {
   it('reconstructs Date columns from cast_as', async () => {
-    const client = typedClient(
+    const client = createEncryptionClient(
       fakeClient({
         when: '2020-01-02T03:04:05.000Z',
         note: 'hi',
@@ -68,7 +72,10 @@ describe('typedClient — decrypt reconstruction', () => {
   })
 
   it('leaves null column values untouched', async () => {
-    const client = typedClient(fakeClient({ when: null, note: null }), table)
+    const client = createEncryptionClient(
+      fakeClient({ when: null, note: null }),
+      table,
+    )
 
     const result = await client.decryptModel({}, table)
     if (result.failure) return
@@ -79,7 +86,10 @@ describe('typedClient — decrypt reconstruction', () => {
   })
 
   it('leaves invalid date values untouched', async () => {
-    const client = typedClient(fakeClient({ when: 'not-a-date' }), table)
+    const client = createEncryptionClient(
+      fakeClient({ when: 'not-a-date' }),
+      table,
+    )
 
     const result = await client.decryptModel({}, table)
     if (result.failure) return
@@ -99,7 +109,7 @@ describe('typedClient — decrypt reconstruction', () => {
         untouched: true,
       },
     }
-    const client = typedClient(fakeClient(decrypted), nested)
+    const client = createEncryptionClient(fakeClient(decrypted), nested)
 
     const result = await client.decryptModel({}, nested)
     if (result.failure) return
@@ -115,7 +125,7 @@ describe('typedClient — decrypt reconstruction', () => {
   })
 
   it('reconstructs each row for bulkDecryptModels', async () => {
-    const client = typedClient(
+    const client = createEncryptionClient(
       fakeClient({ when: '2021-06-01T00:00:00.000Z', note: 'x' }),
       table,
     )
@@ -136,14 +146,14 @@ describe('typedClient — decrypt reconstruction', () => {
         }),
     } as unknown as EncryptionClient
 
-    const client = typedClient(failing, table)
+    const client = createEncryptionClient(failing, table)
     const result = await client.decryptModel({}, table)
     expect(result.failure).toBeTruthy()
   })
 
   it('fails with a DecryptionError when given a table it was not initialized with', async () => {
     const other = encryptedTable('other', { x: types.Text('x') })
-    const client = typedClient(fakeClient({ when: null }), table)
+    const client = createEncryptionClient(fakeClient({ when: null }), table)
 
     const single = await client.decryptModel({}, other as never)
     expect(single.failure?.type).toBe('DecryptionError')
@@ -164,7 +174,7 @@ describe('typedClient — decrypt reconstruction', () => {
     })
     expect(sameTableRebuilt).not.toBe(table)
 
-    const client = typedClient(
+    const client = createEncryptionClient(
       fakeClient({ when: '2020-01-02T03:04:05.000Z', note: 'hi' }),
       table,
     )
@@ -184,7 +194,7 @@ describe('typedClient — decrypt reconstruction', () => {
   // They must decrypt without throwing — degrading to nominal behaviour (no date
   // reconstruction) — not dereference `undefined.tableName`.
   it('tolerates a one-arg (nominal-style) decryptModel call with no table', async () => {
-    const client = typedClient(
+    const client = createEncryptionClient(
       fakeClient({ when: '2020-01-02T03:04:05.000Z', note: 'hi' }),
       table,
     )
@@ -208,7 +218,7 @@ describe('typedClient — decrypt reconstruction', () => {
   })
 
   it('tolerates a one-arg (nominal-style) bulkDecryptModels call with no table', async () => {
-    const client = typedClient(
+    const client = createEncryptionClient(
       fakeClient({ when: '2021-06-01T00:00:00.000Z', note: 'x' }),
       table,
     )

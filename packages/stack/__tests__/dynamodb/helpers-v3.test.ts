@@ -17,16 +17,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildReadContext,
   deepClone,
-  isV3Table,
   toEncryptedDynamoItem,
   toItemWithEqlPayloads,
 } from '@/dynamodb/helpers'
 import { encryptedTable, types } from '@/eql/v3'
-import {
-  encryptedColumn,
-  encryptedField,
-  encryptedTable as encryptedTableV2,
-} from '@/schema'
 import { logger } from '@/utils/logger'
 
 const users = encryptedTable('users', {
@@ -58,28 +52,6 @@ const scalar = (
   i: { t: 'users', c: column },
   c,
   ...terms,
-})
-
-describe('isV3Table', () => {
-  it('recognises a v3 table by its concrete-domain columns', () => {
-    expect(isV3Table(users)).toBe(true)
-  })
-
-  it('recognises a flat v2 table', () => {
-    const v2 = encryptedTableV2('users', {
-      email: encryptedColumn('email').equality(),
-    })
-
-    expect(isV3Table(v2)).toBe(false)
-  })
-
-  it('recognises a v2 table whose columns are nested under a group', () => {
-    const v2 = encryptedTableV2('users', {
-      example: { protected: encryptedField('example.protected') },
-    })
-
-    expect(isV3Table(v2)).toBe(false)
-  })
 })
 
 describe('toEncryptedDynamoItem with v3 payloads', () => {
@@ -190,12 +162,14 @@ describe('toItemWithEqlPayloads for a v3 table', () => {
     })
   })
 
-  it('still emits a v2 envelope for a v2 table', () => {
-    const v2 = encryptedTableV2('users', {
-      email: encryptedColumn('email').equality(),
-    })
-
-    expect(toItemWithEqlPayloads({ email__source: 'ct' }, v2)).toEqual({
+  it('emits a v2 envelope when legacy storage is selected explicitly', () => {
+    expect(
+      toItemWithEqlPayloads(
+        { email__source: 'ct' },
+        users,
+        buildReadContext(users, 2),
+      ),
+    ).toEqual({
       email: { i: { c: 'email', t: 'users' }, v: 2, k: 'ct', c: 'ct' },
     })
   })
@@ -332,7 +306,7 @@ describe('regressions found in review', () => {
     // envelope in place so write and read stay symmetric and it round-trips.
     const item = { profile: { secret: scalar('secret', 'CT', { hm: 'H' }) } }
 
-    const stored = toEncryptedDynamoItem(item, encryptedAttrs, true)
+    const stored = toEncryptedDynamoItem(item, encryptedAttrs)
 
     expect(stored).toEqual(item)
     expect(toItemWithEqlPayloads(stored, users)).toEqual(item)
@@ -400,7 +374,7 @@ describe('arrays are a deliberate carve-out', () => {
     const item = { tags: [scalar('tags', 'CT', { hm: 'H' })] }
 
     // Whole envelope retained (v, i, c, hm all present); no tags__source/__hmac.
-    expect(toEncryptedDynamoItem(item, encryptedAttrs, true)).toEqual(item)
+    expect(toEncryptedDynamoItem(item, encryptedAttrs)).toEqual(item)
   })
 
   it('passes an envelope nested in an array straight through on read', () => {
@@ -414,7 +388,7 @@ describe('arrays are a deliberate carve-out', () => {
   it('round-trips a payload nested in an array', () => {
     const item = { tags: [scalar('tags', 'CT', { hm: 'H' })] }
 
-    const stored = toEncryptedDynamoItem(item, encryptedAttrs, true)
+    const stored = toEncryptedDynamoItem(item, encryptedAttrs)
     expect(stored).toEqual(item)
     expect(toItemWithEqlPayloads(stored, users)).toEqual(item)
   })
@@ -425,7 +399,7 @@ describe('arrays are a deliberate carve-out', () => {
     // being false stops a split. That guard interaction is otherwise untested.
     const item = { email: [scalar('email', 'CT', { hm: 'H' })] }
 
-    const stored = toEncryptedDynamoItem(item, encryptedAttrs, true)
+    const stored = toEncryptedDynamoItem(item, encryptedAttrs)
     expect(stored).toEqual(item)
     expect(stored).not.toHaveProperty('email__source')
     expect(toItemWithEqlPayloads(stored, users)).toEqual(item)
@@ -441,7 +415,7 @@ describe('arrays are a deliberate carve-out', () => {
       ],
     }
 
-    const stored = toEncryptedDynamoItem(item, encryptedAttrs, true)
+    const stored = toEncryptedDynamoItem(item, encryptedAttrs)
     expect(stored).toEqual(item)
     expect(toItemWithEqlPayloads(stored, users)).toEqual(item)
   })

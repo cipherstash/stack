@@ -1,17 +1,16 @@
 import type { Result } from '@byteslice/result'
 import type { AuditConfig } from '@cipherstash/stack/adapter-kit'
-import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import type { EncryptionError } from '@cipherstash/stack/errors'
 import type { LockContext } from '@cipherstash/stack/identity'
 import type { EncryptedQueryResult } from '@cipherstash/stack/types'
-import type { AnyV3Table, EncryptionClientFor } from '@cipherstash/stack/v3'
+import type { AnyV3Table, EncryptionClient } from '@cipherstash/stack/v3'
 import { describe, expectTypeOf, it } from 'vitest'
 import { createEncryptionOperators } from '../src/index.js'
 
 /**
  * Static regression guard for M1: `createEncryptionOperators` must accept the
- * `TypedEncryptionClient` that `EncryptionV3` resolves to — the documented
- * `createEncryptionOperators(await EncryptionV3({ schemas }))` usage — as well
+ * `EncryptionClient` that `Encryption` resolves to — the documented
+ * `createEncryptionOperators(await Encryption({ schemas }))` usage — as well
  * as the nominal `EncryptionClient` and a hand-rolled `{ encryptQuery }` double,
  * none requiring a cast. Typing the parameter to `EncryptionClient` (the
  * original bug) makes the first call below a compile error, which this suite
@@ -21,7 +20,7 @@ import { createEncryptionOperators } from '../src/index.js'
  * existing typecheck scope without dragging the loose-typed runtime suites in.
  */
 describe('createEncryptionOperators - client parameter (M1)', () => {
-  type V3Client = EncryptionClientFor<readonly AnyV3Table[]>
+  type V3Client = EncryptionClient<readonly AnyV3Table[]>
 
   // A query operation resolving `Result<T, …>` — the surface the factory drives.
   type QueryOp<T> = {
@@ -30,11 +29,11 @@ describe('createEncryptionOperators - client parameter (M1)', () => {
     then: PromiseLike<Result<T, EncryptionError>>['then']
   }
 
-  it('accepts the client EncryptionV3 returns with no cast', () => {
+  it('accepts the client Encryption returns with no cast', () => {
     expectTypeOf(createEncryptionOperators).toBeCallableWith({} as V3Client)
   })
 
-  it('still accepts the nominal EncryptionClient', () => {
+  it('accepts the generic EncryptionClient', () => {
     expectTypeOf(createEncryptionOperators).toBeCallableWith(
       {} as EncryptionClient,
     )

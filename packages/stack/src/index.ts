@@ -6,7 +6,7 @@ export {
   encryptedToPgComposite,
   isEncryptedPayload,
 } from '@/encryption/helpers'
-export { encryptedColumn, encryptedField, encryptedTable } from '@/schema'
+export type { EncryptionClient } from '@/encryption/v3'
 
 // Re-export auth strategies for convenience. Pass one as `config.authStrategy`
 // to `Encryption()` to control how ZeroKMS requests are authenticated — notably

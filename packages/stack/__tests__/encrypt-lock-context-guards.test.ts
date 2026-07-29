@@ -20,11 +20,9 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
-import type { EncryptionClientFor } from '@/encryption/v3'
 import { encryptedTable as encryptedTableV3, types } from '@/eql/v3'
 import { LockContext } from '@/identity'
 import { Encryption } from '@/index'
-import { encryptedColumn, encryptedTable } from '@/schema'
 
 vi.mock('@cipherstash/protect-ffi', () => ({
   // `getErrorCode` does `error instanceof ProtectError` on the failure path,
@@ -43,8 +41,8 @@ vi.mock('@cipherstash/protect-ffi', () => ({
 
 import * as ffi from '@cipherstash/protect-ffi'
 
-const users = encryptedTable('users', {
-  score: encryptedColumn('score').dataType('number').equality().orderAndRange(),
+const users = encryptedTableV3('users', {
+  score: types.IntegerOrd('score'),
 })
 
 const usersV3 = encryptedTableV3('users_v3', {
@@ -55,15 +53,14 @@ const usersV3 = encryptedTableV3('users_v3', {
 // biome-ignore lint/suspicious/noExplicitAny: test helper reads the Result union
 const failure = (result: any) => result.failure
 
-let clientV2: EncryptionClient
-let clientV3: EncryptionClientFor<readonly [typeof usersV3]>
+let clientV2: EncryptionClient<readonly [typeof users]>
+let clientV3: EncryptionClient<readonly [typeof usersV3]>
 
 beforeEach(async () => {
   vi.clearAllMocks()
   process.env.CS_WORKSPACE_CRN = 'crn:ap-southeast-2.aws:test-workspace'
-  // One client per wire format: `Encryption` rejects mixed v2 + v3 schema
-  // sets (one client emits exactly one wire format), so the two schema
-  // styles get their own clients and the suites below pick the right one.
+  // Use two v3 tables to ensure the shared operation guards are independent of
+  // the particular concrete domain descriptor.
   clientV2 = await Encryption({ schemas: [users] })
   clientV3 = await Encryption({ schemas: [usersV3] })
 })

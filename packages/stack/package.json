@@ -42,9 +42,6 @@
 			"adapter-kit": [
 				"./dist/adapter-kit.d.ts"
 			],
-			"client": [
-				"./dist/client.d.ts"
-			],
 			"identity": [
 				"./dist/identity/index.d.ts"
 			],
@@ -80,16 +77,6 @@
 			"require": {
 				"types": "./dist/index.d.cts",
 				"default": "./dist/index.cjs"
-			}
-		},
-		"./client": {
-			"import": {
-				"types": "./dist/client.d.ts",
-				"default": "./dist/client.js"
-			},
-			"require": {
-				"types": "./dist/client.d.cts",
-				"default": "./dist/client.cjs"
 			}
 		},
 		"./identity": {

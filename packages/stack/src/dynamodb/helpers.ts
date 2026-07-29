@@ -1,9 +1,7 @@
 import type { ProtectErrorCode } from '@cipherstash/protect-ffi'
 import { ProtectError as FfiProtectError } from '@cipherstash/protect-ffi'
 import { resolveEncryptColumnMap } from '@/encryption/helpers/model-helpers'
-import type { AnyV3Table } from '@/eql/v3'
 import type { EncryptedValue } from '@/types'
-import { hasBuildColumnKeyMap } from '@/types'
 import { logger } from '@/utils/logger'
 import type { AnyEncryptedTable, EncryptedDynamoDBError } from './types'
 
@@ -18,10 +16,6 @@ export const searchTermAttrSuffix = '__hmac'
  * `resolveEqlVersion` (`encryption/index.ts`) and `types.ts`, which document it
  * as *the* signal. Only v3 tables define it.
  */
-export function isV3Table(table: AnyEncryptedTable): table is AnyV3Table {
-  return hasBuildColumnKeyMap(table)
-}
-
 export class EncryptedDynamoDBErrorImpl
   extends Error
   implements EncryptedDynamoDBError
@@ -86,8 +80,8 @@ export function handleError(
 /**
  * Resolve a decrypt call against either client shape.
  *
- * The nominal `EncryptionClient` and the typed client both return a chainable
- * operation carrying `.audit()` on decrypt (the typed client's is a
+ * `EncryptionClient` returns a chainable operation carrying `.audit()` on
+ * decrypt (the schema-derived model operation is a
  * `MappedDecryptOperation`). Chain the audit metadata onto it.
  *
  * NOT every client this package accepts does that. `WasmEncryptionClient`
@@ -318,21 +312,17 @@ function isStoredEqlPayload(value: unknown): value is StoredEqlPayload {
  * write and read paths so the two split and rebuild EXACTLY the same set of
  * attributes — an asymmetry here writes data one side can never reassemble.
  *
- * `columnPaths` are the JS property paths a model's fields are matched on. The
- * dotted form is tried first; a v2 grouped `encryptedField('amount')` registers
- * the bare leaf, so a nested `amount` falls back to it. v3 always registers the
- * full dotted path (`'profile.ssn'`), so it never needs the fallback — and must
- * NOT use it, or a nested `note` would match a same-named TOP-LEVEL `note`
- * column. Scope the fallback to nested v2 attributes only.
+ * `columnPaths` are the JS property paths a model's fields are matched on.
+ * Nested v3 fields are registered by their full dotted path (`profile.ssn`),
+ * preventing a nested leaf from colliding with a top-level column.
  */
-export function makeColumnMatcher(isV3: boolean, columnPaths: string[]) {
+export function makeColumnMatcher(columnPaths: string[]) {
   return function matchColumn(
     leaf: string,
     prefix: string,
   ): string | undefined {
     const dotted = prefix ? `${prefix}.${leaf}` : leaf
     if (columnPaths.includes(dotted)) return dotted
-    if (!isV3 && prefix && columnPaths.includes(leaf)) return leaf
     return undefined
   }
 }
@@ -340,12 +330,8 @@ export function makeColumnMatcher(isV3: boolean, columnPaths: string[]) {
 export function toEncryptedDynamoItem(
   encrypted: Record<string, unknown>,
   encryptedAttrs: string[],
-  // `false` (v2) by default so existing 2-arg callers keep the v2 bare-leaf
-  // fallback; the operations pass `isV3Table(table)` so a v3 write splits the
-  // same columns a v3 read rebuilds.
-  isV3 = false,
 ): Record<string, unknown> {
-  const matchColumn = makeColumnMatcher(isV3, encryptedAttrs)
+  const matchColumn = makeColumnMatcher(encryptedAttrs)
 
   function processValue(
     attrName: string,
@@ -450,7 +436,6 @@ export function toEncryptedDynamoItem(
  * a column is declared `emailAddress: types.TextEq('email_address')`.
  */
 export type ReadContext = {
-  isV3: boolean
   v: 2 | 3
   encryptConfig: {
     tableName: string
@@ -464,12 +449,13 @@ export type ReadContext = {
 }
 
 /** Resolve the row-invariant read context for a table, once. */
-export function buildReadContext(schema: AnyEncryptedTable): ReadContext {
-  const isV3 = isV3Table(schema)
+export function buildReadContext(
+  schema: AnyEncryptedTable,
+  storedEqlVersion: 2 | 3 = 3,
+): ReadContext {
   const { columnPaths, toColumnName } = resolveEncryptColumnMap(schema)
   return {
-    isV3,
-    v: isV3 ? 3 : 2,
+    v: storedEqlVersion,
     encryptConfig: schema.build(),
     columnPaths,
     toColumnName,
@@ -483,10 +469,10 @@ export function toItemWithEqlPayloads(
   // it is not rebuilt per item.
   context: ReadContext = buildReadContext(encryptionSchema),
 ): Record<string, unknown> {
-  const { isV3, v, encryptConfig, columnPaths, toColumnName } = context
+  const { v, encryptConfig, columnPaths, toColumnName } = context
 
   // The same matcher the write path splits with, so the two stay symmetric.
-  const matchColumn = makeColumnMatcher(isV3, columnPaths)
+  const matchColumn = makeColumnMatcher(columnPaths)
 
   function processValue(
     attrName: string,
@@ -508,10 +494,7 @@ export function toItemWithEqlPayloads(
 
     const columnName = attrName.slice(0, -ciphertextAttrSuffix.length)
 
-    // Resolve the attribute back to a declared column. `matchColumn` prefers
-    // the dotted path (`encryptedField('example.protected')`, and v3's dotted
-    // property form) and falls back to the bare leaf (`encryptedField('amount')`
-    // under a `details` group), so both authoring conventions resolve.
+    // Resolve the attribute back to its declared dotted property path.
     const matched = matchColumn(columnName, prefix)
 
     // A stored ciphertext attribute that names no declared column is almost

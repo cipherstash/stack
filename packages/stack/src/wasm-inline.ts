@@ -109,15 +109,15 @@ import {
   assertValidNumericValue,
   assertValueIndexCompatibility,
 } from '@/encryption/helpers/validation'
-import {
-  type AnyV3Table,
-  buildEncryptConfig,
-  type V3DecryptedModel,
-  type V3EncryptedModel,
-  type V3ModelInput,
-} from '@/eql/v3'
-import { DATE_LIKE_CASTS } from '@/eql/v3/columns'
+import { buildEncryptConfig } from '@/eql/v3'
+import { type AnyEncryptedV3Column, DATE_LIKE_CASTS } from '@/eql/v3/columns'
 import { reconstructDateValue } from '@/eql/v3/date-reconstruction'
+import type {
+  AnyV3Table,
+  V3DecryptedModel,
+  V3EncryptedModel,
+  V3ModelInput,
+} from '@/eql/v3/table'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import {
   type CastAs,
@@ -126,10 +126,8 @@ import {
   toEqlCastAs,
 } from '@/schema'
 import type {
-  BuildableV3QueryableColumn,
   Encrypted,
   EncryptedQuery,
-  EncryptOptions,
   Plaintext,
   QueryTypeName,
 } from '@/types'
@@ -152,8 +150,7 @@ export {
 // the column classes, `buildEncryptConfig`, and the inference helpers — is the
 // v3 one, re-exported wholesale so an edge consumer authors v3 schemas from this
 // single import. The v2 builders are intentionally NOT exported here: the WASM
-// path was never announced or documented for v2, and the edge targets v3. EQL v2
-// remains fully available on the native `@cipherstash/stack` entry.
+// path was never announced or documented for v2, and the edge targets v3.
 export * from '@/eql/v3'
 // The failure vocabulary every method on this entry now returns. Exported here
 // so an edge consumer can discriminate `result.failure.type` from the SAME
@@ -293,6 +290,16 @@ export type WasmEncryptionConfig = {
   config: WasmClientConfig
 }
 
+export type WasmEncryptOptions = {
+  table: AnyV3Table
+  column: AnyEncryptedV3Column
+}
+
+type WasmQueryableV3Column = Extract<
+  AnyEncryptedV3Column,
+  { isQueryable(): true }
+>
+
 /**
  * Options for {@link WasmEncryptionClient.encryptQuery}.
  *
@@ -302,9 +309,9 @@ export type WasmEncryptionConfig = {
  */
 export type WasmEncryptQueryOptions = {
   /** The `encryptedTable(...)` the column belongs to. */
-  table: EncryptOptions['table']
+  table: AnyV3Table
   /** The queryable v3 column the term targets, e.g. `users.email`. */
-  column: BuildableV3QueryableColumn
+  column: WasmQueryableV3Column
   /**
    * Which of the column's indexes the term targets:
    *
@@ -340,7 +347,7 @@ export type WasmQueryTerm = WasmEncryptQueryOptions & {
  * One storage value in a {@link WasmEncryptionClient.bulkEncrypt} batch.
  *
  * Each entry carries its OWN table and column, rather than the batch taking a
- * single `EncryptOptions` the way {@link WasmEncryptionClient.encrypt} does.
+ * single `WasmEncryptOptions` the way {@link WasmEncryptionClient.encrypt} does.
  * That mirrors {@link WasmQueryTerm} — and it is what makes the round-trip
  * saving worth having: rendering a page of rows means encrypting several
  * columns across many rows, and a single-column batch would still cost one
@@ -364,8 +371,8 @@ export type WasmBulkPlaintext = {
    * every call site to satisfy a check the runtime does anyway.
    */
   plaintext: WasmPlaintext | undefined
-  table: EncryptOptions['table']
-  column: EncryptOptions['column']
+  table: AnyV3Table
+  column: AnyEncryptedV3Column
 }
 
 /**
@@ -750,7 +757,7 @@ export class WasmEncryptionClient {
 
   async encrypt(
     plaintext: WasmPlaintext,
-    opts: EncryptOptions,
+    opts: WasmEncryptOptions,
   ): Promise<WasmResult<Encrypted>> {
     return wasmResult(async () => {
       const ffiOpts = {
@@ -1430,8 +1437,8 @@ export async function Encryption(
  *
  * The Node entry of protect-ffi performs this normalization internally
  * via `normalizeEncryptConfig.js`; the WASM bindings do not. Without
- * this, the WASM client rejects an `encryptedColumn('email')` (which
- * defaults to `cast_as: 'string'`) with
+ * this, the WASM client rejects a column config whose SDK-facing cast is
+ * `string` with
  * `unknown variant `string`, expected one of `big_int`, …`.
  *
  * `toEqlCastAs` is exhaustive over the current `CastAs` union; if a new
@@ -1468,7 +1475,7 @@ export function normalizeCastAs(config: EncryptConfig): unknown {
  * Resolve a column's name structurally. Accepts any column builder exposing
  * `getName()` — v2 `EncryptedColumn` / `EncryptedField` AND v3 column builders
  * (e.g. `EncryptedTextSearchColumn`) alike — matching the structural
- * `BuildableColumn` contract that `EncryptOptions.column` was widened to.
+ * v3 column contract accepted by {@link WasmEncryptOptions.column}.
  *
  * An `instanceof EncryptedColumn || EncryptedField` gate would type-check after
  * the widening but throw at runtime for a v3 column, breaking the type promise;
@@ -1478,7 +1485,7 @@ export function normalizeCastAs(config: EncryptConfig): unknown {
  *
  * @internal exported for unit-test coverage.
  */
-export function getColumnName(col: EncryptOptions['column']): string {
+export function getColumnName(col: AnyEncryptedV3Column): string {
   if (typeof col?.getName === 'function') {
     return col.getName()
   }

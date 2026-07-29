@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { MatchIndexOpts } from '@/schema'
+import type { MatchIndexOpts } from '@/schema/internal'
 import { matchNeedleError, matchNeedleMinLength } from '@/schema/match-defaults'
 
 // The floor a free-text needle must clear before it yields any ngram. A needle

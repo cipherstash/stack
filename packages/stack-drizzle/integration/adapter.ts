@@ -1,7 +1,7 @@
 import {
   type AnyV3Table,
-  type EncryptionClientFor,
-  EncryptionV3,
+  Encryption,
+  type EncryptionClient,
 } from '@cipherstash/stack/v3'
 import {
   databaseUrl,
@@ -61,7 +61,7 @@ type AnyTable = any
 export function makeDrizzleAdapter(): IntegrationAdapter {
   let sqlClient: postgres.Sql
   let db: ReturnType<typeof drizzle>
-  let client: EncryptionClientFor<readonly AnyV3Table[]>
+  let client: EncryptionClient<readonly AnyV3Table[]>
   let ops: ReturnType<typeof createEncryptionOperators>
   let table: AnyTable
   let schema: ReturnType<typeof extractEncryptionSchema>
@@ -161,7 +161,7 @@ export function makeDrizzleAdapter(): IntegrationAdapter {
 
       // The client must know this table's schema to encrypt for it. Rebuilt per
       // family, since each family has its own columns.
-      client = await EncryptionV3({ schemas: [schema as never] })
+      client = await Encryption({ schemas: [schema as never] })
       ops = createEncryptionOperators(client)
     },
 

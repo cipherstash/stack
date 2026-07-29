@@ -32,12 +32,6 @@ vi.mock('@cipherstash/protect-ffi/wasm-inline', () => ({
 }))
 
 import { newClient as wasmNewClient } from '@cipherstash/protect-ffi/wasm-inline'
-// v2 builders come from the native schema entry — used only to prove the WASM
-// factory REJECTS a v2 table.
-import {
-  encryptedColumn,
-  encryptedTable as v2EncryptedTable,
-} from '../src/schema'
 import * as wasm from '../src/wasm-inline'
 import { Encryption, encryptedTable, types } from '../src/wasm-inline'
 
@@ -75,9 +69,10 @@ describe('wasm-inline is EQL v3 only (#614)', () => {
   })
 
   it('rejects a v2 table with a clear error, before touching newClient', async () => {
-    const v2Users = v2EncryptedTable('users', {
-      email: encryptedColumn('email'),
-    })
+    const v2Users = {
+      tableName: 'users',
+      build: () => ({ tableName: 'users', columns: {} }),
+    }
     await expect(
       // A JS caller can bypass the v3-only `schemas` type; the runtime guard
       // must catch it. Cast to satisfy the compile-time type for this test.
