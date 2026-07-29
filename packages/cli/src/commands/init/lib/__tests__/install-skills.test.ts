@@ -17,7 +17,6 @@ import type { Integration } from '../../types.js'
 vi.mock('@clack/prompts', () => ({ log: { warn: vi.fn() } }))
 
 import * as p from '@clack/prompts'
-import { SKILL_MAP as WIZARD_SKILL_MAP } from '../../../../../../wizard/src/lib/install-skills.js'
 import {
   availableSkills,
   installSkills,
@@ -40,14 +39,11 @@ const ALL_INTEGRATIONS: Integration[] = [
   'postgresql',
 ]
 
+// Parity with the wizard's own SKILL_MAP is asserted in
+// `e2e/tests/skill-map-parity.e2e.test.ts` — the only workspace that declares
+// both `stash` and `@cipherstash/wizard`, and whose `typecheck` script compiles
+// the cross-package import.
 describe('SKILL_MAP', () => {
-  it('stays in parity with every wizard integration', () => {
-    expect(WIZARD_SKILL_MAP.drizzle).toEqual(SKILL_MAP.drizzle)
-    expect(WIZARD_SKILL_MAP.supabase).toEqual(SKILL_MAP.supabase)
-    expect(WIZARD_SKILL_MAP.prisma).toEqual(SKILL_MAP['prisma-next'])
-    expect(WIZARD_SKILL_MAP.generic).toEqual(SKILL_MAP.postgresql)
-  })
-
   it('selects only skills that contain a bundled SKILL.md', () => {
     for (const integration of ALL_INTEGRATIONS) {
       const available = new Set(availableSkills(integration))
