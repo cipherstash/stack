@@ -47,6 +47,7 @@ describe('maybeInstallSkills', () => {
       'stash-encryption',
       'stash-drizzle',
       'stash-indexing',
+      'stash-deployment',
       'stash-cli',
     ])
     expect(warnings()).toContain('Could not create ./.claude/skills/')
@@ -66,6 +67,7 @@ describe('maybeInstallSkills', () => {
     expect(result.copied).toEqual([
       'stash-encryption',
       'stash-indexing',
+      'stash-deployment',
       'stash-cli',
     ])
     expect(result.failed).toEqual(['stash-drizzle'])

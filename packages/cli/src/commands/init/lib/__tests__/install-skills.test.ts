@@ -128,6 +128,7 @@ describe('skillsFor', () => {
       'stash-encryption',
       'stash-prisma-next',
       'stash-indexing',
+      'stash-deployment',
       'stash-cli',
     ])
   })
@@ -135,7 +136,12 @@ describe('skillsFor', () => {
   it('falls back to the base skills for an unmapped integration (never crashes)', () => {
     // Simulate a future Integration variant with no SKILL_MAP entry.
     const skills = skillsFor('mystery-orm' as Integration)
-    expect(skills).toEqual(['stash-encryption', 'stash-indexing', 'stash-cli'])
+    expect(skills).toEqual([
+      'stash-encryption',
+      'stash-indexing',
+      'stash-deployment',
+      'stash-cli',
+    ])
   })
 })
 
@@ -157,6 +163,7 @@ describe('installSkills', () => {
       'stash-encryption',
       'stash-drizzle',
       'stash-indexing',
+      'stash-deployment',
       'stash-cli',
     ])
     expect(failed).toEqual([])
@@ -199,6 +206,7 @@ describe('installSkills', () => {
         'stash-encryption',
         'stash-drizzle',
         'stash-indexing',
+        'stash-deployment',
         'stash-cli',
       ],
     })
@@ -221,7 +229,12 @@ describe('installSkills', () => {
     )
 
     const { copied, failed } = installSkills(tmp, '.codex/skills', 'drizzle')
-    expect(copied).toEqual(['stash-encryption', 'stash-indexing', 'stash-cli'])
+    expect(copied).toEqual([
+      'stash-encryption',
+      'stash-indexing',
+      'stash-deployment',
+      'stash-cli',
+    ])
     expect(failed).toEqual(['stash-drizzle'])
     expect(warnings()).toContain('Failed to install skill stash-drizzle')
   })
@@ -240,6 +253,7 @@ describe('installSkills', () => {
       'stash-encryption',
       'stash-drizzle',
       'stash-indexing',
+      'stash-deployment',
       'stash-cli',
     ])
   })

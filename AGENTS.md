@@ -85,7 +85,7 @@ If these variables are missing, tests that require live encryption will fail or 
 - `e2e/*`: Cross-package end-to-end tests (package managers, supply chain, Prisma example README)
 - `examples/*`: Working apps (basic, prisma, supabase-worker)
 - `docs/plans/*`: Internal design plans. User-facing documentation lives at https://cipherstash.com/docs (not in this repo).
-- `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-indexing`, `stash-postgres`, `stash-edge`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-prisma-next`, `stash-supply-chain-security`)
+- `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-indexing`, `stash-deployment`, `stash-postgres`, `stash-edge`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-prisma-next`, `stash-supply-chain-security`)
 
 ## Agent Skills — these ship to customers
 
@@ -112,6 +112,7 @@ nothing type-checks them, and the damage lands in a customer's repo, not ours.
 | `packages/stack` encryption API, schema builders, subpath exports | `skills/stash-encryption` |
 | Drizzle / Supabase / Prisma Next / DynamoDB integrations | `skills/stash-drizzle`, `skills/stash-supabase`, `skills/stash-prisma-next`, `skills/stash-dynamodb` |
 | The rollout/cutover lifecycle (`packages/migrate`, `stash encrypt *`) | `skills/stash-encryption` and `skills/stash-cli` |
+| The deploy sequencing / deploy-gate story, `stash env`, or platform-specific deployment guidance | `skills/stash-deployment` |
 | The `@cipherstash/eql` pin, `eql install`/`eql migration` behaviour, or index-related SQL guidance | `skills/stash-indexing` |
 | The EQL operator/domain surface (`eql_v3.query_*` casts, predicate forms) | `skills/stash-postgres` |
 | `packages/stack/src/wasm-inline.ts`, the WASM entry's exports, or `stash env` | `skills/stash-edge` |
