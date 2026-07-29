@@ -5,7 +5,9 @@
 Remove the EQL v2 authoring surface and de-suffix the v3 API to the canonical
 unsuffixed names (part of the EQL v2 removal, #707).
 
-- **`encryptedSupabase` is now the connect-time-introspecting EQL v3 factory.**
+- **`encryptedSupabase` is now the connect-time-introspecting EQL v3 factory**
+  (formerly `encryptedSupabaseV3`). `encryptedSupabaseV3` remains a
+  type-identical `@deprecated` alias, so existing imports keep working.
 - **The legacy v2 `encryptedSupabase({ encryptionClient, supabaseClient })`
   wrapper is removed** — with it the two-argument `from(tableName, schema)` form
   and the hand-written client-side v2 schema. Its `EncryptedSupabaseConfig` and
@@ -14,7 +16,8 @@ unsuffixed names (part of the EQL v2 removal, #707).
 - **The public types use canonical unsuffixed names:**
   `EncryptedSupabaseOptions`, `EncryptedSupabaseInstance`,
   `TypedEncryptedSupabaseInstance`, `EncryptedQueryBuilder`,
-  `EncryptedQueryBuilderUntyped`, `FilterableKeys`, and `OrderableKeys`.
+  `EncryptedQueryBuilderUntyped`, `FilterableKeys`, and `OrderableKeys`. Each
+  keeps a type-identical `@deprecated` `*V3` alias.
 
 **Reading existing v2 data.** Only the v2 *authoring/emission* surface is removed
 — no v2 ciphertext is stranded. Decryption in `@cipherstash/stack` is
