@@ -12,8 +12,10 @@ const SCRIPT = resolve(
 
 function runScript(script, ...targets) {
   try {
-    execFileSync(process.execPath, [script, ...targets], { encoding: 'utf8' })
-    return { exitCode: 0, output: '' }
+    const output = execFileSync(process.execPath, [script, ...targets], {
+      encoding: 'utf8',
+    })
+    return { exitCode: 0, output }
   } catch (err) {
     return {
       exitCode: err.status,
@@ -24,6 +26,25 @@ function runScript(script, ...targets) {
 
 function run(target) {
   return runScript(SCRIPT, target)
+}
+
+function runWithReaddirError(code) {
+  const probe = resolve(
+    fileURLToPath(import.meta.url),
+    '../../walk-error-probe.mjs',
+  )
+  const dir = mkdtempSync(join(tmpdir(), 'lint-hardcoded-runners-walk-'))
+  const src = readFileSync(SCRIPT, 'utf8').replace(
+    "import { readdir } from 'node:fs/promises'",
+    `async function readdir() { const err = new Error('readdir failed'); err.code = '${code}'; throw err }`,
+  )
+  try {
+    writeFileSync(probe, src)
+    return runScript(probe, dir)
+  } finally {
+    rmSync(probe, { force: true })
+    rmSync(dir, { recursive: true, force: true })
+  }
 }
 
 describe('lint-no-hardcoded-runners', () => {
@@ -49,6 +70,18 @@ describe('lint-no-hardcoded-runners', () => {
     expect(r.exitCode).toBe(2)
     expect(r.output).toContain('no-such-fixture.ts')
     expect(r.output).not.toMatch(/at ModuleJob/)
+  })
+
+  it('skips a directory that vanished while being walked', () => {
+    const r = runWithReaddirError('ENOENT')
+    expect(r.exitCode).toBe(0)
+    expect(r.output).toContain('OK')
+  })
+
+  it('rethrows unexpected errors encountered while walking', () => {
+    const r = runWithReaddirError('EACCES')
+    expect(r.exitCode).not.toBe(0)
+    expect(r.output).toContain('EACCES')
   })
 
   // Matches the sibling linter: a target outside the repo rendered as a
