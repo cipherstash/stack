@@ -11,14 +11,32 @@ const table = encryptedTable('t', {
 })
 
 /**
- * A minimal client stub whose model-decrypt methods resolve to a fixed
- * `Result` payload. `typedClient` only `await`s these, so a plain Promise is a
- * sufficient thenable.
+ * A minimal operation stub resolving to a fixed `Result`. `typedClient` now
+ * wraps the underlying decrypt op in a `MappedDecryptOperation` and calls
+ * `.execute()` on it (rather than awaiting a bare promise), so the stub must be
+ * operation-like: `.execute()` plus the chainable `.audit()` / `.withLockContext()`
+ * the wrapper may delegate to.
+ */
+function fakeOp<R>(result: R) {
+  return {
+    execute: () => Promise.resolve(result),
+    audit() {
+      return this
+    },
+    withLockContext() {
+      return this
+    },
+  }
+}
+
+/**
+ * A minimal client stub whose model-decrypt methods return an operation
+ * resolving to a fixed `Result` payload.
  */
 function fakeClient(data: Record<string, unknown>): EncryptionClient {
   return {
-    decryptModel: () => Promise.resolve({ data }),
-    bulkDecryptModels: () => Promise.resolve({ data: [data] }),
+    decryptModel: () => fakeOp({ data }),
+    bulkDecryptModels: () => fakeOp({ data: [data] }),
   } as unknown as EncryptionClient
 }
 
@@ -60,6 +78,42 @@ describe('typedClient — decrypt reconstruction', () => {
     expect(data.note).toBeNull()
   })
 
+  it('leaves invalid date values untouched', async () => {
+    const client = typedClient(fakeClient({ when: 'not-a-date' }), table)
+
+    const result = await client.decryptModel({}, table)
+    if (result.failure) return
+
+    expect((result.data as Record<string, unknown>).when).toBe('not-a-date')
+  })
+
+  it('reconstructs a dotted date path without mutating the decrypted row', async () => {
+    const nested = encryptedTable('nested', {
+      'profile.when': types.Timestamp('profile_when'),
+      'profile.birthday': types.Date('profile_birthday'),
+    })
+    const decrypted = {
+      profile: {
+        when: '2020-01-02T03:04:05.000Z',
+        birthday: '1990-04-05',
+        untouched: true,
+      },
+    }
+    const client = typedClient(fakeClient(decrypted), nested)
+
+    const result = await client.decryptModel({}, nested)
+    if (result.failure) return
+
+    const data = result.data as Record<string, unknown>
+    const profile = data.profile as Record<string, unknown>
+    expect(profile.when).toBeInstanceOf(Date)
+    expect(profile.birthday).toBeInstanceOf(Date)
+    expect(profile.untouched).toBe(true)
+    expect(profile).not.toBe(decrypted.profile)
+    expect(decrypted.profile.when).toBe('2020-01-02T03:04:05.000Z')
+    expect(decrypted.profile.birthday).toBe('1990-04-05')
+  })
+
   it('reconstructs each row for bulkDecryptModels', async () => {
     const client = typedClient(
       fakeClient({ when: '2021-06-01T00:00:00.000Z', note: 'x' }),
@@ -77,7 +131,7 @@ describe('typedClient — decrypt reconstruction', () => {
   it('propagates a failure result unchanged', async () => {
     const failing = {
       decryptModel: () =>
-        Promise.resolve({
+        fakeOp({
           failure: { type: 'DecryptionError', message: 'boom' },
         }),
     } as unknown as EncryptionClient
@@ -121,5 +175,53 @@ describe('typedClient — decrypt reconstruction', () => {
 
     const data = result.data as Record<string, unknown>
     expect(data.when).toBeInstanceOf(Date)
+  })
+
+  // `Encryption` now returns THIS typed client for a v3 schema set, so a consumer
+  // typed against the nominal overload (e.g. stack-supabase's query builder,
+  // which casts to it and calls the one-arg `decryptModel(row)` /
+  // `bulkDecryptModels(rows)`) reaches the typed methods with NO table argument.
+  // They must decrypt without throwing — degrading to nominal behaviour (no date
+  // reconstruction) — not dereference `undefined.tableName`.
+  it('tolerates a one-arg (nominal-style) decryptModel call with no table', async () => {
+    const client = typedClient(
+      fakeClient({ when: '2020-01-02T03:04:05.000Z', note: 'hi' }),
+      table,
+    )
+    // The typed signature forbids the one-arg form; a nominal-typed caller does
+    // it at runtime. Exercise that runtime path.
+    // biome-ignore lint/suspicious/noExplicitAny: exercising the nominal-arity runtime path
+    const decryptOneArg = client.decryptModel as any
+
+    const result = await decryptOneArg({
+      when: '2020-01-02T03:04:05.000Z',
+      note: 'hi',
+    })
+    expect(result.failure).toBeFalsy()
+    if (result.failure) return
+
+    const data = result.data as Record<string, unknown>
+    // No table → no reconstruction: `when` stays the raw string, exactly as the
+    // nominal client would return it.
+    expect(data.when).toBe('2020-01-02T03:04:05.000Z')
+    expect(data.note).toBe('hi')
+  })
+
+  it('tolerates a one-arg (nominal-style) bulkDecryptModels call with no table', async () => {
+    const client = typedClient(
+      fakeClient({ when: '2021-06-01T00:00:00.000Z', note: 'x' }),
+      table,
+    )
+    // biome-ignore lint/suspicious/noExplicitAny: exercising the nominal-arity runtime path
+    const bulkOneArg = client.bulkDecryptModels as any
+
+    const result = await bulkOneArg([{ when: '2021-06-01T00:00:00.000Z' }])
+    expect(result.failure).toBeFalsy()
+    if (result.failure) return
+
+    const rows = result.data as Array<Record<string, unknown>>
+    expect(rows).toHaveLength(1)
+    // No table → no reconstruction: raw string, not a Date.
+    expect(rows[0].when).toBe('2021-06-01T00:00:00.000Z')
   })
 })

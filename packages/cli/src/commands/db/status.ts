@@ -99,8 +99,7 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
   // install creates it and Proxy reads it. EQL v3 has no configuration table —
   // encryption config lives in each column's `eql_v3.*` domain type — so on a
   // v3-only install there's nothing to probe. Gate the check on v2 being
-  // installed; this also removes the old dead-end that told v3-only users to
-  // run `db push` (which neither creates that table nor applies to v3).
+  // installed; this also avoids probing a table that does not apply to v3.
   if (!installedV2) {
     p.log.info(
       "Encrypt config: carried in each column's `eql_v3.*` type (EQL v3 has no Proxy config table).",

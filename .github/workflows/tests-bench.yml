@@ -1,20 +1,45 @@
 name: "Test Benchmark JS"
 
+# Trigger paths follow the package GRAPH, not the bench directory. bench depends
+# on `@cipherstash/stack` and `@cipherstash/stack-drizzle`, and (since the fixture
+# schema moved to EQL v3 domains) on the CLI's EQL installer — a break in any of
+# them can red this job, so an edit to any of them has to be able to trigger it.
+# Scoped the same way the `integration-*` workflows scope theirs rather than
+# taking whole packages, to keep the trigger surface honest.
 on:
   push:
     branches:
       - 'main'
     paths:
       - 'packages/bench/**'
+      - 'packages/stack/src/eql/v3/**'
+      # The bench drives the typed v3 CLIENT, which lives in `encryption/`, not
+      # `eql/v3/` (that is the authoring DSL). Without this the job stayed green
+      # by never running for the changes most likely to break it.
+      - 'packages/stack/src/encryption/**'
+      - 'packages/stack-drizzle/**'
+      - 'packages/test-kit/**'
+      - 'packages/cli/src/installer/**'
       - 'local/**'
       - '.github/workflows/tests-bench.yml'
+      - '.github/actions/integration-setup/**'
   pull_request:
     branches:
       - "**"
+    # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
     paths:
       - 'packages/bench/**'
+      - 'packages/stack/src/eql/v3/**'
+      # The bench drives the typed v3 CLIENT, which lives in `encryption/`, not
+      # `eql/v3/` (that is the authoring DSL). Without this the job stayed green
+      # by never running for the changes most likely to break it.
+      - 'packages/stack/src/encryption/**'
+      - 'packages/stack-drizzle/**'
+      - 'packages/test-kit/**'
+      - 'packages/cli/src/installer/**'
       - 'local/**'
       - '.github/workflows/tests-bench.yml'
+      - '.github/actions/integration-setup/**'
 
 jobs:
   tests-bench:
@@ -25,25 +50,14 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v6.0.9
-        name: Install pnpm
+      # The shared integration preamble, which also builds the `stash` CLI — not
+      # incidental here: the bench `globalSetup` installs EQL v3 by shelling out
+      # to the real `stash eql install --eql-version 3`.
+      - uses: ./.github/actions/integration-setup
         with:
-          run_install: false
-
-      - name: Install Node.js
-        uses: actions/setup-node@v6.5.0
-        with:
+          # This job's existing Node; the composite defaults to 24 for the
+          # integration suites.
           node-version: 22
-          cache: 'pnpm'
-
-      # node-pty's install hook falls back to `node-gyp rebuild` when no
-      # linux-x64 prebuild matches. pnpm/action-setup v6 no longer ships
-      # node-gyp on PATH, so install it explicitly.
-      - name: Install node-gyp
-        run: npm install -g node-gyp
-
-      - name: Install dependencies
-        run: pnpm recursive install --frozen-lockfile
 
       # `@cipherstash/stack` ships dist/-based `exports`; bench imports
       # from `@cipherstash/stack` and `@cipherstash/stack-drizzle` (the Drizzle
@@ -54,11 +68,28 @@ jobs:
       - name: Build stack + adapter packages
         run: pnpm exec turbo run build --filter @cipherstash/stack --filter @cipherstash/stack-drizzle
 
-      # Starts the pinned postgres-eql container (PostgreSQL 17 + EQL
-      # pre-installed) via local/docker-compose.yml; waits for healthcheck.
-      - name: Start local Postgres (EQL)
+      # Deliberately BEFORE Postgres. Separate config, no globalSetup: these
+      # need neither a database nor credentials, so they must not be reachable
+      # only after the steps that do — a docker failure below would otherwise
+      # skip the one check whose whole rationale is that it cannot be skipped.
+      # The seed keying they check was wrong for the entire v2 -> v3 port
+      # precisely because every suite that would have caught it needs
+      # credentials, and `tsc --noEmit` passes on a hand-written row type that
+      # agrees with itself (#772 review, finding 12).
+      - name: Run bench unit checks (no database, no credentials)
+        working-directory: packages/bench
+        run: pnpm test:unit
+
+      # Service-scoped `postgres`: local/docker-compose.yml also defines a
+      # PostgREST that bench never talks to.
+      #
+      # This container has EQL v2 baked in and NOTHING to do with the v3 domains
+      # the fixture schema needs — those come from the `globalSetup` install
+      # below. Do not add an EQL step here; keeping the install inside vitest is
+      # what makes `pnpm test:local` and CI the same path.
+      - name: Start local Postgres
         working-directory: local
-        run: docker compose up --wait --wait-timeout 60
+        run: docker compose up --wait --wait-timeout 60 postgres
 
       # `pnpm test:local` resolves to `vitest run`; the trailing `db-only`
       # is a vitest path filter that narrows to __tests__/db-only.test.ts

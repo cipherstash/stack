@@ -10,12 +10,13 @@ import type {
   V3ModelInput,
 } from '@/eql/v3'
 import { DATE_LIKE_CASTS } from '@/eql/v3/columns'
+import { reconstructDatePaths } from '@/eql/v3/date-reconstruction'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import type { LockContextInput } from '@/identity'
 import type {
   BulkDecryptPayload,
   BulkEncryptPayload,
-  ClientConfig,
+  Decrypted,
   Encrypted,
   EncryptedReturnType,
   EncryptOptions,
@@ -33,6 +34,10 @@ import {
   type EncryptOperation,
   type EncryptQueryOperation,
 } from './index'
+import {
+  type AuditableDecryptModelOperation,
+  MappedDecryptOperation,
+} from './operations/mapped-decrypt'
 
 /**
  * A strongly-typed view over an {@link EncryptionClient} for EQL v3 schemas.
@@ -101,22 +106,44 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
    * columns are reconstructed from the encrypt-config `cast_as`.
    *
    * Pass `lockContext` to decrypt identity-bound data — the same context that
-   * was supplied at encrypt time must be provided here.
+   * was supplied at encrypt time must be provided here (or chain
+   * `.withLockContext()` on the returned operation).
    *
-   * Unlike the encrypt operations this returns a plain `Promise<Result<…>>`
-   * rather than a chainable operation, because it maps the resolved value.
+   * Returns a chainable {@link AuditableDecryptModelOperation}: await it for the
+   * `Result`, or chain `.audit({ metadata })` / `.withLockContext()` first. The
+   * per-row `Date` reconstruction is applied to the successful result.
    */
   decryptModel<Table extends S[number], T extends Record<string, unknown>>(
     input: T,
     table: Table,
     lockContext?: LockContextInput,
-  ): Promise<Result<V3DecryptedModel<Table, T>, EncryptionError>>
+  ): AuditableDecryptModelOperation<V3DecryptedModel<Table, T>>
+
+  /**
+   * Table-less form, mirroring the nominal {@link EncryptionClient}: decrypt
+   * whatever encrypted fields the model carries, with no `Date` reconstruction
+   * (there is no `cast_as` to reconstruct from) and no precise plaintext shape.
+   *
+   * This is the read path for rows that predate this client's schemas — legacy
+   * **EQL v2** models above all, whose table is not, and cannot be, a member of
+   * `S`. The runtime has always accepted the one-arg call; without this
+   * signature the type layer forbids the very compatibility the client
+   * promises. Prefer the two-arg form whenever the table IS registered.
+   */
+  decryptModel<T extends Record<string, unknown>>(
+    input: T,
+  ): AuditableDecryptModelOperation<Decrypted<T>>
 
   bulkDecryptModels<Table extends S[number], T extends Record<string, unknown>>(
     input: Array<T>,
     table: Table,
     lockContext?: LockContextInput,
-  ): Promise<Result<Array<V3DecryptedModel<Table, T>>, EncryptionError>>
+  ): AuditableDecryptModelOperation<Array<V3DecryptedModel<Table, T>>>
+
+  /** Table-less bulk form — see the one-arg {@link decryptModel} overload. */
+  bulkDecryptModels<T extends Record<string, unknown>>(
+    input: Array<T>,
+  ): AuditableDecryptModelOperation<Array<Decrypted<T>>>
 
   // Parity passthroughs — not v3-strengthened, delegated as-is.
   bulkEncrypt(
@@ -125,6 +152,36 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
   ): BulkEncryptOperation
   bulkDecrypt(payloads: BulkDecryptPayload): BulkDecryptOperation
   getEncryptConfig(): ReturnType<EncryptionClient['getEncryptConfig']>
+
+  /**
+   * Re-initialize the underlying client, staying on EQL v3.
+   *
+   * @internal Present for runtime parity with {@link EncryptionClient}, not as
+   * part of the typed authoring surface. `Encryption` picks its return value by
+   * inspecting the *schemas* while overload resolution inspects the *config*, so
+   * the two can disagree: a config hoisted into a `ClientConfig`-typed variable
+   * selects the nominal overload but still yields this client at runtime. Every
+   * other `EncryptionClient` method already existed here; without `init` that
+   * mismatch turned into `TypeError: client.init is not a function`.
+   *
+   * This is NOT a bare passthrough, because `EncryptionClient.init` would
+   * otherwise be a way around the guard `Encryption` applies at construction.
+   * `init` takes its own `eqlVersion`, forwards `undefined` to the FFI (whose
+   * default is **v2**), and never consults `resolveEqlVersion` — so delegating
+   * verbatim would let a typed v3 client be re-initialized into v2 wire while
+   * keeping this v3 surface, the exact contradiction `resolveEqlVersion`
+   * refuses. The wire version is pinned to `3` and an explicit `2` is rejected.
+   *
+   * It also resolves to the TYPED client rather than the underlying nominal one,
+   * so `client = (await client.init(cfg)).data` — the natural idiom, since
+   * `EncryptionClient.init` resolves `{ data: this }` — keeps the typed surface
+   * instead of silently degrading to the nominal one.
+   */
+  init(
+    config: Omit<Parameters<EncryptionClient['init']>[0], 'eqlVersion'> & {
+      eqlVersion?: 3
+    },
+  ): Promise<Result<TypedEncryptionClient<S>, EncryptionError>>
 }
 
 /**
@@ -161,13 +218,7 @@ function rowReconstructor(
     .map(([property]) => property)
 
   return (row) => {
-    const out: Record<string, unknown> = { ...row }
-    for (const property of dateProperties) {
-      const value = out[property]
-      if (value == null) continue
-      out[property] = new Date(value as string | number | Date)
-    }
-    return out
+    return reconstructDatePaths(row, dateProperties)
   }
 }
 
@@ -214,6 +265,16 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
     },
   }
 
+  // Pass-through maps for a one-arg (nominal-style) decrypt call, where `table`
+  // is absent: decrypt WITHOUT date reconstruction, exactly as the nominal
+  // `EncryptionClient` does. This client is now what `Encryption` returns for a
+  // v3 schema set, so a consumer typed against the nominal overload (e.g.
+  // stack-supabase's query builder, which casts to it) can call `decryptModel(x)`
+  // / `bulkDecryptModels(xs)` with no table. Degrade gracefully instead of
+  // dereferencing `undefined.tableName`.
+  const passthroughRow = (row: Record<string, unknown>) => row
+  const passthroughRows = (rows: Array<Record<string, unknown>>) => rows
+
   // Overloaded so the implementation is checked against BOTH forms directly —
   // no whole-value cast. The two public signatures mirror the interface member;
   // the hidden implementation signature is broad and forwards to the nominal
@@ -244,7 +305,85 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
     return client.encryptQuery(plaintextOrTerms as never, opts as never)
   }
 
-  return {
+  // Overloaded declarations for the same reason as `encryptQuery` above: the
+  // table-ful and table-less forms have different return types, and a single
+  // arrow in the object literal cannot present both.
+  function decryptModel<
+    Table extends S[number],
+    T extends Record<string, unknown>,
+  >(
+    input: T,
+    table: Table,
+    lockContext?: LockContextInput,
+  ): AuditableDecryptModelOperation<V3DecryptedModel<Table, T>>
+  function decryptModel<T extends Record<string, unknown>>(
+    input: T,
+  ): AuditableDecryptModelOperation<Decrypted<T>>
+  function decryptModel(
+    input: Record<string, unknown>,
+    table?: AnyV3Table,
+    lockContext?: LockContextInput,
+  ): AuditableDecryptModelOperation<never> {
+    // `table` is absent on a nominal-style one-arg call (see `passthroughRow`).
+    // Given a table: reconstruct dates from its cast_as, or — if it was never
+    // registered — leave `map` undefined so the mapped op resolves to
+    // `unknownTableFailure` on execute.
+    const reconstruct = table
+      ? reconstructors.get(table.tableName)
+      : passthroughRow
+    const op = client.decryptModel(input)
+    const base = lockContext ? op.withLockContext(lockContext) : op
+    return new MappedDecryptOperation(
+      base,
+      reconstruct,
+      unknownTableFailure,
+    ) as never
+  }
+
+  function bulkDecryptModels<
+    Table extends S[number],
+    T extends Record<string, unknown>,
+  >(
+    input: Array<T>,
+    table: Table,
+    lockContext?: LockContextInput,
+  ): AuditableDecryptModelOperation<Array<V3DecryptedModel<Table, T>>>
+  function bulkDecryptModels<T extends Record<string, unknown>>(
+    input: Array<T>,
+  ): AuditableDecryptModelOperation<Array<Decrypted<T>>>
+  function bulkDecryptModels(
+    input: Array<Record<string, unknown>>,
+    table?: AnyV3Table,
+    lockContext?: LockContextInput,
+  ): AuditableDecryptModelOperation<never> {
+    const op = client.bulkDecryptModels(input)
+    const base = lockContext ? op.withLockContext(lockContext) : op
+    // No table → pass rows through (nominal behaviour). Registered table →
+    // reconstruct each row. Unregistered table → `undefined` map →
+    // `unknownTableFailure` on execute.
+    let mapRows:
+      | ((
+          rows: Array<Record<string, unknown>>,
+        ) => Array<Record<string, unknown>>)
+      | undefined
+    if (!table) {
+      mapRows = passthroughRows
+    } else {
+      const reconstruct = reconstructors.get(table.tableName)
+      mapRows = reconstruct ? (rows) => rows.map(reconstruct) : undefined
+    }
+    return new MappedDecryptOperation(
+      base,
+      mapRows,
+      unknownTableFailure,
+    ) as never
+  }
+
+  // Annotated rather than `satisfies`, because `init` resolves to `typed`
+  // itself and a self-referencing initializer has no inferrable type. The
+  // annotation checks the same shape the `satisfies` did, and the function's
+  // declared return type is this type anyway, so nothing is widened.
+  const typed: TypedEncryptionClient<S> = {
     encrypt: (plaintext, opts) =>
       client.encrypt(plaintext as never, opts as never),
     encryptQuery,
@@ -253,67 +392,102 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
     bulkEncryptModels: (input, table) =>
       client.bulkEncryptModels(input as never, table as never) as never,
     decrypt: (encrypted) => client.decrypt(encrypted),
-    decryptModel: async (input, table, lockContext) => {
-      const reconstruct = reconstructors.get(table.tableName)
-      if (!reconstruct) return unknownTableFailure as never
-      const op = client.decryptModel(input as never)
-      const result = await (lockContext ? op.withLockContext(lockContext) : op)
-      if (result.failure) return result as never
-      return { data: reconstruct(result.data) } as never
-    },
-    bulkDecryptModels: async (input, table, lockContext) => {
-      const reconstruct = reconstructors.get(table.tableName)
-      if (!reconstruct) return unknownTableFailure as never
-      const op = client.bulkDecryptModels(input as never)
-      const result = await (lockContext ? op.withLockContext(lockContext) : op)
-      if (result.failure) return result as never
-      return {
-        data: result.data.map((row) =>
-          reconstruct(row as Record<string, unknown>),
-        ),
-      } as never
-    },
+    decryptModel,
+    bulkDecryptModels,
     bulkEncrypt: (plaintexts, opts) => client.bulkEncrypt(plaintexts, opts),
     bulkDecrypt: (payloads) => client.bulkDecrypt(payloads),
     getEncryptConfig: () => client.getEncryptConfig(),
-  } satisfies TypedEncryptionClient<S>
+    // See the interface member for why this is not `client.init(config)`:
+    // `init` bypasses `resolveEqlVersion` and defaults the FFI to v2 wire, so a
+    // verbatim delegation would reopen the contradiction A-8 closes. Pin v3,
+    // refuse an explicit 2, and resolve to the typed client so the surface
+    // survives the round trip.
+    init: async (config) => {
+      if (config.eqlVersion !== undefined && config.eqlVersion !== 3) {
+        return {
+          failure: {
+            type: EncryptionErrorTypes.EncryptionError,
+            message:
+              "[eql/v3]: cannot re-initialize a typed EQL v3 client at eqlVersion 2 — the payloads would not match the columns' eql_v3_* domains. Build a separate client from the EQL v2 schema you want to write.",
+          },
+        }
+      }
+
+      const result = await client.init({ ...config, eqlVersion: 3 })
+      return result.failure ? result : { data: typed }
+    },
+  }
+
+  return typed
 }
 
 /**
- * Build a {@link TypedEncryptionClient} for EQL v3 schemas — the strongly-typed
- * counterpart to {@link Encryption}. Mirrors its config, then retypes the client
- * against the provided v3 `schemas`.
+ * The client type {@link Encryption} resolves to for the schema tuple `S`.
+ *
+ * This is **the** way to name the client — reach for it whenever you need to
+ * declare a variable, field or return type before the `await` that produces it:
+ *
+ * ```typescript
+ * const users = encryptedTable("users", { email: types.TextSearch("email") })
+ *
+ * let client: EncryptionClientFor<readonly [typeof users]>
+ * client = await Encryption({ schemas: [users] })
+ * ```
+ *
+ * For code that is generic over its schemas — integration adapters that build a
+ * table per test family, say — name the loose array and keep the typed surface:
+ *
+ * ```typescript
+ * let client: EncryptionClientFor<readonly AnyV3Table[]>
+ * ```
+ *
+ * **Do not use `Awaited<ReturnType<typeof Encryption>>`.** `Encryption` is
+ * overloaded, and TypeScript's `ReturnType` reads the LAST overload — the
+ * nominal one — so that expression yields `EncryptionClient` even for an all-v3
+ * schema set, and assigning the real client to it is an error:
+ *
+ * ```
+ * Type 'TypedEncryptionClient<…>' is missing the following properties
+ * from type 'EncryptionClient': client, encryptConfig
+ * ```
+ *
+ * Overload order cannot fix that — whichever signature is last wins, so one of
+ * the two forms is always mis-resolved, and putting the nominal signature first
+ * mis-resolves v3 schemas instead (a v3 table structurally satisfies
+ * `BuildableTable`). A named extraction type is what every comparable library
+ * does for the same reason: `z.infer`, arktype's `typeof T.infer`, hono's
+ * `Client<T>`.
+ */
+export type EncryptionClientFor<S extends readonly unknown[]> =
+  S extends readonly AnyV3Table[]
+    ? S['length'] extends 0
+      ? EncryptionClient
+      : TypedEncryptionClient<S>
+    : EncryptionClient
+
+/**
+ * @deprecated Use {@link Encryption} instead — it is now overloaded so an array
+ * of concrete EQL v3 tables yields the same strongly-typed client this used to.
+ * `EncryptionV3` is a type-identical alias of `Encryption`, retained for
+ * backwards compatibility, and will be removed in a future release.
  *
  * @example
  * ```typescript
- * import { EncryptionV3, encryptedTable, types } from "@cipherstash/stack/v3"
+ * import { Encryption, encryptedTable, types } from "@cipherstash/stack/v3"
  *
  * const users = encryptedTable("users", { email: types.TextSearch("email") })
- * const client = await EncryptionV3({ schemas: [users] })
+ * const client = await Encryption({ schemas: [users] })
  *
  * await client.encrypt("a@b.com", { table: users, column: users.email })
  * ```
  */
-export async function EncryptionV3<
-  const S extends readonly AnyV3Table[],
->(config: {
-  schemas: S
-  config?: ClientConfig
-}): Promise<TypedEncryptionClient<S>> {
-  const client = await Encryption({
-    schemas: config.schemas as unknown as Parameters<
-      typeof Encryption
-    >[0]['schemas'],
-    // Force the v3 EQL wire format. protect-ffi's newClient defaults to
-    // eqlVersion 2; a v2-mode client cannot resolve v3 concrete-type columns
-    // and fails every encrypt with "Cannot convert undefined or null to
-    // object". This is a v3-only invariant, so it overrides any user value.
-    config: { ...config.config, eqlVersion: 3 },
-  })
-  return typedClient(client, ...config.schemas)
-}
+export const EncryptionV3 = Encryption
 
 // Single import surface: re-export the v3 `types` namespace + table API + type
 // helpers so `@cipherstash/stack/v3` provides everything needed to author and
 // use a schema.
 export * from '@/eql/v3'
+// `Encryption` comes along for the same reason — it is the current name for
+// what `EncryptionV3` aliases, so authoring a v3 schema and building its
+// client should not need a second import specifier.
+export { Encryption }

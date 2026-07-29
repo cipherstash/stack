@@ -32,8 +32,8 @@
  * a distinct `sub`) and asserts B cannot read A's row, with A reading it as the
  * control.
  */
-import { OidcFederationStrategy } from '@cipherstash/stack'
-import { EncryptionV3 } from '@cipherstash/stack/v3'
+import { type AuthFailure, OidcFederationStrategy } from '@cipherstash/stack'
+import { type EncryptionClientFor, EncryptionV3 } from '@cipherstash/stack/v3'
 import { databaseUrl, unwrapResult, V3_MATRIX } from '@cipherstash/test-kit'
 import { clerkJwtProvider } from '@cipherstash/test-kit/integration-clerk'
 import { and, asc as drizzleAsc, eq as drizzleEq, type SQL } from 'drizzle-orm'
@@ -41,11 +41,11 @@ import { integer, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { makeEqlV3Column } from '../src/v3/column'
+import { makeEqlV3Column } from '../src/column'
 import {
-  createEncryptionOperatorsV3,
-  extractEncryptionSchemaV3,
-} from '../src/v3/index.js'
+  createEncryptionOperators,
+  extractEncryptionSchema,
+} from '../src/index.js'
 
 const sqlClient = postgres(databaseUrl(), { prepare: false })
 
@@ -65,14 +65,14 @@ const secretTable = pgTable(TABLE_NAME, {
   rowKey: text('row_key').notNull(),
   testRunId: text('test_run_id').notNull(),
   secret: makeEqlV3Column(V3_MATRIX['public.eql_v3_text_eq'].builder('secret')),
-} as never)
+})
 
-const schema = extractEncryptionSchemaV3(secretTable)
+const schema = extractEncryptionSchema(secretTable)
 
 type SelectRow = { rowKey: string }
 
-let client: Awaited<ReturnType<typeof EncryptionV3>>
-let ops: ReturnType<typeof createEncryptionOperatorsV3>
+let client: EncryptionClientFor<readonly [typeof schema]>
+let ops: ReturnType<typeof createEncryptionOperators>
 let db: ReturnType<typeof drizzle>
 
 /**
@@ -129,6 +129,12 @@ const IDENTITY_DENIAL =
 const INFRA_FAULT =
   /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|timed? ?out|network error/i
 
+function authFailureMessage(failure: AuthFailure): string {
+  return 'error' in failure && failure.error instanceof Error
+    ? failure.error.message
+    : failure.type
+}
+
 /** Run-scoped SELECT of row keys under an already-encrypted SQL condition. */
 async function selectRowKeys(condition: SQL): Promise<string[]> {
   const rows = (await db
@@ -153,13 +159,13 @@ beforeAll(async () => {
   // `config.authStrategy` expects (it calls `.getToken()` on it).
   const federation = OidcFederationStrategy.create(crn, clerkJwtProvider())
   if (federation.failure) {
-    throw new Error(`[federation]: ${federation.failure.message}`)
+    throw new Error(`[federation]: ${authFailureMessage(federation.failure)}`)
   }
   client = await EncryptionV3({
     schemas: [schema],
     config: { authStrategy: federation.data },
   })
-  ops = createEncryptionOperatorsV3(client)
+  ops = createEncryptionOperators(client)
   db = drizzle({ client: sqlClient })
 
   await sqlClient.unsafe(`
@@ -310,7 +316,9 @@ describe('v3 drizzle operators with lock context (live pg)', () => {
       clerkJwtProvider('CLERK_MACHINE_TOKEN_B'),
     )
     if (federationB.failure) {
-      throw new Error(`[federation B]: ${federationB.failure.message}`)
+      throw new Error(
+        `[federation B]: ${authFailureMessage(federationB.failure)}`,
+      )
     }
     const clientB = await EncryptionV3({
       schemas: [schema],

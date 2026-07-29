@@ -21,6 +21,7 @@ The generated migration also carries the `cs_migrations` tracking schema, so one
 isn't installed or configured, init now reports EQL as not installed and points
 at `stash eql migration --drizzle` rather than aborting the run.
 
-The v2 Drizzle path remains available for existing deployments via an explicit
-`stash eql install --drizzle --eql-version 2`; that command's error message now
-points at the v3 alternative instead of only suggesting `--eql-version 2`.
+The final CLI installation and mutation surface is v3-only: the explicit v2
+Drizzle install path is removed. Legacy v2 remains readable and visible in
+diagnostics. Generate a checked-in install migration with `stash eql migration
+--drizzle`.

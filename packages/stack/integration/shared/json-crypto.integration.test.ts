@@ -7,6 +7,7 @@
  */
 import { unwrapResult } from '@cipherstash/test-kit'
 import { beforeAll, describe, expect, it } from 'vitest'
+import type { EncryptionClientFor } from '@/encryption/v3'
 import { EncryptionV3, encryptedTable, types } from '@/encryption/v3'
 
 const docs = encryptedTable('v3_json_docs', {
@@ -14,7 +15,7 @@ const docs = encryptedTable('v3_json_docs', {
 })
 
 describe('v3 typed client — encrypted JSONB round-trip', () => {
-  let client: Awaited<ReturnType<typeof EncryptionV3<[typeof docs]>>>
+  let client: EncryptionClientFor<readonly [typeof docs]>
 
   beforeAll(async () => {
     client = await EncryptionV3({ schemas: [docs] })

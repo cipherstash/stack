@@ -6,11 +6,9 @@
  */
 
 import { execSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
 import * as p from '@clack/prompts'
 import type { GatheredContext } from './gather.js'
-import { rewriteEncryptedAlterColumns } from './rewrite-migrations.js'
+import { describeSkipReason, sweepMigrationDirs } from './rewrite-migrations.js'
 import type { DetectedPackageManager, Integration } from './types.js'
 
 interface PostAgentOptions {
@@ -21,13 +19,15 @@ interface PostAgentOptions {
 }
 
 /**
- * Candidate directories drizzle-kit may write migrations to. We check in
- * order and rewrite the first one that exists; `drizzle` is the default.
+ * Candidate directories drizzle-kit may write migrations to. `drizzle` is the
+ * default, but a project's configured `out` is not discoverable from here, so
+ * every candidate that exists is swept — see {@link sweepMigrationDirs} for why
+ * stopping at the first one loses migrations.
  */
 const DRIZZLE_OUT_DIRS = ['drizzle', 'migrations', 'src/db/migrations']
 
 /**
- * Run all post-agent steps: install packages, push config, run migrations.
+ * Run all post-agent steps: install packages, install EQL, run migrations.
  */
 export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
   const { cwd, integration, gathered, packageManager } = opts
@@ -53,21 +53,9 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
     )
   }
 
-  // Step 3: Push encryption config (only when using Proxy)
-  if (gathered.usesProxy) {
-    await runStep(
-      'Pushing encryption config to database...',
-      'Encryption config pushed',
-      `${runner} stash db push`,
-      cwd,
-    )
-  } else {
-    p.log.info(
-      'Skipping `stash db push` — not using CipherStash Proxy. Run it manually if you ever switch to Proxy.',
-    )
-  }
-
-  // Step 4: Integration-specific migrations
+  // Step 3: Integration-specific migrations. Older gathered context may still
+  // carry `usesProxy`; it is compatibility data only. EQL v3 has no Proxy
+  // configuration to push, and the retired `stash db push` must never run.
   if (integration === 'drizzle') {
     await runStep(
       'Generating Drizzle migration...',
@@ -76,13 +64,53 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
       cwd,
     )
 
-    // Rewrite any `ALTER COLUMN ... SET DATA TYPE eql_v2_encrypted` that
-    // drizzle-kit just produced — those fail in Postgres. CIP-2991 + CIP-2994.
-    await rewriteEncryptedMigrations(cwd)
+    // Rewrite any `ALTER COLUMN ... SET DATA TYPE <eql domain>` that
+    // drizzle-kit just produced — those fail in Postgres (no cast from
+    // text/numeric to an EQL domain). Covers the EQL v3 family the wizard now
+    // scaffolds, and legacy eql_v2_encrypted. CIP-2991 + CIP-2994 + #693.
+    const sweep = await rewriteEncryptedMigrations(cwd)
+
+    // A rewritten file is a DROP+ADD in disguise — the next migrate destroys
+    // data on any table that already holds rows. A flagged statement never got
+    // that treatment: it is left on disk untouched, so nothing is destroyed by
+    // migrating, but a raw ALTER to an encrypted domain has no cast in
+    // Postgres and fails at migrate time until a human resolves it. Both
+    // default the prompt to NO — an `initialValue: true` immediately under
+    // either warning invites exactly the mistake the warning is about — but
+    // they need different words: claiming "DESTROYS data" for a migration
+    // that destroyed nothing is its own kind of wrong guidance.
+    const destructive = sweep.rewritten > 0
+    const flaggedOnly = !destructive && sweep.skipped > 0
+
+    // A directory whose sweep threw contributes 0 to both totals, so on its own
+    // it is indistinguishable from a clean sweep — except that it means the
+    // opposite: those migrations may still hold unrepaired `SET DATA TYPE`
+    // statements and nobody has looked. `stash eql migration` / `db install`
+    // treat "sweep failed outright" and "sweep left near-misses" as the same
+    // state for the same reason; unknown is not safe, so the default is NO here
+    // too. The wording differs from the destructive case on purpose: nothing is
+    // known about that directory, so claiming it destroys data would be a guess.
+    const unverifiedDirs = sweep.failedDirs
+    const unverified = unverifiedDirs.length > 0
+    const unverifiedList = unverifiedDirs.map((dir) => `${dir}/`).join(', ')
+    const unverifiedCount = `${unverifiedDirs.length} director${
+      unverifiedDirs.length === 1 ? 'y' : 'ies'
+    }`
+    if (unverified) {
+      p.log.warn(
+        `The ALTER COLUMN sweep did not fully complete — review the sibling migrations in ${unverifiedList} before running drizzle-kit migrate, or you may apply broken/unsafe SQL.`,
+      )
+    }
 
     const shouldMigrate = await p.confirm({
-      message: `Run the migration now? (${runner} drizzle-kit migrate)`,
-      initialValue: true,
+      message: destructive
+        ? `Run the migration now? (${runner} drizzle-kit migrate) — see the warnings above: this migration DESTROYS data on any table that already holds rows`
+        : flaggedOnly
+          ? `Run the migration now? (${runner} drizzle-kit migrate) — statement(s) were flagged for review above rather than rewritten; nothing was destroyed, but the raw ALTER will fail at migrate time until they're resolved`
+          : unverified
+            ? `Run the migration now? (${runner} drizzle-kit migrate) — the sweep could not check ${unverifiedCount} (${unverifiedList}); review those migrations before migrating, or you may apply broken/unsafe SQL`
+            : `Run the migration now? (${runner} drizzle-kit migrate)`,
+      initialValue: !destructive && !flaggedOnly && !unverified,
     })
 
     if (!p.isCancel(shouldMigrate) && shouldMigrate) {
@@ -112,31 +140,74 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
   }
 }
 
-async function rewriteEncryptedMigrations(cwd: string): Promise<void> {
-  for (const dir of DRIZZLE_OUT_DIRS) {
-    const abs = resolve(cwd, dir)
-    if (!existsSync(abs)) continue
+/**
+ * Sweep the candidate migration directories, reporting what happened, and
+ * return the totals so the caller can decide how dangerous "run it now" is.
+ *
+ * `failedDirs` names the directories that exist but whose sweep threw. It is a
+ * third state, not a variant of "nothing to do": those migrations may still
+ * contain unrepaired `SET DATA TYPE` statements and went unchecked, which the
+ * `rewritten`/`skipped` counts cannot express — both stay 0 for such a
+ * directory, exactly as they do for a clean one.
+ */
+async function rewriteEncryptedMigrations(cwd: string): Promise<{
+  rewritten: number
+  skipped: number
+  failedDirs: string[]
+}> {
+  const results = await sweepMigrationDirs(cwd, DRIZZLE_OUT_DIRS)
+  const totals = { rewritten: 0, skipped: 0, failedDirs: [] as string[] }
 
-    try {
-      const rewritten = await rewriteEncryptedAlterColumns(abs)
-      if (rewritten.length > 0) {
-        p.log.info(
-          `Rewrote ${rewritten.length} migration file(s) in ${dir}/ to use ADD+DROP+RENAME for encrypted columns.`,
-        )
-        for (const file of rewritten) p.log.step(`  - ${file}`)
-        p.log.warn(
-          'If any of these tables already have rows, backfill the new column via @cipherstash/stack before running the migration in production. See the comments in the rewritten SQL.',
-        )
+  for (const { dir, rewritten, skipped, error, notDrizzleOutput } of results) {
+    totals.rewritten += rewritten.length
+    totals.skipped += skipped.length
+
+    // Not a failure and not a risk — the directory belongs to some other tool,
+    // so `drizzle-kit migrate` will not run it and the prompt below is
+    // unaffected. Said out loud anyway, so a user whose drizzle output really
+    // does live here (meta/ deleted, or a hand-assembled directory) can see why
+    // nothing was repaired instead of assuming it was clean.
+    if (notDrizzleOutput) {
+      p.log.info(
+        `Left ${dir}/ alone — it holds .sql files but no drizzle-kit journal (meta/_journal.json), so it is not a drizzle output directory. If it IS your drizzle \`out\`, run \`drizzle-kit generate\` once to create the journal, then re-run the wizard.`,
+      )
+      continue
+    }
+
+    // Presence, not truthiness: `error` is `err.message` for a thrown `Error`,
+    // and `new Error()` has an empty message. Testing `if (error)` would put a
+    // blank-message failure back on the fail-open path this whole branch exists
+    // to close.
+    if (error !== undefined) {
+      totals.failedDirs.push(dir)
+      p.log.warn(
+        `Could not rewrite migrations in ${dir}: ${error || 'unknown error'}`,
+      )
+      continue
+    }
+
+    if (rewritten.length > 0) {
+      p.log.info(
+        `Rewrote ${rewritten.length} migration file(s) in ${dir}/ to use ADD+DROP+RENAME for encrypted columns.`,
+      )
+      for (const file of rewritten) p.log.step(`  - ${file}`)
+      p.log.warn(
+        'This rewrite is data-destroying — safe only on an EMPTY table. If any of these tables already have rows, do NOT run the migration; use the staged `stash encrypt` flow (add -> backfill via @cipherstash/stack -> cutover -> drop) instead. See the comments in the rewritten SQL.',
+      )
+    }
+
+    if (skipped.length > 0) {
+      p.log.warn(
+        `${skipped.length} statement(s) look like an ALTER-to-encrypted that the rewrite left alone. Review them before migrating:`,
+      )
+      for (const s of skipped) {
+        p.log.step(`  - ${s.file}: ${s.statement}`)
+        p.log.step(`      ${describeSkipReason(s.reason)}`)
       }
-      // Only rewrite the first dir that matches — running again on a
-      // different candidate would double-transform already-rewritten SQL.
-      return
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      p.log.warn(`Could not rewrite migrations in ${dir}: ${message}`)
-      return
     }
   }
+
+  return totals
 }
 
 async function runStep(

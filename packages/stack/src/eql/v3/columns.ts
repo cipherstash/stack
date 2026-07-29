@@ -431,7 +431,46 @@ function isQueryableCapabilities(capabilities: QueryCapabilities): boolean {
  * `EncryptedDateColumn`, both storage-only) are NOT mutually assignable. This
  * nominality is what keeps plaintext inference precise.
  */
+/**
+ * Key for {@link EncryptedV3Column}'s phantom domain carrier. Declared, never
+ * defined — it exists only in the type layer, and is deliberately not exported.
+ */
+declare const domainCarrier: unique symbol
+
 export class EncryptedV3Column<D extends V3DomainDefinition> {
+  /**
+   * Phantom carrier for `D`, and the reason this class is usable from the
+   * BUILT package at all.
+   *
+   * `PlaintextForColumn` / `QueryTypesForColumn` recover the domain with
+   * `C extends EncryptedV3Column<infer D>`. That inference needs `D` to appear
+   * BARE somewhere in the instance type. In source the only such site is
+   * `private readonly definition: D` — but `tsc` strips the types of private
+   * members on declaration emit, so the shipped `.d.ts` says
+   * `private readonly definition;` and the site disappears. What is left is
+   * `getEqlType(): D['eqlType']`, `getQueryCapabilities(): D['capabilities']`
+   * and `isQueryable(): QueryableFlag<D>` — all uninvertible, so `infer D` fell
+   * back to the `V3DomainDefinition` constraint and every helper collapsed:
+   * `QueryTypesForColumn` to `never`, `PlaintextForColumn` to the union of
+   * every domain's plaintext. Typed `encryptQuery` was therefore uncallable for
+   * ANY column against the published package.
+   *
+   * `declare` means type-only: no field is emitted, no runtime cost, no
+   * constructor change — but the declaration survives emit and gives `infer D`
+   * the bare site it needs. Optional so no call site has to supply it.
+   *
+   * Keyed by a non-exported `unique symbol` rather than a plain name. There is
+   * no `stripInternal` in this build, so `@internal` is documentation only — a
+   * `__domain` property would be reachable from customer code and show up in
+   * autocomplete on every column, typed `D | undefined` while being `undefined`
+   * always. The symbol is not exported, so the carrier is unnameable outside
+   * this module while remaining exactly as inferrable.
+   *
+   * @internal Not for consumption; read the domain via `getEqlType()` /
+   * `getQueryCapabilities()`.
+   */
+  declare readonly [domainCarrier]?: D
+
   constructor(
     private readonly columnName: string,
     private readonly definition: D,

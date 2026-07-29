@@ -1,0 +1,25 @@
+{
+  // Compiles the exact files `stash init` writes into a user's project.
+  //
+  // Nothing else in the repo did. `packages/cli` has no typecheck script (21
+  // pre-existing errors), the codegen tests only string-match the templates,
+  // and `build-schema.test.ts` stubs the generator out entirely — so when
+  // `Encryption` was tightened to require a non-empty schema set, both
+  // placeholders started emitting a file that fails `tsc` on first build, in a
+  // file the CLI had just told the user not to hand-edit, and CI stayed green
+  // (#772 review, finding 6).
+  //
+  // Deliberately scoped to the fixtures so it gates the scaffold without
+  // waiting on the rest of the package to compile.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "include": ["__fixtures__/scaffold/*.ts"]
+}

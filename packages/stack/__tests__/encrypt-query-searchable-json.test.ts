@@ -1,10 +1,9 @@
 import 'dotenv/config'
 import { beforeAll, describe, expect, it } from 'vitest'
+import type { EncryptionClient } from '@/encryption'
 import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
 import { createMockLockContext, expectFailure, unwrapResult } from './fixtures'
-
-type EncryptionClient = Awaited<ReturnType<typeof Encryption>>
 
 const documents = encryptedTable('documents', {
   metadata: types.Json('metadata'),
@@ -21,10 +20,19 @@ function expectContainment(value: unknown): void {
 }
 
 describe('encryptQuery with searchableJson', () => {
+  // NOTE: this suite holds the client through the NOMINAL surface on purpose.
+  // The typed client derives `encryptQuery`'s plaintext from the column's domain,
+  // so every query type on a `types.Json()` column is typed `JsonDocument` — but
+  // the searchable-JSON query types take a JSONPath string, a `{ path, value }`
+  // pair, or a bare scalar. This file exercises exactly those, so typing it
+  // against the typed client would mean casting away the argument type at every
+  // call and hiding the gap. Cast once, here, where it is visible and explained.
   let client: EncryptionClient
 
   beforeAll(async () => {
-    client = await Encryption({ schemas: [documents] })
+    client = (await Encryption({
+      schemas: [documents],
+    })) as unknown as EncryptionClient
   })
 
   it('infers a selector hash for string plaintext', async () => {

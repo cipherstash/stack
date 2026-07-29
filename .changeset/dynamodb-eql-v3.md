@@ -6,15 +6,17 @@
 `encryptedDynamoDB` now accepts EQL v3 tables.
 
 Pass a table built with `encryptedTable` + the `types.*` domains from
-`@cipherstash/stack/v3` (or `@cipherstash/stack/eql/v3`) to any of
-`encryptModel`, `bulkEncryptModels`, `decryptModel`, `bulkDecryptModels`. Both
-the typed client from `EncryptionV3` and the nominal client from
-`Encryption({ config: { eqlVersion: 3 } })` are accepted.
+`@cipherstash/stack/v3` to any of `encryptModel`, `bulkEncryptModels`,
+`decryptModel`, or `bulkDecryptModels`. Build the typed client with
+`Encryption({ schemas: [table] })`.
 
-EQL v2 tables continue to work unchanged — this is additive, and no existing
-caller needs to change. The table decides which wire format is used, so a
-DynamoDB table populated under one version must keep being read with that
-version.
+EQL v2 tables continue to be **readable** — `decryptModel` /
+`bulkDecryptModels` still accept one, so existing items stay accessible. Writing
+through a v2 table is a separate matter: `encryptModel` / `bulkEncryptModels`
+narrowed to EQL v3 tables in this same release, so a caller that still encrypts
+through a v2 table does need to change. The table decides which wire format is
+used, so a DynamoDB table populated under one version must keep being read with
+that version.
 
 This fixes a latent bug that made v3 unusable: the write path detected an
 encrypted value by its `k: 'ct'` tag, but EQL v3 scalars carry no `k`
@@ -33,8 +35,8 @@ Notes on capability:
   path — `{ 'profile.ssn': types.TextEq('profile.ssn') }`. The model is
   matched by dotted path, so `{ profile: { ssn } }` resolves, and the nested
   attribute keeps its `__hmac` for key conditions.
-- Audit metadata on `decryptModel` / `bulkDecryptModels` requires the nominal
-  client; the `EncryptionV3` client has no audit surface on decrypt.
+- The typed `Encryption` client supports `.audit()` on `decryptModel` and
+  `bulkDecryptModels`, including when used through the DynamoDB adapter.
 
 The DynamoDB adapter also gains its first test coverage — across the v2 and v3
 paths, where it previously had none.
@@ -71,4 +73,4 @@ type, where a declared column `email` becomes `email__source` (plus
 `email`. `decryptModel` / `bulkDecryptModels` invert it via `DecryptedAttributes`.
 `AnyEncryptedTable`, `DynamoDBEncryptionClient` and `AuditConfig` are now
 exported from `@cipherstash/stack/dynamodb` so these signatures can be named.
-The EQL v2 overloads are unchanged.
+The EQL v2 **decrypt** overloads are unchanged; the v2 encrypt overloads are removed in this release.

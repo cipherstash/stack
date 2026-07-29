@@ -24,11 +24,12 @@ export function getTargetRows(): number {
   return n
 }
 
-function makePlaintextRow(idx: number): BenchPlaintextRow {
+/** Exported so `__unit__/seed-keys.test.ts` can check the row keys. */
+export function makePlaintextRow(idx: number): BenchPlaintextRow {
   return {
-    enc_text: `value-${String(idx).padStart(7, '0')}`,
-    enc_int: idx,
-    enc_jsonb: { idx, group: idx % 100 },
+    encText: `value-${String(idx).padStart(7, '0')}`,
+    encInt: idx,
+    encJsonb: { idx, group: idx % 100 },
   }
 }
 
@@ -53,25 +54,22 @@ export async function seed(
     plaintexts.push(makePlaintextRow(rowsBefore + i))
   }
 
-  const encResult =
-    await h.encryptionClient.bulkEncryptModels<BenchPlaintextRow>(
-      plaintexts,
-      encryptionBenchTable,
-    )
+  const encResult = await h.encryptionClient.bulkEncryptModels(
+    plaintexts,
+    encryptionBenchTable,
+  )
   if (encResult.failure) {
     throw new Error(
       `[bench:seed] bulkEncryptModels failed: ${encResult.failure.message}`,
     )
   }
 
-  // bulkEncryptModels returns rows keyed by the encryptedTable column names
-  // (snake_case here). Drizzle's `benchTable` uses camelCase TS field names —
-  // remap before insert.
-  const encRows = encResult.data.map((r) => ({
-    encText: r.enc_text as unknown as string,
-    encInt: r.enc_int as unknown as number,
-    encJsonb: r.enc_jsonb as unknown as { idx: number; group: number },
-  }))
+  // bulkEncryptModels returns rows under the SAME keys it matched on — the
+  // Drizzle table's JS property names — with EQL v3 envelopes as values. Those
+  // are the keys `db.insert()` wants, so there is nothing to remap. (The
+  // remap that used to sit here rewrote enc_text -> encText, which only
+  // appeared to work: nothing was ever encrypted, so it was moving plaintext.)
+  const encRows = encResult.data
 
   for (let i = 0; i < encRows.length; i += INSERT_BATCH) {
     const batch = encRows.slice(i, i + INSERT_BATCH)

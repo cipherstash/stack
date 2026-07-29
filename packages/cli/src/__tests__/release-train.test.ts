@@ -33,6 +33,20 @@ describe('release train coverage', () => {
     }
   })
 
+  it('pins the bare-project stash invocation in the published CLI skill', () => {
+    const cliManifest = JSON.parse(
+      readFileSync(resolve(CLI_ROOT, 'package.json'), 'utf8'),
+    ) as { version: string }
+    const skill = readFileSync(
+      resolve(REPO_ROOT, 'skills/stash-cli/SKILL.md'),
+      'utf8',
+    )
+
+    expect(skill).toContain(
+      `npx --package=stash@${cliManifest.version} stash eql install --database-url 'postgres://...'`,
+    )
+  })
+
   it('every train manifest exists and carries a version (what tsup will embed)', () => {
     // Exercises the exact inputs tsup.config.ts reads at build time, so a
     // renamed/moved workspace package fails HERE in source-mode tests, not

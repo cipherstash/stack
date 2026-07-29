@@ -64,17 +64,24 @@
  * import { OidcFederationStrategy } from "@cipherstash/stack/wasm-inline"
  * import { cookieStore } from "@cipherstash/auth/cookies"
  *
- * const authStrategy = OidcFederationStrategy.create(
+ * // `create` returns a Result — UNWRAP it. `config.authStrategy` takes the
+ * // strategy itself; handing it the Result fails later and opaquely.
+ * const strategy = OidcFederationStrategy.create(
  *   "crn:ap-southeast-2.aws:my-workspace-id", () => getClerkSessionToken(req),
  *   { store: cookieStore({ request: req, responseHeaders }) },
  * )
- * const client = await Encryption({ schemas, config: { authStrategy, clientId, clientKey } })
+ * if (strategy.failure) throw new Error(strategy.failure.error.message)
+ *
+ * const client = await Encryption({
+ *   schemas, config: { authStrategy: strategy.data, clientId, clientKey },
+ * })
  * ```
  *
  * For service-to-service / CI use with a custom token store, build an
  * `AccessKeyStrategy.create(workspaceCrn, accessKey, { store })` the same
- * way (it derives the region from the CRN). Both strategies are
- * re-exported from this entry.
+ * way — same Result-unwrapping, and it derives the region from the CRN. Both
+ * strategies are re-exported from this entry. An auth strategy and
+ * `config.accessKey` are mutually exclusive.
  */
 
 import { withResult } from '@byteslice/result'
@@ -110,6 +117,7 @@ import {
   type V3ModelInput,
 } from '@/eql/v3'
 import { DATE_LIKE_CASTS } from '@/eql/v3/columns'
+import { reconstructDateValue } from '@/eql/v3/date-reconstruction'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import {
   type CastAs,
@@ -601,19 +609,6 @@ function datePropertyPaths(table: AnyV3Table): Set<string> {
 }
 
 /**
- * Rebuild a decrypted plaintext for a model field into a `Date` when the
- * column is date-like. An unparseable stored value (a date column written in a
- * non-ISO format, or corrupted) would make `new Date(...)` an Invalid Date;
- * return the raw value in that case rather than silently handing back an
- * Invalid Date whose later `.toISOString()` throws far from here (#742 review).
- */
-function reconstructDate(value: WasmPlaintext, isDateColumn: boolean): unknown {
-  if (!isDateColumn || value == null) return value
-  const date = new Date(value as string | number)
-  return Number.isNaN(date.getTime()) ? value : date
-}
-
-/**
  * Internal token used to gate the {@link WasmEncryptionClient}
  * constructor. Symbols are unique by reference, so external code can't
  * forge one even if they recreate `WasmEncryptionClient` via type
@@ -655,14 +650,48 @@ const INTERNAL_CONSTRUCT = Symbol('cs-wasm-client')
  * ZeroKMS round trip regardless of how many fields or models it covers. What
  * still differs from the native surface is deliberate and local: failures come
  * back as this entry's `{ failure }` Results (rather than a thenable operation
- * with `.audit()`), and there is no `.withLockContext()` — identity-bound
- * encryption on the edge is configured at client construction via
- * `config.authStrategy` instead (#663 context).
+ * with `.audit()`).
+ *
+ * There is also no `.withLockContext()` here, and that one is a **gap, not a
+ * design decision** (#797). An earlier version of this comment said
+ * identity-bound encryption is "configured at client construction via
+ * `config.authStrategy` instead" (#663 context). That is wrong, and the
+ * conflation is worth naming because it is the one people arrive with:
+ * an auth strategy decides WHO THE CLIENT IS; a lock context decides WHICH
+ * KEY THE VALUE IS ENCRYPTED UNDER. They are orthogonal, and only the first
+ * exists on this entry.
+ *
+ * The consequences are silent, which is why they are stated here rather than
+ * left to a failed decrypt: values written from this entry are encrypted under
+ * the workspace key even when the client is authenticated as an end user, and
+ * this entry cannot read anything the native entry wrote under a lock context,
+ * since decrypt requires the same context. `skills/stash-edge` documents both.
+ *
+ * The binding accepts a lock context on both paths — `lockContext` is an
+ * option field on the single calls and per-payload-item on the bulk ones — so
+ * closing this is plumbing rather than a new capability. It is not plumbed
+ * here yet, and shipping it would want a live round-trip test first: a wrong
+ * or missing claim surfaces as a failed decrypt, not a key error.
  *
  * Construct via {@link Encryption} — the constructor is private to
  * prevent callers from wrapping arbitrary objects in this type.
  */
 export class WasmEncryptionClient {
+  /**
+   * This client's `decryptModel` / `bulkDecryptModels` REQUIRE the table — they
+   * resolve date fields from a per-table map and throw without it. The native
+   * clients derive the table from the payloads instead, so callers that hold a
+   * client structurally cannot tell the two apart.
+   *
+   * `encryptedDynamoDB` is the caller that cares: its legacy EQL v2 read path
+   * deliberately omits the table (a v2 table means nothing to a v3
+   * reconstructor map), which reached `requireTable` with `undefined` and threw
+   * a TypeError about `tableName` pointing nowhere near the cause. Declared
+   * rather than sniffed so the check is a stated capability, not a guess about
+   * arity or constructor name (#772 review, finding 10).
+   */
+  readonly requiresTableForDecrypt = true
+
   /** @internal */
   private readonly client: unknown
 
@@ -882,7 +911,7 @@ export class WasmEncryptionClient {
         (term) => term.value !== null && term.value !== undefined,
         async (live) =>
           // The FFI's batch field is `queries` (matching the native
-          // ffiEncryptQueryBulk call in packages/protect).
+          // ffiEncryptQueryBulk call in the encryption client).
           (await wasmEncryptQueryBulk(
             // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
             this.client as never,
@@ -1327,7 +1356,9 @@ export class WasmEncryptionClient {
         setNestedValue(
           rebuilt,
           field.fieldKey.split('.'),
-          reconstructDate(item.data, dateFields.has(field.fieldKey)),
+          dateFields.has(field.fieldKey)
+            ? reconstructDateValue(item.data)
+            : item.data,
         )
       })
       return rebuilt

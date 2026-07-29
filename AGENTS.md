@@ -73,26 +73,19 @@ If these variables are missing, tests that require live encryption will fail or 
 
 - `packages/stack`: Main package (`@cipherstash/stack`) containing the encryption client and all integrations
   - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/client`, `@cipherstash/stack/identity`, `@cipherstash/stack/schema`, `@cipherstash/stack/eql/v3`, `@cipherstash/stack/v3`, `@cipherstash/stack/types`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/encryption`, `@cipherstash/stack/errors`, `@cipherstash/stack/adapter-kit`, `@cipherstash/stack/wasm-inline` (the Drizzle and Supabase integrations moved to their own packages — see below)
-- `packages/protect`: Core encryption library (internal, re-exported via `@cipherstash/stack`)
-  - `src/index.ts`: Public API (`Encryption`, exports)
-  - `src/ffi/index.ts`: `EncryptionClient` implementation, bridges to `@cipherstash/protect-ffi`
-  - `src/ffi/operations/*`: Encrypt/decrypt/model/bulk/query operations (thenable pattern with optional `.withLockContext()`)
-  - `__tests__/*`: End-to-end and API contract tests (Vitest)
 - `packages/cli`: The `stash` CLI — auth, init, encryption schema, and database setup (`stash eql install`). Has its own `AGENTS.md`.
 - `packages/wizard`: AI-powered encryption setup (`@cipherstash/wizard`)
 - `packages/migrate`: Plaintext-to-encrypted column migration (`@cipherstash/migrate`) — resumable backfill, per-column state
 - `packages/prisma-next`: Prisma Next integration (`@cipherstash/prisma-next`) — searchable field-level encryption for Postgres. **EQL v3 only**: per-domain constructors (`cipherstash.TextSearch()` / `text()` / `bigIntOrd()` / …) and `cipherstashFromStack` (the `./v3` and `./stack` entries). The EQL v2 surface was removed — the adapter's baseline migration installs the EQL v3 bundle only (works on Supabase as a non-superuser)
-- `packages/stack-drizzle`: Drizzle ORM integration (`@cipherstash/stack-drizzle`), depends on `@cipherstash/stack` — EQL v2 (`.`) and EQL v3 (`./v3`). Split out of `@cipherstash/stack`.
-- `packages/stack-supabase`: Supabase integration (`@cipherstash/stack-supabase`), depends on `@cipherstash/stack` — `encryptedSupabase` (v2) and `encryptedSupabaseV3` (v3). Split out of `@cipherstash/stack`.
-- `packages/schema`: Schema builder utilities and types (`encryptedTable`, `encryptedColumn`, `encryptedField`)
+- `packages/stack-drizzle`: Drizzle ORM integration (`@cipherstash/stack-drizzle`), depends on `@cipherstash/stack` — **EQL v3 only**, on the package root (the v2 surface was removed and the old `./v3` subpath collapsed into `.`). Split out of `@cipherstash/stack`.
+- `packages/stack-supabase`: Supabase integration (`@cipherstash/stack-supabase`), depends on `@cipherstash/stack` — **EQL v3 only**: `encryptedSupabase` is the v3 factory (`encryptedSupabaseV3` remains as a `@deprecated` alias). Split out of `@cipherstash/stack`.
 - `packages/nextjs`: Next.js helpers and Clerk integration (`./clerk` export)
-- `packages/protect-dynamodb`: DynamoDB helpers (`protectDynamoDB`), built on `@cipherstash/protect`. A fork of the shipping adapter, kept for existing consumers of the standalone package; EQL v2 only. The maintained implementation is `packages/stack/src/dynamodb` (`encryptedDynamoDB`)
 - `packages/utils`: Shared config (`utils/config`) and logger (`utils/logger`)
 - `packages/bench`: Performance / index-engagement benchmarks (private, not published)
 - `e2e/*`: Cross-package end-to-end tests (package managers, supply chain, Prisma example README)
 - `examples/*`: Working apps (basic, prisma, supabase-worker)
 - `docs/plans/*`: Internal design plans. User-facing documentation lives at https://cipherstash.com/docs (not in this repo).
-- `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-indexing`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-prisma-next`, `stash-supply-chain-security`)
+- `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-indexing`, `stash-postgres`, `stash-edge`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-prisma-next`, `stash-supply-chain-security`)
 
 ## Agent Skills — these ship to customers
 
@@ -120,6 +113,8 @@ nothing type-checks them, and the damage lands in a customer's repo, not ours.
 | Drizzle / Supabase / Prisma Next / DynamoDB integrations | `skills/stash-drizzle`, `skills/stash-supabase`, `skills/stash-prisma-next`, `skills/stash-dynamodb` |
 | The rollout/cutover lifecycle (`packages/migrate`, `stash encrypt *`) | `skills/stash-encryption` and `skills/stash-cli` |
 | The `@cipherstash/eql` pin, `eql install`/`eql migration` behaviour, or index-related SQL guidance | `skills/stash-indexing` |
+| The EQL operator/domain surface (`eql_v3.query_*` casts, predicate forms) | `skills/stash-postgres` |
+| `packages/stack/src/wasm-inline.ts`, the WASM entry's exports, or `stash env` | `skills/stash-edge` |
 | pnpm config, CI workflows, dependency policy | `skills/stash-supply-chain-security` |
 | The durable agent rules themselves | `packages/cli/src/commands/init/doctrine/AGENTS-doctrine.md` |
 
@@ -149,8 +144,8 @@ Three rules to remember when editing CI or pnpm config:
 
 ## Key Concepts and APIs
 
-- **Initialization**: `EncryptionV3({ schemas })` returns the typed EQL v3 client. (`Encryption({ schemas })` is the legacy v2 client.) Provide at least one `encryptedTable`.
-- **Schema (EQL v3, the documented approach)**: Define tables/columns with `encryptedTable` and the `types.*` concrete-domain factories from `@cipherstash/stack/eql/v3` (`types.TextSearch`, `types.IntegerOrd`, `types.Json`, …) — each domain's query capabilities are fixed by its type; there are no chainable capability tuners. Build the client with `EncryptionV3` from `@cipherstash/stack/v3`. (Legacy EQL v2 — `Encryption` + `encryptedColumn(...).equality().freeTextSearch().orderAndRange().searchableJson()` from `@cipherstash/stack/schema` — remains for existing deployments. DynamoDB accepts both v3 and v2 tables; nested fields work in both — v2 via `encryptedField` groups, v3 via a flat dotted column path (`'profile.ssn': types.TextEq(...)`), since `EncryptedV3TableColumn` admits no nested groups.)
+- **Initialization**: `Encryption({ schemas })` is the single client factory. It is overloaded: an array of concrete EQL v3 tables yields the strongly-typed EQL v3 client; a v2/loose schema set yields the nominal client. `EncryptionV3` (from `@cipherstash/stack/v3`) is a deprecated, type-identical alias of `Encryption`. Provide at least one `encryptedTable`.
+- **Schema (EQL v3, the documented approach)**: Define tables/columns with `encryptedTable` and the `types.*` concrete-domain factories from `@cipherstash/stack/eql/v3` (`types.TextSearch`, `types.IntegerOrd`, `types.Json`, …) — each domain's query capabilities are fixed by its type; there are no chainable capability tuners. Build the client with `Encryption` (import `encryptedTable`/`types` from `@cipherstash/stack/v3`). The client authors EQL v3 only; the `config.eqlVersion` field and the `@cipherstash/stack/schema` EQL v2 builders (`encryptedColumn(...).equality().freeTextSearch().orderAndRange().searchableJson()`) remain (now `@deprecated`) for reading/migrating legacy v2 data. `decrypt`/`decryptModel` read both v2 and v3 payloads. DynamoDB **writes EQL v3 only; decrypt still reads existing v2 items**; nested fields work in both — v2 via `encryptedField` groups (read only), v3 via a flat dotted column path (`'profile.ssn': types.TextEq(...)`), since `EncryptedV3TableColumn` admits no nested groups.
 - **Operations** (all return Result-like objects and support chaining `.withLockContext(lockContext)` and `.audit()` when applicable):
   - `encrypt(plaintext, { table, column })`
   - `decrypt(encryptedPayload)`
@@ -161,8 +156,8 @@ Three rules to remember when editing CI or pnpm config:
   - `encryptQuery(terms[])` for batch query encryption
 - **Identity-aware encryption**: Authenticate the client as the end user with `OidcFederationStrategy` (`config.authStrategy`, re-exported from `@cipherstash/stack`), then chain `.withLockContext({ identityClaim })` on operations to bind the data key to a claim. The same claim must be used for encrypt and decrypt. (`LockContext.identify()` from `@cipherstash/stack/identity` is deprecated — the strategy now handles token acquisition; `.withLockContext()` also accepts a `LockContext`.)
 - **Integrations**:
-  - **Drizzle ORM**: `encryptedType`, `extractEncryptionSchema`, `createEncryptionOperators` from `@cipherstash/stack-drizzle` (EQL v3 factories from `@cipherstash/stack-drizzle/v3`)
-  - **Supabase**: `encryptedSupabase` (v2) / `encryptedSupabaseV3` (v3) from `@cipherstash/stack-supabase`
+  - **Drizzle ORM**: `types.*` column factories, `extractEncryptionSchema`, `createEncryptionOperators` from `@cipherstash/stack-drizzle`
+  - **Supabase**: `encryptedSupabase` from `@cipherstash/stack-supabase` (EQL v3; `encryptedSupabaseV3` is a `@deprecated` alias)
   - **DynamoDB**: `encryptedDynamoDB` from `@cipherstash/stack/dynamodb`
 
 ## Critical Gotchas (read before coding)
@@ -225,11 +220,11 @@ pnpm changeset:publish
 ## Adding Features Safely (LLM checklist)
 
 1. Identify the target package(s) in `packages/*` and confirm whether changes affect public APIs or payload shapes.
-2. If modifying `packages/protect` operations or `EncryptionClient`, ensure:
+2. If modifying `packages/stack` encryption operations or `EncryptionClient`, ensure:
    - The Result contract and error type strings remain stable.
    - `.withLockContext()` remains available for affected operations.
    - ESM/CJS exports continue to work (don't break `require`).
-3. If changing schema behavior (`packages/schema`), update type definitions and ensure validation still works in `EncryptionClient.init`.
+3. If changing schema behavior (`packages/stack` schema builders, `@cipherstash/stack/schema`), update type definitions and ensure validation still works in `EncryptionClient.init`.
 4. Add/extend tests in the same package. For features that require live credentials, guard with env checks or provide mock-friendly paths.
 5. Run:
    - `pnpm run code:fix`

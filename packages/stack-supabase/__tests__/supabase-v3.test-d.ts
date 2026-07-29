@@ -9,7 +9,9 @@ import {
 } from '@cipherstash/stack/schema'
 import { describe, expectTypeOf, it } from 'vitest'
 import {
+  type EncryptedQueryBuilder,
   type EncryptedQueryBuilderV3,
+  type EncryptedSingleQueryBuilder,
   type EncryptedSupabaseResponse,
   encryptedSupabase,
   encryptedSupabaseV3,
@@ -335,21 +337,6 @@ describe('encryptedSupabaseV3 untyped surface (no schemas)', () => {
     builder.contains('tags', 'vip')
   })
 
-  it('keeps like/ilike on the v2 builder', () => {
-    const v2Users = v2EncryptedTable('users', {
-      email: encryptedColumn('email').freeTextSearch(),
-    })
-    const v2 = encryptedSupabase({
-      encryptionClient: {} as never,
-      supabaseClient,
-    })
-    const builder = v2.from<{ email: string }>('users', v2Users)
-    builder.like('email', '%ada%')
-    builder.ilike('email', '%ada%')
-    // @ts-expect-error — contains is the v3 dialect's method
-    builder.contains('email', 'ada')
-  })
-
   it('supports a no-arg select(), like supabase-js', async () => {
     const supabase = await encryptedSupabaseV3(supabaseClient)
     supabase.from('users').select()
@@ -443,5 +430,142 @@ describe('withLockContext accepts the plain { identityClaim } form (not only Loc
   it('rejects an object with an unknown key', () => {
     // @ts-expect-error — `claim` is not `identityClaim`
     mixedBuilder.withLockContext({ claim: ['sub'] })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// De-suffixed canonical names (encryptedSupabase / EncryptedQueryBuilder)
+//
+// `encryptedSupabaseV3` and `EncryptedQueryBuilderV3` remain as type-identical
+// `@deprecated` aliases (exercised throughout the tests above); these assert the
+// unsuffixed names are the same surface.
+// ---------------------------------------------------------------------------
+
+describe('canonical (unsuffixed) exports', () => {
+  it('encryptedSupabase is the same factory as encryptedSupabaseV3', () => {
+    expectTypeOf(encryptedSupabase).toEqualTypeOf(encryptedSupabaseV3)
+  })
+
+  it('EncryptedQueryBuilder is the same type as EncryptedQueryBuilderV3', () => {
+    expectTypeOf<EncryptedQueryBuilder<typeof users, UserRow>>().toEqualTypeOf<
+      EncryptedQueryBuilderV3<typeof users, UserRow>
+    >()
+  })
+
+  it('a typed builder narrows to the documented shape', async () => {
+    const supabase = await encryptedSupabase(supabaseClient, {
+      schemas: { users },
+    })
+    expectTypeOf(supabase.from('users')).toEqualTypeOf<
+      EncryptedQueryBuilder<typeof users, UserRow>
+    >()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// single() / maybeSingle()
+//
+// The single-row builder is a DIFFERENT type from the array builder, so every
+// method it does and does not carry is public API. Filters and transforms are
+// deliberately absent — one applied after `single()` would change the query the
+// single-row promise was made about. What stays available is exactly `then`,
+// `abortSignal`, `throwOnError`, `returns`, `withLockContext` and `audit`; this
+// is NOT parity with postgrest-js, whose `overrideTypes` and `setHeader` have no
+// adapter equivalent. `returns<U>()` in particular is documented in the
+// changeset for this change and was unreachable from the public surface until
+// now (#772 review, SB-1).
+// ---------------------------------------------------------------------------
+
+/** A typed builder for the single-row assertions below. */
+type MixedRow = UserRow & {
+  tags: string[]
+  meta: Record<string, unknown>
+  note: string
+}
+
+describe('single-row builder surface', () => {
+  it('is exported so a stored builder can be annotated', () => {
+    expectTypeOf<EncryptedSingleQueryBuilder<UserRow>>().toMatchTypeOf<
+      PromiseLike<EncryptedSupabaseResponse<UserRow>>
+    >()
+  })
+
+  it('awaits to ONE row, not an array', async () => {
+    const { data } = await mixedBuilder.single()
+    expectTypeOf(data).toEqualTypeOf<MixedRow | null>()
+  })
+
+  it('carries returns<U>() with the single-row shape preserved', async () => {
+    const { data } = await mixedBuilder.single().returns<UserRow>()
+    expectTypeOf(data).toEqualTypeOf<UserRow | null>()
+  })
+
+  it('carries the encryption configurators, which are read at execute time', () => {
+    const builder = mixedBuilder.single()
+    expectTypeOf(
+      builder.withLockContext({ identityClaim: ['sub'] }),
+    ).toEqualTypeOf<EncryptedSingleQueryBuilder<MixedRow>>()
+    expectTypeOf(builder.audit({ metadata: { a: 1 } })).toEqualTypeOf<
+      EncryptedSingleQueryBuilder<MixedRow>
+    >()
+  })
+
+  it('does NOT carry filters or transforms', () => {
+    const builder = mixedBuilder.single()
+    // @ts-expect-error - a filter after single() would change the query
+    builder.eq('email', 'a@b.com')
+    // @ts-expect-error - a transform after single() would change the query
+    builder.limit(1)
+    // @ts-expect-error - single() is applied last
+    builder.single()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Row-type generics accept an `interface`
+//
+// DO NOT "simplify" `InterfaceRow` below into a `type` alias — the whole point
+// of this block is the distinction. A `type` alias for an object literal gets an
+// IMPLICIT INDEX SIGNATURE, so it satisfies `Record<string, unknown>`; an
+// `interface` does NOT, so an interface row type fails a
+// `Row extends Record<string, unknown>` constraint with TS2344 ("Index signature
+// for type 'string' is missing"). Every other row-typed test in this file goes
+// through `type UserRow = InferPlaintext<typeof users>` (line ~33) — an alias —
+// which is exactly why none of them ever caught this.
+//
+// Interfaces are the ordinary way a Supabase user declares a row type (and what
+// `supabase gen types` emits alongside its aliases), and upstream postgrest-js
+// leaves the equivalent `returns<T>()` type parameter entirely unconstrained, so
+// the adapter must not be stricter than the API it mirrors.
+// ---------------------------------------------------------------------------
+
+interface InterfaceRow {
+  id: string
+  email: string
+}
+
+describe('row-type generics accept an interface (not just a type alias)', () => {
+  it('accepts an interface on the untyped instance from<Row>()', async () => {
+    const supabase = await encryptedSupabase(supabaseClient)
+    const { data } = await supabase.from<InterfaceRow>('users').select('*')
+    expectTypeOf(data).toEqualTypeOf<InterfaceRow[] | null>()
+  })
+
+  it('accepts an interface on the typed instance fallback from<Row>()', async () => {
+    const supabase = await encryptedSupabase(supabaseClient, {
+      schemas: { users },
+    })
+    const { data } = await supabase.from<InterfaceRow>('orders').select('*')
+    expectTypeOf(data).toEqualTypeOf<InterfaceRow[] | null>()
+  })
+
+  it('accepts an interface on returns<U>()', async () => {
+    const { data } = await mixedBuilder.returns<InterfaceRow>()
+    expectTypeOf(data).toEqualTypeOf<InterfaceRow[] | null>()
+  })
+
+  it('accepts an interface on single().returns<U>()', async () => {
+    const { data } = await mixedBuilder.single().returns<InterfaceRow>()
+    expectTypeOf(data).toEqualTypeOf<InterfaceRow | null>()
   })
 })

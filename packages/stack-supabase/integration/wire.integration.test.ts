@@ -33,7 +33,7 @@ import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
 import { databaseUrl } from '@cipherstash/test-kit'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { EncryptedQueryBuilderV3Impl } from '../src/query-builder-v3'
+import { EncryptedQueryBuilderImpl as EncryptedQueryBuilderV3Impl } from '../src/query-builder'
 import { makePostgrestClient, reloadSchemaCache } from './helpers/pgrest'
 import { narrowedQueryTerm, storageEnvelope } from './helpers/v3-envelope'
 
@@ -223,7 +223,7 @@ const ADA_CREATED = new Date('2026-01-02T03:04:05.000Z')
 
 beforeAll(async () => {
   // EQL v3 and the Supabase grants are installed once per run by `globalSetup`,
-  // which shells out to the real `stash eql install --eql-version 3 --supabase`.
+  // which shells out to the real `stash eql install --supabase`.
   // Re-applying them here would only test a hand-rolled approximation.
   await sql.unsafe(`DROP TABLE IF EXISTS ${TABLE}`)
   await sql.unsafe(`

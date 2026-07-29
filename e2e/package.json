@@ -5,17 +5,18 @@
   "description": "End-to-end tests that exercise built CipherStash binaries and cross-package behaviour.",
   "type": "module",
   "scripts": {
-    "test:e2e": "vitest run"
+    "test:e2e": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "stash": "workspace:*",
-    "@cipherstash/protect": "workspace:*",
     "@cipherstash/stack": "workspace:*",
     "@cipherstash/wizard": "workspace:*"
   },
   "devDependencies": {
     "@types/semver": "7.7.1",
     "semver": "^7.8.0",
+    "typescript": "catalog:repo",
     "vitest": "catalog:repo",
     "yaml": "^2.9.0"
   }

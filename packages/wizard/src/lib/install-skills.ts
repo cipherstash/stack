@@ -11,16 +11,31 @@ import type { Integration } from './types.js'
  * skills into the user's project so Claude Code picks them up during
  * follow-up work.
  */
-const SKILL_MAP: Record<Integration, readonly string[]> = {
+export const SKILL_MAP: Record<Integration, readonly string[]> = {
   drizzle: ['stash-encryption', 'stash-drizzle', 'stash-indexing', 'stash-cli'],
+  // `stash-postgres` / `stash-edge` mirror the CLI's SKILL_MAP — see the comments
+  // there for why Supabase and the generic (no-ORM) path get them (#754).
   supabase: [
     'stash-encryption',
     'stash-supabase',
     'stash-indexing',
+    'stash-postgres',
+    'stash-edge',
     'stash-cli',
   ],
-  prisma: ['stash-encryption', 'stash-indexing', 'stash-cli'],
-  generic: ['stash-encryption', 'stash-indexing', 'stash-cli'],
+  prisma: [
+    'stash-encryption',
+    'stash-prisma-next',
+    'stash-indexing',
+    'stash-cli',
+  ],
+  generic: [
+    'stash-encryption',
+    'stash-indexing',
+    'stash-postgres',
+    'stash-edge',
+    'stash-cli',
+  ],
 }
 
 /**
@@ -52,7 +67,9 @@ export async function maybeInstallSkills(
     return { copied: [], failed: [] }
   }
 
-  const available = skills.filter((name) => existsSync(join(bundledRoot, name)))
+  const available = skills.filter((name) =>
+    existsSync(join(bundledRoot, name, 'SKILL.md')),
+  )
   if (available.length === 0) return { copied: [], failed: [] }
 
   const confirmed = await p.confirm({

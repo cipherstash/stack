@@ -1,7 +1,7 @@
 -- Seed a users table with plaintext emails for e2e backfill testing.
 --
--- The encrypted target column must be created separately (drizzle-kit /
--- stash db push route), after which the backfill encrypts `email` → `email_encrypted`.
+-- The EQL v3 encrypted target column must be created separately (for example,
+-- by Drizzle Kit), after which backfill encrypts `email` → `email_encrypted`.
 
 DROP TABLE IF EXISTS users CASCADE;
 

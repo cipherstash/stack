@@ -10,7 +10,7 @@
  *   (implicit jsonb→domain cast + CHECK enforcement, the same assignment
  *   path a real `eql_v3_*` column takes);
  * - `countEncrypted` (the v3 verification primitive — v3 has no
- *   `eql_v2.count_encrypted_with_active_config`) counts them.
+ *   the encrypted-column coverage check counts them.
  *
  * Skipped unless `PG_TEST_URL` is set (same harness as the v2 file):
  *

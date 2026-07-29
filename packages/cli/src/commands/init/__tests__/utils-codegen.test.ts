@@ -20,15 +20,27 @@ describe('generateClientFromSchemas', () => {
     expect(out).toContain("age: types.IntegerOrd('age'),")
     expect(out).toContain("verified: types.Boolean('verified'),")
     expect(out).toContain("from '@cipherstash/stack/v3'")
-    expect(out).toContain('EncryptionV3(')
+    // `Encryption` is the current name; `EncryptionV3` is a deprecated alias.
+    // Same reasoning as the drizzle negatives below — this is a template
+    // literal written into the user's repo as real source, so nothing but an
+    // assertion here catches a scaffold that teaches the deprecated name.
+    expect(out).toContain('Encryption(')
+    expect(out).not.toContain('EncryptionV3')
   })
 
   it('emits the chosen v3 domain factory per column (drizzle)', () => {
     const out = generateClientFromSchemas('drizzle', schemas)
     expect(out).toContain("email: types.TextSearch('email'),")
     expect(out).toContain("age: types.IntegerOrd('age'),")
-    expect(out).toContain('extractEncryptionSchemaV3')
-    expect(out).toContain("from '@cipherstash/stack-drizzle/v3'")
+    // The collapsed root: `@cipherstash/stack-drizzle` dropped its EQL v2
+    // surface and folded `./v3` into `.`, de-suffixing the exports. The
+    // negatives matter as much as the positives — this string is written into
+    // the user's repo as real source, and nothing type-checks a template
+    // literal, so the removed names can only be caught here.
+    expect(out).toContain('extractEncryptionSchema(')
+    expect(out).toContain("from '@cipherstash/stack-drizzle'")
+    expect(out).not.toContain('extractEncryptionSchemaV3')
+    expect(out).not.toContain('@cipherstash/stack-drizzle/v3')
   })
 
   it('carries no residual v2 capability vocabulary', () => {
@@ -47,6 +59,7 @@ describe('generateClientFromSchemas', () => {
     const out = generateClientFromSchemas('supabase', schemas)
     expect(out).toContain("email: types.TextSearch('email'),")
     expect(out).toContain("from '@cipherstash/stack/v3'")
+    expect(out).not.toContain('EncryptionV3')
     expect(out).not.toContain('@cipherstash/stack-drizzle')
   })
 

@@ -79,8 +79,6 @@ export default defineConfig([
       options.define = { ...options.define, ...buildDefines }
     },
     onSuccess: async () => {
-      // Copy bundled SQL files into dist so they ship with the package
-      cpSync('src/sql', 'dist/sql', { recursive: true })
       // Skills live at the monorepo root and ship inside the CLI tarball so
       // `stash init` can copy them into the user's `.claude/skills/` or
       // `.codex/skills/` directory at handoff time. Mirror of

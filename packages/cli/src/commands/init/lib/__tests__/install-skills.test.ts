@@ -39,7 +39,23 @@ const ALL_INTEGRATIONS: Integration[] = [
   'postgresql',
 ]
 
+// Parity with the wizard's own SKILL_MAP is asserted in
+// `e2e/tests/skill-map-parity.e2e.test.ts` — the only workspace that declares
+// both `stash` and `@cipherstash/wizard`, and whose `typecheck` script compiles
+// the cross-package import.
 describe('SKILL_MAP', () => {
+  it('selects only skills that contain a bundled SKILL.md', () => {
+    for (const integration of ALL_INTEGRATIONS) {
+      const available = new Set(availableSkills(integration))
+      const skills = SKILL_MAP[integration]
+      for (const skill of skills) {
+        expect(available.has(skill), `${integration}: ${skill}/SKILL.md`).toBe(
+          true,
+        )
+      }
+    }
+  })
+
   it('has a non-empty entry for every integration (no undefined → crash)', () => {
     for (const integration of ALL_INTEGRATIONS) {
       const skills = SKILL_MAP[integration]
@@ -81,6 +97,28 @@ describe('SKILL_MAP', () => {
     expect(SKILL_MAP.postgresql).not.toContain('stash-drizzle')
     expect(SKILL_MAP.postgresql).not.toContain('stash-supabase')
     expect(SKILL_MAP.postgresql).not.toContain('stash-prisma-next')
+  })
+
+  // #754: the no-ORM path had no source for the raw-SQL binding surface or
+  // the WASM entry — an integration on it had to reverse-engineer both from
+  // `dist/*.d.ts` and the Postgres catalog. `postgresql` is that path;
+  // Supabase shares it (Edge Functions are the flagship WASM-entry use, and
+  // its migrations/RPC are hand-written SQL).
+  it.each([
+    'postgresql',
+    'supabase',
+  ] as const)('%s includes the raw-SQL and edge skills', (integration) => {
+    expect(SKILL_MAP[integration]).toContain('stash-postgres')
+    expect(SKILL_MAP[integration]).toContain('stash-edge')
+  })
+
+  // The ORM integrations emit correctly-typed operands themselves, so they
+  // get cross-links from their own skills rather than the full install.
+  it.each([
+    'drizzle',
+    'prisma-next',
+  ] as const)('%s does not install the raw-SQL skill', (integration) => {
+    expect(SKILL_MAP[integration]).not.toContain('stash-postgres')
   })
 })
 

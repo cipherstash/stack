@@ -1,16 +1,15 @@
 import { spawnSync } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, unlinkSync, writeFileSync } from 'node:fs'
+import { readdir } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
 import { MIGRATIONS_SCHEMA_SQL } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
 import { CliExit } from '@/cli/exit.js'
+import { printNextSteps, SAFE_MIGRATION_NAME } from '@/commands/db/install.js'
 import {
-  cleanupMigrationFile,
-  findGeneratedMigration,
-  printNextSteps,
-  SAFE_MIGRATION_NAME,
-} from '@/commands/db/install.js'
-import { rewriteEncryptedAlterColumns } from '@/commands/db/rewrite-migrations.js'
+  describeSkipReason,
+  rewriteEncryptedAlterColumns,
+} from '@/commands/db/rewrite-migrations.js'
 import {
   detectPackageManager,
   execArgv,
@@ -21,6 +20,40 @@ import { messages } from '@/messages.js'
 
 const DEFAULT_MIGRATION_NAME = 'install-eql'
 const DEFAULT_DRIZZLE_OUT = 'drizzle'
+
+/** Find the most recently generated Drizzle migration matching the name. */
+export async function findGeneratedMigration(
+  outDir: string,
+  migrationName: string,
+): Promise<string> {
+  if (!existsSync(outDir)) {
+    throw new Error(
+      `Drizzle output directory not found: ${outDir}\nMake sure drizzle-kit is configured correctly.`,
+    )
+  }
+  const migrationSuffix = `_${migrationName}.sql`
+  const matchingFiles = (await readdir(outDir))
+    .filter((entry) => entry.endsWith(migrationSuffix))
+    .sort()
+  if (matchingFiles.length === 0) {
+    throw new Error(
+      `Could not find a migration matching "${migrationName}" in ${outDir}`,
+    )
+  }
+  return join(outDir, matchingFiles[matchingFiles.length - 1])
+}
+
+function cleanupMigrationFile(filePath: string | undefined): void {
+  if (!filePath) return
+  try {
+    if (existsSync(filePath)) {
+      unlinkSync(filePath)
+      p.log.info(`Cleaned up migration file: ${filePath}`)
+    }
+  } catch {
+    p.log.warn(`Could not clean up migration file: ${filePath}`)
+  }
+}
 
 export interface EqlMigrationOptions {
   /** Emit a Drizzle custom migration. */
@@ -49,9 +82,9 @@ export interface EqlMigrationOptions {
  * Assemble the EQL **v3** install SQL for a generated migration.
  *
  * One source of truth: the SQL is the CLI's bundled v3 install script
- * (`loadBundledEqlSql({ eqlVersion: 3 })`) — the same bundle `stash eql install`
+ * (`loadBundledEqlSql()`) — the same bundle `stash eql install`
  * applies directly. On `--supabase` the v3 role grants are appended
- * (`supabaseGrantsFor(3)` → USAGE/EXECUTE on `eql_v3` + `eql_v3_internal` for
+ * (`supabaseGrantsFor()` → USAGE/EXECUTE on `eql_v3` + `eql_v3_internal` for
  * `anon`/`authenticated`/`service_role`), matching `stash eql install --supabase`.
  * Apps that connect directly as `postgres` don't need the grants, but they're
  * idempotent and harmless, and required when the same tables are reached via
@@ -63,9 +96,9 @@ export interface EqlMigrationOptions {
  * install`.
  */
 export function buildEqlV3MigrationSql(opts: { supabase: boolean }): string {
-  const eqlSql = loadBundledEqlSql({ eqlVersion: 3 })
+  const eqlSql = loadBundledEqlSql()
   const grants = opts.supabase
-    ? `\n\n-- Supabase role grants: let anon/authenticated/service_role use the\n-- eql_v3 + eql_v3_internal schemas (required when tables are reached via\n-- PostgREST/RLS; harmless otherwise).\n${supabaseGrantsFor(3).trim()}`
+    ? `\n\n-- Supabase role grants: let anon/authenticated/service_role use the\n-- eql_v3 + eql_v3_internal schemas (required when tables are reached via\n-- PostgREST/RLS; harmless otherwise).\n${supabaseGrantsFor().trim()}`
     : ''
   return `${eqlSql.trim()}${grants}\n\n-- CipherStash encryption-migration tracking schema.\n-- Tracks per-column phase + backfill progress for \`stash encrypt\`.\n${MIGRATIONS_SCHEMA_SQL.trim()}\n`
 }
@@ -245,10 +278,11 @@ async function generateDrizzleEqlMigration(
     if (skipped.length > 0) {
       sweepIncomplete = true
       p.log.warn(
-        `Found ${skipped.length} ALTER-to-encrypted statement(s) the sweep could not rewrite automatically. Review and fix them before running your migrations:`,
+        `Found ${skipped.length} ALTER-to-encrypted statement(s) the sweep left alone. Review and fix them before running your migrations:`,
       )
-      for (const { file, statement } of skipped) {
+      for (const { file, statement, reason } of skipped) {
         p.log.step(`  - ${file}: ${statement}`)
+        p.log.step(`      ${describeSkipReason(reason)}`)
       }
     }
   } catch (error) {

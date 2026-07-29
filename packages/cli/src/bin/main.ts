@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url'
 import * as p from '@clack/prompts'
 import { CliExit } from '../cli/exit.js'
 import { renderCommandHelp } from '../cli/help.js'
+import { validateInstallFlags } from '../commands/db/install.js'
 // Commands that depend on @cipherstash/stack are lazy-loaded in the switch below.
 import {
   authCommand,
@@ -112,8 +113,6 @@ Commands:
   eql upgrade          Upgrade EQL extensions to the latest version
   eql status           Show EQL installation status
 
-  db push              (EQL v2 + Proxy) Push encryption schema to eql_v2_configuration
-  db activate          (EQL v2 + Proxy) Promote pending → active without renames
   db validate          Validate encryption schema
   db migrate           Run pending encrypt config migrations
   db test-connection   Test database connectivity
@@ -123,7 +122,6 @@ Commands:
   encrypt status       Show per-column migration status (phase, progress, drift)
   encrypt plan         Diff intent (.cipherstash/migrations.json) vs observed state
   encrypt backfill     Resumably encrypt plaintext into the encrypted column
-  encrypt cutover      Rename swap encrypted → primary column (EQL v2 only)
   encrypt drop         Generate a migration to drop the plaintext column
 
   env                  Mint deployment credentials and print them as env vars
@@ -163,7 +161,13 @@ function parseArgs(argv: string[]): ParsedArgs {
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]
     if (arg.startsWith('--')) {
-      const key = arg.slice(2)
+      const raw = arg.slice(2)
+      const equals = raw.indexOf('=')
+      if (equals >= 0) {
+        values[raw.slice(0, equals)] = raw.slice(equals + 1)
+        continue
+      }
+      const key = raw
       const nextArg = rest[i + 1]
       if (nextArg !== undefined && !nextArg.startsWith('-')) {
         values[key] = nextArg
@@ -190,19 +194,11 @@ async function runInstall(
   flags: Record<string, boolean>,
   values: Record<string, string>,
 ) {
+  rejectRetiredEqlFlags(flags, values)
   await installCommand({
     force: flags.force,
     dryRun: flags['dry-run'],
     supabase: flags.supabase,
-    excludeOperatorFamily: flags['exclude-operator-family'],
-    drizzle: flags.drizzle,
-    latest: flags.latest,
-    name: values.name,
-    out: values.out,
-    migration: flags.migration,
-    direct: flags.direct,
-    migrationsDir: values['migrations-dir'],
-    eqlVersion: values['eql-version'],
     databaseUrl: values['database-url'],
     // An explicit `--database-url` is a one-shot install against that DB — leave
     // the project untouched. Otherwise offer to scaffold a config for later.
@@ -214,14 +210,35 @@ async function runUpgrade(
   flags: Record<string, boolean>,
   values: Record<string, string>,
 ) {
+  rejectRetiredEqlFlags(flags, values)
   await upgradeCommand({
     dryRun: flags['dry-run'],
     supabase: flags.supabase,
-    excludeOperatorFamily: flags['exclude-operator-family'],
-    latest: flags.latest,
-    eqlVersion: values['eql-version'],
     databaseUrl: values['database-url'],
   })
+}
+
+function rejectRetiredEqlFlags(
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+): void {
+  const present = (key: string) =>
+    flags[key] === true || Object.hasOwn(values, key)
+  const error = validateInstallFlags({
+    eqlVersion: values['eql-version'],
+    latest: present('latest'),
+    drizzle: present('drizzle'),
+    name: values.name,
+    out: values.out,
+    migration: present('migration'),
+    direct: present('direct'),
+    migrationsDir: values['migrations-dir'],
+    excludeOperatorFamily: present('exclude-operator-family'),
+  })
+  if (error) {
+    p.log.error(error)
+    throw new CliExit(1)
+  }
 }
 
 async function runEqlCommand(
@@ -282,19 +299,12 @@ async function runDbCommand(
       p.log.warn(messages.db.aliasDeprecated(STASH, 'upgrade'))
       await runUpgrade(flags, values)
       break
-    case 'push': {
-      const { pushCommand } = await requireStack(
-        () => import('../commands/db/push.js'),
-      )
-      await pushCommand({ dryRun: flags['dry-run'], databaseUrl })
-      break
-    }
+    case 'push':
     case 'activate': {
-      const { activateCommand } = await requireStack(
-        () => import('../commands/db/activate.js'),
+      p.log.error(
+        `stash db ${sub} was removed with the EQL v2 CipherStash Proxy configuration lifecycle. EQL v3 stores query configuration in its column domains and has nothing to push or activate.`,
       )
-      await activateCommand({ databaseUrl })
-      break
+      throw new CliExit(1)
     }
     case 'validate': {
       const { validateCommand } = await requireStack(
@@ -366,18 +376,10 @@ async function runEncryptCommand(
       break
     }
     case 'cutover': {
-      const table = requireValue(values, 'table')
-      const column = requireValue(values, 'column')
-      const { cutoverCommand } = await requireStack(
-        () => import('../commands/encrypt/cutover.js'),
+      p.log.error(
+        '`stash encrypt cutover` was the EQL v2 rename/config-promotion command and has been removed. For EQL v3, finish the backfill, switch the application to the encrypted column by name, then run `stash encrypt drop` for the plaintext column.',
       )
-      await cutoverCommand({
-        table,
-        column,
-        proxyUrl: values['proxy-url'],
-        migrationsDir: values['migrations-dir'],
-      })
-      break
+      throw new CliExit(1)
     }
     case 'drop': {
       const table = requireValue(values, 'table')

@@ -71,19 +71,19 @@ npm install @cipherstash/stack @cipherstash/stack-drizzle drizzle-orm
 
 Full guide: [Drizzle quickstart →][drizzle-docs]
 
-## Full example (EQL v3, the `/v3` subpath)
+## Full example (EQL v3)
 
 Each encrypted column is a concrete `public.eql_v3_*` Postgres domain whose query capabilities
 are fixed by the `types.*` factory you choose — no per-column config object:
 
 ```ts
 import { pgTable, integer } from 'drizzle-orm/pg-core'
-import { EncryptionV3 } from '@cipherstash/stack/v3'
+import { Encryption } from '@cipherstash/stack/v3'
 import {
   types,
-  extractEncryptionSchemaV3,
-  createEncryptionOperatorsV3,
-} from '@cipherstash/stack-drizzle/v3'
+  extractEncryptionSchema,
+  createEncryptionOperators,
+} from '@cipherstash/stack-drizzle'
 
 const users = pgTable('users', {
   id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
@@ -91,9 +91,9 @@ const users = pgTable('users', {
   age: types.IntegerOrd('age'),     // equality + order/range
 })
 
-const schema = extractEncryptionSchemaV3(users)
-const client = await EncryptionV3({ schemas: [schema] })
-const ops = createEncryptionOperatorsV3(client)
+const schema = extractEncryptionSchema(users)
+const client = await Encryption({ schemas: [schema] })
+const ops = createEncryptionOperators(client)
 
 // Insert — encrypt models first (bulk helpers batch key operations
 // through ZeroKMS instead of one round trip per row)
@@ -107,7 +107,11 @@ if (!enc.failure) await db.insert(users).values(enc.data)
 const rows = await db
   .select()
   .from(users)
-  .where(await ops.eq(users.email, 'alice@example.com'))
+  .where(await ops.and(
+    ops.matches(users.email, 'alice'), // free-text token match over ciphertext
+    ops.between(users.age, 18, 65),
+  ))
+  .orderBy(ops.asc(users.age))
 
 // Decrypt after select
 const dec = await client.bulkDecryptModels(rows, schema)
@@ -128,7 +132,7 @@ indexes up like any others:
 
 ```ts
 import { integer, pgTable } from 'drizzle-orm/pg-core'
-import { encryptedIndexes, types } from '@cipherstash/stack-drizzle/v3'
+import { encryptedIndexes, types } from '@cipherstash/stack-drizzle'
 
 export const users = pgTable(
   'users',
@@ -159,19 +163,6 @@ over the extractor. Keys come from [ZeroKMS][zerokms] — one per value — so b
 key revocation, and [identity-bound decryption][identity] (lock contexts) work without the
 database ever holding a secret. Runs on plain PostgreSQL, Supabase, and RDS/Aurora; the SQL
 install needs no superuser.
-
-## EQL v2 (package root) — legacy
-
-The v2 integration predates the typed v3 domains and is kept for existing projects. New
-projects should use v3 above.
-
-```ts
-import { encryptedType, extractEncryptionSchema, createEncryptionOperators } from '@cipherstash/stack-drizzle'
-import { Encryption } from '@cipherstash/stack'
-```
-
-`encryptedType` defines an `eql_v2_encrypted` column; `createEncryptionOperators` returns
-query operators (`eq`, `like`, `gt`, `inArray`, …) that transparently encrypt search values.
 
 ## Docs
 

@@ -25,7 +25,7 @@
  */
 
 import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
-import type { ClientConfig } from '@cipherstash/stack/types'
+import type { V3ClientConfig } from '@cipherstash/stack/types'
 import { EncryptionV3, type TypedEncryptionClient } from '@cipherstash/stack/v3'
 import type {
   SqlMiddleware,
@@ -55,8 +55,14 @@ export interface CipherstashFromStackV3Options {
    */
   readonly schemasV3?: ReadonlyArray<AnyV3Table>
 
-  /** Pass-through to `EncryptionV3({ config })` (keyset overrides, logging, …). */
-  readonly encryptionConfig?: ClientConfig
+  /**
+   * Pass-through to `EncryptionV3({ config })` (keyset overrides, logging, …).
+   *
+   * `V3ClientConfig`, not `ClientConfig`: this package is EQL v3 only, and the
+   * legacy `eqlVersion: 2` escape hatch throws at setup over the all-v3 schema
+   * set this entry point derives.
+   */
+  readonly encryptionConfig?: V3ClientConfig
 }
 
 export interface CipherstashFromStackV3Result {

@@ -46,7 +46,7 @@ export interface GatheredContext {
   installCommand: string
   /** Whether stash.config.ts already exists. */
   hasStashConfig: boolean
-  /** Whether the user runs CipherStash Proxy. False = SDK-only (post-agent skips `stash db push`). Sourced from .cipherstash/context.json; defaults to false when the file is missing or the field is absent. */
+  /** Legacy context field retained for compatibility with existing context files. */
   usesProxy: boolean
 }
 

@@ -1,6 +1,6 @@
 ---
 name: stash-cli
-description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql install/upgrade/status`, `db validate`, `encrypt backfill/cutover/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, the credential rules for `~/.cipherstash`, and the rollout-then-cutover lifecycle. Use when setting up CipherStash EQL in a database, running any `stash` command, creating `stash.config.ts`, or rolling encryption out to production.
+description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql install/upgrade/status`, `db validate`, `encrypt backfill/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, credential rules, and the staged EQL v3 rollout lifecycle.
 ---
 
 # CipherStash CLI (`stash`)
@@ -130,7 +130,6 @@ There is **no global `--non-interactive` or `--json` flag** (and no global `--ye
 | Region (`auth login`, `init`) | `--region <slug>` or `STASH_REGION` |
 | Database URL (all `db` / `eql` / `schema` commands) | `--database-url <url>` or `DATABASE_URL` |
 | Agent target (`plan`, `impl`) | `--target <claude-code\|codex\|agents-md\|wizard>` |
-| Proxy choice (`init`) | `--proxy` / `--no-proxy` (default) |
 | Dual-write confirmation (`encrypt backfill`) | `--confirm-dual-writes-deployed` |
 | Machine-readable output | `--json` on `status`, `manifest`, `auth login`, `auth regions` |
 
@@ -199,7 +198,7 @@ export default defineConfig({
 | Option | Required | Default | Purpose |
 |---|---|---|---|
 | `databaseUrl` | yes | — | PostgreSQL connection string |
-| `client` | no | `./src/encryption/index.ts` | Encryption client, loaded by `db validate`, `schema build`, `encrypt *` |
+| `client` | no | `./src/encryption/index.ts` | Encryption client, loaded by `db validate` and `encrypt backfill` (`schema build` only writes here; `encrypt drop` resolves against the database) |
 
 Resolved by walking up from `process.cwd()`, like `tsconfig.json`. `stash init` scaffolds it; `stash eql install` offers to.
 
@@ -209,29 +208,28 @@ Four explicit save-points. Each runs standalone; chain prompts make first-time s
 
 | Command | Owns | Ends with |
 |---|---|---|
-| `stash init` | Auth, database, proxy choice, encryption client, deps, EQL install, `.cipherstash/context.json` | Default-yes prompt → chains to `stash plan` |
+| `stash init` | Auth, database, encryption client, deps, EQL install, `.cipherstash/context.json` | Default-yes prompt → chains to `stash plan` |
 | `stash plan` | Drafts `.cipherstash/plan.md` via agent handoff. State-driven: auto-detects rollout vs. cutover. | Default-yes prompt → chains to `stash impl` |
 | `stash impl` | Executes the plan via agent handoff. Enforces the deploy gate. | Deploy-gate banner (rollout) or "verify state" |
 | `stash status` | The rollout quest log — per-column "where am I", runs in ms | — |
 
 ### `init` — scaffold
 
-Seven mechanical steps, no agent handoff. It prompts only when it can't pick a sensible default.
+Six mechanical steps, no agent handoff. It prompts only when it can't pick a sensible default.
 
 1. **Authenticate** — silent when a valid token exists.
 2. **Resolve database** — per the resolution order above; verifies the connection.
-3. **Resolve proxy choice** — CipherStash Proxy or direct SDK access (the default). Stored as `usesProxy` in `context.json`. Set by `--proxy` / `--no-proxy`; non-TTY without a flag defaults to SDK.
-4. **Build schema** — auto-detects Drizzle (`drizzle.config.*`, `drizzle-orm`/`drizzle-kit`), Supabase (from the `DATABASE_URL` host), and Prisma Next. Writes a placeholder encryption client; prompts only if a file already exists there.
-5. **Install dependencies** — one combined prompt for `@cipherstash/stack` and `stash`. Skipped when both are present.
-6. **Install EQL** — always EQL v3. **Drizzle** projects generate a v3 install migration (the same output as `eql migration --drizzle`, including the `cs_migrations` tracking schema) so the install lands in your migration history — apply it with `drizzle-kit migrate`; requires `drizzle-kit` to be installed and configured. **Prisma Next** is skipped (it installs EQL via `prisma-next migrate`). Everything else runs `eql install` directly against the resolved database, and is skipped when EQL is already installed.
-7. **Gather context** — detects available coding agents and writes `.cipherstash/context.json`.
+3. **Build schema** — auto-detects Drizzle, Supabase, and Prisma Next and writes the placeholder encryption client.
+4. **Install dependencies** — one combined prompt for `@cipherstash/stack` and `stash`.
+5. **Install EQL** — always EQL v3. Drizzle generates `eql migration --drizzle`; Prisma Next installs through `prisma-next migrate`; other integrations install directly.
+6. **Gather context** — detects available coding agents and writes `.cipherstash/context.json`.
 
-Flags: `--supabase`, `--drizzle`, `--prisma-next`, `--proxy` / `--no-proxy`, `--region <slug>`.
+Flags: `--supabase`, `--drizzle`, `--prisma-next`, `--region <slug>`.
 
 | Generated file | Purpose |
 |---|---|
 | `./src/encryption/index.ts` | Placeholder encryption client — declare encrypted columns here, or let `plan`/`impl` do it |
-| `.cipherstash/context.json` | Detected facts: integration, package manager, schemas, env key names, agents, `usesProxy`. CLI-owned; never hand-edit |
+| `.cipherstash/context.json` | Detected facts: integration, package manager, schemas, env key names, and agents. CLI-owned; never hand-edit |
 | `stash.config.ts` | Scaffolded if missing |
 
 ### `plan` — draft for review
@@ -250,7 +248,7 @@ Pre-flights `.cipherstash/context.json` (errors with "Run `stash init` first" if
 | Detected state | Plan written |
 |---|---|
 | No `dual_writing` event recorded | **Encryption rollout** — schema-add + dual-write code. Ends at the deploy gate. |
-| A column has `dual_writing` or later | **Encryption cutover** — backfill, schema rename, read-path switch, drop. Requires the rollout to be deployed. |
+| A column has `dual_writing` or later | **Encryption cutover** — backfill, switch schema/query references to the EQL v3 encrypted column by name, wire the read path, then drop plaintext. Requires the rollout to be deployed. |
 | `--complete-rollout` passed | **Complete rollout** — schema-add through drop, no deploy gate. Needs consent: an interactive default-no confirm, or `--yes` non-interactively (without it, a non-interactive run **exits non-zero without drafting** rather than silently doing nothing). |
 
 The agent writes a machine-readable header into the plan:
@@ -307,7 +305,7 @@ The split is invisible — keep running `plan` and `impl`; the CLI reads `cs_mig
 
 ### Why the split exists
 
-There is no atomic way to replace a populated plaintext column with an encrypted one without corrupting data. The rollout phase deploys the *capability* to write encrypted values (the twin column and the dual-write code). The cutover phase deploys the *transition*: backfill historical rows, rename-swap the columns, switch the application read path through the encryption client, then drop the plaintext column.
+There is no atomic way to replace a populated plaintext column with an encrypted one without corrupting data. The rollout phase deploys the *capability* to write encrypted values (the twin column and the dual-write code). The cutover phase deploys the *transition*: backfill historical rows, switch schema/query references to the EQL v3 encrypted column by name, wire the application read path through the encryption client, then drop the plaintext column. There is no rename swap.
 
 Backfill is only safe once dual-writes are running in production. Any row written *during* the backfill window must land in both columns — otherwise it stays plaintext-only and creates silent migration drift. The gate makes that precondition explicit.
 
@@ -345,30 +343,18 @@ stash eql status
 
 #### `eql install`
 
-Gets a project from zero to installed EQL. It loads an existing `stash.config.ts` (or offers to scaffold one), scaffolds the encryption client if missing, then auto-detects the install path: **Drizzle** generates a migration via `drizzle-kit generate --custom` (apply it with `npx drizzle-kit migrate`); **Supabase without Drizzle** prompts between a migration file and a direct install, pre-selecting migration when `supabase/migrations/` exists; otherwise it installs directly.
+Gets a project from zero to a direct EQL v3 install. It loads an existing `stash.config.ts` (or offers to scaffold one), scaffolds the encryption client if missing, and applies the pinned `@cipherstash/eql` bundle. To put installation in Drizzle migration history, use `eql migration --drizzle` instead.
 
 | Flag | Description |
 |---|---|
 | `--force` | Reinstall even if EQL is present |
 | `--dry-run` | Show what would happen |
-| `--supabase` | Supabase-compatible install (no operator families; grants `anon`, `authenticated`, `service_role`) |
-| `--drizzle` | Generate a Drizzle migration (`--name`, `--out` tune it — `--name` accepts letters, numbers, `-`, `_` only; `--out` is passed to `drizzle-kit --out`, so set it to match your `drizzle.config.ts`) |
-| `--migration` / `--direct` | Supabase: write a migration file, or run SQL directly |
-| `--migrations-dir <path>` | Supabase migrations directory (default `supabase/migrations`) |
-| `--exclude-operator-family` | Skip operator families (non-superuser roles) |
-| `--eql-version <2\|3>` | EQL generation. **Default `3`** (the native `public.eql_v3_*` domain schema — the documented approach). `2` is the legacy composite schema. |
-| `--latest` | Fetch latest EQL from GitHub instead of the bundled copy (**v2 only**) |
+| `--supabase` | Supabase-compatible install; grants `anon`, `authenticated`, and `service_role` |
 | `--database-url <url>` | One-shot install (see below) |
 
-`--migration`, `--direct`, and `--migrations-dir` require an explicit `--supabase`; they never auto-enable it.
+The removed `--eql-version`, `--latest`, `--drizzle`, `--migration`, `--direct`, `--migrations-dir`, and `--exclude-operator-family` options fail clearly instead of being ignored. A request for EQL v2 points dump-recovery users to the upstream EQL 2.3.1 SQL release. New installs are EQL v3 only; its pinned bundle self-adapts when a database role cannot create the optional operator family.
 
-**`eql install` for EQL v3 runs the direct path only.** Passing `--eql-version 3` with an explicit `--drizzle`, `--migration`, `--migrations-dir`, or `--latest` is an error. When Drizzle or a Supabase migrations directory is merely *auto-detected*, v3 falls back to a direct install and prints a notice. To get a **v3 install as a migration** (preferred for real projects), use `eql migration` (below) instead of `eql install --drizzle`.
-
-**`--database-url` is a one-shot.** It installs against that database and leaves the project untouched — no config is loaded, and none is scaffolded, nor is an encryption client. This lets `npx stash eql install --database-url postgres://...` run in a bare project with no CipherStash dependencies. It also means the flag always wins: loading a config could pick up a parent-directory `databaseUrl` literal and install against the wrong database.
-
-**`eql install --supabase --migration`** writes `supabase/migrations/00000000000000_cipherstash_eql.sql`. The all-zero timestamp guarantees it runs before any user migration referencing `eql_v2_encrypted`. Apply with `supabase db reset` (local) or `supabase migration up` (remote).
-
-Direct installs (`--supabase --direct`) do **not** survive `supabase db reset` — the reset drops the database and replays only files in `supabase/migrations/`. Use `--migration` if you reset.
+**`--database-url` is a one-shot.** It installs against that database and leaves the project untouched — no config is loaded, and none is scaffolded, nor is an encryption client. This lets `npx --package=stash@1.0.0-rc.4 stash eql install --database-url 'postgres://...'` run in a bare project with no CipherStash dependencies while pinning the CLI to this skill's release. It also means the flag always wins: loading a config could pick up a parent-directory `databaseUrl` literal and install against the wrong database.
 
 #### `eql migration`
 
@@ -390,15 +376,15 @@ stash eql migration --drizzle --supabase   # also grant eql_v3 to anon/authentic
 
 Pass exactly one of `--drizzle` / `--prisma`. The generated migration also installs the `cs_migrations` tracking schema, so one `drizzle-kit migrate` covers everything `stash encrypt …` needs.
 
-After writing the migration, `--drizzle` sweeps the output directory for sibling migrations containing an in-place `ALTER COLUMN … SET DATA TYPE <eql_v2_encrypted | eql_v3_*>` — drizzle-kit emits these when you change a plaintext column to an encrypted one, and Postgres rejects them (there is no cast from `text`/`numeric` to an EQL type). Each is rewritten into an `ADD COLUMN` + `DROP` + `RENAME` sequence and the rewritten files are listed. This is equivalent to DROP+ADD — it fixes the type but does **not** preserve data — so it is safe **only on an empty table**. On a populated table the new column starts NULL and the old one is dropped in the same migration, destroying the plaintext; do not run it there. Use the staged `stash encrypt` path (add → backfill → cutover → drop) instead.
+After writing the migration, `--drizzle` sweeps sibling migrations containing an in-place `ALTER COLUMN … SET DATA TYPE <encrypted domain>`. When the source declaration is provably plaintext, it replaces the ALTER with an `ADD COLUMN` + `DROP` + `RENAME` sequence and lists the rewritten files. This is equivalent to DROP+ADD: it is safe only on an empty table and does not preserve data, constraints, defaults, or indexes. On a populated table, do not run that rewrite; use the staged EQL v3 rollout (add an encrypted twin, dual-write, backfill, switch the application to the encrypted column by name, then drop plaintext). If the source type cannot be proven, the statement remains unchanged and the command warns that the migration directory needs review.
 
 #### `eql upgrade`
 
-The install SQL is safe to re-run — columns and data survive — but it is not fully idempotent: it begins with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, which cascade-drops any **functional indexes** built on the `eql_v3` extractors (see `stash-indexing`). After an upgrade, recreate them: migration runners skip migrations already recorded as applied, so add a *new* migration that re-issues the `CREATE INDEX` statements (or run the DDL directly), then `ANALYZE` the affected tables. `upgrade` checks the current version, re-runs the install SQL, and reports the new one. If EQL isn't installed it points you at `eql install`. Same `--supabase`, `--exclude-operator-family`, `--eql-version`, `--latest`, `--dry-run`, `--database-url` flags.
+The install SQL is safe to re-run — columns and data survive — but it cascade-drops functional indexes that depend on `eql_v3`; recreate them afterward. `upgrade` is v3-only and accepts `--supabase`, `--dry-run`, and `--database-url`.
 
 #### `eql status`
 
-Whether EQL is installed and at which version; database permission status; whether an active encrypt config exists (relevant only to Proxy users).
+Whether EQL is installed and at which version, plus database permission status. It retains read-only EQL v2/config-table diagnostics for existing deployments.
 
 ### Database
 
@@ -433,10 +419,7 @@ For AI-guided integration that edits your existing schema files in place, prefer
 
 The database-side toolset that takes an existing plaintext column the rest of the way, **after** the rollout PR is deployed and dual-writes are live. It drives `@cipherstash/migrate`, recording every transition in `cipherstash.cs_migrations` (installed by `eql install`) and reading intent from `.cipherstash/migrations.json`.
 
-The phase ladder depends on the column's EQL version, which the commands detect from the column's **domain type** (EQL v3 types are self-describing; the `<col>_encrypted` naming is a convention only, never relied upon):
-
-- **EQL v3 (the default):** `schema-added → dual-writing → backfilling → backfilled → dropped`. There is no cut-over — the application switches to the encrypted column by name, then the plaintext column is dropped.
-- **EQL v2:** `schema-added → dual-writing → backfilling → backfilled → cut-over → dropped`, where cut-over renames the encrypted twin into the original column name.
+The authored lifecycle is EQL v3 only: `schema-added → dual-writing → backfilling → backfilled → dropped`. There is no rename cut-over — the application switches to the encrypted column by name, then the plaintext column is dropped. Status readers still display legacy v2 manifest/history fields, but mutation commands refuse an unclassified `eql_v2_encrypted` target.
 
 #### `encrypt status` / `encrypt plan`
 
@@ -451,9 +434,11 @@ stash encrypt backfill --table users --column email --chunk-size 5000
 
 Chunked, resumable, idempotent. Walks the table in keyset-pagination order, encrypts each chunk via `bulkEncryptModels`, and writes one `UPDATE ... FROM (VALUES ...)` per chunk in a transaction that also checkpoints to `cs_migrations`. SIGINT/SIGTERM finishes the current chunk and exits cleanly; re-running resumes. The `<col> IS NOT NULL AND <col>_encrypted IS NULL` guard makes concurrent runners and re-runs converge.
 
-Backfill **auto-detects the target column's EQL version** from its Postgres domain type and records it (plus the version-appropriate target phase) in `.cipherstash/migrations.json`. On an EQL v3 column it finishes by printing the v3 next steps: switch the application to `<col>_encrypted` by name, then `stash encrypt drop` — there is no cut-over.
+Backfill requires a `public.eql_v3_*` target column, records version 3 and the `dropped` target phase in `.cipherstash/migrations.json`, then prints the next steps: switch the application to the encrypted column by name and run `stash encrypt drop`. A missing, plaintext, or legacy v2 target is rejected before encryption begins.
 
 **Dual-write precondition.** The application must already write both `<col>` and `<col>_encrypted` on every insert and update. Otherwise rows written *during* the backfill land in plaintext only, silently. The first run prompts (interactive) or requires `--confirm-dual-writes-deployed` (non-interactive), then records `dual_writing`. Resumes don't re-prompt.
+
+**Credential precondition — run the backfill with the *application's* credentials.** Backfill encrypts through whichever `CS_*` credentials are in its environment, and EQL index terms derive from the ZeroKMS client key. Backfilling from a laptop on the local device profile, then querying from an app using credentials minted by `stash env`, produces rows that decrypt correctly and **never match a query** — with no error. Export the target environment's `CS_*` values in the shell running the backfill. See [`env`](#env) and `stash-edge` § The Credential-Identity Rule.
 
 | Flag | Description |
 |---|---|
@@ -465,29 +450,13 @@ Backfill **auto-detects the target column's EQL version** from its Postgres doma
 | `--confirm-dual-writes-deployed` | Non-interactive equivalent of the prompt |
 | `--force` | Re-encrypt every plaintext row, including ones with existing ciphertext. Recovery path for drift. Expensive, not destructive. Flagged in the audit trail. |
 
-#### `encrypt cutover`
-
-```bash
-stash encrypt cutover --table users --column email
-```
-
-**EQL v2 only** — v3 has no cut-over: the application switches to the encrypted column by name. Running this command on a **backfilled** v3 column reports "not applicable" (exit 0) with the next step; before backfill completes it exits 1 and says to finish the backfill (never "switch now" onto a half-populated column). For v2, the preconditions are: the column is in the `backfilled` phase, **and** a pending EQL configuration exists (on a v3-only database — no `eql_v2_configuration` table — it explains that and exits 1).
-
-In one transaction it renames `<col>` → `<col>_plaintext` and `<col>_encrypted` → `<col>`, advances the pending config to `encrypting`, activates it, and appends a `cut_over` event. With a Proxy URL configured (`--proxy-url` or `CIPHERSTASH_PROXY_URL`) it then calls `eql_v2.reload_config()` so Proxy picks up the new shape.
-
-> **After cutover, `<col>` holds ciphertext — the read path is not automatic.** Wire reads through the encryption client (`decryptModel(row, table)` for Drizzle, the `encryptedSupabaseV3` wrapper for Supabase — `encryptedSupabase` on the legacy v2 surface, otherwise `decrypt` / `bulkDecryptModels`) before returning values to callers. Skip this and your read paths hand raw EQL payloads to end users. The integration skill has the exact API. **CipherStash Proxy is the one exception** — it decrypts on the wire, so Proxy users need no application change. The cutover plan written by `stash plan` includes this read-path switch as an explicit step.
->
-> **Known gap (v2).** The pending-configuration precondition is satisfied by `stash db push`. SDK-only users (who otherwise never need `db push`) must therefore run it once before `encrypt cutover`. This gap is specific to the legacy v2 path and is not being decoupled — EQL v3 columns sidestep it entirely (no configuration table, no cut-over; see above), which is how [issue #585](https://github.com/cipherstash/stack/issues/585) was resolved when v3 became the default.
-
-Flags: `--table`, `--column`, `--proxy-url <url>`, `--migrations-dir <path>`.
-
 #### `encrypt drop`
 
 ```bash
 stash encrypt drop --table users --column email
 ```
 
-Version-aware. For **EQL v2** columns in the `cut-over` phase it emits `ALTER TABLE <table> DROP COLUMN <col>_plaintext;` (the post-rename name). For **EQL v3** columns it runs from the `backfilled` phase and drops the ORIGINAL `<col>` — v3 has no rename, so make sure the application reads/writes the encrypted column first. Before generating, the v3 path **verifies live coverage** (refuses if any row still has `<col>` set with the encrypted column NULL — e.g. rows written without dual-writes since the backfill; re-run `encrypt backfill` to fix). Either way it does **not** apply the migration — review and run your own migrate command.
+Runs from the `backfilled` phase and drops the original plaintext `<col>`. It verifies live coverage first and refuses if any row still has plaintext set with the encrypted column NULL. Legacy EQL v2 targets are rejected; the old rename/drop lifecycle is no longer automated. The command generates a migration but does not apply it.
 
 Flags: `--table`, `--column`, `--migrations-dir <path>`.
 
@@ -513,6 +482,14 @@ CS_CLIENT_ID=<uuid>
 CS_CLIENT_KEY=<hex>
 CS_CLIENT_ACCESS_KEY=CSAK…
 ```
+
+> **Every writer of a searchable column must use these same credentials** —
+> including `stash encrypt backfill`, seed scripts, and admin tools — or their
+> rows decrypt but never match a query. EQL index terms derive from the ZeroKMS
+> client key, so a row written under one credential and queried under another
+> decrypts correctly and silently fails every search. Mint one credential per
+> environment and export it for **every** process that writes that
+> environment's data. See `stash-edge` § The Credential-Identity Rule.
 
 Things to know:
 
@@ -550,7 +527,7 @@ Flags: `--name <name>`, `--write [path]`, `--json`.
 ```typescript
 import {
   defineConfig, loadStashConfig, resolveDatabaseUrl,
-  EQLInstaller, loadBundledEqlSql, downloadEqlSql,
+  EQLInstaller, loadBundledEqlSql,
 } from 'stash'
 ```
 
@@ -559,8 +536,7 @@ import {
 | `defineConfig` | `(config: StashConfig) => StashConfig` — identity function for type-checking |
 | `loadStashConfig` | `(resolverOptions?: ResolveDatabaseUrlOptions, knownConfigPath?: string) => Promise<ResolvedStashConfig>` — walks up for the config, validates with Zod, applies defaults, exits 1 if missing or invalid |
 | `resolveDatabaseUrl` | `(opts?: ResolveDatabaseUrlOptions) => Promise<string>` — the resolution chain documented above |
-| `loadBundledEqlSql` | `(options?: { supabase?, excludeOperatorFamily?, eqlVersion?: 2 \| 3 }) => string` |
-| `downloadEqlSql` | `(options?: { excludeOperatorFamily?, supabase? } \| boolean) => Promise<string>` — latest EQL from GitHub releases |
+| `loadBundledEqlSql` | `() => string` — pinned EQL v3 SQL from `@cipherstash/eql` |
 
 ### `EQLInstaller`
 
@@ -568,18 +544,18 @@ import {
 const installer = new EQLInstaller({ databaseUrl: 'postgresql://...' })
 
 await installer.checkPermissions()                  // PermissionCheckResult
-await installer.isInstalled({ eqlVersion: 3 })      // boolean
+await installer.isInstalled()                       // boolean (v3)
 await installer.getInstalledVersion()               // string | 'unknown' | null
 await installer.install({ supabase: true })         // executes in a transaction
 ```
 
-`isInstalled`, `getInstalledVersion`, and `install` all accept `eqlVersion?: 2 | 3` (default `3`, matching the CLI's `--eql-version` default), selecting the `eql_v3` or `eql_v2` schema. `install` also takes `excludeOperatorFamily`, `supabase`, and `latest` (v2 only).
+`install` installs EQL v3 only and accepts `supabase`. `isInstalled` and `getInstalledVersion` retain an optional `{ eqlVersion: 2 | 3 }` solely for read-only diagnostics of existing v2 databases.
 
 ```typescript
 type PermissionCheckResult = {
   ok: boolean           // all required permissions present
   missing: string[]     // what's absent
-  isSuperuser: boolean  // drives the automatic no-operator-family fallback
+  isSuperuser: boolean  // permission diagnostic; the v3 bundle self-adapts
 }
 ```
 

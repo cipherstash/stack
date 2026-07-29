@@ -10,9 +10,6 @@
  * the public entry point.
  */
 
-/** EQL v2's operator schema. It has no internal schema. */
-export const EQL_SCHEMA_NAME = 'eql_v2'
-
 /**
  * EQL v3 installs its operator functions into `eql_v3` (constructors live in
  * `eql_v3_internal`; the scalar type domains live in `public`). The `eql_v3`
@@ -31,8 +28,7 @@ export const EQL_V3_INTERNAL_SCHEMA_NAME = 'eql_v3_internal'
  * are required. Returned as a single multi-statement string so it can be
  * executed in one `client.query()` (Postgres accepts multi-statement strings)
  * AND embedded directly into a Supabase migration file. One source of truth
- * for both the runtime install path and the generated migration file, shared
- * by the v2 (`eql_v2`) and v3 (`eql_v3`) installs.
+ * for both the runtime install path and the generated migration file.
  */
 export function supabasePermissionsSql(schemaName: string): string {
   return `GRANT USAGE ON SCHEMA ${schemaName} TO anon, authenticated, service_role;
@@ -60,7 +56,6 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA ${schemaName} GRANT USAGE O
  * only real barrier; EXECUTE is granted too so an install into a database that
  * has revoked EXECUTE from PUBLIC still works.
  *
- * `eql_v2` has no internal schema, so this applies to v3 only.
  */
 export function supabaseInternalPermissionsSql(schemaName: string): string {
   return `GRANT USAGE ON SCHEMA ${schemaName} TO anon, authenticated, service_role;
@@ -68,9 +63,6 @@ GRANT EXECUTE ON ALL ROUTINES IN SCHEMA ${schemaName} TO anon, authenticated, se
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA ${schemaName} GRANT EXECUTE ON ROUTINES TO anon, authenticated, service_role;
 `
 }
-
-/** The v2 (`eql_v2`) Supabase grants block. See {@link supabasePermissionsSql}. */
-export const SUPABASE_PERMISSIONS_SQL = supabasePermissionsSql(EQL_SCHEMA_NAME)
 
 /**
  * The v3 Supabase grants block: `eql_v3` (the public surface) AND

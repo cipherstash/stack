@@ -4,14 +4,21 @@
 are transparently encrypted on mutations, `::jsonb`-cast on selects, encrypted
 in filter terms, and decrypted in results.
 
-Two entry points, one query mechanism:
+One entry point, EQL v3 only:
 
 | Entry point | Schema DSL | Column storage |
 |---|---|---|
-| `encryptedSupabase` | `@cipherstash/stack/schema` (EQL v2) | `eql_v2_encrypted` composite |
-| `encryptedSupabaseV3` | `@cipherstash/stack/eql/v3` (EQL v3) | native `public.eql_v3_*` domains |
+| `encryptedSupabase` | `@cipherstash/stack/eql/v3` (EQL v3) | native `public.eql_v3_*` domains |
 
-Both filter via **direct EQL operators over PostgREST**: the wrapper encrypts
+Rows already written as EQL v2 still decrypt through `@cipherstash/stack`; what
+is gone is the ability to author new v2 columns here.
+
+`encryptedSupabaseV3` remains as a `@deprecated`, type-identical alias. The old
+EQL v2 authoring wrapper — `encryptedSupabase({ encryptionClient,
+supabaseClient })` — has been removed; the name now binds to the v3 factory
+below.
+
+It filters via **direct EQL operators over PostgREST**: the wrapper encrypts
 the filter term and emits an ordinary `col <op> term` filter, which resolves
 to the custom operator defined on the encrypted type (equality by HMAC, range
 by the ordering term — CLLW-OPE on `_ord` domains, block-ORE on `_ord_ore` —
@@ -19,7 +26,7 @@ free-text by bloom-filter containment).
 
 ## Quick start (EQL v3)
 
-`encryptedSupabaseV3` is an async factory that **introspects the database at
+`encryptedSupabase` is an async factory that **introspects the database at
 connect time**: it detects EQL v3 columns by their Postgres domain, derives
 each column's encryption config from the domain, and builds the encryption
 client internally. Introspection needs a direct Postgres connection
@@ -27,14 +34,14 @@ client internally. Introspection needs a direct Postgres connection
 run in a Worker or the browser.
 
 ```typescript
-import { encryptedSupabaseV3 } from '@cipherstash/stack-supabase'
+import { encryptedSupabase } from '@cipherstash/stack-supabase'
 
 // Introspects the database via options.databaseUrl or DATABASE_URL
-const es = await encryptedSupabaseV3(
+const es = await encryptedSupabase(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_ANON_KEY!,
 )
-// or wrap an existing client: await encryptedSupabaseV3(supabaseClient, options)
+// or wrap an existing client: await encryptedSupabase(supabaseClient, options)
 
 await es.from('users').insert({ email: 'a@b.com', amount: 30 })
 
@@ -49,16 +56,16 @@ await es.from('users').select('id, amount').gte('amount', 10).lte('amount', 100)
 `from(tableName)` takes only the table name — no schema argument; column
 capabilities come from the introspected domains.
 
-The builder surface is shared across v2 and v3:
-`.select/.insert/.update/.upsert/.delete`,
+The builder surface is `.select/.insert/.update/.upsert/.delete`,
 `.eq/.neq/.in/.is/.gt/.gte/.lt/.lte/.match/.or/.not/.filter`,
-transforms (`.order/.limit/.range/.single/.maybeSingle/.csv/.abortSignal/.throwOnError`),
-plus `.withLockContext(lockContext)` and `.audit(config)` — with one fork:
-free-text search. v2 exposes `.like/.ilike` (SQL wildcard matching); v3
-exposes `.matches()` (fuzzy bloom token search) on encrypted columns, keeps
-`.contains()` for native (exact) containment on plaintext columns, and treats
-`like`/`ilike` on an encrypted column as an approximate shim that delegates to
-`.matches()` (see "v3 encoding details" below).
+transforms (`.order/.limit/.range/.single/.maybeSingle/.abortSignal/.throwOnError`
+— `.csv()` is declared but always throws, since PostgREST serializes rows
+before the wrapper can decrypt them),
+plus `.withLockContext(lockContext)` and `.audit(config)`. For free-text
+search it exposes `.matches()` (fuzzy bloom token search) on encrypted
+columns, keeps `.contains()` for native (exact) containment on plaintext
+columns, and treats `like`/`ilike` on an encrypted column as an approximate
+shim that delegates to `.matches()` (see "v3 encoding details" below).
 
 ### Typing (v3)
 
@@ -68,14 +75,14 @@ tables against the database at construction:
 
 ```typescript
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
-import { encryptedSupabaseV3 } from '@cipherstash/stack-supabase'
+import { encryptedSupabase } from '@cipherstash/stack-supabase'
 
 const users = encryptedTable('users', {
   email:  types.TextSearch('email'),   // public.eql_v3_text_search
   amount: types.IntegerOrd('amount'),  // public.eql_v3_integer_ord
 })
 
-const es = await encryptedSupabaseV3(
+const es = await encryptedSupabase(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_ANON_KEY!,
   { schemas: { users } },
@@ -132,17 +139,14 @@ The domains use SQL-standard type names (`integer`, `smallint`, `real`,
 ### Install EQL
 
 ```bash
-# v2 (default)
 stash eql install --supabase
-
-# v3
-stash eql install --eql-version 3 --supabase
 ```
 
-For **v2**, `--supabase` selects the opclass-stripped bundle (operator
-classes / families require superuser, which Supabase does not grant) and
-applies the schema grants for `anon`, `authenticated`, and `service_role`.
-Without the grants, encrypted queries fail with `42501`.
+`stash` no longer installs EQL v2 or mutates its Proxy configuration. To
+recover or restore an existing v2 database dump, use the upstream
+[EQL 2.3.1 release SQL](https://github.com/cipherstash/encrypt-query-language/releases/tag/eql-2.3.1),
+then migrate maintained deployments to v3 domains. Do not use v2 for new
+authoring.
 
 For **v3**, since eql-3.0.0 there is **one** SQL artifact for every target —
 no separate Supabase variant. The bundle's only superuser-requiring
@@ -163,9 +167,9 @@ denied for schema eql_v3_internal`).
 
 ### Exposed schemas
 
-**v2 (manual, required):** for a bare `col <op> term` filter to reach the
-custom operator, `eql_v2` must be on PostgREST's request-time search_path —
-add it to **Dashboard → Settings → API → Exposed schemas**
+**Legacy v2 recovery deployments only:** for a bare `col <op> term` filter to
+reach the custom operator, `eql_v2` must be on PostgREST's request-time
+search_path — add it to **Dashboard → Settings → API → Exposed schemas**
 ([Supabase custom-schemas guide](https://supabase.com/docs/guides/api/using-custom-schemas)).
 
 > **Warning — silent fallback (v2).** If the schema is not exposed, the

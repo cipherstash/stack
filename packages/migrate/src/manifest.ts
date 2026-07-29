@@ -3,8 +3,7 @@ import * as path from 'node:path'
 import { z } from 'zod'
 
 /**
- * The four EQL index kinds recognised by Proxy. Keep in sync with the
- * `indexes` CHECK constraint in `eql_v2_configuration`.
+ * Legacy EQL v2 index kinds retained so existing manifests remain readable.
  */
 const IndexKind = z.enum(['unique', 'match', 'ore', 'ste_vec'])
 
@@ -47,10 +46,8 @@ const ManifestColumnSchema = z.object({
   /** Desired EQL index set. Driver of the `indexes: {…}` block in EQL config. */
   indexes: z.array(IndexKind).default([]),
   /**
-   * The phase the user wants this column to reach. `cut-over` is the
-   * typical end state (reads transparently decrypted); advance to
-   * `dropped` only once you're confident the plaintext column is no
-   * longer needed.
+   * The phase the user wants this column to reach. `cut-over` is retained for
+   * legacy EQL v2 manifests; new EQL v3 entries target `dropped`.
    */
   targetPhase: z
     .enum(['schema-added', 'dual-writing', 'backfilled', 'cut-over', 'dropped'])

@@ -121,7 +121,7 @@ jobs:
           done
 
       - name: Run E2E suite
-        run: pnpm --filter @cipherstash/prisma-next-example test:e2e
+        run: pnpm exec turbo run test:e2e --filter @cipherstash/prisma-next-example --env-mode=loose
 
       - name: Stop E2E Postgres container
         if: always()

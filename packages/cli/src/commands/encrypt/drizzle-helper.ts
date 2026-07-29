@@ -10,10 +10,8 @@ import { detectPackageManager, runnerArgv } from '@/commands/init/utils.js'
  * does — `drizzle-kit generate --custom` creates the file and records the
  * journal entry / snapshot, then we overwrite the empty body with our SQL.
  *
- * Used by `encrypt drop` (to ship the plaintext-column drop migration in a
- * shape `drizzle-kit migrate` actually picks up) and `encrypt cutover` (to
- * record the live rename so Drizzle's snapshot reflects post-cutover
- * reality).
+ * Used by `encrypt drop` to ship the plaintext-column drop migration in a
+ * shape `drizzle-kit migrate` actually picks up.
  *
  * Throws if `drizzle-kit` isn't on PATH or the generated file can't be
  * located afterwards. Callers should fall back to the self-named-file

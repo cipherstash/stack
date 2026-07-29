@@ -44,8 +44,8 @@ export function dbVariant(): DbVariant {
  * Notes on the flags:
  * - `--supabase` applies the `eql_v3` AND `eql_v3_internal` grants to
  *   anon/authenticated/service_role. The SECURITY INVOKER extractors need both.
- * - `--direct` is required alongside it: `--supabase` alone prompts for an
- *   install mode (migration vs direct) and would hang a CI job.
+ * - EQL v3 is the only installable generation, and `eql install` is always a
+ *   direct install, so no generation or mode flags are required.
  * - Verified against `supabase/postgres:17.4.1.048` as the NON-superuser
  *   `postgres` role: no superuser connection is needed.
  */
@@ -61,8 +61,8 @@ export async function installEqlV3(
     )
   }
 
-  const args = ['eql', 'install', '--eql-version', '3']
-  if (variant === 'supabase') args.push('--supabase', '--direct')
+  const args = ['eql', 'install']
+  if (variant === 'supabase') args.push('--supabase')
   args.push('--database-url', databaseUrl)
 
   try {
@@ -76,7 +76,7 @@ export async function installEqlV3(
   } catch (cause) {
     const detail = cause instanceof Error ? cause.message : String(cause)
     throw new Error(
-      `stash eql install --eql-version 3${variant === 'supabase' ? ' --supabase --direct' : ''} failed.\n` +
+      `stash eql install${variant === 'supabase' ? ' --supabase' : ''} failed.\n` +
         'This is the real installer, so a failure here is a real bug — do not work around it.\n' +
         detail,
     )

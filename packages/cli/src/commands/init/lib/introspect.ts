@@ -43,11 +43,36 @@ export function pgTypeToDataType(udtName: string): DataType {
 }
 
 /**
+ * Is this column already managed by CipherStash?
+ *
+ * Both generations count. v3 is the sole generation this workspace authors,
+ * and its columns carry per-domain types (`eql_v3_text_search`,
+ * `eql_v3_integer_ord`, …) rather than v2's single `eql_v2_encrypted` udt —
+ * so keying on the v2 name alone, as this did, reported every column on the
+ * default path as plaintext. That is the dangerous direction to be wrong in:
+ * an encrypted column shown as plaintext invites the caller to encrypt it a
+ * second time. `packages/wizard` already carries this predicate; the two
+ * should agree.
+ *
+ * Deliberately not `classifyEqlDomain` from `@cipherstash/migrate`, despite
+ * the dependency being present: that answers "which generation authors this",
+ * Legacy `eql_v2_encrypted` remains recognisable for read-only diagnostics even
+ * though v2 is no longer authorable.
+ * The question here is "is this encrypted at all", which v2 answers yes to.
+ *
+ * The trailing underscore matters — a bare `eql_v3` prefix would also claim a
+ * hypothetical future `eql_v30_*`.
+ */
+export function isEqlEncryptedDomain(udtName: string): boolean {
+  return udtName === 'eql_v2_encrypted' || udtName.startsWith('eql_v3_')
+}
+
+/**
  * Read every base table in the `public` schema along with its columns.
  *
- * The `eql_v2_encrypted` UDT marker tells us a column is already managed by
- * CipherStash — useful for re-runs against a partially set up DB so we can
- * pre-select those columns rather than asking the user to reconfirm.
+ * The EQL domain markers tell us a column is already managed by CipherStash —
+ * useful for re-runs against a partially set up DB so we can pre-select those
+ * columns rather than asking the user to reconfirm.
  */
 export async function introspectDatabase(
   databaseUrl: string,
@@ -85,7 +110,7 @@ export async function introspectDatabase(
         columnName: row.column_name,
         dataType: row.data_type,
         udtName: row.udt_name,
-        isEqlEncrypted: row.udt_name === 'eql_v2_encrypted',
+        isEqlEncrypted: isEqlEncryptedDomain(row.udt_name),
       })
       tableMap.set(row.table_name, cols)
     }
@@ -203,7 +228,7 @@ export function defaultDomain(
  * Returns `undefined` if the user cancels at any prompt — callers should
  * propagate the cancellation rather than treating it as "no columns selected".
  *
- * Pre-selects columns that are already `eql_v2_encrypted` so re-running on a
+ * Pre-selects columns that already carry an EQL domain so re-running on a
  * partially encrypted DB is a no-op by default.
  */
 export async function selectTableColumns(
@@ -230,7 +255,7 @@ export async function selectTableColumns(
 
   if (eqlColumns.length > 0) {
     p.log.info(
-      `Detected ${eqlColumns.length} column${eqlColumns.length !== 1 ? 's' : ''} with eql_v2_encrypted type — pre-selected for you.`,
+      `Detected ${eqlColumns.length} already-encrypted column${eqlColumns.length !== 1 ? 's' : ''} (${[...new Set(eqlColumns.map((c) => c.udtName))].join(', ')}) — pre-selected for you.`,
     )
   }
 
@@ -239,7 +264,7 @@ export async function selectTableColumns(
     options: table.columns.map((col) => ({
       value: col.columnName,
       label: col.columnName,
-      hint: col.isEqlEncrypted ? 'eql_v2_encrypted' : col.dataType,
+      hint: col.isEqlEncrypted ? col.udtName : col.dataType,
     })),
     required: true,
     initialValues: eqlColumns.map((c) => c.columnName),

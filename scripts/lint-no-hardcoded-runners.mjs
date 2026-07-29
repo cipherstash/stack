@@ -9,9 +9,6 @@ const REPO_ROOT = resolve(import.meta.dirname, '..')
 const ALLOWLISTED_PATHS = new Set([
   'packages/wizard/src/lib/detect.ts', // npm row of the PM table
   'packages/cli/src/commands/init/utils.ts', // runnerCommand `case 'npm'`
-  'packages/cli/src/commands/init/lib/setup-prompt.ts', // execCommand `case 'npm':` switch
-  'packages/protect/src/bin/runner.ts', // Pre-allowlisted: helper for Task 11
-  'packages/drizzle/src/bin/runner.ts', // Pre-allowlisted: helper for Task 13
   'scripts/lint-no-hardcoded-runners.mjs', // this script's own docs
 ])
 
@@ -31,7 +28,26 @@ const TARGETS = process.argv.slice(2).length
 const NPX_TOKEN = /['"`]npx\b|(?:^|[^a-zA-Z0-9_$])npx\s+[@\w-]/
 
 async function* walk(dir) {
-  const entries = await readdir(dir, { withFileTypes: true })
+  // A directory can vanish between the parent's `readdir` and this call. The
+  // repo's own script self-tests create and delete probe packages under
+  // `packages/` (`lint-untracked-probe`, `lint-dead-shell-probe` in
+  // `lint-no-dead-package-paths.test.mjs`) while other suites run, so a walk of
+  // `packages/` can enumerate one and find it gone a moment later.
+  //
+  // Left unhandled this rejects with ENOENT, and Node exits **1** — the same
+  // code as "found a hardcoded npx". Every caller then reads a crash as a
+  // violation: CI fails naming a file that is perfectly clean, and re-running
+  // it passes. The missing-target case deliberately exits 2 for exactly this
+  // reason ("Exit 2 means the linter could not run"); this is the same
+  // distinction, one level down. There is nothing to lint in a directory that
+  // no longer exists, so skip it.
+  let entries
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch (err) {
+    if (err?.code === 'ENOENT') return
+    throw err
+  }
   for (const entry of entries) {
     const full = join(dir, entry.name)
     if (entry.isDirectory()) {
@@ -70,23 +86,97 @@ function isAllowedRunnerSwitch(line) {
   return /\bcase\s+['"]npm['"]/.test(line) || /name:\s*['"]npm['"]/.test(line)
 }
 
+// An allowlist entry is a standing exemption, so it has to keep earning its
+// place. Two ways it rots: the file is deleted (which is how the legacy Drizzle
+// package's `src/bin/runner.ts` entry outlived its package by two months), or
+// the file survives but the `npx` literal it was excused for moves elsewhere —
+// leaving an entry that reads as evidence the exemption is still needed. Check
+// both before scanning anything.
+const staleAllowlist = []
+for (const rel of ALLOWLISTED_PATHS) {
+  let source
+  try {
+    source = readFileSync(resolve(REPO_ROOT, rel), 'utf8')
+  } catch {
+    staleAllowlist.push(`${rel}: no such file`)
+    continue
+  }
+  const stillNeeded = source
+    .split('\n')
+    .some(
+      (line) =>
+        NPX_TOKEN.test(line) &&
+        !isCommentLine(line) &&
+        !isAllowedFallback(line) &&
+        !isAllowedRunnerSwitch(line),
+    )
+  if (!stillNeeded) {
+    staleAllowlist.push(
+      `${rel}: no longer contains an unexcused \`npx\` literal`,
+    )
+  }
+}
+
+if (staleAllowlist.length > 0) {
+  console.error(
+    `Found ${staleAllowlist.length} stale allowlist entr(ies) in this script:\n`,
+  )
+  for (const s of staleAllowlist) console.error(`  ${s}`)
+  console.error(
+    '\nDrop the entry. An exemption for a file that no longer exists, or that\n' +
+      'no longer contains the literal it was excused for, is dead weight that\n' +
+      'reads as deliberate.',
+  )
+  // Exit 2, not 1: the linter's own configuration is wrong, which is a
+  // different thing to fix than an `npx` literal in the codebase.
+  process.exit(2)
+}
+
 const offenders = []
 for (const target of TARGETS) {
   const abs = resolve(REPO_ROOT, target)
-  const stat = statSync(abs)
+  let stat
+  try {
+    stat = statSync(abs)
+  } catch {
+    // Was an uncaught throw: exit 1 plus a raw stack trace, which reads to
+    // anything checking the exit code exactly like a genuine `npx` finding.
+    // Exit 2 says the linter could not run — the same contract the allowlist
+    // self-check above already uses.
+    console.error(
+      `Target \`${target}\` does not exist.\n\n` +
+        'Update the scan roots in this script if it was renamed or removed,\n' +
+        'or check the path passed on the command line.',
+    )
+    process.exit(2)
+  }
   const files = stat.isDirectory() ? walk(abs) : [abs]
   for await (const file of files) {
+    // `rel` stays repo-relative for the allowlist lookup; only the rendering
+    // falls back to the absolute path, for a target outside the repo root that
+    // would otherwise print a `../../../../..` chain instead of a filename.
     const rel = relative(REPO_ROOT, file)
+    const shown = rel.startsWith('..') ? file : rel
     if (ALLOWLISTED_PATHS.has(rel)) continue
     if (/\.(test|spec)\.(ts|tsx|mts|cts)$/.test(file)) continue
-    const lines = readFileSync(file, 'utf8').split('\n')
+    let source
+    try {
+      source = readFileSync(file, 'utf8')
+    } catch (err) {
+      // A file can vanish after its directory was enumerated, just as a
+      // directory can vanish before the recursive readdir above. There is
+      // nothing left to lint; unexpected read failures must still surface.
+      if (err?.code === 'ENOENT') continue
+      throw err
+    }
+    const lines = source.split('\n')
     lines.forEach((line, idx) => {
       const matches = NPX_TOKEN.test(line)
       if (!matches) return
       if (isCommentLine(line)) return
       if (isAllowedFallback(line)) return
       if (isAllowedRunnerSwitch(line)) return
-      offenders.push(`${rel}:${idx + 1}: ${line.trim()}`)
+      offenders.push(`${shown}:${idx + 1}: ${line.trim()}`)
     })
   }
 }

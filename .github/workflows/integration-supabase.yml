@@ -19,7 +19,6 @@ on:
       # trigger the live suite that would catch it.
       - 'packages/stack/src/encryption/**'
       - 'packages/stack/src/schema/**'
-      - 'packages/schema/**'
       - 'packages/stack/integration/**'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
@@ -38,7 +37,6 @@ on:
       # trigger the live suite that would catch it.
       - 'packages/stack/src/encryption/**'
       - 'packages/stack/src/schema/**'
-      - 'packages/schema/**'
       - 'packages/stack/integration/**'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
@@ -131,7 +129,7 @@ jobs:
       # Step env, not a `.env` file: `dotenv/config` does not override an
       # already-set `process.env`, so these win and no secret is written to disk.
       - name: Supabase v3 integration suites
-        run: pnpm --filter @cipherstash/stack-supabase run test:integration
+        run: pnpm exec turbo run test:integration --filter @cipherstash/stack-supabase --env-mode=loose
         env:
           DATABASE_URL: ${{ steps.db.outputs.database-url }}
           PGRST_URL: ${{ steps.db.outputs.pgrest-url }}
@@ -141,7 +139,7 @@ jobs:
       # `isInstalled` short-circuits against the DB the first invocation already
       # provisioned — so this is a fast no-op check, not a second schema apply.
       - name: Shared core integration suites (against Supabase Postgres)
-        run: pnpm --filter @cipherstash/stack run test:integration
+        run: pnpm exec turbo run test:integration --filter @cipherstash/stack --env-mode=loose
         env:
           DATABASE_URL: ${{ steps.db.outputs.database-url }}
           PGRST_URL: ${{ steps.db.outputs.pgrest-url }}

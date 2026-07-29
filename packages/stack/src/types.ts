@@ -171,6 +171,12 @@ export type ClientConfig = {
   strategy?: AuthStrategy
 
   /**
+   * @deprecated The client authors EQL v3 — an all-v3 schema set forces `3`
+   * automatically and yields the typed client. This field remains only to read
+   * or write legacy EQL v2 during migration (e.g. `eqlVersion: 2` with a v2
+   * schema set), and will be removed once the v2 adapters are gone. New code
+   * should not set it.
+   *
    * The EQL wire version the client emits — one FFI client always emits
    * exactly one wire format.
    *
@@ -195,6 +201,22 @@ export type ClientConfig = {
    * strings for JSON path queries.
    */
   eqlVersion?: 2 | 3
+}
+
+/**
+ * {@link ClientConfig} for a client that authors EQL v3 — the same options
+ * minus the legacy `eqlVersion: 2` escape hatch.
+ *
+ * `Encryption` accepts this (not the full `ClientConfig`) alongside an all-v3
+ * schema set. Forcing v2 wire over v3 schemas THROWS at setup — v2 payloads
+ * cannot satisfy an `eql_v3_*` domain — so admitting `2` there typed the call
+ * as `TypedEncryptionClient` for a call that returns no client at all.
+ * Adapters that are v3-only (`@cipherstash/prisma-next`,
+ * `@cipherstash/stack-drizzle`) should take this type for their pass-through
+ * config for the same reason.
+ */
+export type V3ClientConfig = Omit<ClientConfig, 'eqlVersion'> & {
+  eqlVersion?: 3
 }
 
 type AtLeastOneCsTable<T> = [T, ...T[]]

@@ -23,9 +23,6 @@ vi.mock('../steps/authenticate.js', () => ({
 vi.mock('../steps/resolve-database.js', () => ({
   resolveDatabaseStep: { id: 'resolve-database', ...passthrough },
 }))
-vi.mock('../steps/resolve-proxy-choice.js', () => ({
-  resolveProxyChoiceStep: { id: 'resolve-proxy-choice', ...passthrough },
-}))
 vi.mock('../steps/build-schema.js', () => ({
   buildSchemaStep: { id: 'build-schema', ...passthrough },
 }))

@@ -21,9 +21,8 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { encryptedDynamoDB } from '@/dynamodb'
 import { toItemWithEqlPayloads } from '@/dynamodb/helpers'
 import type { EncryptedDynamoDBInstance } from '@/dynamodb/types'
-import type { EncryptionClient } from '@/encryption'
-import { EncryptionV3 } from '@/encryption/v3'
-import type { JsonValue } from '@/eql/v3'
+import { type EncryptionClientFor, EncryptionV3 } from '@/encryption/v3'
+import type { AnyV3Table, JsonValue } from '@/eql/v3'
 import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
 
@@ -66,7 +65,7 @@ type User = {
 /** The typed client from `EncryptionV3` — the documented v3 entry point. */
 let typedDynamo: EncryptedDynamoDBInstance
 /** The nominal chainable client, forced into v3 mode. */
-let nominalClient: EncryptionClient
+let nominalClient: EncryptionClientFor<readonly AnyV3Table[]>
 let nominalDynamo: EncryptedDynamoDBInstance
 
 beforeAll(async () => {
@@ -362,7 +361,7 @@ describe('nested attributes with a v3 table', liveSuiteOptions, () => {
   }
 
   let nestedDynamo: EncryptedDynamoDBInstance
-  let nestedClient: EncryptionClient
+  let nestedClient: EncryptionClientFor<readonly AnyV3Table[]>
 
   beforeAll(async () => {
     nestedClient = await Encryption({
@@ -432,8 +431,8 @@ describe('nested attributes with a v3 table', liveSuiteOptions, () => {
     if (stored.failure) throw new Error(stored.failure.message)
 
     const term = await nestedClient.encryptQuery(ssn, {
-      table: nested as never,
-      column: nested['profile.ssn'] as never,
+      table: nested,
+      column: nested['profile.ssn'],
     })
     if (term.failure) throw new Error(term.failure.message)
 
@@ -477,7 +476,7 @@ describe(
     })
 
     let renamedDynamo: EncryptedDynamoDBInstance
-    let renamedClient: EncryptionClient
+    let renamedClient: EncryptionClientFor<readonly AnyV3Table[]>
 
     beforeAll(async () => {
       renamedClient = await Encryption({
@@ -517,8 +516,8 @@ describe(
       expect(decrypted.data).toEqual(original)
 
       const term = await renamedClient.encryptQuery('c@d.com', {
-        table: renamed as never,
-        column: renamed.emailAddress as never,
+        table: renamed,
+        column: renamed.emailAddress,
       })
       if (term.failure) throw new Error(term.failure.message)
 
@@ -580,8 +579,8 @@ describe(
       if (stored.failure) throw new Error(stored.failure.message)
 
       const term = await nominalClient.encryptQuery(email, {
-        table: users as never,
-        column: users.email as never,
+        table: users,
+        column: users.email,
       })
       if (term.failure) throw new Error(term.failure.message)
 
@@ -624,7 +623,7 @@ describe('audit metadata with a v3 table', liveSuiteOptions, () => {
     expect(decrypted.data).toEqual(item)
   })
 
-  it('is accepted on the typed client, though decrypt cannot carry it', async () => {
+  it('is carried on every operation of the typed client too', async () => {
     const item: User = { pk: 'user#15', email: 'ken@example.com' }
 
     const encrypted = await typedDynamo
@@ -632,9 +631,11 @@ describe('audit metadata with a v3 table', liveSuiteOptions, () => {
       .audit({ metadata })
     if (encrypted.failure) throw new Error(encrypted.failure.message)
 
-    // The typed client's `decryptModel` returns a plain promise with no audit
-    // surface. The chain must still resolve correctly — the metadata is simply
-    // not forwarded. Use the nominal client if decrypt audit matters.
+    // The typed client's `decryptModel` now returns a `MappedDecryptOperation`,
+    // so the metadata forwards to ZeroKMS here as it does on the nominal client.
+    // That forwarding is proven credential-free in
+    // `__tests__/decrypt-audit-forwarding.test.ts`; this live test asserts the
+    // round-trip still decrypts with the chain attached.
     const decrypted = await typedDynamo
       .decryptModel(encrypted.data, users)
       .audit({ metadata })

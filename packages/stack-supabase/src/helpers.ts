@@ -1,7 +1,3 @@
-import type {
-  EncryptedTable,
-  EncryptedTableColumn,
-} from '@cipherstash/stack/schema'
 import type { QueryTypeName } from '@cipherstash/stack/types'
 import type {
   DbFilterString,
@@ -12,16 +8,6 @@ import type {
 } from './types'
 
 /**
- * Get the names of all encrypted columns defined in a table schema.
- */
-export function getEncryptedColumnNames(
-  schema: EncryptedTable<EncryptedTableColumn>,
-): string[] {
-  const built = schema.build()
-  return Object.keys(built.columns)
-}
-
-/**
  * Check whether a column name refers to an encrypted column in the schema.
  */
 export function isEncryptedColumn(
@@ -29,53 +15,6 @@ export function isEncryptedColumn(
   encryptedColumnNames: string[],
 ): boolean {
   return encryptedColumnNames.includes(columnName)
-}
-
-/**
- * Parse a Supabase select string and add `::jsonb` casts to encrypted columns.
- *
- * Input:  `'id, email, name'`
- * Output: `'id, email::jsonb, name::jsonb'`  (if email and name are encrypted)
- *
- * Handles whitespace, already-cast columns, and embedded functions.
- */
-export function addJsonbCasts(
-  columns: string,
-  encryptedColumnNames: string[],
-): DbSelect {
-  // The mapping below emits DB-space tokens; the brand is asserted once, here.
-  return columns
-    .split(',')
-    .map((col) => {
-      const trimmed = col.trim()
-
-      // Skip empty segments
-      if (!trimmed) return col
-
-      // If it already has a cast (e.g. `email::jsonb`), skip
-      if (trimmed.includes('::')) return col
-
-      // If it contains parens (function call) or dots (foreign table), skip
-      if (trimmed.includes('(') || trimmed.includes('.')) return col
-
-      // Check if the column name (possibly with alias) is encrypted
-      // Handle `column_name` or `column_name as alias`
-      const parts = trimmed.split(/\s+/)
-      const colName = parts[0]
-
-      if (isEncryptedColumn(colName, encryptedColumnNames)) {
-        // Preserve original whitespace before the column
-        const leadingWhitespace = col.match(/^(\s*)/)?.[1] ?? ''
-        if (parts.length > 1) {
-          // Has alias: `email as e` -> `email::jsonb as e`
-          return `${leadingWhitespace}${colName}::jsonb ${parts.slice(1).join(' ')}`
-        }
-        return `${leadingWhitespace}${colName}::jsonb`
-      }
-
-      return col
-    })
-    .join(',') as DbSelect
 }
 
 /**
@@ -109,7 +48,7 @@ function lookupDbName(
  *   property name.
  * - A DB column name used directly is cast in place (`db_name::jsonb`).
  * - Tokens that already carry a cast, or contain parens/dots (functions,
- *   foreign tables), are left untouched — same rules as the v2 helper.
+ *   foreign tables), are left untouched.
  */
 export function addJsonbCastsV3(
   columns: string,
@@ -256,10 +195,11 @@ export function mapFilterOpToQueryType(op: FilterOp): QueryTypeName {
 }
 
 /**
- * Parse a Supabase `.or()` filter string into structured conditions.
+ * Parse a Supabase `.or()` filter string into structured conditions, flattening
+ * nested `and(...)` / `or(...)` groups and recording every leaf's source span.
  *
  * Input: `'email.eq.john@example.com,name.ilike.%john%'`
- * Output: `[{ column: 'email', op: 'eq', negate: false, value: 'john@example.com' }, …]`
+ * Output: `[{ column: 'email', op: 'eq', negate: false, value: 'john@example.com', sourceSpan: … }, …]`
  *
  * PostgREST spells negation `column.not.<op>.<value>`. It is lifted onto its own
  * `negate` flag rather than left as the operator: the term collector keys the
@@ -268,15 +208,40 @@ export function mapFilterOpToQueryType(op: FilterOp): QueryTypeName {
  * string `in.(a,b)` as a single plaintext — a filter that silently matched
  * nothing. Only a `not` in the OPERATOR position is a prefix; a column or value
  * of that name is untouched.
+ *
+ * The spans are what let {@link substituteOrStringLeaves} rewrite a leaf in
+ * place, so groups survive byte-for-byte instead of being rebuilt (and
+ * destroyed) from the flat condition array.
  */
-export function parseOrString(orString: string): PendingOrCondition[] {
+export function parseOrStringWithSpans(orString: string): PendingOrCondition[] {
+  return parseOrStringAt(orString, 0)
+}
+
+/** Recursively flatten PostgREST logic groups while retaining each leaf's
+ * exact location in the caller's original expression. `baseOffset` translates
+ * the group body's own coordinates back into that original string. */
+function parseOrStringAt(
+  orString: string,
+  baseOffset: number,
+): PendingOrCondition[] {
   const conditions: PendingOrCondition[] = []
-  // Split on commas that are not inside parentheses (nested or/and)
   const parts = splitTopLevel(orString)
+  let cursor = 0
 
   for (const part of parts) {
+    const partStart = orString.indexOf(part, cursor)
+    cursor = partStart + part.length
     const trimmed = part.trim()
     if (!trimmed) continue
+    const leading = part.length - part.trimStart().length
+    const sourceStart = baseOffset + partStart + leading
+
+    const group = /^(?:not\.)?(?:and|or)\(([\s\S]*)\)$/.exec(trimmed)
+    if (group) {
+      const open = trimmed.indexOf('(')
+      conditions.push(...parseOrStringAt(group[1], sourceStart + open + 1))
+      continue
+    }
 
     // Format: column.op.value — or column.not.op.value
     const firstDot = trimmed.indexOf('.')
@@ -306,7 +271,13 @@ export function parseOrString(orString: string): PendingOrCondition[] {
     // Handle special value formats
     const parsedValue = parseOrValue(value, op)
 
-    conditions.push({ column, op, negate, value: parsedValue })
+    conditions.push({
+      column,
+      op,
+      negate,
+      value: parsedValue,
+      sourceSpan: { start: sourceStart, end: sourceStart + trimmed.length },
+    })
   }
 
   return conditions
@@ -358,6 +329,35 @@ export function rebuildOrString(
     .join(',') as DbFilterString
 }
 
+/**
+ * Rebuild only encrypted leaves of a string-form `.or()` expression.
+ *
+ * The original delimiters, whitespace, nesting, and plaintext conditions are
+ * retained byte-for-byte. Replacements run from right to left so source spans
+ * remain stable when ciphertext is longer than the plaintext operand.
+ */
+export function substituteOrStringLeaves(
+  original: string,
+  conditions: DbPendingOrCondition[],
+  shouldReplace: (condition: DbPendingOrCondition) => boolean,
+): DbFilterString {
+  let result = original
+  const replacements = conditions
+    .filter((condition) => condition.sourceSpan && shouldReplace(condition))
+    .sort(
+      (left, right) =>
+        (right.sourceSpan?.start ?? 0) - (left.sourceSpan?.start ?? 0),
+    )
+
+  for (const condition of replacements) {
+    const span = condition.sourceSpan
+    if (!span) continue
+    const replacement = rebuildOrString([condition])
+    result = result.slice(0, span.start) + replacement + result.slice(span.end)
+  }
+  return result as DbFilterString
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -392,12 +392,12 @@ const OR_GROUP_TOKEN = /^(?:not\.)?(?:and|or)$/
  * opener. `depth !== 0` at the end proves the counting was fooled, so the pass
  * is discarded and the input re-split honouring quotes alone — a backstop, not
  * the primary mechanism. It must stay narrow: applied to an input whose braces
- * WERE structure, it re-splits inside `{vip,admin}` and `parseOrString` then
+ * WERE structure, it re-splits inside `{vip,admin}` and `parseOrStringAt` then
  * drops the dotless `admin}` fragment.
  *
  * `trackDepth` is the recursion's own flag, never passed by callers. NEVER
- * throws — `query-builder.ts` relies on `parseOrString` being total so that
- * capability errors surface in filter order.
+ * throws — `query-builder.ts` relies on `parseOrStringWithSpans` being total so
+ * that capability errors surface in filter order.
  */
 function splitTopLevel(input: string, trackDepth = true): string[] {
   const parts: string[] = []

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -71,6 +71,44 @@ describe('manifest', () => {
       const read = await readManifest(tmp)
       expect(read?.tables.users?.[0]?.targetPhase).toBe('cut-over')
       expect(read?.tables.users?.[0]?.indexes).toEqual([])
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('retains legacy v2 status fields for existing migration history', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'cs-manifest-'))
+    try {
+      const legacy = {
+        version: 1,
+        tables: {
+          users: [
+            {
+              column: 'email',
+              castAs: 'text',
+              indexes: ['unique'],
+              targetPhase: 'cut-over',
+              encryptedColumn: 'email_encrypted',
+              eqlVersion: 2,
+            },
+          ],
+        },
+      }
+      const file = manifestPath(tmp)
+      mkdirSync(join(tmp, '.cipherstash'), { recursive: true })
+      writeFileSync(file, JSON.stringify(legacy), 'utf-8')
+
+      expect(await readManifest(tmp)).toMatchObject({
+        tables: {
+          users: [
+            {
+              targetPhase: 'cut-over',
+              encryptedColumn: 'email_encrypted',
+              eqlVersion: 2,
+            },
+          ],
+        },
+      })
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }

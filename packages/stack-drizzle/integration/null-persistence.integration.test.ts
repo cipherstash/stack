@@ -13,18 +13,18 @@
  * as SQL NULL, and the present cell still decrypts to its plaintext.
  */
 
-import { EncryptionV3 } from '@cipherstash/stack/v3'
+import { type EncryptionClientFor, EncryptionV3 } from '@cipherstash/stack/v3'
 import { databaseUrl, V3_MATRIX } from '@cipherstash/test-kit'
 import { and, asc as drizzleAsc, eq as drizzleEq, type SQL } from 'drizzle-orm'
 import { integer, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { makeEqlV3Column } from '../src/v3/column'
+import { makeEqlV3Column } from '../src/column'
 import {
-  createEncryptionOperatorsV3,
-  extractEncryptionSchemaV3,
-} from '../src/v3/index.js'
+  createEncryptionOperators,
+  extractEncryptionSchema,
+} from '../src/index.js'
 
 const sqlClient = postgres(databaseUrl(), { prepare: false })
 
@@ -50,7 +50,7 @@ const nullableTable = pgTable(TABLE_NAME, {
   matchText: makeEqlV3Column(
     V3_MATRIX['public.eql_v3_text_match'].builder('match_text'),
   ),
-} as never)
+})
 
 // Tier metadata: property (drizzle) + DB column + a present-row plaintext.
 const TIERS = [
@@ -80,12 +80,12 @@ const TIERS = [
   },
 ] as const
 
-const schema = extractEncryptionSchemaV3(nullableTable)
+const schema = extractEncryptionSchema(nullableTable)
 
 type SelectRow = { rowKey: string }
 
-let client: Awaited<ReturnType<typeof EncryptionV3>>
-let ops: ReturnType<typeof createEncryptionOperatorsV3>
+let client: EncryptionClientFor<readonly [typeof schema]>
+let ops: ReturnType<typeof createEncryptionOperators>
 let db: ReturnType<typeof drizzle>
 
 function unwrap<T>(result: { data?: T; failure?: { message: string } }): T {
@@ -108,7 +108,7 @@ async function selectRowKeys(condition: SQL): Promise<string[]> {
 beforeAll(async () => {
   // EQL v3 is installed once per run by `global-setup.ts`.
   client = await EncryptionV3({ schemas: [schema] })
-  ops = createEncryptionOperatorsV3(client)
+  ops = createEncryptionOperators(client)
   db = drizzle({ client: sqlClient })
 
   const columnDefs = TIERS.map((t) => `"${t.db}" ${t.domain}`).join(',\n      ')

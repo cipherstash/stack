@@ -4,7 +4,8 @@
   "version": "1.2.14-rc.4",
   "type": "module",
   "scripts": {
-    "start": "tsx index.ts"
+    "start": "tsx index.ts",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "keywords": [],
   "author": "",
@@ -13,7 +14,7 @@
   "dependencies": {
     "@cipherstash/stack": "workspace:*",
     "@cipherstash/stack-drizzle": "workspace:*",
-    "@cipherstash/stack-supabase": "workspace:*",
+    "drizzle-orm": "^0.45.2",
     "dotenv": "^17.4.2",
     "pg": "8.22.0"
   },

@@ -249,7 +249,7 @@ function nextMoveFor(
     if (doneCount === 0) {
       return 'Declare the encrypted column in your schema and run the migration.'
     }
-    return `Promote the pending EQL config — \`${cli} db activate\`.`
+    return 'Legacy EQL v2 pending configuration detected. Automatic activation has been removed; migrate the column definition to EQL v3 before continuing.'
   }
 
   // Migrate. The v3 ladder has no cut-over — after backfill the app
@@ -269,20 +269,9 @@ function nextMoveFor(
     }
   }
 
-  switch (doneCount) {
-    case 0:
-      return 'Add the encrypted twin column (`<col>_encrypted`) and run the migration.'
-    case 1:
-      return `Wire dual-write code on every persistence path, deploy to production, then run \`${cli} encrypt backfill\` (it confirms dual-writes and records the event).`
-    case 2:
-      return `Run \`${cli} encrypt backfill --table ${obs.table} --column ${obs.column}\` to encrypt historical rows.`
-    case 3:
-      return `Run \`${cli} encrypt cutover --table ${obs.table} --column ${obs.column}\` to rename the encrypted twin into place and switch reads.`
-    case 4:
-      return `Run \`${cli} encrypt drop --table ${obs.table} --column ${obs.column}\` to remove the plaintext column.`
-    default:
-      return ''
-  }
+  return doneCount >= 5
+    ? ''
+    : 'Legacy EQL v2 rollout state detected. Mutation commands for v2 have been removed; migrate the deployment to EQL v3 before continuing.'
 }
 
 /**

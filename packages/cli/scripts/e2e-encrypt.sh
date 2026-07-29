@@ -26,11 +26,11 @@ psql -h "$HOST" -d postgres -c "CREATE DATABASE ${DB}" >/dev/null
 export DATABASE_URL
 
 echo "==> 1. Install EQL + cs_migrations"
-"$STASH" db install --force
+"$STASH" eql install --force
 
 echo "==> 2. Seed 5000 plaintext users"
 psql "$DATABASE_URL" -f "$FIXTURES/seed-users.sql" >/dev/null
-psql "$DATABASE_URL" -c "ALTER TABLE users ADD COLUMN email_encrypted eql_v2_encrypted" >/dev/null
+psql "$DATABASE_URL" -c "ALTER TABLE users ADD COLUMN email_encrypted public.eql_v3_text_search" >/dev/null
 
 echo "==> 3. Backfill with interrupt/resume (dual-writes confirmed via flag for non-interactive run)"
 "$STASH" encrypt backfill --table users --column email --chunk-size 500 --confirm-dual-writes-deployed &
@@ -50,10 +50,9 @@ echo "OK: all 5000 rows encrypted"
 echo "==> 4. Status"
 "$STASH" encrypt status
 
-echo "==> 5. Cutover"
-"$STASH" encrypt cutover --table users --column email
+echo "==> 5. Switch application reads to email_encrypted (manual deploy step)"
 
-echo "==> 6. Drop"
+echo "==> 6. Generate plaintext drop migration"
 "$STASH" encrypt drop --table users --column email --migrations-dir "$(pwd)/drizzle"
 
 echo "==> Done."

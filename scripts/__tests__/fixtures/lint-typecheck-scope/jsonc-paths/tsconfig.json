@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    /* A block comment, and below a path mapping whose KEY contains `/*` — a
+       naive strip eats from inside that string to the next comment close. */
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "strict": true
+  },
+  // A trailing comma follows, which `JSON.parse` also rejects.
+  "exclude": ["dist", "node_modules"]
+}

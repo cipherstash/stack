@@ -117,7 +117,7 @@ export const db = postgres<Contract>({
 
 `cipherstashFromStack({ contractJson })` derives the v3 encryption schemas from
 the contract (one `public.eql_v3_*` domain per column), constructs the
-`@cipherstash/stack` `EncryptionV3` client from your `CS_*` env vars or local
+`@cipherstash/stack` `Encryption` client from your `CS_*` env vars or local
 profile, builds the SDK adapter, and returns ready-to-spread `extensions` and
 `middleware`.
 
@@ -178,7 +178,10 @@ The `ANALYZE` is part of the recipe — an expression index has no statistics
 until it runs. Works as a non-superuser role (Supabase included); only the
 ORE-flavour (`_ord_ore`) ordering opclass is superuser-gated. For the full
 model — which domains take which index, engagement rules, `EXPLAIN`
-verification, rollout timing — see the `stash-indexing` skill.
+verification, rollout timing — see the `stash-indexing` skill. For encrypted
+predicates written as raw SQL rather than through the `cipherstash:*`
+operators — operand casts to `eql_v3.query_*`, per-driver parameter binding —
+see the `stash-postgres` skill.
 
 In a migration, the recipes ride a raw-SQL operation (`rawSql` from
 `@prisma-next/postgres/migration`) in the migration's `operations`:

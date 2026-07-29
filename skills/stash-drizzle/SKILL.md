@@ -1,11 +1,11 @@
 ---
 name: stash-drizzle
-description: Integrate CipherStash encryption with Drizzle ORM using @cipherstash/stack-drizzle/v3 (EQL v3). Covers the types.* encrypted column factories (concrete Postgres domains), auto-encrypting query operators (eq, ne, gt/gte/lt/lte, between, inArray, matches, contains, JSON selector, asc/desc), schema extraction, the EncryptionV3 typed client, database setup with stash eql install, and migrating existing plaintext columns to encrypted. Use when adding encryption to a Drizzle ORM project, defining encrypted Drizzle schemas, or querying encrypted columns with Drizzle.
+description: Integrate CipherStash encryption with Drizzle ORM using @cipherstash/stack-drizzle (EQL v3). Covers the types.* encrypted column factories (concrete Postgres domains), auto-encrypting query operators (eq, ne, gt/gte/lt/lte, between, inArray, matches, contains, JSON selector, asc/desc), schema extraction, the Encryption typed client, database setup with stash eql install, and migrating existing plaintext columns to encrypted. Use when adding encryption to a Drizzle ORM project, defining encrypted Drizzle schemas, or querying encrypted columns with Drizzle.
 ---
 
 # CipherStash Stack - Drizzle ORM Integration
 
-Guide for integrating CipherStash field-level encryption with Drizzle ORM using `@cipherstash/stack-drizzle/v3` (EQL v3). Provides Drizzle-native encrypted column factories and query operators that transparently encrypt search values — Drizzle never sees plaintext in a query.
+Guide for integrating CipherStash field-level encryption with Drizzle ORM using `@cipherstash/stack-drizzle` (EQL v3). Provides Drizzle-native encrypted column factories and query operators that transparently encrypt search values — Drizzle never sees plaintext in a query.
 
 In EQL v3 every encrypted column is a **concrete Postgres domain** (`public.eql_v3_text_search`, `public.eql_v3_integer_ord`, ...) whose query capabilities are fixed by the type you pick — there is no capability config object. See the `stash-encryption` skill's "Schema Definition" section (the `types` catalog) for the full catalog and capability suffixes (`Eq`, `Ord`/`OrdOre`, `Match`, `Search`, `Json`).
 
@@ -33,8 +33,8 @@ npm install @cipherstash/stack @cipherstash/stack-drizzle drizzle-orm
 
 The Drizzle integration ships as its own first-party package,
 `@cipherstash/stack-drizzle`, which depends on `@cipherstash/stack`. Install both.
-The v3 surface documented here lives on the `@cipherstash/stack-drizzle/v3` subpath.
-It is distinct from the older, separate `@cipherstash/drizzle` package (which is
+The v3 surface documented here is exported from the `@cipherstash/stack-drizzle`
+package root. It is distinct from the older, separate `@cipherstash/drizzle` package (which is
 `@cipherstash/protect`-based, with different symbol names) — that package is
 **deprecated and no longer published**; do not install it. This package replaces it.
 
@@ -49,7 +49,7 @@ EQL (Encrypt Query Language) provides the PostgreSQL functions and domains that 
 **Direct install** — run the SQL straight against the database (quick, good for dev):
 
 ```bash
-stash eql install --eql-version 3
+stash eql install
 ```
 
 **Migration (preferred for real projects)** — generate a Drizzle custom migration that carries the EQL v3 install SQL, so it lands in your migration history and ships to every environment through `drizzle-kit migrate`:
@@ -61,7 +61,7 @@ stash eql migration --drizzle --supabase   # also grants eql_v3 to anon/authenti
 
 The generated migration also installs the `cs_migrations` tracking schema, so a single `drizzle-kit migrate` covers everything `stash encrypt …` needs — no out-of-band `stash eql install`. EQL v3 ships one SQL bundle for every target including Supabase; `--supabase` only adds the PostgREST/RLS role grants (harmless when you connect directly as `postgres`). Requires `drizzle-kit` installed and configured.
 
-**Changing an existing plaintext column to an encrypted one.** `drizzle-kit generate` emits an in-place `ALTER TABLE … ALTER COLUMN … SET DATA TYPE eql_v3_<name>`, which Postgres rejects — there is no cast from `text`/`numeric` to an EQL domain. (On drizzle-kit 0.31.0 and later the emitted type is also mangled to `"undefined"."eql_v3_<name>"`, since a `customType` has no `typeSchema`.) The `stash eql migration --drizzle` sweep repairs the invalid statement — the `stash-cli` skill covers what it rewrites and the rule that matters: the repair is data-destroying, so it is safe **only on an empty table**. For a table with live data, do **not** apply the swept migration; follow the staged flow in **Migrating an Existing Column to Encrypted** below instead.
+**Changing an existing plaintext column to an encrypted one.** `drizzle-kit generate` emits an in-place `ALTER TABLE … ALTER COLUMN … SET DATA TYPE eql_v3_<name>`, which Postgres rejects — there is no cast from `text`/`numeric` to an EQL domain. (On drizzle-kit 0.31.0 and later the emitted type is also mangled to `"undefined"."eql_v3_<name>"`, since a `customType` has no `typeSchema`.) The `stash eql migration --drizzle` sweep repairs the invalid statement — the `stash-cli` skill covers what it rewrites and the rule that matters: the repair is data-destroying, so it is safe **only on an empty table**. It repairs only what it can place: the swept directory must also contain the migration that declared the column. If it does not, the statement is flagged for review instead of rewritten. For a table with live data, do **not** apply the swept migration; follow the staged flow in **Migrating an Existing Column to Encrypted** below instead.
 
 ### Column Storage
 
@@ -83,11 +83,11 @@ Encrypted predicates need functional indexes over the `eql_v3.*` extractors, and
 
 ## Schema Definition
 
-Use the `types` namespace from `@cipherstash/stack-drizzle/v3` to define encrypted columns. Each factory maps 1:1 to a Postgres domain, and the column's query capabilities are fixed by the type:
+Use the `types` namespace from `@cipherstash/stack-drizzle` to define encrypted columns. Each factory maps 1:1 to a Postgres domain, and the column's query capabilities are fixed by the type:
 
 ```typescript
 import { pgTable, integer, timestamp, varchar } from "drizzle-orm/pg-core"
-import { types } from "@cipherstash/stack-drizzle/v3"
+import { types } from "@cipherstash/stack-drizzle"
 
 const usersTable = pgTable("users", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -117,37 +117,37 @@ Capability suffixes at a glance (full catalog: `stash-encryption` skill, "Schema
 
 Value families: `Integer`/`Smallint`/`Numeric`/`Real`/`Double` (`number`), `Bigint` (`bigint`), `Date`/`Timestamp` (`Date`), `Text` (`string`), `Boolean` (`boolean`, storage only), `Json` (a JSON document — object or array, not a top-level scalar).
 
-`makeEqlV3Column(builder)` wraps a column builder from `@cipherstash/stack/eql/v3` (e.g. `makeEqlV3Column(v3types.TextEq("email"))`) — `types.TextEq("email")` from the Drizzle subpath is shorthand for the same thing.
+`makeEqlV3Column(builder)` wraps a column builder from `@cipherstash/stack/eql/v3` (e.g. `makeEqlV3Column(v3types.TextEq("email"))`) — `types.TextEq("email")` from the Drizzle package is shorthand for the same thing.
 
 ## Initialization
 
 ### 1. Extract Schema from Drizzle Table
 
 ```typescript
-import { extractEncryptionSchemaV3, createEncryptionOperatorsV3 } from "@cipherstash/stack-drizzle/v3"
-import { EncryptionV3 } from "@cipherstash/stack/v3"
+import { extractEncryptionSchema, createEncryptionOperators } from "@cipherstash/stack-drizzle"
+import { Encryption } from "@cipherstash/stack/v3"
 
 // Convert the Drizzle table definition to a CipherStash v3 schema
-const usersSchema = extractEncryptionSchemaV3(usersTable)
+const usersSchema = extractEncryptionSchema(usersTable)
 ```
 
 ### 2. Initialize the Encryption Client
 
 ```typescript
-const encryptionClient = await EncryptionV3({
+const encryptionClient = await Encryption({
   schemas: [usersSchema],
 })
 ```
 
-`EncryptionV3` returns a strongly-typed client: plaintext types are pinned to each column's domain, and query methods only accept queryable columns.
+`Encryption` returns a strongly-typed client: plaintext types are pinned to each column's domain, and query methods only accept queryable columns.
 
 ### 3. Create Query Operators
 
 ```typescript
-const ops = createEncryptionOperatorsV3(encryptionClient)
+const ops = createEncryptionOperators(encryptionClient)
 ```
 
-`createEncryptionOperatorsV3(client, { lockContext, audit })` optionally sets defaults applied to every operand encryption; the async encrypting operators (`eq`, `ne`, `inArray`, `notInArray`, `gt`/`gte`/`lt`/`lte`, `between`/`notBetween`, `matches`, `contains`, and all methods returned by `selector(...)`) also take an optional trailing `{ lockContext, audit }` argument per call. Top-level `asc`/`desc` and the passthrough operators (`isNull`, `isNotNull`, `not`, `and`, `or`, `exists`, `notExists`) encrypt nothing and take no such argument.
+`createEncryptionOperators(client, { lockContext, audit })` optionally sets defaults applied to every operand encryption; the async encrypting operators (`eq`, `ne`, `inArray`, `notInArray`, `gt`/`gte`/`lt`/`lte`, `between`/`notBetween`, `matches`, `contains`, and all methods returned by `selector(...)`) also take an optional trailing `{ lockContext, audit }` argument per call. Top-level `asc`/`desc` and the passthrough operators (`isNull`, `isNotNull`, `not`, `and`, `or`, `exists`, `notExists`) encrypt nothing and take no such argument.
 
 ### 4. Create Drizzle Instance
 
@@ -370,14 +370,14 @@ if (!decrypted.failure) {
 }
 ```
 
-`Date` columns are reconstructed to real `Date` instances on decrypt; `bigint` columns round-trip as native `bigint`. Non-schema fields pass through unchanged.
+`Date` columns are reconstructed to real `Date` instances on decrypt; `bigint` columns round-trip as native `bigint`. Non-schema fields pass through unchanged. Drizzle decrypts through the same typed client as every other integration, so the one caveat applies here too: a stored value that does **not** parse as a date is handed back unchanged rather than as an `Invalid Date`, even though the declared type is `Date` — guard with `instanceof Date` before calling `Date` methods on a column whose stored values you don't control.
 
 ## Indexing Encrypted Columns
 
 Drizzle emits the encrypted query operators, but **no index DDL** — without functional indexes over the `eql_v3.*` term extractors, every encrypted predicate sequential-scans. `encryptedIndexes` derives the recommended indexes for every encrypted column in the table from its domain, so a schema column can't be forgotten:
 
 ```typescript
-import { encryptedIndexes, types } from "@cipherstash/stack-drizzle/v3"
+import { encryptedIndexes, types } from "@cipherstash/stack-drizzle"
 import { integer, pgTable } from "drizzle-orm/pg-core"
 
 export const users = pgTable(
@@ -417,13 +417,15 @@ import { index } from "drizzle-orm/pg-core"
 
 Run `ANALYZE <table>` after the migration applies — an expression index gathers no statistics at `CREATE INDEX` time. For when to create indexes during a rollout (after backfill, before switching reads), engagement rules, and `EXPLAIN` verification, see the `stash-indexing` skill.
 
+> **Dropping to raw SQL?** ``db.execute(sql`…`)`` bypasses the operators this integration emits, so you own the operand casts yourself — an encrypted predicate needs its needle cast to the column's `eql_v3.query_*` domain, and the driver's parameter-binding rules differ between `pg` and `postgres-js`. The `stash-postgres` skill is the reference for both.
+
 ## Migrating an Existing Column to Encrypted
 
 The hard case: a Drizzle table that already exists in production with live data in a plaintext column you want to encrypt. You can't just change the column type — that would drop the data and break NOT NULL constraints.
 
-CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code) and a **cutover step** (backfill + switch reads + drop — under EQL v2 the switch is a rename, under v3 it is an application-side change). (If using CipherStash Proxy, the rollout also includes `stash db push` to register the encryption config with EQL.) The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Drizzle-specific shape.
+CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code) and a **cutover step** (backfill + switch reads by name + drop). The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Drizzle-specific shape.
 
-> **EQL version note.** The CLI rollout tooling (`stash encrypt *`, and the underlying `@cipherstash/migrate`) works with **both EQL versions** and auto-detects a column's version from its Postgres domain type — there is no flag. The lifecycles differ at the end: **v3** (the default, and what the schema below uses) is `schema-add → dual-write → deploy gate → backfill → switch the app to the encrypted column by name → drop`, with **no cut-over rename**; **v2** finishes with `stash encrypt cutover` (a rename swap plus an `eql_v2_configuration` promotion) before the drop. Running `stash encrypt cutover` on a **backfilled** v3 column reports "not applicable" and exits 0 (it exits 1 if the backfill hasn't finished).
+> **EQL version note.** The CLI rollout tooling (`stash encrypt *`, and the underlying `@cipherstash/migrate`) now mutates **EQL v3 only**. A `public.eql_v3_*` target is required for backfill and drop. Legacy `eql_v2_encrypted` columns and migration history remain visible in status, but mutation commands reject them. The v3 lifecycle is `schema-add → dual-write → deploy gate → backfill → switch the app to the encrypted column by name → drop`, with no rename.
 
 > **Where am I?** Run `stash status` first (substitute the runner per the note above). It shows you which Drizzle tables/columns are mid-rollout, which are post-deploy, and what the next move is. Re-run after every transition.
 
@@ -451,7 +453,7 @@ Add an `email_encrypted` column **alongside** `email`. Crucially, the encrypted 
 
 ```typescript
 // src/db/schema.ts
-import { types } from '@cipherstash/stack-drizzle/v3'
+import { types } from '@cipherstash/stack-drizzle'
 
 export const users = pgTable('users', {
   id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
@@ -464,28 +466,16 @@ Update the encryption client to harvest the encrypted columns from the table:
 
 ```typescript
 // src/encryption/index.ts
-import { EncryptionV3 } from '@cipherstash/stack/v3'
-import { extractEncryptionSchemaV3 } from '@cipherstash/stack-drizzle/v3'
+import { Encryption } from '@cipherstash/stack/v3'
+import { extractEncryptionSchema } from '@cipherstash/stack-drizzle'
 import { users } from '../db/schema'
 
-const usersEncryptionSchema = extractEncryptionSchemaV3(users)
+const usersEncryptionSchema = extractEncryptionSchema(users)
 
-export const encryptionClient = await EncryptionV3({ schemas: [usersEncryptionSchema] })
+export const encryptionClient = await Encryption({ schemas: [usersEncryptionSchema] })
 ```
 
-Generate the migration with `drizzle-kit generate`. The generated SQL should be a single `ALTER TABLE ... ADD COLUMN email_encrypted public.eql_v3_text_search;`. Apply with `drizzle-kit migrate`. (This requires the EQL v3 SQL to be installed first — see Database Setup.)
-
-> **Using CipherStash Proxy?**
->
-> If your app queries encrypted data through CipherStash Proxy, register the new encryption config with EQL:
->
-> ```bash
-> stash db push
-> ```
->
-> If this is the project's first encrypted column, `db push` writes directly to the active EQL config (nothing to rename). If an active config already exists, `db push` writes the new config as `pending` — that's expected. The pending row will be promoted to active by `stash encrypt cutover` in the cutover step.
->
-> SDK-only users can skip this step.
+Generate the migration with `drizzle-kit generate`. The generated SQL should be a single `ALTER TABLE ... ADD COLUMN "email_encrypted" "eql_v3_text_search";` — drizzle-kit emits the **bare** domain name, which resolves to the `public.eql_v3_text_search` domain via `search_path` (a schema-qualified custom type would be quoted as one identifier and fail, so the bare name is deliberate). Apply with `drizzle-kit migrate`. (This requires the EQL v3 SQL to be installed first — see Database Setup.)
 
 #### Dual-writing: write to both columns from app code
 
@@ -540,53 +530,14 @@ Resumable, idempotent, chunked. The CLI walks the table in keyset-pagination ord
 
 If something goes wrong (e.g. you discover the dual-write code wasn't actually live when backfill ran), re-run with `--force` to re-encrypt every row regardless of current state.
 
-> **SDK-only note (EQL v2 only):** `stash encrypt cutover` requires a pending EQL configuration set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`. EQL v3 columns never hit this — cut-over doesn't apply to them.
-
 #### Switch reads to the encrypted column
 
-**EQL v3 (the schema above): there is no cut-over.** The encrypted column keeps
-its own name — you switch the application to it by name, verify reads, then drop
-the plaintext column. Point your queries at `email_encrypted`, deploy, and
-confirm reads decrypt correctly; then skip ahead to the drop step. Running
-`stash encrypt cutover` on a **backfilled** v3 column reports "not applicable" and exits 0 (it exits 1 if the backfill hasn't finished).
+The EQL v3 encrypted column keeps its own name. Switch the application to it by
+name, verify reads, then drop the plaintext column. There is no rename command.
 
-The rest of this subsection is the **EQL v2** path (a `eql_v2_encrypted` twin),
-kept for existing v2 deployments.
-
-First, update the Drizzle schema to the post-cutover shape — switch `email` to the encrypted type and remove the `email_encrypted` column.
-
-> **Using CipherStash Proxy?**
->
-> If using Proxy, re-push the encryption config so EQL has a pending row that points at `email` (no `_encrypted` suffix):
->
-> ```bash
-> stash db push
-> # → writes the new config as `pending`. Active config (still pointing at
-> #   `email_encrypted`) keeps serving while we complete the cutover.
-> ```
-
-Now run the cutover:
-
-```bash
-stash encrypt cutover --table users --column email
-```
-
-Inside one transaction it: (1) renames `email` → `email_plaintext` and `email_encrypted` → `email`, (2) promotes the pending EQL config to `active` (and the prior active to `inactive`), (3) records a `cut_over` event in `cs_migrations`.
-
-The Drizzle schema you just edited now matches the physical DB shape — `email` is the encrypted column. Keep the temporary `email_plaintext: text('email_plaintext')` declaration in the schema file until the drop step:
-
-```typescript
-// src/db/schema.ts (post-cutover)
-export const users = pgTable('users', {
-  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
-  email: types.TextSearch('email'),
-  email_plaintext: text('email_plaintext'),  // temporary; dropped next
-})
-```
-
-App code that does `SELECT email FROM users` now returns ciphertext that must be decrypted via the encryption client. **This is the moment that breaks read paths if they aren't decrypting.**
-
-Update read paths to decrypt:
+Point your read paths at `email_encrypted` and decrypt the selected envelopes
+with the encryption client. **This is the moment that breaks read paths if they
+aren't decrypting.**
 
 ```typescript
 // Before
@@ -597,10 +548,10 @@ const email = rows[0].email
 const rows = await db.select().from(users).where(eq(users.id, id))
 const decrypted = await encryptionClient.decryptModel(rows[0], usersEncryptionSchema)
 if (decrypted.failure) throw new Error(decrypted.failure.message)
-const email = decrypted.data.email
+const email = decrypted.data.email_encrypted
 ```
 
-For queries that filter on `email`, switch to the encrypted operators from `createEncryptionOperatorsV3` — `eq`, `matches`, `gte`, etc. (See `## Query Encrypted Data` above.)
+For queries that filter on the column, switch to the encrypted operators from `createEncryptionOperators` — `eq`, `matches`, `gte`, etc. (See `## Query Encrypted Data` above.) Deploy, confirm reads decrypt correctly, then drop the plaintext column.
 
 #### Drop: remove the plaintext column
 
@@ -610,10 +561,15 @@ Once read paths are updated and you're confident reads are decrypting correctly,
 stash encrypt drop --table users --column email
 ```
 
-The CLI emits a Drizzle migration file with the drop. **Which column it drops depends on the EQL version**, which the CLI auto-detects:
-
-- **v3** — drops the original plaintext column, `ALTER TABLE users DROP COLUMN email;`. There was no rename, so no `email_plaintext` exists. Requires the column to be in the `backfilled` phase, plus a live coverage check.
-- **v2** — drops the post-rename leftover, `ALTER TABLE users DROP COLUMN email_plaintext;`. Requires the `cut-over` phase.
+The CLI emits a Drizzle migration file with the drop. For a v3 column it drops
+the original plaintext column, `email` — there was no rename, so no
+`email_plaintext` exists. The generated SQL is not a bare `ALTER TABLE`: it is a
+`DO $stash_drop$` block that takes `LOCK TABLE users IN ACCESS EXCLUSIVE MODE`,
+re-counts rows where `email IS NOT NULL AND email_encrypted IS NULL` *at apply
+time*, `RAISE EXCEPTION`s if any remain, and only then executes the
+`ALTER TABLE ... DROP COLUMN`. So a row written after generation can't be
+silently destroyed. Requires the column to be in the `backfilled` phase, plus a
+live coverage check at generation time.
 
 Review and apply with `drizzle-kit migrate`, then update the schema to its final shape — the encrypted column is the only one left:
 
@@ -678,11 +634,11 @@ All comparison/containment operators auto-encrypt their operands and are async; 
 
 ### Other v3 Exports
 
-`types`, `makeEqlV3Column`, `getEqlV3Column`, `isEqlV3Column`, `extractEncryptionSchemaV3`, `createEncryptionOperatorsV3`, `EncryptionOperatorError`, and the codec helpers `v3ToDriver` / `v3FromDriver` / `EqlV3CodecError` — all from `@cipherstash/stack-drizzle/v3`.
+`types`, `makeEqlV3Column`, `getEqlV3Column`, `isEqlV3Column`, `extractEncryptionSchema`, `createEncryptionOperators`, `EncryptionOperatorError`, and the codec helpers `v3ToDriver` / `v3FromDriver` / `EqlV3CodecError` — all from `@cipherstash/stack-drizzle`.
 
 ## Error Handling
 
-Operators throw `EncryptionOperatorError` (exported from `@cipherstash/stack-drizzle/v3`) whenever the query cannot be answered safely:
+Operators throw `EncryptionOperatorError` (exported from `@cipherstash/stack-drizzle`) whenever the query cannot be answered safely:
 
 - the column is not an encrypted v3 column (there is no plaintext fallback);
 - the column's domain lacks the operator's capability (e.g. ordering a `TextEq` column, `eq` on a `Json` column);
@@ -691,7 +647,7 @@ Operators throw `EncryptionOperatorError` (exported from `@cipherstash/stack-dri
 - operand encryption itself fails.
 
 ```typescript
-import { EncryptionOperatorError } from "@cipherstash/stack-drizzle/v3"
+import { EncryptionOperatorError } from "@cipherstash/stack-drizzle"
 
 class EncryptionOperatorError extends Error {
   context?: {
@@ -706,6 +662,4 @@ There is no `EncryptionConfigError` on the v3 path — capability problems surfa
 
 Encryption client operations (`encryptModel`, `bulkDecryptModels`, ...) don't throw — they return `Result` objects with `data` or `failure`. Check `.failure` before using `.data`.
 
-## Legacy: EQL v2
-
-The original v2 integration — `encryptedType` config-flag columns, `extractEncryptionSchema`, and `createEncryptionOperators` (with `like`/`ilike`) from the `@cipherstash/stack-drizzle` package root, over the `eql_v2_encrypted` column type installed via `stash eql install --drizzle` (the deprecated standalone `@cipherstash/drizzle` package shipped its own `generate-eql-migration` bin for the same purpose) — still exists for existing deployments and is documented at https://cipherstash.com/docs. New projects must use the `/v3` surface documented above — `stash init --drizzle` generates an EQL **v3** migration via `stash eql migration --drizzle`. Reaching the v2 install path now requires opting in explicitly with `stash eql install --drizzle --eql-version 2`.
+> **EQL v2 removed.** `@cipherstash/stack-drizzle` no longer ships an EQL v2 authoring surface: the pre-v3 `encryptedType` config-flag columns and the `like`/`ilike` operators are gone, and the `./v3` subpath has collapsed into the package root (`@cipherstash/stack-drizzle`). All exports documented here are EQL v3. Existing v2 ciphertext is still decryptable via `@cipherstash/stack`; only the Drizzle-side authoring/query-building of new v2 columns is removed. `stash init --drizzle` generates an EQL v3 migration via `stash eql migration --drizzle`.

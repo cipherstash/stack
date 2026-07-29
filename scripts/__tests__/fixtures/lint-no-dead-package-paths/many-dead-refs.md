@@ -1,0 +1,4 @@
+- packages/protect
+- packages/schema
+- packages/protect-dynamodb
+- packages/stack

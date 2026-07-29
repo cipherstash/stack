@@ -1,15 +1,12 @@
 import type { ClientBase } from 'pg'
 
 /**
- * Which EQL generation an encrypted column belongs to. The migration lifecycle
- * differs between them: v2 is driven by the `eql_v2_configuration` state machine
- * (see {@link import('./eql.js')}), while v3 is domain-native — configuration
- * lives in the column's own type and there is no configuration table, so its
- * lifecycle is backfill-then-drop with no cut-over rename.
+ * Which EQL generation an encrypted column belongs to. EQL v3 is domain-native:
+ * configuration lives in the column's own type and its lifecycle is
+ * backfill-then-drop with no cut-over rename. The `2` member remains solely for
+ * reading legacy manifest and status records.
  *
- * Numeric (`2 | 3`) to match the manifest's `eqlVersion` field and the CLI
- * installer's `--eql-version` — one representation everywhere, no
- * string↔number translation at boundaries.
+ * Numeric (`2 | 3`) to match the manifest's `eqlVersion` field.
  */
 export type EqlVersion = 2 | 3
 
@@ -17,7 +14,7 @@ export type EqlVersion = 2 | 3
 export interface EncryptedColumnInfo {
   /** The column's name, exactly as Postgres reports it. */
   column: string
-  /** The EQL domain name, e.g. `eql_v2_encrypted` or `eql_v3_text_search`. */
+  /** The EQL domain name, e.g. `eql_v3_text_search` or `eql_v3_integer_ord`. */
   domain: string
   version: EqlVersion
 }
@@ -30,12 +27,19 @@ export interface EncryptedColumnInfo {
  * rule lives, and why detection never relies on column NAMES: the
  * `<column>_encrypted` naming is a convention, neither enforced nor required.
  *
- * - `eql_v2_encrypted` → 2
  * - `eql_v3_*` (e.g. `eql_v3_text_search`, `eql_v3_integer_ord`) → 3
- * - anything else → `null` (not an EQL column)
+ * - anything else → `null` (not an EQL v3 column)
+ *
+ * v3 is the sole generation this workspace authors and backfills, so the
+ * classifier only recognises `eql_v3_*` domains. A legacy `eql_v2_encrypted`
+ * column is therefore no longer classified here — its version is carried by
+ * the manifest's recorded `eqlVersion` instead (see the `?? eqlVersion`
+ * fallbacks in the CLI's `encrypt status` / `status` renderers). Existing v2
+ * ciphertext stays decryptable; only its *classification as an authorable
+ * generation* is dropped. `EqlVersion` keeps the `2` member for those
+ * manifest-sourced legacy values.
  */
 export function classifyEqlDomain(domain: string): EqlVersion | null {
-  if (domain === 'eql_v2_encrypted') return 2
   // Underscore included: a bare `startsWith('eql_v3')` would also claim
   // hypothetical future generations like `eql_v30_*`.
   if (domain.startsWith('eql_v3_')) return 3
@@ -96,6 +100,38 @@ export async function detectColumnEqlVersion(
   )
   const domain = result.rows[0]?.domain_name
   return domain === undefined ? null : classifyEqlDomain(domain)
+}
+
+/**
+ * Whether `columnName` exists on `tableName` at all, whatever its type.
+ *
+ * Distinct from {@link detectColumnEqlVersion}, which answers "and is it an EQL
+ * column?". Callers need the difference to tell a STALE reference (the column
+ * is gone) from a live one the classifier simply does not recognise — most
+ * often a legacy `eql_v2_encrypted` counterpart.
+ *
+ * Lives here rather than in the CLI so it shares {@link REGCLASS_SQL} with the
+ * other catalog probes: a hand-rolled `to_regclass($1)` case-folds unquoted
+ * identifiers and silently reports "missing" for a Prisma-style `"User"` table
+ * (#787 review).
+ */
+export async function columnExists(
+  client: ClientBase,
+  tableName: string,
+  columnName: string,
+): Promise<boolean> {
+  const { schema, table } = splitTableName(tableName)
+  const { rows } = await client.query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM pg_attribute
+       WHERE attrelid = ${REGCLASS_SQL}
+         AND attname = $3
+         AND attnum > 0
+         AND NOT attisdropped
+     ) AS exists`,
+    [table, schema, columnName],
+  )
+  return rows[0]?.exists === true
 }
 
 /**

@@ -18,7 +18,16 @@ import { buildEqlV3MigrationSql, eqlMigrationCommand } from '../migration.js'
 // reports through.
 const clack = vi.hoisted(() => ({
   spinnerInstance: { start: vi.fn(), stop: vi.fn() },
-  log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn() },
+  // `step` is on the real clack `log`; omitting it made the sweep's
+  // per-statement report throw and land in the command's catch block, so no
+  // test ever saw the report. Keep it here.
+  log: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    success: vi.fn(),
+    step: vi.fn(),
+  },
   intro: vi.fn(),
   note: vi.fn(),
   outro: vi.fn(),
@@ -217,6 +226,14 @@ describe('eqlMigrationCommand — Drizzle', () => {
   it('rewrites a sibling migration with a broken v3 ALTER COLUMN', async () => {
     const out = join(tmp, 'drizzle')
     mkdirSync(out, { recursive: true })
+    // The sweep is fail-closed: it rewrites a column only when the corpus
+    // positively declares it (and it isn't already encrypted). A real drizzle
+    // corpus carries this declaration in an earlier migration — supply it so
+    // the fixture matches what the sweep actually requires.
+    writeFileSync(
+      join(out, '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text);\n',
+    )
     const sibling = join(out, '0001_encrypt-email.sql')
     writeFileSync(
       sibling,
@@ -239,10 +256,17 @@ describe('eqlMigrationCommand — Drizzle', () => {
   it('does not rewrite the EQL install migration it just generated', async () => {
     const out = join(tmp, 'drizzle')
     mkdirSync(out, { recursive: true })
-    const generated = join(out, '0000_install-eql.sql')
+    // Fail-closed requires the corpus to positively declare the column before
+    // the sweep will touch it — supply the declaration a real drizzle corpus
+    // would carry, same as the sibling-rewrite test above.
+    writeFileSync(
+      join(out, '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text);\n',
+    )
+    const generated = join(out, '0001_install-eql.sql')
     // A sibling carrying the SAME statement — the differential that proves the
     // sweep ran at all, rather than no-opping over the whole directory.
-    const sibling = join(out, '0001_encrypt-email.sql')
+    const sibling = join(out, '0002_encrypt-email.sql')
     const unsafeAlter =
       'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE "undefined"."eql_v3_text_search";\n'
     writeFileSync(sibling, unsafeAlter)
@@ -292,6 +316,44 @@ describe('eqlMigrationCommand — Drizzle', () => {
     // The near-miss statement is left untouched...
     expect(readFileSync(sibling, 'utf-8')).toContain('SET DATA TYPE')
     // ...and the closing note warns the sweep did not fully complete.
+    const warned = clack.log.warn.mock.calls.map((c) => String(c[0]))
+    expect(warned.some((msg) => msg.includes('did not fully complete'))).toBe(
+      true,
+    )
+  })
+
+  // A column the corpus never declares is fail-closed to `source-unknown`: left
+  // on disk, and reported so the user goes and checks its type. This is the most
+  // common skip on a real (e.g. squashed) corpus, and it renders through the
+  // `p.log.step` path that a missing mock method used to make throw — so assert
+  // the guidance text actually reaches the user, not just that a warning fired.
+  it('reports source-unknown guidance for an undeclared column and warns at the close', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    // No CREATE TABLE / ADD COLUMN anywhere declares "users"."email".
+    const sibling = join(out, '0001_encrypt-email.sql')
+    const unsafeAlter =
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n'
+    writeFileSync(sibling, unsafeAlter)
+    spawnMock.mockImplementation(() => {
+      writeFileSync(join(out, '0002_install-eql.sql'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+
+    await eqlMigrationCommand({ drizzle: true, out })
+
+    // Left exactly as written — a source-unknown statement is never rewritten.
+    expect(readFileSync(sibling, 'utf-8')).toBe(unsafeAlter)
+    // The per-statement report reached the user with the source-unknown
+    // remediation (the whole point of the reason), not a crash into the catch.
+    const stepped = clack.log.step.mock.calls.map((c) => String(c[0]))
+    expect(stepped.some((msg) => msg.includes(sibling))).toBe(true)
+    expect(
+      stepped.some((msg) =>
+        msg.includes("Check the column's current type in the database"),
+      ),
+    ).toBe(true)
+    // And the closing note warns the sweep did not fully complete.
     const warned = clack.log.warn.mock.calls.map((c) => String(c[0]))
     expect(warned.some((msg) => msg.includes('did not fully complete'))).toBe(
       true,

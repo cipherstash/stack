@@ -11,14 +11,11 @@ This repository is the CipherStash Stack monorepo for JavaScript/TypeScript. It 
 | ------- | ----------- |
 | `@cipherstash/stack` | Main package: encryption client, schema, EQL v3 typed client |
 | `stash` | CipherStash CLI |
-| `@cipherstash/protect` | Core encryption library (re-exported via `@cipherstash/stack`) |
-| `@cipherstash/schema` | Schema builder utilities |
 | `@cipherstash/nextjs` | Next.js helpers |
-| `@cipherstash/protect-dynamodb` | DynamoDB helpers |
 | `@cipherstash/migrate` | Plaintext-to-encrypted column migration tooling |
 | `@cipherstash/prisma-next` | Prisma Next integration (searchable field-level encryption for Postgres) |
-| `@cipherstash/stack-drizzle` | Drizzle ORM integration for `@cipherstash/stack` (EQL v2 + v3) |
-| `@cipherstash/stack-supabase` | Supabase integration for `@cipherstash/stack` (EQL v2 + v3) |
+| `@cipherstash/stack-drizzle` | Drizzle ORM integration for `@cipherstash/stack` (EQL v3) |
+| `@cipherstash/stack-supabase` | Supabase integration for `@cipherstash/stack` (EQL v3) |
 | `@cipherstash/wizard` | AI-powered encryption setup |
 
 **Security fixes are released for the latest release line of each package.** Security reports are welcome for any version, but fixes land in the latest release — if you are running an older major version, plan to upgrade to receive them.

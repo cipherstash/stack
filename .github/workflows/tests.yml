@@ -136,20 +136,97 @@ jobs:
       - name: Typecheck (prisma-next — enforces v3 operator-capability gating)
         run: pnpm --filter @cipherstash/prisma-next run typecheck
 
+      # `packages/bench` is a live importer of `@cipherstash/stack` and
+      # `@cipherstash/stack-drizzle`, but it has no `test` script (its suites
+      # need a database), so `pnpm run test` never reaches it and an adapter
+      # rename could break it unnoticed. Its `build` is `tsc --noEmit`, and
+      # turbo's `^build` builds the two adapters first. This also runs in the
+      # Bun job's full `turbo build`, but that job swallows its own test
+      # failures — the importer guard should not depend on it.
+      - name: Typecheck (bench — guards the stack/stack-drizzle importers)
+        run: pnpm exec turbo run build --filter @cipherstash/bench
+
+      # The wizard is built by tsup, which transpiles without typechecking, so
+      # nothing here caught the three `auth.AutoStrategy` resolution errors that
+      # sat in `main` until #771. Gate it so they cannot come back silently.
+      - name: Typecheck (wizard)
+        run: pnpm --filter @cipherstash/wizard run typecheck
+
+      # `examples/*` are standalone apps outside the `./packages/*` filter that
+      # root `build`/`test` use, so nothing in CI compiled them. `examples/basic`
+      # had been broken since the v2 removal deleted `encryptedType` and the v2
+      # `encryptedSupabase` — on a fully green board. Gate it through turbo so
+      # `^build` builds stack/stack-drizzle/stash first.
+      - name: Typecheck (examples/basic — guards the v3 stack/stack-drizzle importers)
+        run: pnpm exec turbo run typecheck --filter @cipherstash/basic-example
+
+      # The rest of the surfaces that were compiling nowhere. Each of these has
+      # a `tsconfig.json` that covers its `src` and tests, and each was already
+      # clean — so they are gated now, before they drift. They resolve their
+      # workspace dependencies through `dist/*.d.ts`, hence the turbo filters
+      # (`^build` builds the dependencies first).
+      #
+      # NOT fully gated yet, and deliberately: `@cipherstash/stack` (147 errors
+      # under its own tsconfig), `stash` (21) and `@cipherstash/stack-supabase`
+      # (11). Their `test:types` scripts only cover `__tests__/**/*.test-d.ts`,
+      # so `src` and the runtime test suites compile nowhere.
+      # `@cipherstash/stack-drizzle` now type-tests every `integration/**`
+      # source as well; its remaining `src` / runtime-test errors share one
+      # root cause — `V3_MATRIX`'s `indexes` union in `@cipherstash/test-kit`
+      # — see #778.
+      - name: Typecheck (migrate)
+        run: pnpm exec turbo run typecheck --filter @cipherstash/migrate
+
+      - name: Typecheck (nextjs)
+        run: pnpm exec turbo run typecheck --filter @cipherstash/nextjs
+
+      - name: Typecheck (examples/prisma — guards the prisma-next importers)
+        run: pnpm exec turbo run typecheck --filter @cipherstash/prisma-next-example
+
+      - name: Typecheck (e2e)
+        run: pnpm exec turbo run typecheck --filter @cipherstash/e2e
+
+      # Everything else typechecks against SOURCE. This one reads the emitted
+      # `.d.ts`, which is what customers consume — and where typed `encryptQuery`
+      # sat broken for every column through the whole rc series, because `tsc`
+      # strips private member types and that was the only place the column's
+      # domain parameter appeared bare.
+      - name: Typecheck (stack — emitted declarations, not source)
+        run: pnpm exec turbo run test:types:dist --filter @cipherstash/stack
+
+      # `stash init` writes a client file into the user's project and tells them
+      # not to hand-edit it. Nothing compiled that file, so tightening
+      # `Encryption` to require a non-empty schema set left every `stash init`
+      # emitting a project that fails its first `tsc` — with CI green (#772
+      # review). The fixtures are pinned byte-for-byte to the generator by
+      # `placeholder-client-fixture.test.ts`.
+      # Through turbo, not `pnpm run` — the fixtures import `@cipherstash/stack/v3`,
+      # so this needs that package BUILT. Invoked directly it passed only because
+      # earlier steps in this job happen to build it via their own `^build`; drop
+      # or reorder those (they read as guards for other packages, so they look
+      # independently removable) and this fails `TS2307`, which reads as "the
+      # scaffold is broken" rather than "you forgot to build" (#787 review).
+      - name: Typecheck (stash init's scaffolded client)
+        run: pnpm exec turbo run typecheck:scaffold --filter stash
+
       - name: Lint — no hardcoded package-manager runners
         run: pnpm run lint:runners
 
+      # The gates above only mean something if they compile source. A tsconfig
+      # with no `include` globs `**/*`, which sweeps the package's own `dist/`
+      # into the program — and whether `dist/` exists during a gate depends on
+      # what an earlier step built transitively, so the gate compiles a
+      # different program in CI than it does locally.
+      - name: Lint — typecheck gates compile source, not build output
+        run: pnpm run lint:typecheck-scope
+
+      # Deleting or renaming a package leaves `packages/<name>` references
+      # dangling in docs and CI config. Nothing else catches it (#760 review).
+      - name: Lint — no references to deleted package directories
+        run: pnpm run lint:package-paths
+
       - name: Test — lint script self-tests
         run: pnpm run test:scripts
-
-      - name: Create .env file in ./packages/protect/
-        run: |
-          touch ./packages/protect/.env
-          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/protect/.env
-          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/protect/.env
-          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect/.env
-          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect/.env
-          echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/protect/.env
 
       - name: Create .env file in ./packages/stack/
         run: |
@@ -159,14 +236,6 @@ jobs:
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/stack/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/stack/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/stack/.env
-
-      - name: Create .env file in ./packages/protect-dynamodb/
-        run: |
-          touch ./packages/protect-dynamodb/.env
-          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/protect-dynamodb/.env
-          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/protect-dynamodb/.env
-          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect-dynamodb/.env
-          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect-dynamodb/.env
 
       # Run TurboRepo tests
       - name: Run tests
@@ -353,15 +422,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Create .env file in ./packages/protect/
-        run: |
-          touch ./packages/protect/.env
-          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/protect/.env
-          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/protect/.env
-          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect/.env
-          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect/.env
-          echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/protect/.env
-
       - name: Create .env file in ./packages/stack/
         run: |
           touch ./packages/stack/.env
@@ -371,21 +431,13 @@ jobs:
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/stack/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/stack/.env
 
-      - name: Create .env file in ./packages/protect-dynamodb/
-        run: |
-          touch ./packages/protect-dynamodb/.env
-          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/protect-dynamodb/.env
-          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/protect-dynamodb/.env
-          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect-dynamodb/.env
-          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect-dynamodb/.env
-
       # Build with Node (turbo/tsup need Node), then run tests with Bun
       - name: Build packages
         run: pnpm turbo build --filter './packages/*'
 
       - name: Run tests with Bun
         run: |
-          for dir in packages/schema packages/protect packages/stack packages/protect-dynamodb packages/stack-forge; do
+          for dir in packages/stack; do
             if [ -f "$dir/vitest.config.ts" ] || [ -f "$dir/package.json" ]; then
               echo "--- Testing $dir ---"
               (cd "$dir" && bunx --bun vitest run) || true

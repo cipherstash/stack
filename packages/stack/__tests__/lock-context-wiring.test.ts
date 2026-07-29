@@ -44,6 +44,7 @@ vi.mock('@cipherstash/protect-ffi', () => ({
 }))
 
 import * as ffi from '@cipherstash/protect-ffi'
+import type { EncryptionClient } from '@/encryption'
 
 const users = encryptedTable('users', {
   email: encryptedColumn('email').equality(),
@@ -78,7 +79,7 @@ function unwrap(result: any) {
 // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
 const lastOpts = (fn: any) => fn.mock.calls.at(-1)[1]
 
-let client: Awaited<ReturnType<typeof Encryption>>
+let client: EncryptionClient
 
 beforeEach(async () => {
   vi.clearAllMocks()

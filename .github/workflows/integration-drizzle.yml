@@ -23,7 +23,6 @@ on:
       # suite that would catch it.
       - 'packages/stack/src/encryption/**'
       - 'packages/stack/src/schema/**'
-      - 'packages/schema/**'
       - 'packages/stack/integration/**'
       # The WASM family suite (integration/wasm/**) exercises this entry:
       - 'packages/stack/src/wasm-inline.ts'
@@ -46,7 +45,6 @@ on:
       # suite that would catch it.
       - 'packages/stack/src/encryption/**'
       - 'packages/stack/src/schema/**'
-      - 'packages/schema/**'
       - 'packages/stack/integration/**'
       # The WASM family suite (integration/wasm/**) exercises this entry:
       - 'packages/stack/src/wasm-inline.ts'
@@ -155,8 +153,14 @@ jobs:
       #
       # Step env, not a `.env` file: `dotenv/config` does not override an
       # already-set `process.env`, so these win and no secret is written to disk.
+      # Through turbo, not a bare `pnpm --filter`: `test:integration` declares
+      # `dependsOn: ["^build", "build"]`, and the only build in this job is the
+      # setup action's `--filter stash`, which reaches these packages purely by
+      # coincidence of stash's own dependency graph. `--env-mode=loose` because
+      # turbo defaults to strict and would otherwise withhold the step env below
+      # from the test process (#787 review follow-up).
       - name: Drizzle v3 integration suites
-        run: pnpm --filter @cipherstash/stack-drizzle run test:integration
+        run: pnpm exec turbo run test:integration --filter @cipherstash/stack-drizzle --env-mode=loose
         env:
           DATABASE_URL: ${{ steps.db.outputs.database-url }}
           PGRST_URL: ${{ steps.db.outputs.pgrest-url }}
@@ -166,7 +170,7 @@ jobs:
       # `isInstalled` short-circuits against the DB the first invocation already
       # provisioned — a fast no-op check, not a second schema apply.
       - name: Shared core + identity + wasm integration suites
-        run: pnpm --filter @cipherstash/stack run test:integration
+        run: pnpm exec turbo run test:integration --filter @cipherstash/stack --env-mode=loose
         env:
           DATABASE_URL: ${{ steps.db.outputs.database-url }}
           PGRST_URL: ${{ steps.db.outputs.pgrest-url }}

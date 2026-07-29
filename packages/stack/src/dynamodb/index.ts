@@ -31,17 +31,42 @@ import type {
  * hand: the operation methods below, when a table is supplied. `encryptedDynamoDB`
  * itself receives no table, so it cannot check earlier.
  *
- * RESIDUAL GAP: a client explicitly forced to `eqlVersion: 2` over a v3 schema
- * set (a deliberate migration path) DOES register the table yet emits v2 wire;
- * that is not detectable without a wire-version accessor the client does not
- * provide, so it is out of scope here.
+ * The one case this could not detect — a client forced to `eqlVersion: 2` while
+ * registering a v3 table, emitting v2 wire for an `eql_v3_*` domain — is now
+ * refused by `resolveEqlVersion` at client construction, so no such client can
+ * reach here.
  */
 function assertClientTableVersionMatch(
   encryptionClient: EncryptedDynamoDBConfig['encryptionClient'],
   table: AnyEncryptedTable,
 ): void {
   // Only v3 tables carry the strict wire-format requirement this guards.
-  if (!isV3Table(table)) return
+  if (!isV3Table(table)) {
+    // The v2 read path calls `decryptModel(item)` with NO table on purpose —
+    // a v2 table means nothing to a v3 client's reconstructor map. That is
+    // fine for the native clients, which derive the table from the payloads,
+    // and impossible for the WASM client, whose decrypt requires the table and
+    // otherwise throws a TypeError about `tableName` from deep inside
+    // `requireTable`. Refuse the pairing here, where the message can name it
+    // (#772 review, finding 10).
+    //
+    // The message is deliberately operation-NEUTRAL. This guard runs on all
+    // four operations, so a plain-JS caller (the write overloads are
+    // `AnyV3Table`-only, so TypeScript never reaches this) hits it on encrypt
+    // too — where "would fail at the first read" names an operation that never
+    // ran. The pairing is wrong in both directions anyway: `Encryption()` on
+    // that entry rejects a v2 schema outright, so the client can never hold
+    // this table (#788 review).
+    if (
+      (encryptionClient as { requiresTableForDecrypt?: boolean })
+        .requiresTableForDecrypt
+    ) {
+      throw new Error(
+        `encryptedDynamoDB: the @cipherstash/stack/wasm-inline client cannot be paired with the legacy EQL v2 table "${table.tableName}". That entry is EQL v3 only — Encryption() there rejects a v2 schema, and its model operations require a table it was initialized with — so both encrypt and decrypt would fail on this table. Use the default @cipherstash/stack entry for tables that still hold EQL v2 items, or migrate the table to an EQL v3 schema (types.* domains) and pass that.`,
+      )
+    }
+    return
+  }
 
   const getEncryptConfig = (
     encryptionClient as {
@@ -57,7 +82,7 @@ function assertClientTableVersionMatch(
   if (table.tableName in config.tables) return
 
   throw new Error(
-    `encryptedDynamoDB: EQL version mismatch — the EQL v3 table "${table.tableName}" is not registered with this encryption client, so the client is not in EQL v3 mode for it. A v3 table requires a v3-mode client: build it with EncryptionV3({ schemas: [<table>] }) (or Encryption({ schemas: [<table>], config: { eqlVersion: 3 } })) and pass that client to encryptedDynamoDB. Otherwise encrypt/decrypt fails later inside the FFI with an opaque deserialization error.`,
+    `encryptedDynamoDB: EQL version mismatch — the EQL v3 table "${table.tableName}" is not registered with this encryption client, so the client is not in EQL v3 mode for it. A v3 table requires a v3-mode client: build it with Encryption({ schemas: [<table>] }) and pass that client to encryptedDynamoDB. Otherwise encrypt/decrypt fails later inside the FFI with an opaque deserialization error.`,
   )
 }
 
@@ -68,9 +93,11 @@ function assertClientTableVersionMatch(
  * and `bulkDecryptModels` methods that transparently encrypt/decrypt DynamoDB
  * items according to the provided table schema.
  *
- * Accepts EQL v3 tables (`types.*` domains) and EQL v2 tables
- * (`encryptedColumn`/`encryptedField`) alike — the table decides which wire
- * format is synthesized on read.
+ * **Encrypt/write is EQL v3 only** — `encryptModel` / `bulkEncryptModels` accept
+ * only EQL v3 tables (`types.*` domains). **Decrypt still reads existing EQL v2
+ * items**: `decryptModel` / `bulkDecryptModels` continue to accept an EQL v2
+ * table (`encryptedColumn`/`encryptedField`) so previously stored v2 data
+ * remains readable. The table decides which wire format is reconstructed on read.
  *
  * Only equality is meaningful on DynamoDB: an `hm` term is stored alongside the
  * ciphertext as `<attr>__hmac` and can back a key condition. Ordering and
@@ -83,7 +110,8 @@ function assertClientTableVersionMatch(
  *
  * @example EQL v3
  * ```typescript
- * import { EncryptionV3, encryptedTable, types } from "@cipherstash/stack/v3"
+ * import { Encryption } from "@cipherstash/stack"
+ * import { encryptedTable, types } from "@cipherstash/stack/v3"
  * import { encryptedDynamoDB } from "@cipherstash/stack/dynamodb"
  *
  * const users = encryptedTable("users", {
@@ -91,13 +119,13 @@ function assertClientTableVersionMatch(
  *   name: types.Text("name"),      // storage only
  * })
  *
- * const client = await EncryptionV3({ schemas: [users] })
+ * const client = await Encryption({ schemas: [users] })
  * const dynamo = encryptedDynamoDB({ encryptionClient: client })
  *
  * const encrypted = await dynamo.encryptModel({ email: "a@b.com" }, users)
  * ```
  *
- * @example EQL v2 (existing deployments)
+ * @example EQL v2 (reading existing deployments — decrypt only)
  * ```typescript
  * import { Encryption } from "@cipherstash/stack"
  * import { encryptedDynamoDB } from "@cipherstash/stack/dynamodb"

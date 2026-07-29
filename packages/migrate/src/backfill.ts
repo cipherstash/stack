@@ -158,8 +158,8 @@ export interface BackfillOptions {
    */
   plaintextColumn: string
   /**
-   * Physical column that receives the `eql_v2_encrypted` ciphertext JSON,
-   * e.g. `email_encrypted`. Must already exist (typically created by
+   * Physical EQL v3 domain column that receives ciphertext, e.g.
+   * `email_encrypted`. Must already exist (typically created by
    * `drizzle-kit` / a prior migration) before backfill starts.
    */
   encryptedColumn: string

@@ -106,10 +106,9 @@ describe('installEqlStep', () => {
   it('never pins EQL v2 for the non-Drizzle paths', async () => {
     await installEqlStep.run(baseState, provider)
 
-    // `undefined` means "take the v3 default" in resolveEqlVersion.
-    expect(
-      vi.mocked(installCommand).mock.calls[0][0].eqlVersion,
-    ).toBeUndefined()
+    expect(vi.mocked(installCommand).mock.calls[0][0]).not.toHaveProperty(
+      'eqlVersion',
+    )
   })
 
   describe('Drizzle', () => {

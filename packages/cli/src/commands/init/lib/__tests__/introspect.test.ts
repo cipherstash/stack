@@ -5,6 +5,7 @@ import type { DataType } from '../../types.js'
 import {
   candidateDomains,
   defaultDomain,
+  isEqlEncryptedDomain,
   pgTypeToDataType,
   selectTableColumns,
 } from '../introspect.js'
@@ -100,6 +101,44 @@ describe('defaultDomain', () => {
     expect(defaultDomain([{ value: 'TextEq' }, { value: 'TextSearch' }])).toBe(
       'TextSearch',
     )
+  })
+})
+
+// The marker used to be `udt_name === 'eql_v2_encrypted'` alone. v3 is the
+// default generation and its columns carry `eql_v3_*` domains, so on the
+// default path an already-encrypted column was reported as plaintext: shown
+// with its `dataType` hint and left unticked. `packages/wizard` already made
+// this call, and its comment names the consequence — misreporting encrypted
+// columns as plaintext lets an agent clobber real ciphertext.
+describe('isEqlEncryptedDomain', () => {
+  it('recognises every eql_v3_* domain', () => {
+    for (const udt of [
+      'eql_v3_encrypted',
+      'eql_v3_text_search',
+      'eql_v3_integer_ord',
+      'eql_v3_date_ord',
+      'eql_v3_json',
+    ]) {
+      expect(isEqlEncryptedDomain(udt)).toBe(true)
+    }
+  })
+
+  it('still recognises the legacy v2 udt', () => {
+    expect(isEqlEncryptedDomain('eql_v2_encrypted')).toBe(true)
+  })
+
+  it('does not claim plaintext types', () => {
+    for (const udt of ['text', 'int4', 'jsonb', 'bool', 'timestamptz']) {
+      expect(isEqlEncryptedDomain(udt)).toBe(false)
+    }
+  })
+
+  // The trailing underscore is load-bearing: a bare `startsWith('eql_v3')`
+  // would also claim a hypothetical future `eql_v30_*` generation. Same
+  // reasoning as `classifyEqlDomain` in `@cipherstash/migrate`.
+  it('does not claim a future generation by prefix', () => {
+    expect(isEqlEncryptedDomain('eql_v30_text_search')).toBe(false)
+    expect(isEqlEncryptedDomain('eql_v3')).toBe(false)
   })
 })
 
@@ -212,6 +251,38 @@ describe('selectTableColumns', () => {
     // …and the column is mapped through pgTypeToDataType('eql_v2_encrypted')
     // which falls back to 'string', so it still receives its chosen domain.
     expect(schema?.columns).toEqual([{ name: 'ssn', domain: 'TextSearch' }])
+  })
+
+  // The per-column hint was the literal string 'eql_v2_encrypted' for any
+  // encrypted column, so a v3 column was labelled with a domain it does not
+  // have. Report the column's actual udt.
+  it('hints an encrypted column with its real domain, not a hardcoded v2 udt', async () => {
+    const withV3 = [
+      {
+        tableName: 'accounts',
+        columns: [
+          {
+            columnName: 'ssn',
+            dataType: 'jsonb',
+            udtName: 'eql_v3_text_search',
+            isEqlEncrypted: true,
+          },
+        ],
+      },
+    ]
+    selectMock
+      .mockResolvedValueOnce('accounts')
+      .mockResolvedValueOnce('TextSearch')
+    multiselectMock.mockResolvedValueOnce(['ssn'])
+
+    await selectTableColumns(withV3)
+
+    const opts = multiselectMock.mock.calls[0][0].options
+    expect(opts).toEqual([
+      expect.objectContaining({ value: 'ssn', hint: 'eql_v3_text_search' }),
+    ])
+    // And it starts ticked, so a re-run does not offer to re-encrypt it.
+    expect(multiselectMock.mock.calls[0][0].initialValues).toEqual(['ssn'])
   })
 
   it('pre-selects the widest searchable domain as the per-column default', async () => {

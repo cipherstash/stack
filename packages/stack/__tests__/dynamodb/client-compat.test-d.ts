@@ -14,8 +14,9 @@
 import { describe, expectTypeOf, it } from 'vitest'
 import type { EncryptedAttributes, EncryptedDynamoDBInstance } from '@/dynamodb'
 import { encryptedDynamoDB } from '@/dynamodb'
+import type { CallableEncryptionClient } from '@/dynamodb/types'
 import type { EncryptionClient } from '@/encryption'
-import type { EncryptionV3 } from '@/encryption/v3'
+import type { EncryptionClientFor } from '@/encryption/v3'
 import { encryptedTable as encryptedTableV3, types } from '@/eql/v3'
 import { encryptedColumn, encryptedTable as encryptedTableV2 } from '@/schema'
 
@@ -42,12 +43,17 @@ const searchV3 = encryptedTableV3('search_v3', {
 
 type V3Model = { pk: string; email?: string; age?: number; role?: string }
 
-// The two client shapes. `EncryptionV3` returns a `TypedEncryptionClient`
-// parameterised by its own schema tuple; `Encryption` returns the nominal
-// `EncryptionClient`. Both must be accepted by the factory WITHOUT a cast.
-declare const typedClient: Awaited<
-  ReturnType<typeof EncryptionV3<readonly [typeof usersV3]>>
->
+// The two client shapes. A v3 schema tuple yields a `TypedEncryptionClient`
+// parameterised by it; a v2 set yields the nominal `EncryptionClient`. Both must
+// be accepted by the factory WITHOUT a cast.
+//
+// Named with `EncryptionClientFor`, not `Awaited<ReturnType<typeof Encryption>>`
+// — `ReturnType` reads the LAST overload, so that idiom resolves to the nominal
+// client whatever schemas you pass. Supplying an explicit type argument happens
+// to dodge it today, but only because it filters the non-generic nominal
+// overload out of the instantiation; give that overload a type parameter and
+// this assertion would silently start checking the wrong client.
+declare const typedClient: EncryptionClientFor<readonly [typeof usersV3]>
 declare const nominalClient: EncryptionClient
 
 describe('encryptedDynamoDB accepts both client shapes without a cast', () => {
@@ -79,27 +85,25 @@ describe('encryptedDynamoDB accepts both client shapes without a cast', () => {
 
 const dynamo = encryptedDynamoDB({ encryptionClient: typedClient })
 
-describe('all four methods accept both a v3 and a v2 table', () => {
-  it('encryptModel', () => {
+describe('write is EQL v3 only; read accepts both a v3 and a v2 table', () => {
+  it('encryptModel accepts a v3 table and rejects a v2 table', () => {
     expectTypeOf(dynamo.encryptModel).toBeCallableWith(
       { pk: 'a', email: 'a@b.com' },
       usersV3,
     )
-    expectTypeOf(dynamo.encryptModel).toBeCallableWith(
-      { pk: 'a', email: 'a@b.com' },
-      usersV2,
-    )
+    // Write is EQL v3 only — the v2 write overload was removed, so a v2 table is
+    // rejected on encrypt (decrypt below still accepts it).
+    // @ts-expect-error - encryptModel no longer accepts an EQL v2 table
+    dynamo.encryptModel({ pk: 'a', email: 'a@b.com' }, usersV2)
   })
 
-  it('bulkEncryptModels', () => {
+  it('bulkEncryptModels accepts a v3 table and rejects a v2 table', () => {
     expectTypeOf(dynamo.bulkEncryptModels).toBeCallableWith(
       [{ pk: 'a', email: 'a@b.com' }],
       usersV3,
     )
-    expectTypeOf(dynamo.bulkEncryptModels).toBeCallableWith(
-      [{ pk: 'a', email: 'a@b.com' }],
-      usersV2,
-    )
+    // @ts-expect-error - bulkEncryptModels no longer accepts an EQL v2 table
+    dynamo.bulkEncryptModels([{ pk: 'a', email: 'a@b.com' }], usersV2)
   })
 
   it('decryptModel', () => {
@@ -332,24 +336,38 @@ describe('a required-nullable v3 column keeps __source required', () => {
   })
 })
 
-describe('the v2 overload still returns the input model', () => {
-  it('keeps an existing v2 caller compiling unchanged', async () => {
-    const result = await dynamo.encryptModel<{ pk: string; email?: string }>(
-      { pk: 'a', email: 'a@b.com' },
-      usersV2,
-    )
-    if (result.failure) throw new Error(result.failure.message)
-
-    expectTypeOf(result.data).toEqualTypeOf<{ pk: string; email?: string }>()
-  })
-})
-
 describe('operations chain and resolve', () => {
   it('.audit() returns the operation so it stays chainable', () => {
     const op = dynamo.encryptModel({ pk: 'a', email: 'a@b.com' }, usersV3)
     expectTypeOf(op.audit({ metadata: { sub: 'u1' } })).toEqualTypeOf<
       typeof op
     >()
+  })
+
+  it('.audit() is chainable on decryptModel and returns the operation', () => {
+    // The DynamoDB decrypt op is chainable; audit metadata now forwards to the
+    // underlying client decrypt regardless of client shape (see
+    // resolve-decrypt.test.ts / decrypt-audit-forwarding.test.ts for the runtime
+    // proof). Here we lock the type-level surface.
+    const op = dynamo.decryptModel({ pk: 'a', email__source: 'ct' }, usersV3)
+    expectTypeOf(op).toHaveProperty('audit')
+    expectTypeOf(op.audit({ metadata: { sub: 'u1' } })).toEqualTypeOf<
+      typeof op
+    >()
+  })
+
+  it('awaiting decryptModel yields a discriminated Result', async () => {
+    const result = await dynamo.decryptModel(
+      { pk: 'a', email__source: 'ct' },
+      usersV3,
+    )
+
+    if (result.failure) {
+      expectTypeOf(result.failure.message).toEqualTypeOf<string>()
+      return
+    }
+
+    expectTypeOf(result.data.email).toEqualTypeOf<string>()
   })
 
   it('awaiting yields a discriminated Result', async () => {
@@ -369,5 +387,39 @@ describe('operations chain and resolve', () => {
     // ...and the failure arm is unreachable in this one.
     expectTypeOf(result.failure).toEqualTypeOf<undefined>()
     expectTypeOf(result.data.email__source).toEqualTypeOf<string>()
+  })
+})
+
+/**
+ * The INTERNAL client view, `CallableEncryptionClient` — the shape the operation
+ * classes cast to. Distinct from everything above, which is the PUBLIC instance.
+ *
+ * All four members must return `unknown`. The shipped clients disagree about
+ * what an operation is: the nominal client returns a chainable
+ * `EncryptModelOperation`, the typed client a `MappedDecryptOperation`, and the
+ * wasm-inline client a bare `Promise<WasmResult>` carrying no `.audit()` at all.
+ * Declaring a chainable shape here asserts an `.audit()` that entry does not
+ * have — and that assertion is not academic: it is what let the write path chain
+ * `.audit()` unconditionally and fail EVERY EQL v3 write on the wasm entry
+ * (#788 review follow-up).
+ *
+ * `unknown` forces every call site through `resolveEncryptResult` /
+ * `resolveDecryptResult`, which normalise all three shapes and fail closed. The
+ * encrypt members were the last two still declaring the lie.
+ */
+describe('the internal callable client view is shape-agnostic', () => {
+  it('returns unknown from all four members, so no shape is presumed', () => {
+    expectTypeOf<
+      ReturnType<CallableEncryptionClient['encryptModel']>
+    >().toBeUnknown()
+    expectTypeOf<
+      ReturnType<CallableEncryptionClient['bulkEncryptModels']>
+    >().toBeUnknown()
+    expectTypeOf<
+      ReturnType<CallableEncryptionClient['decryptModel']>
+    >().toBeUnknown()
+    expectTypeOf<
+      ReturnType<CallableEncryptionClient['bulkDecryptModels']>
+    >().toBeUnknown()
   })
 })

@@ -146,6 +146,25 @@ describe('typed v3 client — model decrypt yields precise plaintext', () => {
       users,
     )
   })
+
+  it('decryptModel / bulkDecryptModels are chainable with .audit() and .withLockContext()', () => {
+    // The typed client's decrypt methods return a chainable operation (not a bare
+    // Promise), so audit metadata and lock context can be attached before await.
+    const op = client.decryptModel({ id: 'u1', email: {} as Encrypted }, users)
+    expectTypeOf(op).toHaveProperty('audit')
+    expectTypeOf(op).toHaveProperty('withLockContext')
+    // Both stay chainable — same operation type back.
+    expectTypeOf(op.audit({ metadata: { sub: 'u1' } })).toEqualTypeOf<
+      typeof op
+    >()
+
+    const bulkOp = client.bulkDecryptModels(
+      [{ id: 'u1', email: {} as Encrypted }],
+      users,
+    )
+    expectTypeOf(bulkOp).toHaveProperty('audit')
+    expectTypeOf(bulkOp).toHaveProperty('withLockContext')
+  })
 })
 
 describe('typed v3 client — soundness', () => {
