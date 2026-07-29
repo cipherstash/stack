@@ -64,6 +64,24 @@ from the token. Endpoints are never hand-configured — the `CS_*_HOST`
 override variables are debug-only and must not appear in CI, examples, or
 docs.
 
+CipherStash runs in a variety of regions across the world, and the set is
+**subject to change** — `stash auth regions` (add `--json` for
+machine-readable output) lists the current ones; see `stash-cli`. As of this
+writing:
+
+| Region | Location |
+|---|---|
+| `us-east-1` | Virginia, USA |
+| `us-east-2` | Ohio, USA |
+| `us-west-1` | California, USA |
+| `us-west-2` | Oregon, USA |
+| `eu-west-1` | Dublin, Ireland |
+| `eu-central-1` | Frankfurt, Germany |
+| `ap-southeast-2` | Sydney, Australia |
+
+A workspace lives in one region, chosen at creation (the `stash auth login`
+region picker / `--region`); the CRN records it thereafter.
+
 CTS failures are deliberate and descriptive: `401` with a reason ("Principal
 X is not a member of workspace Y", "No OIDC provider found for issuer: …",
 "Access key was malformed: …"), and `402` ("Insufficient balance…") when the

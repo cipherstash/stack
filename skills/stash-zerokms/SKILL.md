@@ -20,12 +20,13 @@ CTS for a service token first. The auth strategies do this for you —
 `stash-auth` is the canonical skill for that whole surface (strategies,
 `CS_*` variables, token contents, failure codes).
 
-ZeroKMS runs in a number of regions. Your workspace's region is part of its
-CRN (`crn:<region>.<provider>:<workspace-id>`), and CTS resolves the
-matching ZeroKMS endpoint and stamps it into the service token — the client
-discovers where ZeroKMS is from the token itself. You never configure a
-ZeroKMS URL, which is also why the `CS_*_HOST` override variables are
-debug-only and must not appear in CI or examples.
+ZeroKMS runs in a number of regions (the current list: `stash auth regions`,
+or the table in `stash-auth`). Your workspace's region is part of its CRN
+(`crn:<region>.<provider>:<workspace-id>`), and CTS resolves the matching
+ZeroKMS endpoint and stamps it into the service token — the client discovers
+where ZeroKMS is from the token itself. You never configure a ZeroKMS URL,
+which is also why the `CS_*_HOST` override variables are debug-only and must
+not appear in CI or examples.
 
 ## The model in one paragraph
 
