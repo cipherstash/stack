@@ -82,10 +82,10 @@ const warnedLikeDelegation = new Set<string>()
  * passthroughs. Decrypt v2 data with the core `@cipherstash/stack` client.
  *
  * The pipeline is split across sibling modules — `./column-map` (name and
- * capability resolution), `./query-encrypt` (mutation data and filter terms),
- * `./query-dbspace` (property → DB space), `./query-filters` (operand
- * substitution), `./query-results` (decryption) — and orchestrated by
- * {@link execute} below.
+ * capability resolution), `./query-dbspace` (property → DB space),
+ * `./query-terms` (which operands need encrypting), `./query-encrypt`
+ * (mutation data and filter terms), `./query-filters` (operand substitution),
+ * `./query-results` (decryption) — and orchestrated by {@link execute} below.
  */
 export class EncryptedQueryBuilderImpl<
   T extends object = Record<string, unknown>,
