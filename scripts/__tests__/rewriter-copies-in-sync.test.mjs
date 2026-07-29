@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
 
 /**
- * The destructive ALTER-COLUMN rewriter exists twice: `@cipherstash/wizard`
+ * The ALTER-COLUMN rewriter exists twice: `@cipherstash/wizard`
  * runs it after its agent edits a schema, and `stash eql migration --drizzle`
  * runs it over an explicit `--out`. Both are published, neither depends on the
  * other, and `packages/utils` is not a package while `@cipherstash/test-kit` is
@@ -87,7 +87,7 @@ describe('the wizard and cli rewriter copies stay in sync', () => {
       wizard.join('\n'),
       `${WIZARD} and ${CLI} have drifted. Every fix to this rewriter must land ` +
         "in BOTH copies — a one-sided fix still passes that package's own suite, " +
-        'and this rewriter emits DROP COLUMN. If the difference is intentional and ' +
+        'and this rewriter now emits a staged encrypted-column addition. If the difference is intentional and ' +
         `wizard-only, move it inside the ${REGION_OPEN} region.`,
     ).toBe(cli.join('\n'))
   })

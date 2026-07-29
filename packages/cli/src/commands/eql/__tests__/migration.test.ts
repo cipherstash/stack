@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CliExit } from '../../../cli/exit.js'
 import { messages } from '../../../messages.js'
@@ -66,6 +66,35 @@ vi.mock('node:fs', async (importOriginal) => {
   return { ...actual, default: actual, writeFileSync: fsWrite.spy }
 })
 
+// Pin the detected package manager so the argv assertion below can name the
+// exact runner prefix. Detection walks the real filesystem, so without this the
+// expected argv would have to be computed from `execArgv` — which makes the
+// assertion tautological and unable to catch a regression back to the
+// download-and-run (`dlx`) form. Everything else in `utils.js` stays real.
+vi.mock('@/commands/init/utils.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/commands/init/utils.js')>()),
+  detectPackageManager: () => 'pnpm',
+}))
+
+// The sweep stays REAL by default — every other sweep test drives it through
+// actual SQL on disk. The spy exists so the "sweep threw" branch can be reached
+// with a throw the sweep itself never produces (a bare string, `null`), which is
+// the case the partial-result reporting has to survive without masking.
+const rewriteMock = vi.hoisted(() => ({
+  real: (() => {
+    throw new Error(
+      'rewriteMock.real not initialised: rewrite-migrations mock factory did not run',
+    )
+  }) as typeof import('../../db/rewrite-migrations.js').rewriteEncryptedAlterColumns,
+  spy: vi.fn(),
+}))
+vi.mock('../../db/rewrite-migrations.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../db/rewrite-migrations.js')>()
+  rewriteMock.real = actual.rewriteEncryptedAlterColumns
+  return { ...actual, rewriteEncryptedAlterColumns: rewriteMock.spy }
+})
+
 // `printNextSteps` lives in the install module, which drags in `pg`. Stub it;
 // the two helpers we reuse (`findGeneratedMigration`, `cleanupMigrationFile`)
 // stay real and act on the tmpdir.
@@ -76,6 +105,7 @@ vi.mock('../../db/install.js', async (importOriginal) => {
 
 beforeEach(() => {
   fsWrite.spy.mockImplementation(fsWrite.real)
+  rewriteMock.spy.mockImplementation(rewriteMock.real)
 })
 afterEach(() => {
   vi.clearAllMocks()
@@ -170,6 +200,32 @@ describe('eqlMigrationCommand — Drizzle', () => {
     expect(spawnMock).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['command substitution', 'a$(whoami)'],
+    ['backticks', 'a`id`'],
+    ['a path separator', '../escape'],
+    // `''` is not nullish, so it slips past `options.name ?? DEFAULT` and hits
+    // the regex, where `+` rejects it — `--name ''` aborts, it does NOT fall
+    // back to `install-eql`. The one input where "empty" and "absent" diverge.
+    ['an empty string', ''],
+  ])('rejects %s in --name', async (_label, name) => {
+    await expect(
+      eqlMigrationCommand({ drizzle: true, name, out: join(tmp, 'drizzle') }),
+    ).rejects.toBeInstanceOf(CliExit)
+    expect(spawnMock).not.toHaveBeenCalled()
+  })
+
+  // Ordering invariant: name validation sits ABOVE the dry-run preview, so a
+  // bad name aborts before anything is rendered. Move the validation below the
+  // preview and an unvalidated name ships into the note — with no other test
+  // combining the two, that refactor would pass CI.
+  it('rejects an unsafe name in a dry run too (validation precedes the preview)', async () => {
+    await expect(
+      eqlMigrationCommand({ drizzle: true, name: 'x; ls', dryRun: true }),
+    ).rejects.toBeInstanceOf(CliExit)
+    expect(clack.note).not.toHaveBeenCalled()
+  })
+
   it('dry run neither spawns drizzle-kit nor creates the out directory', async () => {
     const out = join(tmp, 'drizzle')
     await eqlMigrationCommand({ drizzle: true, dryRun: true, out })
@@ -179,6 +235,28 @@ describe('eqlMigrationCommand — Drizzle', () => {
       expect.stringContaining(
         'drizzle-kit generate --custom --name=install-eql',
       ),
+      'Dry Run',
+    )
+  })
+
+  it('includes --out in the dry-run preview', async () => {
+    const out = join(tmp, 'custom-out')
+    await eqlMigrationCommand({ drizzle: true, dryRun: true, out })
+    expect(spawnMock).not.toHaveBeenCalled()
+    expect(clack.note).toHaveBeenCalledWith(
+      expect.stringContaining(`--out=${out}`),
+      'Dry Run',
+    )
+  })
+
+  // Widest blast radius of the flag handling: because `--out` is ALWAYS
+  // appended to drizzle-kit's argv, a flag-less invocation silently overrides
+  // the project's drizzle.config.ts `out` with `<cwd>/drizzle`. The dry-run
+  // preview reaches that arm without spawning or touching the filesystem.
+  it('defaults --out to an absolute drizzle/ when the flag is omitted', async () => {
+    await eqlMigrationCommand({ drizzle: true, dryRun: true })
+    expect(clack.note).toHaveBeenCalledWith(
+      expect.stringContaining(`--out=${resolve('drizzle')}`),
       'Dry Run',
     )
   })
@@ -207,11 +285,24 @@ describe('eqlMigrationCommand — Drizzle', () => {
 
     await eqlMigrationCommand({ drizzle: true, name: 'add-eql', out })
 
-    // argv array, never a shell string — the name/out are discrete tokens.
-    const [, argv] = spawnMock.mock.calls[0]
-    expect(argv).toContain('drizzle-kit')
-    expect(argv).toContain('--name=add-eql')
-    expect(argv).toContain(`--out=${out}`)
+    expect(spawnMock).toHaveBeenCalledTimes(1)
+    const [command, argv] = spawnMock.mock.calls[0]
+    // The whole argv, exactly — not `toContain` checks, which would still pass
+    // if the runner prefix (`exec`) were dropped and drizzle-kit ran under the
+    // wrong resolver. Three things at once: name and out are discrete inert
+    // tokens in an array, never interpolated into a shell string; `--out` is
+    // actually passed, so drizzle-kit writes where step 2 then looks; and the
+    // project-local `exec` form (not `dlx`) is asserted, so a regression back to
+    // download-and-run — which resolves a different drizzle.config.ts — fails.
+    expect(command).toBe('pnpm')
+    expect(argv).toEqual([
+      'exec',
+      'drizzle-kit',
+      'generate',
+      '--custom',
+      '--name=add-eql',
+      `--out=${out}`,
+    ])
 
     const written = readFileSync(join(out, '0000_add-eql.sql'), 'utf-8')
     expect(written).toContain('EQL v3 schema creation')
@@ -221,8 +312,8 @@ describe('eqlMigrationCommand — Drizzle', () => {
   // drizzle-kit emits an un-runnable in-place `ALTER COLUMN ... SET DATA TYPE`
   // when a plaintext column is changed to an encrypted one. `eql install
   // --drizzle` has always swept the out directory for these; the v3
-  // migration-first path must do the same, or a v3 user is left with a broken
-  // migration and nothing to fix it (#693).
+  // migration-first path must do the same, but the rewrite is now add-only and
+  // fails closed when it cannot prove the source column.
   it('rewrites a sibling migration with a broken v3 ALTER COLUMN', async () => {
     const out = join(tmp, 'drizzle')
     mkdirSync(out, { recursive: true })
@@ -248,9 +339,18 @@ describe('eqlMigrationCommand — Drizzle', () => {
 
     const rewritten = readFileSync(sibling, 'utf-8')
     expect(rewritten).toContain(
-      'ALTER TABLE "users" ADD COLUMN "email__cipherstash_tmp" "public"."eql_v3_text_search";',
+      'ALTER TABLE "users" ADD COLUMN "email_encrypted" "public"."eql_v3_text_search";',
     )
     expect(rewritten).not.toContain('SET DATA TYPE')
+    // The add-only invariant, at the COMMAND level. Both rewriter unit suites
+    // pin it too, but only this asserts what the command actually leaves on
+    // disk — the wiring between them is where a regression would hide.
+    expect(rewritten).not.toMatch(/\b(?:DROP|RENAME)\s+COLUMN\b/i)
+    // The success line is the user's only signal that the sweep did anything.
+    const info = clack.log.info.mock.calls.map((c) => String(c[0]))
+    expect(info.some((msg) => msg.includes('Rewrote 1 migration file'))).toBe(
+      true,
+    )
   })
 
   it('does not rewrite the EQL install migration it just generated', async () => {
@@ -311,15 +411,17 @@ describe('eqlMigrationCommand — Drizzle', () => {
       return { status: 0, stdout: '', stderr: '' }
     })
 
-    await eqlMigrationCommand({ drizzle: true, out })
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out }),
+    ).rejects.toBeInstanceOf(CliExit)
 
     // The near-miss statement is left untouched...
     expect(readFileSync(sibling, 'utf-8')).toContain('SET DATA TYPE')
-    // ...and the closing note warns the sweep did not fully complete.
-    const warned = clack.log.warn.mock.calls.map((c) => String(c[0]))
-    expect(warned.some((msg) => msg.includes('did not fully complete'))).toBe(
-      true,
+    // ...and the command fails closed with the sweep error.
+    expect(clack.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('unsafe or unverified SQL'),
     )
+    expect(clack.outro).toHaveBeenCalledWith('Migration aborted.')
   })
 
   // A column the corpus never declares is fail-closed to `source-unknown`: left
@@ -340,12 +442,15 @@ describe('eqlMigrationCommand — Drizzle', () => {
       return { status: 0, stdout: '', stderr: '' }
     })
 
-    await eqlMigrationCommand({ drizzle: true, out })
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out }),
+    ).rejects.toBeInstanceOf(CliExit)
 
     // Left exactly as written — a source-unknown statement is never rewritten.
     expect(readFileSync(sibling, 'utf-8')).toBe(unsafeAlter)
     // The per-statement report reached the user with the source-unknown
-    // remediation (the whole point of the reason), not a crash into the catch.
+    // remediation (the whole point of the reason), and the command failed
+    // closed instead of continuing.
     const stepped = clack.log.step.mock.calls.map((c) => String(c[0]))
     expect(stepped.some((msg) => msg.includes(sibling))).toBe(true)
     expect(
@@ -353,10 +458,36 @@ describe('eqlMigrationCommand — Drizzle', () => {
         msg.includes("Check the column's current type in the database"),
       ),
     ).toBe(true)
-    // And the closing note warns the sweep did not fully complete.
-    const warned = clack.log.warn.mock.calls.map((c) => String(c[0]))
-    expect(warned.some((msg) => msg.includes('did not fully complete'))).toBe(
-      true,
+    expect(clack.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('unsafe or unverified SQL'),
+    )
+  })
+
+  // The catch reads `rewritten` / `skipped` off the thrown value to report the
+  // work a partial sweep did complete (#786). A throw that is not an object —
+  // or not one carrying those arrays — must fall through to the plain "could
+  // not sweep" message and still fail closed, not crash on a property read.
+  it.each([
+    null,
+    undefined,
+    'rewrite failed',
+  ])('handles a non-object sweep failure without masking it: %s', async (failure) => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    spawnMock.mockImplementation(() => {
+      writeFileSync(join(out, '0000_install-eql.sql'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+    rewriteMock.spy.mockRejectedValueOnce(failure)
+
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out }),
+    ).rejects.toBeInstanceOf(CliExit)
+    expect(clack.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Could not sweep'),
+    )
+    expect(clack.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('unsafe or unverified SQL'),
     )
   })
 
@@ -366,6 +497,59 @@ describe('eqlMigrationCommand — Drizzle', () => {
       eqlMigrationCommand({ drizzle: true, out: join(tmp, 'drizzle') }),
     ).rejects.toBeInstanceOf(CliExit)
     expect(clack.log.error).toHaveBeenCalledWith('boom')
+  })
+
+  it('reports the spawn error when drizzle-kit cannot be launched', async () => {
+    // spawnSync's ENOENT shape: null status, no captured stderr, `error` set.
+    // `result.stderr?.trim()` is undefined, so the message falls through to the
+    // second arm (`result.error?.message`) — the realistic "drizzle-kit isn't
+    // installed" case. If the `?.` on stderr were dropped, this shape would
+    // throw a TypeError instead of reporting.
+    spawnMock.mockReturnValue({
+      status: null,
+      stdout: null,
+      stderr: null,
+      error: Object.assign(new Error('spawnSync pnpm ENOENT'), {
+        code: 'ENOENT',
+      }),
+    })
+
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out: join(tmp, 'drizzle') }),
+    ).rejects.toBeInstanceOf(CliExit)
+    expect(clack.log.error).toHaveBeenCalledWith('spawnSync pnpm ENOENT')
+    expect(clack.log.info).toHaveBeenCalledWith(
+      expect.stringContaining('Make sure drizzle-kit is installed'),
+    )
+  })
+
+  it('falls back to the exit status when there is no stderr or spawn error', async () => {
+    // Third arm of the fallback chain: non-zero status, empty stderr, no
+    // `error`. The user still gets a message instead of a blank error line.
+    spawnMock.mockReturnValue({ status: 2, stdout: '', stderr: '' })
+
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out: join(tmp, 'drizzle') }),
+    ).rejects.toBeInstanceOf(CliExit)
+    expect(clack.log.error).toHaveBeenCalledWith(
+      'drizzle-kit exited with status 2.',
+    )
+  })
+
+  it('points at --out when the generated migration is not where we looked', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    // drizzle-kit "succeeds" but wrote to its own drizzle.config.ts `out`, not
+    // ours, so step 2 finds nothing and must abort with the remediation hint
+    // rather than a bare "could not find a migration".
+    spawnMock.mockReturnValue({ status: 0, stdout: '', stderr: '' })
+
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out }),
+    ).rejects.toBeInstanceOf(CliExit)
+    expect(clack.log.info).toHaveBeenCalledWith(
+      'If your drizzle.config.ts writes elsewhere, pass --out <dir> so it matches.',
+    )
   })
 
   it('removes the scaffolded migration when writing the SQL fails', async () => {

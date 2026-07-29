@@ -69,48 +69,26 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
     // text/numeric to an EQL domain). Covers the EQL v3 family the wizard now
     // scaffolds, and legacy eql_v2_encrypted. CIP-2991 + CIP-2994 + #693.
     const sweep = await rewriteEncryptedMigrations(cwd)
+    const staged = sweep.rewritten > 0
+    const skipped = sweep.skipped > 0
+    const unverified = sweep.failedDirs.length > 0
 
-    // A rewritten file is a DROP+ADD in disguise — the next migrate destroys
-    // data on any table that already holds rows. A flagged statement never got
-    // that treatment: it is left on disk untouched, so nothing is destroyed by
-    // migrating, but a raw ALTER to an encrypted domain has no cast in
-    // Postgres and fails at migrate time until a human resolves it. Both
-    // default the prompt to NO — an `initialValue: true` immediately under
-    // either warning invites exactly the mistake the warning is about — but
-    // they need different words: claiming "DESTROYS data" for a migration
-    // that destroyed nothing is its own kind of wrong guidance.
-    const destructive = sweep.rewritten > 0
-    const flaggedOnly = !destructive && sweep.skipped > 0
-
-    // A directory whose sweep threw contributes 0 to both totals, so on its own
-    // it is indistinguishable from a clean sweep — except that it means the
-    // opposite: those migrations may still hold unrepaired `SET DATA TYPE`
-    // statements and nobody has looked. `stash eql migration` / `db install`
-    // treat "sweep failed outright" and "sweep left near-misses" as the same
-    // state for the same reason; unknown is not safe, so the default is NO here
-    // too. The wording differs from the destructive case on purpose: nothing is
-    // known about that directory, so claiming it destroys data would be a guess.
-    const unverifiedDirs = sweep.failedDirs
-    const unverified = unverifiedDirs.length > 0
-    const unverifiedList = unverifiedDirs.map((dir) => `${dir}/`).join(', ')
-    const unverifiedCount = `${unverifiedDirs.length} director${
-      unverifiedDirs.length === 1 ? 'y' : 'ies'
-    }`
-    if (unverified) {
-      p.log.warn(
-        `The ALTER COLUMN sweep did not fully complete — review the sibling migrations in ${unverifiedList} before running drizzle-kit migrate, or you may apply broken/unsafe SQL.`,
+    if (staged) {
+      p.log.info(
+        `Rewrote ${sweep.rewritten} migration file(s) in the drizzle output to add staged encrypted columns while preserving the source columns.`,
+      )
+    }
+    if (skipped || unverified) {
+      throw new Error(
+        `The ALTER COLUMN sweep found unsafe or unverified SQL. The generated migration remains in ${cwd}, but review the sibling migrations before running drizzle-kit migrate.`,
       )
     }
 
     const shouldMigrate = await p.confirm({
-      message: destructive
-        ? `Run the migration now? (${runner} drizzle-kit migrate) — see the warnings above: this migration DESTROYS data on any table that already holds rows`
-        : flaggedOnly
-          ? `Run the migration now? (${runner} drizzle-kit migrate) — statement(s) were flagged for review above rather than rewritten; nothing was destroyed, but the raw ALTER will fail at migrate time until they're resolved`
-          : unverified
-            ? `Run the migration now? (${runner} drizzle-kit migrate) — the sweep could not check ${unverifiedCount} (${unverifiedList}); review those migrations before migrating, or you may apply broken/unsafe SQL`
-            : `Run the migration now? (${runner} drizzle-kit migrate)`,
-      initialValue: !destructive && !flaggedOnly && !unverified,
+      message: staged
+        ? `Run the migration now? (${runner} drizzle-kit migrate) — the generated migration adds staged encrypted columns and preserves the source column for the later backfill and application switch`
+        : `Run the migration now? (${runner} drizzle-kit migrate)`,
+      initialValue: true,
     })
 
     if (!p.isCancel(shouldMigrate) && shouldMigrate) {
@@ -188,12 +166,9 @@ async function rewriteEncryptedMigrations(cwd: string): Promise<{
 
     if (rewritten.length > 0) {
       p.log.info(
-        `Rewrote ${rewritten.length} migration file(s) in ${dir}/ to use ADD+DROP+RENAME for encrypted columns.`,
+        `Rewrote ${rewritten.length} migration file(s) in ${dir}/ to add staged encrypted columns while preserving the source columns.`,
       )
       for (const file of rewritten) p.log.step(`  - ${file}`)
-      p.log.warn(
-        'This rewrite is data-destroying — safe only on an EMPTY table. If any of these tables already have rows, do NOT run the migration; use the staged `stash encrypt` flow (add -> backfill via @cipherstash/stack -> cutover -> drop) instead. See the comments in the rewritten SQL.',
-      )
     }
 
     if (skipped.length > 0) {
