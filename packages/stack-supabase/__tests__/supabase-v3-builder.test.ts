@@ -557,6 +557,71 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(or.args[1]).toEqual({ referencedTable: 'profiles' })
   })
 
+  // `substituteOrStringLeaves` splices each encrypted leaf back into the
+  // caller's original string by source span, and sorts the replacements
+  // RIGHT-TO-LEFT so an earlier span stays valid after a later one grew — every
+  // v3 envelope is far longer than the plaintext operand it replaces. Every
+  // other string-form or() test carries exactly ONE encrypted leaf, where the
+  // sort direction cannot matter; with two, a left-to-right pass splices the
+  // second replacement at an offset that now lands INSIDE the first envelope.
+  it('substitutes every encrypted leaf of a multi-leaf or() string', async () => {
+    const { es, supabase } = v3Instance()
+
+    await es
+      .from('users', users)
+      .select('id')
+      .or('email.eq.ada,createdAt.gte.2026-01-01')
+
+    const emitted = supabase.callsFor('or')[0].args[0] as string
+
+    // Neither operand may reach PostgREST as plaintext.
+    expect(emitted).not.toContain('email.eq.ada')
+    expect(emitted).not.toContain('.gte.2026-01-01')
+
+    // The two conditions are still separated by exactly one top-level comma,
+    // and the second still carries its DB column name. Split on the delimiter
+    // rather than on `,`: every quote inside an envelope is backslash-escaped,
+    // so this boundary occurs once.
+    const boundary = emitted.indexOf('",created_at.gte."')
+    expect(boundary).toBeGreaterThan(0)
+    const first = emitted.slice(0, boundary + 1)
+    const second = emitted.slice(boundary + 2)
+
+    expect(first).toMatch(/^email\.eq\."/)
+    expect(second).toMatch(/^created_at\.gte\."/)
+    expect(JSON.parse(orOperand(first, 'email.eq.')).pt).toBe('ada')
+    expect(JSON.parse(orOperand(second, 'created_at.gte.')).pt).toBe(
+      '2026-01-01',
+    )
+  })
+
+  // `parseOrStringAt`'s group regex admits a `not.` prefix
+  // (`/^(?:not\.)?(?:and|or)\(…\)$/`). Without it, `not.and(…)` is not a group:
+  // the leaf parser splits it at the first dot into the pseudo-column `not`,
+  // which matches no encrypted column — so the whole or-string takes the
+  // verbatim branch and the encrypted operand goes to the database in the clear.
+  it('encrypts a leaf nested inside a not.and() group', async () => {
+    const { es, supabase } = v3Instance()
+
+    await es
+      .from('users', users)
+      .select('id')
+      .or('not.and(email.eq.ada,note.eq.x),id.eq.1')
+
+    const emitted = supabase.callsFor('or')[0].args[0] as string
+
+    // The `not.and(` wrapper and both plaintext siblings survive byte-for-byte.
+    expect(emitted).toMatch(/^not\.and\(email\.eq\."/)
+    expect(emitted.endsWith(',note.eq.x),id.eq.1')).toBe(true)
+    expect(emitted).not.toContain('email.eq.ada')
+
+    const operand = emitted.slice(
+      'not.and('.length,
+      emitted.length - ',note.eq.x),id.eq.1'.length,
+    )
+    expect(JSON.parse(orOperand(operand, 'email.eq.')).pt).toBe('ada')
+  })
+
   it('preserves referencedTable for structured or() filters', async () => {
     const { es, supabase } = v3Instance()
 
