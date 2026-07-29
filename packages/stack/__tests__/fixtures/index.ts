@@ -13,17 +13,28 @@ export const users = encryptedTable('users', {
 })
 
 /**
- * Articles table with only freeTextSearch (for auto-inference test)
+ * Articles table with only freeTextSearch (for auto-inference test).
+ *
+ * MUST stay a match-only domain (`types.TextMatch`, not `types.TextSearch`):
+ * `TextSearch` derives `unique + ope + match`, and `unique` outranks `match` in
+ * `inferIndexType`'s priority order — which silently re-points every
+ * auto-inference test here at the `hm` term and disables the match-only numeric
+ * guard. Pinned by `fixtures-query-contract.test.ts`.
  */
 export const articles = encryptedTable('articles', {
-  content: types.TextSearch('content'),
+  content: types.TextMatch('content'),
 })
 
 /**
- * Products table with only orderAndRange (for auto-inference test)
+ * Products table with only orderAndRange (for auto-inference test).
+ *
+ * Deliberately the block-ORE ordering flavour (`ore` index, `ob` term), where
+ * `users.age` is the CLLW-OPE one (`ope` index, `op` term), so the live suite
+ * covers both v3 ordering flavours. Pinned by
+ * `fixtures-query-contract.test.ts`.
  */
 export const products = encryptedTable('products', {
-  price: types.IntegerOrd('price'),
+  price: types.NumericOrdOre('price'),
 })
 
 /**
@@ -67,6 +78,30 @@ export function createMockLockContext(overrides?: {
 }
 
 // ============ Test Helpers ============
+
+/**
+ * Whether live CipherStash credentials are present in the environment.
+ */
+export const hasLiveCredentials = Boolean(
+  process.env.CS_WORKSPACE_CRN &&
+    process.env.CS_CLIENT_ID &&
+    process.env.CS_CLIENT_KEY &&
+    process.env.CS_CLIENT_ACCESS_KEY,
+)
+
+/**
+ * Gate for suites that call the real CipherStash service.
+ *
+ * Locally, skip: without credentials `Encryption()` throws in `beforeAll`, and
+ * vitest reports that as "Failed Suites 1 / Tests N skipped" — indistinguishable
+ * from ordinary credential gating. That ambiguity is how #829's 21 stale EQL v2
+ * assertions got attributed to missing credentials and reached CI.
+ *
+ * In CI, do NOT skip: missing credentials must fail the build. A plain
+ * `skipIf(!hasLiveCredentials)` would be worse than the status quo — credential
+ * rot would leave these suites covering nothing while CI stayed green.
+ */
+export const skipWithoutLiveCredentials = !hasLiveCredentials && !process.env.CI
 
 /**
  * Unwraps a Result type, throwing an error if it's a failure.
