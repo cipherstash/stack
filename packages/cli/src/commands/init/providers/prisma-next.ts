@@ -14,7 +14,7 @@ export function createPrismaNextProvider(): InitProvider {
       const stash = runnerCommand(pm, 'stash')
       const prismaNext = runnerCommand(pm, 'prisma-next')
       return [
-        'Declare encrypted columns in prisma/schema.prisma using cipherstash.Encrypted*()',
+        'Declare encrypted columns in prisma/schema.prisma using cipherstash.TextSearch(), cipherstash.DateOrd(), …',
         'Register the extension: add `cipherstash` to `extensionPacks` in prisma-next.config.ts',
         `Generate the contract: ${prismaNext} contract emit`,
         `Plan + apply (installs the EQL bundle alongside your app schema): ${prismaNext} migration plan && ${prismaNext} migrate`,

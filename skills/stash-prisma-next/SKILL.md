@@ -76,11 +76,11 @@ column — there is no capability tuner.
 
 ```typescript
 import cipherstash from '@cipherstash/prisma-next/control'
-import { defineConfig } from 'prisma-next'
+import { defineConfig } from '@prisma-next/cli/config-types'
 import { prismaContract } from '@prisma-next/sql-contract-psl/provider'
 import postgresPack from '@prisma-next/target-postgres/pack'
 import { postgresCreateNamespace } from '@prisma-next/target-postgres/types'
-// ... family, target, adapter
+// ... family, target, driver, adapter
 
 export default defineConfig({
   // ... your existing config
@@ -302,8 +302,11 @@ Same credential model as the rest of Stack:
 
 `@cipherstash/stack` wraps a native FFI module and must be excluded from bundling
 (`serverExternalPackages`, esbuild `external`, etc.) — see the `stash-encryption`
-skill's bundling section. For edge/serverless runtimes without the native module,
-use `@cipherstash/stack/wasm-inline`.
+skill's bundling section. The Prisma Next adapter is **native-only**:
+`cipherstashFromStack` constructs the native `@cipherstash/stack` client, and
+there is no `wasm-inline` variant of this adapter — the WASM entry is a
+different client for non-Prisma edge paths (`stash-edge`), not a drop-in here.
+Run Prisma Next apps on a Node runtime where the native module loads.
 
 ## Subpath exports
 
@@ -313,6 +316,7 @@ use `@cipherstash/stack/wasm-inline`.
 | `@cipherstash/prisma-next/control` | The extension pack for `extensionPacks: [...]` |
 | `@cipherstash/prisma-next/runtime` | Envelope classes, `decryptAll`, `eql*` operators, `EncryptedString.from()`… |
 | `@cipherstash/prisma-next/stack` | One-call setup against `@cipherstash/stack`: `cipherstashFromStack` |
+| `@cipherstash/prisma-next/column-types` | camelCase factories (`textSearch`, `bigIntOrd`, …) for **TS-authored** contracts — emits byte-identical `contract.json` to the PSL constructors |
 
 ## Gotchas
 
