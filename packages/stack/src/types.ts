@@ -132,8 +132,10 @@ export type ClientConfig = {
    * Specify by name (`{ name: "tenant-a" }`) or UUID (`{ id: "..." }`).
    * Keysets are created and managed in the
    * [dashboard](https://dashboard.cipherstash.com/workspaces/_/keysets); omit to
-   * use the workspace's default keyset. A client is bound to one keyset for its
-   * lifetime, so use one client per tenant.
+   * use the default keyset of the ZeroKMS client behind your credentials — the
+   * keyset it was created against, which is the workspace's `default` keyset if
+   * using the profile credentials in a dev environment. A client is bound to
+   * one keyset for its lifetime, so use one client per tenant.
    *
    * @see {@link Encryption} for the full keysets walkthrough.
    */

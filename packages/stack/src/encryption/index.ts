@@ -781,7 +781,11 @@ export function __resetStrategyDeprecationWarningForTests(): void {
  * that gives each tenant its own cryptographic isolation, so data encrypted under one keyset cannot
  * be decrypted under another. Create and manage keysets in the
  * [dashboard](https://dashboard.cipherstash.com/workspaces/_/keysets) (the `_` in the URL resolves
- * to whichever workspace you select); omit `config.keyset` to use the workspace's default keyset.
+ * to whichever workspace you select). Omitting `config.keyset` uses the default keyset of the
+ * ZeroKMS client behind your credentials — the keyset that client was created against, which is the
+ * workspace's `default` keyset if using the profile credentials in a dev environment. Two processes
+ * that both omit `config.keyset` therefore share a keyspace only if their clients default to the
+ * same keyset.
  *
  * ```typescript
  * // `users` is the schema from the first example above.
