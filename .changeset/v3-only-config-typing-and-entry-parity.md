@@ -33,3 +33,10 @@ overloads, including the `readonly` and non-literal array forms. The bundled
 rows, both of which still ship. `cipherstashFromStack`'s `encryptionConfig`
 JSDoc described `config.eqlVersion` as an escape hatch that throws over an
 all-v3 schema set; it is rejected unconditionally, and the doc now says that.
+
+The `stash-dynamodb` skill documented the v3 descriptor a legacy read takes but
+not that it must also be one of the tables passed to `Encryption({ schemas })`.
+The adapter forwards that descriptor to the client, which rejects a table it was
+not initialized with, so reading v2 rows for a table your current schema no
+longer declares fails. That requirement is now stated where the legacy-read
+signature is.

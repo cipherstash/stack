@@ -465,6 +465,13 @@ Let `T` be inferred from the argument; do not pass explicit type arguments on th
 For a stored v2 item, pass `{ storedEqlVersion: 2 }` as `readOptions`. The table
 is still the current v3 descriptor, which supplies table and column identity.
 
+That descriptor must be one of the tables you passed to `Encryption({ schemas })`.
+The adapter forwards it to the client to drive envelope and `Date` reconstruction,
+and the client rejects a table it was not initialized with — so a legacy read of a
+table your current schema no longer declares fails with `decryptModel received a
+table this client was not initialized with`. Keep the table declared for as long
+as you still need to read its v2 rows.
+
 | Method | Signature | Resolves to |
 |---|---|---|
 | `decryptModel` | `(item, v3Table, { storedEqlVersion: 2 })` | `T` |

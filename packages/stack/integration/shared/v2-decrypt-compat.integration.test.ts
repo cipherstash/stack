@@ -28,6 +28,12 @@
  * client's own `eqlVersion`. Delete the unrelated table, or point these reads
  * back at `users`, and the block silently stops testing anything.
  *
+ * The invariant is scoped to the client's TABLE-LESS reads. The DynamoDB
+ * adapter always forwards a table, and the table-aware overload does consult
+ * the schema tuple — so legacy DynamoDB reads require the table to be declared
+ * in `Encryption({ schemas })`. The last case in the second block pins that
+ * boundary so the difference is not mistaken for a regression later.
+ *
  * Whatever next removes code here must keep that second block alive. It is the
  * successor to the `#1c` case that guarded this invariant while the
  * `config: { eqlVersion: 2 }` escape hatch still existed; the hatch is gone
@@ -241,25 +247,37 @@ describe('a client that never registered the v2 table still reads its payloads',
   }, 30000)
 
   /**
-   * The adapter reaches the same conclusion by a different route, so it needs
-   * its own case. `assertClientTableVersionMatch` normally REFUSES a table the
-   * client has not registered — that guard catches a v3 write aimed at the
-   * wrong client — but it early-returns for `storedEqlVersion: 2`
-   * (`src/dynamodb/index.ts`), precisely because a v2 payload says nothing
-   * about which v3 tables the client holds. The table argument survives only to
-   * drive envelope reconstruction. If that early return is ever tightened into
-   * a registration check, this case is what fails.
+   * The DynamoDB adapter does NOT extend the guarantee above, and this case
+   * pins that boundary rather than asserting it away.
+   *
+   * There are two independent registration checks on this path, and clearing
+   * the first does not clear the second. `assertClientTableVersionMatch`
+   * (`src/dynamodb/index.ts`) early-returns for `storedEqlVersion: 2`, because
+   * a v2 payload says nothing about which v3 tables the client holds. But the
+   * adapter then forwards the table into `client.decryptModel(item, table)` —
+   * deliberately, to preserve Date reconstruction — and the TABLE-AWARE
+   * overload rejects a table outside the schema tuple
+   * (`src/encryption/client-v3.ts`). The native reads above survive because
+   * they use the table-LESS overload, which has no such map to miss.
+   *
+   * The pre-#815 version of this case passed a v2 table descriptor, which side-
+   * stepped the v3 guard entirely. That shape is now unreproducible: the v2
+   * builders are gone, so the only descriptor that exists is a v3 one. Reading
+   * legacy DynamoDB data therefore requires declaring the table in
+   * `Encryption({ schemas })` — a real constraint, not a regression, and one
+   * the caller must already satisfy to have a descriptor to pass.
    */
-  it('decrypts a stored v2 DynamoDB item through an adapter on the unrelated client', async () => {
+  it('refuses a stored v2 DynamoDB item whose table the client never registered', async () => {
     const encrypted = await v2Ciphertext(SECRET)
     const stored = toEncryptedDynamoItem({ pk: 'a', email: encrypted }, [
       'email',
     ])
     const dynamo = encryptedDynamoDB({ encryptionClient: unrelatedClient })
 
-    const decrypted = unwrapResult(
-      await dynamo.decryptModel(stored, users, { storedEqlVersion: 2 }),
-    )
-    expect(decrypted).toMatchObject({ pk: 'a', email: SECRET })
+    const result = await dynamo.decryptModel(stored, users, {
+      storedEqlVersion: 2,
+    })
+
+    expect(result.failure?.message).toMatch(/was not initialized with/)
   }, 30000)
 })
