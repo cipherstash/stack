@@ -407,11 +407,13 @@ payload (1–2 KB per row) and spills. Group on the extractor —
 sequential-scans. Adding the functional index over the extractor is a separate
 step — see `stash-indexing`.
 
-**Every writer needs the same credentials.** Index terms derive from the
-ZeroKMS client key, so rows written by a client with different `CS_*`
-credentials decrypt correctly but never match a query — silently. This
-includes `stash encrypt backfill` and seed scripts. See `stash-edge` §
-The Credential-Identity Rule.
+**Every writer and reader must resolve to the same keyset** — the credential
+strings themselves may differ. Index terms come from a per-*keyset* key, so
+any client granted the keyset produces matching terms; a client on a
+different keyset fails loudly (decrypt and query alike, ZeroKMS 404), never
+silently. If decrypt works but a query returns zero rows, suspect the operand
+cast or predicate form on this page, or a missing index (`stash-indexing`) —
+not credentials. `stash-zerokms` is canonical for keyset scoping.
 
 ## Troubleshooting
 
@@ -458,8 +460,9 @@ SELECT column_name, domain_schema, domain_name
   and the client API, the rollout/cutover lifecycle.
 - `stash-indexing` — functional indexes over the term extractors, and the
   `EXPLAIN` checklist.
-- `stash-edge` — the WASM entry, `CS_*` credentials, and the
-  credential-identity rule.
+- `stash-edge` — the WASM entry and running encryption from edge runtimes.
+- `stash-zerokms` — keysets, clients, and grants (canonical for keyset scoping).
+- `stash-auth` — credentials, auth strategies, and lock context (canonical).
 - `stash-cli` — `stash eql install`, `stash db validate`, `stash encrypt backfill`.
 
 Upstream:

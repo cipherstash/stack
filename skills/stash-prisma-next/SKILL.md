@@ -292,8 +292,9 @@ Same credential model as the rest of Stack:
 
 - **Local dev:** `npx stash auth login` (device-code flow; token in `~/.cipherstash`).
 - **CI / production:** the four `CS_*` env vars (`CS_WORKSPACE_CRN`, `CS_CLIENT_ID`,
-  `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`). See the `stash-cli` and
-  `stash-encryption` skills for how to obtain them from your device session.
+  `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`), minted with `stash env`. The
+  `stash-auth` skill is canonical for credentials and auth strategies;
+  `stash-zerokms` for keysets and what the credentials can reach.
 
 `cipherstashFromStack` resolves `CS_*` when present, else the local profile.
 

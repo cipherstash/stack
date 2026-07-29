@@ -1,6 +1,6 @@
 ---
 name: stash-edge
-description: Run CipherStash encryption on edge and non-Node runtimes with the `@cipherstash/stack/wasm-inline` entry — Deno, Supabase Edge Functions, Cloudflare Workers, and Bun. Covers the import specifier per runtime, the four mandatory `CS_*` variables and minting them with `stash env`, the credential-identity rule (rows written under different credentials decrypt but never match a query), how the WASM client surface differs from the native typed client, and why an EQL v3 schema module cannot be shared across the two entries. Use when adding encryption to a Supabase Edge Function, a Worker, or a Deno service; when a native module fails to load in a deployed runtime; when wiring `CS_*` secrets into an edge deploy; or when encrypted search returns zero rows on the edge but works locally.
+description: Run CipherStash encryption on edge and non-Node runtimes with the `@cipherstash/stack/wasm-inline` entry — Deno, Supabase Edge Functions, Cloudflare Workers, and Bun. Covers the import specifier per runtime, the four mandatory `CS_*` variables and minting them with `stash env`, how keysets and credentials interact on the edge (what must match is the keyset — `stash-zerokms` is canonical), how the WASM client surface differs from the native typed client, and why an EQL v3 schema module cannot be shared across the two entries. Use when adding encryption to a Supabase Edge Function, a Worker, or a Deno service; when a native module fails to load in a deployed runtime; when wiring `CS_*` secrets into an edge deploy; or when encrypted search returns zero rows on the edge but works locally.
 ---
 
 # Encryption on the Edge (WASM entry)
@@ -26,7 +26,7 @@ together.
   bundler chokes trying to include it.
 - Wiring `CS_*` credentials into an edge deploy, or minting them at all.
 - Encrypted search works locally but returns **zero rows** in the deployed
-  function — see [The Credential-Identity Rule](#the-credential-identity-rule-a-silent-data-footgun).
+  function — see [Keysets and Credentials](#keysets-and-credentials-when-search-returns-zero-rows).
 - A schema module shared with Node tooling fails to typecheck against the
   edge client.
 
@@ -160,49 +160,39 @@ wrangler secret put CS_CLIENT_KEY      # repeat per variable
 vercel env add CS_CLIENT_KEY production
 ```
 
-## The Credential-Identity Rule (a silent data footgun)
+## Keysets and Credentials (when search returns zero rows)
 
-> **Every writer of a searchable column must use the same credentials as every
-> reader — including `stash encrypt backfill`, seed scripts, and admin tools.
-> Rows written under different credentials decrypt correctly but never match a
-> query.**
+An earlier version of this section described a "credential-identity rule":
+index terms deriving from the ZeroKMS client key, so rows written under one
+credential would decrypt but silently never match a query. **That model is
+wrong.** The scoping unit is the **keyset**, and `stash-zerokms` is the
+canonical skill for it. What actually holds:
 
-EQL's searchable-encryption index terms (the `hm`, `op`, `bf` fields in the
-stored payload) derive from the **ZeroKMS client key**, not from the workspace
-or keyset. Two clients in the same workspace with different `CS_CLIENT_ID` /
-`CS_CLIENT_KEY` pairs therefore produce **different terms for the same
-plaintext**.
+- Search terms are produced with a per-**keyset** index key. Every client
+  granted the keyset derives the *same* index key, so rows written by one
+  credential match queries from another — different `CS_CLIENT_ID` /
+  `CS_CLIENT_KEY` pairs interoperate fully as long as both clients resolve
+  to the same keyset.
+- A client that cannot reach the data's keyset fails **loudly and
+  completely**: client construction (the index-key load), encrypt, decrypt,
+  and query all fail with a ZeroKMS 404. There is no silent partial failure.
+- The old cautionary scenario — `stash encrypt backfill` from a laptop, then
+  querying from an Edge Function with `stash env`-minted values — is fine
+  when both clients resolve to the same keyset (the common case: both
+  created against the workspace default). If they were created against
+  different keysets you find out immediately, because *everything* fails,
+  not just search. Watch the keyset-less nuance from `stash-zerokms`: an
+  operation with no explicit keyset resolves to **that client's default
+  keyset**, so two clients created against different keysets don't share a
+  keyspace even in the same workspace.
 
-The consequences are asymmetric, which is what makes this hard to spot:
+**If decrypt works but a query returns zero rows, it is not a credential or
+key problem.** Check the operand cast / predicate form (`stash-postgres`)
+and that the extractor index exists and is used (`stash-indexing`).
 
-- **Decryption still works.** The data key is wrapped through ZeroKMS against
-  the workspace, so any authorised client in the workspace can decrypt the
-  row. Round-trip tests pass.
-- **Search silently fails.** An equality or match predicate compares the
-  query term against the stored term. Different client keys, different terms,
-  no match — and no error. The query returns zero rows exactly as though the
-  data were absent.
-
-The classic way to hit it: run `stash encrypt backfill` from a laptop (using
-the local device-profile credentials), then query those rows from an Edge
-Function using `CS_*` values minted by `stash env`. Every row decrypts. No
-search ever matches.
-
-**What to do:**
-
-- Mint one credential per *environment*, and use it for **every** process that
-  touches that environment's data — the app, the backfill, seed scripts, admin
-  jobs, and one-off scripts alike.
-- Before running `stash encrypt backfill` against an environment, export that
-  environment's `CS_*` values into the shell running it.
-- If rows have already been written under the wrong credentials, re-encrypt
-  them with the correct client: read (decryption still works), then write back
-  through a client built with the target credentials.
-
-**Diagnosing it:** if `decrypt` returns the right plaintext but an equality
-query on the same row returns nothing, compare the stored term against a
-freshly minted one for the same plaintext. Matching plaintext with differing
-`hm` values is this bug, not an indexing problem.
+Environment hygiene still matters, for the reasons `stash-auth` and
+`stash-deployment` give: mint one credential set per environment with
+`stash env`, and don't point laptop profile credentials at production data.
 
 ## The Client Surface
 
@@ -250,19 +240,23 @@ them is the standard mistake. Identity-bound encryption needs both:
    `config.authStrategy`. The client then acts as that user for its lifetime.
    **Available on this entry**, and shown below.
 2. **Bind the data key to a claim** — chain `.withLockContext({ identityClaim })`
-   on the operation. *This* is what changes key derivation. **Not available on
-   this entry** ([#797](https://github.com/cipherstash/stack/issues/797)).
+   on the operation. *This* is what binds key retrieval to the user's claim.
+   **Not available on this entry**
+   ([#797](https://github.com/cipherstash/stack/issues/797)).
 
 > [!IMPORTANT]
 > **An auth strategy alone does not produce identity-bound data.** It decides
-> *who the client is*; a lock context decides *which key the value is encrypted
-> under*. Only the first exists here, so on this entry today:
+> *who the client is*; a lock context decides *who can retrieve a value's
+> data key* (the claim from the encrypting caller's service token is bound to
+> the key — `stash-auth` is canonical). Only the first exists here, so on
+> this entry today:
 >
-> - Values you write are encrypted under the **workspace key**, not the user's
->   — even with a per-user `authStrategy`.
+> - Values you write carry **no identity condition on key retrieval** — any
+>   client with keyset access can decrypt them — even with a per-user
+>   `authStrategy`.
 > - You **cannot read** anything the native entry wrote under a lock context,
->   because decrypt needs the same context. That is a silent split in what the
->   two entries can read, on top of the schema incompatibility below.
+>   because key retrieval requires the same claim. That is a silent split in
+>   what the two entries can read, on top of the schema incompatibility below.
 >
 > If a value must be bound to an end-user claim, encrypt and decrypt it on the
 > native entry. Don't reach for `as any` to force a lock context through here —
@@ -288,8 +282,8 @@ const client = await Encryption({
   config: { authStrategy: strategy.data, clientId, clientKey },
 })
 
-// Authenticated as the end user — but the value is still encrypted under the
-// workspace key. There is no `.withLockContext()` on this entry to bind it.
+// Authenticated as the end user — but the value carries no identity condition
+// on key retrieval. There is no `.withLockContext()` on this entry to bind it.
 const enc = await client.encrypt('alice@example.com', {
   table: users,
   column: users.email,
@@ -432,10 +426,12 @@ function was served without `--env-file`. Validate all four at handler entry
 and return an actionable error rather than letting client construction fail
 opaquely; the example in `examples/supabase-worker` does exactly this.
 
-**Encryption works, search returns zero rows** — the credential-identity rule
-above. Second most likely: a missing index (see `stash-indexing`) makes it
-slow, not empty, so empty results point at credentials or an untyped operand
-(`stash-postgres`).
+**Encryption works, search returns zero rows** — not a credential problem: a
+keyset mismatch fails everything loudly, decrypt included (see [Keysets and
+Credentials](#keysets-and-credentials-when-search-returns-zero-rows) and
+`stash-zerokms`). Empty results with working decrypt point at an untyped
+operand or wrong predicate form (`stash-postgres`); a missing index (see
+`stash-indexing`) makes queries slow, not empty.
 
 **Search needle rejected** — free-text needles must be at least 3 characters;
 shorter ones tokenize to nothing.
@@ -446,6 +442,8 @@ user-scoped, so it is reused across invocations on a warm isolate.
 
 ## Reference
 
+- `stash-zerokms` — keysets, clients, grants, and the key hierarchy (canonical).
+- `stash-auth` — credentials, auth strategies, and lock context (canonical).
 - `stash-postgres` — the raw-SQL predicate cookbook and driver binding rules.
 - `stash-encryption` — schema authoring, the `types.*` domain catalog, and the
   rollout/cutover lifecycle.

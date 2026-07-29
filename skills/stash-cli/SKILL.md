@@ -440,7 +440,7 @@ Backfill requires a `public.eql_v3_*` target column, records version 3 and the `
 
 **Dual-write precondition.** The application must already write both `<col>` and `<col>_encrypted` on every insert and update. Otherwise rows written *during* the backfill land in plaintext only, silently. The first run prompts (interactive) or requires `--confirm-dual-writes-deployed` (non-interactive), then records `dual_writing`. Resumes don't re-prompt.
 
-**Credential precondition — run the backfill with the *application's* credentials.** Backfill encrypts through whichever `CS_*` credentials are in its environment, and EQL index terms derive from the ZeroKMS client key. Backfilling from a laptop on the local device profile, then querying from an app using credentials minted by `stash env`, produces rows that decrypt correctly and **never match a query** — with no error. Export the target environment's `CS_*` values in the shell running the backfill. See [`env`](#env) and `stash-edge` § The Credential-Identity Rule.
+**Keyset precondition — the backfill's client must resolve to the same keyset as the application's.** Backfill encrypts through whichever `CS_*` credentials are in its environment, and what must match between backfill and app is the **keyset** their clients resolve to, not the credential strings (`stash-zerokms` is canonical). Two clients on the same keyset interoperate fully — search included, since index terms come from a per-keyset key. Clients resolving to *different* keysets fail loudly: decrypt and query alike, not a silent search miss. Export the target environment's `CS_*` values in the shell running the backfill so the ciphertext lands in that environment's keyspace and the run is attributed to its client. See [`env`](#env) and `stash-auth`.
 
 | Flag | Description |
 |---|---|
@@ -485,13 +485,15 @@ CS_CLIENT_KEY=<hex>
 CS_CLIENT_ACCESS_KEY=CSAK…
 ```
 
-> **Every writer of a searchable column must use these same credentials** —
-> including `stash encrypt backfill`, seed scripts, and admin tools — or their
-> rows decrypt but never match a query. EQL index terms derive from the ZeroKMS
-> client key, so a row written under one credential and queried under another
-> decrypts correctly and silently fails every search. Mint one credential per
-> environment and export it for **every** process that writes that
-> environment's data. See `stash-edge` § The Credential-Identity Rule.
+> **What must match between writers and readers is the keyset, not the
+> credential string.** The client minted here is created against the
+> workspace default keyset, so it interoperates — search included — with any
+> other client resolving to that keyset (index terms come from a per-keyset
+> key; `stash-zerokms` is canonical). A client on a *different* keyset fails
+> loudly, decrypt and query alike. Still mint one credential set per
+> environment and export it for every process touching that environment's
+> data — for isolation, attribution, and revocability (`stash-auth`), not
+> because credential strings must be identical.
 
 Things to know:
 

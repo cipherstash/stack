@@ -481,7 +481,7 @@ if (decrypted.failure) throw new Error(decrypted.failure.message)
 
 `null` / `undefined` entries yield `null` at the same index without reaching ZeroKMS. Because each entry names its own column, one call can cover several columns across many rows. When items fail to decrypt, `failure.message` names every failing index.
 
-**The model helpers are available on the WASM entry too**: `encryptModel(model, table)`, `decryptModel(model, table)`, `bulkEncryptModels(models, table)`, `bulkDecryptModels(models, table)`. They run the same schema walk as the native client — declared columns are encrypted (matched by **JS property name**; nested fields via the column's dotted path), everything else passes through, `null`/`undefined` fields are preserved without reaching ZeroKMS, and the caller's model is never mutated — and a call that touches at least one field is **one ZeroKMS round trip** no matter how many fields or models it covers (an empty batch, or one whose models carry no schema fields, is short-circuited and makes **zero** calls). `table` must be one the client was built with (`Encryption({ schemas })`), else the call fails, as on the native client. `types.Date` / `types.Timestamp` columns round-trip `Date` → `Date` (on the wire they travel as ISO strings); because matching is by JS property name, a row keyed by raw DB column names (e.g. a raw `SELECT` returning `created_on`) still decrypts, but its date fields come back as ISO strings — key your models by the schema's property names. Differences from the native typed client: every method returns a plain `Promise` of the `{ data } | { failure }` Result (no `.audit()` chaining), and there is **no lock-context argument** — identity-bound encryption on the edge is configured at client construction via `config.authStrategy`. Decrypt failures name every failing field: `bulkDecryptModels` prefixes the model index (`[model 1] profile.ssn`), `decryptModel` names the field alone (`profile.ssn`).
+**The model helpers are available on the WASM entry too**: `encryptModel(model, table)`, `decryptModel(model, table)`, `bulkEncryptModels(models, table)`, `bulkDecryptModels(models, table)`. They run the same schema walk as the native client — declared columns are encrypted (matched by **JS property name**; nested fields via the column's dotted path), everything else passes through, `null`/`undefined` fields are preserved without reaching ZeroKMS, and the caller's model is never mutated — and a call that touches at least one field is **one ZeroKMS round trip** no matter how many fields or models it covers (an empty batch, or one whose models carry no schema fields, is short-circuited and makes **zero** calls). `table` must be one the client was built with (`Encryption({ schemas })`), else the call fails, as on the native client. `types.Date` / `types.Timestamp` columns round-trip `Date` → `Date` (on the wire they travel as ISO strings); because matching is by JS property name, a row keyed by raw DB column names (e.g. a raw `SELECT` returning `created_on`) still decrypts, but its date fields come back as ISO strings — key your models by the schema's property names. Differences from the native typed client: every method returns a plain `Promise` of the `{ data } | { failure }` Result (no `.audit()` chaining), and there is **no lock-context argument** — a known gap ([#797](https://github.com/cipherstash/stack/issues/797)), not a different mechanism. `config.authStrategy` decides *who the client is*; it does not bind values to the user (a lock context gates retrieval of a value's data key by a claim — `stash-auth` is canonical). Values written on the edge therefore carry no identity condition, and the edge cannot read values the native entry wrote under a lock context. Decrypt failures name every failing field: `bulkDecryptModels` prefixes the model index (`[model 1] profile.ssn`), `decryptModel` names the field alone (`profile.ssn`).
 
 ```typescript
 const row = await client.encryptModel({ id: 1, email: "alice@example.com" }, users)
@@ -638,7 +638,7 @@ See the `stash-drizzle` and `stash-supabase` skills for the full integration gui
 
 ## Authentication
 
-The client authenticates to ZeroKMS through `config.authStrategy`. Leave it unset for the default **auto** strategy: in local development, authenticate once with `npx stash auth login` (preferred — no credentials in your environment; `npx stash init` is the agent-assisted flow that also sets up schema and database); in CI/production, set the `CS_*` environment variables. Two explicit strategies cover the other cases:
+The client authenticates to ZeroKMS through `config.authStrategy` (`stash-auth` is the canonical skill for credentials, strategies, and failure codes). Leave it unset for the default **auto** strategy: in local development, authenticate once with `npx stash auth login` (preferred — no credentials in your environment; `npx stash init` is the agent-assisted flow that also sets up schema and database); in CI/production, set the `CS_*` environment variables. Two explicit strategies cover the other cases:
 
 - **`AccessKeyStrategy`** — service-to-service / CI. Authenticates a *service* with a CipherStash access key.
 - **`OidcFederationStrategy`** — authenticates the client **as the end user** by federating a third-party OIDC JWT (Clerk, Supabase, Auth0, Okta, ...) into a CipherStash service token:
@@ -672,7 +672,7 @@ Authentication stands on its own — an OIDC-authenticated client encrypts and d
 
 ## Identity-Aware Encryption (Lock Contexts)
 
-Bind a data key to a claim from the end user's JWT, so only that user can decrypt. Chain `.withLockContext({ identityClaim })` on any operation:
+Bind a data key to a claim from the end user's JWT, so only that user can decrypt — the claim is bound to the key at encrypt time, and ZeroKMS releases the key only to a caller presenting the same claim (`stash-auth` is the canonical skill for this model). Chain `.withLockContext({ identityClaim })` on any operation:
 
 ```typescript
 // Requires a client authenticated with OidcFederationStrategy (see
@@ -737,7 +737,12 @@ const client = await Encryption({
 })
 ```
 
-Each keyset provides full cryptographic isolation between tenants.
+Each keyset provides full cryptographic isolation between tenants. Encrypt
+and query always use the client's bound keyset (one `Encryption()` client
+per tenant); decrypt follows each payload's own keyset, subject to grants.
+Omitting `config.keyset` resolves to the *client's* default keyset. The
+`stash-zerokms` skill is canonical for keysets, clients, grants, and the
+failure modes.
 
 ## Operation Chaining
 
