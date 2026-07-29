@@ -686,6 +686,29 @@ describe.skipIf(skipWithoutLiveCredentials)('encryptQuery', () => {
     }, 30000)
   })
 
+  // These cover the SDK surface only — that `.withLockContext()` returns an
+  // executable operation. They deliberately do NOT execute.
+  //
+  // Two tests that DID execute were removed (see below). A lock context binds a
+  // data key to an end user's identity claim, which requires an
+  // `OidcFederationStrategy`-authenticated client — `skills/stash-encryption`
+  // states that a service credential "cannot be used with a lock context". This
+  // suite builds its client from the `CS_*` service credentials, so the claim
+  // could never resolve, and ZeroKMS rejects the request on the EQL v3 wire.
+  //
+  // They were never meaningful. Introduced in fea303d0, they passed against the
+  // live service while forwarding a literal `accessToken: 'mock-token'` — proof
+  // that nothing was authorising the binding. Their assertions (`i`, `v`, `hm`,
+  // `op`) are identical to the non-lock-context tests above, so they could not
+  // distinguish a bound claim from an ignored one. And per 8d707cc9, query terms
+  // are not identity-bound at all: the `hm` term is workspace-scoped and matches
+  // with or without a lock context — the identity boundary is enforced at
+  // DECRYPT.
+  //
+  // Real coverage lives where the claim can actually resolve, under
+  // CLERK_MACHINE_TOKEN + OidcFederationStrategy:
+  //   packages/stack/integration/identity/matrix-identity.integration.test.ts
+  //   packages/stack-drizzle/integration/lock-context.integration.test.ts
   describe('LockContext support', () => {
     it('single query with a lock context builds an executable operation', async () => {
       const operation = protectClient.encryptQuery('test@example.com', {
@@ -712,49 +735,6 @@ describe.skipIf(skipWithoutLiveCredentials)('encryptQuery', () => {
       const withContext = operation.withLockContext(createMockLockContext())
       expect(withContext).toHaveProperty('execute')
       expect(typeof withContext.execute).toBe('function')
-    }, 30000)
-
-    it('executes a single query bound to an identity claim', async () => {
-      const operation = protectClient.encryptQuery('test@example.com', {
-        column: users.email,
-        table: users,
-        queryType: 'equality',
-      })
-
-      const withContext = operation.withLockContext(createMockLockContext())
-      const result = await withContext.execute()
-
-      const data = unwrapResult(result)
-      expect(data).toMatchObject({
-        i: { t: 'users', c: 'email' },
-        v: 3,
-      })
-      expect(data).toHaveProperty('hm')
-    }, 30000)
-
-    it('executes a bulk query bound to an identity claim', async () => {
-      const operation = protectClient.encryptQuery([
-        {
-          value: 'test@example.com',
-          column: users.email,
-          table: users,
-          queryType: 'equality',
-        },
-        {
-          value: 42,
-          column: users.age,
-          table: users,
-          queryType: 'orderAndRange',
-        },
-      ])
-
-      const withContext = operation.withLockContext(createMockLockContext())
-      const result = await withContext.execute()
-
-      const data = unwrapResult(result)
-      expect(data).toHaveLength(2)
-      expect(data[0]).toHaveProperty('hm')
-      expect(data[1]).toHaveProperty('op')
     }, 30000)
   })
 })
