@@ -271,6 +271,102 @@ function dollarQuoteDelimiter(sql: string, open: number): string | undefined {
 const DOLLAR_QUOTE_OPEN_RE = /\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/y
 
 /**
+ * The INNER text of every dollar-quoted body (`$$ … $$`, `$fn$ … $fn$`) whose
+ * opener sits at a live position — one that {@link isInsideCommentOrString}
+ * does not already call inert.
+ *
+ * **Why this exists (#836, item 1):** {@link isInsideCommentOrString} skips a
+ * dollar-quoted body WHOLE, and that is right for the rewrite pass — the body
+ * is PL/pgSQL, {@link renderSafeAlter} returns multiple lines, and splicing
+ * them into code this sweep cannot reason about is not a repair. But it is
+ * wrong for {@link indexColumnDeclarations}: DDL inside `DO $$ … END $$;` is
+ * EXECUTED. An encrypted `ADD COLUMN` there means the column really does hold
+ * ciphertext, yet it never entered `encrypted`, so the column fell to
+ * "plaintext by residue" and the sweep added an empty `<col>_encrypted` twin
+ * beside the real ciphertext — reported as a successful rewrite (#811).
+ *
+ * So the index reads these bodies, and only for the ENCRYPTED side. That is
+ * the same asymmetry the per-column `CREATE TABLE` loops already rely on:
+ * over-detecting "encrypted" costs a flagged statement, while over-detecting
+ * "declared" is what puts a column back on the fail-open path. A `DO $$` body
+ * is CONDITIONAL PL/pgSQL — an `IF … THEN` arm, an `EXCEPTION` handler — so a
+ * plaintext declaration inside one is not proof the column exists, and
+ * {@link indexEncryptedDeclarations} deliberately does not record one.
+ *
+ * An INERT body stays inert: a `DO $$ … $$;` inside a `--` comment or quoted
+ * inside an `INSERT … VALUES ('…')` never ran, and its DDL is evidence of
+ * nothing.
+ *
+ * An UNTERMINATED body yields its remainder to the end of the file. That is
+ * deliberately the opposite of what {@link isInsideCommentOrString} does with
+ * one, and the two are not in conflict: there, "inert to the end of the file"
+ * protects quote PARITY for the rewrite; here the goal is COVERAGE, and a file
+ * whose dollar quote never closes is one Postgres rejects outright — so
+ * everything it says is unproven, and over-detecting "encrypted" (a flagged
+ * statement) is the safe way to be wrong about it.
+ *
+ * **This tracks inertness itself rather than calling
+ * {@link isInsideCommentOrString} per opener, and that is a hard requirement,
+ * not a tidy-up.** That predicate rescans from index 0 on every call, so asking
+ * it about each `$` makes this quadratic — and the corpus this runs over
+ * routinely includes the ~2.6 MB EQL install migration, which is itself
+ * thousands of `$$` PL/pgSQL bodies. Measured on that corpus: ~370 ms as a
+ * single pass, ~8.5 s per-opener. Same token rules, same helpers, one traversal.
+ */
+function* dollarQuotedBodies(sql: string): Generator<string> {
+  let i = 0
+  while (i < sql.length) {
+    if (sql.startsWith('--', i)) {
+      const eol = sql.indexOf('\n', i)
+      // Runs to EOF, so nothing after it is live.
+      if (eol === -1) return
+      i = eol + 1
+    } else if (sql.startsWith('/*', i)) {
+      // Nestable, exactly as in `isInsideCommentOrString`: stopping at the first
+      // `*/` would let the text after a nested close read as live SQL.
+      let depth = 1
+      let j = i + 2
+      while (j < sql.length && depth > 0) {
+        if (sql.startsWith('/*', j)) {
+          depth += 1
+          j += 2
+        } else if (sql.startsWith('*/', j)) {
+          depth -= 1
+          j += 2
+        } else {
+          j += 1
+        }
+      }
+      i = j
+    } else if (sql[i] === '$') {
+      const delimiter = dollarQuoteDelimiter(sql, i)
+      if (delimiter === undefined) {
+        i += 1
+        continue
+      }
+      const bodyStart = i + delimiter.length
+      const close = sql.indexOf(delimiter, bodyStart)
+      if (close === -1) {
+        yield sql.slice(bodyStart)
+        return
+      }
+      // The body is opaque: resuming past its close is what stops a `'` or `--`
+      // inside it from being read as SQL.
+      yield sql.slice(bodyStart, close)
+      i = close + delimiter.length
+    } else if (sql[i] === '"') {
+      // Before the `'` branch, so an apostrophe inside `"o'brien"` cannot open a
+      // phantom literal. Unterminated returns `sql.length` and ends the walk.
+      i = endOfQuoted(sql, i, '"')
+    } else if (sql[i] === "'") {
+      i = endOfQuoted(sql, i, "'", isEscapeStringOpener(sql, i))
+    } else {
+      i += 1
+    }
+  }
+}
+
+/**
  * Whether the `'` at `open` starts an `E''` escape-string, in which a backslash
  * escapes the following character. Plain literals give backslash no special
  * meaning under the default `standard_conforming_strings = on`.
@@ -558,64 +654,156 @@ function indexColumnDeclarations(contents: readonly string[]): ColumnIndex {
   const declared = new Set<string>()
 
   for (const sql of contents) {
-    for (const created of sql.matchAll(CREATE_TABLE_HEAD_RE)) {
-      if (isInsideCommentOrString(sql, created.index)) continue
-      const { schema, table } = tableOf(created[1], created[2])
-      const bodyStart = created.index + created[0].length
-      const bodyEnd = endOfCreateTableBody(sql, bodyStart)
-      // Never closed — treat the statement as absent rather than index a body
-      // that runs to the end of the file.
-      if (bodyEnd === undefined) continue
-      const body = sql.slice(bodyStart, bodyEnd)
+    // Materialised once: both passes below walk the same bodies, and the
+    // generator re-scans the file each time it is iterated.
+    const opaque = [...dollarQuotedBodies(sql)]
 
-      // The body is scanned as its own document: a `--` earlier in it comments
-      // out the rest of that line, and a CREATE inside a block comment or a
-      // string literal was already skipped above.
-      //
-      // Asymmetric on purpose. ENCRYPTED does NOT re-check comments here: a
-      // commented-out encrypted column inside an otherwise live CREATE TABLE
-      // still counts, exactly as it did before this sweep learned to declare
-      // anything — over-detecting "encrypted" only costs a flagged statement.
-      // DECLARED DOES re-check: a commented-out plaintext line never ran, so
-      // it must not count as a declaration — over-detecting "declared" is
-      // what would put a truly-undeclared, possibly already-encrypted column
-      // back on the fail-open path.
-      for (const column of body.matchAll(CREATE_TABLE_ENCRYPTED_COLUMN_RE)) {
-        encrypted.add(columnKey(table, column[1], schema))
-      }
+    indexDeclarations(sql, encrypted, declared)
+    for (const body of opaque) indexEncryptedDeclarations(body, encrypted)
 
-      for (const column of body.matchAll(DECLARED_COLUMN_RE)) {
-        if (isInsideCommentOrString(body, column.index)) continue
-        declared.add(columnKey(table, column[1], schema))
-      }
-    }
-
-    for (const added of sql.matchAll(ADD_ENCRYPTED_COLUMN_RE)) {
-      if (isInsideCommentOrString(sql, added.index)) continue
-      const { schema, table } = tableOf(added[1], added[2])
-      encrypted.add(columnKey(table, added[3], schema))
-    }
-
-    for (const added of sql.matchAll(ADD_COLUMN_RE)) {
-      if (isInsideCommentOrString(sql, added.index)) continue
-      const { schema, table } = tableOf(added[1], added[2])
-      declared.add(columnKey(table, added[3], schema))
-    }
-
-    // A rename carries the column's type with it — and `<col>__cipherstash_tmp`
-    // renamed onto the real name is exactly what a previous sweep of this very
-    // directory emitted. Run after ADD so that tmp column is already indexed.
-    for (const renamed of sql.matchAll(RENAME_COLUMN_RE)) {
-      if (isInsideCommentOrString(sql, renamed.index)) continue
-      const { schema, table } = tableOf(renamed[1], renamed[2])
-      const from = columnKey(table, renamed[3], schema)
-      const to = columnKey(table, renamed[4], schema)
-      if (encrypted.has(from)) encrypted.add(to)
-      if (declared.has(from)) declared.add(to)
-    }
+    // Renames run after EVERY declaration above, live and dollar-quoted: a
+    // rename carries the column's type with it, so the ADD it refers to has to
+    // be indexed first.
+    indexRenames(sql, encrypted, declared)
+    for (const body of opaque) indexEncryptedRenames(body, encrypted)
   }
 
   return { encrypted, declared }
+}
+
+/** Declarations at LIVE positions — both sides of the index. */
+function indexDeclarations(
+  sql: string,
+  encrypted: Set<string>,
+  declared: Set<string>,
+): void {
+  for (const created of sql.matchAll(CREATE_TABLE_HEAD_RE)) {
+    if (isInsideCommentOrString(sql, created.index)) continue
+    const { schema, table } = tableOf(created[1], created[2])
+    const bodyStart = created.index + created[0].length
+    const bodyEnd = endOfCreateTableBody(sql, bodyStart)
+    // Never closed — treat the statement as absent rather than index a body
+    // that runs to the end of the file.
+    if (bodyEnd === undefined) continue
+    const body = sql.slice(bodyStart, bodyEnd)
+
+    // The body is scanned as its own document: a `--` earlier in it comments
+    // out the rest of that line, and a CREATE inside a block comment or a
+    // string literal was already skipped above.
+    //
+    // Asymmetric on purpose. ENCRYPTED does NOT re-check comments here: a
+    // commented-out encrypted column inside an otherwise live CREATE TABLE
+    // still counts, exactly as it did before this sweep learned to declare
+    // anything — over-detecting "encrypted" only costs a flagged statement.
+    // DECLARED DOES re-check: a commented-out plaintext line never ran, so
+    // it must not count as a declaration — over-detecting "declared" is
+    // what would put a truly-undeclared, possibly already-encrypted column
+    // back on the fail-open path.
+    for (const column of body.matchAll(CREATE_TABLE_ENCRYPTED_COLUMN_RE)) {
+      encrypted.add(columnKey(table, column[1], schema))
+    }
+
+    for (const column of body.matchAll(DECLARED_COLUMN_RE)) {
+      if (isInsideCommentOrString(body, column.index)) continue
+      declared.add(columnKey(table, column[1], schema))
+    }
+  }
+
+  for (const added of sql.matchAll(ADD_ENCRYPTED_COLUMN_RE)) {
+    if (isInsideCommentOrString(sql, added.index)) continue
+    const { schema, table } = tableOf(added[1], added[2])
+    encrypted.add(columnKey(table, added[3], schema))
+  }
+
+  for (const added of sql.matchAll(ADD_COLUMN_RE)) {
+    if (isInsideCommentOrString(sql, added.index)) continue
+    const { schema, table } = tableOf(added[1], added[2])
+    declared.add(columnKey(table, added[3], schema))
+  }
+}
+
+/**
+ * The ENCRYPTED side only, over one {@link dollarQuotedBodies} body.
+ *
+ * `declared` is deliberately untouched — see {@link dollarQuotedBodies} for why
+ * a conditional PL/pgSQL body may not prove a plaintext column exists. The
+ * consequence is the safe one: a column whose ONLY declaration sits inside a
+ * dollar body stays `source-unknown` and is flagged rather than rewritten.
+ *
+ * Comments and literals INSIDE the body are not re-checked, matching the live
+ * encrypted `CREATE TABLE` loop: a commented-out encrypted column still counts,
+ * because over-detecting "encrypted" only ever costs a flagged statement.
+ */
+function indexEncryptedDeclarations(
+  body: string,
+  encrypted: Set<string>,
+): void {
+  for (const created of body.matchAll(CREATE_TABLE_HEAD_RE)) {
+    const { schema, table } = tableOf(created[1], created[2])
+    const bodyStart = created.index + created[0].length
+    const bodyEnd = endOfCreateTableBody(body, bodyStart)
+    if (bodyEnd === undefined) continue
+    for (const column of body
+      .slice(bodyStart, bodyEnd)
+      .matchAll(CREATE_TABLE_ENCRYPTED_COLUMN_RE)) {
+      encrypted.add(columnKey(table, column[1], schema))
+    }
+  }
+
+  for (const added of body.matchAll(ADD_ENCRYPTED_COLUMN_RE)) {
+    const { schema, table } = tableOf(added[1], added[2])
+    encrypted.add(columnKey(table, added[3], schema))
+  }
+}
+
+/**
+ * Renames at LIVE positions — both sides of the index.
+ *
+ * `<col>__cipherstash_tmp` renamed onto the real name is exactly what a
+ * previous sweep of this very directory emitted, so a rename has to carry the
+ * source column's type onto its new name.
+ */
+function indexRenames(
+  sql: string,
+  encrypted: Set<string>,
+  declared: Set<string>,
+): void {
+  for (const renamed of sql.matchAll(RENAME_COLUMN_RE)) {
+    if (isInsideCommentOrString(sql, renamed.index)) continue
+    const { schema, table } = tableOf(renamed[1], renamed[2])
+    const from = columnKey(table, renamed[3], schema)
+    const to = columnKey(table, renamed[4], schema)
+    if (encrypted.has(from)) encrypted.add(to)
+    if (declared.has(from)) declared.add(to)
+  }
+}
+
+/**
+ * Renames inside one {@link dollarQuotedBodies} body — ENCRYPTED side only.
+ *
+ * This is the shape #811 actually reported: `ADD COLUMN "email_encrypted"
+ * <domain>` live, then `RENAME COLUMN "email_encrypted" TO "email"` inside
+ * `DO $$ … END $$;`. After that block `email` holds the ciphertext, so an
+ * `ALTER COLUMN "email" SET DATA TYPE …` needs staged RE-encryption, not a
+ * second twin.
+ *
+ * `declared` is not propagated, for the same reason
+ * {@link indexEncryptedDeclarations} does not record one: the rename may sit in
+ * a branch that never ran, and inventing a declaration from it is the
+ * fail-open direction.
+ *
+ * **Residue, accepted.** A rename CHAIN that alternates between live and
+ * dollar-quoted statements within a single file, in the order dollar→live, is
+ * not followed: the live pass above has already run by then. Crossing files
+ * works, since files are indexed in sorted order.
+ */
+function indexEncryptedRenames(body: string, encrypted: Set<string>): void {
+  for (const renamed of body.matchAll(RENAME_COLUMN_RE)) {
+    const { schema, table } = tableOf(renamed[1], renamed[2])
+    if (encrypted.has(columnKey(table, renamed[3], schema))) {
+      encrypted.add(columnKey(table, renamed[4], schema))
+    }
+  }
 }
 
 /** Why a recognised ALTER-to-encrypted statement was left alone. */
@@ -782,8 +970,18 @@ export async function rewriteEncryptedAlterColumns(
             return match
           }
 
+          // `encryptedColumns` as well as `declaredColumns`: the two sets are
+          // not nested. A twin added inside a dollar-quoted body — or a
+          // commented-out encrypted column inside a live CREATE TABLE — is
+          // `encrypted` without ever being `declared`, and emitting a second
+          // ADD COLUMN for it fails at migrate time with "column already
+          // exists". Over-detecting here costs a flagged statement.
           const target = columnKey(table, `${column}_encrypted`, schema)
-          if (declaredColumns.has(target) || stagedTargets.has(target)) {
+          if (
+            declaredColumns.has(target) ||
+            encryptedColumns.has(target) ||
+            stagedTargets.has(target)
+          ) {
             skip(filePath, match.trim(), 'target-exists')
             return match
           }

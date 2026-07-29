@@ -886,6 +886,18 @@ describe('rewriteEncryptedAlterColumns', () => {
     })
   })
 
+  /**
+   * #823 closed #811 by removing the blast radius — the rewrite became add-only
+   * — not by closing the MECHANISM. #836 item 1 closed the mechanism: the index
+   * now reads dollar-quoted bodies for the encrypted side, so these corpora are
+   * recognised as already-encrypted instead of being handed an empty twin.
+   *
+   * Two expectations here therefore tightened, both toward fail-closed:
+   * `already-encrypted` replaces `target-exists` on the rename corpora (after
+   * those renames `email` IS the ciphertext, and `target-exists`'s "review the
+   * existing encrypted twin" pointed at a column the rename had just consumed),
+   * and the `DO $$` ADD COLUMN case no longer rewrites at all.
+   */
   describe('issue #811 dollar-quoted DDL regression', () => {
     const domainChange =
       'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE "eql_v3_text_eq";'
@@ -911,11 +923,14 @@ describe('rewriteEncryptedAlterColumns', () => {
       expect(rewritten).toEqual([])
       expect(fs.readFileSync(change, 'utf-8')).toBe(`${domainChange}\n`)
       expect(skipped).toEqual([
-        { file: change, statement: domainChange, reason: 'target-exists' },
+        { file: change, statement: domainChange, reason: 'already-encrypted' },
       ])
     })
 
-    it('does not emit destructive SQL when an encrypted ADD COLUMN is inside DO $$', async () => {
+    // The case #823's own test codified backwards (#836, item 1): the `DO $$`
+    // body really does leave `email` encrypted, so staging a twin beside the
+    // ciphertext was wrong. It is now recognised and flagged.
+    it('flags an encrypted ADD COLUMN inside DO $$ instead of staging a twin', async () => {
       fs.writeFileSync(
         path.join(tmpDir, '0000_setup.sql'),
         [
@@ -930,12 +945,13 @@ describe('rewriteEncryptedAlterColumns', () => {
       const change = path.join(tmpDir, '0001_change_domain.sql')
       fs.writeFileSync(change, `${domainChange}\n`)
 
-      const { rewritten } = await rewriteEncryptedAlterColumns(tmpDir)
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
 
-      expect(rewritten).toEqual([change])
-      const updated = fs.readFileSync(change, 'utf-8')
-      expect(updated).toContain('ADD COLUMN "email_encrypted"')
-      expect(updated).not.toMatch(/\b(?:DROP|RENAME)\s+COLUMN\b/i)
+      expect(rewritten).toEqual([])
+      expect(fs.readFileSync(change, 'utf-8')).toBe(`${domainChange}\n`)
+      expect(skipped).toEqual([
+        { file: change, statement: domainChange, reason: 'already-encrypted' },
+      ])
     })
 
     it('does not emit destructive SQL for a rename inside a custom dollar tag', async () => {
@@ -959,11 +975,16 @@ describe('rewriteEncryptedAlterColumns', () => {
       expect(rewritten).toEqual([])
       expect(fs.readFileSync(change, 'utf-8')).toBe(`${domainChange}\n`)
       expect(skipped).toEqual([
-        { file: change, statement: domainChange, reason: 'target-exists' },
+        { file: change, statement: domainChange, reason: 'already-encrypted' },
       ])
     })
 
-    it('does not emit destructive SQL when an unterminated $$ hides a later encrypted declaration', async () => {
+    // An unterminated `$$` makes the whole file unparseable, so Postgres never
+    // ran any of it and nothing after the opener is proven. The index reads that
+    // remainder for the encrypted side anyway (see `dollarQuotedBodies`), which
+    // is why the twin is now seen and the statement flagged rather than
+    // rewritten — the fail-closed way to be wrong about a broken file.
+    it('flags rather than rewrites when an unterminated $$ hides an encrypted declaration', async () => {
       fs.writeFileSync(
         path.join(tmpDir, '0000_setup.sql'),
         [
@@ -976,14 +997,260 @@ describe('rewriteEncryptedAlterColumns', () => {
       const change = path.join(tmpDir, '0001_change_domain.sql')
       fs.writeFileSync(change, `${domainChange}\n`)
 
-      const { rewritten } = await rewriteEncryptedAlterColumns(tmpDir)
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
 
-      expect(rewritten).toEqual([change])
-      const updated = fs.readFileSync(change, 'utf-8')
-      expect(updated).toContain('ADD COLUMN "email_encrypted"')
-      expect(updated).not.toMatch(/\b(?:DROP|RENAME)\s+COLUMN\b/i)
+      expect(rewritten).toEqual([])
+      expect(fs.readFileSync(change, 'utf-8')).toBe(`${domainChange}\n`)
+      expect(skipped).toEqual([
+        { file: change, statement: domainChange, reason: 'target-exists' },
+      ])
     })
   })
+
+  /**
+   * Issue #836, item 1. `isInsideCommentOrString` skips a dollar-quoted body
+   * WHOLE — correct for the rewrite pass, wrong for the index pass. DDL inside
+   * `DO $$ … END $$;` is executed SQL: the column really is encrypted in the
+   * database. Skipping it meant the column never entered `encrypted`, fell to
+   * "plaintext by residue", and the sweep added an empty `<col>_encrypted` twin
+   * beside the real ciphertext — `rewritten` listing the file, `skipped` empty,
+   * exit code 0.
+   *
+   * The index now reads dollar-quoted bodies for the ENCRYPTED side only. The
+   * `declared` side stays gated: a `DO $$` body is conditional PL/pgSQL, so a
+   * plaintext declaration inside one may never have run, and over-detecting
+   * `declared` is the fail-OPEN direction. The rewrite pass is untouched — an
+   * ALTER inside a dollar body is still inert and still not rewritten.
+   */
+  describe('encrypted DDL inside a dollar-quoted body', () => {
+    const domainChange =
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE "eql_v3_text_eq";'
+
+    it('indexes an encrypted CREATE TABLE column inside DO $$', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_setup.sql'),
+        [
+          'DO $$ BEGIN',
+          '  CREATE TABLE "users" ("email" "public"."eql_v3_text_search");',
+          'END $$;',
+          '',
+        ].join('\n'),
+      )
+      const change = path.join(tmpDir, '0001_change_domain.sql')
+      fs.writeFileSync(change, `${domainChange}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([
+        { file: change, statement: domainChange, reason: 'already-encrypted' },
+      ])
+    })
+
+    it('carries encryptedness through a RENAME inside DO $$', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_setup.sql'),
+        [
+          'CREATE TABLE "users" ("email" text NOT NULL);',
+          'ALTER TABLE "users" ADD COLUMN "email_tmp" "eql_v3_text_search";',
+          'DO $$ BEGIN',
+          '  ALTER TABLE "users" DROP COLUMN "email";',
+          '  ALTER TABLE "users" RENAME COLUMN "email_tmp" TO "email";',
+          'END $$;',
+          '',
+        ].join('\n'),
+      )
+      const change = path.join(tmpDir, '0001_change_domain.sql')
+      fs.writeFileSync(change, `${domainChange}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([
+        { file: change, statement: domainChange, reason: 'already-encrypted' },
+      ])
+    })
+
+    // The staged twin exists in the database but only inside a dollar body, so
+    // it is `encrypted` without ever being `declared`. Emitting another
+    // ADD COLUMN for it fails at migrate time with "column already exists".
+    it('treats an encrypted twin added inside DO $$ as an existing target', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_setup.sql'),
+        [
+          'CREATE TABLE "users" ("email" text NOT NULL);',
+          'DO $$ BEGIN',
+          '  ALTER TABLE "users" ADD COLUMN "email_encrypted" "eql_v3_text_search";',
+          'END $$;',
+          '',
+        ].join('\n'),
+      )
+      const change = path.join(tmpDir, '0001_change_domain.sql')
+      const alter =
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE "eql_v3_text_search";'
+      fs.writeFileSync(change, `${alter}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([
+        { file: change, statement: alter, reason: 'target-exists' },
+      ])
+    })
+
+    // The fail-OPEN direction, deliberately not taken. A `DO $$` body is
+    // conditional, so a PLAINTEXT declaration inside one is not proof the
+    // column exists — it stays undeclared and the statement stays flagged.
+    it('does not let a plaintext declaration inside DO $$ count as declared', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_setup.sql'),
+        [
+          'DO $$ BEGIN',
+          '  ALTER TABLE "users" ADD COLUMN "email" text;',
+          'END $$;',
+          '',
+        ].join('\n'),
+      )
+      const change = path.join(tmpDir, '0001_change_domain.sql')
+      fs.writeFileSync(change, `${domainChange}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([
+        { file: change, statement: domainChange, reason: 'source-unknown' },
+      ])
+    })
+
+    // Reading dollar bodies must not resurrect INERT ones. A `DO $$` block
+    // sitting inside a `--` comment or a string literal never runs, so the
+    // encrypted declaration in it is not evidence of anything.
+    it('ignores a dollar-quoted body inside a line comment', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_setup.sql'),
+        [
+          'CREATE TABLE "users" ("email" text NOT NULL);',
+          '-- DO $$ BEGIN ALTER TABLE "users" ADD COLUMN "email" "eql_v3_text_search"; END $$;',
+          '',
+        ].join('\n'),
+      )
+      const change = path.join(tmpDir, '0001_change_domain.sql')
+      fs.writeFileSync(change, `${domainChange}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([change])
+      expect(skipped).toEqual([])
+      expect(fs.readFileSync(change, 'utf-8')).toContain(
+        'ADD COLUMN "email_encrypted"',
+      )
+    })
+
+    it('ignores a dollar-quoted body inside a string literal', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_setup.sql'),
+        [
+          'CREATE TABLE "users" ("email" text NOT NULL);',
+          `INSERT INTO "audit" ("sql") VALUES ('DO $$ BEGIN ALTER TABLE "users" ADD COLUMN "email" "eql_v3_text_search"; END $$;');`,
+          '',
+        ].join('\n'),
+      )
+      const change = path.join(tmpDir, '0001_change_domain.sql')
+      fs.writeFileSync(change, `${domainChange}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([change])
+      expect(skipped).toEqual([])
+    })
+
+    // The rewrite pass keeps treating a dollar body as inert: `renderSafeAlter`
+    // returns MULTIPLE lines, and splicing them into a PL/pgSQL body would
+    // rewrite code the sweep cannot reason about.
+    it('still refuses to rewrite an ALTER that sits inside DO $$', async () => {
+      const file = path.join(tmpDir, '0000_setup.sql')
+      const sql = [
+        'CREATE TABLE "users" ("email" text NOT NULL);',
+        'DO $$ BEGIN',
+        `  ${domainChange}`,
+        'END $$;',
+        '',
+      ].join('\n')
+      fs.writeFileSync(file, sql)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([])
+      expect(fs.readFileSync(file, 'utf-8')).toBe(sql)
+    })
+
+    // drizzle-kit's own enum idiom. It touches no table, so widening the index
+    // must not turn every corpus containing one into a wall of flagged
+    // statements — the reason a blanket "fail closed on any dollar-quoted body"
+    // was rejected in favour of indexing the encrypted side.
+    it('leaves the drizzle-kit CREATE TYPE enum idiom rewritable', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_setup.sql'),
+        [
+          'CREATE TABLE "users" ("email" text NOT NULL);',
+          'DO $$ BEGIN CREATE TYPE "public"."role" AS ENUM(\'admin\'); EXCEPTION WHEN duplicate_object THEN null; END $$;',
+          '',
+        ].join('\n'),
+      )
+      const change = path.join(tmpDir, '0001_change_domain.sql')
+      fs.writeFileSync(change, `${domainChange}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([change])
+      expect(skipped).toEqual([])
+    })
+  })
+
+  /**
+   * `dollarQuotedBodies` must track comment/string state itself. Asking
+   * `isInsideCommentOrString` about each `$` is the obvious implementation and
+   * is quadratic, because that predicate rescans from index 0 every call.
+   *
+   * This corpus is the shape that makes it bite — thousands of small `$$`
+   * PL/pgSQL bodies, which is exactly the ~2.6 MB EQL install migration sitting
+   * in a real drizzle output directory next to the ALTER being swept. So this is
+   * shipped-command latency, not a microbenchmark: on that corpus the whole
+   * sweep measures ~0.4 s in one pass and ~8.5 s per-opener.
+   *
+   * Sized so the two are unambiguous rather than marginal. Over this ~2.1 MB
+   * corpus the body scan alone measures ~3 ms in one pass and ~41 s per-opener,
+   * and the whole sweep runs in well under a second when linear. The 15 s bound
+   * therefore sits ~30x above the linear time (so a slow shared runner is still
+   * comfortable) and ~3x below the regressed time — it catches an
+   * order-of-magnitude regression and does not police milliseconds.
+   */
+  it('scans a dollar-quote-heavy corpus in a single pass', async () => {
+    const bodies = Array.from(
+      { length: 32_000 },
+      (_, n) =>
+        `DO $$ BEGIN PERFORM ${n}; EXCEPTION WHEN others THEN null; END $$;`,
+    ).join('\n')
+    fs.writeFileSync(path.join(tmpDir, '0000_install.sql'), bodies)
+    fs.writeFileSync(
+      path.join(tmpDir, '0001_declare.sql'),
+      'CREATE TABLE "users" ("email" text);\n',
+    )
+    const alter = path.join(tmpDir, '0002_alter.sql')
+    fs.writeFileSync(
+      alter,
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+    )
+
+    const started = Date.now()
+    const { rewritten } = await rewriteEncryptedAlterColumns(tmpDir)
+    const elapsed = Date.now() - started
+
+    // Still correct: the dollar bodies declare nothing, so the ALTER rewrites.
+    expect(rewritten).toEqual([alter])
+    expect(elapsed).toBeLessThan(15_000)
+  }, 180_000)
 
   // A domain change on a column that is ALREADY encrypted needs staged
   // re-encryption; there is no plaintext source to backfill from.
