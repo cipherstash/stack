@@ -908,6 +908,105 @@ describe('rewriteEncryptedAlterColumns', () => {
     })
   })
 
+  describe('issue #811 dollar-quoted DDL regression', () => {
+    const domainChange =
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE "eql_v3_text_eq";'
+
+    it('does not emit destructive SQL for the reported two-file DO $$ rename corpus', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_setup.sql'),
+        [
+          'CREATE TABLE "users" ("id" serial PRIMARY KEY NOT NULL, "email" text NOT NULL);',
+          'ALTER TABLE "users" ADD COLUMN "email_encrypted" "eql_v3_text_search";',
+          'DO $$ BEGIN',
+          '  ALTER TABLE "users" RENAME COLUMN "email" TO "email_old";',
+          '  ALTER TABLE "users" RENAME COLUMN "email_encrypted" TO "email";',
+          'END $$;',
+          '',
+        ].join('\n'),
+      )
+      const change = path.join(tmpDir, '0001_change_domain.sql')
+      fs.writeFileSync(change, `${domainChange}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(fs.readFileSync(change, 'utf-8')).toBe(`${domainChange}\n`)
+      expect(skipped).toEqual([
+        { file: change, statement: domainChange, reason: 'target-exists' },
+      ])
+    })
+
+    it('does not emit destructive SQL when an encrypted ADD COLUMN is inside DO $$', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_setup.sql'),
+        [
+          'CREATE TABLE "users" ("email" text NOT NULL);',
+          'DO $$ BEGIN',
+          '  ALTER TABLE "users" DROP COLUMN "email";',
+          '  ALTER TABLE "users" ADD COLUMN "email" "eql_v3_text_search";',
+          'END $$;',
+          '',
+        ].join('\n'),
+      )
+      const change = path.join(tmpDir, '0001_change_domain.sql')
+      fs.writeFileSync(change, `${domainChange}\n`)
+
+      const { rewritten } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([change])
+      const updated = fs.readFileSync(change, 'utf-8')
+      expect(updated).toContain('ADD COLUMN "email_encrypted"')
+      expect(updated).not.toMatch(/\b(?:DROP|RENAME)\s+COLUMN\b/i)
+    })
+
+    it('does not emit destructive SQL for a rename inside a custom dollar tag', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_setup.sql'),
+        [
+          'CREATE TABLE "users" ("email" text NOT NULL);',
+          'ALTER TABLE "users" ADD COLUMN "email_encrypted" "eql_v3_text_search";',
+          'DO $stash$ BEGIN',
+          '  ALTER TABLE "users" RENAME COLUMN "email" TO "email_old";',
+          '  ALTER TABLE "users" RENAME COLUMN "email_encrypted" TO "email";',
+          'END $stash$;',
+          '',
+        ].join('\n'),
+      )
+      const change = path.join(tmpDir, '0001_change_domain.sql')
+      fs.writeFileSync(change, `${domainChange}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(fs.readFileSync(change, 'utf-8')).toBe(`${domainChange}\n`)
+      expect(skipped).toEqual([
+        { file: change, statement: domainChange, reason: 'target-exists' },
+      ])
+    })
+
+    it('does not emit destructive SQL when an unterminated $$ hides a later encrypted declaration', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_setup.sql'),
+        [
+          'CREATE TABLE "users" ("email" text NOT NULL);',
+          'SELECT $$unterminated;',
+          'ALTER TABLE "users" ADD COLUMN "email_encrypted" "eql_v3_text_search";',
+          '',
+        ].join('\n'),
+      )
+      const change = path.join(tmpDir, '0001_change_domain.sql')
+      fs.writeFileSync(change, `${domainChange}\n`)
+
+      const { rewritten } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([change])
+      const updated = fs.readFileSync(change, 'utf-8')
+      expect(updated).toContain('ADD COLUMN "email_encrypted"')
+      expect(updated).not.toMatch(/\b(?:DROP|RENAME)\s+COLUMN\b/i)
+    })
+  })
+
   // A domain change on a column that is ALREADY encrypted needs staged
   // re-encryption; there is no plaintext source to backfill from.
   describe('columns that are already encrypted', () => {
