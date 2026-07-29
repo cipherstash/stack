@@ -27,7 +27,7 @@ interface PostAgentOptions {
 const DRIZZLE_OUT_DIRS = ['drizzle', 'migrations', 'src/db/migrations']
 
 /**
- * Run all post-agent steps: install packages, push config, run migrations.
+ * Run all post-agent steps: install packages, install EQL, run migrations.
  */
 export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
   const { cwd, integration, gathered, packageManager } = opts
@@ -53,21 +53,9 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
     )
   }
 
-  // Step 3: Push encryption config (only when using Proxy)
-  if (gathered.usesProxy) {
-    await runStep(
-      'Pushing encryption config to database...',
-      'Encryption config pushed',
-      `${runner} stash db push`,
-      cwd,
-    )
-  } else {
-    p.log.info(
-      'Skipping `stash db push` — not using CipherStash Proxy. Run it manually if you ever switch to Proxy.',
-    )
-  }
-
-  // Step 4: Integration-specific migrations
+  // Step 3: Integration-specific migrations. Older gathered context may still
+  // carry `usesProxy`; it is compatibility data only. EQL v3 has no Proxy
+  // configuration to push, and the retired `stash db push` must never run.
   if (integration === 'drizzle') {
     await runStep(
       'Generating Drizzle migration...',

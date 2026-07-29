@@ -139,17 +139,14 @@ The domains use SQL-standard type names (`integer`, `smallint`, `real`,
 ### Install EQL
 
 ```bash
-# v3 (the default)
 stash eql install --supabase
-
-# v2 (legacy installs only)
-stash eql install --eql-version 2 --supabase
 ```
 
-For **v2**, `--supabase` selects the opclass-stripped bundle (operator
-classes / families require superuser, which Supabase does not grant) and
-applies the schema grants for `anon`, `authenticated`, and `service_role`.
-Without the grants, encrypted queries fail with `42501`.
+`stash` no longer installs EQL v2 or mutates its Proxy configuration. To
+recover or restore an existing v2 database dump, use the upstream
+[EQL 2.3.1 release SQL](https://github.com/cipherstash/encrypt-query-language/releases/tag/eql-2.3.1),
+then migrate maintained deployments to v3 domains. Do not use v2 for new
+authoring.
 
 For **v3**, since eql-3.0.0 there is **one** SQL artifact for every target —
 no separate Supabase variant. The bundle's only superuser-requiring
@@ -170,9 +167,9 @@ denied for schema eql_v3_internal`).
 
 ### Exposed schemas
 
-**v2 (manual, required):** for a bare `col <op> term` filter to reach the
-custom operator, `eql_v2` must be on PostgREST's request-time search_path —
-add it to **Dashboard → Settings → API → Exposed schemas**
+**Legacy v2 recovery deployments only:** for a bare `col <op> term` filter to
+reach the custom operator, `eql_v2` must be on PostgREST's request-time
+search_path — add it to **Dashboard → Settings → API → Exposed schemas**
 ([Supabase custom-schemas guide](https://supabase.com/docs/guides/api/using-custom-schemas)).
 
 > **Warning — silent fallback (v2).** If the schema is not exposed, the

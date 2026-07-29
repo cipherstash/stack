@@ -49,7 +49,7 @@ EQL (Encrypt Query Language) provides the PostgreSQL functions and domains that 
 **Direct install** — run the SQL straight against the database (quick, good for dev):
 
 ```bash
-stash eql install --eql-version 3
+stash eql install
 ```
 
 **Migration (preferred for real projects)** — generate a Drizzle custom migration that carries the EQL v3 install SQL, so it lands in your migration history and ships to every environment through `drizzle-kit migrate`:
@@ -423,9 +423,9 @@ Run `ANALYZE <table>` after the migration applies — an expression index gather
 
 The hard case: a Drizzle table that already exists in production with live data in a plaintext column you want to encrypt. You can't just change the column type — that would drop the data and break NOT NULL constraints.
 
-CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code) and a **cutover step** (backfill + switch reads + drop — under EQL v2 the switch is a rename, under v3 it is an application-side change). (On a legacy EQL v2 + CipherStash Proxy database, the rollout also includes `stash db push` to register the encryption config in `eql_v2_configuration`; EQL v3 ships no configuration table, so on the v3-only database the schema below assumes, `db push` reports "Nothing to do." and a v3 rollout never needs it.) The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Drizzle-specific shape.
+CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code) and a **cutover step** (backfill + switch reads by name + drop). The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Drizzle-specific shape.
 
-> **EQL version note.** The CLI rollout tooling (`stash encrypt *`, and the underlying `@cipherstash/migrate`) works with **both EQL versions** and detects a column's generation from its Postgres domain type — there is no flag. Detection is one-sided: a `public.eql_v3_*` domain classifies as **v3**; anything else — a plaintext column, or a legacy `eql_v2_encrypted` one — classifies as *unknown* and falls through to the **v2** lifecycle, which is the correct default for a v2 column. Only a v3 column has its version recorded in the migration manifest. The lifecycles differ at the end: **v3** (the default, and what the schema below uses) is `schema-add → dual-write → deploy gate → backfill → switch the app to the encrypted column by name → drop`, with **no cut-over rename**; **v2** finishes with `stash encrypt cutover` (a rename swap plus an `eql_v2_configuration` promotion) before the drop. Running `stash encrypt cutover` on a **backfilled** v3 column reports "not applicable" and exits 0 (it exits 1 if the backfill hasn't finished).
+> **EQL version note.** The CLI rollout tooling (`stash encrypt *`, and the underlying `@cipherstash/migrate`) now mutates **EQL v3 only**. A `public.eql_v3_*` target is required for backfill and drop. Legacy `eql_v2_encrypted` columns and migration history remain visible in status, but mutation commands reject them. The v3 lifecycle is `schema-add → dual-write → deploy gate → backfill → switch the app to the encrypted column by name → drop`, with no rename.
 
 > **Where am I?** Run `stash status` first (substitute the runner per the note above). It shows you which Drizzle tables/columns are mid-rollout, which are post-deploy, and what the next move is. Re-run after every transition.
 
@@ -476,18 +476,6 @@ export const encryptionClient = await Encryption({ schemas: [usersEncryptionSche
 ```
 
 Generate the migration with `drizzle-kit generate`. The generated SQL should be a single `ALTER TABLE ... ADD COLUMN "email_encrypted" "eql_v3_text_search";` — drizzle-kit emits the **bare** domain name, which resolves to the `public.eql_v3_text_search` domain via `search_path` (a schema-qualified custom type would be quoted as one identifier and fail, so the bare name is deliberate). Apply with `drizzle-kit migrate`. (This requires the EQL v3 SQL to be installed first — see Database Setup.)
-
-> **Using CipherStash Proxy?**
->
-> `stash db push` registers the encryption config in `eql_v2_configuration`, which only exists on a database that has EQL v2 installed. The Database Setup above installs EQL v3 only, and `types.TextSearch('email_encrypted')` is a `public.eql_v3_text_search` column — v3 keeps a column's config in its domain type and ships no configuration table, so on that database `stash db push` prints "Nothing to do." and exits 0. There is nothing to push for this schema.
->
-> ```bash
-> stash db push   # EQL v2 + Proxy databases only
-> ```
->
-> On a legacy EQL v2 database: if this is the project's first encrypted column, `db push` writes directly to the active EQL config (nothing to rename). If an active config already exists, `db push` writes the new config as `pending` — that's expected, and `stash db activate` promotes the pending row to active.
->
-> SDK-only users can skip this step on EQL v3 (this section's case) — there is nothing to push. On a legacy EQL v2 column they cannot: `stash encrypt cutover` requires a pending EQL config, so an SDK-only v2 rollout must still run `stash db push` once before cutover (see the SDK-only note under Backfill below).
 
 #### Dual-writing: write to both columns from app code
 
@@ -542,14 +530,10 @@ Resumable, idempotent, chunked. The CLI walks the table in keyset-pagination ord
 
 If something goes wrong (e.g. you discover the dual-write code wasn't actually live when backfill ran), re-run with `--force` to re-encrypt every row regardless of current state.
 
-> **SDK-only note (EQL v2 only):** `stash encrypt cutover` requires a pending EQL configuration set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`. EQL v3 columns never hit this — cut-over doesn't apply to them.
-
 #### Switch reads to the encrypted column
 
-**EQL v3: there is no cut-over.** The encrypted column keeps its own name — you
-switch the application to it by name, verify reads, then drop the plaintext
-column. Running `stash encrypt cutover` on a **backfilled** v3 column reports
-"not applicable" and exits 0 (it exits 1 if the backfill hasn't finished).
+The EQL v3 encrypted column keeps its own name. Switch the application to it by
+name, verify reads, then drop the plaintext column. There is no rename command.
 
 Point your read paths at `email_encrypted` and decrypt the selected envelopes
 with the encryption client. **This is the moment that breaks read paths if they

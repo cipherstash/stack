@@ -58,3 +58,5 @@ right lifecycle, no new flags:
 The `stash-cli` and `stash-encryption` skills and the `@cipherstash/migrate`
 README document the two lifecycles (v2: backfill → cutover → drop;
 v3: backfill → switch-by-name → drop).
+
+Superseded later in this release: `@cipherstash/migrate` and the CLI now author and mutate v3 only; legacy v2 manifest fields remain readable.

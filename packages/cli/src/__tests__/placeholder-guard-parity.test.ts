@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PLACEHOLDER_TABLE_NAME } from '@/config/index.js'
 
 /**
- * `stash db push` / `db validate` reach the user's encryption client through
+ * `stash db validate` reaches the user's encryption client through
  * `loadEncryptConfig`; `stash encrypt backfill` reaches the same file through
  * `loadEncryptionContext`. Both must refuse the un-replaced `stash init`
  * scaffold, and — because it is one file and one mistake — both must say the
@@ -72,7 +72,7 @@ describe('the un-replaced init scaffold, refused identically by both loaders', (
     }
   })
 
-  it('gives db push and encrypt backfill the same refusal for the same file', async () => {
+  it('gives db validate and encrypt backfill the same refusal for the same file', async () => {
     writeProject(
       `export const encryptionClient = {
          getEncryptConfig: () => ({ tables: { '${PLACEHOLDER_TABLE_NAME}': {} } }),
@@ -81,22 +81,24 @@ describe('the un-replaced init scaffold, refused identically by both loaders', (
     )
 
     const { loadEncryptConfig } = await import('@/config/index.js')
-    const dbPush = await captureRefusal(() => loadEncryptConfig('./client.ts'))
+    const dbValidate = await captureRefusal(() =>
+      loadEncryptConfig('./client.ts'),
+    )
 
     const { loadEncryptionContext } = await import(
       '../commands/encrypt/context.js'
     )
     const backfill = await captureRefusal(() => loadEncryptionContext())
 
-    expect(dbPush.exited).toBe(true)
+    expect(dbValidate.exited).toBe(true)
     expect(backfill.exited).toBe(true)
-    expect(dbPush.message).toContain('still contains the placeholder table')
-    expect(backfill.message).toEqual(dbPush.message)
+    expect(dbValidate.message).toContain('still contains the placeholder table')
+    expect(backfill.message).toEqual(dbValidate.message)
   })
 
   it('names the cause, not the symptom, when the client has no encrypt config', async () => {
     // A client whose `getEncryptConfig()` returns nothing is the same class of
-    // un-finished setup. `db push` already named it; `encrypt backfill` used to
+    // unfinished setup. `db validate` already named it; backfill used to
     // fall through to `requireTable`'s `Table "users" was not found …
     // Available: (none)` — the symptom-not-cause message this guard exists to
     // replace (#787 review follow-up).
@@ -106,14 +108,16 @@ describe('the un-replaced init scaffold, refused identically by both loaders', (
     )
 
     const { loadEncryptConfig } = await import('@/config/index.js')
-    const dbPush = await captureRefusal(() => loadEncryptConfig('./client.ts'))
+    const dbValidate = await captureRefusal(() =>
+      loadEncryptConfig('./client.ts'),
+    )
 
     const { loadEncryptionContext } = await import(
       '../commands/encrypt/context.js'
     )
     const backfill = await captureRefusal(() => loadEncryptionContext())
 
-    expect(dbPush.exited).toBe(true)
+    expect(dbValidate.exited).toBe(true)
     expect(backfill.exited).toBe(true)
     expect(backfill.message).toContain('no initialized encrypt config')
     expect(backfill.message).not.toContain('was not found')

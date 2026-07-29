@@ -153,11 +153,11 @@ Prefer the plain `Ord` domains unless you know your database supports the ORE op
 Install the EQL v3 SQL into your database with the stash CLI:
 
 ```bash
-npx stash eql install --eql-version 3
+npx stash eql install
 # On Supabase, add --supabase to grant the anon/authenticated/service_role
 # roles access to the eql_v3 schemas — without it, encrypted queries fail with
 # "permission denied for schema eql_v3_internal":
-npx stash eql install --eql-version 3 --supabase
+npx stash eql install --supabase
 ```
 
 In migrations, declare each encrypted column as its domain type:

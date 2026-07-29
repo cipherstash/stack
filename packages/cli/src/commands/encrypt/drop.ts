@@ -4,6 +4,8 @@ import {
   appendEvent,
   countUnencrypted,
   progress,
+  qualifyTable,
+  quoteIdent,
   setManifestTargetPhase,
 } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
@@ -16,9 +18,7 @@ import { explainUnresolved, resolveColumnLifecycle } from './lib/resolve-eql.js'
 
 /**
  * Options accepted by `stash encrypt drop`. Generates a migration file that
- * drops the now-unused plaintext column — for EQL v2 that is
- * `<col>_plaintext` (the name cutover's rename left it with); for EQL v3
- * (no rename) it is the original `<col>` itself. Does *not* apply the
+ * drops the now-unused original plaintext column for EQL v3. Does *not* apply the
  * migration — the user runs their usual migration tool (drizzle-kit,
  * prisma, psql) to actually execute it.
  */
@@ -27,9 +27,7 @@ export interface DropCommandOptions {
   table: string
   /**
    * Physical column — the original plaintext name. What gets dropped
-   * depends on the column's EQL version: v2 drops `<column>_plaintext`
-   * (post-cutover leftover); v3 drops `<column>` itself, gated on a live
-   * ciphertext-coverage check.
+   * is `<column>` itself, gated on a live ciphertext-coverage check.
    */
   column: string
   /**
@@ -41,9 +39,8 @@ export interface DropCommandOptions {
 }
 
 /**
- * CLI handler for `stash encrypt drop`. Version-aware preconditions:
- * EQL v2 requires phase `cut-over`; EQL v3 (which has no cut-over) requires
- * `backfilled` plus a live coverage check — and the generated v3 migration
+ * CLI handler for `stash encrypt drop`. EQL v3 requires `backfilled` plus a
+ * live coverage check — and the generated migration
  * re-verifies coverage at APPLY time, since rows can be written between
  * generation and application.
  *
@@ -67,13 +64,8 @@ export async function dropCommand(options: DropCommandOptions) {
   try {
     await client.connect()
 
-    // The plaintext column's name depends on the EQL version's lifecycle:
-    // v2's cut-over renames `<col>` → `<col>_plaintext` (so that's what we
-    // drop, after `cut-over`); v3 has no rename — the app switched to the
-    // encrypted column by name, so the original `<col>` IS the plaintext
-    // column, droppable straight after `backfilled`. The version and the
-    // encrypted column's name are resolved from the DOMAIN TYPES (manifest
-    // name as a hint) — the `<col>_encrypted` naming is a convention only.
+    // EQL v3 has no rename: the app switches to the encrypted column by name,
+    // so the original `<col>` remains the plaintext column to drop.
     const { info, candidates, unresolvedHint } = await resolveColumnLifecycle(
       client,
       options.table,
@@ -82,11 +74,7 @@ export async function dropCommand(options: DropCommandOptions) {
     // Fail closed on ambiguity: with EQL columns present but no identifiable
     // counterpart, guessing a lifecycle here could validate coverage against
     // the wrong ciphertext and generate an irreversible drop of the wrong
-    // data. (The post-cutover v2 state — `<col>` itself carries the v2
-    // domain, counterpart legitimately unresolvable — falls through to the
-    // v2 path: the classifier recognises `eql_v3_*` only, so that column is
-    // not a candidate and the table reads as having no EQL columns. Live
-    // truth from the DB wins over the manifest's cached version throughout.)
+    // data.
     const unresolved = explainUnresolved(
       options.table,
       options.column,
@@ -95,6 +83,13 @@ export async function dropCommand(options: DropCommandOptions) {
     )
     if (!info && unresolved) {
       p.log.error(unresolved)
+      exitCode = 1
+      return
+    }
+    if (!info) {
+      p.log.error(
+        `Cannot identify an EQL v3 encrypted column for ${options.table}.${options.column}. Legacy EQL v2 drop/cut-over automation has been removed; migrate the schema to EQL v3 before continuing.`,
+      )
       exitCode = 1
       return
     }
@@ -113,62 +108,55 @@ export async function dropCommand(options: DropCommandOptions) {
     // live `DROP COLUMN` on the plaintext at exit 0 (#772 review, finding 7).
     if (info?.via === 'sole') {
       p.log.error(
-        `${options.table}.${info.column} (${info.domain}) is the only EQL column left on ${options.table} once "${options.column}" itself is excluded, but nothing confirms it encrypts "${options.column}" — refusing to generate an irreversible drop on that guess. Identify the column that actually encrypts "${options.column}" and record that pairing: re-run \`stash encrypt backfill --table ${options.table} --column ${options.column} --encrypted-column <name>\` (which writes it to the manifest), or set "encryptedColumn" for this column in .cipherstash/migrations.json. If "${options.column}" pairs with a legacy eql_v2_encrypted column, resolution cannot see it (this command resolves EQL v3 counterparts only): complete that column's v2 lifecycle yourself with the eql_v2 SQL, since no stash command can drive it here — and do not record ${info.column}.`,
+        `${options.table}.${info.column} (${info.domain}) is the only EQL column left on ${options.table} once "${options.column}" itself is excluded, but nothing confirms it encrypts "${options.column}" — refusing to generate an irreversible drop on that guess. Identify the EQL v3 column that actually encrypts "${options.column}" and record that pairing: re-run \`stash encrypt backfill --table ${options.table} --column ${options.column} --encrypted-column <name>\` (which writes it to the manifest), or set "encryptedColumn" for this column in .cipherstash/migrations.json. Legacy EQL v2 drop/cut-over automation has been removed — do not record ${info.column} as a workaround.`,
       )
       exitCode = 1
       return
     }
-    const isV3 = info?.version === 3
-    const encryptedColumn = info?.column ?? `${options.column}_encrypted`
-    const requiredPhase = isV3 ? 'backfilled' : 'cut-over'
-    const plaintextToDrop = isV3
-      ? options.column
-      : `${options.column}_plaintext`
+    const encryptedColumn = info.column
+    const requiredPhase = 'backfilled'
+    const plaintextToDrop = options.column
 
     const state = await progress(client, options.table, options.column)
     if (state?.phase !== requiredPhase) {
       p.log.error(
-        `Cannot generate drop migration: ${options.table}.${options.column} is in phase '${state?.phase ?? '—'}'. Must be '${requiredPhase}'${isV3 ? ' (EQL v3 has no cut-over — backfill, switch the app to the encrypted column, then drop)' : ''}.`,
+        `Cannot generate drop migration: ${options.table}.${options.column} is in phase '${state?.phase ?? '—'}'. Must be '${requiredPhase}' (EQL v3 has no cut-over — backfill, switch the app to the encrypted column, then drop).`,
       )
       exitCode = 1
       return
     }
 
-    if (isV3) {
-      // The phase gate above proves a backfill FINISHED at some point; it
-      // says nothing about rows written since (a bulk import or a service
-      // that isn't dual-writing leaves plaintext-only rows). Dropping the
-      // original column is the one irreversible step in the v3 ladder, so
-      // verify live coverage before generating the migration.
-      const unencrypted = await countUnencrypted(
-        client,
-        options.table,
-        options.column,
-        encryptedColumn,
+    // The phase gate above proves a backfill FINISHED at some point; it
+    // says nothing about rows written since (a bulk import or a service
+    // that isn't dual-writing leaves plaintext-only rows). Dropping the
+    // original column is the one irreversible step in the v3 ladder, so
+    // verify live coverage before generating the migration.
+    const unencrypted = await countUnencrypted(
+      client,
+      options.table,
+      options.column,
+      encryptedColumn,
+    )
+    if (unencrypted > 0) {
+      p.log.error(
+        `Refusing to generate the drop migration: ${unencrypted} row(s) in ${options.table} have "${options.column}" set but "${encryptedColumn}" NULL — dropping "${options.column}" would permanently destroy that data. Likely rows written without dual-writes since the backfill. Re-run:\n  stash encrypt backfill --table ${options.table} --column ${options.column}\nthen generate the drop again.`,
       )
-      if (unencrypted > 0) {
-        p.log.error(
-          `Refusing to generate the drop migration: ${unencrypted} row(s) in ${options.table} have "${options.column}" set but "${encryptedColumn}" NULL — dropping "${options.column}" would permanently destroy that data. Likely rows written without dual-writes since the backfill. Re-run:\n  stash encrypt backfill --table ${options.table} --column ${options.column}\nthen generate the drop again.`,
-        )
-        exitCode = 1
-        return
-      }
-      p.log.success(
-        `Verified: no rows with "${options.column}" set and "${encryptedColumn}" NULL.`,
-      )
-      p.log.info(
-        `${options.table}.${encryptedColumn} is EQL v3 (${info?.domain}) — the drop targets the original plaintext column "${options.column}" (v3 has no rename, so there is no "${options.column}_plaintext"). Make sure your application reads/writes ${encryptedColumn} before applying this migration.`,
-      )
+      exitCode = 1
+      return
     }
+    p.log.success(
+      `Verified: no rows with "${options.column}" set and "${encryptedColumn}" NULL.`,
+    )
+    p.log.info(
+      `${options.table}.${encryptedColumn} is EQL v3 (${info.domain}) — the drop targets the original plaintext column "${options.column}" (v3 has no rename, so there is no "${options.column}_plaintext"). Make sure your application reads/writes ${encryptedColumn} before applying this migration.`,
+    )
 
-    const dot = options.table.indexOf('.')
-    const qualifiedTable =
-      dot >= 0
-        ? `"${options.table.slice(0, dot)}"."${options.table.slice(dot + 1)}"`
-        : `"${options.table}"`
-    const dropSql = isV3
-      ? buildV3DropSql(qualifiedTable, options.column, encryptedColumn)
-      : `-- Generated by stash encrypt drop\n-- Drops the plaintext column now that ${options.table}.${options.column} is encrypted.\n\nALTER TABLE ${qualifiedTable} DROP COLUMN "${plaintextToDrop}";\n`
+    const dropSql = buildV3DropSql(
+      options.table,
+      options.column,
+      encryptedColumn,
+    )
+    const migrationStem = buildMigrationStem(options.table, plaintextToDrop)
 
     const cwd = process.cwd()
     const migrationsDir = options.migrationsDir ?? 'drizzle'
@@ -181,7 +169,7 @@ export async function dropCommand(options: DropCommandOptions) {
       // Without this, the file ships but `drizzle-kit migrate` never picks it
       // up because the journal doesn't reference it.
       const result = await scaffoldDrizzleMigration({
-        name: `drop_${options.table}_${plaintextToDrop}`,
+        name: migrationStem,
         outDir: migrationsDir,
         sql: dropSql,
       })
@@ -196,7 +184,7 @@ export async function dropCommand(options: DropCommandOptions) {
         .toISOString()
         .replace(/[-:.TZ]/g, '')
         .slice(0, 14)
-      const fileName = `${ts}_drop_${options.table}_${plaintextToDrop}.sql`
+      const fileName = `${ts}_${migrationStem}.sql`
       filePath = path.join(dirAbs, fileName)
       fs.writeFileSync(filePath, dropSql, 'utf-8')
       nextStep = `Review the migration, then apply with your migration tool:\n  - prisma migrate deploy\n  - psql -f ${fileName}`
@@ -246,17 +234,20 @@ export async function dropCommand(options: DropCommandOptions) {
  * DO block so check-and-drop stay atomic even under migration runners that
  * don't wrap files in a transaction (plain `psql -f`).
  *
- * Identifiers arrive pre-validated (they resolved against the live catalog
- * above); embedded string literals escape single quotes defensively.
+ * Identifiers resolved against the live catalog above, but still require SQL
+ * quoting because valid PostgreSQL identifiers may contain quotes or dots.
  */
 function buildV3DropSql(
-  qualifiedTable: string,
+  table: string,
   plaintextColumn: string,
   encryptedColumn: string,
 ): string {
   const lit = (s: string) => s.replace(/'/g, "''")
+  const qualifiedTable = qualifyTable(table)
+  const quotedPlaintext = quoteIdent(plaintextColumn)
+  const quotedEncrypted = quoteIdent(encryptedColumn)
   return `-- Generated by stash encrypt drop
--- Drops the plaintext column now that ${qualifiedTable}."${encryptedColumn}" is encrypted.
+-- Drops the plaintext column now that ${qualifiedTable}.${quotedEncrypted} is encrypted.
 -- Coverage is re-verified here, at apply time: the check stash ran at
 -- generation time cannot see rows written after it.
 
@@ -270,16 +261,27 @@ BEGIN
 
   SELECT count(*) INTO unencrypted
     FROM ${qualifiedTable}
-   WHERE "${plaintextColumn}" IS NOT NULL
-     AND "${encryptedColumn}" IS NULL;
+   WHERE ${quotedPlaintext} IS NOT NULL
+     AND ${quotedEncrypted} IS NULL;
 
   IF unencrypted > 0 THEN
     RAISE EXCEPTION 'stash encrypt drop: refusing to drop %.% — % row(s) have plaintext set but % NULL. Dropping now would permanently destroy that data. Re-run: stash encrypt backfill, then regenerate this migration.',
       '${lit(qualifiedTable)}', '${lit(plaintextColumn)}', unencrypted, '${lit(encryptedColumn)}';
   END IF;
 
-  EXECUTE 'ALTER TABLE ${lit(qualifiedTable)} DROP COLUMN "${lit(plaintextColumn)}"';
+  EXECUTE 'ALTER TABLE ${lit(qualifiedTable)} DROP COLUMN ${lit(quotedPlaintext)}';
 END
 $stash_drop$;
 `
+}
+
+/** Filesystem- and drizzle-kit-safe name derived from untrusted identifiers. */
+function buildMigrationStem(...identifiers: string[]): string {
+  const sanitized = identifiers
+    .map((identifier) =>
+      identifier.replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, ''),
+    )
+    .filter(Boolean)
+    .join('_')
+  return `drop_${sanitized || 'column'}`
 }

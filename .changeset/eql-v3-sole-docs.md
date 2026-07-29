@@ -24,3 +24,5 @@ than a Legacy section, because EQL v2 is still reachable there:
 Also corrects the legacy `@cipherstash/drizzle` README's pointer to the removed
 `@cipherstash/stack/drizzle` subpath (now the separate `@cipherstash/stack-drizzle`
 package).
+
+Superseded later in this release: CLI/migrate v2 mutation guidance is removed; only legacy ciphertext reads and status diagnostics remain.

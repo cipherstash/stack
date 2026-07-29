@@ -268,8 +268,8 @@ Index not being used:
 
 ## Reference
 
-- `stash-encryption` — the `types.*` domain catalog, wire-format operators and ordering, and the rollout/cutover lifecycle.
-- `stash-cli` — `stash eql install`, `stash db validate` (its "No indexes on an encrypted column" Info finding is resolved by this skill), `stash encrypt backfill` / `cutover`.
+- `stash-encryption` — the `types.*` domain catalog, wire-format operators and ordering, and the staged rollout lifecycle.
+- `stash-cli` — `stash eql install`, `stash db validate` (its "No indexes on an encrypted column" Info finding is resolved by this skill), and `stash encrypt backfill` / `drop`.
 - `stash-drizzle`, `stash-supabase`, `stash-prisma-next` — per-integration query patterns; index DDL placement per the section above.
 - `stash-postgres` — the hand-written predicate forms these indexes serve (`pg` / `postgres-js`, no ORM).
 - `stash-edge` — the WASM entry, for apps whose queries run on Deno / Workers / Supabase Edge Functions.

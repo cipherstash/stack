@@ -242,7 +242,7 @@ export async function loadEncryptConfig(
  * cause.
  *
  * Shared rather than duplicated because it guards ONE file reached by two
- * loaders — `loadEncryptConfig` for `stash db push` / `db validate`, and
+ * loaders — `loadEncryptConfig` for `stash db validate`, and
  * `loadEncryptionContext` for `stash encrypt backfill`. When the copies were
  * separate they had already drifted on the nullish-config case, so one command
  * named the cause while the other fell through to `requireTable`'s `Table

@@ -25,3 +25,5 @@ typecheck step, the codegen tests only string-match fragments of the template,
 and the step test stubs the generator out entirely. Both templates are now
 committed as fixtures that CI typechecks, pinned byte-for-byte to the generator
 so they cannot drift.
+
+Superseded later in this release: the generated guidance no longer references removed `db push` or `encrypt cutover` commands.

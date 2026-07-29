@@ -11,3 +11,5 @@ that cannot describe the column it just cut over to. The prompt now says
 explicitly not to use `types.*` for a v2 column, and points at the deprecated
 `@cipherstash/stack/schema` builders with decryption through
 `@cipherstash/stack`, which is the actual read path for legacy v2 rows.
+
+Superseded later in this release: `stash encrypt cutover` and all v2 mutation guidance are removed; legacy v2 remains read-only.

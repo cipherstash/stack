@@ -83,7 +83,7 @@ export const installEqlStep: InitStep = {
 
     // installCommand scaffolds stash.config.ts (which `import`s from `stash`)
     // for the rest of the workflow. `stash` must be installed or the config the
-    // user relies on next (db push / schema build / encrypt) can't load. Detect
+    // user relies on next (db validate / encrypt) can't load. Detect
     // the precondition and bail with a clear message instead. install-deps is
     // what installs the package, so a "no" there leaves us here.
     if (!isPackageInstalled('stash')) {
@@ -147,13 +147,10 @@ export const installEqlStep: InitStep = {
       return { ...state, eqlInstalled: false, eqlMigrationPending: true }
     }
 
-    let outcome: Awaited<ReturnType<typeof installCommand>>
     try {
-      outcome = await installCommand({
+      await installCommand({
         supabase: supabase || undefined,
         databaseUrl: state.databaseUrl,
-        // No `eqlVersion` — take the v3 default. (The Drizzle branch above
-        // returns before this point.)
         // init passes a resolved URL to avoid re-prompting, but still wants a
         // config scaffolded — this is NOT a one-shot `--database-url` run.
         scaffoldConfig: 'ensure',
@@ -172,14 +169,6 @@ export const installEqlStep: InitStep = {
       )
       p.note('Re-run with: stash eql install', 'You can retry manually')
       return { ...state, eqlInstalled: false }
-    }
-
-    // Supabase `--migration` mode only WRITES a migration file — EQL isn't in
-    // the database until the user applies it. (Drizzle is handled above.)
-    // Report that honestly rather than claiming the extension is installed;
-    // the init summary turns this into "migration generated, apply it".
-    if (outcome === 'migration-generated') {
-      return { ...state, eqlInstalled: false, eqlMigrationPending: true }
     }
 
     // 'installed' | 'already-installed' — the extension is present in the DB.

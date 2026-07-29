@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/stash.svg?style=for-the-badge&labelColor=000000)](https://www.npmjs.com/package/stash)
 [![License: MIT](https://img.shields.io/npm/l/stash.svg?style=for-the-badge&labelColor=000000)](https://github.com/cipherstash/stack/blob/main/LICENSE.md)
 
-The single CLI for CipherStash. It handles authentication, project initialization, EQL database lifecycle (install, upgrade, validate, push, migrate), and schema building. Install it as a devDependency alongside the runtime SDK `@cipherstash/stack`.
+The single CLI for CipherStash. It handles authentication, project initialization, EQL v3 installation/upgrades, validation, migration rollout, and schema building.
 
 ---
 
@@ -15,7 +15,7 @@ npx stash auth login    # authenticate with CipherStash
 npx stash init          # scaffold, introspect, install EQL
 ```
 
-`stash init` does the scaffold-once work as one flow: authenticate, resolve `DATABASE_URL`, choose Proxy or direct SDK access, introspect your database and scaffold an encryption client, install dependencies, install the EQL extension, and write `.cipherstash/context.json`. It stops there, at a clean save-point, and offers to continue into `stash plan`.
+`stash init` authenticates, resolves `DATABASE_URL`, introspects the database, scaffolds an encryption client, installs dependencies and EQL v3, and writes `.cipherstash/context.json`.
 
 The agent handoff belongs to the next two commands — `stash plan` drafts a reviewable `.cipherstash/plan.md`, and `stash impl` executes it. Both present the same four targets:
 
@@ -42,9 +42,7 @@ npx stash auth login
                             └── npx stash status   ← where am I?
 ```
 
-`stash` covers authentication, initialization, EQL install/upgrade/status, schema introspection, the encryption rollout and cutover commands, and a `stash wizard` subcommand that thin-wraps [`@cipherstash/wizard`](https://www.npmjs.com/package/@cipherstash/wizard). The wizard package itself is a separate npm install — kept out of the `stash` bundle so the agent SDK doesn't bloat the CLI.
-
-> `stash db push` is **not** part of the default flow. It registers the encryption config in `public.eql_v2_configuration`, which only [CipherStash Proxy](https://github.com/cipherstash/proxy) reads. SDK users (Drizzle, Supabase, plain PostgreSQL) keep that config in application code and can skip it.
+`stash` covers authentication, initialization, EQL install/upgrade/status, schema introspection, and the staged EQL v3 encryption rollout.
 
 ---
 
@@ -68,7 +66,7 @@ export default defineConfig({
 
 The CLI loads `.env` files automatically before reading the config, so `process.env` references work without extra setup. The config file is resolved by walking up from the current working directory.
 
-Commands that consume `stash.config.ts`: `eql install`, `eql upgrade`, `db push`, `db validate`, `eql status`, `db test-connection`, `schema build`. `eql install` will scaffold `stash.config.ts` for you if it's missing.
+Commands that consume `stash.config.ts`: `eql install`, `eql upgrade`, `db validate`, `eql status`, `db test-connection`, `schema build`, and `encrypt *`.
 
 ---
 
@@ -92,19 +90,19 @@ What `init` does, in order:
 
 1. **Authenticate** — re-uses an existing token if found, otherwise opens the browser device-code flow.
 2. **Resolve `DATABASE_URL`** — flag → env → `supabase status` → interactive prompt → hard-fail. The same resolver `eql install` uses.
-3. **Generate the encryption client** — connects to your database, lists tables, and prompts you to multi-select which columns to encrypt. Writes `./src/encryption/index.ts` with the right shape for the detected ORM (Drizzle / Supabase / plain Postgres). Falls back to a placeholder if the database has no tables yet.
+3. **Generate the encryption client placeholder** — detects the integration and writes `./src/encryption/index.ts` without selecting columns or replacing the project's authoritative schema files. The subsequent `stash plan` / `stash impl` workflow edits the real schema.
 4. **Install dependencies** — `@cipherstash/stack` (runtime) and `stash` (dev), with a confirmation prompt.
 5. **Install EQL** — runs `stash eql install` against the resolved URL after a y/N confirm.
-6. **Hand off** — four-option menu (Claude Code / Codex / CipherStash Agent / write `AGENTS.md`). See the Quickstart section above for what each option writes and spawns.
+6. **Checkpoint** — writes `.cipherstash/context.json` and exits. Continue with `stash plan`, then `stash impl`, as described in Quickstart.
 
-The full pipeline state — integration, columns, env-key names, paths, versions — is captured in `.cipherstash/context.json`. The action plan at `.cipherstash/setup-prompt.md` tells whichever agent picks up next what's already done and what's left.
+The full pipeline state — integration, columns, env-key names, paths, versions — is captured in `.cipherstash/context.json`. The action plan at `.cipherstash/setup-prompt.md` records what's already done and what `stash plan` / `stash impl` should do next.
 
 `CIPHERSTASH_WIZARD_URL` overrides the gateway endpoint for the rulebook fetch. Useful for local-dev against a wizard gateway running on `localhost`.
 
-**Running `init` non-interactively** (CI, agents, pipes): every prompt has an escape hatch, so `init` never blocks waiting on a TTY. Provide the region up front (`--region` / `STASH_REGION`) if you aren't already logged in, the database URL (`--database-url` / `DATABASE_URL`), the proxy choice (`--proxy` / `--no-proxy`), and — for the closing agent handoff — nothing is required (init exits at a clean checkpoint and points you at `stash plan --target …`). When a required value is missing in a non-TTY context the command exits non-zero with an actionable message rather than hanging.
+**Running `init` non-interactively** (CI, agents, pipes): every prompt has an escape hatch, so `init` never blocks waiting on a TTY. Provide the region up front (`--region` / `STASH_REGION`) if you aren't already logged in and set `DATABASE_URL`. Init exits at a clean checkpoint and points you at `stash plan --target …`; run `stash impl` after planning. When a required value is missing in a non-TTY context the command exits non-zero with an actionable message rather than hanging.
 
 ```bash
-STASH_REGION=us-east-1 DATABASE_URL=postgres://… npx stash init --no-proxy
+STASH_REGION=us-east-1 DATABASE_URL=postgres://… npx stash init
 ```
 
 ---
@@ -180,7 +178,7 @@ Any flags after `wizard` are forwarded verbatim to the wizard package. On the fi
 
 Configure your database and install CipherStash EQL extensions in a single command. Run this after `npx stash init`. (`npx stash db install` is a deprecated alias — it still works but prints a warning.)
 
-When `stash.config.ts` is missing, the command auto-detects your encryption client file (or asks for the path) and writes the config before installing. Supabase and Drizzle are detected from your `DATABASE_URL` and project files, so the matching flags default on. Install uses bundled SQL for offline, deterministic runs.
+When `stash.config.ts` is missing, the command offers to scaffold it. Installation is direct and EQL v3 only, using the bundle pinned by `@cipherstash/eql`.
 
 ```bash
 npx stash eql install [options]
@@ -190,22 +188,18 @@ npx stash eql install [options]
 |------|-------------|
 | `--force` | Reinstall even if EQL is already installed |
 | `--dry-run` | Show what would happen without making changes |
-| `--supabase` | Supabase-compatible install (no operator families + grants Supabase roles) |
-| `--exclude-operator-family` | Skip operator family creation |
-| `--drizzle` | Generate a Drizzle migration instead of direct install |
-| `--latest` | Fetch the latest EQL from GitHub |
-| `--name <value>` | Migration name (Drizzle mode, default: `install-eql`) |
-| `--out <value>` | Drizzle output directory (default: `drizzle`) |
+| `--supabase` | Supabase-compatible install with grants for built-in roles |
+| `--database-url <url>` | One-shot target; leaves project files untouched |
 
-The `--supabase` flag uses a Supabase-specific SQL variant and grants `USAGE`, table, routine, and sequence permissions on the `eql_v2` schema to the `anon`, `authenticated`, and `service_role` roles.
+`--supabase` grants the built-in roles access to both `eql_v3` and `eql_v3_internal`. Removed v2 options fail explicitly; `--eql-version 2` points dump-recovery users to the upstream EQL 2.3.1 SQL release.
 
-> **Good to know:** Without operator families, `ORDER BY` on encrypted columns is not supported. Sort application-side after decrypting results as a workaround. This applies to both `--supabase` and `--exclude-operator-family` installs.
+> **Good to know:** The pinned EQL v3 bundle self-adapts when the install role cannot create its optional ORE operator family. In that case it disables the `*OrdOre` domains; use the ordinary `*Ord` domains for ordering.
 
 ---
 
 ### `npx stash eql upgrade`
 
-Upgrade an existing EQL installation to the version bundled with the package (or the latest from GitHub).
+Upgrade an existing EQL v3 installation to the package-pinned version.
 
 ```bash
 npx stash eql upgrade [options]
@@ -215,37 +209,8 @@ npx stash eql upgrade [options]
 |------|-------------|
 | `--dry-run` | Show what would happen without making changes |
 | `--supabase` | Use Supabase-compatible upgrade |
-| `--exclude-operator-family` | Skip operator family creation |
-| `--latest` | Fetch the latest EQL from GitHub |
 
 The install SQL is idempotent and safe to re-run. If EQL is not installed, the command suggests running `npx stash eql install` instead.
-
----
-
-### `npx stash db push`
-
-Push your encryption schema to the database. **Only required when using CipherStash Proxy.** If you use the SDK directly with Drizzle, Supabase, or plain PostgreSQL, skip this step.
-
-```bash
-npx stash db push [--dry-run]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--dry-run` | Load and validate the schema, print as JSON. No database changes. |
-
-When pushing, the CLI loads the encryption client from `stash.config.ts`, runs schema validation (warns but does not block), maps SDK types to EQL types, and upserts the config row in `eql_v2_configuration`.
-
-**SDK to EQL type mapping:**
-
-| SDK `dataType()` | EQL `cast_as` |
-|------------------|---------------|
-| `string` / `text` | `text` |
-| `number` | `double` |
-| `bigint` | `big_int` |
-| `boolean` | `boolean` |
-| `date` | `date` |
-| `json` | `jsonb` |
 
 ---
 
@@ -264,7 +229,7 @@ npx stash db validate [--supabase] [--exclude-operator-family]
 | No indexes on an encrypted column | Info |
 | `searchableJson` without `dataType("json")` | Error |
 
-The command exits with code 1 on errors (not on warnings or info). Validation also runs automatically before `db push`.
+The command exits with code 1 on errors (not on warnings or info).
 
 ---
 
@@ -288,7 +253,7 @@ Show the current state of EQL in your database.
 npx stash eql status
 ```
 
-Reports EQL installation status and version, database permission status, and whether an active encrypt config exists in `eql_v2_configuration` (relevant only for CipherStash Proxy).
+Reports EQL installation status and version, database permission status, and read-only diagnostics for legacy EQL v2/Proxy configuration state.
 
 ---
 
@@ -320,22 +285,22 @@ Reads `databaseUrl` from `stash.config.ts`.
 
 ## Drizzle migration mode
 
-Use `--drizzle` with `npx stash eql install` to add EQL installation to your Drizzle migration history instead of applying it directly. `--drizzle` is auto-detected when your project has `drizzle-orm`, `drizzle-kit`, or a `drizzle.config.*` file, so you usually don't need to pass it explicitly.
+Use `eql migration --drizzle` to add EQL v3 installation to Drizzle migration history instead of applying it directly.
 
 ```bash
-npx stash eql install --drizzle
+npx stash eql migration --drizzle
 npx drizzle-kit migrate
 ```
 
 How it works:
 1. Runs `npx drizzle-kit generate --custom --name=<name>` to create an empty migration.
-2. Loads the bundled EQL SQL (or fetches from GitHub with `--latest`).
+2. Loads the pinned EQL v3 SQL.
 3. Writes the EQL SQL into the generated migration file.
 
 With a custom name or output directory:
 
 ```bash
-npx stash eql install --drizzle --name setup-eql --out ./migrations
+npx stash eql migration --drizzle --name setup-eql --out ./migrations
 npx drizzle-kit migrate
 ```
 
@@ -348,7 +313,7 @@ npx drizzle-kit migrate
 Before installing EQL, the CLI verifies that the connected role has:
 
 - `CREATE` on the database (for `CREATE SCHEMA` and `CREATE EXTENSION`).
-- `CREATE` on the `public` schema (for `CREATE TYPE public.eql_v2_encrypted`).
+- `CREATE` on the `public` schema (for the `public.eql_v3_*` domains).
 - `SUPERUSER` or extension owner privileges (for `CREATE EXTENSION pgcrypto`, if not already installed).
 
 If permissions are insufficient, the CLI exits with a message listing what is missing.
@@ -363,7 +328,6 @@ import {
   loadStashConfig,
   EQLInstaller,
   loadBundledEqlSql,
-  downloadEqlSql,
 } from 'stash'
 ```
 
@@ -415,11 +379,11 @@ if (!(await installer.isInstalled())) {
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `checkPermissions()` | `Promise<PermissionCheckResult>` | Check required database permissions |
-| `isInstalled()` | `Promise<boolean>` | Check if the `eql_v2` schema exists |
+| `isInstalled()` | `Promise<boolean>` | Check if the EQL v3 schemas exist |
 | `getInstalledVersion()` | `Promise<string \| null>` | Get the installed EQL version |
 | `install(options?)` | `Promise<void>` | Execute the EQL install SQL in a transaction |
 
-Install options: `excludeOperatorFamily`, `supabase`, `latest` (all boolean).
+Install options: `supabase`.
 
 ### `loadBundledEqlSql`
 
@@ -429,19 +393,6 @@ Load the bundled EQL install SQL as a string:
 import { loadBundledEqlSql } from 'stash'
 
 const sql = loadBundledEqlSql()
-const sql = loadBundledEqlSql({ supabase: true })
-const sql = loadBundledEqlSql({ excludeOperatorFamily: true })
-```
-
-### `downloadEqlSql`
-
-Download the latest EQL install SQL from GitHub:
-
-```typescript
-import { downloadEqlSql } from 'stash'
-
-const sql = await downloadEqlSql()             // standard
-const sql = await downloadEqlSql(true)         // no operator family variant
 ```
 
 ---

@@ -2,13 +2,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { findGeneratedMigration } from '../install.js'
+import { findGeneratedMigration } from '../../eql/migration.js'
 
 /**
- * `findGeneratedMigration` was promoted to public API by the `eql migration`
- * command and now has two consumers (`db install --drizzle` and
- * `eql migration --drizzle`), so its branches are pinned directly — a change for
- * one consumer must not silently break the other.
+ * `findGeneratedMigration` locates the custom migration scaffolded by
+ * `eql migration --drizzle`; pin its failure and ordering branches directly.
  */
 describe('findGeneratedMigration', () => {
   let dir: string
@@ -38,6 +36,7 @@ describe('findGeneratedMigration', () => {
       '0010_install-eql.sql',
       '0011_install-eql.txt', // not .sql
       '0001_users.sql', // doesn't match the name
+      '9999_install-eql-backup.sql', // contains the name, but is not an exact match
     ]) {
       writeFileSync(join(dir, f), '')
     }

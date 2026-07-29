@@ -41,7 +41,28 @@ describe('runPostAgentSteps execution commands', () => {
     vi.mocked(childProcess.execSync).mockImplementation(() => Buffer.from(''))
   })
 
-  it('executes eql install/db push using the detected runner (bun → bunx) when usesProxy=true', async () => {
+  it('reads legacy usesProxy context without running or recommending retired db push', async () => {
+    const info = vi.spyOn(p.log, 'info')
+
+    await runPostAgentSteps({
+      cwd: '/tmp/fake',
+      integration: 'supabase',
+      packageManager: bun,
+      gathered: {
+        installCommand: 'bun add @cipherstash/stack',
+        hasStashConfig: true,
+        usesProxy: true,
+      } as never,
+    })
+
+    const commands = vi
+      .mocked(childProcess.execSync)
+      .mock.calls.map((c) => c[0] as string)
+    expect(commands).not.toContain('bunx stash db push')
+    expect(info).not.toHaveBeenCalledWith(expect.stringMatching(/db push/i))
+  })
+
+  it('executes eql install using the detected runner (bun → bunx) and ignores legacy usesProxy=true', async () => {
     await runPostAgentSteps({
       cwd: '/tmp/fake',
       integration: 'supabase',
@@ -58,14 +79,14 @@ describe('runPostAgentSteps execution commands', () => {
       .mocked(childProcess.execSync)
       .mock.calls.map((c) => c[0] as string)
     expect(commands).toContain('bunx stash eql install')
-    expect(commands).toContain('bunx stash db push')
+    expect(commands).not.toContain('bunx stash db push')
     // Sanity: no leftover npx forms for the cipherstash binaries.
     for (const cmd of commands) {
       expect(cmd).not.toMatch(/^npx @cipherstash/)
     }
   })
 
-  it('skips eql install when hasStashConfig=true and still uses bunx for db push when usesProxy=true', async () => {
+  it('skips eql install when hasStashConfig=true and ignores legacy usesProxy=true', async () => {
     await runPostAgentSteps({
       cwd: '/tmp/fake',
       integration: 'supabase',
@@ -79,11 +100,11 @@ describe('runPostAgentSteps execution commands', () => {
     const commands = vi
       .mocked(childProcess.execSync)
       .mock.calls.map((c) => c[0] as string)
-    expect(commands).toContain('bunx stash db push')
+    expect(commands).not.toContain('bunx stash db push')
     expect(commands).not.toContain('bunx stash eql install')
   })
 
-  it('falls back to npx when packageManager is undefined and usesProxy=true', async () => {
+  it('falls back to npx when packageManager is undefined and ignores legacy usesProxy=true', async () => {
     await runPostAgentSteps({
       cwd: '/tmp/fake',
       integration: 'supabase',
@@ -98,10 +119,10 @@ describe('runPostAgentSteps execution commands', () => {
       .mocked(childProcess.execSync)
       .mock.calls.map((c) => c[0] as string)
     expect(commands).toContain('npx stash eql install')
-    expect(commands).toContain('npx stash db push')
+    expect(commands).not.toContain('npx stash db push')
   })
 
-  it('skips db push when usesProxy=false', async () => {
+  it('never runs retired db push when legacy usesProxy=false', async () => {
     await runPostAgentSteps({
       cwd: '/tmp/fake',
       integration: 'supabase',

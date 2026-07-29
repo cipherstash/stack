@@ -328,7 +328,9 @@ describe('rewriteEncryptedAlterColumns', () => {
     const updated = fs.readFileSync(filePath, 'utf-8')
     expect(updated).toContain('safe ONLY if')
     expect(updated).toContain('constraints, defaults, and indexes')
-    expect(updated).toContain('stash encrypt')
+    expect(updated).toContain('EQL v3 path')
+    expect(updated).toContain('dual-write')
+    expect(updated).toContain('switch the app to the encrypted column')
   })
 
   it('separates ADD/DROP/RENAME with --> statement-breakpoint', async () => {

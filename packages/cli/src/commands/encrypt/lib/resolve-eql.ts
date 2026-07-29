@@ -37,11 +37,8 @@ export interface ResolvedLifecycle {
    *
    * Deliberately NOT set when `candidates` is empty. That is the pure-v2 table
    * — a `<col>` / `<col>_encrypted` pair and nothing else — where there is no
-   * v3 column to mis-claim and so nothing to protect against. The v2 lifecycle
-   * is still implemented in `cutover.ts` / `drop.ts`, and those commands must
-   * keep reaching it; failing closed here would refuse a lifecycle this same
-   * build still performs, and tell the user to downgrade to reach it (#787
-   * review).
+   * v3 column to mis-claim. The caller then emits its explicit fail-closed
+   * legacy-v2 diagnostic; no v2 mutation lifecycle remains.
    */
   unresolvedHint?: string
 }
@@ -96,11 +93,8 @@ export async function resolveColumnLifecycle(
   //   reports success for a rename it never performed, and `drop`'s remedy
   //   tells the user to record the guess (#772 review, finding 7). Fail closed;
   // - the column exists, is not an EQL v3 column, and there are NO v3 columns
-  //   on the table — the pure-v2 table. Nothing here can be mis-claimed, and
-  //   `cutover` / `drop` still implement the v2 ladder, so fall through to it
-  //   exactly as before. Gating on `candidates.length` is what keeps the
-  //   protection above scoped to the mixed table it was written for (#787
-  //   review).
+  //   on the table — the pure-v2 table. Nothing here can be mis-claimed, so
+  //   fall through and let the caller emit its explicit v2-retirement error.
   if (
     hint &&
     candidates.length > 0 &&
@@ -114,18 +108,13 @@ export async function resolveColumnLifecycle(
 
 /**
  * Explain a failed resolution (`info === null`) to the user, or return
- * `null` when the failure is fine to fall through to the v2 lifecycle.
+ * `null` when no v3 candidate exists and the caller should emit its explicit
+ * fail-closed legacy-v2 diagnostic.
  *
- * The one fall-through case is "no EQL v3 columns at all", which the v2
- * phase/config preconditions turn into an accurate error ("not backfilled",
- * "no pending config", …). Since `classifyEqlDomain` recognises `eql_v3_*`
- * only, that case covers every pure-v2 table — both the pre-cutover pair
- * (`<col>` / `<col>_encrypted`) and the post-cutover state where `<col>` was
- * renamed onto the ciphertext. Neither column is ever a candidate, so a pure-v2
- * table reaches the v2 ladder here regardless of what the manifest recorded;
- * a recorded `encryptedColumn` must NOT turn that into a refusal, because
- * `cutover.ts` / `drop.ts` in this same build still implement that ladder
- * (#787 review).
+ * The one fall-through case is "no EQL v3 columns at all". Since
+ * `classifyEqlDomain` recognises `eql_v3_*` only, that covers pure-v2 tables.
+ * Neither v2 column is a candidate, so the caller reaches its v2-retirement
+ * error regardless of what the manifest recorded; no mutation is attempted.
  *
  * A non-empty candidate list therefore means EQL v3 columns exist but none is
  * identifiable — the caller must fail closed with this message rather than
@@ -140,11 +129,11 @@ export function explainUnresolved(
   unresolvedHint?: string,
 ): string | null {
   // "No EQL v3 columns at all" always falls through, even with a recorded hint.
-  // That is the pure-v2 table, and the v2 ladder in `cutover.ts` / `drop.ts`
-  // still handles it — the caller's own preconditions produce the accurate
-  // error. Ordered ahead of the hint branch deliberately: `resolveColumnLifecycle`
-  // already declines to set `unresolvedHint` on an empty candidate list, and this
-  // keeps the two agreeing for direct callers of this function (#787 review).
+  // That is the pure-v2 table; the caller's own fail-closed retirement branch
+  // produces the actionable error. Ordered ahead of the hint branch
+  // deliberately: `resolveColumnLifecycle` already declines to set
+  // `unresolvedHint` on an empty candidate list, and this keeps the two agreeing
+  // for direct callers of this function (#787 review).
   if (candidates.length === 0) return null
 
   // The recorded pairing points at a real column that is not an EQL v3 column,
@@ -153,7 +142,7 @@ export function explainUnresolved(
   // that: listing the v3 candidates here would invite the user to record one of
   // them, which is how the guess used to get laundered into a `via: 'hint'` match.
   if (unresolvedHint !== undefined) {
-    return `${table}.${column} is recorded as pairing with "${unresolvedHint}", but ${unresolvedHint} is not an EQL v3 column — it is most likely a legacy eql_v2_encrypted column. ${table} also holds EQL v3 columns, and none of them is a confirmed counterpart for ${column}, so this command cannot tell which lifecycle applies and will not guess.\n\nIf that pairing is wrong, correct or remove "encryptedColumn" for ${column} in .cipherstash/migrations.json and re-run. If it is right, ${column} is on the EQL v2 lifecycle, which no stash command can drive on this table — complete it yourself against ${unresolvedHint} with the eql_v2 SQL.`
+    return `${table}.${column} is recorded as pairing with "${unresolvedHint}", but ${unresolvedHint} is not an EQL v3 column — it is most likely a legacy eql_v2_encrypted column. ${table} also holds EQL v3 columns, and none of them is a confirmed counterpart for ${column}, so this command cannot tell which lifecycle applies and will not guess.\n\nIf that pairing is wrong, correct or remove "encryptedColumn" for ${column} in .cipherstash/migrations.json and re-run. If it is right, v2 mutation automation has been removed. For dump recovery, use the upstream EQL 2.3.1 SQL from https://github.com/cipherstash/encrypt-query-language/releases/tag/eql-2.3.1.`
   }
 
   const listed = candidates

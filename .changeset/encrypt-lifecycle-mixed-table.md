@@ -57,3 +57,5 @@ Two cases DO newly exit 1, both deliberately:
   unconventionally, where `cutover` previously exited 0 with "not applicable".
   Re-run `stash encrypt backfill --table T --column C --encrypted-column <name>`
   to record the pairing.
+
+Superseded later in this release: no v2 lifecycle can be driven by `stash encrypt`; mixed and pure-v2 state now fail with migration/recovery guidance.

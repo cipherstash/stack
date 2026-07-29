@@ -1,15 +1,12 @@
 import type { ClientBase } from 'pg'
 
 /**
- * Which EQL generation an encrypted column belongs to. The migration lifecycle
- * differs between them: v2 is driven by the `eql_v2_configuration` state machine
- * (see {@link import('./eql.js')}), while v3 is domain-native — configuration
- * lives in the column's own type and there is no configuration table, so its
- * lifecycle is backfill-then-drop with no cut-over rename.
+ * Which EQL generation an encrypted column belongs to. EQL v3 is domain-native:
+ * configuration lives in the column's own type and its lifecycle is
+ * backfill-then-drop with no cut-over rename. The `2` member remains solely for
+ * reading legacy manifest and status records.
  *
- * Numeric (`2 | 3`) to match the manifest's `eqlVersion` field and the CLI
- * installer's `--eql-version` — one representation everywhere, no
- * string↔number translation at boundaries.
+ * Numeric (`2 | 3`) to match the manifest's `eqlVersion` field.
  */
 export type EqlVersion = 2 | 3
 

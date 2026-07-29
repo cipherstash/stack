@@ -56,7 +56,8 @@ export function pgTypeToDataType(udtName: string): DataType {
  *
  * Deliberately not `classifyEqlDomain` from `@cipherstash/migrate`, despite
  * the dependency being present: that answers "which generation authors this",
- * and returns `null` for `eql_v2_encrypted` because v2 is no longer authorable.
+ * Legacy `eql_v2_encrypted` remains recognisable for read-only diagnostics even
+ * though v2 is no longer authorable.
  * The question here is "is this encrypted at all", which v2 answers yes to.
  *
  * The trailing underscore matters — a bare `eql_v3` prefix would also claim a

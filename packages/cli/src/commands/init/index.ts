@@ -14,7 +14,6 @@ import { gatherContextStep } from './steps/gather-context.js'
 import { installDepsStep } from './steps/install-deps.js'
 import { installEqlStep } from './steps/install-eql.js'
 import { resolveDatabaseStep } from './steps/resolve-database.js'
-import { resolveProxyChoiceStep } from './steps/resolve-proxy-choice.js'
 import type { InitProvider, InitState } from './types.js'
 import { CancelledError } from './types.js'
 import { detectPackageManager, runnerCommand } from './utils.js'
@@ -39,7 +38,6 @@ const PROVIDER_MAP: Record<string, () => InitProvider> = {
 const STEPS = [
   authenticateStep,
   resolveDatabaseStep,
-  resolveProxyChoiceStep,
   buildSchemaStep,
   installDepsStep,
   installEqlStep,
@@ -73,6 +71,16 @@ export async function initCommand(
   flags: Record<string, boolean>,
   values: Record<string, string> = {},
 ) {
+  const retiredProxyFlag = ['proxy', 'no-proxy'].find(
+    (name) => flags[name] === true || Object.hasOwn(values, name),
+  )
+  if (retiredProxyFlag) {
+    p.log.error(
+      `\`--${retiredProxyFlag}\` has been removed. EQL v3 stores query configuration in column domains and does not use CipherStash Proxy; remove this flag and select only the project integration (for example, \`--supabase\` or \`--drizzle\`).`,
+    )
+    throw new CliExit(1)
+  }
+
   const provider = resolveProvider(flags)
 
   p.intro('CipherStash Stack Setup')
@@ -85,13 +93,6 @@ export async function initCommand(
   // fallback in resolveRegion).
   if (values.region) {
     state.regionFlag = values.region
-  }
-
-  // Parse --proxy and --no-proxy flags; --proxy wins if both are set
-  if (flags.proxy) {
-    state.usesProxy = true
-  } else if (flags['no-proxy']) {
-    state.usesProxy = false
   }
 
   try {

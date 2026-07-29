@@ -29,3 +29,5 @@ handoff time, so a stale skill becomes stale guidance in the user's project.
   and `--region` flags; corrects six programmatic API signatures; fixes the README's claim
   that `stash init` ends in an agent-handoff menu (that belongs to `stash plan` / `stash impl`);
   and marks `stash env` as the non-functional stub it currently is.
+
+Superseded later in this release: the v2/Proxy commands and flags listed above are removed from both the CLI and bundled skill.

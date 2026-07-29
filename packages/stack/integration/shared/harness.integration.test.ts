@@ -7,7 +7,7 @@ import { afterAll, expect, it } from 'vitest'
  * Proves the harness itself, so a failure in the adapter suites is never
  * ambiguous between "the adapter is broken" and "the database was never set up".
  *
- * `globalSetup` has already run `stash eql install --eql-version 3` against the
+ * `globalSetup` has already run `stash eql install` against the
  * configured database by the time this file executes. Nothing here is skippable:
  * an unconfigured run throws in `globalSetup`, before any test is collected.
  */

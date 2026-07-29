@@ -117,9 +117,8 @@ describe('stash CLI — non-interactive smoke', () => {
     expect(r.output).toContain('bogus-sub')
   })
 
-  // `--migration` without `--supabase` fails flag validation before any I/O
-  // or prompt, so these two cases can observe the install entry path
-  // deterministically without a database.
+  // The retired `--migration` flag fails before any I/O or prompt, so these
+  // cases can observe the install entry path deterministically without a DB.
   it('db install still works as a deprecated alias and warns', async () => {
     const r = render(['db', 'install', '--migration'])
     const { exitCode } = await r.exit
@@ -128,7 +127,8 @@ describe('stash CLI — non-interactive smoke', () => {
     expect(r.output).toContain('stash db install" is deprecated')
     expect(r.output).toContain('eql install" instead')
     // The alias reaches the real install command (its flag validation ran).
-    expect(r.output).toContain('requires `--supabase`')
+    expect(r.output).toContain('eql install --migration` has been removed')
+    expect(r.output).toContain('eql migration --drizzle')
   })
 
   it('eql install routes to the install command without a deprecation warning', async () => {
@@ -136,7 +136,8 @@ describe('stash CLI — non-interactive smoke', () => {
     const { exitCode } = await r.exit
     expect(exitCode).toBe(1)
     expect(r.output).not.toContain('is deprecated')
-    expect(r.output).toContain('requires `--supabase`')
+    expect(r.output).toContain('eql install --migration` has been removed')
+    expect(r.output).toContain('eql migration --drizzle')
   })
 
   it('db migrate is a stub that exits 0 with a "not yet implemented" warning', async () => {
