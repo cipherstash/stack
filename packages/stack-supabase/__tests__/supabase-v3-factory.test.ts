@@ -161,9 +161,12 @@ describe('encryptedSupabaseV3 factory', () => {
         ],
       }),
     )
-    await expect(
-      encryptedSupabaseV3(fakeClient, { databaseUrl: 'postgres://x' }),
-    ).rejects.toThrow(/no EQL v3 encrypted columns found/)
+    const result = encryptedSupabaseV3(fakeClient, {
+      databaseUrl: 'postgres://x',
+    })
+    await expect(result).rejects.toThrow(/no EQL v3 encrypted columns found/)
+    await expect(result).rejects.toThrow(/stash eql install --supabase/)
+    await expect(result).rejects.not.toThrow(/--eql-version/)
     expect(encryptionMock).not.toHaveBeenCalled()
   })
 

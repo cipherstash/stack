@@ -26,6 +26,38 @@ describe('retired EQL v2 CLI surface', () => {
   })
 
   it.each([
+    ['--proxy', '--proxy'],
+    ['--no-proxy', '--no-proxy'],
+    ['--proxy=true', '--proxy'],
+    ['--no-proxy=true', '--no-proxy'],
+  ] as const)('rejects retired init flag `%s` before init work', async (arg, flag) => {
+    const result = await runPiped(['init', arg], { timeoutMs: 2_000 })
+
+    expect(result.timedOut).toBe(false)
+    expect(result.exitCode).toBe(1)
+    expect(output(result)).toContain(flag)
+    expect(output(result)).toMatch(/removed|retired/i)
+    expect(output(result)).toMatch(/EQL v3/i)
+  })
+
+  it.each([
+    '--eql-version=2',
+    '--latest=true',
+    '--drizzle=true',
+    '--name=install-eql',
+    '--out=drizzle',
+    '--migration=true',
+    '--migrations-dir=drizzle',
+    '--direct=true',
+    '--exclude-operator-family=true',
+  ])('rejects retired eql install equals form `%s`', async (arg) => {
+    const result = await runPiped(['eql', 'install', arg])
+
+    expect(result.exitCode).toBe(1)
+    expect(output(result)).toMatch(/removed/i)
+  })
+
+  it.each([
     [['db', 'push'], 'db push'],
     [['db', 'activate'], 'db activate'],
     [['encrypt', 'cutover'], 'encrypt cutover'],

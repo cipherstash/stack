@@ -6,11 +6,17 @@ import { describe, expect, it } from 'vitest'
 
 const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
 
-/** Tracked skills ship with the CLI and are copied into customer projects. */
-function shippedSkills() {
+/** Tracked executable examples that describe the current public surface. */
+function publicCommandDocs() {
   const out = execFileSync(
     'git',
-    ['ls-files', '-z', ':(glob)skills/*/SKILL.md'],
+    [
+      'ls-files',
+      '-z',
+      ':(glob)skills/*/SKILL.md',
+      ':(glob)packages/*/README.md',
+      'docs/reference/supabase-sdk.md',
+    ],
     {
       cwd: REPO_ROOT,
       encoding: 'utf8',
@@ -64,13 +70,15 @@ describe('obsolete eql install example detection', () => {
   })
 })
 
-describe('shipped skill eql install examples use the current CLI', () => {
-  const files = shippedSkills()
+describe('public eql install examples use the current CLI', () => {
+  const files = publicCommandDocs()
 
-  it('finds tracked shipped skills (guards against a silently-empty glob)', () => {
+  it('finds tracked public command docs (guards against a silently-empty glob)', () => {
     expect(files).not.toHaveLength(0)
     expect(files).toContain('skills/stash-drizzle/SKILL.md')
     expect(files).toContain('skills/stash-supabase/SKILL.md')
+    expect(files).toContain('packages/stack/README.md')
+    expect(files).toContain('docs/reference/supabase-sdk.md')
   })
 
   it.each(files)('%s', (file) => {

@@ -287,7 +287,7 @@ const BIGINT_ERR = [9223372036854775808n, -9223372036854775809n] as const
  * the eql-3.0.0 bundle self-skips that statement on `insufficient_privilege`.
  *
  * Measured against `supabase/postgres:17.4.1.048` after `stash eql install
- * --eql-version 3 --supabase --direct`, as the non-superuser `postgres` role:
+ * --supabase`, as the non-superuser `postgres` role:
  * the domains ARE created, but they cannot hold data. Their CHECK calls
  * `eql_v3_internal.ore_domain_unavailable()`, so the first INSERT raises
  *

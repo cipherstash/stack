@@ -71,6 +71,16 @@ export async function initCommand(
   flags: Record<string, boolean>,
   values: Record<string, string> = {},
 ) {
+  const retiredProxyFlag = ['proxy', 'no-proxy'].find(
+    (name) => flags[name] === true || Object.hasOwn(values, name),
+  )
+  if (retiredProxyFlag) {
+    p.log.error(
+      `\`--${retiredProxyFlag}\` has been removed. EQL v3 stores query configuration in column domains and does not use CipherStash Proxy; remove this flag and select only the project integration (for example, \`--supabase\` or \`--drizzle\`).`,
+    )
+    throw new CliExit(1)
+  }
+
   const provider = resolveProvider(flags)
 
   p.intro('CipherStash Stack Setup')

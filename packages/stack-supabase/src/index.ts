@@ -208,7 +208,7 @@ export async function encryptedSupabase(
   if (encryptionSchemas.length === 0) {
     throw new Error(
       '[supabase v3]: no EQL v3 encrypted columns found in schema "public". ' +
-        'Check that EQL v3 is installed (`stash eql install --eql-version 3`) ' +
+        'Check that EQL v3 is installed (`stash eql install --supabase`) ' +
         'and that at least one column uses an eql_v3 domain type.',
     )
   }

@@ -223,7 +223,7 @@ const ADA_CREATED = new Date('2026-01-02T03:04:05.000Z')
 
 beforeAll(async () => {
   // EQL v3 and the Supabase grants are installed once per run by `globalSetup`,
-  // which shells out to the real `stash eql install --eql-version 3 --supabase`.
+  // which shells out to the real `stash eql install --supabase`.
   // Re-applying them here would only test a hand-rolled approximation.
   await sql.unsafe(`DROP TABLE IF EXISTS ${TABLE}`)
   await sql.unsafe(`

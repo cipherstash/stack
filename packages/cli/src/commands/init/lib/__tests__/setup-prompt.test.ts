@@ -598,6 +598,12 @@ describe('renderSetupPrompt — plan templates are EQL v3-only', () => {
     expect(plan('cutover')).not.toMatch(/encrypt cutover/)
   })
 
+  it('does not list cutover inside a brace-form or comma-separated encrypt command index', () => {
+    const out = renderSetupPrompt(baseCtx)
+    expect(out).not.toMatch(/encrypt\s*\{[^}]*\bcutover\b[^}]*\}/i)
+    expect(out).not.toMatch(/encrypt[^\n]*,\s*cutover\b/i)
+  })
+
   it('gives the complete plan the supported backfill, read-switch, and drop sequence', () => {
     const out = plan('complete')
     expect(hasCompletePlanSequence(out)).toBe(true)

@@ -161,7 +161,13 @@ function parseArgs(argv: string[]): ParsedArgs {
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]
     if (arg.startsWith('--')) {
-      const key = arg.slice(2)
+      const raw = arg.slice(2)
+      const equals = raw.indexOf('=')
+      if (equals >= 0) {
+        values[raw.slice(0, equals)] = raw.slice(equals + 1)
+        continue
+      }
+      const key = raw
       const nextArg = rest[i + 1]
       if (nextArg !== undefined && !nextArg.startsWith('-')) {
         values[key] = nextArg
@@ -216,16 +222,18 @@ function rejectRetiredEqlFlags(
   flags: Record<string, boolean>,
   values: Record<string, string>,
 ): void {
+  const present = (key: string) =>
+    flags[key] === true || Object.hasOwn(values, key)
   const error = validateInstallFlags({
     eqlVersion: values['eql-version'],
-    latest: flags.latest,
-    drizzle: flags.drizzle,
+    latest: present('latest'),
+    drizzle: present('drizzle'),
     name: values.name,
     out: values.out,
-    migration: flags.migration,
-    direct: flags.direct,
+    migration: present('migration'),
+    direct: present('direct'),
     migrationsDir: values['migrations-dir'],
-    excludeOperatorFamily: flags['exclude-operator-family'],
+    excludeOperatorFamily: present('exclude-operator-family'),
   })
   if (error) {
     p.log.error(error)
