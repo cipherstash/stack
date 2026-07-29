@@ -9,6 +9,11 @@ export type LikeNeedle = {
  * Reduce a SQL LIKE pattern to the literal needle used by encrypted fuzzy
  * matching. Only unescaped leading/trailing `%` tokens are approximable;
  * escaped metacharacters remain literal and every other wildcard is reported.
+ *
+ * A trailing lone backslash (which Postgres itself rejects, "LIKE pattern must
+ * not end with escape character") is deliberately kept as a literal backslash
+ * rather than throwing: the needle is only an approximation feeding encrypted
+ * fuzzy matching, and the plaintext `like` path never reaches here.
  */
 export function parseLikeNeedle(pattern: string): LikeNeedle {
   const tokens: LikeToken[] = []
