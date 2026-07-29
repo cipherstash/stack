@@ -66,7 +66,7 @@ export default defineConfig({
 
 The CLI loads `.env` files automatically before reading the config, so `process.env` references work without extra setup. The config file is resolved by walking up from the current working directory.
 
-Commands that consume `stash.config.ts`: `eql install`, `eql upgrade`, `db validate`, `eql status`, `db test-connection`, and `schema build`.
+Commands that consume `stash.config.ts`: `eql install`, `eql upgrade`, `db validate`, `eql status`, `db test-connection`, `schema build`, and `encrypt *`.
 
 ---
 

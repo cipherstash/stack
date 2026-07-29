@@ -31,8 +31,9 @@ export async function findGeneratedMigration(
       `Drizzle output directory not found: ${outDir}\nMake sure drizzle-kit is configured correctly.`,
     )
   }
+  const migrationSuffix = `_${migrationName}.sql`
   const matchingFiles = (await readdir(outDir))
-    .filter((entry) => entry.endsWith('.sql') && entry.includes(migrationName))
+    .filter((entry) => entry.endsWith(migrationSuffix))
     .sort()
   if (matchingFiles.length === 0) {
     throw new Error(

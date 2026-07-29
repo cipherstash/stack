@@ -36,6 +36,7 @@ describe('findGeneratedMigration', () => {
       '0010_install-eql.sql',
       '0011_install-eql.txt', // not .sql
       '0001_users.sql', // doesn't match the name
+      '9999_install-eql-backup.sql', // contains the name, but is not an exact match
     ]) {
       writeFileSync(join(dir, f), '')
     }

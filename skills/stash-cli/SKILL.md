@@ -354,7 +354,7 @@ Gets a project from zero to a direct EQL v3 install. It loads an existing `stash
 
 The removed `--eql-version`, `--latest`, `--drizzle`, `--migration`, `--direct`, `--migrations-dir`, and `--exclude-operator-family` options fail clearly instead of being ignored. A request for EQL v2 points dump-recovery users to the upstream EQL 2.3.1 SQL release. New installs are EQL v3 only; its pinned bundle self-adapts when a database role cannot create the optional operator family.
 
-**`--database-url` is a one-shot.** It installs against that database and leaves the project untouched — no config is loaded, and none is scaffolded, nor is an encryption client. This lets `npx stash eql install --database-url postgres://...` run in a bare project with no CipherStash dependencies. It also means the flag always wins: loading a config could pick up a parent-directory `databaseUrl` literal and install against the wrong database.
+**`--database-url` is a one-shot.** It installs against that database and leaves the project untouched — no config is loaded, and none is scaffolded, nor is an encryption client. This lets `npx --package=stash@1.0.0-rc.4 stash eql install --database-url 'postgres://...'` run in a bare project with no CipherStash dependencies while pinning the CLI to this skill's release. It also means the flag always wins: loading a config could pick up a parent-directory `databaseUrl` literal and install against the wrong database.
 
 #### `eql migration`
 
