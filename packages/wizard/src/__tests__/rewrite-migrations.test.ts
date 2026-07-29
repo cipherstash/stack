@@ -1,18 +1,31 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   describeSkipReason,
   rewriteEncryptedAlterColumns,
   sweepMigrationDirs,
 } from '../lib/rewrite-migrations.js'
 
+const fsPromisesWrite = vi.hoisted(() => ({
+  real: (() => {
+    throw new Error('fsPromisesWrite.real not initialised')
+  }) as typeof import('node:fs/promises').writeFile,
+  spy: vi.fn(),
+}))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  fsPromisesWrite.real = actual.writeFile
+  return { ...actual, writeFile: fsPromisesWrite.spy }
+})
+
 describe('rewriteEncryptedAlterColumns', () => {
   let tmpDir: string
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wizard-rewrite-'))
+    fsPromisesWrite.spy.mockImplementation(fsPromisesWrite.real)
   })
 
   afterEach(() => {
@@ -1561,7 +1574,13 @@ describe('rewriteEncryptedAlterColumns', () => {
       failing,
       'ALTER TABLE "users" ALTER COLUMN "name" SET DATA TYPE eql_v3_text_search;\n',
     )
-    fs.chmodSync(failing, 0o444)
+    fsPromisesWrite.spy.mockImplementation(async (file, data, options) => {
+      if (file === failing) {
+        fs.unlinkSync(failing)
+        fs.mkdirSync(failing)
+      }
+      return fsPromisesWrite.real(file, data, options)
+    })
 
     try {
       await rewriteEncryptedAlterColumns(tmpDir)
@@ -1574,7 +1593,7 @@ describe('rewriteEncryptedAlterColumns', () => {
         'ADD COLUMN "email_encrypted"',
       )
     } finally {
-      fs.chmodSync(failing, 0o644)
+      if (fs.statSync(failing).isDirectory()) fs.rmdirSync(failing)
     }
   })
 

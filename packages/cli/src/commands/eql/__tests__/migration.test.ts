@@ -321,6 +321,7 @@ describe('eqlMigrationCommand — Drizzle', () => {
     expect(clack.log.error).toHaveBeenCalledWith(
       expect.stringContaining('unsafe or unverified SQL'),
     )
+    expect(clack.outro).toHaveBeenCalledWith('Migration aborted.')
   })
 
   // A column the corpus never declares is fail-closed to `source-unknown`: left

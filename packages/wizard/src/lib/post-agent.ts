@@ -71,23 +71,11 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
     const sweep = await rewriteEncryptedMigrations(cwd)
     const staged = sweep.rewritten > 0
     const skipped = sweep.skipped > 0
-    const unverifiedDirs = sweep.failedDirs
-    const unverified = unverifiedDirs.length > 0
-    const unverifiedList = unverifiedDirs.map((dir) => `${dir}/`).join(', ')
+    const unverified = sweep.failedDirs.length > 0
 
     if (staged) {
       p.log.info(
         `Rewrote ${sweep.rewritten} migration file(s) in the drizzle output to add staged encrypted columns while preserving the source columns.`,
-      )
-    }
-    if (skipped) {
-      p.log.warn(
-        `${sweep.skipped} statement(s) look like an ALTER-to-encrypted that the rewrite left alone. Review them before migrating:`,
-      )
-    }
-    if (unverified) {
-      p.log.warn(
-        `Could not fully rewrite migrations in ${unverifiedList}; review those directories before migrating.`,
       )
     }
     if (skipped || unverified) {

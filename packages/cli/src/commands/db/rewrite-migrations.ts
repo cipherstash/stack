@@ -854,6 +854,15 @@ function renderSafeAlter(
     "-- @cipherstash/stack's encryptModel, then switch the application to the",
     '-- encrypted column by name and drop the plaintext column — both separately',
     '-- reviewed steps taken only after the backfill is complete.',
+    // The domain is emitted as `"public"."<domain>"` unconditionally: EQL
+    // installs its domains into `public` (both `stash eql install` and the
+    // adapters' baseline migrations do), and the qualifier makes the rewrite
+    // independent of the session `search_path`. It is an ASSUMPTION, not
+    // something read back from the matched SQL — the `schema` capture above is
+    // the TABLE's schema (from a pgSchema() table) and says nothing about where
+    // the domain lives. If EQL ever supports installing into a non-`public`
+    // schema, this needs the install schema threaded in, here and in the
+    // sibling `packages/wizard/src/lib/rewrite-migrations.ts`.
     `ALTER TABLE ${qualifiedTable} ADD COLUMN "${encrypted}" "public"."${domain}";`,
   ].join('\n')
 }

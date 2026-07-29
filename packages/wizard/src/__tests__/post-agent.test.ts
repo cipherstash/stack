@@ -241,6 +241,7 @@ describe('drizzle migrate prompt after a staged rewrite', () => {
   })
 
   it('fails before prompting when a statement was flagged rather than rewritten', async () => {
+    const warn = vi.spyOn(p.log, 'warn').mockImplementation(() => {})
     makeDrizzleOut('drizzle')
     fs.writeFileSync(
       path.join(cwd, 'drizzle', '0001_using.sql'),
@@ -249,18 +250,34 @@ describe('drizzle migrate prompt after a staged rewrite', () => {
 
     await expect(runDrizzle()).rejects.toThrow('unsafe or unverified SQL')
     expect(p.confirm).not.toHaveBeenCalled()
+    expect(
+      warn.mock.calls.filter(([message]) =>
+        String(message).includes('rewrite left alone'),
+      ),
+    ).toHaveLength(1)
+    warn.mockRestore()
   })
 
   // A directory whose sweep threw contributes 0 to both totals, so a failed
   // sweep used to be indistinguishable from a clean one: prompt defaulting to
   // Yes over migrations nobody checked. Unknown is not the same as safe.
   it('fails before prompting when a directory could not be swept at all', async () => {
+    const warn = vi.spyOn(p.log, 'warn').mockImplementation(() => {})
     // A directory named `*.sql` makes readFile throw EISDIR mid-sweep.
     makeDrizzleOut('drizzle')
     fs.mkdirSync(path.join(cwd, 'drizzle', '0001_alter.sql'))
 
     await expect(runDrizzle()).rejects.toThrow('unsafe or unverified SQL')
     expect(p.confirm).not.toHaveBeenCalled()
+    expect(
+      warn.mock.calls.filter(([message]) =>
+        String(message).includes('Could not rewrite migrations'),
+      ),
+    ).toHaveLength(1)
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining('Could not fully rewrite migrations'),
+    )
+    warn.mockRestore()
   })
 
   // `error` is built as `err instanceof Error ? err.message : String(err)`, and

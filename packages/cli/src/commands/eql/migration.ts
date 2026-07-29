@@ -22,6 +22,32 @@ import { messages } from '@/messages.js'
 const DEFAULT_MIGRATION_NAME = 'install-eql'
 const DEFAULT_DRIZZLE_OUT = 'drizzle'
 
+/**
+ * What {@link rewriteEncryptedAlterColumns} attaches to the error when the
+ * sweep throws partway through: the files it had already rewritten, and the
+ * statements it had already flagged. Reported so a partial sweep names the
+ * work it did rather than looking like it never ran (#786).
+ */
+interface PartialRewriteResult {
+  rewritten?: string[]
+  skipped?: SkippedAlter[]
+}
+
+/**
+ * The sweep can also fail with a non-`Error` throw — a string, `null`, anything
+ * — in which case there is no partial result to report. Narrow rather than cast
+ * so those cases fall through to the plain "could not sweep" message instead of
+ * crashing on a property read of a non-object.
+ */
+function isPartialRewriteResult(value: unknown): value is PartialRewriteResult {
+  if (typeof value !== 'object' || value === null) return false
+  const partial: Record<string, unknown> = value
+  return (
+    (partial.rewritten === undefined || Array.isArray(partial.rewritten)) &&
+    (partial.skipped === undefined || Array.isArray(partial.skipped))
+  )
+}
+
 /** Find the most recently generated Drizzle migration matching the name. */
 export async function findGeneratedMigration(
   outDir: string,
@@ -284,17 +310,16 @@ async function generateDrizzleEqlMigration(
   } catch (error) {
     // Advisory: the install migration itself is already written and valid.
     sweepIncomplete = true
-    const partial = error as Partial<{
-      rewritten: string[]
-      skipped: SkippedAlter[]
-    }>
-    if ((partial.rewritten?.length ?? 0) > 0) {
+    const partial: PartialRewriteResult = isPartialRewriteResult(error)
+      ? error
+      : {}
+    if (partial.rewritten && partial.rewritten.length > 0) {
       p.log.info(
         `Rewrote ${partial.rewritten.length} migration file(s) before the sweep stopped:`,
       )
       for (const file of partial.rewritten) p.log.step(`  - ${file}`)
     }
-    if ((partial.skipped?.length ?? 0) > 0) {
+    if (partial.skipped && partial.skipped.length > 0) {
       p.log.warn(
         `Found ${partial.skipped.length} ALTER-to-encrypted statement(s) the sweep left alone. Review and fix them before running your migrations:`,
       )
@@ -314,6 +339,7 @@ async function generateDrizzleEqlMigration(
     p.log.error(
       `The ALTER COLUMN sweep found unsafe or unverified SQL. The generated migration remains at ${migrationPath}, but review the sibling migrations in ${outDir} and use the staged stash encrypt flow before running drizzle-kit migrate.`,
     )
+    if (!embedded) p.outro('Migration aborted.')
     throw new CliExit(1)
   }
   p.log.success(`Migration created: ${migrationPath}`)
