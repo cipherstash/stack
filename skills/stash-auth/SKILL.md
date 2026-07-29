@@ -56,13 +56,16 @@ service token:
 
 The minted token carries: the subject (`CS|<user-id>` or `CS|CSAK<key-id>`),
 the workspace, scopes derived from the credential's role (member or admin —
-see `stash-zerokms` for what the scopes gate), and a `services` claim with
-the URL of the workspace's regional **ZeroKMS endpoint**. That last part is
-the region story: the workspace CRN (`crn:<region>.<provider>:<workspace-id>`)
-names the region, CTS resolves the endpoint for it, and the client reads it
-from the token. Endpoints are never hand-configured — the `CS_*_HOST`
-override variables are debug-only and must not appear in CI, examples, or
-docs.
+see `stash-zerokms` for what the scopes gate), and a built-in **service
+discovery mechanism** — the token itself tells the client where the
+workspace's services (ZeroKMS) live. The workspace CRN
+(`crn:<region>.<provider>:<workspace-id>`) names the region, CTS resolves
+the regional endpoints, and the client reads them from the token. You don't
+need to know how it works; the one fact that matters is that **a
+CipherStash-issued service token is only valid for services in the region it
+was issued for** — it cannot be replayed against another region. Endpoints
+are never hand-configured — the `CS_*_HOST` override variables are
+debug-only and must not appear in CI, examples, or docs.
 
 CipherStash runs in a variety of regions across the world, and the set is
 **subject to change** — `stash auth regions` (add `--json` for
