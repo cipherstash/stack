@@ -1,6 +1,11 @@
 # Proposal: a command-descriptor registry for `stash` help + a `manifest --json`
 
-**Status:** proposal / for discussion
+**Status:** implemented — the registry and `stash manifest --json` shipped.
+Kept as the design record. **Note (2026-07-29):** the command names used as
+examples below are a snapshot of the surface at proposal time. `db push`, `db
+install`, `db upgrade`, and `db status` no longer exist (the installer is `stash
+eql install`), and `stash encrypt cutover` was removed with EQL v2. Run `stash
+manifest --json` for the current surface — that is the point of the registry.
 **Area:** `packages/cli`
 **Motivated by:** the docs V2 CLI reference, which is generated from the CLI
 (cipherstash/docs#45). Today it parses `stash --help`; this proposal gives it —
@@ -20,7 +25,9 @@ and agents — a real structured source, and makes per-command help consistent.
 2. **Per-command help is inconsistent.** `auth` implements its own `--help`
    ([`commands/auth/index.ts`](../../packages/cli/src/commands/auth/index.ts)),
    but `stash eql install --help`, `stash db push --help`, etc. fall through to
-   the top-level help. There is no per-command help for most commands.
+   the top-level help. There is no per-command help for most commands. (`db
+   push` has since been removed — the drift it illustrates was real, and is
+   what the registry now prevents.)
 
 3. **No machine-readable output.** Docs have to scrape `--help`, and agents
    running `npx stash` have no authoritative, versioned command surface to read.

@@ -1,5 +1,6 @@
 import {
   appendEvent,
+  columnExists,
   detectColumnEqlVersion,
   type ManifestColumn,
   progress,
@@ -137,19 +138,11 @@ export async function backfillCommand(options: BackfillCommandOptions) {
     const encryptedColumn =
       options.encryptedColumn ?? `${options.column}_encrypted`
 
-    // Backfill authors ciphertext, so it accepts only the current EQL v3
-    // domains. Legacy v2 remains visible to status/read diagnostics but is no
-    // longer a writable rollout target.
-    const eqlVersion = await detectColumnEqlVersion(
+    const eqlVersion = await assertEqlV3Target(
       db,
       options.table,
       encryptedColumn,
     )
-    if (eqlVersion !== 3) {
-      throw new BackfillConfigError(
-        `${options.table}.${encryptedColumn} is not an EQL v3 domain. stash no longer backfills legacy EQL v2 columns; migrate the schema to an eql_v3_* domain first.`,
-      )
-    }
     p.log.info(
       `${options.table}.${encryptedColumn} is EQL v3 — lifecycle is backfill → switch the app to the encrypted column by name → drop (no cut-over rename).`,
     )
@@ -314,11 +307,41 @@ export async function backfillCommand(options: BackfillCommandOptions) {
  * upstream encryption errors, which can embed plaintext samples and are
  * suppressed by the catch block in {@link backfillCommand}.
  */
-class BackfillConfigError extends Error {
+export class BackfillConfigError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'BackfillConfigError'
   }
+}
+
+/**
+ * Backfill authors ciphertext, so it accepts only the current EQL v3 domains.
+ * Legacy v2 remains visible to status/read diagnostics but is no longer a
+ * writable rollout target.
+ *
+ * `detectColumnEqlVersion` answers `null` for a non-v3 domain AND for a column
+ * that isn't there, so the failure path pays for one extra probe to tell them
+ * apart. Conflating them accused a user who had merely not added the encrypted
+ * twin yet of running legacy v2, and handed them a remedy — migrate the domain
+ * — for a column that does not exist. The probe stays off the happy path: a v3
+ * answer already proves existence.
+ */
+export async function assertEqlV3Target(
+  db: pg.ClientBase,
+  table: string,
+  encryptedColumn: string,
+): Promise<3> {
+  const eqlVersion = await detectColumnEqlVersion(db, table, encryptedColumn)
+  if (eqlVersion === 3) return 3
+
+  if (!(await columnExists(db, table, encryptedColumn))) {
+    throw new BackfillConfigError(
+      `Column ${encryptedColumn} does not exist on ${table}. Add the encrypted destination column with an eql_v3_* domain type to your schema and apply the migration before backfilling. If your schema names it something other than ${encryptedColumn}, pass --encrypted-column <name>.`,
+    )
+  }
+  throw new BackfillConfigError(
+    `${table}.${encryptedColumn} is not an EQL v3 domain. stash no longer backfills legacy EQL v2 columns; migrate the schema to an eql_v3_* domain first.`,
+  )
 }
 
 /**
