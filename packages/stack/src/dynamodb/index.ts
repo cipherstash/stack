@@ -18,14 +18,15 @@ import type {
  * surfaces only much later as an opaque FFI deserialization error, far from the
  * misconfiguration that caused it.
  *
- * The client does not expose its EQL wire version directly (it is baked into the
- * FFI client at `newClient` time and neither the nominal `EncryptionClient` nor
- * the typed `Encryption` wrapper re-surfaces it). The reliable, public signal
- * both client shapes DO expose is `getEncryptConfig()`: a v3 table can only be
- * encrypted by a client that registered it, and a client built for v3 registers
- * it under its `tableName`. So the guard fires only when we can PROVE the table
- * is absent from a readable config — never on an unreadable one, to avoid a
- * false positive.
+ * The client does not expose its EQL wire version directly: it is baked into the
+ * FFI client at `newClient` time and the `EncryptionClient` wrapper does not
+ * re-surface it. The reliable, public signal it DOES expose is
+ * `getEncryptConfig()`: a v3 table can only be encrypted by a client that
+ * registered it, and a client built for v3 registers it under its `tableName`.
+ * So the guard fires only when we can PROVE the table is absent from a readable
+ * config — never on an unreadable one, to avoid a false positive. The
+ * wasm-inline client is exactly that case: it carries no `getEncryptConfig`, so
+ * this check stays silent there rather than rejecting a valid client.
  *
  * This runs at the first point where both the client and a concrete table are in
  * hand: the operation methods below, when a table is supplied. `encryptedDynamoDB`
@@ -117,7 +118,20 @@ function resolveStoredEqlVersion(options: DynamoDBReadOptions): 2 | 3 {
  * @example EQL v2 storage (reading existing deployments)
  * ```typescript
  * import { Encryption } from "@cipherstash/stack"
+ * import { encryptedTable, types } from "@cipherstash/stack/v3"
  * import { encryptedDynamoDB } from "@cipherstash/stack/dynamodb"
+ *
+ * // The CURRENT v3 table — there is no v2 builder and no v2-mode client. It
+ * // supplies column identity and type reconstruction for the legacy read, so
+ * // keep it declared for as long as v2 items remain in the table.
+ * const users = encryptedTable("users", {
+ *   email: types.TextEq("email"),
+ * })
+ *
+ * const client = await Encryption({ schemas: [users] })
+ * const dynamo = encryptedDynamoDB({ encryptionClient: client })
+ *
+ * // `storedItem` is an item written before the v3 cutover.
  * const decrypted = await dynamo.decryptModel(storedItem, users, {
  *   storedEqlVersion: 2,
  * })

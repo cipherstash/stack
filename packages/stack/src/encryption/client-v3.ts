@@ -20,18 +20,24 @@ import type {
   EncryptedReturnType,
   EncryptOptions,
 } from '@/types'
-import {
-  type BatchEncryptQueryOperation,
-  type BulkDecryptModelsOperation,
-  type BulkDecryptOperation,
-  type BulkEncryptModelsOperation,
-  type BulkEncryptOperation,
-  type DecryptModelOperation,
-  type DecryptOperation,
+// Every binding from `./index` is imported TYPE-ONLY — `Encryption` included,
+// since it is referenced only from the TSDoc {@link}s below (same trick as the
+// `LockContext` import in `./index`). Keeping this side type-only is what makes
+// the pair acyclic at runtime: values flow one way only, `./index` → here, for
+// `createEncryptionClient`. A value import of `Encryption` here would reinstate
+// a genuine module-eval cycle for the sake of a binding nothing consumes.
+import type {
+  BatchEncryptQueryOperation,
+  BulkDecryptModelsOperation,
+  BulkDecryptOperation,
+  BulkEncryptModelsOperation,
+  BulkEncryptOperation,
+  DecryptModelOperation,
+  DecryptOperation,
   Encryption,
-  type EncryptModelOperation,
-  type EncryptOperation,
-  type EncryptQueryOperation,
+  EncryptModelOperation,
+  EncryptOperation,
+  EncryptQueryOperation,
 } from './index'
 import {
   type AuditableDecryptModelOperation,
@@ -39,7 +45,18 @@ import {
   MappedDecryptOperation,
 } from './operations/mapped-decrypt'
 
-type NativeEncryptionClient = {
+/**
+ * The structural VIEW of the native client that the wrapper below consumes —
+ * only the members it forwards to, with operands erased to `never` so a client
+ * built for any schema tuple satisfies it.
+ *
+ * Deliberately not the concrete class: that class (`NativeEncryptionClient` in
+ * `./index`) is not exported, and naming it here would make the two modules
+ * mutually dependent at the type level for no gain. Named for the role it plays
+ * — the thing being wrapped — so it does not read as a second declaration of
+ * the implementation class.
+ */
+type UnderlyingNativeClient = {
   encrypt(plaintext: never, opts: never): EncryptOperation
   encryptQuery(
     plaintextOrTerms: never,
@@ -88,7 +105,8 @@ type BulkEncryptPayloadFor<Col> = Array<{
 }>
 
 /**
- * A strongly-typed view over an {@link EncryptionClient} for EQL v3 schemas.
+ * The client type {@link Encryption} resolves to for the schema tuple `S`: a
+ * strongly-typed view over the native FFI-backed client, for EQL v3 schemas.
  *
  * Every method derives its types from the concrete `table` / `column` builder
  * arguments (which carry their branded types at the call site), so:
@@ -101,6 +119,35 @@ type BulkEncryptPayloadFor<Col> = Array<{
  *   a precise encrypted model;
  * - `decryptModel` / `bulkDecryptModels` return the precise plaintext model,
  *   reconstructing `Date` values from the encrypt-config `cast_as`.
+ *
+ * This is **the** way to name the client — reach for it whenever you need to
+ * declare a variable, field or return type before the `await` that produces it:
+ *
+ * ```typescript
+ * const users = encryptedTable("users", { email: types.TextSearch("email") })
+ *
+ * let client: EncryptionClient<readonly [typeof users]>
+ * client = await Encryption({ schemas: [users] })
+ * ```
+ *
+ * For code that is generic over its schemas — integration adapters that build a
+ * table per test family, say — name the loose array:
+ *
+ * ```typescript
+ * let client: EncryptionClient<readonly AnyV3Table[]>
+ * ```
+ *
+ * That keeps `table` and `column` arguments checked, but NOT the model input:
+ * with `S` loose, `V3ModelInput<AnyV3Table, T>` cannot resolve a per-column
+ * plaintext, so `encryptModel` / `bulkEncryptModels` reject a
+ * `Record<string, unknown>` model. An adapter holding untyped rows needs a cast
+ * at that boundary (`@cipherstash/stack-supabase` has exactly one, for exactly
+ * this reason). Name a concrete tuple wherever the schema IS known statically —
+ * that is the only form with full model typing.
+ *
+ * Prefer this named type to `Awaited<ReturnType<typeof Encryption>>` when the
+ * concrete schema tuple matters: TypeScript's `ReturnType` reads the final
+ * overload and therefore produces the intentionally widened default client.
  *
  * @typeParam S - the tuple of registered v3 tables; `table` arguments must be a
  *   member of this tuple.
@@ -176,15 +223,17 @@ export interface EncryptionClient<
   ): AuditableDecryptModelOperation<V3DecryptedModel<Table, T>>
 
   /**
-   * Table-less form, mirroring the nominal {@link EncryptionClient}: decrypt
-   * whatever encrypted fields the model carries, with no `Date` reconstruction
-   * (there is no `cast_as` to reconstruct from) and no precise plaintext shape.
+   * Table-less form: decrypt whatever encrypted fields the model carries, with
+   * no `Date` reconstruction (there is no `cast_as` to reconstruct from) and no
+   * precise plaintext shape.
    *
    * This is the read path for rows that predate this client's schemas — legacy
    * **EQL v2** models above all, whose table is not, and cannot be, a member of
-   * `S`. The runtime has always accepted the one-arg call; without this
-   * signature the type layer forbids the very compatibility the client
-   * promises. Prefer the two-arg form whenever the table IS registered.
+   * `S`. It is also the arity the pre-v3 client exposed, so callers and adapters
+   * written against that shape keep compiling. The runtime has always accepted
+   * the one-arg call; without this signature the type layer forbids the very
+   * compatibility the client promises. Prefer the two-arg form whenever the
+   * table IS registered.
    */
   decryptModel<T extends Record<string, unknown>>(
     input: T,
@@ -210,7 +259,7 @@ export interface EncryptionClient<
     opts: { table: Table; column: Col },
   ): BulkEncryptOperation
   bulkDecrypt(payloads: BulkDecryptPayload): BulkDecryptOperation
-  getEncryptConfig(): ReturnType<NativeEncryptionClient['getEncryptConfig']>
+  getEncryptConfig(): ReturnType<UnderlyingNativeClient['getEncryptConfig']>
 }
 
 /**
@@ -250,16 +299,16 @@ function rowReconstructor(
 }
 
 /**
- * Wrap an already-built {@link EncryptionClient} in a {@link EncryptionClient}
- * for the given v3 schemas. Zero runtime cost for the encrypt/query paths (the
- * underlying operations are returned unchanged); the decrypt-model paths add a
- * per-column `Date` reconstruction step.
+ * Wrap an already-built native FFI client (`UnderlyingNativeClient`) in an
+ * {@link EncryptionClient} for the given v3 schemas. Zero runtime cost for the
+ * encrypt/query paths (the underlying operations are returned unchanged); the
+ * decrypt-model paths add a per-column `Date` reconstruction step.
  *
  * The `schemas` are captured with a `const` type parameter so array-literal
  * widening does not collapse per-table inference.
  */
 export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
-  client: NativeEncryptionClient,
+  client: UnderlyingNativeClient,
   ...schemas: S
 ): EncryptionClient<S> {
   // Precompute one row reconstructor per schema table at construction. This runs
@@ -292,19 +341,21 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
     },
   }
 
-  // Pass-through maps for a one-arg (nominal-style) decrypt call, where `table`
-  // is absent: decrypt WITHOUT date reconstruction, exactly as the nominal
-  // `EncryptionClient` does. This client is now what `Encryption` returns for a
-  // v3 schema set, so generic consumers can call `decryptModel(x)`
-  // / `bulkDecryptModels(xs)` with no table. Degrade gracefully instead of
+  // Pass-through maps for the table-less one-arg decrypt call, where `table` is
+  // absent: decrypt WITHOUT date reconstruction, because with no table there is
+  // no `cast_as` to reconstruct from. This client is what `Encryption` returns
+  // for every v3 schema set, so generic consumers — and the legacy EQL v2 read
+  // path, whose table is not in `S` — can call `decryptModel(x)` /
+  // `bulkDecryptModels(xs)` with no table. Degrade gracefully instead of
   // dereferencing `undefined.tableName`.
   const passthroughRow = (row: Record<string, unknown>) => row
   const passthroughRows = (rows: Array<Record<string, unknown>>) => rows
 
   // Overloaded so the implementation is checked against BOTH forms directly —
   // no whole-value cast. The two public signatures mirror the interface member;
-  // the hidden implementation signature is broad and forwards to the nominal
-  // client (which routes to the batch operation when no `opts` are supplied).
+  // the hidden implementation signature is broad and forwards to the underlying
+  // native client (which routes to the batch operation when no `opts` are
+  // supplied).
   // Only the forwarded args are `as never`, exactly as the sibling wrappers
   // below: one forwarding body cannot re-derive the public client's per-column
   // signatures.
@@ -357,7 +408,7 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
     table?: AnyV3Table,
     lockContext?: LockContextInput,
   ): AuditableDecryptModelOperation<never> {
-    // `table` is absent on a nominal-style one-arg call (see `passthroughRow`).
+    // `table` is absent on the table-less one-arg call (see `passthroughRow`).
     // Given a table: reconstruct dates from its cast_as, or — if it was never
     // registered — leave `map` undefined so the mapped op resolves to
     // `unknownTableFailure` on execute.
@@ -398,7 +449,7 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
   ): AuditableDecryptModelOperation<never> {
     const op = client.bulkDecryptModels(input)
     const base = lockContext ? op.withLockContext(lockContext) : op
-    // No table → pass rows through (nominal behaviour). Registered table →
+    // No table → pass rows through (no date reconstruction). Registered table →
     // reconstruct each row. Unregistered table → `undefined` map →
     // `unknownTableFailure` on execute.
     let mapRows:
@@ -438,41 +489,3 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
 
   return typed
 }
-
-/**
- * The client type {@link Encryption} resolves to for the schema tuple `S`.
- *
- * This is **the** way to name the client — reach for it whenever you need to
- * declare a variable, field or return type before the `await` that produces it:
- *
- * ```typescript
- * const users = encryptedTable("users", { email: types.TextSearch("email") })
- *
- * let client: EncryptionClient<readonly [typeof users]>
- * client = await Encryption({ schemas: [users] })
- * ```
- *
- * For code that is generic over its schemas — integration adapters that build a
- * table per test family, say — name the loose array:
- *
- * ```typescript
- * let client: EncryptionClient<readonly AnyV3Table[]>
- * ```
- *
- * That keeps `table` and `column` arguments checked, but NOT the model input:
- * with `S` loose, `V3ModelInput<AnyV3Table, T>` cannot resolve a per-column
- * plaintext, so `encryptModel` / `bulkEncryptModels` reject a
- * `Record<string, unknown>` model. An adapter holding untyped rows needs a cast
- * at that boundary (`@cipherstash/stack-supabase` has exactly one, for exactly
- * this reason). Name a concrete tuple wherever the schema IS known statically —
- * that is the only form with full model typing.
- *
- * Prefer this named type to `Awaited<ReturnType<typeof Encryption>>` when the
- * concrete schema tuple matters: TypeScript's `ReturnType` reads the final
- * overload and therefore produces the intentionally widened default client.
- */
-// Single import surface: re-export the v3 `types` namespace + table API + type
-// helpers so `@cipherstash/stack/v3` provides everything needed to author and
-// use a schema.
-export * from '@/eql/v3'
-export { Encryption }

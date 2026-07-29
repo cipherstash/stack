@@ -29,11 +29,11 @@ export type DynamoDBReadOptions = {
  * nominal `EncryptionClient<S>` parameter would reject a client built for
  * a narrower schema tuple.
  *
- * Both NATIVE clients return a chainable operation on every path — the nominal
- * client's `DecryptModelOperation` and the typed wrapper's
- * `MappedDecryptOperation` each carry `.audit()` (the typed wrapper also takes
- * the table as a second argument). The operation classes handle both; see
- * `DecryptModelOperation` and `resolveDecryptResult`.
+ * The NATIVE client returns a chainable operation on every path: its
+ * decrypt-model methods hand back a `MappedDecryptOperation` wrapping the
+ * underlying `DecryptModelOperation`, and both of those carry `.audit()`. The
+ * operation classes handle either shape; see `DecryptModelOperation` and
+ * `resolveDecryptResult`.
  *
  * The wasm-inline client does not, on EITHER path: its encrypt and decrypt are
  * plain `async` methods returning a bare `Promise<WasmResult>`, so audit

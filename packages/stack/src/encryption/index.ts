@@ -26,12 +26,9 @@ import type {
 } from '@/types'
 import { hasBuildColumnKeyMap } from '@/types'
 import { logger } from '@/utils/logger'
-// `createEncryptionClient` wraps the internal FFI client with the public schema-derived API.
-// This is a deliberate circular import with `./v3` (which imports `Encryption`
-// from here): both `Encryption` and `createEncryptionClient` are hoisted `function`
-// declarations, and the only module-eval cross-reference — `Encryption =
-// Encryption` in `./v3` — reads the hoisted `Encryption`, so neither binding is
-// observed uninitialised regardless of which module evaluates first.
+// `createEncryptionClient` wraps the internal FFI client with the public
+// schema-derived API. The edge is one-way: `./client-v3` names `Encryption` and
+// the operation classes type-only, so nothing flows back here at runtime.
 import { createEncryptionClient, type EncryptionClient } from './client-v3'
 import { toFfiKeysetIdentifier } from './helpers'
 import { isScalarQueryTermArray } from './helpers/type-guards'
@@ -48,7 +45,7 @@ import { EncryptQueryOperation } from './operations/encrypt-query'
 
 export type { EncryptionClient } from './client-v3'
 
-// Re-export the operation classes returned by NativeEncryptionClient methods so they
+// Re-export the operation classes returned by `EncryptionClient` methods so they
 // are part of the public API and appear in the generated reference, allowing
 // TSDoc {@link} references and method return types to resolve to real pages.
 export {
@@ -82,10 +79,15 @@ function assertV3Schemas(schemas: readonly AnyV3Table[]): void {
   }
 }
 
-/** The NativeEncryptionClient is the main entry point for interacting with the CipherStash Encryption library.
- * It provides methods for encrypting and decrypting individual values, as well as models (objects) and bulk operations.
+/**
+ * The FFI-backed implementation behind every encryption operation: it provides
+ * the methods for encrypting and decrypting individual values, as well as models
+ * (objects) and bulk operations.
  *
- * The client must be initialized using the {@link Encryption} function before it can be used.
+ * It is deliberately NOT exported. The public entry point is {@link Encryption},
+ * which initializes one of these and returns it wrapped in an
+ * {@link EncryptionClient} — the schema-derived surface callers actually hold.
+ * Nothing outside this module should construct or name this class.
  */
 class NativeEncryptionClient {
   private client: Client
@@ -822,8 +824,9 @@ type NonEmptyV3<S extends readonly AnyV3Table[]> = S['length'] extends 0
   : S
 
 // Overload 1 — v3-typed: an array literal of concrete EQL v3 tables (from
-// `@cipherstash/stack/v3`) yields the strongly-typed {@link NativeEncryptionClient},
-// the collapse of the former `Encryption`. The wire format is forced to v3.
+// `@cipherstash/stack/v3`) yields the strongly-typed {@link EncryptionClient}
+// for that exact tuple — this factory is the collapse of the former
+// `EncryptionV3`. The wire format is forced to v3.
 //
 // `S` is the ARRAY, not a non-empty tuple. Constraining the type parameter to
 // `readonly [AnyV3Table, ...AnyV3Table[]]` — which is how the `[]` case was

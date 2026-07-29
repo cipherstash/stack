@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
-import {
-  createEncryptionClient,
-  encryptedTable,
-  types,
-} from '@/encryption/client-v3'
+import { createEncryptionClient } from '@/encryption/client-v3'
+import { encryptedTable, types } from '@/eql/v3'
 
 const table = encryptedTable('t', {
   when: types.Timestamp('when'),

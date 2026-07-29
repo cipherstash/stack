@@ -152,8 +152,9 @@ const dynamo = encryptedDynamoDB({ encryptionClient })
 
 > **Audit metadata on decrypt works.** `decryptModel` / `bulkDecryptModels` are
 > audit-chainable — `dynamo.decryptModel(item, table).audit({ metadata })` forwards
-> the metadata to ZeroKMS, whether the client came from `Encryption` or the
-> `Encryption` client.
+> the metadata to ZeroKMS on the default `@cipherstash/stack` entry. The
+> `@cipherstash/stack/wasm-inline` client has no chainable operations, so audit
+> metadata is dropped there.
 
 ### Reading Existing EQL v2 Items
 

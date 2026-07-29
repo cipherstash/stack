@@ -1,11 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
-import {
-  createEncryptionClient,
-  encryptedTable,
-  types,
-} from '@/encryption/client-v3'
+import { createEncryptionClient } from '@/encryption/client-v3'
 import * as v3 from '@/encryption/v3'
+import { encryptedTable, types } from '@/eql/v3'
 import * as root from '@/index'
 import * as schema from '@/schema'
 import packageJson from '../package.json'
