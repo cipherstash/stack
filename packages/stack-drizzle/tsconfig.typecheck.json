@@ -9,9 +9,5 @@
   // (#778). Widen this `include` as that count comes down; do not widen it to
   // the whole project until it is zero, or the gate is useless.
   "extends": "./tsconfig.json",
-  "include": [
-    "__tests__/**/*.test-d.ts",
-    "integration/adapter.ts",
-    "integration/json-adapter.ts"
-  ]
+  "include": ["__tests__/**/*.test-d.ts", "integration/**/*.ts"]
 }

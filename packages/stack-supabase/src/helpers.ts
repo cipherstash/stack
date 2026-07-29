@@ -209,13 +209,46 @@ export function mapFilterOpToQueryType(op: FilterOp): QueryTypeName {
  * of that name is untouched.
  */
 export function parseOrString(orString: string): PendingOrCondition[] {
+  return parseOrStringAt(orString, 0, false).map(
+    ({ sourceSpan: _, ...condition }) => condition,
+  )
+}
+
+/** Adapter-only parser that flattens nested groups and records every leaf's
+ * source span, allowing encrypted substitution without rebuilding the group. */
+export function parseOrStringWithSpans(orString: string): PendingOrCondition[] {
+  return parseOrStringAt(orString, 0, true)
+}
+
+/** Recursively flatten PostgREST logic groups while retaining each leaf's
+ * exact location in the caller's original expression. The adapter must
+ * encrypt leaves inside `and(...)` / `or(...)`, but rebuilding the whole
+ * expression from a flat condition array destroys those groups. */
+function parseOrStringAt(
+  orString: string,
+  baseOffset: number,
+  recurseGroups: boolean,
+): PendingOrCondition[] {
   const conditions: PendingOrCondition[] = []
-  // Split on commas that are not inside parentheses (nested or/and)
   const parts = splitTopLevel(orString)
+  let cursor = 0
 
   for (const part of parts) {
+    const partStart = orString.indexOf(part, cursor)
+    cursor = partStart + part.length
     const trimmed = part.trim()
     if (!trimmed) continue
+    const leading = part.length - part.trimStart().length
+    const sourceStart = baseOffset + partStart + leading
+
+    const group = /^(?:not\.)?(?:and|or)\(([\s\S]*)\)$/.exec(trimmed)
+    if (recurseGroups && group) {
+      const open = trimmed.indexOf('(')
+      conditions.push(
+        ...parseOrStringAt(group[1], sourceStart + open + 1, true),
+      )
+      continue
+    }
 
     // Format: column.op.value — or column.not.op.value
     const firstDot = trimmed.indexOf('.')
@@ -245,7 +278,13 @@ export function parseOrString(orString: string): PendingOrCondition[] {
     // Handle special value formats
     const parsedValue = parseOrValue(value, op)
 
-    conditions.push({ column, op, negate, value: parsedValue })
+    conditions.push({
+      column,
+      op,
+      negate,
+      value: parsedValue,
+      sourceSpan: { start: sourceStart, end: sourceStart + trimmed.length },
+    })
   }
 
   return conditions
@@ -295,6 +334,35 @@ export function rebuildOrString(
       return `${c.column}.${token}.${value}`
     })
     .join(',') as DbFilterString
+}
+
+/**
+ * Rebuild only encrypted leaves of a string-form `.or()` expression.
+ *
+ * The original delimiters, whitespace, nesting, and plaintext conditions are
+ * retained byte-for-byte. Replacements run from right to left so source spans
+ * remain stable when ciphertext is longer than the plaintext operand.
+ */
+export function substituteOrStringLeaves(
+  original: string,
+  conditions: DbPendingOrCondition[],
+  shouldReplace: (condition: DbPendingOrCondition) => boolean,
+): DbFilterString {
+  let result = original
+  const replacements = conditions
+    .filter((condition) => condition.sourceSpan && shouldReplace(condition))
+    .sort(
+      (left, right) =>
+        (right.sourceSpan?.start ?? 0) - (left.sourceSpan?.start ?? 0),
+    )
+
+  for (const condition of replacements) {
+    const span = condition.sourceSpan
+    if (!span) continue
+    const replacement = rebuildOrString([condition])
+    result = result.slice(0, span.start) + replacement + result.slice(span.end)
+  }
+  return result as DbFilterString
 }
 
 // ---------------------------------------------------------------------------

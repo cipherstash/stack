@@ -78,6 +78,42 @@ describe('typedClient — decrypt reconstruction', () => {
     expect(data.note).toBeNull()
   })
 
+  it('leaves invalid date values untouched', async () => {
+    const client = typedClient(fakeClient({ when: 'not-a-date' }), table)
+
+    const result = await client.decryptModel({}, table)
+    if (result.failure) return
+
+    expect((result.data as Record<string, unknown>).when).toBe('not-a-date')
+  })
+
+  it('reconstructs a dotted date path without mutating the decrypted row', async () => {
+    const nested = encryptedTable('nested', {
+      'profile.when': types.Timestamp('profile_when'),
+      'profile.birthday': types.Date('profile_birthday'),
+    })
+    const decrypted = {
+      profile: {
+        when: '2020-01-02T03:04:05.000Z',
+        birthday: '1990-04-05',
+        untouched: true,
+      },
+    }
+    const client = typedClient(fakeClient(decrypted), nested)
+
+    const result = await client.decryptModel({}, nested)
+    if (result.failure) return
+
+    const data = result.data as Record<string, unknown>
+    const profile = data.profile as Record<string, unknown>
+    expect(profile.when).toBeInstanceOf(Date)
+    expect(profile.birthday).toBeInstanceOf(Date)
+    expect(profile.untouched).toBe(true)
+    expect(profile).not.toBe(decrypted.profile)
+    expect(decrypted.profile.when).toBe('2020-01-02T03:04:05.000Z')
+    expect(decrypted.profile.birthday).toBe('1990-04-05')
+  })
+
   it('reconstructs each row for bulkDecryptModels', async () => {
     const client = typedClient(
       fakeClient({ when: '2021-06-01T00:00:00.000Z', note: 'x' }),

@@ -79,6 +79,33 @@ describe('encryptedSupabaseV3 factory', () => {
     expect(createClientMock).not.toHaveBeenCalled()
   })
 
+  it('diagnoses the removed v2 object call shape before introspection', async () => {
+    await expect(
+      encryptedSupabaseV3(
+        {
+          encryptionClient: {},
+          supabaseClient: fakeClient,
+        } as unknown as SupabaseClientLike,
+        { databaseUrl: 'postgres://x' },
+      ),
+    ).rejects.toThrow(/removed EQL v2 API.*Pass the Supabase client directly/)
+    expect(introspectMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects an invalid supplied client before introspection', async () => {
+    await expect(
+      encryptedSupabaseV3({} as SupabaseClientLike, {
+        databaseUrl: 'postgres://x',
+      }),
+    ).rejects.toThrow(/Supabase client with a from\(\) method/)
+    await expect(
+      encryptedSupabaseV3(null as unknown as SupabaseClientLike, {
+        databaseUrl: 'postgres://x',
+      }),
+    ).rejects.toThrow(/Supabase client with a from\(\) method/)
+    expect(introspectMock).not.toHaveBeenCalled()
+  })
+
   it('falls back to process.env.DATABASE_URL', async () => {
     process.env.DATABASE_URL = 'postgres://env'
     await encryptedSupabaseV3(fakeClient)

@@ -54,6 +54,7 @@ const users = encryptedTable('users', {
 // model carries `{ profile: { ssn } }`; the walk matches it via the path.
 const patients = encryptedTable('patients', {
   'profile.ssn': types.TextEq('profile.ssn'),
+  'profile.seenAt': types.Timestamp('profile.seen_at'),
 })
 
 async function client() {
@@ -215,6 +216,17 @@ describe('WasmEncryptionClient.decryptModel', () => {
     expect((data.createdOn as Date).toISOString()).toBe(
       '2026-07-22T01:02:03.000Z',
     )
+  })
+
+  it('rebuilds a date-like value at a dotted model path', async () => {
+    ffi.decryptBulkFallible.mockResolvedValueOnce([
+      { data: '2026-07-22T01:02:03.000Z' },
+    ] as never)
+
+    const c = await client()
+    const out = await c.decryptModel({ profile: { seenAt: ct('d') } }, patients)
+
+    expect(expectData(out).profile.seenAt).toBeInstanceOf(Date)
   })
 
   it('names every failed field by its model path', async () => {

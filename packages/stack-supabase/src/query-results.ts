@@ -1,4 +1,9 @@
-import { DATE_LIKE_CASTS, logger } from '@cipherstash/stack/adapter-kit'
+import {
+  DATE_LIKE_CASTS,
+  logger,
+  reconstructDatePaths,
+  reconstructDateValue,
+} from '@cipherstash/stack/adapter-kit'
 import { selectKeyToDbV3 } from './helpers'
 import {
   type EncryptionContext,
@@ -58,14 +63,14 @@ function postprocessDecryptedRow(
     keyToDb[dbName] ??= dbName
   }
 
-  const out: Record<string, unknown> = { ...row }
+  let out: Record<string, unknown> = { ...row }
   for (const [key, dbName] of Object.entries(keyToDb)) {
     const castAs = ctx.columns.schemaFor(dbName)?.cast_as
     if (!DATE_LIKE_CAST_SET.has(castAs as string)) continue
-    const value = out[key]
-    if (value == null || value instanceof Date) continue
-    if (typeof value === 'string' || typeof value === 'number') {
-      out[key] = new Date(value)
+    if (key.includes('.')) {
+      out = reconstructDatePaths(out, [key])
+    } else if (Object.hasOwn(out, key)) {
+      out[key] = reconstructDateValue(out[key])
     }
   }
   return out

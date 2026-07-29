@@ -1,5 +1,5 @@
 ---
-'@cipherstash/migrate': patch
+'@cipherstash/migrate': minor
 ---
 
 Drop EQL v2 from the domain-type classifier. `classifyEqlDomain` (and the

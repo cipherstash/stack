@@ -16,6 +16,7 @@
   "devDependencies": {
     "@types/semver": "7.7.1",
     "semver": "^7.8.0",
+    "typescript": "catalog:repo",
     "vitest": "catalog:repo",
     "yaml": "^2.9.0"
   }

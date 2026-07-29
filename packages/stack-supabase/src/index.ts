@@ -141,6 +141,21 @@ export async function encryptedSupabase(
     }
     supabaseClient = createClient(url, key) as unknown as SupabaseClientLike
   } else {
+    if (clientOrUrl === null || typeof clientOrUrl !== 'object') {
+      throw new Error(
+        '[supabase v3]: encryptedSupabase expected a Supabase client with a from() method. Pass encryptedSupabase(supabaseClient, options), or use encryptedSupabase(url, key, options).',
+      )
+    }
+    if ('encryptionClient' in clientOrUrl && 'supabaseClient' in clientOrUrl) {
+      throw new Error(
+        '[supabase v3]: encryptedSupabase({ encryptionClient, supabaseClient }) was the removed EQL v2 API. Pass the Supabase client directly instead: encryptedSupabase(supabaseClient, { databaseUrl, schemas? }).',
+      )
+    }
+    if (typeof clientOrUrl.from !== 'function') {
+      throw new Error(
+        '[supabase v3]: encryptedSupabase expected a Supabase client with a from() method. Pass encryptedSupabase(supabaseClient, options), or use encryptedSupabase(url, key, options).',
+      )
+    }
     supabaseClient = clientOrUrl
     options =
       (keyOrOptions as EncryptedSupabaseOptions<V3Schemas | undefined>) ?? {}

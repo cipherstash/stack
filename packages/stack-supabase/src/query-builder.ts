@@ -313,6 +313,11 @@ export class EncryptedQueryBuilderImpl<
    * silently accept as containment of the raw string.
    */
   matches(column: string, value: unknown): this {
+    if (value == null) {
+      throw new Error(
+        `[supabase v3]: matches("${column}", …) requires a non-null search term; null and undefined cannot be encrypted and would otherwise reach PostgREST as plaintext.`,
+      )
+    }
     if (this.columns.isSearchableJsonColumn(column)) {
       throw new Error(
         `[supabase v3]: matches() is encrypted free-text search and does not apply to encrypted JSON column "${column}". Use contains("${column}", subDocument) or selectorEq("${column}", path, value).`,
@@ -391,6 +396,7 @@ export class EncryptedQueryBuilderImpl<
       this.orFilters.push({
         kind: 'structured',
         conditions: filtersOrConditions,
+        referencedTable: options?.referencedTable ?? options?.foreignTable,
       })
     }
     return this
@@ -486,8 +492,9 @@ export class EncryptedQueryBuilderImpl<
   }
 
   csv(): this {
-    this.transforms.push({ kind: 'csv' })
-    return this
+    throw new Error(
+      '[supabase v3]: csv() is unavailable on encrypted queries because PostgREST serializes rows before the adapter can decrypt them. Select rows normally, then serialize the decrypted data to CSV.',
+    )
   }
 
   abortSignal(signal: AbortSignal): this {
@@ -861,12 +868,32 @@ export class EncryptedQueryBuilderImpl<
    * per (op, column) that the delegation is approximate.
    */
   private likeNeedle(column: string, op: string, pattern: string): string {
-    const needle = pattern.replace(/^%+/, '').replace(/%+$/, '')
-    if (needle.includes('%') || pattern.includes('_')) {
+    const tokens: Array<{ value: string; wildcard: boolean }> = []
+    for (let i = 0; i < pattern.length; i++) {
+      const char = pattern[i]
+      if (char === '\\' && i + 1 < pattern.length) {
+        tokens.push({ value: pattern[++i], wildcard: false })
+      } else {
+        tokens.push({
+          value: char,
+          wildcard: char === '%' || char === '_',
+        })
+      }
+    }
+
+    while (tokens[0]?.wildcard && tokens[0].value === '%') tokens.shift()
+    while (
+      tokens[tokens.length - 1]?.wildcard &&
+      tokens[tokens.length - 1]?.value === '%'
+    )
+      tokens.pop()
+
+    if (tokens.some((token) => token.wildcard)) {
       throw new Error(
         `[supabase v3]: "${op}" pattern "${pattern}" on encrypted column "${column}" has wildcards fuzzy free-text matching cannot honor (an internal "%" or any "_"). Use matches("${column}", term) with a literal search term.`,
       )
     }
+    const needle = tokens.map((token) => token.value).join('')
     const key = `${op}:${column}`
     if (!warnedLikeDelegation.has(key)) {
       warnedLikeDelegation.add(key)

@@ -6,10 +6,9 @@
 `encryptedDynamoDB` now accepts EQL v3 tables.
 
 Pass a table built with `encryptedTable` + the `types.*` domains from
-`@cipherstash/stack/v3` (or `@cipherstash/stack/eql/v3`) to any of
-`encryptModel`, `bulkEncryptModels`, `decryptModel`, `bulkDecryptModels`. Both
-the typed client from `EncryptionV3` and the nominal client from
-`Encryption({ config: { eqlVersion: 3 } })` are accepted.
+`@cipherstash/stack/v3` to any of `encryptModel`, `bulkEncryptModels`,
+`decryptModel`, or `bulkDecryptModels`. Build the typed client with
+`Encryption({ schemas: [table] })`.
 
 EQL v2 tables continue to be **readable** — `decryptModel` /
 `bulkDecryptModels` still accept one, so existing items stay accessible. Writing
@@ -36,8 +35,8 @@ Notes on capability:
   path — `{ 'profile.ssn': types.TextEq('profile.ssn') }`. The model is
   matched by dotted path, so `{ profile: { ssn } }` resolves, and the nested
   attribute keeps its `__hmac` for key conditions.
-- Audit metadata on `decryptModel` / `bulkDecryptModels` requires the nominal
-  client; the `EncryptionV3` client has no audit surface on decrypt.
+- The typed `Encryption` client supports `.audit()` on `decryptModel` and
+  `bulkDecryptModels`, including when used through the DynamoDB adapter.
 
 The DynamoDB adapter also gains its first test coverage — across the v2 and v3
 paths, where it previously had none.

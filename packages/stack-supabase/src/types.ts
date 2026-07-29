@@ -539,7 +539,11 @@ export type PendingFilter = {
 }
 
 export type PendingOrFilter =
-  | { kind: 'structured'; conditions: PendingOrCondition[] }
+  | {
+      kind: 'structured'
+      conditions: PendingOrCondition[]
+      referencedTable?: string
+    }
   | { kind: 'string'; value: string; referencedTable?: string }
 
 export type PendingOrCondition = {
@@ -549,6 +553,10 @@ export type PendingOrCondition = {
    * `in`-list split and the query-type mapping both key on the real operator. */
   negate?: boolean
   value: unknown
+  /** Character range in the caller's original string-form `.or()` expression.
+   * Internal only: lets the encrypted adapter replace this leaf without
+   * rebuilding (and corrupting) surrounding `and(...)` / `or(...)` groups. */
+  sourceSpan?: { start: number; end: number }
 }
 
 export type PendingMatchFilter = {
@@ -694,7 +702,11 @@ export type DbPendingMatchFilter = {
  * nested `and()` or quoted values) alongside the parsed DB-space conditions
  * used by the encrypt-and-rebuild path. Parsing happens once, here. */
 export type DbPendingOrFilter =
-  | { kind: 'structured'; conditions: DbPendingOrCondition[] }
+  | {
+      kind: 'structured'
+      conditions: DbPendingOrCondition[]
+      referencedTable?: string
+    }
   | {
       kind: 'string'
       original: string

@@ -10,6 +10,7 @@ import type {
   V3ModelInput,
 } from '@/eql/v3'
 import { DATE_LIKE_CASTS } from '@/eql/v3/columns'
+import { reconstructDatePaths } from '@/eql/v3/date-reconstruction'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import type { LockContextInput } from '@/identity'
 import type {
@@ -217,13 +218,7 @@ function rowReconstructor(
     .map(([property]) => property)
 
   return (row) => {
-    const out: Record<string, unknown> = { ...row }
-    for (const property of dateProperties) {
-      const value = out[property]
-      if (value == null) continue
-      out[property] = new Date(value as string | number | Date)
-    }
-    return out
+    return reconstructDatePaths(row, dateProperties)
   }
 }
 

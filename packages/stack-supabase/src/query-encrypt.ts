@@ -206,6 +206,24 @@ export function queryTypeForOrOp(op: FilterOp): QueryTypeName {
   return queryTypeForRawOp(op)
 }
 
+/** A nullish encrypted search operand is never a SQL-NULL predicate. Skipping
+ * encryption would put the raw operand on the wire under `cs`, so fail closed
+ * for every spelling (`matches`, `contains`, raw `cs`, `not`, and `.or()`). */
+function assertEncryptedSearchOperand(
+  queryType: QueryTypeName,
+  value: unknown,
+  column: string,
+): void {
+  if (
+    value == null &&
+    (queryType === 'freeTextSearch' || queryType === 'searchableJson')
+  ) {
+    throw new Error(
+      `[supabase v3]: encrypted search on column "${column}" requires a non-null operand; null and undefined cannot be sent through the plaintext PostgREST filter path.`,
+    )
+  }
+}
+
 function encryptionFailure(
   tableName: string,
   message: string,
@@ -287,19 +305,19 @@ export async function encryptFilterValues(
 
     const column = tableColumns[f.column]
     if (!column) continue
+    const queryType = mapFilterOpToQueryType(f.op)
+    assertEncryptedSearchOperand(queryType, f.value, f.column)
 
     if (f.op === 'in' && Array.isArray(f.value)) {
-      collectInListTerms(
-        f.op,
-        f.value,
-        column,
-        mapFilterOpToQueryType(f.op),
-        (inIndex) => ({ source: 'filter', filterIndex: i, inIndex }),
-      )
+      collectInListTerms(f.op, f.value, column, queryType, (inIndex) => ({
+        source: 'filter',
+        filterIndex: i,
+        inIndex,
+      }))
     } else if (!isEncryptableTerm(f.op, f.value)) {
       // `is` predicate or null operand — forwarded unencrypted.
     } else {
-      pushTerm(f.value as JsPlaintext, column, mapFilterOpToQueryType(f.op), {
+      pushTerm(f.value as JsPlaintext, column, queryType, {
         source: 'filter',
         filterIndex: i,
       })
@@ -328,9 +346,11 @@ export async function encryptFilterValues(
   for (let i = 0; i < dbSpace.notFilters.length; i++) {
     const nf = dbSpace.notFilters[i]
     if (!isEncryptedColumn(nf.column, encryptedColumnNames)) continue
-    if (!isEncryptableTerm(nf.op, nf.value)) continue
     const column = tableColumns[nf.column]
     if (!column) continue
+    const queryType = mapFilterOpToQueryType(nf.op)
+    assertEncryptedSearchOperand(queryType, nf.value, nf.column)
+    if (!isEncryptableTerm(nf.op, nf.value)) continue
 
     if (nf.op === 'in') {
       // A PostgREST list literal (`'(a,b)'`) cannot be encrypted element-wise,
@@ -342,17 +362,15 @@ export async function encryptFilterValues(
             `not a PostgREST list literal — each element must be encrypted separately`,
         )
       }
-      collectInListTerms(
-        nf.op,
-        nf.value,
-        column,
-        mapFilterOpToQueryType(nf.op),
-        (inIndex) => ({ source: 'not', notIndex: i, inIndex }),
-      )
+      collectInListTerms(nf.op, nf.value, column, queryType, (inIndex) => ({
+        source: 'not',
+        notIndex: i,
+        inIndex,
+      }))
       continue
     }
 
-    pushTerm(nf.value as JsPlaintext, column, mapFilterOpToQueryType(nf.op), {
+    pushTerm(nf.value as JsPlaintext, column, queryType, {
       source: 'not',
       notIndex: i,
     })
@@ -374,6 +392,7 @@ export async function encryptFilterValues(
       // `queryTypeForOrOp`, not `mapFilterOpToQueryType`: an or-condition may
       // carry a raw PostgREST operator (`cs`), which is not a `FilterOp`.
       const queryType = queryTypeForOrOp(cond.op)
+      assertEncryptedSearchOperand(queryType, cond.value, cond.column)
       const mappingFor = (inIndex?: number): TermMapping => ({
         source,
         orIndex: i,
@@ -397,6 +416,8 @@ export async function encryptFilterValues(
     if (!isEncryptedColumn(rf.column, encryptedColumnNames)) continue
     const column = tableColumns[rf.column]
     if (!column) continue
+    const queryType = queryTypeForRawOp(rf.operator)
+    assertEncryptedSearchOperand(queryType, rf.value, rf.column)
 
     if (rf.operator === 'in') {
       // Same contract as the `not(…, 'in', …)` path: a PostgREST list literal
@@ -409,19 +430,17 @@ export async function encryptFilterValues(
             `not a PostgREST list literal — each element must be encrypted separately`,
         )
       }
-      collectInListTerms(
-        'in',
-        rf.value,
-        column,
-        queryTypeForRawOp(rf.operator),
-        (inIndex) => ({ source: 'raw', rawIndex: i, inIndex }),
-      )
+      collectInListTerms('in', rf.value, column, queryType, (inIndex) => ({
+        source: 'raw',
+        rawIndex: i,
+        inIndex,
+      }))
       continue
     }
 
     if (!isEncryptableTerm(rf.operator, rf.value)) continue
 
-    pushTerm(rf.value as JsPlaintext, column, queryTypeForRawOp(rf.operator), {
+    pushTerm(rf.value as JsPlaintext, column, queryType, {
       source: 'raw',
       rawIndex: i,
     })

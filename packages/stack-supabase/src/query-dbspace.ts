@@ -1,5 +1,5 @@
 import type { ColumnMap } from './column-map'
-import { parseOrString } from './helpers'
+import { parseOrStringWithSpans } from './helpers'
 import type {
   DbConflictList,
   DbMutationOp,
@@ -51,11 +51,15 @@ function orFilterToDbSpace(
     return {
       kind: 'string',
       original: of_.value,
-      conditions: parseOrString(of_.value).map(toDbCondition),
+      conditions: parseOrStringWithSpans(of_.value).map(toDbCondition),
       referencedTable: of_.referencedTable,
     }
   }
-  return { kind: 'structured', conditions: of_.conditions.map(toDbCondition) }
+  return {
+    kind: 'structured',
+    conditions: of_.conditions.map(toDbCondition),
+    referencedTable: of_.referencedTable,
+  }
 }
 
 function transformToDbSpace(t: TransformOp, columns: ColumnMap): DbTransformOp {

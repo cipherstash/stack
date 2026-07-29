@@ -17,6 +17,7 @@ import type { Integration } from '../../types.js'
 vi.mock('@clack/prompts', () => ({ log: { warn: vi.fn() } }))
 
 import * as p from '@clack/prompts'
+import { SKILL_MAP as WIZARD_SKILL_MAP } from '../../../../../../wizard/src/lib/install-skills.js'
 import {
   availableSkills,
   installSkills,
@@ -40,6 +41,13 @@ const ALL_INTEGRATIONS: Integration[] = [
 ]
 
 describe('SKILL_MAP', () => {
+  it('stays in parity with every wizard integration', () => {
+    expect(WIZARD_SKILL_MAP.drizzle).toEqual(SKILL_MAP.drizzle)
+    expect(WIZARD_SKILL_MAP.supabase).toEqual(SKILL_MAP.supabase)
+    expect(WIZARD_SKILL_MAP.prisma).toEqual(SKILL_MAP['prisma-next'])
+    expect(WIZARD_SKILL_MAP.generic).toEqual(SKILL_MAP.postgresql)
+  })
+
   it('has a non-empty entry for every integration (no undefined → crash)', () => {
     for (const integration of ALL_INTEGRATIONS) {
       const skills = SKILL_MAP[integration]
