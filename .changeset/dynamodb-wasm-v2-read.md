@@ -2,24 +2,18 @@
 '@cipherstash/stack': patch
 ---
 
-`encryptedDynamoDB` now refuses a `@cipherstash/stack/wasm-inline` client paired
-with a legacy EQL v2 table, instead of failing at the first read with a
-misleading error.
+`encryptedDynamoDB` now serves legacy `{ storedEqlVersion: 2 }` reads on the
+`@cipherstash/stack/wasm-inline` entry, not just the native one.
 
-The adapter's v2 read path deliberately calls `decryptModel(item)` with **no**
-table — a v2 table means nothing to a v3 client's reconstructor map, and the
-native clients derive the table from the payloads anyway. `WasmEncryptionClient`
-cannot do that: its decrypt requires the table and resolves date fields from a
-per-table map, so the omitted argument surfaced as
-`TypeError: Cannot read properties of undefined (reading 'tableName')` thrown
-from deep inside the client — on the documented entry for Deno, Cloudflare
-Workers and Supabase Edge Functions, which satisfies the adapter's client type
-structurally and so was accepted with no cast.
+The legacy read reconstructs the EQL v2 envelope around the **current v3 table**
+and forwards that table exactly as a v3 read does, so both entries can serve it:
+protect-ffi's `decrypt` accepts either wire generation regardless of the
+client's `eqlVersion`, and the reconstructor map is keyed by the current schema
+either way. Deno, Cloudflare Workers and Supabase Edge Functions can therefore
+read rows written before the v3 migration; previously the pairing was refused
+outright and those runtimes had no way to read that data at all.
 
-The pairing is now rejected at the call site, with a message naming both the
-combination and the fix. The message is operation-neutral: the guard runs on all
-four operations, so a plain-JS caller reaching the write path with a v2 table
-gets a message that does not claim a read it never attempted.
+Writes remain EQL v3-only on both entries.
 
 `encryptModel` / `bulkEncryptModels` now also tolerate a client whose encrypt
 returns a plain promise. They chained `.audit()` onto the result

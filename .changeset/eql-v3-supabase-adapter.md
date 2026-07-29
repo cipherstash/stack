@@ -63,5 +63,6 @@ index now emits `include_original: false` — the flag is inert in protect-ffi (
 bloom is trigram-only either way), so this moves no ciphertext and only pins the
 value a substring-search domain wants.
 
-v2 (`encryptedSupabase`) is unchanged: it keeps `like`/`ilike` (`eql_v2.like`,
-`~~`) and its raw-`filter` query-type mapping, so no v2 ciphertext moves.
+This surface was subsequently consolidated as the unsuffixed
+`encryptedSupabase` EQL v3 factory. The legacy v2 Supabase authoring wrapper has
+been removed; core native decrypt remains compatible with stored v2 payloads.

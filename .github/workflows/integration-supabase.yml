@@ -20,6 +20,30 @@ on:
       - 'packages/stack/src/encryption/**'
       - 'packages/stack/src/schema/**'
       - 'packages/stack/integration/**'
+      # The DynamoDB adapter, and the entry/type modules the suites import
+      # directly. `integration/shared/v2-decrypt-compat` is the repo's only live
+      # EQL v2 read coverage for the native entry (the `integration/wasm/` twin
+      # runs on the Drizzle job) and it exercises the DynamoDB legacy path, so a
+      # change here must run it. Pinned by
+      # scripts/__tests__/integration-workflow-paths.test.mjs.
+      - 'packages/stack/src/dynamodb/**'
+      - 'packages/stack/src/index.ts'
+      - 'packages/stack/src/types.ts'
+      # That v2 suite mints its fixtures by importing `@cipherstash/protect-ffi`
+      # directly. A native-module bump is the change most able to break v2
+      # payload deserialization and it touches NO source directory, so without
+      # these two entries the only suites that would catch it never start. They
+      # are the files a bump actually edits: exact pins (`protect-ffi`,
+      # `@cipherstash/eql`) live in the package manifest, `catalog:` ones
+      # (`@cipherstash/auth`) in the workspace catalog.
+      #
+      # `pnpm-lock.yaml` is deliberately NOT listed. It changes on roughly every
+      # dependency bump in the monorepo — far more often than either file here —
+      # and these are credentialed, database-backed jobs. Nothing is lost: a
+      # protect-ffi or auth version change cannot reach the lockfile without
+      # editing one of the two manifests below first.
+      - 'packages/stack/package.json'
+      - 'pnpm-workspace.yaml'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
       - 'local/docker-compose.supabase.yml'
@@ -38,6 +62,30 @@ on:
       - 'packages/stack/src/encryption/**'
       - 'packages/stack/src/schema/**'
       - 'packages/stack/integration/**'
+      # The DynamoDB adapter, and the entry/type modules the suites import
+      # directly. `integration/shared/v2-decrypt-compat` is the repo's only live
+      # EQL v2 read coverage for the native entry (the `integration/wasm/` twin
+      # runs on the Drizzle job) and it exercises the DynamoDB legacy path, so a
+      # change here must run it. Pinned by
+      # scripts/__tests__/integration-workflow-paths.test.mjs.
+      - 'packages/stack/src/dynamodb/**'
+      - 'packages/stack/src/index.ts'
+      - 'packages/stack/src/types.ts'
+      # That v2 suite mints its fixtures by importing `@cipherstash/protect-ffi`
+      # directly. A native-module bump is the change most able to break v2
+      # payload deserialization and it touches NO source directory, so without
+      # these two entries the only suites that would catch it never start. They
+      # are the files a bump actually edits: exact pins (`protect-ffi`,
+      # `@cipherstash/eql`) live in the package manifest, `catalog:` ones
+      # (`@cipherstash/auth`) in the workspace catalog.
+      #
+      # `pnpm-lock.yaml` is deliberately NOT listed. It changes on roughly every
+      # dependency bump in the monorepo — far more often than either file here —
+      # and these are credentialed, database-backed jobs. Nothing is lost: a
+      # protect-ffi or auth version change cannot reach the lockfile without
+      # editing one of the two manifests below first.
+      - 'packages/stack/package.json'
+      - 'pnpm-workspace.yaml'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
       - 'local/docker-compose.supabase.yml'

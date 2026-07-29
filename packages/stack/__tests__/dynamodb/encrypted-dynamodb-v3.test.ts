@@ -4,7 +4,7 @@
  * Mirrors the v2 suite in `encrypted-dynamodb.test.ts` and adds the two things
  * only v3 raises:
  *
- *  - both client shapes must work. `EncryptionV3` returns a `TypedEncryptionClient`
+ *  - both client shapes must work. `Encryption` returns a `EncryptionClient`
  *    whose `decryptModel` is a plain `Promise<Result<…>>` taking the table as a
  *    second argument; `Encryption({ config: { eqlVersion: 3 } })` returns the
  *    nominal chainable client. Audit metadata on decrypt only has somewhere to
@@ -21,7 +21,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { encryptedDynamoDB } from '@/dynamodb'
 import { toItemWithEqlPayloads } from '@/dynamodb/helpers'
 import type { EncryptedDynamoDBInstance } from '@/dynamodb/types'
-import { type EncryptionClientFor, EncryptionV3 } from '@/encryption/v3'
+import type { EncryptionClient } from '@/encryption/v3'
 import type { AnyV3Table, JsonValue } from '@/eql/v3'
 import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
@@ -62,10 +62,10 @@ type User = {
   role?: string
 }
 
-/** The typed client from `EncryptionV3` — the documented v3 entry point. */
+/** The typed client from `Encryption` — the documented v3 entry point. */
 let typedDynamo: EncryptedDynamoDBInstance
 /** The nominal chainable client, forced into v3 mode. */
-let nominalClient: EncryptionClientFor<readonly AnyV3Table[]>
+let nominalClient: EncryptionClient<readonly AnyV3Table[]>
 let nominalDynamo: EncryptedDynamoDBInstance
 
 beforeAll(async () => {
@@ -75,12 +75,11 @@ beforeAll(async () => {
   // with every other live suite in this package.
   requireIntegrationEnv(['cipherstash'])
 
-  const typedClient = await EncryptionV3({ schemas: [users] })
+  const typedClient = await Encryption({ schemas: [users] })
   typedDynamo = encryptedDynamoDB({ encryptionClient: typedClient })
 
   nominalClient = await Encryption({
     schemas: [users] as never,
-    config: { eqlVersion: 3 },
   })
   nominalDynamo = encryptedDynamoDB({ encryptionClient: nominalClient })
 })
@@ -361,12 +360,11 @@ describe('nested attributes with a v3 table', liveSuiteOptions, () => {
   }
 
   let nestedDynamo: EncryptedDynamoDBInstance
-  let nestedClient: EncryptionClientFor<readonly AnyV3Table[]>
+  let nestedClient: EncryptionClient<readonly AnyV3Table[]>
 
   beforeAll(async () => {
     nestedClient = await Encryption({
       schemas: [nested] as never,
-      config: { eqlVersion: 3 },
     })
     nestedDynamo = encryptedDynamoDB({ encryptionClient: nestedClient })
   })
@@ -476,12 +474,11 @@ describe(
     })
 
     let renamedDynamo: EncryptedDynamoDBInstance
-    let renamedClient: EncryptionClientFor<readonly AnyV3Table[]>
+    let renamedClient: EncryptionClient<readonly AnyV3Table[]>
 
     beforeAll(async () => {
       renamedClient = await Encryption({
         schemas: [renamed] as never,
-        config: { eqlVersion: 3 },
       })
       renamedDynamo = encryptedDynamoDB({ encryptionClient: renamedClient })
     })

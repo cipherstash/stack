@@ -20,7 +20,7 @@ describe('generateClientFromSchemas', () => {
     expect(out).toContain("age: types.IntegerOrd('age'),")
     expect(out).toContain("verified: types.Boolean('verified'),")
     expect(out).toContain("from '@cipherstash/stack/v3'")
-    // `Encryption` is the current name; `EncryptionV3` is a deprecated alias.
+    // `Encryption` is the sole public factory; the old alias is removed.
     // Same reasoning as the drizzle negatives below — this is a template
     // literal written into the user's repo as real source, so nothing but an
     // assertion here catches a scaffold that teaches the deprecated name.

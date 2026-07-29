@@ -7,18 +7,18 @@
  */
 import { unwrapResult } from '@cipherstash/test-kit'
 import { beforeAll, describe, expect, it } from 'vitest'
-import type { EncryptionClientFor } from '@/encryption/v3'
-import { EncryptionV3, encryptedTable, types } from '@/encryption/v3'
+import type { EncryptionClient } from '@/encryption/v3'
+import { Encryption, encryptedTable, types } from '@/encryption/v3'
 
 const docs = encryptedTable('v3_json_docs', {
   profile: types.Json('profile'),
 })
 
 describe('v3 typed client — encrypted JSONB round-trip', () => {
-  let client: EncryptionClientFor<readonly [typeof docs]>
+  let client: EncryptionClient<readonly [typeof docs]>
 
   beforeAll(async () => {
-    client = await EncryptionV3({ schemas: [docs] })
+    client = await Encryption({ schemas: [docs] })
   }, 30000)
 
   it('round-trips a JSON document through encrypt/decrypt', async () => {

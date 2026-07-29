@@ -1,6 +1,7 @@
 import { logger } from '@cipherstash/stack/adapter-kit'
 import type { ColumnMap } from './column-map'
 import {
+  dynamicEncryptionClient,
   type EncryptionContext,
   EncryptionFailedError,
   withOpContext,
@@ -36,11 +37,12 @@ export async function encryptMutationData(
   if (mutation.kind === 'delete') return null
 
   const data = mutation.data
+  const client = dynamicEncryptionClient(ctx.encryptionClient)
 
   if (Array.isArray(data)) {
     // Bulk encrypt
     const result = await withOpContext(
-      ctx.encryptionClient.bulkEncryptModels(data, ctx.table),
+      client.bulkEncryptModels(data, ctx.table),
       ctx,
     )
     if (result.failure) {
@@ -60,10 +62,7 @@ export async function encryptMutationData(
   }
 
   // Single model
-  const result = await withOpContext(
-    ctx.encryptionClient.encryptModel(data, ctx.table),
-    ctx,
-  )
+  const result = await withOpContext(client.encryptModel(data, ctx.table), ctx)
   if (result.failure) {
     logger.error(
       `Supabase: failed to encrypt model for table "${ctx.tableName}"`,

@@ -1,4 +1,4 @@
-import { type EncryptionClientFor, EncryptionV3 } from '@cipherstash/stack/v3'
+import { Encryption, type EncryptionClient } from '@cipherstash/stack/v3'
 import { extractEncryptionSchema, types } from '@cipherstash/stack-drizzle'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { pgTable, serial } from 'drizzle-orm/pg-core'
@@ -23,7 +23,7 @@ export const benchTable = pgTable('bench', {
 })
 
 /**
- * Encryption schema for the `EncryptionV3()` client. Derived from the Drizzle
+ * Encryption schema for the `Encryption()` client. Derived from the Drizzle
  * table above so the two can't drift apart.
  */
 export const encryptionBenchTable = extractEncryptionSchema(benchTable)
@@ -55,7 +55,7 @@ export type BenchPlaintextRow = {
 }
 
 /** The typed EQL v3 client this bench drives. */
-export type BenchEncryptionClient = EncryptionClientFor<
+export type BenchEncryptionClient = EncryptionClient<
   readonly [typeof encryptionBenchTable]
 >
 
@@ -79,7 +79,7 @@ export async function buildBench(): Promise<BenchHandle> {
 
   const db = drizzle(pool)
 
-  const encryptionClient = await EncryptionV3({
+  const encryptionClient = await Encryption({
     schemas: [encryptionBenchTable],
   })
 

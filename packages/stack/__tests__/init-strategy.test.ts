@@ -15,10 +15,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { __resetStrategyDeprecationWarningForTests } from '@/encryption'
-import { EncryptionV3 } from '@/encryption/v3'
+import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
-import { encryptedColumn, encryptedTable } from '@/schema'
-import type { AuthStrategy, BuildableTable } from '@/types'
+import type { AuthStrategy } from '@/types'
 
 vi.mock('@cipherstash/protect-ffi', () => ({
   newClient: vi.fn(async () => ({ __mock: 'client' })),
@@ -27,7 +26,7 @@ vi.mock('@cipherstash/protect-ffi', () => ({
 import * as ffi from '@cipherstash/protect-ffi'
 
 const users = encryptedTable('users', {
-  email: encryptedColumn('email'),
+  email: types.Text('email'),
 })
 
 // Silence + capture the deprecation warning, and reset its once-per-process
@@ -181,108 +180,63 @@ describe('Encryption config.strategy (deprecated alias)', () => {
   })
 })
 
-// A minimal structural EQL v3 table: what marks a table as v3 for wire-format
-// detection is its `buildColumnKeyMap()` method (v2 tables have none). Built
-// by hand rather than via `@cipherstash/stack/v3` so this suite pins the
-// structural contract `Encryption` actually dispatches on.
-const v3Table = (tableName = 'v3_users'): BuildableTable =>
-  ({
-    tableName,
-    build: () => ({
-      tableName,
-      columns: { email: { cast_as: 'text', indexes: { unique: {} } } },
-    }),
-    buildColumnKeyMap: () => ({ email: 'email' }),
-  }) as BuildableTable
-
-describe('Encryption config.eqlVersion', () => {
+describe('Encryption v3 wire format', () => {
   // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
   const lastNewClientOpts = () =>
     vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
 
-  it('leaves eqlVersion undefined for a v2 schema set (FFI default, byte-identical v2 wire)', async () => {
+  it('always constructs the FFI client with eqlVersion 3', async () => {
     await Encryption({ schemas: [users] })
 
-    expect(lastNewClientOpts().eqlVersion).toBeUndefined()
+    expect(lastNewClientOpts().eqlVersion).toBe(3)
   })
 
-  it('rejects legacy v2 searchableJson before constructing an incompatible FFI client', async () => {
-    const legacyJson = encryptedTable('documents', {
-      metadata: encryptedColumn('metadata').searchableJson(),
-    })
-    await expect(Encryption({ schemas: [legacyJson] })).rejects.toThrow(
-      /legacy EQL v2 schema is not supported.*types\.Json\(\)/,
-    )
+  it('rejects a non-v3 schema before constructing the FFI client', async () => {
+    const legacyTable = {
+      tableName: 'legacy_users',
+      build: () => ({ tableName: 'legacy_users', columns: {} }),
+    }
+    await expect(
+      Encryption({ schemas: [legacyTable as never] }),
+    ).rejects.toThrow(/is not an EQL v3 table/)
     expect(ffi.newClient).not.toHaveBeenCalled()
   })
 
-  it('auto-detects eqlVersion 3 when every schema is a v3 table', async () => {
-    await Encryption({ schemas: [v3Table()] })
-
-    expect(lastNewClientOpts().eqlVersion).toBe(3)
-  })
-
-  it('forwards an explicit eqlVersion for a v2 schema set', async () => {
-    await Encryption({ schemas: [users], config: { eqlVersion: 3 } })
-
-    expect(lastNewClientOpts().eqlVersion).toBe(3)
-  })
-
-  // #772 review, finding 8. This used to be honoured, and the resulting client
-  // wrote `eql_v2_encrypted` payloads into `eql_v3_*` columns with no
-  // diagnostic at any layer — the type surface types it as the nominal client,
-  // which matches what the runtime returns, so nothing disagreed loudly enough
-  // to notice.
-  it('rejects an explicit eqlVersion 2 over a v3 schema set before constructing the FFI client', async () => {
+  it('rejects the removed config.eqlVersion escape hatch at runtime', async () => {
     await expect(
-      Encryption({ schemas: [v3Table()], config: { eqlVersion: 2 } }),
-    ).rejects.toThrow(/entirely EQL v3/)
-
-    expect(ffi.newClient).not.toHaveBeenCalled()
-  })
-
-  // The escape hatch survives where it is actually used: minting v2 wire from
-  // a v2 schema set, which is how the v2-read-compat fixtures are produced.
-  it('still honours an explicit eqlVersion 2 for a v2 schema set', async () => {
-    await Encryption({ schemas: [users], config: { eqlVersion: 2 } })
-
-    expect(lastNewClientOpts().eqlVersion).toBe(2)
-  })
-
-  it('throws on a mixed v2 + v3 schema set — one client emits one wire format', async () => {
-    await expect(Encryption({ schemas: [users, v3Table()] })).rejects.toThrow(
-      /cannot mix EQL v2 and EQL v3 tables/,
-    )
-  })
-
-  it('throws on a mixed schema set even with an explicit eqlVersion', async () => {
-    await expect(
-      Encryption({ schemas: [users, v3Table()], config: { eqlVersion: 3 } }),
-    ).rejects.toThrow(/cannot mix EQL v2 and EQL v3 tables/)
-  })
-
-  it('EncryptionV3 creates the underlying client with eqlVersion 3', async () => {
-    // The duck-typed table satisfies the runtime contract; the type-level
-    // AnyV3Table constraint is beside the point for this wiring assertion.
-    await EncryptionV3({ schemas: [v3Table() as never] })
-
-    expect(lastNewClientOpts().eqlVersion).toBe(3)
-  })
-
-  it('EncryptionV3 rejects an explicit eqlVersion 2 identically', async () => {
-    // Post-collapse `EncryptionV3` IS `Encryption` (a deprecated alias), so it
-    // no longer independently pins the wire format. The invariant it used to
-    // enforce by forcing `eqlVersion: 3` now lives in `resolveEqlVersion`, so
-    // the outcome for a caller upgrading from the old `EncryptionV3` is the
-    // same in the case that matters: the contradiction is refused rather than
-    // silently building a v2-wire client over v3 concrete domains.
-    await expect(
-      EncryptionV3({
-        schemas: [v3Table() as never],
-        config: { eqlVersion: 2 },
+      Encryption({
+        schemas: [users],
+        config: { eqlVersion: 2 } as never,
       }),
-    ).rejects.toThrow(/entirely EQL v3/)
+    ).rejects.toThrow(/config\.eqlVersion.*removed/)
 
     expect(ffi.newClient).not.toHaveBeenCalled()
+  })
+
+  it('rejects an explicit eqlVersion 3, which is a stale config and not a request', async () => {
+    await expect(
+      Encryption({
+        schemas: [users],
+        config: { eqlVersion: 3 } as never,
+      }),
+    ).rejects.toThrow(/config\.eqlVersion.*removed/)
+
+    expect(ffi.newClient).not.toHaveBeenCalled()
+  })
+
+  /**
+   * `eqlVersion?: never` on `ClientConfig` has declared type `undefined` without
+   * `exactOptionalPropertyTypes` — which this repo does not enable — so the type
+   * accepts `eqlVersion: undefined` and cannot be made to reject it. A bare
+   * `Object.hasOwn` check therefore threw on a config the emitted declarations
+   * had already accepted. An explicit `undefined` names no version and carries
+   * no migration hazard, so the runtime tolerates exactly that one value.
+   */
+  it('tolerates an explicitly undefined eqlVersion, which the type permits', async () => {
+    await expect(
+      Encryption({ schemas: [users], config: { eqlVersion: undefined } }),
+    ).resolves.toBeDefined()
+
+    expect(lastNewClientOpts().eqlVersion).toBe(3)
   })
 })

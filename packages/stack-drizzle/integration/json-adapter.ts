@@ -1,7 +1,7 @@
 import {
   type AnyV3Table,
-  type EncryptionClientFor,
-  EncryptionV3,
+  Encryption,
+  type EncryptionClient,
 } from '@cipherstash/stack/v3'
 import {
   databaseUrl,
@@ -29,7 +29,7 @@ export function makeDrizzleJsonAdapter(): JsonIntegrationAdapter {
   let db: ReturnType<typeof drizzle>
   let tableName: string
   let table: AnyTable
-  let client: EncryptionClientFor<readonly AnyV3Table[]>
+  let client: EncryptionClient<readonly AnyV3Table[]>
   let ops: ReturnType<typeof createEncryptionOperators>
 
   const rowsFor = async (
@@ -76,7 +76,7 @@ export function makeDrizzleJsonAdapter(): JsonIntegrationAdapter {
         document: types.Json('document'),
       })
       const schema = extractEncryptionSchema(table)
-      client = await EncryptionV3({ schemas: [schema] })
+      client = await Encryption({ schemas: [schema] })
       ops = createEncryptionOperators(client)
 
       await sqlClient.unsafe(`DROP TABLE IF EXISTS ${tableName}`)

@@ -12,10 +12,10 @@ import { BulkEncryptOperation } from '@/encryption/operations/bulk-encrypt'
 import { DecryptOperation } from '@/encryption/operations/decrypt'
 import { EncryptOperation } from '@/encryption/operations/encrypt'
 import { EncryptQueryOperation } from '@/encryption/operations/encrypt-query'
-import { encryptedColumn, encryptedTable } from '@/schema'
+import { encryptedTable, types } from '@/eql/v3'
 
 const table = encryptedTable('null-guards-test', {
-  metadata: encryptedColumn('metadata').searchableJson(),
+  metadata: types.Json('metadata'),
 })
 
 // Any truthy stand-in — the guard returns before the client is touched.

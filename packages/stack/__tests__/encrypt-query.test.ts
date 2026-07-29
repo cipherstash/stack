@@ -9,11 +9,12 @@ import {
   expectFailure,
   metadata,
   products,
+  skipWithoutLiveCredentials,
   unwrapResult,
   users,
 } from './fixtures'
 
-describe('encryptQuery', () => {
+describe.skipIf(skipWithoutLiveCredentials)('encryptQuery', () => {
   let protectClient: EncryptionClient
 
   beforeAll(async () => {
@@ -34,7 +35,7 @@ describe('encryptQuery', () => {
 
       expect(data).toMatchObject({
         i: { t: 'users', c: 'email' },
-        v: 2,
+        v: 3,
       })
       expect(data).toHaveProperty('hm')
     }, 30000)
@@ -50,7 +51,7 @@ describe('encryptQuery', () => {
 
       expect(data).toMatchObject({
         i: { t: 'users', c: 'bio' },
-        v: 2,
+        v: 3,
       })
       expect(data).toHaveProperty('bf')
     }, 30000)
@@ -66,9 +67,46 @@ describe('encryptQuery', () => {
 
       expect(data).toMatchObject({
         i: { t: 'users', c: 'age' },
-        v: 2,
+        v: 3,
       })
+      expect(data).toHaveProperty('op')
+    }, 30000)
+
+    it('answers equality through the ordering term on an order-capable column', async () => {
+      // A v3 numeric `_ord` domain carries no `hm`. Equality resolves to the
+      // same CLLW-OPE term `orderAndRange` emits — the two are distinguished by
+      // the SQL comparison operator (`=` vs `>=`), not by the ciphertext — so
+      // the default `equality → unique` mapping would wrongly reject it.
+      // Asserting `hm` is ABSENT is the load-bearing half: it fails if a future
+      // change gives the domain a `unique` index and quietly routes equality
+      // back through the HMAC.
+      const result = await protectClient.encryptQuery(25, {
+        column: users.age,
+        table: users,
+        queryType: 'equality',
+      })
+
+      const data = unwrapResult(result)
+      expect(data).toHaveProperty('op')
+      expect(data).not.toHaveProperty('hm')
+    }, 30000)
+
+    it('emits the block-ORE term on an _ord_ore domain', async () => {
+      // The other v3 ordering flavour: `_ord_ore` domains stay block-ORE (`ore`
+      // index, `ob` term) where `_ord` is CLLW-OPE. This is the explicit-
+      // queryType path, where `queryTypeToFfi` maps orderAndRange to a static
+      // `ore` and `resolveIndexType` then swaps to `ope` only when the column
+      // lacks `ore` — so this is the case where that swap must NOT fire. The
+      // auto-inference test below never reaches that branch.
+      const result = await protectClient.encryptQuery(99.99, {
+        column: products.price,
+        table: products,
+        queryType: 'orderAndRange',
+      })
+
+      const data = unwrapResult(result)
       expect(data).toHaveProperty('ob')
+      expect(data).not.toHaveProperty('op')
     }, 30000)
   })
 
@@ -163,10 +201,14 @@ describe('encryptQuery', () => {
     }, 30000)
 
     it('provides descriptive error for queryType mismatch', async () => {
-      const result = await protectClient.encryptQuery(42, {
-        column: users.age,
-        table: users,
-        queryType: 'equality', // age only has orderAndRange
+      // A match-only column genuinely cannot answer equality: it has no
+      // `unique` index and no ordering index to resolve through. (An
+      // order-capable column DOES answer equality — see "answers equality
+      // through the ordering term" above — so it can't carry this assertion.)
+      const result = await protectClient.encryptQuery('anything', {
+        column: articles.content,
+        table: articles,
+        queryType: 'equality',
       })
 
       expectFailure(result, 'unique')
@@ -217,7 +259,7 @@ describe('encryptQuery', () => {
       expect(data).toHaveProperty('bf') // bloom filter
     }, 30000)
 
-    it('allows number with ore index', async () => {
+    it('allows number with an ordering index', async () => {
       const result = await protectClient.encryptQuery(42, {
         column: users.age,
         table: users,
@@ -225,7 +267,7 @@ describe('encryptQuery', () => {
       })
 
       const data = unwrapResult(result)
-      expect(data).toHaveProperty('ob') // order bits
+      expect(data).toHaveProperty('op') // CLLW-OPE ordering term
     }, 30000)
   })
 
@@ -240,9 +282,9 @@ describe('encryptQuery', () => {
       const data = unwrapResult(result)
       expect(data).toMatchObject({
         i: { t: 'users', c: 'age' },
-        v: 2,
+        v: 3,
       })
-      expect(data).toHaveProperty('ob')
+      expect(data).toHaveProperty('op')
     }, 30000)
 
     it('encrypts MIN_SAFE_INTEGER', async () => {
@@ -255,9 +297,9 @@ describe('encryptQuery', () => {
       const data = unwrapResult(result)
       expect(data).toMatchObject({
         i: { t: 'users', c: 'age' },
-        v: 2,
+        v: 3,
       })
-      expect(data).toHaveProperty('ob')
+      expect(data).toHaveProperty('op')
     }, 30000)
 
     it('encrypts negative zero', async () => {
@@ -268,7 +310,7 @@ describe('encryptQuery', () => {
       })
 
       const data = unwrapResult(result)
-      expect(data).toHaveProperty('ob')
+      expect(data).toHaveProperty('op')
     }, 30000)
   })
 
@@ -283,7 +325,7 @@ describe('encryptQuery', () => {
       const data = unwrapResult(result)
       expect(data).toMatchObject({
         i: { t: 'users', c: 'email' },
-        v: 2,
+        v: 3,
       })
       expect(data).toHaveProperty('hm')
     }, 30000)
@@ -298,7 +340,7 @@ describe('encryptQuery', () => {
       const data = unwrapResult(result)
       expect(data).toMatchObject({
         i: { t: 'users', c: 'bio' },
-        v: 2,
+        v: 3,
       })
       expect(data).toHaveProperty('bf')
     }, 30000)
@@ -316,7 +358,7 @@ describe('encryptQuery', () => {
       const data = unwrapResult(result)
       expect(data).toMatchObject({
         i: { t: 'users', c: 'email' },
-        v: 2,
+        v: 3,
       })
       expect(data).toHaveProperty('hm')
     }, 30000)
@@ -371,7 +413,7 @@ describe('encryptQuery', () => {
 
       expect(data).toHaveLength(2)
       expect(data[0]).toHaveProperty('hm')
-      expect(data[1]).toHaveProperty('ob')
+      expect(data[1]).toHaveProperty('op')
     }, 30000)
 
     it('rejects NaN/Infinity values in batch', async () => {
@@ -473,7 +515,7 @@ describe('encryptQuery', () => {
       expect(data).toHaveLength(1)
       expect(data[0]).toMatchObject({
         i: { t: 'users', c: 'email' },
-        v: 2,
+        v: 3,
       })
       expect(typeof data[0]).toBe('object')
     }, 30000)
@@ -532,7 +574,7 @@ describe('encryptQuery', () => {
       expect(data).toHaveLength(1)
       expect(data[0]).toMatchObject({
         i: { t: 'users', c: 'email' },
-        v: 2,
+        v: 3,
       })
       expect(typeof data[0]).toBe('object')
     }, 30000)
@@ -591,7 +633,7 @@ describe('encryptQuery', () => {
 
       expect(data).toMatchObject({
         i: { t: 'users', c: 'email' },
-        v: 2,
+        v: 3,
       })
       expect(typeof data).toBe('object')
     }, 30000)
@@ -638,12 +680,35 @@ describe('encryptQuery', () => {
 
       expect(data).toMatchObject({
         i: { t: 'users', c: 'email' },
-        v: 2,
+        v: 3,
       })
       expect(typeof data).toBe('object')
     }, 30000)
   })
 
+  // These cover the SDK surface only — that `.withLockContext()` returns an
+  // executable operation. They deliberately do NOT execute.
+  //
+  // Two tests that DID execute were removed (see below). A lock context binds a
+  // data key to an end user's identity claim, which requires an
+  // `OidcFederationStrategy`-authenticated client — `skills/stash-encryption`
+  // states that a service credential "cannot be used with a lock context". This
+  // suite builds its client from the `CS_*` service credentials, so the claim
+  // could never resolve, and ZeroKMS rejects the request on the EQL v3 wire.
+  //
+  // They were never meaningful. Introduced in fea303d0, they passed against the
+  // live service while forwarding a literal `accessToken: 'mock-token'` — proof
+  // that nothing was authorising the binding. Their assertions (`i`, `v`, `hm`,
+  // `op`) are identical to the non-lock-context tests above, so they could not
+  // distinguish a bound claim from an ignored one. And per 8d707cc9, query terms
+  // are not identity-bound at all: the `hm` term is workspace-scoped and matches
+  // with or without a lock context — the identity boundary is enforced at
+  // DECRYPT.
+  //
+  // Real coverage lives where the claim can actually resolve, under
+  // CLERK_MACHINE_TOKEN + OidcFederationStrategy:
+  //   packages/stack/integration/identity/matrix-identity.integration.test.ts
+  //   packages/stack-drizzle/integration/lock-context.integration.test.ts
   describe('LockContext support', () => {
     it('single query with a lock context builds an executable operation', async () => {
       const operation = protectClient.encryptQuery('test@example.com', {
@@ -670,49 +735,6 @@ describe('encryptQuery', () => {
       const withContext = operation.withLockContext(createMockLockContext())
       expect(withContext).toHaveProperty('execute')
       expect(typeof withContext.execute).toBe('function')
-    }, 30000)
-
-    it('executes a single query bound to an identity claim', async () => {
-      const operation = protectClient.encryptQuery('test@example.com', {
-        column: users.email,
-        table: users,
-        queryType: 'equality',
-      })
-
-      const withContext = operation.withLockContext(createMockLockContext())
-      const result = await withContext.execute()
-
-      const data = unwrapResult(result)
-      expect(data).toMatchObject({
-        i: { t: 'users', c: 'email' },
-        v: 2,
-      })
-      expect(data).toHaveProperty('hm')
-    }, 30000)
-
-    it('executes a bulk query bound to an identity claim', async () => {
-      const operation = protectClient.encryptQuery([
-        {
-          value: 'test@example.com',
-          column: users.email,
-          table: users,
-          queryType: 'equality',
-        },
-        {
-          value: 42,
-          column: users.age,
-          table: users,
-          queryType: 'orderAndRange',
-        },
-      ])
-
-      const withContext = operation.withLockContext(createMockLockContext())
-      const result = await withContext.execute()
-
-      const data = unwrapResult(result)
-      expect(data).toHaveLength(2)
-      expect(data[0]).toHaveProperty('hm')
-      expect(data[1]).toHaveProperty('ob')
     }, 30000)
   })
 })

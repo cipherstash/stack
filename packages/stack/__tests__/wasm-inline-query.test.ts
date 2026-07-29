@@ -39,6 +39,8 @@ const users = encryptedTable('users', {
   bio: types.TextSearch('bio'),
   // IntegerOrd → ope only (the OPE ordering flavour, no unique)
   age: types.IntegerOrd('age'),
+  // IntegerOrdOre → ore only (the block-ORE ordering flavour, no unique)
+  score: types.IntegerOrdOre('score'),
   // Json → ste_vec
   prefs: types.Json('prefs'),
 })
@@ -121,6 +123,37 @@ describe('WasmEncryptionClient.encryptQuery', () => {
     expect(ffi.encryptQuery).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ indexType: 'ope' }),
+    )
+  })
+
+  it("keeps 'ore' for an _ord_ore domain (the other ordering flavour)", async () => {
+    // `orderingForEqlType` splits on the domain name: `_ord_ore` stays block-ORE
+    // where `_ord` is CLLW-OPE. Covering one flavour only lets a regression in
+    // that split hide behind the other.
+    const c = await client()
+    await c.encryptQuery(42, {
+      table: users,
+      column: users.score,
+      queryType: 'orderAndRange',
+    })
+    expect(ffi.encryptQuery).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ indexType: 'ore' }),
+    )
+  })
+
+  it('answers equality through the ore index on an _ord_ore column', async () => {
+    // The `indexes.ore` branch of `equalityOrderingIndex`; the test above it
+    // covers the `indexes.ope` branch.
+    const c = await client()
+    await c.encryptQuery(42, {
+      table: users,
+      column: users.score,
+      queryType: 'equality',
+    })
+    expect(ffi.encryptQuery).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ indexType: 'ore' }),
     )
   })
 

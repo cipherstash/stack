@@ -232,7 +232,7 @@ export async function encryptedSupabase(
     schemas: encryptionSchemas as unknown as Parameters<
       typeof Encryption
     >[0]['schemas'],
-    config: { ...options.config, eqlVersion: 3 },
+    config: options.config,
   })
 
   // 6. Return the instance. `from` resolves the introspected/merged table and

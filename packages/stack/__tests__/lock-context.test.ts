@@ -1,8 +1,8 @@
 import 'dotenv/config'
 import { OidcFederationStrategy } from '@cipherstash/auth'
 import { describe, expect, it } from 'vitest'
+import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
-import { encryptedColumn, encryptedTable } from '@/schema'
 
 /**
  * Live, identity-bound encryption round-trips (gated on `USER_JWT`).
@@ -18,8 +18,8 @@ import { encryptedColumn, encryptedTable } from '@/schema'
  * `CS_CLIENT_KEY`; skips silently if `USER_JWT` is absent.
  */
 const users = encryptedTable('users', {
-  email: encryptedColumn('email').freeTextSearch().equality().orderAndRange(),
-  address: encryptedColumn('address').freeTextSearch(),
+  email: types.TextSearch('email'),
+  address: types.TextMatch('address'),
 })
 
 const IDENTITY_CLAIM = { identityClaim: ['sub'] }

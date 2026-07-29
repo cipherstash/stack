@@ -4,7 +4,7 @@
  *
  * Most consumers want {@link cipherstashFromStack}: it derives the v3
  * encryption schemas from your contract, constructs the
- * `@cipherstash/stack` `EncryptionV3` client from your `CS_*` env vars or
+ * `@cipherstash/stack` `Encryption` client from your `CS_*` env vars or
  * local profile, builds the SDK adapter, and returns ready-to-spread
  * `extensions` / `middleware` for `postgres<Contract>({...})`. The
  * remaining exports are the primitives it composes, for advanced users

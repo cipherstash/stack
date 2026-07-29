@@ -23,8 +23,7 @@ EQL v3 exclusively:
   const client = await Encryption({ schemas: [patients], config })
   ```
 
-The v2 schema builders (`encryptedColumn` / `encryptedField` / the v2
-`encryptedTable`) are no longer exported from this entry, and passing a v2 table
-throws a clear error. The WASM path was never announced or documented for v2 and
-had no known users; EQL v2 remains fully supported on the native
-`@cipherstash/stack` entry.
+Only the EQL v3 schema authoring surface is public, and passing a legacy table
+shape throws a clear error. The WASM path was never announced or documented for
+v2 and had no known users. The native `@cipherstash/stack` entry continues to
+decrypt stored EQL v2 payloads, but new clients author EQL v3 only.

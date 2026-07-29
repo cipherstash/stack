@@ -1,6 +1,6 @@
 /**
  * `cipherstashFromStack` — the v3-only entry point's validation
- * paths, all of which throw BEFORE any `EncryptionV3` client is
+ * paths, all of which throw BEFORE any `Encryption` client is
  * constructed (so no live CipherStash credentials are needed here; the
  * happy path is exercised by the live suite).
  *

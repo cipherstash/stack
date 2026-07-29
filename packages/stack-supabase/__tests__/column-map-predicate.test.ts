@@ -1,4 +1,3 @@
-import { encryptedColumn } from '@cipherstash/stack/schema'
 import { describe, expect, it } from 'vitest'
 import { isV3ColumnLike } from '../src/column-map'
 
@@ -115,12 +114,15 @@ describe('isV3ColumnLike', () => {
     expect(isV3ColumnLike(builder)).toBe(true)
   })
 
-  // The case the four-probe design exists for, stated with the real class
-  // rather than a hand-rolled stub: a v2 column builder genuinely has `build()`
-  // and `getName()` and genuinely lacks the other two. A two-probe gate would
-  // accept it and its filter operands would go to PostgREST in the clear.
-  it('rejects a real EQL v2 column builder', () => {
-    const v2 = encryptedColumn('email').equality()
+  // The case the four-probe design exists for: a v2 column builder genuinely
+  // has `build()` and `getName()` and genuinely lacks the other two. A two-probe
+  // gate would accept it and its filter operands would go to PostgREST in the
+  // clear. The stub is hand-rolled because the v2 `EncryptedColumn` class no
+  // longer exists to import — it was deleted with the v3-only collapse — so
+  // this pins the STRUCTURE that class had, which is what `isV3ColumnLike`
+  // discriminates on.
+  it('rejects the structural shape of a legacy v2 column builder', () => {
+    const v2 = { getName: () => 'email', build: () => ({}) }
 
     // Spelled out so that if `EncryptedColumn` ever grows one of these, the
     // failure names the cause rather than just reporting `true !== false`.

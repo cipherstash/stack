@@ -7,7 +7,7 @@ import {
   encryptedTable,
   types,
 } from '@/eql/v3'
-import { encryptConfigSchema, encryptedColumn } from '@/schema'
+import { encryptConfigSchema, encryptedColumn } from '@/schema/internal'
 import { type DomainSpec, typedEntries, V3_MATRIX } from './v3-matrix/catalog'
 
 describe('eql_v3 text_search column', () => {

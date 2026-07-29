@@ -4,7 +4,7 @@
  *
  * `cipherstashFromStack({ contractJson })` derives the v3 encryption
  * schemas from the contract (one `public.eql_v3_*` domain per column),
- * constructs the `@cipherstash/stack` `EncryptionV3` client against
+ * constructs the `@cipherstash/stack` encryption client against
  * your `CS_*` env vars or local profile, builds the SDK adapter, and
  * returns ready-to-spread arrays for `extensions` and `middleware`.
  * Override `schemasV3` only if you have additional tables the contract

@@ -46,12 +46,19 @@ import { type ComparisonOp, type EqualityOp, v3Dialect } from './sql-dialect.js'
 /**
  * The client capability this factory consumes: `encryptQuery`, in both its
  * single (`value, opts`) and batch (`terms[]`) forms. Declared structurally —
- * with maximally-permissive operands — so it is satisfied by the nominal
- * `EncryptionClient`, by the `TypedEncryptionClient` that `EncryptionV3` returns
- * (whatever its schema tuple), AND by a hand-rolled test double, none needing a
- * cast. Typing the parameter to the nominal `TypedEncryptionClient<S>` would
- * reject a client built for a narrower schema tuple (it accepts fewer tables than
- * `readonly AnyV3Table[]`); the structural surface sidesteps that variance.
+ * with maximally-permissive operands — so it is satisfied by an
+ * `EncryptionClient` at ANY schema-tuple instantiation (the defaulted
+ * `readonly AnyV3Table[]` one and the narrowed one `Encryption({ schemas })`
+ * returns are mutually assignable, so tuple width costs nothing either way)
+ * AND by anything else that can only `encryptQuery` — a partial client, an
+ * adapter, a test double — none needing a cast.
+ *
+ * That last group is the reason the parameter is not simply typed
+ * `client: EncryptionClient`. `EncryptionClient` is a ten-member interface;
+ * naming it nominally would demand `encryptModel`, `decrypt`, `decryptModel`
+ * and the rest from every caller, rejecting anything that supplies only the
+ * capability this factory actually consumes. See `__tests__/operators.test-d.ts`,
+ * which pins all three shapes.
  *
  * Every operand is a QUERY TERM, not a storage envelope: `encryptQuery` mints a
  * ciphertext-free term (no `c`) carrying all of the column's configured index
@@ -181,15 +188,16 @@ type ChainableOperation<T> = {
  * {@link EncryptionOperatorError} when the column can't answer the operator
  * (e.g. ordering a non-`ore` column).
  *
- * @param client - anything that can `encryptQuery` — the nominal
- *   `EncryptionClient` or the `TypedEncryptionClient` from `EncryptionV3` (no
- *   cast needed).
+ * @param client - anything that can `encryptQuery`: an `EncryptionClient` at any
+ *   schema-tuple instantiation, including the narrowed one
+ *   `Encryption({ schemas })` returns, or a partial client supplying just that
+ *   capability. No cast needed in either case.
  * @param defaults - lock context / audit applied to every operand encryption
  *   unless a per-call override is supplied.
  *
  * @example
  * ```typescript
- * const ops = createEncryptionOperators(await EncryptionV3({ schemas: [users] }))
+ * const ops = createEncryptionOperators(await Encryption({ schemas: [users] }))
  * await db.select().from(users).where(await ops.eq(users.email, 'a@b.com'))
  * ```
  */

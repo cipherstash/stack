@@ -35,7 +35,6 @@
       // surfaces as implicit-`any` noise far from the real cause
       // (#684). The matching runtime aliases live in `vitest.shared.ts`.
       "@cipherstash/stack": ["../stack/src/index.ts"],
-      "@cipherstash/stack/client": ["../stack/src/client.ts"],
       "@cipherstash/stack/types": ["../stack/src/types-public.ts"],
       "@cipherstash/stack/eql/v3": ["../stack/src/eql/v3/index.ts"],
       "@cipherstash/stack/schema": ["../stack/src/schema/index.ts"],

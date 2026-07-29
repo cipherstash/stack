@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { EncryptionV3 } from '@/encryption/v3'
 import { encryptedTable, types } from '@/eql/v3'
+import { Encryption } from '@/index'
 
 vi.mock('@cipherstash/protect-ffi', () => ({
   ProtectError: class ProtectError extends Error {},
@@ -30,7 +30,7 @@ afterEach(() => {
 
 describe('core v3 match-needle preflight', () => {
   it('rejects a short scalar needle without calling protect-ffi', async () => {
-    const client = await EncryptionV3({ schemas: [users] })
+    const client = await Encryption({ schemas: [users] })
     const result = await client.encryptQuery('ad', {
       column: users.bio,
       table: users,
@@ -42,7 +42,7 @@ describe('core v3 match-needle preflight', () => {
   })
 
   it('rejects a short term in a batch before calling protect-ffi', async () => {
-    const client = await EncryptionV3({ schemas: [users] })
+    const client = await Encryption({ schemas: [users] })
     const result = await client.encryptQuery([
       {
         value: 'ad',

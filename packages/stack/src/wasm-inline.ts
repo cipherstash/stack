@@ -109,15 +109,15 @@ import {
   assertValidNumericValue,
   assertValueIndexCompatibility,
 } from '@/encryption/helpers/validation'
-import {
-  type AnyV3Table,
-  buildEncryptConfig,
-  type V3DecryptedModel,
-  type V3EncryptedModel,
-  type V3ModelInput,
-} from '@/eql/v3'
-import { DATE_LIKE_CASTS } from '@/eql/v3/columns'
+import { buildEncryptConfig } from '@/eql/v3'
+import { type AnyEncryptedV3Column, DATE_LIKE_CASTS } from '@/eql/v3/columns'
 import { reconstructDateValue } from '@/eql/v3/date-reconstruction'
+import type {
+  AnyV3Table,
+  V3DecryptedModel,
+  V3EncryptedModel,
+  V3ModelInput,
+} from '@/eql/v3/table'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import {
   type CastAs,
@@ -126,10 +126,8 @@ import {
   toEqlCastAs,
 } from '@/schema'
 import type {
-  BuildableV3QueryableColumn,
   Encrypted,
   EncryptedQuery,
-  EncryptOptions,
   Plaintext,
   QueryTypeName,
 } from '@/types'
@@ -152,8 +150,7 @@ export {
 // the column classes, `buildEncryptConfig`, and the inference helpers — is the
 // v3 one, re-exported wholesale so an edge consumer authors v3 schemas from this
 // single import. The v2 builders are intentionally NOT exported here: the WASM
-// path was never announced or documented for v2, and the edge targets v3. EQL v2
-// remains fully available on the native `@cipherstash/stack` entry.
+// path was never announced or documented for v2, and the edge targets v3.
 export * from '@/eql/v3'
 // The failure vocabulary every method on this entry now returns. Exported here
 // so an edge consumer can discriminate `result.failure.type` from the SAME
@@ -226,6 +223,25 @@ export type WasmClientConfig = {
   clientId: string
   /** Workspace client key — required by the WASM client. */
   clientKey: string
+
+  /**
+   * Removed: this entry always emits EQL v3. Declared as `never` rather than
+   * omitted because excess-property checking — the only thing that caught a
+   * leftover `eqlVersion` — fires on FRESH object literals alone. A shared
+   * config const, which is what a v2 → v3 migration actually holds, therefore
+   * type-checked clean and then hit the runtime guard in {@link Encryption}.
+   *
+   * On the shared base so it applies across all three auth arms below; a copy
+   * per arm would drift. Mirrors `ClientConfig.eqlVersion` on the native entry,
+   * whose guard this one is a byte-for-byte mirror of — the type is defence in
+   * depth for the JS/JSON callers that bypass it, not a replacement.
+   *
+   * As on the native entry, `?: never` still admits `eqlVersion: undefined`
+   * without `exactOptionalPropertyTypes` (not enabled in this repo) and cannot
+   * be made to reject it, so the runtime tolerates that one value and rejects
+   * every real one.
+   */
+  eqlVersion?: never
   // Provide exactly one of `accessKey` (we build the strategy) or a
   // pre-built auth strategy — never both, never neither.
 } & (
@@ -288,10 +304,43 @@ export type WasmAuthStrategy = AccessKeyStrategy | OidcFederationStrategy
 
 export type WasmEncryptionConfig = {
   /** One or more EQL v3 tables, authored with `types` / `encryptedTable` from
-   *  this entry. The WASM entry is EQL v3 only. */
-  schemas: [AnyV3Table, ...AnyV3Table[]]
+   *  this entry. The WASM entry is EQL v3 only.
+   *
+   *  `readonly` (not the mutable tuple this once was) for the same reason the
+   *  native entry was widened in A-4: a mutable tuple rejects every shape that
+   *  is not an array literal — a shared `export const all: AnyV3Table[]`, a
+   *  `ReadonlyArray`, anything spread. But non-emptiness stays HERE rather than
+   *  moving entirely onto the {@link Encryption} overloads: a loose
+   *  `readonly AnyV3Table[]` on the exported type laundered an empty set past
+   *  both overloads, because `NonEmptyV3<readonly AnyV3Table[]>` resolves
+   *  `S['length']` to `number`, not `0`. A config object built once and passed
+   *  around — precisely what this type exists for — then reached the runtime
+   *  throw with a clean typecheck. The overloads still accept widened arrays
+   *  passed INLINE, which is the case A-4 was actually about. */
+  schemas: readonly [AnyV3Table, ...AnyV3Table[]]
   config: WasmClientConfig
 }
+
+/**
+ * The implementation's view of {@link WasmEncryptionConfig}: same shape, loose
+ * array. Deliberately not exported — it is what the overload implementation
+ * signature destructures, and exporting it would reopen the laundering path
+ * documented above.
+ */
+type WasmEncryptionConfigInput = {
+  schemas: readonly AnyV3Table[]
+  config: WasmClientConfig
+}
+
+export type WasmEncryptOptions = {
+  table: AnyV3Table
+  column: AnyEncryptedV3Column
+}
+
+type WasmQueryableV3Column = Extract<
+  AnyEncryptedV3Column,
+  { isQueryable(): true }
+>
 
 /**
  * Options for {@link WasmEncryptionClient.encryptQuery}.
@@ -302,9 +351,9 @@ export type WasmEncryptionConfig = {
  */
 export type WasmEncryptQueryOptions = {
   /** The `encryptedTable(...)` the column belongs to. */
-  table: EncryptOptions['table']
+  table: AnyV3Table
   /** The queryable v3 column the term targets, e.g. `users.email`. */
-  column: BuildableV3QueryableColumn
+  column: WasmQueryableV3Column
   /**
    * Which of the column's indexes the term targets:
    *
@@ -340,7 +389,7 @@ export type WasmQueryTerm = WasmEncryptQueryOptions & {
  * One storage value in a {@link WasmEncryptionClient.bulkEncrypt} batch.
  *
  * Each entry carries its OWN table and column, rather than the batch taking a
- * single `EncryptOptions` the way {@link WasmEncryptionClient.encrypt} does.
+ * single `WasmEncryptOptions` the way {@link WasmEncryptionClient.encrypt} does.
  * That mirrors {@link WasmQueryTerm} — and it is what makes the round-trip
  * saving worth having: rendering a page of rows means encrypting several
  * columns across many rows, and a single-column batch would still cost one
@@ -364,8 +413,8 @@ export type WasmBulkPlaintext = {
    * every call site to satisfy a check the runtime does anyway.
    */
   plaintext: WasmPlaintext | undefined
-  table: EncryptOptions['table']
-  column: EncryptOptions['column']
+  table: AnyV3Table
+  column: AnyEncryptedV3Column
 }
 
 /**
@@ -683,12 +732,15 @@ export class WasmEncryptionClient {
    * clients derive the table from the payloads instead, so callers that hold a
    * client structurally cannot tell the two apart.
    *
-   * `encryptedDynamoDB` is the caller that cares: its legacy EQL v2 read path
-   * deliberately omits the table (a v2 table means nothing to a v3
-   * reconstructor map), which reached `requireTable` with `undefined` and threw
-   * a TypeError about `tableName` pointing nowhere near the cause. Declared
-   * rather than sniffed so the check is a stated capability, not a guess about
-   * arity or constructor name (#772 review, finding 10).
+   * Declared rather than sniffed so the capability is a stated fact, not a
+   * guess about arity or constructor name (#772 review, finding 10).
+   *
+   * This does NOT imply the entry cannot serve a legacy EQL v2 read. It once
+   * did: `encryptedDynamoDB` used to omit the table on that path, reaching
+   * `requireTable` with `undefined`. It now forwards the registered v3 table on
+   * every read, v2 storage included — the reconstructor map is keyed by the
+   * current schema either way, and protect-ffi's `decrypt` accepts both wire
+   * generations regardless of the client's `eqlVersion`.
    */
   readonly requiresTableForDecrypt = true
 
@@ -750,7 +802,7 @@ export class WasmEncryptionClient {
 
   async encrypt(
     plaintext: WasmPlaintext,
-    opts: EncryptOptions,
+    opts: WasmEncryptOptions,
   ): Promise<WasmResult<Encrypted>> {
     return wasmResult(async () => {
       const ffiOpts = {
@@ -1367,14 +1419,35 @@ export class WasmEncryptionClient {
 }
 
 /**
+ * `[]` must stay a compile error, but the constraint cannot carry that: it
+ * would reject widened and readonly arrays again. The native entry solves this
+ * the same way — see `NonEmptyV3` in `encryption/index.ts` for why the
+ * conditional sits on the PROPERTY, and why a second overload is needed for
+ * callers that are themselves generic over their schemas.
+ */
+type NonEmptyV3<S extends readonly AnyV3Table[]> = S['length'] extends 0
+  ? never
+  : S
+
+/**
  * Initialize a WASM-backed encryption client.
  *
  * Mirrors the Node entry's {@link import('./encryption').Encryption}
  * factory, but constructs the protect-ffi client via the WASM strategy
  * API. Use from Deno / Edge / Workers / Bun.
  */
+export function Encryption<
+  const S extends readonly [AnyV3Table, ...AnyV3Table[]],
+>(config: {
+  schemas: S
+  config: WasmClientConfig
+}): Promise<WasmEncryptionClient>
+export function Encryption<const S extends readonly AnyV3Table[]>(config: {
+  schemas: NonEmptyV3<S>
+  config: WasmClientConfig
+}): Promise<WasmEncryptionClient>
 export async function Encryption(
-  config: WasmEncryptionConfig,
+  config: WasmEncryptionConfigInput,
 ): Promise<WasmEncryptionClient> {
   const { schemas, config: clientConfig } = config
 
@@ -1384,15 +1457,40 @@ export async function Encryption(
     )
   }
 
+  // Mirrors the native entry's guard (#815). The two entries disagreed about v2
+  // before that issue, so a config the native factory rejects outright must not
+  // pass silently here. This entry cannot emit v2 — `eqlVersion: 3` is hardcoded
+  // below — so an `eqlVersion` key is always a stale config, never a request we
+  // could honour. `Object.hasOwn` rejects the PRESENCE of the key, including an
+  // explicit `eqlVersion: 3`, so the removal is discovered at the source rather
+  // than the field lingering as a no-op that looks load-bearing.
+  //
+  // An explicit `undefined` is the one exception, on both entries: it names no
+  // version, and `eqlVersion?: never` cannot reject it at the type level without
+  // `exactOptionalPropertyTypes` (not enabled here), so throwing on it would
+  // fail a config the emitted declarations already accepted.
+  if (
+    clientConfig &&
+    Object.hasOwn(clientConfig, 'eqlVersion') &&
+    clientConfig.eqlVersion !== undefined
+  ) {
+    throw new Error(
+      '[encryption]: `config.eqlVersion` has been removed — @cipherstash/stack always authors EQL v3. Remove the field.',
+    )
+  }
+
   // The WASM entry is EQL v3 only. The types enforce v3 tables, but a plain-JS
   // caller can bypass that — reject a non-v3 table (one lacking the v3
   // `buildColumnKeyMap` marker) with a clear message rather than pinning the
   // client to v3 wire against a v2 schema and failing opaquely inside the FFI.
+  // The message must not point anywhere else for v2 authoring: since #815 the
+  // native entry rejects it too, so a referral would only cost the reader a
+  // second rejection. Name the one thing v2 payloads are still good for.
   for (const table of schemas) {
     const isV3 = hasBuildColumnKeyMap(table)
     if (!isV3) {
       throw new Error(
-        '[encryption]: `@cipherstash/stack/wasm-inline` is EQL v3 only — author schemas with `types` / `encryptedTable` from this entry. (EQL v2 is available on the native `@cipherstash/stack` entry.)',
+        '[encryption]: `@cipherstash/stack/wasm-inline` is EQL v3 only — author schemas with `types` / `encryptedTable` from this entry. EQL v2 authoring has been removed from every entry; the client still decrypts existing v2 payloads.',
       )
     }
   }
@@ -1430,8 +1528,8 @@ export async function Encryption(
  *
  * The Node entry of protect-ffi performs this normalization internally
  * via `normalizeEncryptConfig.js`; the WASM bindings do not. Without
- * this, the WASM client rejects an `encryptedColumn('email')` (which
- * defaults to `cast_as: 'string'`) with
+ * this, the WASM client rejects a column config whose SDK-facing cast is
+ * `string` with
  * `unknown variant `string`, expected one of `big_int`, …`.
  *
  * `toEqlCastAs` is exhaustive over the current `CastAs` union; if a new
@@ -1465,20 +1563,22 @@ export function normalizeCastAs(config: EncryptConfig): unknown {
 }
 
 /**
- * Resolve a column's name structurally. Accepts any column builder exposing
- * `getName()` — v2 `EncryptedColumn` / `EncryptedField` AND v3 column builders
- * (e.g. `EncryptedTextSearchColumn`) alike — matching the structural
- * `BuildableColumn` contract that `EncryptOptions.column` was widened to.
+ * Resolve a column's name structurally: any builder exposing `getName()`
+ * qualifies, matching the structural v3 column contract accepted by
+ * {@link WasmEncryptOptions.column}.
  *
- * An `instanceof EncryptedColumn || EncryptedField` gate would type-check after
- * the widening but throw at runtime for a v3 column, breaking the type promise;
- * resolving the name structurally keeps the wasm-inline encrypt entry honest.
- * The `typeof` check still fails loudly for plain JS callers passing a value
- * that is not a column builder.
+ * Structural rather than an `instanceof` gate because the v3 column builders are
+ * a family of classes (`EncryptedTextSearchColumn`, `EncryptedIntegerOrdColumn`,
+ * …), and enumerating them here would silently reject any domain added later —
+ * a class of bug the type checker cannot see, since the parameter type is
+ * structural. `getName()` is the whole contract this function needs.
+ *
+ * The `typeof` check still fails loudly for plain-JS callers passing a value
+ * that is not a column builder at all.
  *
  * @internal exported for unit-test coverage.
  */
-export function getColumnName(col: EncryptOptions['column']): string {
+export function getColumnName(col: AnyEncryptedV3Column): string {
   if (typeof col?.getName === 'function') {
     return col.getName()
   }

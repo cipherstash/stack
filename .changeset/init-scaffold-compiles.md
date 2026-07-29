@@ -8,9 +8,8 @@ Both placeholder templates emitted `await Encryption({ schemas: [] })`, and
 `Encryption` requires at least one table — an empty schema set is a deliberate
 compile error, so it cannot be relaxed. Every `stash init` therefore left a
 project whose first `tsc` or `next build` failed, in a file the CLI had just
-told the user not to hand-edit. (The previous scaffold called `EncryptionV3`,
-whose looser bound accepted `[]`; collapsing that into an alias of `Encryption`
-tightened it.)
+told the user not to hand-edit. The consolidated `Encryption` factory enforces
+the non-empty schema requirement.
 
 The scaffold now declares a single sentinel table, `__stash_placeholder__`, so
 the file typechecks as written. Every command that reads the encryption client

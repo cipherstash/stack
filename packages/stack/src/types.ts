@@ -8,6 +8,7 @@ import type {
   newClient,
   QueryOpName,
 } from '@cipherstash/protect-ffi'
+import type { AnyV3Table } from '@/eql/v3'
 import type {
   ColumnSchema,
   EncryptedColumn,
@@ -16,7 +17,7 @@ import type {
   // Imported type-only for the TSDoc {@link} references in the comments below.
   encryptedColumn,
   encryptedField,
-} from '@/schema'
+} from '@/schema/internal'
 
 /**
  * A pluggable authentication strategy for ZeroKMS requests. Any object
@@ -53,9 +54,8 @@ export type EncryptedValue = Brand<CipherStashEncrypted, 'encrypted'>
 /** Structural type representing encrypted data stored in the database. Always
  * carries a ciphertext. Covers BOTH wire formats: the EQL v2.3 payloads
  * (`k: "ct"` / `k: "sv"`) and the EQL v3 payloads (flat `{v: 3, i, c, …}`
- * scalars and `{v: 3, k: "sv", i, sv}` SteVec documents). Which format
- * `encrypt` produces is selected by the client's
- * {@link ClientConfig.eqlVersion}; `decrypt` accepts both regardless.
+ * scalars and `{v: 3, k: "sv", i, sv}` SteVec documents). Schema authoring is
+ * v3-only, so `encrypt` always produces v3; `decrypt` accepts both regardless.
  * v3 scalars carry no `k` discriminator, so narrow with `'k' in payload`
  * before reading it. See also `EncryptedValue` for branded nominal typing,
  * and {@link EncryptedQuery} for the search-term shape returned by
@@ -171,55 +171,26 @@ export type ClientConfig = {
   strategy?: AuthStrategy
 
   /**
-   * @deprecated The client authors EQL v3 — an all-v3 schema set forces `3`
-   * automatically and yields the typed client. This field remains only to read
-   * or write legacy EQL v2 during migration (e.g. `eqlVersion: 2` with a v2
-   * schema set), and will be removed once the v2 adapters are gone. New code
-   * should not set it.
+   * Removed: Stack always authors EQL v3. Declared as `never` rather than
+   * omitted so the type rejects it wherever it appears — every other property
+   * here is optional, so excess-property checking was the only thing catching a
+   * leftover `eqlVersion`, and that fires on FRESH object literals alone. A
+   * shared config const (`const cfg = { …, eqlVersion: 2 }`) — the shape a
+   * v2 → v3 migration most plausibly has — therefore type-checked clean and
+   * threw at `Encryption()`.
    *
-   * The EQL wire version the client emits — one FFI client always emits
-   * exactly one wire format.
+   * `Encryption` keeps its runtime guard: JS and JSON callers bypass types
+   * entirely, so this is defence in depth, not a replacement for it.
    *
-   * - `2` (the protect-ffi default): payloads target the
-   *   `eql_v2_encrypted` column type.
-   * - `3`: payloads target the per-capability `eql_v3` domains
-   *   (`eql_v3.text_eq`, `eql_v3.integer_ord_ore`, `eql_v3.json`, …),
-   *   derived from each column's `cast_as` and indexes.
-   *
-   * When omitted, {@link Encryption} auto-detects from the schema set:
-   * EQL v3 tables (from `@cipherstash/stack/v3`, marked by
-   * `buildColumnKeyMap()`) select `3`; v2 tables leave the FFI default
-   * (`2`) untouched. Mixing v2 and v3 tables in one client is an error —
-   * split them across two clients instead.
-   *
-   * `decrypt` accepts BOTH formats regardless of this setting, so v2 and
-   * v3 data can coexist during a migration.
-   *
-   * Under `3`, `encryptQuery` returns EQL v3 query operands (protect-ffi
-   * 0.29+): term-only scalar operands for the `eql_v3.query_<name>` twins,
-   * the `eql_v3.query_json` containment needle, and bare selector-hash
-   * strings for JSON path queries.
+   * One asymmetry the guard has to account for: without
+   * `exactOptionalPropertyTypes` — which this repo does not enable — `?: never`
+   * has declared type `undefined`, so `eqlVersion: undefined` is accepted here
+   * and no declaration can reject it. The runtime therefore tolerates exactly
+   * that value (it names no version) while still rejecting every real one,
+   * `eqlVersion: 3` included.
    */
-  eqlVersion?: 2 | 3
+  eqlVersion?: never
 }
-
-/**
- * {@link ClientConfig} for a client that authors EQL v3 — the same options
- * minus the legacy `eqlVersion: 2` escape hatch.
- *
- * `Encryption` accepts this (not the full `ClientConfig`) alongside an all-v3
- * schema set. Forcing v2 wire over v3 schemas THROWS at setup — v2 payloads
- * cannot satisfy an `eql_v3_*` domain — so admitting `2` there typed the call
- * as `TypedEncryptionClient` for a call that returns no client at all.
- * Adapters that are v3-only (`@cipherstash/prisma-next`,
- * `@cipherstash/stack-drizzle`) should take this type for their pass-through
- * config for the same reason.
- */
-export type V3ClientConfig = Omit<ClientConfig, 'eqlVersion'> & {
-  eqlVersion?: 3
-}
-
-type AtLeastOneCsTable<T> = [T, ...T[]]
 
 /** Structural contract for a column builder the client can consume for STORAGE
  *  (`encrypt`). Satisfied by v2 `EncryptedColumn` / `EncryptedField` AND v3
@@ -283,8 +254,28 @@ export function hasBuildColumnKeyMap<T extends object>(
   )
 }
 
-export type EncryptionClientConfig = {
-  schemas: AtLeastOneCsTable<BuildableTable>
+/**
+ * The `Encryption({ schemas, config })` argument, as a named type.
+ *
+ * The default MUST be a non-empty tuple, not `readonly AnyV3Table[]`: with the
+ * widened default, `S['length']` resolves to `number`, `number extends 0` is
+ * false, and the conditional hands back the widened array — so
+ * `const cfg: EncryptionClientConfig = { schemas: [] }` typechecked clean and
+ * threw at `Encryption()`. Excess-property checking only catches the FRESH
+ * literal `Encryption({ schemas: [] })`; a config object built once and passed
+ * around, which is exactly what this type exists to serve, slipped through.
+ *
+ * The conditional stays for an explicit `EncryptionClientConfig<[]>`, and the
+ * type parameter stays so a caller can pin their own schema tuple. The factory
+ * keeps accepting widened arrays inline through its overloads — that is a
+ * separate concern from what this exported type can prove.
+ *
+ * Mirrors `WasmEncryptionConfig` on the `wasm-inline` entry.
+ */
+export type EncryptionClientConfig<
+  S extends readonly AnyV3Table[] = readonly [AnyV3Table, ...AnyV3Table[]],
+> = {
+  schemas: S['length'] extends 0 ? never : S
   config?: ClientConfig
 }
 

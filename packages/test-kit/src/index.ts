@@ -74,3 +74,16 @@ export {
   type RowPlan,
   type TableSpec,
 } from './rows.ts'
+export {
+  V2_MINT_DEFERRED,
+  V2_UNREACHABLE_CAST_AS,
+  type V2DeferredDomain,
+  type V2FixtureCase,
+  type V2FixtureDomain,
+  type V2FixturePlan,
+  v2FixtureColumns,
+  v2FixturePlan,
+  v2ModelRows,
+  v2OpeIndexedDomains,
+  v2UndeclaredCastAs,
+} from './v2-fixtures.ts'

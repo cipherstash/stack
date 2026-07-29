@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { EncryptionV3 } from '@/encryption/v3'
+import { Encryption } from '@/encryption/v3'
 import { encryptedTable, types } from '@/eql/v3'
 
 /**
@@ -37,7 +37,7 @@ async function opTerms(
   values: readonly unknown[],
   column: 'amount' | 'when' | 'name',
 ) {
-  const client = await EncryptionV3({ schemas: [table] })
+  const client = await Encryption({ schemas: [table] })
   const terms: string[] = []
   for (const value of values) {
     const result = await client.encrypt(value as never, {

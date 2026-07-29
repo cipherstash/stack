@@ -1,6 +1,6 @@
 ---
 name: stash-dynamodb
-description: Integrate CipherStash encryption with Amazon DynamoDB using @cipherstash/stack/dynamodb. Covers the encryptedDynamoDB helper for encrypting items before PutItem and decrypting after GetItem with EQL v3 (types.* domains) or EQL v2 schemas, bulk encrypt/decrypt for BatchWrite and BatchGet, querying with encrypted partition and sort keys via HMAC attributes, nested object encryption, audit logging, and the DynamoDB attribute naming conventions (__source/__hmac). Use when adding encryption to a DynamoDB project, encrypting items before writes, decrypting items after reads, or querying encrypted DynamoDB attributes.
+description: Integrate CipherStash encryption with Amazon DynamoDB using @cipherstash/stack/dynamodb and EQL v3 schemas. Covers item and bulk encryption, legacy v2 reads, HMAC query attributes, nested objects, audit logging, and the __source/__hmac storage convention.
 ---
 
 # CipherStash Stack - DynamoDB Integration
@@ -42,42 +42,20 @@ Non-encrypted attributes pass through unchanged. On decryption, the `__source` a
 
 **Only equality is usable on DynamoDB.** Ordering terms and free-text bloom filters have no DynamoDB query surface, so they are not stored. A column in an ordering or free-text domain still encrypts and decrypts correctly — it just cannot back a key condition.
 
-## Choosing a Schema Version
+## Schema and Stored Versions
 
-**Encrypt/write is EQL v3 only.** `encryptModel` / `bulkEncryptModels` accept only EQL v3 tables (`types.*` domains). **Decrypt still reads existing EQL v2 items** — `decryptModel` / `bulkDecryptModels` continue to accept an EQL v2 table so previously stored data stays readable. Author all new tables with EQL v3; keep a v2 table around only to read old data.
+Schema authoring and every write are EQL v3-only. Existing v2 DynamoDB items
+remain readable by passing the same v3 table descriptor plus
+`{ storedEqlVersion: 2 }` to `decryptModel` or `bulkDecryptModels`. Both entries
+serve legacy reads — the default `@cipherstash/stack` one and
+`@cipherstash/stack/wasm-inline`.
 
-| | EQL v3 (author + read) | EQL v2 (read existing data only) |
-|---|---|---|
-| Import | `@cipherstash/stack/v3` | `@cipherstash/stack` + `@cipherstash/stack/schema` |
-| Schema | `encryptedTable` + `types.*` | `encryptedTable` + `encryptedColumn` |
-| Client | `Encryption({ schemas })` (or the deprecated `EncryptionV3`) | `Encryption({ schemas })` |
-| encrypt | ✅ | ❌ removed — write is v3 only |
-| decrypt | ✅ | ✅ reads stored v2 items — **native entry only** |
-| Nested fields | Flat dotted path (`"profile.ssn"`) | Nested group + `encryptedField` |
-
-> **v2 reads need the native entry.** A client from `@cipherstash/stack/wasm-inline`
-> (the documented entry for Deno, Bun, Cloudflare Workers and Supabase Edge Functions)
-> is EQL v3 only: `encryptedDynamoDB` throws at the call site if you pass it a v2
-> table. Read legacy v2 items with a client from the default `@cipherstash/stack`
-> entry. EQL v3 tables work on both entries.
-
-There is no infrastructure migration between the versions — DynamoDB has no EQL extension to install and no schema to alter — and there is no automatic *data* migration either. The two use **different wire formats**; a stored v2 item still decrypts through a v2 table, but new writes are v3. To fully move a table to v3, re-encrypt every item with a v3 schema.
+There is no infrastructure migration between the versions — DynamoDB has no EQL extension to install and no schema to alter — and there is no automatic *data* migration either. To fully move a table to v3, re-encrypt every item with the v3 schema.
 
 The client must be built for the table. Build the client with the same v3 table you hand to `encryptedDynamoDB` — `Encryption({ schemas: [users] })` returns the typed v3 client for a concrete v3 schema set. Passing a v3 table to a client that never registered it (a client built for a different schema set) throws a clear error naming the table on the first operation, instead of failing later with an opaque FFI deserialization error.
 
-**Nested attributes work in both versions**, with different authoring syntax.
-
-DynamoDB items are natively nested, so this matters here more than on Postgres. Both versions encrypt *selected leaves in place*: the item keeps its shape and unlisted siblings stay plaintext.
-
-EQL v2 uses a nested group with `encryptedField`:
-
-```typescript
-const users = encryptedTable("users", {
-  profile: { ssn: encryptedField("profile.ssn") },
-})
-```
-
-EQL v3 has no nested-group syntax — a nested object in a v3 column map is a compile error. Declare the column **flat, with a dotted path** instead:
+DynamoDB items are natively nested. Declare encrypted leaves as flat dotted
+paths; the item keeps its nested shape and unlisted siblings stay plaintext:
 
 ```typescript
 const users = encryptedTable("users", {
@@ -85,8 +63,6 @@ const users = encryptedTable("users", {
   "profile.note": types.Text("profile.note"),
 })
 ```
-
-Both produce the same nested DynamoDB attribute *layout*, but the encrypted contents are version-specific: an item written under one version cannot be decrypted under the other (see the compatibility note above).
 
 ```jsonc
 { "pk": "u#1",
@@ -176,46 +152,28 @@ const dynamo = encryptedDynamoDB({ encryptionClient })
 
 > **Audit metadata on decrypt works.** `decryptModel` / `bulkDecryptModels` are
 > audit-chainable — `dynamo.decryptModel(item, table).audit({ metadata })` forwards
-> the metadata to ZeroKMS, whether the client came from `Encryption` or the
-> deprecated `EncryptionV3` alias. (`EncryptionV3` is now a deprecated, type-identical
-> alias of `Encryption`; prefer `Encryption`.)
+> the metadata to ZeroKMS on the default `@cipherstash/stack` entry. The
+> `@cipherstash/stack/wasm-inline` client has no chainable operations, so audit
+> metadata is dropped there.
 
-### EQL v2 Schema (reading existing deployments)
+### Reading Existing EQL v2 Items
 
-A v2 table is **read-only** through this adapter now: pass it to `decryptModel` /
-`bulkDecryptModels` to read items written before the v3 cutover. `encryptModel` /
-`bulkEncryptModels` no longer accept a v2 table — author new writes with an EQL v3
-table.
+Use the current v3 table descriptor and select the stored wire version on the
+read. No v2 builder or v2-configured client is needed.
 
-**Not on the WASM entry.** This whole section requires a client from the default
-`@cipherstash/stack` entry. `@cipherstash/stack/wasm-inline` is EQL v3 only —
-`Encryption()` there rejects a v2 schema outright, and `encryptedDynamoDB` refuses
-the pairing at the call site with a message naming the fix. So on Deno, Bun,
-Workers and Supabase Edge Functions, legacy v2 items are not readable through this
-adapter; re-encrypt them to a v3 schema, or read them from a Node process using the
-native entry.
+**Works on both entries.** Schema authoring is EQL v3-only everywhere, but the
+read itself is not: the legacy path reconstructs the v2 envelope around the
+current v3 table, and `decrypt` accepts either wire generation. So Deno, Bun,
+Workers and Supabase Edge Functions can read legacy items through
+`@cipherstash/stack/wasm-inline` too.
 
 ```typescript
-import { encryptedTable, encryptedColumn, encryptedField } from "@cipherstash/stack/schema"
-import { Encryption } from "@cipherstash/stack"
-
-const usersV2 = encryptedTable("users", {
-  email: encryptedColumn("email").equality(),   // searchable via HMAC
-  name: encryptedColumn("name"),                // encrypt-only, no search
-  metadata: encryptedColumn("metadata").dataType("json"),
-  profile: {                                     // nested objects: v2 only
-    ssn: encryptedField("profile.ssn"),
-  },
-})
-
-const encryptionClient = await Encryption({ schemas: [usersV2] })
-const dynamo = encryptedDynamoDB({ encryptionClient })
-
-// Read existing v2 items — decrypt still accepts the v2 table.
-const decrypted = await dynamo.decryptModel(storedV2Item, usersV2)
+const decrypted = await dynamo.decryptModel(
+  storedV2Item,
+  users,
+  { storedEqlVersion: 2 },
+)
 ```
-
-> **Note:** `encryptedColumn` also supports `.orderAndRange()`, `.freeTextSearch()`, and `.searchableJson()` index methods, but only `.equality()` produces HMAC values usable for DynamoDB key condition queries.
 
 ### Optional: Logger and Error Handler
 
@@ -480,7 +438,7 @@ if (result.failure) {
 import { encryptedDynamoDB } from "@cipherstash/stack/dynamodb"
 
 const dynamo = encryptedDynamoDB({
-  // From Encryption(...) (or the deprecated EncryptionV3(...) alias)
+  // From Encryption(...)
   encryptionClient,
   options: {         // optional
     logger: { error: (message, error) => void },
@@ -491,7 +449,8 @@ const dynamo = encryptedDynamoDB({
 
 ### Instance Methods
 
-**Encrypt accepts an EQL v3 table only. Decrypt accepts an EQL v3 OR an EQL v2 table** (so stored v2 items stay readable). The decrypt methods are overloaded on the table's EQL version.
+All methods accept an EQL v3 table. Decrypt defaults to stored EQL v3 and can
+reconstruct a legacy v2 envelope when explicitly requested.
 
 **EQL v3** — the item is checked against the table's column domains, and the result is typed as the attribute map that is actually stored: a declared column `email` becomes `email__source` (plus `email__hmac` if its domain mints one), NOT `email`.
 
@@ -499,21 +458,43 @@ const dynamo = encryptedDynamoDB({
 |---|---|---|
 | `encryptModel` | `(item, v3Table)` | `EncryptedAttributes<Table, T>` |
 | `bulkEncryptModels` | `(items, v3Table)` | `EncryptedAttributes<Table, T>[]` |
-| `decryptModel` | `(storedItem, v3Table)` | `DecryptedAttributes<Table, T>` — `__source` folded back to the column, `__hmac` dropped |
-| `bulkDecryptModels` | `(storedItems, v3Table)` | `DecryptedAttributes<Table, T>[]` |
+| `decryptModel` | `(storedItem, v3Table, readOptions?)` | `DecryptedAttributes<Table, T>` — `__source` folded back to the column, `__hmac` dropped |
+| `bulkDecryptModels` | `(storedItems, v3Table, readOptions?)` | `DecryptedAttributes<Table, T>[]` |
 
 Let `T` be inferred from the argument; do not pass explicit type arguments on the v3 path.
 
-**EQL v2 — decrypt (read) only.** The v2 write overloads were removed; `encryptModel` / `bulkEncryptModels` no longer accept a v2 table. `decryptModel` / `bulkDecryptModels` still do, so existing v2 items decrypt. `T` is the model shape you expect back; declare a type of your own to read the stored `__source` / `__hmac` attributes.
+For a stored v2 item, pass `{ storedEqlVersion: 2 }` as `readOptions`. The table
+is still the current v3 descriptor, which supplies table and column identity.
+
+That descriptor must be one of the tables you passed to `Encryption({ schemas })`.
+The adapter forwards it to the client to drive envelope and `Date` reconstruction,
+and the client rejects a table it was not initialized with — so a legacy read of a
+table your current schema no longer declares fails with `decryptModel received a
+table this client was not initialized with`. Keep the table declared for as long
+as you still need to read its v2 rows.
 
 | Method | Signature | Resolves to |
 |---|---|---|
-| `decryptModel` | `(item: Record<string, unknown>, v2Table)` | `T` |
-| `bulkDecryptModels` | `(items: Record<string, unknown>[], v2Table)` | `T[]` |
+| `decryptModel` | `(item, v3Table, { storedEqlVersion: 2 })` | `T` |
+| `bulkDecryptModels` | `(items, v3Table, { storedEqlVersion: 2 })` | `T[]` |
+
+**Grouped v2 fields.** A v2 column inside a group was stored as
+`<group>.<leaf>__source` while the v2 schema knew it only as `<leaf>`. On a
+`{ storedEqlVersion: 2 }` read the leaf is matched inside the group, so carrying
+the column forward as a plain top-level `amount: types.TextEq('amount')` reads
+those rows correctly. You can also name it by its full path, keeping the
+original DB name — `'details.amount': types.TextEq('amount')`. Note the two
+differ: the property is the dotted path, the argument is the v2 DB name. This
+applies to v2 storage only; a v3 nested field uses the same dotted path for
+both (`'profile.ssn': types.TextEq('profile.ssn')`).
+
+Type reconstruction follows either spelling: a grouped v2 `date` / `timestamp`
+column comes back as a `Date`, not an ISO string, whether you declare it as a
+plain top-level `placedAt: types.Date('placed_at')` or as the full dotted path.
 
 All operations are thenable (awaitable) and support `.audit({ metadata })` chaining. On the default `@cipherstash/stack` entry the metadata forwards to ZeroKMS on every operation, encrypt and decrypt alike (see the Setup note). The `@cipherstash/stack/wasm-inline` client has no `.audit()` — its operations return a plain promise — so audit metadata is **dropped** there (logged at debug level). The operation itself still succeeds; only the audit record is lost. Use the native entry when audit trails matter.
 
-Types exported from `@cipherstash/stack/dynamodb`: `EncryptedDynamoDBInstance`, `EncryptedDynamoDBConfig`, `EncryptedDynamoDBError`, `AnyEncryptedTable`, `DynamoDBEncryptionClient`, `EncryptedAttributes`, `DecryptedAttributes`, `AuditConfig`.
+Types exported from `@cipherstash/stack/dynamodb`: `EncryptedDynamoDBInstance`, `EncryptedDynamoDBConfig`, `EncryptedDynamoDBError`, `AnyEncryptedTable`, `DynamoDBReadOptions`, `DynamoDBEncryptionClient`, `EncryptedAttributes`, `DecryptedAttributes`, `AuditConfig`.
 
 ### Querying Encrypted Attributes
 

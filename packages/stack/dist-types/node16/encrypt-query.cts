@@ -15,6 +15,7 @@
  */
 
 import type {
+  AnyV3Table,
   EncryptedTextSearchColumn,
   PlaintextForColumn,
   QueryTypesForColumn,
@@ -63,5 +64,43 @@ export async function callable() {
     column: users.email,
     // @ts-expect-error - `searchableJson` is not a capability of text_search
     queryType: 'searchableJson',
+  })
+}
+
+/**
+ * The other two halves of the #815 criterion — schema-array shapes and config
+ * typing — against the CJS declaration set.
+ *
+ * `../schemas-and-config.ts` asserts both, but only against the `.d.ts` pass
+ * under bundler resolution. tsup emits `.d.cts` in a separate DTS pass, so a
+ * divergence confined to it — in the `Encryption` overloads or in
+ * `ClientConfig` — would ship green to every CJS consumer.
+ */
+export async function schemaAndConfigShapes() {
+  const widened: AnyV3Table[] = [users]
+  await Encryption({ schemas: widened })
+
+  const frozen: readonly AnyV3Table[] = [users]
+  await Encryption({ schemas: frozen })
+
+  await Encryption({ schemas: [users].map((t) => t) })
+
+  // @ts-expect-error - at least one table is required
+  await Encryption({ schemas: [] })
+
+  await Encryption({
+    schemas: [users],
+    // @ts-expect-error - `eqlVersion` was removed; Stack always authors EQL v3
+    config: { eqlVersion: 2 },
+  })
+
+  // Excess-property checking only fires on fresh literals, so a shared config
+  // const — what a v2 → v3 migration actually holds — used to compile and then
+  // throw at runtime.
+  const hoistedConfig = { workspaceCrn: 'crn', eqlVersion: 2 }
+  await Encryption({
+    schemas: [users],
+    // @ts-expect-error - rejected even when the config is not a fresh literal
+    config: hoistedConfig,
   })
 }

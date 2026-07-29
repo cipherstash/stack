@@ -19,7 +19,7 @@
  * `stash eql install`. This suite throws rather than skips when unconfigured.
  */
 
-import { type EncryptionClientFor, EncryptionV3 } from '@cipherstash/stack/v3'
+import { Encryption, type EncryptionClient } from '@cipherstash/stack/v3'
 import {
   type DomainSpec,
   databaseUrl,
@@ -136,7 +136,7 @@ type RowKey = (typeof ROWS)[number]
 type MatrixPlainRow = Record<string, PlainValue | null | string>
 type SelectRow = { rowKey: string }
 type Db = ReturnType<typeof drizzle>
-type Client = EncryptionClientFor<readonly [typeof schema, typeof bigintSchema]>
+type Client = EncryptionClient<readonly [typeof schema, typeof bigintSchema]>
 type Ops = ReturnType<typeof createEncryptionOperators>
 let client: Client
 let ops: Ops
@@ -214,7 +214,7 @@ function assertScopeKeys<T extends { rowKey: string; testRunId: string }>(
 }
 
 beforeAll(async () => {
-  client = await EncryptionV3({ schemas: [schema, bigintSchema] })
+  client = await Encryption({ schemas: [schema, bigintSchema] })
   ops = createEncryptionOperators(client)
   db = drizzle({ client: sqlClient })
 
@@ -554,7 +554,7 @@ describe('v3 drizzle — relational, needle guards, pagination', () => {
     )
   }, 30000)
 
-  // A real `TypedEncryptionClient` exposes `bulkEncrypt`, so these lists are
+  // A real `EncryptionClient` exposes `bulkEncrypt`, so these lists are
   // encrypted in one FFI crossing and the returned terms must line up
   // index-for-index with the values. Five values also crosses the
   // MAX_IN_ARRAY_CONCURRENCY=4 boundary of the single-encrypt fallback that a

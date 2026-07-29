@@ -1,6 +1,6 @@
 /**
  * Adapt the `@cipherstash/stack` EQL v3 client (the
- * `TypedEncryptionClient` returned by `EncryptionV3`) to the
+ * `EncryptionClient` returned by `Encryption`) to the
  * framework-native `CipherstashSdk` shape consumed by
  * `createCipherstashV3RuntimeDescriptor({ sdk })` and
  * `bulkEncryptMiddlewareV3(sdk)`.
@@ -60,7 +60,7 @@ type StackResult<T> =
 
 /**
  * Minimal structural view of the stack v3 client this adapter drives —
- * satisfied by the `TypedEncryptionClient` that `EncryptionV3` returns
+ * satisfied by the `EncryptionClient` that `Encryption` returns
  * (whatever its schema tuple) AND by a hand-rolled test double, neither
  * needing a cast.
  *
@@ -104,7 +104,7 @@ interface PendingSlot {
  * it was constructed with.
  *
  * `schemas` should be the exact `AnyV3Table[]` passed to
- * `EncryptionV3({ schemas })` (typically the return value of
+ * `Encryption({ schemas })` (typically the return value of
  * `deriveStackSchemasV3`). The adapter uses it to translate framework
  * `(table, column)` routing-key strings back to the typed schema
  * objects the client's operations expect.

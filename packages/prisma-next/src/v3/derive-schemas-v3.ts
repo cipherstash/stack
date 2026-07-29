@@ -9,7 +9,7 @@
  * domain as `nativeType`. `deriveStackSchemasV3` walks the
  * `storage.namespaces.<ns>.entries.table` envelope and returns one v3
  * `EncryptedTable` per table with at least one v3-codec'd column, ready
- * to pass to `EncryptionV3({ schemas })`.
+ * to pass to `Encryption({ schemas })`.
  *
  * The v3-specific delta vs the v2 derivation: the concrete column
  * factory is selected by `nativeType` via the catalog's
@@ -112,7 +112,7 @@ export function v3ContractColumnEntries(
  * Derive an array of v3 `EncryptedTable` builders from a Prisma Next
  * contract. Returns an empty array when no v3 cipherstash columns are
  * present; callers must still pass at least one table to
- * `EncryptionV3({ schemas })`, which requires a non-empty array.
+ * `Encryption({ schemas })`, which requires a non-empty array.
  */
 export function deriveStackSchemasV3(
   contractJson: V3ContractShape,

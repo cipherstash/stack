@@ -18,8 +18,8 @@ import { OidcFederationStrategy } from '@cipherstash/auth'
 import { unwrapResult } from '@cipherstash/test-kit'
 import { clerkJwtProvider } from '@cipherstash/test-kit/integration-clerk'
 import { beforeAll, describe, expect, it } from 'vitest'
-import type { EncryptionClientFor } from '@/encryption/v3'
-import { EncryptionV3, encryptedTable, types } from '@/encryption/v3'
+import type { EncryptionClient } from '@/encryption/v3'
+import { Encryption, encryptedTable, types } from '@/encryption/v3'
 
 const users = encryptedTable('v3_identity_live_users', {
   email: types.TextEq('email'),
@@ -36,7 +36,7 @@ const INFRA_FAULT =
   /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|timed? ?out|network error/i
 
 describe('v3 typed client identity-aware operations (live)', () => {
-  let client: EncryptionClientFor<readonly [typeof users]>
+  let client: EncryptionClient<readonly [typeof users]>
 
   beforeAll(async () => {
     const crn = process.env.CS_WORKSPACE_CRN
@@ -50,7 +50,7 @@ describe('v3 typed client identity-aware operations (live)', () => {
     if (federation.failure) {
       throw new Error(`[federation]: ${federation.failure.message}`)
     }
-    client = await EncryptionV3({
+    client = await Encryption({
       schemas: [users],
       config: { authStrategy: federation.data },
     })
@@ -115,10 +115,10 @@ describe('v3 typed client identity-aware operations (live)', () => {
 // test on a Clerk outage or a rotated `CLERK_MACHINE_TOKEN` — for behaviour it
 // never exercises.
 describe('v3 typed client audit metadata (live)', () => {
-  let client: EncryptionClientFor<readonly [typeof users]>
+  let client: EncryptionClient<readonly [typeof users]>
 
   beforeAll(async () => {
-    client = await EncryptionV3({ schemas: [users] })
+    client = await Encryption({ schemas: [users] })
   }, 30000)
 
   it('accepts .audit({ metadata }) on the encrypt path and still round-trips', async () => {

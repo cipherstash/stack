@@ -10,7 +10,8 @@ and are superseded by `@cipherstash/stack`:
 
 - `@cipherstash/protect` (core encryption) → `@cipherstash/stack`, which now
   carries the encryption client directly.
-- `@cipherstash/schema` (schema builders) → `@cipherstash/stack/schema`.
+- `@cipherstash/schema` (schema builders) → the EQL v3 `encryptedTable` and
+  `types.*` factories from `@cipherstash/stack/eql/v3`.
 - `@cipherstash/protect-dynamodb` (standalone DynamoDB adapter) →
   `@cipherstash/stack/dynamodb` (`encryptedDynamoDB`), the maintained
   implementation.

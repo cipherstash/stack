@@ -27,8 +27,8 @@ import {
 } from '@cipherstash/test-kit'
 import { beforeAll, describe, expect, it } from 'vitest'
 import {
-  type EncryptionClientFor,
-  EncryptionV3,
+  Encryption,
+  type EncryptionClient,
   encryptedTable,
 } from '@/encryption/v3'
 import type { AnyV3Table } from '@/eql/v3'
@@ -75,12 +75,12 @@ const errorCases = domains.flatMap(([t, spec]) =>
 )
 
 describe('v3 matrix live round-trip (all domains × samples)', () => {
-  let client: EncryptionClientFor<readonly AnyV3Table[]>
+  let client: EncryptionClient<readonly AnyV3Table[]>
   let encrypted: Array<Record<string, unknown>>
   let decrypted: Array<Record<string, unknown>>
 
   beforeAll(async () => {
-    client = await EncryptionV3({ schemas: [table] as never })
+    client = await Encryption({ schemas: [table] as never })
     encrypted = unwrapResult(
       await client.bulkEncryptModels(modelRows as never, table as never),
     ) as Array<Record<string, unknown>>

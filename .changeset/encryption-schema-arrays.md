@@ -27,10 +27,16 @@ an array literal still gets full per-column typing — passing the wrong plainte
 for a column's domain, or a table the client was not built with, is still
 rejected.
 
-`EncryptionClientFor<S>` is widened to match, so it names the typed client for a
-loose `readonly AnyV3Table[]` as well as for a tuple. Code that is generic over
-its schemas — an adapter that builds a table per request, say — can now write
-`EncryptionClientFor<readonly AnyV3Table[]>` and keep the typed surface.
+`EncryptionClient<S>` accepts the same schema parameter, so it names the client
+for a loose `readonly AnyV3Table[]` as well as for a tuple. Code that is generic
+over its schemas — an adapter that builds a table per request, say — can write
+`EncryptionClient<readonly AnyV3Table[]>`.
+
+That keeps the `table` and `column` arguments checked, but not the model input:
+with the schema parameter loose there is no per-column plaintext to resolve, so
+`encryptModel` / `bulkEncryptModels` still reject an untyped
+`Record<string, unknown>` model and an adapter holding untyped rows needs a cast
+at that one boundary. Full model typing requires a concrete schema tuple.
 
 If you narrowed a schema array to `readonly [AnyV3Table, ...AnyV3Table[]]` to
 satisfy the old signature, that narrowing is no longer needed.
@@ -48,5 +54,5 @@ async function makeClient<S extends readonly [AnyV3Table, ...AnyV3Table[]]>(
 Note the non-empty tuple constraint. A wrapper generic over a loose
 `readonly AnyV3Table[]` is still rejected — that type admits `readonly []`, so
 the wrapper cannot promise what `Encryption` requires. Constrain it as above, or
-take `EncryptionClientFor<readonly AnyV3Table[]>` as a parameter instead of
+take `EncryptionClient<readonly AnyV3Table[]>` as a parameter instead of
 building the client inside the generic function.

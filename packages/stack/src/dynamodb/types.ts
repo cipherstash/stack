@@ -1,5 +1,5 @@
 import type { ProtectErrorCode } from '@cipherstash/protect-ffi'
-import type { EncryptionClient } from '@/encryption'
+import type { EncryptionClient } from '@/encryption/client-v3'
 import type {
   AnyV3Table,
   EncryptedTable as EncryptedV3Table,
@@ -8,45 +8,32 @@ import type {
   QueryTypesForColumn,
   V3ModelInput,
 } from '@/eql/v3'
-import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
-import type { EncryptedValue } from '@/types'
 import type { ciphertextAttrSuffix, searchTermAttrSuffix } from './helpers'
 import type { BulkDecryptModelsOperation } from './operations/bulk-decrypt-models'
 import type { BulkEncryptModelsOperation } from './operations/bulk-encrypt-models'
 import type { DecryptModelOperation } from './operations/decrypt-model'
 import type { EncryptModelOperation } from './operations/encrypt-model'
 
-/**
- * A table this adapter accepts: either an EQL v2 table (`encryptedTable` +
- * `encryptedColumn`/`encryptedField` from `@cipherstash/stack/schema`) or an
- * EQL v3 one (`encryptedTable` + `types.*` from `@cipherstash/stack/eql/v3`).
- *
- * This union is the adapter's widest input type — the erased view the internal
- * `CallableEncryptionClient` is declared against. It is NOT the public contract:
- * the surface split the two versions apart. `encryptModel` /
- * `bulkEncryptModels` narrowed to `AnyV3Table` (the v2 write overloads were
- * removed, so a v2 encrypt call site does have to change); `decryptModel` /
- * `bulkDecryptModels` still take either, so items stored under v2 stay
- * readable. See {@link EncryptedDynamoDBInstance} for the overloads that decide
- * this per method.
- */
-export type AnyEncryptedTable =
-  | EncryptedTable<EncryptedTableColumn>
-  | AnyV3Table
+/** An EQL v3 table accepted by every adapter operation. */
+export type AnyEncryptedTable = AnyV3Table
+
+export type DynamoDBReadOptions = {
+  /** Wire generation of the payload before DynamoDB stripped its envelope. */
+  storedEqlVersion?: 2 | 3
+}
 
 /**
  * The client capability this adapter consumes, declared structurally so it is
- * satisfied by the nominal {@link EncryptionClient} AND by the
- * `TypedEncryptionClient` that `EncryptionV3` returns, neither needing a cast.
+ * satisfied by {@link EncryptionClient} and by the WASM client.
  * Mirrors the approach the Drizzle v3 operators take for the same reason: a
- * nominal `TypedEncryptionClient<S>` parameter would reject a client built for
+ * nominal `EncryptionClient<S>` parameter would reject a client built for
  * a narrower schema tuple.
  *
- * Both NATIVE clients return a chainable operation on every path — the nominal
- * client's `DecryptModelOperation` and the typed wrapper's
- * `MappedDecryptOperation` each carry `.audit()` (the typed wrapper also takes
- * the table as a second argument). The operation classes handle both; see
- * `DecryptModelOperation` and `resolveDecryptResult`.
+ * The NATIVE client returns a chainable operation on every path: its
+ * decrypt-model methods hand back a `MappedDecryptOperation` wrapping the
+ * underlying `DecryptModelOperation`, and both of those carry `.audit()`. The
+ * operation classes handle either shape; see `DecryptModelOperation` and
+ * `resolveDecryptResult`.
  *
  * The wasm-inline client does not, on EITHER path: its encrypt and decrypt are
  * plain `async` methods returning a bare `Promise<WasmResult>`, so audit
@@ -55,10 +42,10 @@ export type AnyEncryptedTable =
  * therefore a bug, not just a lost audit record; the encrypt path made exactly
  * that mistake and failed every v3 write on this entry (#788 review follow-up).
  *
- * Its EQL v2 path is refused outright by `assertClientTableVersionMatch` — the
- * v2 read relies on calling decrypt WITHOUT a table, and that entry's
- * `Encryption()` rejects a v2 schema anyway, so the pairing is wrong in both
- * directions.
+ * Its EQL v2 READ path is supported, however. The legacy read reconstructs the
+ * v2 envelope around the current v3 table and forwards that table like any
+ * other read, so nothing on this entry needs a v2 schema — which is just as
+ * well, since its `Encryption()` rejects one.
  */
 export type DynamoDBEncryptionClient = {
   encryptModel(input: never, table: never): unknown
@@ -71,15 +58,15 @@ export type DynamoDBEncryptionClient = {
  * @internal Callable view of {@link DynamoDBEncryptionClient}.
  *
  * The public type declares `never` operands so both client shapes satisfy it
- * without a cast; a callable signature cannot be written that both a generic
- * `EncryptionClient` method and a generic `TypedEncryptionClient` method
- * satisfy. The operation classes therefore cast to this shape at the call site
+ * without a cast; a callable signature cannot be written that both the generic
+ * native `EncryptionClient` and the WASM client methods satisfy. The operation
+ * classes therefore cast to this shape at the call site
  * — the same split the Drizzle v3 operators use.
  *
  * The returns are intentionally untyped on ALL FOUR members. The clients
- * disagree about what an operation even is: the nominal client returns a
- * chainable `EncryptModelOperation` / `DecryptModelOperation`, the typed client
- * a `MappedDecryptOperation`, and the wasm-inline client a bare
+ * disagree about what an operation even is: the native client returns a
+ * chainable `EncryptModelOperation` / `DecryptModelOperation`, adapters can
+ * return a `MappedDecryptOperation`, and the wasm-inline client returns a bare
  * `Promise<WasmResult>` with no `.audit()` anywhere on it.
  *
  * Declaring a chainable shape here asserts an `.audit()` that the wasm entry
@@ -110,11 +97,11 @@ export type CallableEncryptionClient = {
 
 export interface EncryptedDynamoDBConfig {
   /**
-   * The client from `Encryption(...)` (or the deprecated `EncryptionV3(...)`
-   * alias). For an EQL v3 schema set `Encryption` auto-selects the v3 wire format
-   * and returns the typed client — no `config: { eqlVersion: 3 }` needed.
+   * The client returned by `Encryption(...)` for this table.
    */
-  encryptionClient: EncryptionClient | DynamoDBEncryptionClient
+  encryptionClient:
+    | EncryptionClient<readonly AnyV3Table[]>
+    | DynamoDBEncryptionClient
   options?: {
     logger?: {
       error: (message: string, error: Error) => void
@@ -273,12 +260,8 @@ export interface EncryptedDynamoDBInstance {
   decryptModel<Table extends AnyV3Table, T extends Record<string, unknown>>(
     item: T,
     table: Table,
+    options?: DynamoDBReadOptions,
   ): DecryptModelOperation<DecryptedAttributes<Table, T>>
-  /** EQL v2. Unchanged. */
-  decryptModel<T extends Record<string, unknown>>(
-    item: Record<string, EncryptedValue | unknown>,
-    table: EncryptedTable<EncryptedTableColumn>,
-  ): DecryptModelOperation<T>
 
   /** EQL v3. See {@link EncryptedDynamoDBInstance.decryptModel}. */
   bulkDecryptModels<
@@ -287,10 +270,6 @@ export interface EncryptedDynamoDBInstance {
   >(
     items: T[],
     table: Table,
+    options?: DynamoDBReadOptions,
   ): BulkDecryptModelsOperation<DecryptedAttributes<Table, T>>
-  /** EQL v2. Unchanged. */
-  bulkDecryptModels<T extends Record<string, unknown>>(
-    items: Record<string, EncryptedValue | unknown>[],
-    table: EncryptedTable<EncryptedTableColumn>,
-  ): BulkDecryptModelsOperation<T>
 }

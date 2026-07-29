@@ -24,10 +24,10 @@ unsuffixed names (part of the EQL v2 removal, #707).
 generation-agnostic, so EQL v2 payloads still decrypt through the core client
 (`decrypt` / `decryptModel`). This adapter, however, is now EQL v3 only and will
 not auto-read an `eql_v2_encrypted` column: to read legacy v2 data during
-migration, decrypt fetched rows with `@cipherstash/stack` directly, or run a
-v2-configured setup alongside the v3 one and route per column. Mixed-generation
-handling is a customer-side concern (install both and handle it explicitly), not
-adapter auto-detection.
+migration, decrypt fetched rows with `@cipherstash/stack` directly, or use a
+dedicated migration reader that calls the native client's generation-agnostic
+decrypt operations. The public Stack client cannot be configured to author v2;
+mixed-generation handling is explicit rather than adapter auto-detection.
 
 Internally the v3 query builder (`query-builder-v3.ts`) was folded into the base
 `EncryptedQueryBuilderImpl`, which is now natively EQL v3; no runtime behaviour or

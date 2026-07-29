@@ -206,7 +206,7 @@ export type QueryableColumnsOf<T extends AnyV3Table> =
     : never
 
 /**
- * The accepted input model for {@link import('@/encryption/v3').TypedEncryptionClient.encryptModel}.
+ * The accepted input model for {@link import('@/encryption/v3').EncryptionClient.encryptModel}.
  * `T` is inferred from the argument: keys that name a schema column are pinned to
  * the column's plaintext type (nullable if the field is nullable), so a wrong-typed
  * field fails assignability; all other keys pass through unchanged.

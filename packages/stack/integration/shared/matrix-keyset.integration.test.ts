@@ -7,16 +7,16 @@
 import { ensureKeyset } from '@cipherstash/protect-ffi'
 import { unwrapResult } from '@cipherstash/test-kit'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { EncryptionV3, encryptedTable, types } from '@/encryption/v3'
+import { Encryption, encryptedTable, types } from '@/encryption/v3'
 
 const users = encryptedTable('v3_keyset_users', {
   email: types.TextEq('email'),
 })
 
-describe('EncryptionV3 keyset config (deterministic)', () => {
+describe('Encryption keyset config (deterministic)', () => {
   it('rejects an invalid keyset id before touching the network', async () => {
     await expect(
-      EncryptionV3({
+      Encryption({
         schemas: [users],
         config: { keyset: { id: 'invalid-uuid' } },
       }),
@@ -26,7 +26,7 @@ describe('EncryptionV3 keyset config (deterministic)', () => {
   })
 })
 
-describe('EncryptionV3 keyset config (live)', () => {
+describe('Encryption keyset config (live)', () => {
   let keysetId: string
 
   beforeAll(async () => {
@@ -35,7 +35,7 @@ describe('EncryptionV3 keyset config (live)', () => {
   }, 30000)
 
   it('round-trips a value using an explicit keyset id', async () => {
-    const client = await EncryptionV3({
+    const client = await Encryption({
       schemas: [users],
       config: { keyset: { id: keysetId } },
     })

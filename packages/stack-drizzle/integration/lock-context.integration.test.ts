@@ -33,7 +33,7 @@
  * control.
  */
 import { type AuthFailure, OidcFederationStrategy } from '@cipherstash/stack'
-import { type EncryptionClientFor, EncryptionV3 } from '@cipherstash/stack/v3'
+import { Encryption, type EncryptionClient } from '@cipherstash/stack/v3'
 import { databaseUrl, unwrapResult, V3_MATRIX } from '@cipherstash/test-kit'
 import { clerkJwtProvider } from '@cipherstash/test-kit/integration-clerk'
 import { and, asc as drizzleAsc, eq as drizzleEq, type SQL } from 'drizzle-orm'
@@ -71,7 +71,7 @@ const schema = extractEncryptionSchema(secretTable)
 
 type SelectRow = { rowKey: string }
 
-let client: EncryptionClientFor<readonly [typeof schema]>
+let client: EncryptionClient<readonly [typeof schema]>
 let ops: ReturnType<typeof createEncryptionOperators>
 let db: ReturnType<typeof drizzle>
 
@@ -161,7 +161,7 @@ beforeAll(async () => {
   if (federation.failure) {
     throw new Error(`[federation]: ${authFailureMessage(federation.failure)}`)
   }
-  client = await EncryptionV3({
+  client = await Encryption({
     schemas: [schema],
     config: { authStrategy: federation.data },
   })
@@ -320,7 +320,7 @@ describe('v3 drizzle operators with lock context (live pg)', () => {
         `[federation B]: ${authFailureMessage(federationB.failure)}`,
       )
     }
-    const clientB = await EncryptionV3({
+    const clientB = await Encryption({
       schemas: [schema],
       config: { authStrategy: federationB.data },
     })

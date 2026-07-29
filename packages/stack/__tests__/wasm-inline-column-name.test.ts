@@ -18,18 +18,9 @@ vi.mock('@cipherstash/protect-ffi/wasm-inline', () => ({
 }))
 
 import { types } from '../src/eql/v3'
-import { encryptedColumn, encryptedField } from '../src/schema'
 import { getColumnName } from '../src/wasm-inline'
 
 describe('wasm-inline getColumnName', () => {
-  it('returns the name for a v2 EncryptedColumn', () => {
-    expect(getColumnName(encryptedColumn('email'))).toBe('email')
-  })
-
-  it('returns the name for a v2 EncryptedField', () => {
-    expect(getColumnName(encryptedField('profile'))).toBe('profile')
-  })
-
   it('returns the name for a v3 EncryptedTextSearchColumn (structural, no instanceof)', () => {
     // Regression: widening EncryptOptions.column to the structural
     // BuildableColumn made v3 columns type-check at the wasm-inline encrypt

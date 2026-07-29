@@ -4,7 +4,7 @@
  * Everything on the encryption path is REAL:
  *
  *   - the client is `cipherstashFromStack({ contractJson })` over a
- *     real `EncryptionV3` (ZeroKMS round-trips, no fakes);
+ *     real `Encryption` (ZeroKMS round-trips, no fakes);
  *   - writes go through the REAL v3 bulk-encrypt middleware returned by
  *     that factory (`cs.middleware[0].beforeExecute`), driven exactly
  *     the way the SQL runtime drives it: an execution plan whose AST

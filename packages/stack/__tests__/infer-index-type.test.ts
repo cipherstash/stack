@@ -4,7 +4,7 @@ import {
   inferQueryOpFromPlaintext,
   validateIndexType,
 } from '@/encryption/helpers/infer-index-type'
-import { encryptedColumn, encryptedTable } from '@/schema'
+import { encryptedColumn, encryptedTable } from '@/schema/internal'
 
 describe('infer-index-type helpers', () => {
   const users = encryptedTable('users', {

@@ -1,0 +1,491 @@
+import type {
+  AnyV3Table,
+  ColumnsOf,
+  PlaintextForColumn,
+  QueryableColumnsOf,
+  QueryTypesForColumn,
+  V3DecryptedModel,
+  V3EncryptedModel,
+  V3ModelInput,
+} from '@/eql/v3'
+import { DATE_LIKE_CASTS } from '@/eql/v3/columns'
+import { reconstructDatePaths } from '@/eql/v3/date-reconstruction'
+import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
+import type { LockContextInput } from '@/identity'
+import type {
+  BulkDecryptPayload,
+  BulkEncryptPayload,
+  Decrypted,
+  Encrypted,
+  EncryptedReturnType,
+  EncryptOptions,
+} from '@/types'
+// Every binding from `./index` is imported TYPE-ONLY — `Encryption` included,
+// since it is referenced only from the TSDoc {@link}s below (same trick as the
+// `LockContext` import in `./index`). Keeping this side type-only is what makes
+// the pair acyclic at runtime: values flow one way only, `./index` → here, for
+// `createEncryptionClient`. A value import of `Encryption` here would reinstate
+// a genuine module-eval cycle for the sake of a binding nothing consumes.
+import type {
+  BatchEncryptQueryOperation,
+  BulkDecryptModelsOperation,
+  BulkDecryptOperation,
+  BulkEncryptModelsOperation,
+  BulkEncryptOperation,
+  DecryptModelOperation,
+  DecryptOperation,
+  Encryption,
+  EncryptModelOperation,
+  EncryptOperation,
+  EncryptQueryOperation,
+} from './index'
+import {
+  type AuditableDecryptModelOperation,
+  type LockBoundDecryptModelOperation,
+  MappedDecryptOperation,
+} from './operations/mapped-decrypt'
+
+/**
+ * The structural VIEW of the native client that the wrapper below consumes —
+ * only the members it forwards to, with operands erased to `never` so a client
+ * built for any schema tuple satisfies it.
+ *
+ * Deliberately not the concrete class: that class (`NativeEncryptionClient` in
+ * `./index`) is not exported, and naming it here would make the two modules
+ * mutually dependent at the type level for no gain. Named for the role it plays
+ * — the thing being wrapped — so it does not read as a second declaration of
+ * the implementation class.
+ */
+type UnderlyingNativeClient = {
+  encrypt(plaintext: never, opts: never): EncryptOperation
+  encryptQuery(
+    plaintextOrTerms: never,
+    opts?: never,
+  ): EncryptQueryOperation | BatchEncryptQueryOperation
+  encryptModel(input: never, table: never): unknown
+  bulkEncryptModels(input: never, table: never): unknown
+  decrypt(encrypted: Encrypted): DecryptOperation
+  decryptModel(
+    input: Record<string, unknown>,
+  ): DecryptModelOperation<Record<string, unknown>>
+  bulkDecryptModels(
+    input: Array<Record<string, unknown>>,
+  ): BulkDecryptModelsOperation<Record<string, unknown>>
+  bulkEncrypt(
+    plaintexts: BulkEncryptPayload,
+    opts: EncryptOptions,
+  ): BulkEncryptOperation
+  bulkDecrypt(payloads: BulkDecryptPayload): BulkDecryptOperation
+  getEncryptConfig(): import('@/schema').EncryptConfig | undefined
+}
+
+type QueryTermForTable<Table extends AnyV3Table> =
+  QueryableColumnsOf<Table> extends infer Col
+    ? Col extends QueryableColumnsOf<Table>
+      ? {
+          value: PlaintextForColumn<Col>
+          table: Table
+          column: Col
+          queryType?: QueryTypesForColumn<Col>
+          returnType?: EncryptedReturnType
+        }
+      : never
+    : never
+
+type QueryTermForSchemas<S extends readonly AnyV3Table[]> =
+  S[number] extends infer Table
+    ? Table extends AnyV3Table
+      ? QueryTermForTable<Table>
+      : never
+    : never
+
+type BulkEncryptPayloadFor<Col> = Array<{
+  id?: string
+  plaintext: PlaintextForColumn<Col> | null
+}>
+
+/**
+ * The client type {@link Encryption} resolves to for the schema tuple `S`: a
+ * strongly-typed view over the native FFI-backed client, for EQL v3 schemas.
+ *
+ * Every method derives its types from the concrete `table` / `column` builder
+ * arguments (which carry their branded types at the call site), so:
+ * - `encrypt` / `encryptQuery` pin the plaintext to the column's domain type
+ *   (`text → string`, `timestamp → Date`, …);
+ * - `encryptQuery` additionally constrains `queryType` to the column's
+ *   capabilities and rejects storage-only columns outright;
+ * - `encryptModel` / `bulkEncryptModels` validate schema-column fields against
+ *   their inferred plaintext type (passthrough fields are untouched) and return
+ *   a precise encrypted model;
+ * - `decryptModel` / `bulkDecryptModels` return the precise plaintext model,
+ *   reconstructing `Date` values from the encrypt-config `cast_as`.
+ *
+ * This is **the** way to name the client — reach for it whenever you need to
+ * declare a variable, field or return type before the `await` that produces it:
+ *
+ * ```typescript
+ * const users = encryptedTable("users", { email: types.TextSearch("email") })
+ *
+ * let client: EncryptionClient<readonly [typeof users]>
+ * client = await Encryption({ schemas: [users] })
+ * ```
+ *
+ * For code that is generic over its schemas — integration adapters that build a
+ * table per test family, say — name the loose array:
+ *
+ * ```typescript
+ * let client: EncryptionClient<readonly AnyV3Table[]>
+ * ```
+ *
+ * That keeps `table` and `column` arguments checked, but NOT the model input:
+ * with `S` loose, `V3ModelInput<AnyV3Table, T>` cannot resolve a per-column
+ * plaintext, so `encryptModel` / `bulkEncryptModels` reject a
+ * `Record<string, unknown>` model. An adapter holding untyped rows needs a cast
+ * at that boundary (`@cipherstash/stack-supabase` has exactly one, for exactly
+ * this reason). Name a concrete tuple wherever the schema IS known statically —
+ * that is the only form with full model typing.
+ *
+ * Prefer this named type to `Awaited<ReturnType<typeof Encryption>>` when the
+ * concrete schema tuple matters: TypeScript's `ReturnType` reads the final
+ * overload and therefore produces the intentionally widened default client.
+ *
+ * @typeParam S - the tuple of registered v3 tables; `table` arguments must be a
+ *   member of this tuple.
+ */
+export interface EncryptionClient<
+  S extends readonly AnyV3Table[] = readonly AnyV3Table[],
+> {
+  encrypt<Table extends S[number], Col extends ColumnsOf<Table>>(
+    plaintext: PlaintextForColumn<Col>,
+    opts: { table: Table; column: Col },
+  ): EncryptOperation
+
+  encryptQuery<
+    Table extends S[number],
+    Col extends QueryableColumnsOf<Table>,
+    QT extends QueryTypesForColumn<Col> = QueryTypesForColumn<Col>,
+  >(
+    plaintext: PlaintextForColumn<Col>,
+    opts: {
+      table: Table
+      column: Col
+      queryType?: QT
+      returnType?: EncryptedReturnType
+    },
+  ): EncryptQueryOperation
+
+  /** Batch query terms remain correlated by table, column, value and capability. */
+  encryptQuery(
+    terms: readonly QueryTermForSchemas<S>[],
+  ): BatchEncryptQueryOperation
+
+  encryptModel<Table extends S[number], T extends Record<string, unknown>>(
+    input: V3ModelInput<Table, T>,
+    table: Table,
+  ): EncryptModelOperation<V3EncryptedModel<Table, T>>
+
+  bulkEncryptModels<Table extends S[number], T extends Record<string, unknown>>(
+    input: Array<V3ModelInput<Table, T>>,
+    table: Table,
+  ): BulkEncryptModelsOperation<V3EncryptedModel<Table, T>>
+
+  /**
+   * Decrypt a single value. Cannot be strongly typed — a lone ciphertext carries
+   * no column identity — so it resolves to the FFI plaintext union unchanged.
+   */
+  decrypt(encrypted: Encrypted): DecryptOperation
+
+  /**
+   * Decrypt a model, returning the precise plaintext shape for `table`. `Date`
+   * columns are reconstructed from the encrypt-config `cast_as`.
+   *
+   * Pass `lockContext` to decrypt identity-bound data — the same context that
+   * was supplied at encrypt time must be provided here (or chain
+   * `.withLockContext()` on the returned operation).
+   *
+   * Returns a chainable {@link AuditableDecryptModelOperation}: await it for the
+   * `Result`, or chain `.audit({ metadata })` / `.withLockContext()` first. The
+   * per-row `Date` reconstruction is applied to the successful result.
+   *
+   * Passing `lockContext` positionally returns the
+   * {@link LockBoundDecryptModelOperation} instead, which offers `.audit()` but
+   * not `.withLockContext()` — a context binds exactly once, and binding twice
+   * throws.
+   */
+  decryptModel<Table extends S[number], T extends Record<string, unknown>>(
+    input: T,
+    table: Table,
+    lockContext: LockContextInput | undefined,
+  ): LockBoundDecryptModelOperation<V3DecryptedModel<Table, T>>
+  decryptModel<Table extends S[number], T extends Record<string, unknown>>(
+    input: T,
+    table: Table,
+  ): AuditableDecryptModelOperation<V3DecryptedModel<Table, T>>
+
+  /**
+   * Table-less form: decrypt whatever encrypted fields the model carries, with
+   * no `Date` reconstruction (there is no `cast_as` to reconstruct from) and no
+   * precise plaintext shape.
+   *
+   * This is the read path for rows that predate this client's schemas — legacy
+   * **EQL v2** models above all, whose table is not, and cannot be, a member of
+   * `S`. It is also the arity the pre-v3 client exposed, so callers and adapters
+   * written against that shape keep compiling. The runtime has always accepted
+   * the one-arg call; without this signature the type layer forbids the very
+   * compatibility the client promises. Prefer the two-arg form whenever the
+   * table IS registered.
+   */
+  decryptModel<T extends Record<string, unknown>>(
+    input: T,
+  ): AuditableDecryptModelOperation<Decrypted<T>>
+
+  bulkDecryptModels<Table extends S[number], T extends Record<string, unknown>>(
+    input: Array<T>,
+    table: Table,
+    lockContext: LockContextInput | undefined,
+  ): LockBoundDecryptModelOperation<Array<V3DecryptedModel<Table, T>>>
+  bulkDecryptModels<Table extends S[number], T extends Record<string, unknown>>(
+    input: Array<T>,
+    table: Table,
+  ): AuditableDecryptModelOperation<Array<V3DecryptedModel<Table, T>>>
+
+  /** Table-less bulk form — see the one-arg {@link decryptModel} overload. */
+  bulkDecryptModels<T extends Record<string, unknown>>(
+    input: Array<T>,
+  ): AuditableDecryptModelOperation<Array<Decrypted<T>>>
+
+  bulkEncrypt<Table extends S[number], Col extends ColumnsOf<Table>>(
+    plaintexts: BulkEncryptPayloadFor<Col>,
+    opts: { table: Table; column: Col },
+  ): BulkEncryptOperation
+  bulkDecrypt(payloads: BulkDecryptPayload): BulkDecryptOperation
+  getEncryptConfig(): ReturnType<UnderlyingNativeClient['getEncryptConfig']>
+}
+
+/**
+ * Build a per-row reconstructor of `Date` values from the table's
+ * encrypt-config `cast_as`. The FFI returns `JsPlaintext`
+ * (string/number/boolean/…) with no `Date`, so those columns arrive as their
+ * serialized form and are rebuilt here. Safe (idempotent) if the FFI ever
+ * returns `Date` directly: `new Date(date)` is a no-op.
+ *
+ * A factory rather than a `(row, table)` function so the table config —
+ * row-invariant, but non-trivial to build — is derived once per call site,
+ * not once per row on the bulk path.
+ *
+ * NOTE: only date-like casts need per-row reconstruction. `bigint` (int8)
+ * needs none — protect-ffi 0.28 returns a native JS `bigint` on decrypt
+ * (and bounds-checks/encodes it on encrypt), so those columns pass through
+ * unchanged, exactly like `string`/`number`/`boolean`.
+ */
+function rowReconstructor(
+  table: AnyV3Table,
+): (row: Record<string, unknown>) => Record<string, unknown> {
+  // The decrypted row is keyed by JS property name, but `cast_as` lives on the
+  // config keyed by DB name — bridge the two via the table's property→DB map.
+  const { columns } = table.build()
+  const propToDb = table.buildColumnKeyMap()
+  // Only date-like columns need per-row work; resolve them up front.
+  const dateProperties = Object.entries(propToDb)
+    .filter(([, dbName]) => {
+      const castAs = columns[dbName]?.cast_as
+      // Date-like casts share one source of truth with the type-level
+      // reconstruction (`PlaintextFromKind`) — see `DATE_LIKE_CASTS`.
+      return (DATE_LIKE_CASTS as readonly string[]).includes(castAs as string)
+    })
+    .map(([property]) => property)
+
+  return (row) => reconstructDatePaths(row, dateProperties)
+}
+
+/**
+ * Wrap an already-built native FFI client (`UnderlyingNativeClient`) in an
+ * {@link EncryptionClient} for the given v3 schemas. Zero runtime cost for the
+ * encrypt/query paths (the underlying operations are returned unchanged); the
+ * decrypt-model paths add a per-column `Date` reconstruction step.
+ *
+ * The `schemas` are captured with a `const` type parameter so array-literal
+ * widening does not collapse per-table inference.
+ */
+export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
+  client: UnderlyingNativeClient,
+  ...schemas: S
+): EncryptionClient<S> {
+  // Precompute one row reconstructor per schema table at construction. This runs
+  // each table's `build()` — which throws on duplicate DB column names — ONCE,
+  // here, off the Result-returning decrypt path. `decryptModel`/
+  // `bulkDecryptModels` therefore never call `build()` (whose throw would surface
+  // as a promise rejection and break their `Promise<Result<…>>` contract) and no
+  // longer rebuild the row-invariant config on every call.
+  // Keyed by `tableName`, not table object identity: `AnyV3Table` is
+  // structurally typed, so a table re-imported from another module (or rebuilt
+  // after an HMR reload) satisfies `Table extends S[number]` yet is a different
+  // object. Identity keying would fail those valid calls. `tableName` is the
+  // semantic identity the FFI encrypt config and `build()` already key on.
+  const reconstructors = new Map<
+    string,
+    (row: Record<string, unknown>) => Record<string, unknown>
+  >()
+  for (const table of schemas) {
+    reconstructors.set(table.tableName, rowReconstructor(table))
+  }
+
+  // A table not among the schemas this client was initialized with has no
+  // precomputed reconstructor. Return a Result failure rather than building one
+  // inline, which could throw and reject the Result-shaped decrypt promise.
+  const unknownTableFailure: { failure: EncryptionError } = {
+    failure: {
+      type: EncryptionErrorTypes.DecryptionError,
+      message:
+        '[eql/v3]: decryptModel received a table this client was not initialized with — pass one of the tables given to Encryption({ schemas })',
+    },
+  }
+
+  // Pass-through maps for the table-less one-arg decrypt call, where `table` is
+  // absent: decrypt WITHOUT date reconstruction, because with no table there is
+  // no `cast_as` to reconstruct from. This client is what `Encryption` returns
+  // for every v3 schema set, so generic consumers — and the legacy EQL v2 read
+  // path, whose table is not in `S` — can call `decryptModel(x)` /
+  // `bulkDecryptModels(xs)` with no table. Degrade gracefully instead of
+  // dereferencing `undefined.tableName`.
+  const passthroughRow = (row: Record<string, unknown>) => row
+  const passthroughRows = (rows: Array<Record<string, unknown>>) => rows
+
+  // Overloaded so the implementation is checked against BOTH forms directly —
+  // no whole-value cast. The two public signatures mirror the interface member;
+  // the hidden implementation signature is broad and forwards to the underlying
+  // native client (which routes to the batch operation when no `opts` are
+  // supplied).
+  // Only the forwarded args are `as never`, exactly as the sibling wrappers
+  // below: one forwarding body cannot re-derive the public client's per-column
+  // signatures.
+  function encryptQuery<
+    Table extends S[number],
+    Col extends QueryableColumnsOf<Table>,
+    QT extends QueryTypesForColumn<Col> = QueryTypesForColumn<Col>,
+  >(
+    plaintext: PlaintextForColumn<Col>,
+    opts: {
+      table: Table
+      column: Col
+      queryType?: QT
+      returnType?: EncryptedReturnType
+    },
+  ): EncryptQueryOperation
+  function encryptQuery(
+    terms: readonly QueryTermForSchemas<S>[],
+  ): BatchEncryptQueryOperation
+  function encryptQuery(
+    plaintextOrTerms: unknown,
+    opts?: unknown,
+  ): EncryptQueryOperation | BatchEncryptQueryOperation {
+    return client.encryptQuery(plaintextOrTerms as never, opts as never)
+  }
+
+  // Overloaded declarations for the same reason as `encryptQuery` above: the
+  // table-ful and table-less forms have different return types, and a single
+  // arrow in the object literal cannot present both.
+  function decryptModel<
+    Table extends S[number],
+    T extends Record<string, unknown>,
+  >(
+    input: T,
+    table: Table,
+    lockContext: LockContextInput | undefined,
+  ): LockBoundDecryptModelOperation<V3DecryptedModel<Table, T>>
+  function decryptModel<
+    Table extends S[number],
+    T extends Record<string, unknown>,
+  >(
+    input: T,
+    table: Table,
+  ): AuditableDecryptModelOperation<V3DecryptedModel<Table, T>>
+  function decryptModel<T extends Record<string, unknown>>(
+    input: T,
+  ): AuditableDecryptModelOperation<Decrypted<T>>
+  function decryptModel(
+    input: Record<string, unknown>,
+    table?: AnyV3Table,
+    lockContext?: LockContextInput,
+  ): AuditableDecryptModelOperation<never> {
+    // `table` is absent on the table-less one-arg call (see `passthroughRow`).
+    // Given a table: reconstruct dates from its cast_as, or — if it was never
+    // registered — leave `map` undefined so the mapped op resolves to
+    // `unknownTableFailure` on execute.
+    const reconstruct = table
+      ? reconstructors.get(table.tableName)
+      : passthroughRow
+    const op = client.decryptModel(input)
+    const base = lockContext ? op.withLockContext(lockContext) : op
+    return new MappedDecryptOperation(
+      base,
+      reconstruct,
+      unknownTableFailure,
+    ) as never
+  }
+
+  function bulkDecryptModels<
+    Table extends S[number],
+    T extends Record<string, unknown>,
+  >(
+    input: Array<T>,
+    table: Table,
+    lockContext: LockContextInput | undefined,
+  ): LockBoundDecryptModelOperation<Array<V3DecryptedModel<Table, T>>>
+  function bulkDecryptModels<
+    Table extends S[number],
+    T extends Record<string, unknown>,
+  >(
+    input: Array<T>,
+    table: Table,
+  ): AuditableDecryptModelOperation<Array<V3DecryptedModel<Table, T>>>
+  function bulkDecryptModels<T extends Record<string, unknown>>(
+    input: Array<T>,
+  ): AuditableDecryptModelOperation<Array<Decrypted<T>>>
+  function bulkDecryptModels(
+    input: Array<Record<string, unknown>>,
+    table?: AnyV3Table,
+    lockContext?: LockContextInput,
+  ): AuditableDecryptModelOperation<never> {
+    const op = client.bulkDecryptModels(input)
+    const base = lockContext ? op.withLockContext(lockContext) : op
+    // No table → pass rows through (no date reconstruction). Registered table →
+    // reconstruct each row. Unregistered table → `undefined` map →
+    // `unknownTableFailure` on execute.
+    let mapRows:
+      | ((
+          rows: Array<Record<string, unknown>>,
+        ) => Array<Record<string, unknown>>)
+      | undefined
+    if (!table) {
+      mapRows = passthroughRows
+    } else {
+      const reconstruct = reconstructors.get(table.tableName)
+      mapRows = reconstruct ? (rows) => rows.map(reconstruct) : undefined
+    }
+    return new MappedDecryptOperation(
+      base,
+      mapRows,
+      unknownTableFailure,
+    ) as never
+  }
+
+  const typed: EncryptionClient<S> = {
+    encrypt: (plaintext, opts) =>
+      client.encrypt(plaintext as never, opts as never),
+    encryptQuery,
+    encryptModel: (input, table) =>
+      client.encryptModel(input as never, table as never) as never,
+    bulkEncryptModels: (input, table) =>
+      client.bulkEncryptModels(input as never, table as never) as never,
+    decrypt: (encrypted) => client.decrypt(encrypted),
+    decryptModel,
+    bulkDecryptModels,
+    bulkEncrypt: (plaintexts, opts) =>
+      client.bulkEncrypt(plaintexts as BulkEncryptPayload, opts),
+    bulkDecrypt: (payloads) => client.bulkDecrypt(payloads),
+    getEncryptConfig: () => client.getEncryptConfig(),
+  }
+
+  return typed
+}

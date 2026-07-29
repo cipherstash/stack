@@ -15,9 +15,9 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { encryptedTable, types } from '@/eql/v3'
 import { LockContext } from '@/identity'
 import { Encryption } from '@/index'
-import { encryptedColumn, encryptedTable } from '@/schema'
 
 // A protect-ffi-shaped encrypted payload (passes the SDK's
 // `isEncryptedPayload` check so model decrypt detects encrypted fields).
@@ -47,7 +47,7 @@ import * as ffi from '@cipherstash/protect-ffi'
 import type { EncryptionClient } from '@/encryption'
 
 const users = encryptedTable('users', {
-  email: encryptedColumn('email').equality(),
+  email: types.TextEq('email'),
 })
 
 const IDENTITY_CLAIM = { identityClaim: ['sub'] }

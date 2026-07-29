@@ -17,16 +17,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildReadContext,
   deepClone,
-  isV3Table,
   toEncryptedDynamoItem,
   toItemWithEqlPayloads,
 } from '@/dynamodb/helpers'
 import { encryptedTable, types } from '@/eql/v3'
-import {
-  encryptedColumn,
-  encryptedField,
-  encryptedTable as encryptedTableV2,
-} from '@/schema'
 import { logger } from '@/utils/logger'
 
 const users = encryptedTable('users', {
@@ -58,28 +52,6 @@ const scalar = (
   i: { t: 'users', c: column },
   c,
   ...terms,
-})
-
-describe('isV3Table', () => {
-  it('recognises a v3 table by its concrete-domain columns', () => {
-    expect(isV3Table(users)).toBe(true)
-  })
-
-  it('recognises a flat v2 table', () => {
-    const v2 = encryptedTableV2('users', {
-      email: encryptedColumn('email').equality(),
-    })
-
-    expect(isV3Table(v2)).toBe(false)
-  })
-
-  it('recognises a v2 table whose columns are nested under a group', () => {
-    const v2 = encryptedTableV2('users', {
-      example: { protected: encryptedField('example.protected') },
-    })
-
-    expect(isV3Table(v2)).toBe(false)
-  })
 })
 
 describe('toEncryptedDynamoItem with v3 payloads', () => {
@@ -190,12 +162,14 @@ describe('toItemWithEqlPayloads for a v3 table', () => {
     })
   })
 
-  it('still emits a v2 envelope for a v2 table', () => {
-    const v2 = encryptedTableV2('users', {
-      email: encryptedColumn('email').equality(),
-    })
-
-    expect(toItemWithEqlPayloads({ email__source: 'ct' }, v2)).toEqual({
+  it('emits a v2 envelope when legacy storage is selected explicitly', () => {
+    expect(
+      toItemWithEqlPayloads(
+        { email__source: 'ct' },
+        users,
+        buildReadContext(users, 2),
+      ),
+    ).toEqual({
       email: { i: { c: 'email', t: 'users' }, v: 2, k: 'ct', c: 'ct' },
     })
   })
@@ -332,7 +306,7 @@ describe('regressions found in review', () => {
     // envelope in place so write and read stay symmetric and it round-trips.
     const item = { profile: { secret: scalar('secret', 'CT', { hm: 'H' }) } }
 
-    const stored = toEncryptedDynamoItem(item, encryptedAttrs, true)
+    const stored = toEncryptedDynamoItem(item, encryptedAttrs)
 
     expect(stored).toEqual(item)
     expect(toItemWithEqlPayloads(stored, users)).toEqual(item)
@@ -400,7 +374,7 @@ describe('arrays are a deliberate carve-out', () => {
     const item = { tags: [scalar('tags', 'CT', { hm: 'H' })] }
 
     // Whole envelope retained (v, i, c, hm all present); no tags__source/__hmac.
-    expect(toEncryptedDynamoItem(item, encryptedAttrs, true)).toEqual(item)
+    expect(toEncryptedDynamoItem(item, encryptedAttrs)).toEqual(item)
   })
 
   it('passes an envelope nested in an array straight through on read', () => {
@@ -414,7 +388,7 @@ describe('arrays are a deliberate carve-out', () => {
   it('round-trips a payload nested in an array', () => {
     const item = { tags: [scalar('tags', 'CT', { hm: 'H' })] }
 
-    const stored = toEncryptedDynamoItem(item, encryptedAttrs, true)
+    const stored = toEncryptedDynamoItem(item, encryptedAttrs)
     expect(stored).toEqual(item)
     expect(toItemWithEqlPayloads(stored, users)).toEqual(item)
   })
@@ -425,7 +399,7 @@ describe('arrays are a deliberate carve-out', () => {
     // being false stops a split. That guard interaction is otherwise untested.
     const item = { email: [scalar('email', 'CT', { hm: 'H' })] }
 
-    const stored = toEncryptedDynamoItem(item, encryptedAttrs, true)
+    const stored = toEncryptedDynamoItem(item, encryptedAttrs)
     expect(stored).toEqual(item)
     expect(stored).not.toHaveProperty('email__source')
     expect(toItemWithEqlPayloads(stored, users)).toEqual(item)
@@ -441,7 +415,7 @@ describe('arrays are a deliberate carve-out', () => {
       ],
     }
 
-    const stored = toEncryptedDynamoItem(item, encryptedAttrs, true)
+    const stored = toEncryptedDynamoItem(item, encryptedAttrs)
     expect(stored).toEqual(item)
     expect(toItemWithEqlPayloads(stored, users)).toEqual(item)
   })
@@ -525,5 +499,148 @@ describe('deepClone preserves structured values', () => {
     expect(cloned).not.toBe(input)
     expect(cloned).not.toBeInstanceOf(Model)
     expect(cloned.pk).toBe('u#1')
+  })
+})
+
+describe('stored EQL v2 grouped fields', () => {
+  /**
+   * A v2 grouped column registered its build key on the BARE LEAF, so a field
+   * inside a group was stored as `<group>.<leaf>__source` while the schema knew
+   * it only as `<leaf>`. The v3 rewrite made matching exact-dotted-path only
+   * for both generations, which silently orphaned every such attribute: it
+   * reads back as raw base64 inside a `{ data }` success.
+   *
+   * The fallback is gated on the stored generation. A v3 table registers full
+   * dotted paths precisely so a nested leaf cannot collide with a top-level
+   * column ("does not rebuild a nested <leaf>__source whose leaf collides"
+   * above), and that guard must keep holding for v3.
+   */
+  const orders = encryptedTable('orders', {
+    amount: types.TextEq('amount'),
+  })
+
+  it('rebuilds a nested v2 attribute registered under its bare leaf', () => {
+    const item = {
+      pk: 'order#1',
+      details: { amount__source: 'BASE64CT', amount__hmac: 'HMAC' },
+    }
+
+    expect(
+      toItemWithEqlPayloads(item, orders, buildReadContext(orders, 2)),
+    ).toEqual({
+      pk: 'order#1',
+      details: {
+        amount: {
+          i: { c: 'amount', t: 'orders' },
+          v: 2,
+          k: 'ct',
+          c: 'BASE64CT',
+        },
+      },
+    })
+  })
+
+  it('leaves the same item untouched when the stored generation is v3', () => {
+    const item = {
+      pk: 'order#1',
+      details: { amount__source: 'BASE64CT', amount__hmac: 'HMAC' },
+    }
+
+    expect(
+      toItemWithEqlPayloads(item, orders, buildReadContext(orders, 3)),
+    ).toEqual(item)
+  })
+})
+
+/**
+ * The bare-leaf fallback matches `details.amount__source` against the REGISTERED
+ * path `amount`, but the rebuilt envelope is re-nested by the recursion, so the
+ * plaintext lands at `details.amount`. Both reconstructors resolve date columns
+ * from the registered paths alone (`client-v3.ts` `rowReconstructor`, and
+ * `wasm-inline.ts` `dateFields`), so neither sees `details.amount` and a legacy
+ * grouped date column reads back as an ISO string instead of a `Date`.
+ *
+ * The read path is the only layer that knows the alias happened, so it reports
+ * the ACTUAL path it wrote to and the adapter reconstructs there.
+ */
+describe('stored EQL v2 grouped date fields', () => {
+  const orders = encryptedTable('orders', {
+    placedAt: types.DateEq('placed_at'),
+    reference: types.TextEq('reference'),
+  })
+
+  const groupedItem = (leaf: string) => ({
+    pk: 'order#1',
+    details: { [`${leaf}__source`]: 'BASE64CT', [`${leaf}__hmac`]: 'HMAC' },
+  })
+
+  it('reports the actual nested path a bare-leaf-matched date column landed at', () => {
+    const aliasedDatePaths = new Set<string>()
+
+    toItemWithEqlPayloads(
+      groupedItem('placedAt'),
+      orders,
+      buildReadContext(orders, 2),
+      aliasedDatePaths,
+    )
+
+    expect([...aliasedDatePaths]).toEqual(['details.placedAt'])
+  })
+
+  it('reports nothing for a bare-leaf-matched column that is not date-like', () => {
+    const aliasedDatePaths = new Set<string>()
+
+    toItemWithEqlPayloads(
+      groupedItem('reference'),
+      orders,
+      buildReadContext(orders, 2),
+      aliasedDatePaths,
+    )
+
+    expect([...aliasedDatePaths]).toEqual([])
+  })
+
+  it('reports nothing for a stored v3 read, where the fallback never fires', () => {
+    const aliasedDatePaths = new Set<string>()
+
+    toItemWithEqlPayloads(
+      groupedItem('placedAt'),
+      orders,
+      buildReadContext(orders, 3),
+      aliasedDatePaths,
+    )
+
+    expect([...aliasedDatePaths]).toEqual([])
+  })
+
+  it('reports nothing for a top-level date column, which the client already reconstructs', () => {
+    const aliasedDatePaths = new Set<string>()
+
+    toItemWithEqlPayloads(
+      { pk: 'order#1', placedAt__source: 'BASE64CT' },
+      orders,
+      buildReadContext(orders, 2),
+      aliasedDatePaths,
+    )
+
+    expect([...aliasedDatePaths]).toEqual([])
+  })
+
+  it('reports nothing for a nested date column registered under its full dotted path', () => {
+    // Registered as `details.placedAt`, so the EXACT match fires, not the
+    // fallback — the client reconstructs this path itself.
+    const dotted = encryptedTable('orders', {
+      'details.placedAt': types.DateEq('placed_at'),
+    })
+    const aliasedDatePaths = new Set<string>()
+
+    toItemWithEqlPayloads(
+      groupedItem('placedAt'),
+      dotted,
+      buildReadContext(dotted, 2),
+      aliasedDatePaths,
+    )
+
+    expect([...aliasedDatePaths]).toEqual([])
   })
 })

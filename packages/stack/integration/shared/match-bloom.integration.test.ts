@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
-import type { EncryptionClientFor } from '@/encryption/v3'
-import { EncryptionV3 } from '@/encryption/v3'
+import type { EncryptionClient } from '@/encryption/v3'
+import { Encryption } from '@/encryption/v3'
 import type { AnyV3Table } from '@/eql/v3'
 import { encryptedTable, types } from '@/eql/v3'
 
@@ -38,7 +38,7 @@ const docs = encryptedTable('match_bloom_probe', {
 const HAYSTACK = 'ada@example.com'
 
 async function bloomOf(
-  client: EncryptionClientFor<readonly AnyV3Table[]>,
+  client: EncryptionClient<readonly AnyV3Table[]>,
   value: string,
 ) {
   const result = await client.encrypt(value, { column: docs.bio, table: docs })
@@ -67,7 +67,7 @@ it.each([
 ])('bloom(needle) is a subset of bloom(haystack) for a $label', async ({
   needle,
 }) => {
-  const client = await EncryptionV3({ schemas: [docs] })
+  const client = await Encryption({ schemas: [docs] })
   const haystack = await bloomOf(client, HAYSTACK)
   const probe = await bloomOf(client, needle)
 
@@ -83,7 +83,7 @@ it.each([
 it('a needle absent from the haystack is NOT a bloom subset', async () => {
   // Without this, an implementation that blooms every needle to the empty set
   // would satisfy every assertion above.
-  const client = await EncryptionV3({ schemas: [docs] })
+  const client = await Encryption({ schemas: [docs] })
   const haystack = await bloomOf(client, HAYSTACK)
   const probe = await bloomOf(client, 'qqqzzz')
 
@@ -91,7 +91,7 @@ it('a needle absent from the haystack is NOT a bloom subset', async () => {
 }, 120_000)
 
 it('a needle blooms to a non-empty filter', async () => {
-  const client = await EncryptionV3({ schemas: [docs] })
+  const client = await Encryption({ schemas: [docs] })
   expect((await bloomOf(client, 'ada')).size).toBeGreaterThan(0)
 }, 120_000)
 
@@ -106,7 +106,7 @@ it('a needle blooms to a non-empty filter', async () => {
  * than passing for some unrelated reason.
  */
 it('the subset assertion detects a single foreign token in the operand', async () => {
-  const client = await EncryptionV3({ schemas: [docs] })
+  const client = await Encryption({ schemas: [docs] })
   const haystack = await bloomOf(client, HAYSTACK)
   const substring = await bloomOf(client, 'a@examp')
   const foreign = await bloomOf(client, 'qqqzzz')

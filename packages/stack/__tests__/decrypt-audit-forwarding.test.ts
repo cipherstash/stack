@@ -40,7 +40,7 @@ vi.mock('@cipherstash/protect-ffi', () => ({
 }))
 
 import * as ffi from '@cipherstash/protect-ffi'
-import type { EncryptionClientFor } from '@/encryption/v3'
+import type { EncryptionClient } from '@/encryption/v3'
 // Imported after the mock so the v3 table builder is available; `Encryption`
 // returns the typed client for an all-v3 schema set.
 import { encryptedTable, types } from '@/encryption/v3'
@@ -67,7 +67,7 @@ const lastDecryptOpts = () => (ffi.decryptBulk as any).mock.calls.at(-1)[1]
 const lastCiphertextLockContext = () =>
   lastDecryptOpts().ciphertexts[0]?.lockContext
 
-let client: EncryptionClientFor<readonly [typeof users]>
+let client: EncryptionClient<readonly [typeof users]>
 let prevWorkspaceCrn: string | undefined
 
 beforeEach(async () => {
@@ -140,14 +140,29 @@ describe('typed v3 client: audit metadata forwards through decryptModel', () => 
     expect(lastCiphertextLockContext()).toEqual(IDENTITY_CLAIM)
   })
 
+  /**
+   * A positional bind followed by a chained one is a COMPILE error: binding
+   * returns `LockBoundDecryptModelOperation`, which carries no
+   * `withLockContext` (see `operations/mapped-decrypt.ts`). The runtime throw
+   * below is the backstop for callers who never see those types — plain
+   * JavaScript, or anything reaching the client through an `any`. `rebind()`
+   * models exactly that caller, which is why it casts rather than chaining
+   * directly; chaining directly would not compile, and a test that does not
+   * compile is not a test.
+   *
+   * Silently keeping the first context would drop the caller's intent and fail
+   * later at ZeroKMS with an opaque rejection, so the re-bind is rejected at
+   * the call site instead.
+   */
+  const rebind = (op: unknown, lockContext: { identityClaim: string[] }) =>
+    (
+      op as { withLockContext(lc: { identityClaim: string[] }): unknown }
+    ).withLockContext(lockContext)
+
   it('throws when a second lock context is chained onto an already-bound op', () => {
-    // The wrapper always exposes `withLockContext`, so a positional bind
-    // followed by a chained one type-checks. Silently keeping the first would
-    // drop the caller's intent (and fail later at ZeroKMS with an opaque
-    // rejection); reject the re-bind at the call site instead.
     const op = client.decryptModel({ email: enc() }, users, IDENTITY_CLAIM)
 
-    expect(() => op.withLockContext({ identityClaim: ['other'] })).toThrow(
+    expect(() => rebind(op, { identityClaim: ['other'] })).toThrow(
       /already bound to a lock context/i,
     )
   })
@@ -157,7 +172,7 @@ describe('typed v3 client: audit metadata forwards through decryptModel', () => 
       identityClaim: ['sub'],
     })
 
-    expect(() => op.withLockContext(IDENTITY_CLAIM)).toThrow(
+    expect(() => rebind(op, IDENTITY_CLAIM)).toThrow(
       /already bound to a lock context/i,
     )
   })

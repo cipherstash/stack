@@ -37,7 +37,7 @@ vi.mock('@cipherstash/protect-ffi', () => ({
 }))
 
 import * as ffi from '@cipherstash/protect-ffi'
-import type { EncryptionClientFor } from '@/encryption/v3'
+import type { EncryptionClient } from '@/encryption/v3'
 import { encryptedTable, types } from '@/encryption/v3'
 
 const users = encryptedTable('users', {
@@ -70,8 +70,8 @@ function unwrap(result: any) {
 const lastOpts = (fn: any) => fn.mock.calls.at(-1)[1]
 
 // `Encryption` returns the typed client directly for an all-v3 schema set (the
-// collapse of `EncryptionV3`), so there is no separate `typedClient` wrap here.
-let typed: EncryptionClientFor<readonly [typeof users]>
+// collapse of `Encryption`), so there is no separate `typedClient` wrap here.
+let typed: EncryptionClient<readonly [typeof users]>
 let prevWorkspaceCrn: string | undefined
 
 beforeEach(async () => {

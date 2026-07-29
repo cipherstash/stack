@@ -7,8 +7,8 @@
  */
 import { unwrapResult } from '@cipherstash/test-kit'
 import { beforeAll, describe, expect, it } from 'vitest'
-import type { EncryptionClientFor } from '@/encryption/v3'
-import { EncryptionV3, encryptedTable, types } from '@/encryption/v3'
+import type { EncryptionClient } from '@/encryption/v3'
+import { Encryption, encryptedTable, types } from '@/encryption/v3'
 
 const people = encryptedTable('v3_bulk_people', {
   nickname: types.TextEq('nickname'),
@@ -16,10 +16,10 @@ const people = encryptedTable('v3_bulk_people', {
 })
 
 describe('v3 typed client bulk-at-scale (live)', () => {
-  let client: EncryptionClientFor<readonly [typeof people]>
+  let client: EncryptionClient<readonly [typeof people]>
 
   beforeAll(async () => {
-    client = await EncryptionV3({ schemas: [people] })
+    client = await Encryption({ schemas: [people] })
   }, 30000)
 
   it('round-trips 100 models through bulkEncryptModels/bulkDecryptModels', async () => {

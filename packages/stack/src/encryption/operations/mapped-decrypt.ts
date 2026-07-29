@@ -19,16 +19,26 @@ type UnderlyingDecryptOperation<In> = EncryptionOperation<In> & {
  * awaitable to a `Result<Out, …>`, and chainable with `.audit()` /
  * `.withLockContext()`. Hides the underlying pre-map type parameter.
  */
-export interface AuditableDecryptModelOperation<Out>
+export interface LockBoundDecryptModelOperation<Out>
   extends EncryptionOperation<Out> {
   audit(config: AuditConfig): this
-  /**
-   * @throws if the operation already took a lock context positionally — bind it
-   * once, either positionally or by chaining.
-   */
+}
+
+/**
+ * The unbound form, which additionally offers `.withLockContext()`.
+ *
+ * Binding returns the {@link LockBoundDecryptModelOperation} above, which does
+ * NOT carry the method — a context binds exactly once. The runtime has always
+ * rejected a second bind (see `MappedDecryptOperation.withLockContext`); until
+ * this split, the type did not, so `decryptModel(input, table, lc)
+ * .withLockContext(lc)` compiled and then threw. This mirrors the encrypt path,
+ * where `EncryptModelOperationWithLockContext` simply lacks the method.
+ */
+export interface AuditableDecryptModelOperation<Out>
+  extends LockBoundDecryptModelOperation<Out> {
   withLockContext(
     lockContext: LockContextInput,
-  ): AuditableDecryptModelOperation<Out>
+  ): LockBoundDecryptModelOperation<Out>
 }
 
 /**

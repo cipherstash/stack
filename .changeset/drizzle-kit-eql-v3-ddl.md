@@ -13,9 +13,9 @@ hand-repaired.
 
 The v3 column now emits the **unqualified** domain (`eql_v3_text_search`), which
 drizzle-kit renders as the valid `"eql_v3_text_search"` and which resolves via the
-search path (the domains live in `public`). This matches how the v2
-`encryptedType` surface already declares its type, and how drizzle-kit reads the
-type back during a `push` introspection diff, so the two sides no longer disagree.
+search path (the domains live in `public`). This also matches how drizzle-kit
+reads the type back during a `push` introspection diff, so the two sides no
+longer disagree.
 Builder recovery still yields the canonical `public.eql_v3_*` identity, so
 operators and schema extraction are unchanged.
 

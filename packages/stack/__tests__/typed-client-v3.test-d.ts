@@ -4,7 +4,6 @@ import type { EncryptionClient } from '@/encryption'
 // from src/encryption/v3.ts), exercising the re-export at the same time.
 import {
   encryptedTable,
-  typedClient,
   types,
   type V3DecryptedModel,
   type V3EncryptedModel,
@@ -25,7 +24,7 @@ const other = encryptedTable('other', {
   weight: types.IntegerOrd('weight'),
 })
 
-const client = typedClient({} as EncryptionClient, users, other)
+declare const client: EncryptionClient<readonly [typeof users, typeof other]>
 
 describe('typed v3 client — encrypt plaintext is pinned to the column domain', () => {
   it('accepts the matching plaintext type per domain', () => {
@@ -89,6 +88,48 @@ describe('typed v3 client — encryptQuery constrains queryType to capabilities'
       // @ts-expect-error - storage-only text column is not queryable
       column: users.note,
     })
+  })
+
+  it('keeps batch values correlated with their table and column', () => {
+    client.encryptQuery([
+      { value: 'alice@example.com', table: users, column: users.email },
+      {
+        value: new Date(),
+        table: users,
+        column: users.createdAt,
+        queryType: 'orderAndRange',
+      },
+    ])
+
+    client.encryptQuery([
+      // @ts-expect-error - a timestamp column requires a Date
+      {
+        value: 'not-a-date',
+        table: users,
+        column: users.createdAt,
+      },
+    ])
+  })
+})
+
+describe('typed v3 client — bulk encrypt derives the column plaintext', () => {
+  it('accepts matching values and preserves nullable entries', () => {
+    client.bulkEncrypt(
+      [{ id: '1', plaintext: new Date() }, { plaintext: null }],
+      { table: users, column: users.createdAt },
+    )
+  })
+
+  it('rejects a value from the wrong domain', () => {
+    client.bulkEncrypt(
+      [
+        {
+          // @ts-expect-error - timestamp bulk values must be Date or null
+          plaintext: 'not-a-date',
+        },
+      ],
+      { table: users, column: users.createdAt },
+    )
   })
 })
 
@@ -188,5 +229,83 @@ describe('typed v3 client — soundness', () => {
       // @ts-expect-error - integer_ord column from `other` is not in ColumnsOf<typeof users>
       column: other.weight,
     })
+  })
+})
+
+declare const lockContext: { identityClaim: string[] }
+
+describe('typed v3 client — a lock context binds exactly once', () => {
+  it('offers .withLockContext() on an unbound decrypt operation', () => {
+    expectTypeOf(
+      client.decryptModel({ email: {} as Encrypted }, users).withLockContext,
+    ).toBeFunction()
+    expectTypeOf(
+      client.bulkDecryptModels([{ email: {} as Encrypted }], users)
+        .withLockContext,
+    ).toBeFunction()
+  })
+
+  it('drops .withLockContext() once bound positionally', () => {
+    const op = client.decryptModel(
+      { email: {} as Encrypted },
+      users,
+      lockContext,
+    )
+    // @ts-expect-error - already lock-bound; binding twice throws at runtime
+    op.withLockContext(lockContext)
+
+    const bulk = client.bulkDecryptModels(
+      [{ email: {} as Encrypted }],
+      users,
+      lockContext,
+    )
+    // @ts-expect-error - already lock-bound; binding twice throws at runtime
+    bulk.withLockContext(lockContext)
+  })
+
+  it('drops .withLockContext() once bound by chaining', () => {
+    const op = client
+      .decryptModel({ email: {} as Encrypted }, users)
+      .withLockContext(lockContext)
+    // @ts-expect-error - already lock-bound; binding twice throws at runtime
+    op.withLockContext(lockContext)
+  })
+
+  it('keeps .audit() available after binding', () => {
+    expectTypeOf(
+      client.decryptModel({ email: {} as Encrypted }, users, lockContext).audit,
+    ).toBeFunction()
+  })
+})
+
+/**
+ * The overload split that makes a double bind a compile error must not also
+ * reject an OPTIONAL lock context. `decryptModel(row, table, session?.lc)` —
+ * where the context is `LockContextInput | undefined` — is the ordinary shape
+ * for code that decrypts identity-bound rows only for signed-in users. It
+ * compiled against the single optional parameter this replaced, and nothing
+ * about binding-once requires breaking it: `undefined` binds nothing.
+ */
+describe('typed v3 client — an optional lock context still type-checks', () => {
+  it('accepts LockContextInput | undefined positionally', () => {
+    expectTypeOf(client.decryptModel).toBeCallableWith(
+      { email: {} as Encrypted },
+      users,
+      undefined,
+    )
+    expectTypeOf(client.bulkDecryptModels).toBeCallableWith(
+      [{ email: {} as Encrypted }],
+      users,
+      undefined,
+    )
+  })
+
+  it('accepts a union-typed context without narrowing at the call site', () => {
+    const maybe: typeof lockContext | undefined = undefined
+    expectTypeOf(client.decryptModel).toBeCallableWith(
+      { email: {} as Encrypted },
+      users,
+      maybe,
+    )
   })
 })

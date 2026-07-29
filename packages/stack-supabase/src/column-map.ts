@@ -1,7 +1,6 @@
 import { hasBuildColumnKeyMap } from '@cipherstash/stack/adapter-kit'
 import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
 import type { ColumnSchema } from '@cipherstash/stack/schema'
-import type { BuildableQueryColumn } from '@cipherstash/stack/types'
 import type { DbName } from './types'
 
 /**
@@ -287,13 +286,7 @@ export class ColumnMap {
   }
 
   /** The encrypted builders as the term collector's column lookup. */
-  queryColumnMap(): Record<string, BuildableQueryColumn> {
-    // `V3ColumnLike` omits `isQueryable(): true`, which `BuildableV3QueryableColumn`
-    // requires — and `v3Columns` intentionally holds storage-only columns, for which
-    // `isQueryable()` is `false`. The collector consults `getQueryCapabilities()`
-    // before using an entry (`query-encrypt.ts:513`), so the widening is safe;
-    // narrowing the type would mean narrowing the map.
-    // biome-ignore lint/plugin: storage-only v3 columns lack `isQueryable(): true`; widening is safe (see above).
-    return this.v3Columns as unknown as Record<string, BuildableQueryColumn>
+  queryColumnMap(): Record<string, V3ColumnLike> {
+    return this.v3Columns
   }
 }

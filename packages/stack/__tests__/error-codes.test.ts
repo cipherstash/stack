@@ -2,9 +2,9 @@ import 'dotenv/config'
 import { ProtectError as FfiProtectError } from '@cipherstash/protect-ffi'
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
+import { encryptedTable, types } from '@/eql/v3'
 import { EncryptionErrorTypes } from '@/errors'
 import { Encryption } from '@/index'
-import { encryptedColumn, encryptedTable } from '@/schema'
 import type { BulkDecryptPayload } from '@/types'
 
 /** FFI tests require longer timeout due to client initialization */
@@ -20,19 +20,19 @@ describe('FFI Error Code Preservation', () => {
 
   // Schema with a valid column for testing
   const testSchema = encryptedTable('test_table', {
-    email: encryptedColumn('email').equality(),
-    bio: encryptedColumn('bio').freeTextSearch(),
-    age: encryptedColumn('age').dataType('number').orderAndRange(),
+    email: types.TextEq('email'),
+    bio: types.TextMatch('bio'),
+    age: types.IntegerOrd('age'),
   })
 
   // Schema without indexes for testing non-FFI validation
   const noIndexSchema = encryptedTable('no_index_table', {
-    raw: encryptedColumn('raw'),
+    raw: types.Text('raw'),
   })
 
   // Schema with non-existent column for triggering FFI UNKNOWN_COLUMN error
   const badModelSchema = encryptedTable('test_table', {
-    nonexistent: encryptedColumn('nonexistent_column'),
+    nonexistent: types.Text('nonexistent_column'),
   })
 
   beforeAll(async () => {
@@ -55,7 +55,7 @@ describe('FFI Error Code Preservation', () => {
       'returns UNKNOWN_COLUMN code for non-existent column',
       async () => {
         // Create a fake column that doesn't exist in the schema
-        const fakeColumn = encryptedColumn('nonexistent_column').equality()
+        const fakeColumn = types.TextEq('nonexistent_column')
 
         const result = await protectClient.encryptQuery('test', {
           column: fakeColumn,
@@ -111,7 +111,7 @@ describe('FFI Error Code Preservation', () => {
     it(
       'preserves error code in batch operations',
       async () => {
-        const fakeColumn = encryptedColumn('nonexistent_column').equality()
+        const fakeColumn = types.TextEq('nonexistent_column')
 
         const result = await protectClient.encryptQuery([
           {
@@ -152,7 +152,7 @@ describe('FFI Error Code Preservation', () => {
     it(
       'returns UNKNOWN_COLUMN code for non-existent column in encrypt',
       async () => {
-        const fakeColumn = encryptedColumn('nonexistent_column')
+        const fakeColumn = types.Text('nonexistent_column')
 
         const result = await protectClient.encrypt('test', {
           column: fakeColumn,
@@ -209,7 +209,7 @@ describe('FFI Error Code Preservation', () => {
     it(
       'returns UNKNOWN_COLUMN code for non-existent column',
       async () => {
-        const fakeColumn = encryptedColumn('nonexistent_column')
+        const fakeColumn = types.Text('nonexistent_column')
 
         const result = await protectClient.bulkEncrypt(
           [{ plaintext: 'test1' }, { plaintext: 'test2' }],
