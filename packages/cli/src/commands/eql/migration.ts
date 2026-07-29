@@ -41,7 +41,7 @@ interface PartialRewriteResult {
  */
 function isPartialRewriteResult(value: unknown): value is PartialRewriteResult {
   if (typeof value !== 'object' || value === null) return false
-  const partial: Record<string, unknown> = value
+  const partial = value as Record<string, unknown>
   return (
     (partial.rewritten === undefined || Array.isArray(partial.rewritten)) &&
     (partial.skipped === undefined || Array.isArray(partial.skipped))

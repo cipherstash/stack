@@ -855,10 +855,11 @@ function renderSafeAlter(
   return [
     '-- Rewritten by stash: in-place ALTER COLUMN cannot cast to',
     `-- ${domain}. The source column "${column}" is deliberately preserved.`,
-    '-- Use the staged `stash encrypt` lifecycle: backfill this new column via',
-    "-- @cipherstash/stack's encryptModel, then switch the application to the",
-    '-- encrypted column by name and drop the plaintext column — both separately',
-    '-- reviewed steps taken only after the backfill is complete.',
+    '-- Use the staged `stash encrypt` lifecycle: dual-write to this new column,',
+    "-- backfill it via @cipherstash/stack's encryptModel, then",
+    '-- switch the application to the encrypted column by name and drop the',
+    '-- plaintext column — both separately reviewed steps taken only after the',
+    '-- backfill is complete.',
     // The domain is emitted as `"public"."<domain>"` unconditionally: EQL
     // installs its domains into `public` (both `stash eql install` and the
     // adapters' baseline migrations do), and the qualifier makes the rewrite
