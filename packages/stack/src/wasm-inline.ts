@@ -609,13 +609,6 @@ function datePropertyPaths(table: AnyV3Table): Set<string> {
 }
 
 /**
- * Rebuild a decrypted plaintext for a model field into a `Date` when the
- * column is date-like. An unparseable stored value (a date column written in a
- * non-ISO format, or corrupted) would make `new Date(...)` an Invalid Date;
- * return the raw value in that case rather than silently handing back an
- * Invalid Date whose later `.toISOString()` throws far from here (#742 review).
- */
-/**
  * Internal token used to gate the {@link WasmEncryptionClient}
  * constructor. Symbols are unique by reference, so external code can't
  * forge one even if they recreate `WasmEncryptionClient` via type

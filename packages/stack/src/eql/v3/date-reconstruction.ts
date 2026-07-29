@@ -1,5 +1,14 @@
-/** Reconstruct a decrypted date-like plaintext without manufacturing an
- * `Invalid Date`. Non-date values and already-constructed Dates pass through. */
+/**
+ * Rebuild a decrypted plaintext for a date-like model field into a `Date`.
+ * Non-date values and already-constructed Dates pass through untouched.
+ *
+ * The `Number.isNaN` guard is the point of the function, not a formality: an
+ * unparseable stored value — a date column written in a non-ISO format, or
+ * corrupted — makes `new Date(...)` an Invalid Date. Returning the raw value
+ * instead means the caller sees what is actually stored, rather than an
+ * Invalid Date whose later `.toISOString()` throws far from the column that
+ * produced it (#742 review).
+ */
 export function reconstructDateValue(value: unknown): unknown {
   if (
     value == null ||
