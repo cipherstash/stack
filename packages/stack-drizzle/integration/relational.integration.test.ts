@@ -183,7 +183,19 @@ function encryptedInsertRows(): MatrixPlainRow[] {
   })
 }
 
-function checkedInsertRows<T extends { rowKey: string; testRunId: string }>(
+/**
+ * Re-establish the Drizzle insert type on rows that came back from
+ * `bulkEncryptModels`, which is typed against the runtime-shaped `AnyV3Table`
+ * and so returns `Record<string, unknown>[]`.
+ *
+ * The assertion is the narrow part of the contract: it checks ONLY that the
+ * two plaintext scope keys — `rowKey` and `testRunId`, the ones every query
+ * and the run-scoped cleanup filter on — survived encryption as strings. The
+ * encrypted columns are NOT validated; their shape is what the assertions in
+ * the tests themselves are for. Named for that scope so the cast at the end
+ * does not read as a checked conversion of the whole row.
+ */
+function assertScopeKeys<T extends { rowKey: string; testRunId: string }>(
   rows: unknown[],
 ): T[] {
   for (const row of rows) {
@@ -253,7 +265,7 @@ beforeAll(async () => {
     )
   `)
 
-  const encryptedRows = checkedInsertRows<typeof matrixTable.$inferInsert>(
+  const encryptedRows = assertScopeKeys<typeof matrixTable.$inferInsert>(
     unwrapResult(await client.bulkEncryptModels(encryptedInsertRows(), schema)),
   )
   await db.insert(matrixTable).values(encryptedRows)
@@ -270,7 +282,7 @@ beforeAll(async () => {
   // ROW_B exists so the filter proofs below have a row they must EXCLUDE. On a
   // one-row table `gt(balance, 0n)` returning every row is indistinguishable
   // from it returning the right row.
-  const bigintRows = checkedInsertRows<typeof bigintTable.$inferInsert>(
+  const bigintRows = assertScopeKeys<typeof bigintTable.$inferInsert>(
     unwrapResult(
       await client.bulkEncryptModels(
         [
