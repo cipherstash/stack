@@ -79,7 +79,7 @@ export const messages = {
      * install baseline. Fail with a pointer rather than a silent no-op.
      */
     migrationPrismaUnavailable:
-      '`stash eql migration --prisma` is not available yet — the Prisma Next emitter is a follow-up (tracked in cipherstash/stack#690). Use `--drizzle` today.',
+      'Prisma Next does not need `stash eql migration` — its extension pack installs the EQL bundle through its own migration framework (the `migrations/cipherstash/` contract space). Run `prisma-next migration plan` and `prisma-next migrate` instead.',
     /** `--name` carried characters outside `[A-Za-z0-9_-]`. */
     migrationBadName:
       'Migration name must contain only letters, numbers, dashes, and underscores.',

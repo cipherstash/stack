@@ -161,10 +161,10 @@ export async function eqlMigrationCommand(
   }
 
   if (options.prisma) {
-    // The Prisma Next emitter is a follow-up (tracked in #690): it will write
-    // the install migration in the framework `Migration` shape and let
-    // prisma-next drop its baked install baseline. Until it lands, fail loudly
-    // with a pointer rather than emit a broken/empty file.
+    // Prisma Next does not need an emitted install migration: its extension
+    // pack contributes the `migrations/cipherstash/` contract space, which
+    // installs the EQL bundle through prisma-next's own migration framework.
+    // The flag exists only to route people who try it to that mechanism.
     p.log.error(messages.eql.migrationPrismaUnavailable)
     throw new CliExit(1)
   }
