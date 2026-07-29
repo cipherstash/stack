@@ -195,10 +195,11 @@ export function mapFilterOpToQueryType(op: FilterOp): QueryTypeName {
 }
 
 /**
- * Parse a Supabase `.or()` filter string into structured conditions.
+ * Parse a Supabase `.or()` filter string into structured conditions, flattening
+ * nested `and(...)` / `or(...)` groups and recording every leaf's source span.
  *
  * Input: `'email.eq.john@example.com,name.ilike.%john%'`
- * Output: `[{ column: 'email', op: 'eq', negate: false, value: 'john@example.com' }, …]`
+ * Output: `[{ column: 'email', op: 'eq', negate: false, value: 'john@example.com', sourceSpan: … }, …]`
  *
  * PostgREST spells negation `column.not.<op>.<value>`. It is lifted onto its own
  * `negate` flag rather than left as the operator: the term collector keys the
@@ -207,27 +208,21 @@ export function mapFilterOpToQueryType(op: FilterOp): QueryTypeName {
  * string `in.(a,b)` as a single plaintext — a filter that silently matched
  * nothing. Only a `not` in the OPERATOR position is a prefix; a column or value
  * of that name is untouched.
+ *
+ * The spans are what let {@link substituteOrStringLeaves} rewrite a leaf in
+ * place, so groups survive byte-for-byte instead of being rebuilt (and
+ * destroyed) from the flat condition array.
  */
-export function parseOrString(orString: string): PendingOrCondition[] {
-  return parseOrStringAt(orString, 0, false).map(
-    ({ sourceSpan: _, ...condition }) => condition,
-  )
-}
-
-/** Adapter-only parser that flattens nested groups and records every leaf's
- * source span, allowing encrypted substitution without rebuilding the group. */
 export function parseOrStringWithSpans(orString: string): PendingOrCondition[] {
-  return parseOrStringAt(orString, 0, true)
+  return parseOrStringAt(orString, 0)
 }
 
 /** Recursively flatten PostgREST logic groups while retaining each leaf's
- * exact location in the caller's original expression. The adapter must
- * encrypt leaves inside `and(...)` / `or(...)`, but rebuilding the whole
- * expression from a flat condition array destroys those groups. */
+ * exact location in the caller's original expression. `baseOffset` translates
+ * the group body's own coordinates back into that original string. */
 function parseOrStringAt(
   orString: string,
   baseOffset: number,
-  recurseGroups: boolean,
 ): PendingOrCondition[] {
   const conditions: PendingOrCondition[] = []
   const parts = splitTopLevel(orString)
@@ -242,11 +237,9 @@ function parseOrStringAt(
     const sourceStart = baseOffset + partStart + leading
 
     const group = /^(?:not\.)?(?:and|or)\(([\s\S]*)\)$/.exec(trimmed)
-    if (recurseGroups && group) {
+    if (group) {
       const open = trimmed.indexOf('(')
-      conditions.push(
-        ...parseOrStringAt(group[1], sourceStart + open + 1, true),
-      )
+      conditions.push(...parseOrStringAt(group[1], sourceStart + open + 1))
       continue
     }
 
@@ -399,12 +392,12 @@ const OR_GROUP_TOKEN = /^(?:not\.)?(?:and|or)$/
  * opener. `depth !== 0` at the end proves the counting was fooled, so the pass
  * is discarded and the input re-split honouring quotes alone — a backstop, not
  * the primary mechanism. It must stay narrow: applied to an input whose braces
- * WERE structure, it re-splits inside `{vip,admin}` and `parseOrString` then
+ * WERE structure, it re-splits inside `{vip,admin}` and `parseOrStringAt` then
  * drops the dotless `admin}` fragment.
  *
  * `trackDepth` is the recursion's own flag, never passed by callers. NEVER
- * throws — `query-builder.ts` relies on `parseOrString` being total so that
- * capability errors surface in filter order.
+ * throws — `query-builder.ts` relies on `parseOrStringWithSpans` being total so
+ * that capability errors surface in filter order.
  */
 function splitTopLevel(input: string, trackDepth = true): string[] {
   const parts: string[] = []

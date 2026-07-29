@@ -351,7 +351,7 @@ export function applyFilters(
         // Every condition names a plaintext column, whose property name IS
         // its DB name — nothing to map. Forward the caller's ORIGINAL string
         // byte-for-byte: relied on for nested `and()` and quoted values that
-        // `parseOrString`/`rebuildOrString` cannot round-trip.
+        // `parseOrStringWithSpans`/`rebuildOrString` cannot round-trip.
         q = q.or(of_.original as DbFilterString, {
           referencedTable: of_.referencedTable,
         })

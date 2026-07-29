@@ -103,7 +103,8 @@ function mutationToDbSpace(m: MutationOp, columns: ColumnMap): DbMutationOp {
  * `buildAndExecuteQuery`) consumes only the branded result, so a column can
  * no longer reach PostgREST untranslated — that is a compile error.
  *
- * Total: `filterColumnName`, `parseOrString`, and `resolveMutationOptions`
+ * Total: `filterColumnName`, `parseOrStringWithSpans`, and
+ * `resolveMutationOptions`
  * never throw, so this introduces no new early-throw point and cannot perturb
  * the order in which capability errors surface.
  *
