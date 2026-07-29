@@ -117,6 +117,7 @@ import {
   type V3ModelInput,
 } from '@/eql/v3'
 import { DATE_LIKE_CASTS } from '@/eql/v3/columns'
+import { reconstructDateValue } from '@/eql/v3/date-reconstruction'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import {
   type CastAs,
@@ -605,19 +606,6 @@ function datePropertyPaths(table: AnyV3Table): Set<string> {
     }
   }
   return paths
-}
-
-/**
- * Rebuild a decrypted plaintext for a model field into a `Date` when the
- * column is date-like. An unparseable stored value (a date column written in a
- * non-ISO format, or corrupted) would make `new Date(...)` an Invalid Date;
- * return the raw value in that case rather than silently handing back an
- * Invalid Date whose later `.toISOString()` throws far from here (#742 review).
- */
-function reconstructDate(value: WasmPlaintext, isDateColumn: boolean): unknown {
-  if (!isDateColumn || value == null) return value
-  const date = new Date(value as string | number)
-  return Number.isNaN(date.getTime()) ? value : date
 }
 
 /**
@@ -1368,7 +1356,9 @@ export class WasmEncryptionClient {
         setNestedValue(
           rebuilt,
           field.fieldKey.split('.'),
-          reconstructDate(item.data, dateFields.has(field.fieldKey)),
+          dateFields.has(field.fieldKey)
+            ? reconstructDateValue(item.data)
+            : item.data,
         )
       })
       return rebuilt

@@ -54,6 +54,7 @@ const users = encryptedTable('users', {
 // model carries `{ profile: { ssn } }`; the walk matches it via the path.
 const patients = encryptedTable('patients', {
   'profile.ssn': types.TextEq('profile.ssn'),
+  'profile.seenAt': types.Timestamp('profile.seen_at'),
 })
 
 async function client() {
@@ -217,6 +218,17 @@ describe('WasmEncryptionClient.decryptModel', () => {
     )
   })
 
+  it('rebuilds a date-like value at a dotted model path', async () => {
+    ffi.decryptBulkFallible.mockResolvedValueOnce([
+      { data: '2026-07-22T01:02:03.000Z' },
+    ] as never)
+
+    const c = await client()
+    const out = await c.decryptModel({ profile: { seenAt: ct('d') } }, patients)
+
+    expect(expectData(out).profile.seenAt).toBeInstanceOf(Date)
+  })
+
   it('names every failed field by its model path', async () => {
     ffi.decryptBulkFallible.mockResolvedValueOnce([
       { error: 'boom', code: 'CT_ERROR' },
@@ -284,6 +296,26 @@ describe('WasmEncryptionClient.bulkDecryptModels', () => {
       { email: 'plain-0', id: 1 },
       { email: 'plain-1', id: 2, note: null },
     ])
+  })
+
+  it('reconstructs valid Dates in bulk and preserves invalid date values', async () => {
+    ffi.decryptBulkFallible.mockResolvedValueOnce([
+      { data: '2026-07-22T01:02:03.000Z' },
+      { data: 'not-a-date' },
+    ] as never)
+
+    const c = await client()
+    const out = await c.bulkDecryptModels(
+      [{ createdOn: ct('a') }, { createdOn: ct('b') }],
+      users,
+    )
+
+    const data = expectData(out)
+    expect(data[0].createdOn).toBeInstanceOf(Date)
+    expect((data[0].createdOn as Date).toISOString()).toBe(
+      '2026-07-22T01:02:03.000Z',
+    )
+    expect(data[1].createdOn).toBe('not-a-date')
   })
 
   it('labels failures with the model index and field path', async () => {

@@ -223,6 +223,18 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(supabase.callsFor('contains')).toHaveLength(0)
   })
 
+  it('rejects nullish matches operands before they can reach the wire', () => {
+    const { es, supabase } = v3Instance()
+
+    expect(() =>
+      es.from('users', users).select('id').matches('email', undefined),
+    ).toThrow(/requires a non-null search term/)
+    expect(() =>
+      es.from('users', users).select('id').matches('email', null),
+    ).toThrow(/requires a non-null search term/)
+    expect(supabase.callsFor('filter')).toHaveLength(0)
+  })
+
   it('refuses contains() on an encrypted column, naming matches', async () => {
     const { es } = v3Instance()
 
@@ -261,6 +273,22 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(() =>
       es.from('users', users).select('id').ilike('email', 'f_o'),
     ).toThrow(/cannot honor/)
+  })
+
+  it('treats escaped LIKE wildcards as literal search characters', async () => {
+    for (const [pattern, needle] of [
+      ['%100\\%%', '100%'],
+      ['%under\\_score%', 'under_score'],
+    ] as const) {
+      const { es, supabase } = v3Instance()
+
+      await es.from('users', users).select('id').like('email', pattern)
+
+      const envelope = JSON.parse(
+        supabase.callsFor('filter')[0].args[2] as string,
+      )
+      expect(envelope.pt).toBe(needle)
+    }
   })
 
   it('passes contains through to native cs on a plaintext column', async () => {
@@ -512,11 +540,106 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(emitted.endsWith(',note.eq.x')).toBe(true)
   })
 
-  // An all-plaintext or() string is forwarded verbatim, so its containment
-  // literal is never parsed. Naming an encrypted column forces the rebuild
-  // path — and there the literal's own commas must not be mistaken for
-  // condition separators, or `note` is filtered on the truncated `{vip`.
-  it('preserves a plaintext containment literal when rebuilding a mixed or() string', async () => {
+  it('preserves nested PostgREST logic while replacing encrypted leaves', async () => {
+    const { es, supabase } = v3Instance()
+
+    await es
+      .from('users', users)
+      .select('id')
+      .or('and(createdAt.gte.2026-01-01,note.eq.x),id.eq.1', {
+        referencedTable: 'profiles',
+      })
+
+    const [or] = supabase.callsFor('or')
+    const emitted = or.args[0] as string
+    expect(emitted).toMatch(/^and\(created_at\.gte\."/)
+    expect(emitted).toContain(',note.eq.x),id.eq.1')
+    expect(or.args[1]).toEqual({ referencedTable: 'profiles' })
+  })
+
+  // `substituteOrStringLeaves` splices each encrypted leaf back into the
+  // caller's original string by source span, and sorts the replacements
+  // RIGHT-TO-LEFT so an earlier span stays valid after a later one grew — every
+  // v3 envelope is far longer than the plaintext operand it replaces. Every
+  // other string-form or() test carries exactly ONE encrypted leaf, where the
+  // sort direction cannot matter; with two, a left-to-right pass splices the
+  // second replacement at an offset that now lands INSIDE the first envelope.
+  it('substitutes every encrypted leaf of a multi-leaf or() string', async () => {
+    const { es, supabase } = v3Instance()
+
+    await es
+      .from('users', users)
+      .select('id')
+      .or('email.eq.ada,createdAt.gte.2026-01-01')
+
+    const emitted = supabase.callsFor('or')[0].args[0] as string
+
+    // Neither operand may reach PostgREST as plaintext.
+    expect(emitted).not.toContain('email.eq.ada')
+    expect(emitted).not.toContain('.gte.2026-01-01')
+
+    // The two conditions are still separated by exactly one top-level comma,
+    // and the second still carries its DB column name. Split on the delimiter
+    // rather than on `,`: every quote inside an envelope is backslash-escaped,
+    // so this boundary occurs once.
+    const boundary = emitted.indexOf('",created_at.gte."')
+    expect(boundary).toBeGreaterThan(0)
+    const first = emitted.slice(0, boundary + 1)
+    const second = emitted.slice(boundary + 2)
+
+    expect(first).toMatch(/^email\.eq\."/)
+    expect(second).toMatch(/^created_at\.gte\."/)
+    expect(JSON.parse(orOperand(first, 'email.eq.')).pt).toBe('ada')
+    expect(JSON.parse(orOperand(second, 'created_at.gte.')).pt).toBe(
+      '2026-01-01',
+    )
+  })
+
+  // `parseOrStringAt`'s group regex admits a `not.` prefix
+  // (`/^(?:not\.)?(?:and|or)\(…\)$/`). Without it, `not.and(…)` is not a group:
+  // the leaf parser splits it at the first dot into the pseudo-column `not`,
+  // which matches no encrypted column — so the whole or-string takes the
+  // verbatim branch and the encrypted operand goes to the database in the clear.
+  it('encrypts a leaf nested inside a not.and() group', async () => {
+    const { es, supabase } = v3Instance()
+
+    await es
+      .from('users', users)
+      .select('id')
+      .or('not.and(email.eq.ada,note.eq.x),id.eq.1')
+
+    const emitted = supabase.callsFor('or')[0].args[0] as string
+
+    // The `not.and(` wrapper and both plaintext siblings survive byte-for-byte.
+    expect(emitted).toMatch(/^not\.and\(email\.eq\."/)
+    expect(emitted.endsWith(',note.eq.x),id.eq.1')).toBe(true)
+    expect(emitted).not.toContain('email.eq.ada')
+
+    const operand = emitted.slice(
+      'not.and('.length,
+      emitted.length - ',note.eq.x),id.eq.1'.length,
+    )
+    expect(JSON.parse(orOperand(operand, 'email.eq.')).pt).toBe('ada')
+  })
+
+  it('preserves referencedTable for structured or() filters', async () => {
+    const { es, supabase } = v3Instance()
+
+    await es
+      .from('users', users)
+      .select('id')
+      .or([{ column: 'nickname', op: 'eq', value: 'ada' }], {
+        foreignTable: 'profiles',
+      })
+
+    expect(supabase.callsFor('or')[0].args[1]).toEqual({
+      referencedTable: 'profiles',
+    })
+  })
+
+  // Encrypted leaves are substituted in place, so a plaintext containment
+  // sibling remains byte-for-byte identical even though its comma is nested.
+  it('preserves a plaintext containment literal in a mixed or() string', async () => {
     const { es, supabase } = v3Instance()
 
     await es
@@ -526,7 +649,7 @@ describe('encryptedSupabaseV3 wire encoding', () => {
 
     const emitted = supabase.callsFor('or')[0].args[0] as string
     expect(emitted).toMatch(/^email\.eq\./)
-    expect(emitted.endsWith(',note.cs."{vip,admin}"')).toBe(true)
+    expect(emitted.endsWith(',note.cs.{vip,admin}')).toBe(true)
   })
 
   it('keeps every filter array correlated in a combined query', async () => {
@@ -852,6 +975,19 @@ describe('encryptedSupabaseV3 wire encoding', () => {
       )
     })
 
+    it('rejects a nullish encrypted search operand in structured or()', async () => {
+      const { es, supabase } = v3Instance()
+
+      const { error, status } = await es
+        .from('users', users)
+        .select('id')
+        .or([{ column: 'email', op: 'matches', value: undefined }])
+
+      expect(status).toBe(500)
+      expect(error?.message).toMatch(/requires a non-null operand/)
+      expect(supabase.callsFor('or')).toHaveLength(0)
+    })
+
     // The operator token depends on the OPERATOR, never on whether the operand
     // was encrypted. `note` is a plaintext passthrough, so nothing encrypts and
     // the rewrite used to be skipped, emitting `note.contains.plain` — which
@@ -897,6 +1033,15 @@ describe('encryptedSupabaseV3 wire encoding', () => {
   })
 
   describe('update / delete / single / maybeSingle', () => {
+    it('rejects csv() before serialized ciphertext can enter model decryption', () => {
+      const { es, supabase } = v3Instance()
+
+      expect(() => es.from('users', users).select('id, email').csv()).toThrow(
+        /serializes rows before the adapter can decrypt/,
+      )
+      expect(supabase.callsFor('csv')).toHaveLength(0)
+    })
+
     it('updates with raw envelopes keyed by DB column name', async () => {
       const { es, supabase } = v3Instance()
 
@@ -998,6 +1143,87 @@ describe('encryptedSupabaseV3 wire encoding', () => {
       expect((data![0].createdAt as Date).toISOString()).toBe(
         '2026-01-02T03:04:05.000Z',
       )
+    })
+
+    it('leaves an invalid date value untouched', async () => {
+      const { es } = v3Instance([{ id: 1, createdAt: 'not-a-date' }])
+
+      const { data } = await es.from('users', users).select('id, createdAt')
+
+      expect(data?.[0].createdAt).toBe('not-a-date')
+    })
+
+    it('reconstructs a nested dotted date path', async () => {
+      const nestedTable = encryptedTable('profiles', {
+        'profile.createdAt': types.Timestamp('profile_created_at'),
+      })
+      const supabase = createMockSupabase([
+        { profile: { createdAt: '2026-01-02T03:04:05.000Z' } },
+      ])
+      const builder = new EncryptedQueryBuilderV3Impl(
+        'profiles',
+        nestedTable,
+        createMockEncryptionClient(),
+        supabase.client,
+        ['profile_created_at'],
+      )
+
+      const { data } = await builder.select('profile.createdAt')
+
+      if (!data) throw new Error('Expected a decrypted row')
+      const profile = (data[0] as Record<string, unknown>).profile as Record<
+        string,
+        unknown
+      >
+      expect(profile.createdAt).toBeInstanceOf(Date)
+    })
+
+    // Two dotted paths under the SAME prefix. `postprocessDecryptedRow` now
+    // batches every dotted key into one `reconstructDatePaths` call instead of
+    // one call per key; within a single call the second path must clone the
+    // `profile` object the first already rebuilt, or one of the two Dates is
+    // silently thrown away along with any plaintext sibling.
+    it('reconstructs two dotted date paths sharing a prefix', async () => {
+      const nestedTable = encryptedTable('profiles', {
+        'profile.createdAt': types.Timestamp('profile_created_at'),
+        'profile.updatedAt': types.Timestamp('profile_updated_at'),
+      })
+      const supabase = createMockSupabase([
+        {
+          profile: {
+            createdAt: '2026-01-02T03:04:05.000Z',
+            updatedAt: '2026-03-04T05:06:07.000Z',
+            nickname: 'ada',
+          },
+        },
+      ])
+      const builder = new EncryptedQueryBuilderV3Impl(
+        'profiles',
+        nestedTable,
+        createMockEncryptionClient(),
+        supabase.client,
+        ['profile_created_at', 'profile_updated_at'],
+      )
+
+      const { data } = await builder.select(
+        'profile.createdAt, profile.updatedAt',
+      )
+
+      if (!data) throw new Error('Expected a decrypted row')
+      const profile = (data[0] as Record<string, unknown>).profile as Record<
+        string,
+        unknown
+      >
+      expect(profile.createdAt).toBeInstanceOf(Date)
+      expect((profile.createdAt as Date).toISOString()).toBe(
+        '2026-01-02T03:04:05.000Z',
+      )
+      expect(profile.updatedAt).toBeInstanceOf(Date)
+      expect((profile.updatedAt as Date).toISOString()).toBe(
+        '2026-03-04T05:06:07.000Z',
+      )
+      // The plaintext sibling rides along in the same nested object.
+      expect(profile.nickname).toBe('ada')
     })
 
     // Selecting by raw DB name means the row comes back keyed `created_at`,

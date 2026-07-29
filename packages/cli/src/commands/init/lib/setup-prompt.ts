@@ -100,7 +100,7 @@ function schemaAuthoringGuidance(integration: Integration): string {
     case 'drizzle':
       return 'Declare it with the `types.*` column factories from `@cipherstash/stack-drizzle` on the existing `pgTable`'
     case 'supabase':
-      return 'Declare the column with the `eql_v3_encrypted` domain in the migration SQL (`encryptedSupabase` derives its encryption config by introspecting those domains)'
+      return 'Declare the column with a concrete `public.eql_v3_*` domain in the migration SQL — for example, `email public.eql_v3_text_search` (`encryptedSupabase` derives its encryption config by introspecting those domains)'
     case 'prisma-next':
       return 'Declare the field with the `cipherstash.*` constructors in `prisma/schema.prisma` (`cipherstash.TextSearch()`, `cipherstash.DoubleOrd()`, …), with the `cipherstash` extension pack wired up per `@cipherstash/prisma-next/control`'
     default:

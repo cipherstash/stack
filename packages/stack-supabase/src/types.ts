@@ -539,7 +539,11 @@ export type PendingFilter = {
 }
 
 export type PendingOrFilter =
-  | { kind: 'structured'; conditions: PendingOrCondition[] }
+  | {
+      kind: 'structured'
+      conditions: PendingOrCondition[]
+      referencedTable?: string
+    }
   | { kind: 'string'; value: string; referencedTable?: string }
 
 export type PendingOrCondition = {
@@ -549,6 +553,10 @@ export type PendingOrCondition = {
    * `in`-list split and the query-type mapping both key on the real operator. */
   negate?: boolean
   value: unknown
+  /** Character range in the caller's original string-form `.or()` expression.
+   * Internal only: lets the encrypted adapter replace this leaf without
+   * rebuilding (and corrupting) surrounding `and(...)` / `or(...)` groups. */
+  sourceSpan?: { start: number; end: number }
 }
 
 export type PendingMatchFilter = {
@@ -591,7 +599,8 @@ export type TransformOp =
     }
   | { kind: 'single' }
   | { kind: 'maybeSingle' }
-  | { kind: 'csv' }
+  // No `csv` member: `csv()` throws rather than recording a transform (see
+  // {@link EncryptedQueryBuilderCore.csv}), so nothing can ever push one.
   | { kind: 'abortSignal'; signal: AbortSignal }
   | { kind: 'throwOnError' }
   | { kind: 'returns' }
@@ -690,11 +699,15 @@ export type DbPendingMatchFilter = {
 }
 
 /** Retains the caller's ORIGINAL text for the verbatim fallback (which must be
- * forwarded byte-for-byte — `parseOrString`/`rebuildOrString` do not round-trip
- * nested `and()` or quoted values) alongside the parsed DB-space conditions
- * used by the encrypt-and-rebuild path. Parsing happens once, here. */
+ * forwarded byte-for-byte — `parseOrStringWithSpans`/`rebuildOrString` do not
+ * round-trip nested `and()` or quoted values) alongside the parsed DB-space
+ * conditions used by the encrypt-and-rebuild path. Parsing happens once, here. */
 export type DbPendingOrFilter =
-  | { kind: 'structured'; conditions: DbPendingOrCondition[] }
+  | {
+      kind: 'structured'
+      conditions: DbPendingOrCondition[]
+      referencedTable?: string
+    }
   | {
       kind: 'string'
       original: string
@@ -957,6 +970,16 @@ export interface EncryptedQueryBuilderCore<
    * error. Same `T | null` awaited shape — `single()` reports the missing row
    * through `error` instead. */
   maybeSingle(): EncryptedSingleQueryBuilder<T>
+  /**
+   * Always THROWS. PostgREST serializes rows server-side, so a CSV response
+   * carries ciphertext the adapter never gets to decrypt. Declared so the call
+   * is a loud runtime failure rather than a missing method, and typed `Self`
+   * only to keep the chain shape — it never returns. Select rows normally and
+   * serialize the decrypted data yourself.
+   *
+   * @deprecated Always throws on an encrypted query — select the rows normally,
+   * then serialize the decrypted data to CSV yourself.
+   */
   csv(): Self
   abortSignal(signal: AbortSignal): Self
   throwOnError(): Self

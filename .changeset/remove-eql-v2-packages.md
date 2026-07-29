@@ -1,6 +1,5 @@
 ---
 '@cipherstash/stack': patch
-'@cipherstash/nextjs': patch
 ---
 
 Remove the EQL v2-only published packages `@cipherstash/protect`,

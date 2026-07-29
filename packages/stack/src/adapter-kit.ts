@@ -33,6 +33,10 @@ export {
   DATE_LIKE_CASTS,
   EncryptedV3Column,
 } from './eql/v3/columns.js'
+export {
+  reconstructDatePaths,
+  reconstructDateValue,
+} from './eql/v3/date-reconstruction.js'
 // Domain registry: the Supabase adapter classifies introspected columns by their
 // Postgres domain and rebuilds each column's encryption config from it.
 export {

@@ -39,7 +39,23 @@ const ALL_INTEGRATIONS: Integration[] = [
   'postgresql',
 ]
 
+// Parity with the wizard's own SKILL_MAP is asserted in
+// `e2e/tests/skill-map-parity.e2e.test.ts` — the only workspace that declares
+// both `stash` and `@cipherstash/wizard`, and whose `typecheck` script compiles
+// the cross-package import.
 describe('SKILL_MAP', () => {
+  it('selects only skills that contain a bundled SKILL.md', () => {
+    for (const integration of ALL_INTEGRATIONS) {
+      const available = new Set(availableSkills(integration))
+      const skills = SKILL_MAP[integration]
+      for (const skill of skills) {
+        expect(available.has(skill), `${integration}: ${skill}/SKILL.md`).toBe(
+          true,
+        )
+      }
+    }
+  })
+
   it('has a non-empty entry for every integration (no undefined → crash)', () => {
     for (const integration of ALL_INTEGRATIONS) {
       const skills = SKILL_MAP[integration]

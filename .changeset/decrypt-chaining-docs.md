@@ -31,8 +31,9 @@ other two to guess:
   for Drizzle, the `encryptedSupabase` wrapper's own filters for Supabase, the
   `eql*` column operators for Prisma Next, and `client.encryptQuery(...)` for a
   plain Postgres project.
-- **Schema authoring.** The `types.*` column factories for Drizzle, the
-  `eql_v3_encrypted` domain in migration SQL for Supabase, the `cipherstash.*`
+- **Schema authoring.** The `types.*` column factories for Drizzle, a concrete
+  `public.eql_v3_*` domain such as `public.eql_v3_text_search` in migration SQL
+  for Supabase, the `cipherstash.*`
   field constructors in `schema.prisma` for Prisma Next, and `encryptedTable`
   for plain Postgres. Prisma Next was previously sent at `types.*` /
   `encryptedTable` — the client `stash schema build` explicitly refuses to

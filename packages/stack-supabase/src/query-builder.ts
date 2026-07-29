@@ -10,6 +10,7 @@ import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
 import type { LockContextInput } from '@cipherstash/stack/identity'
 import { ColumnMap } from './column-map'
 import { addJsonbCastsV3 } from './helpers'
+import { parseLikeNeedle } from './like-pattern'
 import { toDbSpace } from './query-dbspace'
 import {
   assertJsonContainmentOperand,
@@ -256,9 +257,10 @@ export class EncryptedQueryBuilderImpl<
    * delegated to `matches`. EQL v3 free-text search is fuzzy bloom token
    * matching, not SQL pattern matching, so the result is APPROXIMATE — matching
    * is case-insensitive and one-sided (may false-positive), and anchoring is
-   * lost. Leading/trailing `%` are stripped; an internal `%` or any `_` cannot be
-   * approximated by trigram matching and throws. A plaintext column keeps real
-   * SQL LIKE.
+   * lost. Unescaped leading/trailing `%` are stripped; an unescaped internal `%`
+   * or any unescaped `_` cannot be approximated by trigram matching and throws.
+   * Escaped metacharacters (`\%`, `\_`) are literal search characters. A
+   * plaintext column keeps real SQL LIKE.
    */
   like(column: string, pattern: string): this {
     if (!this.columns.isEncryptedV3Column(column)) {
@@ -313,6 +315,11 @@ export class EncryptedQueryBuilderImpl<
    * silently accept as containment of the raw string.
    */
   matches(column: string, value: unknown): this {
+    if (value == null) {
+      throw new Error(
+        `[supabase v3]: matches("${column}", …) requires a non-null search term; null and undefined cannot be encrypted and would otherwise reach PostgREST as plaintext.`,
+      )
+    }
     if (this.columns.isSearchableJsonColumn(column)) {
       throw new Error(
         `[supabase v3]: matches() is encrypted free-text search and does not apply to encrypted JSON column "${column}". Use contains("${column}", subDocument) or selectorEq("${column}", path, value).`,
@@ -391,6 +398,7 @@ export class EncryptedQueryBuilderImpl<
       this.orFilters.push({
         kind: 'structured',
         conditions: filtersOrConditions,
+        referencedTable: options?.referencedTable ?? options?.foreignTable,
       })
     }
     return this
@@ -486,8 +494,9 @@ export class EncryptedQueryBuilderImpl<
   }
 
   csv(): this {
-    this.transforms.push({ kind: 'csv' })
-    return this
+    throw new Error(
+      '[supabase v3]: csv() is unavailable on encrypted queries because PostgREST serializes rows before the adapter can decrypt them. Select rows normally, then serialize the decrypted data to CSV.',
+    )
   }
 
   abortSignal(signal: AbortSignal): this {
@@ -719,9 +728,6 @@ export class EncryptedQueryBuilderImpl<
         case 'maybeSingle':
           query = query.maybeSingle()
           break
-        case 'csv':
-          query = query.csv()
-          break
         case 'abortSignal':
           query = query.abortSignal(t.signal)
           break
@@ -857,14 +863,15 @@ export class EncryptedQueryBuilderImpl<
   /**
    * Reduce a SQL LIKE pattern to a fuzzy-match needle, or throw when it cannot be
    * approximated. Strips surrounding `%` (prefix/suffix wildcards, which fuzzy
-   * matching subsumes); an internal `%` or any `_` is unapproximable. Warns once
-   * per (op, column) that the delegation is approximate.
+   * matching subsumes); an unescaped internal `%` or any unescaped `_` is
+   * unapproximable. Escaped metacharacters (`\%`, `\_`) are literals and pass
+   * through. Warns once per (op, column) that the delegation is approximate.
    */
   private likeNeedle(column: string, op: string, pattern: string): string {
-    const needle = pattern.replace(/^%+/, '').replace(/%+$/, '')
-    if (needle.includes('%') || pattern.includes('_')) {
+    const { needle, hasUnsupportedWildcard } = parseLikeNeedle(pattern)
+    if (hasUnsupportedWildcard) {
       throw new Error(
-        `[supabase v3]: "${op}" pattern "${pattern}" on encrypted column "${column}" has wildcards fuzzy free-text matching cannot honor (an internal "%" or any "_"). Use matches("${column}", term) with a literal search term.`,
+        `[supabase v3]: "${op}" pattern "${pattern}" on encrypted column "${column}" has wildcards fuzzy free-text matching cannot honor (an unescaped internal "%" or any unescaped "_"). Use matches("${column}", term) with a literal search term.`,
       )
     }
     const key = `${op}:${column}`

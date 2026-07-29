@@ -19,11 +19,7 @@
  * `stash eql install`. This suite throws rather than skips when unconfigured.
  */
 
-import {
-  type AnyV3Table,
-  type EncryptionClientFor,
-  EncryptionV3,
-} from '@cipherstash/stack/v3'
+import { type EncryptionClientFor, EncryptionV3 } from '@cipherstash/stack/v3'
 import {
   type DomainSpec,
   databaseUrl,
@@ -82,9 +78,9 @@ const ROWS = [ROW_A, ROW_B, ROW_C] as const
 // and the seed INSERT raises — so a table built from every row can only ever run
 // against a superuser database. Filtering here is what lets this suite run on
 // both the plain-Postgres and Supabase variants.
-const matrixEntries = typedEntries(V3_MATRIX).filter(([, spec]) =>
-  isCovered(spec),
-)
+const matrixEntries: Array<readonly [EqlV3TypeName, DomainSpec]> = typedEntries(
+  V3_MATRIX,
+).filter(([, spec]) => isCovered(spec))
 const matrixColumns = Object.fromEntries(
   matrixEntries.map(([eqlType, spec]) => [
     slug(eqlType),
@@ -140,41 +136,13 @@ type RowKey = (typeof ROWS)[number]
 type MatrixPlainRow = Record<string, PlainValue | null | string>
 type SelectRow = { rowKey: string }
 type Db = ReturnType<typeof drizzle>
-type Client = EncryptionClientFor<readonly AnyV3Table[]>
+type Client = EncryptionClientFor<readonly [typeof schema, typeof bigintSchema]>
 type Ops = ReturnType<typeof createEncryptionOperators>
-type ComparisonOperator = 'gt' | 'gte' | 'lt' | 'lte'
-
 let client: Client
 let ops: Ops
 let db: Db
 
-const equalityDomains = matrixEntries.filter(
-  ([, spec]) => spec.indexes.unique || spec.indexes.ore || spec.indexes.ope,
-)
-const orderDomains = matrixEntries.filter(
-  ([, spec]) => spec.indexes.ore || spec.indexes.ope,
-)
 const matchDomains = matrixEntries.filter(([, spec]) => spec.indexes.match)
-const noEqualityDomains = matrixEntries.filter(
-  ([, spec]) => !spec.indexes.unique && !spec.indexes.ore && !spec.indexes.ope,
-)
-const noOrderDomains = matrixEntries.filter(
-  ([, spec]) => !spec.indexes.ore && !spec.indexes.ope,
-)
-const noMatchDomains = matrixEntries.filter(([, spec]) => !spec.indexes.match)
-const comparisonOperators: Array<
-  [ComparisonOperator, (cmp: number) => boolean]
-> = [
-  ['gt', (cmp) => cmp > 0],
-  ['gte', (cmp) => cmp >= 0],
-  ['lt', (cmp) => cmp < 0],
-  ['lte', (cmp) => cmp <= 0],
-]
-const comparisonDomains = orderDomains.flatMap(([eqlType, spec]) =>
-  comparisonOperators.map(
-    ([operator, predicate]) => [eqlType, spec, operator, predicate] as const,
-  ),
-)
 
 const matrixColumn = (eqlType: EqlV3TypeName): SQLWrapper =>
   (matrixTable as unknown as Record<string, SQLWrapper>)[slug(eqlType)]
@@ -213,6 +181,36 @@ function encryptedInsertRows(): MatrixPlainRow[] {
     }
     return row
   })
+}
+
+/**
+ * Re-establish the Drizzle insert type on rows that came back from
+ * `bulkEncryptModels`, which is typed against the runtime-shaped `AnyV3Table`
+ * and so returns `Record<string, unknown>[]`.
+ *
+ * The assertion is the narrow part of the contract: it checks ONLY that the
+ * two plaintext scope keys — `rowKey` and `testRunId`, the ones every query
+ * and the run-scoped cleanup filter on — survived encryption as strings. The
+ * encrypted columns are NOT validated; their shape is what the assertions in
+ * the tests themselves are for. Named for that scope so the cast at the end
+ * does not read as a checked conversion of the whole row.
+ */
+function assertScopeKeys<T extends { rowKey: string; testRunId: string }>(
+  rows: unknown[],
+): T[] {
+  for (const row of rows) {
+    if (
+      row === null ||
+      typeof row !== 'object' ||
+      !('rowKey' in row) ||
+      typeof row.rowKey !== 'string' ||
+      !('testRunId' in row) ||
+      typeof row.testRunId !== 'string'
+    ) {
+      throw new Error('Encrypted integration row lost plaintext scope keys')
+    }
+  }
+  return rows as T[]
 }
 
 beforeAll(async () => {
@@ -267,8 +265,8 @@ beforeAll(async () => {
     )
   `)
 
-  const encryptedRows = unwrapResult(
-    await client.bulkEncryptModels(encryptedInsertRows(), schema),
+  const encryptedRows = assertScopeKeys<typeof matrixTable.$inferInsert>(
+    unwrapResult(await client.bulkEncryptModels(encryptedInsertRows(), schema)),
   )
   await db.insert(matrixTable).values(encryptedRows)
   await db.insert(accountsTable).values([
@@ -276,30 +274,33 @@ beforeAll(async () => {
     { rowKey: ROW_B, label: 'secondary', testRunId: RUN },
   ])
 
-  // A3 end-to-end, cast-free: encrypt a native bigint model, insert the
-  // resulting envelope rows (typed against the column's `Encrypted` data slot),
-  // no `as never` anywhere.
+  // A3 end-to-end: encrypt a native bigint model and insert the resulting
+  // envelope rows against the column's `Encrypted` data slot. The extracted
+  // schema is intentionally runtime-shaped (`AnyV3Table`), so restore the
+  // concrete Drizzle insert shape at this boundary.
   //
   // ROW_B exists so the filter proofs below have a row they must EXCLUDE. On a
   // one-row table `gt(balance, 0n)` returning every row is indistinguishable
   // from it returning the right row.
-  const bigintRows = unwrapResult(
-    await client.bulkEncryptModels(
-      [
-        {
-          rowKey: ROW_A,
-          testRunId: RUN,
-          balance: BIGINT_BALANCE,
-          ledger: BIGINT_LEDGER,
-        },
-        {
-          rowKey: ROW_B,
-          testRunId: RUN,
-          balance: BIGINT_B_BALANCE,
-          ledger: BIGINT_B_LEDGER,
-        },
-      ],
-      bigintSchema,
+  const bigintRows = assertScopeKeys<typeof bigintTable.$inferInsert>(
+    unwrapResult(
+      await client.bulkEncryptModels(
+        [
+          {
+            rowKey: ROW_A,
+            testRunId: RUN,
+            balance: BIGINT_BALANCE,
+            ledger: BIGINT_LEDGER,
+          },
+          {
+            rowKey: ROW_B,
+            testRunId: RUN,
+            balance: BIGINT_B_BALANCE,
+            ledger: BIGINT_B_LEDGER,
+          },
+        ],
+        bigintSchema,
+      ),
     ),
   )
   await db.insert(bigintTable).values(bigintRows)

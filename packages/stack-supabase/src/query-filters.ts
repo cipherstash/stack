@@ -4,6 +4,7 @@ import {
   formatInListOperand,
   isEncryptedColumn,
   rebuildOrString,
+  substituteOrStringLeaves,
 } from './helpers'
 import {
   assertPostgrestCanQueryEncryptedOperator,
@@ -338,14 +339,19 @@ export function applyFilters(
       )
 
       if (referencesEncrypted) {
-        q = q.or(rebuildOrString(parsed), {
-          referencedTable: of_.referencedTable,
-        })
+        q = q.or(
+          substituteOrStringLeaves(of_.original, parsed, (condition) =>
+            isEncryptedColumn(condition.column, encryptedColumnNames),
+          ),
+          {
+            referencedTable: of_.referencedTable,
+          },
+        )
       } else {
         // Every condition names a plaintext column, whose property name IS
         // its DB name — nothing to map. Forward the caller's ORIGINAL string
         // byte-for-byte: relied on for nested `and()` and quoted values that
-        // `parseOrString`/`rebuildOrString` cannot round-trip.
+        // `parseOrStringWithSpans`/`rebuildOrString` cannot round-trip.
         q = q.or(of_.original as DbFilterString, {
           referencedTable: of_.referencedTable,
         })
@@ -357,7 +363,9 @@ export function applyFilters(
         return sub ? { ...cond, value: sub.value } : cond
       })
 
-      q = q.or(rebuildOrString(conditions))
+      q = q.or(rebuildOrString(conditions), {
+        referencedTable: of_.referencedTable,
+      })
     }
   }
 

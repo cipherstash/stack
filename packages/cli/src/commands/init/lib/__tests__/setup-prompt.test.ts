@@ -188,7 +188,8 @@ describe('renderSetupPrompt — orient + route (implement mode)', () => {
     })
 
     it('names the eql_v3 domain for supabase', () => {
-      expect(render('supabase')).toContain('eql_v3_encrypted')
+      expect(render('supabase')).toContain('email public.eql_v3_text_search')
+      expect(render('supabase')).not.toContain('eql_v3_encrypted')
     })
 
     it('names the cipherstash.* field constructors for prisma-next', () => {

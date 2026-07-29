@@ -13,11 +13,7 @@
  * as SQL NULL, and the present cell still decrypts to its plaintext.
  */
 
-import {
-  type AnyV3Table,
-  type EncryptionClientFor,
-  EncryptionV3,
-} from '@cipherstash/stack/v3'
+import { type EncryptionClientFor, EncryptionV3 } from '@cipherstash/stack/v3'
 import { databaseUrl, V3_MATRIX } from '@cipherstash/test-kit'
 import { and, asc as drizzleAsc, eq as drizzleEq, type SQL } from 'drizzle-orm'
 import { integer, pgTable, text } from 'drizzle-orm/pg-core'
@@ -54,7 +50,7 @@ const nullableTable = pgTable(TABLE_NAME, {
   matchText: makeEqlV3Column(
     V3_MATRIX['public.eql_v3_text_match'].builder('match_text'),
   ),
-} as never)
+})
 
 // Tier metadata: property (drizzle) + DB column + a present-row plaintext.
 const TIERS = [
@@ -88,7 +84,7 @@ const schema = extractEncryptionSchema(nullableTable)
 
 type SelectRow = { rowKey: string }
 
-let client: EncryptionClientFor<readonly AnyV3Table[]>
+let client: EncryptionClientFor<readonly [typeof schema]>
 let ops: ReturnType<typeof createEncryptionOperators>
 let db: ReturnType<typeof drizzle>
 

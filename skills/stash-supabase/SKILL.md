@@ -372,10 +372,18 @@ These are passed through to Supabase directly:
 .order("email", { ascending: true })  // encrypted columns: see behaviour below
 .limit(10)
 .range(0, 9)
-.csv()
 .abortSignal(signal)
 .throwOnError()
 .returns<U>()
+```
+
+`csv()` is the exception — it **throws**. PostgREST serializes rows
+server-side, so a CSV response would carry ciphertext the wrapper never gets
+to decrypt. Select rows normally and serialize the decrypted data yourself:
+
+```typescript
+const { data } = await es.from("users").select("id, email")
+const csv = data!.map((r) => `${r.id},${r.email}`).join("\n")
 ```
 
 `order()` works on plaintext columns and on OPE-backed encrypted ordering

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { addJsonbCastsV3, parseOrString, rebuildOrString } from '../src/helpers'
+import {
+  addJsonbCastsV3,
+  parseOrStringWithSpans,
+  rebuildOrString,
+  substituteOrStringLeaves,
+} from '../src/helpers'
 import type { DbPendingOrCondition } from '../src/types'
 
 // `createdAt` is a renamed property (DB column `created_at`); `email` is a
@@ -81,6 +86,21 @@ const ENVELOPE = '{"v":1,"i":{"t":"users","c":"email"},"c":"ct:abc"}'
 /** `rebuildOrString` takes DB-space conditions; `column` is a branded `DbName`. */
 function cond(column: string, op: string, value: unknown, negate?: boolean) {
   return { column, op, value, negate } as unknown as DbPendingOrCondition
+}
+
+/**
+ * The parsed leaves with `sourceSpan` dropped, for the assertions that are about
+ * column / op / negate / value.
+ *
+ * Spans are pinned exactly — and against the source text they must slice back
+ * to — in their own describe below, so removing them here costs no coverage and
+ * keeps these `toEqual`s as strict about the condition shape as they have
+ * always been.
+ */
+function parseConditions(orString: string) {
+  return parseOrStringWithSpans(orString).map(
+    ({ sourceSpan: _sourceSpan, ...condition }) => condition,
+  )
 }
 
 describe('rebuildOrString quoting', () => {
@@ -188,13 +208,13 @@ describe('rebuildOrString containment', () => {
   })
 })
 
-describe('parseOrString / rebuildOrString round-trip', () => {
+describe('parseOrStringWithSpans / rebuildOrString round-trip', () => {
   it('round-trips an encrypted JSON envelope operand', () => {
     const conditions = [
       { column: 'email', op: 'eq', negate: false, value: ENVELOPE },
     ]
     expect(
-      parseOrString(
+      parseConditions(
         rebuildOrString(conditions.map((c) => cond(c.column, c.op, c.value))),
       ),
     ).toEqual(conditions)
@@ -205,7 +225,7 @@ describe('parseOrString / rebuildOrString round-trip', () => {
       { column: 'a', op: 'eq', negate: false, value: 'x\\"y,z' },
     ]
     expect(
-      parseOrString(
+      parseConditions(
         rebuildOrString(conditions.map((c) => cond(c.column, c.op, c.value))),
       ),
     ).toEqual(conditions)
@@ -216,7 +236,7 @@ describe('parseOrString / rebuildOrString round-trip', () => {
       cond('email', 'eq', ENVELOPE),
       cond('id', 'eq', '7'),
     ])
-    const parsed = parseOrString(s)
+    const parsed = parseConditions(s)
     expect(parsed).toHaveLength(2)
     expect(parsed[0].value).toBe(ENVELOPE)
     expect(parsed[1].value).toBe('7')
@@ -238,7 +258,7 @@ describe('parseOrString / rebuildOrString round-trip', () => {
     const s = rebuildOrString(
       conditions.map((c) => cond(c.column, c.op, c.value)),
     )
-    expect(parseOrString(s)).toEqual(conditions)
+    expect(parseConditions(s)).toEqual(conditions)
   })
 })
 
@@ -259,23 +279,23 @@ describe('parseOrString / rebuildOrString round-trip', () => {
 // entirely — a filter that silently matches the wrong rows. Only or-strings
 // that also reference an encrypted column are rebuilt from the parse, so this
 // corrupts precisely the mixed encrypted/plaintext case.
-describe('parseOrString containment literals', () => {
+describe('parseOrStringWithSpans containment literals', () => {
   it('does not split on a comma inside an array literal', () => {
-    expect(parseOrString('note.eq.hello,tags.cs.{vip,admin}')).toEqual([
+    expect(parseConditions('note.eq.hello,tags.cs.{vip,admin}')).toEqual([
       { column: 'note', op: 'eq', negate: false, value: 'hello' },
       { column: 'tags', op: 'cs', negate: false, value: '{vip,admin}' },
     ])
   })
 
   it('does not split on a comma inside a jsonb literal', () => {
-    expect(parseOrString('meta.cs.{"a":1,"b":2},note.eq.x')).toEqual([
+    expect(parseConditions('meta.cs.{"a":1,"b":2},note.eq.x')).toEqual([
       { column: 'meta', op: 'cs', negate: false, value: '{"a":1,"b":2}' },
       { column: 'note', op: 'eq', negate: false, value: 'x' },
     ])
   })
 
   it('round-trips a plaintext containment literal through rebuild', () => {
-    const parsed = parseOrString('tags.cs.{vip,admin}')
+    const parsed = parseOrStringWithSpans('tags.cs.{vip,admin}')
     expect(rebuildOrString(parsed as DbPendingOrCondition[])).toBe(
       'tags.cs."{vip,admin}"',
     )
@@ -290,16 +310,16 @@ describe('parseOrString containment literals', () => {
 // into the preceding operand — and only or-strings that also reference an
 // encrypted column are rebuilt from the parse, so it corrupts precisely the
 // mixed encrypted/plaintext case.
-describe('parseOrString structural characters inside values', () => {
+describe('parseOrStringWithSpans structural characters inside values', () => {
   it('does not close an array literal on a brace inside a quoted element', () => {
-    expect(parseOrString('tags.cs.{"a}b"},email.eq.secret')).toEqual([
+    expect(parseConditions('tags.cs.{"a}b"},email.eq.secret')).toEqual([
       { column: 'tags', op: 'cs', negate: false, value: '{"a}b"}' },
       { column: 'email', op: 'eq', negate: false, value: 'secret' },
     ])
   })
 
   it('does not close a jsonb literal on a brace inside a quoted value', () => {
-    expect(parseOrString('meta.cs.{"a":"v}"},id.eq.1')).toEqual([
+    expect(parseConditions('meta.cs.{"a":"v}"},id.eq.1')).toEqual([
       { column: 'meta', op: 'cs', negate: false, value: '{"a":"v}"}' },
       { column: 'id', op: 'eq', negate: false, value: '1' },
     ])
@@ -316,7 +336,7 @@ describe('parseOrString structural characters inside values', () => {
     '(',
   ])('keeps a quoted %s inside a jsonb literal out of the depth count', (char) => {
     expect(
-      parseOrString(`email.eq.x,meta.cs.{"a":"${char}"},note.eq.y`),
+      parseConditions(`email.eq.x,meta.cs.{"a":"${char}"},note.eq.y`),
     ).toEqual([
       { column: 'email', op: 'eq', negate: false, value: 'x' },
       { column: 'meta', op: 'cs', negate: false, value: `{"a":"${char}"}` },
@@ -326,20 +346,22 @@ describe('parseOrString structural characters inside values', () => {
 
   it('keeps an escaped quote inside a jsonb value opaque', () => {
     // `\"` must not close the element, or the `}` behind it decrements depth.
-    expect(parseOrString('a.eq.1,meta.cs.{"a":"\\"}"},b.eq.2')).toHaveLength(3)
+    expect(parseConditions('a.eq.1,meta.cs.{"a":"\\"}"},b.eq.2')).toHaveLength(
+      3,
+    )
   })
 
   it('splits after an unmatched brace in an unquoted value', () => {
     // `}` is not a PostgREST reserved character, so `a}b` is a valid unquoted
     // scalar operand.
-    expect(parseOrString('nickname.eq.a}b,id.eq.1')).toEqual([
+    expect(parseConditions('nickname.eq.a}b,id.eq.1')).toEqual([
       { column: 'nickname', op: 'eq', negate: false, value: 'a}b' },
       { column: 'id', op: 'eq', negate: false, value: '1' },
     ])
   })
 
   it('splits after an unmatched paren in an unquoted value', () => {
-    expect(parseOrString('a.eq.x),b.eq.y')).toEqual([
+    expect(parseConditions('a.eq.x),b.eq.y')).toEqual([
       { column: 'a', op: 'eq', negate: false, value: 'x)' },
       { column: 'b', op: 'eq', negate: false, value: 'y' },
     ])
@@ -352,14 +374,14 @@ describe('parseOrString structural characters inside values', () => {
   // then forwarded VERBATIM (nothing looks encrypted), so PostgREST runs the
   // swallowed `email.eq.ada` with a plaintext operand against a ciphertext column.
   it('splits after an unmatched opening brace in an unquoted value', () => {
-    expect(parseOrString('note.eq.a{b,email.eq.ada')).toEqual([
+    expect(parseConditions('note.eq.a{b,email.eq.ada')).toEqual([
       { column: 'note', op: 'eq', negate: false, value: 'a{b' },
       { column: 'email', op: 'eq', negate: false, value: 'ada' },
     ])
   })
 
   it('splits after an unmatched opening paren in an unquoted value', () => {
-    expect(parseOrString('note.eq.a(b,email.eq.ada')).toEqual([
+    expect(parseConditions('note.eq.a(b,email.eq.ada')).toEqual([
       { column: 'note', op: 'eq', negate: false, value: 'a(b' },
       { column: 'email', op: 'eq', negate: false, value: 'ada' },
     ])
@@ -368,31 +390,32 @@ describe('parseOrString structural characters inside values', () => {
   // A stray opener must not cost the or-string its REAL containment literals.
   // Discarding the depth pass wholesale on an unbalanced count re-splits inside
   // `{vip,admin}`, and the dotless `admin}` fragment is then dropped by
-  // `parseOrString` — the same silent condition loss, moved one operand along.
+  // `parseOrStringWithSpans` — the same silent condition loss, moved one
+  // operand along.
   // A structural brace opens a group or an operand; anywhere else it is data.
   it('keeps a sibling array literal intact past a stray opening brace', () => {
-    expect(parseOrString('note.eq.a{b,tags.cs.{vip,admin}')).toEqual([
+    expect(parseConditions('note.eq.a{b,tags.cs.{vip,admin}')).toEqual([
       { column: 'note', op: 'eq', negate: false, value: 'a{b' },
       { column: 'tags', op: 'cs', negate: false, value: '{vip,admin}' },
     ])
   })
 
   it('keeps an array literal intact when the stray opener follows it', () => {
-    expect(parseOrString('tags.cs.{vip,admin},note.eq.a{b')).toEqual([
+    expect(parseConditions('tags.cs.{vip,admin},note.eq.a{b')).toEqual([
       { column: 'tags', op: 'cs', negate: false, value: '{vip,admin}' },
       { column: 'note', op: 'eq', negate: false, value: 'a{b' },
     ])
   })
 
   it('keeps a sibling jsonb literal intact past a stray opening brace', () => {
-    expect(parseOrString('note.eq.a{b,meta.cs.{"a":1,"b":2}')).toEqual([
+    expect(parseConditions('note.eq.a{b,meta.cs.{"a":1,"b":2}')).toEqual([
       { column: 'note', op: 'eq', negate: false, value: 'a{b' },
       { column: 'meta', op: 'cs', negate: false, value: '{"a":1,"b":2}' },
     ])
   })
 
   it('keeps a sibling array literal intact past a stray opening paren', () => {
-    expect(parseOrString('note.eq.a(b,tags.cs.{vip,admin}')).toEqual([
+    expect(parseConditions('note.eq.a(b,tags.cs.{vip,admin}')).toEqual([
       { column: 'note', op: 'eq', negate: false, value: 'a(b' },
       { column: 'tags', op: 'cs', negate: false, value: '{vip,admin}' },
     ])
@@ -402,18 +425,243 @@ describe('parseOrString structural characters inside values', () => {
   // scalar carrying an in-value dot still fools it. The unbalanced-depth
   // re-split is what recovers this one; both mechanisms are load-bearing.
   it('recovers a scalar whose brace follows an in-value dot', () => {
-    expect(parseOrString('x.eq.a.{b,y.eq.1')).toEqual([
+    expect(parseConditions('x.eq.a.{b,y.eq.1')).toEqual([
       { column: 'x', op: 'eq', negate: false, value: 'a.{b' },
       { column: 'y', op: 'eq', negate: false, value: '1' },
     ])
   })
 
-  it('treats and/or group parens as structure', () => {
-    expect(parseOrString('and(a.eq.1,b.eq.2),c.eq.3')).toHaveLength(2)
-    expect(parseOrString('not.and(a.eq.1,b.eq.2),c.eq.3')).toHaveLength(2)
-    expect(parseOrString('and(a.eq.1,or(b.eq.2,c.eq.3)),d.eq.4')).toHaveLength(
-      2,
+  // A logic group is STRUCTURE, and its body is recursed into: every leaf comes
+  // back flat, in source order, each carrying the span it occupies in the
+  // caller's original string.
+  //
+  // The alternative — treating `and(a.eq.1,b.eq.2)` as one pseudo-condition on a
+  // column literally named `and(a` — is the disclosure this PR fixes. Such a
+  // condition matches no encrypted column, so nothing in the group looked
+  // encrypted, and the whole `.or()` was forwarded VERBATIM: an encrypted
+  // column inside the group was compared against a PLAINTEXT operand on the
+  // wire. Assert the leaves, not just the count, so a regression that flattens
+  // to the right number of wrong conditions cannot pass.
+  it('flattens an and() group to its leaf conditions', () => {
+    expect(parseConditions('and(a.eq.1,b.eq.2),c.eq.3')).toEqual([
+      { column: 'a', op: 'eq', negate: false, value: '1' },
+      { column: 'b', op: 'eq', negate: false, value: '2' },
+      { column: 'c', op: 'eq', negate: false, value: '3' },
+    ])
+  })
+
+  it('flattens a not.and() group to its leaf conditions', () => {
+    // The `not.` belongs to the GROUP, not to any leaf: negation of the group is
+    // preserved by leaving the original text in place (see
+    // `substituteOrStringLeaves`), so no leaf comes back with `negate: true`.
+    expect(parseConditions('not.and(a.eq.1,b.eq.2),c.eq.3')).toEqual([
+      { column: 'a', op: 'eq', negate: false, value: '1' },
+      { column: 'b', op: 'eq', negate: false, value: '2' },
+      { column: 'c', op: 'eq', negate: false, value: '3' },
+    ])
+  })
+
+  it('flattens an or() group nested inside an and() group', () => {
+    expect(parseConditions('and(a.eq.1,or(b.eq.2,c.eq.3)),d.eq.4')).toEqual([
+      { column: 'a', op: 'eq', negate: false, value: '1' },
+      { column: 'b', op: 'eq', negate: false, value: '2' },
+      { column: 'c', op: 'eq', negate: false, value: '3' },
+      { column: 'd', op: 'eq', negate: false, value: '4' },
+    ])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Source spans
+//
+// Flattening a group is only half the fix: the leaves come back detached from
+// their nesting, so the ONLY thing that can put an encrypted operand back where
+// it belongs is `sourceSpan`. Every span is an offset into the caller's
+// ORIGINAL string, across group recursion, containment literals whose commas
+// and braces are not delimiters, and whitespace the parser trims.
+//
+// A span that is off by even one character does not throw — it splices
+// ciphertext into the middle of a neighbouring condition, producing an or-string
+// PostgREST either rejects or, worse, silently reads as a different filter.
+// ---------------------------------------------------------------------------
+
+/**
+ * Every leaf's span resolved back through `input.slice(start, end)` — the
+ * property that actually matters, since that is exactly the slice
+ * {@link substituteOrStringLeaves} overwrites.
+ */
+function spanTexts(orString: string): string[] {
+  return parseOrStringWithSpans(orString).map((condition) => {
+    const span = condition.sourceSpan
+    if (!span) {
+      throw new Error(`leaf ${condition.column}.${condition.op} has no span`)
+    }
+    return orString.slice(span.start, span.end)
+  })
+}
+
+/** The raw spans, for the assertions that pin exact offsets. */
+function spans(orString: string) {
+  return parseOrStringWithSpans(orString).map((c) => c.sourceSpan)
+}
+
+describe('parseOrStringWithSpans source spans', () => {
+  it('spans each top-level leaf, and nothing of the delimiter', () => {
+    const input = 'email.eq.ada,note.eq.x'
+    expect(spans(input)).toEqual([
+      { start: 0, end: 12 },
+      { start: 13, end: 22 },
+    ])
+    expect(spanTexts(input)).toEqual(['email.eq.ada', 'note.eq.x'])
+  })
+
+  it('spans a leaf one group deep against the ORIGINAL string', () => {
+    // The recursion re-parses the group BODY, whose own offsets start at zero.
+    // The `open + 1` base offset is what translates them back into the original
+    // string; without it every inner span is short by the group's opener.
+    const input = 'and(a.eq.1,b.eq.2),c.eq.3'
+    expect(spans(input)).toEqual([
+      { start: 4, end: 10 },
+      { start: 11, end: 17 },
+      { start: 19, end: 25 },
+    ])
+    expect(spanTexts(input)).toEqual(['a.eq.1', 'b.eq.2', 'c.eq.3'])
+  })
+
+  it('spans a leaf two groups deep, accumulating both base offsets', () => {
+    const input = 'and(a.eq.1,and(b.eq.2,or(c.eq.3,d.eq.4)))'
+    expect(spans(input)).toEqual([
+      { start: 4, end: 10 },
+      { start: 15, end: 21 },
+      { start: 25, end: 31 },
+      { start: 32, end: 38 },
+    ])
+    expect(spanTexts(input)).toEqual(['a.eq.1', 'b.eq.2', 'c.eq.3', 'd.eq.4'])
+  })
+
+  it('spans a leaf inside not.and(), counting the prefix', () => {
+    // The group regex matches `not.and(` as well as `and(`, so the opener is at
+    // index 7, not 3. Measuring from a hard-coded `and(` length would shift
+    // every leaf in a negated group by four characters.
+    const input = 'not.and(email.eq.ada,note.eq.x)'
+    expect(spans(input)).toEqual([
+      { start: 8, end: 20 },
+      { start: 21, end: 30 },
+    ])
+    expect(spanTexts(input)).toEqual(['email.eq.ada', 'note.eq.x'])
+  })
+
+  it('spans a leaf that follows an array containment literal', () => {
+    // `{vip,admin}` holds a comma that is NOT a delimiter. Splitting on it puts
+    // the following leaf's span inside the literal, so substitution would
+    // overwrite part of `{vip,admin}` rather than replace `email.eq.ada`.
+    const input = 'and(note.cs.{vip,admin},email.eq.ada)'
+    expect(spans(input)).toEqual([
+      { start: 4, end: 23 },
+      { start: 24, end: 36 },
+    ])
+    expect(spanTexts(input)).toEqual(['note.cs.{vip,admin}', 'email.eq.ada'])
+  })
+
+  it('spans a leaf that follows a jsonb containment literal', () => {
+    const input = 'and(meta.cs.{"a":1,"b":2},email.eq.ada)'
+    expect(spans(input)).toEqual([
+      { start: 4, end: 25 },
+      { start: 26, end: 38 },
+    ])
+    expect(spanTexts(input)).toEqual(['meta.cs.{"a":1,"b":2}', 'email.eq.ada'])
+  })
+
+  it('excludes the whitespace surrounding a leaf from its span', () => {
+    // The condition is parsed from the TRIMMED token, so the span must start
+    // after the leading spaces and stop before the trailing ones — otherwise
+    // substitution eats the caller's formatting, and a trailing-space span on
+    // the last leaf runs past a shorter replacement.
+    const input = ' email.eq.ada , note.eq.x '
+    expect(spans(input)).toEqual([
+      { start: 1, end: 13 },
+      { start: 16, end: 25 },
+    ])
+    expect(spanTexts(input)).toEqual(['email.eq.ada', 'note.eq.x'])
+  })
+
+  it('gives two identical leaves distinct spans', () => {
+    // The token search runs from a moving cursor, not from index 0. Restarting
+    // it would give the second occurrence the first one's span, so both
+    // substitutions would rewrite the first leaf and the second would keep its
+    // plaintext operand.
+    const input = 'email.eq.ada,email.eq.ada'
+    expect(spans(input)).toEqual([
+      { start: 0, end: 12 },
+      { start: 13, end: 25 },
+    ])
+    expect(spanTexts(input)).toEqual(['email.eq.ada', 'email.eq.ada'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// substituteOrStringLeaves
+//
+// Replacements run RIGHT TO LEFT. Every span is an offset into the original
+// string, so the moment one splice changes the string's length — and an
+// encrypted operand is always far longer than the plaintext it replaces —
+// every span to its right is stale. A left-to-right pass therefore splices the
+// second replacement INSIDE the first one's ciphertext.
+// ---------------------------------------------------------------------------
+
+describe('substituteOrStringLeaves', () => {
+  /** Re-value the parsed leaves, then splice. `map` keeps each leaf's span. */
+  function substitute(
+    input: string,
+    revalue: (column: string, value: unknown) => unknown,
+    shouldReplace: (column: string) => boolean,
+  ) {
+    const conditions = parseOrStringWithSpans(input).map((c) => ({
+      ...c,
+      value: revalue(c.column, c.value),
+    })) as DbPendingOrCondition[]
+    return substituteOrStringLeaves(input, conditions, (c) =>
+      shouldReplace(c.column),
     )
+  }
+
+  it('replaces leaves at two nesting depths, longest-first, in place', () => {
+    // Both replacements are LONGER than the operands they displace, and the
+    // top-level leaf sits at a higher offset than the grouped one — so a
+    // left-to-right pass, working from spans the first splice already
+    // invalidated, would write `CT-FOR-BOB…` into the middle of `CT-FOR-ADA…`.
+    // Distinct replacement values, so a splice landing on the wrong leaf shows
+    // up rather than cancelling out.
+    const input = 'and(email.eq.ada,note.eq.x),email.eq.bob'
+    expect(
+      substitute(
+        input,
+        (_column, value) =>
+          value === 'ada'
+            ? 'CT-FOR-ADA-XXXXXXXXXXXXXXXXXXXX'
+            : value === 'bob'
+              ? 'CT-FOR-BOB-YYYYYYYYYYYYYYYYYYYY'
+              : value,
+        (column) => column === 'email',
+      ),
+    ).toBe(
+      'and(email.eq.CT-FOR-ADA-XXXXXXXXXXXXXXXXXXXX,note.eq.x),email.eq.CT-FOR-BOB-YYYYYYYYYYYYYYYYYYYY',
+    )
+  })
+
+  it('replaces leaves across three depths and leaves the rest byte-for-byte', () => {
+    // Depths 1, 2 and 0 in one expression, with the depth-2 `b` leaf skipped:
+    // the group syntax, the untouched leaf, and the delimiters must all survive
+    // verbatim — that byte-for-byte survival is the whole reason the adapter
+    // splices rather than rebuilding the expression from the flat leaves.
+    const input = 'and(a.eq.1,or(b.eq.2,c.eq.3)),d.eq.4'
+    expect(
+      substitute(
+        input,
+        (column, value) => (column === 'b' ? value : `${column}`.repeat(10)),
+        (column) => column !== 'b',
+      ),
+    ).toBe('and(a.eq.aaaaaaaaaa,or(b.eq.2,c.eq.cccccccccc)),d.eq.dddddddddd')
   })
 })
 
@@ -422,26 +670,28 @@ describe('parseOrString structural characters inside values', () => {
 // string on every comma tore `("a,b",c)` into three fragments and left the quotes
 // embedded in them — on an encrypted column each fragment is encrypted as its own
 // term, so the intended element never matches.
-describe('parseOrString in-list elements', () => {
+describe('parseOrStringWithSpans in-list elements', () => {
   it('does not split on a comma inside a quoted element', () => {
-    expect(parseOrString('email.in.("a,b",c)')).toEqual([
+    expect(parseConditions('email.in.("a,b",c)')).toEqual([
       { column: 'email', op: 'in', negate: false, value: ['a,b', 'c'] },
     ])
   })
 
   it('unescapes a quoted element', () => {
-    expect(parseOrString('a.in.("x\\"y",z)')).toEqual([
+    expect(parseConditions('a.in.("x\\"y",z)')).toEqual([
       { column: 'a', op: 'in', negate: false, value: ['x"y', 'z'] },
     ])
   })
 
   it('round-trips a comma-bearing element through rebuild', () => {
     const s = 'name.in.("Doe, John",Smith)'
-    expect(rebuildOrString(parseOrString(s) as DbPendingOrCondition[])).toBe(s)
+    expect(
+      rebuildOrString(parseOrStringWithSpans(s) as DbPendingOrCondition[]),
+    ).toBe(s)
   })
 
   it('round-trips an encrypted envelope element', () => {
-    const parsed = parseOrString(
+    const parsed = parseConditions(
       rebuildOrString([cond('email', 'in', [ENVELOPE, 'x'])]),
     )
     expect(parsed).toEqual([
@@ -450,7 +700,7 @@ describe('parseOrString in-list elements', () => {
   })
 
   it('splits a negated list on top-level commas only', () => {
-    expect(parseOrString('email.not.in.("a,b",c)')).toEqual([
+    expect(parseConditions('email.not.in.("a,b",c)')).toEqual([
       { column: 'email', op: 'in', negate: true, value: ['a,b', 'c'] },
     ])
   })
@@ -460,7 +710,7 @@ describe('parseOrString in-list elements', () => {
   // `(`: parsed as an array, an encrypted `eq` operand is encrypted as a JS array
   // rather than the intended string, and the filter matches nothing.
   it('does not read a parenthesized scalar as a list for a scalar operator', () => {
-    expect(parseOrString('email.eq.(foo)')).toEqual([
+    expect(parseConditions('email.eq.(foo)')).toEqual([
       { column: 'email', op: 'eq', negate: false, value: '(foo)' },
     ])
   })
@@ -477,10 +727,12 @@ describe('parseOrString in-list elements', () => {
     'adj',
   ])('round-trips a paren-delimited %s operand', (op) => {
     const s = `period.${op}.(1,10)`
-    expect(parseOrString(s)).toEqual([
+    expect(parseConditions(s)).toEqual([
       { column: 'period', op, negate: false, value: ['1', '10'] },
     ])
-    expect(rebuildOrString(parseOrString(s) as DbPendingOrCondition[])).toBe(s)
+    expect(
+      rebuildOrString(parseOrStringWithSpans(s) as DbPendingOrCondition[]),
+    ).toBe(s)
   })
 })
 
@@ -507,36 +759,36 @@ describe('rebuildOrString reserved words', () => {
   })
 })
 
-describe('parseOrString negation', () => {
+describe('parseOrStringWithSpans negation', () => {
   it('lifts a not. prefix off the operator', () => {
-    expect(parseOrString('nickname.not.eq.ada')).toEqual([
+    expect(parseConditions('nickname.not.eq.ada')).toEqual([
       { column: 'nickname', op: 'eq', negate: true, value: 'ada' },
     ])
   })
 
   it('parses a negated in-list as a real list, not a literal string', () => {
-    expect(parseOrString('nickname.not.in.(ada,grace)')).toEqual([
+    expect(parseConditions('nickname.not.in.(ada,grace)')).toEqual([
       { column: 'nickname', op: 'in', negate: true, value: ['ada', 'grace'] },
     ])
   })
 
   it('parses not.is.null', () => {
-    expect(parseOrString('email.not.is.null')).toEqual([
+    expect(parseConditions('email.not.is.null')).toEqual([
       { column: 'email', op: 'is', negate: true, value: null },
     ])
   })
 
   it('leaves a non-negated condition unnegated', () => {
-    expect(parseOrString('nickname.in.(ada,grace)')).toEqual([
+    expect(parseConditions('nickname.in.(ada,grace)')).toEqual([
       { column: 'nickname', op: 'in', negate: false, value: ['ada', 'grace'] },
     ])
   })
 
   it('does not mistake a column or value named "not" for the prefix', () => {
-    expect(parseOrString('not.eq.ada')).toEqual([
+    expect(parseConditions('not.eq.ada')).toEqual([
       { column: 'not', op: 'eq', negate: false, value: 'ada' },
     ])
-    expect(parseOrString('nickname.eq.not')).toEqual([
+    expect(parseConditions('nickname.eq.not')).toEqual([
       { column: 'nickname', op: 'eq', negate: false, value: 'not' },
     ])
   })
@@ -545,12 +797,12 @@ describe('parseOrString negation', () => {
     // `col.not.<value>` is malformed PostgREST. Consuming the prefix would leave
     // no operator, and the condition would be silently DROPPED from the or-string
     // — quietly widening the result set. Pass it through so PostgREST rejects it.
-    expect(parseOrString('nickname.not.ada')).toEqual([
+    expect(parseConditions('nickname.not.ada')).toEqual([
       { column: 'nickname', op: 'not', negate: false, value: 'ada' },
     ])
     expect(
       rebuildOrString(
-        parseOrString('nickname.not.ada') as DbPendingOrCondition[],
+        parseOrStringWithSpans('nickname.not.ada') as DbPendingOrCondition[],
       ),
     ).toBe('nickname.not.ada')
   })
@@ -564,7 +816,7 @@ describe('rebuildOrString negation', () => {
   })
 
   it('round-trips a negated in-list through parse → rebuild', () => {
-    const parsed = parseOrString('nickname.not.in.(ada,grace)')
+    const parsed = parseOrStringWithSpans('nickname.not.in.(ada,grace)')
     expect(rebuildOrString(parsed as DbPendingOrCondition[])).toBe(
       'nickname.not.in.(ada,grace)',
     )
