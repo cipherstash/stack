@@ -242,10 +242,11 @@ export class EncryptedField {
    * @param castAs - The plaintext data type: `'string'`, `'number'`, `'boolean'`, `'date'`, `'timestamp'`, `'text'`, `'bigint'`, or `'json'`. Use `'timestamp'` (not `'date'`) to preserve time-of-day — `'date'` truncates to midnight.
    * @returns This `EncryptedField` instance for method chaining.
    *
+   * @internal EQL v2 authoring. Not exported from any public subpath — retained
+   * only for reading/migrating legacy v2 data.
+   *
    * @example
    * ```typescript
-   * import { encryptedField } from "@cipherstash/stack/schema"
-   *
    * const age = encryptedField("age").dataType("number")
    * ```
    */
@@ -300,10 +301,11 @@ export class EncryptedColumn {
    * @param castAs - The plaintext data type: `'string'`, `'number'`, `'boolean'`, `'date'`, `'timestamp'`, `'text'`, `'bigint'`, or `'json'`. Use `'timestamp'` (not `'date'`) to preserve time-of-day — `'date'` truncates to midnight.
    * @returns This `EncryptedColumn` instance for method chaining.
    *
+   * @internal EQL v2 authoring. Not exported from any public subpath — retained
+   * only for reading/migrating legacy v2 data.
+   *
    * @example
    * ```typescript
-   * import { encryptedColumn } from "@cipherstash/stack/schema"
-   *
    * const dateOfBirth = encryptedColumn("date_of_birth").dataType("date")
    * ```
    */
@@ -320,10 +322,11 @@ export class EncryptedColumn {
    *
    * @returns This `EncryptedColumn` instance for method chaining.
    *
+   * @internal EQL v2 authoring. Not exported from any public subpath — retained
+   * only for reading/migrating legacy v2 data.
+   *
    * @example
    * ```typescript
-   * import { encryptedTable, encryptedColumn } from "@cipherstash/stack/schema"
-   *
    * const users = encryptedTable("users", {
    *   email: encryptedColumn("email").orderAndRange(),
    * })
@@ -344,10 +347,11 @@ export class EncryptedColumn {
    *   When omitted, no token filters are applied.
    * @returns This `EncryptedColumn` instance for method chaining.
    *
+   * @internal EQL v2 authoring. Not exported from any public subpath — retained
+   * only for reading/migrating legacy v2 data.
+   *
    * @example
    * ```typescript
-   * import { encryptedTable, encryptedColumn } from "@cipherstash/stack/schema"
-   *
    * const users = encryptedTable("users", {
    *   email: encryptedColumn("email").equality(),
    * })
@@ -370,10 +374,11 @@ export class EncryptedColumn {
    *   tokenization with a downcase filter, `k=6`, `m=2048`, and `include_original=true`.
    * @returns This `EncryptedColumn` instance for method chaining.
    *
+   * @internal EQL v2 authoring. Not exported from any public subpath — retained
+   * only for reading/migrating legacy v2 data.
+   *
    * @example
    * ```typescript
-   * import { encryptedTable, encryptedColumn } from "@cipherstash/stack/schema"
-   *
    * const users = encryptedTable("users", {
    *   email: encryptedColumn("email").freeTextSearch(),
    * })
@@ -414,10 +419,11 @@ export class EncryptedColumn {
    *
    * @returns This `EncryptedColumn` instance for method chaining.
    *
+   * @internal EQL v2 authoring. Not exported from any public subpath — retained
+   * only for reading/migrating legacy v2 data.
+   *
    * @example
    * ```typescript
-   * import { encryptedTable, encryptedColumn } from "@cipherstash/stack/schema"
-   *
    * const documents = encryptedTable("documents", {
    *   metadata: encryptedColumn("metadata").searchableJson(),
    * })
@@ -623,10 +629,11 @@ export type InferEncrypted<T extends EncryptedTable<any>> =
  * @returns A `EncryptedTable<T> & T` that can be used as both a schema definition
  *   and a column accessor.
  *
+ * @internal EQL v2 authoring. Not exported from any public subpath — retained
+ * only for reading/migrating legacy v2 data.
+ *
  * @example
  * ```typescript
- * import { encryptedTable, encryptedColumn } from "@cipherstash/stack/schema"
- *
  * const users = encryptedTable("users", {
  *   email: encryptedColumn("email").equality().freeTextSearch(),
  *   address: encryptedColumn("address"),
@@ -671,10 +678,11 @@ export function encryptedTable<T extends EncryptedTableColumn>(
  * @param columnName - The name of the database column to encrypt.
  * @returns A new `EncryptedColumn` builder.
  *
+ * @internal EQL v2 authoring. Not exported from any public subpath — retained
+ * only for reading/migrating legacy v2 data.
+ *
  * @example
  * ```typescript
- * import { encryptedTable, encryptedColumn } from "@cipherstash/stack/schema"
- *
  * const users = encryptedTable("users", {
  *   email: encryptedColumn("email").equality().freeTextSearch().orderAndRange(),
  * })
@@ -699,10 +707,11 @@ export function encryptedColumn(columnName: string) {
  * @param valueName - The name of the value field.
  * @returns A new `EncryptedField` builder.
  *
+ * @internal EQL v2 authoring. Not exported from any public subpath — retained
+ * only for reading/migrating legacy v2 data.
+ *
  * @example
  * ```typescript
- * import { encryptedTable, encryptedField } from "@cipherstash/stack/schema"
- *
  * const orders = encryptedTable("orders", {
  *   details: {
  *     amount: encryptedField("amount").dataType("number"),
@@ -721,10 +730,12 @@ export function encryptedField(valueName: string) {
  * @param protectTables - The list of encrypted tables to build the config from.
  * @returns An encrypt config object.
  *
+ * @internal EQL v2 authoring. Not exported from any public subpath — the
+ * published `buildEncryptConfig` ships from `@cipherstash/stack/eql/v3`. This
+ * one is retained only for reading/migrating legacy v2 data.
+ *
  * @example
  * ```typescript
- * import { buildEncryptConfig } from "@cipherstash/stack/schema"
- *
  * const users = encryptedTable("users", {
  *   email: encryptedColumn("email").equality(),
  * })

@@ -31,27 +31,23 @@ import type {
  * hand: the operation methods below, when a table is supplied. `encryptedDynamoDB`
  * itself receives no table, so it cannot check earlier.
  *
- * The one case this could not detect — a client forced to `eqlVersion: 2` while
- * registering a v3 table, emitting v2 wire for an `eql_v3_*` domain — is now
- * refused by `resolveEqlVersion` at client construction, so no such client can
- * reach here.
+ * The one case this could not detect — a client forced to write v2 wire while
+ * registering a v3 table, emitting v2 wire for an `eql_v3_*` domain — can no
+ * longer exist: `Encryption()` rejects a `config.eqlVersion` field outright and
+ * accepts only v3 tables, so no such client can reach here.
  */
 function assertClientTableVersionMatch(
   encryptionClient: EncryptedDynamoDBConfig['encryptionClient'],
   table: AnyEncryptedTable,
   storedEqlVersion: 2 | 3 = 3,
 ): void {
-  if (storedEqlVersion === 2) {
-    if (
-      (encryptionClient as { requiresTableForDecrypt?: boolean })
-        .requiresTableForDecrypt
-    ) {
-      throw new Error(
-        'encryptedDynamoDB: the @cipherstash/stack/wasm-inline client cannot read DynamoDB attributes stored from EQL v2 because that entry requires registered table-aware decryption. Use the native @cipherstash/stack entry for legacy rows.',
-      )
-    }
-    return
-  }
+  // A legacy read reconstructs the v2 envelope around the CURRENT v3 table, so
+  // the table is forwarded on this path exactly as it is for a v3 read. Both
+  // entries can serve it: `decrypt` in protect-ffi accepts either wire
+  // generation regardless of the client's `eqlVersion`, and the table is what
+  // the reconstructor map needs either way. The registration check below is
+  // skipped only because a v2 payload proves nothing about v3 mode.
+  if (storedEqlVersion === 2) return
 
   const getEncryptConfig = (
     encryptionClient as {

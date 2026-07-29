@@ -2,17 +2,18 @@
 '@cipherstash/stack': patch
 ---
 
-`encryptedDynamoDB` now refuses a `@cipherstash/stack/wasm-inline` client when a
-legacy read is requested with `{ storedEqlVersion: 2 }`, instead of failing at
-the first read with a misleading error.
+`encryptedDynamoDB` now serves legacy `{ storedEqlVersion: 2 }` reads on the
+`@cipherstash/stack/wasm-inline` entry, not just the native one.
 
-The adapter's native v2 read path relies on generation-agnostic payload decrypt.
-`WasmEncryptionClient` cannot perform that compatibility read, so the former
-path surfaced a deep client error on Deno, Cloudflare Workers and Supabase Edge
-Functions rather than explaining the unsupported combination.
+The legacy read reconstructs the EQL v2 envelope around the **current v3 table**
+and forwards that table exactly as a v3 read does, so both entries can serve it:
+protect-ffi's `decrypt` accepts either wire generation regardless of the
+client's `eqlVersion`, and the reconstructor map is keyed by the current schema
+either way. Deno, Cloudflare Workers and Supabase Edge Functions can therefore
+read rows written before the v3 migration; previously the pairing was refused
+outright and those runtimes had no way to read that data at all.
 
-The pairing is now rejected at the call site, with a message directing callers
-to the native entry for legacy reads. Writes remain EQL v3-only on both entries.
+Writes remain EQL v3-only on both entries.
 
 `encryptModel` / `bulkEncryptModels` now also tolerate a client whose encrypt
 returns a plain promise. They chained `.audit()` onto the result

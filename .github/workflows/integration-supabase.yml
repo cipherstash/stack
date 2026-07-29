@@ -20,6 +20,14 @@ on:
       - 'packages/stack/src/encryption/**'
       - 'packages/stack/src/schema/**'
       - 'packages/stack/integration/**'
+      # The DynamoDB adapter, and the entry/type modules the suites import
+      # directly. `integration/shared/v2-decrypt-compat` is the repo's only live
+      # EQL v2 read coverage and it exercises the DynamoDB legacy path, so a
+      # change here (or a protect-ffi bump) must run it. Pinned by
+      # scripts/__tests__/integration-workflow-paths.test.mjs.
+      - 'packages/stack/src/dynamodb/**'
+      - 'packages/stack/src/index.ts'
+      - 'packages/stack/src/types.ts'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
       - 'local/docker-compose.supabase.yml'
@@ -38,6 +46,14 @@ on:
       - 'packages/stack/src/encryption/**'
       - 'packages/stack/src/schema/**'
       - 'packages/stack/integration/**'
+      # The DynamoDB adapter, and the entry/type modules the suites import
+      # directly. `integration/shared/v2-decrypt-compat` is the repo's only live
+      # EQL v2 read coverage and it exercises the DynamoDB legacy path, so a
+      # change here (or a protect-ffi bump) must run it. Pinned by
+      # scripts/__tests__/integration-workflow-paths.test.mjs.
+      - 'packages/stack/src/dynamodb/**'
+      - 'packages/stack/src/index.ts'
+      - 'packages/stack/src/types.ts'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
       - 'local/docker-compose.supabase.yml'

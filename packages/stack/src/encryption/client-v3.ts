@@ -35,6 +35,7 @@ import {
 } from './index'
 import {
   type AuditableDecryptModelOperation,
+  type LockBoundDecryptModelOperation,
   MappedDecryptOperation,
 } from './operations/mapped-decrypt'
 
@@ -158,11 +159,20 @@ export interface EncryptionClient<
    * Returns a chainable {@link AuditableDecryptModelOperation}: await it for the
    * `Result`, or chain `.audit({ metadata })` / `.withLockContext()` first. The
    * per-row `Date` reconstruction is applied to the successful result.
+   *
+   * Passing `lockContext` positionally returns the
+   * {@link LockBoundDecryptModelOperation} instead, which offers `.audit()` but
+   * not `.withLockContext()` — a context binds exactly once, and binding twice
+   * throws.
    */
   decryptModel<Table extends S[number], T extends Record<string, unknown>>(
     input: T,
     table: Table,
-    lockContext?: LockContextInput,
+    lockContext: LockContextInput,
+  ): LockBoundDecryptModelOperation<V3DecryptedModel<Table, T>>
+  decryptModel<Table extends S[number], T extends Record<string, unknown>>(
+    input: T,
+    table: Table,
   ): AuditableDecryptModelOperation<V3DecryptedModel<Table, T>>
 
   /**
@@ -183,7 +193,11 @@ export interface EncryptionClient<
   bulkDecryptModels<Table extends S[number], T extends Record<string, unknown>>(
     input: Array<T>,
     table: Table,
-    lockContext?: LockContextInput,
+    lockContext: LockContextInput,
+  ): LockBoundDecryptModelOperation<Array<V3DecryptedModel<Table, T>>>
+  bulkDecryptModels<Table extends S[number], T extends Record<string, unknown>>(
+    input: Array<T>,
+    table: Table,
   ): AuditableDecryptModelOperation<Array<V3DecryptedModel<Table, T>>>
 
   /** Table-less bulk form — see the one-arg {@link decryptModel} overload. */
@@ -274,7 +288,7 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
     failure: {
       type: EncryptionErrorTypes.DecryptionError,
       message:
-        '[eql/v3]: decryptModel received a table this client was not initialized with — pass a table given to Encryption/createEncryptionClient',
+        '[eql/v3]: decryptModel received a table this client was not initialized with — pass one of the tables given to Encryption({ schemas })',
     },
   }
 
@@ -326,7 +340,14 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
   >(
     input: T,
     table: Table,
-    lockContext?: LockContextInput,
+    lockContext: LockContextInput,
+  ): LockBoundDecryptModelOperation<V3DecryptedModel<Table, T>>
+  function decryptModel<
+    Table extends S[number],
+    T extends Record<string, unknown>,
+  >(
+    input: T,
+    table: Table,
   ): AuditableDecryptModelOperation<V3DecryptedModel<Table, T>>
   function decryptModel<T extends Record<string, unknown>>(
     input: T,
@@ -358,7 +379,14 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
   >(
     input: Array<T>,
     table: Table,
-    lockContext?: LockContextInput,
+    lockContext: LockContextInput,
+  ): LockBoundDecryptModelOperation<Array<V3DecryptedModel<Table, T>>>
+  function bulkDecryptModels<
+    Table extends S[number],
+    T extends Record<string, unknown>,
+  >(
+    input: Array<T>,
+    table: Table,
   ): AuditableDecryptModelOperation<Array<V3DecryptedModel<Table, T>>>
   function bulkDecryptModels<T extends Record<string, unknown>>(
     input: Array<T>,

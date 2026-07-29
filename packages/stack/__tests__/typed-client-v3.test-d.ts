@@ -231,3 +231,49 @@ describe('typed v3 client — soundness', () => {
     })
   })
 })
+
+declare const lockContext: { identityClaim: string[] }
+
+describe('typed v3 client — a lock context binds exactly once', () => {
+  it('offers .withLockContext() on an unbound decrypt operation', () => {
+    expectTypeOf(
+      client.decryptModel({ email: {} as Encrypted }, users).withLockContext,
+    ).toBeFunction()
+    expectTypeOf(
+      client.bulkDecryptModels([{ email: {} as Encrypted }], users)
+        .withLockContext,
+    ).toBeFunction()
+  })
+
+  it('drops .withLockContext() once bound positionally', () => {
+    const op = client.decryptModel(
+      { email: {} as Encrypted },
+      users,
+      lockContext,
+    )
+    // @ts-expect-error - already lock-bound; binding twice throws at runtime
+    op.withLockContext(lockContext)
+
+    const bulk = client.bulkDecryptModels(
+      [{ email: {} as Encrypted }],
+      users,
+      lockContext,
+    )
+    // @ts-expect-error - already lock-bound; binding twice throws at runtime
+    bulk.withLockContext(lockContext)
+  })
+
+  it('drops .withLockContext() once bound by chaining', () => {
+    const op = client
+      .decryptModel({ email: {} as Encrypted }, users)
+      .withLockContext(lockContext)
+    // @ts-expect-error - already lock-bound; binding twice throws at runtime
+    op.withLockContext(lockContext)
+  })
+
+  it('keeps .audit() available after binding', () => {
+    expectTypeOf(
+      client.decryptModel({ email: {} as Encrypted }, users, lockContext).audit,
+    ).toBeFunction()
+  })
+})

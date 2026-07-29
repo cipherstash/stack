@@ -45,13 +45,10 @@ Non-encrypted attributes pass through unchanged. On decryption, the `__source` a
 ## Schema and Stored Versions
 
 Schema authoring and every write are EQL v3-only. Existing v2 DynamoDB items
-remain readable with the native entry by passing the same v3 table descriptor
-plus `{ storedEqlVersion: 2 }` to `decryptModel` or `bulkDecryptModels`.
-
-> **v2 reads need the native entry.** A client from `@cipherstash/stack/wasm-inline`
-> (the documented entry for Deno, Bun, Cloudflare Workers and Supabase Edge Functions)
-> cannot perform a legacy read. Read legacy v2 items with a client from the default `@cipherstash/stack`
-> entry. EQL v3 tables work on both entries.
+remain readable by passing the same v3 table descriptor plus
+`{ storedEqlVersion: 2 }` to `decryptModel` or `bulkDecryptModels`. Both entries
+serve legacy reads — the default `@cipherstash/stack` one and
+`@cipherstash/stack/wasm-inline`.
 
 There is no infrastructure migration between the versions — DynamoDB has no EQL extension to install and no schema to alter — and there is no automatic *data* migration either. To fully move a table to v3, re-encrypt every item with the v3 schema.
 
@@ -163,12 +160,11 @@ const dynamo = encryptedDynamoDB({ encryptionClient })
 Use the current v3 table descriptor and select the stored wire version on the
 read. No v2 builder or v2-configured client is needed.
 
-**Not on the WASM entry.** This whole section requires a client from the default
-`@cipherstash/stack` entry. `@cipherstash/stack/wasm-inline` is EQL v3 only —
-So on Deno, Bun,
-Workers and Supabase Edge Functions, legacy v2 items are not readable through this
-adapter; re-encrypt them to a v3 schema, or read them from a Node process using the
-native entry.
+**Works on both entries.** Schema authoring is EQL v3-only everywhere, but the
+read itself is not: the legacy path reconstructs the v2 envelope around the
+current v3 table, and `decrypt` accepts either wire generation. So Deno, Bun,
+Workers and Supabase Edge Functions can read legacy items through
+`@cipherstash/stack/wasm-inline` too.
 
 ```typescript
 const decrypted = await dynamo.decryptModel(

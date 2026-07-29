@@ -13,7 +13,7 @@ export const searchTermAttrSuffix = '__hmac'
  * stored `__source` attribute.
  *
  * `buildColumnKeyMap` is the canonical v3 marker in this codebase — see
- * `resolveEqlVersion` (`encryption/index.ts`) and `types.ts`, which document it
+ * `assertV3Schemas` (`encryption/index.ts`) and `types.ts`, which document it
  * as *the* signal. Only v3 tables define it.
  */
 export class EncryptedDynamoDBErrorImpl

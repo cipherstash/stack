@@ -21,6 +21,7 @@ import type { Encrypted } from '@/types'
 
 const users = encryptedTable('v2_read_compat_users', {
   email: types.TextEq('email'),
+  altEmail: types.TextEq('alt_email'),
 })
 
 const SECRET = 'ada@example.com'
@@ -59,6 +60,33 @@ describe('native v3 client reads stored EQL v2 payloads', () => {
     expect(
       unwrapResult(await client.decryptModel({ pk: 'a', email: encrypted })),
     ).toEqual({ pk: 'a', email: SECRET })
+  }, 30000)
+
+  /**
+   * The state a real migration actually leaves behind: rows written before the
+   * upgrade sit alongside rows written after, and a single model carries both.
+   * Every other case here is all-v2, which is only ever true immediately before
+   * the first v3 write.
+   */
+  it('decrypts a model mixing v2 and v3 fields', async () => {
+    const legacy = await v2Ciphertext(SECRET)
+    const current = unwrapResult(
+      await client.encrypt('grace@example.com', {
+        table: users,
+        column: users.altEmail,
+      }),
+    )
+    expect(legacy).toMatchObject({ v: 2 })
+    expect(current).toMatchObject({ v: 3 })
+
+    expect(
+      unwrapResult(
+        await client.decryptModel(
+          { pk: 'a', email: legacy, altEmail: current },
+          users,
+        ),
+      ),
+    ).toEqual({ pk: 'a', email: SECRET, altEmail: 'grace@example.com' })
   }, 30000)
 
   it('bulk-decrypts v2 ciphertexts', async () => {

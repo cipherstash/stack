@@ -285,8 +285,14 @@ export type WasmAuthStrategy = AccessKeyStrategy | OidcFederationStrategy
 
 export type WasmEncryptionConfig = {
   /** One or more EQL v3 tables, authored with `types` / `encryptedTable` from
-   *  this entry. The WASM entry is EQL v3 only. */
-  schemas: [AnyV3Table, ...AnyV3Table[]]
+   *  this entry. The WASM entry is EQL v3 only.
+   *
+   *  Widened to `readonly AnyV3Table[]` for the same reason the native entry
+   *  was (A-4): a mutable non-empty tuple rejects every shape that is not an
+   *  array literal — a shared `export const all: AnyV3Table[]`, a
+   *  `ReadonlyArray`, anything `map`-built or spread. Non-emptiness is carried
+   *  by the {@link Encryption} overloads instead. */
+  schemas: readonly AnyV3Table[]
   config: WasmClientConfig
 }
 
@@ -690,12 +696,15 @@ export class WasmEncryptionClient {
    * clients derive the table from the payloads instead, so callers that hold a
    * client structurally cannot tell the two apart.
    *
-   * `encryptedDynamoDB` is the caller that cares: its legacy EQL v2 read path
-   * deliberately omits the table (a v2 table means nothing to a v3
-   * reconstructor map), which reached `requireTable` with `undefined` and threw
-   * a TypeError about `tableName` pointing nowhere near the cause. Declared
-   * rather than sniffed so the check is a stated capability, not a guess about
-   * arity or constructor name (#772 review, finding 10).
+   * Declared rather than sniffed so the capability is a stated fact, not a
+   * guess about arity or constructor name (#772 review, finding 10).
+   *
+   * This does NOT imply the entry cannot serve a legacy EQL v2 read. It once
+   * did: `encryptedDynamoDB` used to omit the table on that path, reaching
+   * `requireTable` with `undefined`. It now forwards the registered v3 table on
+   * every read, v2 storage included — the reconstructor map is keyed by the
+   * current schema either way, and protect-ffi's `decrypt` accepts both wire
+   * generations regardless of the client's `eqlVersion`.
    */
   readonly requiresTableForDecrypt = true
 
@@ -1374,12 +1383,33 @@ export class WasmEncryptionClient {
 }
 
 /**
+ * `[]` must stay a compile error, but the constraint cannot carry that: it
+ * would reject widened and readonly arrays again. The native entry solves this
+ * the same way — see `NonEmptyV3` in `encryption/index.ts` for why the
+ * conditional sits on the PROPERTY, and why a second overload is needed for
+ * callers that are themselves generic over their schemas.
+ */
+type NonEmptyV3<S extends readonly AnyV3Table[]> = S['length'] extends 0
+  ? never
+  : S
+
+/**
  * Initialize a WASM-backed encryption client.
  *
  * Mirrors the Node entry's {@link import('./encryption').Encryption}
  * factory, but constructs the protect-ffi client via the WASM strategy
  * API. Use from Deno / Edge / Workers / Bun.
  */
+export function Encryption<
+  const S extends readonly [AnyV3Table, ...AnyV3Table[]],
+>(config: {
+  schemas: S
+  config: WasmClientConfig
+}): Promise<WasmEncryptionClient>
+export function Encryption<const S extends readonly AnyV3Table[]>(config: {
+  schemas: NonEmptyV3<S>
+  config: WasmClientConfig
+}): Promise<WasmEncryptionClient>
 export async function Encryption(
   config: WasmEncryptionConfig,
 ): Promise<WasmEncryptionClient> {

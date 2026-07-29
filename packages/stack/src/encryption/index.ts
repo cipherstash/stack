@@ -163,7 +163,7 @@ class NativeEncryptionClient {
    *
    * @example
    * The following example demonstrates how to encrypt a value using the Encryption client.
-   * It includes defining an encryption schema with {@link encryptedTable} and {@link encryptedColumn},
+   * It includes defining an encryption schema with {@link encryptedTable} and the {@link types} domain factories,
    * initializing the client with {@link Encryption}, and performing the encryption.
    *
    * `encrypt` returns an {@link EncryptOperation} which can be awaited to get a {@link Result}
@@ -172,9 +172,9 @@ class NativeEncryptionClient {
    * ```typescript
    * // Define encryption schema
    * import { Encryption } from "@cipherstash/stack"
-   * import { encryptedTable, encryptedColumn } from "@cipherstash/stack/schema"
+   * import { encryptedTable, types } from "@cipherstash/stack/v3"
    * const userSchema = encryptedTable("users", {
-   *  email: encryptedColumn("email"),
+   *  email: types.Text("email"),
    * });
    *
    * // Initialize Encryption client
@@ -224,8 +224,7 @@ class NativeEncryptionClient {
    * @see {@link EncryptOptions}
    * @see {@link Result}
    * @see {@link encryptedTable}
-   * @see {@link encryptedColumn}
-   * @see {@link encryptedField}
+   * @see {@link types}
    * @see {@link LockContext}
    * @see {@link EncryptOperation}
    */
@@ -246,9 +245,9 @@ class NativeEncryptionClient {
    * ```typescript
    * // Define encryption schema
    * import { Encryption } from "@cipherstash/stack"
-   * import { encryptedTable, encryptedColumn } from "@cipherstash/stack/schema"
+   * import { encryptedTable, types } from "@cipherstash/stack/v3"
    * const userSchema = encryptedTable("users", {
-   *  email: encryptedColumn("email").equality(),
+   *  email: types.TextEq("email"),
    * });
    *
    * // Initialize Encryption client
@@ -398,12 +397,12 @@ class NativeEncryptionClient {
    * @example
    * ```typescript
    * import { Encryption } from "@cipherstash/stack"
-   * import { encryptedTable, encryptedColumn } from "@cipherstash/stack/schema"
+   * import { encryptedTable, types } from "@cipherstash/stack/v3"
    *
    * type User = { id: string; email: string; createdAt: Date }
    *
    * const usersSchema = encryptedTable("users", {
-   *   email: encryptedColumn("email").equality(),
+   *   email: types.TextEq("email"),
    * })
    *
    * const client = await Encryption({ schemas: [usersSchema] })
@@ -488,12 +487,12 @@ class NativeEncryptionClient {
    * @example
    * ```typescript
    * import { Encryption } from "@cipherstash/stack"
-   * import { encryptedTable, encryptedColumn } from "@cipherstash/stack/schema"
+   * import { encryptedTable, types } from "@cipherstash/stack/v3"
    *
    * type User = { id: string; email: string }
    *
    * const usersSchema = encryptedTable("users", {
-   *   email: encryptedColumn("email"),
+   *   email: types.Text("email"),
    * })
    *
    * const client = await Encryption({ schemas: [usersSchema] })
@@ -569,17 +568,17 @@ class NativeEncryptionClient {
    * your application data.
    *
    * @param plaintexts - An array of objects with `plaintext` (and optional `id`) fields.
-   * @param opts - Options specifying the target column (or nested {@link encryptedField}) and table. See {@link EncryptOptions}.
+   * @param opts - Options specifying the target column (or nested field) and table. See {@link EncryptOptions}.
    * @returns A `BulkEncryptOperation` that can be awaited to get a `Result`
    *   containing an array of `{ id?, data: Encrypted }` objects, or an `EncryptionError`.
    *
    * @example
    * ```typescript
    * import { Encryption } from "@cipherstash/stack"
-   * import { encryptedTable, encryptedColumn } from "@cipherstash/stack/schema"
+   * import { encryptedTable, types } from "@cipherstash/stack/v3"
    *
    * const users = encryptedTable("users", {
-   *   email: encryptedColumn("email"),
+   *   email: types.Text("email"),
    * })
    * const client = await Encryption({ schemas: [users] })
    *

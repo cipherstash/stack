@@ -42,10 +42,10 @@ export type DynamoDBReadOptions = {
  * therefore a bug, not just a lost audit record; the encrypt path made exactly
  * that mistake and failed every v3 write on this entry (#788 review follow-up).
  *
- * Its EQL v2 path is refused outright by `assertClientTableVersionMatch` — the
- * v2 read relies on calling decrypt WITHOUT a table, and that entry's
- * `Encryption()` rejects a v2 schema anyway, so the pairing is wrong in both
- * directions.
+ * Its EQL v2 READ path is supported, however. The legacy read reconstructs the
+ * v2 envelope around the current v3 table and forwards that table like any
+ * other read, so nothing on this entry needs a v2 schema — which is just as
+ * well, since its `Encryption()` rejects one.
  */
 export type DynamoDBEncryptionClient = {
   encryptModel(input: never, table: never): unknown

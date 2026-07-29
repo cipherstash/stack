@@ -78,7 +78,7 @@ CREATE INDEX events_at_ord_ore ON events USING btree (eql_v3.ord_term_ore(encryp
 ANALYZE events;
 ```
 
-This one depends on a custom operator class the EQL installer must be privileged enough to create — see [Supabase and Managed Postgres](#supabase-and-managed-postgres-what-actually-needs-superuser) for which platforms allow it and for the failure mode to check. Prefer `types.TOrd` unless you specifically need ORE ordering on a platform whose installer could create the opclass.
+This one depends on a custom operator class the EQL installer must be privileged enough to create — see [Supabase and Managed Postgres](#supabase-and-managed-postgres-what-actually-needs-superuser) for which platforms allow it and for the failure mode to check. Prefer `types.NOrd` / `types.TextOrd` unless you specifically need ORE ordering on a platform whose installer could create the opclass.
 
 ### Free-Text Match — `eql_v3.match_term`
 

@@ -54,9 +54,8 @@ export type EncryptedValue = Brand<CipherStashEncrypted, 'encrypted'>
 /** Structural type representing encrypted data stored in the database. Always
  * carries a ciphertext. Covers BOTH wire formats: the EQL v2.3 payloads
  * (`k: "ct"` / `k: "sv"`) and the EQL v3 payloads (flat `{v: 3, i, c, …}`
- * scalars and `{v: 3, k: "sv", i, sv}` SteVec documents). Which format
- * `encrypt` produces is selected by the client's
- * {@link ClientConfig.eqlVersion}; `decrypt` accepts both regardless.
+ * scalars and `{v: 3, k: "sv", i, sv}` SteVec documents). Schema authoring is
+ * v3-only, so `encrypt` always produces v3; `decrypt` accepts both regardless.
  * v3 scalars carry no `k` discriminator, so narrow with `'k' in payload`
  * before reading it. See also `EncryptedValue` for branded nominal typing,
  * and {@link EncryptedQuery} for the search-term shape returned by

@@ -73,18 +73,40 @@ describe('legacy DynamoDB read forwarding', () => {
     expect(calls[0]?.args[1]).toBe(users)
   })
 
-  it('rejects legacy reads for clients that require table-aware decrypt', () => {
+  it('forwards the registered v3 table for clients that require table-aware decrypt', async () => {
     const { calls, client } = recordingClient({
       requiresTableForDecrypt: true,
     })
     const dynamo = encryptedDynamoDB({ encryptionClient: client as never })
 
-    expect(() =>
-      dynamo.decryptModel({ email__source: 'ciphertext' }, users, {
-        storedEqlVersion: 2,
-      }),
-    ).toThrow(/wasm-inline client cannot read.*stored from EQL v2/)
-    expect(calls).toHaveLength(0)
+    await dynamo.decryptModel({ email__source: 'ciphertext' }, users, {
+      storedEqlVersion: 2,
+    })
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.args[1]).toBe(users)
+    expect(calls[0]?.args[0]).toEqual({
+      email: {
+        i: { c: 'email', t: 'users' },
+        v: 2,
+        k: 'ct',
+        c: 'ciphertext',
+      },
+    })
+  })
+
+  it('forwards the registered v3 table on bulk legacy reads for table-aware clients', async () => {
+    const { calls, client } = recordingClient({
+      requiresTableForDecrypt: true,
+    })
+    const dynamo = encryptedDynamoDB({ encryptionClient: client as never })
+
+    await dynamo.bulkDecryptModels([{ email__source: 'ciphertext' }], users, {
+      storedEqlVersion: 2,
+    })
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.args[1]).toBe(users)
   })
 
   it('rejects an invalid stored version from JavaScript callers', () => {
