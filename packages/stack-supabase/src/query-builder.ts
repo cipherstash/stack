@@ -10,6 +10,7 @@ import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
 import type { LockContextInput } from '@cipherstash/stack/identity'
 import { ColumnMap } from './column-map'
 import { addJsonbCastsV3 } from './helpers'
+import { parseLikeNeedle } from './like-pattern'
 import { toDbSpace } from './query-dbspace'
 import {
   assertJsonContainmentOperand,
@@ -868,32 +869,12 @@ export class EncryptedQueryBuilderImpl<
    * per (op, column) that the delegation is approximate.
    */
   private likeNeedle(column: string, op: string, pattern: string): string {
-    const tokens: Array<{ value: string; wildcard: boolean }> = []
-    for (let i = 0; i < pattern.length; i++) {
-      const char = pattern[i]
-      if (char === '\\' && i + 1 < pattern.length) {
-        tokens.push({ value: pattern[++i], wildcard: false })
-      } else {
-        tokens.push({
-          value: char,
-          wildcard: char === '%' || char === '_',
-        })
-      }
-    }
-
-    while (tokens[0]?.wildcard && tokens[0].value === '%') tokens.shift()
-    while (
-      tokens[tokens.length - 1]?.wildcard &&
-      tokens[tokens.length - 1]?.value === '%'
-    )
-      tokens.pop()
-
-    if (tokens.some((token) => token.wildcard)) {
+    const { needle, hasUnsupportedWildcard } = parseLikeNeedle(pattern)
+    if (hasUnsupportedWildcard) {
       throw new Error(
         `[supabase v3]: "${op}" pattern "${pattern}" on encrypted column "${column}" has wildcards fuzzy free-text matching cannot honor (an internal "%" or any "_"). Use matches("${column}", term) with a literal search term.`,
       )
     }
-    const needle = tokens.map((token) => token.value).join('')
     const key = `${op}:${column}`
     if (!warnedLikeDelegation.has(key)) {
       warnedLikeDelegation.add(key)

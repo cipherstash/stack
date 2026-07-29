@@ -298,6 +298,26 @@ describe('WasmEncryptionClient.bulkDecryptModels', () => {
     ])
   })
 
+  it('reconstructs valid Dates in bulk and preserves invalid date values', async () => {
+    ffi.decryptBulkFallible.mockResolvedValueOnce([
+      { data: '2026-07-22T01:02:03.000Z' },
+      { data: 'not-a-date' },
+    ] as never)
+
+    const c = await client()
+    const out = await c.bulkDecryptModels(
+      [{ createdOn: ct('a') }, { createdOn: ct('b') }],
+      users,
+    )
+
+    const data = expectData(out)
+    expect(data[0].createdOn).toBeInstanceOf(Date)
+    expect((data[0].createdOn as Date).toISOString()).toBe(
+      '2026-07-22T01:02:03.000Z',
+    )
+    expect(data[1].createdOn).toBe('not-a-date')
+  })
+
   it('labels failures with the model index and field path', async () => {
     ffi.decryptBulkFallible.mockResolvedValueOnce([
       { data: 'ok' },
