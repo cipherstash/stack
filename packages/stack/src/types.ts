@@ -169,6 +169,20 @@ export type ClientConfig = {
    * but it will be removed in a future release. Set `authStrategy` instead.
    */
   strategy?: AuthStrategy
+
+  /**
+   * Removed: Stack always authors EQL v3. Declared as `never` rather than
+   * omitted so the type rejects it wherever it appears — every other property
+   * here is optional, so excess-property checking was the only thing catching a
+   * leftover `eqlVersion`, and that fires on FRESH object literals alone. A
+   * shared config const (`const cfg = { …, eqlVersion: 2 }`) — the shape a
+   * v2 → v3 migration most plausibly has — therefore type-checked clean and
+   * threw at `Encryption()`.
+   *
+   * `Encryption` keeps its runtime guard: JS and JSON callers bypass types
+   * entirely, so this is defence in depth, not a replacement for it.
+   */
+  eqlVersion?: never
 }
 
 /** Structural contract for a column builder the client can consume for STORAGE

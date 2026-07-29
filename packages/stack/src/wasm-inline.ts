@@ -223,6 +223,20 @@ export type WasmClientConfig = {
   clientId: string
   /** Workspace client key — required by the WASM client. */
   clientKey: string
+
+  /**
+   * Removed: this entry always emits EQL v3. Declared as `never` rather than
+   * omitted because excess-property checking — the only thing that caught a
+   * leftover `eqlVersion` — fires on FRESH object literals alone. A shared
+   * config const, which is what a v2 → v3 migration actually holds, therefore
+   * type-checked clean and then hit the runtime guard in {@link Encryption}.
+   *
+   * On the shared base so it applies across all three auth arms below; a copy
+   * per arm would drift. Mirrors `ClientConfig.eqlVersion` on the native entry,
+   * whose guard this one is a byte-for-byte mirror of — the type is defence in
+   * depth for the JS/JSON callers that bypass it, not a replacement.
+   */
+  eqlVersion?: never
   // Provide exactly one of `accessKey` (we build the strategy) or a
   // pre-built auth strategy — never both, never neither.
 } & (
@@ -1421,15 +1435,31 @@ export async function Encryption(
     )
   }
 
+  // Mirrors the native entry's guard (#815). The two entries disagreed about v2
+  // before that issue, so a config the native factory rejects outright must not
+  // pass silently here. This entry cannot emit v2 — `eqlVersion: 3` is hardcoded
+  // below — so an `eqlVersion` key is always a stale config, never a request we
+  // could honour. `Object.hasOwn` rejects the PRESENCE of the key, including an
+  // explicit `eqlVersion: 3`, so the removal is discovered at the source rather
+  // than the field lingering as a no-op that looks load-bearing.
+  if (clientConfig && Object.hasOwn(clientConfig, 'eqlVersion')) {
+    throw new Error(
+      '[encryption]: `config.eqlVersion` has been removed — @cipherstash/stack always authors EQL v3. Remove the field.',
+    )
+  }
+
   // The WASM entry is EQL v3 only. The types enforce v3 tables, but a plain-JS
   // caller can bypass that — reject a non-v3 table (one lacking the v3
   // `buildColumnKeyMap` marker) with a clear message rather than pinning the
   // client to v3 wire against a v2 schema and failing opaquely inside the FFI.
+  // The message must not point anywhere else for v2 authoring: since #815 the
+  // native entry rejects it too, so a referral would only cost the reader a
+  // second rejection. Name the one thing v2 payloads are still good for.
   for (const table of schemas) {
     const isV3 = hasBuildColumnKeyMap(table)
     if (!isV3) {
       throw new Error(
-        '[encryption]: `@cipherstash/stack/wasm-inline` is EQL v3 only — author schemas with `types` / `encryptedTable` from this entry. (EQL v2 is available on the native `@cipherstash/stack` entry.)',
+        '[encryption]: `@cipherstash/stack/wasm-inline` is EQL v3 only — author schemas with `types` / `encryptedTable` from this entry. EQL v2 authoring has been removed from every entry; the client still decrypts existing v2 payloads.',
       )
     }
   }
@@ -1502,16 +1532,18 @@ export function normalizeCastAs(config: EncryptConfig): unknown {
 }
 
 /**
- * Resolve a column's name structurally. Accepts any column builder exposing
- * `getName()` — v2 `EncryptedColumn` / `EncryptedField` AND v3 column builders
- * (e.g. `EncryptedTextSearchColumn`) alike — matching the structural
- * v3 column contract accepted by {@link WasmEncryptOptions.column}.
+ * Resolve a column's name structurally: any builder exposing `getName()`
+ * qualifies, matching the structural v3 column contract accepted by
+ * {@link WasmEncryptOptions.column}.
  *
- * An `instanceof EncryptedColumn || EncryptedField` gate would type-check after
- * the widening but throw at runtime for a v3 column, breaking the type promise;
- * resolving the name structurally keeps the wasm-inline encrypt entry honest.
- * The `typeof` check still fails loudly for plain JS callers passing a value
- * that is not a column builder.
+ * Structural rather than an `instanceof` gate because the v3 column builders are
+ * a family of classes (`EncryptedTextSearchColumn`, `EncryptedIntegerOrdColumn`,
+ * …), and enumerating them here would silently reject any domain added later —
+ * a class of bug the type checker cannot see, since the parameter type is
+ * structural. `getName()` is the whole contract this function needs.
+ *
+ * The `typeof` check still fails loudly for plain-JS callers passing a value
+ * that is not a column builder at all.
  *
  * @internal exported for unit-test coverage.
  */

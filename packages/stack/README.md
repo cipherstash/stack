@@ -688,13 +688,33 @@ if (result.failure) {
 ### `Encryption(config)` - Initialize the typed client
 
 ```typescript
-function Encryption(config: {
-  schemas: AnyV3Table[]
-  config?: ClientConfig
-}): Promise<EncryptionClient>
+// Overload 1 — non-emptiness in the CONSTRAINT, so code that is itself
+// generic over its schemas still compiles.
+function Encryption<const S extends readonly [AnyV3Table, ...AnyV3Table[]]>(
+  config: { schemas: S; config?: ClientConfig },
+): Promise<EncryptionClient<S>>
+
+// Overload 2 — any array of v3 tables; non-emptiness is enforced on the
+// `schemas` PROPERTY, which keeps `const` inference (and per-column plaintext
+// typing) intact on the array-literal path.
+function Encryption<const S extends readonly AnyV3Table[]>(
+  config: { schemas: NonEmptyV3<S>; config?: ClientConfig },
+): Promise<EncryptionClient<S>>
 ```
 
-The wire format is pinned to EQL v3 — `config.eqlVersion` is not supported.
+(`NonEmptyV3<S>` is an internal helper — it resolves to `S` for any non-empty
+array and to `never` for `readonly []`. It is not exported; you never name it.)
+
+`schemas` accepts **any non-empty array of v3 tables** — an array literal, a
+shared `export const schemas: AnyV3Table[]`, a `ReadonlyArray`, or one built at
+runtime by push or spread. A mutable array literal is not required. The returned
+client's model and query types are derived from `S`.
+
+`Encryption({ schemas: [] })` is a compile error. An array *typed* `AnyV3Table[]`
+that happens to be empty at runtime compiles and throws on init instead.
+
+The wire format is pinned to EQL v3 — `config.eqlVersion` is not supported, and
+`Encryption()` throws if the field is present at all.
 
 ### `EncryptionClient` Methods
 

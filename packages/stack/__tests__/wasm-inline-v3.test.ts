@@ -1,6 +1,6 @@
 /**
- * `@cipherstash/stack/wasm-inline` is EQL v3 only (#614). This pins the three
- * things that make that true and keep working:
+ * `@cipherstash/stack/wasm-inline` is EQL v3 only (#614). This pins the things
+ * that make that true and keep working:
  *
  *   1. The factory always constructs the client with `eqlVersion: 3` — a
  *      v2-mode client cannot resolve the concrete `eql_v3_*` domains and would
@@ -10,6 +10,12 @@
  *      WASM client accepts (v3 columns carry `cast_as: 'string'`, not `'text'`).
  *   3. It rejects a v2 table with a clear message rather than pinning v3 wire to
  *      a v2 schema and failing opaquely inside the FFI.
+ *   4. That message does not refer the reader on to the native entry for v2
+ *      authoring, and `config.eqlVersion` is rejected here exactly as the native
+ *      entry rejects it (#815). #815 exists because the two entries disagreed
+ *      about v2; a guard on only one of them would reopen it.
+ *   5. The runtime `!schemas.length` guard actually runs — it was previously
+ *      pinned only by a `@ts-expect-error` type test, which never executes.
  *
  * It also pins that the v3 authoring surface is re-exported from this entry, so
  * an edge consumer authors v3 schemas from a single import.
@@ -81,6 +87,66 @@ describe('wasm-inline is EQL v3 only (#614)', () => {
         config,
       }),
     ).rejects.toThrow(/EQL v3 only/)
+    expect(vi.mocked(wasmNewClient)).not.toHaveBeenCalled()
+  })
+
+  // #815: the message used to close with "(EQL v2 is available on the native
+  // `@cipherstash/stack` entry.)" — false since the native entry started
+  // rejecting v2 authoring too. A customer following it hit a second rejection.
+  // Pin the substantive claim (v2 authoring is gone everywhere, decrypt
+  // survives), not the `EQL v3 only` prefix that the test above already covers
+  // and that a stale referral would still satisfy.
+  it('does not send the reader to the native entry for v2 authoring', async () => {
+    const v2Users = {
+      tableName: 'users',
+      build: () => ({ tableName: 'users', columns: {} }),
+    }
+    const err = await Encryption({
+      schemas: [v2Users as unknown as typeof users],
+      config,
+    }).catch((e: unknown) => e)
+
+    expect(err).toBeInstanceOf(Error)
+    const message = (err as Error).message
+    // No referral to another entry as a place v2 authoring still works.
+    expect(message).not.toMatch(/EQL v2 is available/)
+    expect(message).not.toMatch(/native `?@cipherstash\/stack`? entry/)
+    // It must say the removal is repo-wide, and that reads still work — the two
+    // facts that stop a customer hunting for a v2-capable entry that is gone.
+    expect(message).toMatch(
+      /EQL v2 authoring has been removed from every entry/,
+    )
+    expect(message).toMatch(/decrypt/)
+  })
+
+  // #815: native throws on the PRESENCE of `config.eqlVersion`
+  // (`Object.hasOwn`, packages/stack/src/encryption/index.ts). The WASM factory
+  // had no equivalent, so a JS/JSON caller carrying `eqlVersion: 2` got a hard
+  // error on one entry and silence on the other — the exact entry-disagreement
+  // #815 exists to close.
+  it.each([
+    2, 3,
+  ])('rejects config.eqlVersion (%i) the way the native entry does', async (eqlVersion) => {
+    await expect(
+      Encryption({
+        schemas: [users],
+        // A JS caller can carry this key even though the type omits it.
+        config: { ...config, eqlVersion } as unknown as typeof config,
+      }),
+    ).rejects.toThrow(/`config\.eqlVersion` has been removed/)
+    expect(vi.mocked(wasmNewClient)).not.toHaveBeenCalled()
+  })
+
+  // The runtime `!schemas.length` guard was pinned only by a `@ts-expect-error`
+  // type test (wasm-inline-schemas.test-d.ts), which never executes — deleting
+  // the runtime throw left everything green. This executes it.
+  it('rejects an empty schemas array at runtime, before touching newClient', async () => {
+    await expect(
+      Encryption({
+        schemas: [] as unknown as [typeof users],
+        config,
+      }),
+    ).rejects.toThrow(/At least one encryptedTable must be provided/)
     expect(vi.mocked(wasmNewClient)).not.toHaveBeenCalled()
   })
 

@@ -193,6 +193,8 @@ The SDK never logs plaintext data.
 | `@cipherstash/stack/wasm-inline` | The **edge** entry — Deno, Bun, Cloudflare Workers, Supabase Edge Functions. Its own `Encryption` factory plus its own copy of the v3 authoring surface, `EncryptionErrorTypes`, and the WASM build of protect-ffi inlined into the bundle. No native binding, so no bundler externalisation needed. **EQL v3 only** — `Encryption()` here rejects a v2 schema, and its operations return plain Results with no `.audit()` or `.withLockContext()` chaining, so **values written here cannot be identity-bound** and it cannot read what the native entry wrote under a lock context. **ESM-only, and its schema types do not interchange with the other entries'** — see the `stash-edge` skill. |
 | `@cipherstash/stack/dynamodb` | `encryptedDynamoDB` — encrypt/write is **EQL v3 only** (`types.*`); decrypt still reads existing v2 items via `{ storedEqlVersion: 2 }`, on both the native and `wasm-inline` entries. See the `stash-dynamodb` skill |
 | `@cipherstash/stack/schema` | Low-level encrypt-config types and validation helpers; it is not a schema-authoring DSL |
+| `@cipherstash/stack/encryption` | The `Encryption` factory and the chainable operation classes its methods return (`EncryptOperation`, `DecryptOperation`, `EncryptQueryOperation`, `BulkEncryptModelsOperation`, …). Import these only to *name* an operation's type; author schemas and build the client from `@cipherstash/stack/v3` |
+| `@cipherstash/stack/adapter-kit` | The internal seam for the **first-party** adapter packages (`@cipherstash/stack-drizzle`, `@cipherstash/stack-supabase`). Not a general-purpose public API — anything an end user needs has a dedicated subpath above. Do not import it in application code |
 
 ## Schema Definition
 

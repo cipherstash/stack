@@ -15,7 +15,9 @@
  * that boundary, and this pins the runtime half of it: the guard must reject an
  * empty set BEFORE any FFI client is constructed, on every entry point.
  *
- * The compile-time half is pinned in `encryption-overloads.test-d.ts`.
+ * The compile-time half is pinned in `encryption-v3-only.test-d.ts`
+ * (`encryption-overloads.test-d.ts` was deleted with the v2 authoring surface in
+ * `a3830f0d`; that coverage moved).
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'

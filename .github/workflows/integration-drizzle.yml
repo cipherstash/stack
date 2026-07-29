@@ -27,13 +27,30 @@ on:
       # The WASM family suite (integration/wasm/**) exercises this entry:
       - 'packages/stack/src/wasm-inline.ts'
       # The DynamoDB adapter, and the entry/type modules the suites import
-      # directly. `integration/shared/v2-decrypt-compat` is the repo's only live
-      # EQL v2 read coverage and it exercises the DynamoDB legacy path, so a
-      # change here (or a protect-ffi bump) must run it. Pinned by
+      # directly. `integration/shared/v2-decrypt-compat` and its
+      # `integration/wasm/` twin (both selected below) are the repo's only live
+      # EQL v2 read coverage, and they exercise the DynamoDB legacy path, so a
+      # change here must run them. Pinned by
       # scripts/__tests__/integration-workflow-paths.test.mjs.
       - 'packages/stack/src/dynamodb/**'
       - 'packages/stack/src/index.ts'
       - 'packages/stack/src/types.ts'
+      # Those same v2 suites mint their fixtures by importing
+      # `@cipherstash/protect-ffi` directly. A native-module bump is the change
+      # most able to break v2 payload deserialization and it touches NO source
+      # directory, so without these two entries the only suites that would catch
+      # it never start. They are the files a bump actually edits: exact pins
+      # (`protect-ffi`, `@cipherstash/eql`) live in the package manifest,
+      # `catalog:` ones (`@cipherstash/auth`, which moves in lockstep with
+      # protect-ffi for the WASM entry) in the workspace catalog.
+      #
+      # `pnpm-lock.yaml` is deliberately NOT listed. It changes on roughly every
+      # dependency bump in the monorepo — far more often than either file here —
+      # and these are credentialed, database-backed jobs. Nothing is lost: a
+      # protect-ffi or auth version change cannot reach the lockfile without
+      # editing one of the two manifests below first.
+      - 'packages/stack/package.json'
+      - 'pnpm-workspace.yaml'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
       - 'local/docker-compose.postgres.yml'
@@ -57,13 +74,30 @@ on:
       # The WASM family suite (integration/wasm/**) exercises this entry:
       - 'packages/stack/src/wasm-inline.ts'
       # The DynamoDB adapter, and the entry/type modules the suites import
-      # directly. `integration/shared/v2-decrypt-compat` is the repo's only live
-      # EQL v2 read coverage and it exercises the DynamoDB legacy path, so a
-      # change here (or a protect-ffi bump) must run it. Pinned by
+      # directly. `integration/shared/v2-decrypt-compat` and its
+      # `integration/wasm/` twin (both selected below) are the repo's only live
+      # EQL v2 read coverage, and they exercise the DynamoDB legacy path, so a
+      # change here must run them. Pinned by
       # scripts/__tests__/integration-workflow-paths.test.mjs.
       - 'packages/stack/src/dynamodb/**'
       - 'packages/stack/src/index.ts'
       - 'packages/stack/src/types.ts'
+      # Those same v2 suites mint their fixtures by importing
+      # `@cipherstash/protect-ffi` directly. A native-module bump is the change
+      # most able to break v2 payload deserialization and it touches NO source
+      # directory, so without these two entries the only suites that would catch
+      # it never start. They are the files a bump actually edits: exact pins
+      # (`protect-ffi`, `@cipherstash/eql`) live in the package manifest,
+      # `catalog:` ones (`@cipherstash/auth`, which moves in lockstep with
+      # protect-ffi for the WASM entry) in the workspace catalog.
+      #
+      # `pnpm-lock.yaml` is deliberately NOT listed. It changes on roughly every
+      # dependency bump in the monorepo — far more often than either file here —
+      # and these are credentialed, database-backed jobs. Nothing is lost: a
+      # protect-ffi or auth version change cannot reach the lockfile without
+      # editing one of the two manifests below first.
+      - 'packages/stack/package.json'
+      - 'pnpm-workspace.yaml'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
       - 'local/docker-compose.postgres.yml'

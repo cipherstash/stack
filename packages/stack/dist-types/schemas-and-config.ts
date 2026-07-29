@@ -59,6 +59,18 @@ export async function configShapes() {
     config: { eqlVersion: 2 },
   })
 
+  // The same rejection through a hoisted const. Excess-property checking only
+  // fires on FRESH object literals, so the shape a v2 → v3 migration most
+  // plausibly has — one shared config object — type-checked clean and then
+  // threw at runtime. `eqlVersion?: never` on `ClientConfig` makes the two
+  // agree; the runtime guard stays for JS/JSON callers who bypass types.
+  const hoistedConfig = { workspaceCrn: 'crn', eqlVersion: 2 }
+  await Encryption({
+    schemas: [users],
+    // @ts-expect-error - rejected even when the config is not a fresh literal
+    config: hoistedConfig,
+  })
+
   // @ts-expect-error - at least one table is required
   await Encryption({ schemas: [] })
 }
