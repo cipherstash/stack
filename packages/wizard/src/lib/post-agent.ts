@@ -86,7 +86,7 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
 
     const shouldMigrate = await p.confirm({
       message: staged
-        ? `Run the migration now? (${runner} drizzle-kit migrate) — the generated migration adds staged encrypted columns and preserves the source column for later backfill/cutover`
+        ? `Run the migration now? (${runner} drizzle-kit migrate) — the generated migration adds staged encrypted columns and preserves the source column for the later backfill and application switch`
         : `Run the migration now? (${runner} drizzle-kit migrate)`,
       initialValue: true,
     })

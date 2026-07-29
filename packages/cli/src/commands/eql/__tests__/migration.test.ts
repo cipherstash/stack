@@ -66,6 +66,25 @@ vi.mock('node:fs', async (importOriginal) => {
   return { ...actual, default: actual, writeFileSync: fsWrite.spy }
 })
 
+// The sweep stays REAL by default — every other sweep test drives it through
+// actual SQL on disk. The spy exists so the "sweep threw" branch can be reached
+// with a throw the sweep itself never produces (a bare string, `null`), which is
+// the case the partial-result reporting has to survive without masking.
+const rewriteMock = vi.hoisted(() => ({
+  real: (() => {
+    throw new Error(
+      'rewriteMock.real not initialised: rewrite-migrations mock factory did not run',
+    )
+  }) as typeof import('../../db/rewrite-migrations.js').rewriteEncryptedAlterColumns,
+  spy: vi.fn(),
+}))
+vi.mock('../../db/rewrite-migrations.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../db/rewrite-migrations.js')>()
+  rewriteMock.real = actual.rewriteEncryptedAlterColumns
+  return { ...actual, rewriteEncryptedAlterColumns: rewriteMock.spy }
+})
+
 // `printNextSteps` lives in the install module, which drags in `pg`. Stub it;
 // the two helpers we reuse (`findGeneratedMigration`, `cleanupMigrationFile`)
 // stay real and act on the tmpdir.
@@ -76,6 +95,7 @@ vi.mock('../../db/install.js', async (importOriginal) => {
 
 beforeEach(() => {
   fsWrite.spy.mockImplementation(fsWrite.real)
+  rewriteMock.spy.mockImplementation(rewriteMock.real)
 })
 afterEach(() => {
   vi.clearAllMocks()
@@ -358,6 +378,34 @@ describe('eqlMigrationCommand — Drizzle', () => {
         msg.includes("Check the column's current type in the database"),
       ),
     ).toBe(true)
+    expect(clack.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('unsafe or unverified SQL'),
+    )
+  })
+
+  // The catch reads `rewritten` / `skipped` off the thrown value to report the
+  // work a partial sweep did complete (#786). A throw that is not an object —
+  // or not one carrying those arrays — must fall through to the plain "could
+  // not sweep" message and still fail closed, not crash on a property read.
+  it.each([
+    null,
+    undefined,
+    'rewrite failed',
+  ])('handles a non-object sweep failure without masking it: %s', async (failure) => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    spawnMock.mockImplementation(() => {
+      writeFileSync(join(out, '0000_install-eql.sql'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+    rewriteMock.spy.mockRejectedValueOnce(failure)
+
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out }),
+    ).rejects.toBeInstanceOf(CliExit)
+    expect(clack.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Could not sweep'),
+    )
     expect(clack.log.error).toHaveBeenCalledWith(
       expect.stringContaining('unsafe or unverified SQL'),
     )
