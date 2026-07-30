@@ -5,7 +5,7 @@
 
 Type `extractEncryptionSchema` precisely: a Drizzle-extracted schema now preserves each column's concrete EQL v3 domain instead of widening to `AnyV3Table` (#589).
 
-`extractEncryptionSchema` is generic over the Drizzle table (`<T extends PgTable>(table: T)`) and returns `EncryptedTable<Cols> & Cols`, the same shape a hand-written `encryptedTable({...})` returns, when concrete column brands are available. Each column's builder is carried through `pgTable()` on a phantom brand and recovered by a mapped type, which also filters out the table's non-encrypted columns. Tables widened to `PgTable`, and ordinary `customType` columns recovered from their EQL SQL domain, retain the safe `AnyV3Table` fallback instead of incorrectly becoming an empty schema type.
+`extractEncryptionSchema` is generic over the Drizzle table (`<T extends PgTable>(table: T)`) and returns `EncryptedTable<Cols> & Cols`, the same shape a hand-written `encryptedTable({...})` returns, when concrete column brands are available. Each column's builder is carried through `pgTable()` on a phantom brand and recovered by a mapped type, which also filters out the table's non-encrypted columns. Tables widened to `PgTable`, and tables containing ordinary `customType` columns recovered from their EQL SQL domain, retain the safe `AnyV3Table` fallback instead of incorrectly becoming an empty or partial schema type.
 
 What this fixes, along the documented flow `extractEncryptionSchema(table)` → `Encryption({ schemas })` → `bulkEncryptModels`:
 
@@ -15,4 +15,4 @@ What this fixes, along the documented flow `extractEncryptionSchema(table)` → 
 
 **Runtime behaviour is unchanged** — the runtime already recovered each column's builder correctly, so this is a type-level fix only. It is `minor` rather than `patch` because code that previously compiled against the widened types can now fail to compile: a model field typed against the wrong domain, or a schema-derived type that relied on the old index signature. Rows whose shape is only known at runtime (a dynamically built table) should name their model type explicitly — `client.bulkEncryptModels<typeof schema, MyRow>(rows, schema)` — rather than being cast back to `AnyV3Table`.
 
-`skills/stash-drizzle` documents the preserved typing and warns against casting an extracted schema to `AnyV3Table` to make an insert compile.
+`skills/stash-drizzle` documents the preserved typing and warns against casting an extracted schema to `AnyV3Table` to make an insert compile. A matching update to the separately maintained CipherStash documentation site is required so its Drizzle schema-extraction guidance explains the precise branded typing and the widened fallback for incomplete runtime-recovered column maps.

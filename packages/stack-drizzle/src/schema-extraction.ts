@@ -4,6 +4,7 @@ import {
   type EncryptedTable,
   encryptedTable,
 } from '@cipherstash/stack/eql/v3'
+import type { Encrypted } from '@cipherstash/stack/types'
 import type { PgTable } from 'drizzle-orm/pg-core'
 import { getEqlV3Column, type V3BuilderOf } from './column.js'
 
@@ -41,14 +42,31 @@ export type EncryptedColumnsOf<T> = {
 }
 
 /**
- * Keep concrete branded columns precise, but retain the pre-existing widened
- * schema type when TypeScript cannot see any brands. The runtime extractor can
- * still recover columns from a widened `PgTable` or from their EQL SQL domain;
- * representing those successful paths as an empty table would be unsound.
+ * Columns whose Drizzle data is an encrypted envelope but whose concrete EQL
+ * builder is not visible in the type layer. This includes ordinary
+ * `customType<{ data: Encrypted }>` columns that runtime extraction recognizes
+ * from their SQL domain. If even one exists, the branded map is incomplete.
  */
-type ExtractedEncryptionSchema<T> = keyof EncryptedColumnsOf<T> extends never
-  ? AnyV3Table
-  : EncryptedTable<EncryptedColumnsOf<T>> & EncryptedColumnsOf<T>
+type UnbrandedEncryptedKeys<T> = {
+  [K in keyof T]-?: [V3BuilderOf<T[K]>] extends [never]
+    ? T[K] extends { _: { data: Encrypted } }
+      ? K
+      : never
+    : never
+}[keyof T]
+
+/**
+ * Keep concrete branded columns precise, but retain the pre-existing widened
+ * schema type when the branded map is empty or incomplete. The runtime
+ * extractor can still recover columns from a widened `PgTable` or from their
+ * EQL SQL domain; representing those successful paths as an empty or partial
+ * table would be unsound.
+ */
+type ExtractedEncryptionSchema<T> = [UnbrandedEncryptedKeys<T>] extends [never]
+  ? keyof EncryptedColumnsOf<T> extends never
+    ? AnyV3Table
+    : EncryptedTable<EncryptedColumnsOf<T>> & EncryptedColumnsOf<T>
+  : AnyV3Table
 
 /**
  * Rebuild a Drizzle table's encrypted columns as an eql/v3 {@link EncryptedTable}.

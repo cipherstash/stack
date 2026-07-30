@@ -254,6 +254,7 @@ export function makeEqlV3Column<C extends AnyEncryptedV3Column>(
   const column = makeCarrierColumn(sqlType, name)
 
   writeBuilder(getCarrier(column), builder)
+  // biome-ignore lint/plugin: makeCarrierColumn always returns an object; attaching the registry-symbol carrier directly is intentional and getEqlV3Column reads this exact property.
   writeBuilder(column as unknown as EqlV3ColumnCarrier, builder)
   // The brand is type-only — no runtime property backs it (see EqlV3Column) —
   // so the carrier column is narrowed to the branded type here. The runtime

@@ -72,6 +72,14 @@ const sqlTypeFallbackUsers = pgTable('sql_type_fallback_users', {
 })
 const fallbackExtracted = extractEncryptionSchema(sqlTypeFallbackUsers)
 
+// A single visible brand must not make the schema look complete when another
+// runtime-encrypted column is only recoverable from its SQL domain.
+const mixedUsers = pgTable('mixed_users', {
+  email: eqlTextEq('email'),
+  age: types.IntegerOrd('age'),
+})
+const mixedExtracted = extractEncryptionSchema(mixedUsers)
+
 // Real schemas rarely declare a bare column — `.notNull()` in particular is
 // near-universal. Modifiers are the one place the brand could be dropped for
 // SOME columns while bare ones keep working, which is why they get their own
@@ -255,6 +263,21 @@ describe('extractEncryptionSchema - unbranded table fallback', () => {
     if (result.failure) throw result.failure
 
     expectTypeOf(result.data).toEqualTypeOf<Array<{ email: Encrypted }>>()
+  })
+
+  it('widens a mixed branded and SQL-derived schema as a complete unit', async () => {
+    expectTypeOf(mixedExtracted).toEqualTypeOf<AnyV3Table>()
+
+    const client = await Encryption({ schemas: [mixedExtracted] })
+    const result = await client.bulkEncryptModels(
+      [{ email: 'ada@example.com', age: 36 }],
+      mixedExtracted,
+    )
+    if (result.failure) throw result.failure
+
+    expectTypeOf(result.data).toEqualTypeOf<
+      Array<{ email: Encrypted; age: Encrypted }>
+    >()
   })
 })
 

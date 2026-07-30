@@ -134,11 +134,12 @@ const usersSchema = extractEncryptionSchema(usersTable)
 The extracted schema keeps each column's concrete domain, so it types exactly like a hand-written `encryptedTable({...})`: `InferPlaintext<typeof usersSchema>` is a precise per-column plaintext map, non-encrypted columns (`id`, plain `text()` helpers) are excluded from it and pass through model operations untouched, and `usersSchema.email` addresses the column at its own type. Do not cast an extracted schema to `AnyV3Table` or annotate model rows with `Record<string, unknown>` to make an insert compile — that discards the checking and hides real mismatches.
 
 That precision depends on passing the concrete table type produced by `pgTable()`.
-If a table has already been widened to `PgTable`, or its encrypted columns are
-ordinary `customType` columns detected from their EQL SQL domain, extraction
-returns the safe widened `AnyV3Table` type because the concrete domain brands
-are no longer available to TypeScript. Runtime extraction still discovers and
-uses those encrypted columns.
+If a table has already been widened to `PgTable`, or any encrypted column is an
+ordinary `customType` column detected from its EQL SQL domain, extraction
+returns the safe widened `AnyV3Table` type because the complete concrete domain
+map is no longer available to TypeScript. This applies to mixed tables with
+both `types.*` and ordinary `customType` encrypted columns. Runtime extraction
+still discovers and uses all of those encrypted columns.
 
 ### 2. Initialize the Encryption Client
 
