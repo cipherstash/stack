@@ -94,6 +94,9 @@ It runs alongside Supabase Auth and RLS, and supports
 [identity-locking encryption][identity] — binding a row's data key to the signed-in user's
 JWT claim — via the same lock-context API as the rest of the Stack.
 
+> `encryptedSupabaseV3` remains as a `@deprecated`, type-identical alias of `encryptedSupabase`,
+> so existing imports keep working.
+
 ## How it works
 
 <p align="center">
@@ -111,14 +114,6 @@ sorting. The EQL SQL bundle defines the Postgres domains and operators, so an en
 resolves to a comparison of equality terms and engages a functional index. Keys come from
 [ZeroKMS][zerokms] — one per value — so a leaked key or a dumped table never exposes more than
 it should, and the EQL install needs no superuser (it works on cloud-hosted Supabase as-is).
-
-## EQL v2 (removed)
-
-The legacy EQL v2 authoring wrapper — `encryptedSupabase({ encryptionClient, supabaseClient
-}).from(tableName, schema)` — has been removed; this package authors and queries EQL v3 only.
-Migrate existing v2 columns to an `eql_v3_*` domain, or pin the last release that shipped the
-v2 wrapper. `encryptedSupabaseV3` remains as a `@deprecated`, type-identical alias of
-`encryptedSupabase`, so existing imports keep working.
 
 ## Docs
 
