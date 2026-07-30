@@ -374,12 +374,11 @@ disclosure, see [SECURITY.md][security-policy]. [MIT licensed][license].
 [security-architecture]: https://cipherstash.com/docs/stack/reference/security-architecture?utm_source=github&utm_medium=stack_readme
 [zerokms]: https://cipherstash.com/docs/stack/cipherstash/kms?utm_source=github&utm_medium=stack_readme
 [bundling]: https://cipherstash.com/docs/stack/deploy/bundling?utm_source=github&utm_medium=stack_readme
-<!-- TODO: placeholder doc links below — point at real pages once the EQL v3 docs land. -->
 [query-equality]: https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption?utm_source=github&utm_medium=stack_readme#equality
 [query-match]: https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption?utm_source=github&utm_medium=stack_readme#free-text-search
 [query-range]: https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption?utm_source=github&utm_medium=stack_readme#range-and-ordering
 [query-json]: https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption?utm_source=github&utm_medium=stack_readme#json
-[auth]: https://cipherstash.com/docs/stack/cipherstash/authentication?utm_source=github&utm_medium=stack_readme
+[auth]: https://cipherstash.com/docs/stack/cipherstash/encryption/identity?utm_source=github&utm_medium=stack_readme
 [keysets]: https://cipherstash.com/docs/stack/cipherstash/kms?utm_source=github&utm_medium=stack_readme#keysets
 [benches]: https://github.com/cipherstash/benches
 [eql]: https://github.com/cipherstash/encrypt-query-language

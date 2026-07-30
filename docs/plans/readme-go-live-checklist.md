@@ -59,11 +59,10 @@ social preview card.
 
 ## Links & assets (mechanical, pre-merge)
 
-- [ ] **Placeholder doc links** — query-type anchors (`#equality`, `#free-text-search`,
-  `#range-and-ordering`, `#json`), `[auth]` page, and `[keysets]` anchor all resolve once the EQL v3
-  docs land (marked with a TODO comment above the link definitions). Also confirm the per-integration
-  quick-start URLs (`supabase`, `drizzle`, `prisma-next`, `dynamodb`) — the Prisma package was renamed
-  `@cipherstash/prisma-next` → `@cipherstash/stack-prisma`, so its docs slug may have moved.
+- [x] **Doc links** — all docs-site URLs checked against the published docs (2026-07-30), including
+  the query-type anchors and the per-integration quick-start slugs. The `[auth]` link now points at
+  the identity page (`/docs/stack/cipherstash/encryption/identity`) — there is no standalone
+  authentication page.
 - [x] **Architecture diagram URLs** — the four `<picture>` paths use the absolute
   `https://raw.githubusercontent.com/cipherstash/stack/main/…` prefix (they will 404 on the PR branch
   and resolve on merge).
