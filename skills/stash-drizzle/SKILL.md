@@ -63,6 +63,31 @@ The generated migration also installs the `cs_migrations` tracking schema, so a 
 
 **Changing an existing plaintext column to an encrypted one.** `drizzle-kit generate` emits an in-place `ALTER TABLE … ALTER COLUMN … SET DATA TYPE eql_v3_<name>`, which Postgres rejects — there is no cast from `text`/`numeric` to an EQL domain. (On drizzle-kit 0.31.0 and later the emitted type is also mangled to `"undefined"."eql_v3_<name>"`, since a `customType` has no `typeSchema`.) The `stash eql migration --drizzle` sweep repairs the invalid statement — the `stash-cli` skill covers what it rewrites. The repair is **add-only**: it adds a staged `<column>_encrypted` column and leaves the source column in place, so it never emits `DROP COLUMN` or `RENAME COLUMN` and is safe to apply on a populated table. It repairs only what it can place: the swept directory must also contain the migration that declared the column. If the sweep cannot prove the source column's type, or the encrypted twin already exists, it leaves that statement untouched and the command exits non-zero so you review the directory before running `drizzle-kit migrate`. Applying the swept migration only *adds* the column — encrypting the data is the staged flow in **Migrating an Existing Column to Encrypted** below.
 
+**Reconcile your schema after a sweep — `drizzle-kit generate` will not tell you to.** The sweep repairs SQL and nothing else, so once you apply the swept migration three artefacts disagree:
+
+| | `email` | `email_encrypted` |
+|---|---|---|
+| database | `text` (unchanged) | `eql_v3_text_search` |
+| `schema.ts` | declared as `eql_v3_text_search` | absent |
+| `meta/*_snapshot.json` | declared as `eql_v3_text_search` | absent |
+
+`drizzle-kit generate` diffs `schema.ts` against the snapshot — it never reads `.sql` and never introspects the database. Those two still agree, so the diff is empty and it emits nothing. (Introspection is `drizzle-kit push`, a different command.) So nothing surfaces the divergence, and every consequence through the ORM is silent:
+
+- reads of `users.email` hand plaintext to the `customType.fromDriver` that expects an EQL envelope
+- writes push an EQL envelope into a `text` column and **succeed**, storing ciphertext in a plaintext column
+- `email_encrypted` is unreachable — it is in no Drizzle schema
+
+The fix: declare the encrypted column in `schema.ts` under **its own name**, keep the source column as its plaintext type, then run `drizzle-kit generate` to bring the snapshot forward.
+
+```typescript
+export const users = pgTable('users', {
+  email: text('email').notNull(),                        // source column, still plaintext
+  email_encrypted: types.TextSearch('email_encrypted'),  // the twin the sweep added
+})
+```
+
+Do **not** just change `email`'s type and re-generate: that diffs against the stale snapshot and emits a duplicate `ADD COLUMN "email_encrypted"`, which fails at migrate time with `column "email_encrypted" already exists`. Then backfill through the staged flow below before switching reads across.
+
 ### Column Storage
 
 Each encrypted column is a concrete Postgres domain named `public.eql_v3_<name>`:
