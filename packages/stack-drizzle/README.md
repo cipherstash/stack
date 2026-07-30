@@ -1,7 +1,14 @@
-# @cipherstash/stack-drizzle
+<div align="center">
+  <h1>@cipherstash/stack-drizzle</h1>
 
-**Searchable, application-level encryption for [Drizzle ORM][drizzle-orm] and PostgreSQL**,
-from [CipherStash Stack][stack-repo].
+  <p><b>Searchable, application-level encryption for <a href="https://orm.drizzle.team">Drizzle ORM</a> and PostgreSQL, from <a href="https://github.com/cipherstash/stack">CipherStash Stack</a>.</b></p>
+
+  <a href="https://www.npmjs.com/package/@cipherstash/stack-drizzle"><img alt="npm version" src="https://img.shields.io/npm/v/@cipherstash/stack-drizzle.svg?style=for-the-badge&labelColor=000000"></a>
+  <a href="https://www.npmjs.com/package/@cipherstash/stack-drizzle"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@cipherstash/stack-drizzle.svg?style=for-the-badge&labelColor=000000"></a>
+  <a href="https://cipherstash.com/docs/stack/cipherstash/encryption/drizzle?utm_source=github&utm_medium=stack_drizzle_readme"><img alt="Docs" src="https://img.shields.io/badge/Docs-333333.svg?style=for-the-badge&logo=readthedocs&labelColor=333"></a>
+  <a href="https://discord.gg/5qwXUFb6PB"><img alt="Discord" src="https://img.shields.io/badge/Join%20the%20community-blueviolet.svg?style=for-the-badge&logo=Discord&labelColor=000000"></a>
+  <a href="https://github.com/cipherstash/stack/blob/main/LICENSE.md"><img alt="License" src="https://img.shields.io/npm/l/@cipherstash/stack-drizzle.svg?style=for-the-badge&labelColor=000000"></a>
+</div>
 
 ## Why
 
@@ -35,7 +42,7 @@ const rows = await db
   .select()
   .from(users)
   .where(await ops.and(
-    ops.contains(users.email, 'alice'), // free-text match, on ciphertext
+    ops.matches(users.email, 'alice'),  // free-text match, on ciphertext
     ops.between(users.age, 18, 65),     // range, on ciphertext
   ))
   .orderBy(ops.asc(users.age))          // ordered by encrypted value
@@ -47,7 +54,7 @@ The operators mirror Drizzle's and encrypt their operands transparently:
 |---|---|---|
 | **Equality** | `ops.eq`, `ops.ne`, `ops.inArray` | [Equality queries →][query-equality] |
 | **Range & ordering** | `ops.gt`/`gte`/`lt`/`lte`, `ops.between`, `ops.asc`/`desc` | [Range & ordering →][query-range] |
-| **Free-text match** | `ops.matches`, `ops.contains` | [Text search →][query-match] |
+| **Free-text match** | `ops.matches` | [Text search →][query-match] |
 | **Encrypted JSON** | `ops.contains` (containment), `ops.selector(col, path)` | [JSON →][query-json] |
 
 Each column's query capabilities are fixed by its type, so an unsupported operation is rejected
@@ -154,6 +161,15 @@ expression indexes instead; the bundled `stash-indexing` agent skill has the ful
 
 ## How it works
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark) and (max-width: 600px)" srcset="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-stacked-dark.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-dark.svg">
+    <source media="(max-width: 600px)" srcset="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-stacked-light.svg">
+    <img alt="CipherStash architecture: encryption and decryption happen in your TypeScript app; only ciphertext (EQL JSON) is stored in your PostgreSQL database. ZeroKMS issues a unique key per value, derived in your app. Plaintext and keys never reach CipherStash, and every decryption is logged for audit." width="880" src="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-light.svg">
+  </picture>
+</p>
+
 Every value is encrypted into an [EQL][eql] payload: the ciphertext plus the *searchable
 terms* its column type declares — an HMAC term for equality, an order-preserving term for
 range and sorting, a bloom filter for text match, a structured-encryption vector for JSON.
@@ -174,8 +190,6 @@ install needs no superuser.
 > Not to be confused with `@cipherstash/drizzle`, the older `@cipherstash/protect`-based
 > package — deprecated and no longer maintained; this package replaces it.
 
-[drizzle-orm]: https://orm.drizzle.team
-[stack-repo]: https://github.com/cipherstash/stack
 [eql]: https://github.com/cipherstash/encrypt-query-language
 [signup]: https://cipherstash.com/signup?utm_source=github&utm_medium=stack_drizzle_readme
 [zerokms]: https://cipherstash.com/docs/stack/cipherstash/kms?utm_source=github&utm_medium=stack_drizzle_readme

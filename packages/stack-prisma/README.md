@@ -1,6 +1,14 @@
-# @cipherstash/stack-prisma
+<div align="center">
+  <h1>@cipherstash/stack-prisma</h1>
 
-**Searchable field-level encryption for Postgres with [Prisma Next](https://www.npmjs.com/package/prisma-next)** — powered by [`@cipherstash/stack`](../stack/README.md) and the [EQL bundle](https://cipherstash.com/docs/stack/platform/eql).
+  <p><b>Searchable field-level encryption for Postgres with <a href="https://www.npmjs.com/package/prisma-next">Prisma Next</a> — powered by <a href="https://www.npmjs.com/package/@cipherstash/stack">@cipherstash/stack</a> and the <a href="https://cipherstash.com/docs/stack/platform/eql?utm_source=github&utm_medium=stack_prisma_readme">EQL bundle</a>.</b></p>
+
+  <a href="https://www.npmjs.com/package/@cipherstash/stack-prisma"><img alt="npm version" src="https://img.shields.io/npm/v/@cipherstash/stack-prisma.svg?style=for-the-badge&labelColor=000000"></a>
+  <a href="https://www.npmjs.com/package/@cipherstash/stack-prisma"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@cipherstash/stack-prisma.svg?style=for-the-badge&labelColor=000000"></a>
+  <a href="https://cipherstash.com/docs/stack/cipherstash/encryption/prisma-next?utm_source=github&utm_medium=stack_prisma_readme"><img alt="Docs" src="https://img.shields.io/badge/Docs-333333.svg?style=for-the-badge&logo=readthedocs&labelColor=333"></a>
+  <a href="https://discord.gg/5qwXUFb6PB"><img alt="Discord" src="https://img.shields.io/badge/Join%20the%20community-blueviolet.svg?style=for-the-badge&logo=Discord&labelColor=000000"></a>
+  <a href="https://github.com/cipherstash/stack/blob/main/LICENSE.md"><img alt="License" src="https://img.shields.io/npm/l/@cipherstash/stack-prisma.svg?style=for-the-badge&labelColor=000000"></a>
+</div>
 
 Declare encrypted columns directly in `schema.prisma`, and the framework's migration system installs the EQL bundle in the same control-plane sweep that creates your tables. No separate "install EQL" step.
 
@@ -8,7 +16,7 @@ Declare encrypted columns directly in `schema.prisma`, and the framework's migra
 
 ## Features
 
-- 🔒 Six encrypted column types — `string`, `double`, `bigint`, `date`, `boolean`, `json`
+- 🔒 Domain-named encrypted column types for text, integers, floats, numerics, dates, timestamps, booleans, and JSON — the name encodes the query capability (`cipherstash.TextSearch()`, `cipherstash.DoubleOrd()`, …)
 - 🔍 Searchable encryption — equality, free-text search, range, order, JSON path and containment
 - 🎯 Type-safe query operators — the EQL-derived `eql*` vocabulary (`eqlEq`, `eqlMatch`, `eqlGt`, `eqlAsc`, …)
 - ⚡ Bulk encrypt / bulk decrypt coalescing — one SDK round-trip per `(table, column)` group per query
@@ -110,21 +118,38 @@ There are 2 main ways to authenticate to CipherStash:
 
 ### Env vars (Production)
 
-The four `CS_*` env vars (`CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`) are reserved for production deployments and CI runners. See the [authentication docs](https://cipherstash.com/docs/stack/encryption/prisma-next#authentication) for more information.
+The four `CS_*` env vars (`CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`) are reserved for production deployments and CI runners. See the [authentication docs](https://cipherstash.com/docs/stack/cipherstash/encryption/prisma-next#authentication) for more information.
 
 ## Example
 
-A runnable end-to-end example lives at [`examples/prisma/`](../../examples/prisma/) — bundles a docker-compose Postgres, a six-codec `User` schema, and a flow that exercises every operator category against a live ZeroKMS workspace.
+A runnable end-to-end example lives at [`examples/prisma/`](https://github.com/cipherstash/stack/tree/main/examples/prisma) — bundles a docker-compose Postgres, a six-codec `User` schema, and a flow that exercises every operator category against a live ZeroKMS workspace.
+
+## How it works
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark) and (max-width: 600px)" srcset="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-stacked-dark.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-dark.svg">
+    <source media="(max-width: 600px)" srcset="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-stacked-light.svg">
+    <img alt="CipherStash architecture: encryption and decryption happen in your TypeScript app; only ciphertext (EQL JSON) is stored in your PostgreSQL database. ZeroKMS issues a unique key per value, derived in your app. Plaintext and keys never reach CipherStash, and every decryption is logged for audit." width="880" src="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-light.svg">
+  </picture>
+</p>
+
+Encryption happens in your application: the codecs encrypt on write and the `eql*` operators encrypt
+their query operands, so only ciphertext ([EQL](https://github.com/cipherstash/encrypt-query-language)
+payloads in `eql_v3_*` column domains) ever reaches Postgres. Per-value keys are issued in bulk by
+[ZeroKMS](https://cipherstash.com/docs/stack/cipherstash/kms?utm_source=github&utm_medium=stack_prisma_readme),
+plaintext and keys never reach CipherStash, and every decryption is logged for audit.
 
 ## Contributing
 
-See [`DEVELOPING.md`](./DEVELOPING.md) for the source layout, two-pass codec encode + middleware rewrite lifecycle, physical-column-name routing, the `bigint → Number` SDK boundary, and other runtime-side details.
+See [`DEVELOPING.md`](https://github.com/cipherstash/stack/blob/main/packages/stack-prisma/DEVELOPING.md) for the source layout, two-pass codec encode + middleware rewrite lifecycle, physical-column-name routing, the `bigint → Number` SDK boundary, and other runtime-side details.
 
 ## References
 
 - 📖 [**Full docs**](https://cipherstash.com/docs/stack/cipherstash/encryption/prisma-next) — column types, operator reference, security model, known limitations.
 - [CipherStash EQL reference](https://cipherstash.com/docs/stack/platform/eql) — encrypted operator semantics and search-config index types.
-- [`@cipherstash/stack`](../stack/README.md) — encryption SDK and schema DSL.
+- [`@cipherstash/stack`](https://www.npmjs.com/package/@cipherstash/stack) — encryption SDK and schema DSL.
 - [Prisma Next](https://www.npmjs.com/package/prisma-next) — the framework this extension plugs into.
 
 ## License
