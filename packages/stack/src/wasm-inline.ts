@@ -822,6 +822,18 @@ export class WasmEncryptionClient {
     }, EncryptionErrorTypes.EncryptionError)
   }
 
+  /**
+   * Decrypt a single stored payload, resolving to the plaintext union unchanged.
+   *
+   * **A `date` / `timestamp` column comes back as the string it was stored as,
+   * not a `Date`** — where `decryptModel(row, table)` reconstructs it via
+   * {@link datePropertyPaths}. Same boundary the native client draws, and for
+   * the same reason: reconstruction is a property of the MODEL path, which is
+   * handed a table to read `cast_as` from. Not because the identity is missing
+   * — every payload carries `i: { t, c }` — but because this method's declared
+   * plaintext union excludes `Date`, and returning one would make the type a
+   * lie (#779). Read through the model helpers, or `new Date(value)` yourself.
+   */
   async decrypt(encrypted: Encrypted): Promise<WasmResult<WasmPlaintext>> {
     return wasmResult(
       async () =>
@@ -1076,6 +1088,12 @@ export class WasmEncryptionClient {
    * (A per-item `Result[]` would preserve the partial success too, and is
    * worth considering if callers ask for it — but it is a different return
    * type from every other method here, so it is not the default.)
+   *
+   * ## No date reconstruction
+   *
+   * Same boundary as {@link decrypt}: date-like columns arrive as their stored
+   * strings, not `Date` values. Prefer {@link bulkDecryptModels} with the table
+   * when you want the column's declared plaintext type back (#779).
    *
    * @example
    * ```ts
