@@ -22,11 +22,13 @@ Options:
   --no-open         Don't auto-open the verification URL in a browser.
   --supabase        Track Supabase as the referrer
   --drizzle         Track Drizzle as the referrer
+  --prisma          Track Prisma as the referrer
 
 Examples:
   ${STASH_AUTH} login
   ${STASH_AUTH} login --region us-east-1
   ${STASH_AUTH} login --supabase
+  ${STASH_AUTH} login --prisma
   ${STASH_AUTH} regions            # list available regions
   ${STASH_AUTH} regions --json     # machine-readable [{slug,label}]
   # Agent triggers auth; a human completes it in the browser:
