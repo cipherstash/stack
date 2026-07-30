@@ -144,7 +144,7 @@ no rotation schedule to babysit:
 
 ## Advanced features
 
-### 👤 Identity-aware encryption
+### 👤 Identity-locking encryption
 
 Building on OIDC federation, you can bind a record's encryption key to the end user's identity, so only
 *that* user can decrypt their data: `.withLockContext({ identityClaim })` ties the data key to a claim in
@@ -157,7 +157,7 @@ await client
   .withLockContext({ identityClaim: ["sub"] });
 ```
 
-→ [Identity-aware encryption][identity]
+→ [Identity-locking encryption][identity]
 
 ### 🗂️ Keysets for multitenancy & sovereignty
 
