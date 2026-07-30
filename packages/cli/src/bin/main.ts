@@ -110,6 +110,7 @@ Commands:
 
   eql install          Scaffold stash.config.ts (if missing) and install EQL extensions
   eql migration        Generate an EQL v3 install migration for your ORM (Drizzle)
+  eql repair           Repair migrations with an un-runnable ALTER COLUMN to an encrypted type
   eql upgrade          Upgrade EQL extensions to the latest version
   eql status           Show EQL installation status
 
@@ -261,6 +262,16 @@ async function runEqlCommand(
         name: values.name,
         out: values.out,
         dryRun: flags['dry-run'],
+      })
+      break
+    }
+    case 'repair': {
+      const { eqlRepairCommand } = await import('../commands/eql/repair.js')
+      await eqlRepairCommand({
+        drizzle: flags.drizzle,
+        out: values.out,
+        dryRun: flags['dry-run'],
+        databaseUrl: values['database-url'],
       })
       break
     }

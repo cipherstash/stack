@@ -308,6 +308,26 @@ npx drizzle-kit migrate
 
 ---
 
+### `npx stash eql repair --drizzle`
+
+Repairs migrations `drizzle-kit generate` emitted with an in-place `ALTER COLUMN … SET DATA TYPE <eql_v3_*>`, which Postgres cannot run (there is no cast from `text`/`numeric` to an EQL domain). Each is rewritten into an additive `ADD COLUMN "<column>_encrypted"` that preserves the source column.
+
+```bash
+npx stash eql repair --drizzle
+npx drizzle-kit migrate
+```
+
+| Flag | Description |
+|------|-------------|
+| `--drizzle` | Required. Repair a Drizzle migration directory |
+| `--out <path>` | Directory to sweep. Default `drizzle` |
+| `--dry-run` | Report what would be rewritten without writing anything |
+| `--database-url <url>` | Leave migrations the database has already applied untouched |
+
+This is the same sweep `eql migration --drizzle` performs, without generating an install migration you do not need. With `--database-url` it reads `drizzle.__drizzle_migrations` and refuses to rewrite an already-applied migration — doing so would leave the file describing a shape that database never got from it, and a fresh CI or staging database replaying it would silently diverge. Without a URL it proceeds and warns that applied state could not be verified.
+
+---
+
 ## Required database permissions
 
 Before installing EQL, the CLI verifies that the connected role has:

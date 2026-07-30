@@ -53,6 +53,19 @@ describe('renderCommandHelp', () => {
     expect(out).toContain('auth regions')
   })
 
+  // `eql repair` is the only command that can consult applied state, so its
+  // --database-url is load-bearing rather than decorative — help must show it
+  // alongside the flags that shape the sweep.
+  it('renders every flag of the standalone repair command', () => {
+    const out = renderCommandHelp('eql repair', RUNNER)
+    expect(out).not.toBeNull()
+    expect(out).toContain('Usage: npx stash eql repair [options]')
+    expect(out).toContain('--drizzle')
+    expect(out).toContain('--out <path>')
+    expect(out).toContain('--dry-run')
+    expect(out).toContain('--database-url <url>')
+  })
+
   it('renders a summary-only command without empty Options/Examples', () => {
     const out = renderCommandHelp('wizard', RUNNER)
     expect(out).toContain('Usage: npx stash wizard [options]')

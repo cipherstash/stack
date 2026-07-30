@@ -1038,10 +1038,19 @@ interface RewriteSweepError extends Error, PartialRewriteResult {}
  * shipping broken SQL. Statements sitting inside a
  * SQL comment — or inside a single-quoted string literal, where they are data
  * rather than SQL — are inert and are neither rewritten nor reported.
+ *
+ * `options.skip` names files to leave on disk — they are still READ, because a
+ * column's current type comes from the whole corpus, but never written. One
+ * path or many: `eql migration` passes the install migration it just generated,
+ * `eql repair` passes every migration already applied to the database.
+ *
+ * `options.dryRun` computes the identical result without writing anything, so a
+ * caller can preview a repair — or ask which files WOULD be rewritten — before
+ * touching migrations that are about to be applied.
  */
 export async function rewriteEncryptedAlterColumns(
   outDir: string,
-  options: { skip?: string } = {},
+  options: { skip?: string | readonly string[]; dryRun?: boolean } = {},
 ): Promise<RewriteResult> {
   const entries = await readdir(outDir).catch(
     (error: NodeJS.ErrnoException) => {
@@ -1057,6 +1066,9 @@ export async function rewriteEncryptedAlterColumns(
   const staged: StagedColumn[] = []
   const seen = new Set<string>()
   const stagedTargets = new Set<string>()
+  const skipFiles = new Set(
+    typeof options.skip === 'string' ? [options.skip] : (options.skip ?? []),
+  )
 
   /** Record a skip once — the strict pass and the broad scan can both find it. */
   const skip = (file: string, statement: string, reason: SkipReason): void => {
@@ -1084,7 +1096,7 @@ export async function rewriteEncryptedAlterColumns(
 
   try {
     for (const [filePath, original] of contents) {
-      if (options.skip && filePath === options.skip) continue
+      if (skipFiles.has(filePath)) continue
 
       // Reset the regex's lastIndex — it's stateful on /g
       ALTER_COLUMN_TO_ENCRYPTED_RE.lastIndex = 0
@@ -1165,7 +1177,7 @@ export async function rewriteEncryptedAlterColumns(
       )
 
       if (updated !== original) {
-        await writeFile(filePath, updated, 'utf-8')
+        if (!options.dryRun) await writeFile(filePath, updated, 'utf-8')
         rewritten.push(filePath)
         staged.push(...fileStaged)
       }
