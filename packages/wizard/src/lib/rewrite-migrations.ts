@@ -919,16 +919,25 @@ export function describeStagedReconciliation(
   const lines = [
     'The sweep repaired SQL only. Your Drizzle schema and drizzle-kit snapshot still describe the OLD shape, so reconcile them before the application reads these columns:',
   ]
-  for (const { schema, table, column, encryptedColumn, domain } of staged) {
+  for (const {
+    file,
+    schema,
+    table,
+    column,
+    encryptedColumn,
+    domain,
+  } of staged) {
     const ref = schema ? `${schema}.${table}` : table
     lines.push(
-      `  - ${ref}: the database now has "${column}" (unchanged, still plaintext) and "${encryptedColumn}" ${domain}, but your schema declares "${column}" as ${domain} and knows nothing about "${encryptedColumn}".`,
+      `  - ${ref}: the database now has "${column}" (unchanged, still plaintext) and "${encryptedColumn}" ${domain} (staged in ${file}), but your schema declares "${column}" as ${domain} and knows nothing about "${encryptedColumn}".`,
     )
   }
   lines.push(
     'Until you reconcile it: reads of the source column hand plaintext to a decrypt path expecting an EQL envelope, writes store an EQL envelope in a plaintext column and SUCCEED, and the new encrypted column is unreachable through the ORM.',
     '`drizzle-kit generate` will NOT warn you — it diffs your schema against its snapshot and reads neither the .sql nor the database, and those two still agree.',
-    'Declare the encrypted column in your Drizzle schema under its own name, keep the source column as its plaintext type, then run `drizzle-kit generate` to bring the snapshot forward. Do not hand-edit only the schema and re-generate against the stale snapshot: that emits a duplicate ADD COLUMN which fails with "column already exists". Then run the staged `stash encrypt` lifecycle to backfill before switching reads across.',
+    'To reconcile, first fix your Drizzle schema: declare each encrypted column above under its own name, and set each source column BACK to its plaintext type — it is currently declared as the encrypted domain, and that declaration is what made drizzle-kit emit the invalid ALTER in the first place.',
+    'Then run `drizzle-kit generate` to advance the snapshot, and DELETE the regenerated `ADD COLUMN` statement for each encrypted column from the migration it writes. The snapshot has never seen those columns, so `generate` always emits an ADD COLUMN for them — and the migration above already adds them, so applying both fails with "column already exists". Removing the statement keeps the snapshot advance, which is the whole point of the step. (`ADD COLUMN IF NOT EXISTS` works too.) Anything else `generate` emits, such as a no-op SET DATA TYPE on the source column, can stay.',
+    'Then `drizzle-kit migrate`, and run the staged `stash encrypt` lifecycle to backfill before switching reads across. If you have NOT yet applied the migration above, you can instead revert your schema, remove that migration (its .sql, its meta/*_snapshot.json, and its meta/_journal.json entry) and start from the documented staged rollout, which generates the ADD COLUMN itself and leaves nothing to delete.',
   )
   return lines
 }
@@ -1070,6 +1079,14 @@ export async function rewriteEncryptedAlterColumns(
       // Reset the regex's lastIndex — it's stateful on /g
       ALTER_COLUMN_TO_ENCRYPTED_RE.lastIndex = 0
 
+      // Buffered per file, then committed to `staged` only once this file's
+      // write has SUCCEEDED. The entries are produced inside `.replace()`, which
+      // runs before the write — and `staged` drives a notice telling the user the
+      // database now HAS these columns. Pushing straight to `staged` reported
+      // twins that never reached disk when a later write threw, sending the user
+      // to reconcile a column that exists nowhere.
+      const fileStaged: StagedColumn[] = []
+
       const updated = original.replace(
         ALTER_COLUMN_TO_ENCRYPTED_RE,
         (
@@ -1121,8 +1138,11 @@ export async function rewriteEncryptedAlterColumns(
           // but leave the statement alone rather than emit a broken rewrite.
           if (!domain) return match
 
+          // `stagedTargets` is the in-run duplicate guard and is deliberately
+          // NOT rolled back with the buffer: if the write fails, treating the
+          // target as taken keeps a later file from staging it again.
           stagedTargets.add(target)
-          staged.push({
+          fileStaged.push({
             file: filePath,
             schema,
             table,
@@ -1137,6 +1157,7 @@ export async function rewriteEncryptedAlterColumns(
       if (updated !== original) {
         await writeFile(filePath, updated, 'utf-8')
         rewritten.push(filePath)
+        staged.push(...fileStaged)
       }
 
       // Broad secondary scan on the POST-rewrite content: anything still carrying

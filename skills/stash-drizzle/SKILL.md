@@ -77,16 +77,24 @@ The generated migration also installs the `cs_migrations` tracking schema, so a 
 - writes push an EQL envelope into a `text` column and **succeed**, storing ciphertext in a plaintext column
 - `email_encrypted` is unreachable — it is in no Drizzle schema
 
-The fix: declare the encrypted column in `schema.ts` under **its own name**, keep the source column as its plaintext type, then run `drizzle-kit generate` to bring the snapshot forward.
+Reconciling is three steps, and the middle one is not optional.
+
+**1. Fix `schema.ts`:** declare the encrypted column under **its own name**, and set the source column **back** to its plaintext type. It is currently declared as the encrypted domain — that declaration is exactly what made `drizzle-kit generate` emit the invalid `ALTER` in the first place.
 
 ```typescript
 export const users = pgTable('users', {
-  email: text('email').notNull(),                        // source column, still plaintext
+  email: text('email').notNull(),                        // back to plaintext
   email_encrypted: types.TextSearch('email_encrypted'),  // the twin the sweep added
 })
 ```
 
-Do **not** just change `email`'s type and re-generate: that diffs against the stale snapshot and emits a duplicate `ADD COLUMN "email_encrypted"`, which fails at migrate time with `column "email_encrypted" already exists`. Then backfill through the staged flow below before switching reads across.
+**2. Run `drizzle-kit generate`, then delete the regenerated `ADD COLUMN` from the migration it writes.** The snapshot has never seen `email_encrypted`, so `generate` **always** emits `ADD COLUMN "email_encrypted"` for it — and the swept migration already adds that column, so applying both fails at migrate time with `column "email_encrypted" already exists`. Deleting that one statement keeps the snapshot advance, which is the entire point of the step. (`ADD COLUMN IF NOT EXISTS` works too.) Anything else `generate` emits — such as a now no-op `SET DATA TYPE text` on the source column — can stay.
+
+This is not avoidable by editing the schema more carefully: the snapshot can only learn about the twin from a `generate` that also emits SQL to create it. `drizzle-kit push` would introspect and skip it, but that bypasses your migration history.
+
+**3. Run `drizzle-kit migrate`,** then backfill through the staged flow below before switching reads across.
+
+If you have **not** yet applied the swept migration, the cleaner option is to revert `schema.ts`, remove that migration entirely (its `.sql`, its `meta/*_snapshot.json`, and its entry in `meta/_journal.json`), and follow **Migrating an Existing Column to Encrypted** below from a clean start — `generate` then produces the `ADD COLUMN` itself and there is nothing to delete.
 
 ### Column Storage
 

@@ -577,6 +577,47 @@ describe('eqlMigrationCommand — Drizzle', () => {
     )
   })
 
+  /**
+   * A sweep that threw PART WAY through has already written staged twins to
+   * disk, so the same three-way divergence exists for them and the
+   * reconciliation notice still has to fire. The command aborts either way —
+   * this pins that aborting does not swallow the guidance for work that did
+   * land.
+   */
+  it('reports staged twins from a sweep that threw part way through', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    spawnMock.mockImplementation(() => {
+      writeFileSync(join(out, '0000_install-eql.sql'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+    const partial = Object.assign(new Error('EISDIR'), {
+      rewritten: [join(out, '0001_encrypt.sql')],
+      skipped: [],
+      staged: [
+        {
+          file: join(out, '0001_encrypt.sql'),
+          table: 'users',
+          column: 'email',
+          encryptedColumn: 'email_encrypted',
+          domain: 'eql_v3_text_search',
+        },
+      ],
+    })
+    rewriteMock.spy.mockRejectedValueOnce(partial)
+
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out }),
+    ).rejects.toBeInstanceOf(CliExit)
+
+    const warnings = clack.log.warn.mock.calls
+      .map((c) => String(c[0]))
+      .join('\n')
+    expect(warnings).toContain('"email_encrypted" eql_v3_text_search')
+    expect(warnings).toContain('drizzle-kit generate` will NOT warn you')
+    expect(warnings).toContain('column already exists')
+  })
+
   it('aborts (exit 1) when drizzle-kit exits non-zero', async () => {
     spawnMock.mockReturnValue({ status: 1, stdout: '', stderr: 'boom' })
     await expect(

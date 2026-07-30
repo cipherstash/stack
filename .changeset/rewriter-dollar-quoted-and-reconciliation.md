@@ -28,10 +28,18 @@ its snapshot and reads neither the `.sql` nor the database — so the divergence
 was entirely silent: reads of the source column hand plaintext to a decrypt path
 expecting an EQL envelope, and writes store an EQL envelope in a plaintext
 column and succeed. `stash eql migration --drizzle` and the wizard now print the
-divergence per column, naming the table, both columns and the domain, along with
-the reconciling schema edit and the stale-snapshot trap that turns a partial fix
-into `column already exists`. The `skills/stash-cli` and `skills/stash-drizzle`
-guides document it.
+divergence per column, naming the table, both columns, the domain and the
+migration the twin was staged in, followed by the reconciliation: set the source
+column back to its plaintext type, declare the twin under its own name, then run
+`drizzle-kit generate` and delete the `ADD COLUMN` it regenerates for the twin.
+That last step is load-bearing — the snapshot can only learn about the twin from
+a `generate` that also emits SQL to create it, and the swept migration already
+added that column, so leaving both fails with `column already exists`. The
+`skills/stash-cli` and `skills/stash-drizzle` guides carry the same sequence.
+
+Twins are reported only once the migration file they were written into has been
+saved, so a sweep that fails mid-write no longer names a column that never
+reached disk.
 
 The new body scan is a single forward pass, so sweep time is unchanged on a real
 drizzle output directory — which contains the ~2.6 MB EQL install migration, and

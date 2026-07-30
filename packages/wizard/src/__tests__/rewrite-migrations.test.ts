@@ -1332,6 +1332,58 @@ describe('rewriteEncryptedAlterColumns', () => {
       expect(lines).toContain('column already exists')
       expect(lines).toContain('SUCCEED')
     })
+
+    // Names the migration the twin was staged in, so the user can go read the
+    // statement rather than hunt the directory for it.
+    it('names the migration file each twin was staged in', async () => {
+      const lines = describeStagedReconciliation([
+        {
+          file: '/tmp/drizzle/0001_alter.sql',
+          table: 'users',
+          column: 'email',
+          encryptedColumn: 'email_encrypted',
+          domain: 'eql_v3_text_search',
+        },
+      ]).join('\n')
+
+      expect(lines).toContain('/tmp/drizzle/0001_alter.sql')
+    })
+
+    /**
+     * The remediation has to be followed to a working end state, and the
+     * obvious reading of it does not get there.
+     *
+     * After a sweep, `schema.ts` declares the SOURCE column as the encrypted
+     * domain — that declaration is what made drizzle-kit emit the invalid
+     * ALTER — and the snapshot agrees with it. So the guidance must say to set
+     * the source column BACK to plaintext, not to "keep" it.
+     *
+     * And the snapshot has never seen the twin, so `drizzle-kit generate`
+     * ALWAYS emits an `ADD COLUMN` for it — the swept migration already adds
+     * that column, so applying both fails with "column already exists". That
+     * is not avoidable by editing the schema more carefully; the generated
+     * statement has to be removed. Guidance that stops at "run generate" walks
+     * the user into the very error it warns about.
+     */
+    it('tells the user to revert the source column and drop the regenerated ADD COLUMN', async () => {
+      const lines = describeStagedReconciliation([
+        {
+          file: '/tmp/0001_alter.sql',
+          table: 'users',
+          column: 'email',
+          encryptedColumn: 'email_encrypted',
+          domain: 'eql_v3_text_search',
+        },
+      ]).join('\n')
+
+      // Revert, not "keep": the schema currently declares it as the domain.
+      expect(lines).toMatch(/\bback to its plaintext type\b/i)
+      expect(lines).not.toContain('keep the source column as its plaintext')
+      // The step that makes the difference between working and failing.
+      expect(lines).toMatch(/\b(?:DELETE|delete|remove)\b[^\n]*ADD COLUMN/)
+      // And it must not blame partial editing for the duplicate.
+      expect(lines).not.toContain('Do not hand-edit only the schema')
+    })
   })
 
   /**
@@ -2003,12 +2055,22 @@ describe('rewriteEncryptedAlterColumns', () => {
       await rewriteEncryptedAlterColumns(tmpDir)
       throw new Error('expected rewriteEncryptedAlterColumns to throw')
     } catch (error) {
-      const partial = error as { rewritten?: string[]; skipped?: unknown[] }
+      const partial = error as {
+        rewritten?: string[]
+        skipped?: unknown[]
+        staged?: { column: string }[]
+      }
       expect(partial.rewritten).toEqual([first])
       expect(partial.skipped).toEqual([])
       expect(fs.readFileSync(first, 'utf-8')).toContain(
         'ADD COLUMN "email_encrypted"',
       )
+      // `staged` drives a notice telling the user the database now HAS these
+      // columns, so it must only list twins that reached disk. `name`'s twin was
+      // staged in memory during the string replace and then lost when the write
+      // threw — reporting it would send the user reconciling a column that
+      // exists nowhere.
+      expect(partial.staged?.map((s) => s.column)).toEqual(['email'])
     } finally {
       if (fs.statSync(failing).isDirectory()) fs.rmdirSync(failing)
     }
@@ -2415,9 +2477,45 @@ describe('sweepMigrationDirs', () => {
     expect(results[0].error).toBe('null')
     expect(results[0].rewritten).toEqual([])
     expect(results[0].skipped).toEqual([])
+    expect(results[0].staged).toEqual([])
     // …and the sweep carried on to the remaining candidates.
     expect(results[1].dir).toBe('migrations')
     expect(results[1].rewritten).toEqual([path.join(abs, '0002_alter.sql')])
+  })
+
+  /**
+   * A directory whose sweep threw part way through has real twins on disk, and
+   * `sweepMigrationDirs` has to carry them out so the caller can print the
+   * reconciliation notice for them. `partial.staged` was threaded but never
+   * asserted.
+   */
+  it('carries staged twins out of a directory whose sweep threw', async () => {
+    const abs = seedDir('drizzle')
+    fs.writeFileSync(
+      path.join(abs, '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text, "name" text);\n',
+    )
+    const first = path.join(abs, '0001_email.sql')
+    const failing = path.join(abs, '0002_name.sql')
+    fs.writeFileSync(
+      first,
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+    )
+    fs.writeFileSync(
+      failing,
+      'ALTER TABLE "users" ALTER COLUMN "name" SET DATA TYPE eql_v3_text_search;\n',
+    )
+    fsPromisesWrite.spy.mockImplementation(async (file, data, options) => {
+      if (String(file) === failing) throw new Error('EISDIR')
+      return fsPromisesWrite.real(file, data, options)
+    })
+
+    const results = await sweepMigrationDirs(tmpDir, ['drizzle'])
+
+    expect(results[0].error).toBeDefined()
+    // Only the twin that reached disk — `name`'s write threw.
+    expect(results[0].staged.map((s) => s.column)).toEqual(['email'])
+    expect(results[0].staged[0].encryptedColumn).toBe('email_encrypted')
   })
 
   it('reports near-misses per directory', async () => {
