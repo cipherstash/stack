@@ -1,6 +1,6 @@
 ---
 name: stash-supply-chain-security
-description: Supply-chain security controls for the @cipherstash/stack monorepo. Covers post-install script policy (onlyBuiltDependencies), install cooldown (minimumReleaseAge), lockfile integrity (blockExoticSubdeps + lockfile registry check), frozen-lockfile CI, registry pinning (.npmrc), Dependabot cooldown, and CODEOWNERS. Use when modifying CI workflows, pnpm config, dependency updates, .github/dependabot.yml, or anything that touches how packages enter the build.
+description: Supply-chain security controls for the @cipherstash/stack monorepo. Covers post-install script policy (onlyBuiltDependencies), install cooldown (minimumReleaseAge), lockfile integrity (blockExoticSubdeps + lockfile registry check), frozen-lockfile CI, registry pinning (.npmrc), Dependabot cooldown, CODEOWNERS, and npm OIDC trusted publishing / provenance (including claiming a new package name). Use when modifying CI workflows, pnpm config, dependency updates, .github/dependabot.yml, release.yml, publishing a package to npm for the first time, or anything that touches how packages enter the build.
 ---
 
 # Supply Chain Security
@@ -14,6 +14,7 @@ Controls applied in this repo to limit blast radius from compromised npm package
 - Updating `.github/dependabot.yml` or `.github/CODEOWNERS`
 - Adding a dependency that needs a build script (i.e. `node-gyp`, `node-pty`, prebuilt binaries)
 - Bypassing the install cooldown for a security fix
+- Publishing a package to npm under a name that has never been published before
 - Reviewing a PR that touches any of the above
 
 ## What's Enforced (Config + Test Gate)
@@ -91,7 +92,10 @@ Every maintainer with publish access to `@cipherstash/*` should have:
 npm profile enable-2fa auth-and-writes
 ```
 
-(This becomes mostly moot once the deferred OIDC-trusted-publisher migration lands — the workflow won't need long-lived tokens at all. See "Deferred" below.)
+Releases no longer depend on this — `release.yml` publishes via OIDC and holds no
+long-lived token (see "Publishing" below). 2FA still matters for the manual
+publishes that OIDC can't cover: claiming a new package name, `npm deprecate`,
+and `npm dist-tag` changes.
 
 ### Reduce dependency tree — practice #13
 
@@ -107,14 +111,67 @@ Before adding a new direct dep, ask:
 
 Do **not** commit any `.env` file to the repo.
 
-## What's Deferred (Follow-Up PR)
+## Publishing — OIDC trusted publishing + provenance (practices #11, #12)
 
-These need npmjs.com-side configuration and are tracked separately:
+`.github/workflows/release.yml` publishes to npm with **no `NPM_TOKEN`**. It
+authenticates via npm OIDC trusted publishing, and provenance attestations are
+generated automatically as a side effect. Verify any published version with:
 
-- **Provenance attestations** — practice #11
-- **OIDC trusted publishing** — practice #12
+```bash
+npm view <pkg>@<version> --json | grep -A3 attestations
+```
 
-Both require the npm org admin to register each `@cipherstash/*` package as a Trusted Publisher (cipherstash/stack repo + release.yml). Once that's done, `release.yml` can drop `NPM_TOKEN` entirely, run `npm publish` with `id-token: write`, and provenance is auto-generated.
+Constraints baked into that workflow — don't undo them:
+
+- **`permissions: id-token: write`** is what mints the OIDC token. Without it every publish fails.
+- **`runs-on: ubuntu-latest`, not a self-hosted/Blacksmith runner.** npm rejects provenance from non-GitHub-hosted runners with E422.
+- **Never set `NPM_TOKEN`.** `changesets/action` writes a token `.npmrc` when it sees one, which shadows OIDC and fails every publish with E404 (npm/cli#8976).
+- **npm ≥ 11.5.1 and Node ≥ 22.14.** Node 22 ships npm 10.x, so the workflow installs `npm@^11.5.1` explicitly before publishing.
+- **No Actions cache in this workflow** (no `cache:`, `package-manager-cache: false`, `pnpm/action-setup` with `cache: false`). A poisoned cache entry would execute in a credential-bearing job. Enforced by `scripts/lint-no-workflow-caching.mjs`.
+
+Trusted publishing is configured **per package** on npmjs.com (package settings →
+Trusted publisher → GitHub Actions): owner/repo `cipherstash/stack`, workflow
+filename `release.yml` (filename only, with extension — not a path), environment
+blank. npm does not validate this on save, so a typo only surfaces as a failed
+publish.
+
+### Publishing a package name for the first time
+
+A trusted publisher can only be attached to a package that already exists on the
+registry, so a brand-new name can't be released by `release.yml` on its own —
+the first publish has to be manual. This is why `@cipherstash/stack-drizzle` and
+`@cipherstash/stack-supabase` each carry a `0.0.0` placeholder version.
+
+Do this **before** the release that would first publish the name:
+
+1. `npm login` as a maintainer with publish rights on the `@cipherstash` scope.
+2. Publish a placeholder to claim the name. Use `pnpm publish`, not `npm publish` — workspace packages depend on each other via `workspace:*` and only pnpm rewrites that protocol on pack:
+
+   ```bash
+   pnpm --filter <pkg> build
+   cd packages/<dir>
+   npm version 0.0.0 --no-git-tag-version
+   pnpm publish --tag bootstrap --access public --no-git-checks
+   git checkout package.json   # restore the real version
+   ```
+
+   This publish has no provenance — it predates the trusted-publisher config by
+   definition. That's expected and is the only unattested version.
+3. Register the trusted publisher on npmjs.com as described above.
+4. `npm deprecate <pkg>@0.0.0 "Placeholder package"` so nothing installs it silently.
+5. After the real release lands, clean up the placeholder tags — `changeset publish` never removes a tag it didn't create:
+
+   ```bash
+   npm dist-tag rm <pkg> bootstrap
+   ```
+
+The first publish also sets `latest` to `0.0.0` regardless of `--tag`, so keep the
+gap between the placeholder and the real release short, and confirm
+`npm view <pkg> dist-tags` afterwards.
+
+Also confirm the package's `package.json` has `"publishConfig": {"access": "public"}` —
+`.changeset/config.json` sets `access: "restricted"` repo-wide, and the per-package
+field is what overrides it.
 
 ## Common Operations
 
