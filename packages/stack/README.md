@@ -573,7 +573,6 @@ The wizard will:
 | Flag | Description |
 |------|-------------|
 | `--supabase` / `--drizzle` / `--prisma-next` | Target a specific integration's setup flow |
-| `--proxy` / `--no-proxy` | Opt in/out of the CipherStash Proxy path |
 | `--region <slug>` | Workspace region (env `STASH_REGION`); **required for non-interactive init when not already logged in** |
 
 ## Configuration
