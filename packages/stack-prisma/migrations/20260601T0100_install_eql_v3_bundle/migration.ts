@@ -25,6 +25,14 @@
  * into consumer repos; a re-emit that changes them orphans every vendored
  * copy. An EQL version bump ships as a NEW upgrade migration directory
  * (see `20260720T0000_upgrade_eql_v3_3_0_2`), never as an edit here.
+ * (One authorized pre-GA re-emit happened on the 1.0 release branch: the
+ * install op was reclassified `data` → `additive`, the baked bundle was
+ * bumped to eql-3.0.4, and a no-SQL carrier op per upgrade invariant
+ * (3.0.2 and 3.0.4) was added so fresh-database `db init` passes its
+ * additive-only policy. Both the `migrationHash` and the baked
+ * `installSqlSha256` changed. RC consumers must delete
+ * `migrations/cipherstash/` and re-run `prisma-next migration plan` to
+ * pick up the re-emitted artefacts.)
  *
  * Authoring loop (pre-publication only): hand-edit, then re-emit
  * `ops.json` / `migration.json` via
@@ -56,18 +64,25 @@ export default class M extends Migration {
       rawSql({
         id: 'cipherstash.install-eql-v3-bundle',
         label: INSTALL_LABEL,
-        // `data`, not `additive`: this genesis edge moves NO contract
-        // storage (`from: null` → the empty-storage hash — the bundle
-        // declares no contract-space storage), and the aggregate
-        // integrity checker (`migration-tools` `check-integrity.ts`)
-        // rejects a no-storage-movement edge unless it carries a
-        // `data`-class op. Along the axis the checker classifies — does
-        // the op move the modeled contract shape? — `data` is the
-        // truthful answer: the bundle creates `public.eql_v3_*` domains
-        // and `eql_v3.*` functions the space contract deliberately does
-        // not model. The `migrate` policy allows all four classes, so
-        // apply behaviour is unchanged.
-        operationClass: 'data',
+        // `additive` (previously `data`): the bundle only CREATEs new
+        // objects — the `public.eql_v3_*` domains, the `eql_v3` /
+        // `eql_v3_internal` schemas and their functions — and touches no
+        // user data, so along the axis migration POLICIES classify
+        // (can this op damage existing data?) `additive` is the truthful
+        // answer. The practical stake: `db init` enforces an
+        // additive-only policy, and a `data` class here made every
+        // fresh-database init (e.g. Prisma Compute preview deploys)
+        // fail with PN-RUN-3020.
+        //
+        // The earlier `data` classification existed to satisfy the
+        // aggregate integrity checker's no-op self-edge rule
+        // (`sameSourceAndTarget`) — but that rule only fires when
+        // `from === to`, and this genesis edge runs `from: null` → the
+        // empty-storage hash, which the checker does NOT treat as a
+        // self-edge. Verified against `migration-tools`
+        // `check-integrity.ts` 0.16.0. (The 3.0.2 upgrade edge IS a true
+        // self-edge and keeps its `data` class for exactly that rule.)
+        operationClass: 'additive',
         invariantId: CIPHERSTASH_V3_INVARIANTS.installBundle,
         target: { id: 'postgres' },
         precheck: [],
@@ -97,6 +112,52 @@ export default class M extends Migration {
           {
             description: 'verify the eql_v3.eq operator function exists',
             sql: "SELECT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'eql_v3' AND p.proname = 'eq')",
+          },
+        ],
+      }),
+      // Invariant carrier: the install op above already ships the pinned
+      // release's bundle (eql-3.0.4 — `readVerifiedInstallSql()` is digest-
+      // verified against the installed manifest), so a fresh database that
+      // walks this genesis edge IS at the pinned release — a superset of
+      // every earlier v3 surface, so the 3.0.2 invariant is honestly
+      // satisfied too. Declaring the upgrade invariants here
+      // lets the shortest-path planner (`computeExtensionSpaceApplyPath` /
+      // `findPathWithDecision`) satisfy the head ref from this single
+      // all-additive edge, so fresh-database `db init` (additive-only
+      // policy) never needs to walk the `data`-classed upgrade self-edges.
+      // Databases installed at an older bundle still reach the pinned
+      // release through those upgrade edges via `migrate`, whose policy
+      // allows all classes.
+      rawSql({
+        id: 'cipherstash.install-provides-eql-v3-3-0-2',
+        label:
+          'EQL 3.0.2 invariant — provided by the install bundle above (no additional SQL)',
+        operationClass: 'additive',
+        invariantId: CIPHERSTASH_V3_INVARIANTS.upgradeBundle302,
+        target: { id: 'postgres' },
+        precheck: [],
+        execute: [],
+        postcheck: [
+          {
+            description:
+              'verify the eql_v3 operator schema exists (the bundle was installed by the preceding op)',
+            sql: "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'eql_v3')",
+          },
+        ],
+      }),
+      rawSql({
+        id: 'cipherstash.install-provides-eql-v3-3-0-4',
+        label:
+          'EQL 3.0.4 invariant — provided by the install bundle above (no additional SQL)',
+        operationClass: 'additive',
+        invariantId: CIPHERSTASH_V3_INVARIANTS.upgradeBundle304,
+        target: { id: 'postgres' },
+        precheck: [],
+        execute: [],
+        postcheck: [
+          {
+            description: `verify eql_v3.version() reports ${releaseManifest.eqlVersion}`,
+            sql: `SELECT eql_v3.version() = '${releaseManifest.eqlVersion}'`,
           },
         ],
       }),

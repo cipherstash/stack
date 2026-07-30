@@ -37,6 +37,7 @@ import cipherstashExtensionDescriptor from '../src/exports/control'
 import { CIPHERSTASH_SPACE_ID } from '../src/extension-metadata/constants'
 import {
   CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
+  CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
   CIPHERSTASH_V3_INVARIANTS,
 } from '../src/extension-metadata/constants-v3'
@@ -70,7 +71,7 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
 
   it('publishes the v3 baseline and versioned EQL upgrade edges', () => {
     const space = cipherstashExtensionDescriptor.contractSpace!
-    expect(space.migrations).toHaveLength(2)
+    expect(space.migrations).toHaveLength(3)
     const v3Baseline = space.migrations[0]!
     expect(v3Baseline.dirName).toBe(CIPHERSTASH_V3_BASELINE_MIGRATION_NAME)
     // Genesis edge (`from: null`): the bundle declares no contract-space
@@ -82,13 +83,23 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
     expect(v3Upgrade.dirName).toBe(CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME)
     expect(v3Upgrade.metadata.from).toBe(v3Baseline.metadata.to)
     expect(v3Upgrade.metadata.to).toBe(v3Baseline.metadata.to)
+    const v3Upgrade304 = space.migrations[2]!
+    expect(v3Upgrade304.dirName).toBe(CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME)
+    expect(v3Upgrade304.metadata.from).toBe(v3Baseline.metadata.to)
+    expect(v3Upgrade304.metadata.to).toBe(v3Baseline.metadata.to)
   })
 
-  it('v3 baseline ops carry the installEqlV3Bundle op only', () => {
+  it('v3 baseline ops carry the install op plus the upgrade-invariant carriers', () => {
     const space = cipherstashExtensionDescriptor.contractSpace!
     const v3Baseline = space.migrations[0]!
     const opIds = v3Baseline.ops.map((op) => op.invariantId).filter(Boolean)
-    expect(opIds).toEqual([CIPHERSTASH_V3_INVARIANTS.installBundle])
+    // The carriers let a fresh database satisfy every head-ref invariant
+    // from this single all-additive edge (see the migration file).
+    expect(opIds).toEqual([
+      CIPHERSTASH_V3_INVARIANTS.installBundle,
+      CIPHERSTASH_V3_INVARIANTS.upgradeBundle302,
+      CIPHERSTASH_V3_INVARIANTS.upgradeBundle304,
+    ])
   })
 
   it('v3 3.0.2 upgrade ops carry a distinct versioned invariant', () => {
@@ -133,8 +144,15 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
     const space = cipherstashExtensionDescriptor.contractSpace!
     const latest = space.migrations[space.migrations.length - 1]!
     expect(space.headRef.hash).toBe(latest.metadata.to)
+    // Deduped: the baseline carries the upgrade invariants too (so fresh
+    // databases can satisfy the head ref from one edge), so the same
+    // invariant id legitimately appears on more than one migration.
     expect([...space.headRef.invariants].sort()).toEqual(
-      space.migrations.flatMap((m) => m.metadata.providedInvariants).sort(),
+      [
+        ...new Set(
+          space.migrations.flatMap((m) => m.metadata.providedInvariants),
+        ),
+      ].sort(),
     )
   })
 

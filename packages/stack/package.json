@@ -190,7 +190,7 @@
 		"test:integration": "vitest run --config integration/vitest.config.ts"
 	},
 	"devDependencies": {
-		"@cipherstash/eql": "3.0.2",
+		"@cipherstash/eql": "3.0.4",
 		"@clack/prompts": "^1.7.0",
 		"@clerk/backend": "3.11.3",
 		"@supabase/postgrest-js": "2.110.2",

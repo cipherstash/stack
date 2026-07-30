@@ -55,9 +55,10 @@ You can also wrap an existing client: `await encryptedSupabase(supabaseClient, o
 Each column's query capabilities are fixed by its `eql_v3_*` type, so an unsupported operation is
 rejected loudly instead of silently scanning.
 
-> **PostgREST limitation (EQL 3.0.2).** Encrypted free-text `matches()`, encrypted JSON
+> **PostgREST limitation (EQL 3.0.4).** Encrypted free-text `matches()`, encrypted JSON
 > `contains()`, and `selectorEq()`/`selectorNe()` need typed query-domain casts that PostgREST
-> cannot express, so they fail fast with this EQL release. Use the
+> cannot express, so they fail fast with this EQL release — the requirement began in EQL 3.0.2
+> and remains in 3.0.4. Use the
 > [Drizzle][stack-drizzle] or [Prisma][stack-prisma] adapter, or a carefully scoped SQL/RPC
 > path, for those query shapes. Plaintext `like`/`ilike` on encrypted columns is rejected by
 > design.
