@@ -1,824 +1,389 @@
-# @cipherstash/stack
+<!-- Before merging to main, work through docs/plans/readme-go-live-checklist.md — it tracks the
+     remaining pre-merge items (doc links, benchmark refresh, social preview card). -->
+<div align="center">
+  <a href="https://cipherstash.com?utm_source=github&utm_medium=stack_readme">
+    <img alt="CipherStash" width="128" height="128" src="https://cipherstash.com/brand/cipherstash-logo-dark.svg">
+  </a>
+  <h1>CipherStash Stack for TypeScript</h1>
 
-The all-in-one TypeScript SDK for the CipherStash data security stack.
+  <p><b>Searchable, application-level encryption for building privacy-first apps.</b></p>
 
-[![npm version](https://img.shields.io/npm/v/@cipherstash/stack.svg?style=for-the-badge&labelColor=000000)](https://www.npmjs.com/package/@cipherstash/stack)
-[![License: MIT](https://img.shields.io/npm/l/@cipherstash/stack.svg?style=for-the-badge&labelColor=000000)](https://github.com/cipherstash/stack/blob/main/LICENSE.md)
-[![TypeScript](https://img.shields.io/badge/TypeScript-first-blue?style=for-the-badge&labelColor=000000)](https://www.typescriptlang.org/)
+  <a href="https://www.npmjs.com/package/@cipherstash/stack"><img alt="npm version" src="https://img.shields.io/npm/v/@cipherstash/stack.svg?style=for-the-badge&labelColor=000000"></a>
+  <a href="https://www.npmjs.com/package/@cipherstash/stack"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@cipherstash/stack.svg?style=for-the-badge&labelColor=000000"></a>
+  <a href="https://github.com/cipherstash/stack/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/cipherstash/stack?style=for-the-badge&labelColor=000000"></a>
+  <a href="https://cipherstash.com/docs/stack?utm_source=github&utm_medium=stack_readme"><img alt="Docs" src="https://img.shields.io/badge/Docs-333333.svg?style=for-the-badge&logo=readthedocs&labelColor=333"></a>
+  <a href="https://discord.gg/5qwXUFb6PB"><img alt="Discord" src="https://img.shields.io/badge/Join%20the%20community-blueviolet.svg?style=for-the-badge&logo=Discord&labelColor=000000"></a>
+  <a href="https://github.com/cipherstash/stack/blob/main/LICENSE.md"><img alt="License" src="https://img.shields.io/npm/l/@cipherstash/stack.svg?style=for-the-badge&labelColor=000000"></a>
 
----
+  <div>⭐ Star this repo if encryption you can actually query is your thing!</div>
+</div>
 
-## Table of Contents
 
-- [Install](#install)
-- [Quick Start](#quick-start)
-- [Features](#features)
-- [Schema Definition](#schema-definition)
-- [Encryption and Decryption](#encryption-and-decryption)
-- [Searchable Encryption](#searchable-encryption)
-- [Authentication](#authentication)
-- [Identity-Aware Encryption](#identity-aware-encryption-lock-contexts)
-- [CLI Reference](#cli-reference)
-- [Configuration](#configuration)
-- [Error Handling](#error-handling)
-- [API Reference](#api-reference)
-- [Subpath Exports](#subpath-exports)
-- [Legacy: EQL v2](#legacy-eql-v2)
-- [Requirements](#requirements)
-- [License](#license)
+## Encryption-level security without the pain
 
----
+Field-level encryption is the strongest way to protect data.
+But if DB functionality or performance suffers, you need to justify the pain.
+Searchable Encryption nukes the trade-off: encryption-level security without the pain.
+
+* Searchable Encryption for any Postgres including Supabase, RDS, Aurora, Prisma Postgres and Neon
+* Works with Supabase.js, Prisma Next, Drizzle or plain SQL
+* Built-in key management — automatic rotation, auditing and up to 14x faster than AWS KMS
+* Integrates with Supabase Auth, Clerk, Auth0 and Okta
+
+<br/>
+
+## Quick starts
+
+### Use the wizard
+
+Takes 5-10 minutes, starts on the **free developer tier** ([sign up][signup]), includes agent handoff.
+
+```bash
+# Run this to start (or just ask Claude to)
+npx stash init
+```
+
+### ORM/database specific guides
+
+| Quick start | Guide |
+|---|---|
+| **Supabase** | [Supabase quickstart →][supabase] |
+| **Prisma Next** | [Prisma Next quickstart →][prisma-next] |
+| **Drizzle ORM** | [Drizzle quickstart →][drizzle] |
+| **Raw PostgreSQL (`pg`)** | [PostgreSQL quickstart →][encryption] |
+| **DynamoDB** | [DynamoDB quickstart →][dynamodb] |
+
+> The Stack also ships a `stash` CLI for auth, schema, and database setup. See the [SDK reference][reference].
+
+## What's in the Stack
+
+### 🔐 Searchable encryption
+
+Encrypt individual fields and still run real queries against them — all on ciphertext, in PostgreSQL:
+
+| Query type | Operations | Docs |
+|---|---|---|
+| **Equality** | `=`, `IN` | [Equality queries →][query-equality] |
+| **Free-text search** | fuzzy `matches` | [Text search →][query-match] |
+| **Range & ordering** | `<`, `>`, `BETWEEN`, `ORDER BY`, `MIN`/`MAX` | [Range queries →][query-range] |
+| **Encrypted JSON** | containment (`@>`), JSONPath selectors | [JSON queries →][query-json] |
+
+With [EQL v3][eql], the column type *is* the configuration. Declare a column with the encrypted type
+that names its data type and the operations it supports, and it's ready to query — there's no per-column
+search configuration to maintain in your client:
+
+```sql
+CREATE TABLE users (
+  id          serial PRIMARY KEY,
+  username    text,                    -- plaintext — business as usual
+  email       eql_v3_text_match,       -- encrypted · free-text search
+  ssn         eql_v3_text_eq,          -- encrypted · equality
+  salary      eql_v3_integer_ord,      -- encrypted · range + ORDER BY
+  preferences eql_v3_json_search       -- encrypted · containment + selectors
+);
+```
+
+Encrypted types exist for text, integers, floats, numerics, dates, timestamps, booleans, and JSON, so
+your schema documents itself — and encrypted data stays indexable with standard Postgres indexes. No
+special index engine, no SQL rewrites. ORMs pick the types up transparently: declare the column as
+encrypted in `schema.prisma` or your Drizzle table and the Stack handles the rest. Only raw `pg` needs
+a client-side [schema][schema] — declared with the same type names:
+
+```typescript
+import { encryptedTable, types } from "@cipherstash/stack/v3";
+
+const users = encryptedTable("users", {
+  email: types.TextMatch("email"),       // ↔ eql_v3_text_match
+  salary: types.IntegerOrd("salary"),    // ↔ eql_v3_integer_ord
+});
+```
+
+→ [Searchable encryption][searchable-encryption] · [Schema][schema] · [Encrypt & decrypt][encrypt-decrypt] · [Bulk & model operations][model-ops]
+
+### 🔑 Authentication
+
+How you authenticate to ZeroKMS depends on who's asking for keys:
+
+- **Device auth** — browser-based login for local development: `npx stash auth login` opens your
+  browser and saves credentials to your local CipherStash profile. No secrets in your repo or shell.
+- **Access key auth** — service-level credentials for servers, workers, and CI, supplied via `CS_*`
+  environment variables.
+- **OIDC federation** — federate your identity provider's JWT so every key request authenticates *as the
+  signed-in user*, not as your app. Supported providers: **Supabase Auth**, **Clerk**, **Okta**, and **Auth0**
+  (any OIDC-compliant provider works).
+
+```typescript
+// Access key (default) — reads CS_* env vars, no config needed
+const client = await Encryption({ schemas: [users] });
+
+// OIDC federation — every ZeroKMS request authenticates as the end user
+const client = await Encryption({
+  schemas: [users],
+  config: { authStrategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt()) },
+});
+```
+
+→ [Authentication][auth]
+
+### 🗝️ Built-in key management
+
+Key management is built in, powered by [ZeroKMS][zerokms] — no AWS KMS to wire up, no key vault to run,
+no rotation schedule to babysit:
+
+- **A unique key for every value** — not one key per table or per database.
+- **Automatic key rotation** — handled for you, with zero downtime.
+- **CipherStash can never see your keys.** Keys are *derived inside your application*; neither plaintext
+  keys nor plaintext data ever leave your infrastructure.
+- **Fast at scale** — bulk key operations handle up to 10,000 keys in a single call, up to 14× faster
+  than AWS KMS at peak ([benchmarks][benches]).
+- **Every decryption is logged** — a built-in audit trail of who decrypted what, and when.
+
+> **CipherStash never sees your plaintext — or your keys.** Data is encrypted in your app with a unique
+> key per value, and keys are derived inside your application via [ZeroKMS][zerokms] — so a database
+> breach leaks only ciphertext. [See the security architecture →][security-architecture]
+
+## Advanced features
+
+### 👤 Identity-locking encryption
+
+Building on OIDC federation, you can bind a record's encryption key to the end user's identity, so only
+*that* user can decrypt their data: `.withLockContext({ identityClaim })` ties the data key to a claim in
+the user's JWT, enforced cryptographically by ZeroKMS.
+
+```typescript
+// Bind the data key to a claim — the same claim is required to decrypt
+await client
+  .encrypt("alice@example.com", { table: users, column: users.email })
+  .withLockContext({ identityClaim: ["sub"] });
+```
+
+→ [Identity-locking encryption][identity]
+
+### 🗂️ Keysets for multitenancy & sovereignty
+
+Partition your keys into **keysets** — independent key hierarchies within a single workspace. Give each
+tenant its own keyset (`config.keyset`) for cryptographic tenant isolation: every encrypt, decrypt, and
+query is scoped to a keyset, so revoking a keyset's access makes that tenant's data undecryptable —
+without re-architecting your app. [Keysets →][keysets]
+
+## Encrypted fields. Real queries. Your tools.
+
+The `email` column below is stored as ciphertext with a unique key per row — and the search still works,
+because the query runs on the ciphertext. No decrypt-and-scan, no query rewrites.
+
+**Supabase** — same Supabase.js calls; the wrapper introspects your schema, encrypts filters on the way
+in, and decrypts results on the way out:
+
+```typescript
+const db = await encryptedSupabase(supabaseUrl, supabaseKey);
+
+const { data } = await db.from("users")
+  .select("id, name, email")
+  .eq("email", "alice@acme.com"); // encrypted equality — runs on ciphertext
+```
+
+**Prisma Next** — declare encrypted columns in `schema.prisma`, query with type-safe operators:
+
+```prisma
+model User {
+  id    String @id
+  email cipherstash.TextSearch()
+}
+```
+
+```typescript
+const rows = await db.orm.public.User
+  .where((u) => u.email.eqlMatch("acme.com"))
+  .all();
+```
+
+**Drizzle** — encrypted column types in your table, auto-encrypting operators in your queries:
+
+```typescript
+export const usersTable = pgTable("users", {
+  id: integer("id").primaryKey(),
+  email: types.TextSearch("email"), // → eql_v3_text_search — the type is the config
+});
+
+const results = await db.select().from(usersTable)
+  .where(await ops.matches(usersTable.email, "acme.com"));
+```
+
+## How it works
+
+<p align="center">
+  <picture>
+    <!-- Dark theme · narrow viewport (mobile) -->
+    <source media="(prefers-color-scheme: dark) and (max-width: 600px)" srcset="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-stacked-dark.svg">
+    <!-- Dark theme · wide viewport (desktop) -->
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-dark.svg">
+    <!-- Light theme · narrow viewport (mobile) -->
+    <source media="(max-width: 600px)" srcset="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-stacked-light.svg">
+    <!-- Light theme · wide viewport (desktop) — universal fallback (npm, older renderers) -->
+    <img alt="CipherStash architecture: encryption and decryption happen in your TypeScript app; only ciphertext (EQL JSON) is stored in your PostgreSQL database. ZeroKMS issues a unique key per value, derived in your app. Plaintext and keys never reach CipherStash, and every decryption is logged for audit." width="880" src="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-light.svg">
+  </picture>
+</p>
+
+Encryption happens in your application. Ciphertext is stored as an [EQL][eql] payload in your database;
+plaintext and keys never reach CipherStash. Per-value keys are issued in bulk by ZeroKMS (so millions
+of unique keys stay fast), and every decryption is logged for compliance.
+
+→ [Security architecture][security-architecture] · [ZeroKMS][zerokms]
+
+## Performance
+
+Encrypted queries stay fast — latency is flat from 10k to 10M rows. Measured on EQL v3 in [cipherstash/benches][benches]:
+
+| Operation | Median latency (up to 10M rows) |
+|---|---|
+| Equality lookup | ~0.1 ms |
+| Range query | ~0.5 ms |
+| JSON field equality | ~0.1 ms |
+
+<!-- TODO: embed a purpose-built latency chart here (theme-aware light/dark SVG pair in docs/images/,
+     same treatment as the architecture diagram): one line per query family (equality, range, JSON)
+     staying flat from 10k → 10M rows, regenerated from cipherstash/benches data. The charts committed
+     to the benches repo are internal-report style (matplotlib) and not README-quality.
+     See docs/plans/readme-visual-assets.md → Asset 3. -->
+
+## Why CipherStash
+
+- **Trusted data access** — only your end-users can access their sensitive data, enforced cryptographically.
+- **Shrink the blast radius** — a breached vulnerability exposes only what one user can decrypt, not your whole table.
+- **Audit trail built in** — every decryption event is recorded, no extra tooling to bolt on.
+- **Meet compliance faster** — exceed the encryption requirements of SOC 2 and ISO 27001, with FIPS-compliant
+  cryptography and BYOK for teams that need it.
+
+## FAQ
+
+<details>
+<summary><b>Can CipherStash ever see my data, or my encryption keys?</b></summary>
+
+No, never. Encryption and decryption happen in your application, and keys are derived within your own
+environment. Plaintext and keys never leave your control and never reach CipherStash.
+</details>
+
+<details>
+<summary><b>How well does it scale?</b></summary>
+
+Latency stays flat as data grows — exact-match lookups hold at ~0.1 ms and range queries at ~0.5 ms from
+10k up to 10M rows ([cipherstash/benches][benches]). ZeroKMS handles keys in bulk (up to 10,000 per
+call), so key management isn't the bottleneck.
+</details>
+
+<details>
+<summary><b>What does migration look like?</b></summary>
+
+Install EQL on your Postgres database (`npx stash init` and the [quick starts](#quick-starts) handle
+this), declare the columns you want protected with the encrypted type that fits each one (for example
+`eql_v3_text_match` for searchable text or `eql_v3_integer_ord` for range queries), and encrypt values in
+your app before writing. You can adopt it column-by-column — no big-bang rewrite — and your existing
+Postgres indexes keep working.
+</details>
+
+<details>
+<summary><b>Do I have to change how I write queries?</b></summary>
+
+Barely. You keep your query builder: Supabase.js filters work unchanged, and Drizzle and Prisma Next
+add encrypted-aware operators (`ops.eq`, `ops.matches`, `eqlMatch`, …) that take plaintext and encrypt
+it for you. There are no SQL rewrites.
+</details>
+
+<details>
+<summary><b>Do I need to run a KMS or key vault?</b></summary>
+
+No. Key management is built in through ZeroKMS. If you want to control the root key, Bring Your Own Key
+lets you root it in your own KMS.
+</details>
+
+<details>
+<summary><b>Does it work with Supabase Auth and Row Level Security?</b></summary>
+
+Yes. It integrates with Supabase Auth and runs alongside RLS — it complements them, it doesn't replace
+them.
+</details>
+
+<details>
+<summary><b>I already use Row Level Security — do I need this?</b></summary>
+
+RLS and CipherStash solve different problems, and they're strongest together. RLS decides which rows a
+role may query, but the data underneath is plaintext — so anything that bypasses RLS reveals it in the
+clear: a leaked `service_role` key, a misconfigured policy, a SQL injection running as an elevated role,
+a stolen backup, or the database host itself. CipherStash stores only ciphertext and keeps the keys
+outside the database, so those same bypasses reveal nothing readable. Keep RLS for authorization; add
+CipherStash so a bypass never becomes a breach.
+</details>
+
+<details>
+<summary><b>Is there a free tier?</b></summary>
+
+Yes — a free developer tier, so you can build encryption in from day one.
+</details>
+
+## Start free
+
+Encryption is far cheaper to design in than to retrofit — and it's what unlocks regulated and enterprise
+customers. The developer tier is **free**, so you can add encryption from your very first migration:
+
+```bash
+npx stash init
+```
+
+Signing up is the wizard's first step if you don't have an account yet — or
+[create your free account][signup] in the browser first, and `stash init` will pick it up.
 
 ## Install
 
 ```bash
-npm install @cipherstash/stack
+npm install @cipherstash/stack   # or: yarn / pnpm / bun add @cipherstash/stack
 ```
 
-Or with your preferred package manager:
-
-```bash
-yarn add @cipherstash/stack
-pnpm add @cipherstash/stack
-```
-
-## Quick Start
-
-### 1. Initialize and authenticate your project
-
-```bash
-npx stash init
-```
-
-The wizard will authenticate you, walk you through choosing a database connection method, build an encryption schema, and install the required dependencies.
-
-### 2. Encrypt and decrypt
-
-Define a table with concrete EQL v3 column types, build the typed client, and encrypt:
-
-```typescript
-import { Encryption } from "@cipherstash/stack/v3"
-import { encryptedTable, types } from "@cipherstash/stack/eql/v3"
-
-// Define a schema — the column type fixes its query capabilities
-const users = encryptedTable("users", {
-  email: types.TextSearch("email"), // equality + order/range + free-text search
-})
-
-// Create a typed client
-const client = await Encryption({ schemas: [users] })
-
-// Encrypt a value
-const encrypted = await client.encrypt("hello@example.com", {
-  column: users.email,
-  table: users,
-})
-
-// Every operation returns `{ data } | { failure }`. Narrow on `.failure` and
-// return/throw before reading `.data` — the failure branch has no `data`.
-if (encrypted.failure) {
-  throw new Error(`Encryption failed: ${encrypted.failure.message}`)
-}
-console.log("Encrypted payload:", encrypted.data)
-
-// Decrypt the value
-const decrypted = await client.decrypt(encrypted.data)
-if (decrypted.failure) {
-  throw new Error(`Decryption failed: ${decrypted.failure.message}`)
-}
-console.log("Plaintext:", decrypted.data) // "hello@example.com"
-```
-
-The client is typed from your schemas: passing the wrong plaintext type for a column (`client.encrypt(42, { column: users.email, ... })`) is a compile error.
-
-## Features
-
-- **Field-level encryption** - Every value encrypted with its own unique key via [ZeroKMS](https://cipherstash.com/products/zerokms), backed by AWS KMS.
-- **Searchable encryption** - Exact match, free-text search, order/range queries, and encrypted JSON queries in PostgreSQL, driven by concrete EQL v3 column types.
-- **Type-safe by construction** - Each encrypted column is a concrete Postgres domain; its query capabilities are fixed by the type you pick and enforced at compile time by the typed client.
-- **Bulk operations** - Encrypt or decrypt thousands of values in a single ZeroKMS call (`bulkEncrypt`, `bulkDecrypt`, `bulkEncryptModels`, `bulkDecryptModels`).
-- **Identity-aware encryption** - Tie encryption to a user's JWT via `OidcFederationStrategy` and `.withLockContext()`, so only that user can decrypt.
-- **CLI (`stash`)** - Initialize projects and set up encryption from the terminal.
-- **TypeScript-first** - Strongly typed schemas, results, and model operations with full generics support.
-
-## Schema Definition
-
-Define which tables and columns to encrypt using `encryptedTable` and the `types` namespace from `@cipherstash/stack/eql/v3`. Each factory in `types` maps 1:1 to a **concrete Postgres domain** named `public.eql_v3_<name>` — the naming rule is: strip the `eql_v3_` prefix and PascalCase each underscore-separated segment. So `types.TextSearch` builds a `public.eql_v3_text_search` column, `types.IntegerOrd` builds `public.eql_v3_integer_ord`.
-
-There are **no chainable capability methods** — the concrete type fully describes what a column can do.
-
-```typescript
-import { encryptedTable, types } from "@cipherstash/stack/eql/v3"
-
-const users = encryptedTable("users", {
-  email: types.TextSearch("email"),    // equality + order/range + free-text search
-  age: types.IntegerOrd("age"),        // equality + order/range
-  balance: types.Bigint("balance"),    // storage only — encrypt/decrypt, no queries
-  metadata: types.Json("metadata"),    // encrypted JSON: containment + JSONPath selectors
-})
-```
-
-The returned table is also a column accessor (`users.email`). The JS property name and the DB column name may differ: `createdOn: types.Timestamp("created_at")` reads and writes the `createdOn` property on models but targets the `created_at` column in the database.
-
-### Capability Suffixes
-
-The suffix on the type name encodes the query capability:
-
-| Suffix | Capabilities | Query types |
-|---|---|---|
-| _(none)_ | Storage only — encrypt/decrypt, no queries | — |
-| `Eq` | Equality | `'equality'` |
-| `Ord` | Equality + ordering/range (OPE-backed) | `'equality'`, `'orderAndRange'` |
-| `OrdOre` | Equality + ordering/range (block-ORE-backed — the ORE operator class is superuser-only and unavailable on managed Postgres such as Supabase) | `'equality'`, `'orderAndRange'` |
-| `Match` (text only) | Free-text search only | `'freeTextSearch'` |
-| `Search` (text only, as `TextSearch`) | Equality + ordering/range + free-text | all three |
-| `Json` | Encrypted JSON containment + JSONPath selector queries | `'searchableJson'` |
-
-Prefer the plain `Ord` domains unless you know your database supports the ORE operator class.
-
-### Domain Families and Plaintext Types
-
-| Family | Factories | Plaintext (TypeScript) type |
-|---|---|---|
-| `Integer`, `Smallint`, `Numeric`, `Real`, `Double` | base, `Eq`, `Ord`, `OrdOre` | `number` |
-| `Bigint` | base, `Eq`, `Ord`, `OrdOre` | `bigint` (native JS bigint, full i64 range) |
-| `Date` | base, `Eq`, `Ord`, `OrdOre` | `Date` (calendar date; time-of-day truncated) |
-| `Timestamp` | base, `Eq`, `Ord`, `OrdOre` | `Date` (time-of-day preserved) |
-| `Text` | base, `Eq`, `Match`, `Ord`, `OrdOre`, `Search` | `string` |
-| `Boolean` | base only | `boolean` |
-| `Json` | `Json` only | a JSON *document* (object, array, or null — not a top-level scalar) |
-
-### Database Setup
-
-Install the EQL v3 SQL into your database with the stash CLI:
-
-```bash
-npx stash eql install
-# On Supabase, add --supabase to grant the anon/authenticated/service_role
-# roles access to the eql_v3 schemas — without it, encrypted queries fail with
-# "permission denied for schema eql_v3_internal":
-npx stash eql install --supabase
-```
-
-In migrations, declare each encrypted column as its domain type:
-
-```sql
-CREATE TABLE users (
-  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  email public.eql_v3_text_search,
-  age public.eql_v3_integer_ord,
-  balance public.eql_v3_bigint,
-  metadata public.eql_v3_json_search
-);
-```
-
-## Encryption and Decryption
-
-### Single Values
-
-```typescript
-// Encrypt — plaintext is pinned to the column's domain type
-const encrypted = await client.encrypt("secret@example.com", {
-  column: users.email,
-  table: users,
-})
-
-// Decrypt (narrow on `.failure` before reading `.data`)
-if (encrypted.failure) throw new Error(encrypted.failure.message)
-const decrypted = await client.decrypt(encrypted.data)
-```
-
-### Model Operations
-
-Encrypt or decrypt an entire object. Only fields matching your schema are encrypted; other fields pass through unchanged. Schema fields are validated against their inferred plaintext type at compile time.
-
-`decryptModel` takes the **table as a second argument** and returns the precise plaintext model: `Date` columns are reconstructed to real `Date` instances, and `bigint` columns round-trip as native `bigint`.
-
-```typescript
-const user = {
-  id: "user_123",                // not in schema -> passes through
-  email: "alice@example.com",    // TextSearch    -> encrypted as string
-  age: 30,                       // IntegerOrd    -> encrypted as number
-  balance: 100_000n,             // Bigint        -> encrypted as bigint
-}
-
-const encryptedResult = await client.encryptModel(user, users)
-// encryptedResult.data.email -> Encrypted
-// encryptedResult.data.id    -> string
-
-if (encryptedResult.failure) throw new Error(encryptedResult.failure.message)
-const decryptedResult = await client.decryptModel(encryptedResult.data, users)
-// decryptedResult.data.email   -> string
-// decryptedResult.data.balance -> bigint
-```
-
-### Bulk Operations
-
-All bulk methods make a single call to ZeroKMS regardless of the number of records, while still using a unique key per value.
-
-#### Bulk Encrypt / Decrypt Models
-
-```typescript
-const userModels = [
-  { id: "1", email: "alice@example.com", age: 30, balance: 100_000n },
-  { id: "2", email: "bob@example.com", age: 41, balance: 250_000n },
-]
-
-const encrypted = await client.bulkEncryptModels(userModels, users)
-if (encrypted.failure) throw new Error(encrypted.failure.message)
-const decrypted = await client.bulkDecryptModels(encrypted.data, users)
-```
-
-#### Bulk Encrypt / Decrypt (raw values)
-
-`bulkEncrypt` / `bulkDecrypt` work on raw value arrays rather than models. `bulkEncrypt` is typed like `encrypt` — `{ table, column }` pins every `plaintext` to that column's domain — while `bulkDecrypt` takes the payloads alone, so it resolves to the plaintext union and does **no `Date` reconstruction**: a `types.Date` / `types.Timestamp` column read this way is the string it was stored as, where `bulkDecryptModels(rows, table)` gives you a `Date`. See [`EncryptionClient` Methods](#encryptionclient-methods) for why.
-
-```typescript
-const plaintexts = [
-  { id: "u1", plaintext: "alice@example.com" },
-  { id: "u2", plaintext: "bob@example.com" },
-]
-
-const encrypted = await client.bulkEncrypt(plaintexts, {
-  column: users.email,
-  table: users,
-})
-
-// encrypted.data = [{ id: "u1", data: EncryptedPayload }, ...]
-
-if (encrypted.failure) throw new Error(encrypted.failure.message)
-const decrypted = await client.bulkDecrypt(encrypted.data)
-if (decrypted.failure) throw new Error(decrypted.failure.message)
-
-// Each item has either { data: "plaintext" } or { error: "message" }
-for (const item of decrypted.data) {
-  if ("data" in item) {
-    console.log(`${item.id}: ${item.data}`)
-  } else {
-    console.error(`${item.id} failed: ${item.error}`)
-  }
-}
-```
-
-## Searchable Encryption
-
-Encrypt a query term so you can search encrypted data in PostgreSQL. The typed client only accepts queryable columns, and `queryType` is constrained to the column's capabilities — equality and range queries run through the domain's own SQL operators.
-
-```typescript
-// Equality
-const eqQuery = await client.encryptQuery("alice@example.com", {
-  column: users.email,
-  table: users,
-  queryType: "equality",
-})
-
-// Free-text search — queryType is REQUIRED for a match term (see gotcha below)
-const matchQuery = await client.encryptQuery("ali", {
-  column: users.email,
-  table: users,
-  queryType: "freeTextSearch",
-})
-
-// Order and range
-const rangeQuery = await client.encryptQuery(30, {
-  column: users.age,
-  table: users,
-  queryType: "orderAndRange",
-})
-```
-
-> **Gotcha — `TextSearch` defaults to equality.** A `TextSearch` column carries all three indexes, and `encryptQuery` with **no explicit `queryType` builds an equality term, not a free-text match**. A substring like `"joh"` then matches nothing. Always pass `queryType: 'freeTextSearch'` for substring/token search.
-
-Free-text search is fuzzy bloom-filter token matching, surfaced as `matches` in
-the Drizzle adapter and `eqlMatch` in Prisma Next. It is order- and
-multiplicity-insensitive and one-sided (a match may be a false positive, a
-non-match never is). It is not SQL `LIKE`; don't pass `%` wildcards.
-
-> **Supabase + EQL 3.0.2:** encrypted free-text and JSON operators now require
-> typed `eql_v3.query_*` operands. PostgREST cannot express those casts, so
-> Supabase v3 fails fast for `matches()`, encrypted `contains()`, and
-> `selectorEq()`/`selectorNe()`. Use Drizzle, Prisma Next, or a carefully scoped
-> direct SQL/RPC path.
-
-### Encrypted JSON
-
-A `types.Json` column encrypts a whole JSON document (an object, array, or null — not a top-level scalar) to a `public.eql_v3_json_search` value. Two query patterns are supported:
-
-**Exact containment** (jsonb `@>` semantics, no false positives). Pass a sub-object or sub-array needle; array containment is a subset test regardless of element position — `{ roles: ["admin"] }` matches any document whose `roles` array includes `"admin"`:
-
-```typescript
-const events = encryptedTable("events", { metadata: types.Json("metadata") })
-
-const containsQuery = await client.encryptQuery(
-  { roles: ["admin"] },
-  { column: events.metadata, table: events }, // queryType inferred: 'searchableJson'
-)
-```
-
-**JSONPath selectors** — equality and ordering at a path (`$.a`, `$.a.b` dot-notation object paths):
-
-- **Drizzle**: `ops.selector(events.metadata, "$.age")` returns comparison methods bound to the path — `eq`, `ne`, `gt`, `gte`, `lt`, `lte` (e.g. `await ops.selector(events.metadata, "$.age").gt(21)`). Its unique power over containment is *ordering* at a path; equality at a path is equivalently `contains(col, { age: 21 })`.
-- **Supabase**: unavailable through PostgREST on EQL 3.0.2 because it cannot
-  cast operands to `eql_v3.query_json`; the adapter fails fast.
-- **Prisma Next**: `eqlJsonPathEq/Neq/Gt/Gte/Lt/Lte(path, value)` on an encrypted JSON field.
-
-Two semantics to know:
-
-- **`ne` includes absent paths.** A "not equal at path" query also matches rows where the path does not exist at all.
-- **Array-leaf caveat:** a scalar needle does not match an array at the path.
-  Use a full-array containment needle for membership tests.
-
-`types.Json` carries no equality or ordering on the document itself, so applying `eq` / `gt` / `asc` directly to a `Json` column throws.
-
-> **Upgrade note:** EQL 3.0.2 changes the searchable-JSON storage domain and
-> SteVec wire format. Existing encrypted JSON rows must be re-encrypted before
-> querying them with this version. Legacy EQL v2 `searchableJson()` columns are
-> no longer supported; migrate them to the EQL v3 `types.Json` domain. For raw
-> `encryptQuery` callers, explicit `queryType: 'steVecTerm'` now means a scalar
-> JSON ordering term, not containment. Prefer `searchableJson` for containment,
-> or `steVecValueSelector` for exact equality at a path.
-
-### Batch Query Encryption
-
-Encrypt multiple query terms in one call:
-
-```typescript
-const terms = [
-  { value: "alice@example.com", column: users.email, table: users, queryType: "equality" as const },
-  { value: "bob", column: users.email, table: users, queryType: "freeTextSearch" as const },
-]
-
-const results = await client.encryptQuery(terms)
-```
-
-### Ordering Encrypted Data
-
-`ORDER BY` works on encrypted ordering columns via the domain's order term:
-
-- **Drizzle**: `ops.asc(col)` / `ops.desc(col)` emit `ORDER BY eql_v3.ord_term(col)` (or `eql_v3.ord_term_ore` for ORE domains).
-- **Supabase**: `.order()` works on OPE-backed ordering columns — every plain `*Ord` domain plus `TextSearch`.
-
-The one limitation is the ORE-backed `*OrdOre` domains: their ordering term needs the superuser-only ORE operator class, which is unavailable on managed Postgres (e.g. Supabase) — the Supabase adapter rejects `order()` on those columns with a clear error. Prefer the plain `*Ord` (OPE) domains for anything you need to sort in a managed environment.
-
-### Drizzle Integration
-
-The separate `@cipherstash/stack-drizzle` package provides Drizzle-native column factories, schema extraction, and auto-encrypting, capability-checked query operators. It is EQL v3 only, all on the package root — the EQL v2 surface was removed and the old `./v3` subpath collapsed into `.`.
-
-Declare a Drizzle table using the `types` factories — each factory emits its domain as the column's SQL type, so `drizzle-kit generate` produces `ADD COLUMN email public.eql_v3_text_search` etc.:
-
-```ts
-import { pgTable, integer } from "drizzle-orm/pg-core"
-import { drizzle } from "drizzle-orm/postgres-js"
-import {
-  types,
-  createEncryptionOperators,
-  extractEncryptionSchema,
-} from "@cipherstash/stack-drizzle"
-import { Encryption } from "@cipherstash/stack/v3"
-
-// Capabilities come from the concrete type — no flags to configure.
-const users = pgTable("users", {
-  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
-  email: types.TextEq("email"),      // equality: eq / ne / inArray
-  age: types.IntegerOrd("age"),      // order + range: gt/gte/lt/lte, between, asc/desc
-  bio: types.TextMatch("bio"),       // free-text search: matches
-  balance: types.Bigint("balance"),  // storage only (no query capability)
-})
-```
-
-Derive the v3 schema from the table, build the typed client, and create the operators:
-
-```ts
-const usersSchema = extractEncryptionSchema(users)
-const client = await Encryption({ schemas: [usersSchema] })
-const ops = createEncryptionOperators(client)
-
-const db = drizzle({ client: sqlClient })
-```
-
-The operators auto-encrypt their operands and validate them against the column's concrete type. Applying an operator the type doesn't support throws `EncryptionOperatorError`:
-
-```ts
-// Equality — email is TextEq
-const exact = await db.select().from(users)
-  .where(await ops.eq(users.email, "alice@example.com"))
-
-// Range + ordering — age is IntegerOrd
-const adults = await db.select().from(users)
-  .where(await ops.gte(users.age, 18))
-  .orderBy(ops.asc(users.age))
-
-const midBand = await db.select().from(users)
-  .where(await ops.between(users.age, 25, 40))
-
-// Set membership — built on equality
-const listed = await db.select().from(users)
-  .where(await ops.inArray(users.email, ["alice@example.com", "bob@example.com"]))
-
-// Free-text token match — bio is TextMatch
-const coffee = await db.select().from(users)
-  .where(await ops.matches(users.bio, "coffee"))
-```
-
-Rows are **pre-encrypted** with `client.bulkEncryptModels(...)` before they reach `db.insert(...).values(...)` — Drizzle never sees plaintext. `Bigint` columns take a native JS `bigint`:
-
-```ts
-const rows = await client.bulkEncryptModels(
-  [
-    { email: "alice@example.com", age: 30, bio: "climbing and coffee", balance: 100_000n },
-    { email: "bob@example.com", age: 41, bio: "cycling and coffee", balance: 250_000n },
-  ],
-  usersSchema,
-)
-if (rows.failure) throw new Error(rows.failure.message)
-
-await db.insert(users).values(rows.data)
-```
-
-Notes:
-
-- **Free-text search is `ops.matches`** (fuzzy bloom token matching on `TextMatch` / `TextSearch` columns), not SQL `like` / `ilike` — those operators do not exist on the v3 surface. `ops.contains` is a *different* operator: exact encrypted-JSON containment on `types.Json` columns.
-- **The concrete type defines the legal operators.** `TextEq` supports `eq` / `ne` / `inArray` / `notInArray`; `*Ord` types add `gt` / `gte` / `lt` / `lte` / `between` / `notBetween` and `asc` / `desc`; `TextMatch` and `TextSearch` add `matches`; `Json` supports `contains` and `selector(col, '$.path').{eq,ne,gt,gte,lt,lte}`; a bare `Text` / `Integer` / `Bigint` column is storage-only. Using an unsupported operator throws `EncryptionOperatorError`.
-- Combine conditions with `ops.and` / `ops.or`, and do NULL checks with `ops.isNull` / `ops.isNotNull` (the where-clause operators are `async` and must be `await`ed; `ops.asc` / `ops.desc` are synchronous).
-
-### Supabase Integration
-
-`encryptedSupabase` from the separate `@cipherstash/stack-supabase` package wraps a Supabase client and **introspects the database at connect time** — it detects EQL v3 columns by their Postgres domain and builds the encryption client internally:
-
-```typescript
-import { encryptedSupabase } from "@cipherstash/stack-supabase"
-
-const es = await encryptedSupabase(supabaseUrl, supabaseKey)
-
-await es.from("users").insert({ email: "a@b.com", age: 30 })
-await es.from("users").select("id, email").eq("email", "a@b.com")
-await es.from("users").select("id, age").gte("age", 18).order("age")
-```
-
-Equality/range filters and `order()` on OPE-backed ordering columns remain
-available. On EQL 3.0.2, PostgREST cannot express the typed query operands
-required by encrypted free-text and JSON operators, so those methods fail with
-an actionable error. Pass optional declared `schemas` for compile-time row
-types. See the `stash-supabase` skill or the [docs](https://cipherstash.com/docs)
-for the full guide.
-
-## Authentication
-
-The client authenticates to ZeroKMS through `config.authStrategy`. Leave it
-unset for the default **auto** strategy: in local development, authenticate
-once with `npx stash auth login` (preferred — no credentials in your
-environment); in CI/production, set the `CS_*` environment variables. Two
-explicit strategies cover the other cases:
-
-- **`AccessKeyStrategy`** — service-to-service / CI. Authenticates a *service*
-  with a CipherStash access key.
-- **`OidcFederationStrategy`** — authenticates the client **as the end user**
-  by federating a third-party OIDC JWT (Clerk, Supabase, Auth0, Okta, ...)
-  into a CipherStash service token:
-
-```typescript
-import { OidcFederationStrategy } from "@cipherstash/stack"
-import { Encryption } from "@cipherstash/stack/v3"
-
-// The callback is re-invoked on every (re-)federation and must return the
-// CURRENT third-party OIDC JWT.
-const strategy = OidcFederationStrategy.create(
-  process.env.CS_WORKSPACE_CRN!,
-  () => getUserJwt(),
-)
-if (strategy.failure) throw new Error(strategy.failure.error.message)
-
-const client = await Encryption({
-  schemas: [users],
-  config: { authStrategy: strategy.data },
-})
-```
-
-Authentication stands on its own — an OIDC-authenticated client encrypts and
-decrypts normally. Binding *data* to the authenticated user is a separate,
-optional step: the lock context, below.
-
-## Identity-Aware Encryption (Lock Contexts)
-
-Bind a data key to a claim from the end user's JWT, so only that user can
-decrypt. Chain `.withLockContext({ identityClaim })` on any operation:
-
-```typescript
-// Requires a client authenticated with OidcFederationStrategy (above) — the
-// claim's value resolves from the federated JWT.
-const IDENTITY = { identityClaim: ["sub"] }
-
-const encrypted = await client
-  .encrypt("sensitive data", { column: users.email, table: users })
-  .withLockContext(IDENTITY)
-if (encrypted.failure) throw new Error(encrypted.failure.message)
-
-const decrypted = await client
-  .decrypt(encrypted.data)
-  .withLockContext(IDENTITY)
-```
-
-Lock contexts **require** an `OidcFederationStrategy`-authenticated client
-(the auto and access-key strategies authenticate no end user, so there is no
-JWT to resolve claims from); plain authentication never requires a lock
-context.
-
-`identityClaim` is an array of JWT claim *names* (`["sub"]`), not values, and the
-same claim must be supplied to encrypt and decrypt. Lock contexts work with all
-operations: `encrypt`, `decrypt`, `encryptModel`, `decryptModel`,
-`bulkEncryptModels`, `bulkDecryptModels`, `bulkEncrypt`, `bulkDecrypt`,
-`encryptQuery`. `.withLockContext()` also accepts a `LockContext` instance.
-On the typed client, `decryptModel` / `bulkDecryptModels` additionally accept
-the lock context as an optional third argument. Use that or `.withLockContext()`,
-not both — chaining onto a decrypt that already took a positional lock context
-throws.
-
-> **Deprecated: `LockContext.identify()`.** Per-operation CTS tokens were removed
-> in `protect-ffi` 0.25; the token `identify()` fetches is no longer used by
-> encryption. Authenticate with `OidcFederationStrategy` and pass the claim
-> directly, as above.
-
-## CLI Reference
-
-The CLI is available via `npx stash` after install.
-
-### `npx stash auth`
-
-Authenticate with CipherStash.
-
-```bash
-npx stash auth login
-```
-
-This runs the device code flow: it opens your browser, you confirm the code, and a token is saved to `~/.cipherstash/auth.json`. No environment variables or credentials files are needed for local development.
-
-### `npx stash init`
-
-Initialize CipherStash for your project with an interactive wizard.
-
-```bash
-npx stash init
-npx stash init --supabase
-```
-
-The wizard will:
-1. Authenticate with CipherStash (device code flow)
-2. Introspect your database and install the EQL v3 SQL
-3. Choose your database connection method (Drizzle ORM, Supabase JS, Prisma, or Raw SQL)
-4. Build an encryption schema interactively or use a placeholder, then generate the encryption client file
-5. Install `stash` as a dev dependency for database tooling
-
-`init` installs EQL for you — no separate `eql install` step is needed afterward.
-
-| Flag | Description |
-|------|-------------|
-| `--supabase` / `--drizzle` / `--prisma-next` | Target a specific integration's setup flow |
-| `--region <slug>` | Workspace region (env `STASH_REGION`); **required for non-interactive init when not already logged in** |
-
-## Configuration
-
-### Local Development
-
-No environment variables or credentials are needed for local development. Run `npx stash auth login` to authenticate via the device code flow (or `npx stash init` for the agent-assisted end-to-end setup), and the SDK and CLI will use the token saved to `~/.cipherstash/auth.json`.
-
-### Going to Production
-
-For production, CI/CD, and deployed environments, you'll need to set up machine credentials via environment variables:
-
-| Variable | Description |
-|-----|-------|
-| `CS_WORKSPACE_CRN` | The workspace identifier (CRN format) |
-| `CS_CLIENT_ID` | The client identifier |
-| `CS_CLIENT_KEY` | Client key material used with ZeroKMS for encryption |
-| `CS_CLIENT_ACCESS_KEY` | API key for authenticating with the CipherStash API |
-
-See the [Going to Production](https://cipherstash.com/docs/stack/deploy/going-to-production) guide for full details on creating machine clients, setting up access keys, and configuring CI/CD pipelines.
-
-### Programmatic Config
-
-Pass config directly when initializing the client:
-
-```typescript
-import { Encryption } from "@cipherstash/stack/v3"
-import { users } from "./schema"
-
-const client = await Encryption({
-  schemas: [users],
-  config: {
-    workspaceCrn: "crn:ap-southeast-2.aws:your-workspace-id",
-    clientId: "your-client-id",
-    clientKey: "your-client-key",
-    accessKey: "your-access-key",
-    keyset: { name: "my-keyset" }, // or { id: "uuid" }
-  },
-})
-```
-
-### Multi-Tenant Encryption (Keysets)
-
-Isolate encryption keys per tenant using keysets:
-
-```typescript
-const client = await Encryption({
-  schemas: [users],
-  config: {
-    keyset: { id: "123e4567-e89b-12d3-a456-426614174000" },
-  },
-})
-
-// or by name
-const client2 = await Encryption({
-  schemas: [users],
-  config: {
-    keyset: { name: "Company A" },
-  },
-})
-```
-
-### Logging
-
-The SDK uses structured logging across all interfaces (Encryption, Supabase, DynamoDB). Each operation emits a single wide event with context such as the operation type, table, column, lock context status, and duration.
-
-Configure the log level with the `STASH_STACK_LOG` environment variable:
-
-```bash
-STASH_STACK_LOG=error  # debug | info | error (default: error)
-```
-
-| Value   | What is logged         |
-| ------- | ---------------------- |
-| `error` | Errors only (default)  |
-| `info`  | Info and errors        |
-| `debug` | Debug, info, and errors |
-
-When `STASH_STACK_LOG` is not set, the SDK defaults to `error` (errors only).
-
-The SDK never logs plaintext data.
-
-## Error Handling
-
-All async methods return a `Result` object with either a `data` key (success) or a `failure` key (error). This is a discriminated union - you never get both.
-
-```typescript
-const result = await client.encrypt("hello", { column: users.email, table: users })
-
-if (result.failure) {
-  // result.failure.type: string (e.g. "EncryptionError")
-  // result.failure.message: string
-  console.error(result.failure.type, result.failure.message)
-} else {
-  // result.data: Encrypted payload
-  console.log(result.data)
-}
-```
-
-### Error Types
-
-| Type | When |
-|---|---|
-| `ClientInitError` | Client initialization fails (bad credentials, missing config) |
-| `EncryptionError` | An encrypt operation fails |
-| `DecryptionError` | A decrypt operation fails |
-| `LockContextError` | Lock context creation or usage fails |
-| `CtsTokenError` | Identity token exchange fails |
-
-## API Reference
-
-### `Encryption(config)` - Initialize the typed client
-
-```typescript
-// Overload 1 — non-emptiness in the CONSTRAINT, so code that is itself
-// generic over its schemas still compiles.
-function Encryption<const S extends readonly [AnyV3Table, ...AnyV3Table[]]>(
-  config: { schemas: S; config?: ClientConfig },
-): Promise<EncryptionClient<S>>
-
-// Overload 2 — any array of v3 tables; non-emptiness is enforced on the
-// `schemas` PROPERTY, which keeps `const` inference (and per-column plaintext
-// typing) intact on the array-literal path.
-function Encryption<const S extends readonly AnyV3Table[]>(
-  config: { schemas: NonEmptyV3<S>; config?: ClientConfig },
-): Promise<EncryptionClient<S>>
-```
-
-(`NonEmptyV3<S>` is an internal helper — it resolves to `S` for any non-empty
-array and to `never` for `readonly []`. It is not exported; you never name it.)
-
-`schemas` accepts **any non-empty array of v3 tables** — an array literal, a
-shared `export const schemas: AnyV3Table[]`, a `ReadonlyArray`, or one built at
-runtime by push or spread. A mutable array literal is not required. The returned
-client's model and query types are derived from `S`.
-
-`Encryption({ schemas: [] })` is a compile error. An array *typed* `AnyV3Table[]`
-that happens to be empty at runtime compiles and throws on init instead.
-
-The wire format is pinned to EQL v3 — `config.eqlVersion` is not supported, and
-`Encryption()` throws if the field is present at all.
-
-### `EncryptionClient` Methods
-
-Method signatures are derived from your schemas: plaintext arguments are pinned to each column's domain type, query methods only accept queryable columns, and `queryType` is constrained to the column's capabilities.
-
-| Method | Signature | Returns |
-|----|------|-----|
-| `encrypt` | `(plaintext, { column, table })` | `EncryptOperation` (thenable) |
-| `decrypt` | `(encryptedData)` | `DecryptOperation` (thenable) |
-| `encryptQuery` | `(plaintext, { column, table, queryType?, returnType? })` | `EncryptQueryOperation` (thenable) |
-
-`returnType` controls the encrypted query term's shape: `'eql'` (default, the EQL JSON payload for the ORM adapters), `'composite-literal'` (a Postgres composite string for `.eq()`/string-based APIs), or `'escaped-composite-literal'` (the same, escaped for embedding). Most users take the default; the adapters set it as needed.
-| `encryptQuery` | `(terms: ScalarQueryTerm[])` | `BatchEncryptQueryOperation` (thenable) |
-| `encryptModel` | `(model, table)` | `EncryptModelOperation` (thenable) |
-| `decryptModel` | `(encryptedModel, table, lockContext?)` | `AuditableDecryptModelOperation` (thenable) |
-| `bulkEncryptModels` | `(models, table)` | `BulkEncryptModelsOperation` (thenable) |
-| `bulkDecryptModels` | `(encryptedModels, table, lockContext?)` | `AuditableDecryptModelOperation` (thenable) |
-| `bulkEncrypt` | `(plaintexts, { column, table })` | `BulkEncryptOperation` (thenable) |
-| `bulkDecrypt` | `(encryptedPayloads)` | `BulkDecryptOperation` (thenable) |
-| `getEncryptConfig` | `()` | The resolved encrypt config |
-
-The thenable operations support `.withLockContext(lockContext)` for identity-aware encryption, and `decryptModel` / `bulkDecryptModels` also support `.audit({ metadata })`. Those two additionally accept the lock context as an optional third argument — use one form or the other. `decrypt` of a single value cannot be strongly typed (TypeScript cannot know which column a runtime payload came from), and `encryptQuery` rejects storage-only columns at compile time.
-
-**`decrypt` / `bulkDecrypt` do not reconstruct `Date` values.** A `types.Date` / `types.Timestamp` column read through the raw path comes back as the string it was stored as; read through `decryptModel` / `bulkDecryptModels` with the table, it comes back as a `Date`. Reconstruction is driven by the table's `cast_as`, which only the model path is handed. Use the model helpers when you want the column's declared plaintext type, or rebuild at the call site with `new Date(value)`.
-
-### `LockContext` (legacy)
-
-Identity-aware encryption is done with `OidcFederationStrategy` +
-`.withLockContext({ identityClaim })` (see [Identity-Aware Encryption](#identity-aware-encryption-lock-contexts)).
-`LockContext` / `identify()` remain for backwards compatibility only — the
-per-operation CTS token `identify()` fetches was removed in `protect-ffi` 0.25
-and is no longer used by encryption.
-
-### Schema Builders
-
-```typescript
-import { encryptedTable, types } from "@cipherstash/stack/eql/v3"
-
-encryptedTable(tableName, columns)  // columns: Record<string, types.*(dbColumnName)>
-types.TextSearch("email")           // one factory per public.eql_v3_* domain
-```
-
-Type inference helpers live on the same subpath:
-
-```typescript
-import type { InferPlaintext, InferEncrypted } from "@cipherstash/stack/eql/v3"
-
-type UserPlaintext = InferPlaintext<typeof users>
-// { email: string; age: number; balance: bigint; metadata: JsonDocument }
-
-type UserEncrypted = InferEncrypted<typeof users>
-// { email: Encrypted; age: Encrypted; ... }
-```
-
-## Subpath Exports
-
-| Import Path | Provides |
-|-------|-----|
-| `@cipherstash/stack/v3` | `Encryption`, `EncryptionClient<S>`, and the EQL v3 authoring DSL |
-| `@cipherstash/stack/eql/v3` | EQL v3 authoring DSL: `encryptedTable`, the `types` namespace, `buildEncryptConfig`, inference types (`InferPlaintext`, `InferEncrypted`, ...) |
-| `@cipherstash/stack` | `Encryption` — the v3-only client factory — plus auth strategies |
-| `@cipherstash/stack/schema` | Low-level encrypt-config types and validation helpers |
-| `@cipherstash/stack/identity` | `LockContext` class and identity types |
-| `@cipherstash/stack/types` | All TypeScript types (`Encrypted`, `Decrypted`, `ClientConfig`, `EncryptionClientConfig`, query types, etc.) |
-
-The Drizzle and Supabase integrations are **separate first-party packages** that
-depend on `@cipherstash/stack` (they are no longer subpaths of it):
-
-| Package | Provides |
-|-------|-----|
-| `@cipherstash/stack-drizzle` | EQL v3 Drizzle integration (package root, v3 only): `types` column factories, `createEncryptionOperators`, `extractEncryptionSchema`, `makeEqlV3Column`, `EncryptionOperatorError` |
-| `@cipherstash/stack-supabase` | Supabase integration (v3 only): `encryptedSupabase` (`encryptedSupabaseV3` is a `@deprecated` alias) |
-
-## Legacy: EQL v2
-
-EQL v2 is retained only as native decrypt compatibility. Stored v2 payloads are
-recognised automatically by `decrypt`, `decryptModel`, `bulkDecrypt`, and
-`bulkDecryptModels`; there is no public v2 schema builder or write-mode flag.
-Author all schemas and new writes with EQL v3. DynamoDB legacy reads use a v3
-table descriptor plus `{ storedEqlVersion: 2 }`.
-
-Full v2 documentation lives at [cipherstash.com/docs](https://cipherstash.com/docs).
-
-### Migrating from @cipherstash/protect
-
-Method signatures on the encryption client (`encrypt`, `decrypt`,
-`encryptModel`, ...) and the `Result` pattern (`data` / `failure`) are unchanged.
-**Declare tables with the EQL v3 DSL.** A column's capabilities come from its `types.*` domain rather than
-chained tuners: `csColumn("email").equality().freeTextSearch()` becomes
-`types.TextSearch("email")`.
-
-| `@cipherstash/protect` | `@cipherstash/stack` | Import Path |
-|------------|-----------|-------|
-| `protect(config)` | `Encryption(config)` | `@cipherstash/stack` |
-| `csTable(name, cols)` | `encryptedTable(name, cols)` | `@cipherstash/stack/eql/v3` |
-| `csColumn(name)` | `types.<Domain>(name)` (e.g. `types.TextSearch`) | `@cipherstash/stack/eql/v3` |
-| `import { LockContext } from "@cipherstash/protect/identify"` | `import { LockContext } from "@cipherstash/stack/identity"` | `@cipherstash/stack/identity` |
-| N/A | CLI | `npx stash` |
-
-## Requirements
-
-- **Node.js** >= 22
-- The default entry includes a native FFI module (`@cipherstash/protect-ffi`). On a Node server, externalize it from bundling (e.g. Next.js `serverExternalPackages`).
-- For bundled or non-Node runtimes (Deno, Bun, Cloudflare Workers, Supabase Edge Functions), import `@cipherstash/stack/wasm-inline` instead — it inlines the WASM build, so no externalization is needed. See the [bundling guide](https://cipherstash.com/docs/stack/deploy/bundling).
-
-## License
-
-MIT - see [LICENSE.md](https://github.com/cipherstash/stack/blob/main/LICENSE.md).
+> [!IMPORTANT]
+> **Opt out of bundling `@cipherstash/stack`.** It uses native Node.js features (a Rust FFI module) and the
+> native `require`. For edge and serverless runtimes (Cloudflare Workers, Deno, Bun), use the bundler-friendly
+> `@cipherstash/stack/wasm-inline` entry instead. [Bundling guide →][bundling]
+
+**Requirements:** Node.js ≥ 22.
+
+## Documentation & community
+
+- 📚 [Documentation][docs] · [Quickstart][quickstart] · [SDK reference][reference]
+- 🧩 [Example apps][examples]
+- 💬 [Discord community][discord]
+
+## Contributing · Security · License
+
+Contributions are welcome — see [CONTRIBUTE.md][contribute]. For our security policy and responsible
+disclosure, see [SECURITY.md][security-policy]. [MIT licensed][license].
+
+<!-- Link definitions — keep all URLs here. CipherStash links carry README UTM params. -->
+[signup]: https://cipherstash.com/signup?utm_source=github&utm_medium=stack_readme
+[docs]: https://cipherstash.com/docs/stack?utm_source=github&utm_medium=stack_readme
+[quickstart]: https://cipherstash.com/docs/stack/quickstart?utm_source=github&utm_medium=stack_readme
+[reference]: https://cipherstash.com/docs/stack/reference?utm_source=github&utm_medium=stack_readme
+[encryption]: https://cipherstash.com/docs/stack/cipherstash/encryption?utm_source=github&utm_medium=stack_readme
+[searchable-encryption]: https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption?utm_source=github&utm_medium=stack_readme
+[schema]: https://cipherstash.com/docs/stack/cipherstash/encryption/schema?utm_source=github&utm_medium=stack_readme
+[encrypt-decrypt]: https://cipherstash.com/docs/stack/cipherstash/encryption/encrypt-decrypt?utm_source=github&utm_medium=stack_readme
+[model-ops]: https://cipherstash.com/docs/stack/cipherstash/encryption/encrypt-decrypt?utm_source=github&utm_medium=stack_readme#model-operations
+[supabase]: https://cipherstash.com/docs/stack/cipherstash/encryption/supabase?utm_source=github&utm_medium=stack_readme
+[drizzle]: https://cipherstash.com/docs/stack/cipherstash/encryption/drizzle?utm_source=github&utm_medium=stack_readme
+[prisma-next]: https://cipherstash.com/docs/stack/cipherstash/encryption/prisma-next?utm_source=github&utm_medium=stack_readme
+[dynamodb]: https://cipherstash.com/docs/stack/cipherstash/encryption/dynamodb?utm_source=github&utm_medium=stack_readme
+[identity]: https://cipherstash.com/docs/stack/cipherstash/encryption/identity?utm_source=github&utm_medium=stack_readme
+[security-architecture]: https://cipherstash.com/docs/stack/reference/security-architecture?utm_source=github&utm_medium=stack_readme
+[zerokms]: https://cipherstash.com/docs/stack/cipherstash/kms?utm_source=github&utm_medium=stack_readme
+[bundling]: https://cipherstash.com/docs/stack/deploy/bundling?utm_source=github&utm_medium=stack_readme
+[query-equality]: https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption?utm_source=github&utm_medium=stack_readme#equality
+[query-match]: https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption?utm_source=github&utm_medium=stack_readme#free-text-search
+[query-range]: https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption?utm_source=github&utm_medium=stack_readme#range-and-ordering
+[query-json]: https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption?utm_source=github&utm_medium=stack_readme#json
+[auth]: https://cipherstash.com/docs/stack/cipherstash/encryption/identity?utm_source=github&utm_medium=stack_readme
+[keysets]: https://cipherstash.com/docs/stack/cipherstash/kms?utm_source=github&utm_medium=stack_readme#keysets
+[benches]: https://github.com/cipherstash/benches
+[eql]: https://github.com/cipherstash/encrypt-query-language
+[discord]: https://discord.gg/5qwXUFb6PB
+[examples]: https://github.com/cipherstash/stack/tree/main/examples
+[contribute]: https://github.com/cipherstash/stack/blob/main/CONTRIBUTE.md
+[security-policy]: https://github.com/cipherstash/stack/blob/main/SECURITY.md
+[license]: https://github.com/cipherstash/stack/blob/main/LICENSE.md

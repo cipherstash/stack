@@ -178,7 +178,7 @@
 		"./package.json": "./package.json"
 	},
 	"scripts": {
-		"prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+		"prebuild": "node -e \"const fs=require('node:fs');fs.rmSync('dist',{recursive:true,force:true});fs.copyFileSync('../../README.md','README.md')\"",
 		"build": "tsup",
 		"dev": "tsup --watch",
 		"analyze:complexity": "fta src/eql/v3 --score-cap 69",
