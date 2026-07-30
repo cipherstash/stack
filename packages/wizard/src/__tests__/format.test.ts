@@ -81,5 +81,12 @@ describe('formatAgentOutput', () => {
     expect(result).toContain(pc.cyan('stash.config.ts'))
     expect(result).toContain(pc.bold(pc.cyan('Next Steps')))
     expect(result).toContain(pc.dim('1.'))
+    // Pin the second item's content, not just its marker: `stash db push` was
+    // retired with the Proxy lifecycle (#814 / #825), and an unasserted fixture
+    // is how it survived here in the first place (#837).
+    expect(result).toContain(
+      `${pc.dim('2.')} Run ${pc.cyan('npx drizzle-kit migrate')}`,
+    )
+    expect(result).not.toContain('stash db push')
   })
 })
