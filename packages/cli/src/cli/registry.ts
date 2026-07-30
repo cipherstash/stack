@@ -324,7 +324,7 @@ export const registry: CommandGroup[] = [
       {
         name: 'eql migration',
         summary:
-          'Generate an EQL v3 install migration for your ORM (Drizzle now; Prisma Next soon)',
+          'Generate an EQL v3 install migration for your ORM (Drizzle; Prisma Next installs EQL through its own migrations)',
         examples: [
           'eql migration --drizzle',
           'eql migration --drizzle --supabase',
@@ -338,7 +338,7 @@ export const registry: CommandGroup[] = [
           {
             name: '--prisma',
             description:
-              'Emit a Prisma Next migration — not available yet; the emitter is a follow-up tracked in cipherstash/stack#690.',
+              'Not needed: Prisma Next installs EQL through its own migration framework — run `prisma-next migrate` instead.',
           },
           {
             name: '--supabase',

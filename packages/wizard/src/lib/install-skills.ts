@@ -17,6 +17,8 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
     'stash-drizzle',
     'stash-indexing',
     'stash-deployment',
+    'stash-zerokms',
+    'stash-auth',
     'stash-cli',
   ],
   // `stash-postgres` / `stash-edge` mirror the CLI's SKILL_MAP — see the comments
@@ -28,6 +30,8 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
     'stash-postgres',
     'stash-edge',
     'stash-deployment',
+    'stash-zerokms',
+    'stash-auth',
     'stash-cli',
   ],
   prisma: [
@@ -35,6 +39,8 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
     'stash-prisma-next',
     'stash-indexing',
     'stash-deployment',
+    'stash-zerokms',
+    'stash-auth',
     'stash-cli',
   ],
   generic: [
@@ -43,6 +49,8 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
     'stash-postgres',
     'stash-edge',
     'stash-deployment',
+    'stash-zerokms',
+    'stash-auth',
     'stash-cli',
   ],
 }

@@ -706,15 +706,18 @@ const INTERNAL_CONSTRUCT = Symbol('cs-wasm-client')
  * identity-bound encryption is "configured at client construction via
  * `config.authStrategy` instead" (#663 context). That is wrong, and the
  * conflation is worth naming because it is the one people arrive with:
- * an auth strategy decides WHO THE CLIENT IS; a lock context decides WHICH
- * KEY THE VALUE IS ENCRYPTED UNDER. They are orthogonal, and only the first
- * exists on this entry.
+ * an auth strategy decides WHO THE CLIENT IS; a lock context decides WHO CAN
+ * RETRIEVE A VALUE'S DATA KEY (the claim from the encrypting caller's service
+ * token is bound to the key, and retrieval requires presenting the same
+ * claim). They are orthogonal, and only the first exists on this entry.
  *
  * The consequences are silent, which is why they are stated here rather than
- * left to a failed decrypt: values written from this entry are encrypted under
- * the workspace key even when the client is authenticated as an end user, and
- * this entry cannot read anything the native entry wrote under a lock context,
- * since decrypt requires the same context. `skills/stash-edge` documents both.
+ * left to a failed decrypt: values written from this entry carry no identity
+ * condition on key retrieval — any client with keyset access can decrypt
+ * them — even when the client is authenticated as an end user, and this
+ * entry cannot read anything the native entry wrote under a lock context,
+ * since key retrieval requires the same claim. `skills/stash-auth` is
+ * canonical for the model; `skills/stash-edge` documents this entry's gap.
  *
  * The binding accepts a lock context on both paths — `lockContext` is an
  * option field on the single calls and per-payload-item on the bulk ones — so

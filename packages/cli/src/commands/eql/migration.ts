@@ -85,7 +85,10 @@ function cleanupMigrationFile(filePath: string | undefined): void {
 export interface EqlMigrationOptions {
   /** Emit a Drizzle custom migration. */
   drizzle?: boolean
-  /** Emit a Prisma Next migration (not yet available — see issue #690). */
+  /**
+   * Rejected with a pointer — Prisma Next installs EQL through its own
+   * migration framework, so there is nothing for this command to emit.
+   */
   prisma?: boolean
   /** Append the Supabase role grants (`eql_v3` + `eql_v3_internal`). */
   supabase?: boolean
@@ -161,11 +164,11 @@ export async function eqlMigrationCommand(
   }
 
   if (options.prisma) {
-    // The Prisma Next emitter is a follow-up (tracked in #690): it will write
-    // the install migration in the framework `Migration` shape and let
-    // prisma-next drop its baked install baseline. Until it lands, fail loudly
-    // with a pointer rather than emit a broken/empty file.
-    p.log.error(messages.eql.migrationPrismaUnavailable)
+    // Prisma Next does not need an emitted install migration: its extension
+    // pack contributes the `migrations/cipherstash/` contract space, which
+    // installs the EQL bundle through prisma-next's own migration framework.
+    // The flag exists only to route people who try it to that mechanism.
+    p.log.error(messages.eql.migrationPrismaNotNeeded)
     throw new CliExit(1)
   }
 

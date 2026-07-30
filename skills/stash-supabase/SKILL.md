@@ -56,11 +56,15 @@ this is also how **Supabase Edge Functions** get credentials in local dev —
 `stash env --name edge-dev --write` and pass `--env-file`, or
 `supabase secrets set` them for deploys.
 
-> **One credential per environment, used by everything that writes.** EQL index
-> terms derive from the ZeroKMS client key, so rows written by a client with
-> different `CS_*` values decrypt correctly but never match a query — silently.
-> That includes `stash encrypt backfill`, seed scripts, and Edge Functions.
-> Encryption *inside* an Edge Function (Deno, no native modules) uses the
+> **One credential set per environment — but what must match between writers
+> and query readers is the keyset, not the credential string.** Index terms
+> come from a per-*keyset* key, so any client bound to the keyset produces
+> matching terms. Decrypt is looser — it follows each payload's keyset and
+> needs only a grant — so a reader granted the writer's keyset but bound to
+> a different one decrypts fine while its searches silently return zero
+> rows. `stash-zerokms` is canonical for keyset scoping, `stash-auth` for
+> credentials. Encryption *inside* an
+> Edge Function (Deno, no native modules) uses the
 > `@cipherstash/stack/wasm-inline` entry — see the `stash-edge` skill; SQL
 > written by hand in a migration or RPC is covered by `stash-postgres`.
 
@@ -496,8 +500,10 @@ const { data, error } = await es
 ```
 
 `identityClaim` is an array of JWT claim *names* (`["sub"]`), not values; the same
-claim must be used to encrypt and decrypt. `.withLockContext()` also accepts a
-`LockContext` instance.
+claim must be presented to decrypt — the claim gates retrieval of the value's
+data key at ZeroKMS. `.withLockContext()` also accepts a `LockContext`
+instance. `stash-auth` is the canonical skill for the lock-context model and
+the auth strategies.
 
 > **Deprecated: `LockContext.identify()`.** Older code did
 > `new LockContext().identify(userJwt)` to fetch a per-operation CTS token. Those

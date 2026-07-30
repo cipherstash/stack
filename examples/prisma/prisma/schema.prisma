@@ -8,22 +8,22 @@
 // Operator visibility per column follows from the domain's query
 // capabilities (see the package README's operator surface table):
 //
-//   - email         (EncryptedTextSearch → eql_v3_text_search)
+//   - email         (TextSearch → eql_v3_text_search)
 //                     equality + order/range + free-text search:
 //                     eqlEq / Neq / In / NotIn /
 //                     Gt / Gte / Lt / Lte / Between / NotBetween /
 //                     Match, eqlAsc / Desc.
-//   - salary        (EncryptedDoubleOrd → eql_v3_double_ord)
+//   - salary        (DoubleOrd → eql_v3_double_ord)
 //                     equality + order/range.
-//   - accountId     (EncryptedBigIntOrd → eql_v3_bigint_ord)
+//   - accountId     (BigIntOrd → eql_v3_bigint_ord)
 //                     equality + order/range.
-//   - birthday      (EncryptedDateOrd → eql_v3_date_ord)
+//   - birthday      (DateOrd → eql_v3_date_ord)
 //                     equality + order/range.
-//   - emailVerified (EncryptedBoolean → eql_v3_boolean)
+//   - emailVerified (Boolean → eql_v3_boolean)
 //                     STORAGE-ONLY: no search operators at all — every
 //                     eql* predicate throws
 //                     EncryptionOperatorError on this column.
-//   - preferences   (EncryptedJson → eql_v3_json_search)
+//   - preferences   (Json → eql_v3_json_search)
 //                     searchable JSON: eqlJsonContains
 //                     (encrypted jsonb `@>` containment).
 //

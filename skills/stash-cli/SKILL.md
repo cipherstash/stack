@@ -368,7 +368,7 @@ stash eql migration --drizzle --supabase   # also grant eql_v3 to anon/authentic
 | Flag | Description |
 |---|---|
 | `--drizzle` | Emit a Drizzle custom migration (via `drizzle-kit generate --custom`, then inject the SQL). Requires `drizzle-kit`. |
-| `--prisma` | Emit a Prisma Next migration. **Not available yet** — the emitter is a follow-up (tracked in GitHub issue #690); fails with a pointer for now. Use `--drizzle` today. |
+| `--prisma` | **Not needed** — Prisma Next installs the EQL bundle through its own migration framework (the extension pack's `migrations/cipherstash/` contract space; run `prisma-next migrate`). The flag exists only to say so and point you there. |
 | `--supabase` | Append the Supabase role grants (`eql_v3` + `eql_v3_internal` → `anon`, `authenticated`, `service_role`). Harmless when you connect directly as `postgres`; needed when the same tables are reached via PostgREST/RLS. |
 | `--name <name>` | Migration name (Drizzle). Default `install-eql`. Letters, numbers, `-`, and `_` only — anything else is rejected. |
 | `--out <path>` | Output directory (Drizzle). Default `drizzle`. Passed straight to `drizzle-kit --out`, so set it to match your `drizzle.config.ts` if that writes elsewhere. |
@@ -440,7 +440,7 @@ Backfill requires a `public.eql_v3_*` target column, records version 3 and the `
 
 **Dual-write precondition.** The application must already write both `<col>` and `<col>_encrypted` on every insert and update. Otherwise rows written *during* the backfill land in plaintext only, silently. The first run prompts (interactive) or requires `--confirm-dual-writes-deployed` (non-interactive), then records `dual_writing`. Resumes don't re-prompt.
 
-**Credential precondition — run the backfill with the *application's* credentials.** Backfill encrypts through whichever `CS_*` credentials are in its environment, and EQL index terms derive from the ZeroKMS client key. Backfilling from a laptop on the local device profile, then querying from an app using credentials minted by `stash env`, produces rows that decrypt correctly and **never match a query** — with no error. Export the target environment's `CS_*` values in the shell running the backfill. See [`env`](#env) and `stash-edge` § The Credential-Identity Rule.
+**Keyset precondition — the backfill's client must resolve to the same keyset as the application's.** Backfill encrypts through whatever credentials its environment *resolves*: `CS_*` variables when present, otherwise the native auto strategy falls back to the local `~/.cipherstash` dev profile — so a shell without the variables silently runs as your laptop's client. What must match between backfill and app is the **keyset** their clients resolve to, not the credential strings (`stash-zerokms` is canonical). Two clients bound to the same keyset interoperate fully — search included, since index terms come from a per-keyset key. A backfill bound to a *different* keyset is the quiet failure: the app can still decrypt those rows if granted that keyset, but its query terms derive under its own keyset, so encrypted search returns zero rows for them — no error. Export the target environment's `CS_*` values in the shell running the backfill (non-negotiable in CI/production) so the ciphertext lands in that environment's keyspace and the run is attributed to its client. See [`env`](#env) and `stash-auth`.
 
 | Flag | Description |
 |---|---|
@@ -485,13 +485,18 @@ CS_CLIENT_KEY=<hex>
 CS_CLIENT_ACCESS_KEY=CSAK…
 ```
 
-> **Every writer of a searchable column must use these same credentials** —
-> including `stash encrypt backfill`, seed scripts, and admin tools — or their
-> rows decrypt but never match a query. EQL index terms derive from the ZeroKMS
-> client key, so a row written under one credential and queried under another
-> decrypts correctly and silently fails every search. Mint one credential per
-> environment and export it for **every** process that writes that
-> environment's data. See `stash-edge` § The Credential-Identity Rule.
+> **What must match between writers and readers is the keyset, not the
+> credential string.** The client minted here is created against the
+> workspace default keyset, so it interoperates — search included — with any
+> other client resolving to that keyset (index terms come from a per-keyset
+> key; `stash-zerokms` is canonical). A client bound to a *different* keyset
+> fails loudly where it lacks a grant — but where it *is* granted, decrypt
+> still works while its searches run in its own keyspace and silently return
+> zero rows (the asymmetry `stash-zerokms` documents). Still mint one
+> credential set per
+> environment and export it for every process touching that environment's
+> data — for isolation, attribution, and revocability (`stash-auth`), not
+> because credential strings must be identical.
 
 Things to know:
 

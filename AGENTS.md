@@ -85,7 +85,7 @@ If these variables are missing, tests that require live encryption will fail or 
 - `e2e/*`: Cross-package end-to-end tests (package managers, supply chain, Prisma example README)
 - `examples/*`: Working apps (basic, prisma, supabase-worker)
 - `docs/plans/*`: Internal design plans. User-facing documentation lives at https://cipherstash.com/docs (not in this repo).
-- `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-indexing`, `stash-deployment`, `stash-postgres`, `stash-edge`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-prisma-next`, `stash-supply-chain-security`)
+- `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-indexing`, `stash-deployment`, `stash-zerokms`, `stash-auth`, `stash-postgres`, `stash-edge`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-prisma-next`, `stash-supply-chain-security`)
 
 ## Agent Skills — these ship to customers
 
@@ -115,6 +115,8 @@ nothing type-checks them, and the damage lands in a customer's repo, not ours.
 | The deploy sequencing / deploy-gate story, `stash env`, or platform-specific deployment guidance | `skills/stash-deployment` |
 | The `@cipherstash/eql` pin, `eql install`/`eql migration` behaviour, or index-related SQL guidance | `skills/stash-indexing` |
 | The EQL operator/domain surface (`eql_v3.query_*` casts, predicate forms) | `skills/stash-postgres` |
+| The keyset/client model (`config.keyset`, grants, the ZeroKMS access story) | `skills/stash-zerokms` — the canonical source; other skills should point here rather than restate it |
+| Auth strategies (`config.authStrategy`), the `CS_*` variables, lock context, `stash env` / `auth login` behaviour | `skills/stash-auth` — the canonical source; other skills should point here rather than restate it |
 | `packages/stack/src/wasm-inline.ts`, the WASM entry's exports, or `stash env` | `skills/stash-edge` |
 | pnpm config, CI workflows, dependency policy | `skills/stash-supply-chain-security` |
 | The durable agent rules themselves | `packages/cli/src/commands/init/doctrine/AGENTS-doctrine.md` |
