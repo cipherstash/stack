@@ -287,11 +287,60 @@ describe('drizzle migrate prompt after a staged rewrite', () => {
   // different hat.
   it('treats an empty error message as a failed sweep, not a clean one', async () => {
     vi.mocked(sweepMigrationDirs).mockResolvedValueOnce([
-      { dir: 'drizzle', rewritten: [], skipped: [], error: '' },
+      { dir: 'drizzle', rewritten: [], skipped: [], staged: [], error: '' },
     ])
 
     await expect(runDrizzle()).rejects.toThrow('unsafe or unverified SQL')
     expect(p.confirm).not.toHaveBeenCalled()
+  })
+
+  /**
+   * #836, item 2. The wizard's agent edited schema.ts to declare the column as
+   * the encrypted domain — that edit is what made drizzle-kit emit the
+   * impossible `SET DATA TYPE`. After the add-only sweep the database has both
+   * columns, while schema.ts and the snapshot still describe only the old one,
+   * and `drizzle-kit generate` shows nothing because those two agree with each
+   * other. The wizard must say so before it offers to run the migration.
+   */
+  it('warns that schema.ts and the snapshot diverged after staging a twin', async () => {
+    const warn = vi.spyOn(p.log, 'warn').mockImplementation(() => {})
+    makeDrizzleOut('drizzle')
+    fs.writeFileSync(
+      path.join(cwd, 'drizzle', '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text);\n',
+    )
+    fs.writeFileSync(
+      path.join(cwd, 'drizzle', '0001_encrypt.sql'),
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+    )
+
+    await runDrizzle()
+
+    const warnings = warn.mock.calls.map(([m]) => String(m)).join('\n')
+    expect(warnings).toContain('users:')
+    expect(warnings).toContain('"email_encrypted" eql_v3_text_search')
+    expect(warnings).toContain('drizzle-kit generate` will NOT warn you')
+    expect(warnings).toContain('column already exists')
+    // Said BEFORE the migrate prompt, so the user decides with it in hand.
+    expect(p.confirm).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  // Nothing staged means nothing diverged: the notice must not fire, or it sends
+  // the user editing a schema that is already consistent.
+  it('does not warn about reconciliation when nothing was staged', async () => {
+    const warn = vi.spyOn(p.log, 'warn').mockImplementation(() => {})
+    makeDrizzleOut('drizzle')
+    fs.writeFileSync(
+      path.join(cwd, 'drizzle', '0000_init.sql'),
+      'CREATE TABLE "widgets" ("id" integer PRIMARY KEY);\n',
+    )
+
+    await runDrizzle()
+
+    const warnings = warn.mock.calls.map(([m]) => String(m)).join('\n')
+    expect(warnings).not.toContain('drizzle-kit generate` will NOT warn you')
+    warn.mockRestore()
   })
 
   // The wizard ships scanning drizzle/, migrations/ and src/db/migrations/ and

@@ -854,18 +854,139 @@ export function describeSkipReason(reason: SkipReason): string {
   }
 }
 
+/**
+ * An encrypted twin this sweep added, named precisely enough for the caller to
+ * tell the user which ORM artefacts now disagree (#836, item 2).
+ *
+ * The rewrite is add-only, so after it the DATABASE has both `<column>` (still
+ * its original plaintext type) and `<encryptedColumn>` (the domain). Nothing
+ * updates the other two artefacts: `schema.ts` still declares `<column>` AS the
+ * encrypted domain — that declaration is what made drizzle-kit emit the
+ * impossible `SET DATA TYPE` in the first place — and `meta/*_snapshot.json`
+ * still records the same thing. Neither knows `<encryptedColumn>` exists.
+ */
+export interface StagedColumn {
+  /** Absolute path of the migration file the staged ADD COLUMN was written to. */
+  file: string
+  /** Schema qualifier, when the table carried one (a `pgSchema()` table). */
+  schema?: string
+  /** Table the column belongs to, without quotes. */
+  table: string
+  /** The preserved source column, still its original plaintext type. */
+  column: string
+  /** The twin that was added — conventionally `<column>_encrypted`. */
+  encryptedColumn: string
+  /** Bare EQL domain the twin was given, e.g. `eql_v3_text_search`. */
+  domain: string
+}
+
+/**
+ * The reconciliation the user must do by hand after a sweep staged twins, as
+ * lines ready to print (#836, item 2).
+ *
+ * **Why this has to be said out loud.** The sweep repairs SQL and nothing else,
+ * so a successful rewrite leaves three artefacts disagreeing:
+ *
+ * - the database gets `email text` plus `email_encrypted eql_v3_text_search`
+ * - `schema.ts` still declares `email` as the encrypted domain
+ * - `meta/*_snapshot.json` still records `email` as the encrypted domain
+ * - neither `schema.ts` nor the snapshot knows `email_encrypted` exists
+ *
+ * **`drizzle-kit generate` gives no signal.** It diffs `schema.ts` against the
+ * snapshot; it never reads `.sql` and never introspects the database. Both its
+ * inputs still agree, so the diff is empty and it emits nothing. It cannot
+ * propose a column that appears in neither input — that is `push`, which does
+ * introspect. So the divergence is invisible to the ORM's own tooling, and every
+ * consequence through it is silent: reads of `users.email` push plaintext into a
+ * `customType.fromDriver` expecting an EQL envelope, writes push an envelope
+ * into a `text` column and SUCCEED, and `email_encrypted` is unreachable because
+ * it is in no Drizzle schema.
+ *
+ * It only fails loudly much later: correcting `schema.ts` by hand makes
+ * `generate` diff against the stale snapshot and emit a duplicate ADD COLUMN,
+ * which errors at migrate time with "column already exists".
+ *
+ * **Why guidance rather than an automatic edit.** Editing `schema.ts` alone
+ * CREATES that duplicate-column failure — a correct automatic fix would have to
+ * rewrite drizzle-kit's snapshot in lockstep, in an internal format that is
+ * version-coupled and not ours. So the sweep names the divergence precisely and
+ * leaves the edit to the user, who is the one who knows whether the application
+ * is ready to read the twin.
+ */
+export function describeStagedReconciliation(
+  staged: readonly StagedColumn[],
+): string[] {
+  const lines = [
+    'The sweep repaired SQL only. Your Drizzle schema and drizzle-kit snapshot still describe the OLD shape, so reconcile them before the application reads these columns:',
+  ]
+  for (const { schema, table, column, encryptedColumn, domain } of staged) {
+    const ref = schema ? `${schema}.${table}` : table
+    lines.push(
+      `  - ${ref}: the database now has "${column}" (unchanged, still plaintext) and "${encryptedColumn}" ${domain}, but your schema declares "${column}" as ${domain} and knows nothing about "${encryptedColumn}".`,
+    )
+  }
+  lines.push(
+    'Until you reconcile it: reads of the source column hand plaintext to a decrypt path expecting an EQL envelope, writes store an EQL envelope in a plaintext column and SUCCEED, and the new encrypted column is unreachable through the ORM.',
+    '`drizzle-kit generate` will NOT warn you — it diffs your schema against its snapshot and reads neither the .sql nor the database, and those two still agree.',
+    'Declare the encrypted column in your Drizzle schema under its own name, keep the source column as its plaintext type, then run `drizzle-kit generate` to bring the snapshot forward. Do not hand-edit only the schema and re-generate against the stale snapshot: that emits a duplicate ADD COLUMN which fails with "column already exists". Then run the staged `stash encrypt` lifecycle to backfill before switching reads across.',
+  )
+  return lines
+}
+
 /** Outcome of a sweep: the files rewritten, and near-misses left for review. */
 export interface RewriteResult {
   /** Absolute paths of files whose unsafe ALTER COLUMN(s) were rewritten. */
   rewritten: string[]
   /** Near-miss statements the strict matcher passed over — flag, don't guess. */
   skipped: SkippedAlter[]
+  /**
+   * Every encrypted twin staged, for the caller's reconciliation notice. One
+   * entry per rewritten statement, so this is finer-grained than `rewritten`
+   * (which lists files, and a file can carry several ALTERs).
+   */
+  staged: StagedColumn[]
 }
 
-interface RewriteSweepError extends Error {
+/**
+ * What {@link rewriteEncryptedAlterColumns} attaches to the error when the
+ * sweep throws partway through: the files it had already rewritten, and the
+ * statements it had already flagged. Reported so a partial sweep names the work
+ * it did rather than looking like it never ran (#786).
+ */
+export interface PartialRewriteResult {
   rewritten?: string[]
   skipped?: SkippedAlter[]
+  staged?: StagedColumn[]
 }
+
+/**
+ * Narrow a caught value to a {@link PartialRewriteResult}.
+ *
+ * The sweep can also fail with a non-`Error` throw — a string, `null`, anything
+ * — in which case there is no partial result to report. **Narrow rather than
+ * cast:** on `null` or `undefined` a property read raises a `TypeError` inside
+ * the very `catch` block that exists to report the failure, so the report never
+ * happens and the throw escapes the handler entirely. That defeats the
+ * fail-closed reporting outright, which is worse than the missing detail.
+ *
+ * Exported because both callers need it and the two copies of this file must
+ * stay identical: the wizard's `sweepMigrationDirs` uses it to build a
+ * per-directory error result, and the CLI's `eql migration --drizzle` uses it to
+ * report a partial sweep (#836, item 3).
+ */
+export function isPartialRewriteResult(
+  value: unknown,
+): value is PartialRewriteResult {
+  if (typeof value !== 'object' || value === null) return false
+  const partial = value as Record<string, unknown>
+  return (
+    (partial.rewritten === undefined || Array.isArray(partial.rewritten)) &&
+    (partial.skipped === undefined || Array.isArray(partial.skipped)) &&
+    (partial.staged === undefined || Array.isArray(partial.staged))
+  )
+}
+
+interface RewriteSweepError extends Error, PartialRewriteResult {}
 
 /**
  * Replace in-place `ALTER COLUMN ... SET DATA TYPE <encrypted domain>`
@@ -914,6 +1035,7 @@ export async function rewriteEncryptedAlterColumns(
   )
   const rewritten: string[] = []
   const skipped: SkippedAlter[] = []
+  const staged: StagedColumn[] = []
   const seen = new Set<string>()
   const stagedTargets = new Set<string>()
 
@@ -1000,6 +1122,14 @@ export async function rewriteEncryptedAlterColumns(
           if (!domain) return match
 
           stagedTargets.add(target)
+          staged.push({
+            file: filePath,
+            schema,
+            table,
+            column,
+            encryptedColumn: `${column}_encrypted`,
+            domain,
+          })
           return renderSafeAlter(table, column, domain, schema)
         },
       )
@@ -1034,11 +1164,12 @@ export async function rewriteEncryptedAlterColumns(
       const partial = error as RewriteSweepError
       partial.rewritten = rewritten
       partial.skipped = skipped
+      partial.staged = staged
     }
     throw error
   }
 
-  return { rewritten, skipped }
+  return { rewritten, skipped, staged }
 }
 
 // #region wizard-only — deliberately has no counterpart in
@@ -1130,6 +1261,7 @@ export async function sweepMigrationDirs(
           dir,
           rewritten: [],
           skipped: [],
+          staged: [],
           notDrizzleOutput: true,
         })
       }
@@ -1137,15 +1269,21 @@ export async function sweepMigrationDirs(
     }
 
     try {
-      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(abs)
-      results.push({ dir, rewritten, skipped })
+      const { rewritten, skipped, staged } =
+        await rewriteEncryptedAlterColumns(abs)
+      results.push({ dir, rewritten, skipped, staged })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      const partial = err as Partial<RewriteSweepError>
+      // Narrowed, never cast: on `throw null` a property read here would raise
+      // a TypeError INSIDE this catch, so `results.push` never runs and the
+      // throw escapes `sweepMigrationDirs` — losing the per-directory
+      // fail-closed report this block exists to produce (#836, item 3).
+      const partial = isPartialRewriteResult(err) ? err : {}
       results.push({
         dir,
         rewritten: partial.rewritten ?? [],
         skipped: partial.skipped ?? [],
+        staged: partial.staged ?? [],
         error: message,
       })
     }

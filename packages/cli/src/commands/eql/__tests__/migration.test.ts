@@ -353,6 +353,92 @@ describe('eqlMigrationCommand — Drizzle', () => {
     )
   })
 
+  /**
+   * #836, item 2. A successful sweep used to be silent about the state it left
+   * behind: the database gains `email_encrypted`, while schema.ts and the
+   * drizzle-kit snapshot both still declare `email` as the domain and know
+   * nothing about the twin. `drizzle-kit generate` cannot surface that — it
+   * diffs schema.ts against the snapshot and those two still agree — so the
+   * command has to say it.
+   */
+  it('warns that schema.ts and the snapshot diverged after staging a twin', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    writeFileSync(
+      join(out, '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text);\n',
+    )
+    writeFileSync(
+      join(out, '0001_encrypt-email.sql'),
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE "undefined"."eql_v3_text_search";\n',
+    )
+    spawnMock.mockImplementation(() => {
+      writeFileSync(join(out, '0002_install-eql.sql'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+
+    await eqlMigrationCommand({ drizzle: true, out })
+
+    const warnings = clack.log.warn.mock.calls
+      .map((c) => String(c[0]))
+      .join('\n')
+    // Named precisely, not a generic "review your schema".
+    expect(warnings).toContain('users:')
+    expect(warnings).toContain('"email_encrypted" eql_v3_text_search')
+    // The three things the user cannot discover from the tooling.
+    expect(warnings).toContain('drizzle-kit generate` will NOT warn you')
+    expect(warnings).toContain('column already exists')
+    expect(warnings).toContain('SUCCEED')
+  })
+
+  // Warning, not a failure: the swept SQL is valid and additive, so the command
+  // must still succeed and still print its next-steps note.
+  it('does not exit non-zero merely because a twin was staged', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    writeFileSync(
+      join(out, '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text);\n',
+    )
+    writeFileSync(
+      join(out, '0001_encrypt-email.sql'),
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE "undefined"."eql_v3_text_search";\n',
+    )
+    spawnMock.mockImplementation(() => {
+      writeFileSync(join(out, '0002_install-eql.sql'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out }),
+    ).resolves.toBeUndefined()
+
+    expect(clack.log.error).not.toHaveBeenCalled()
+    expect(clack.log.success).toHaveBeenCalled()
+  })
+
+  // No rewrite means nothing diverged, so the notice must not fire — it would
+  // send the user editing a schema that is already consistent.
+  it('does not warn about reconciliation when nothing was staged', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    writeFileSync(
+      join(out, '0000_unrelated.sql'),
+      'CREATE TABLE "widgets" ("id" integer);\n',
+    )
+    spawnMock.mockImplementation(() => {
+      writeFileSync(join(out, '0001_install-eql.sql'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+
+    await eqlMigrationCommand({ drizzle: true, out })
+
+    const warnings = clack.log.warn.mock.calls
+      .map((c) => String(c[0]))
+      .join('\n')
+    expect(warnings).not.toContain('drizzle-kit generate` will NOT warn you')
+  })
+
   it('does not rewrite the EQL install migration it just generated', async () => {
     const out = join(tmp, 'drizzle')
     mkdirSync(out, { recursive: true })

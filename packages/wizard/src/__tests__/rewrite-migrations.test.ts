@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   describeSkipReason,
+  describeStagedReconciliation,
   rewriteEncryptedAlterColumns,
   sweepMigrationDirs,
 } from '../lib/rewrite-migrations.js'
@@ -1209,6 +1210,131 @@ describe('rewriteEncryptedAlterColumns', () => {
   })
 
   /**
+   * #836, item 2. The sweep repairs SQL and nothing else, so a successful
+   * rewrite leaves schema.ts, the drizzle-kit snapshot and the database
+   * three-way divergent — and `drizzle-kit generate` cannot surface it, because
+   * it diffs schema.ts against the snapshot and those two still agree. The
+   * rewriter therefore reports exactly what it staged so the caller can name it.
+   */
+  describe('staged reconciliation reporting', () => {
+    it('names the table, both columns and the domain it staged', async () => {
+      const create = path.join(tmpDir, '0000_create.sql')
+      fs.writeFileSync(
+        create,
+        'CREATE TABLE "users" ("email" text NOT NULL);\n',
+      )
+      const filePath = path.join(tmpDir, '0001_alter.sql')
+      fs.writeFileSync(
+        filePath,
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+      )
+
+      const { staged } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(staged).toEqual([
+        {
+          file: filePath,
+          schema: undefined,
+          table: 'users',
+          column: 'email',
+          encryptedColumn: 'email_encrypted',
+          domain: 'eql_v3_text_search',
+        },
+      ])
+    })
+
+    it('keeps the schema qualifier for a pgSchema() table', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_create.sql'),
+        'CREATE TABLE "app"."users" ("email" text NOT NULL);\n',
+      )
+      const filePath = path.join(tmpDir, '0001_alter.sql')
+      fs.writeFileSync(
+        filePath,
+        'ALTER TABLE "app"."users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+      )
+
+      const { staged } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(staged).toEqual([
+        {
+          file: filePath,
+          schema: 'app',
+          table: 'users',
+          column: 'email',
+          encryptedColumn: 'email_encrypted',
+          domain: 'eql_v3_text_search',
+        },
+      ])
+    })
+
+    // Finer-grained than `rewritten`, which lists FILES: one file can carry
+    // several ALTERs and each one stages its own twin.
+    it('records one entry per staged column, not per file', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_create.sql'),
+        'CREATE TABLE "users" ("email" text, "phone" text);\n',
+      )
+      const filePath = path.join(tmpDir, '0001_alter.sql')
+      fs.writeFileSync(
+        filePath,
+        [
+          'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;',
+          'ALTER TABLE "users" ALTER COLUMN "phone" SET DATA TYPE eql_v3_text_eq;',
+          '',
+        ].join('\n'),
+      )
+
+      const { rewritten, staged } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([filePath])
+      expect(staged.map((s) => s.encryptedColumn)).toEqual([
+        'email_encrypted',
+        'phone_encrypted',
+      ])
+      expect(staged.map((s) => s.domain)).toEqual([
+        'eql_v3_text_search',
+        'eql_v3_text_eq',
+      ])
+    })
+
+    // A statement the sweep refused to rewrite changed nothing on disk, so
+    // there is no divergence to reconcile and no notice to print.
+    it('stages nothing when every statement was skipped', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0001_alter.sql'),
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+      )
+
+      const { rewritten, skipped, staged } =
+        await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toHaveLength(1)
+      expect(staged).toEqual([])
+    })
+
+    it('describes the divergence, the silence, and the snapshot trap', async () => {
+      const lines = describeStagedReconciliation([
+        {
+          file: '/tmp/0001_alter.sql',
+          table: 'users',
+          column: 'email',
+          encryptedColumn: 'email_encrypted',
+          domain: 'eql_v3_text_search',
+        },
+      ]).join('\n')
+
+      expect(lines).toContain('"email_encrypted" eql_v3_text_search')
+      expect(lines).toContain('users:')
+      // The three things a user cannot discover on their own.
+      expect(lines).toContain('drizzle-kit generate` will NOT warn you')
+      expect(lines).toContain('column already exists')
+      expect(lines).toContain('SUCCEED')
+    })
+  })
+
+  /**
    * `dollarQuotedBodies` must track comment/string state itself. Asking
    * `isInsideCommentOrString` about each `$` is the obvious implementation and
    * is quadratic, because that predicate rescans from index 0 every call.
@@ -2183,6 +2309,10 @@ describe('sweepMigrationDirs', () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wizard-sweep-'))
+    // This describe shares the module-level writeFile spy with the one above,
+    // so restore the real implementation rather than inherit whatever the last
+    // test left behind.
+    fsPromisesWrite.spy.mockImplementation(fsPromisesWrite.real)
   })
 
   afterEach(() => {
@@ -2256,6 +2386,37 @@ describe('sweepMigrationDirs', () => {
 
     expect(results[0].dir).toBe('drizzle')
     expect(results[0].error).toBeDefined()
+    expect(results[1].rewritten).toEqual([path.join(abs, '0002_alter.sql')])
+  })
+
+  /**
+   * #836, item 3. The catch block used to read `err.rewritten` off an unchecked
+   * `err as Partial<RewriteSweepError>`. For a non-object throw that property
+   * read raises a `TypeError` INSIDE the catch, so `results.push` never runs and
+   * the throw escapes `sweepMigrationDirs` — the per-directory fail-closed
+   * report the catch exists to produce simply does not happen, and the later
+   * directories are never swept either.
+   *
+   * `fs/promises` does not throw non-Errors, so this is reached by forcing it.
+   * The CLI path was hardened against exactly this; the wizard was not.
+   */
+  it('still reports a directory whose sweep throws a non-object', async () => {
+    const broken = seedDir('drizzle', '0001_alter.sql')
+    const abs = seedDir('migrations', '0002_alter.sql')
+    fsPromisesWrite.spy.mockImplementation(async (file) => {
+      if (String(file).startsWith(broken)) throw null
+      return fsPromisesWrite.real(file, '')
+    })
+
+    const results = await sweepMigrationDirs(tmpDir, ['drizzle', 'migrations'])
+
+    // Reported, not escaped: the directory appears with an error…
+    expect(results[0].dir).toBe('drizzle')
+    expect(results[0].error).toBe('null')
+    expect(results[0].rewritten).toEqual([])
+    expect(results[0].skipped).toEqual([])
+    // …and the sweep carried on to the remaining candidates.
+    expect(results[1].dir).toBe('migrations')
     expect(results[1].rewritten).toEqual([path.join(abs, '0002_alter.sql')])
   })
 

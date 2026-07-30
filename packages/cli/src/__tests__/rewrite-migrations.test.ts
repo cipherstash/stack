@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   describeSkipReason,
+  describeStagedReconciliation,
   rewriteEncryptedAlterColumns,
 } from '../commands/db/rewrite-migrations.js'
 
@@ -1265,6 +1266,131 @@ describe('rewriteEncryptedAlterColumns', () => {
 
       expect(rewritten).toEqual([change])
       expect(skipped).toEqual([])
+    })
+  })
+
+  /**
+   * #836, item 2. The sweep repairs SQL and nothing else, so a successful
+   * rewrite leaves schema.ts, the drizzle-kit snapshot and the database
+   * three-way divergent — and `drizzle-kit generate` cannot surface it, because
+   * it diffs schema.ts against the snapshot and those two still agree. The
+   * rewriter therefore reports exactly what it staged so the caller can name it.
+   */
+  describe('staged reconciliation reporting', () => {
+    it('names the table, both columns and the domain it staged', async () => {
+      const create = path.join(tmpDir, '0000_create.sql')
+      fs.writeFileSync(
+        create,
+        'CREATE TABLE "users" ("email" text NOT NULL);\n',
+      )
+      const filePath = path.join(tmpDir, '0001_alter.sql')
+      fs.writeFileSync(
+        filePath,
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+      )
+
+      const { staged } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(staged).toEqual([
+        {
+          file: filePath,
+          schema: undefined,
+          table: 'users',
+          column: 'email',
+          encryptedColumn: 'email_encrypted',
+          domain: 'eql_v3_text_search',
+        },
+      ])
+    })
+
+    it('keeps the schema qualifier for a pgSchema() table', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_create.sql'),
+        'CREATE TABLE "app"."users" ("email" text NOT NULL);\n',
+      )
+      const filePath = path.join(tmpDir, '0001_alter.sql')
+      fs.writeFileSync(
+        filePath,
+        'ALTER TABLE "app"."users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+      )
+
+      const { staged } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(staged).toEqual([
+        {
+          file: filePath,
+          schema: 'app',
+          table: 'users',
+          column: 'email',
+          encryptedColumn: 'email_encrypted',
+          domain: 'eql_v3_text_search',
+        },
+      ])
+    })
+
+    // Finer-grained than `rewritten`, which lists FILES: one file can carry
+    // several ALTERs and each one stages its own twin.
+    it('records one entry per staged column, not per file', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_create.sql'),
+        'CREATE TABLE "users" ("email" text, "phone" text);\n',
+      )
+      const filePath = path.join(tmpDir, '0001_alter.sql')
+      fs.writeFileSync(
+        filePath,
+        [
+          'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;',
+          'ALTER TABLE "users" ALTER COLUMN "phone" SET DATA TYPE eql_v3_text_eq;',
+          '',
+        ].join('\n'),
+      )
+
+      const { rewritten, staged } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([filePath])
+      expect(staged.map((s) => s.encryptedColumn)).toEqual([
+        'email_encrypted',
+        'phone_encrypted',
+      ])
+      expect(staged.map((s) => s.domain)).toEqual([
+        'eql_v3_text_search',
+        'eql_v3_text_eq',
+      ])
+    })
+
+    // A statement the sweep refused to rewrite changed nothing on disk, so
+    // there is no divergence to reconcile and no notice to print.
+    it('stages nothing when every statement was skipped', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0001_alter.sql'),
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+      )
+
+      const { rewritten, skipped, staged } =
+        await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toHaveLength(1)
+      expect(staged).toEqual([])
+    })
+
+    it('describes the divergence, the silence, and the snapshot trap', async () => {
+      const lines = describeStagedReconciliation([
+        {
+          file: '/tmp/0001_alter.sql',
+          table: 'users',
+          column: 'email',
+          encryptedColumn: 'email_encrypted',
+          domain: 'eql_v3_text_search',
+        },
+      ]).join('\n')
+
+      expect(lines).toContain('"email_encrypted" eql_v3_text_search')
+      expect(lines).toContain('users:')
+      // The three things a user cannot discover on their own.
+      expect(lines).toContain('drizzle-kit generate` will NOT warn you')
+      expect(lines).toContain('column already exists')
+      expect(lines).toContain('SUCCEED')
     })
   })
 

@@ -8,7 +8,12 @@
 import { execSync } from 'node:child_process'
 import * as p from '@clack/prompts'
 import type { GatheredContext } from './gather.js'
-import { describeSkipReason, sweepMigrationDirs } from './rewrite-migrations.js'
+import {
+  describeSkipReason,
+  describeStagedReconciliation,
+  type StagedColumn,
+  sweepMigrationDirs,
+} from './rewrite-migrations.js'
 import type { DetectedPackageManager, Integration } from './types.js'
 
 interface PostAgentOptions {
@@ -69,14 +74,19 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
     // text/numeric to an EQL domain). Covers the EQL v3 family the wizard now
     // scaffolds, and legacy eql_v2_encrypted. CIP-2991 + CIP-2994 + #693.
     const sweep = await rewriteEncryptedMigrations(cwd)
-    const staged = sweep.rewritten > 0
+    const didStage = sweep.rewritten > 0
     const skipped = sweep.skipped > 0
     const unverified = sweep.failedDirs.length > 0
 
-    if (staged) {
+    if (didStage) {
       p.log.info(
         `Rewrote ${sweep.rewritten} migration file(s) in the drizzle output to add staged encrypted columns while preserving the source columns.`,
       )
+      // The rewrite repaired SQL only: the agent's schema edit still declares
+      // the SOURCE column as the encrypted domain, and drizzle-kit's snapshot
+      // agrees with it, so `drizzle-kit generate` sees no diff and says nothing
+      // (#836, item 2). Name the divergence while the user is still here.
+      p.log.warn(describeStagedReconciliation(sweep.staged).join('\n'))
     }
     if (skipped || unverified) {
       throw new Error(
@@ -85,7 +95,7 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
     }
 
     const shouldMigrate = await p.confirm({
-      message: staged
+      message: didStage
         ? `Run the migration now? (${runner} drizzle-kit migrate) — the generated migration adds staged encrypted columns and preserves the source column for the later backfill and application switch`
         : `Run the migration now? (${runner} drizzle-kit migrate)`,
       initialValue: true,
@@ -131,14 +141,30 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
 async function rewriteEncryptedMigrations(cwd: string): Promise<{
   rewritten: number
   skipped: number
+  staged: StagedColumn[]
   failedDirs: string[]
 }> {
   const results = await sweepMigrationDirs(cwd, DRIZZLE_OUT_DIRS)
-  const totals = { rewritten: 0, skipped: 0, failedDirs: [] as string[] }
+  const totals = {
+    rewritten: 0,
+    skipped: 0,
+    staged: [] as StagedColumn[],
+    failedDirs: [] as string[],
+  }
 
-  for (const { dir, rewritten, skipped, error, notDrizzleOutput } of results) {
+  for (const {
+    dir,
+    rewritten,
+    skipped,
+    staged,
+    error,
+    notDrizzleOutput,
+  } of results) {
     totals.rewritten += rewritten.length
     totals.skipped += skipped.length
+    // Accumulated across every directory, including one whose sweep later
+    // threw: those twins are already on disk and already divergent.
+    totals.staged.push(...staged)
 
     // Not a failure and not a risk — the directory belongs to some other tool,
     // so `drizzle-kit migrate` will not run it and the prompt below is

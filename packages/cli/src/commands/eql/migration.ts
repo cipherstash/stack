@@ -8,8 +8,10 @@ import { CliExit } from '@/cli/exit.js'
 import { printNextSteps, SAFE_MIGRATION_NAME } from '@/commands/db/install.js'
 import {
   describeSkipReason,
+  describeStagedReconciliation,
+  isPartialRewriteResult,
+  type PartialRewriteResult,
   rewriteEncryptedAlterColumns,
-  type SkippedAlter,
 } from '@/commands/db/rewrite-migrations.js'
 import {
   detectPackageManager,
@@ -21,32 +23,6 @@ import { messages } from '@/messages.js'
 
 const DEFAULT_MIGRATION_NAME = 'install-eql'
 const DEFAULT_DRIZZLE_OUT = 'drizzle'
-
-/**
- * What {@link rewriteEncryptedAlterColumns} attaches to the error when the
- * sweep throws partway through: the files it had already rewritten, and the
- * statements it had already flagged. Reported so a partial sweep names the
- * work it did rather than looking like it never ran (#786).
- */
-interface PartialRewriteResult {
-  rewritten?: string[]
-  skipped?: SkippedAlter[]
-}
-
-/**
- * The sweep can also fail with a non-`Error` throw — a string, `null`, anything
- * — in which case there is no partial result to report. Narrow rather than cast
- * so those cases fall through to the plain "could not sweep" message instead of
- * crashing on a property read of a non-object.
- */
-function isPartialRewriteResult(value: unknown): value is PartialRewriteResult {
-  if (typeof value !== 'object' || value === null) return false
-  const partial = value as Record<string, unknown>
-  return (
-    (partial.rewritten === undefined || Array.isArray(partial.rewritten)) &&
-    (partial.skipped === undefined || Array.isArray(partial.skipped))
-  )
-}
 
 /** Find the most recently generated Drizzle migration matching the name. */
 export async function findGeneratedMigration(
@@ -288,14 +264,22 @@ async function generateDrizzleEqlMigration(
   // it again at the closing note (below) — not just inline here.
   let sweepIncomplete = false
   try {
-    const { rewritten, skipped } = await rewriteEncryptedAlterColumns(outDir, {
-      skip: migrationPath,
-    })
+    const { rewritten, skipped, staged } = await rewriteEncryptedAlterColumns(
+      outDir,
+      { skip: migrationPath },
+    )
     if (rewritten.length > 0) {
       p.log.info(
         `Rewrote ${rewritten.length} migration file(s) to add staged encrypted columns while preserving the source columns:`,
       )
       for (const file of rewritten) p.log.step(`  - ${file}`)
+    }
+    // The rewrite repaired SQL only, so schema.ts and the drizzle-kit snapshot
+    // now disagree with the database — and `drizzle-kit generate` cannot see it
+    // (#836, item 2). Warn, rather than exit non-zero: the swept SQL is valid
+    // and additive, and the reconciliation is the user's editorial call.
+    if (staged.length > 0) {
+      p.log.warn(describeStagedReconciliation(staged).join('\n'))
     }
     if (skipped.length > 0) {
       sweepIncomplete = true
@@ -318,6 +302,11 @@ async function generateDrizzleEqlMigration(
         `Rewrote ${partial.rewritten.length} migration file(s) before the sweep stopped:`,
       )
       for (const file of partial.rewritten) p.log.step(`  - ${file}`)
+    }
+    // A partial sweep still staged real twins, so the same three-way divergence
+    // already exists for them.
+    if (partial.staged && partial.staged.length > 0) {
+      p.log.warn(describeStagedReconciliation(partial.staged).join('\n'))
     }
     if (partial.skipped && partial.skipped.length > 0) {
       p.log.warn(
