@@ -1,8 +1,8 @@
 ---
-'@cipherstash/prisma-next': minor
+'@cipherstash/stack-prisma': minor
 ---
 
-Make `@cipherstash/prisma-next` **EQL v3 only**. The EQL v2 surface is removed
+Make `@cipherstash/stack-prisma` **EQL v3 only**. The EQL v2 surface is removed
 entirely — install path, authoring constructors, runtime codecs, and the v2
 subpath exports.
 

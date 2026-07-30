@@ -1,5 +1,5 @@
 ---
-'@cipherstash/prisma-next': major
+'@cipherstash/stack-prisma': major
 ---
 
 **Breaking:** `CipherstashFromStackV3Options.encryptionConfig` — the config

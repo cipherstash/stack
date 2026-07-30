@@ -20,7 +20,7 @@ export const RELEASE_TRAIN_MANIFESTS = {
   '@cipherstash/stack': '../stack/package.json',
   '@cipherstash/stack-drizzle': '../stack-drizzle/package.json',
   '@cipherstash/stack-supabase': '../stack-supabase/package.json',
-  '@cipherstash/prisma-next': '../prisma-next/package.json',
+  '@cipherstash/stack-prisma': '../stack-prisma/package.json',
   '@cipherstash/wizard': '../wizard/package.json',
 } as const
 

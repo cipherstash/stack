@@ -130,7 +130,7 @@ export function detectDrizzle(cwd: string): boolean {
  * Return true when the project uses Prisma Next.
  *
  * Detected via a `prisma-next.config.*` at the cwd (fast path) or
- * a `@prisma-next/cli` / `@cipherstash/prisma-next` entry in
+ * a `@prisma-next/cli` / `@cipherstash/stack-prisma` entry in
  * package.json. Either signal alone is enough.
  */
 export function detectPrismaNext(cwd: string): boolean {
@@ -160,7 +160,7 @@ export function detectPrismaNext(cwd: string): boolean {
       ...pkg.peerDependencies,
       ...pkg.optionalDependencies,
     }
-    return '@prisma-next/cli' in deps || '@cipherstash/prisma-next' in deps
+    return '@prisma-next/cli' in deps || '@cipherstash/stack-prisma' in deps
   } catch {
     return false
   }

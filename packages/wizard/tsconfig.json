@@ -14,7 +14,7 @@
     // not include `node` by default, so without this the wizard's three
     // `auth.AutoStrategy` call sites fail to typecheck even though they run
     // fine — the wizard is a Node CLI and always loads the `node` branch.
-    // Matches `packages/stack`, `packages/prisma-next`, `packages/test-kit`,
+    // Matches `packages/stack`, `packages/stack-prisma`, `packages/test-kit`,
     // `packages/stack-drizzle` and `packages/stack-supabase`.
     "customConditions": ["node"],
 

@@ -36,7 +36,7 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
   ],
   prisma: [
     'stash-encryption',
-    'stash-prisma-next',
+    'stash-prisma',
     'stash-indexing',
     'stash-deployment',
     'stash-zerokms',

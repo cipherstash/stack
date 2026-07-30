@@ -1,5 +1,5 @@
 /**
- * Prisma Next config for the `@cipherstash/prisma-next` package itself.
+ * Prisma Next config for the `@cipherstash/stack-prisma` package itself.
  *
  * The extension package is treated as a self-contained "project" for
  * the CLI: `prisma-next contract emit` writes

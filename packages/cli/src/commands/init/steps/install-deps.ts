@@ -34,7 +34,7 @@ const CLI_PACKAGE = 'stash'
  * skew warning, silently reintroducing #661 for exactly the newest package.
  */
 export const INTEGRATION_ADAPTER_PACKAGES: Readonly<Record<string, string>> = {
-  'prisma-next': '@cipherstash/prisma-next',
+  'prisma-next': '@cipherstash/stack-prisma',
   drizzle: '@cipherstash/stack-drizzle',
   supabase: '@cipherstash/stack-supabase',
 }

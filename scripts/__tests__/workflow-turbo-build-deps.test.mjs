@@ -56,7 +56,7 @@ const WORKFLOWS = readdirSync(resolve(REPO_ROOT, '.github/workflows'))
  * not add to it. Route new steps through `turbo run` instead.
  */
 const KNOWN_BARE = new Set([
-  'pnpm --filter @cipherstash/prisma-next run typecheck',
+  'pnpm --filter @cipherstash/stack-prisma run typecheck',
   'pnpm --filter @cipherstash/wizard run typecheck',
 ])
 
@@ -110,7 +110,7 @@ function invokedTask(line) {
  * Only ever consult this for an UNFILTERED invocation. `pnpm --filter <pkg>
  * <task>` runs that package's script, so the root script's delegation says
  * nothing about it — reading it either way exempted a genuinely bare
- * `pnpm --filter @cipherstash/prisma-next-example test:e2e` purely because the
+ * `pnpm --filter @cipherstash/prisma-example test:e2e` purely because the
  * root happens to define `"test:e2e": "turbo run test:e2e"` (#787 review
  * follow-up).
  */

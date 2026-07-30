@@ -142,12 +142,12 @@ importers:
 
   examples/prisma:
     dependencies:
-      '@cipherstash/prisma-next':
-        specifier: workspace:*
-        version: link:../../packages/prisma-next
       '@cipherstash/stack':
         specifier: workspace:*
         version: link:../../packages/stack
+      '@cipherstash/stack-prisma':
+        specifier: workspace:*
+        version: link:../../packages/stack-prisma
       '@prisma-next/adapter-postgres':
         specifier: 0.16.0
         version: 0.16.0(typanion@3.14.0)(typescript@5.9.3)
@@ -374,100 +374,6 @@ importers:
         specifier: 4.62.2
         version: 4.62.2
 
-  packages/prisma-next:
-    dependencies:
-      '@cipherstash/eql':
-        specifier: 3.0.2
-        version: 3.0.2
-      '@cipherstash/stack':
-        specifier: workspace:*
-        version: link:../stack
-      '@prisma-next/contract':
-        specifier: 0.16.0
-        version: 0.16.0(typescript@5.9.3)
-      '@prisma-next/family-sql':
-        specifier: 0.16.0
-        version: 0.16.0(typescript@5.9.3)
-      '@prisma-next/framework-components':
-        specifier: 0.16.0
-        version: 0.16.0(typescript@5.9.3)
-      '@prisma-next/migration-tools':
-        specifier: 0.16.0
-        version: 0.16.0(typescript@5.9.3)
-      '@prisma-next/sql-contract':
-        specifier: 0.16.0
-        version: 0.16.0(typescript@5.9.3)
-      '@prisma-next/sql-operations':
-        specifier: 0.16.0
-        version: 0.16.0(typescript@5.9.3)
-      '@prisma-next/sql-relational-core':
-        specifier: 0.16.0
-        version: 0.16.0(typescript@5.9.3)
-      '@prisma-next/sql-runtime':
-        specifier: 0.16.0
-        version: 0.16.0(typescript@5.9.3)
-      '@prisma-next/ts-render':
-        specifier: 0.16.0
-        version: 0.16.0(typescript@5.9.3)
-      '@prisma-next/utils':
-        specifier: 0.16.0
-        version: 0.16.0(typescript@5.9.3)
-      arktype:
-        specifier: ^2.2.3
-        version: 2.2.3
-    devDependencies:
-      '@cipherstash/test-kit':
-        specifier: workspace:*
-        version: link:../test-kit
-      '@prisma-next/adapter-postgres':
-        specifier: 0.16.0
-        version: 0.16.0(typanion@3.14.0)(typescript@5.9.3)
-      '@prisma-next/cli':
-        specifier: 0.16.0
-        version: 0.16.0(typanion@3.14.0)(typescript@5.9.3)
-      '@prisma-next/driver-postgres':
-        specifier: 0.16.0
-        version: 0.16.0(typescript@5.9.3)
-      '@prisma-next/extension-author-tools':
-        specifier: 0.16.0
-        version: 0.16.0(typescript@5.9.3)
-      '@prisma-next/psl-parser':
-        specifier: 0.16.0
-        version: 0.16.0(typescript@5.9.3)
-      '@prisma-next/sql-contract-psl':
-        specifier: 0.16.0
-        version: 0.16.0(typescript@5.9.3)
-      '@prisma-next/sql-contract-ts':
-        specifier: 0.16.0
-        version: 0.16.0(typescript@5.9.3)
-      '@prisma-next/sql-schema-ir':
-        specifier: 0.16.0
-        version: 0.16.0(typescript@5.9.3)
-      '@prisma-next/target-postgres':
-        specifier: 0.16.0
-        version: 0.16.0(typanion@3.14.0)(typescript@5.9.3)
-      dotenv:
-        specifier: 17.4.2
-        version: 17.4.2
-      fast-check:
-        specifier: ^4.8.0
-        version: 4.9.0
-      pathe:
-        specifier: ^2.0.3
-        version: 2.0.3
-      postgres:
-        specifier: ^3.4.8
-        version: 3.4.9
-      tsup:
-        specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
-      typescript:
-        specifier: catalog:repo
-        version: 5.9.3
-      vitest:
-        specifier: catalog:repo
-        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
-
   packages/stack:
     dependencies:
       '@byteslice/result':
@@ -590,6 +496,100 @@ importers:
       fta-cli:
         specifier: 3.0.0
         version: 3.0.0
+      postgres:
+        specifier: ^3.4.8
+        version: 3.4.9
+      tsup:
+        specifier: catalog:repo
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: catalog:repo
+        version: 5.9.3
+      vitest:
+        specifier: catalog:repo
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+
+  packages/stack-prisma:
+    dependencies:
+      '@cipherstash/eql':
+        specifier: 3.0.2
+        version: 3.0.2
+      '@cipherstash/stack':
+        specifier: workspace:*
+        version: link:../stack
+      '@prisma-next/contract':
+        specifier: 0.16.0
+        version: 0.16.0(typescript@5.9.3)
+      '@prisma-next/family-sql':
+        specifier: 0.16.0
+        version: 0.16.0(typescript@5.9.3)
+      '@prisma-next/framework-components':
+        specifier: 0.16.0
+        version: 0.16.0(typescript@5.9.3)
+      '@prisma-next/migration-tools':
+        specifier: 0.16.0
+        version: 0.16.0(typescript@5.9.3)
+      '@prisma-next/sql-contract':
+        specifier: 0.16.0
+        version: 0.16.0(typescript@5.9.3)
+      '@prisma-next/sql-operations':
+        specifier: 0.16.0
+        version: 0.16.0(typescript@5.9.3)
+      '@prisma-next/sql-relational-core':
+        specifier: 0.16.0
+        version: 0.16.0(typescript@5.9.3)
+      '@prisma-next/sql-runtime':
+        specifier: 0.16.0
+        version: 0.16.0(typescript@5.9.3)
+      '@prisma-next/ts-render':
+        specifier: 0.16.0
+        version: 0.16.0(typescript@5.9.3)
+      '@prisma-next/utils':
+        specifier: 0.16.0
+        version: 0.16.0(typescript@5.9.3)
+      arktype:
+        specifier: ^2.2.3
+        version: 2.2.3
+    devDependencies:
+      '@cipherstash/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
+      '@prisma-next/adapter-postgres':
+        specifier: 0.16.0
+        version: 0.16.0(typanion@3.14.0)(typescript@5.9.3)
+      '@prisma-next/cli':
+        specifier: 0.16.0
+        version: 0.16.0(typanion@3.14.0)(typescript@5.9.3)
+      '@prisma-next/driver-postgres':
+        specifier: 0.16.0
+        version: 0.16.0(typescript@5.9.3)
+      '@prisma-next/extension-author-tools':
+        specifier: 0.16.0
+        version: 0.16.0(typescript@5.9.3)
+      '@prisma-next/psl-parser':
+        specifier: 0.16.0
+        version: 0.16.0(typescript@5.9.3)
+      '@prisma-next/sql-contract-psl':
+        specifier: 0.16.0
+        version: 0.16.0(typescript@5.9.3)
+      '@prisma-next/sql-contract-ts':
+        specifier: 0.16.0
+        version: 0.16.0(typescript@5.9.3)
+      '@prisma-next/sql-schema-ir':
+        specifier: 0.16.0
+        version: 0.16.0(typescript@5.9.3)
+      '@prisma-next/target-postgres':
+        specifier: 0.16.0
+        version: 0.16.0(typanion@3.14.0)(typescript@5.9.3)
+      dotenv:
+        specifier: 17.4.2
+        version: 17.4.2
+      fast-check:
+        specifier: ^4.8.0
+        version: 4.9.0
+      pathe:
+        specifier: ^2.0.3
+        version: 2.0.3
       postgres:
         specifier: ^3.4.8
         version: 3.4.9

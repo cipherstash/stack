@@ -1,4 +1,4 @@
-# Developing `@cipherstash/prisma-next`
+# Developing `@cipherstash/stack-prisma`
 
 Contributor-facing notes for the cipherstash extension. The user-facing
 surface lives in [`README.md`](./README.md); this file collects the
@@ -15,7 +15,7 @@ per-column search-mode flags.
 ## Source layout
 
 ```text
-packages/prisma-next/
+packages/stack-prisma/
 ├── src/
 │   ├── contract.prisma                  PSL contract source (models NO storage — v3
 │   │                                     declares none; the bundle creates the domains)

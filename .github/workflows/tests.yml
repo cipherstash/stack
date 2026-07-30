@@ -134,7 +134,7 @@ jobs:
       # Its tsconfig resolves stack subpaths to SOURCE, so no build step is
       # needed first.
       - name: Typecheck (prisma-next — enforces v3 operator-capability gating)
-        run: pnpm --filter @cipherstash/prisma-next run typecheck
+        run: pnpm --filter @cipherstash/stack-prisma run typecheck
 
       # `packages/bench` is a live importer of `@cipherstash/stack` and
       # `@cipherstash/stack-drizzle`, but it has no `test` script (its suites
@@ -181,7 +181,7 @@ jobs:
         run: pnpm exec turbo run typecheck --filter @cipherstash/nextjs
 
       - name: Typecheck (examples/prisma — guards the prisma-next importers)
-        run: pnpm exec turbo run typecheck --filter @cipherstash/prisma-next-example
+        run: pnpm exec turbo run typecheck --filter @cipherstash/prisma-example
 
       - name: Typecheck (e2e)
         run: pnpm exec turbo run typecheck --filter @cipherstash/e2e

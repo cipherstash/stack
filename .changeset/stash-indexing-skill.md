@@ -19,5 +19,5 @@ during an encryption rollout (after backfill, before switching reads).
 prompt — now install it for **every** integration (Drizzle, Supabase, Prisma
 Next, plain PostgreSQL) — the gap is cross-cutting.
 The existing per-integration skills gained pointers to it (including the
-missing `stash-prisma-next` one-line purpose in the setup prompt, which
+missing `stash-prisma` one-line purpose in the setup prompt, which
 previously rendered "(no description)").

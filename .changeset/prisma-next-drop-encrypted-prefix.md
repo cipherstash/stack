@@ -1,5 +1,5 @@
 ---
-'@cipherstash/prisma-next': minor
+'@cipherstash/stack-prisma': minor
 'stash': patch
 ---
 
@@ -22,5 +22,5 @@ Unchanged: the runtime value envelopes (`EncryptedString`, `EncryptedNumber`,
 `eql*` query operators. The legacy v2 constructors are removed elsewhere in
 this release.
 
-The `stash-prisma-next` skill is updated to the new names (skills ship in the
+The `stash-prisma` skill is updated to the new names (skills ship in the
 `stash` tarball).

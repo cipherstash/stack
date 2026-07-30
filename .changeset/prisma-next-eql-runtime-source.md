@@ -1,5 +1,5 @@
 ---
-'@cipherstash/prisma-next': minor
+'@cipherstash/stack-prisma': minor
 ---
 
 Source the EQL v3 install SQL from `@cipherstash/eql` at runtime instead of

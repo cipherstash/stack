@@ -1,4 +1,4 @@
-# Local Postgres for the @cipherstash/prisma-next example.
+# Local Postgres for the @cipherstash/stack-prisma example.
 #
 # Usage:
 #   docker compose up -d        # start

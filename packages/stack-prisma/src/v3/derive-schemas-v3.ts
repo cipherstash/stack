@@ -136,7 +136,7 @@ export function deriveStackSchemasV3(
         throw new Error(
           `deriveStackSchemasV3: column "${tableName}"."${columnName}" has v3 codec id "${codecId}" ` +
             `but nativeType "${nativeType}" maps to no eql/v3 factory. ` +
-            'Re-emit the contract with a current @cipherstash/prisma-next.',
+            'Re-emit the contract with a current @cipherstash/stack-prisma.',
         )
       }
       columns[columnName] = factory(columnName)

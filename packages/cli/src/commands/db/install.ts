@@ -197,7 +197,7 @@ export function prismaNextInstallGuard(
 ): string | null {
   if (options.force || !detectPrismaNext(cwd)) return null
   return (
-    `${messages.eql.prismaNextDetected} (found prisma-next.config.* or @cipherstash/prisma-next). ` +
+    `${messages.eql.prismaNextDetected} (found prisma-next.config.* or @cipherstash/stack-prisma). ` +
     'Prisma Next installs the EQL bundle through its own migration system — run ' +
     '`prisma-next migrate` instead of `stash eql install`. ' +
     'Pass --force to run the standalone installer against this database anyway.'

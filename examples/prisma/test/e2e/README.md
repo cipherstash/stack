@@ -1,6 +1,6 @@
 # Live PG + EQL v3 + ZeroKMS e2e harness
 
-This directory hosts the live-Postgres + EQL v3 bundle + ZeroKMS end-to-end harness for the @cipherstash/prisma-next example app. Seven `*.e2e.test.ts` files cover one domain or scenario each:
+This directory hosts the live-Postgres + EQL v3 bundle + ZeroKMS end-to-end harness for the @cipherstash/stack-prisma example app. Seven `*.e2e.test.ts` files cover one domain or scenario each:
 
 - `num.e2e.test.ts` — `eql_v3_double_ord` round-trip (decrypts to `EncryptedNumber`); `eqlGt`/`eqlGte`/`eqlLt`/`eqlLte`/`eqlBetween`; `eqlAsc`/`eqlDesc` order-term sort.
 - `bigint.e2e.test.ts` — `eql_v3_bigint_ord` round-trip **lossless beyond `Number.MAX_SAFE_INTEGER`** (native `bigint` pipeline); equality + range + in-array + sort.
@@ -14,7 +14,7 @@ This directory hosts the live-Postgres + EQL v3 bundle + ZeroKMS end-to-end harn
 
 ```bash
 docker compose -f test/e2e/docker-compose.yml up -d   # from examples/prisma
-pnpm --filter @cipherstash/prisma-next-example test:e2e
+pnpm --filter @cipherstash/prisma-example test:e2e
 ```
 
 The harness's Vitest global setup (`global-setup.ts`):

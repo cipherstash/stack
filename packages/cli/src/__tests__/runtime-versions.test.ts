@@ -70,7 +70,7 @@ describe('runtime-versions (explicit version map)', () => {
   const versions = {
     stash: '9.9.9-test.1',
     '@cipherstash/stack': '9.9.9-test.1',
-    '@cipherstash/prisma-next': '8.8.8-test.2',
+    '@cipherstash/stack-prisma': '8.8.8-test.2',
   }
 
   it('pins known packages to the release version', () => {
@@ -79,8 +79,8 @@ describe('runtime-versions (explicit version map)', () => {
     )
     // prisma-next versions on its own line — the map, not a shared constant,
     // is the source of truth.
-    expect(pinnedSpec('@cipherstash/prisma-next', versions)).toBe(
-      '@cipherstash/prisma-next@8.8.8-test.2',
+    expect(pinnedSpec('@cipherstash/stack-prisma', versions)).toBe(
+      '@cipherstash/stack-prisma@8.8.8-test.2',
     )
   })
 

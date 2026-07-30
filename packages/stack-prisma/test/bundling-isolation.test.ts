@@ -195,7 +195,7 @@ function isAllowedSharedChunk(chunk: string): boolean {
 }
 
 describe('bundling isolation', () => {
-  it('dist entry files exist (run `pnpm --filter @cipherstash/prisma-next build` first)', () => {
+  it('dist entry files exist (run `pnpm --filter @cipherstash/stack-prisma build` first)', () => {
     for (const entry of ENTRY_FILES) {
       expect(existsSync(join(DIST, entry)), `dist/${entry} is missing`).toBe(
         true,

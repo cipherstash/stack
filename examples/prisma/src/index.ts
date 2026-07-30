@@ -1,5 +1,5 @@
 /**
- * @cipherstash/prisma-next example — end-to-end demo (EQL v3).
+ * @cipherstash/stack-prisma example — end-to-end demo (EQL v3).
  *
  * Exercises one v3 domain per plaintext family, plus the
  * trait-dispatched predicate operators and the encrypted ORDER BY
@@ -47,7 +47,7 @@ import {
   EncryptedNumber,
   EncryptedString,
   eqlAsc,
-} from '@cipherstash/prisma-next/runtime'
+} from '@cipherstash/stack-prisma/runtime'
 
 import { db } from './db'
 

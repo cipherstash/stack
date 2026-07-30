@@ -75,12 +75,12 @@ jobs:
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
-      # Build via turbo so `^build` on `@cipherstash/prisma-next` and
+      # Build via turbo so `^build` on `@cipherstash/stack-prisma` and
       # its `@cipherstash/stack` peer is honoured. The test's
       # `pnpm install` subprocess inside `examples/prisma/` is a no-op
       # given the lockfile is already in steady state from this step.
-      - name: Build @cipherstash/prisma-next
-        run: pnpm exec turbo run build --filter @cipherstash/prisma-next
+      - name: Build @cipherstash/stack-prisma
+        run: pnpm exec turbo run build --filter @cipherstash/stack-prisma
 
       - name: Run README walkthrough e2e
         run: pnpm exec turbo run test:e2e --filter @cipherstash/e2e -- --run tests/prisma-example-readme.e2e.test.ts

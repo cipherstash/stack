@@ -983,7 +983,7 @@ Useful when the backfill needs to run in a worker, on a schedule, or alongside a
 |---|---|---|
 | Drizzle ORM | `@cipherstash/stack-drizzle` — v3 column factories (each `types.*` factory emits its domain as the column's SQL type for `drizzle-kit generate`), schema extraction, auto-encrypting operators (`ops.eq`, `ops.matches`, `ops.contains`, `ops.selector`, `ops.asc`, ...) | `stash-drizzle` |
 | Supabase | `encryptedSupabase` from `@cipherstash/stack-supabase` — schema-aware query builder (`eq`, `matches`, `contains`, `selectorEq`/`selectorNe`, ...) that works through PostgREST, including as `anon` | `stash-supabase` |
-| Prisma | `@cipherstash/prisma-next` — searchable field-level encryption for Postgres | — |
+| Prisma | `@cipherstash/stack-prisma` — searchable field-level encryption for Postgres | — |
 | DynamoDB | `encryptedDynamoDB` from `@cipherstash/stack/dynamodb` — encrypt is **EQL v3 only**; decrypt still reads existing v2 items | `stash-dynamodb` |
 
 ## Complete API Reference

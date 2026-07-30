@@ -41,7 +41,7 @@ export const installEqlStep: InitStep = {
     const integration = state.integration ?? 'postgresql'
 
     // Prisma Next ships the EQL bundle as a baseline migration inside
-    // `@cipherstash/prisma-next`. `prisma-next migrate` runs
+    // `@cipherstash/stack-prisma`. `prisma-next migrate` runs
     // it in the same control-plane sweep as the user's application
     // migrations — running `stash eql install` here would be a
     // duplicate install and would race with the framework's

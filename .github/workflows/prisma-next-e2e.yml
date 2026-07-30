@@ -1,6 +1,6 @@
 name: Prisma Next E2E
 
-# End-to-end tests for `@cipherstash/prisma-next`: spins up a real
+# End-to-end tests for `@cipherstash/stack-prisma`: spins up a real
 # Postgres container, applies the cipherstash baseline migration
 # (EQL bundle install) + the example app's schema, then runs the
 # suite at `examples/prisma/test/e2e/` against a live ZeroKMS
@@ -15,14 +15,14 @@ on:
     branches:
       - main
     paths:
-      - 'packages/prisma-next/**'
+      - 'packages/stack-prisma/**'
       - 'examples/prisma/**'
       - '.github/workflows/prisma-next-e2e.yml'
   pull_request:
     branches:
       - '**'
     paths:
-      - 'packages/prisma-next/**'
+      - 'packages/stack-prisma/**'
       - 'examples/prisma/**'
       - '.github/workflows/prisma-next-e2e.yml'
 
@@ -95,16 +95,16 @@ jobs:
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./examples/prisma/.env
 
       # Build via turbo so the `^build` dependency on
-      # `@cipherstash/stack` (which `@cipherstash/prisma-next` imports
+      # `@cipherstash/stack` (which `@cipherstash/stack-prisma` imports
       # `/schema` from) is honoured. A bare
-      # `pnpm --filter @cipherstash/prisma-next build` bypasses the
+      # `pnpm --filter @cipherstash/stack-prisma build` bypasses the
       # task graph and leaves the upstream dist/ empty, surfacing as
       # `Cannot find module '@cipherstash/stack/schema'` from tsc.
-      - name: Build @cipherstash/prisma-next
-        run: pnpm exec turbo run build --filter @cipherstash/prisma-next
+      - name: Build @cipherstash/stack-prisma
+        run: pnpm exec turbo run build --filter @cipherstash/stack-prisma
 
       - name: Emit example contract
-        run: pnpm --filter @cipherstash/prisma-next-example emit
+        run: pnpm --filter @cipherstash/prisma-example emit
 
       - name: Start E2E Postgres container
         working-directory: examples/prisma
@@ -121,7 +121,7 @@ jobs:
           done
 
       - name: Run E2E suite
-        run: pnpm exec turbo run test:e2e --filter @cipherstash/prisma-next-example --env-mode=loose
+        run: pnpm exec turbo run test:e2e --filter @cipherstash/prisma-example --env-mode=loose
 
       - name: Stop E2E Postgres container
         if: always()

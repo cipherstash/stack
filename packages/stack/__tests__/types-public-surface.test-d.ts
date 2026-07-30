@@ -9,7 +9,7 @@
  * - REMOVING a name breaks consumers who legitimately need to NAME a type that
  *   appears in a public signature (declaring a variable before the `await`,
  *   typing an adapter's parameter). `@cipherstash/stack-drizzle`,
- *   `@cipherstash/stack-supabase` and `@cipherstash/prisma-next` all import from
+ *   `@cipherstash/stack-supabase` and `@cipherstash/stack-prisma` all import from
  *   this subpath.
  * - ADDING a name is how the EQL v2 authoring surface comes back. `src/types.ts`
  *   still declares v2-shaped types — the client must keep DECRYPTING v2 payloads,

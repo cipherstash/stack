@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import cipherstash from '@cipherstash/prisma-next/control'
+import cipherstash from '@cipherstash/stack-prisma/control'
 import postgresAdapter from '@prisma-next/adapter-postgres/control'
 import { defineConfig } from '@prisma-next/cli/config-types'
 import postgresDriver from '@prisma-next/driver-postgres/control'
