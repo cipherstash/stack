@@ -1,8 +1,8 @@
 ---
-'@cipherstash/stack': patch
+'@cipherstash/stack-supabase': patch
 ---
 
-Fix the Supabase adapter's `.or()` string parser mis-splitting conditions, and pin `contains()` on a mixed union column key to the encrypted operand.
+Fix the Supabase adapter's `.or()` string parser mis-splitting conditions.
 
 An `.or()` string is only rebuilt from its parse when it references an encrypted column — otherwise the caller's string is forwarded verbatim — so each of these corrupts precisely the mixed encrypted/plaintext case.
 
@@ -15,5 +15,3 @@ An `.or()` string is only rebuilt from its parse when it references an encrypted
 **A parenthesized operand was read as a list for every operator.** Only `in` and the range operators (`ov`, `sl`, `sr`, `nxr`, `nxl`, `adj`) take a paren-delimited operand; elsewhere `(` is an ordinary character. `email.eq.(foo)` parsed as `['foo']` and encrypted a JS array rather than the string, matching nothing.
 
 **A string operand spelling `null`, `true` or `false` is now quoted.** PostgREST reads a bare `null` as SQL NULL, so `.or([{ column: 'name', op: 'eq', value: 'null' }])` emitted `name.eq.null` and compared against NULL instead of the three-character string.
-
-**`contains(col, …)` where `col` is a union spanning an encrypted and a plaintext column** accepted an array or object operand. The union is now only as permissive as its strictest member: any declared encrypted column in the union pins the operand to `string`. A literal column argument was never affected.

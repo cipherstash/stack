@@ -18,7 +18,7 @@ import {
   encryptedTable,
   isEncrypted,
   types,
-} from 'npm:@cipherstash/stack@^1.0.0-rc.3/wasm-inline'
+} from 'npm:@cipherstash/stack@1.0.0/wasm-inline'
 
 // EQL v3: the WASM entry exports the v3 authoring surface only (`types.*`),
 // not the v2 chainable builders — `encryptedColumn('email').equality()` is

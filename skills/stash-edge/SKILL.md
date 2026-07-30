@@ -56,15 +56,12 @@ build step.
 ```ts
 import {
   Encryption, encryptedTable, types, isEncrypted,
-} from 'npm:@cipherstash/stack@1.0.0-rc.4/wasm-inline'
+} from 'npm:@cipherstash/stack@1.0.0/wasm-inline'
 ```
 
 **Pin an exact version.** Deno caches by specifier, so an unpinned import
-drifts between deploys. And while the package is on a prerelease line, a
-caret range does not do what it looks like: `@^1.0.0` will **not** match
-`1.0.0-rc.4`, because semver ranges exclude prereleases unless the range
-itself names one. Use the exact version, or a prerelease-bearing range
-(`@^1.0.0-rc.4`). Check what is current with `npm view @cipherstash/stack dist-tags`.
+drifts between deploys — pin, and bump the pin deliberately. Check what is
+current with `npm view @cipherstash/stack dist-tags`.
 
 ### Deno with an import map
 
@@ -74,7 +71,7 @@ name everywhere:
 ```jsonc
 {
   "imports": {
-    "@cipherstash/stack/wasm-inline": "npm:@cipherstash/stack@1.0.0-rc.4/wasm-inline"
+    "@cipherstash/stack/wasm-inline": "npm:@cipherstash/stack@1.0.0/wasm-inline"
   }
 }
 ```

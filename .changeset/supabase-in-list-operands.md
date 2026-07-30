@@ -1,5 +1,5 @@
 ---
-'@cipherstash/stack': minor
+'@cipherstash/stack-supabase': minor
 ---
 
 Fix encrypted `in`-list operands in the Supabase adapter, and widen the `is` /
@@ -16,9 +16,7 @@ in.("{"v":1,"c":"…"}",…)
 ```
 
 Encrypted lists are now emitted through `filter(col, 'in', …)` with each element
-quoted and escaped, matching what the `.or()` path already did. This affects
-**v2 as well as v3** — v2's `("a@b.com")` composite literal is itself
-quote-bearing and was equally broken.
+quoted and escaped, matching what the `.or()` path already did.
 
 **`not(col, 'in', […])` encrypted the whole list as a single ciphertext**, so
 the filter silently matched nothing, and emitted an unparenthesized
@@ -30,11 +28,8 @@ array.
 **`filter(col, 'in', […])` encrypted the whole list as a single ciphertext.**
 The raw `.filter()` path reached `in` with none of the element-splitting the
 `in()`, `not(…, 'in', …)` and `.or()` paths perform, so the entire list operand
-was encrypted as one equality term. The two wire formats then failed
-differently, which is why this went unnoticed: **v2**'s `("json")` composite
-literal is already parenthesized, so PostgREST parsed it as a one-element list
-and answered `200 []` — a filter that silently matched nothing. **v3**'s bare
-`{…}` envelope is not, so PostgREST rejected the request outright with
+was encrypted as one equality term. A bare `{…}` envelope is not parenthesized,
+so PostgREST rejected the request outright with
 `PGRST100 (failed to parse filter)`.
 
 Each element is now encrypted separately and the operand rendered as a quoted
@@ -56,7 +51,8 @@ plaintext jsonb/array column falls through to PostgREST's native containment, so
 `contains('tags', ['vip'])` and `contains('meta', { plan: 'pro' })` now
 typecheck. A plaintext SCALAR column does not: `@>` is undefined on `text`, so
 the operand type follows the column's own shape and a scalar rejects every
-containment operand. Encrypted match columns still take a `string` token.
+containment operand. Encrypted free-text search is `matches()`, which takes a
+`string` token; `contains()` on an encrypted non-JSON column throws and names it.
 Relatedly, `.or([{ op: 'contains' }])` now emits PostgREST's `cs` operator for
 plaintext columns too — previously only encrypted conditions were translated, so
 a plaintext containment reached the wire as `.contains.` and failed to parse.
@@ -87,6 +83,6 @@ ciphertext.
 **In-list operands encrypt in one crossing per column.** The element-wise `in` /
 `not.in` encoding above spent one ZeroKMS round-trip per element; terms are now
 grouped by column and each group takes a single `bulkEncrypt` call, matching the
-Drizzle v3 path. Falls back to per-term encryption for clients without
+Drizzle path. Falls back to per-term encryption for clients without
 `bulkEncrypt`, and rejects a bulk response whose length does not match the list
 rather than silently truncating the predicate.

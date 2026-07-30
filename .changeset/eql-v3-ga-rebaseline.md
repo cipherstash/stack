@@ -8,7 +8,7 @@ Re-baseline EQL v3 on the eql-3.0.0 GA release and protect-ffi 0.29.
   eql-3.0.0 naming convention — flat, prefixed names in `public`
   (`public.eql_v3_text_search`, `public.eql_v3_integer_ord`, …) instead of the
   alpha-era bare names. Databases installed from an alpha bundle must be
-  re-installed (`stash eql install --eql-version 3` replaces the schema).
+  re-installed (`stash eql install` replaces the schema).
 - `encryptQuery` on the EQL v3 client now returns EQL v3 query operands
   (protect-ffi 0.29): term-only scalar operands for the `eql_v3.query_<name>`
   domains, the `eql_v3.query_jsonb` containment needle, and bare selector

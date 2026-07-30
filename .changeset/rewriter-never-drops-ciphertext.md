@@ -36,11 +36,8 @@ rather than rewritten, so the ADD+DROP+RENAME no longer drops a column that the
 migration corpus itself shows already holds ciphertext. That is a guarantee
 about what the corpus says, not about the database: the sweep reasons entirely
 from migration files, and a database that has drifted from its migration
-history is outside what it can see. `stash encrypt cutover` is the sharpest
-example — it renames columns directly in the database and never writes drizzle
-SQL, so the corpus can still describe a column as plaintext after cutover has
-made it ciphertext; the same is true of any change made by hand via psql or the
-Supabase dashboard. If your migration history is squashed, the column's
+history is outside what it can see: a column encrypted by hand via psql or the
+Supabase dashboard is still described as plaintext by the corpus. If your migration history is squashed, the column's
 `CREATE TABLE` lives outside the directory being swept, or the database has
 simply drifted from what the migrations describe, you will see the statement
 flagged instead of repaired: check the column's current type in the database

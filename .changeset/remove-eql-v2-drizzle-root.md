@@ -1,7 +1,5 @@
 ---
 '@cipherstash/stack-drizzle': major
-'@cipherstash/stack': patch
-'stash': patch
 ---
 
 Remove the EQL v2 authoring surface from `@cipherstash/stack-drizzle` and collapse the EQL v3 `./v3` subpath into the package root.
@@ -17,10 +15,3 @@ Remove the EQL v2 authoring surface from `@cipherstash/stack-drizzle` and collap
 The `types.*` column factories, `makeEqlV3Column` / `getEqlV3Column` / `isEqlV3Column`, the codec helpers (`v3ToDriver` / `v3FromDriver` / `EqlV3CodecError`), and `EncryptionOperatorError` are unchanged apart from moving to the root.
 
 Existing EQL v2 ciphertext remains decryptable via `@cipherstash/stack` — only the Drizzle-side v2 authoring and query-building is removed.
-
-**`stash` (patch):** `stash init --drizzle` now emits the package-root
-`extractEncryptionSchema` import. The bundled `stash-drizzle` and
-`stash-encryption` skills are updated to match.
-
-**`@cipherstash/stack` (patch):** README only — its Drizzle section now
-documents the final package-root exports.

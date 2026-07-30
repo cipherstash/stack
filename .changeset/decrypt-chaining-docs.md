@@ -49,15 +49,11 @@ other two to guess:
 object-shorthand that read as three required strings — `queryType` is inferred
 from the column's configured indexes.
 
-The cutover and complete-rollout **plan templates** now split EQL v3 from v2.
-Both described the v2 rename swap (`<col>` → `<col>_plaintext`, twin → `<col>`)
-as the only cutover path, so on the default v3 install `stash plan` drafted a
-plan built around `stash encrypt cutover` — a command that refuses v3 columns
-outright ("there is no rename step") and refuses entirely on a v3-only
-database, where `eql_v2_configuration` does not exist. The implement prompt
-already carried this split; the plan templates did not. The version is
-per-column, so the templates tell the agent to establish it per column rather
-than deciding once for the whole plan.
+The cutover and complete-rollout **plan templates** now describe the EQL v3
+rollout. Both described a rename swap (`<col>` → `<col>_plaintext`, twin →
+`<col>`) as the only cutover path, which EQL v3 does not have — the application
+switches to the encrypted column by name. The implement prompt already carried
+the v3 story; the plan templates did not.
 
 The "already encrypted" stop-and-ask now recognises `eql_v3_*` domains
 alongside the legacy `eql_v2_encrypted` udt, so it can fire on the default
