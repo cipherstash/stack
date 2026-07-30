@@ -6,13 +6,11 @@ import { MIGRATIONS_SCHEMA_SQL } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
 import { CliExit } from '@/cli/exit.js'
 import { printNextSteps, SAFE_MIGRATION_NAME } from '@/commands/db/install.js'
+import { rewriteEncryptedAlterColumns } from '@/commands/db/rewrite-migrations.js'
 import {
-  describeSkipReason,
-  describeStagedReconciliation,
-  isPartialRewriteResult,
-  type PartialRewriteResult,
-  rewriteEncryptedAlterColumns,
-} from '@/commands/db/rewrite-migrations.js'
+  reportSweepFailure,
+  reportSweepResult,
+} from '@/commands/eql/sweep-report.js'
 import {
   detectPackageManager,
   execArgv,
@@ -267,64 +265,13 @@ async function generateDrizzleEqlMigration(
   // it again at the closing note (below) — not just inline here.
   let sweepIncomplete = false
   try {
-    const { rewritten, skipped, staged } = await rewriteEncryptedAlterColumns(
-      outDir,
-      { skip: migrationPath },
+    sweepIncomplete = reportSweepResult(
+      await rewriteEncryptedAlterColumns(outDir, { skip: migrationPath }),
     )
-    if (rewritten.length > 0) {
-      p.log.info(
-        `Rewrote ${rewritten.length} migration file(s) to add staged encrypted columns while preserving the source columns:`,
-      )
-      for (const file of rewritten) p.log.step(`  - ${file}`)
-    }
-    // The rewrite repaired SQL only, so schema.ts and the drizzle-kit snapshot
-    // now disagree with the database — and `drizzle-kit generate` cannot see it
-    // (#836, item 2). Warn, rather than exit non-zero: the swept SQL is valid
-    // and additive, and the reconciliation is the user's editorial call.
-    if (staged.length > 0) {
-      p.log.warn(describeStagedReconciliation(staged).join('\n'))
-    }
-    if (skipped.length > 0) {
-      sweepIncomplete = true
-      p.log.warn(
-        `Found ${skipped.length} ALTER-to-encrypted statement(s) the sweep left alone. Review and fix them before running your migrations:`,
-      )
-      for (const { file, statement, reason } of skipped) {
-        p.log.step(`  - ${file}: ${statement}`)
-        p.log.step(`      ${describeSkipReason(reason)}`)
-      }
-    }
   } catch (error) {
     // Advisory: the install migration itself is already written and valid.
     sweepIncomplete = true
-    const partial: PartialRewriteResult = isPartialRewriteResult(error)
-      ? error
-      : {}
-    if (partial.rewritten && partial.rewritten.length > 0) {
-      p.log.info(
-        `Rewrote ${partial.rewritten.length} migration file(s) before the sweep stopped:`,
-      )
-      for (const file of partial.rewritten) p.log.step(`  - ${file}`)
-    }
-    // A partial sweep still staged real twins, so the same three-way divergence
-    // already exists for them.
-    if (partial.staged && partial.staged.length > 0) {
-      p.log.warn(describeStagedReconciliation(partial.staged).join('\n'))
-    }
-    if (partial.skipped && partial.skipped.length > 0) {
-      p.log.warn(
-        `Found ${partial.skipped.length} ALTER-to-encrypted statement(s) the sweep left alone. Review and fix them before running your migrations:`,
-      )
-      for (const { file, statement, reason } of partial.skipped) {
-        p.log.step(`  - ${file}: ${statement}`)
-        p.log.step(`      ${describeSkipReason(reason)}`)
-      }
-    }
-    p.log.warn(
-      `Could not sweep ${outDir} for unsafe ALTER COLUMN statements: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    )
+    reportSweepFailure(outDir, error)
   }
 
   if (sweepIncomplete) {

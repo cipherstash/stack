@@ -18,6 +18,7 @@ describe('per-command --help', () => {
     expect(r.output).toContain('Usage: npx stash eql <command> [options]')
     expect(r.output).toContain('eql install')
     expect(r.output).toContain('eql migration')
+    expect(r.output).toContain('eql repair')
     expect(r.output).toContain('eql upgrade')
     expect(r.output).toContain('eql status')
     // A group listing must NOT be the global banner.
@@ -43,6 +44,17 @@ describe('per-command --help', () => {
     expect(r.output).not.toContain('--eql-version')
     expect(r.output).not.toContain('--latest')
     expect(r.output).toContain('Also settable via DATABASE_URL.')
+  })
+
+  it('renders full command help for `eql repair --help`', async () => {
+    const r = await run(['eql', 'repair', '--help'], {
+      env: { npm_config_user_agent: '' },
+    })
+    expect(r.exitCode).toBe(0)
+    expect(r.output).toContain('Usage: npx stash eql repair [options]')
+    expect(r.output).toContain('--drizzle')
+    expect(r.output).toContain('--dry-run')
+    expect(r.output).toContain('--database-url')
   })
 
   it('honours the `-h` short flag after a command', async () => {

@@ -84,6 +84,95 @@ export const messages = {
     /** `--name` carried characters outside `[A-Za-z0-9_-]`. */
     migrationBadName:
       'Migration name must contain only letters, numbers, dashes, and underscores.',
+    /** `stash eql repair` with no `--drizzle` target. */
+    repairNeedsTarget: 'Specify a target: `stash eql repair --drizzle`.',
+    /** `--out` (or its `drizzle` default) points at a directory that isn't there. */
+    repairOutMissing: (outDir: string) =>
+      `Drizzle output directory not found: ${outDir}\nPass --out <dir> so it matches your drizzle.config.ts.`,
+    /**
+     * The sweep left statements it could not rewrite. Fail closed, exactly as
+     * `eql migration --drizzle` does: the remaining SQL still fails at migrate
+     * time, so a zero exit would tell CI the repair had succeeded.
+     */
+    repairSweepIncomplete: (outDir: string) =>
+      `The ALTER COLUMN sweep found unsafe or unverified SQL in ${outDir}. Review the statements above and use the staged stash encrypt lifecycle before running drizzle-kit migrate.`,
+    /**
+     * The dry-run stand-in for `describeStagedReconciliation`, which is written
+     * in the past tense and would otherwise claim a column exists that no
+     * migration has added yet.
+     */
+    repairDryRunStaged: (count: number) =>
+      `Would stage ${count} encrypted column(s). Re-run without --dry-run to apply the repair — the reconciliation your Drizzle schema and drizzle-kit snapshot then need is printed at that point.`,
+    /**
+     * Lead line for migrations left alone because the database has already run
+     * them. A distinct outcome from the sweep's `skipped` near-misses: those
+     * are statements the rewriter could not understand, this is one it
+     * understood perfectly and must not act on.
+     */
+    repairAppliedRefused: (count: number) =>
+      `Left ${count} ALREADY APPLIED migration(s) untouched. They carry ALTER-to-encrypted statements, but rewriting an applied migration is not a repair:`,
+    /**
+     * Why an applied migration is refused, and what to do instead. Named
+     * separately so the e2e/unit assertions pin the hazard, not the phrasing
+     * around it.
+     */
+    repairAppliedHazard:
+      'the database already has whatever this migration did, so rewriting its .sql leaves the file describing a shape that database never got from it — a fresh CI or staging database replaying the rewritten file would silently diverge from this one. Reconcile the environments by hand instead, and move the column onto the encrypted twin through the staged `stash encrypt` lifecycle.',
+    /**
+     * The applied-state probe could not run. Fail closed: the user asked to be
+     * protected from rewriting applied migrations, and a silent fallback to
+     * "nothing is applied" would hand them the drift they were avoiding.
+     */
+    repairAppliedCheckFailed: (detail: string) =>
+      `Could not check which migrations have been applied: ${detail}\nNothing was rewritten. Fix the connection and re-run, or re-run without --database-url to repair unverified (see the warning that prints in that mode).`,
+    /**
+     * `--migrations-table` is not a plain `[schema.]table`. Rejected before
+     * connecting: the value is quoted before it reaches SQL, so it cannot break
+     * out, but a malformed one would query a relation that cannot exist and the
+     * resulting `undefined_table` would be read as an absent ledger — silently
+     * downgrading the check the flag was passed to get.
+     */
+    repairMigrationsTableInvalid: (value: string) =>
+      `--migrations-table must be a table name, optionally schema-qualified (e.g. \`my_migrations\` or \`audit.my_migrations\`). Got: ${value}`,
+    /**
+     * The ledger relation is not there. Ambiguous, and deliberately NOT the
+     * confident `repairNothingApplied`: either `drizzle-kit migrate` never ran
+     * against this database, or the project overrode `migrations.table` /
+     * `migrations.schema` in drizzle.config.ts and the probe queried the wrong
+     * relation. Claiming "nothing applied" for the second case would rewrite
+     * applied migrations while reporting the check as clean.
+     */
+    repairLedgerMissing: (relation: string) =>
+      `Could not verify which migrations have been applied: ${relation} does not exist. Either drizzle-kit migrate has never run against this database — in which case there is nothing applied and this repair is safe — or your drizzle.config.ts sets migrations.table / migrations.schema, and the check looked in the wrong place. If it does, re-run with --migrations-table <[schema.]table> naming your ledger. Repairing anyway.`,
+    /** Nothing in `drizzle.__drizzle_migrations` — every migration is fair game. */
+    repairNothingApplied:
+      'No applied migrations found in drizzle.__drizzle_migrations — every migration in this directory can be repaired.',
+    /** How many of the journal's migrations the database has already run. */
+    repairAppliedCount: (count: number) =>
+      `${count} migration(s) already applied to this database; they will not be rewritten.`,
+    /**
+     * No database URL, so the applied-state check did not run.
+     *
+     * The default is to proceed. The journal proves a migration EXISTS, not
+     * that it ran, and refusing everything on that ambiguity would make the
+     * command useless in exactly the flow it exists for — a broken migration
+     * that failed on apply, in a project whose database may not be reachable
+     * from where the repair is being run. So: warn loudly, name the one case
+     * that is genuinely unsafe, and tell the user how to get the check.
+     */
+    repairAppliedUnverified:
+      'Could not verify which migrations have been applied: no --database-url and no DATABASE_URL. The journal shows that a migration EXISTS, not that it ran. Almost every ALTER-to-encrypted statement is un-runnable and so cannot have been applied — the exception is a jsonb column changed to an EQL domain on an empty table, which applies successfully. If you have run drizzle-kit migrate since generating these migrations, re-run with --database-url so applied migrations are left alone.',
+    /** A clean sweep — said out loud so silence never reads as "did not run". */
+    repairNothingToDo:
+      'Nothing to repair: no unsafe ALTER-to-encrypted statements found.',
+    /**
+     * The drizzle journal is missing or unparseable. `detail` names the file and
+     * the underlying reason. Fail closed: the journal is the only offline record
+     * of which migrations exist and when each was generated, so without it the
+     * applied-state check cannot run and a rewrite would be blind.
+     */
+    repairJournalUnreadable: (detail: string) =>
+      `${detail}\nstash eql repair needs drizzle-kit's meta/_journal.json to tell which migrations have already been applied. Check that --out points at your drizzle-kit output directory.`,
   },
   db: {
     unknownSubcommand: 'Unknown db subcommand',

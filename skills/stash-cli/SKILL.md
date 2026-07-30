@@ -1,6 +1,6 @@
 ---
 name: stash-cli
-description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql install/upgrade/status`, `db validate`, `encrypt backfill/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, credential rules, and the staged EQL v3 rollout lifecycle.
+description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql install/migration/repair/upgrade/status`, `db validate`, `encrypt backfill/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, credential rules, and the staged EQL v3 rollout lifecycle.
 ---
 
 # CipherStash CLI (`stash`)
@@ -335,6 +335,7 @@ Flags below are the decision-relevant ones. Run `stash <command> --help` for the
 ```bash
 stash eql install
 stash eql migration --drizzle
+stash eql repair --drizzle
 stash eql upgrade
 stash eql status
 ```
@@ -381,6 +382,37 @@ After writing the migration, `--drizzle` sweeps the output directory for sibling
 The sweep is fail-closed: it rewrites a statement only when the same directory also contains the `CREATE TABLE` or `ADD COLUMN` that declared the column, and the column is not already encrypted **in the corpus**. Declarations inside a `DO $$ … END $$;` block count toward "already encrypted" — that DDL really executes — but a *plaintext* declaration inside one does not count as declaring the column, since the block may be conditional. That is a guarantee about what the migration files say, not about the live database — the sweep never queries the database, so a column that has drifted from its migration history (altered by hand via psql or the Supabase dashboard, or changed by dynamic `EXECUTE` SQL the sweep cannot read) can already hold ciphertext while the corpus still describes it as plaintext. A statement it cannot place — the declaration lives in another migration directory, or the history was squashed — is listed as needing review rather than rewritten, and the command exits non-zero if any such statement remains. Check the column's actual type in the database before applying a flagged or corpus-cleared rewrite by hand.
 
 **After a successful sweep, reconcile your ORM schema.** The rewrite repairs SQL only, so the database ends up with both `email` (unchanged, still plaintext) and `email_encrypted`, while your `schema.ts` and drizzle-kit's `meta/*_snapshot.json` both still declare `email` as the encrypted domain and know nothing about the twin. `drizzle-kit generate` will **not** warn you: it diffs your schema against its snapshot, reads neither the `.sql` nor the database, and those two still agree. The command prints the divergence per column, naming the table, both columns and the domain. Until you reconcile it, reads of the source column hand plaintext to a decrypt path expecting an EQL envelope, writes store an EQL envelope in a plaintext column and *succeed*, and the new encrypted column is unreachable through the ORM. See `skills/stash-drizzle` for the reconciliation, including the step that is easy to miss: because the snapshot has never seen the encrypted twin, `drizzle-kit generate` **always** emits an `ADD COLUMN` for it, and the swept migration already adds that column — so the regenerated statement has to be deleted (or made `IF NOT EXISTS`) or migrate fails with `column already exists`.
+
+The sweep runs *after* the install migration is written, so it only sees migrations that already exist. The broken `ALTER COLUMN` is normally generated later, by your next `drizzle-kit generate` — use `eql repair` for that, rather than regenerating an install migration you do not need.
+
+#### `eql repair`
+
+Runs the same sweep as `eql migration --drizzle`, standalone: it repairs an existing migration directory without generating anything. This is the command for the usual failure — `drizzle-kit generate` emitted an in-place `ALTER COLUMN … SET DATA TYPE <eql_v3_*>` after EQL was installed, and `drizzle-kit migrate` fails on it.
+
+```bash
+stash eql repair --drizzle                                  # sweep drizzle/
+stash eql repair --drizzle --dry-run                        # preview; writes nothing
+stash eql repair --drizzle --out db/migrations \
+  --database-url postgres://…                               # skip already-applied migrations
+```
+
+| Flag | Description |
+|---|---|
+| `--drizzle` | Required. Repair a Drizzle migration directory. |
+| `--out <path>` | Directory to sweep. Default `drizzle`; set it to match your `drizzle.config.ts`. |
+| `--dry-run` | Report what would be rewritten without writing anything. |
+| `--database-url <url>` | Check which migrations the database has already applied, and leave those alone. Also read from `DATABASE_URL`. |
+| `--migrations-table <[schema.]table>` | Drizzle's migration ledger, when `drizzle.config.ts` overrides `migrations.table` / `migrations.schema`. Defaults to `drizzle.__drizzle_migrations`. Only read alongside `--database-url`. |
+
+What it rewrites, what it refuses, and the schema reconciliation afterwards are identical to the `eql migration --drizzle` sweep above — both call the same rewriter and print the same report. It exits non-zero if any statement is left unrepaired.
+
+**Already-applied migrations are refused, not repaired.** Nearly every ALTER-to-encrypted statement is un-runnable, so its migration failed and is safe to rewrite. The exception is a `jsonb` column changed to an EQL domain on an empty table: base types are compatible, so it applies. Rewriting that migration afterwards leaves its `.sql` describing a shape the database never got from it, and a fresh CI or staging database replaying the rewritten file diverges from the one you developed on — silently, since nothing records that they should differ. With `--database-url`, repair reads `drizzle.__drizzle_migrations` and treats a migration as applied when its journal `when` is at or below the latest `created_at` — the same timestamp comparison `drizzle-kit migrate` itself makes (hashes are written but never compared). Applied migrations are listed and left untouched, and the command exits non-zero.
+
+Without a database URL the repair proceeds and warns that applied state could not be verified: the journal proves a migration exists, not that it ran. Pass `--database-url` whenever you have run `drizzle-kit migrate` since generating the migrations. If the check is requested but cannot run (connection refused, bad credentials), nothing is rewritten and the command exits non-zero rather than silently repairing unverified.
+
+**If `drizzle.config.ts` overrides `migrations.table` / `migrations.schema`, pass `--migrations-table`.** The probe cannot discover a renamed ledger, and a missing one is ambiguous — it means either `drizzle-kit migrate` never ran here, or the check looked in the wrong place. Repair reports that state as *unverified* rather than as "nothing applied" and says which relation it tried, so a custom-ledger project is never told its applied migrations are safe to rewrite. Naming the ledger turns the check back on. The value must be a plain table name, optionally schema-qualified; anything else is rejected before connecting.
+
+An applied migration carrying a statement the sweep would have skipped anyway — an undeclared source column, an already-encrypted one, an existing twin — is reported with that skip reason, not as an applied-migration refusal. Its applied-ness is not why it was left alone.
 
 #### `eql upgrade`
 

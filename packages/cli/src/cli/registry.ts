@@ -361,6 +361,54 @@ export const registry: CommandGroup[] = [
         ],
       },
       {
+        name: 'eql repair',
+        summary:
+          'Repair migrations drizzle-kit generated with an un-runnable ALTER COLUMN to an encrypted type',
+        long: [
+          'Sweep an existing Drizzle output directory for in-place',
+          '`ALTER COLUMN ... SET DATA TYPE <eql domain>` statements — which cannot run,',
+          'because Postgres has no cast from text/numeric to an EQL domain — and rewrite',
+          'each into an additive encrypted column that preserves the source column.',
+          '',
+          'This is the same sweep `eql migration --drizzle` runs, without having to',
+          'generate an EQL install migration you do not want just to trigger it.',
+          '',
+          'Migrations the database has already applied are reported and left alone:',
+          'rewriting one would leave its .sql describing a shape that database never got',
+          'from it, so a fresh CI or staging database replaying the file would silently',
+          'diverge. Pass --database-url so that check can run; without it the repair',
+          'proceeds and warns that applied state could not be verified. If your',
+          'drizzle.config.ts overrides `migrations.table` / `migrations.schema`, name',
+          'the ledger with --migrations-table — otherwise the check queries the default',
+          'relation, finds nothing, and reports applied state as unverified.',
+        ].join('\n'),
+        examples: [
+          'eql repair --drizzle',
+          'eql repair --drizzle --dry-run',
+          'eql repair --drizzle --out db/migrations --database-url postgres://…',
+        ],
+        flags: [
+          {
+            name: '--drizzle',
+            description: 'Repair a Drizzle migration directory.',
+          },
+          {
+            name: '--out',
+            value: '<path>',
+            description:
+              'Directory holding the migrations to sweep. Defaults to `drizzle`; set it to match your drizzle.config.ts.',
+          },
+          {
+            name: '--migrations-table',
+            value: '<[schema.]table>',
+            description:
+              "Drizzle's migration ledger, when drizzle.config.ts overrides `migrations.table` / `migrations.schema`. Defaults to `drizzle.__drizzle_migrations`. Only read with --database-url.",
+          },
+          DRY_RUN_FLAG,
+          DATABASE_URL_FLAG,
+        ],
+      },
+      {
         name: 'eql upgrade',
         summary: 'Upgrade EQL extensions to the latest version',
         flags: [DRY_RUN_FLAG, SUPABASE_COMPAT_FLAG, DATABASE_URL_FLAG],
