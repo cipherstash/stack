@@ -89,12 +89,7 @@ export const messages = {
     /** `--out` (or its `drizzle` default) points at a directory that isn't there. */
     repairOutMissing: (outDir: string) =>
       `Drizzle output directory not found: ${outDir}\nPass --out <dir> so it matches your drizzle.config.ts.`,
-    /**
-     * The drizzle journal is missing or unparseable. `detail` names the file and
-     * the underlying reason. Fail closed: the journal is the only offline record
-     * of which migrations exist and when each was generated, so without it the
-     * applied-state check cannot run and a rewrite would be blind.
-     */
+    // The drizzle journal is missing or unparseable (see repairJournalUnreadable below).
     /**
      * The sweep left statements it could not rewrite. Fail closed, exactly as
      * `eql migration --drizzle` does: the remaining SQL still fails at migrate
