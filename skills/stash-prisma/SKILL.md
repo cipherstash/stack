@@ -33,7 +33,7 @@ capability semantics; this skill covers the Prisma-Next-specific surface.
 npm install @cipherstash/stack @cipherstash/stack-prisma
 ```
 
-Or run `npx stash init --prisma-next`, which detects Prisma Next, installs both
+Or run `npx stash init --prisma`, which detects Prisma Next, installs both
 packages pinned to the CLI release, and authenticates. It does **not** scaffold
 the wiring files — Prisma Next derives its schema from `contract.json`, so there
 is no encryption-client file to generate; init prints the next steps (declare
@@ -164,7 +164,7 @@ The apply command is the top-level `prisma-next migrate` (add `--yes` to skip th
 confirmation prompt in CI). There is no `prisma-next migration apply` subcommand.
 
 Do **not** run `stash eql install` for a Prisma Next project — `prisma-next
-migrate` owns EQL installation, and `stash init --prisma-next` skips the
+migrate` owns EQL installation, and `stash init --prisma` skips the
 standalone installer for exactly this reason. The CLI enforces this: `stash eql
 install` detects a Prisma Next project and refuses (pointing you at `prisma-next
 migrate`) unless you pass `--force`.

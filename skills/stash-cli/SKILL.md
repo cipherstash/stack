@@ -32,8 +32,9 @@ Do **not** trigger when:
 The entry point, for humans and agents alike:
 
 ```bash
-npx stash init              # PostgreSQL / Drizzle / Prisma
+npx stash init              # PostgreSQL / Drizzle / Prisma (auto-detected)
 npx stash init --supabase   # Supabase
+npx stash init --prisma     # Prisma Next
 ```
 
 `stash init` installs the CLI as a project dev dependency, so subsequent commands can drop the `npx`. The CLI is package-manager aware — before init, use whichever one-shot runner your project uses (`npx`, `pnpm dlx`, `bunx`, `yarn dlx`). Installs are **pinned to the exact `@cipherstash/*` versions this CLI release shipped with** (never bare dist-tags, which can lag behind a release), and init flags any already-installed `@cipherstash/*` package whose resolved version differs from the release's. The fix depends on direction, and init says which applies: an **older** install should be aligned to the release (init offers the exact command); a **newer** install must NOT be downgraded — update the `stash` CLI to the matching release instead (init prints that command too). **Non-interactively, an older ("behind") skew is fatal** — init refuses with a non-zero exit and the align command rather than scaffolding against mismatched packages and reporting a false success. Interactively it offers to align. Likewise, if the EQL extension isn't installed at the end, init reports **"Setup incomplete"** and exits non-zero — it never claims a setup is complete when encryption would fail at query time. Integrations that install EQL through a migration are the exception and exit 0: **Prisma Next** installs it via the top-level `prisma-next migrate`, and the **Drizzle** flow *generates* an EQL migration, which init reports honestly as "EQL migration generated — apply it with `drizzle-kit migrate`" rather than claiming the extension is already installed.
@@ -100,7 +101,7 @@ The working loop is:
 
 **Authenticate before `stash init`.** Init's authenticate step uses the interactive path, so an agent running `init` unauthenticated makes the CLI try to open a browser on the agent's machine — and in a non-TTY it exits with `region_required` unless `--region` or `STASH_REGION` is set. Once a valid token exists, init logs `Using workspace X (region)` and moves on silently.
 
-Flags: `--region <slug>` (env `STASH_REGION`), `--json`, `--no-open`, `--supabase` / `--drizzle` (referrer tracking only).
+Flags: `--region <slug>` (env `STASH_REGION`), `--json`, `--no-open`, `--supabase` / `--drizzle` / `--prisma` (referrer tracking only).
 
 ## Never read these
 
@@ -221,16 +222,16 @@ Six mechanical steps, no agent handoff. It prompts only when it can't pick a sen
 
 1. **Authenticate** — silent when a valid token exists.
 2. **Resolve database** — per the resolution order above; verifies the connection.
-3. **Build schema** — auto-detects Drizzle, Supabase, and Prisma Next and writes the placeholder encryption client.
+3. **Build schema** — auto-detects Drizzle, Supabase, and Prisma Next and writes the placeholder encryption client. **Prisma Next is the exception:** it derives schemas from `contract.json`, so no encryption-client file is written and none is needed.
 4. **Install dependencies** — one combined prompt for `@cipherstash/stack` and `stash`.
 5. **Install EQL** — always EQL v3. Drizzle generates `eql migration --drizzle`; Prisma Next installs through `prisma-next migrate`; other integrations install directly.
 6. **Gather context** — detects available coding agents and writes `.cipherstash/context.json`.
 
-Flags: `--supabase`, `--drizzle`, `--prisma-next`, `--region <slug>`.
+Flags: `--supabase`, `--drizzle`, `--prisma`, `--region <slug>`.
 
 | Generated file | Purpose |
 |---|---|
-| `./src/encryption/index.ts` | Placeholder encryption client — declare encrypted columns here, or let `plan`/`impl` do it |
+| `./src/encryption/index.ts` | Placeholder encryption client — declare encrypted columns here, or let `plan`/`impl` do it. **Not written for Prisma Next** (`--prisma`), which derives schemas from `contract.json` |
 | `.cipherstash/context.json` | Detected facts: integration, package manager, schemas, env key names, and agents. CLI-owned; never hand-edit |
 | `stash.config.ts` | Scaffolded if missing |
 

@@ -46,7 +46,7 @@ export const installEqlStep: InitStep = {
     // migrations — running `stash eql install` here would be a
     // duplicate install and would race with the framework's
     // migration journal. Skip with guidance instead.
-    if (integration === 'prisma-next' || provider.name === 'prisma-next') {
+    if (integration === 'prisma-next' || provider.name === 'prisma') {
       p.log.success(
         'Skipping `stash eql install` — Prisma Next installs the EQL bundle via `prisma-next migrate` (runs alongside your app migrations).',
       )

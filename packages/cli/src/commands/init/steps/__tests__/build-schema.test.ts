@@ -78,4 +78,18 @@ describe('buildSchemaStep', () => {
     expect(writeFileSyncMock).not.toHaveBeenCalled()
     expect(result.schemaGenerated).toBe(false)
   })
+
+  it('forces the prisma-next integration and skips the scaffold when the `--prisma` provider is selected', async () => {
+    // `--prisma` sets provider.name === 'prisma'; the internal integration
+    // value stays 'prisma-next' so skill/dep/prompt wiring is unchanged.
+    // Prisma Next derives its schema from contract.json, so there is no
+    // placeholder client to write.
+    const prismaProvider = { name: 'prisma' } as unknown as InitProvider
+
+    const result = await buildSchemaStep.run(baseState, prismaProvider)
+
+    expect(result.integration).toBe('prisma-next')
+    expect(result.schemaGenerated).toBe(false)
+    expect(writeFileSyncMock).not.toHaveBeenCalled()
+  })
 })

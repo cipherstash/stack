@@ -6,7 +6,7 @@ import { HANDOFF_CHOICES } from '../impl/steps/how-to-proceed.js'
 import { planCommand } from '../plan/index.js'
 import { createBaseProvider } from './providers/base.js'
 import { createDrizzleProvider } from './providers/drizzle.js'
-import { createPrismaNextProvider } from './providers/prisma-next.js'
+import { createPrismaProvider } from './providers/prisma.js'
 import { createSupabaseProvider } from './providers/supabase.js'
 import { authenticateStep } from './steps/authenticate.js'
 import { buildSchemaStep } from './steps/build-schema.js'
@@ -21,7 +21,7 @@ import { detectPackageManager, runnerCommand } from './utils.js'
 const PROVIDER_MAP: Record<string, () => InitProvider> = {
   supabase: createSupabaseProvider,
   drizzle: createDrizzleProvider,
-  'prisma-next': createPrismaNextProvider,
+  prisma: createPrismaProvider,
 }
 
 /**
@@ -77,6 +77,16 @@ export async function initCommand(
   if (retiredProxyFlag) {
     p.log.error(
       `\`--${retiredProxyFlag}\` has been removed. EQL v3 stores query configuration in column domains and does not use CipherStash Proxy; remove this flag and select only the project integration (for example, \`--supabase\` or \`--drizzle\`).`,
+    )
+    throw new CliExit(1)
+  }
+
+  // `--prisma-next` was renamed to `--prisma` for consistency with `--supabase`
+  // and `--drizzle`. It selects the same Prisma Next setup flow; error rather
+  // than silently ignore a previously-documented flag.
+  if (flags['prisma-next'] === true || Object.hasOwn(values, 'prisma-next')) {
+    p.log.error(
+      '`--prisma-next` has been renamed to `--prisma`. Re-run `stash init --prisma` — it selects the same Prisma Next setup flow.',
     )
     throw new CliExit(1)
   }
