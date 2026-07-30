@@ -1,5 +1,85 @@
 # @cipherstash/prisma-next-example
 
+## 0.1.0
+
+### Minor Changes
+
+- a75513b: Convert the example app to EQL v3. Every column is now a concrete `public.eql_v3_*` domain authored with the per-domain constructors (`EncryptedTextSearch`, `EncryptedDoubleOrd`, `EncryptedBigIntOrd`, `EncryptedDateOrd`, `EncryptedBoolean`, `EncryptedJson`), wired through `cipherstashFromStackV3({ contractJson })`. The e2e harness runs the full v3 surface against live Postgres + ZeroKMS with no skips: the `eql*` operator vocabulary (equality/range plus `eqlMatch` free-text token search), `eqlAsc`/`eqlDesc` order-term sorting, encrypted JSON containment (`eqlJsonContains` — the v2 `cipherstashJsonb*` helpers do not exist in v3), lossless `bigint` beyond `Number.MAX_SAFE_INTEGER`, and the storage-only `eql_v3_boolean` refusal (`EncryptionOperatorError`) pinned as a feature. Migrations regenerate from the v3 contract: the initial app migration creates the `users` table against the v3 domains with zero `add_search_config` ops, and the cipherstash space carries both bundle baselines (v2 + v3).
+
+### Patch Changes
+
+- Updated dependencies [31ca318]
+- Updated dependencies [57441cc]
+- Updated dependencies [e155956]
+- Updated dependencies [8b2551a]
+- Updated dependencies [8817cfb]
+- Updated dependencies [ace2a4f]
+- Updated dependencies [3a0a0dc]
+- Updated dependencies [5d304ec]
+- Updated dependencies [d26950d]
+- Updated dependencies [90c3873]
+- Updated dependencies [de804c2]
+- Updated dependencies [a9d430b]
+- Updated dependencies [310bb19]
+- Updated dependencies [c54f19c]
+- Updated dependencies [b7fa61f]
+- Updated dependencies [66a0e02]
+- Updated dependencies [cfd46ee]
+- Updated dependencies [7eba32d]
+- Updated dependencies [89b903f]
+- Updated dependencies [229ce59]
+- Updated dependencies [50c0a9c]
+- Updated dependencies [a75513b]
+- Updated dependencies [63ca540]
+- Updated dependencies [e297f64]
+- Updated dependencies [1aa9a11]
+- Updated dependencies [af2d04e]
+- Updated dependencies [b8a3d20]
+- Updated dependencies [a0f3b2c]
+- Updated dependencies [8817cfb]
+- Updated dependencies [a5fab3c]
+- Updated dependencies [d6d23be]
+- Updated dependencies [b7fa61f]
+- Updated dependencies [4923c0a]
+- Updated dependencies [a2f80ea]
+- Updated dependencies [daa25b8]
+- Updated dependencies [b7fa61f]
+- Updated dependencies [ed41b93]
+- Updated dependencies [2e6f032]
+- Updated dependencies [cf2c57c]
+- Updated dependencies [04f7ac7]
+- Updated dependencies [36f9988]
+- Updated dependencies [c516b34]
+- Updated dependencies [4d92090]
+- Updated dependencies [b2f9d7a]
+- Updated dependencies [f23f952]
+- Updated dependencies [d2772b0]
+- Updated dependencies [40ab142]
+- Updated dependencies [7c7dbca]
+- Updated dependencies [5411a13]
+- Updated dependencies [8832d35]
+- Updated dependencies [8832d35]
+- Updated dependencies [ea74846]
+- Updated dependencies [20cb8c3]
+- Updated dependencies [57441cc]
+- Updated dependencies [17393b9]
+- Updated dependencies [8d31708]
+- Updated dependencies [5fe9a2f]
+- Updated dependencies [5d304ec]
+- Updated dependencies [310bb19]
+- Updated dependencies [856dcc8]
+- Updated dependencies [ade9707]
+- Updated dependencies [3aff6cb]
+- Updated dependencies [c745db7]
+- Updated dependencies [b7fa61f]
+- Updated dependencies [7b53141]
+- Updated dependencies [b085f66]
+- Updated dependencies [3a0a0dc]
+- Updated dependencies [508f1d5]
+- Updated dependencies [d25d100]
+  - @cipherstash/stack@1.0.0
+  - @cipherstash/stack-prisma@1.0.0
+
 ## 0.1.0-rc.4
 
 ### Patch Changes
