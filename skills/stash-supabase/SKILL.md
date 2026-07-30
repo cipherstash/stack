@@ -1,6 +1,6 @@
 ---
 name: stash-supabase
-description: Integrate CipherStash encryption with Supabase using @cipherstash/stack-supabase. Covers the encryptedSupabase wrapper over native EQL v3 column domains, transparent encryption/decryption on insert/update/select, encrypted scalar filters (eq, gt/gte/lt/lte, in, or), ordering on encrypted columns, EQL 3.0.2 PostgREST query-domain limitations, identity-aware encryption, and the complete query builder API. Use when adding encryption to a Supabase project, querying encrypted columns, or building secure Supabase applications.
+description: Integrate CipherStash encryption with Supabase using @cipherstash/stack-supabase. Covers the encryptedSupabase wrapper over native EQL v3 column domains, transparent encryption/decryption on insert/update/select, encrypted scalar filters (eq, gt/gte/lt/lte, in, or), ordering on encrypted columns, EQL 3.0.4 PostgREST query-domain limitations, identity-aware encryption, and the complete query builder API. Use when adding encryption to a Supabase project, querying encrypted columns, or building secure Supabase applications.
 ---
 
 # CipherStash Stack - Supabase Integration
@@ -310,11 +310,12 @@ encrypted columns makes N ZeroKMS calls, run in parallel.
 
 ### Free-Text Search (`matches`)
 
-EQL 3.0.2 requires a typed `eql_v3.query_*` right operand for encrypted
-free-text matching. PostgREST cannot express that cast, so Supabase v3
-`matches()` fails fast with this EQL release. Use the Drizzle or Prisma Next
-adapter, or expose a carefully scoped SQL/RPC path. Plaintext `like`/`ilike`
-queries remain native PostgREST operations.
+The current EQL 3.0.4 release requires a typed `eql_v3.query_*` right operand
+for encrypted free-text matching. PostgREST cannot express that cast, so
+Supabase v3 `matches()` fails fast. This requirement began in EQL 3.0.2 and
+remains in 3.0.4. Use the Drizzle or Prisma Next adapter, or expose a carefully
+scoped SQL/RPC path. Plaintext `like`/`ilike` queries remain native PostgREST
+operations.
 
 ### Range/Comparison Filters
 
@@ -400,7 +401,8 @@ All envelopes (stored payloads and filter operands) are versioned `v: 3`.
 
 - **`select('*')` (and bare `select()`) works** — it expands to the
   introspected column list.
-- **Encrypted free-text search is unavailable through PostgREST on EQL 3.0.2.**
+- **Encrypted free-text search is unavailable through PostgREST on the current
+  EQL 3.0.4 release.**
   The SQL surface uses `@@` with an `eql_v3.query_*` right operand. PostgREST's
   filter grammar cannot express that cast; its `cs` operator is SQL `@>`, which
   EQL deliberately rejects for text-search domains. Do not use `matches()`,
@@ -445,7 +447,7 @@ All envelopes (stored payloads and filter operands) are versioned `v: 3`.
 ## Encrypted JSON querying (`types.Json`)
 
 A `types.Json("payload")` column (`public.eql_v3_json_search`) can be stored and
-decrypted through Supabase, but EQL 3.0.2 requires an explicit
+decrypted through Supabase, but EQL 3.0.4 requires an explicit
 `eql_v3.query_json` cast for containment and value-selector equality.
 PostgREST cannot express that cast. The wrapper therefore fails fast for
 encrypted `contains()`, `selectorEq()`, and `selectorNe()` before encrypting a
@@ -593,7 +595,7 @@ The column's `public.eql_v3_*` domain determines which filters it accepts:
 | Filter Method | Works On |
 |---|---|
 | `eq`, `neq`, `in`, `match()` | Equality-capable domains (`*_eq`, `*_ord`, `text_search`) |
-| `matches()` / encrypted `contains()` / `selectorEq()` / `selectorNe()` | Unavailable through PostgREST on EQL 3.0.2; use Drizzle, Prisma Next, or scoped SQL/RPC |
+| `matches()` / encrypted `contains()` / `selectorEq()` / `selectorNe()` | Unavailable through PostgREST on EQL 3.0.4; use Drizzle, Prisma Next, or scoped SQL/RPC |
 | `gt`, `gte`, `lt`, `lte` | Range-capable domains (`*_ord`, `text_search`) |
 | `contains()` | Plaintext jsonb/array columns (native containment) |
 | `order()` | OPE-backed ordering domains (plain `*_ord`, `text_ord`, `text_search`) — never `*_ord_ore` |
