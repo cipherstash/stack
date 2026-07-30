@@ -361,6 +361,18 @@ describe('drizzle migrate prompt after a staged rewrite', () => {
       {
         dir: 'drizzle',
         rewritten: ['drizzle/0001_email.sql'],
+        // The twin the rewritten file added. Carried on the failure path
+        // deliberately: it is already on disk, and already divergent from
+        // `schema.ts` and the snapshot.
+        staged: [
+          {
+            file: 'drizzle/0001_email.sql',
+            table: 'users',
+            column: 'email',
+            encryptedColumn: 'email_encrypted',
+            domain: 'eql_v3_text_search',
+          },
+        ],
         skipped: [
           {
             file: 'drizzle/0002_total.sql',
