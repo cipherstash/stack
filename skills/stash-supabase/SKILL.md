@@ -373,6 +373,20 @@ const es = await encryptedSupabase(supabaseUrl, supabaseKey, {
 await es.from("users").select("id, email").eq("email", "a@b.com")
 ```
 
+**Either entry may author the table.** `encryptedTable`/`types` from
+`@cipherstash/stack/wasm-inline` produce tables `schemas` accepts exactly as the
+`@cipherstash/stack/eql/v3` ones above do — same types, same runtime. Use the
+wasm-inline entry when the schema module is shared with an Edge Function, so one
+table definition serves both sides instead of two that can drift.
+
+> If `tsc` rejects a wasm-inline-authored table with *"Types have separate
+> declarations of a private property 'columnName'"*, the installed
+> `@cipherstash/stack` predates this fix — its two entries shipped
+> separately-emitted declarations of the column class, and TypeScript compares
+> classes with `private` members by declaration origin. Upgrade, or author the
+> table from `@cipherstash/stack/eql/v3` on that version. The runtime was never
+> affected.
+
 Four differences from the native entry, three of them enforced by the type
 checker:
 
@@ -996,12 +1010,28 @@ Passing a v2 table in `schemas` is rejected by name:
 
 ```
 [supabase v3]: schemas entry "users" is an EQL v2 table — it has no
-buildColumnKeyMap(), the marker every v3 table carries.
+buildColumnKeyMap(), the marker every v3 table carries. This adapter is EQL v3
+only. Author the table with `encryptedTable`/`types` from
+`@cipherstash/stack/eql/v3` or `@cipherstash/stack/wasm-inline`.
 ```
 
 A v2 `encryptedTable` is structurally identical to a v3 one apart from that
-marker, so TypeScript alone will not always catch the swap — re-author the table
-with `encryptedTable`/`types` from `@cipherstash/stack/eql/v3`.
+marker, so TypeScript alone will not always catch the swap.
+
+A related error names a single column rather than the table:
+
+```
+[supabase v3]: column "email" on table "users" is not a recognised EQL v3
+column builder. Its filter operands would otherwise be sent to PostgREST
+unencrypted, so construction is refused.
+```
+
+That one means the table itself looks like v3 but one of its column builders
+does not present the v3 surface — a v2 `encryptedColumn(...)` left behind in an
+otherwise-migrated table, or a hand-rolled stub. The adapter **fails closed**
+and throws at construction rather than treating the column as plaintext, because
+an unrecognised column would send its filter operands to PostgREST in the clear.
+Re-author that column with the matching `types.*` factory.
 
 Existing v2 deployments should add an `eql_v3_*` twin column and run the rollout
 in "Migrating an Existing Column to Encrypted" above. Current `stash` releases

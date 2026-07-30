@@ -28,6 +28,16 @@ export {
 export type { AuditConfig } from './encryption/operations/base-operation.js'
 // v3 column model + the date-like cast set the Supabase builder uses to
 // reconstruct `Date` values from PostgREST select aliases.
+//
+// `EncryptedV3Column` is exported as a VALUE for generic constraints and
+// subclassing only. Never `instanceof` it. tsup emits the class into several
+// bundles — CJS does not code-split, so every `.cjs` entry gets its own copy,
+// and `wasm-inline` is a separate esbuild run with a third — so an identity
+// check silently fails for any consumer who resolved a different copy. That is
+// how encrypted filter operands once reached PostgREST in plaintext. Probe
+// structurally instead, as `isV3ColumnLike`
+// (`packages/stack-supabase/src/column-map.ts`) and `hasBuildColumnKeyMap`
+// (`src/types.ts`) do.
 export {
   type AnyEncryptedV3Column,
   DATE_LIKE_CASTS,

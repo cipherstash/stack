@@ -15,11 +15,18 @@ const validLevels: readonly LogLevel[] = ['debug', 'info', 'error'] as const
 
 function levelFromEnv(): LogLevel {
   // `process` is absent in a Worker or Deno isolate. This module is reachable
-  // from `@cipherstash/stack/adapter-kit` (`src/adapter-kit.ts:60`), which the
-  // Supabase, Drizzle and Prisma Next adapters all value-import — an unguarded
-  // read here is a ReferenceError at import time on those runtimes. Guard
-  // `process.env` too: some partial polyfills define `process` without `env`,
-  // where `process.env.STASH_STACK_LOG` would throw just the same.
+  // from `@cipherstash/stack/adapter-kit` (which re-exports `logger`), and the
+  // Supabase, Drizzle and Prisma Next adapters all value-import that entry — an
+  // unguarded read here is a ReferenceError at import time on those runtimes.
+  //
+  // The `!process.env` half only keeps THIS read safe; it does not make a
+  // partial polyfill (`globalThis.process = {}`) survive import. `initStackLogger()`
+  // runs at module scope below and calls evlog's `initLogger`, whose
+  // `detectEnvironment()` and `isDev()` guard `typeof process` but then read
+  // `process.env.NODE_ENV` — a TypeError under exactly that shape. So the guard
+  // is cheap local correctness, not support for partial polyfills; supporting
+  // those needs the evlog call site guarded too, and a `process: {}` case added
+  // to `__tests__/helpers/process-free-realm.mjs`.
   const env =
     typeof process === 'undefined' || !process.env
       ? undefined

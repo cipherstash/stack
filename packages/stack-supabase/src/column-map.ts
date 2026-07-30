@@ -26,16 +26,27 @@ export type V3ColumnLike = {
 /**
  * Whether a column builder is an EQL v3 column, checked STRUCTURALLY.
  *
- * NOT `instanceof EncryptedV3Column`. tsup emits that class twice — once into
- * the chunk `dist/adapter-kit.js` imports, and once inline in
- * `dist/wasm-inline.js`, a separate esbuild run
- * (`packages/stack/tsup.config.ts:43-52`). A table authored with
- * `encryptedTable`/`types` from `@cipherstash/stack/wasm-inline` is built from
- * the second copy, so an `instanceof` against the first returned `false` for
- * every column: `v3Columns` came out empty and the adapter treated encrypted
- * columns as plaintext — filter operands reached PostgREST in the clear, while
- * `::jsonb` casts and decryption kept working (they read `buildColumnKeyMap()`
- * and the encrypt config, not this map).
+ * NOT `instanceof EncryptedV3Column`. tsup emits that class into more than one
+ * bundle, and which copy a caller gets depends on module format and entry:
+ *
+ * - **CJS does not code-split at all**, so every entry is self-contained:
+ *   `dist/adapter-kit.cjs`, `dist/eql/v3/index.cjs` and `dist/encryption/v3.cjs`
+ *   each define the class independently. A `require()`-based consumer hit this
+ *   on ANY subpath, including `@cipherstash/stack/eql/v3`.
+ * - **ESM does code-split**, so `dist/adapter-kit.js` and `dist/eql/v3/index.js`
+ *   share one chunk — but `dist/wasm-inline.js` is a separate esbuild run
+ *   (`packages/stack/tsup.config.ts`) and carries its own copy, so an ESM
+ *   consumer authoring from `@cipherstash/stack/wasm-inline` hit it too.
+ *
+ * Whenever the adapter and the schema resolved different copies, `instanceof`
+ * returned `false` for every column: `v3Columns` came out empty and the adapter
+ * treated encrypted columns as plaintext — filter operands reached PostgREST in
+ * the clear, while `::jsonb` casts and decryption kept working (they read
+ * `buildColumnKeyMap()` and the encrypt config, not this map).
+ *
+ * The same hazard has a type-level half, fixed separately in
+ * `packages/stack/tsup.config.ts` and gated by
+ * `packages/stack/dist-types/wasm-inline-type-identity.ts`.
  *
  * Mirrors `hasBuildColumnKeyMap` (`packages/stack/src/types.ts:276-283`), the
  * repo's canonical answer to the same problem, used identically at

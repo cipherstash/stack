@@ -403,7 +403,7 @@ async function construct(
       // a caller's perspective unrelated to the mistake they made.
       if (!hasBuildColumnKeyMap(table)) {
         throw new Error(
-          `[supabase v3]: schemas entry "${key}" is an EQL v2 table — it has no buildColumnKeyMap(), the marker every v3 table carries. This adapter is EQL v3 only. Author the table with \`encryptedTable\`/\`types\` from \`@cipherstash/stack/eql/v3\`.`,
+          `[supabase v3]: schemas entry "${key}" is an EQL v2 table — it has no buildColumnKeyMap(), the marker every v3 table carries. This adapter is EQL v3 only. Author the table with \`encryptedTable\`/\`types\` from \`@cipherstash/stack/eql/v3\` or \`@cipherstash/stack/wasm-inline\`.`,
         )
       }
       assertTableIsModelled(key, unmodelled)

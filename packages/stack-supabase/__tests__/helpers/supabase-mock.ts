@@ -215,13 +215,16 @@ export function createMockSupabase(resultData: unknown = []) {
 
 /**
  * A table whose column builders are structurally EQL v3 but are NOT instances
- * of the `EncryptedV3Column` this package imports — which is exactly how a
- * table authored from `@cipherstash/stack/wasm-inline` presents, because tsup
- * emits that class twice (see `isV3ColumnLike` in `src/column-map.ts`).
+ * of the `EncryptedV3Column` this package imports. That is how a table presents
+ * whenever the adapter and the schema resolve different emitted copies of the
+ * class — every CommonJS consumer regardless of subpath, and ESM consumers
+ * authoring from `@cipherstash/stack/wasm-inline` (see `isV3ColumnLike` in
+ * `src/column-map.ts` for which bundles carry which copy).
  *
  * Object literals, not the real classes: reproducing the split with the real
  * ones needs a built `dist/`, and `vitest.shared.ts:4-14` keeps `pnpm test`
- * free of that. The dist-level version lives in the portable-entry plan.
+ * free of that. `packages/stack/dist-types/wasm-inline-type-identity.ts` covers
+ * the dist-level TYPE half of the same hazard.
  */
 export function wasmAuthoredV3Table(tableName: string, columnNames: string[]) {
   const columnBuilders = Object.fromEntries(

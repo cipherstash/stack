@@ -14,7 +14,7 @@ If you are on Lovable, v0, Bolt, Replit, or a similar hosted builder, and you ha
 
 An agent working on one of these platforms previously spent a full turn concluding CipherStash was impossible in a Lovable project before finding `stash` and the WASM entry. Nothing about that conclusion was true. Everything below is the rest of what that turn had to discover.
 
-The `stash-edge` skill is the full guide to the WASM entry (per-runtime import specifiers, the client surface, why schema modules cannot be shared across entries). This page covers what is specific to *managed* platforms.
+The `stash-edge` skill is the full guide to the WASM entry (per-runtime import specifiers, the client surface, how one schema module is shared across both entries). This page covers what is specific to *managed* platforms.
 
 ## When to Use This Skill
 
@@ -156,9 +156,9 @@ By default `encryptedSupabase` derives every column's encryption config by intro
 
 ```typescript
 import { encryptedSupabase } from '@cipherstash/stack-supabase/wasm-inline'
-// Schemas come from `eql/v3`, NOT `@cipherstash/stack/wasm-inline` — the
-// adapter types `schemas` from that entry and the two entries' column classes
-// do not cross. The engine is still WASM.
+// Either entry may author these: `@cipherstash/stack/eql/v3` and
+// `@cipherstash/stack/wasm-inline` resolve one declaration of the column
+// classes, so `schemas` accepts both. The engine is WASM either way.
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
 
 const users = encryptedTable('users', {
@@ -176,7 +176,7 @@ const supabase = await encryptedSupabase(supabaseClient, {
 
 1. **The entry.** Import from `@cipherstash/stack-supabase/wasm-inline`, not the package root. The root statically imports the native engine, which loads on import whether or not you encrypt anything.
 2. **The schemas.** Without them the wrapper still wants a connection.
-3. **Where the schemas come from.** `encryptedTable` and `types` for the adapter come from `@cipherstash/stack/eql/v3` on **both** its entries — the adapter types `schemas` from that entry, and `@cipherstash/stack/wasm-inline` re-declares the same column classes with private fields TypeScript compares nominally. Author them from the WASM entry and `tsc` rejects the `schemas` object ("separate declarations of a private property `columnName`") while the code runs fine, so nothing but a typecheck tells you. Only a **raw** `Encryption` client from `@cipherstash/stack/wasm-inline` wants tables authored from that entry.
+3. **Where the schemas come from.** `encryptedTable` and `types` may come from either `@cipherstash/stack/eql/v3` or `@cipherstash/stack/wasm-inline` — both entries resolve one declaration of the column classes, so the adapter's `schemas` accepts tables from either. On a version of `@cipherstash/stack` predating that fix they were separate declarations, and `tsc` rejected a wasm-inline-authored table with "separate declarations of a private property `columnName`" while the code ran fine; if you see that diagnostic, upgrade, or author from `eql/v3` on that version.
 
 What declared mode gives up:
 

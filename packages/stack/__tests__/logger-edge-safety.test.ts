@@ -1,6 +1,6 @@
 /**
  * `@cipherstash/stack/adapter-kit` re-exports this package's `logger`
- * (`src/adapter-kit.ts:60`), and three first-party adapters value-import
+ * (`src/adapter-kit.ts`), and three first-party adapters value-import
  * adapter-kit: `packages/stack-supabase/src/column-map.ts:1`,
  * `packages/stack-drizzle/src/column.ts:1`,
  * `packages/stack-prisma/src/exports/column-types.ts:19`. A realm with no
@@ -13,9 +13,14 @@
  *
  * It reads `dist/`, so it SKIPS when the package has not been built — run
  * `pnpm --filter @cipherstash/stack build` first for it to mean anything.
- * (`turbo.json` wires `test` to `build`, so the turbo path cannot skip it; a
- * bare `pnpm --filter … test` on a clean checkout still can.) The
- * portable-entry plan will point the same harness at the WASM entry.
+ * `packages/stack/turbo.json` wires `test` to `build`, and the root `build` task
+ * declares `outputs: ["dist/**"]` so a cache hit restores the artefact rather
+ * than replaying logs over a missing one — without that, this gate reported
+ * `1 skipped` while the suite stayed green. A bare `pnpm --filter … test` on an
+ * unbuilt checkout can still skip, so CI turns that skip into a hard failure
+ * below.
+ *
+ * The portable-entry plan will point the same harness at the WASM entry.
  */
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
@@ -28,8 +33,17 @@ const execFileAsync = promisify(execFile)
 const testsDir = fileURLToPath(new URL('.', import.meta.url))
 const harness = resolve(testsDir, 'helpers/process-free-realm.mjs')
 const emittedEntry = resolve(testsDir, '../dist/adapter-kit.js')
+const isBuilt = existsSync(emittedEntry)
 
-describe.skipIf(!existsSync(emittedEntry))(
+// A skip is an acceptable local convenience and an unacceptable CI result: the
+// gate would report green having never run. Fail loudly instead.
+if (!isBuilt && process.env.CI) {
+  throw new Error(
+    `${emittedEntry} is missing in CI — this gate cannot skip here. Run \`pnpm --filter @cipherstash/stack build\` before \`test\`.`,
+  )
+}
+
+describe.skipIf(!isBuilt)(
   'the emitted adapter-kit seam imports without a process global',
   () => {
     it('evaluates dist/adapter-kit.js in a process-free realm', async () => {

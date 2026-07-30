@@ -1,13 +1,15 @@
 /**
- * The THIRD declaration artifact: `dist/wasm-inline.d.ts`.
+ * The wasm-inline declaration artifact: `dist/wasm-inline.d.ts`.
  *
- * `tsup.config.ts` runs a second, independent DTS pass for the wasm-inline
- * entry, which inlines its own copy of `EncryptedV3Column` and the helpers that
- * invert its domain parameter. Neither the bundler gate nor the `.cts`/`.mts`
- * probes above reach it — they resolve `./v3` and `./eql/v3`, which come from
- * the first pass. So the entry documented for Workers, Deno, Bun and Supabase
+ * `tsup.config.ts` used to run a second, independent DTS pass for this entry,
+ * which inlined its own copy of `EncryptedV3Column` and the helpers that invert
+ * its domain parameter. Neither the bundler gate nor the `.cts`/`.mts` probes
+ * above reached it — they resolve `./v3` and `./eql/v3`, which come from the
+ * main pass. So the entry documented for Workers, Deno, Bun and Supabase
  * Edge — the runtimes with the least margin for a broken type — was the one
- * artifact nothing typechecked.
+ * artifact nothing typechecked. Its declarations now come from the main config
+ * so all entries share one set of chunks; `wasmTableCrossesEntries` below is
+ * what holds that in place.
  *
  * `./wasm-inline` is ESM-only in the `exports` map (no `require` branch, by
  * design: the inlined WASM blob cannot be `require`d), hence `.mts` and no
@@ -19,6 +21,11 @@
  * what collapses if the phantom carrier is lost on emit.
  */
 
+import {
+  type AnyV3Table as NativeAnyV3Table,
+  encryptedTable as nativeEncryptedTable,
+  types as nativeTypes,
+} from '@cipherstash/stack/eql/v3'
 import {
   type AnyV3Table,
   type EncryptedTextSearchColumn,
@@ -55,6 +62,40 @@ const wasmConfig = {
   accessKey: 'ak',
   clientId: 'id',
   clientKey: 'key',
+}
+
+/** The same table authored from the NATIVE entry, for the cross-entry probes. */
+const nativeUsers = nativeEncryptedTable('users', {
+  email: nativeTypes.TextSearch('email'),
+})
+
+/**
+ * A wasm-inline-authored table must be the SAME type as an `./eql/v3` one.
+ *
+ * `EncryptedV3Column` carries `private readonly columnName`, and TypeScript
+ * compares classes with private members by declaration origin rather than
+ * structurally. While this entry got its own DTS pass it carried its own copy of
+ * the class, so this assignment failed with "Types have separate declarations of
+ * a private property 'columnName'" — and since every first-party adapter types
+ * its `schemas` in terms of `AnyV3Table`, a table authored here could not be
+ * passed to `encryptedSupabase`, the Drizzle helpers, or Prisma Next. The
+ * runtime accepted it (`isV3ColumnLike` probes structurally); only the compiler
+ * refused, which is why nothing but a gate over the emitted `.d.ts` caught it.
+ *
+ * The sibling `../wasm-inline-type-identity.ts` asserts the same identity under
+ * `moduleResolution: bundler` over relative paths. This one resolves both
+ * entries BY PACKAGE NAME through the `exports` map — the way a customer does.
+ */
+export const wasmTableCrossesEntries: NativeAnyV3Table = wasmUsers
+
+/**
+ * ...and the reverse direction: an `./eql/v3`-authored table into this entry's
+ * `Encryption`. Asserted explicitly because the failure was symmetric — each
+ * entry rejected the other's schema — so a fix that only made one direction work
+ * would leave the shared-schema-module story broken and this gate green.
+ */
+export async function nativeTableIntoWasmClient() {
+  await WasmEncryption({ schemas: [nativeUsers], config: wasmConfig })
 }
 
 export async function wasmSchemaShapes() {
