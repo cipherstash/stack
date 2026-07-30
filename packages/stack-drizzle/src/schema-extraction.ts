@@ -1,10 +1,10 @@
 import {
   type AnyEncryptedV3Column,
-  type AnyV3Table,
+  type EncryptedTable,
   encryptedTable,
 } from '@cipherstash/stack/eql/v3'
 import type { PgTable } from 'drizzle-orm/pg-core'
-import { getEqlV3Column } from './column.js'
+import { getEqlV3Column, type V3BuilderOf } from './column.js'
 
 /** Drizzle stashes the SQL table name on this well-known symbol key. */
 const DRIZZLE_NAME = Symbol.for('drizzle:Name')
@@ -21,7 +21,37 @@ export function getDrizzleTableName(table: unknown): string | undefined {
   return typeof name === 'string' ? name : undefined
 }
 
-export function extractEncryptionSchema(table: PgTable): AnyV3Table {
+/**
+ * The v3 column map a Drizzle table carries: every branded encrypted column,
+ * keyed by its JS property name and mapped to the concrete v3 builder recovered
+ * from its brand; every other property (plain columns, and the `PgTable`
+ * members drizzle mixes in) dropped.
+ *
+ * This is the type-level mirror of {@link extractEncryptionSchema}'s runtime
+ * loop, and the whole reason extraction can be precisely typed: without it the
+ * return collapses to the widened `AnyV3Table`, and `InferPlaintext` over an
+ * extracted schema degrades to an index signature instead of a per-column
+ * plaintext map (#589).
+ */
+export type EncryptedColumnsOf<T> = {
+  [K in keyof T as [V3BuilderOf<T[K]>] extends [never]
+    ? never
+    : K]: V3BuilderOf<T[K]>
+}
+
+/**
+ * Rebuild a Drizzle table's encrypted columns as an eql/v3 {@link EncryptedTable}.
+ *
+ * The return type mirrors what `encryptedTable()` itself returns —
+ * `EncryptedTable<Cols> & Cols` — so the result is both a schema for
+ * `Encryption({ schemas })` and a column accessor (`schema.email`), with each
+ * column's concrete domain preserved. That is what keeps `InferPlaintext` /
+ * `encryptModel` / `bulkEncryptModels` precisely typed against an extracted
+ * schema.
+ */
+export function extractEncryptionSchema<T extends PgTable>(
+  table: T,
+): EncryptedTable<EncryptedColumnsOf<T>> & EncryptedColumnsOf<T> {
   const tableName = getDrizzleTableName(table)
   if (!tableName) {
     throw new Error(
@@ -46,5 +76,14 @@ export function extractEncryptionSchema(table: PgTable): AnyV3Table {
     )
   }
 
-  return encryptedTable(tableName, columns)
+  // The runtime loop above is untyped by construction — it reads properties off
+  // a `PgTable` and recovers each builder dynamically — so the precise column
+  // map only exists at the type level (`EncryptedColumnsOf<T>`). Narrow the
+  // widened runtime value to it here; the two are kept in step by the
+  // `.test-d.ts` assertions, which compare an extracted schema against the
+  // hand-authored `encryptedTable({…})` it must be equivalent to.
+  return encryptedTable(tableName, columns) as EncryptedTable<
+    EncryptedColumnsOf<T>
+  > &
+    EncryptedColumnsOf<T>
 }

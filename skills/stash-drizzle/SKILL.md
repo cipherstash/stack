@@ -131,6 +131,8 @@ import { Encryption } from "@cipherstash/stack/v3"
 const usersSchema = extractEncryptionSchema(usersTable)
 ```
 
+The extracted schema keeps each column's concrete domain, so it types exactly like a hand-written `encryptedTable({...})`: `InferPlaintext<typeof usersSchema>` is a precise per-column plaintext map, non-encrypted columns (`id`, plain `text()` helpers) are excluded from it and pass through model operations untouched, and `usersSchema.email` addresses the column at its own type. Do not cast an extracted schema to `AnyV3Table` or annotate model rows with `Record<string, unknown>` to make an insert compile — that discards the checking and hides real mismatches.
+
 ### 2. Initialize the Encryption Client
 
 ```typescript

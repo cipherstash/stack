@@ -125,7 +125,102 @@ function getSqlType(column: unknown): string | undefined {
   return typeof domain === 'string' ? qualifyDomain(domain) : undefined
 }
 
-export function makeEqlV3Column<C extends AnyEncryptedV3Column>(builder: C) {
+/**
+ * Build the bare Drizzle carrier column for an EQL v3 domain.
+ *
+ * Split out of {@link makeEqlV3Column} for one reason: it gives the Drizzle
+ * builder type a NAME (`ReturnType<typeof makeCarrierColumn>`) without this
+ * module having to restate `customType`'s deeply-generic return type by hand —
+ * which would silently rot the day drizzle-orm changes it.
+ */
+function makeCarrierColumn(sqlType: string, name: string) {
+  // What is stored/inserted/selected is the ENCRYPTED EQL v3 jsonb envelope
+  // (produced by `client.encrypt` / `bulkEncryptModels`), NOT the column's
+  // plaintext. So `data` is the envelope type — an insert takes an already-
+  // encrypted `Encrypted`, and a select yields one, ready for `decryptModel`.
+  return customType<{ data: Encrypted; driverData: string | null }>({
+    dataType() {
+      return sqlType
+    },
+    toDriver(value: Encrypted): string | null {
+      return v3ToDriver(value)
+    },
+    fromDriver(value: string | object | null | undefined): Encrypted {
+      // A present jsonb value round-trips to an envelope; the driver only
+      // reaches here for non-null values, so the SQL-NULL branch is a safety
+      // net rather than a live path (the boundary cast covers it).
+      return v3FromDriver(value) as Encrypted
+    },
+  })(name)
+}
+
+/**
+ * Key for the phantom v3-builder carrier on {@link EqlV3Column}. Declared, never
+ * defined — it exists only in the type layer. Deliberately NOT exported, so the
+ * brand is unnameable (and so uncounterfeitable) outside this module while
+ * staying just as inferrable through {@link V3BuilderOf}. Same trick, and the
+ * same reasoning, as the core's `domainCarrier` on `EncryptedV3Column`.
+ */
+declare const v3BuilderCarrier: unique symbol
+
+/** The unbranded Drizzle column {@link makeCarrierColumn} produces. */
+type CarrierColumn = ReturnType<typeof makeCarrierColumn>
+
+/**
+ * A Drizzle column for the concrete v3 builder `C`, carrying `C` at the type
+ * level so {@link V3BuilderOf} can recover it downstream.
+ *
+ * The brand rides on the builder's `_` config, NOT on the builder object type,
+ * because `pgTable()` does not hand its column *builders* through to the table —
+ * it rebuilds each one via drizzle's `BuildColumn`, which keeps only `_`. (The
+ * surviving part is `Omit<TBuilder['_'], keyof MakeColumnConfig<…>>`, drizzle's
+ * own extension point — `NotNull<T> = T & { _: { notNull: true } }` uses exactly
+ * this shape.) A brand on the builder object would be dropped by `pgTable()` and
+ * `extractEncryptionSchema` would have nothing left to read.
+ *
+ * The property is REQUIRED, not optional: an optional phantom is structurally
+ * satisfied by every column, so `types.TextEq(…)` and a plain `text()` would
+ * both match the recovery conditional and the non-encrypted columns could not be
+ * filtered out. Nothing constructs this property at runtime — it is type-only,
+ * which is why {@link makeEqlV3Column} asserts its return.
+ */
+export type EqlV3Column<C extends AnyEncryptedV3Column> = CarrierColumn & {
+  _: { [v3BuilderCarrier]: C }
+}
+
+/**
+ * `true` only for `any`. The usual idiom: `1 & T` collapses to `any` when `T` is
+ * `any` (and `0 extends any` holds), and to `1`/`never`/an intersection for
+ * every other `T` (where `0 extends …` does not).
+ */
+type IsAny<T> = 0 extends 1 & T ? true : false
+
+/**
+ * Recover the concrete v3 builder branded onto a Drizzle column (or column
+ * builder) by {@link makeEqlV3Column}. Resolves to `never` for a plain,
+ * non-encrypted Drizzle column — which is what lets a mapped type filter a
+ * table's columns down to just the encrypted ones. The type-level mirror of
+ * {@link getEqlV3Column}'s runtime recovery.
+ *
+ * An `any` column short-circuits to the widened `AnyEncryptedV3Column` rather
+ * than falling through the conditional. A conditional type over `any` resolves
+ * to the UNION of both branches with `infer C` bound to `any`, so without this
+ * guard an untyped table (`const table: any`, the shape a dynamically-built
+ * adapter table has) would brand every column `any` and degrade the whole
+ * schema instead of landing on the widened-but-usable type it had before #589.
+ */
+export type V3BuilderOf<Col> =
+  IsAny<Col> extends true
+    ? AnyEncryptedV3Column
+    : Col extends { _: { [v3BuilderCarrier]: infer C } }
+      ? C extends AnyEncryptedV3Column
+        ? C
+        : never
+      : never
+
+export function makeEqlV3Column<C extends AnyEncryptedV3Column>(
+  builder: C,
+): EqlV3Column<C> {
   const domain = builder.getEqlType()
   const name = builder.getName()
 
@@ -156,28 +251,14 @@ export function makeEqlV3Column<C extends AnyEncryptedV3Column>(builder: C) {
   }
   const sqlType = stripDomainSchema(domain)
 
-  // What is stored/inserted/selected is the ENCRYPTED EQL v3 jsonb envelope
-  // (produced by `client.encrypt` / `bulkEncryptModels`), NOT the column's
-  // plaintext. So `data` is the envelope type — an insert takes an already-
-  // encrypted `Encrypted`, and a select yields one, ready for `decryptModel`.
-  const column = customType<{ data: Encrypted; driverData: string | null }>({
-    dataType() {
-      return sqlType
-    },
-    toDriver(value: Encrypted): string | null {
-      return v3ToDriver(value)
-    },
-    fromDriver(value: string | object | null | undefined): Encrypted {
-      // A present jsonb value round-trips to an envelope; the driver only
-      // reaches here for non-null values, so the SQL-NULL branch is a safety
-      // net rather than a live path (the boundary cast covers it).
-      return v3FromDriver(value) as Encrypted
-    },
-  })(name)
+  const column = makeCarrierColumn(sqlType, name)
 
   writeBuilder(getCarrier(column), builder)
   writeBuilder(column as unknown as EqlV3ColumnCarrier, builder)
-  return column
+  // The brand is type-only — no runtime property backs it (see EqlV3Column) —
+  // so the carrier column is narrowed to the branded type here. The runtime
+  // carrier (`writeBuilder` above) is what `getEqlV3Column` actually reads.
+  return column as EqlV3Column<C>
 }
 
 export function getEqlV3Column(
