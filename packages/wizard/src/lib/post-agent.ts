@@ -196,12 +196,19 @@ async function rewriteEncryptedMigrations(cwd: string): Promise<{
       p.log.warn(
         `Could not rewrite migrations in ${dir}: ${error || 'unknown error'}`,
       )
-      continue
+      // Deliberately NOT `continue`: a directory whose sweep threw may already
+      // have rewritten files on disk, and `sweepMigrationDirs` propagates that
+      // partial set on the failure path. Skipping the reporting below would
+      // leave the user with a failure and no list of what it changed before it
+      // stopped. The CLI twin reports the partial set for the same reason —
+      // `packages/cli/src/commands/eql/migration.ts` (#786, #837).
     }
 
     if (rewritten.length > 0) {
       p.log.info(
-        `Rewrote ${rewritten.length} migration file(s) in ${dir}/ to add staged encrypted columns while preserving the source columns.`,
+        error === undefined
+          ? `Rewrote ${rewritten.length} migration file(s) in ${dir}/ to add staged encrypted columns while preserving the source columns.`
+          : `Rewrote ${rewritten.length} migration file(s) in ${dir}/ before the sweep stopped:`,
       )
       for (const file of rewritten) p.log.step(`  - ${file}`)
     }

@@ -71,7 +71,7 @@ describe('formatAgentOutput', () => {
       '## Next Steps',
       '',
       '1. Run `npx drizzle-kit generate`',
-      '2. Run `npx stash db push`',
+      '2. Run `npx drizzle-kit migrate`',
     ].join('\n')
 
     const result = formatAgentOutput(input)

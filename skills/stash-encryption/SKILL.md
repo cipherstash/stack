@@ -9,7 +9,7 @@ Comprehensive guide for implementing field-level encryption with `@cipherstash/s
 
 Encrypted columns are **EQL v3 concrete Postgres domains** (`public.eql_v3_text_search`, `public.eql_v3_integer_ord`, ...): each column's query capabilities are fixed by the domain type you pick in the schema, and the `Encryption` client (typed for an all-v3 schema set) derives precise TypeScript types from that schema — wrong-typed plaintext is a compile error, not a runtime surprise.
 
-> An older schema surface (EQL v2, with chainable capability builders) still exists for existing deployments — see "Legacy: EQL v2" at the end. Everything else in this skill is the v3 surface. New projects should use v3.
+> EQL v2 is a **read-compatibility path only**. The v2 schema builders and the `@cipherstash/stack/client` subpath have been removed; `decrypt` / `decryptModel` still read stored v2 payloads so existing deployments keep working — see "Legacy: EQL v2" at the end. Author every schema and every new write with the v3 surface this skill describes.
 
 ## When to Use This Skill
 

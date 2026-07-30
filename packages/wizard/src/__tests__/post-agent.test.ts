@@ -280,6 +280,64 @@ describe('drizzle migrate prompt after a staged rewrite', () => {
     warn.mockRestore()
   })
 
+  // A sweep that throws part-way through has already written the files it got
+  // to — `sweepMigrationDirs` propagates that partial set on the failure path.
+  // The reporting used to sit after a `continue`, so the wizard named none of
+  // them and the user was told a directory failed without being told which of
+  // its files had changed. The CLI twin has always reported the partial set
+  // (`packages/cli/src/commands/eql/migration.ts`). #837.
+  it('names the files rewritten before a failed sweep stopped', async () => {
+    const warn = vi.spyOn(p.log, 'warn').mockImplementation(() => {})
+    const info = vi.spyOn(p.log, 'info').mockImplementation(() => {})
+    const step = vi.spyOn(p.log, 'step').mockImplementation(() => {})
+    vi.mocked(sweepMigrationDirs).mockResolvedValueOnce([
+      {
+        dir: 'drizzle',
+        rewritten: ['drizzle/0001_email.sql'],
+        skipped: [],
+        error: 'EISDIR: illegal operation on a directory, read',
+      },
+    ])
+
+    await expect(runDrizzle()).rejects.toThrow('unsafe or unverified SQL')
+
+    expect(p.confirm).not.toHaveBeenCalled()
+    // The failure itself is still reported...
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('Could not rewrite migrations in drizzle'),
+    )
+    // ...and so is what it changed on the way there, named file by file.
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining('before the sweep stopped'),
+    )
+    expect(step).toHaveBeenCalledWith(
+      expect.stringContaining('drizzle/0001_email.sql'),
+    )
+    step.mockRestore()
+    info.mockRestore()
+    warn.mockRestore()
+  })
+
+  // The partial-report path above must not bleed into the clean one: a
+  // successful sweep still says it preserved the source columns, not that it
+  // stopped.
+  it('does not claim the sweep stopped when it completed', async () => {
+    const info = vi.spyOn(p.log, 'info').mockImplementation(() => {})
+    vi.mocked(sweepMigrationDirs).mockResolvedValueOnce([
+      { dir: 'drizzle', rewritten: ['drizzle/0001_email.sql'], skipped: [] },
+    ])
+
+    await runDrizzle()
+
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining('preserving the source columns'),
+    )
+    expect(info).not.toHaveBeenCalledWith(
+      expect.stringContaining('before the sweep stopped'),
+    )
+    info.mockRestore()
+  })
+
   // `error` is built as `err instanceof Error ? err.message : String(err)`, and
   // `new Error()` has an empty message — so a thrown error can arrive as `''`.
   // Testing it for truthiness rather than presence would drop that directory
