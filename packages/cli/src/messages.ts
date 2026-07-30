@@ -89,7 +89,6 @@ export const messages = {
     /** `--out` (or its `drizzle` default) points at a directory that isn't there. */
     repairOutMissing: (outDir: string) =>
       `Drizzle output directory not found: ${outDir}\nPass --out <dir> so it matches your drizzle.config.ts.`,
-    // The drizzle journal is missing or unparseable (see repairJournalUnreadable below).
     /**
      * The sweep left statements it could not rewrite. Fail closed, exactly as
      * `eql migration --drizzle` does: the remaining SQL still fails at migrate
@@ -147,6 +146,12 @@ export const messages = {
     /** A clean sweep — said out loud so silence never reads as "did not run". */
     repairNothingToDo:
       'Nothing to repair: no unsafe ALTER-to-encrypted statements found.',
+    /**
+     * The drizzle journal is missing or unparseable. `detail` names the file and
+     * the underlying reason. Fail closed: the journal is the only offline record
+     * of which migrations exist and when each was generated, so without it the
+     * applied-state check cannot run and a rewrite would be blind.
+     */
     repairJournalUnreadable: (detail: string) =>
       `${detail}\nstash eql repair needs drizzle-kit's meta/_journal.json to tell which migrations have already been applied. Check that --out points at your drizzle-kit output directory.`,
   },

@@ -90,6 +90,12 @@ beforeEach(() => {
   vi.stubEnv('DATABASE_URL', '')
   pgMock.connectionStrings.length = 0
   rewriteMock.spy.mockImplementation(rewriteMock.real)
+  // `pg`'s Client.connect/end both return promises, and the probe chains off
+  // end() to swallow a teardown failure. A bare vi.fn() returns undefined, so
+  // the double has to resolve or that chain throws on a shape the real driver
+  // never produces.
+  pgMock.connect.mockResolvedValue(undefined)
+  pgMock.end.mockResolvedValue(undefined)
 })
 afterEach(() => {
   vi.unstubAllEnvs()
