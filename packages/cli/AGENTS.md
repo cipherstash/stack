@@ -2,7 +2,7 @@
 
 ## Two test suites
 
-This package has **two** Vitest configs. Run the right one for the change.
+This package has **two** Vitest configs (plus a self-skipping live-Postgres mode under the first). Run the right one for the change.
 
 | Command | Config | Scope | Needs build? |
 | --- | --- | --- | --- |
@@ -11,6 +11,24 @@ This package has **two** Vitest configs. Run the right one for the change.
 
 The unit config explicitly excludes `tests/e2e/**` so the default `pnpm test`
 stays fast.
+
+**Live-Postgres suites run under the unit config but self-skip.**
+`src/**/__tests__/**.live.test.ts` gate on `STASH_TEST_DATABASE_URL` via
+`describe.skip`, so `pnpm --filter stash test` stays green with no database and
+CI reports them as skipped. To actually run them:
+
+```bash
+docker compose -f local/docker-compose.postgres.yml up -d --wait
+STASH_TEST_DATABASE_URL=postgres://cipherstash:password@localhost:55432/cipherstash \
+  pnpm --filter stash test
+```
+
+They need Postgres only — no CipherStash credentials. Reach for one when a
+change turns on a real SQL string, a real SQLSTATE, or a driver type
+conversion: a faked `pg` returns whatever the test author typed, so none of
+those is observable under it. `commands/eql/__tests__/applied.live.test.ts` is
+the worked example — it found that a missing *schema* raises `42P01`, not the
+`3F000` the code's own comment assumed.
 
 It is **not** fully self-contained, despite running standalone in CI. Some `src`
 modules import workspace packages that publish `./dist` only, so an unbuilt
