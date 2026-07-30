@@ -35,7 +35,7 @@ database only ever holds ciphertext; every decryption is audited.*
 
 **Layout (left → right data flow):**
 
-```
+```text
 ┌─────────────────────────┐        ciphertext         ┌──────────────────────────┐
 │  YOUR APP (TypeScript)   │  ── EQL JSON payload ──▶  │  YOUR DATABASE           │
 │  @cipherstash/stack      │                           │  PostgreSQL / JSONB      │

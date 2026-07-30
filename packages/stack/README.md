@@ -43,7 +43,7 @@ Takes 5-10 minutes, starts on the **free developer tier** ([sign up][signup]), i
 npx stash init
 ```
 
-### ORM/database specific guides
+### ORM/database-specific guides
 
 | Quick start | Guide |
 |---|---|
@@ -163,8 +163,8 @@ await client
 
 Partition your keys into **keysets** — independent key hierarchies within a single workspace. Give each
 tenant its own keyset (`config.keyset`) for cryptographic tenant isolation: every encrypt, decrypt, and
-query is scoped to a keyset, so revoking a keyset's access makes that tenant's data undecryptable —
-without re-architecting your app. [Keysets →][keysets]
+query is scoped to a keyset, so revoking a client's access to a keyset makes that tenant's data
+unreadable until the grant is restored — without re-architecting your app. [Keysets →][keysets]
 
 ## Encrypted fields. Real queries. Your tools.
 
