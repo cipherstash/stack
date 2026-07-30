@@ -1,6 +1,6 @@
 ---
 name: stash-zerokms
-description: The ZeroKMS key model — keysets, clients, client keys, and the grant/revoke lifecycle. Covers the four-level key hierarchy, why every encrypt/decrypt/query is scoped to a keyset, the exact failure surface when a client lacks keyset access (all operations fail loudly — there is no silent partial failure), the workspace default keyset, multi-tenant isolation via `config.keyset`, and the ZeroKMS API for creating, granting, and revoking keyset access. Use when a decrypt or query fails with a ZeroKMS error, when planning multi-tenant key isolation, when deciding which credentials a backfill job or edge function should use, when rotating or revoking a compromised credential, or whenever another skill's guidance touches "credentials", "keysets", or "who can decrypt what" — this skill is the canonical source for that model.
+description: The ZeroKMS key model — keysets, clients, client keys, and the grant/revoke lifecycle. Covers the four-level key hierarchy, why every encrypt/decrypt/query is scoped to a keyset, the exact failure surface when a client lacks keyset access (unreachable keysets fail loudly; the one silent case is a reader granted the writer's keyset but bound to a different one — decrypt works, encrypted search returns zero rows), the workspace default keyset, multi-tenant isolation via `config.keyset`, and the ZeroKMS API for creating, granting, and revoking keyset access. Use when a decrypt or query fails with a ZeroKMS error, when planning multi-tenant key isolation, when deciding which credentials a backfill job or edge function should use, when rotating or revoking a compromised credential, or whenever another skill's guidance touches "credentials", "keysets", or "who can decrypt what" — this skill is the canonical source for that model.
 ---
 
 # ZeroKMS: keysets, clients, and key management
@@ -30,35 +30,45 @@ not appear in CI or examples.
 
 ## The model in one paragraph
 
-Every value is encrypted **under a keyset**. Encrypt, decrypt, and query are
-all scoped to that keyset — there is no operation that bypasses it. A
-**client** (an application credential with its own client key) is **granted
-access** to one or more keysets. If the client performing an operation has no
-grant for the keyset the data was encrypted under, **every operation fails:
-encrypt, decrypt, and query alike** — loudly, at the ZeroKMS round trip, not
-silently at the data layer.
+Every value is encrypted **under a keyset**. A **client** (an application
+credential with its own client key) is **bound to one keyset** — the one
+named in its config (`config.keyset`) or, when omitted, its default keyset,
+the one it was created against — and can additionally be **granted access**
+to others. The routing is asymmetric, and everything below follows from it:
+
+- **Encrypt and query always use the client's bound keyset.** Search terms
+  are produced with a per-*keyset* index key the client loads from ZeroKMS
+  at initialization. A client whose bound keyset is unreachable (no grant,
+  revoked, disabled) fails **loudly** right there — construction, encrypt,
+  and query alike.
+- **Decrypt follows each payload's own keyset**, whichever client wrote it,
+  and succeeds for any keyset the decrypting client is granted. A payload
+  under a keyset the client has no grant for fails **loudly** at the ZeroKMS
+  round trip (404).
 
 Two corollaries that follow directly, and that agents get wrong most often:
 
 1. **"Same credentials everywhere" is stronger than what's required.** Two
-   different clients — each with its own client key — interoperate completely
-   as long as both are granted the keyset. A backfill job and the deployed
-   app may use different access keys; what must match is the *keyset* the
-   operations run under, not the credential strings. Be precise about how
-   that keyset is chosen: when an operation names one (`config.keyset`),
-   it's that keyset; when it doesn't, ZeroKMS uses **that client's default
-   keyset** — the keyset the client was bound to when it was created. So two
-   clients that both omit `config.keyset` only interoperate if their
-   *default keysets* are the same keyset.
-2. **There is no failure mode where decrypt works but search silently
-   misses.** Search terms are produced with a per-*keyset* index key that the
-   client loads from ZeroKMS at initialization — a client without keyset
-   access cannot even construct the cipher, and every client with access
-   derives the *same* index key, so terms written by one client match terms
-   written by another. If decrypt succeeds but an encrypted query returns
-   zero rows, the problem is the index or the predicate, never key identity —
-   go to `stash-indexing` (missing/unused index) or `stash-postgres` (wrong
-   operand cast / predicate form).
+   different clients — each with its own client key — interoperate completely,
+   search included, as long as both are **bound to the same keyset**. A
+   backfill job and the deployed app may use different access keys; what must
+   match is the *keyset* the operations run under, not the credential
+   strings. Be precise about how that keyset is chosen: when an operation
+   names one (`config.keyset`), it's that keyset; when it doesn't, ZeroKMS
+   uses **that client's default keyset** — the keyset the client was bound to
+   when it was created. So two clients that both omit `config.keyset` only
+   interoperate if their *default keysets* are the same keyset.
+2. **One silent failure mode exists, and it is exactly the asymmetry above.**
+   A reader that is *granted* the writer's keyset but *bound* to a different
+   one decrypts the writer's rows fine — while its query terms derive under
+   its own bound keyset and match nothing: **zero rows, no error**. So
+   "decrypt works but search returns zero rows" has three suspects, in
+   order: the reader's bound keyset vs the writer's (this skill), the
+   extractor index (`stash-indexing`), the operand cast / predicate form
+   (`stash-postgres`). What can *not* cause it is the credential string —
+   every client bound to the same keyset derives the same index key. The
+   same-keyset rule therefore binds **writers and query readers**;
+   decrypt-only readers need just a grant.
 
 ## The key hierarchy
 
@@ -253,7 +263,11 @@ each step's failure explains everything after it:
 5. **Only decrypt of specific values failing, for specific callers?**
    That's lock context (gate 2), not keyset access — check that the decrypt
    call carries the same lock context the value was encrypted with.
-6. **Decrypt fine but queries return zero rows?** Not a key problem at all.
+6. **Decrypt fine but queries return zero rows?** First check the reader's
+   *bound* keyset against the writer's — a reader granted the writer's
+   keyset but bound to a different one decrypts fine while its query terms
+   derive under its own keyspace (the silent case from "The model in one
+   paragraph"). Bound keysets match? Then it's not a key problem:
    `stash-indexing` (is the extractor index there and used?) and
    `stash-postgres` (is the operand cast/predicate form right?).
 

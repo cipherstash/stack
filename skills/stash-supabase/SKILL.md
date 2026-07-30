@@ -57,11 +57,13 @@ this is also how **Supabase Edge Functions** get credentials in local dev —
 `supabase secrets set` them for deploys.
 
 > **One credential set per environment — but what must match between writers
-> and readers is the keyset, not the credential string.** Index terms come
-> from a per-*keyset* key, so any client granted the keyset produces matching
-> terms; a client resolving to a different keyset fails loudly (decrypt and
-> query alike), never as a silent search miss. `stash-zerokms` is canonical
-> for keyset scoping, `stash-auth` for credentials. Encryption *inside* an
+> and query readers is the keyset, not the credential string.** Index terms
+> come from a per-*keyset* key, so any client bound to the keyset produces
+> matching terms. Decrypt is looser — it follows each payload's keyset and
+> needs only a grant — so a reader granted the writer's keyset but bound to
+> a different one decrypts fine while its searches silently return zero
+> rows. `stash-zerokms` is canonical for keyset scoping, `stash-auth` for
+> credentials. Encryption *inside* an
 > Edge Function (Deno, no native modules) uses the
 > `@cipherstash/stack/wasm-inline` entry — see the `stash-edge` skill; SQL
 > written by hand in a migration or RPC is covered by `stash-postgres`.

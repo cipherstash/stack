@@ -407,13 +407,15 @@ payload (1–2 KB per row) and spills. Group on the extractor —
 sequential-scans. Adding the functional index over the extractor is a separate
 step — see `stash-indexing`.
 
-**Every writer and reader must resolve to the same keyset** — the credential
-strings themselves may differ. Index terms come from a per-*keyset* key, so
-any client granted the keyset produces matching terms; a client on a
-different keyset fails loudly (decrypt and query alike, ZeroKMS 404), never
-silently. If decrypt works but a query returns zero rows, suspect the operand
-cast or predicate form on this page, or a missing index (`stash-indexing`) —
-not credentials. `stash-zerokms` is canonical for keyset scoping.
+**Every writer and query reader must resolve to the same keyset** — the
+credential strings themselves may differ. Index terms come from a per-*keyset*
+key, so any client bound to the keyset produces matching terms. Decrypt is
+looser: it follows each payload's keyset and needs only a grant, which makes
+one silent case possible — a reader granted the writer's keyset but bound to
+a different one decrypts fine while its queries return zero rows. If decrypt
+works but a query returns zero rows, check the reader's bound keyset against
+the writer's (`stash-zerokms`), then the operand cast or predicate form on
+this page, then the index (`stash-indexing`) — never the credential strings.
 
 ## Troubleshooting
 

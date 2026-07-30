@@ -17,13 +17,15 @@ What it documents:
   blocks all of its future key operations immediately, without
   re-encryption (not retroactive — already-held plaintext is beyond recall,
   but per-value keys bound the blast radius to what was already accessed).
-- The scoping rule: every encrypt, decrypt, and query is scoped to a keyset,
-  and a client without a grant for that keyset fails **all three operations
-  loudly** at the ZeroKMS round trip. In particular there is no failure mode
-  where decrypt works but encrypted search silently returns nothing — search
-  terms use a per-keyset index key that every granted client derives
-  identically, so a zero-rows query with working decrypt is an index or
-  predicate problem, never a key-identity problem.
+- The scoping rule and its asymmetry: encrypt and query always use the
+  client's **bound** keyset, while decrypt follows each payload's keyset
+  subject to grants. An unreachable bound keyset (no grant, revoked,
+  disabled) fails loudly at the ZeroKMS round trip, as does decrypting a
+  payload under an ungranted keyset. The one **silent** case is a reader
+  granted the writer's keyset but bound to a different one: decrypt works,
+  while its query terms derive under its own keyset and encrypted search
+  returns zero rows. The same-keyset rule therefore binds writers and query
+  readers; decrypt-only readers need just a grant.
 - Clients and grants: creation binds a client to one keyset (the workspace
   default unless named), `grant`/`revoke` manage further access per
   (client, keyset) pair, and two different credentials interoperate fully as

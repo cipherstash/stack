@@ -440,7 +440,7 @@ Backfill requires a `public.eql_v3_*` target column, records version 3 and the `
 
 **Dual-write precondition.** The application must already write both `<col>` and `<col>_encrypted` on every insert and update. Otherwise rows written *during* the backfill land in plaintext only, silently. The first run prompts (interactive) or requires `--confirm-dual-writes-deployed` (non-interactive), then records `dual_writing`. Resumes don't re-prompt.
 
-**Keyset precondition — the backfill's client must resolve to the same keyset as the application's.** Backfill encrypts through whichever `CS_*` credentials are in its environment, and what must match between backfill and app is the **keyset** their clients resolve to, not the credential strings (`stash-zerokms` is canonical). Two clients on the same keyset interoperate fully — search included, since index terms come from a per-keyset key. Clients resolving to *different* keysets fail loudly: decrypt and query alike, not a silent search miss. Export the target environment's `CS_*` values in the shell running the backfill so the ciphertext lands in that environment's keyspace and the run is attributed to its client. See [`env`](#env) and `stash-auth`.
+**Keyset precondition — the backfill's client must resolve to the same keyset as the application's.** Backfill encrypts through whatever credentials its environment *resolves*: `CS_*` variables when present, otherwise the native auto strategy falls back to the local `~/.cipherstash` dev profile — so a shell without the variables silently runs as your laptop's client. What must match between backfill and app is the **keyset** their clients resolve to, not the credential strings (`stash-zerokms` is canonical). Two clients bound to the same keyset interoperate fully — search included, since index terms come from a per-keyset key. A backfill bound to a *different* keyset is the quiet failure: the app can still decrypt those rows if granted that keyset, but its query terms derive under its own keyset, so encrypted search returns zero rows for them — no error. Export the target environment's `CS_*` values in the shell running the backfill (non-negotiable in CI/production) so the ciphertext lands in that environment's keyspace and the run is attributed to its client. See [`env`](#env) and `stash-auth`.
 
 | Flag | Description |
 |---|---|
@@ -489,8 +489,11 @@ CS_CLIENT_ACCESS_KEY=CSAK…
 > credential string.** The client minted here is created against the
 > workspace default keyset, so it interoperates — search included — with any
 > other client resolving to that keyset (index terms come from a per-keyset
-> key; `stash-zerokms` is canonical). A client on a *different* keyset fails
-> loudly, decrypt and query alike. Still mint one credential set per
+> key; `stash-zerokms` is canonical). A client bound to a *different* keyset
+> fails loudly where it lacks a grant — but where it *is* granted, decrypt
+> still works while its searches run in its own keyspace and silently return
+> zero rows (the asymmetry `stash-zerokms` documents). Still mint one
+> credential set per
 > environment and export it for every process touching that environment's
 > data — for isolation, attribution, and revocability (`stash-auth`), not
 > because credential strings must be identical.

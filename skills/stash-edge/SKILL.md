@@ -169,26 +169,31 @@ wrong.** The scoping unit is the **keyset**, and `stash-zerokms` is the
 canonical skill for it. What actually holds:
 
 - Search terms are produced with a per-**keyset** index key. Every client
-  granted the keyset derives the *same* index key, so rows written by one
-  credential match queries from another — different `CS_CLIENT_ID` /
+  **bound** to the keyset derives the *same* index key, so rows written by
+  one credential match queries from another — different `CS_CLIENT_ID` /
   `CS_CLIENT_KEY` pairs interoperate fully as long as both clients resolve
   to the same keyset.
-- A client that cannot reach the data's keyset fails **loudly and
-  completely**: client construction (the index-key load), encrypt, decrypt,
-  and query all fail with a ZeroKMS 404. There is no silent partial failure.
+- The routing is asymmetric (`stash-zerokms` has the full model): encrypt
+  and query always use the client's **bound** keyset — unreachable (no
+  grant, revoked, disabled) means client construction fails loudly at the
+  index-key load — while **decrypt follows each payload's keyset**, subject
+  to grants, with an ungranted payload failing loudly (ZeroKMS 404).
 - The old cautionary scenario — `stash encrypt backfill` from a laptop, then
   querying from an Edge Function with `stash env`-minted values — is fine
   when both clients resolve to the same keyset (the common case: both
-  created against the workspace default). If they were created against
-  different keysets you find out immediately, because *everything* fails,
-  not just search. Watch the keyset-less nuance from `stash-zerokms`: an
-  operation with no explicit keyset resolves to **that client's default
+  created against the workspace default). If they resolve to *different*
+  keysets, how it fails depends on grants: no grant across them and decrypt
+  fails loudly too; but a reader *granted* the writer's keyset while bound
+  to its own decrypts fine and **silently searches the wrong keyspace —
+  zero rows, no error**. Watch the keyset-less nuance from `stash-zerokms`:
+  an operation with no explicit keyset resolves to **that client's default
   keyset**, so two clients created against different keysets don't share a
   keyspace even in the same workspace.
 
-**If decrypt works but a query returns zero rows, it is not a credential or
-key problem.** Check the operand cast / predicate form (`stash-postgres`)
-and that the extractor index exists and is used (`stash-indexing`).
+**If decrypt works but a query returns zero rows, it is never the credential
+strings.** Check, in order: the reader's bound keyset against the writer's
+(`stash-zerokms`), the operand cast / predicate form (`stash-postgres`), and
+that the extractor index exists and is used (`stash-indexing`).
 
 Environment hygiene still matters, for the reasons `stash-auth` and
 `stash-deployment` give: mint one credential set per environment with
