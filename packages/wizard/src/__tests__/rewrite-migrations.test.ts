@@ -1072,6 +1072,70 @@ describe('rewriteEncryptedAlterColumns', () => {
       ])
     })
 
+    /**
+     * A rename CHAIN that crosses from a dollar-quoted body to a live statement
+     * inside the SAME file. The encryptedness has to survive both hops.
+     *
+     * This was accepted residue on the first cut, justified as unreachable
+     * because drizzle-kit never emits `RENAME COLUMN` inside `DO $$`. That is
+     * the wrong reachability test: the corpus #811 actually reported is
+     * hand-written and does exactly this — a human staging a manual column swap.
+     * The cost of missing it is the defect this whole change exists to close, an
+     * empty twin staged beside real ciphertext.
+     */
+    it('carries encryptedness through a rename chain from DO $$ into a live statement', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_setup.sql'),
+        [
+          'CREATE TABLE "users" ("email" text NOT NULL);',
+          'ALTER TABLE "users" ADD COLUMN "tmp" "eql_v3_text_search";',
+          'DO $$ BEGIN',
+          '  ALTER TABLE "users" DROP COLUMN "email";',
+          '  ALTER TABLE "users" RENAME COLUMN "tmp" TO "mid";',
+          'END $$;',
+          'ALTER TABLE "users" RENAME COLUMN "mid" TO "email";',
+          '',
+        ].join('\n'),
+      )
+      const change = path.join(tmpDir, '0001_change_domain.sql')
+      fs.writeFileSync(change, `${domainChange}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([
+        { file: change, statement: domainChange, reason: 'already-encrypted' },
+      ])
+    })
+
+    // And the reverse order, live -> dollar, which already worked. Pinned so a
+    // future reordering of the two rename passes cannot silently break one
+    // direction while the other keeps passing.
+    it('carries encryptedness through a rename chain from a live statement into DO $$', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_setup.sql'),
+        [
+          'CREATE TABLE "users" ("email" text NOT NULL);',
+          'ALTER TABLE "users" ADD COLUMN "tmp" "eql_v3_text_search";',
+          'ALTER TABLE "users" RENAME COLUMN "tmp" TO "mid";',
+          'DO $$ BEGIN',
+          '  ALTER TABLE "users" DROP COLUMN "email";',
+          '  ALTER TABLE "users" RENAME COLUMN "mid" TO "email";',
+          'END $$;',
+          '',
+        ].join('\n'),
+      )
+      const change = path.join(tmpDir, '0001_change_domain.sql')
+      fs.writeFileSync(change, `${domainChange}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([
+        { file: change, statement: domainChange, reason: 'already-encrypted' },
+      ])
+    })
+
     // The staged twin exists in the database but only inside a dollar body, so
     // it is `encrypted` without ever being `declared`. Emitting another
     // ADD COLUMN for it fails at migrate time with "column already exists".
@@ -1398,11 +1462,16 @@ describe('rewriteEncryptedAlterColumns', () => {
    * sweep measures ~0.4 s in one pass and ~8.5 s per-opener.
    *
    * Sized so the two are unambiguous rather than marginal. Over this ~2.1 MB
-   * corpus the body scan alone measures ~3 ms in one pass and ~41 s per-opener,
-   * and the whole sweep runs in well under a second when linear. The 15 s bound
-   * therefore sits ~30x above the linear time (so a slow shared runner is still
-   * comfortable) and ~3x below the regressed time — it catches an
-   * order-of-magnitude regression and does not police milliseconds.
+   * corpus the whole sweep measures ~70 ms in one pass and ~41 s per-opener, so
+   * the 15 s bound sits ~200x above the linear time and ~3x below the regressed
+   * one.
+   *
+   * That headroom is the answer to the usual objection that wall-clock
+   * assertions flake on loaded runners: tripping this one needs a machine ~200x
+   * slower at scanning a string than a developer laptop, where CI is 2-5x. It is
+   * a coarse order-of-magnitude gate, not a millisecond budget — if it ever does
+   * go off spuriously, raise the bound rather than delete the test, because the
+   * regression it guards is shipped-command latency.
    */
   it('scans a dollar-quote-heavy corpus in a single pass', async () => {
     const bodies = Array.from(

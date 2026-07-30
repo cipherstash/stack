@@ -664,8 +664,26 @@ function indexColumnDeclarations(contents: readonly string[]): ColumnIndex {
     // Renames run after EVERY declaration above, live and dollar-quoted: a
     // rename carries the column's type with it, so the ADD it refers to has to
     // be indexed first.
-    indexRenames(sql, encrypted, declared)
-    for (const body of opaque) indexEncryptedRenames(body, encrypted)
+    //
+    // Iterated to a FIXPOINT because a rename chain can alternate between live
+    // and dollar-quoted statements in either order within one file, and a single
+    // ordered pair of passes only follows one of those orders. Running the live
+    // pass first missed `ADD tmp <domain>` → `RENAME tmp TO mid` inside `DO $$`
+    // → live `RENAME mid TO email`, leaving `email` looking like plaintext and
+    // staging an empty twin beside its ciphertext — the exact defect this change
+    // exists to close. Hand-written manual column swaps do this; the corpus #811
+    // reported is one.
+    //
+    // Terminates: both sets only ever grow, and are bounded by the number of
+    // distinct column keys in the corpus. Converges in one extra iteration past
+    // the longest chain, so a corpus with no renames costs a second scan that
+    // finds nothing.
+    let indexed = -1
+    while (indexed !== encrypted.size + declared.size) {
+      indexed = encrypted.size + declared.size
+      indexRenames(sql, encrypted, declared)
+      for (const body of opaque) indexEncryptedRenames(body, encrypted)
+    }
   }
 
   return { encrypted, declared }
@@ -792,10 +810,10 @@ function indexRenames(
  * a branch that never ran, and inventing a declaration from it is the
  * fail-open direction.
  *
- * **Residue, accepted.** A rename CHAIN that alternates between live and
- * dollar-quoted statements within a single file, in the order dollar→live, is
- * not followed: the live pass above has already run by then. Crossing files
- * works, since files are indexed in sorted order.
+ * Chains that alternate between live and dollar-quoted statements are followed
+ * in EITHER order: {@link indexColumnDeclarations} iterates this pass and the
+ * live one to a fixpoint, so which runs first stops mattering. Crossing files
+ * works too, since files are indexed in sorted order.
  */
 function indexEncryptedRenames(body: string, encrypted: Set<string>): void {
   for (const renamed of body.matchAll(RENAME_COLUMN_RE)) {

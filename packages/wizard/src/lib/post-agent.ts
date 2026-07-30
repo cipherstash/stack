@@ -82,10 +82,19 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
       p.log.info(
         `Rewrote ${sweep.rewritten} migration file(s) in the drizzle output to add staged encrypted columns while preserving the source columns.`,
       )
-      // The rewrite repaired SQL only: the agent's schema edit still declares
-      // the SOURCE column as the encrypted domain, and drizzle-kit's snapshot
-      // agrees with it, so `drizzle-kit generate` sees no diff and says nothing
-      // (#836, item 2). Name the divergence while the user is still here.
+    }
+    // The rewrite repaired SQL only: the agent's schema edit still declares the
+    // SOURCE column as the encrypted domain, and drizzle-kit's snapshot agrees
+    // with it, so `drizzle-kit generate` sees no diff and says nothing
+    // (#836, item 2). Name the divergence while the user is still here.
+    //
+    // Gated on `staged`, not on `didStage`, to match the CLI. The two are
+    // equivalent today — a rewritten file always yields at least one staged
+    // column, and both are recorded together only after the write succeeds — but
+    // this notice describes the staged columns, so it should be driven by
+    // whether there are any rather than by a file count that happens to track
+    // them.
+    if (sweep.staged.length > 0) {
       p.log.warn(describeStagedReconciliation(sweep.staged).join('\n'))
     }
     if (skipped || unverified) {
