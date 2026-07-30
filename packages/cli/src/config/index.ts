@@ -251,15 +251,20 @@ export async function loadEncryptConfig(
  *
  * Both refusals are hard exits: there is no partially-usable state here, and
  * every caller would otherwise have to re-derive that.
+ *
+ * `sourceLabel` names where the config came from. It defaults to the
+ * client-file phrasing, but not every caller loads a client file: the Prisma
+ * Next pass derives the schemas from an emitted `contract.json`, where
+ * "Encryption client in …/contract.json" would send the user looking for a
+ * file they are not supposed to author (#819 review).
  */
 export function requireUsableEncryptConfig(
   config: EncryptConfig | undefined,
   encryptClientPath: string,
+  sourceLabel = `Encryption client in ${encryptClientPath}`,
 ): EncryptConfig {
   if (!config) {
-    console.error(
-      `Error: Encryption client in ${encryptClientPath} has no initialized encrypt config.`,
-    )
+    console.error(`Error: ${sourceLabel} has no initialized encrypt config.`)
     process.exit(1)
   }
 
@@ -275,7 +280,7 @@ export function requireUsableEncryptConfig(
   const tables = Object.keys(config.tables ?? {})
   if (tables.length === 1 && tables[0] === PLACEHOLDER_TABLE_NAME) {
     console.error(
-      `Error: ${encryptClientPath} still contains the placeholder table \`${PLACEHOLDER_TABLE_NAME}\` that \`stash init\` wrote.\n\nDeclare your encrypted columns and pass those tables to Encryption({ schemas: [...] }) in that file, then re-run this command.`,
+      `Error: ${sourceLabel} still contains the placeholder table \`${PLACEHOLDER_TABLE_NAME}\` that \`stash init\` wrote.\n\nDeclare your encrypted columns and pass those tables to Encryption({ schemas: [...] }) in that file, then re-run this command.`,
     )
     process.exit(1)
   }

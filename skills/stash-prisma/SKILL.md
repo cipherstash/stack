@@ -169,6 +169,26 @@ standalone installer for exactly this reason. The CLI enforces this: `stash eql
 install` detects a Prisma Next project and refuses (pointing you at `prisma-next
 migrate`) unless you pass `--force`.
 
+## Encrypting data that already exists (`stash encrypt`)
+
+Declaring an encrypted column only covers new writes. To encrypt rows already in
+a plaintext column, use the CLI's rollout lifecycle — `stash encrypt backfill`,
+then switch reads, then `stash encrypt drop` (`stash-cli` and `stash-encryption`
+are canonical for the sequence and its dual-write precondition).
+
+Two things are Prisma-Next-specific:
+
+- **No encryption client file is needed.** `stash.config.ts`'s `client` option
+  points at a file this integration deliberately doesn't have. The encrypt
+  commands detect a Prisma Next project, read the emitted `contract.json`
+  (`src/prisma/`, `prisma/`, or the project root), and derive the schemas the
+  same way the runtime does — so run `prisma-next contract emit` before
+  `stash encrypt`, and don't hand-author a bridge client file.
+- **The tracking schema is created for you.** `cipherstash.cs_migrations` is
+  normally created by `stash eql install`, which this integration never runs.
+  `stash encrypt backfill` bootstraps it itself (idempotently), so the backfill
+  user needs CREATE on the database the first time.
+
 ## Indexing encrypted columns
 
 The adapter emits the encrypted query operators, but **no index DDL** — without

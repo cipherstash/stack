@@ -259,6 +259,18 @@ async function tryLoadPrismaNextContext(
     process.exit(1)
   }
 
+  // `deriveStackSchemasV3` is typed from a jiti import, so its return value is
+  // an assertion, not a checked fact. A version skew that renamed or reshaped
+  // the export would hand us `undefined` here, and the `.length` read below
+  // would throw a raw TypeError past all of this guidance (#819 review).
+  if (!Array.isArray(schemas)) {
+    console.error(
+      `Error: @cipherstash/stack-prisma's deriveStackSchemasV3 returned ${typeof schemas}, not an array of tables.\n\n` +
+        "This usually means the installed @cipherstash/stack-prisma doesn't match this CLI release. Align the versions and re-run.",
+    )
+    process.exit(1)
+  }
+
   if (schemas.length === 0) {
     console.error(
       `Error: No cipherstash-encrypted columns found in ${contractPath}.\n\n` +
@@ -268,7 +280,11 @@ async function tryLoadPrismaNextContext(
   }
 
   const client = await Encryption({ schemas })
-  requireUsableEncryptConfig(client.getEncryptConfig(), contractPath)
+  requireUsableEncryptConfig(
+    client.getEncryptConfig(),
+    contractPath,
+    `Encryption schemas derived from ${contractPath}`,
+  )
 
   const tables = new Map<string, EncryptedTableLike>()
   for (const schema of schemas as EncryptedTableLike[]) {

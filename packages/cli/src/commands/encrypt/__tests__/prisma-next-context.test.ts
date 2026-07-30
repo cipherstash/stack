@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Prisma Next projects have no hand-authored encryption client file — the
-// schema lives in the emitted contract.json (#<issue>). `loadEncryptionContext`
+// schema lives in the emitted contract.json. `loadEncryptionContext`
 // must derive the v3 schemas from the contract (mirroring the runtime's
 // `cipherstashFromStack`) instead of hard-failing on the missing file, and
 // `backfillCommand` must create `cipherstash.cs_migrations` itself because the
@@ -180,6 +180,27 @@ describe('loadEncryptionContext — Prisma Next contract derivation', () => {
     consoleError.mockRestore()
   })
 
+  // `deriveStackSchemasV3` comes from a jiti import, so its array return type
+  // is an assertion. A version skew that reshaped the export must not reach the
+  // `.length` read as a bare TypeError (#819 review).
+  it('errors when deriveStackSchemasV3 returns a non-array', async () => {
+    detectPrismaNextMock.mockReturnValue(true)
+    fsMocks.existsSync.mockImplementation((p: string) =>
+      p.endsWith('src/prisma/contract.json'),
+    )
+    deriveStackSchemasV3Mock.mockReturnValue(undefined as unknown as unknown[])
+    const exit = spyExit()
+    const consoleError = spyConsoleError()
+
+    await expect(loadEncryptionContext()).rejects.toThrow('process.exit:1')
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining('not an array of tables'),
+    )
+
+    exit.mockRestore()
+    consoleError.mockRestore()
+  })
+
   it('errors when the contract has no cipherstash columns', async () => {
     detectPrismaNextMock.mockReturnValue(true)
     fsMocks.existsSync.mockImplementation((p: string) =>
@@ -221,5 +242,42 @@ describe('backfillCommand — cs_migrations bootstrap', () => {
       migrateMocks.installMigrationsSchema.mock.invocationCallOrder[0]!
     const backfillOrder = migrateMocks.runBackfill.mock.invocationCallOrder[0]!
     expect(installOrder).toBeLessThan(backfillOrder)
+  })
+
+  // Without the BackfillConfigError wrapper this lands in the generic handler,
+  // which deliberately prints only "Backfill failed (…)" — the opaque message
+  // the bootstrap exists to remove (#819 review).
+  it('explains a bootstrap failure instead of the generic "Backfill failed"', async () => {
+    detectPrismaNextMock.mockReturnValue(true)
+    fsMocks.existsSync.mockImplementation((p: string) =>
+      p.endsWith('src/prisma/contract.json'),
+    )
+    deriveStackSchemasV3Mock.mockReturnValue([FAKE_TABLE])
+    migrateMocks.installMigrationsSchema.mockRejectedValueOnce(
+      new Error('permission denied for database app'),
+    )
+    const exit = spyExit()
+    const p = await import('@clack/prompts')
+
+    const { backfillCommand } = await import('../backfill.js')
+    await expect(
+      backfillCommand({
+        table: 'transaction',
+        column: 'email',
+        pkColumn: 'id',
+        confirmDualWritesDeployed: true,
+      }),
+    ).rejects.toThrow('process.exit:1')
+
+    expect(migrateMocks.runBackfill).not.toHaveBeenCalled()
+    const logged = vi
+      .mocked(p.log.error)
+      .mock.calls.map(([m]) => m)
+      .join('\n')
+    expect(logged).toContain('cs_migrations')
+    expect(logged).toContain('permission denied for database app')
+    expect(logged).not.toContain('Backfill failed')
+
+    exit.mockRestore()
   })
 })
