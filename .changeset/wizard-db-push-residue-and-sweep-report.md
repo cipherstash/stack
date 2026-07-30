@@ -9,7 +9,9 @@ migration files a failed sweep rewrote before it stopped.
   `stash db push` was retired with the CipherStash Proxy lifecycle and
   `runPostAgentSteps` never invoked it; the line now reports what the step
   actually does (package install, `eql install`, migrations). The `--plan` help
-  text no longer promises "no db pushes" either.
+  text no longer promises "no db pushes" either, and the package README — which
+  ships in the tarball — no longer lists `db push` as a prerequisite or a
+  post-agent step.
 - When a candidate directory's ALTER COLUMN sweep threw, the wizard reported the
   failure but skipped the per-directory report, so files it had already rewritten
   on disk — and statements it had flagged — went unnamed. It now lists them

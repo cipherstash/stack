@@ -14,7 +14,6 @@ import {
   trackWizardStarted,
 } from './lib/analytics.js'
 import { WizardChangelog } from './lib/changelog.js'
-import { INTEGRATIONS } from './lib/constants.js'
 import {
   detectIntegration,
   detectPackageManager,
