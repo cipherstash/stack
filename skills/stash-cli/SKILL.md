@@ -402,12 +402,17 @@ stash eql repair --drizzle --out db/migrations \
 | `--out <path>` | Directory to sweep. Default `drizzle`; set it to match your `drizzle.config.ts`. |
 | `--dry-run` | Report what would be rewritten without writing anything. |
 | `--database-url <url>` | Check which migrations the database has already applied, and leave those alone. Also read from `DATABASE_URL`. |
+| `--migrations-table <[schema.]table>` | Drizzle's migration ledger, when `drizzle.config.ts` overrides `migrations.table` / `migrations.schema`. Defaults to `drizzle.__drizzle_migrations`. Only read alongside `--database-url`. |
 
 What it rewrites, what it refuses, and the schema reconciliation afterwards are identical to the `eql migration --drizzle` sweep above — both call the same rewriter and print the same report. It exits non-zero if any statement is left unrepaired.
 
 **Already-applied migrations are refused, not repaired.** Nearly every ALTER-to-encrypted statement is un-runnable, so its migration failed and is safe to rewrite. The exception is a `jsonb` column changed to an EQL domain on an empty table: base types are compatible, so it applies. Rewriting that migration afterwards leaves its `.sql` describing a shape the database never got from it, and a fresh CI or staging database replaying the rewritten file diverges from the one you developed on — silently, since nothing records that they should differ. With `--database-url`, repair reads `drizzle.__drizzle_migrations` and treats a migration as applied when its journal `when` is at or below the latest `created_at` — the same timestamp comparison `drizzle-kit migrate` itself makes (hashes are written but never compared). Applied migrations are listed and left untouched, and the command exits non-zero.
 
 Without a database URL the repair proceeds and warns that applied state could not be verified: the journal proves a migration exists, not that it ran. Pass `--database-url` whenever you have run `drizzle-kit migrate` since generating the migrations. If the check is requested but cannot run (connection refused, bad credentials), nothing is rewritten and the command exits non-zero rather than silently repairing unverified.
+
+**If `drizzle.config.ts` overrides `migrations.table` / `migrations.schema`, pass `--migrations-table`.** The probe cannot discover a renamed ledger, and a missing one is ambiguous — it means either `drizzle-kit migrate` never ran here, or the check looked in the wrong place. Repair reports that state as *unverified* rather than as "nothing applied" and says which relation it tried, so a custom-ledger project is never told its applied migrations are safe to rewrite. Naming the ledger turns the check back on. The value must be a plain table name, optionally schema-qualified; anything else is rejected before connecting.
+
+An applied migration carrying a statement the sweep would have skipped anyway — an undeclared source column, an already-encrypted one, an existing twin — is reported with that skip reason, not as an applied-migration refusal. Its applied-ness is not why it was left alone.
 
 #### `eql upgrade`
 

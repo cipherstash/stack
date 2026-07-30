@@ -6,13 +6,20 @@ import {
   type RewriteResult,
   rewriteEncryptedAlterColumns,
 } from '@/commands/db/rewrite-migrations.js'
-import { latestAppliedMillis, NOTHING_APPLIED } from '@/commands/eql/applied.js'
+import {
+  DEFAULT_MIGRATIONS_RELATION,
+  isValidRelation,
+  LEDGER_ABSENT,
+  latestAppliedMillis,
+  NOTHING_APPLIED,
+} from '@/commands/eql/applied.js'
 import {
   type JournalEntry,
   JournalError,
   readJournal,
 } from '@/commands/eql/journal.js'
 import {
+  reportSkipped,
   reportSweepFailure,
   reportSweepResult,
 } from '@/commands/eql/sweep-report.js'
@@ -34,6 +41,13 @@ export interface EqlRepairOptions {
    * `DATABASE_URL`) the repair proceeds, warning that it could not verify.
    */
   databaseUrl?: string
+  /**
+   * The drizzle migration ledger to read applied state from, as
+   * `[schema.]table`. Defaults to drizzle-kit's own
+   * `drizzle.__drizzle_migrations`; set it to match `migrations.table` /
+   * `migrations.schema` in drizzle.config.ts when the project overrides them.
+   */
+  migrationsTable?: string
 }
 
 /**
@@ -46,6 +60,14 @@ export async function eqlRepairCommand(
 ): Promise<void> {
   if (!options.drizzle) {
     p.log.error(messages.eql.repairNeedsTarget)
+    throw new CliExit(1)
+  }
+
+  // Before anything else: a malformed ledger name must not reach the probe,
+  // where its "relation does not exist" would masquerade as an absent ledger.
+  const relation = options.migrationsTable ?? DEFAULT_MIGRATIONS_RELATION
+  if (!isValidRelation(relation)) {
+    p.log.error(messages.eql.repairMigrationsTableInvalid(relation))
     throw new CliExit(1)
   }
 
@@ -74,13 +96,18 @@ export async function eqlRepairCommand(
   p.intro('CipherStash EQL repair')
 
   const dryRun = options.dryRun ?? false
-  const applied = await appliedFiles(outDir, journal, options.databaseUrl)
+  const applied = await appliedFiles(
+    outDir,
+    journal,
+    options.databaseUrl,
+    relation,
+  )
 
-  let refused: string[]
+  let appliedFindings: AppliedFindings
   let result: RewriteResult
   let sweepIncomplete: boolean
   try {
-    refused = await refusedAppliedFiles(outDir, applied)
+    appliedFindings = await refusedAppliedFiles(outDir, applied)
     result = await rewriteEncryptedAlterColumns(outDir, {
       dryRun,
       skip: [...applied],
@@ -96,13 +123,17 @@ export async function eqlRepairCommand(
     throw new CliExit(1)
   }
 
+  const { refused, nearMisses } = appliedFindings
   if (refused.length > 0) {
     p.log.warn(messages.eql.repairAppliedRefused(refused.length))
     for (const file of refused) p.log.step(`  - ${file}`)
     p.log.step(`      ${messages.eql.repairAppliedHazard}`)
   }
+  // Held back with the rest of their file, so the real sweep never saw them —
+  // report them here with the same guidance an unapplied near-miss gets.
+  reportSkipped(nearMisses)
 
-  if (sweepIncomplete || refused.length > 0) {
+  if (sweepIncomplete || refused.length > 0 || nearMisses.length > 0) {
     p.log.error(messages.eql.repairSweepIncomplete(outDir))
     p.outro('Repair incomplete.')
     throw new CliExit(1)
@@ -114,8 +145,28 @@ export async function eqlRepairCommand(
 }
 
 /**
- * The applied migrations that carry an ALTER-to-encrypted statement — the ones
- * to report and refuse.
+ * What an applied migration carries, split by what the rewriter would have done
+ * with it — because the two need different words from us.
+ *
+ * `refused` are files the sweep WOULD have rewritten. Holding them back is the
+ * applied-migration hazard, and {@link messages.eql.repairAppliedHazard}
+ * explains it.
+ *
+ * `nearMisses` are statements the sweep would have left alone anyway — an
+ * undeclared source column, an already-encrypted one, an existing twin. Their
+ * applied-ness is beside the point: the actionable thing is the skip reason, so
+ * they get the same guidance an unapplied near-miss gets. Reporting them under
+ * the hazard banner would swap advice the user can act on for an explanation
+ * that does not apply to them.
+ */
+interface AppliedFindings {
+  refused: string[]
+  nearMisses: RewriteResult['skipped']
+}
+
+/**
+ * The applied migrations that carry an ALTER-to-encrypted statement, split into
+ * {@link AppliedFindings}.
  *
  * Answered with a second, WRITE-FREE sweep over the whole directory rather than
  * a private matcher: "does this file carry a statement the repair would act on"
@@ -126,19 +177,15 @@ export async function eqlRepairCommand(
 async function refusedAppliedFiles(
   outDir: string,
   applied: ReadonlySet<string>,
-): Promise<string[]> {
+): Promise<AppliedFindings> {
   // The intersection is empty by construction when nothing is applied — which
   // is every offline run — so don't pay for the extra pass.
-  if (applied.size === 0) return []
+  if (applied.size === 0) return { refused: [], nearMisses: [] }
   const preview = await rewriteEncryptedAlterColumns(outDir, { dryRun: true })
-  return [
-    ...new Set([
-      ...preview.rewritten,
-      ...preview.skipped.map(({ file }) => file),
-    ]),
-  ]
-    .filter((file) => applied.has(file))
-    .sort()
+  return {
+    refused: preview.rewritten.filter((file) => applied.has(file)).sort(),
+    nearMisses: preview.skipped.filter(({ file }) => applied.has(file)),
+  }
 }
 
 /**
@@ -152,6 +199,7 @@ async function appliedFiles(
   outDir: string,
   journal: readonly JournalEntry[],
   databaseUrlFlag: string | undefined,
+  relation: string = DEFAULT_MIGRATIONS_RELATION,
 ): Promise<Set<string>> {
   const databaseUrl = await resolveRepairDatabaseUrl(databaseUrlFlag)
   if (databaseUrl === undefined) {
@@ -159,9 +207,9 @@ async function appliedFiles(
     return new Set()
   }
 
-  let watermark: number | typeof NOTHING_APPLIED
+  let watermark: number | typeof NOTHING_APPLIED | typeof LEDGER_ABSENT
   try {
-    watermark = await latestAppliedMillis(databaseUrl)
+    watermark = await latestAppliedMillis(databaseUrl, relation)
   } catch (error) {
     // Asking for the check and not getting it is a hard failure. Proceeding
     // here would rewrite applied migrations while having told the user the
@@ -173,6 +221,12 @@ async function appliedFiles(
     )
     p.outro('Repair incomplete.')
     throw new CliExit(1)
+  }
+  // Absent relation: ambiguous, so warn rather than claim a clean check. See
+  // LEDGER_ABSENT. Still proceeds, for the same reason the offline path does.
+  if (watermark === LEDGER_ABSENT) {
+    p.log.warn(messages.eql.repairLedgerMissing(relation))
+    return new Set()
   }
   if (watermark === NOTHING_APPLIED) {
     p.log.info(messages.eql.repairNothingApplied)

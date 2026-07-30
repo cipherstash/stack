@@ -29,7 +29,7 @@ function reportRewritten(files: readonly string[], lead: string): void {
  * {@link describeSkipReason} carries — the reasons need different action from
  * the user, so a single generic line would hide that.
  */
-function reportSkipped(skipped: PartialRewriteResult['skipped']): void {
+export function reportSkipped(skipped: PartialRewriteResult['skipped']): void {
   if (!skipped || skipped.length === 0) return
   p.log.warn(
     `Found ${skipped.length} ALTER-to-encrypted statement(s) the sweep left alone. Review and fix them before running your migrations:`,

@@ -377,7 +377,10 @@ export const registry: CommandGroup[] = [
           'rewriting one would leave its .sql describing a shape that database never got',
           'from it, so a fresh CI or staging database replaying the file would silently',
           'diverge. Pass --database-url so that check can run; without it the repair',
-          'proceeds and warns that applied state could not be verified.',
+          'proceeds and warns that applied state could not be verified. If your',
+          'drizzle.config.ts overrides `migrations.table` / `migrations.schema`, name',
+          'the ledger with --migrations-table — otherwise the check queries the default',
+          'relation, finds nothing, and reports applied state as unverified.',
         ].join('\n'),
         examples: [
           'eql repair --drizzle',
@@ -394,6 +397,12 @@ export const registry: CommandGroup[] = [
             value: '<path>',
             description:
               'Directory holding the migrations to sweep. Defaults to `drizzle`; set it to match your drizzle.config.ts.',
+          },
+          {
+            name: '--migrations-table',
+            value: '<[schema.]table>',
+            description:
+              "Drizzle's migration ledger, when drizzle.config.ts overrides `migrations.table` / `migrations.schema`. Defaults to `drizzle.__drizzle_migrations`. Only read with --database-url.",
           },
           DRY_RUN_FLAG,
           DATABASE_URL_FLAG,

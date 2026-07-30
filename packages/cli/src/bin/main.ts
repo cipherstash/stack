@@ -272,6 +272,7 @@ async function runEqlCommand(
         out: values.out,
         dryRun: flags['dry-run'],
         databaseUrl: values['database-url'],
+        migrationsTable: values['migrations-table'],
       })
       break
     }

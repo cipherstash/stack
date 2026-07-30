@@ -37,6 +37,17 @@ as their own outcome, left untouched, and the command exits non-zero. Without a
 database URL the repair proceeds and warns that applied state could not be
 verified; if the check is requested but cannot run, nothing is rewritten.
 
+A ledger that is not where the probe looked is reported as **unverified**, not as
+"nothing applied" — it means either `drizzle-kit migrate` never ran, or
+`drizzle.config.ts` overrode `migrations.table` / `migrations.schema` and the
+query went to the wrong relation. `--migrations-table <[schema.]table>` names the
+ledger for that case; the value must be a plain (optionally schema-qualified)
+identifier and is rejected before connecting otherwise.
+
+An applied migration whose statement the sweep would have skipped regardless — an
+undeclared source column, an already-encrypted one, an existing twin — is
+reported with that skip reason rather than as an applied-migration refusal.
+
 `rewriteEncryptedAlterColumns` gained `dryRun`, and its `skip` option now accepts
 several paths as well as one. The wizard's copy of the rewriter carries the same
 change so the two stay in sync; its own sweep is unaffected.

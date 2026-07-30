@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CliExit } from '../../../cli/exit.js'
 import { messages } from '../../../messages.js'
+import { describeSkipReason } from '../../db/rewrite-migrations.js'
 import { eqlRepairCommand } from '../repair.js'
 
 // clack is chrome — silence it and spy on the channels the command reports
@@ -504,7 +505,9 @@ describe('eqlRepairCommand — applied migrations', () => {
     })
 
     const sql = String(pgMock.query.mock.calls[0]?.[0])
-    expect(sql).toContain('drizzle.__drizzle_migrations')
+    // Quoted, because the relation is now parameterised by --migrations-table
+    // and reaches the query as text.
+    expect(sql).toContain('"drizzle"."__drizzle_migrations"')
     expect(sql).toContain('created_at')
     expect(sql).not.toContain('hash')
   })
@@ -533,16 +536,161 @@ describe('eqlRepairCommand — applied migrations', () => {
     )
   })
 
-  // `drizzle.__drizzle_migrations` only exists once `drizzle-kit migrate` has
-  // run. Its absence is an ANSWER — nothing applied — not a failed check.
+  /**
+   * An ABSENT ledger is ambiguous in a way an empty one is not. It means either
+   * `drizzle-kit migrate` never ran here, or the project set `migrations.table`
+   * / `migrations.schema` in drizzle.config.ts and the probe looked in the
+   * wrong place. The command cannot tell those apart, so it must not report the
+   * confident "nothing applied" — that is the fail-open case: a project with a
+   * custom ledger gets told every migration is repairable while its database
+   * has applied plenty.
+   */
   it.each([
     ['undefined_table', '42P01'],
     ['invalid_schema_name', '3F000'],
-  ])('treats a missing ledger (%s) as nothing applied', async (_l, code) => {
+  ])('does not claim nothing is applied when the ledger (%s) is absent', async (_l, code) => {
+    const out = join(tmp, 'drizzle')
+    writeBrokenCorpus(out)
+    pgMock.query.mockRejectedValue(
+      Object.assign(new Error('relation does not exist'), { code }),
+    )
+
+    await eqlRepairCommand({
+      drizzle: true,
+      out,
+      databaseUrl: 'postgres://user:pw@localhost:5432/app',
+    })
+
+    expect(clack.log.info).not.toHaveBeenCalledWith(
+      messages.eql.repairNothingApplied,
+    )
+    const warned = clack.log.warn.mock.calls.map((c) => String(c[0])).join('\n')
+    // Names where it looked, and the config key that would move it — a
+    // warning the user cannot act on is not much better than silence.
+    expect(warned).toContain('drizzle.__drizzle_migrations')
+    expect(warned).toContain('--migrations-table')
+  })
+
+  /**
+   * Applied files carry TWO kinds of statement, and they need different words.
+   *
+   * One the rewriter would have repaired — refusing it is about the applied
+   * hazard, and `repairAppliedHazard` is the right explanation. One it would
+   * have left alone regardless (here `source-unknown`: nothing in the corpus
+   * declares the column) — its applied-ness is irrelevant, and the actionable
+   * thing is the skip reason. Reporting the second under the hazard banner
+   * swaps guidance the user can act on for an explanation that does not apply.
+   */
+  it('gives an applied near-miss its skip guidance, not the rewrite hazard', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    // No CREATE TABLE anywhere, so the sweep cannot prove the source type.
+    const undeclared = join(out, '0000_encrypt-orphan.sql')
+    writeFileSync(
+      undeclared,
+      'ALTER TABLE "ghosts" ALTER COLUMN "note" SET DATA TYPE "undefined"."eql_v3_text_search";\n',
+    )
+    writeJournal(out, [{ tag: '0000_encrypt-orphan', when: 1_000 }])
+    mockLatestAppliedMillis(1_000)
+
+    await expect(
+      eqlRepairCommand({
+        drizzle: true,
+        out,
+        databaseUrl: 'postgres://user:pw@localhost:5432/app',
+      }),
+    ).rejects.toBeInstanceOf(CliExit)
+
+    const reported = [
+      ...clack.log.warn.mock.calls,
+      ...clack.log.error.mock.calls,
+      ...clack.log.step.mock.calls,
+    ]
+      .map((c) => String(c[0]))
+      .join('\n')
+    expect(reported).toContain(describeSkipReason('source-unknown'))
+    expect(reported).not.toContain(messages.eql.repairAppliedHazard)
+  })
+
+  /**
+   * The actionable half of the absent-ledger warning. Without this the warning
+   * names a flag that does nothing, and a project with a custom ledger has no
+   * way to get the check at all.
+   */
+  it('queries the ledger named by --migrations-table', async () => {
+    const out = join(tmp, 'drizzle')
+    writeBrokenCorpus(out)
+    mockLatestAppliedMillis(1_000)
+
+    await eqlRepairCommand({
+      drizzle: true,
+      out,
+      databaseUrl: 'postgres://user:pw@localhost:5432/app',
+      migrationsTable: 'audit.applied_migrations',
+    })
+
+    const sql = String(pgMock.query.mock.calls[0]?.[0])
+    expect(sql).toContain('"audit"."applied_migrations"')
+    expect(sql).not.toContain('__drizzle_migrations')
+  })
+
+  /**
+   * The relation is the one part of the query built from user text. It is
+   * quoted, so it cannot break out — but a value that is not a plain
+   * `[schema.]table` becomes a quoted identifier no database has, and the
+   * resulting "relation does not exist" would be reported as an ABSENT ledger:
+   * a typo would silently downgrade the check the flag was passed to get.
+   * Reject it before connecting instead.
+   */
+  it.each([
+    ['a statement terminator', '__drizzle_migrations; drop table users --'],
+    ['too many parts', 'db.drizzle.__drizzle_migrations'],
+    ['an empty part', 'drizzle.'],
+    ['a quoted identifier', '"drizzle"."__drizzle_migrations"'],
+  ])('rejects a --migrations-table containing %s', async (_label, migrationsTable) => {
+    const out = join(tmp, 'drizzle')
+    const broken = writeBrokenCorpus(out)
+
+    await expect(
+      eqlRepairCommand({
+        drizzle: true,
+        out,
+        databaseUrl: 'postgres://user:pw@localhost:5432/app',
+        migrationsTable,
+      }),
+    ).rejects.toBeInstanceOf(CliExit)
+
+    // Never reached the database, and never touched the migration.
+    expect(pgMock.query).not.toHaveBeenCalled()
+    expect(readFileSync(broken, 'utf-8')).toBe(BROKEN_ALTER)
+  })
+
+  // A bare table name is the common case — drizzle's `migrations.table` without
+  // a `migrations.schema`. It must resolve via search_path, not be forced into
+  // the `drizzle` schema.
+  it('accepts an unqualified --migrations-table', async () => {
+    const out = join(tmp, 'drizzle')
+    writeBrokenCorpus(out)
+    mockLatestAppliedMillis(1_000)
+
+    await eqlRepairCommand({
+      drizzle: true,
+      out,
+      databaseUrl: 'postgres://user:pw@localhost:5432/app',
+      migrationsTable: 'my_migrations',
+    })
+
+    expect(String(pgMock.query.mock.calls[0]?.[0])).toContain('"my_migrations"')
+  })
+
+  // An absent ledger still REPAIRS — the overwhelmingly common cause is that
+  // drizzle-kit migrate never ran, and refusing there would make the command
+  // useless in the flow it exists for. Only the claim of certainty is dropped.
+  it('still repairs when the ledger is absent', async () => {
     const out = join(tmp, 'drizzle')
     const broken = writeBrokenCorpus(out)
     pgMock.query.mockRejectedValue(
-      Object.assign(new Error('relation does not exist'), { code }),
+      Object.assign(new Error('relation does not exist'), { code: '42P01' }),
     )
 
     await expect(
@@ -555,9 +703,6 @@ describe('eqlRepairCommand — applied migrations', () => {
 
     expect(readFileSync(broken, 'utf-8')).toContain(
       'ADD COLUMN "email_encrypted"',
-    )
-    expect(clack.log.info).toHaveBeenCalledWith(
-      messages.eql.repairNothingApplied,
     )
   })
 

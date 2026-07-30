@@ -125,6 +125,25 @@ export const messages = {
      */
     repairAppliedCheckFailed: (detail: string) =>
       `Could not check which migrations have been applied: ${detail}\nNothing was rewritten. Fix the connection and re-run, or re-run without --database-url to repair unverified (see the warning that prints in that mode).`,
+    /**
+     * `--migrations-table` is not a plain `[schema.]table`. Rejected before
+     * connecting: the value is quoted before it reaches SQL, so it cannot break
+     * out, but a malformed one would query a relation that cannot exist and the
+     * resulting `undefined_table` would be read as an absent ledger — silently
+     * downgrading the check the flag was passed to get.
+     */
+    repairMigrationsTableInvalid: (value: string) =>
+      `--migrations-table must be a table name, optionally schema-qualified (e.g. \`my_migrations\` or \`audit.my_migrations\`). Got: ${value}`,
+    /**
+     * The ledger relation is not there. Ambiguous, and deliberately NOT the
+     * confident `repairNothingApplied`: either `drizzle-kit migrate` never ran
+     * against this database, or the project overrode `migrations.table` /
+     * `migrations.schema` in drizzle.config.ts and the probe queried the wrong
+     * relation. Claiming "nothing applied" for the second case would rewrite
+     * applied migrations while reporting the check as clean.
+     */
+    repairLedgerMissing: (relation: string) =>
+      `Could not verify which migrations have been applied: ${relation} does not exist. Either drizzle-kit migrate has never run against this database — in which case there is nothing applied and this repair is safe — or your drizzle.config.ts sets migrations.table / migrations.schema, and the check looked in the wrong place. If it does, re-run with --migrations-table <[schema.]table> naming your ledger. Repairing anyway.`,
     /** Nothing in `drizzle.__drizzle_migrations` — every migration is fair game. */
     repairNothingApplied:
       'No applied migrations found in drizzle.__drizzle_migrations — every migration in this directory can be repaired.',
