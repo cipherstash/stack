@@ -73,12 +73,13 @@ export const messages = {
     migrationOneTarget:
       'Pass exactly one target: `--drizzle` or `--prisma`, not both.',
     /**
-     * `--prisma` is registered but its Prisma Next emitter isn't built yet —
-     * it's a follow-up (tracked in #690) that will emit the install migration
-     * in the framework `Migration` shape and let prisma-next drop its baked
-     * install baseline. Fail with a pointer rather than a silent no-op.
+     * `--prisma` is registered only to route people to the right mechanism:
+     * Prisma Next installs the EQL bundle through its own migration framework
+     * (the `migrations/cipherstash/` contract space), so there is no emitter
+     * here and never needs to be. Fail with a pointer rather than a silent
+     * no-op.
      */
-    migrationPrismaUnavailable:
+    migrationPrismaNotNeeded:
       'Prisma Next does not need `stash eql migration` — its extension pack installs the EQL bundle through its own migration framework (the `migrations/cipherstash/` contract space). Run `prisma-next migration plan` and `prisma-next migrate` instead.',
     /** `--name` carried characters outside `[A-Za-z0-9_-]`. */
     migrationBadName:

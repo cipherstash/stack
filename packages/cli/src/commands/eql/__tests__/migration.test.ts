@@ -165,11 +165,7 @@ describe('eqlMigrationCommand — target selection', () => {
       { drizzle: true, prisma: true },
       () => messages.eql.migrationOneTarget,
     ],
-    [
-      '--prisma',
-      { prisma: true },
-      () => messages.eql.migrationPrismaUnavailable,
-    ],
+    ['--prisma', { prisma: true }, () => messages.eql.migrationPrismaNotNeeded],
     // `--supabase` is a modifier, not a target.
     [
       '--supabase alone',
