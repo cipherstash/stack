@@ -11,7 +11,13 @@ import { findBundledDir } from './bundled-paths.js'
  * `dist/skills/` at build time.
  */
 export const SKILL_MAP: Record<Integration, readonly string[]> = {
-  drizzle: ['stash-encryption', 'stash-drizzle', 'stash-indexing', 'stash-cli'],
+  drizzle: [
+    'stash-encryption',
+    'stash-drizzle',
+    'stash-indexing',
+    'stash-deployment',
+    'stash-cli',
+  ],
   // Supabase gets the raw-SQL and edge skills on top of its own: Edge
   // Functions are the flagship use of the WASM entry, and Supabase projects
   // write hand-written SQL in migrations and RPC even when the app itself
@@ -22,12 +28,14 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
     'stash-indexing',
     'stash-postgres',
     'stash-edge',
+    'stash-deployment',
     'stash-cli',
   ],
   'prisma-next': [
     'stash-encryption',
     'stash-prisma-next',
     'stash-indexing',
+    'stash-deployment',
     'stash-cli',
   ],
   // The no-ORM path: `stash-postgres` (binding + predicate forms) and `stash-edge`
@@ -38,6 +46,7 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
     'stash-indexing',
     'stash-postgres',
     'stash-edge',
+    'stash-deployment',
     'stash-cli',
   ],
 }
@@ -46,6 +55,7 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
 const BASE_SKILLS: readonly string[] = [
   'stash-encryption',
   'stash-indexing',
+  'stash-deployment',
   'stash-cli',
 ]
 
