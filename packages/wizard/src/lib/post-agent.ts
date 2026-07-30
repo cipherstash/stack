@@ -78,7 +78,14 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
     const skipped = sweep.skipped > 0
     const unverified = sweep.failedDirs.length > 0
 
-    if (didStage) {
+    // Suppressed when a directory failed: this line is a cross-directory
+    // summary built from `totals.rewritten`, which counts a clean directory and
+    // a partially-swept one alike, so on that path it re-asserts the reassuring
+    // framing the per-directory report deliberately drops. Those per-directory
+    // lines already name every file, so nothing is lost by staying quiet here.
+    // A *flagged* statement is different — the sweep finished, and the summary
+    // is accurate — so this stays gated on the failure, not on `skipped`.
+    if (didStage && !unverified) {
       p.log.info(
         `Rewrote ${sweep.rewritten} migration file(s) in the drizzle output to add staged encrypted columns while preserving the source columns.`,
       )

@@ -15,9 +15,12 @@ vi.mock('@clack/prompts', async (importOriginal) => {
   return { ...actual, confirm: vi.fn(async () => false) }
 })
 
-// Wraps the REAL sweep, so every test below still exercises it for free. Only
-// the empty-message case overrides it, because no real filesystem error is
-// reachable with a blank `message`.
+// Wraps the REAL sweep, so every test below still exercises it for free. Two
+// cases override it, both because the state they need is not reachable through
+// the real filesystem from here: the empty-error-`message` case, and the
+// partial-set case, which needs the sweep to throw mid-rewrite-loop rather than
+// during its read pass. Each override says so at the call site; prefer a real
+// fixture for anything else.
 vi.mock('../lib/rewrite-migrations.js', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('../lib/rewrite-migrations.js')>()
@@ -207,6 +210,7 @@ describe('drizzle migrate prompt after a staged rewrite', () => {
   })
 
   it('defaults to Yes and explains the staged addition when a file was rewritten', async () => {
+    const info = vi.spyOn(p.log, 'info').mockImplementation(() => {})
     makeDrizzleOut('drizzle')
     // The sweep is fail-closed: it rewrites a column only when the corpus
     // positively declares it (and it isn't already encrypted). A real drizzle
@@ -238,6 +242,20 @@ describe('drizzle migrate prompt after a staged rewrite', () => {
     expect(swept).toContain('ADD COLUMN "email_encrypted"')
     expect(swept).not.toMatch(/\b(?:DROP|RENAME)\s+COLUMN\b/i)
     expect(swept).not.toContain('SET DATA TYPE')
+
+    // The per-directory report takes the clean arm of its message: a sweep that
+    // finished must not borrow the "before the sweep stopped" wording the
+    // partial path uses. Anchored on `in drizzle/` so the cross-directory
+    // summary ("in the drizzle output") cannot satisfy it instead.
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'in drizzle/ to add staged encrypted columns while preserving the source columns',
+      ),
+    )
+    expect(info).not.toHaveBeenCalledWith(
+      expect.stringContaining('before the sweep stopped'),
+    )
+    info.mockRestore()
   })
 
   it('fails before prompting when a statement was flagged rather than rewritten', async () => {
@@ -280,13 +298,62 @@ describe('drizzle migrate prompt after a staged rewrite', () => {
     warn.mockRestore()
   })
 
+  // The cross-directory summary is printed off `totals.rewritten`, which counts
+  // a clean directory and a failed one alike. Printing "…while preserving the
+  // source columns" after a directory failed re-asserts the reassuring framing
+  // the per-directory report deliberately drops, for a sweep that did not
+  // finish. The per-directory lines already name every file, so the summary has
+  // nothing to add on that path.
+  it('does not summarise the sweep as clean when another directory failed', async () => {
+    const warn = vi.spyOn(p.log, 'warn').mockImplementation(() => {})
+    const info = vi.spyOn(p.log, 'info').mockImplementation(() => {})
+    // drizzle/ declares its column, so its ALTER is rewritten cleanly...
+    makeDrizzleOut('drizzle')
+    fs.writeFileSync(
+      path.join(cwd, 'drizzle', '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text);\n',
+    )
+    fs.writeFileSync(
+      path.join(cwd, 'drizzle', '0001_encrypt.sql'),
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+    )
+    // ...while migrations/ cannot be swept at all: a directory named `*.sql`
+    // makes readFile throw EISDIR mid-sweep.
+    makeDrizzleOut('migrations')
+    fs.mkdirSync(path.join(cwd, 'migrations', '0001_alter.sql'))
+
+    await expect(runDrizzle()).rejects.toThrow('unsafe or unverified SQL')
+
+    expect(info).not.toHaveBeenCalledWith(
+      expect.stringContaining('in the drizzle output'),
+    )
+    // The per-directory report still stands on its own for the clean directory.
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'in drizzle/ to add staged encrypted columns while preserving the source columns',
+      ),
+    )
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('Could not rewrite migrations in migrations'),
+    )
+    info.mockRestore()
+    warn.mockRestore()
+  })
+
   // A sweep that throws part-way through has already written the files it got
-  // to — `sweepMigrationDirs` propagates that partial set on the failure path.
-  // The reporting used to sit after a `continue`, so the wizard named none of
-  // them and the user was told a directory failed without being told which of
-  // its files had changed. The CLI twin has always reported the partial set
+  // to, and may have flagged statements before it stopped —
+  // `sweepMigrationDirs` propagates both on the failure path. The reporting used
+  // to sit after a `continue`, so the wizard surfaced neither: the user was told
+  // a directory failed without being told which of its files had changed or
+  // what it had flagged. The CLI twin has always reported the partial set
   // (`packages/cli/src/commands/eql/migration.ts`). #837.
-  it('names the files rewritten before a failed sweep stopped', async () => {
+  //
+  // Mocked, unlike the tests above: the throw has to land *inside* the rewrite
+  // loop to leave a partial set behind, which needs a mid-loop `writeFile`
+  // failure (see `rewrite-migrations.test.ts`, "reports files rewritten before a
+  // later write failure"). The real filesystem errors reachable from here throw
+  // during the read pass, before anything is rewritten or flagged.
+  it('names the files rewritten and statements flagged before a failed sweep stopped', async () => {
     const warn = vi.spyOn(p.log, 'warn').mockImplementation(() => {})
     const info = vi.spyOn(p.log, 'info').mockImplementation(() => {})
     const step = vi.spyOn(p.log, 'step').mockImplementation(() => {})
@@ -294,8 +361,15 @@ describe('drizzle migrate prompt after a staged rewrite', () => {
       {
         dir: 'drizzle',
         rewritten: ['drizzle/0001_email.sql'],
-        skipped: [],
-        error: 'EISDIR: illegal operation on a directory, read',
+        skipped: [
+          {
+            file: 'drizzle/0002_total.sql',
+            statement:
+              'ALTER TABLE "orders" ALTER COLUMN "total" SET DATA TYPE eql_v3_text_search;',
+            reason: 'source-unknown',
+          },
+        ],
+        error: 'EACCES: permission denied, open drizzle/0003_name.sql',
       },
     ])
 
@@ -313,29 +387,19 @@ describe('drizzle migrate prompt after a staged rewrite', () => {
     expect(step).toHaveBeenCalledWith(
       expect.stringContaining('drizzle/0001_email.sql'),
     )
+    // ...as is what it flagged, with the reason the user has to act on.
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('rewrite left alone'),
+    )
+    expect(step).toHaveBeenCalledWith(
+      expect.stringContaining('drizzle/0002_total.sql'),
+    )
+    expect(step).toHaveBeenCalledWith(
+      expect.stringContaining('could not find where this column was declared'),
+    )
     step.mockRestore()
     info.mockRestore()
     warn.mockRestore()
-  })
-
-  // The partial-report path above must not bleed into the clean one: a
-  // successful sweep still says it preserved the source columns, not that it
-  // stopped.
-  it('does not claim the sweep stopped when it completed', async () => {
-    const info = vi.spyOn(p.log, 'info').mockImplementation(() => {})
-    vi.mocked(sweepMigrationDirs).mockResolvedValueOnce([
-      { dir: 'drizzle', rewritten: ['drizzle/0001_email.sql'], skipped: [] },
-    ])
-
-    await runDrizzle()
-
-    expect(info).toHaveBeenCalledWith(
-      expect.stringContaining('preserving the source columns'),
-    )
-    expect(info).not.toHaveBeenCalledWith(
-      expect.stringContaining('before the sweep stopped'),
-    )
-    info.mockRestore()
   })
 
   // `error` is built as `err instanceof Error ? err.message : String(err)`, and
