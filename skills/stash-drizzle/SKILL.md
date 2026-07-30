@@ -61,7 +61,40 @@ stash eql migration --drizzle --supabase   # also grants eql_v3 to anon/authenti
 
 The generated migration also installs the `cs_migrations` tracking schema, so a single `drizzle-kit migrate` covers everything `stash encrypt …` needs — no out-of-band `stash eql install`. EQL v3 ships one SQL bundle for every target including Supabase; `--supabase` only adds the PostgREST/RLS role grants (harmless when you connect directly as `postgres`). Requires `drizzle-kit` installed and configured.
 
-**Changing an existing plaintext column to an encrypted one.** `drizzle-kit generate` emits an in-place `ALTER TABLE … ALTER COLUMN … SET DATA TYPE eql_v3_<name>`, which Postgres rejects — there is no cast from `text`/`numeric` to an EQL domain. (On drizzle-kit 0.31.0 and later the emitted type is also mangled to `"undefined"."eql_v3_<name>"`, since a `customType` has no `typeSchema`.) The `stash eql migration --drizzle` sweep repairs the invalid statement — the `stash-cli` skill covers what it rewrites and the rule that matters: the repair is data-destroying, so it is safe **only on an empty table**. It repairs only what it can place: the swept directory must also contain the migration that declared the column. If it does not, the statement is flagged for review instead of rewritten. For a table with live data, do **not** apply the swept migration; follow the staged flow in **Migrating an Existing Column to Encrypted** below instead.
+**Changing an existing plaintext column to an encrypted one.** `drizzle-kit generate` emits an in-place `ALTER TABLE … ALTER COLUMN … SET DATA TYPE eql_v3_<name>`, which Postgres rejects — there is no cast from `text`/`numeric` to an EQL domain. (On drizzle-kit 0.31.0 and later the emitted type is also mangled to `"undefined"."eql_v3_<name>"`, since a `customType` has no `typeSchema`.) The `stash eql migration --drizzle` sweep repairs the invalid statement — the `stash-cli` skill covers what it rewrites. The repair is **add-only**: it adds a staged `<column>_encrypted` column and leaves the source column in place, so it never emits `DROP COLUMN` or `RENAME COLUMN` and is safe to apply on a populated table. It repairs only what it can prove — the swept directory must also contain the migration that declared the column, so the sweep can see the source type. A statement it cannot place, one whose column is already encrypted, one whose encrypted twin already exists, or one outside the strict matcher (a hand-authored `SET DATA TYPE … USING …`) is left untouched, and the command exits non-zero so you review the directory before running `drizzle-kit migrate`. Applying the swept migration only *adds* the column — encrypting the data is the staged flow in **Migrating an Existing Column to Encrypted** below.
+
+**Reconcile your schema after a sweep — `drizzle-kit generate` will not tell you to.** The sweep repairs SQL and nothing else, so once you apply the swept migration three artefacts disagree:
+
+| | `email` | `email_encrypted` |
+|---|---|---|
+| database | `text` (unchanged) | `eql_v3_text_search` |
+| `schema.ts` | declared as `eql_v3_text_search` | absent |
+| `meta/*_snapshot.json` | declared as `eql_v3_text_search` | absent |
+
+`drizzle-kit generate` diffs `schema.ts` against the snapshot — it never reads `.sql` and never introspects the database. Those two still agree, so the diff is empty and it emits nothing. (Introspection is `drizzle-kit push`, a different command.) So nothing surfaces the divergence, and every consequence through the ORM is silent:
+
+- reads of `users.email` hand plaintext to the `customType.fromDriver` that expects an EQL envelope
+- writes push an EQL envelope into a `text` column and **succeed**, storing ciphertext in a plaintext column
+- `email_encrypted` is unreachable — it is in no Drizzle schema
+
+Reconciling is three steps, and the middle one is not optional.
+
+**1. Fix `schema.ts`:** declare the encrypted column under **its own name**, and set the source column **back** to its plaintext type. It is currently declared as the encrypted domain — that declaration is exactly what made `drizzle-kit generate` emit the invalid `ALTER` in the first place.
+
+```typescript
+export const users = pgTable('users', {
+  email: text('email').notNull(),                        // back to plaintext
+  email_encrypted: types.TextSearch('email_encrypted'),  // the twin the sweep added
+})
+```
+
+**2. Run `drizzle-kit generate`, then delete the regenerated `ADD COLUMN` from the migration it writes.** The snapshot has never seen `email_encrypted`, so `generate` **always** emits `ADD COLUMN "email_encrypted"` for it — and the swept migration already adds that column, so applying both fails at migrate time with `column "email_encrypted" already exists`. Deleting that one statement keeps the snapshot advance, which is the entire point of the step. (`ADD COLUMN IF NOT EXISTS` works too.) Anything else `generate` emits — such as a now no-op `SET DATA TYPE text` on the source column — can stay.
+
+This is not avoidable by editing the schema more carefully: the snapshot can only learn about the twin from a `generate` that also emits SQL to create it. `drizzle-kit push` would introspect and skip it, but that bypasses your migration history.
+
+**3. Run `drizzle-kit migrate`,** then backfill through the staged flow below before switching reads across.
+
+If you have **not** yet applied the swept migration, the cleaner option is to revert `schema.ts`, remove that migration entirely (its `.sql`, its `meta/*_snapshot.json`, and its entry in `meta/_journal.json`), and follow **Migrating an Existing Column to Encrypted** below from a clean start — `generate` then produces the `ADD COLUMN` itself and there is nothing to delete.
 
 ### Column Storage
 

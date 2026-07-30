@@ -8,7 +8,12 @@
 import { execSync } from 'node:child_process'
 import * as p from '@clack/prompts'
 import type { GatheredContext } from './gather.js'
-import { describeSkipReason, sweepMigrationDirs } from './rewrite-migrations.js'
+import {
+  describeSkipReason,
+  describeStagedReconciliation,
+  type StagedColumn,
+  sweepMigrationDirs,
+} from './rewrite-migrations.js'
 import type { DetectedPackageManager, Integration } from './types.js'
 
 interface PostAgentOptions {
@@ -69,14 +74,35 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
     // text/numeric to an EQL domain). Covers the EQL v3 family the wizard now
     // scaffolds, and legacy eql_v2_encrypted. CIP-2991 + CIP-2994 + #693.
     const sweep = await rewriteEncryptedMigrations(cwd)
-    const staged = sweep.rewritten > 0
+    const didStage = sweep.rewritten > 0
     const skipped = sweep.skipped > 0
     const unverified = sweep.failedDirs.length > 0
 
-    if (staged) {
+    // Suppressed when a directory failed: this line is a cross-directory
+    // summary built from `totals.rewritten`, which counts a clean directory and
+    // a partially-swept one alike, so on that path it re-asserts the reassuring
+    // framing the per-directory report deliberately drops. Those per-directory
+    // lines already name every file, so nothing is lost by staying quiet here.
+    // A *flagged* statement is different — the sweep finished, and the summary
+    // is accurate — so this stays gated on the failure, not on `skipped`.
+    if (didStage && !unverified) {
       p.log.info(
         `Rewrote ${sweep.rewritten} migration file(s) in the drizzle output to add staged encrypted columns while preserving the source columns.`,
       )
+    }
+    // The rewrite repaired SQL only: the agent's schema edit still declares the
+    // SOURCE column as the encrypted domain, and drizzle-kit's snapshot agrees
+    // with it, so `drizzle-kit generate` sees no diff and says nothing
+    // (#836, item 2). Name the divergence while the user is still here.
+    //
+    // Gated on `staged`, not on `didStage`, to match the CLI. The two are
+    // equivalent today — a rewritten file always yields at least one staged
+    // column, and both are recorded together only after the write succeeds — but
+    // this notice describes the staged columns, so it should be driven by
+    // whether there are any rather than by a file count that happens to track
+    // them.
+    if (sweep.staged.length > 0) {
+      p.log.warn(describeStagedReconciliation(sweep.staged).join('\n'))
     }
     if (skipped || unverified) {
       throw new Error(
@@ -85,7 +111,7 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
     }
 
     const shouldMigrate = await p.confirm({
-      message: staged
+      message: didStage
         ? `Run the migration now? (${runner} drizzle-kit migrate) — the generated migration adds staged encrypted columns and preserves the source column for the later backfill and application switch`
         : `Run the migration now? (${runner} drizzle-kit migrate)`,
       initialValue: true,
@@ -131,14 +157,30 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
 async function rewriteEncryptedMigrations(cwd: string): Promise<{
   rewritten: number
   skipped: number
+  staged: StagedColumn[]
   failedDirs: string[]
 }> {
   const results = await sweepMigrationDirs(cwd, DRIZZLE_OUT_DIRS)
-  const totals = { rewritten: 0, skipped: 0, failedDirs: [] as string[] }
+  const totals = {
+    rewritten: 0,
+    skipped: 0,
+    staged: [] as StagedColumn[],
+    failedDirs: [] as string[],
+  }
 
-  for (const { dir, rewritten, skipped, error, notDrizzleOutput } of results) {
+  for (const {
+    dir,
+    rewritten,
+    skipped,
+    staged,
+    error,
+    notDrizzleOutput,
+  } of results) {
     totals.rewritten += rewritten.length
     totals.skipped += skipped.length
+    // Accumulated across every directory, including one whose sweep later
+    // threw: those twins are already on disk and already divergent.
+    totals.staged.push(...staged)
 
     // Not a failure and not a risk — the directory belongs to some other tool,
     // so `drizzle-kit migrate` will not run it and the prompt below is
@@ -161,12 +203,19 @@ async function rewriteEncryptedMigrations(cwd: string): Promise<{
       p.log.warn(
         `Could not rewrite migrations in ${dir}: ${error || 'unknown error'}`,
       )
-      continue
+      // Deliberately NOT `continue`: a directory whose sweep threw may already
+      // have rewritten files on disk, and `sweepMigrationDirs` propagates that
+      // partial set on the failure path. Skipping the reporting below would
+      // leave the user with a failure and no list of what it changed before it
+      // stopped. The CLI twin reports the partial set for the same reason —
+      // `packages/cli/src/commands/eql/migration.ts` (#786, #837).
     }
 
     if (rewritten.length > 0) {
       p.log.info(
-        `Rewrote ${rewritten.length} migration file(s) in ${dir}/ to add staged encrypted columns while preserving the source columns.`,
+        error === undefined
+          ? `Rewrote ${rewritten.length} migration file(s) in ${dir}/ to add staged encrypted columns while preserving the source columns.`
+          : `Rewrote ${rewritten.length} migration file(s) in ${dir}/ before the sweep stopped:`,
       )
       for (const file of rewritten) p.log.step(`  - ${file}`)
     }

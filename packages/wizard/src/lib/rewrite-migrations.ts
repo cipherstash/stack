@@ -279,6 +279,102 @@ function dollarQuoteDelimiter(sql: string, open: number): string | undefined {
 const DOLLAR_QUOTE_OPEN_RE = /\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/y
 
 /**
+ * The INNER text of every dollar-quoted body (`$$ … $$`, `$fn$ … $fn$`) whose
+ * opener sits at a live position — one that {@link isInsideCommentOrString}
+ * does not already call inert.
+ *
+ * **Why this exists (#836, item 1):** {@link isInsideCommentOrString} skips a
+ * dollar-quoted body WHOLE, and that is right for the rewrite pass — the body
+ * is PL/pgSQL, {@link renderSafeAlter} returns multiple lines, and splicing
+ * them into code this sweep cannot reason about is not a repair. But it is
+ * wrong for {@link indexColumnDeclarations}: DDL inside `DO $$ … END $$;` is
+ * EXECUTED. An encrypted `ADD COLUMN` there means the column really does hold
+ * ciphertext, yet it never entered `encrypted`, so the column fell to
+ * "plaintext by residue" and the sweep added an empty `<col>_encrypted` twin
+ * beside the real ciphertext — reported as a successful rewrite (#811).
+ *
+ * So the index reads these bodies, and only for the ENCRYPTED side. That is
+ * the same asymmetry the per-column `CREATE TABLE` loops already rely on:
+ * over-detecting "encrypted" costs a flagged statement, while over-detecting
+ * "declared" is what puts a column back on the fail-open path. A `DO $$` body
+ * is CONDITIONAL PL/pgSQL — an `IF … THEN` arm, an `EXCEPTION` handler — so a
+ * plaintext declaration inside one is not proof the column exists, and
+ * {@link indexEncryptedDeclarations} deliberately does not record one.
+ *
+ * An INERT body stays inert: a `DO $$ … $$;` inside a `--` comment or quoted
+ * inside an `INSERT … VALUES ('…')` never ran, and its DDL is evidence of
+ * nothing.
+ *
+ * An UNTERMINATED body yields its remainder to the end of the file. That is
+ * deliberately the opposite of what {@link isInsideCommentOrString} does with
+ * one, and the two are not in conflict: there, "inert to the end of the file"
+ * protects quote PARITY for the rewrite; here the goal is COVERAGE, and a file
+ * whose dollar quote never closes is one Postgres rejects outright — so
+ * everything it says is unproven, and over-detecting "encrypted" (a flagged
+ * statement) is the safe way to be wrong about it.
+ *
+ * **This tracks inertness itself rather than calling
+ * {@link isInsideCommentOrString} per opener, and that is a hard requirement,
+ * not a tidy-up.** That predicate rescans from index 0 on every call, so asking
+ * it about each `$` makes this quadratic — and the corpus this runs over
+ * routinely includes the ~2.6 MB EQL install migration, which is itself
+ * thousands of `$$` PL/pgSQL bodies. Measured on that corpus: ~370 ms as a
+ * single pass, ~8.5 s per-opener. Same token rules, same helpers, one traversal.
+ */
+function* dollarQuotedBodies(sql: string): Generator<string> {
+  let i = 0
+  while (i < sql.length) {
+    if (sql.startsWith('--', i)) {
+      const eol = sql.indexOf('\n', i)
+      // Runs to EOF, so nothing after it is live.
+      if (eol === -1) return
+      i = eol + 1
+    } else if (sql.startsWith('/*', i)) {
+      // Nestable, exactly as in `isInsideCommentOrString`: stopping at the first
+      // `*/` would let the text after a nested close read as live SQL.
+      let depth = 1
+      let j = i + 2
+      while (j < sql.length && depth > 0) {
+        if (sql.startsWith('/*', j)) {
+          depth += 1
+          j += 2
+        } else if (sql.startsWith('*/', j)) {
+          depth -= 1
+          j += 2
+        } else {
+          j += 1
+        }
+      }
+      i = j
+    } else if (sql[i] === '$') {
+      const delimiter = dollarQuoteDelimiter(sql, i)
+      if (delimiter === undefined) {
+        i += 1
+        continue
+      }
+      const bodyStart = i + delimiter.length
+      const close = sql.indexOf(delimiter, bodyStart)
+      if (close === -1) {
+        yield sql.slice(bodyStart)
+        return
+      }
+      // The body is opaque: resuming past its close is what stops a `'` or `--`
+      // inside it from being read as SQL.
+      yield sql.slice(bodyStart, close)
+      i = close + delimiter.length
+    } else if (sql[i] === '"') {
+      // Before the `'` branch, so an apostrophe inside `"o'brien"` cannot open a
+      // phantom literal. Unterminated returns `sql.length` and ends the walk.
+      i = endOfQuoted(sql, i, '"')
+    } else if (sql[i] === "'") {
+      i = endOfQuoted(sql, i, "'", isEscapeStringOpener(sql, i))
+    } else {
+      i += 1
+    }
+  }
+}
+
+/**
  * Whether the `'` at `open` starts an `E''` escape-string, in which a backslash
  * escapes the following character. Plain literals give backslash no special
  * meaning under the default `standard_conforming_strings = on`.
@@ -566,64 +662,174 @@ function indexColumnDeclarations(contents: readonly string[]): ColumnIndex {
   const declared = new Set<string>()
 
   for (const sql of contents) {
-    for (const created of sql.matchAll(CREATE_TABLE_HEAD_RE)) {
-      if (isInsideCommentOrString(sql, created.index)) continue
-      const { schema, table } = tableOf(created[1], created[2])
-      const bodyStart = created.index + created[0].length
-      const bodyEnd = endOfCreateTableBody(sql, bodyStart)
-      // Never closed — treat the statement as absent rather than index a body
-      // that runs to the end of the file.
-      if (bodyEnd === undefined) continue
-      const body = sql.slice(bodyStart, bodyEnd)
+    // Materialised once: both passes below walk the same bodies, and the
+    // generator re-scans the file each time it is iterated.
+    const opaque = [...dollarQuotedBodies(sql)]
 
-      // The body is scanned as its own document: a `--` earlier in it comments
-      // out the rest of that line, and a CREATE inside a block comment or a
-      // string literal was already skipped above.
-      //
-      // Asymmetric on purpose. ENCRYPTED does NOT re-check comments here: a
-      // commented-out encrypted column inside an otherwise live CREATE TABLE
-      // still counts, exactly as it did before this sweep learned to declare
-      // anything — over-detecting "encrypted" only costs a flagged statement.
-      // DECLARED DOES re-check: a commented-out plaintext line never ran, so
-      // it must not count as a declaration — over-detecting "declared" is
-      // what would put a truly-undeclared, possibly already-encrypted column
-      // back on the fail-open path.
-      for (const column of body.matchAll(CREATE_TABLE_ENCRYPTED_COLUMN_RE)) {
-        encrypted.add(columnKey(table, column[1], schema))
-      }
+    indexDeclarations(sql, encrypted, declared)
+    for (const body of opaque) indexEncryptedDeclarations(body, encrypted)
 
-      for (const column of body.matchAll(DECLARED_COLUMN_RE)) {
-        if (isInsideCommentOrString(body, column.index)) continue
-        declared.add(columnKey(table, column[1], schema))
-      }
-    }
-
-    for (const added of sql.matchAll(ADD_ENCRYPTED_COLUMN_RE)) {
-      if (isInsideCommentOrString(sql, added.index)) continue
-      const { schema, table } = tableOf(added[1], added[2])
-      encrypted.add(columnKey(table, added[3], schema))
-    }
-
-    for (const added of sql.matchAll(ADD_COLUMN_RE)) {
-      if (isInsideCommentOrString(sql, added.index)) continue
-      const { schema, table } = tableOf(added[1], added[2])
-      declared.add(columnKey(table, added[3], schema))
-    }
-
-    // A rename carries the column's type with it — and `<col>__cipherstash_tmp`
-    // renamed onto the real name is exactly what a previous sweep of this very
-    // directory emitted. Run after ADD so that tmp column is already indexed.
-    for (const renamed of sql.matchAll(RENAME_COLUMN_RE)) {
-      if (isInsideCommentOrString(sql, renamed.index)) continue
-      const { schema, table } = tableOf(renamed[1], renamed[2])
-      const from = columnKey(table, renamed[3], schema)
-      const to = columnKey(table, renamed[4], schema)
-      if (encrypted.has(from)) encrypted.add(to)
-      if (declared.has(from)) declared.add(to)
+    // Renames run after EVERY declaration above, live and dollar-quoted: a
+    // rename carries the column's type with it, so the ADD it refers to has to
+    // be indexed first.
+    //
+    // Iterated to a FIXPOINT because a rename chain can alternate between live
+    // and dollar-quoted statements in either order within one file, and a single
+    // ordered pair of passes only follows one of those orders. Running the live
+    // pass first missed `ADD tmp <domain>` → `RENAME tmp TO mid` inside `DO $$`
+    // → live `RENAME mid TO email`, leaving `email` looking like plaintext and
+    // staging an empty twin beside its ciphertext — the exact defect this change
+    // exists to close. Hand-written manual column swaps do this; the corpus #811
+    // reported is one.
+    //
+    // Terminates: both sets only ever grow, and are bounded by the number of
+    // distinct column keys in the corpus. Converges in one extra iteration past
+    // the longest chain, so a corpus with no renames costs a second scan that
+    // finds nothing.
+    let indexed = -1
+    while (indexed !== encrypted.size + declared.size) {
+      indexed = encrypted.size + declared.size
+      indexRenames(sql, encrypted, declared)
+      for (const body of opaque) indexEncryptedRenames(body, encrypted)
     }
   }
 
   return { encrypted, declared }
+}
+
+/** Declarations at LIVE positions — both sides of the index. */
+function indexDeclarations(
+  sql: string,
+  encrypted: Set<string>,
+  declared: Set<string>,
+): void {
+  for (const created of sql.matchAll(CREATE_TABLE_HEAD_RE)) {
+    if (isInsideCommentOrString(sql, created.index)) continue
+    const { schema, table } = tableOf(created[1], created[2])
+    const bodyStart = created.index + created[0].length
+    const bodyEnd = endOfCreateTableBody(sql, bodyStart)
+    // Never closed — treat the statement as absent rather than index a body
+    // that runs to the end of the file.
+    if (bodyEnd === undefined) continue
+    const body = sql.slice(bodyStart, bodyEnd)
+
+    // The body is scanned as its own document: a `--` earlier in it comments
+    // out the rest of that line, and a CREATE inside a block comment or a
+    // string literal was already skipped above.
+    //
+    // Asymmetric on purpose. ENCRYPTED does NOT re-check comments here: a
+    // commented-out encrypted column inside an otherwise live CREATE TABLE
+    // still counts, exactly as it did before this sweep learned to declare
+    // anything — over-detecting "encrypted" only costs a flagged statement.
+    // DECLARED DOES re-check: a commented-out plaintext line never ran, so
+    // it must not count as a declaration — over-detecting "declared" is
+    // what would put a truly-undeclared, possibly already-encrypted column
+    // back on the fail-open path.
+    for (const column of body.matchAll(CREATE_TABLE_ENCRYPTED_COLUMN_RE)) {
+      encrypted.add(columnKey(table, column[1], schema))
+    }
+
+    for (const column of body.matchAll(DECLARED_COLUMN_RE)) {
+      if (isInsideCommentOrString(body, column.index)) continue
+      declared.add(columnKey(table, column[1], schema))
+    }
+  }
+
+  for (const added of sql.matchAll(ADD_ENCRYPTED_COLUMN_RE)) {
+    if (isInsideCommentOrString(sql, added.index)) continue
+    const { schema, table } = tableOf(added[1], added[2])
+    encrypted.add(columnKey(table, added[3], schema))
+  }
+
+  for (const added of sql.matchAll(ADD_COLUMN_RE)) {
+    if (isInsideCommentOrString(sql, added.index)) continue
+    const { schema, table } = tableOf(added[1], added[2])
+    declared.add(columnKey(table, added[3], schema))
+  }
+}
+
+/**
+ * The ENCRYPTED side only, over one {@link dollarQuotedBodies} body.
+ *
+ * `declared` is deliberately untouched — see {@link dollarQuotedBodies} for why
+ * a conditional PL/pgSQL body may not prove a plaintext column exists. The
+ * consequence is the safe one: a column whose ONLY declaration sits inside a
+ * dollar body stays `source-unknown` and is flagged rather than rewritten.
+ *
+ * Comments and literals INSIDE the body are not re-checked, matching the live
+ * encrypted `CREATE TABLE` loop: a commented-out encrypted column still counts,
+ * because over-detecting "encrypted" only ever costs a flagged statement.
+ */
+function indexEncryptedDeclarations(
+  body: string,
+  encrypted: Set<string>,
+): void {
+  for (const created of body.matchAll(CREATE_TABLE_HEAD_RE)) {
+    const { schema, table } = tableOf(created[1], created[2])
+    const bodyStart = created.index + created[0].length
+    const bodyEnd = endOfCreateTableBody(body, bodyStart)
+    if (bodyEnd === undefined) continue
+    for (const column of body
+      .slice(bodyStart, bodyEnd)
+      .matchAll(CREATE_TABLE_ENCRYPTED_COLUMN_RE)) {
+      encrypted.add(columnKey(table, column[1], schema))
+    }
+  }
+
+  for (const added of body.matchAll(ADD_ENCRYPTED_COLUMN_RE)) {
+    const { schema, table } = tableOf(added[1], added[2])
+    encrypted.add(columnKey(table, added[3], schema))
+  }
+}
+
+/**
+ * Renames at LIVE positions — both sides of the index.
+ *
+ * `<col>__cipherstash_tmp` renamed onto the real name is exactly what a
+ * previous sweep of this very directory emitted, so a rename has to carry the
+ * source column's type onto its new name.
+ */
+function indexRenames(
+  sql: string,
+  encrypted: Set<string>,
+  declared: Set<string>,
+): void {
+  for (const renamed of sql.matchAll(RENAME_COLUMN_RE)) {
+    if (isInsideCommentOrString(sql, renamed.index)) continue
+    const { schema, table } = tableOf(renamed[1], renamed[2])
+    const from = columnKey(table, renamed[3], schema)
+    const to = columnKey(table, renamed[4], schema)
+    if (encrypted.has(from)) encrypted.add(to)
+    if (declared.has(from)) declared.add(to)
+  }
+}
+
+/**
+ * Renames inside one {@link dollarQuotedBodies} body — ENCRYPTED side only.
+ *
+ * This is the shape #811 actually reported: `ADD COLUMN "email_encrypted"
+ * <domain>` live, then `RENAME COLUMN "email_encrypted" TO "email"` inside
+ * `DO $$ … END $$;`. After that block `email` holds the ciphertext, so an
+ * `ALTER COLUMN "email" SET DATA TYPE …` needs staged RE-encryption, not a
+ * second twin.
+ *
+ * `declared` is not propagated, for the same reason
+ * {@link indexEncryptedDeclarations} does not record one: the rename may sit in
+ * a branch that never ran, and inventing a declaration from it is the
+ * fail-open direction.
+ *
+ * Chains that alternate between live and dollar-quoted statements are followed
+ * in EITHER order: {@link indexColumnDeclarations} iterates this pass and the
+ * live one to a fixpoint, so which runs first stops mattering. Crossing files
+ * works too, since files are indexed in sorted order.
+ */
+function indexEncryptedRenames(body: string, encrypted: Set<string>): void {
+  for (const renamed of body.matchAll(RENAME_COLUMN_RE)) {
+    const { schema, table } = tableOf(renamed[1], renamed[2])
+    if (encrypted.has(columnKey(table, renamed[3], schema))) {
+      encrypted.add(columnKey(table, renamed[4], schema))
+    }
+  }
 }
 
 /** Why a recognised ALTER-to-encrypted statement was left alone. */
@@ -666,18 +872,148 @@ export function describeSkipReason(reason: SkipReason): string {
   }
 }
 
+/**
+ * An encrypted twin this sweep added, named precisely enough for the caller to
+ * tell the user which ORM artefacts now disagree (#836, item 2).
+ *
+ * The rewrite is add-only, so after it the DATABASE has both `<column>` (still
+ * its original plaintext type) and `<encryptedColumn>` (the domain). Nothing
+ * updates the other two artefacts: `schema.ts` still declares `<column>` AS the
+ * encrypted domain — that declaration is what made drizzle-kit emit the
+ * impossible `SET DATA TYPE` in the first place — and `meta/*_snapshot.json`
+ * still records the same thing. Neither knows `<encryptedColumn>` exists.
+ */
+export interface StagedColumn {
+  /** Absolute path of the migration file the staged ADD COLUMN was written to. */
+  file: string
+  /** Schema qualifier, when the table carried one (a `pgSchema()` table). */
+  schema?: string
+  /** Table the column belongs to, without quotes. */
+  table: string
+  /** The preserved source column, still its original plaintext type. */
+  column: string
+  /** The twin that was added — conventionally `<column>_encrypted`. */
+  encryptedColumn: string
+  /** Bare EQL domain the twin was given, e.g. `eql_v3_text_search`. */
+  domain: string
+}
+
+/**
+ * The reconciliation the user must do by hand after a sweep staged twins, as
+ * lines ready to print (#836, item 2).
+ *
+ * **Why this has to be said out loud.** The sweep repairs SQL and nothing else,
+ * so a successful rewrite leaves three artefacts disagreeing:
+ *
+ * - the database gets `email text` plus `email_encrypted eql_v3_text_search`
+ * - `schema.ts` still declares `email` as the encrypted domain
+ * - `meta/*_snapshot.json` still records `email` as the encrypted domain
+ * - neither `schema.ts` nor the snapshot knows `email_encrypted` exists
+ *
+ * **`drizzle-kit generate` gives no signal.** It diffs `schema.ts` against the
+ * snapshot; it never reads `.sql` and never introspects the database. Both its
+ * inputs still agree, so the diff is empty and it emits nothing. It cannot
+ * propose a column that appears in neither input — that is `push`, which does
+ * introspect. So the divergence is invisible to the ORM's own tooling, and every
+ * consequence through it is silent: reads of `users.email` push plaintext into a
+ * `customType.fromDriver` expecting an EQL envelope, writes push an envelope
+ * into a `text` column and SUCCEED, and `email_encrypted` is unreachable because
+ * it is in no Drizzle schema.
+ *
+ * It only fails loudly much later: correcting `schema.ts` by hand makes
+ * `generate` diff against the stale snapshot and emit a duplicate ADD COLUMN,
+ * which errors at migrate time with "column already exists".
+ *
+ * **Why guidance rather than an automatic edit.** Editing `schema.ts` alone
+ * CREATES that duplicate-column failure — a correct automatic fix would have to
+ * rewrite drizzle-kit's snapshot in lockstep, in an internal format that is
+ * version-coupled and not ours. So the sweep names the divergence precisely and
+ * leaves the edit to the user, who is the one who knows whether the application
+ * is ready to read the twin.
+ */
+export function describeStagedReconciliation(
+  staged: readonly StagedColumn[],
+): string[] {
+  const lines = [
+    'The sweep repaired SQL only. Your Drizzle schema and drizzle-kit snapshot still describe the OLD shape, so reconcile them before the application reads these columns:',
+  ]
+  for (const {
+    file,
+    schema,
+    table,
+    column,
+    encryptedColumn,
+    domain,
+  } of staged) {
+    const ref = schema ? `${schema}.${table}` : table
+    lines.push(
+      `  - ${ref}: the database now has "${column}" (unchanged, still plaintext) and "${encryptedColumn}" ${domain} (staged in ${file}), but your schema declares "${column}" as ${domain} and knows nothing about "${encryptedColumn}".`,
+    )
+  }
+  lines.push(
+    'Until you reconcile it: reads of the source column hand plaintext to a decrypt path expecting an EQL envelope, writes store an EQL envelope in a plaintext column and SUCCEED, and the new encrypted column is unreachable through the ORM.',
+    '`drizzle-kit generate` will NOT warn you — it diffs your schema against its snapshot and reads neither the .sql nor the database, and those two still agree.',
+    'To reconcile, first fix your Drizzle schema: declare each encrypted column above under its own name, and set each source column BACK to its plaintext type — it is currently declared as the encrypted domain, and that declaration is what made drizzle-kit emit the invalid ALTER in the first place.',
+    'Then run `drizzle-kit generate` to advance the snapshot, and DELETE the regenerated `ADD COLUMN` statement for each encrypted column from the migration it writes. The snapshot has never seen those columns, so `generate` always emits an ADD COLUMN for them — and the migration above already adds them, so applying both fails with "column already exists". Removing the statement keeps the snapshot advance, which is the whole point of the step. (`ADD COLUMN IF NOT EXISTS` works too.) Anything else `generate` emits, such as a no-op SET DATA TYPE on the source column, can stay.',
+    'Then `drizzle-kit migrate`, and run the staged `stash encrypt` lifecycle to backfill before switching reads across. If you have NOT yet applied the migration above, you can instead revert your schema, remove that migration (its .sql, its meta/*_snapshot.json, and its meta/_journal.json entry) and start from the documented staged rollout, which generates the ADD COLUMN itself and leaves nothing to delete.',
+  )
+  return lines
+}
+
 /** Outcome of a sweep: the files rewritten, and near-misses left for review. */
 export interface RewriteResult {
   /** Absolute paths of files whose unsafe ALTER COLUMN(s) were rewritten. */
   rewritten: string[]
   /** Near-miss statements the strict matcher passed over — flag, don't guess. */
   skipped: SkippedAlter[]
+  /**
+   * Every encrypted twin staged, for the caller's reconciliation notice. One
+   * entry per rewritten statement, so this is finer-grained than `rewritten`
+   * (which lists files, and a file can carry several ALTERs).
+   */
+  staged: StagedColumn[]
 }
 
-interface RewriteSweepError extends Error {
+/**
+ * What {@link rewriteEncryptedAlterColumns} attaches to the error when the
+ * sweep throws partway through: the files it had already rewritten, and the
+ * statements it had already flagged. Reported so a partial sweep names the work
+ * it did rather than looking like it never ran (#786).
+ */
+export interface PartialRewriteResult {
   rewritten?: string[]
   skipped?: SkippedAlter[]
+  staged?: StagedColumn[]
 }
+
+/**
+ * Narrow a caught value to a {@link PartialRewriteResult}.
+ *
+ * The sweep can also fail with a non-`Error` throw — a string, `null`, anything
+ * — in which case there is no partial result to report. **Narrow rather than
+ * cast:** on `null` or `undefined` a property read raises a `TypeError` inside
+ * the very `catch` block that exists to report the failure, so the report never
+ * happens and the throw escapes the handler entirely. That defeats the
+ * fail-closed reporting outright, which is worse than the missing detail.
+ *
+ * Exported because both callers need it and the two copies of this file must
+ * stay identical: the wizard's `sweepMigrationDirs` uses it to build a
+ * per-directory error result, and the CLI's `eql migration --drizzle` uses it to
+ * report a partial sweep (#836, item 3).
+ */
+export function isPartialRewriteResult(
+  value: unknown,
+): value is PartialRewriteResult {
+  if (typeof value !== 'object' || value === null) return false
+  const partial = value as Record<string, unknown>
+  return (
+    (partial.rewritten === undefined || Array.isArray(partial.rewritten)) &&
+    (partial.skipped === undefined || Array.isArray(partial.skipped)) &&
+    (partial.staged === undefined || Array.isArray(partial.staged))
+  )
+}
+
+interface RewriteSweepError extends Error, PartialRewriteResult {}
 
 /**
  * Replace in-place `ALTER COLUMN ... SET DATA TYPE <encrypted domain>`
@@ -726,6 +1062,7 @@ export async function rewriteEncryptedAlterColumns(
   )
   const rewritten: string[] = []
   const skipped: SkippedAlter[] = []
+  const staged: StagedColumn[] = []
   const seen = new Set<string>()
   const stagedTargets = new Set<string>()
 
@@ -760,6 +1097,14 @@ export async function rewriteEncryptedAlterColumns(
       // Reset the regex's lastIndex — it's stateful on /g
       ALTER_COLUMN_TO_ENCRYPTED_RE.lastIndex = 0
 
+      // Buffered per file, then committed to `staged` only once this file's
+      // write has SUCCEEDED. The entries are produced inside `.replace()`, which
+      // runs before the write — and `staged` drives a notice telling the user the
+      // database now HAS these columns. Pushing straight to `staged` reported
+      // twins that never reached disk when a later write threw, sending the user
+      // to reconcile a column that exists nowhere.
+      const fileStaged: StagedColumn[] = []
+
       const updated = original.replace(
         ALTER_COLUMN_TO_ENCRYPTED_RE,
         (
@@ -790,8 +1135,18 @@ export async function rewriteEncryptedAlterColumns(
             return match
           }
 
+          // `encryptedColumns` as well as `declaredColumns`: the two sets are
+          // not nested. A twin added inside a dollar-quoted body — or a
+          // commented-out encrypted column inside a live CREATE TABLE — is
+          // `encrypted` without ever being `declared`, and emitting a second
+          // ADD COLUMN for it fails at migrate time with "column already
+          // exists". Over-detecting here costs a flagged statement.
           const target = columnKey(table, `${column}_encrypted`, schema)
-          if (declaredColumns.has(target) || stagedTargets.has(target)) {
+          if (
+            declaredColumns.has(target) ||
+            encryptedColumns.has(target) ||
+            stagedTargets.has(target)
+          ) {
             skip(filePath, match.trim(), 'target-exists')
             return match
           }
@@ -801,7 +1156,18 @@ export async function rewriteEncryptedAlterColumns(
           // but leave the statement alone rather than emit a broken rewrite.
           if (!domain) return match
 
+          // `stagedTargets` is the in-run duplicate guard and is deliberately
+          // NOT rolled back with the buffer: if the write fails, treating the
+          // target as taken keeps a later file from staging it again.
           stagedTargets.add(target)
+          fileStaged.push({
+            file: filePath,
+            schema,
+            table,
+            column,
+            encryptedColumn: `${column}_encrypted`,
+            domain,
+          })
           return renderSafeAlter(table, column, domain, schema)
         },
       )
@@ -809,6 +1175,7 @@ export async function rewriteEncryptedAlterColumns(
       if (updated !== original) {
         await writeFile(filePath, updated, 'utf-8')
         rewritten.push(filePath)
+        staged.push(...fileStaged)
       }
 
       // Broad secondary scan on the POST-rewrite content: anything still carrying
@@ -836,11 +1203,12 @@ export async function rewriteEncryptedAlterColumns(
       const partial = error as RewriteSweepError
       partial.rewritten = rewritten
       partial.skipped = skipped
+      partial.staged = staged
     }
     throw error
   }
 
-  return { rewritten, skipped }
+  return { rewritten, skipped, staged }
 }
 
 // #region wizard-only — deliberately has no counterpart in
@@ -932,6 +1300,7 @@ export async function sweepMigrationDirs(
           dir,
           rewritten: [],
           skipped: [],
+          staged: [],
           notDrizzleOutput: true,
         })
       }
@@ -939,15 +1308,21 @@ export async function sweepMigrationDirs(
     }
 
     try {
-      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(abs)
-      results.push({ dir, rewritten, skipped })
+      const { rewritten, skipped, staged } =
+        await rewriteEncryptedAlterColumns(abs)
+      results.push({ dir, rewritten, skipped, staged })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      const partial = err as Partial<RewriteSweepError>
+      // Narrowed, never cast: on `throw null` a property read here would raise
+      // a TypeError INSIDE this catch, so `results.push` never runs and the
+      // throw escapes `sweepMigrationDirs` — losing the per-directory
+      // fail-closed report this block exists to produce (#836, item 3).
+      const partial = isPartialRewriteResult(err) ? err : {}
       results.push({
         dir,
         rewritten: partial.rewritten ?? [],
         skipped: partial.skipped ?? [],
+        staged: partial.staged ?? [],
         error: message,
       })
     }

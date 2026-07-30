@@ -231,7 +231,7 @@ const decrypted = await client.bulkDecryptModels(encrypted.data, users)
 
 #### Bulk Encrypt / Decrypt (raw values)
 
-`bulkEncrypt` / `bulkDecrypt` are untyped passthroughs for raw value arrays:
+`bulkEncrypt` / `bulkDecrypt` work on raw value arrays rather than models. `bulkEncrypt` is typed like `encrypt` — `{ table, column }` pins every `plaintext` to that column's domain — while `bulkDecrypt` takes the payloads alone, so it resolves to the plaintext union and does **no `Date` reconstruction**: a `types.Date` / `types.Timestamp` column read this way is the string it was stored as, where `bulkDecryptModels(rows, table)` gives you a `Date`. See [`EncryptionClient` Methods](#encryptionclient-methods) for why.
 
 ```typescript
 const plaintexts = [
@@ -736,7 +736,9 @@ Method signatures are derived from your schemas: plaintext arguments are pinned 
 | `bulkDecrypt` | `(encryptedPayloads)` | `BulkDecryptOperation` (thenable) |
 | `getEncryptConfig` | `()` | The resolved encrypt config |
 
-The thenable operations support `.withLockContext(lockContext)` for identity-aware encryption, and `decryptModel` / `bulkDecryptModels` also support `.audit({ metadata })`. Those two additionally accept the lock context as an optional third argument — use one form or the other. `decrypt` of a single value cannot be strongly typed (a lone ciphertext carries no column identity), and `encryptQuery` rejects storage-only columns at compile time.
+The thenable operations support `.withLockContext(lockContext)` for identity-aware encryption, and `decryptModel` / `bulkDecryptModels` also support `.audit({ metadata })`. Those two additionally accept the lock context as an optional third argument — use one form or the other. `decrypt` of a single value cannot be strongly typed (TypeScript cannot know which column a runtime payload came from), and `encryptQuery` rejects storage-only columns at compile time.
+
+**`decrypt` / `bulkDecrypt` do not reconstruct `Date` values.** A `types.Date` / `types.Timestamp` column read through the raw path comes back as the string it was stored as; read through `decryptModel` / `bulkDecryptModels` with the table, it comes back as a `Date`. Reconstruction is driven by the table's `cast_as`, which only the model path is handed. Use the model helpers when you want the column's declared plaintext type, or rebuild at the call site with `new Date(value)`.
 
 ### `LockContext` (legacy)
 

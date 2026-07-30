@@ -88,8 +88,10 @@ describe('wizardCanUseTool — DLX command allowlist', () => {
       )
     })
 
-    it('allows stash db push', () => {
-      expect(wizardCanUseTool('Bash', { command: 'stash db push' })).toBe(true)
+    it('allows stash db validate', () => {
+      expect(wizardCanUseTool('Bash', { command: 'stash db validate' })).toBe(
+        true,
+      )
     })
   })
 
