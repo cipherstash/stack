@@ -40,7 +40,7 @@ Options:
   --version, -v        Show version
   --debug              Print extra diagnostics from the agent
   --plan               Drafts \`.cipherstash/plan.md\` for review.
-                       No code or schema changes, no db pushes.
+                       No code or schema changes, no migrations run.
   --implement          Full setup flow (the default).
   --mode <plan|implement>
                        Long form of \`--plan\` / \`--implement\`. Last mode

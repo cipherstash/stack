@@ -145,9 +145,9 @@ describe('wizardCanUseTool', () => {
       expect(wizardCanUseTool('Bash', { command: 'npx tsc --noEmit' })).toBe(
         true,
       )
-      expect(wizardCanUseTool('Bash', { command: 'npx stash db push' })).toBe(
-        true,
-      )
+      expect(
+        wizardCanUseTool('Bash', { command: 'npx stash db validate' }),
+      ).toBe(true)
     })
 
     it('blocks commands not in allowlist', () => {

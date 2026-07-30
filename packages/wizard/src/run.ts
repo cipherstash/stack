@@ -14,7 +14,6 @@ import {
   trackWizardStarted,
 } from './lib/analytics.js'
 import { WizardChangelog } from './lib/changelog.js'
-import { INTEGRATIONS } from './lib/constants.js'
 import {
   detectIntegration,
   detectPackageManager,
@@ -240,7 +239,7 @@ export async function run(options: RunOptions) {
         })
         changelog.phase(
           'Post-agent steps complete',
-          'Package install, `eql install`, `db push`, and migrations finished.',
+          'Package install, `eql install`, and migrations finished.',
         )
 
         const scanResult = await scanPromise
