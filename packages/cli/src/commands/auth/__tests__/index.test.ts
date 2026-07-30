@@ -75,6 +75,32 @@ describe('authCommand login — option forwarding', () => {
     )
   })
 
+  it('derives the referrer from --prisma', async () => {
+    // `--prisma` is the third integration referrer flag, at parity with
+    // `--supabase` / `--drizzle` (`stash init --prisma` records the same name).
+    await authCommand(['login'], { prisma: true }, {})
+
+    expect(loginMock.login).toHaveBeenCalledWith(
+      'us-east-1.aws',
+      'prisma',
+      expect.objectContaining({ json: false }),
+    )
+  })
+
+  it('orders a multi-flag referrer alphabetically, not by argv order', async () => {
+    await authCommand(
+      ['login'],
+      { supabase: true, prisma: true, drizzle: true },
+      {},
+    )
+
+    expect(loginMock.login).toHaveBeenCalledWith(
+      'us-east-1.aws',
+      'drizzle-prisma-supabase',
+      expect.objectContaining({ json: false }),
+    )
+  })
+
   it('fails fast on a valueless --region without calling login', async () => {
     // `--region` with no value booleanises into flags; guard must fire first.
     await expect(authCommand(['login'], { region: true }, {})).rejects.toThrow(

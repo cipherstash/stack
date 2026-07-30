@@ -34,8 +34,10 @@ Examples:
 `.trim()
 
 function referrerFromFlags(flags: Record<string, boolean>): string | undefined {
+  // Alphabetical, so a multi-flag referrer is stable regardless of argv order.
   const parts: string[] = []
   if (flags.drizzle) parts.push('drizzle')
+  if (flags.prisma) parts.push('prisma')
   if (flags.supabase) parts.push('supabase')
   return parts.length > 0 ? parts.join('-') : undefined
 }

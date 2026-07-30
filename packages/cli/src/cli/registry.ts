@@ -284,6 +284,7 @@ export const registry: CommandGroup[] = [
             description: 'Track Supabase as the referrer.',
           },
           { name: '--drizzle', description: 'Track Drizzle as the referrer.' },
+          { name: '--prisma', description: 'Track Prisma as the referrer.' },
         ],
       },
       {
