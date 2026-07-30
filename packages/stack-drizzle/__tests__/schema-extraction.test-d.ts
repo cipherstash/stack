@@ -16,9 +16,11 @@
 import {
   type AnyV3Table,
   type EncryptedIntegerOrdColumn,
+  type EncryptedJsonColumn,
   type EncryptedTextEqColumn,
   encryptedTable,
   type InferPlaintext,
+  type JsonDocument,
   types as v3Types,
 } from '@cipherstash/stack/eql/v3'
 import type { Encrypted } from '@cipherstash/stack/types'
@@ -70,6 +72,33 @@ const sqlTypeFallbackUsers = pgTable('sql_type_fallback_users', {
 })
 const fallbackExtracted = extractEncryptionSchema(sqlTypeFallbackUsers)
 
+// Real schemas rarely declare a bare column — `.notNull()` in particular is
+// near-universal. Modifiers are the one place the brand could be dropped for
+// SOME columns while bare ones keep working, which is why they get their own
+// fixture: every other table here is bare, so a modifier-only regression would
+// otherwise ship green. See the `modifiers` describe below.
+const modified = pgTable('modified', {
+  bare: types.TextEq('bare'),
+  notNull: types.TextEq('not_null').notNull(),
+  unique: types.IntegerOrd('uniq').unique(),
+  chained: types.IntegerOrd('chained').notNull().unique(),
+})
+const modifiedExtracted = extractEncryptionSchema(modified)
+
+// `types.Json`'s plaintext is the whole `JsonDocument` union rather than a
+// scalar, so it exercises the one domain where a widened index signature and
+// the precise type are easiest to confuse.
+const documents = pgTable('documents', {
+  id: serial('id').primaryKey(),
+  doc: types.Json('doc'),
+  label: types.TextEq('label'),
+})
+const documentsExtracted = extractEncryptionSchema(documents)
+const documentsAuthored = encryptedTable('documents', {
+  doc: v3Types.Json('doc'),
+  label: v3Types.TextEq('label'),
+})
+
 /** The plaintext map both schemas must infer. */
 type UserPlaintext = { email: string; age: number }
 
@@ -116,6 +145,89 @@ describe('extractEncryptionSchema - plaintext inference (#589)', () => {
     expectTypeOf(extracted.age).toEqualTypeOf<EncryptedIntegerOrdColumn>()
     expectTypeOf(authored.email).toEqualTypeOf<EncryptedTextEqColumn>()
     expectTypeOf(authored.age).toEqualTypeOf<EncryptedIntegerOrdColumn>()
+  })
+})
+
+/**
+ * Regression guard for the brand's survival through Drizzle's column modifiers.
+ *
+ * `pgTable()` does not hand builders through — it rebuilds each one via
+ * drizzle's `BuildColumn`, which keeps only
+ * `Omit<TBuilder['_'], keyof MakeColumnConfig<…> | 'brand' | 'dialect'>`. The
+ * brand rides in `_` precisely so it survives that (see `EqlV3Column`), and
+ * modifiers then intersect further into `_` (`NotNull<T> = T & { _: { notNull:
+ * true } }`). Both steps have to preserve the symbol key.
+ *
+ * This is a drizzle-orm compatibility contract, not one we control: an upstream
+ * change to how `BuildColumn` or `NotNull` reshape `_` could drop the brand for
+ * modified columns while bare ones keep working. The runtime would not notice —
+ * `getEqlV3Column` recovers builders from the runtime carrier and the SQL domain,
+ * never from the type — so extraction would silently type a `.notNull()` column
+ * as a plain pass-through field while still encrypting it. Nothing else in CI
+ * catches that.
+ */
+describe('extractEncryptionSchema - drizzle column modifiers', () => {
+  it('keeps modified columns in the extracted schema', () => {
+    expectTypeOf<
+      keyof InferPlaintext<typeof modifiedExtracted>
+    >().toEqualTypeOf<'bare' | 'notNull' | 'unique' | 'chained'>()
+  })
+
+  it('keeps each modified column at its own concrete plaintext type', () => {
+    expectTypeOf<InferPlaintext<typeof modifiedExtracted>>().toEqualTypeOf<{
+      bare: string
+      notNull: string
+      unique: number
+      chained: number
+    }>()
+  })
+
+  it('keeps modified columns addressable at their concrete domain type', () => {
+    expectTypeOf(
+      modifiedExtracted.notNull,
+    ).toEqualTypeOf<EncryptedTextEqColumn>()
+    expectTypeOf(
+      modifiedExtracted.chained,
+    ).toEqualTypeOf<EncryptedIntegerOrdColumn>()
+  })
+})
+
+/**
+ * `types.Json` is the only domain whose plaintext is a union rather than a
+ * scalar, so it is the easiest one to lose to a widened index signature without
+ * any other assertion noticing.
+ */
+describe('extractEncryptionSchema - json domain', () => {
+  it('infers JsonDocument on both paths', () => {
+    type DocumentPlaintext = { doc: JsonDocument; label: string }
+
+    expectTypeOf<
+      InferPlaintext<typeof documentsExtracted>
+    >().toEqualTypeOf<DocumentPlaintext>()
+    expectTypeOf<
+      InferPlaintext<typeof documentsAuthored>
+    >().toEqualTypeOf<DocumentPlaintext>()
+  })
+
+  it('keeps the json column addressable at its concrete domain type', () => {
+    expectTypeOf(documentsExtracted.doc).toEqualTypeOf<EncryptedJsonColumn>()
+    expectTypeOf(
+      documentsExtracted.label,
+    ).toEqualTypeOf<EncryptedTextEqColumn>()
+  })
+
+  it('rejects a scalar written to a json column', async () => {
+    const client = await Encryption({ schemas: [documentsExtracted] })
+
+    expectTypeOf(client.encrypt).toBeCallableWith(
+      { note: 'ok' },
+      { table: documentsExtracted, column: documentsExtracted.doc },
+    )
+    // @ts-expect-error - JsonDocument is object | array | null, never a scalar
+    client.encrypt(36, {
+      table: documentsExtracted,
+      column: documentsExtracted.doc,
+    })
   })
 })
 
