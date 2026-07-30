@@ -1,17 +1,17 @@
 ---
-name: stash-prisma-next
-description: Integrate CipherStash searchable field-level encryption with Prisma Next using @cipherstash/prisma-next (EQL v3). Covers the full 31-constructor catalog of domain-named encrypted column types in schema.prisma (per plaintext type × capability tier — Text/TextEq/TextOrd/TextMatch/TextSearch, Integer/Smallint/BigInt/Numeric/Real/Double × Eq/Ord, Date/Timestamp × Eq/Ord, Boolean, Json), the one-call cipherstashFromStack wiring, the runtime value envelopes (EncryptedString/Number/BigInt/Date/Boolean/Json) and decryptAll, the eql* query operators (eqlEq, eqlMatch, eqlGt, eqlBetween, eqlIn, eqlJsonContains, eqlAsc/eqlDesc, eqlJsonPathAsc/eqlJsonPathDesc), EQL bundle installation via prisma-next migrate, and authentication. Use when adding encryption to a Prisma Next project, choosing a column type, or querying encrypted columns.
+name: stash-prisma
+description: Integrate CipherStash searchable field-level encryption with Prisma Next using @cipherstash/stack-prisma (EQL v3). Covers the full 31-constructor catalog of domain-named encrypted column types in schema.prisma (per plaintext type × capability tier — Text/TextEq/TextOrd/TextMatch/TextSearch, Integer/Smallint/BigInt/Numeric/Real/Double × Eq/Ord, Date/Timestamp × Eq/Ord, Boolean, Json), the one-call cipherstashFromStack wiring, the runtime value envelopes (EncryptedString/Number/BigInt/Date/Boolean/Json) and decryptAll, the eql* query operators (eqlEq, eqlMatch, eqlGt, eqlBetween, eqlIn, eqlJsonContains, eqlAsc/eqlDesc, eqlJsonPathAsc/eqlJsonPathDesc), EQL bundle installation via prisma-next migrate, and authentication. Use when adding encryption to a Prisma Next project, choosing a column type, or querying encrypted columns.
 ---
 
 # CipherStash Stack — Prisma Next Integration
 
 Guide for searchable field-level encryption in a **Prisma Next** app with
-`@cipherstash/prisma-next` (EQL v3), powered by `@cipherstash/stack`. You declare
+`@cipherstash/stack-prisma` (EQL v3), powered by `@cipherstash/stack`. You declare
 encrypted columns directly in `schema.prisma`; Prisma Next's migration system
 installs the EQL bundle in the same sweep that creates your tables — there is no
 separate `stash eql install` step.
 
-> `@cipherstash/prisma-next` is **EQL v3 only** — there is no EQL v2 surface.
+> `@cipherstash/stack-prisma` is **EQL v3 only** — there is no EQL v2 surface.
 > Everything below is v3.
 
 In EQL v3 every encrypted column is a **concrete Postgres domain**
@@ -30,7 +30,7 @@ capability semantics; this skill covers the Prisma-Next-specific surface.
 ## Installation
 
 ```bash
-npm install @cipherstash/stack @cipherstash/prisma-next
+npm install @cipherstash/stack @cipherstash/stack-prisma
 ```
 
 Or run `npx stash init --prisma-next`, which detects Prisma Next, installs both
@@ -101,7 +101,7 @@ sort needs the matching `*Eq` / `*Ord` / text-search domain.
 ### 2. Register the extension pack in `prisma-next.config.ts`
 
 ```typescript
-import cipherstash from '@cipherstash/prisma-next/control'
+import cipherstash from '@cipherstash/stack-prisma/control'
 import { defineConfig } from '@prisma-next/cli/config-types'
 import { prismaContract } from '@prisma-next/sql-contract-psl/provider'
 import postgresPack from '@prisma-next/target-postgres/pack'
@@ -127,7 +127,7 @@ longer materialises a placeholder namespace. Omitting it fails at runtime with
 
 ```typescript
 import 'dotenv/config'
-import { cipherstashFromStack } from '@cipherstash/prisma-next/v3'
+import { cipherstashFromStack } from '@cipherstash/stack-prisma/v3'
 import postgres from '@prisma-next/postgres/runtime'
 import type { Contract } from './prisma/contract.d'
 import contractJson from './prisma/contract.json' with { type: 'json' }
@@ -242,7 +242,7 @@ import {
   decryptAll,
   EncryptedString, EncryptedNumber, EncryptedBigInt,
   EncryptedDate, EncryptedBoolean, EncryptedJson,
-} from '@cipherstash/prisma-next/runtime'
+} from '@cipherstash/stack-prisma/runtime'
 
 await db.orm.public.User.create({
   id: 'user-0',
@@ -301,11 +301,11 @@ await db.orm.public.User.where((u) => u.preferences.eqlJsonPathEq('$.theme', 'da
 // JSONPath ordering (ciphertext-free selector + scalar term)
 await db.orm.public.User.where((u) => u.preferences.eqlJsonPathGte('$.score', 80)).all()
 // ordering
-import { eqlAsc } from '@cipherstash/prisma-next/runtime'
+import { eqlAsc } from '@cipherstash/stack-prisma/runtime'
 await db.orm.public.User.orderBy((u) => eqlAsc(u.salary)).all()
 
 // ordering by a JSONPath leaf; missing paths follow PostgreSQL NULL ordering
-import { eqlJsonPathAsc } from '@cipherstash/prisma-next/runtime'
+import { eqlJsonPathAsc } from '@cipherstash/stack-prisma/runtime'
 await db.orm.public.User.orderBy((u) => eqlJsonPathAsc(u.preferences, '$.score')).all()
 ```
 
@@ -339,11 +339,11 @@ Run Prisma Next apps on a Node runtime where the native module loads.
 
 | Subpath | Purpose |
 |---|---|
-| `@cipherstash/prisma-next/v3` | The v3 surface: `cipherstashFromStack`, the SDK adapter, envelopes/middleware |
-| `@cipherstash/prisma-next/control` | The extension pack for `extensionPacks: [...]` |
-| `@cipherstash/prisma-next/runtime` | Envelope classes, `decryptAll`, `eql*` operators, `EncryptedString.from()`… |
-| `@cipherstash/prisma-next/stack` | One-call setup against `@cipherstash/stack`: `cipherstashFromStack` |
-| `@cipherstash/prisma-next/column-types` | camelCase factories (`textSearch`, `bigIntOrd`, …) for **TS-authored** contracts — emits byte-identical `contract.json` to the PSL constructors |
+| `@cipherstash/stack-prisma/v3` | The v3 surface: `cipherstashFromStack`, the SDK adapter, envelopes/middleware |
+| `@cipherstash/stack-prisma/control` | The extension pack for `extensionPacks: [...]` |
+| `@cipherstash/stack-prisma/runtime` | Envelope classes, `decryptAll`, `eql*` operators, `EncryptedString.from()`… |
+| `@cipherstash/stack-prisma/stack` | One-call setup against `@cipherstash/stack`: `cipherstashFromStack` |
+| `@cipherstash/stack-prisma/column-types` | camelCase factories (`textSearch`, `bigIntOrd`, …) for **TS-authored** contracts — emits byte-identical `contract.json` to the PSL constructors |
 
 ## Gotchas
 

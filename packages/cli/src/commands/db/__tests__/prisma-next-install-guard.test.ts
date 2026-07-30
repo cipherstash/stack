@@ -24,10 +24,12 @@ describe('prismaNextInstallGuard', () => {
     expect(msg).toContain('--force')
   })
 
-  it('blocks when @cipherstash/prisma-next is a dependency', () => {
+  it('blocks when @cipherstash/stack-prisma is a dependency', () => {
     writeFileSync(
       join(dir, 'package.json'),
-      JSON.stringify({ dependencies: { '@cipherstash/prisma-next': '1.0.0' } }),
+      JSON.stringify({
+        dependencies: { '@cipherstash/stack-prisma': '1.0.0' },
+      }),
     )
 
     expect(prismaNextInstallGuard(dir, {})).toContain(

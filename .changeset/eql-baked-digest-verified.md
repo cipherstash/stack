@@ -1,5 +1,5 @@
 ---
-'@cipherstash/prisma-next': minor
+'@cipherstash/stack-prisma': minor
 ---
 
 Bake the EQL v3 install SQL into the migration artefacts at emit time,

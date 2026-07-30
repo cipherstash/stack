@@ -1,5 +1,5 @@
 ---
-'@cipherstash/prisma-next': minor
+'@cipherstash/stack-prisma': minor
 ---
 
 Route v3 decoding from the EQL payload's own identifier, so encrypted columns

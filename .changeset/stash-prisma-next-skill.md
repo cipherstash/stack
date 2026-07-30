@@ -11,7 +11,7 @@ degrades an unmapped integration to the base skill set instead of crashing
 (`tsup` ships without type-checking, so the `Record<Integration>` type alone
 didn't protect the build).
 
-Ships a new **`stash-prisma-next`** agent skill documenting the EQL v3 Prisma
+Ships a new **`stash-prisma`** agent skill documenting the EQL v3 Prisma
 Next surface — the domain-named encrypted column types (`EncryptedTextSearch`,
 `EncryptedDoubleOrd`, …), `cipherstashFromStackV3` wiring, the runtime value
 envelopes, the `eql*` query operators, and EQL installation via

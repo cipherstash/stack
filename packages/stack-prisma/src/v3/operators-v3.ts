@@ -372,7 +372,7 @@ function requireQueryCast(ctx: ColumnContext, method: string): string {
     throw operatorError(
       ctx,
       method,
-      `cipherstash ${method}: domain ${ctx.meta.nativeType} passed its capability gate but has no eql_v3.query_* operand type. This is a bug in @cipherstash/prisma-next — please report it.`,
+      `cipherstash ${method}: domain ${ctx.meta.nativeType} passed its capability gate but has no eql_v3.query_* operand type. This is a bug in @cipherstash/stack-prisma — please report it.`,
     )
   }
   return cast

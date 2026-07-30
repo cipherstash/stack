@@ -89,14 +89,14 @@ describe('SKILL_MAP', () => {
     expect(SKILL_MAP.supabase).toContain('stash-supabase')
   })
 
-  it('prisma-next includes stash-prisma-next', () => {
-    expect(SKILL_MAP['prisma-next']).toContain('stash-prisma-next')
+  it('prisma-next includes stash-prisma', () => {
+    expect(SKILL_MAP['prisma-next']).toContain('stash-prisma')
   })
 
   it('postgresql skips ORM-specific skills', () => {
     expect(SKILL_MAP.postgresql).not.toContain('stash-drizzle')
     expect(SKILL_MAP.postgresql).not.toContain('stash-supabase')
-    expect(SKILL_MAP.postgresql).not.toContain('stash-prisma-next')
+    expect(SKILL_MAP.postgresql).not.toContain('stash-prisma')
   })
 
   // #754: the no-ORM path had no source for the raw-SQL binding surface or
@@ -126,7 +126,7 @@ describe('skillsFor', () => {
   it('returns the mapped skills for a known integration', () => {
     expect(skillsFor('prisma-next')).toEqual([
       'stash-encryption',
-      'stash-prisma-next',
+      'stash-prisma',
       'stash-indexing',
       'stash-deployment',
       'stash-zerokms',

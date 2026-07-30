@@ -2,10 +2,10 @@
 'stash': patch
 ---
 
-Correct the `stash-prisma-next` skill against the current adapter, and fix a
+Correct the `stash-prisma` skill against the current adapter, and fix a
 stale constructor name in `stash init --prisma-next`'s next steps.
 
-The skill was verified line-by-line against `@cipherstash/prisma-next` on
+The skill was verified line-by-line against `@cipherstash/stack-prisma` on
 main (constructors, domains, operators, `rawSql` shape, EQL function names,
 CLI commands — all confirmed current). Two real errors fixed:
 

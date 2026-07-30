@@ -102,7 +102,7 @@ function schemaAuthoringGuidance(integration: Integration): string {
     case 'supabase':
       return 'Declare the column with a concrete `public.eql_v3_*` domain in the migration SQL — for example, `email public.eql_v3_text_search` (`encryptedSupabase` derives its encryption config by introspecting those domains)'
     case 'prisma-next':
-      return 'Declare the field with the `cipherstash.*` constructors in `prisma/schema.prisma` (`cipherstash.TextSearch()`, `cipherstash.DoubleOrd()`, …), with the `cipherstash` extension pack wired up per `@cipherstash/prisma-next/control`'
+      return 'Declare the field with the `cipherstash.*` constructors in `prisma/schema.prisma` (`cipherstash.TextSearch()`, `cipherstash.DoubleOrd()`, …), with the `cipherstash` extension pack wired up per `@cipherstash/stack-prisma/control`'
     default:
       return 'Declare the table with `encryptedTable` and the `types.*` domain factories from `@cipherstash/stack/v3`, then pass it to `Encryption({ schemas })`'
   }
@@ -194,7 +194,7 @@ const SKILL_PURPOSES: Record<string, string> = {
     'Drizzle-specific patterns: declaring encrypted columns, query operators, the rollout/cutover walkthrough for an existing column',
   'stash-supabase':
     'Supabase-specific patterns: `encryptedSupabase` wrapper, encrypted query filters, transparent decryption, the rollout/cutover walkthrough',
-  'stash-prisma-next':
+  'stash-prisma':
     'Prisma Next-specific patterns: `cipherstash.*` field constructors, migration flow, encrypted query operators',
   'stash-indexing':
     'index recipes for encrypted columns — the `eql_v3` extractor functional indexes, Supabase/managed-Postgres constraints, EXPLAIN verification',

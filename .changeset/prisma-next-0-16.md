@@ -1,5 +1,5 @@
 ---
-'@cipherstash/prisma-next': minor
+'@cipherstash/stack-prisma': minor
 'stash': patch
 ---
 
@@ -24,7 +24,7 @@ contract: prismaContract('./prisma/schema.prisma', {
 ```
 
 Without it, `prisma-next contract emit` fails at runtime with `createNamespace is
-not a function`. The bundled `stash-prisma-next` skill documents this too.
+not a function`. The bundled `stash-prisma` skill documents this too.
 
 The bundled EQL v3 baseline migration is re-emitted so its label and hash reflect
 the pinned `@cipherstash/eql` 3.0.2 (the committed artifact still said 3.0.0).

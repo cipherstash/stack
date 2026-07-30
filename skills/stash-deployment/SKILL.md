@@ -14,7 +14,7 @@ user reads the row.
 
 This skill covers how to sequence that across deploys. For the API and the
 lifecycle model see `stash-encryption`; for the commands see `stash-cli`; for
-framework specifics see `stash-drizzle` / `stash-supabase` / `stash-prisma-next`.
+framework specifics see `stash-drizzle` / `stash-supabase` / `stash-prisma`.
 
 Everything here describes **EQL v3**, the only authoring generation. The EQL v2
 rollout commands were removed — `stash encrypt cutover` (the old v2 rename swap)
@@ -170,7 +170,7 @@ Then **build the `eql_v3.*` extractor indexes** for every capability you query a
 index maintenance during the backfill, and the switched reads engage an index from
 the first query. Ship the DDL through whatever migration flow owns the schema —
 a Drizzle or Supabase migration, an index migration in the Prisma Next graph
-(never out-of-band there — see `stash-prisma-next`), or your SQL migration tool.
+(never out-of-band there — see `stash-prisma`), or your SQL migration tool.
 Never ad-hoc against production. Recipes in `stash-indexing`.
 
 ### Deploy 2 — read cutover
@@ -322,7 +322,7 @@ every deploy.
 
 Prisma Next is **contract-first**: `contract.prisma` is emitted to `contract.json` /
 `contract.d.ts`, and the database is advanced along a migration graph. CipherStash
-integrates through `@cipherstash/prisma-next`, which contributes its own contract
+integrates through `@cipherstash/stack-prisma`, which contributes its own contract
 space, so **EQL installs as part of your migration graph** — `prisma-next migrate`
 (the top-level apply verb) installs the bundle alongside your schema. Never
 `stash eql install`, which refuses on a Prisma Next project.
@@ -468,4 +468,4 @@ id is printed in the check output itself.
 - **`stash-zerokms`** — the keyset/grant model that governs who can decrypt what
 - **`stash-auth`** — auth strategies, the `CS_*` variables, and credential resolution order
 - **`stash-edge`** — edge/serverless runtimes and the `@cipherstash/stack/wasm-inline` entry
-- **`stash-prisma-next`** / **`stash-drizzle`** / **`stash-supabase`** — integration specifics
+- **`stash-prisma`** / **`stash-drizzle`** / **`stash-supabase`** — integration specifics

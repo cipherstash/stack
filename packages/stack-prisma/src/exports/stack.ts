@@ -1,5 +1,5 @@
 /**
- * `@cipherstash/prisma-next/stack` — one-call setup for the
+ * `@cipherstash/stack-prisma/stack` — one-call setup for the
  * `@cipherstash/stack` SDK against a Prisma Next contract (EQL v3).
  *
  * Most consumers want {@link cipherstashFromStack}: it derives the v3

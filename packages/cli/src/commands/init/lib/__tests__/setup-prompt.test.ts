@@ -271,7 +271,7 @@ describe('renderSetupPrompt — orient + route (implement mode)', () => {
   it('has a purpose line for every skill SKILL_MAP can install', () => {
     // renderSkillIndex falls back to "(no description)" for a skill missing
     // from SKILL_PURPOSES — a silent gap no per-skill assertion catches when
-    // a new skill lands (stash-prisma-next shipped that way). Render the
+    // a new skill lands (stash-prisma shipped that way). Render the
     // union of every installable skill and require zero fallbacks.
     const everyInstallable = [...new Set(Object.values(SKILL_MAP).flat())]
     const out = renderSetupPrompt({

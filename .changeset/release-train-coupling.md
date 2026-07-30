@@ -16,7 +16,7 @@ be offered the reinstall fix, never "looks newer, leave it").
 
 **Version lockstep.** The release-train packages (`stash`,
 `@cipherstash/stack`, `@cipherstash/stack-drizzle`,
-`@cipherstash/stack-supabase`, `@cipherstash/prisma-next`,
+`@cipherstash/stack-supabase`, `@cipherstash/stack-prisma`,
 `@cipherstash/wizard`) are now a Changesets `fixed` group: a release of any of
 them republishes all of them at the same version, so the CLI's embedded
 version map can never go stale against the packages it pins (previously a

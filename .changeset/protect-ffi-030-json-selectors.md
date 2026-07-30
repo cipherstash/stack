@@ -2,7 +2,7 @@
 '@cipherstash/stack': minor
 '@cipherstash/stack-drizzle': minor
 '@cipherstash/stack-supabase': patch
-'@cipherstash/prisma-next': minor
+'@cipherstash/stack-prisma': minor
 'stash': patch
 ---
 

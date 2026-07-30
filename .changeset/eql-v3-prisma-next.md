@@ -1,5 +1,5 @@
 ---
-'@cipherstash/prisma-next': minor
+'@cipherstash/stack-prisma': minor
 ---
 
 **Breaking:** EQL v3 columns are now authored through **concrete per-domain constructors** — the constructor you choose *is* the capability set. The legacy boolean-option surface (`EncryptedString({ equality, freeTextSearch, orderAndRange })`) is not carried into v3.
@@ -11,7 +11,7 @@
   - `EncryptedJson` — searchable encrypted JSONB (`public.eql_v3_json`, `ste_vec`), queried with `eqlJsonContains` (`@>` containment). Selector querying (comparing the value at a JSONPath) is tracked in #677.
 - **Impossible capability combinations have no constructor** (e.g. text equality + free-text without order/range) — they are unrepresentable, not runtime errors.
 - **BigInt is a first-class v3 family** (`EncryptedBigInt` / `EncryptedBigIntEq` / `EncryptedBigIntOrd`, JS `bigint` plaintext, backed by `public.eql_v3_bigint*`).
-- New `@cipherstash/prisma-next/v3` entry point: `cipherstashFromStackV3({ contractJson })` builds the v3 runtime descriptor, bulk-encrypt middleware, and a stack `Encryption` client from the emitted contract.
+- New `@cipherstash/stack-prisma/v3` entry point: `cipherstashFromStackV3({ contractJson })` builds the v3 runtime descriptor, bulk-encrypt middleware, and a stack `Encryption` client from the emitted contract.
 - Query operators use an **EQL-derived vocabulary** (`eqlEq`, `eqlNeq`, `eqlIn`, `eqlNotIn`, `eqlGt`, `eqlGte`, `eqlLt`, `eqlLte`, `eqlBetween`, `eqlNotBetween`, `eqlJsonContains`; ordering via `eqlAsc` / `eqlDesc`), lowering to the same-named `eql_v3.*` functions with operands cast to the domain's query type (`$n::eql_v3.query_<domain>`); ordering uses `eql_v3.ord_term` / `eql_v3.ord_term_ore` by the column's ordering flavour. The domains are `public.eql_v3_*`; the operator functions live in the `eql_v3` schema.
 - Free-text search is **`eqlMatch`** — fuzzy bloom token matching (`eql_v3.contains`), deliberately NOT named after SQL `ILIKE`: matching is case-insensitive, order/multiplicity-insensitive, and one-sided (may false-positive). Two guards run before encryption: SQL wildcards are normalised (leading/trailing `%` stripped; interior `%` or any `_` rejected), and needles the column's match index cannot answer (empty / below the tokenizer length) are rejected via the shared `matchNeedleError` guard. There is **no negated match operator** — negating a may-false-positive bloom test would silently drop matching rows.
 - A new baseline migration `20260601T0100_install_eql_v3_bundle` (invariant `cipherstash:install-eql-v3-bundle-v1`) installs the `public.eql_v3_*` domains and `eql_v3.*` functions from the pinned `@cipherstash/eql` release. Regenerate contracts and run migrations after changing constructors.

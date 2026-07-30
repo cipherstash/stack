@@ -216,7 +216,7 @@ export class CipherstashV3CellCodec<
               '    extensions: [createCipherstashV3RuntimeDescriptor({ sdk })],\n' +
               '    middleware:  [bulkEncryptMiddlewareV3(sdk)],\n' +
               '  });\n\n' +
-              'Both must close over the SAME `sdk` reference. See the @cipherstash/prisma-next README for the full wiring example.',
+              'Both must close over the SAME `sdk` reference. See the @cipherstash/stack-prisma README for the full wiring example.',
             {
               codecId: this.descriptor.codecId,
               reason: 'cipherstash-bulk-encrypt-middleware-not-registered',

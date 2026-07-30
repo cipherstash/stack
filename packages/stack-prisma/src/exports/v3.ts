@@ -1,5 +1,5 @@
 /**
- * `@cipherstash/prisma-next/v3` — the complete EQL v3 surface in one
+ * `@cipherstash/stack-prisma/v3` — the complete EQL v3 surface in one
  * import (decision 1b: v3 is a SEPARATE entry point from the v2
  * `./runtime` / `./stack` composition — a client is v2 or v3, never
  * both; the two runtime descriptors collide if co-registered).

@@ -13,7 +13,7 @@
 
 import 'dotenv/config'
 
-import { cipherstashFromStack } from '@cipherstash/prisma-next/v3'
+import { cipherstashFromStack } from '@cipherstash/stack-prisma/v3'
 import postgres from '@prisma-next/postgres/runtime'
 
 import type { Contract } from './prisma/contract.d'
