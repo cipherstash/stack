@@ -10,9 +10,10 @@ config from its domain — callers no longer pass a schema to `from()`.
 `select('*')` is supported (expanded from the introspected column list, and
 aliased back to each declared column's JS property name so a property→DB rename
 round-trips). A column using a `public.eql_v3_*` domain this SDK version does not
-model throws at construction rather than silently passing through. Supplying
-`schemas` remains optional and adds compile-time types plus startup verification
-of the declared tables against the database. Requires a Postgres connection for
+model throws when its table is named via `from()` rather than silently passing
+through. Supplying `schemas` remains optional and adds compile-time types plus
+eager construction-time verification of the declared tables against the
+database — including that same unmodelled-column check. Requires a Postgres connection for
 introspection (`pg` is an optional peer), so it cannot run in a Worker or the
 browser.
 

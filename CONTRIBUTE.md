@@ -113,7 +113,7 @@ The `stash` / `@cipherstash/stack` / `@cipherstash/stack-drizzle` /
 packages are a `fixed` group in [`.changeset/config.json`](./.changeset/config.json):
 they always version together, so a bump to any one of them bumps all six.
 
-## Pre release process
+## Pre-release process
 
 The 1.0 line published its `1.0.0-rc.*` series through
 [changesets pre mode](https://github.com/changesets/changesets/blob/main/docs/prereleases.md).

@@ -17,7 +17,8 @@ check would wave through an astral-plane term — `"👍👍"` is 4 code units b
 only 2 codepoints, yields no trigram, and matched every row.
 
 **Breaking for callers passing short terms:** free-text calls that previously
-returned every row now throw. Terms of 3+ codepoints are unaffected.
+returned every row now throw. Terms at or above the configured `token_length`
+are unaffected.
 
 `v3FromDriver()` now throws the new `EqlV3CodecError` on a payload that is not
 an EQL envelope, instead of surfacing a raw `SyntaxError` for malformed JSON and

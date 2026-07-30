@@ -3,7 +3,10 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { INTEGRATION_ADAPTER_PACKAGES } from '../commands/init/steps/install-deps.js'
-import { RELEASE_TRAIN_MANIFESTS } from '../release-train.js'
+import {
+  RELEASE_TRAIN_MANIFESTS,
+  type ReleaseTrainPackage,
+} from '../release-train.js'
 
 const CLI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const REPO_ROOT = resolve(CLI_ROOT, '../..')
@@ -14,7 +17,11 @@ function stableVersion(version: string): string {
   return version.split('-')[0] as string
 }
 
-function manifestVersion(pkg: string): string {
+function isReleaseTrainPackage(pkg: string): pkg is ReleaseTrainPackage {
+  return Object.hasOwn(RELEASE_TRAIN_MANIFESTS, pkg)
+}
+
+function manifestVersion(pkg: ReleaseTrainPackage): string {
   const rel = RELEASE_TRAIN_MANIFESTS[pkg]
   if (!rel) throw new Error(`${pkg} is not on the release train`)
   const manifest = JSON.parse(readFileSync(resolve(CLI_ROOT, rel), 'utf8')) as {
@@ -98,8 +105,8 @@ describe('release train coverage', () => {
         /(?:npm:)?(stash|@cipherstash\/[a-z0-9-]+)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/g
 
       for (const [, pkg, pinned] of body.matchAll(PIN)) {
-        if (!((pkg as string) in RELEASE_TRAIN_MANIFESTS)) continue
-        const current = manifestVersion(pkg as string)
+        if (!isReleaseTrainPackage(pkg)) continue
+        const current = manifestVersion(pkg)
 
         expect(
           pinned,
@@ -107,7 +114,7 @@ describe('release train coverage', () => {
         ).not.toContain('-')
 
         expect(
-          (pinned as string).split('.')[0],
+          pinned.split('.')[0],
           `${pkg}@${pinned} is off this release line (${current}) — update the pin and the prose around it`,
         ).toBe(stableVersion(current).split('.')[0])
       }
