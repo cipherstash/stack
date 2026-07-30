@@ -2,6 +2,7 @@ import {
   appendEvent,
   columnExists,
   detectColumnEqlVersion,
+  installMigrationsSchema,
   type ManifestColumn,
   progress,
   runBackfill,
@@ -131,6 +132,27 @@ export async function backfillCommand(options: BackfillCommandOptions) {
     process.on('SIGINT', onSignal)
     process.on('SIGTERM', onSignal)
     db = await pool.connect()
+
+    // `stash eql install` normally creates `cipherstash.cs_migrations`, but
+    // not every integration runs it — Prisma Next installs EQL through its
+    // own migration graph, which doesn't carry the tracking schema. The DDL
+    // is CREATE IF NOT EXISTS throughout, so this is a no-op everywhere else.
+    //
+    // Rethrown as a config error: this is a known prerequisite with a known
+    // fix (usually CREATE privileges), and the generic handler below would
+    // reduce it to "Backfill failed" — the opaque message this whole pass
+    // exists to remove (#819 review). The DDL touches no row data, so its
+    // message is safe to surface verbatim.
+    try {
+      await installMigrationsSchema(db)
+    } catch (error) {
+      throw new BackfillConfigError(
+        'Could not create the `cipherstash.cs_migrations` tracking schema, which backfill needs to checkpoint progress.\n\n' +
+          `Cause: ${error instanceof Error ? error.message : String(error)}\n\n` +
+          'This database user needs CREATE on the database (to create the `cipherstash` schema) and on that schema. Grant it, or have someone run `stash eql install` once, then re-run.',
+      )
+    }
+
     const pkColumn =
       options.pkColumn ?? (await detectPkColumn(db, options.table))
 

@@ -198,7 +198,9 @@ export default defineConfig({
 | Option | Required | Default | Purpose |
 |---|---|---|---|
 | `databaseUrl` | yes | — | PostgreSQL connection string |
-| `client` | no | `./src/encryption/index.ts` | Encryption client, loaded by `db validate` and `encrypt backfill` (`schema build` only writes here; `encrypt drop` resolves against the database) |
+| `client` | no | `./src/encryption/index.ts` | Encryption client, loaded by `db validate` and `encrypt backfill` (`schema build` only writes here; `encrypt drop` resolves against the database). **Not required in Prisma Next projects** — see below. |
+
+In a **Prisma Next** project there is deliberately no client file: encrypted columns are declared in the PSL contract. When the configured `client` path is missing, `encrypt backfill` — the only command that loads it — detects Prisma Next, reads the emitted `contract.json` (searched at `src/prisma/`, `prisma/`, then the project root), and derives the schemas with the adapter's own `deriveStackSchemasV3`, so the CLI's schema view matches the application's. (`encrypt status` and `encrypt drop` never read the client file; they resolve against the database.) Both `@cipherstash/stack-prisma` and `@cipherstash/stack` are resolved from *your* project, not the CLI's dependency tree. Run `prisma-next contract emit` first; if the contract declares no `cipherstash.*()` column, the command says so rather than reporting a missing client file.
 
 Resolved by walking up from `process.cwd()`, like `tsconfig.json`. `stash init` scaffolds it; `stash eql install` offers to.
 
@@ -471,6 +473,8 @@ stash encrypt backfill --table users --column email --chunk-size 5000
 Chunked, resumable, idempotent. Walks the table in keyset-pagination order, encrypts each chunk via `bulkEncryptModels`, and writes one `UPDATE ... FROM (VALUES ...)` per chunk in a transaction that also checkpoints to `cs_migrations`. SIGINT/SIGTERM finishes the current chunk and exits cleanly; re-running resumes. The `<col> IS NOT NULL AND <col>_encrypted IS NULL` guard makes concurrent runners and re-runs converge.
 
 Backfill requires a `public.eql_v3_*` target column, records version 3 and the `dropped` target phase in `.cipherstash/migrations.json`, then prints the next steps: switch the application to the encrypted column by name and run `stash encrypt drop`. A missing, plaintext, or legacy v2 target is rejected before encryption begins.
+
+**Prisma Next.** Works with no encryption client file — schemas come from the emitted `contract.json` (see [`client`](#configuration)). Backfill also bootstraps the `cipherstash.cs_migrations` tracking schema itself, since the Prisma Next flow installs EQL through the `prisma-next` migration graph rather than `stash eql install` (which is what creates that schema elsewhere). Both steps are idempotent.
 
 **Dual-write precondition.** The application must already write both `<col>` and `<col>_encrypted` on every insert and update. Otherwise rows written *during* the backfill land in plaintext only, silently. The first run prompts (interactive) or requires `--confirm-dual-writes-deployed` (non-interactive), then records `dual_writing`. Resumes don't re-prompt.
 
