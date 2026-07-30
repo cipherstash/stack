@@ -179,11 +179,12 @@ are canonical for the sequence and its dual-write precondition).
 Two things are Prisma-Next-specific:
 
 - **No encryption client file is needed.** `stash.config.ts`'s `client` option
-  points at a file this integration deliberately doesn't have. The encrypt
-  commands detect a Prisma Next project, read the emitted `contract.json`
-  (`src/prisma/`, `prisma/`, or the project root), and derive the schemas the
-  same way the runtime does — so run `prisma-next contract emit` before
-  `stash encrypt`, and don't hand-author a bridge client file.
+  points at a file this integration deliberately doesn't have. `stash encrypt
+  backfill` — the only command that loads it — detects a Prisma Next project,
+  reads the emitted `contract.json` (`src/prisma/`, `prisma/`, or the project
+  root), and derives the schemas the same way the runtime does. So run
+  `prisma-next contract emit` before `stash encrypt backfill`, and don't
+  hand-author a bridge client file.
 - **The tracking schema is created for you.** `cipherstash.cs_migrations` is
   normally created by `stash eql install`, which this integration never runs.
   `stash encrypt backfill` bootstraps it itself (idempotently), so the backfill

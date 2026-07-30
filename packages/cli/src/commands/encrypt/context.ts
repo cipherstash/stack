@@ -279,7 +279,24 @@ async function tryLoadPrismaNextContext(
     process.exit(1)
   }
 
-  const client = await Encryption({ schemas })
+  // `Encryption()` throws on invalid credentials or config — a very plausible
+  // first run. `loadEncryptionContext` is called before `backfillCommand`'s own
+  // try/catch, so an unguarded throw here escapes as a raw stack trace, unlike
+  // every other failure in this function. The client-file path doesn't have
+  // this hole: there the client is constructed inside the user's module, which
+  // `jiti.import` already wraps (#819 review).
+  let client: EncryptionClient
+  try {
+    client = await Encryption({ schemas })
+  } catch (error) {
+    console.error(
+      `Error: Failed to initialize the encryption client from ${contractPath}\n\n` +
+        'Encryption schemas derived fine, so this is a credentials or keyset problem, not a contract one. Check CS_* in this shell (`stash env`) or your `~/.cipherstash` profile.\n',
+    )
+    console.error(error)
+    process.exit(1)
+  }
+
   requireUsableEncryptConfig(
     client.getEncryptConfig(),
     contractPath,

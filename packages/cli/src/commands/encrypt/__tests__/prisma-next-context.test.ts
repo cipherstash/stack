@@ -201,6 +201,30 @@ describe('loadEncryptionContext — Prisma Next contract derivation', () => {
     consoleError.mockRestore()
   })
 
+  // `loadEncryptionContext` runs before `backfillCommand`'s own try/catch, so
+  // a throw from `Encryption()` — invalid credentials, a bad keyset — would
+  // escape as a raw stack trace rather than this function's guided message
+  // (#819 review).
+  it('errors with a credentials hint when Encryption() throws', async () => {
+    detectPrismaNextMock.mockReturnValue(true)
+    fsMocks.existsSync.mockImplementation((p: string) =>
+      p.endsWith('src/prisma/contract.json'),
+    )
+    deriveStackSchemasV3Mock.mockReturnValue([FAKE_TABLE])
+    encryptionMock.mockRejectedValueOnce(new Error('invalid keyset id'))
+    const exit = spyExit()
+    const consoleError = spyConsoleError()
+
+    await expect(loadEncryptionContext()).rejects.toThrow('process.exit:1')
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to initialize the encryption client'),
+    )
+    expect(requireUsableEncryptConfigMock).not.toHaveBeenCalled()
+
+    exit.mockRestore()
+    consoleError.mockRestore()
+  })
+
   it('errors when the contract has no cipherstash columns', async () => {
     detectPrismaNextMock.mockReturnValue(true)
     fsMocks.existsSync.mockImplementation((p: string) =>
