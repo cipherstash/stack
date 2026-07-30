@@ -26,10 +26,13 @@
  * copy. An EQL version bump ships as a NEW upgrade migration directory
  * (see `20260720T0000_upgrade_eql_v3_3_0_2`), never as an edit here.
  * (One authorized pre-GA re-emit happened on the 1.0 release branch: the
- * install op was reclassified `data` → `additive` and the 3.0.2 invariant
- * carrier was added so fresh-database `db init` passes its additive-only
- * policy. RC consumers must delete `migrations/cipherstash/` and re-run
- * `prisma-next migration plan` to pick up the re-emitted artefacts.)
+ * install op was reclassified `data` → `additive`, the baked bundle was
+ * bumped to eql-3.0.4, and a no-SQL carrier op per upgrade invariant
+ * (3.0.2 and 3.0.4) was added so fresh-database `db init` passes its
+ * additive-only policy. Both the `migrationHash` and the baked
+ * `installSqlSha256` changed. RC consumers must delete
+ * `migrations/cipherstash/` and re-run `prisma-next migration plan` to
+ * pick up the re-emitted artefacts.)
  *
  * Authoring loop (pre-publication only): hand-edit, then re-emit
  * `ops.json` / `migration.json` via
@@ -113,11 +116,11 @@ export default class M extends Migration {
         ],
       }),
       // Invariant carrier: the install op above already ships the pinned
-      // release's bundle (eql-3.0.2 — `readVerifiedInstallSql()` is digest-
+      // release's bundle (eql-3.0.4 — `readVerifiedInstallSql()` is digest-
       // verified against the installed manifest), so a fresh database that
-      // walks this genesis edge IS at the pinned release (3.0.4, a
-      // superset of every earlier v3 surface, so the 3.0.2 invariant is
-      // honestly satisfied too). Declaring the upgrade invariants here
+      // walks this genesis edge IS at the pinned release — a superset of
+      // every earlier v3 surface, so the 3.0.2 invariant is honestly
+      // satisfied too. Declaring the upgrade invariants here
       // lets the shortest-path planner (`computeExtensionSpaceApplyPath` /
       // `findPathWithDecision`) satisfy the head ref from this single
       // all-additive edge, so fresh-database `db init` (additive-only

@@ -1,6 +1,6 @@
 /**
  * v3 baseline migration assertions — the on-disk emitted artefacts for
- * `20260601T0100_install_eql_v3_bundle` and the 3.0.2 upgrade edge.
+ * `20260601T0100_install_eql_v3_bundle` and the 3.0.2 / 3.0.4 upgrade edges.
  *
  * The install SQL IS baked into `ops.json`: each migration's self-emit
  * script embeds `readVerifiedInstallSql()` — the installed
@@ -134,13 +134,14 @@ const MIGRATIONS_DIR = join(
 )
 
 describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
-  it('installs under the v3 invariants with two additive rawSql ops', () => {
-    // Two ops, both `additive`, so fresh-database `db init` (additive-only
-    // policy) can walk this genesis edge: the bundle install itself, plus a
-    // no-SQL carrier op that declares the 3.0.2 upgrade invariant (the baked
-    // bundle IS the pinned release, so a fresh install lands at 3.0.2 and
-    // the shortest-path planner never needs the data-classed upgrade
-    // self-edge). `additive` is safe on this edge because the checker's
+  it('installs under the v3 invariants with three additive rawSql ops', () => {
+    // Three ops, all `additive`, so fresh-database `db init` (additive-only
+    // policy) can walk this genesis edge: the bundle install itself, plus one
+    // no-SQL carrier op per upgrade invariant (3.0.2 and 3.0.4). The baked
+    // bundle IS the pinned release, so a fresh install lands at 3.0.4 —
+    // which satisfies both invariants, and the shortest-path planner never
+    // needs the data-classed upgrade self-edges.
+    // `additive` is safe on this edge because the checker's
     // no-op self-edge rule only fires when from === to, and this edge runs
     // from: null → the empty-storage hash — see the rationale comment in
     // the migration file.
