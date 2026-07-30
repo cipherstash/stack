@@ -1,6 +1,5 @@
-<!-- Doc-driven README: this describes the EQLv3-based Stack slightly ahead of current code capabilities.
-     Before merging to main, work through docs/plans/readme-go-live-checklist.md — it tracks every claim
-     and code example that must be confirmed implemented first. -->
+<!-- Before merging to main, work through docs/plans/readme-go-live-checklist.md — it tracks the
+     remaining pre-merge items (doc links, benchmark refresh, social preview card). -->
 <div align="center">
   <a href="https://cipherstash.com?utm_source=github&utm_medium=stack_readme">
     <img alt="CipherStash" width="128" height="128" src="https://cipherstash.com/brand/cipherstash-logo-dark.svg">
@@ -65,9 +64,9 @@ Encrypt individual fields and still run real queries against them — all on cip
 | Query type | Operations | Docs |
 |---|---|---|
 | **Equality** | `=`, `IN` | [Equality queries →][query-equality] |
-| **Free-text search** | `LIKE` / `ILIKE`, match | [Text search →][query-match] |
+| **Free-text search** | fuzzy `matches` | [Text search →][query-match] |
 | **Range & ordering** | `<`, `>`, `BETWEEN`, `ORDER BY`, `MIN`/`MAX` | [Range queries →][query-range] |
-| **Encrypted JSON** | field access (`->`, `->>`), containment (`@>`) | [JSON queries →][query-json] |
+| **Encrypted JSON** | containment (`@>`), JSONPath selectors | [JSON queries →][query-json] |
 
 With [EQL v3][eql], the column type *is* the configuration. Declare a column with the encrypted type
 that names its data type and the operations it supports, and it's ready to query — there's no per-column
@@ -76,11 +75,11 @@ search configuration to maintain in your client:
 ```sql
 CREATE TABLE users (
   id          serial PRIMARY KEY,
-  username    text,                 -- plaintext — business as usual
-  email       eql_v3.text_match,    -- encrypted · free-text search
-  ssn         eql_v3.text_eq,       -- encrypted · equality
-  salary      eql_v3.int4_ord,      -- encrypted · range + ORDER BY
-  preferences eql_v3.json           -- encrypted · field access + containment
+  username    text,                    -- plaintext — business as usual
+  email       eql_v3_text_match,       -- encrypted · free-text search
+  ssn         eql_v3_text_eq,          -- encrypted · equality
+  salary      eql_v3_integer_ord,      -- encrypted · range + ORDER BY
+  preferences eql_v3_json_search       -- encrypted · containment + selectors
 );
 ```
 
@@ -91,11 +90,11 @@ encrypted in `schema.prisma` or your Drizzle table and the Stack handles the res
 a client-side [schema][schema] — declared with the same type names:
 
 ```typescript
-import { encryptedTable, types } from "@cipherstash/stack/eql/v3";
+import { encryptedTable, types } from "@cipherstash/stack/v3";
 
 const users = encryptedTable("users", {
-  email: types.TextMatch("email"),  // ↔ eql_v3.text_match
-  salary: types.Int4Ord("salary"),  // ↔ eql_v3.int4_ord
+  email: types.TextMatch("email"),       // ↔ eql_v3_text_match
+  salary: types.IntegerOrd("salary"),    // ↔ eql_v3_integer_ord
 });
 ```
 
@@ -120,7 +119,7 @@ const client = await Encryption({ schemas: [users] });
 // OIDC federation — every ZeroKMS request authenticates as the end user
 const client = await Encryption({
   schemas: [users],
-  config: { strategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt()) },
+  config: { authStrategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt()) },
 });
 ```
 
@@ -163,23 +162,24 @@ await client
 ### 🗂️ Keysets for multitenancy & sovereignty
 
 Partition your keys into **keysets** — independent key hierarchies within a single workspace. Give each
-tenant its own keyset for cryptographic tenant isolation (revoking a keyset renders that tenant's data
-permanently unreadable), or pin keysets to a region to meet data-sovereignty requirements without
-re-architecting your app. [Keysets →][keysets]
+tenant its own keyset (`config.keyset`) for cryptographic tenant isolation: every encrypt, decrypt, and
+query is scoped to a keyset, so revoking a keyset's access makes that tenant's data undecryptable —
+without re-architecting your app. [Keysets →][keysets]
 
 ## Encrypted fields. Real queries. Your tools.
 
 The `email` column below is stored as ciphertext with a unique key per row — and the search still works,
 because the query runs on the ciphertext. No decrypt-and-scan, no query rewrites.
 
-**Supabase** — same Supabase.js calls; filters are encrypted on the way in, results decrypted on the way out:
+**Supabase** — same Supabase.js calls; the wrapper introspects your schema, encrypts filters on the way
+in, and decrypts results on the way out:
 
 ```typescript
-const db = encryptedSupabase({ encryptionClient, supabaseClient });
+const db = await encryptedSupabase(supabaseUrl, supabaseKey);
 
-const { data } = await db.from("users", users)
+const { data } = await db.from("users")
   .select("id, name, email")
-  .ilike("email", "%@acme.com"); // encrypted free-text match
+  .eq("email", "alice@acme.com"); // encrypted equality — runs on ciphertext
 ```
 
 **Prisma Next** — declare encrypted columns in `schema.prisma`, query with type-safe operators:
@@ -187,13 +187,13 @@ const { data } = await db.from("users", users)
 ```prisma
 model User {
   id    String @id
-  email cipherstash.EncryptedString()
+  email cipherstash.TextSearch()
 }
 ```
 
 ```typescript
-const rows = await db.orm.User
-  .where((u) => u.email.cipherstashIlike("%@acme.com"))
+const rows = await db.orm.public.User
+  .where((u) => u.email.eqlMatch("acme.com"))
   .all();
 ```
 
@@ -202,11 +202,11 @@ const rows = await db.orm.User
 ```typescript
 export const usersTable = pgTable("users", {
   id: integer("id").primaryKey(),
-  email: types.TextMatch("email"), // → eql_v3.text_match — the type is the config
+  email: types.TextSearch("email"), // → eql_v3_text_search — the type is the config
 });
 
 const results = await db.select().from(usersTable)
-  .where(await ops.ilike(usersTable.email, "%@acme.com"));
+  .where(await ops.matches(usersTable.email, "acme.com"));
 ```
 
 ## How it works
@@ -276,7 +276,7 @@ call), so key management isn't the bottleneck.
 
 Install EQL on your Postgres database (`npx stash init` and the [quick starts](#quick-starts) handle
 this), declare the columns you want protected with the encrypted type that fits each one (for example
-`eql_v3.text_match` for searchable text or `eql_v3.int4_ord` for range queries), and encrypt values in
+`eql_v3_text_match` for searchable text or `eql_v3_integer_ord` for range queries), and encrypt values in
 your app before writing. You can adopt it column-by-column — no big-bang rewrite — and your existing
 Postgres indexes keep working.
 </details>
@@ -284,8 +284,9 @@ Postgres indexes keep working.
 <details>
 <summary><b>Do I have to change how I write queries?</b></summary>
 
-No. Query encrypted columns with the same Supabase.js, Prisma, or Drizzle calls you use today — there
-are no SQL rewrites.
+Barely. You keep your query builder: Supabase.js filters work unchanged, and Drizzle and Prisma Next
+add encrypted-aware operators (`ops.eq`, `ops.matches`, `eqlMatch`, …) that take plaintext and encrypt
+it for you. There are no SQL rewrites.
 </details>
 
 <details>
@@ -339,9 +340,10 @@ npm install @cipherstash/stack   # or: yarn / pnpm / bun add @cipherstash/stack
 
 > [!IMPORTANT]
 > **Opt out of bundling `@cipherstash/stack`.** It uses native Node.js features (a Rust FFI module) and the
-> native `require`. [Bundling guide →][bundling]
+> native `require`. For edge and serverless runtimes (Cloudflare Workers, Deno, Bun), use the bundler-friendly
+> `@cipherstash/stack/wasm-inline` entry instead. [Bundling guide →][bundling]
 
-**Requirements:** Node.js ≥ 18.
+**Requirements:** Node.js ≥ 22.
 
 ## Documentation & community
 

@@ -212,7 +212,7 @@ of the four variants from **two** dimensions at once — theme (`prefers-color-s
 (`max-width: 600px`) — with the desktop-light `<img>` as the universal fallback for npm and older
 renderers. `<source>` order is most-specific first (dark+narrow → dark → light+narrow → fallback).
 
-> **Pre-merge TODO:** while the PR is open, the four paths are **relative** (`docs/images/…`) so they
-> preview on the branch. They must be restored to the absolute
-> `https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/…` prefix before merge, or they
-> render on GitHub but break on the npm package page.
+> **Note:** the four paths use the absolute
+> `https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/…` prefix (required for the
+> npm package page). They 404 while the PR is open — the files don't exist on `main` yet — and
+> resolve on merge.
