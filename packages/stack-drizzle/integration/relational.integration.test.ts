@@ -265,8 +265,19 @@ beforeAll(async () => {
     )
   `)
 
+  // The model type is supplied explicitly. `MatrixPlainRow` is a pure index
+  // signature — this table's columns are generated from `V3_MATRIX` at runtime,
+  // so there are no statically-known keys to infer from — and inference would
+  // otherwise settle on the non-null `PlainValue`, which `nullableTextEq`
+  // (deliberately `null` on ROW_A) then fails. Naming `MatrixPlainRow` lets
+  // `V3ModelInput`'s nullability branch see the `| null` that is actually there.
   const encryptedRows = assertScopeKeys<typeof matrixTable.$inferInsert>(
-    unwrapResult(await client.bulkEncryptModels(encryptedInsertRows(), schema)),
+    unwrapResult(
+      await client.bulkEncryptModels<typeof schema, MatrixPlainRow>(
+        encryptedInsertRows(),
+        schema,
+      ),
+    ),
   )
   await db.insert(matrixTable).values(encryptedRows)
   await db.insert(accountsTable).values([

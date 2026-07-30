@@ -1,10 +1,12 @@
 import {
   type AnyEncryptedV3Column,
   type AnyV3Table,
+  type EncryptedTable,
   encryptedTable,
 } from '@cipherstash/stack/eql/v3'
+import type { Encrypted } from '@cipherstash/stack/types'
 import type { PgTable } from 'drizzle-orm/pg-core'
-import { getEqlV3Column } from './column.js'
+import { getEqlV3Column, type V3BuilderOf } from './column.js'
 
 /** Drizzle stashes the SQL table name on this well-known symbol key. */
 const DRIZZLE_NAME = Symbol.for('drizzle:Name')
@@ -21,7 +23,64 @@ export function getDrizzleTableName(table: unknown): string | undefined {
   return typeof name === 'string' ? name : undefined
 }
 
-export function extractEncryptionSchema(table: PgTable): AnyV3Table {
+/**
+ * The v3 column map a Drizzle table carries: every branded encrypted column,
+ * keyed by its JS property name and mapped to the concrete v3 builder recovered
+ * from its brand; every other property (plain columns, and the `PgTable`
+ * members drizzle mixes in) dropped.
+ *
+ * This is the type-level mirror of {@link extractEncryptionSchema}'s runtime
+ * loop, and the whole reason extraction can be precisely typed: without it the
+ * return collapses to the widened `AnyV3Table`, and `InferPlaintext` over an
+ * extracted schema degrades to an index signature instead of a per-column
+ * plaintext map (#589).
+ */
+export type EncryptedColumnsOf<T> = {
+  [K in keyof T as [V3BuilderOf<T[K]>] extends [never]
+    ? never
+    : K]: V3BuilderOf<T[K]>
+}
+
+/**
+ * Columns whose Drizzle data is an encrypted envelope but whose concrete EQL
+ * builder is not visible in the type layer. This includes ordinary
+ * `customType<{ data: Encrypted }>` columns that runtime extraction recognizes
+ * from their SQL domain. If even one exists, the branded map is incomplete.
+ */
+type UnbrandedEncryptedKeys<T> = {
+  [K in keyof T]-?: [V3BuilderOf<T[K]>] extends [never]
+    ? T[K] extends { _: { data: Encrypted } }
+      ? K
+      : never
+    : never
+}[keyof T]
+
+/**
+ * Keep concrete branded columns precise, but retain the pre-existing widened
+ * schema type when the branded map is empty or incomplete. The runtime
+ * extractor can still recover columns from a widened `PgTable` or from their
+ * EQL SQL domain; representing those successful paths as an empty or partial
+ * table would be unsound.
+ */
+type ExtractedEncryptionSchema<T> = [UnbrandedEncryptedKeys<T>] extends [never]
+  ? keyof EncryptedColumnsOf<T> extends never
+    ? AnyV3Table
+    : EncryptedTable<EncryptedColumnsOf<T>> & EncryptedColumnsOf<T>
+  : AnyV3Table
+
+/**
+ * Rebuild a Drizzle table's encrypted columns as an eql/v3 {@link EncryptedTable}.
+ *
+ * The return type mirrors what `encryptedTable()` itself returns —
+ * `EncryptedTable<Cols> & Cols` — so the result is both a schema for
+ * `Encryption({ schemas })` and a column accessor (`schema.email`), with each
+ * column's concrete domain preserved. That is what keeps `InferPlaintext` /
+ * `encryptModel` / `bulkEncryptModels` precisely typed against an extracted
+ * schema.
+ */
+export function extractEncryptionSchema<T extends PgTable>(
+  table: T,
+): ExtractedEncryptionSchema<T> {
   const tableName = getDrizzleTableName(table)
   if (!tableName) {
     throw new Error(
@@ -46,5 +105,10 @@ export function extractEncryptionSchema(table: PgTable): AnyV3Table {
     )
   }
 
-  return encryptedTable(tableName, columns)
+  // The runtime loop above is untyped by construction — it reads properties off
+  // a `PgTable` and recovers each builder dynamically. Narrow to the branded
+  // column map when one is visible at the type level, or to `AnyV3Table` when
+  // runtime recovery succeeded without visible brands. The `.test-d.ts`
+  // assertions keep both paths in step with the runtime behavior.
+  return encryptedTable(tableName, columns) as ExtractedEncryptionSchema<T>
 }

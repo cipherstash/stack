@@ -41,10 +41,11 @@ export const encryptionBenchTable = extractEncryptionSchema(benchTable)
  * so `__unit__/seed-keys.test.ts` is the real drift guard, not the type.
  * Drizzle's `InferInsertModel` describes the ENCRYPTED column (the custom type's
  * `data` is the EQL envelope, not the plaintext) and degrades these three to
- * optional `any`. Deriving from `encryptionBenchTable` is no better:
- * `extractEncryptionSchema` returns the widened `AnyV3Table`, whose column map
- * is an index signature — a type that admits `encTxt: 'x'` and `encText: 12345`
- * alike, both of which the literal below rejects.
+ * optional `any`. `InferPlaintext<typeof encryptionBenchTable>` is precise per
+ * column since #589, and it does pin `encText`/`encInt` — but `encJsonb` is a
+ * `types.Json` column, whose plaintext is the whole `JsonDocument` union. The
+ * literal below says `{ idx: number; group: number }`, which is what the bench
+ * queries actually assume, so deriving would still lose the shape that matters.
  *
  * Update it by hand when `benchTable` changes; the unit test will tell you.
  */
