@@ -1,5 +1,6 @@
 import {
   type AnyEncryptedV3Column,
+  type AnyV3Table,
   type EncryptedTable,
   encryptedTable,
 } from '@cipherstash/stack/eql/v3'
@@ -40,6 +41,16 @@ export type EncryptedColumnsOf<T> = {
 }
 
 /**
+ * Keep concrete branded columns precise, but retain the pre-existing widened
+ * schema type when TypeScript cannot see any brands. The runtime extractor can
+ * still recover columns from a widened `PgTable` or from their EQL SQL domain;
+ * representing those successful paths as an empty table would be unsound.
+ */
+type ExtractedEncryptionSchema<T> = keyof EncryptedColumnsOf<T> extends never
+  ? AnyV3Table
+  : EncryptedTable<EncryptedColumnsOf<T>> & EncryptedColumnsOf<T>
+
+/**
  * Rebuild a Drizzle table's encrypted columns as an eql/v3 {@link EncryptedTable}.
  *
  * The return type mirrors what `encryptedTable()` itself returns —
@@ -51,7 +62,7 @@ export type EncryptedColumnsOf<T> = {
  */
 export function extractEncryptionSchema<T extends PgTable>(
   table: T,
-): EncryptedTable<EncryptedColumnsOf<T>> & EncryptedColumnsOf<T> {
+): ExtractedEncryptionSchema<T> {
   const tableName = getDrizzleTableName(table)
   if (!tableName) {
     throw new Error(
@@ -77,13 +88,9 @@ export function extractEncryptionSchema<T extends PgTable>(
   }
 
   // The runtime loop above is untyped by construction — it reads properties off
-  // a `PgTable` and recovers each builder dynamically — so the precise column
-  // map only exists at the type level (`EncryptedColumnsOf<T>`). Narrow the
-  // widened runtime value to it here; the two are kept in step by the
-  // `.test-d.ts` assertions, which compare an extracted schema against the
-  // hand-authored `encryptedTable({…})` it must be equivalent to.
-  return encryptedTable(tableName, columns) as EncryptedTable<
-    EncryptedColumnsOf<T>
-  > &
-    EncryptedColumnsOf<T>
+  // a `PgTable` and recovers each builder dynamically. Narrow to the branded
+  // column map when one is visible at the type level, or to `AnyV3Table` when
+  // runtime recovery succeeded without visible brands. The `.test-d.ts`
+  // assertions keep both paths in step with the runtime behavior.
+  return encryptedTable(tableName, columns) as ExtractedEncryptionSchema<T>
 }

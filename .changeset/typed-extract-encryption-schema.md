@@ -5,7 +5,7 @@
 
 Type `extractEncryptionSchema` precisely: a Drizzle-extracted schema now preserves each column's concrete EQL v3 domain instead of widening to `AnyV3Table` (#589).
 
-`extractEncryptionSchema` is generic over the Drizzle table (`<T extends PgTable>(table: T)`) and returns `EncryptedTable<Cols> & Cols`, the same shape a hand-written `encryptedTable({...})` returns. Each column's builder is carried through `pgTable()` on a phantom brand and recovered by a mapped type, which also filters out the table's non-encrypted columns.
+`extractEncryptionSchema` is generic over the Drizzle table (`<T extends PgTable>(table: T)`) and returns `EncryptedTable<Cols> & Cols`, the same shape a hand-written `encryptedTable({...})` returns, when concrete column brands are available. Each column's builder is carried through `pgTable()` on a phantom brand and recovered by a mapped type, which also filters out the table's non-encrypted columns. Tables widened to `PgTable`, and ordinary `customType` columns recovered from their EQL SQL domain, retain the safe `AnyV3Table` fallback instead of incorrectly becoming an empty schema type.
 
 What this fixes, along the documented flow `extractEncryptionSchema(table)` → `Encryption({ schemas })` → `bulkEncryptModels`:
 

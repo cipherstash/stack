@@ -14,6 +14,7 @@
  */
 
 import {
+  type AnyV3Table,
   type EncryptedIntegerOrdColumn,
   type EncryptedTextEqColumn,
   encryptedTable,
@@ -22,7 +23,13 @@ import {
 } from '@cipherstash/stack/eql/v3'
 import type { Encrypted } from '@cipherstash/stack/types'
 import { Encryption, type EncryptionClient } from '@cipherstash/stack/v3'
-import { pgTable, serial, text } from 'drizzle-orm/pg-core'
+import {
+  customType,
+  type PgTable,
+  pgTable,
+  serial,
+  text,
+} from 'drizzle-orm/pg-core'
 import { describe, expectTypeOf, it } from 'vitest'
 import { extractEncryptionSchema } from '../src/schema-extraction'
 import { types } from '../src/types'
@@ -46,6 +53,22 @@ const authored = encryptedTable('users', {
 })
 
 const extracted = extractEncryptionSchema(users)
+
+// Consumers can legitimately erase a table's concrete column shape at module
+// boundaries. Runtime extraction still sees the columns in this case, but the
+// private type brand is no longer recoverable.
+const widenedUsers: PgTable = users
+const widenedExtracted = extractEncryptionSchema(widenedUsers)
+
+// Runtime extraction also supports ordinary Drizzle custom columns by their
+// EQL SQL domain, even though those columns never carried our private brand.
+const eqlTextEq = customType<{ data: Encrypted }>({
+  dataType: () => 'eql_v3_text_eq',
+})
+const sqlTypeFallbackUsers = pgTable('sql_type_fallback_users', {
+  email: eqlTextEq('email'),
+})
+const fallbackExtracted = extractEncryptionSchema(sqlTypeFallbackUsers)
 
 /** The plaintext map both schemas must infer. */
 type UserPlaintext = { email: string; age: number }
@@ -93,6 +116,33 @@ describe('extractEncryptionSchema - plaintext inference (#589)', () => {
     expectTypeOf(extracted.age).toEqualTypeOf<EncryptedIntegerOrdColumn>()
     expectTypeOf(authored.email).toEqualTypeOf<EncryptedTextEqColumn>()
     expectTypeOf(authored.age).toEqualTypeOf<EncryptedIntegerOrdColumn>()
+  })
+})
+
+describe('extractEncryptionSchema - unbranded table fallback', () => {
+  it('preserves the widened schema type for a table annotated as PgTable', () => {
+    expectTypeOf(widenedExtracted).toEqualTypeOf<AnyV3Table>()
+    expectTypeOf<keyof InferPlaintext<typeof widenedExtracted>>().toEqualTypeOf<
+      string | number
+    >()
+  })
+
+  it('preserves the widened schema type for columns recovered by SQL type', () => {
+    expectTypeOf(fallbackExtracted).toEqualTypeOf<AnyV3Table>()
+    expectTypeOf<
+      keyof InferPlaintext<typeof fallbackExtracted>
+    >().toEqualTypeOf<string | number>()
+  })
+
+  it('still types fields as encrypted through widened model operations', async () => {
+    const client = await Encryption({ schemas: [widenedExtracted] })
+    const result = await client.bulkEncryptModels(
+      [{ email: 'ada@example.com' }],
+      widenedExtracted,
+    )
+    if (result.failure) throw result.failure
+
+    expectTypeOf(result.data).toEqualTypeOf<Array<{ email: Encrypted }>>()
   })
 })
 
