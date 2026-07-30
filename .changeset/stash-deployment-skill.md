@@ -15,9 +15,9 @@ row has a ciphertext twin and the deployed code reads it.
 
 The new skill makes the deploy shape the primary subject:
 
-- The three-deploy ladder (rollout → read cutover → drop plaintext) with the two
-  out-of-band steps and two human gates between them, plus what each gate is
-  actually verifying.
+- The four-deploy ladder (rollout → read cutover → stop dual-writes → drop
+  plaintext) with the out-of-band backfill and index build between the first
+  two, three human gates, and what each gate is actually verifying.
 - A failure table: for each way of collapsing the ladder, the data that is lost.
 - Rollback per stage, making explicit that only the final drop is irreversible.
 - `CS_*` credentials as a **build-time** input on platforms that construct the

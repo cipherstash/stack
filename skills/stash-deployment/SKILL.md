@@ -1,6 +1,6 @@
 ---
 name: stash-deployment
-description: Deploy a CipherStash encryption rollout to a live environment without losing data — the multi-deploy ladder (schema-add + dual-write → backfill → read cutover → drop plaintext), why each deploy boundary exists, what breaks if stages are merged, rollback per stage, and how to get CS_* credentials into a build and a runtime. Includes a Prisma Postgres / Prisma Compute section covering push-to-deploy, build-time credential requirements, destructive-migration policy, preview-branch databases, and running backfills against a hosted database. Use when shipping encryption to staging or production, planning the PR sequence for an encryption rollout, wiring deploy credentials, or deploying a CipherStash app to Prisma Compute.
+description: Deploy a CipherStash encryption rollout to a live environment without losing data — the multi-deploy ladder (schema-add + dual-write → backfill → read cutover → stop dual-writes → drop plaintext), why each deploy boundary exists, what breaks if stages are merged, rollback per stage, and how to get CS_* credentials into a build and a runtime. Includes a Prisma Postgres / Prisma Compute section covering push-to-deploy, build-time credential requirements, destructive-migration policy, preview-branch databases, and running backfills against a hosted database. Use when shipping encryption to staging or production, planning the PR sequence for an encryption rollout, wiring deploy credentials, or deploying a CipherStash app to Prisma Compute.
 ---
 
 # Stash Deployment
@@ -16,10 +16,12 @@ This skill covers how to sequence that across deploys. For the API and the
 lifecycle model see `stash-encryption`; for the commands see `stash-cli`; for
 framework specifics see `stash-drizzle` / `stash-supabase` / `stash-prisma-next`.
 
-Everything here describes **EQL v3**, the authoring generation. A legacy EQL v2
-column follows a different shape at the end of the ladder (a rename swap via
-`stash encrypt cutover`, then dropping `<col>_plaintext`); `stash-encryption`
-has that path.
+Everything here describes **EQL v3**, the only authoring generation. The EQL v2
+rollout commands were removed — `stash encrypt cutover` (the old v2 rename swap)
+now exits with an error on every project. A column that started under v2
+finishes the same way as v3: complete the backfill, switch reads to the
+encrypted column by name, then `stash encrypt drop`. Legacy v2 payloads remain
+readable; `stash-encryption` covers that.
 
 > **Runner note.** `stash init` adds `stash` to the project as a dev dependency,
 > so the bare `stash <command>` form used below runs through whichever package
@@ -39,7 +41,7 @@ has that path.
 
 ## The rule
 
-> **A column goes from plaintext to encrypted across at least three deploys, never one.**
+> **A column goes from plaintext to encrypted across at least four deploys, never one.**
 
 Not a style preference. There is no atomic operation that replaces a populated
 plaintext column with an encrypted one, because **ciphertext can only be produced
@@ -55,22 +57,33 @@ minimum safe shape.
 
 ## The deployment ladder
 
-```
- DEPLOY 1                        DEPLOY 2                      DEPLOY 3
- rollout                         read cutover                  drop plaintext
- ────────────                    ─────────────                 ──────────────
- + encrypted twin (nullable)     reads → encrypted col         drop plaintext col
- + dual-write everywhere         decrypt at the boundary       + NOT NULL on encrypted
- reads unchanged                 dual-writes stay              dual-write code removed
-        │                               ▲    │                        ▲
-        ▼                               │    ▼                        │
-   ⛔ GATE: dual-writes live ──► BACKFILL    ⛔ GATE: soak, verify ────┘
-      in the environment that      (out-of-band,     reads decrypt correctly
-      owns the database            against prod DB)  for real traffic
+```text
+ DEPLOY 1     rollout           + encrypted twin (nullable) + dual-write
+                                everywhere; reads unchanged
+
+   ⛔ GATE 1  dual-writes live in the environment that owns the database
+
+ out-of-band  BACKFILL          encrypt historical rows, against the prod DB
+ migration    indexes           eql_v3.* extractor indexes + ANALYZE, shipped
+                                through the integration's migration flow
+
+ DEPLOY 2     read cutover      reads → encrypted column, decrypt at the
+                                boundary; dual-writes stay
+
+   ⛔ GATE 2  soak — real traffic reads decrypt correctly
+
+ DEPLOY 3     stop dual-write   writes → encrypted column only; plaintext
+                                column stays, now unwritten
+
+   ⛔ GATE 3  Deploy 3 live everywhere; coverage re-checked
+
+ DEPLOY 4     drop plaintext    drop the plaintext column (+ NOT NULL on
+                                encrypted), guarded by an apply-time
+                                coverage re-check
 ```
 
-Three deploys, two out-of-band steps between them. Each gate is a human decision,
-not a pipeline step.
+Four deploys, with the backfill and index build between the first two. Each gate
+is a human decision, not a pipeline step.
 
 ### Deploy 0 — prepare the environment (optional, do it early)
 
@@ -83,8 +96,12 @@ Before any application change, make sure the target environment can encrypt at a
 - **`CS_*` credentials present** in the environment, minted with
   `stash env --name <app>-<env>`. On most platforms these are needed at **build**
   time as well as run time (see [Credentials](#credentials-in-a-deployed-environment)).
-- **Native module excluded from bundling** (`serverExternalPackages`, esbuild
-  `external`, …) — `@cipherstash/stack` wraps a native FFI module.
+- **Bundling handled.** The default `@cipherstash/stack` entry wraps a native
+  FFI module — exclude it from bundling (`serverExternalPackages`, esbuild
+  `external`, …). On runtimes that cannot load native modules at all
+  (Cloudflare Workers, Deno, Supabase Edge Functions), bundle
+  `@cipherstash/stack/wasm-inline` instead — it inlines the WASM build, no
+  externalization needed. See `stash-edge`.
 
 Shipping this as its own deploy is cheap and de-risks Deploy 1: a credential or
 bundling problem surfaces while nothing depends on encryption yet.
@@ -139,10 +156,13 @@ Two hard requirements:
 - **Verify coverage before moving on.** Count rows where the plaintext column is
   non-null and the encrypted column is null. It must be zero.
 
-Then **create the `eql_v3.*` extractor indexes** for every capability you query and
+Then **build the `eql_v3.*` extractor indexes** for every capability you query and
 `ANALYZE` — after backfill, before the read switch. One bulk build instead of per-row
 index maintenance during the backfill, and the switched reads engage an index from
-the first query. Recipes in `stash-indexing`.
+the first query. Ship the DDL through whatever migration flow owns the schema —
+a Drizzle or Supabase migration, an index migration in the Prisma Next graph
+(never out-of-band there — see `stash-prisma-next`), or your SQL migration tool.
+Never ad-hoc against production. Recipes in `stash-indexing`.
 
 ### Deploy 2 — read cutover
 
@@ -155,8 +175,9 @@ Reads move to the encrypted column; writes still go to both.
 | Writes | **Still dual-write.** Do not remove it yet. |
 
 There is no rename and no CLI step here — this deploy is application code only.
-(`stash encrypt cutover` is the **EQL v2** rename swap; it does not apply to a v3
-column and reports as much.)
+(There is no cutover command: `stash encrypt cutover` was the EQL v2 rename swap
+and has been **removed** — running it exits with an error pointing at this
+manual path.)
 
 Keeping dual-writes through this deploy is what makes it reversible: if reads
 misbehave, Deploy 2 reverts to plaintext reads and every row is still correct
@@ -167,15 +188,38 @@ in both columns.
 Let real traffic read the encrypted column. Confirm results are correct — not just
 non-empty: check ordering, range filters, and free-text matches against known rows.
 Re-check coverage (still zero plaintext-only rows; new writes are covered by
-dual-writes). Only then plan the drop.
+dual-writes). Only then ship Deploy 3.
 
-### Deploy 3 — drop the plaintext column
+### Deploy 3 — stop writing the plaintext column
 
-Irreversible. Everything before this point can be walked back.
+Remove the dual-write logic: writes now target only the encrypted column. The
+plaintext column stays in place, unwritten. If the original column is `NOT NULL`,
+this deploy's migration must relax that (`DROP NOT NULL`) — otherwise inserts
+fail the moment dual-writes stop.
+
+This is the deploy that ends easy reversibility: rows written after it have no
+plaintext value, so reverting reads back to the plaintext column is no longer
+safe. That is why Gate 2's soak comes first.
+
+**Do not fold the drop into this deploy.** Most pipelines apply migrations before
+the new code is live — a drop migration riding alongside the dual-write removal
+executes while the previous deploy's still-dual-writing code is serving traffic,
+and every insert and update fails against a column that no longer exists.
+
+### ⛔ Gate 3 — nothing writes plaintext anymore
+
+Deploy 3 must be live on **every** instance (rolling deploys included), and
+coverage re-checked one last time: zero rows with plaintext and no ciphertext.
+Only then is the drop safe.
+
+### Deploy 4 — drop the plaintext column
+
+Irreversible — every earlier stage can be walked back (see
+[Rollback per stage](#rollback-per-stage)). This deploy is migration-only:
+the application stopped touching the column in Deploy 3.
 
 | Change | Detail |
 |---|---|
-| Code | Remove the dual-write logic — the plaintext column is no longer authoritative. |
 | Migration | Drop the plaintext column, and (optionally) `SET NOT NULL` on the encrypted one. |
 
 Generate the drop rather than hand-writing it where the tooling can:
@@ -196,6 +240,7 @@ notes below), reproduce that property: the drop and the coverage check must be i
 | Backfill before dual-writes are live in production | Every row written during and after the backfill window stays plaintext-only. Silent; found later by a user. |
 | Backfill under laptop credentials | Ciphertext lands under a different keyset. Decrypt fails in production only. No error at write time. |
 | Drop plaintext in the same deploy as the read switch | No rollback. If the read path is wrong, the source data is already gone. |
+| Drop plaintext in the same deploy that removes dual-writes | Migrations usually apply before the new code is live: the still-deployed dual-writing code writes to a dropped column, and every insert/update fails until the rollout completes. |
 | Drop without an apply-time coverage re-check | Rows written by a missed dual-write path are destroyed by the drop. |
 | `NOT NULL` on the encrypted column before coverage is proven | Migration fails mid-deploy, or (worse) succeeds and the drop already ran. |
 
@@ -206,7 +251,8 @@ notes below), reproduce that property: the drop and the coverage check must be i
 | Deploy 1 | Revert the code. Extra nullable column is inert; leave it. |
 | Backfill | Nothing to undo — it only fills nulls. Re-runnable. |
 | Deploy 2 | Revert the code; reads return to plaintext. Both columns still correct. |
-| Deploy 3 | **None.** The plaintext is gone. This is why Gate 2 exists. |
+| Deploy 3 | Revert the code; dual-writes resume. But rows written while it was live have no plaintext — reverting Deploy 2 after this point is unsafe. |
+| Deploy 4 | **None.** The plaintext is gone. This is why Gates 2 and 3 exist. |
 
 ## Credentials in a deployed environment
 
@@ -283,7 +329,7 @@ encrypted-twin columns of Deploy 1 apply during the build. No manual migrate ste
 additive-only *by policy*. A merge carrying `dropColumn` or `setNotNull` fails the
 build:
 
-```
+```text
 PN-CLI-4020: Migration planning failed
 Operation "Set NOT NULL on "transaction"."amountEncrypted"" requires class
 "destructive", but policy allows only: additive
@@ -291,17 +337,19 @@ Operation "Set NOT NULL on "transaction"."amountEncrypted"" requires class
 
 This happens **even when the PR contains a hand-authored migration covering exactly
 that change** — `db init` reconciles live schema against the contract and does not
-consult the authored edge. There is no outage: the previous deployment keeps serving
-and the database is untouched.
+consult the authored edge. The failed build itself causes no outage: the previous
+deployment keeps serving and the database is untouched.
 
-The sequence that works for Deploy 3:
+The sequence that works for the drop (Deploy 4) — run it **only after the
+Deploy 3 merge (dual-write removal) is live**, so nothing still writes the
+plaintext column when it disappears:
 
 ```bash
 # 1. Mint a one-time connection URL for the PRODUCTION database
 npx @prisma/cli database list                       # identify the target — see below
 npx @prisma/cli database connection create <db_id>
 
-# 2. Apply the authored migration out-of-band, BEFORE merging
+# 2. Apply the authored migration out-of-band, BEFORE merging the Deploy 4 PR
 npx prisma-next db update --db "<one-time-url>"
 
 # 3. Remove the connection, then merge. `db init` sees no drift and passes.
@@ -309,8 +357,9 @@ npx @prisma/cli database connection remove <connection_id>
 ```
 
 Applying *before* the merge is strictly better than merging and recovering: the
-build passes on the first try, and the production database and the deployed code
-change in the intended order.
+build passes on the first try. The deploy ordering is what makes the window
+safe — with dual-writes already removed in Deploy 3, nothing running touches
+the column between the out-of-band apply and the merge going live.
 
 **3. Preview branches get their own databases.** Each preview branch database is
 created fresh, so `db init` reconciles it from empty and **never walks the
@@ -338,8 +387,10 @@ merges:
 | Stage | PR | Manual step after merge |
 |---|---|---|
 | Deploy 1 | encrypted twins + dual-write | put `CS_*` into the production env, redeploy, then run the backfill |
+| Indexes | `eql_v3.*` index migration, in the graph — never out-of-band | `ANALYZE`, verify with `EXPLAIN` |
 | Deploy 2 | read cutover + decrypt at boundary | soak and verify |
-| Deploy 3 | contract drop + authored migration | *(apply the migration before merging)* |
+| Deploy 3 | remove dual-writes (code; relax `NOT NULL` on plaintext if set) | verify writes are clean, re-check coverage |
+| Deploy 4 | contract drop + authored migration | *(apply the migration before merging — after Deploy 3 is live)* |
 
 Never combine two stages into one PR to save a review cycle. The gates are the
 safety mechanism.
@@ -362,7 +413,7 @@ Set both **before** the build, for **both** roles (preview and production):
 - Scale-to-zero: the first request after idle may cold-start or 404. Retry before
   diagnosing.
 
-### Authoring the Deploy 3 migration on Prisma Next
+### Authoring the Deploy 4 migration on Prisma Next
 
 `prisma-next migration plan` scaffolds `dropColumn` + `setNotNull` from the contract
 diff, but the resulting migration has **no coverage guard** — and the usual remedy
@@ -388,6 +439,8 @@ id is printed in the check output itself.
 | Symptom | Cause |
 |---|---|
 | `Not authenticated` during a **build** | `CS_*` missing from the build environment. Local builds mask it via the device profile. |
+| Native module fails to load (edge runtime, bundled serverless) | The default entry needs native `require`. Bundle `@cipherstash/stack/wasm-inline` instead — see `stash-edge`. |
+| Writes fail with `column "…" does not exist` after the drop | The drop was applied while dual-writing code was still deployed. Deploy the dual-write removal (Deploy 3) before applying the drop. |
 | Rows read back as `null` / garbage after cutover | Uncovered rows: a write path that never dual-wrote, or a backfill that ran before dual-writes were live. Re-run the backfill with `--force`. |
 | Decrypt fails only in production | Keyset mismatch — ciphertext written under different credentials than the app resolves. |
 | Raw EQL payloads reaching end users | Read path not wired through decryption. |
@@ -400,4 +453,5 @@ id is printed in the check output itself.
 - **`stash-encryption`** — the encryption API and the canonical rollout/cutover model
 - **`stash-cli`** — `stash status` / `plan` / `impl` / `encrypt *` / `env` command surface
 - **`stash-indexing`** — the `eql_v3.*` extractor indexes to build between backfill and cutover
+- **`stash-edge`** — edge/serverless runtimes and the `@cipherstash/stack/wasm-inline` entry
 - **`stash-prisma-next`** / **`stash-drizzle`** / **`stash-supabase`** — integration specifics
