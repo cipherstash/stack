@@ -7,10 +7,21 @@
  */
 export const DEFAULT_MIGRATIONS_RELATION = 'drizzle.__drizzle_migrations'
 
-/** Postgres SQLSTATEs meaning "the relation isn't there". */
+/**
+ * Postgres SQLSTATEs meaning "the relation isn't there".
+ *
+ * In practice this query only ever raises `42P01`: a SELECT against a
+ * schema-qualified relation reports `relation "s.t" does not exist` whether the
+ * TABLE or the SCHEMA is the missing part. `3F000` (invalid_schema_name) comes
+ * from statements that name a schema directly — `SET search_path`, `CREATE
+ * TABLE s.t` — and is kept here only as defensive breadth, not because this
+ * query produces it. Confirmed against live Postgres 17 in
+ * `__tests__/applied.live.test.ts`, and by mutation: removing `3F000` leaves
+ * both live absent-ledger cases green.
+ */
 const NO_LEDGER = new Set([
   '42P01', // undefined_table
-  '3F000', // invalid_schema_name
+  '3F000', // invalid_schema_name — see above; unreachable via this query
 ])
 
 /** The ledger exists and is empty — nothing has been applied. A real answer. */
