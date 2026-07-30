@@ -17,8 +17,7 @@ This is a [Turborepo](https://turbo.build/) monorepo managed with [pnpm](https:/
 ├── packages/
 │   ├── stack/            <-- Main package (@cipherstash/stack)
 │   ├── cli/              <-- The `stash` CLI
-│   ├── protect/          <-- Core encryption library (re-exported via stack)
-│   └── ...               <-- schema, drizzle, nextjs, prisma-next, migrate, wizard, ...
+│   └── ...               <-- stack-drizzle, stack-supabase, stack-prisma, nextjs, migrate, wizard, ...
 ├── examples/             <-- Runnable example apps
 ├── e2e/                  <-- Cross-package end-to-end tests
 ├── skills/               <-- Agent skills
