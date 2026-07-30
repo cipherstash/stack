@@ -78,6 +78,27 @@ describe('initCommand — region threading', () => {
   })
 })
 
+describe('initCommand — integration flags', () => {
+  it('selects the Prisma provider (name `prisma`) for `--prisma`', async () => {
+    await initCommand({ prisma: true }, {})
+
+    expect(authRun).toHaveBeenCalledTimes(1)
+    // Steps receive the resolved provider as their second argument; `--prisma`
+    // must resolve to the Prisma Next provider whose referrer name is `prisma`.
+    const providerArg = authRun.mock.calls[0][1] as { name?: string }
+    expect(providerArg.name).toBe('prisma')
+  })
+
+  it('errors on the renamed `--prisma-next` flag before running any step', async () => {
+    // `--prisma-next` was renamed to `--prisma`; init must fail loudly with
+    // guidance rather than silently ignore a previously-documented flag.
+    await expect(
+      initCommand({ 'prisma-next': true }, {}),
+    ).rejects.toBeInstanceOf(CliExit)
+    expect(authRun).not.toHaveBeenCalled()
+  })
+})
+
 describe('initCommand — honest summary', () => {
   it('exits non-zero and reports "Setup incomplete" when EQL was not installed', async () => {
     eqlRun.mockImplementationOnce(async (s: InitState) => ({

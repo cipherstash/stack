@@ -61,7 +61,7 @@ export const buildSchemaStep: InitStep = {
   async run(state: InitState, provider: InitProvider): Promise<InitState> {
     const cwd = process.cwd()
     const integration =
-      provider.name === 'prisma-next'
+      provider.name === 'prisma'
         ? 'prisma-next'
         : detectIntegration(cwd, state.databaseUrl)
     const clientFilePath = DEFAULT_CLIENT_PATH

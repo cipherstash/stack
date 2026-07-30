@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { createPrismaNextProvider } from '../prisma-next.js'
+import { createPrismaProvider } from '../prisma.js'
 
-describe('createPrismaNextProvider getNextSteps', () => {
-  const provider = createPrismaNextProvider()
+describe('createPrismaProvider', () => {
+  const provider = createPrismaProvider()
+
+  it('reports the `prisma` referrer name (consistent with --supabase/--drizzle)', () => {
+    // The flag is `--prisma`; `provider.name` is what init records as the
+    // referrer and what build-schema/install-eql branch on to force the
+    // Prisma Next integration.
+    expect(provider.name).toBe('prisma')
+  })
 
   it('points at prisma-next migration plan + apply rather than stash eql install', () => {
     const steps = provider.getNextSteps({}, 'pnpm')

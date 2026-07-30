@@ -1,9 +1,17 @@
 import type { InitProvider } from '../types.js'
 import { type PackageManager, runnerCommand } from '../utils.js'
 
-export function createPrismaNextProvider(): InitProvider {
+/**
+ * The `--prisma` provider. It backs the Prisma Next framework (the only
+ * Prisma integration Stack ships), so `provider.name` is the short,
+ * `--supabase`/`--drizzle`-consistent `'prisma'` used for referrer tracking,
+ * while the internal `Integration` value it resolves to stays `'prisma-next'`
+ * (see build-schema.ts) — that keeps skill/dependency/prompt wiring on the
+ * existing Prisma Next path.
+ */
+export function createPrismaProvider(): InitProvider {
   return {
-    name: 'prisma-next',
+    name: 'prisma',
     introMessage: 'Setting up CipherStash for your Prisma Next project...',
     // Note: Prisma Next absorbs the EQL bundle install and schema
     // scaffold steps via its migration framework. The next-steps list

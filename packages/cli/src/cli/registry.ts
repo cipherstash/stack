@@ -113,7 +113,7 @@ export const registry: CommandGroup[] = [
         examples: [
           'init',
           'init --supabase',
-          'init --prisma-next',
+          'init --prisma',
           'init --region us-east-1',
         ],
         flags: [
@@ -126,7 +126,7 @@ export const registry: CommandGroup[] = [
             description: 'Use Drizzle-specific setup flow.',
           },
           {
-            name: '--prisma-next',
+            name: '--prisma',
             description:
               'Use Prisma Next-specific setup flow (EQL bundle installed via prisma-next migrate).',
           },

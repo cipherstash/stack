@@ -111,6 +111,25 @@ describe('installEqlStep', () => {
     )
   })
 
+  describe('Prisma Next (`--prisma`)', () => {
+    it('skips `stash eql install` when the provider is `prisma` (framework installs the bundle)', async () => {
+      // `--prisma` sets provider.name === 'prisma'. Prisma Next installs the EQL
+      // bundle via `prisma-next migrate`, so init must NOT run its own install —
+      // that would duplicate the install and race the framework's journal.
+      const prismaProvider = { name: 'prisma' } as unknown as InitProvider
+
+      const result = await installEqlStep.run(
+        { integration: 'prisma-next' } as unknown as InitState,
+        prismaProvider,
+      )
+
+      expect(p.confirm).not.toHaveBeenCalled()
+      expect(installCommand).not.toHaveBeenCalled()
+      expect(eqlMigrationCommand).not.toHaveBeenCalled()
+      expect(result.eqlInstalled).toBe(false)
+    })
+  })
+
   describe('Drizzle', () => {
     it('generates an EQL v3 migration instead of running `eql install` (the v2 pin is gone)', async () => {
       // Regression guard for the defect: init used to pass `eqlVersion: '2'` to
