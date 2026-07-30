@@ -5,7 +5,7 @@
 'stash': major
 ---
 
-CipherStash Stack 1.0 (release candidate).
+CipherStash Stack 1.0.
 
 This is the first 1.0-line release of `@cipherstash/stack`, the first published
 release of the split-out EQL v3 adapters `@cipherstash/stack-drizzle` and

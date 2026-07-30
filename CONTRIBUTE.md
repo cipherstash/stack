@@ -104,24 +104,37 @@ We use [**Changesets**](https://github.com/changesets/changesets) to manage vers
 - Follow the prompts to indicate the type of version bump (patch, minor, major).
 - The [GitHub Actions workflows](./.github/workflows/) handle the **publish** step to npm once your PR is merged and the changeset is committed to `main`.
 
+Releases are **stable** — Changesets is not in pre mode. Merging a changeset to
+`main` opens (or updates) a "Version Packages" PR with plain semver versions, and
+merging that PR publishes to npm under the `latest` dist-tag.
+
+The `stash` / `@cipherstash/stack` / `@cipherstash/stack-drizzle` /
+`@cipherstash/stack-supabase` / `@cipherstash/prisma-next` / `@cipherstash/wizard`
+packages are a `fixed` group in [`.changeset/config.json`](./.changeset/config.json):
+they always version together, so a bump to any one of them bumps all six.
+
 ## Pre release process
 
-We currently use [changesets to manage pre-releasing](https://github.com/changesets/changesets/blob/main/docs/prereleases.md) the `next` version of the package, and the process is executed manually.
+The 1.0 line published its `1.0.0-rc.*` series through
+[changesets pre mode](https://github.com/changesets/changesets/blob/main/docs/prereleases.md).
+That mode is **exited** — do not re-enter it for ordinary work; a stable release
+is the default.
 
-To do so, you need to:
+If a future line genuinely needs a prerelease series:
 
-1. Check out the `next` branch
-2. Run `pnpm changeset pre enter next`
-3. Run `pnpm changeset version`
-4. Run `git add .`
-5. Run `git commit -m "Enter prerelease mode and version packages"`
-6. Run `pnpm changeset publish --tag next`
-7. Run `git push --follow-tags`
-
-When you are ready to release, you can run `pnpm changeset pre exit` to exit prerelease mode and commit the changes.
-When you merge the PR, the `next` branch will be merged into `main`, and the package will be published to npm without the prerelease tag.
+1. Run `pnpm changeset pre enter rc` (this writes `.changeset/pre.json`)
+2. Commit that file — from then on, every "Version Packages" PR produces
+   `x.y.z-rc.N` versions and publishes under the `rc` dist-tag
+3. When the line is ready to go stable, run `pnpm changeset pre exit` and commit
+   the change. The next `changeset version` graduates every package to its final
+   version, consumes the accumulated changesets into `CHANGELOG.md`, and deletes
+   `.changeset/pre.json`
 
 > [!IMPORTANT]
+> Pre mode retains every consumed changeset until exit, so its markdown is what
+> lands in the stable changelog — an entry that a later change made wrong stays
+> wrong until someone edits it. Review `.changeset/*.md` as a set before exiting.
+>
 > This process can be dangerous, so please be careful when using it as it's difficult to undo mistakes.
 > If you are unfamiliar with the process, please reach out to the maintainers for help.
 
