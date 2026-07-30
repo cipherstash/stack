@@ -200,11 +200,18 @@ export interface EncryptionClient<
    * The scalar form cannot be strongly *typed*: TypeScript has no way to know
    * which column a runtime `Encrypted` came from, so the static type has to be
    * the whole union. That is a statement about the type layer only. At runtime
-   * every payload carries its own `i: { t, c }` table/column identity, so the
-   * `cast_as` is perfectly reachable from here — skipping reconstruction is a
-   * deliberate contract line, not a missing capability. `JsPlaintext` excludes
-   * `Date` by construction, and that is the type callers have annotated
-   * against; reconstructing without widening it would make the type a lie.
+   * every payload carries its own `i: { t, c }` table/column identity, so for
+   * one of the tables this client was initialized with, the `cast_as` is
+   * reachable from here — skipping reconstruction is a deliberate contract
+   * line, not a missing capability. `JsPlaintext` excludes `Date` by
+   * construction, and that is the type callers have annotated against;
+   * reconstructing without widening it would make the type a lie.
+   *
+   * (A payload from a table NOT in the client's schemas — the legacy EQL v2
+   * read path — is the one case where the capability genuinely is absent: the
+   * `i` names a table there is no encrypt config to resolve. The contract is
+   * the same either way, which is why the boundary is drawn at the method and
+   * not per payload.)
    *
    * For `Date` values, read through {@link decryptModel} /
    * {@link bulkDecryptModels} with the table, or rebuild at the call site
@@ -375,11 +382,10 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
   // Pass-through maps for the table-less one-arg decrypt call, where `table` is
   // absent: decrypt WITHOUT date reconstruction. The `table` argument is what
   // selects a reconstructor, and the one-arg overload's `Decrypted<T>` return
-  // type declares every decrypted field `string` to match. Note what is NOT the
-  // reason: a payload from a registered table carries its own `i: { t, c }`, so
-  // the `cast_as` could be resolved here (#779). Declining to is what keeps
-  // this arity's runtime agreeing with its declared type — reconstructing under
-  // a `string` type would trade a documented split for a lying one.
+  // type declares every decrypted field `string` to match — reconstructing
+  // under that type is the drift #779 rules out. (The payload's own `i: { t, c }`
+  // could resolve a `cast_as` for a registered table; the boundary is drawn at
+  // the arity so the runtime and the declared type never disagree.)
   // This client is what `Encryption` returns for every v3 schema set, so
   // generic consumers — and the legacy EQL v2 read path, whose table is not in
   // `S` — can call `decryptModel(x)` / `bulkDecryptModels(xs)` with no table.

@@ -1,3 +1,4 @@
+import type { JsPlaintext } from '@cipherstash/protect-ffi'
 import { describe, expectTypeOf, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
 // Everything comes from the single `@cipherstash/stack/v3` surface (re-exported
@@ -205,6 +206,58 @@ describe('typed v3 client — model decrypt yields precise plaintext', () => {
     )
     expectTypeOf(bulkOp).toHaveProperty('audit')
     expectTypeOf(bulkOp).toHaveProperty('withLockContext')
+  })
+})
+
+/**
+ * The raw-vs-model `Date` boundary (#779), pinned at the layer it is argued
+ * from. `typed-client-v3.test.ts` pins the runtime — that the wrapper hands the
+ * stored string back untouched — but the reason it is allowed to is a type-level
+ * claim: the raw methods resolve to the FFI plaintext union, which has no `Date`
+ * arm, so reconstructing would make the declared type wrong. A runtime test
+ * cannot see that claim expire. If `JsPlaintext` ever gains `Date` upstream, the
+ * justification dissolves while every runtime assertion still passes; these are
+ * what notice.
+ */
+describe('typed v3 client — the raw decrypt paths exclude Date', () => {
+  /** The `data` of an awaited operation's success arm. */
+  type SuccessData<Op> = Extract<Awaited<Op>, { data: unknown }>['data']
+
+  type RawDecrypted = SuccessData<ReturnType<typeof client.decrypt>>
+  type RawBulkDecrypted = SuccessData<ReturnType<typeof client.bulkDecrypt>>
+
+  it('resolves decrypt to the FFI plaintext union, unwidened', () => {
+    expectTypeOf<RawDecrypted>().toEqualTypeOf<JsPlaintext>()
+    // The whole argument for the split in one assertion: no `Date` arm to
+    // return one through. Widen `JsPlaintext` upstream and this fails.
+    expectTypeOf<Date>().not.toExtend<RawDecrypted>()
+  })
+
+  it('resolves bulkDecrypt items to the same union, per position', () => {
+    expectTypeOf<RawBulkDecrypted[number]['data']>().toEqualTypeOf<
+      JsPlaintext | null | undefined
+    >()
+    expectTypeOf<Date>().not.toExtend<RawBulkDecrypted[number]['data']>()
+  })
+
+  it('reconstructs Date on the model path, which is handed the table', () => {
+    // The contrast the boundary consists of, asserted on the type a caller
+    // actually awaits (not just the `V3DecryptedModel` mapping above).
+    type ModelDecrypted = SuccessData<
+      ReturnType<
+        typeof client.decryptModel<typeof users, { createdAt: Encrypted }>
+      >
+    >
+    expectTypeOf<ModelDecrypted['createdAt']>().toEqualTypeOf<Date>()
+  })
+
+  it('types the table-less model path string, matching its unreconstructed runtime', () => {
+    // `Decrypted<T>` — no table, no reconstruction, and the declared type says
+    // so. Reconstructing here would be the lie the JSDoc describes.
+    type LooseDecrypted = SuccessData<
+      ReturnType<typeof client.decryptModel<{ createdAt: Encrypted }>>
+    >
+    expectTypeOf<LooseDecrypted['createdAt']>().toEqualTypeOf<string>()
   })
 })
 

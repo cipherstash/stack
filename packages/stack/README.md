@@ -231,7 +231,7 @@ const decrypted = await client.bulkDecryptModels(encrypted.data, users)
 
 #### Bulk Encrypt / Decrypt (raw values)
 
-`bulkEncrypt` / `bulkDecrypt` are untyped passthroughs for raw value arrays:
+`bulkEncrypt` / `bulkDecrypt` are untyped passthroughs for raw value arrays — which includes **no `Date` reconstruction**: a `types.Date` / `types.Timestamp` column read this way is the string it was stored as, where `bulkDecryptModels(rows, table)` gives you a `Date`. See [`EncryptionClient` Methods](#encryptionclient-methods) for why.
 
 ```typescript
 const plaintexts = [
