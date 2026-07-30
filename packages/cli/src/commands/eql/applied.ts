@@ -67,6 +67,6 @@ export async function latestAppliedMillis(
     }
     throw error
   } finally {
-    await client.end()
+    await client.end().catch(() => undefined)
   }
 }
