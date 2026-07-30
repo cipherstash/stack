@@ -52,8 +52,9 @@ social preview card.
 
 ## Performance section
 
-- [ ] **Numbers refreshed on EQL v3** — current figures come from the EQL 2.3 run in
-  `cipherstash/benches`; re-run on v3 before launch.
+- [x] **Numbers refreshed on EQL v3** — verified against the EQL v3 run in `cipherstash/benches`
+  (`report/BENCHMARK_REPORT.md` + per-family pages): equality ~0.12–0.14 ms, ORE range (10 rows)
+  ~0.5 ms, JSON field equality ~0.1 ms — flat from 10k to 10M rows, matching the README table.
 - [ ] **Flat-latency chart** embedded (spec: Asset 3 in `readme-visual-assets.md`).
 
 ## Links & assets (mechanical, pre-merge)

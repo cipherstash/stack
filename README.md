@@ -232,7 +232,7 @@ of unique keys stay fast), and every decryption is logged for compliance.
 
 ## Performance
 
-Encrypted queries stay fast — latency is flat from 10k to 10M rows. Measured in [cipherstash/benches][benches]:
+Encrypted queries stay fast — latency is flat from 10k to 10M rows. Measured on EQL v3 in [cipherstash/benches][benches]:
 
 | Operation | Median latency (up to 10M rows) |
 |---|---|
