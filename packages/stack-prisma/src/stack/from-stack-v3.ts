@@ -1,6 +1,6 @@
 /**
- * One-call setup for `@cipherstash/prisma-next` against the
- * `@cipherstash/stack` EQL v3 client. `@cipherstash/prisma-next` is EQL
+ * One-call setup for `@cipherstash/stack-prisma` against the
+ * `@cipherstash/stack` EQL v3 client. `@cipherstash/stack-prisma` is EQL
  * v3 only; this is the sole `cipherstashFromStack` entry point.
  *
  *   const cipherstash = await cipherstashFromStack({ contractJson })
@@ -89,7 +89,7 @@ export async function cipherstashFromStack(
   if (foreignIds.length > 0) {
     throw new Error(
       `cipherstashFromStack: contract.json contains non-v3 cipherstash codec ids [${foreignIds.join(', ')}]. ` +
-        '`@cipherstash/prisma-next` is EQL v3 only — author columns with the v3 ' +
+        '`@cipherstash/stack-prisma` is EQL v3 only — author columns with the v3 ' +
         '`cipherstash.*()` constructors and re-emit the contract (`prisma-next contract emit`).',
     )
   }

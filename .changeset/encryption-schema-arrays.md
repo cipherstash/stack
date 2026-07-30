@@ -1,6 +1,6 @@
 ---
 '@cipherstash/stack': minor
-'@cipherstash/prisma-next': patch
+'@cipherstash/stack-prisma': patch
 ---
 
 `Encryption({ schemas })` now accepts any non-empty array of EQL v3 tables, not

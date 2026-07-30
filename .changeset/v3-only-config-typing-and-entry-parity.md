@@ -1,6 +1,6 @@
 ---
 '@cipherstash/stack': major
-'@cipherstash/prisma-next': patch
+'@cipherstash/stack-prisma': patch
 'stash': patch
 ---
 

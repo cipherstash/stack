@@ -3,7 +3,7 @@
  * (`src/adapter-kit.ts:60`), and three first-party adapters value-import
  * adapter-kit: `packages/stack-supabase/src/column-map.ts:1`,
  * `packages/stack-drizzle/src/column.ts:1`,
- * `packages/prisma-next/src/exports/column-types.ts:19`. A realm with no
+ * `packages/stack-prisma/src/exports/column-types.ts:19`. A realm with no
  * `process` binding turns an unguarded module-scope `process.env` read in the
  * logger into a `ReferenceError` at import time on exactly the runtimes those
  * builds exist to serve.

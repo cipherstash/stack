@@ -1,8 +1,8 @@
 {
-  "name": "@cipherstash/prisma-next-example",
+  "name": "@cipherstash/prisma-example",
   "private": true,
   "version": "0.1.0-rc.4",
-  "description": "End-to-end example of @cipherstash/prisma-next: searchable application-layer encryption for Postgres with Prisma Next, using @cipherstash/stack as the SDK.",
+  "description": "End-to-end example of @cipherstash/stack-prisma: searchable application-layer encryption for Postgres with Prisma Next, using @cipherstash/stack as the SDK.",
   "type": "module",
   "scripts": {
     "emit": "prisma-next contract emit",
@@ -13,7 +13,7 @@
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@cipherstash/prisma-next": "workspace:*",
+    "@cipherstash/stack-prisma": "workspace:*",
     "@cipherstash/stack": "workspace:*",
     "@prisma-next/adapter-postgres": "0.16.0",
     "@prisma-next/contract": "0.16.0",

@@ -13,7 +13,7 @@ This repository is the CipherStash Stack monorepo for JavaScript/TypeScript. It 
 | `stash` | CipherStash CLI |
 | `@cipherstash/nextjs` | Next.js helpers |
 | `@cipherstash/migrate` | Plaintext-to-encrypted column migration tooling |
-| `@cipherstash/prisma-next` | Prisma Next integration (searchable field-level encryption for Postgres) |
+| `@cipherstash/stack-prisma` | Prisma Next integration (searchable field-level encryption for Postgres) |
 | `@cipherstash/stack-drizzle` | Drizzle ORM integration for `@cipherstash/stack` (EQL v3) |
 | `@cipherstash/stack-supabase` | Supabase integration for `@cipherstash/stack` (EQL v3) |
 | `@cipherstash/wizard` | AI-powered encryption setup |

@@ -1,5 +1,5 @@
 {
-	"name": "@cipherstash/prisma-next",
+	"name": "@cipherstash/stack-prisma",
 	"version": "1.0.0-rc.4",
 	"license": "MIT",
 	"author": "CipherStash <support@cipherstash.com>",
@@ -19,7 +19,7 @@
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/cipherstash/stack.git",
-		"directory": "packages/prisma-next"
+		"directory": "packages/stack-prisma"
 	},
 	"type": "module",
 	"sideEffects": false,

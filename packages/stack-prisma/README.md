@@ -1,4 +1,4 @@
-# @cipherstash/prisma-next
+# @cipherstash/stack-prisma
 
 **Searchable field-level encryption for Postgres with [Prisma Next](https://www.npmjs.com/package/prisma-next)** — powered by [`@cipherstash/stack`](../stack/README.md) and the [EQL bundle](https://cipherstash.com/docs/stack/platform/eql).
 
@@ -18,7 +18,7 @@ Declare encrypted columns directly in `schema.prisma`, and the framework's migra
 ## Installation
 
 ```bash
-npm install @cipherstash/stack @cipherstash/prisma-next
+npm install @cipherstash/stack @cipherstash/stack-prisma
 ```
 
 ## Quick start
@@ -36,7 +36,7 @@ model User {
 
 ```typescript
 // prisma-next.config.ts
-import cipherstash from "@cipherstash/prisma-next/control"
+import cipherstash from "@cipherstash/stack-prisma/control"
 // ... other imports
 export default defineConfig({
   // ... family, target, adapter, contract
@@ -47,7 +47,7 @@ export default defineConfig({
 ```typescript
 // src/db.ts
 import "dotenv/config"
-import { cipherstashFromStack } from "@cipherstash/prisma-next/v3"
+import { cipherstashFromStack } from "@cipherstash/stack-prisma/v3"
 import postgres from "@prisma-next/postgres/runtime"
 import type { Contract } from "./prisma/contract.d"
 import contractJson from "./prisma/contract.json" with { type: "json" }
@@ -69,7 +69,7 @@ npx prisma-next migrate                   # installs EQL bundle + your schema (t
 ```
 
 ```typescript
-import { EncryptedString, decryptAll } from "@cipherstash/prisma-next/runtime"
+import { EncryptedString, decryptAll } from "@cipherstash/stack-prisma/runtime"
 
 await db.orm.public.User.create({
   id: "user-0",

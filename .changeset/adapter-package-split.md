@@ -7,7 +7,7 @@
 Split the Drizzle and Supabase integrations into their own packages.
 
 The adapters now ship as first-party packages that depend on `@cipherstash/stack`,
-following the `@cipherstash/prisma-next` precedent:
+following the `@cipherstash/stack-prisma` precedent:
 
 - **`@cipherstash/stack-drizzle`** — EQL v3 Drizzle integration on the package
   root (`types` factories, `createEncryptionOperators`,

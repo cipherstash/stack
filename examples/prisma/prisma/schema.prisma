@@ -1,4 +1,4 @@
-// @cipherstash/prisma-next example schema — EQL v3.
+// @cipherstash/stack-prisma example schema — EQL v3.
 //
 // One User model exercising one v3 domain per plaintext family. Each
 // v3 constructor is argument-less and maps 1:1 to a concrete

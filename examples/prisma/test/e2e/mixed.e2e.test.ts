@@ -38,12 +38,12 @@ import {
   EncryptedNumber,
   EncryptedString,
   eqlAsc,
-} from '@cipherstash/prisma-next/runtime'
+} from '@cipherstash/stack-prisma/runtime'
 import {
   cipherstashFromStack,
   createCipherstashV3Sdk,
   deriveStackSchemasV3,
-} from '@cipherstash/prisma-next/v3'
+} from '@cipherstash/stack-prisma/v3'
 import postgres from '@prisma-next/postgres/runtime'
 import { and } from '@prisma-next/sql-orm-client'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'

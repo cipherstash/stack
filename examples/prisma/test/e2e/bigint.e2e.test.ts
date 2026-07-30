@@ -20,7 +20,7 @@ import {
   EncryptedNumber,
   EncryptedString,
   eqlAsc,
-} from '@cipherstash/prisma-next/runtime'
+} from '@cipherstash/stack-prisma/runtime'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { db, ensureConnected, truncateUsers } from './harness'
 

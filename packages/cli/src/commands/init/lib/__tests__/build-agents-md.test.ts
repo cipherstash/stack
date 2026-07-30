@@ -53,11 +53,11 @@ describe('buildAgentsMdBody', () => {
     expect(out).not.toContain('# Skill: stash-supabase')
   })
 
-  it('prisma-next inlines the stash-prisma-next skill (no crash on undefined map)', () => {
+  it('prisma-next inlines the stash-prisma skill (no crash on undefined map)', () => {
     // Regression: SKILL_MAP once lacked a prisma-next key, so this call
     // threw "SKILL_MAP[integration] is not iterable" for any Prisma repo.
     const out = buildAgentsMdBody('prisma-next', 'doctrine-plus-skills')
-    expect(out).toContain('# Skill: stash-prisma-next')
+    expect(out).toContain('# Skill: stash-prisma')
     expect(out).toContain('# Skill: stash-encryption')
     expect(out).not.toContain('# Skill: stash-drizzle')
   })

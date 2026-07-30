@@ -19,7 +19,7 @@ on:
     branches: [main]
     paths:
       - 'packages/stack/src/eql/v3/**'
-      - 'packages/prisma-next/**'
+      - 'packages/stack-prisma/**'
       # Source layers the adapter's encoding/round-trip rests on: a break here
       # (not just under src/eql/v3) can produce wrong rows, so trigger the live
       # suite that would catch it.
@@ -38,7 +38,7 @@ on:
     # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
     paths:
       - 'packages/stack/src/eql/v3/**'
-      - 'packages/prisma-next/**'
+      - 'packages/stack-prisma/**'
       # Source layers the adapter's encoding/round-trip rests on: a break here
       # (not just under src/eql/v3) can produce wrong rows, so trigger the live
       # suite that would catch it.
@@ -114,7 +114,7 @@ jobs:
       # `stash eql install --eql-version 3`, so an installer regression fails
       # here rather than hiding behind a test-only SQL apply.
       - name: prisma-next v3 family suites
-        run: pnpm exec turbo run test:integration --filter @cipherstash/prisma-next --env-mode=loose
+        run: pnpm exec turbo run test:integration --filter @cipherstash/stack-prisma --env-mode=loose
         env:
           # Step env, not a `.env` file: `dotenv/config` does not override an
           # already-set `process.env`, so these win and no secret hits disk.

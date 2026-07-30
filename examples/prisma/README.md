@@ -1,6 +1,6 @@
-# @cipherstash/prisma-next example
+# @cipherstash/stack-prisma example
 
-End-to-end demo of [`@cipherstash/prisma-next`](../../packages/prisma-next/README.md): searchable application-layer encryption for Postgres with [Prisma Next](https://www.npmjs.com/package/@prisma-next/cli), using [`@cipherstash/stack`](../../packages/stack/README.md) as the encryption SDK — on **EQL v3**, where every encrypted column is a concrete `public.eql_v3_*` Postgres domain and the constructor you pick *is* the capability set.
+End-to-end demo of [`@cipherstash/stack-prisma`](../../packages/stack-prisma/README.md): searchable application-layer encryption for Postgres with [Prisma Next](https://www.npmjs.com/package/@prisma-next/cli), using [`@cipherstash/stack`](../../packages/stack/README.md) as the encryption SDK — on **EQL v3**, where every encrypted column is a concrete `public.eql_v3_*` Postgres domain and the constructor you pick *is* the capability set.
 
 A single `User` model with one column per plaintext family, exercised end-to-end: insert, equality, free-text token search, range, between, in-array, encrypted-order-term sort, JSON containment, and `decryptAll`-amortised read.
 
@@ -108,4 +108,4 @@ Two v3 behaviours worth noticing in that output:
 ## References
 
 - 📖 [Prisma Next encryption docs](https://cipherstash.com/docs/stack/cipherstash/encryption/prisma-next) — the canonical reference.
-- [`@cipherstash/prisma-next` package README](../../packages/prisma-next/README.md) — install, subpath exports, quick start.
+- [`@cipherstash/stack-prisma` package README](../../packages/stack-prisma/README.md) — install, subpath exports, quick start.

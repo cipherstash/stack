@@ -20,7 +20,7 @@ An EQL v3 encrypted column is a **Postgres domain over `jsonb`** (`public.eql_v3
 This covers the `pg` and `postgres-js` drivers with no ORM — plain Node
 services, Hono, edge functions. If you use Drizzle, Prisma Next, or the
 Supabase client, those integrations emit correct operands for you: see
-`stash-drizzle`, `stash-prisma-next`, `stash-supabase` instead.
+`stash-drizzle`, `stash-prisma`, `stash-supabase` instead.
 
 > **Using CipherStash Proxy? None of this applies.** This skill assumes the
 > app connects to Postgres **directly** and encrypts **client-side**: Stack
