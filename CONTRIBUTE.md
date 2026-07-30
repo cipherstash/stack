@@ -109,7 +109,7 @@ Releases are **stable** — Changesets is not in pre mode. Merging a changeset t
 merging that PR publishes to npm under the `latest` dist-tag.
 
 The `stash` / `@cipherstash/stack` / `@cipherstash/stack-drizzle` /
-`@cipherstash/stack-supabase` / `@cipherstash/prisma-next` / `@cipherstash/wizard`
+`@cipherstash/stack-supabase` / `@cipherstash/stack-prisma` / `@cipherstash/wizard`
 packages are a `fixed` group in [`.changeset/config.json`](./.changeset/config.json):
 they always version together, so a bump to any one of them bumps all six.
 
