@@ -416,7 +416,7 @@ const decrypted = await client.bulkDecryptModels(encrypted.data, users)
 
 ### Bulk Encrypt / Decrypt (Raw Values)
 
-`bulkEncrypt` / `bulkDecrypt` are parity passthroughs (not v3-strengthened), which includes **no `Date` reconstruction** — a `types.Timestamp` column read this way is the stored ISO string, where `bulkDecryptModels(rows, table)` gives you a `Date`:
+These two work on raw value arrays rather than models. `bulkEncrypt` is typed like `encrypt` — `{ table, column }` pins every `plaintext` to that column's domain — while `bulkDecrypt` takes the payloads alone, so it resolves to the plaintext union and does **no `Date` reconstruction**: a `types.Timestamp` column read this way is the stored ISO string, where `bulkDecryptModels(rows, table)` gives you a `Date`:
 
 ```typescript
 const plaintexts = [
@@ -995,7 +995,7 @@ Useful when the backfill needs to run in a worker, on a schedule, or alongside a
 | `decryptModel` | `(model, table, lockContext?)` | `AuditableDecryptModelOperation<V3DecryptedModel<Table, T>>` |
 | `bulkEncryptModels` | `(models, table)` | `BulkEncryptModelsOperation<V3EncryptedModel<Table, T>>` |
 | `bulkDecryptModels` | `(models, table, lockContext?)` | `AuditableDecryptModelOperation<V3DecryptedModel<Table, T>[]>` |
-| `bulkEncrypt` | `(plaintexts, { column, table })` — parity passthrough | `BulkEncryptOperation` |
+| `bulkEncrypt` | `(plaintexts, { column, table })` — raw values, each `plaintext` pinned to the column's domain type | `BulkEncryptOperation` |
 | `bulkDecrypt` | `(encryptedPayloads)` — parity passthrough; no `Date` reconstruction | `BulkDecryptOperation` |
 | `getEncryptConfig` | `()` | The client's encrypt config |
 
