@@ -2,8 +2,8 @@
 "stash": patch
 ---
 
-Correct the bundled `stash-supabase` agent skill: EQL v3 `contains()` matches
-substrings. The skill previously carried the reverse — that `contains()` matched
+Correct the bundled `stash-supabase` agent skill: encrypted free-text search
+matches substrings. The skill previously carried the reverse — that it matched
 only exact values because the query's bloom filter appended the whole search term
 as an extra token. That was never true: `include_original` is inert in
 protect-ffi (the match bloom is trigram-only either way), so any substring of at

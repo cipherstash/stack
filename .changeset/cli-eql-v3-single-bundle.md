@@ -2,7 +2,7 @@
 'stash': minor
 ---
 
-`stash eql install --eql-version 3` now installs the eql-3.0.0 GA bundle,
+`stash eql install` now installs the eql-3.0.0 GA bundle,
 vendored from the pinned `@cipherstash/eql` package (sha256-verified).
 
 Since eql-3.0.0 one artifact installs everywhere: the operator-class

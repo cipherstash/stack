@@ -5,8 +5,8 @@
 
 EQL v3 Drizzle: encrypt every query operand with `encryptQuery`, not `encrypt` (#622).
 
-The v3 Drizzle operators (`eq`/`ne`/`gt`/`gte`/`lt`/`lte`/`between`/`notBetween`/
-`inArray`/`notInArray`/`contains`) previously encrypted their operands with
+The Drizzle operators (`eq`/`ne`/`gt`/`gte`/`lt`/`lte`/`between`/`notBetween`/
+`inArray`/`notInArray`/`matches`/`contains`) previously encrypted their operands with
 `client.encrypt`, producing a full storage envelope (including the ciphertext `c`)
 cast to `::jsonb`. A WHERE-clause operand should be a query *term*, not a value to
 store. Every operator now uses `client.encryptQuery`, which yields a

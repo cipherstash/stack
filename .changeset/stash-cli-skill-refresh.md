@@ -20,14 +20,9 @@ handoff time, so a stale skill becomes stale guidance in the user's project.
   entirely, plus the non-interactive interface (per-command escape hatches, exit codes, the
   `DATABASE_URL` resolution order, the `auth login --json` NDJSON event contract).
 - **Corrects the `db` → `eql` move.** `db install`, `db upgrade`, and `db status` are
-  deprecated aliases that warn and forward; `db push`, `db activate`, `db validate`,
-  `db test-connection`, and `db migrate` remain in the `db` group.
-- **Scopes `db push` / `db activate` as EQL v2 + CipherStash Proxy only**, in both the skill
-  and the README's recommended flow. SDK users hold their encryption config in application
-  code and don't need them.
-- Adds the missing `--database-url`, `--eql-version`, `--prisma-next`, `--proxy`/`--no-proxy`,
-  and `--region` flags; corrects six programmatic API signatures; fixes the README's claim
+  deprecated aliases that warn and forward; `db validate`, `db test-connection`, and
+  `db migrate` remain in the `db` group.
+- Adds the missing `--database-url`, `--prisma-next`, and `--region` flags; corrects
+  six programmatic API signatures; fixes the README's claim
   that `stash init` ends in an agent-handoff menu (that belongs to `stash plan` / `stash impl`);
   and marks `stash env` as the non-functional stub it currently is.
-
-Superseded later in this release: the v2/Proxy commands and flags listed above are removed from both the CLI and bundled skill.

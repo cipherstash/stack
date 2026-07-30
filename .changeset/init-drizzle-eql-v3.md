@@ -2,16 +2,13 @@
 'stash': patch
 ---
 
-`stash init --drizzle` now installs EQL v3 instead of v2.
+`stash init --drizzle` installs EQL v3.
 
-The Drizzle init flow pinned `--eql-version 2`, because `stash eql install
---drizzle` (the only migration-generating install path at the time) was
-v2-only. That made `stash init --drizzle` the single flow that provisioned a v2
-database — a bare `stash eql install`, and init for every other integration,
-already defaulted to v3. It also contradicted the `stash-drizzle` skill init
-copies into the same project, which documents the v3 `@cipherstash/stack-drizzle`
-surface (`types.*` domains, `Encryption`) and would have the user's agent
-author v3 code against a v2 database.
+The Drizzle init flow used to provision a v2 database — the only
+migration-generating install path at the time was v2-only — while the
+`stash-drizzle` skill init copies into the same project documents the v3
+`@cipherstash/stack-drizzle` surface (`types.*` domains, `Encryption`). The
+user's agent would have authored v3 code against a v2 database.
 
 Init's Drizzle flow now routes through `stash eql migration --drizzle`, so it
 stays migration-first (the install lands in your Drizzle migration history and
@@ -21,7 +18,6 @@ The generated migration also carries the `cs_migrations` tracking schema, so one
 isn't installed or configured, init now reports EQL as not installed and points
 at `stash eql migration --drizzle` rather than aborting the run.
 
-The final CLI installation and mutation surface is v3-only: the explicit v2
-Drizzle install path is removed. Legacy v2 remains readable and visible in
-diagnostics. Generate a checked-in install migration with `stash eql migration
---drizzle`.
+The CLI installation and mutation surface is v3-only. Legacy v2 remains readable
+and visible in diagnostics. Generate a checked-in install migration with
+`stash eql migration --drizzle`.

@@ -11,7 +11,7 @@ containment. The name `contains()` promised substring/containment semantics it
 never had. It is renamed to `matches()` on the encrypted surface; `contains()` is
 kept for genuine, exact containment:
 
-- **Drizzle** (`@cipherstash/stack-drizzle/v3`): `matches()` = bloom free-text on
+- **Drizzle** (`@cipherstash/stack-drizzle`): `matches()` = bloom free-text on
   `text_match`/`text_search` columns; `contains()` = exact encrypted-JSON `@>` on
   `types.Json` (ste_vec) columns.
 - **Supabase** (`@cipherstash/stack-supabase`): `.matches()` = encrypted free-text;

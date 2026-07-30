@@ -1,5 +1,5 @@
 ---
-'@cipherstash/stack': patch
+'@cipherstash/stack-supabase': patch
 ---
 
 Fix the Supabase adapter encrypting `is` and `null` filter operands.
@@ -14,10 +14,9 @@ NULL column rather than ciphertext, so it is found with an unencrypted
 `IS NULL`; encrypting the operand could never match.
 
 A single `isEncryptableTerm(operator, value)` predicate now guards every term
-collector. Affects both `encryptedSupabase` (v2) and `encryptedSupabaseV3`. On
-v3 this additionally removes a spurious `does not support equality queries`
-error, which `is` raised because it maps to the `equality` query type and so hit
-the column-capability guard — `or('active.is.null')` on a storage-only column
+collector. This additionally removes a spurious `does not support equality
+queries` error, which `is` raised because it maps to the `equality` query type
+and so hit the column-capability guard — `or('active.is.null')` on a storage-only column
 threw rather than querying.
 
 Relatedly, an `or()` string is now rebuilt whenever a condition *references* an

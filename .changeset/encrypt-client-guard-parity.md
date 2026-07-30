@@ -6,9 +6,9 @@
 initialized encrypt config, instead of reporting a missing table.
 
 The guard that refuses an unusable client file existed twice — once in
-`loadEncryptConfig` (`stash db push` / `db validate`) and once, hand-copied, in
+`loadEncryptConfig` (`stash db validate`) and once, hand-copied, in
 `loadEncryptionContext` (`stash encrypt backfill`). The copies had already
-drifted: for a client whose `getEncryptConfig()` returns nothing, `db push`
+drifted: for a client whose `getEncryptConfig()` returns nothing, `db validate`
 exited 1 with `Encryption client in <file> has no initialized encrypt config`,
 while `encrypt backfill` fell through to `Table "users" was not found in the
 encryption client exports. Available: (none)` — naming the symptom rather than
