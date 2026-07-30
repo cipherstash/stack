@@ -190,8 +190,25 @@ export interface EncryptionClient<
   ): BulkEncryptModelsOperation<V3EncryptedModel<Table, T>>
 
   /**
-   * Decrypt a single value. Cannot be strongly typed — a lone ciphertext carries
-   * no column identity — so it resolves to the FFI plaintext union unchanged.
+   * Decrypt a single stored payload, resolving to the FFI plaintext union
+   * (`JsPlaintext`) unchanged.
+   *
+   * **A `date` / `timestamp` column comes back as the string it was stored as,
+   * not a `Date`** — where `decryptModel(row, table)` reconstructs it. Same
+   * value, two JavaScript types, depending on which method read it (#779).
+   *
+   * The scalar form cannot be strongly *typed*: TypeScript has no way to know
+   * which column a runtime `Encrypted` came from, so the static type has to be
+   * the whole union. That is a statement about the type layer only. At runtime
+   * every payload carries its own `i: { t, c }` table/column identity, so the
+   * `cast_as` is perfectly reachable from here — skipping reconstruction is a
+   * deliberate contract line, not a missing capability. `JsPlaintext` excludes
+   * `Date` by construction, and that is the type callers have annotated
+   * against; reconstructing without widening it would make the type a lie.
+   *
+   * For `Date` values, read through {@link decryptModel} /
+   * {@link bulkDecryptModels} with the table, or rebuild at the call site
+   * (`new Date(value)`).
    */
   decrypt(encrypted: Encrypted): DecryptOperation
 
@@ -224,8 +241,12 @@ export interface EncryptionClient<
 
   /**
    * Table-less form: decrypt whatever encrypted fields the model carries, with
-   * no `Date` reconstruction (there is no `cast_as` to reconstruct from) and no
-   * precise plaintext shape.
+   * no `Date` reconstruction and no precise plaintext shape. The `table`
+   * argument is what selects the reconstruction map, and `Decrypted<T>` types
+   * every decrypted field as `string` to match. (For a table that IS
+   * registered, the payload's own `i: { t, c }` would resolve the `cast_as` —
+   * declining to use it is what keeps this arity's runtime agreeing with its
+   * declared type. #779.)
    *
    * This is the read path for rows that predate this client's schemas — legacy
    * **EQL v2** models above all, whose table is not, and cannot be, a member of
@@ -258,6 +279,16 @@ export interface EncryptionClient<
     plaintexts: BulkEncryptPayloadFor<Col>,
     opts: { table: Table; column: Col },
   ): BulkEncryptOperation
+
+  /**
+   * Decrypt many stored payloads in one ZeroKMS round trip, position-stable
+   * with a per-item `{ data } | { error }` entry.
+   *
+   * Draws the same boundary as {@link decrypt}, for the same reason: **no
+   * `Date` reconstruction** — date-like columns arrive as their stored strings.
+   * Prefer {@link bulkDecryptModels} with the table when you want the column's
+   * declared plaintext type back (#779).
+   */
   bulkDecrypt(payloads: BulkDecryptPayload): BulkDecryptOperation
   getEncryptConfig(): ReturnType<UnderlyingNativeClient['getEncryptConfig']>
 }
@@ -342,12 +373,17 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
   }
 
   // Pass-through maps for the table-less one-arg decrypt call, where `table` is
-  // absent: decrypt WITHOUT date reconstruction, because with no table there is
-  // no `cast_as` to reconstruct from. This client is what `Encryption` returns
-  // for every v3 schema set, so generic consumers — and the legacy EQL v2 read
-  // path, whose table is not in `S` — can call `decryptModel(x)` /
-  // `bulkDecryptModels(xs)` with no table. Degrade gracefully instead of
-  // dereferencing `undefined.tableName`.
+  // absent: decrypt WITHOUT date reconstruction. The `table` argument is what
+  // selects a reconstructor, and the one-arg overload's `Decrypted<T>` return
+  // type declares every decrypted field `string` to match. Note what is NOT the
+  // reason: a payload from a registered table carries its own `i: { t, c }`, so
+  // the `cast_as` could be resolved here (#779). Declining to is what keeps
+  // this arity's runtime agreeing with its declared type — reconstructing under
+  // a `string` type would trade a documented split for a lying one.
+  // This client is what `Encryption` returns for every v3 schema set, so
+  // generic consumers — and the legacy EQL v2 read path, whose table is not in
+  // `S` — can call `decryptModel(x)` / `bulkDecryptModels(xs)` with no table.
+  // Degrade gracefully instead of dereferencing `undefined.tableName`.
   const passthroughRow = (row: Record<string, unknown>) => row
   const passthroughRows = (rows: Array<Record<string, unknown>>) => rows
 

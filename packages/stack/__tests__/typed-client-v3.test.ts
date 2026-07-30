@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import type { EncryptionClient } from '@/encryption'
 import { createEncryptionClient } from '@/encryption/client-v3'
 import { encryptedTable, types } from '@/eql/v3'
+import type { Encrypted } from '@/types'
+
+/**
+ * What `createEncryptionClient` wraps. Derived from the factory rather than
+ * imported, because `UnderlyingNativeClient` is deliberately module-private —
+ * naming it here is the only thing a test needs from it, and `Parameters` gets
+ * that without widening the module's export surface.
+ *
+ * The stubs below are cast to this, not to `EncryptionClient`: the wrapper takes
+ * the NATIVE client, and casting to the public client type instead was a type
+ * error in every call (invisible, since `__tests__` is not typechecked in CI).
+ */
+type NativeClientStub = Parameters<typeof createEncryptionClient>[0]
 
 const table = encryptedTable('t', {
   when: types.Timestamp('when'),
@@ -34,11 +46,11 @@ function fakeOp<R>(result: R) {
  * A minimal client stub whose model-decrypt methods return an operation
  * resolving to a fixed `Result` payload.
  */
-function fakeClient(data: Record<string, unknown>): EncryptionClient {
+function fakeClient(data: Record<string, unknown>): NativeClientStub {
   return {
     decryptModel: () => fakeOp({ data }),
     bulkDecryptModels: () => fakeOp({ data: [data] }),
-  } as unknown as EncryptionClient
+  } as unknown as NativeClientStub
 }
 
 describe('createEncryptionClient — decrypt reconstruction', () => {
@@ -141,7 +153,7 @@ describe('createEncryptionClient — decrypt reconstruction', () => {
         fakeOp({
           failure: { type: 'DecryptionError', message: 'boom' },
         }),
-    } as unknown as EncryptionClient
+    } as unknown as NativeClientStub
 
     const client = createEncryptionClient(failing, table)
     const result = await client.decryptModel({}, table)
@@ -230,5 +242,92 @@ describe('createEncryptionClient — decrypt reconstruction', () => {
     expect(rows).toHaveLength(1)
     // No table → no reconstruction: raw string, not a Date.
     expect(rows[0].when).toBe('2021-06-01T00:00:00.000Z')
+  })
+})
+
+/**
+ * The raw-path boundary, pinned rather than asserted away (#779).
+ *
+ * `decrypt` / `bulkDecrypt` are bare delegations — the typed wrapper adds no
+ * `Date` reconstruction — so a `timestamp` column read this way is the string it
+ * was stored as, where `decryptModel(row, table)` above turns the same value
+ * into a `Date`. That split is deliberate: the raw methods resolve to the FFI
+ * plaintext union, which excludes `Date`, and reconstructing without widening
+ * it would make the declared type a lie.
+ *
+ * What it is NOT is a missing capability, which is the claim the JSDoc used to
+ * make. The payloads below carry `i: { t, c }` naming a REGISTERED date-like
+ * column — the identity needed to resolve `cast_as` is right there and
+ * deliberately unused. Pinning it here means a future change of heart has to
+ * delete this test, which is the point: the integration suite covers the
+ * single-value half end-to-end (`integration/shared/v2-decrypt-compat`), but
+ * nothing covered the bulk half, and that gap is what let the split read as an
+ * accident.
+ */
+describe('createEncryptionClient — raw decrypt paths are unmapped', () => {
+  const storedIso = '2020-01-02T03:04:05.000Z'
+  // Shaped like a real storage payload: `i` names `t`'s `when` column, which
+  // the table above declares `types.Timestamp` (`cast_as: 'timestamp'`). Typed
+  // as `Encrypted` so both calls below go through the PUBLIC signature — the
+  // arity a caller actually reaches, unlike the one-arg model tests above.
+  const payload: Encrypted = {
+    k: 'ct',
+    v: 2,
+    i: { t: 't', c: 'when' },
+    c: 'ciphertext',
+  }
+
+  /**
+   * Stubs only the two raw methods. They are returned by the wrapper unchanged,
+   * so — unlike the model paths, which get wrapped in a `MappedDecryptOperation`
+   * that calls `.execute()` — the stub is awaited directly and can simply be a
+   * promise of the `Result`.
+   */
+  function rawFakeClient() {
+    const forwarded: unknown[] = []
+    const client = {
+      decrypt: (encrypted: unknown) => {
+        forwarded.push(encrypted)
+        return Promise.resolve({ data: storedIso })
+      },
+      bulkDecrypt: (payloads: unknown) => {
+        forwarded.push(payloads)
+        return Promise.resolve({
+          data: [{ id: 'u1', data: storedIso }],
+        })
+      },
+    } as unknown as NativeClientStub
+    return { client, forwarded }
+  }
+
+  it('returns a date-like column as its stored string from decrypt', async () => {
+    const { client: underlying, forwarded } = rawFakeClient()
+    const client = createEncryptionClient(underlying, table)
+
+    const result = await client.decrypt(payload)
+    expect(result.failure).toBeFalsy()
+    if (result.failure) return
+
+    expect(result.data).toBe(storedIso)
+    expect(result.data).not.toBeInstanceOf(Date)
+    // Bare delegation: the payload reaches the underlying client untouched.
+    expect(forwarded).toEqual([payload])
+  })
+
+  it('returns date-like columns as stored strings from bulkDecrypt', async () => {
+    const { client: underlying, forwarded } = rawFakeClient()
+    const client = createEncryptionClient(underlying, table)
+
+    const result = await client.bulkDecrypt([{ id: 'u1', data: payload }])
+    expect(result.failure).toBeFalsy()
+    if (result.failure) return
+
+    expect(result.data).toHaveLength(1)
+    const [first] = result.data
+    expect(first.data).toBe(storedIso)
+    expect(first.data).not.toBeInstanceOf(Date)
+    // Position-stable identifiers survive the (absent) mapping too.
+    expect(first.id).toBe('u1')
+    expect(forwarded).toEqual([[{ id: 'u1', data: payload }]])
   })
 })

@@ -364,7 +364,9 @@ if (!decrypted.failure) {
 }
 ```
 
-`decrypt` of a single value cannot be strongly typed — a lone ciphertext carries no column identity. All plaintext values passed to `encrypt` must be non-null; null handling is managed at the model level by `encryptModel` and `decryptModel`.
+`decrypt` of a single value cannot be strongly typed — TypeScript cannot know which column a runtime payload came from, so the result is the whole plaintext union. All plaintext values passed to `encrypt` must be non-null; null handling is managed at the model level by `encryptModel` and `decryptModel`.
+
+> **`decrypt` / `bulkDecrypt` hand back date columns as strings, not `Date`.** Reconstruction is driven by the table's `cast_as`, and only the model path is given a table — so the same stored value comes back as a `Date` from `decryptModel(row, table)` and as its stored ISO string from `decrypt(payload)`. Nothing warns: the raw path's declared type is the plaintext union, which includes `string`. Comparing two ISO strings orders correctly, so this survives review and breaks later on `.getTime()` or date arithmetic. Use the model helpers when you want the column's declared plaintext type, or rebuild at the call site (`new Date(value)`). Same on the WASM entry, and same for the one-arg `decryptModel(row)` / `bulkDecryptModels(rows)` forms, which take no table.
 
 ## Model Operations
 
@@ -414,7 +416,7 @@ const decrypted = await client.bulkDecryptModels(encrypted.data, users)
 
 ### Bulk Encrypt / Decrypt (Raw Values)
 
-`bulkEncrypt` / `bulkDecrypt` are parity passthroughs (not v3-strengthened):
+`bulkEncrypt` / `bulkDecrypt` are parity passthroughs (not v3-strengthened), which includes **no `Date` reconstruction** — a `types.Timestamp` column read this way is the stored ISO string, where `bulkDecryptModels(rows, table)` gives you a `Date`:
 
 ```typescript
 const plaintexts = [
@@ -986,7 +988,7 @@ Useful when the backfill needs to run in a worker, on a schedule, or alongside a
 | Method | Signature | Returns |
 |---|---|---|
 | `encrypt` | `(plaintext, { table, column })` — plaintext pinned to the column's domain type | `EncryptOperation` |
-| `decrypt` | `(encryptedData)` — untyped (no column identity) | `DecryptOperation` |
+| `decrypt` | `(encryptedData)` — untyped (the column is not known statically); no `Date` reconstruction | `DecryptOperation` |
 | `encryptQuery` | `(plaintext, { table, column, queryType?, returnType? })` — queryable columns only; `queryType` constrained to the column's capabilities | `EncryptQueryOperation` |
 | `encryptQuery` | `(terms: readonly ScalarQueryTerm[])` — batch form | `BatchEncryptQueryOperation` |
 | `encryptModel` | `(model, table)` — schema fields validated against inferred plaintext types | `EncryptModelOperation<V3EncryptedModel<Table, T>>` |
@@ -994,7 +996,7 @@ Useful when the backfill needs to run in a worker, on a schedule, or alongside a
 | `bulkEncryptModels` | `(models, table)` | `BulkEncryptModelsOperation<V3EncryptedModel<Table, T>>` |
 | `bulkDecryptModels` | `(models, table, lockContext?)` | `AuditableDecryptModelOperation<V3DecryptedModel<Table, T>[]>` |
 | `bulkEncrypt` | `(plaintexts, { column, table })` — parity passthrough | `BulkEncryptOperation` |
-| `bulkDecrypt` | `(encryptedPayloads)` — parity passthrough | `BulkDecryptOperation` |
+| `bulkDecrypt` | `(encryptedPayloads)` — parity passthrough; no `Date` reconstruction | `BulkDecryptOperation` |
 | `getEncryptConfig` | `()` | The client's encrypt config |
 
 All of these operations are thenable (awaitable) and support `.withLockContext()` and `.audit()` chaining — including `decryptModel`/`bulkDecryptModels`, which also accept the lock context as a third argument. Use one or the other: chaining `.withLockContext()` onto a decrypt that already took a positional lock context throws.
