@@ -142,17 +142,21 @@ historical rows that predate Deploy 1.
 stash encrypt backfill --table users --column email
 ```
 
-Keyset-paginated, one transactional `UPDATE` per chunk plus a checkpoint, SIGINT-safe,
-idempotent on re-run. Concurrent production writes are safe **because dual-writes are
-live** — that is the entire reason for Gate 1.
+Paginated by primary key, one transactional `UPDATE` per chunk plus a checkpoint,
+SIGINT-safe, idempotent on re-run. Concurrent production writes are safe **because
+dual-writes are live** — that is the entire reason for Gate 1.
 
 Two hard requirements:
 
-- **Run it with the same credentials the deployed app uses.** Ciphertext is written
-  under whichever keyset the resolved credentials belong to, and `CS_*` env vars beat
-  the local `~/.cipherstash` profile. A backfill authenticated as your laptop profile
-  can write rows the deployed app **cannot decrypt**, with no error until read time.
-  Export the app's `CS_*` vars for the backfill run.
+- **Encrypt under the same keyset the deployed app uses.** The credentials do
+  not have to be identical — any client granted access to that keyset works —
+  but the ciphertext must land under the keyset the app resolves, or the app
+  **cannot decrypt** it, with no error until read time. The trap: `CS_*` env
+  vars beat the local `~/.cipherstash` profile, so a backfill that silently
+  authenticates as your laptop profile can resolve a different keyset. Exporting
+  the app's own `CS_*` vars for the run is the simplest way to guarantee a
+  match. Keysets and grants: `stash-zerokms`; credential resolution order:
+  `stash-auth`.
 - **Verify coverage before moving on.** Count rows where the plaintext column is
   non-null and the encrypted column is null. It must be zero.
 
@@ -238,7 +242,7 @@ notes below), reproduce that property: the drop and the coverage check must be i
 |---|---|
 | Twin column + dual-write + backfill + read switch in one deploy | Rows written between migration-apply and code-live have no ciphertext. Reads return null/garbage for them. |
 | Backfill before dual-writes are live in production | Every row written during and after the backfill window stays plaintext-only. Silent; found later by a user. |
-| Backfill under laptop credentials | Ciphertext lands under a different keyset. Decrypt fails in production only. No error at write time. |
+| Backfill under credentials that resolve a different keyset (e.g. the laptop profile) | Ciphertext lands under a keyset the app has no grant on. Decrypt fails in production only. No error at write time. |
 | Drop plaintext in the same deploy as the read switch | No rollback. If the read path is wrong, the source data is already gone. |
 | Drop plaintext in the same deploy that removes dual-writes | Migrations usually apply before the new code is live: the still-deployed dual-writing code writes to a dropped column, and every insert/update fails until the rollout completes. |
 | Drop without an apply-time coverage re-check | Rows written by a missed dual-write path are destroyed by the drop. |
@@ -285,7 +289,9 @@ Rules that bite in practice:
   mask it, because the `~/.cipherstash` device profile authenticates silently.
 - **Keyset consistency governs decryptability.** Everything that writes ciphertext
   for an environment — the app, the backfill, one-off scripts — must resolve to the
-  same keyset. Mismatches are silent at write time.
+  same keyset; the credentials themselves may differ, provided each client is
+  granted that keyset. Mismatches are silent at write time. The model lives in
+  `stash-zerokms`.
 - **Never print or log the values.** They are secrets, and so is any one-time
   database connection URL used alongside them.
 
@@ -442,7 +448,7 @@ id is printed in the check output itself.
 | Native module fails to load (edge runtime, bundled serverless) | The default entry needs native `require`. Bundle `@cipherstash/stack/wasm-inline` instead — see `stash-edge`. |
 | Writes fail with `column "…" does not exist` after the drop | The drop was applied while dual-writing code was still deployed. Deploy the dual-write removal (Deploy 3) before applying the drop. |
 | Rows read back as `null` / garbage after cutover | Uncovered rows: a write path that never dual-wrote, or a backfill that ran before dual-writes were live. Re-run the backfill with `--force`. |
-| Decrypt fails only in production | Keyset mismatch — ciphertext written under different credentials than the app resolves. |
+| Decrypt fails only in production | Keyset mismatch — ciphertext written under a different keyset than the app resolves (see `stash-zerokms`). |
 | Raw EQL payloads reaching end users | Read path not wired through decryption. |
 | Deploy fails with a destructive-operation policy error | Additive-only deploy policy. Apply the authored migration out-of-band, ideally before merging. |
 | Migration applied but the deploy still fails identically | It was applied to the wrong (preview) database. |
@@ -453,5 +459,7 @@ id is printed in the check output itself.
 - **`stash-encryption`** — the encryption API and the canonical rollout/cutover model
 - **`stash-cli`** — `stash status` / `plan` / `impl` / `encrypt *` / `env` command surface
 - **`stash-indexing`** — the `eql_v3.*` extractor indexes to build between backfill and cutover
+- **`stash-zerokms`** — the keyset/grant model that governs who can decrypt what
+- **`stash-auth`** — auth strategies, the `CS_*` variables, and credential resolution order
 - **`stash-edge`** — edge/serverless runtimes and the `@cipherstash/stack/wasm-inline` entry
 - **`stash-prisma-next`** / **`stash-drizzle`** / **`stash-supabase`** — integration specifics

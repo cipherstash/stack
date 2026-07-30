@@ -21,9 +21,10 @@ The new skill makes the deploy shape the primary subject:
 - A failure table: for each way of collapsing the ladder, the data that is lost.
 - Rollback per stage, making explicit that only the final drop is irreversible.
 - `CS_*` credentials as a **build-time** input on platforms that construct the
-  encryption client at module load, and the keyset rule for backfills — ciphertext
-  written under credentials the deployed app does not resolve to fails only at
-  read time.
+  encryption client at module load, and the keyset rule for backfills — the
+  backfill must encrypt under the same keyset the deployed app resolves
+  (credentials may differ, keyset may not); ciphertext under any other keyset
+  fails only at read time.
 - A Prisma Postgres / Prisma Compute section: EQL installing through the Prisma
   Next migration graph, one merge deploying one stage, the additive-only deploy
   policy that makes the plaintext drop fail the build (and the apply-before-merge
