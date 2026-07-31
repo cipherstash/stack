@@ -65,9 +65,16 @@ pub trait Decipher<'c>: Sized {
         V: DecipherVisitor<'c> + Send + 'c,
         A: IntoAad<'a>;
     /// Decrypt a sequence of ciphertexts authenticated against `aad`, driving the
-    /// visitor's [`visit_seq`](DecipherVisitor::visit_seq). `aad` is applied to every
-    /// element, mirroring how [`SeqCipher::encrypt_next`](crate::SeqCipher::encrypt_next)
+    /// visitor's [`visit_seq`](DecipherVisitor::visit_seq). Each element is
+    /// verified against [`Aad::for_sequence_element`](crate::Aad::for_sequence_element)
+    /// of `aad`, mirroring how [`SeqCipher::encrypt_next`](crate::SeqCipher::encrypt_next)
     /// binds it per element.
+    ///
+    /// **Caller obligation — order is not authenticated.** Element AAD
+    /// carries no positional index (records are retrieved in a different
+    /// order than they were inserted), so a permuted sequence still
+    /// decrypts. Callers that need positional integrity must bind position
+    /// into their own AAD or verify order themselves.
     fn decrypt_seq<'a, V, A>(self, visitor: V, aad: A) -> Self::Ok<V::Value>
     where
         V: DecipherVisitor<'c> + Send + 'c,
@@ -75,6 +82,18 @@ pub trait Decipher<'c>: Sized {
     /// Decrypt a map of ciphertexts authenticated against `aad`, driving the visitor's
     /// [`visit_map`](DecipherVisitor::visit_map). `aad` is applied to every value,
     /// mirroring [`MapCipher::encrypt_value`](crate::MapCipher::encrypt_value).
+    ///
+    /// **Caller obligation — membership is not authenticated.** Each entry's
+    /// key is inseparably bound to its value (via
+    /// [`Aad::for_map_entry`](crate::Aad::for_map_entry)), and duplicate
+    /// keys are rejected, but the *set* of keys present is not committed:
+    /// a column projection (`SELECT foo, bar`) legitimately returns a
+    /// subset, so deleting *some* entries from a stored ciphertext still
+    /// returns `Ok`. Verify the key set you projected for. The failure
+    /// mode is asymmetric — deleting *all* entries **is** caught (an
+    /// entry-less `Map` is rejected; emptiness is only provable by the
+    /// authenticated empty-map marker) — so do not infer from the
+    /// empty-map rejection that partial deletion is covered.
     fn decrypt_map<'a, V, A>(self, visitor: V, aad: A) -> Self::Ok<V::Value>
     where
         V: DecipherVisitor<'c> + Send + 'c,
