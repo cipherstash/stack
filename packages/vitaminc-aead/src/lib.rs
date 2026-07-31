@@ -16,7 +16,7 @@ pub use aad::{Aad, IntoAad};
 #[doc(inline)]
 pub use cipher::{Cipher, MapCipher, SeqCipher, Unspecified};
 #[doc(inline)]
-pub use ciphertext::{CipherTextBuilder, LocalCipherText};
+pub use ciphertext::{CipherTextBuilder, LocalCipherText, WIRE_VERSION};
 #[doc(inline)]
 pub use container::CipherText;
 #[doc(inline)]

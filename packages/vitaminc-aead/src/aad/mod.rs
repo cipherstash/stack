@@ -100,6 +100,27 @@ impl<'a> Aad<'a> {
         pae::encode(&[MARKER_DOMAIN, self.as_bytes(), kind])
     }
 
+    /// Derives the effective AAD every leaf is sealed against, binding the
+    /// wire-format `version` byte that prefixes the stored leaf
+    /// ([`WIRE_VERSION`](crate::WIRE_VERSION)).
+    ///
+    /// This is the outermost derivation: ciphers apply it at the AEAD
+    /// seal/open boundary, *after* any structural derivation
+    /// ([`for_map_entry`](Aad::for_map_entry),
+    /// [`for_sequence_element`](Aad::for_sequence_element), the markers) has
+    /// produced the caller-visible AAD. Binding the version under the tag is
+    /// what makes it more than a parse hint: a stored leaf relabeled with a
+    /// different version byte fails verification instead of selecting a
+    /// different (perhaps weaker) set of parsing and derivation rules — the
+    /// downgrade is foreclosed by construction.
+    ///
+    /// The domain label deliberately carries no `/v1` suffix: the version is
+    /// a *parameter* here, not part of the label.
+    pub fn for_leaf(&self, version: u8) -> Aad<'static> {
+        const LEAF_DOMAIN: &[u8] = b"vitaminc/aead/leaf";
+        pae::encode(&[LEAF_DOMAIN, &[version], self.as_bytes()])
+    }
+
     /// Derives the AAD a sequence element must be sealed against.
     ///
     /// Without this derivation, sequence elements share the caller's bare
@@ -399,6 +420,28 @@ mod tests {
                 assert_ne!(m.as_bytes(), other.as_bytes());
             }
         }
+    }
+
+    #[test]
+    fn for_leaf_pins_encoding() {
+        // The exact bytes are a wire-format commitment: PAE(domain, [ver], aad).
+        // Changing them breaks decryption of every existing leaf.
+        let derived = Aad::from_slice(b"ctx").for_leaf(1);
+        let expected = Aad::pae(&[b"vitaminc/aead/leaf", &[1u8], b"ctx"]);
+        assert_eq!(derived.as_bytes(), expected.as_bytes());
+    }
+
+    #[test]
+    fn for_leaf_is_version_sensitive_and_disjoint() {
+        let aad = Aad::from_slice(b"ctx");
+        // A relabeled version byte must change the effective AAD — that is
+        // the whole downgrade defence.
+        assert_ne!(aad.for_leaf(1).as_bytes(), aad.for_leaf(2).as_bytes());
+        // Disjoint from the bare AAD and from a caller tuple binding the
+        // same shape at the top level.
+        assert_ne!(aad.for_leaf(1).as_bytes(), aad.as_bytes());
+        let tuple = (b"vitaminc/aead/leaf".as_slice(), "ctx").into_aad();
+        assert_ne!(aad.for_leaf(1).as_bytes(), tuple.as_bytes());
     }
 
     #[test]

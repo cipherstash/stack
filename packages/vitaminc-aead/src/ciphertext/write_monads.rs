@@ -55,13 +55,14 @@ impl<const N: usize, E> EncryptedWithTag<N, E> {
 
     pub fn build(self) -> Result<LocalCipherText, E> {
         // SAFETY: at this point `self.bytes` is the *ciphertext* (sealed by
-        // the AEAD primitive — nonce || ciphertext || tag, with the tag
-        // bound to AAD). It is not secret-bearing, so unwrapping the
+        // the AEAD primitive — version || nonce || ciphertext || tag, with
+        // the tag bound to AAD). It is not secret-bearing, so unwrapping the
         // `Protected` guard does not leak plaintext. The resulting
         // `LocalCipherText` is intentionally durable: it is what we return
         // to the caller.
         let inner = self.bytes?.risky_unwrap();
-        let mut bytes = BytesMut::with_capacity(N + inner.len());
+        let mut bytes = BytesMut::with_capacity(1 + N + inner.len());
+        bytes.extend([super::WIRE_VERSION]);
         bytes.extend(self.nonce.into_inner());
         bytes.extend(inner);
         Ok(LocalCipherText(bytes.freeze()))
