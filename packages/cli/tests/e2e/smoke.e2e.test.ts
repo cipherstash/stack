@@ -122,8 +122,15 @@ describe('stash CLI — non-interactive smoke', () => {
    * clack hard-wraps to the pty width (100 cols), so any assertion phrase long
    * enough to straddle a wrap fails on formatting rather than content. Collapse
    * the wrapping before matching — line breaks here are presentation.
+   *
+   * The `│` gutter is part of that wrapping: clack inserts one at every wrap
+   * point, so collapsing whitespace alone still leaves it embedded mid-phrase.
+   * Today's phrases happen not to straddle a wrap, but the next edit to any of
+   * these messages shifts the wrap points — which is the exact failure this
+   * helper exists to stop.
    */
-  const unwrapped = (output: string): string => output.replace(/\s+/g, ' ')
+  const unwrapped = (output: string): string =>
+    output.replace(/[\s│]+/g, ' ').trim()
 
   // The retired `--migration` flag fails before any I/O or prompt, so these
   // cases can observe the install entry path deterministically without a DB.

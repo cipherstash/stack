@@ -158,6 +158,55 @@ describe('initCommand — honest summary', () => {
     expect(body).not.toContain('✓ EQL extension installed')
   })
 
+  it('points a Supabase migration run at supabase, not drizzle-kit', async () => {
+    // Regression: the apply-command branch read `state.integration`, which
+    // `detectIntegration` sets from the DATABASE_URL host — and a LOCAL
+    // Supabase stack is `127.0.0.1:54322`, so integration lands on
+    // 'postgresql' while the provider is 'supabase'. `installEqlStep` routes on
+    // either signal, so it generated a Supabase migration and the summary then
+    // told the user to run `drizzle-kit migrate`, contradicting the provider's
+    // own next-steps block a few lines later. That is exactly the local-dev
+    // user this feature targets.
+    eqlRun.mockImplementationOnce(async (s: InitState) => ({
+      ...s,
+      integration: 'postgresql',
+      eqlInstalled: false,
+      eqlMigrationPending: true,
+    }))
+
+    await expect(initCommand({ supabase: true }, {})).resolves.toBeUndefined()
+
+    const summary = vi
+      .mocked(p.note)
+      .mock.calls.find(([, title]) => title === 'Setup complete')
+    const body = summary?.[0] as string
+    expect(body).toContain('EQL migration generated')
+    expect(body).toContain('supabase db reset')
+    expect(body).not.toContain('drizzle-kit migrate')
+  })
+
+  it('still points a Drizzle-on-Supabase run at drizzle-kit', async () => {
+    // The mirror image: `--supabase` is only the grants modifier there, and
+    // drizzle-kit owns the migration history, so the apply command is its own.
+    eqlRun.mockImplementationOnce(async (s: InitState) => ({
+      ...s,
+      integration: 'drizzle',
+      eqlInstalled: false,
+      eqlMigrationPending: true,
+    }))
+
+    await expect(
+      initCommand({ drizzle: true, supabase: true }, {}),
+    ).resolves.toBeUndefined()
+
+    const summary = vi
+      .mocked(p.note)
+      .mock.calls.find(([, title]) => title === 'Setup complete')
+    const body = summary?.[0] as string
+    expect(body).toContain('drizzle-kit migrate')
+    expect(body).not.toContain('supabase db reset')
+  })
+
   it('summary says "kept (existing file)" when an existing client is kept', async () => {
     // The three-way encryption-client checkmark fork was untested — the keep
     // path (`build-schema` sets clientFilePath + schemaGenerated: false) now

@@ -140,13 +140,23 @@ export async function initCommand(
       // migration. That's the intended, honest end state for these flows
       // (applying is the migration tool's job), so it's NOT an incomplete
       // setup — but we must not claim "installed" either.
-      const applyCmd =
-        state.integration === 'supabase'
-          ? 'supabase db reset` (local) or `supabase migration up'
-          : 'drizzle-kit migrate'
-      checkmarks.push(
-        `○ EQL migration generated — apply it with \`${applyCmd}\``,
-      )
+      //
+      // Match on BOTH signals, exactly as `installEqlStep` routes. `integration`
+      // alone is wrong: `detectIntegration` reads it from the DATABASE_URL host,
+      // and a local Supabase stack is `127.0.0.1:54322` — so integration lands on
+      // 'postgresql' while the provider is 'supabase', and this printed
+      // `drizzle-kit migrate` at the very user the Supabase route targets.
+      // Drizzle wins when both fire: it owns the migration history there, and
+      // `--supabase` is only the grants modifier.
+      const isDrizzle =
+        state.integration === 'drizzle' || provider.name === 'drizzle'
+      const isSupabase =
+        state.integration === 'supabase' || provider.name === 'supabase'
+      const applyStep =
+        isSupabase && !isDrizzle
+          ? 'apply it with `supabase db reset` (local) or `supabase db push` (remote)'
+          : 'apply it with `drizzle-kit migrate`'
+      checkmarks.push(`○ EQL migration generated — ${applyStep}`)
     }
 
     // EQL is required for encryption. Some integrations install it out-of-band

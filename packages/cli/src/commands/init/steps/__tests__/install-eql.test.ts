@@ -12,12 +12,21 @@ vi.mock('../../../eql/migration.js', () => ({
 // Whether a Supabase project has local `supabase/` scaffolding decides between
 // the migration and direct-install routes. Real detection walks the cwd (this
 // package), which has neither — so toggle it per test.
-vi.mock('../../../db/detect.js', () => ({
+vi.mock('../../../db/detect.js', async (importOriginal) => ({
+  // Spread the original: replacing the whole module would leave
+  // detectSupabase / detectDrizzle / detectPrismaNext undefined for anything
+  // else that imports it. Nothing needs them today; this keeps it that way.
+  ...(await importOriginal<typeof import('../../../db/detect.js')>()),
   detectSupabaseProject: vi.fn(() => ({
     hasConfigToml: false,
     hasMigrationsDir: false,
     migrationsDir: '/project/supabase/migrations',
   })),
+}))
+// Whether an install migration is already on disk decides between generating
+// one and reporting the existing one as pending.
+vi.mock('../../../eql/supabase-migration.js', () => ({
+  findExistingEqlMigration: vi.fn(() => null),
 }))
 // `eql install` normally scaffolds these; the Drizzle branch does it itself.
 vi.mock('../../../db/config-scaffold.js', () => ({
@@ -48,6 +57,7 @@ import { offerStashConfig } from '../../../db/config-scaffold.js'
 import { detectSupabaseProject } from '../../../db/detect.js'
 import { installCommand } from '../../../db/install.js'
 import { eqlMigrationCommand } from '../../../eql/migration.js'
+import { findExistingEqlMigration } from '../../../eql/supabase-migration.js'
 import { installEqlStep } from '../install-eql.js'
 
 /** Pretend the cwd has (or lacks) `supabase init` scaffolding. */
@@ -81,6 +91,9 @@ describe('installEqlStep', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(isInteractive).mockReturnValue(true)
+    // clearAllMocks clears calls but keeps implementations, so a
+    // mockReturnValue set in one test would leak into every later one.
+    vi.mocked(findExistingEqlMigration).mockReturnValue(null)
   })
 
   it("requests scaffoldConfig: 'ensure' so init still creates a stash.config.ts (#581 regression)", async () => {
@@ -348,6 +361,42 @@ describe('installEqlStep', () => {
         .flat()
         .join('\n')
       expect(logged).not.toContain('hunter2')
+    })
+
+    it('re-running init over an existing install migration is a no-op, not a failure', async () => {
+      // Regression: `eql migration --supabase` refuses to write a second
+      // install migration, so a second `stash init --supabase` used to take the
+      // catch branch, return no `eqlMigrationPending`, and make initCommand
+      // report "✗ EQL extension NOT installed" and exit 1 — pointing the user
+      // at the direct `stash eql install` this route exists to avoid. Nothing
+      // is wrong with the project: the migration is right there.
+      withSupabaseScaffolding(true)
+      vi.mocked(findExistingEqlMigration).mockReturnValue(
+        '/project/supabase/migrations/20260804021925_cipherstash_eql.sql',
+      )
+
+      const result = await installEqlStep.run(supabaseState, supabaseProvider)
+
+      expect(eqlMigrationCommand).not.toHaveBeenCalled()
+      expect(installCommand).not.toHaveBeenCalled()
+      expect(result.eqlMigrationPending).toBe(true)
+      expect(result.eqlInstalled).toBe(false)
+    })
+
+    it('names the existing migration so the user knows what to apply', async () => {
+      withSupabaseScaffolding(true)
+      vi.mocked(findExistingEqlMigration).mockReturnValue(
+        '/project/supabase/migrations/20260804021925_cipherstash_eql.sql',
+      )
+
+      await installEqlStep.run(supabaseState, supabaseProvider)
+
+      const logged = vi
+        .mocked(p.log.info)
+        .mock.calls.flat()
+        .concat(vi.mocked(p.log.success).mock.calls.flat())
+        .join('\n')
+      expect(logged).toContain('20260804021925_cipherstash_eql.sql')
     })
 
     it('keeps a Supabase-hosted Drizzle project on the Drizzle route', async () => {

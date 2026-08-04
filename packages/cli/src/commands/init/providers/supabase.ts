@@ -10,13 +10,16 @@ export function createSupabaseProvider(): InitProvider {
       // Migration-first, always. A direct `eql install` does not survive
       // `supabase db reset` — the reset drops the database and replays
       // supabase/migrations/, so an install that isn't in there is gone.
+      // `supabase db push` for remote, not a bare `supabase migration up` —
+      // that applies to the LOCAL database (the remote forms are `db push` and
+      // `migration up --linked`).
+      const apply =
+        'supabase db reset (local) or supabase db push (remote/linked)'
       const steps = state.eqlMigrationPending
-        ? [
-            'Apply the generated EQL migration: supabase db reset (local) or supabase migration up (remote)',
-          ]
+        ? [`Apply the generated EQL migration: ${apply}`]
         : [
             `Install EQL: ${cli} eql migration --supabase (writes it into supabase/migrations/)`,
-            'Apply it: supabase db reset (local) or supabase migration up (remote)',
+            `Apply it: ${apply}`,
           ]
 
       const manualEdit = state.clientFilePath

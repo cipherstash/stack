@@ -8,7 +8,10 @@ import { CliExit } from '@/cli/exit.js'
 import { detectSupabaseProject } from '@/commands/db/detect.js'
 import { printNextSteps, SAFE_MIGRATION_NAME } from '@/commands/db/install.js'
 import { rewriteEncryptedAlterColumns } from '@/commands/db/rewrite-migrations.js'
-import { writeSupabaseEqlMigration } from '@/commands/eql/supabase-migration.js'
+import {
+  findExistingEqlMigration,
+  writeSupabaseEqlMigration,
+} from '@/commands/eql/supabase-migration.js'
 import {
   reportSweepFailure,
   reportSweepResult,
@@ -200,6 +203,13 @@ async function generateSupabaseEqlMigration(
   // and how to resolve a relative --out against the cwd.
   const { migrationsDir } = detectSupabaseProject(process.cwd(), options.out)
 
+  // The filename is fixed (`<timestamp>_cipherstash_eql.sql`) because
+  // `findExistingEqlMigration` matches on that suffix to refuse duplicates.
+  // Silently dropping --name would leave the user believing they renamed it.
+  if (options.name !== undefined) {
+    p.log.warn(messages.eql.migrationNameDrizzleOnly)
+  }
+
   // Load the SQL up front so a corrupt/missing bundle fails BEFORE we create
   // any directory, with the same spinner-free error the Drizzle path uses.
   let sql: string
@@ -216,10 +226,19 @@ async function generateSupabaseEqlMigration(
   if (!embedded) p.intro('CipherStash EQL migration')
 
   if (options.dryRun) {
-    p.note(
-      `Would write the EQL v3 install SQL (with Supabase grants) into a new <timestamp>_cipherstash_eql.sql in ${migrationsDir}`,
-      'Dry Run',
-    )
+    // Predict the real run's outcome, including its refusals — a dry run that
+    // always claims "would write" is worse than no dry run in the one directory
+    // where the answer is actually interesting.
+    const existing = findExistingEqlMigration(migrationsDir)
+    let preview: string
+    if (!existing) {
+      preview = `Would write the EQL v3 install SQL (with Supabase grants) into a new <timestamp>_cipherstash_eql.sql in ${migrationsDir}`
+    } else if (options.force) {
+      preview = `Would replace the EQL v3 install SQL in ${existing}, keeping its version.`
+    } else {
+      preview = `Would refuse: an EQL install migration already exists at ${existing}. Re-run with --force to replace it, or delete that file first.`
+    }
+    p.note(preview, 'Dry Run')
     if (!embedded) p.outro('Dry run complete.')
     return
   }
@@ -233,7 +252,9 @@ async function generateSupabaseEqlMigration(
       sql,
       force: options.force ?? false,
     })
-    s.stop(`Migration written: ${written.path}`)
+    // Status only — the path is reported once, by the success line below, the
+    // same shape the Drizzle path uses.
+    s.stop('EQL v3 install SQL written.')
   } catch (error) {
     s.stop('Failed to write the migration.')
     p.log.error(error instanceof Error ? error.message : String(error))
@@ -245,9 +266,10 @@ async function generateSupabaseEqlMigration(
     // Rewriting a migration that some database has already applied leaves the
     // file describing a shape that database never got from it — the same
     // hazard `eql repair` guards against. We can't check that from here (no
-    // connection), so say it plainly.
+    // connection), so say it plainly. Lead with the reset: this is the local
+    // case, and it is the path the Supabase docs steer people to.
     p.log.warn(
-      'Replaced the existing EQL install migration in place, keeping its version. If it had already been applied somewhere, that database has the old bundle — re-run `stash eql install` against it, or reset it.',
+      'Replaced the existing EQL install migration in place, keeping its version. Any database that already applied it still has the old bundle — re-apply with `supabase db reset` (local) or `supabase db push` (remote).',
     )
   }
 
@@ -255,7 +277,7 @@ async function generateSupabaseEqlMigration(
     `Migration ${written.overwritten ? 'replaced' : 'created'}: ${written.path}`,
   )
   p.note(
-    `Apply it:\n\n  supabase db reset        # local — replays every migration\n  supabase migration up    # remote/linked project`,
+    `Apply it:\n\n  supabase db reset               # local — replays every migration\n  supabase db push                # remote/linked project`,
     'Next Steps',
   )
   if (!embedded) {

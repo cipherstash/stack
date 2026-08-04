@@ -87,6 +87,13 @@ export const messages = {
     /** `--name` carried characters outside `[A-Za-z0-9_-]`. */
     migrationBadName:
       'Migration name must contain only letters, numbers, dashes, and underscores.',
+    /**
+     * `--name` with `--supabase`. The Supabase filename is fixed because
+     * duplicate detection matches on the `_cipherstash_eql.sql` suffix, so the
+     * flag cannot be honoured — warn rather than rename nothing silently.
+     */
+    migrationNameDrizzleOnly:
+      '`--name` applies to `--drizzle` only and is ignored here — the Supabase migration is always named `<timestamp>_cipherstash_eql.sql`, which is how a duplicate install is detected.',
     /** `stash eql repair` with no `--drizzle` target. */
     repairNeedsTarget: 'Specify a target: `stash eql repair --drizzle`.',
     /** `--out` (or its `drizzle` default) points at a directory that isn't there. */

@@ -315,7 +315,7 @@ Add `--supabase` on a Supabase-hosted Drizzle project to append the `anon` / `au
 ```bash
 npx stash eql migration --supabase
 supabase db reset          # local
-supabase migration up      # remote/linked project
+supabase db push           # remote/linked project
 ```
 
 This writes `supabase/migrations/<timestamp>_cipherstash_eql.sql` containing the EQL v3 bundle, the Supabase role grants, and the `cipherstash.cs_migrations` tracking schema — so one reset provisions everything `stash encrypt` needs.

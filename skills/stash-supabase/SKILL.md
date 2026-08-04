@@ -75,8 +75,11 @@ Install it as a **migration**, not directly:
 ```bash
 stash eql migration --supabase   # writes supabase/migrations/<timestamp>_cipherstash_eql.sql
 supabase db reset                # local — replays every migration
-supabase migration up            # remote/linked project
+supabase db push                 # remote/linked project
 ```
+
+> A bare `supabase migration up` applies to the **local** database. The remote
+> forms are `supabase db push` and `supabase migration up --linked`.
 
 > ⚠️ **Do not use `stash eql install --supabase` on a project with a local
 > `supabase/` directory.** It applies the SQL straight to the running database,
@@ -686,7 +689,7 @@ ALTER TABLE users
   ADD COLUMN email_encrypted public.eql_v3_text_search;  -- nullable
 ```
 
-Apply with `supabase db reset` locally or `supabase migration up` against the
+Apply with `supabase db reset` locally or `supabase db push` against the
 remote project. The reset is safe here because the EQL install is itself a
 migration (step 1) — it is replayed before this one, so the `eql_v3_text_search`
 domain exists by the time this `ALTER TABLE` runs.

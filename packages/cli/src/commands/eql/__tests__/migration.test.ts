@@ -237,6 +237,35 @@ describe('eqlMigrationCommand — Supabase', () => {
     )
   })
 
+  it('dry run predicts the refusal when an install migration already exists', async () => {
+    // Regression: the preview always claimed it "would write" a new file, even
+    // in a directory where the real run exits 1. A dry run that predicts the
+    // wrong outcome is worse than no dry run.
+    writeFileSync(join(tmp, '20260101000000_cipherstash_eql.sql'), '')
+
+    await eqlMigrationCommand({ supabase: true, out: tmp, dryRun: true })
+
+    const [note] = vi.mocked(clack.note).mock.calls.at(-1) ?? []
+    expect(note).toContain('20260101000000_cipherstash_eql.sql')
+    expect(note).toMatch(/--force/)
+    expect(note).not.toMatch(/Would write/i)
+  })
+
+  it('dry run predicts the in-place overwrite under --force', async () => {
+    writeFileSync(join(tmp, '20260101000000_cipherstash_eql.sql'), '')
+
+    await eqlMigrationCommand({
+      supabase: true,
+      out: tmp,
+      dryRun: true,
+      force: true,
+    })
+
+    const [note] = vi.mocked(clack.note).mock.calls.at(-1) ?? []
+    expect(note).toContain('20260101000000_cipherstash_eql.sql')
+    expect(note).toMatch(/replace/i)
+  })
+
   it('exits 1 rather than adding a second install migration', async () => {
     await eqlMigrationCommand({ supabase: true, out: tmp })
     await expect(
@@ -256,8 +285,30 @@ describe('eqlMigrationCommand — Supabase', () => {
     await eqlMigrationCommand({ supabase: true, out: tmp, force: true })
 
     expect(readdirSync(tmp)).toEqual([original])
+    // The warning must name the re-apply route, not just note the replacement:
+    // a database that already ran the old file is the whole hazard.
+    const [warning] = vi.mocked(clack.log.warn).mock.calls.at(-1) ?? []
+    expect(warning).toMatch(/already applied/)
+    expect(warning).toContain('supabase db reset')
+  })
+
+  it('warns that --name is ignored rather than silently dropping it', async () => {
+    // The filename is load-bearing: duplicate detection matches the
+    // `_cipherstash_eql.sql` suffix, so --name cannot be honoured here. Saying
+    // nothing would leave the user believing they had renamed it.
+    await eqlMigrationCommand({ supabase: true, out: tmp, name: 'my-install' })
+
     expect(clack.log.warn).toHaveBeenCalledWith(
-      expect.stringContaining('already been applied'),
+      messages.eql.migrationNameDrizzleOnly,
+    )
+    expect(readdirSync(tmp)[0]).toMatch(/^\d{14}_cipherstash_eql\.sql$/)
+  })
+
+  it('stays quiet about --name when it was not passed', async () => {
+    await eqlMigrationCommand({ supabase: true, out: tmp })
+
+    expect(clack.log.warn).not.toHaveBeenCalledWith(
+      messages.eql.migrationNameDrizzleOnly,
     )
   })
 

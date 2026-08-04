@@ -34,13 +34,13 @@ describe('createSupabaseProvider getNextSteps', () => {
     expect(steps[2]).toContain('yarn dlx stash wizard')
     // Sanity: the supabase CLI commands stay untouched.
     expect(steps.join('\n')).toContain('supabase db reset')
-    expect(steps.join('\n')).toContain('supabase migration up')
+    expect(steps.join('\n')).toContain('supabase db push')
   })
 
   it('leaves the supabase CLI commands alone (those are not npm packages)', () => {
     const steps = provider.getNextSteps({}, 'bun')
     expect(steps.join('\n')).toContain('supabase db reset')
-    expect(steps.join('\n')).toContain('supabase migration up')
+    expect(steps.join('\n')).toContain('supabase db push')
   })
 
   it('never pairs a direct `eql install` with `supabase db reset` (#613)', () => {
@@ -63,8 +63,18 @@ describe('createSupabaseProvider getNextSteps', () => {
     )
 
     expect(steps[0]).toBe(
-      'Apply the generated EQL migration: supabase db reset (local) or supabase migration up (remote)',
+      'Apply the generated EQL migration: supabase db reset (local) or supabase db push (remote/linked)',
     )
     expect(steps.join('\n')).not.toContain('eql migration --supabase')
+  })
+
+  it('never sends a remote apply to a bare `supabase migration up`', async () => {
+    // That form targets the LOCAL database — the remote ones are `db push` and
+    // `migration up --linked`. Telling a user it is the remote command means
+    // their production database silently never gets EQL.
+    for (const state of [{}, { eqlMigrationPending: true } as InitState]) {
+      const joined = provider.getNextSteps(state, 'npm').join('\n')
+      expect(joined).not.toMatch(/supabase migration up(?! --linked)/)
+    }
   })
 })

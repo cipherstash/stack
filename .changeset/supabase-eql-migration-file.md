@@ -10,6 +10,8 @@ Supabase projects previously had only `stash eql install --supabase`, which appl
 
 `--supabase` keeps its existing meaning alongside `--drizzle` (append the role grants to the Drizzle migration); only a bare `--supabase` selects the new emitter.
 
-`stash init --supabase` now generates that migration instead of installing directly, when the project has local `supabase/` scaffolding — a hosted project without it still installs directly. Its next steps no longer tell you to run `eql install --supabase` and then `supabase db reset`, which was the exact sequence that destroyed the install.
+`stash init --supabase` now generates that migration instead of installing directly, when the project has local `supabase/` scaffolding — a hosted project without it still installs directly. Re-running init over a project that already has an install migration reports it and moves on, rather than treating the duplicate refusal as a failed setup. Its next steps no longer tell you to run `eql install --supabase` and then `supabase db reset`, which was the exact sequence that destroyed the install.
+
+Also corrects the remote apply command across the Supabase guidance: a bare `supabase migration up` targets the local database, so the instructions now say `supabase db push`.
 
 Also corrects the `eql install --migration` removal message, which pointed every Supabase user at `--drizzle`.

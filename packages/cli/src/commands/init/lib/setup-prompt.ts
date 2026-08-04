@@ -62,7 +62,9 @@ function migrationCommands(
     return {
       tool: 'Supabase CLI',
       generate: 'supabase migration new <name>',
-      apply: 'supabase migration up (remote) or supabase db reset (local)',
+      // A bare `supabase migration up` targets the LOCAL database; the remote
+      // forms are `db push` and `migration up --linked`.
+      apply: 'supabase db push (remote) or supabase db reset (local)',
     }
   }
   return undefined

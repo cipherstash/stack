@@ -9,7 +9,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildEqlV3MigrationSql } from '../migration.js'
 import {
   findExistingEqlMigration,
@@ -19,9 +19,29 @@ import {
 
 // Real filesystem throughout: the whole point of this module is what lands on
 // disk, and a mocked `node:fs` would assert our own mock's behaviour.
+//
+// The one exception is `writeFile`, a spy that delegates to the real impl so
+// the atomicity test can make just that call fail. `vi.spyOn` cannot do this —
+// an ESM namespace is not configurable — so the module is mocked and the
+// delegating default restored in `beforeEach` after `clearAllMocks`.
+const fsWrite = vi.hoisted(() => ({
+  real: (() => {
+    throw new Error(
+      'fsWrite.real not initialised: node:fs/promises mock factory did not run',
+    )
+  }) as typeof import('node:fs/promises').writeFile,
+  spy: vi.fn(),
+}))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  fsWrite.real = actual.writeFile
+  return { ...actual, default: actual, writeFile: fsWrite.spy }
+})
+
 let tmp: string
 
 beforeEach(() => {
+  fsWrite.spy.mockImplementation(fsWrite.real)
   tmp = mkdtempSync(join(tmpdir(), 'stash-supabase-migration-'))
 })
 
@@ -50,6 +70,16 @@ describe('findExistingEqlMigration', () => {
     const path = join(tmp, 'migrations', `20991231235959_cipherstash_eql.sql`)
     writeFileSync(path, '')
     expect(findExistingEqlMigration(join(tmp, 'migrations'))).toBe(path)
+  })
+
+  it('ignores a directory that happens to carry the suffix', () => {
+    // readdirSync returns directories too. Treating one as the target made it
+    // targetPath, and the write then failed with a raw EISDIR through the
+    // generic error path.
+    mkdirSync(join(tmp, 'migrations', '20260101000000_cipherstash_eql.sql'), {
+      recursive: true,
+    })
+    expect(findExistingEqlMigration(join(tmp, 'migrations'))).toBeNull()
   })
 
   it('returns the lexically last when several exist', () => {
@@ -173,5 +203,35 @@ describe('writeSupabaseEqlMigration', () => {
     expect(second.overwritten).toBe(true)
     expect(readdirSync(tmp)).toHaveLength(1)
     expect(readFileSync(second.path, 'utf-8')).toContain('SELECT 2;')
+  })
+
+  it('leaves no partial .sql behind when the write fails', async () => {
+    // The migrations directory is executed wholesale by `supabase db reset`, so
+    // a truncated file from an interrupted write is not inert — it runs. The
+    // write goes to a temp sibling and is renamed, so a failure leaves the
+    // directory exactly as it was.
+    fsWrite.spy.mockRejectedValueOnce(
+      new Error('ENOSPC: no space left on device'),
+    )
+
+    await expect(
+      writeSupabaseEqlMigration({
+        migrationsDir: tmp,
+        sql: 'SELECT 1;',
+        now: FIXED_NOW,
+      }),
+    ).rejects.toThrow(/ENOSPC/)
+
+    expect(readdirSync(tmp)).toHaveLength(0)
+  })
+
+  it('does not leave a temp file behind on a successful write', async () => {
+    await writeSupabaseEqlMigration({
+      migrationsDir: tmp,
+      sql: 'SELECT 1;',
+      now: FIXED_NOW,
+    })
+
+    expect(readdirSync(tmp)).toEqual([FIXED_FILENAME])
   })
 })

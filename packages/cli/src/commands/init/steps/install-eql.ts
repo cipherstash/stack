@@ -10,6 +10,7 @@ import {
   type EqlMigrationOptions,
   eqlMigrationCommand,
 } from '../../eql/migration.js'
+import { findExistingEqlMigration } from '../../eql/supabase-migration.js'
 import type { InitProvider, InitState, InitStep } from '../types.js'
 import { CancelledError } from '../types.js'
 import { isPackageInstalled } from '../utils.js'
@@ -23,6 +24,24 @@ import { isPackageInstalled } from '../utils.js'
 function hasLocalSupabaseScaffolding(): boolean {
   const project = detectSupabaseProject(process.cwd())
   return project.hasConfigToml || project.hasMigrationsDir
+}
+
+/**
+ * Re-running `stash init --supabase` over a project that already has an install
+ * migration is a no-op, not a failure.
+ *
+ * `eql migration --supabase` refuses to write a second one, so without this the
+ * generate call throws, the catch below reports a write failure, and `initCommand`
+ * sees no `eqlMigrationPending` — printing "✗ EQL extension NOT installed",
+ * telling the user to run the direct `stash eql install` this route exists to
+ * avoid, and exiting 1. Nothing is wrong: the migration is right there.
+ *
+ * Passing `force: true` from init would also unblock it, but that silently
+ * rewrites a file some environment may already have applied.
+ */
+function existingSupabaseMigration(): string | null {
+  const { migrationsDir } = detectSupabaseProject(process.cwd())
+  return findExistingEqlMigration(migrationsDir)
 }
 
 /**
@@ -188,6 +207,11 @@ export const installEqlStep: InitStep = {
     // database with no `supabase/` directory has nowhere to write and no
     // `supabase` binary to apply it with, so it must keep installing directly.
     if (supabase && hasLocalSupabaseScaffolding()) {
+      const existing = existingSupabaseMigration()
+      if (existing) {
+        p.log.success(`EQL install migration already present: ${existing}`)
+        return { ...state, eqlInstalled: false, eqlMigrationPending: true }
+      }
       return await generateEqlMigration(state, {
         options: { supabase: true },
         retryCommand: 'stash eql migration --supabase',

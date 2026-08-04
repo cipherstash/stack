@@ -1,6 +1,6 @@
-import { existsSync, readdirSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { existsSync, readdirSync, statSync } from 'node:fs'
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { basename, join } from 'node:path'
 
 /**
  * Suffix every generated Supabase EQL install migration carries.
@@ -68,11 +68,25 @@ export function findExistingEqlMigration(migrationsDir: string): string | null {
     return null
   }
   const matches = entries
-    .filter((entry) => entry.endsWith(SUPABASE_EQL_MIGRATION_SUFFIX))
+    .filter(
+      (entry) =>
+        entry.endsWith(SUPABASE_EQL_MIGRATION_SUFFIX) &&
+        // readdirSync returns directories too, and one named `…_cipherstash_eql.sql`
+        // would otherwise become the write target and fail with a raw EISDIR.
+        isFile(join(migrationsDir, entry)),
+    )
     .sort()
   return matches.length > 0
     ? join(migrationsDir, matches[matches.length - 1])
     : null
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile()
+  } catch {
+    return false
+  }
 }
 
 export interface WriteSupabaseEqlMigrationOptions {
@@ -132,7 +146,21 @@ export async function writeSupabaseEqlMigration(
   const body = `${migrationHeader()}\n${sql.trimEnd()}\n`
 
   await mkdir(migrationsDir, { recursive: true })
-  await writeFile(targetPath, body, 'utf-8')
+
+  // Write to a sibling and rename, rather than straight to targetPath. The
+  // migrations directory is executed wholesale by `supabase db reset`, so a
+  // truncated file from an interrupted or failed write is not inert — it runs.
+  // The rename is atomic within the filesystem, and the temp name is dot-
+  // prefixed so a crash between the two leaves nothing the Supabase CLI picks
+  // up (it only reads `*.sql`).
+  const tempPath = join(migrationsDir, `.${basename(targetPath)}.tmp`)
+  try {
+    await writeFile(tempPath, body, 'utf-8')
+    await rename(tempPath, targetPath)
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => {})
+    throw error
+  }
 
   return { path: targetPath, overwritten: existing !== null }
 }
