@@ -1,758 +1,1686 @@
-# Absorbing `protectjs-ffi` into the monorepo — execution plan
+# protect-ffi monorepo absorption — implementation plan
 
-Move `cipherstash/protectjs-ffi` into this repo as `packages/protect-ffi` (plus its
-six `platforms/*` packages), so releases are built, versioned, and published from a
-single repo instead of requiring coordinated PRs across two. **Decision taken: full
-`workspace:*` synchronisation** — source and publishing both move.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-Revised 2026-08-04 after review (**[rev]**, **[rev2]**, **[rev4]**). Revised again
-the same day after the decision to **import first and make the laziness change
-in-monorepo, with no interim upstream release** — those changes are marked **[rev3]**.
+**Goal:** Build, version and publish `@cipherstash/protect-ffi` and its six platform binary packages from this repository instead of `cipherstash/protectjs-ffi`, so a change spanning the Rust core and the JS SDK is one PR and one release.
 
-**[rev4]** closes the last execution gaps found in the final verification: the native
-matrix now gates only on an FFI release (not every workspace release), phase 4 names
-the Changesets version-PR lifecycle explicitly, the 0.31 adoption gets its own Stack
-changeset, Rust formatting leaves the default test path, and the declarations-only
-WASM inventory matches the actual published 0.31.0 tarball.
+**Architecture:** Source and publishing both move. The seven FFI packages get their own Changesets `fixed` group, separate from Stack's. The release pipeline is **one version authority (Changesets) plus N idempotent publishers ordered by dependency** — the model proven in `cipherstash/encrypt-query-language`. Native binaries are built by a target-explicit matrix, packed, and published *before* `changeset publish`, which then skips them as already-published.
+
+**Tech Stack:** pnpm 10.33.2 workspaces + catalogs, Turborepo, Changesets 2.31, Neon (`@neon-rs/cli`, `@neon-rs/load`), Rust/Cargo (nested workspace), wasm-pack, Vitest 3.2.7, Biome 2.5.3, GitHub Actions with npm OIDC trusted publishing.
+
+## Global Constraints
+
+- **Node >= 22** (root `engines`); **pnpm 10.33.2**; CI installs with `--frozen-lockfile` — including `release.yml`, which currently does not (Task 5).
+- **Publish jobs run on GitHub-hosted runners.** npm rejects provenance from self-hosted with E422. Build matrices may stay on Blacksmith.
+- **Publish workflows must never restore the GitHub Actions cache.** Enforced by `scripts/lint-no-workflow-caching.mjs`. This is why upstream's `.github/actions/setup` composite action is **not** ported wholesale — it sets `cache: npm` on `setup-node` and `cache: true` on `mise-action`.
+- **npm >= 11.5.1 is required for OIDC trusted publishing**, installed *after* any `mise-action` step.
+- **Trusted publishing binds to `(repository, workflow filename)`.** The job performing a publish must live in the registered file. Reusable workflows are fine for building artifacts, not for publishing.
+- **`repository.url` must exactly match the publishing GitHub repository** — verified against <https://docs.npmjs.com/trusted-publishers/>: *"your package's `repository.url` field in `package.json` must exactly match your GitHub repository."*
+- **No `NPM_TOKEN` in the release workflow.** `changesets/action` writes a token `.npmrc` that shadows OIDC; every publish then fails with E404 (npm/cli#8976).
+- **`pnpm pack` takes no positional directory argument.** Use `pnpm --dir <dir> pack` or `pnpm --filter <name> pack`. See Task 4.
+- **Do not write `pnpm run <script> -- --flag`.** npm strips the `--`; pnpm forwards it verbatim.
+- **Biome gates on errors, not warnings.**
+
+---
 
 ## Status
 
-- **VERIFIED:** Neon works in a pnpm monorepo; the laziness change does not regress a
-  consumer or bundling path; the eager-load diagnosis and its one-line fix. Tested
-  empirically — see "Verified findings". The separate 0.31 adoption is intentionally
-  user-visible and handled by its own changeset below.
-- **[rev3] VERIFIED:** the import is *also* a `0.30.0` → `0.31.0` upgrade, and `0.31.0`
-  is a breaking release. Three source changes in `packages/stack` are required to
-  consume it. See "The import is also an upgrade" — this was missed by the first two
-  drafts, which treated the drift as an anecdote.
-- **DECIDED:** full sync. protect-ffi and its six platform packages get their **own**
-  fixed group, separate from Stack's **[rev]**.
-- **[rev3] DECIDED: no interim upstream release.** The laziness fix lands in this repo
-  after the import, not in `protectjs-ffi` before it. This removes the last cross-repo
-  release but introduces the ignore-window invariant below, which is what splits the
-  `stash doctor` work away from the laziness fix.
-- **[rev2] PROVISIONAL:** "ordinary CI needs no Rust". `dist/wasm/**` and `lib/**` are
-  generated and untracked upstream, so a workspace consumer does not get them the way an
-  npm consumer does. The proposed resolution is credible and the measurements favour it,
-  but it is unproven until the phase-1 experiment runs. Do not quote the contributor-Rust
-  conclusion as settled before then — see "Generated output is not source-controlled".
-- **OPEN:** release-pipeline mechanics (publish gating, artifact restore) are specified
-  below but unproven; phase 3 is where they get exercised. The workflow topology is
-  decided, but its conditions and skipped-job behaviour still require an end-to-end
-  workflow run before cutover.
+**Phases 1 and 2 are complete** on branch `import-protect-ffi`, as 11 commits over a pure subtree import (tip `b99cbd92`).
+
+| Commit | Delivers |
+|---|---|
+| `0b605912` | Pure `git subtree` import — 613 commits, 200 tracked files |
+| `1e922ec0` | Deposit cleanup (lockfile, duplicate COC, nested Biome config) |
+| `267ba11d` | Workspace linking: `platforms/*` glob, three `workspace:*` pins, six `optionalDependencies`, Dependabot + `minimumReleaseAgeExclude` removals |
+| `a0236fa4` | FFI fixed group + `scripts/lint-no-ffi-changeset.mjs` publishing guard |
+| `76696dab` | Manifest/toolchain reconciliation — cargo off the default test and build paths |
+| `29af450d` | `packages/stack` consumes protect-ffi 0.31.0 |
+| `9b7983ce` | Three WASM declaration files tracked; three-layer `.gitignore` chain |
+| `d7128724` | `CS_CLIENT_KEY` hex guard in `require-cs-secrets` |
+| `6c1f641a` | Non-ignored Stack changeset for the 0.31 adoption (`minor`) |
+| `c0bfe6b5` | `AGENTS.md`, `SECURITY.md`, `skills/stash-auth` |
+| `b99cbd92` | Lazy native load + `assertNativeBindingAvailable()` |
+
+**Working-tree state is not part of this plan's guarantees.** An earlier revision claimed "working tree clean"; that was true when written and false shortly after. A prior rewrite of this document was lost by being left uncommitted across a branch switch — **commit plan edits in the session that makes them.**
+
+**Remaining: phases 3, 4, 5.** Phase 3 is specified as executable tasks below. Phase 4 contains the only irreversible steps. Phase 5 is blocked until phase 4 publishes.
+
+---
+
+## Corrections to earlier revisions
+
+### The `ignore` guard is impossible
+
+Changesets rejects it:
+
+```
+error The package "@cipherstash/stack" depends on the skipped package
+      "@cipherstash/protect-ffi", but "@cipherstash/stack" is not being skipped.
+      Please add "@cipherstash/stack" to the `ignore` option.
+```
+
+An ignored package's dependents must also be ignored, cascading through the Stack fixed group to a total release freeze — the alternative this plan rejected. Replaced by `scripts/lint-no-ffi-changeset.mjs`. All seven packages are already on npm at `0.31.0`, and `changeset publish` only publishes versions absent from the registry, so a release is *already* a no-op for them. Full analysis: `.work/2026-08-04-protect-ffi-changesets-ignore-analysis.md`.
+
+### `optionalDependencies` were never tracked
+
+`neon update` injected the six platform pins at prepack. Dropping it as originally planned would have published a wrapper with no platform dependencies. Fixed by committing them as `workspace:*`.
+
+### The 0.31 delta is four breaking changes, not three
+
+The fourth — filed as "lower-risk but worth knowing" — broke 61 tests: 0.31 forwards unrecognised top-level keys to Rust, and stack attached a correlation `id` to every bulk payload. A fifth surfaced on removing the `as never`: `encryptConfig` no longer needs `normalizeCastAs`.
+
+### Release lines are coupled by pinning, not by fixed groups
+
+Earlier text claimed the separate fixed group avoids "making every Rust patch republish the CLI, the core library, the wizard, and all three adapters". **That is false as pinned.** Measured with isolated `changeset status` runs:
+
+| protect-ffi pinned as | FFI changeset | Stack group (6 packages) |
+|---|---|---|
+| `workspace:*` (current) | patch | **patch — all six** |
+| `workspace:*` (current) | minor | **patch — all six** |
+| `workspace:^` | patch | **untouched** |
+| `workspace:^` | minor (0.31→0.32, outside `^0.31.0`) | **patch — all six** |
+
+`updateInternalDependencies` is not the lever — it accepts only `patch` or `minor`, and an exact pin is always out of range after any bump. What the separate fixed group actually buys is avoiding a **version discontinuity**: joining Stack's group would take protect-ffi from `0.31.0` to `1.0.1`, since a fixed group adopts its highest member version.
+
+The coupling is correct and should stay: an exact pin is how a wrapper/binary mismatch is made impossible, and caret is restrictive below 1.0 anyway. The forced bump is only a patch, so Stack's version line is never disturbed. **This matters for the EQL import** — see "Out of scope".
+
+### pnpm argument forwarding
+
+npm strips the `--` in `npm run x -- --release`; pnpm forwards it, landing it after the `> cargo.log` redirect where cargo rejects it as a positional. The release matrix passes `--target "${CARGO_BUILD_TARGET}.2.28"` this way, so the port depends on the separator-free spelling.
+
+### `neon dist` needs `-o`
+
+Bare `neon dist < cargo.log` writes `./index.node` — the `debug:` fallback in `load.cts`. Populating a platform package needs `neon dist -o platforms/<p>/index.node`.
+
+---
 
 ## Verified findings
 
-### Neon is not a blocker
+### Option (3) holds — ordinary CI needs no Rust
 
-The stated risk — "the Neon bindings may not support monorepos" — does not hold.
-Tested in a scratch monorepo (root `package.json` + `pnpm-workspace.yaml` globbing
-`packages/*` and `packages/protect-ffi/platforms/*`, an rsync of the FFI repo, and a
-sibling consumer package).
+With every `.js` and `.wasm` deleted from `dist/wasm` and only `protect_ffi.d.ts`, `protect_ffi_bg.wasm.d.ts` and `errors.d.ts` present (11.3KB): stack's `build` (tsup + dts), `test:types:dist`, `test:types` (59) and unit suite (1064) all pass. Confirmed with a `cargo` trap on `PATH` — zero invocations from root `pnpm test` or `turbo build`; `test:cargo` correctly exits 97.
 
-| Checked | Result |
-|---|---|
-| `neon dist` / `neon update` / `neon show ci github` / `neon list-platforms` | All cwd-relative; work unchanged from a nested package |
-| Nested Cargo workspace under `packages/protect-ffi/crates/` | Builds (342 crates, all from crates.io — no private registry) |
-| `neon dist < cargo.log` | Writes `platforms/<p>/index.node` correctly |
-| Sibling workspace package `require`s the binding | Resolves and dlopens the 41MB debug binding through pnpm symlinks |
-| `workspace:*` on the six platform packages | Links fine; os/cpu constraints bypassed with a warning, not an error |
-| changesets `fixed` group across all seven | Bumps in lockstep |
-| `workspace:*` → concrete version rewrite at publish | Already proven in production by `@cipherstash/stack-drizzle` |
+Re-inclusion must start at the **root** `.gitignore` (git cannot re-include a file whose parent directory is excluded), and `inline-wasm.mjs` removes the `dist/wasm/.gitignore` wasm-pack writes, since the deepest file wins.
 
-Two gotchas that will bite if missed:
+### `CS_CLIENT_KEY` is hex
 
-1. **`neon update` must come out of `prepack`.** Changesets writes real versions into
-   the platform `optionalDependencies`; `neon update` regenerates and overwrites them.
-   The single most likely cause of a silently-wrong publish.
-2. **`neon bump` is npm-lifecycle-coupled** and has an arg-parsing bug
-   (`options[0]` where it means `options._unknown[0]`, yielding
-   `npm version --force undefined`). Drop the `version` script rather than fix it.
+Credentialed suites pass against the live service under 0.31, which decodes an explicit `clientKey` hex-only. `SecretKey::from_hex` is still lenient — 0.31 added its own `deserialize_hex_key` at the option boundary (`client_options.rs:84`). The repository secret remains unverifiable, hence the guard in `require-cs-secrets`.
 
-### [rev3] The import is also an upgrade
+### Binary-absent measurement
 
-This repo pins `@cipherstash/protect-ffi` at **`0.30.0`** in all three consumers.
-Upstream `main` is **`0.31.0`**, a release whose changelog carries a `Breaking`
-heading. Importing the source *is* adopting it. The first two drafts noted the version
-gap only as "a decent illustration of the problem being solved" and never costed the
-consumption.
-
-Three concrete breakages, all verified against the tree:
-
-**1. The `ProtectError` class is gone.** The export moved from a class to a guard:
-
-```
-v0.30.0  src/index.cts:23  export { ProtectError, type ProtectErrorCode } from './errors.js'
-main     src/index.cts:16  export { isProtectErrorCode, type ProtectErrorCode } from './errors.js'
-```
-
-The *type* survives, so every type-only import in `packages/stack` is unaffected
-(`src/types.ts`, `src/errors/index.ts`, `src/dynamodb/types.ts`, and the rest). Two
-**value** sites break and must move to a `code`-property check:
-
-- `packages/stack/src/encryption/helpers/error-code.ts:2,11` — `error instanceof FfiProtectError`
-- `packages/stack/src/dynamodb/helpers.ts:2,48` — same pattern, with a plain-object fallback already beside it
-
-**2. The wasm `newClient` credential move.** `packages/stack/src/wasm-inline.ts:1530`
-passes `clientId` / `clientKey` at the top level:
-
-```ts
-const client = await wasmNewClient({
-  strategy,
-  encryptConfig: normalizeCastAs(encryptConfig),
-  clientId: clientConfig.clientId,
-  clientKey: clientConfig.clientKey,
-  eqlVersion: 3,
-} as never)
-```
-
-Under `0.31.0` they belong in `clientOpts`. The failure is **loud, not silent** —
-`0.31.0` rejects unrecognised fields (``unknown field `clientId` ``) rather than
-dropping them — but the silent-wrong-keyset mode the changelog warns about is exactly
-what a direct FFI consumer with a top-level `keyset` would hit if only *some* fields
-moved. Stack's WASM config currently forwards only `clientId` and `clientKey`, not a
-keyset: move those **two** into `clientOpts`. Use the typed `authStrategy` spelling for
-the resolved strategy rather than retaining the deprecated `strategy` alias.
-
-The `as never` is why this type-checks today: `0.30.0`'s wasm declarations were
-`(client, opts: any) => Promise<any>`. `0.31.0` types them properly, so **delete the
-cast** and let the compiler enforce the shape. That also clears a
-`no-type-erasing-assertions` plugin warning.
-
-**3. `clientKey` must be hex.** `SecretKey::from_hex`'s base64 fallback is gone — and
-base64 is the encoding `~/.cipherstash/secretkey.json` uses on disk. The Neon entry
-forwards `CS_CLIENT_KEY` straight through as `clientKey`, so **any base64 value in a
-developer `.env` or a CI secret starts failing at client construction** with `invalid
-clientKey: expected a hex-encoded key`. This is an environment question, not a code
-one: it cannot be settled by reading the tree, and it will present as every
-credential-gated test failing at once. Check the CI secrets before the import lands,
-not after.
-
-Also in the release, lower-risk but worth knowing: a malformed `clientId` now fails
-even without a `clientKey`; the Neon entry forwards unrecognised top-level keys to Rust
-instead of dropping them; and a key whose value is `undefined` is rejected on wasm
-where Neon still drops it.
-
-### The eager-load diagnosis
-
-Eager native loading traces to **one line** in `src/index.cts`:
-
-```ts
-import * as native from './load.cjs'   // → const native = __importStar(require("./load.cjs"))
-```
-
-`__importStar` enumerates the `@neon-rs/load` proxy, forcing the platform binary to
-resolve at module-evaluation time. Changing it to `import native = require('./load.cjs')`
-(emitting a plain `require`) makes the package importable **with no binary present at
-all** — verified for both the CJS and ESM entries.
-
-Measured build costs:
-
-- Linux release build: **1m32s** cargo / **2m23s** job, *cold* (no cargo cache).
-- Full release **16m27s**, Windows-dominated: **14m24s**, of which ~5.8 min is vcpkg
-  static OpenSSL.
-- Prebuilt platform fetch: 5.4MB in 1.7s.
-
-**[rev] Correction:** the first draft said "only 3 of 52 stack test files need the
-binary." The denominator is wrong — `packages/stack/__tests__` holds **65** `*.test.ts`
-files (79 counting `integration/`). The numerator came from running the suite with the
-binary absent and **must be re-measured** against the current tree before it is relied
-on. The shape of the conclusion (a small, credential-gated minority) is unchanged, but
-treat the number as unverified until re-run.
-
-Constraint: `release.yml` may never use GitHub Actions caching — enforced by
-`scripts/lint-no-workflow-caching.mjs`, whose default TARGETS are `release.yml` and
-`tests-supply-chain.yml`. Artifact upload/download is *not* caching and stays legal.
-
-### No consumer or bundling path regresses
-
-- **Bundlers cannot observe the change.** esbuild A/B: without externalization, six
-  identical resolution errors in both builds; with `--external:@cipherstash/protect-ffi`,
-  output bundles are byte-identical (`diff` → IDENTICAL). `__importStar` is a
-  runtime-only wrapper; the module graph is unchanged.
-- **`@cipherstash/wizard`** depends only on `@cipherstash/auth` — not in scope.
-- **`@cipherstash/nextjs`** has one runtime dep (`jose`) and one peer (`next`); its
-  `serverExternalPackages` mentions are documentation. Not in scope.
-- **`wasm-inline`** never imports the native root — only
-  `@cipherstash/protect-ffi/wasm-inline` and `@cipherstash/auth/wasm-inline`. Its
-  isolation guard (`wasm-inline-bundle-isolation.test.ts`) is a static scan of built
-  import specifiers, so load timing is invisible to it.
-- **CLI launcher** (`packages/cli/src/bin/stash.ts`) is already lazy-tolerant by
-  explicit design — its outer handler comments *"in case a native addon loads lazily
-  (at call time) rather than during module evaluation."*
-- **`@cipherstash/migrate`** has no runtime dep on stack (peer + devDep). Its one
-  import is `isEncryptedPayload` from the root entry — a pure-JS type guard that today
-  drags in an ~8.7MB dlopen. Strict improvement.
-- **`@cipherstash/stack-prisma`**: 14 of 15 stack imports go to `./eql/v3` (9),
-  `./adapter-kit` (3), `./types` (2) — all three have **zero** cipherstash deps in
-  their built chunk closure and never reach the loader. Only `src/stack/from-stack-v3.ts`
-  pulls `Encryption` from `./v3`. Strict improvement.
-
-Built chunk closure, for reference:
-
-```
-dist/index.js          12 chunks   @cipherstash/auth, @cipherstash/protect-ffi, …
-dist/encryption/v3.js  14 chunks   @cipherstash/protect-ffi, …
-dist/eql/v3/index.js    5 chunks   (none)
-dist/adapter-kit.js     6 chunks   (none)
-dist/types-public.js    3 chunks   (none)
-```
+**11 of 65** test files need the binary, all credential-gated live suites (the "3 of 52" figure was stale). 54 files pass without it: 905 green, 159 skipped.
 
 ### The one real regression: `stash doctor`
 
-`packages/cli/src/commands/doctor/index.ts` probes with `await import(probe.pkg)` and
-its comment states the mechanism it depends on: *"Importing each forces its
-@neon-rs/load proxy to resolve the platform binary."* Measured with the binary removed:
+With the binary removed, `require('@cipherstash/protect-ffi')` threw `MODULE_NOT_FOUND`; after the laziness change it returns 14 exports (15 via ESM) and the same error is raised on first use. `assertNativeBindingAvailable()` exists because there is no consumer-side fix: the loader is unreachable (`ERR_PACKAGE_PATH_NOT_EXPORTED`), touching an export never reaches the proxy, and calling a real wrapper means picking one whose validation does not reject first.
 
-| | eager (today) | lazy (after fix) |
-|---|---|---|
-| `require('@cipherstash/protect-ffi')` | throws `MODULE_NOT_FOUND` | succeeds, 12 exports |
-| touching `m.newClient` | — | **succeeds, no throw** |
-| calling `m.newClient({})` | — | throws `MODULE_NOT_FOUND`, same code + message |
+### Nested `mise.toml` must be trusted
 
-Three things follow:
+`mise` refuses the config at its new path, and cargo goes through mise shims. `jdx/mise-action` handles it; a bare `cargo` call on a mise-equipped runner does not.
 
-1. **Touching an export is not enough.** `index.cjs` exports its own wrapper
-   functions, not the proxy's properties — the proxy is only reached from inside a
-   wrapper body. A probe must *call through*. And `encryptBulk({})` throws a plain
-   validation error before reaching native, so the forcing call must be chosen
-   deliberately.
-2. **There is no consumer-side fix.** `require('@cipherstash/protect-ffi/lib/load.cjs')`
-   fails with `ERR_PACKAGE_PATH_NOT_EXPORTED` — the proxy is unreachable from outside
-   the package. protect-ffi must export an explicit forcing function, named
-   **`assertNativeBindingAvailable()`** **[rev]**: a stable diagnostic interface that
-   does not expose the loader implementation.
-3. **The failure is subtler than "doctor breaks."** `dist/index.js` also statically
-   imports `@cipherstash/auth`, which is eager on two counts (`require` at module top,
-   plus `module.exports = { ...native }` — a spread forces any loader). So
-   `import('@cipherstash/stack')` still throws when *auth's* binary is missing. The
-   stack probe silently degenerates into a duplicate of the auth probe on line 19,
-   losing its protect-ffi coverage while still rendering two green rows.
+### Turbo outputs
 
-The error's `code` and `message` are unchanged, so `isNativeBinaryMissing` still
-classifies it (`native.test.ts` keeps passing) and `reportNativeBinaryMissing` still
-produces the right guidance. Only the *moment* moves.
+protect-ffi's `build` emits `lib/**`, not `dist/**`. Without the `@cipherstash/protect-ffi#build` override, a Turbo cache **hit** restores nothing while reporting success.
 
-Test coverage for this is currently nil: `doctor.e2e.test.ts` exercises only the
-healthy path, and `native.test.ts` is a pure unit test against synthetic errors.
-Nothing in the repo removes a real binary. (`e2e/tests/package-managers.e2e.test.ts`
-tests package-manager *detection* — runner prefixes in help text — not
-missing-optional-dependency behaviour.)
+---
 
-### [rev2] How doctor reaches the forcing function
+## Release architecture
 
-Adding `assertNativeBindingAvailable()` to protect-ffi does not by itself wire it to
-doctor. **The CLI has no protect-ffi dependency** — `packages/cli/package.json` declares
-only `@cipherstash/stack` (peer `>=1.0.0-rc.0`, dev `workspace:*`). Reaching protect-ffi
-through a hoisted transitive dependency is invalid under pnpm's strict layout and must
-not be relied on.
+Derived from `cipherstash/encrypt-query-language`, verified against its workflows, scripts and published version streams (`@cipherstash/eql` and `eql-bindings` share an identical stream through `3.0.4`).
 
-The clean seam is a new **`@cipherstash/stack/diagnostics`** subpath that:
+**One version authority. N idempotent publishers, ordered by dependency, each keyed on the committed version.**
 
-- imports protect-ffi **without** importing `@cipherstash/auth` (so the two probes stay
-  genuinely independent, which is exactly what today's implementation fails to do),
-- calls `assertNativeBindingAvailable()` and lets the `MODULE_NOT_FOUND` propagate
-  unchanged, so `isNativeBinaryMissing` keeps classifying it,
-- ships both `import` and `require` conditions, per the repo's ESM/CJS rule,
-- is pure — no client construction, no credentials, no network.
-
-Doctor then probes `@cipherstash/stack/diagnostics` for the encryption engine and keeps
-its existing separate `@cipherstash/auth` probe.
-
-The alternative — declaring protect-ffi as a direct CLI dependency — leaks an
-implementation dependency into the CLI and duplicates stack's ownership of it. Rejected.
-
-**[rev3] This seam cannot ship until after the flip.** See the ignore-window invariant.
-
-### [rev3] The ignore-window invariant
-
-Dropping the interim upstream release creates one hazard, and it governs the phase
-order.
-
-From phase 1 until the flip, the seven packages sit in `.changeset/config.json`'s
-`ignore` list, so their workspace version stays at `0.31.0`. But `workspace:*` is
-rewritten to the **local** version at pack time — and `0.31.0` is already on npm,
-published from upstream. So a `@cipherstash/stack` release during the window pins
-`@cipherstash/protect-ffi@0.31.0`, and consumers get **upstream's tarball**, which does
-not contain any workspace change made since the import.
-
-> **Invariant: while the ignore list is in place, `packages/stack` must not consume a
-> protect-ffi API that published `0.31.0` lacks.**
-
-Consequences, and this is the whole reason the phases are ordered as they are:
-
-- Changing protect-ffi *internals* is safe. The laziness fix alters when the binary
-  resolves; stack consumes no new API, so a stack release in the window is unaffected.
-- Adding `assertNativeBindingAvailable()` is safe **as an export**. Nothing breaks by
-  publishing a function nobody calls.
-- **`@cipherstash/stack/diagnostics` calling it is not safe.** That is stack consuming
-  an API absent from published `0.31.0`; a stack release in the window ships an entry
-  point that throws on import for every consumer.
-
-So the doctor work — the diagnostics subpath, the probe rework, the e2e fixture — moves
-*after* the flip, into its own phase. Everything else is unaffected.
-
-The alternative is freezing `@cipherstash/stack` releases from the laziness fix through
-to the flip. Rejected: this repo releases actively (`a3198ebc Version Packages (#750)`),
-a freeze of unknown duration is a real operational cost, and the split costs nothing.
-
-## [rev] Versioning: a separate fixed group
-
-The first draft framed this as "join Stack's fixed group, or take `workspace:*` only."
-That was a false choice. The correct seam is **two independent fixed groups**:
-
-- **Unchanged:** `stash`, `@cipherstash/stack`, `stack-drizzle`, `stack-supabase`,
-  `stack-prisma`, `wizard` — all currently at `1.0.0`.
-- **New:** `@cipherstash/protect-ffi` + its six `protect-ffi-*` platform packages.
-
-This keeps the wrapper/binary lockstep that actually matters (a platform binary must
-never be published at a version its wrapper doesn't expect) without making every Rust
-patch republish the CLI, the core library, the wizard, and all three adapters.
-
-It also avoids a version discontinuity. Joining Stack's group would have taken
-protect-ffi from `0.31.0` to **`1.0.1`** on the next patch release — fixed groups adopt
-the highest member version and bump together.
-
-`@cipherstash/migrate` and `@cipherstash/nextjs` are published but outside any fixed
-group; selective membership is already the norm here.
-
-**[rev] The external-dependents question is answered.** The first draft's claim that
-"nothing outside this repo pins `@cipherstash/protect-ffi`" is false. npm reports two
-dependents: `@cipherstash/stack` (ours) and `@cipherstash/protect@12.0.1` — our own
-legacy predecessor — which pins `0.23.0` and therefore cannot float to a 1.x release.
-The risk was low either way, but the separate fixed group removes the question.
-
-## [rev] Release pipeline design
-
-Today's release is a single `changesets/action` step whose `publish:` runs the root
-`release` script (`.github/workflows/release.yml:60`), and that script is
-`pnpm run build && changeset publish` (`package.json`) — it builds everything inline,
-immediately before publishing. Five things must be specified before this can absorb a
-native matrix.
-
-**1. Publish gating.** The matrix must not run on every push to `main`.
-
-**[rev2] The obvious gate is wrong.** "No unconsumed `.changeset/*.md`" is also true
-for ordinary pushes — a docs commit, a refactor with no changeset, or the very next
-commit after a release — so it would fire the matrix routinely. The changesets action
-documentation makes the same point: a commit with no changesets can land after
-publication, and custom publishing must independently detect what is already published.
-
-**[rev4] One boolean is not enough.** The gate job computes three outputs without
-calling the publishing form of `changesets/action`:
-
-- `hasChangesets`: there is at least one unconsumed changeset;
-- `shouldPublish`: at least one publishable workspace package has a local version not
-  present on npm;
-- `needsFfiArtifacts`: one of the **seven protect-ffi packages** has a local version
-  not present on npm.
-
-Derive the version outputs by enumerating non-private workspace manifests and querying
-`npm view <name> versions`; handle a registry 404 as "unpublished". Do not infer either
-output from `.changeset/` contents. `shouldPublish` controls whether the final publish
-path runs. `needsFfiArtifacts` alone controls the native matrix and WASM job — an
-ordinary Stack, CLI, Wizard, or adapter release must not pay the 16-minute FFI build.
-
-The workflow topology is explicit:
-
-1. A cheap gate job computes the three outputs.
-2. A Version Packages job runs when `hasChangesets == true` and invokes
-   `changesets/action` **without** `publish:` to create or update the release PR.
-3. Native and WASM jobs run only when `hasChangesets == false && needsFfiArtifacts`.
-4. A restore/verification job downloads the artifacts only on that branch.
-5. The final GitHub-hosted release job runs when
-   `hasChangesets == false && shouldPublish`; use `always()` plus explicit result checks
-   so skipped FFI jobs do not skip an ordinary JS release.
-6. That final job invokes the publishing form of `changesets/action`; it is the sole
-   publishing invocation and preserves npm publication, git tags, and GitHub releases.
-
-Add workflow tests for all four states: pending changeset; nothing unpublished; JS-only
-release; FFI release. The last is the only state that may start the matrix.
-
-**2. WASM is a first-class artifact, not an afterthought.** The main tarball's `files`
-include `dist/wasm/**` — `protect_ffi.js`, `protect_ffi_bg.wasm`, `protect_ffi_inline.js`,
-`errors.js`, and their `.d.ts`. Upstream's `build.yml` runs a **separate `wasm` job**
-(`wasm-pack build --target bundler` + `scripts/inline-wasm.mjs`) and transfers its
-output as an artifact before the `main` job packs. A native-only matrix would publish
-a main tarball whose `./wasm` and `./wasm-inline` entries resolve to nothing. Port the
-WASM job, its declaration typecheck (`tsconfig.wasm-errors.json`), and its artifact
-transfer.
-
-**3. Artifact restore before publish.** The six `platforms/<p>/index.node` files and
-`dist/wasm/` must be materialised into the workspace *before* `changeset publish` runs.
-Use `actions/download-artifact` into the correct paths in the publish job.
-
-**4. The publish command must not rebuild.** `pnpm run release` currently runs a full
-`turbo build`, which for protect-ffi means `cargo build --release` — on the publish
-runner, producing only the host binary and overwriting the restored artifact. The
-release script needs a variant that builds the JS packages and leaves native/WASM
-outputs alone. See "Task separation" below.
-
-**5. "Dry run" needs a definition.** `changeset publish` has no `--dry-run`. The real
-pre-flight is: pack all seven tarballs (`npm pack`), run `npm publish --dry-run` per
-tarball, then install the wrapper plus the **host-matching** platform tarball into a
-scratch project and smoke-test — `require` the wrapper, call
-`assertNativeBindingAvailable()`, and resolve both `./wasm` and `./wasm-inline` from the
-packed artifact. Verify the other five platform tarballs statically or on matching
-runners. That is the gate before the trusted-publisher cutover, not a workflow flag.
-
-## [rev2] Generated output is not source-controlled
-
-Upstream's `.gitignore` covers `dist`, `lib`, **and** `index.node`. Nothing under
-either directory is tracked — `git ls-files dist` and `git ls-files lib` both return
-zero. Of the 200 tracked files, `platforms/` contributes only 12: a `package.json` and
-a README each. Today this is invisible because consumers install a *packed tarball*
-that contains the generated output; after workspace linking they get the *source tree*,
-which does not.
-
-Two distinct consequences:
-
-- **`lib/` is the package `main`** (`./lib/index.cjs`; the packed 0.31.0 package
-  contains 226 files under `lib/`). A workspace consumer resolving
-  `@cipherstash/protect-ffi` gets nothing until `tsc` has run. This is cheap to fix —
-  `tsc` is already the first half of `prepack`.
-- **`dist/wasm/**` is generated by `wasm-pack` + `scripts/inline-wasm.mjs`**, which
-  needs Rust, the `wasm32-unknown-unknown` target, and wasm-pack. `packages/stack/src/wasm-inline.ts:101`
-  value-imports `@cipherstash/protect-ffi/wasm-inline`, so its absence breaks stack's
-  declaration build even though tsup keeps the runtime import external.
-
-This is the finding that most threatens "ordinary CI needs no Rust", and it must be
-settled empirically in phase 1 — after the npm package is replaced by the workspace
-package. Until then, treat the contributor-Rust conclusion as **provisional**.
-
-Measured inputs to that decision:
+1. **Changesets owns every version**, propagated by a `version:` hook. EQL's `release-plz.yml`: *"There is deliberately NO release-plz `release-pr` job — changesets opens the version PR, so a release-plz PR would fight it."*
+2. **Every publisher is idempotent.** `changeset publish` logs `is not being published because version X is already published on npm` (`@changesets/cli@2.31.0` `changesets-cli.cjs.js:1114`).
+3. **Publishers are ordered.** `changeset publish` packs from the workspace, so if it runs before the native artifacts exist it publishes six binary-less platform packages. Publishing the FFI tarballs first makes changesets skip them.
 
 ```
-dist/wasm total                  ~8M
-  protect_ffi_inline.js       4,610,881B   runtime only
-  protect_ffi_bg.wasm         3,457,620B   runtime only
-  protect_ffi_bg.js              38,289B   runtime only
-  protect_ffi.d.ts                6,171B   needed for typecheck
-  protect_ffi_bg.wasm.d.ts        3,298B   declaration companion
-  errors.d.ts                    2,495B   needed: protect_ffi.d.ts re-exports it
+Version PR (changesets)  ──merge──►  push to main
+                                          │
+                   gate: which committed versions are unpublished?   (npm view)
+                                          │
+                        ┌─────────────────┴─────────────────┐
+                        │ ffi unpublished?                  │
+                        ▼                                   │
+              build native matrix + wasm                    │
+              (explicit CARGO_BUILD_TARGET per platform)    │
+              pack 7 tarballs                               │
+                        │                                   │
+                        ▼                                   │
+              publish 6 platform tarballs, THEN the wrapper │
+              tag + GitHub release for all seven            │
+                        │                                   │
+                        └─────────────────┬─────────────────┘
+                                          ▼
+                              changeset publish
+                    (JS packages; FFI already on npm → skipped)
 ```
 
-And: stack's **unit** tests never load the real module. `packages/stack/vitest.config.ts`
-aliases `@cipherstash/protect-ffi/wasm-inline` to
-`__tests__/helpers/stub-protect-ffi-wasm-inline.ts`. Only
-`packages/stack/integration/wasm/` needs real WASM at runtime.
+### The gate is load-bearing, not a cost optimisation
 
-Of the three options, the data favours the third:
+An earlier revision claimed a wrong gate merely wastes 16 minutes. **False.** A false negative — reporting `ffi=false` when those versions are in fact unpublished — skips the artifact and publish jobs, and `changeset publish` then finds them unpublished and packs them **from the workspace, without `index.node`**. The gate must be correct, and its failure path is tested (Task 3, Step 1).
 
-1. **Build WASM in ordinary CI** — imposes the Rust + wasm-pack toolchain on every
-   contributor and every PR job. Defeats the main benefit. Reject unless (3) fails.
-2. **Commit the generated artifacts** — 7.4MB of regenerated binary output per release,
-   permanently in git history. Reject.
-3. **Commit declarations only; generate runtime output at release** — ~12KB across
-   `protect_ffi.d.ts`, `protect_ffi_bg.wasm.d.ts`, and `errors.d.ts`; human-reviewable,
-   rarely changing. Export maps resolve `types` and `default`
-   independently, so typecheck and the dts build succeed without the `.js`/`.wasm`
-   present. Unit tests already run stubbed. Integration WASM tests become a gated job
-   that builds wasm first, alongside the existing credential-gated suites.
+The related hazard is job-result semantics: if `ffi-artifacts` fails, `publish-ffi` is **skipped**, not failed. A condition of `needs.publish-ffi.result != 'failure'` therefore passes and lets changesets publish the broken packages. The condition must distinguish *skipped because unnecessary* from *skipped because a prerequisite failed* (Task 5).
 
-   The nested `.gitignore` currently ignores all of `dist`; add narrow negations for
-   these three files (and their `dist/wasm/` parent) rather than force-adding them or
-   exposing the runtime artifacts. Root Biome already excludes `**/dist`, so the
-   generated declarations stay outside formatting and linting.
+### Changesets will not tag what it did not publish
 
-**Verify (3) before committing to it**: with the workspace package linked, delete
-`dist/wasm/*.js` and `*.wasm` leaving all three `.d.ts`, then run
-`pnpm --filter @cipherstash/stack build` and `typecheck`. If the dts build resolves,
-(3) holds and ordinary CI stays Rust-free.
+`tagPublish(tool, successfulNpmPublishes, cwd)` receives `publishedPackages.filter(p => p.result === "published")` (`changesets-cli.cjs.js:~1187`). Packages skipped as already-published get **no git tag and no GitHub release**. Since the seven FFI packages are published before changesets runs, tagging them is this pipeline's responsibility (Task 5).
 
-## [rev] Task separation — "PR CI needs no Rust" requires work
+### Trusted-publishing constraint on file layout
 
-This does not follow automatically from the laziness fix. Once `packages/protect-ffi`
-matches `packages/*`, three root entry points reach its scripts:
+Keep `release.yml` as the single npm entry point, so existing Stack packages need no npm-side change at cutover and only the seven FFI packages get repointed.
 
-| Entry point | Reaches | Effect |
-|---|---|---|
-| `pnpm test` → `turbo test --filter './packages/*'` (`tests.yml`, "Run tests") | protect-ffi `test` → `test:rust` → `cargo test` | Cargo on every PR |
-| `pnpm turbo build --filter './packages/*'` (`tests.yml`, Bun job "Build packages") | protect-ffi `build` → `cargo build --release` | Cargo in the Bun job |
-| `pnpm run release` → `pnpm run build && changeset publish` | same `build` | Cargo during publish |
+---
 
-Path-filtering a standalone cargo workflow does nothing about any of these — Turbo
-reaches the package's own scripts regardless.
+## Phase 3 — build the pipeline
 
-**Fix it in protect-ffi's manifest, not the root scripts.** Its `test` today is
-`test:typecheck && test:unit && test:lint && test:format && test:rust`, and
-`test:format` itself expands to `test:format:ts && test:format:rust` where the latter
-runs `cargo fmt --check`. Redefine the default test as the JS-only chain
-`test:typecheck && test:unit && test:lint && test:format:ts`. Run `test:rust`,
-`test:format:rust`, and clippy in the path-filtered Rust job. The verification is
-literal: neither the default package test nor root `pnpm test` may execute a `cargo`
-process.
+Nine tasks.
 
-**[rev2] `build` cannot become a no-op.** The first draft said "no-op or tsc-only" —
-no-op is wrong, because `lib/` is generated and is the package's `main` (see "Generated
-output" above). The default `build` must run **at least `tsc`**, or every workspace
-consumer resolves an empty package. `build:native` carries the cargo invocation
-(currently `build` → `cargo-build -- --release`); whether the default also needs a wasm
-step depends on the option-(3) verification above.
+### Task 1: Stop the protect-ffi crate being publishable
 
-Turbo already supports per-package task overrides if the graph needs pinning —
-`stash#build`, `@cipherstash/wizard#build`, and `@cipherstash/bench#build` are existing
-precedent in `turbo.json`.
+The crate has never been on crates.io (verified via its API) but carries no `publish` key, so it is publishable by default. EQL's convention — inherited when `eql-bindings` arrives — is exactly one publishable crate with every other member explicitly opted out.
 
-**Naming caution:** do *not* reuse `build:js`. It already exists at root and means
-`turbo build --filter './packages/nextjs'` — despite `AGENTS.md` describing it as
-"only JS libraries". Either pick different names or fix that script deliberately, in
-its own commit.
+**Files:**
+- Modify: `packages/protect-ffi/crates/protect-ffi/Cargo.toml`
+- Create: `scripts/__tests__/cargo-publish-opt-out.test.mjs`
 
-**[rev] Rust path filters must be broader than `crates/**`** — that misses dependency,
-feature, and toolchain changes. Trigger cargo verification on at least: `crates/**`,
-`Cargo.toml`, `Cargo.lock`, `rust-toolchain*`, `.cargo/**`, `mise.toml`, `build.rs` /
-native build scripts, and the `neon` block in `packages/protect-ffi/package.json`.
+**Interfaces:** Guard only; nothing consumes it.
 
-## What changes
+- [ ] **Step 1: Write the failing test**
 
-**Workspace**
-- `pnpm-workspace.yaml`: add `packages/protect-ffi/platforms/*` (the `packages/*` glob
-  already covers `packages/protect-ffi`).
-- **[rev] All three exact pins** become `workspace:*` — leaving any on npm would build
-  and test that adapter against the published FFI rather than the absorbed source:
-  - `packages/stack/package.json:219`
-  - `packages/stack-drizzle/package.json:65`
-  - `packages/stack-supabase/package.json:72`
-- `minimumReleaseAgeExclude`: the `@cipherstash/protect-ffi` / `-*` entries become dead
-  once workspace-linked. Remove them, and the two lines of the explanatory comment above
-  them that describe protect-ffi.
-- **[rev]** `.github/dependabot.yml:56` ignores `@cipherstash/protect-ffi`, with a
-  comment naming the same three consumers and their lockstep pin. Remove the entry and
-  the comment. Audit the integration-workflow path logic for the same assumption —
-  that FFI changes arrive as exact dependency-pin edits.
+```js
+// scripts/__tests__/cargo-publish-opt-out.test.mjs
+import { readFileSync, readdirSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { describe, expect, it } from 'vitest'
 
-**[rev3] What the subtree deposits.** The import lands upstream's whole tracked tree
-(200 files) under `packages/protect-ffi/`, including root-level files that now collide
-conceptually with this repo's:
+const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
+const CRATES = join(REPO_ROOT, 'packages/protect-ffi/crates')
 
-| Deposited | Disposition |
+// Crates deliberately published to crates.io. Adding a name here is an audit
+// decision: it means a future release-plz adoption will publish it.
+const PUBLISHABLE = new Set([])
+
+describe('cargo publish opt-out', () => {
+  const members = readdirSync(CRATES, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name)
+
+  it('finds the workspace members it means to check', () => {
+    expect(members).toContain('protect-ffi')
+  })
+
+  for (const name of members) {
+    it(`${name} declares publish = false unless allowlisted`, () => {
+      if (PUBLISHABLE.has(name)) return
+      const manifest = readFileSync(join(CRATES, name, 'Cargo.toml'), 'utf8')
+      expect(manifest).toMatch(/^publish = false$/m)
+    })
+  }
+})
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run --config scripts/vitest.config.mjs cargo-publish-opt-out`
+Expected: FAIL — `protect-ffi declares publish = false unless allowlisted`
+
+- [ ] **Step 3: Add the opt-out**
+
+In `packages/protect-ffi/crates/protect-ffi/Cargo.toml`, in `[package]`, after the `version` line:
+
+```toml
+# Never published to crates.io. This crate is a cdylib compiled into
+# `index.node` and shipped inside the `@cipherstash/protect-ffi-<platform>` npm
+# packages; it has no Rust-consumer identity. Without this key cargo treats it
+# as publishable.
+publish = false
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `npx vitest run --config scripts/vitest.config.mjs cargo-publish-opt-out`
+Expected: PASS
+
+- [ ] **Step 5: Verify cargo still builds**
+
+Run: `pnpm --filter @cipherstash/protect-ffi build:native`
+Expected: exit 0, `index.node` written
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add packages/protect-ffi/crates/protect-ffi/Cargo.toml \
+        scripts/__tests__/cargo-publish-opt-out.test.mjs
+git commit -m "chore(protect-ffi): mark the crate publish = false"
+```
+
+---
+
+### Task 2: Repoint the FFI manifests at this repository
+
+npm requires `repository.url` to exactly match the repository performing a trusted publish. All seven manifests still name `cipherstash/protectjs-ffi`, so OIDC publication from `cipherstash/stack` would fail. This must land **before** the cutover.
+
+**Files:**
+- Modify: `packages/protect-ffi/package.json`, `packages/protect-ffi/platforms/*/package.json` (six), `packages/protect-ffi/crates/protect-ffi/Cargo.toml`
+- Create: `scripts/__tests__/ffi-repository-urls.test.mjs`
+
+**Interfaces:** Guard only.
+
+- [ ] **Step 1: Write the failing test**
+
+```js
+// scripts/__tests__/ffi-repository-urls.test.mjs
+import { readFileSync, readdirSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { describe, expect, it } from 'vitest'
+
+const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
+const FFI = join(REPO_ROOT, 'packages/protect-ffi')
+
+// npm trusted publishing requires repository.url to match the repository the
+// publish runs from EXACTLY. A stale URL does not warn — the publish fails.
+const EXPECTED = 'https://github.com/cipherstash/stack'
+
+const manifests = [
+  join(FFI, 'package.json'),
+  ...readdirSync(join(FFI, 'platforms')).map((p) =>
+    join(FFI, 'platforms', p, 'package.json'),
+  ),
+]
+
+describe('FFI manifests name this repository', () => {
+  it('checks the wrapper and all six platform packages', () => {
+    expect(manifests).toHaveLength(7)
+  })
+
+  for (const path of manifests) {
+    const pkg = JSON.parse(readFileSync(path, 'utf8'))
+    it(`${pkg.name} points repository.url at cipherstash/stack`, () => {
+      expect(pkg.repository.url).toBe(`git+${EXPECTED}.git`)
+    })
+  }
+
+  it('the wrapper also updates bugs and homepage', () => {
+    // Not required by npm, but a published package that links users to an
+    // archived repository is its own kind of wrong.
+    const pkg = JSON.parse(readFileSync(join(FFI, 'package.json'), 'utf8'))
+    expect(pkg.bugs.url).toBe(`${EXPECTED}/issues`)
+    expect(pkg.homepage).toBe(`${EXPECTED}#readme`)
+  })
+
+  it('no manifest still references the old repository', () => {
+    for (const path of manifests) {
+      expect(readFileSync(path, 'utf8')).not.toMatch(/protectjs-ffi/)
+    }
+  })
+})
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run --config scripts/vitest.config.mjs ffi-repository-urls`
+Expected: FAIL — seven assertions naming `protectjs-ffi`
+
+- [ ] **Step 3: Rewrite the URLs**
+
+```bash
+cd packages/protect-ffi
+perl -0pi -e 's{github\.com/cipherstash/protectjs-ffi}{github.com/cipherstash/stack}g' \
+  package.json platforms/*/package.json
+grep -rn "protectjs-ffi" package.json platforms/*/package.json || echo clean
+```
+
+- [ ] **Step 4: Fix each platform's `repository.directory`**
+
+```bash
+for d in platforms/*/ ; do
+  p=$(basename "$d")
+  node -e '
+    const fs=require("node:fs"); const f=process.argv[1];
+    const j=JSON.parse(fs.readFileSync(f,"utf8"));
+    j.repository.directory = "packages/protect-ffi/platforms/" + process.argv[2];
+    fs.writeFileSync(f, JSON.stringify(j,null,2)+"\n");
+  ' "$d/package.json" "$p"
+done
+```
+
+- [ ] **Step 5: Update the Cargo manifest**
+
+In `packages/protect-ffi/crates/protect-ffi/Cargo.toml`, set any `repository` / `homepage` key to `https://github.com/cipherstash/stack`. The crate is `publish = false`, so this is documentation rather than a registry requirement — but a wrong URL in a shipped manifest is still wrong.
+
+- [ ] **Step 6: Run the test to verify it passes**
+
+Run: `npx vitest run --config scripts/vitest.config.mjs ffi-repository-urls`
+Expected: PASS, 10 tests
+
+- [ ] **Step 7: Verify the packed manifest carries the new URL**
+
+```bash
+pnpm --dir packages/protect-ffi pack --pack-destination /tmp/urlcheck
+tar xzOf /tmp/urlcheck/*.tgz package/package.json | grep -A2 '"repository"'
+```
+Expected: `cipherstash/stack`
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add packages/protect-ffi/package.json packages/protect-ffi/platforms \
+        packages/protect-ffi/crates/protect-ffi/Cargo.toml \
+        scripts/__tests__/ffi-repository-urls.test.mjs
+git commit -m "chore(protect-ffi): point the manifests at cipherstash/stack"
+```
+
+---
+
+### Task 3: The release gate script
+
+**Files:**
+- Create: `scripts/release-gate.mjs`, `scripts/__tests__/release-gate.test.mjs`
+- Modify: `package.json`
+
+**Interfaces:**
+- Produces `unpublished(manifests, lookup): string[]` — `manifests` is `[{name, version, private?}]`, `lookup(name)` returns published versions or `null` for a 404; `classify(names): { ffi: boolean, js: boolean }`; CLI writes `ffi=`, `js=`, `unpublished=` to `$GITHUB_OUTPUT`.
+
+- [ ] **Step 1: Write the failing test**
+
+```js
+// scripts/__tests__/release-gate.test.mjs
+import { describe, expect, it } from 'vitest'
+import { classify, unpublished } from '../release-gate.mjs'
+
+const FFI = '@cipherstash/protect-ffi'
+const PLATFORM = '@cipherstash/protect-ffi-darwin-arm64'
+
+describe('unpublished', () => {
+  it('reports a package whose committed version is not on the registry', () => {
+    expect(unpublished([{ name: FFI, version: '0.32.0' }], () => ['0.31.0']))
+      .toEqual([FFI])
+  })
+
+  it('reports nothing when the committed version is already published', () => {
+    expect(unpublished([{ name: FFI, version: '0.31.0' }], () => ['0.31.0']))
+      .toEqual([])
+  })
+
+  it('treats a registry 404 as unpublished', () => {
+    expect(unpublished([{ name: 'new-pkg', version: '1.0.0' }], () => null))
+      .toEqual(['new-pkg'])
+  })
+
+  it('skips private packages', () => {
+    expect(
+      unpublished([{ name: 'bench', version: '1.0.0', private: true }], () => null),
+    ).toEqual([])
+  })
+
+  it('propagates a lookup error instead of reporting "nothing to publish"', () => {
+    // THE load-bearing case. A false negative here skips the artifact build,
+    // and `changeset publish` then packs the platform packages WITHOUT
+    // index.node and publishes them. A network or auth failure must fail the
+    // gate, never read as "already published".
+    const boom = () => { throw new Error('npm view failed: ETIMEDOUT') }
+    expect(() => unpublished([{ name: FFI, version: '0.32.0' }], boom))
+      .toThrow(/ETIMEDOUT/)
+  })
+})
+
+describe('classify', () => {
+  it('flags ffi when the wrapper is unpublished', () => {
+    expect(classify([FFI])).toEqual({ ffi: true, js: false })
+  })
+
+  it('flags ffi when only a platform package is unpublished', () => {
+    // A partially-failed publish can leave one platform package behind; that
+    // still needs the matrix.
+    expect(classify([PLATFORM])).toEqual({ ffi: true, js: false })
+  })
+
+  it('flags js for an ordinary Stack release', () => {
+    expect(classify(['@cipherstash/stack', 'stash']))
+      .toEqual({ ffi: false, js: true })
+  })
+
+  it('flags both when a release spans them', () => {
+    expect(classify([FFI, '@cipherstash/stack']))
+      .toEqual({ ffi: true, js: true })
+  })
+
+  it('flags neither when nothing is unpublished', () => {
+    expect(classify([])).toEqual({ ffi: false, js: false })
+  })
+})
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run --config scripts/vitest.config.mjs release-gate`
+Expected: FAIL — `Failed to resolve import "../release-gate.mjs"`
+
+- [ ] **Step 3: Write the script**
+
+```js
+// scripts/release-gate.mjs
+/**
+ * Decide what a push to `main` still has to publish.
+ *
+ * The gate is REGISTRY STATE, not changeset analysis. "No unconsumed
+ * `.changeset/*.md`" is also true for an ordinary docs commit and for the very
+ * next commit after a release, so gating on that would fire the 16-minute
+ * native matrix routinely.
+ *
+ * This is LOAD-BEARING, not a cost control. A false negative skips the artifact
+ * build, and `changeset publish` then packs the platform workspaces without
+ * `index.node` and publishes them. Every failure mode here fails loudly.
+ */
+import { execFileSync } from 'node:child_process'
+import { appendFileSync, readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import process from 'node:process'
+import { fileURLToPath } from 'node:url'
+
+const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../..')
+
+export const FFI_PREFIX = '@cipherstash/protect-ffi'
+
+/** Names whose committed version is absent from the registry. */
+export function unpublished(manifests, lookup) {
+  const missing = []
+  for (const { name, version, private: isPrivate } of manifests) {
+    if (isPrivate) continue
+    const published = lookup(name)
+    if (published === null || !published.includes(version)) missing.push(name)
+  }
+  return missing
+}
+
+/** Which publisher branches the unpublished set requires. */
+export function classify(names) {
+  return {
+    ffi: names.some((n) => n.startsWith(FFI_PREFIX)),
+    js: names.some((n) => !n.startsWith(FFI_PREFIX)),
+  }
+}
+
+/** Every workspace manifest, read from disk. */
+export function workspaceManifests() {
+  const entries = JSON.parse(
+    execFileSync('pnpm', ['ls', '-r', '--depth', '-1', '--json'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024,
+    }),
+  )
+  return entries
+    .filter((p) => p.path !== REPO_ROOT)
+    .map((p) => JSON.parse(readFileSync(join(p.path, 'package.json'), 'utf8')))
+    .map(({ name, version, private: isPrivate }) => ({
+      name,
+      version,
+      private: Boolean(isPrivate),
+    }))
+}
+
+/** Registry lookup. `null` on 404 so a first publish is not read as published. */
+export function npmVersions(name) {
+  try {
+    return JSON.parse(
+      execFileSync('npm', ['view', name, 'versions', '--json'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }),
+    )
+  } catch (err) {
+    const text = `${err.stdout ?? ''}${err.stderr ?? ''}`
+    if (text.includes('E404')) return null
+    throw new Error(`npm view ${name} failed: ${text.trim() || err.message}`)
+  }
+}
+
+function main() {
+  const manifests = workspaceManifests()
+  const missing = unpublished(manifests, npmVersions)
+  const { ffi, js } = classify(missing)
+
+  console.log(
+    missing.length
+      ? `unpublished: ${missing.join(', ')}`
+      : 'nothing to publish — every committed version is on the registry',
+  )
+  console.log(`ffi=${ffi} js=${js}`)
+
+  if (process.env.GITHUB_OUTPUT) {
+    appendFileSync(
+      process.env.GITHUB_OUTPUT,
+      `ffi=${ffi}\njs=${js}\nunpublished=${missing.join(' ')}\n`,
+    )
+  }
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) main()
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `npx vitest run --config scripts/vitest.config.mjs release-gate`
+Expected: PASS, 10 tests
+
+- [ ] **Step 5: Run the script against the live registry**
+
+Run: `node scripts/release-gate.mjs`
+Expected: `nothing to publish — every committed version is on the registry`, then `ffi=false js=false`.
+
+- [ ] **Step 6: Add the npm script and commit**
+
+In root `package.json` `scripts`, before `"release"`: `"release:gate": "node scripts/release-gate.mjs",`
+
+```bash
+git add scripts/release-gate.mjs scripts/__tests__/release-gate.test.mjs package.json
+git commit -m "feat(release): gate publishing on registry state"
+```
+
+---
+
+### Task 4: Reusable FFI artifact workflow
+
+Ports upstream's `build.yml`. **The Rust target must be selected explicitly per platform** — upstream derives it from `neon list-platforms` and passes it as `CARGO_BUILD_TARGET`, and every cross-compilation detail hangs off it. Omitting it builds for the host: `macos-latest` now maps to `macos-15-arm64`, so both Darwin jobs would emit ARM64 and `darwin-x64` would ship an ARM binary.
+
+Upstream's `.github/actions/setup` is **not** ported wholesale: it sets `cache: npm` on `setup-node` and `cache: true` on `mise-action`, which the no-caching policy forbids where artifacts get published.
+
+**Files:**
+- Create: `.github/workflows/_build-ffi-artifacts.yml`
+- Reference: `packages/protect-ffi/.github/workflows/build.yml`, `.../actions/setup/action.yml`
+
+**Interfaces:** Produces artifact `ffi-tarballs` — seven `.tgz` files, consumed by Tasks 5 and 8.
+
+- [ ] **Step 1: Write the workflow**
+
+```yaml
+# .github/workflows/_build-ffi-artifacts.yml
+name: Build FFI artifacts
+
+# Reusable. Builds the six platform bindings and the WASM output, packs all
+# seven npm tarballs, and uploads them. It does NOT publish: npm trusted
+# publishing binds to the entry-point workflow FILENAME, so the publish step
+# lives in `release.yml`.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to build from
+        required: true
+        type: string
+    outputs:
+      artifact:
+        description: Name of the uploaded tarball artifact
+        value: ffi-tarballs
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  matrix:
+    name: Compute platform matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.matrix.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6.0.9
+        with:
+          run_install: false
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `neon list-platforms` maps each platform name to its Rust target
+      # triple. This is the ONLY source of that mapping — `neon.platforms` in
+      # package.json lists names, not triples — and getting it wrong silently
+      # produces a binary for the runner's own architecture.
+      - id: matrix
+        run: |
+          set -euo pipefail
+          triples=$(pnpm --dir packages/protect-ffi exec neon list-platforms)
+          echo "$triples"
+          result=$(node -e '
+            const map = JSON.parse(process.argv[1])
+            const runner = (p) =>
+              p.startsWith("win32") ? "windows-latest"
+              : p.startsWith("darwin") ? "macos-latest"
+              : "blacksmith-4vcpu-ubuntu-2404"
+            // gnu targets cross-compile through cargo-zigbuild so the glibc
+            // floor can be pinned; everything else builds with plain cargo.
+            const script = (p) => (p.includes("gnu") ? "zigbuild" : "build")
+            console.log(JSON.stringify(Object.entries(map).map(([platform, target]) => ({
+              platform, target, os: runner(platform), script: script(platform),
+            }))))
+          ' "$triples")
+          echo "result=$result" >> "$GITHUB_OUTPUT"
+
+  binaries:
+    name: ${{ matrix.cfg.platform }}
+    needs: [matrix]
+    strategy:
+      fail-fast: false
+      matrix:
+        cfg: ${{ fromJSON(needs.matrix.outputs.matrix) }}
+    runs-on: ${{ matrix.cfg.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      # Static OpenSSL; without it the Windows build fails to link.
+      - name: Install OpenSSL (Windows)
+        if: ${{ matrix.cfg.os == 'windows-latest' }}
+        shell: powershell
+        run: |
+          vcpkg install openssl:x64-windows-static
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          $opensslDir = "$vcpkgRoot\installed\x64-windows-static"
+          echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$opensslDir\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+
+      # aarch64 linker for the linux-arm64-gnu cross build.
+      - name: Install cross-compile toolchain (Linux)
+        if: ${{ contains(matrix.cfg.platform, 'linux') }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gcc-13-aarch64-linux-gnu
+          sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc-13 /usr/bin/aarch64-linux-gnu-gcc
+
+      - name: Install Rust with the platform's target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.cfg.target }}
+
+      - uses: pnpm/action-setup@v6.0.9
+        with:
+          run_install: false
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # mise supplies pinned zig + cargo-zigbuild and trusts
+      # packages/protect-ffi/mise.toml. Cache disabled: this job's output is
+      # published.
+      - uses: jdx/mise-action@v3
+        with:
+          install: true
+          cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build binding
+        working-directory: packages/protect-ffi
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.cfg.target }}
+          NEON_BUILD_PLATFORM: ${{ matrix.cfg.platform }}
+        # No `--` separator: pnpm forwards it verbatim and it lands after the
+        # `> cargo.log` redirect, where cargo rejects the flag as a positional.
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=$(echo "${CARGO_BUILD_TARGET}" | sed 's/unknown-//')-gcc
+          export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=$(echo "${CARGO_BUILD_TARGET}" | sed 's/unknown-//')-gcc
+          if [[ "$CARGO_BUILD_TARGET" =~ musl ]]; then
+            wget -4 https://musl.cc/x86_64-linux-musl-native.tgz
+            tar zxf x86_64-linux-musl-native.tgz
+            sudo tar zxf x86_64-linux-musl-native.tgz -C /opt/
+            export PATH="/opt/x86_64-linux-musl-native/bin/:${PATH}"
+            export RUSTFLAGS="-C target-feature=-crt-static"
+            pnpm run ${{ matrix.cfg.script }}
+          elif [[ "$CARGO_BUILD_TARGET" =~ gnu ]]; then
+            # cargo-zigbuild >= 0.23.0 no longer reads CARGO_BUILD_TARGET from
+            # the environment, so the glibc-pinned target is passed as a flag.
+            pnpm run ${{ matrix.cfg.script }} --target "${CARGO_BUILD_TARGET}.2.28"
+          else
+            pnpm run ${{ matrix.cfg.script }}
+          fi
+
+      - name: Place binding in its platform package
+        working-directory: packages/protect-ffi
+        # Bare `neon dist` writes ./index.node — the `debug:` fallback in
+        # load.cts. Populating a platform package needs an explicit -o.
+        run: |
+          set -euo pipefail
+          npx neon dist -o "platforms/${{ matrix.cfg.platform }}/index.node" < cargo.log
+          test -s "platforms/${{ matrix.cfg.platform }}/index.node"
+
+      # `pnpm pack` accepts NO positional directory — passing one is silently
+      # ignored and it packs the package in the CWD (the wrapper). Verified:
+      # `pnpm pack --pack-destination out ./platforms/darwin-arm64` produced
+      # the wrapper tarball. `--dir` is what selects the package.
+      - name: Pack platform package
+        run: |
+          set -euo pipefail
+          mkdir -p ffi-dist
+          pnpm --dir "packages/protect-ffi/platforms/${{ matrix.cfg.platform }}" \
+            pack --pack-destination "${{ github.workspace }}/ffi-dist"
+          ls ffi-dist
+
+      - name: Verify the tarball is the platform package, not the wrapper
+        run: |
+          set -euo pipefail
+          tgz=$(ls ffi-dist/*.tgz)
+          name=$(tar xzOf "$tgz" package/package.json | node -p \
+            'JSON.parse(require("node:fs").readFileSync(0,"utf8")).name')
+          test "$name" = "@cipherstash/protect-ffi-${{ matrix.cfg.platform }}" \
+            || { echo "::error::packed $name, expected the platform package"; exit 1; }
+          tar tzf "$tgz" | grep -qx package/index.node \
+            || { echo "::error::$tgz has no index.node"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffi-platform-${{ matrix.cfg.platform }}
+          path: ffi-dist/*.tgz
+          if-no-files-found: error
+
+  wrapper:
+    name: WASM + wrapper tarball
+    needs: [binaries]
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6.0.9
+        with:
+          run_install: false
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: jdx/mise-action@v3
+        with:
+          install: true
+          cache: false
+
+      - name: Add wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The wrapper's `files` include dist/wasm/**. Only three .d.ts are
+      # tracked; the runtime .js/.wasm are generated here. Without this the
+      # published ./wasm and ./wasm-inline entries resolve to nothing.
+      - name: Build WASM
+        working-directory: packages/protect-ffi
+        run: pnpm run build:wasm
+
+      - name: Pack wrapper
+        run: |
+          set -euo pipefail
+          mkdir -p ffi-dist
+          pnpm --dir packages/protect-ffi pack \
+            --pack-destination "${{ github.workspace }}/ffi-dist"
+
+      - name: Verify wrapper tarball contents
+        run: |
+          set -euo pipefail
+          tgz=$(ls ffi-dist/cipherstash-protect-ffi-[0-9]*.tgz)
+          for required in \
+            package/lib/index.cjs \
+            package/lib/index.mjs \
+            package/dist/wasm/protect_ffi.js \
+            package/dist/wasm/protect_ffi_inline.js \
+            package/dist/wasm/protect_ffi_bg.wasm ; do
+            tar tzf "$tgz" | grep -qx "$required" \
+              || { echo "::error::$required missing from $tgz"; exit 1; }
+          done
+          # The six optionalDependencies must be concrete versions, not
+          # `workspace:*` — pnpm rewrites them at pack time, and a failure here
+          # means consumers install a wrapper with no binding.
+          tar xzOf "$tgz" package/package.json | node -e '
+            const j = JSON.parse(require("node:fs").readFileSync(0, "utf8"))
+            const deps = Object.entries(j.optionalDependencies ?? {})
+            if (deps.length !== 6) { console.error("expected 6 optionalDependencies, got " + deps.length); process.exit(1) }
+            for (const [n, v] of deps) {
+              if (!/^\d+\.\d+\.\d+/.test(v)) { console.error(`${n} is "${v}", not a concrete version`); process.exit(1) }
+            }
+            console.log("optionalDependencies OK")
+          '
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ffi-platform-*
+          path: ffi-dist
+          merge-multiple: true
+
+      - name: Verify all seven tarballs are present and distinct
+        run: |
+          set -euo pipefail
+          count=$(ls ffi-dist/*.tgz | wc -l)
+          test "$count" -eq 7 || {
+            echo "::error::expected 7 tarballs, found $count"; ls ffi-dist; exit 1; }
+          names=$(for t in ffi-dist/*.tgz ; do
+            tar xzOf "$t" package/package.json | node -p \
+              'JSON.parse(require("node:fs").readFileSync(0,"utf8")).name'
+          done | sort -u | wc -l)
+          test "$names" -eq 7 || {
+            echo "::error::expected 7 distinct package names, found $names"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffi-tarballs
+          path: ffi-dist/*.tgz
+          if-no-files-found: error
+```
+
+- [ ] **Step 2: Lint the workflow**
+
+```bash
+bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+./actionlint .github/workflows/_build-ffi-artifacts.yml
+node scripts/lint-no-workflow-caching.mjs .github/workflows/_build-ffi-artifacts.yml
+```
+Expected: both clean
+
+- [ ] **Step 3: Verify the target mapping locally**
+
+Run: `pnpm --dir packages/protect-ffi exec neon list-platforms`
+Expected: JSON mapping all six platform names to Rust triples (`darwin-x64` → `x86_64-apple-darwin`, etc.). This is the mapping the matrix depends on.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add .github/workflows/_build-ffi-artifacts.yml
+git commit -m "ci: add the reusable FFI artifact build workflow"
+```
+
+---
+
+### Task 5: Ordered publishers in release.yml
+
+**Files:**
+- Modify: `.github/workflows/release.yml`, `scripts/lint-no-workflow-caching.mjs`
+
+**Interfaces:** Consumes gate outputs `ffi` / `js` (Task 3) and artifact `ffi-tarballs` (Task 4).
+
+- [ ] **Step 1: Fix the existing install**
+
+`release.yml` runs bare `pnpm install`, violating the repository's own rule ("CI uses `pnpm install --frozen-lockfile`. Don't drop the flag."):
+
+```yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+```
+
+- [ ] **Step 2: Add the gate job**
+
+```yaml
+  gate:
+    name: What needs publishing?
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      ffi: ${{ steps.gate.outputs.ffi }}
+      js: ${{ steps.gate.outputs.js }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6.0.9
+        with:
+          run_install: false
+          cache: false
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - id: gate
+        run: node scripts/release-gate.mjs
+```
+
+- [ ] **Step 3: Add the artifact and publish jobs**
+
+```yaml
+  ffi-artifacts:
+    name: Build FFI artifacts
+    needs: [gate]
+    if: needs.gate.outputs.ffi == 'true'
+    uses: ./.github/workflows/_build-ffi-artifacts.yml
+    with:
+      ref: ${{ github.sha }}
+
+  publish-ffi:
+    name: Publish FFI packages
+    needs: [gate, ffi-artifacts]
+    if: needs.gate.outputs.ffi == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # git tags + GitHub release for the seven packages
+      id-token: write # npm OIDC trusted publishing
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ffi-tarballs
+          path: ffi-dist
+
+      # No registry-url: setup-node with one writes a //registry/:_authToken
+      # line that shadows OIDC and every publish fails with E404.
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@^11.5.1
+
+      # Publishes BEFORE `changeset publish`: changesets packs from the
+      # workspace, where the platform packages have no index.node, so running
+      # it first would publish six broken tarballs.
+      #
+      # PLATFORM PACKAGES FIRST, WRAPPER LAST. A plain `*.tgz` glob is
+      # lexicographic and puts `cipherstash-protect-ffi-0.32.0.tgz` ahead of
+      # `cipherstash-protect-ffi-darwin-arm64-0.32.0.tgz` ('0' < 'd'), which
+      # would briefly expose a wrapper whose optionalDependencies do not exist.
+      # Idempotent per tarball so a re-run completes a partial set.
+      - name: Publish tarballs
+        id: publish
+        run: |
+          set -euo pipefail
+          meta () { tar xzOf "$1" package/package.json | node -p \
+            "JSON.parse(require('node:fs').readFileSync(0,'utf8')).$2"; }
+
+          wrapper=""
+          platforms=()
+          for tgz in ./ffi-dist/*.tgz ; do
+            if [ "$(meta "$tgz" name)" = "@cipherstash/protect-ffi" ]; then
+              wrapper="$tgz"
+            else
+              platforms+=("$tgz")
+            fi
+          done
+          test -n "$wrapper" || { echo "::error::no wrapper tarball"; exit 1; }
+          test "${#platforms[@]}" -eq 6 || {
+            echo "::error::expected 6 platform tarballs, got ${#platforms[@]}"; exit 1; }
+
+          published=()
+          for tgz in "${platforms[@]}" "$wrapper" ; do
+            name=$(meta "$tgz" name); version=$(meta "$tgz" version)
+            if npm view "${name}@${version}" version >/dev/null 2>&1; then
+              echo "${name}@${version} already published — skipping"
+            else
+              npm publish --access public --provenance "$tgz"
+            fi
+            published+=("${name}@${version}")
+          done
+          printf '%s\n' "${published[@]}" > published.txt
+          echo "version=$(meta "$wrapper" version)" >> "$GITHUB_OUTPUT"
+
+      # Changesets tags only what IT published (`tagPublish` receives
+      # `publishedPackages.filter(p => p.result === "published")`), and it skips
+      # these seven as already-published. Without this step the FFI release has
+      # no git tag and no GitHub release.
+      - name: Tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ steps.publish.outputs.version }}
+        run: |
+          set -euo pipefail
+          while read -r tag ; do
+            if gh api "repos/${REPO}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+              echo "tag ${tag} exists — skipping"
+            else
+              gh api -X POST "repos/${REPO}/git/refs" \
+                -f ref="refs/tags/${tag}" -f sha="$GITHUB_SHA" >/dev/null
+              echo "created ${tag}"
+            fi
+          done < published.txt
+
+          rel="protect-ffi-v${VERSION}"
+          if gh release view "$rel" --repo "$REPO" >/dev/null 2>&1; then
+            echo "release ${rel} exists — skipping"
+          else
+            gh release create "$rel" --repo "$REPO" --target "$GITHUB_SHA" \
+              --title "protect-ffi v${VERSION}" \
+              --notes "Native FFI bindings ${VERSION}. Published: $(tr '\n' ' ' < published.txt)" \
+              ./ffi-dist/*.tgz
+          fi
+```
+
+- [ ] **Step 4: Order the changesets job correctly**
+
+```yaml
+  release:
+    name: Release
+    needs: [gate, publish-ffi]
+    # `always()` because `publish-ffi` is SKIPPED for an ordinary JS release and
+    # a skipped dependency would otherwise skip this job.
+    #
+    # The condition must distinguish "skipped because FFI was unnecessary" from
+    # "skipped because its prerequisite failed". If `ffi-artifacts` fails,
+    # `publish-ffi` is SKIPPED — not failed — so a bare `result != 'failure'`
+    # check passes and `changeset publish` proceeds to pack and publish the
+    # platform workspaces without their binaries.
+    if: >-
+      always() &&
+      needs.gate.result == 'success' &&
+      (
+        needs.gate.outputs.ffi != 'true' ||
+        needs.publish-ffi.result == 'success'
+      )
+    runs-on: ubuntu-latest
+```
+
+- [ ] **Step 5: Register the new workflows with the caching lint**
+
+```js
+      '.github/workflows/release.yml',
+      '.github/workflows/_build-ffi-artifacts.yml',
+      '.github/workflows/tests-supply-chain.yml',
+```
+
+- [ ] **Step 6: Verify**
+
+```bash
+node scripts/lint-no-workflow-caching.mjs
+npx vitest run --config scripts/vitest.config.mjs lint-no-workflow-caching
+./actionlint .github/workflows/release.yml
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add .github/workflows/release.yml scripts/lint-no-workflow-caching.mjs
+git commit -m "ci(release): publish FFI tarballs, tagged, before changeset publish"
+```
+
+---
+
+### Task 6: The `version:` hook
+
+`release.yml` passes only `publish:`, so there is no hook point for propagating a version into a non-npm manifest. EQL needs exactly that when `eql-bindings` arrives.
+
+**Files:** Modify `package.json`, `.github/workflows/release.yml`; create `scripts/__tests__/version-hook.test.mjs`
+
+- [ ] **Step 1: Write the failing test**
+
+```js
+// scripts/__tests__/version-hook.test.mjs
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import yaml from 'js-yaml'
+import { describe, expect, it } from 'vitest'
+
+const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
+const pkg = JSON.parse(readFileSync(resolve(REPO_ROOT, 'package.json'), 'utf8'))
+const workflow = yaml.load(
+  readFileSync(resolve(REPO_ROOT, '.github/workflows/release.yml'), 'utf8'),
+)
+
+describe('changesets version hook', () => {
+  it('defines a root `version` script', () => {
+    expect(pkg.scripts.version).toBeDefined()
+  })
+
+  it('runs changeset version', () => {
+    expect(pkg.scripts.version).toContain('changeset version')
+  })
+
+  it('is wired into the release workflow', () => {
+    const step = workflow.jobs.release.steps.find(
+      (s) => typeof s.uses === 'string' && s.uses.startsWith('changesets/action'),
+    )
+    expect(step).toBeDefined()
+    expect(step.with.version).toBe('pnpm run version')
+  })
+})
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run --config scripts/vitest.config.mjs version-hook`
+Expected: FAIL — `expected undefined to be defined`
+
+- [ ] **Step 3: Add the script**
+
+In root `package.json`, after `"changeset:version"`: `"version": "changeset version",`
+
+- [ ] **Step 4: Wire it into the workflow**
+
+In the `changesets/action` step's `with:` block, above `publish:`:
+
+```yaml
+          # Explicit rather than relying on the action's default, so there is
+          # one place to add cross-ecosystem version propagation — e.g. writing
+          # the computed version into a Cargo.toml, as
+          # cipherstash/encrypt-query-language does for eql-bindings.
+          version: pnpm run version
+```
+
+- [ ] **Step 5: Run the test to verify it passes**
+
+Run: `npx vitest run --config scripts/vitest.config.mjs version-hook`
+Expected: PASS, 3 tests
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add package.json .github/workflows/release.yml scripts/__tests__/version-hook.test.mjs
+git commit -m "ci(release): make the changesets version command explicit"
+```
+
+---
+
+### Task 7: Release-tooling lint gate
+
+**Files:** Create `.github/workflows/lint-release.yml`
+
+- [ ] **Step 1: Write the workflow**
+
+```yaml
+# .github/workflows/lint-release.yml
+name: Lint release tooling
+
+# A release workflow runs roughly once per release, so a syntax or shell error
+# in it surfaces at the worst possible moment. This runs on every PR that
+# touches it.
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/workflows/_build-ffi-artifacts.yml
+      - .github/workflows/ffi-preflight.yml
+      - .github/workflows/lint-release.yml
+      - scripts/release-gate.mjs
+      - scripts/lint-no-workflow-caching.mjs
+      - package.json
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    name: actionlint + release script tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          echo "$PWD" >> "$GITHUB_PATH"
+
+      - name: actionlint (release workflows)
+        run: |
+          set -euo pipefail
+          actionlint \
+            .github/workflows/release.yml \
+            .github/workflows/_build-ffi-artifacts.yml \
+            .github/workflows/ffi-preflight.yml \
+            .github/workflows/lint-release.yml
+
+      - uses: pnpm/action-setup@v6.0.9
+        with:
+          run_install: false
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Release script unit tests
+        run: pnpm run test:scripts
+
+      - name: No caching in publish workflows
+        run: pnpm run lint:workflow-cache
+```
+
+- [ ] **Step 2: Lint it with itself**
+
+Run: `./actionlint .github/workflows/lint-release.yml`
+Expected: clean
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add .github/workflows/lint-release.yml
+git commit -m "ci: gate the release machinery on actionlint and script tests"
+```
+
+---
+
+### Task 8: Pack-and-install pre-flight
+
+`changeset publish` has no `--dry-run`, so this is the dry run. It must check **architecture**, not just size: a tarball carrying an ARM binary labelled `x64` installs cleanly and then fails to dlopen.
+
+**Files:** Create `.github/workflows/ffi-preflight.yml`
+
+- [ ] **Step 1: Write the workflow**
+
+```yaml
+# .github/workflows/ffi-preflight.yml
+name: FFI release pre-flight
+
+# Build the real artifacts, verify each binary's architecture, install the
+# host-matching pair, and use them. Point it at the Version Packages PR branch
+# so the tarballs tested carry the exact versions that will publish.
+#
+# Never publishes: it has no id-token permission, so it cannot.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Ref to build and test (e.g. changeset-release/main)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  artifacts:
+    name: Build artifacts
+    uses: ./.github/workflows/_build-ffi-artifacts.yml
+    with:
+      ref: ${{ inputs.ref }}
+
+  smoke:
+    name: Install and smoke-test
+    needs: [artifacts]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ffi-tarballs
+          path: ffi-dist
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The five non-host platform tarballs cannot be installed here (npm
+      # rejects a mismatched os/cpu with EBADPLATFORM), so verify them
+      # statically — and check ARCHITECTURE, not just that a file exists.
+      # macos-latest is arm64, so a darwin-x64 job that failed to set
+      # CARGO_BUILD_TARGET would emit an ARM binary a size check passes.
+      - name: Verify each binary's architecture
+        run: |
+          set -euo pipefail
+          declare -A EXPECT=(
+            [darwin-arm64]='Mach-O 64-bit.*arm64'
+            [darwin-x64]='Mach-O 64-bit.*x86_64'
+            [linux-arm64-gnu]='ELF 64-bit.*ARM aarch64'
+            [linux-x64-gnu]='ELF 64-bit.*x86-64'
+            [linux-x64-musl]='ELF 64-bit.*x86-64'
+            [win32-x64-msvc]='PE32\+.*x86-64'
+          )
+          mkdir -p probe && cd probe
+          for tgz in ../ffi-dist/*.tgz ; do
+            name=$(tar xzOf "$tgz" package/package.json | node -p \
+              "JSON.parse(require('node:fs').readFileSync(0,'utf8')).name")
+            platform="${name#@cipherstash/protect-ffi-}"
+            [ "$platform" = "$name" ] && continue   # the wrapper
+            rm -rf x && mkdir x && tar xzf "$tgz" -C x
+            desc=$(file -b x/package/index.node)
+            echo "$platform: $desc"
+            [[ "$desc" =~ ${EXPECT[$platform]} ]] || {
+              echo "::error::$platform binary is '$desc', expected ${EXPECT[$platform]}"
+              exit 1; }
+          done
+
+      - name: Install wrapper + host platform package
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/smoke && cd /tmp/smoke
+          echo '{"name":"smoke","version":"1.0.0","type":"module","private":true}' > package.json
+          wrapper=$(ls "$GITHUB_WORKSPACE"/ffi-dist/cipherstash-protect-ffi-[0-9]*.tgz)
+          host=$(ls "$GITHUB_WORKSPACE"/ffi-dist/*linux-x64-gnu*.tgz)
+          npm install --no-audit --no-fund "$wrapper" "$host"
+
+      - name: Smoke-test the installed artifact
+        run: |
+          set -euo pipefail
+          cd /tmp/smoke
+          cat > smoke.mjs <<'EOF'
+          import { createRequire } from 'node:module'
+          const require = createRequire(import.meta.url)
+          const cjs = require('@cipherstash/protect-ffi')
+          // Forces the platform binary to resolve; throws MODULE_NOT_FOUND if
+          // the tarball shipped without a usable binding.
+          cjs.assertNativeBindingAvailable()
+          if (typeof cjs.isEncrypted !== 'function') throw new Error('no isEncrypted')
+          const wasm = await import('@cipherstash/protect-ffi/wasm')
+          if (typeof wasm.newClient !== 'function') throw new Error('./wasm did not resolve')
+          const inline = await import('@cipherstash/protect-ffi/wasm-inline')
+          if (typeof inline.newClient !== 'function') throw new Error('./wasm-inline did not resolve')
+          console.log('smoke OK')
+          EOF
+          node smoke.mjs
+```
+
+- [ ] **Step 2: actionlint**
+
+Run: `./actionlint .github/workflows/ffi-preflight.yml`
+Expected: clean
+
+- [ ] **Step 3: Run it against the current branch**
+
+```bash
+gh workflow run ffi-preflight.yml -f ref=import-protect-ffi
+gh run watch
+```
+Expected: green. First end-to-end proof of matrix, target selection, packing, architecture and install.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add .github/workflows/ffi-preflight.yml
+git commit -m "ci: add the FFI pack-and-install pre-flight"
+```
+
+---
+
+### Task 9: The Rust CI job, and retiring the deposited workflows
+
+Since the import, the Rust checks run **nowhere**. Phase 1 moved `cargo test` and `cargo fmt --check` into `test:cargo` and clippy into `mise run lint:rust`, but no root workflow calls either. `src/lintWiring.test.ts` asserts against the deposited copy and says so: it is *"the specification the phase-3 pipeline port has to satisfy"*.
+
+**Files:**
+- Create: `.github/workflows/tests-rust.yml`
+- Modify: `packages/protect-ffi/src/lintWiring.test.ts`
+- Delete: `packages/protect-ffi/.github/`
+
+- [ ] **Step 1: Write the Rust workflow**
+
+```yaml
+# .github/workflows/tests-rust.yml
+name: Tests (Rust)
+
+# The Rust half of packages/protect-ffi. Path-filtered and separate from
+# tests.yml because it is the only Rust in the repo. `src/lintWiring.test.ts`
+# asserts the split from the manifest side; this is the other half.
+#
+# The filter is broader than `crates/**` — dependency, feature and toolchain
+# changes all alter what cargo builds without touching a .rs file.
+
+on:
+  pull_request:
+    paths:
+      - 'packages/protect-ffi/crates/**'
+      - 'packages/protect-ffi/Cargo.toml'
+      - 'packages/protect-ffi/Cargo.lock'
+      - 'packages/protect-ffi/mise.toml'
+      - 'packages/protect-ffi/package.json'
+      - '.github/workflows/tests-rust.yml'
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: cargo test + clippy + rustfmt
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # mise supplies the pinned toolchain AND trusts
+      # packages/protect-ffi/mise.toml. Without it, cargo through a mise shim
+      # fails with "Config files ... are not trusted" — which reads as a
+      # toolchain problem, not a trust one. Caching is allowed here: this
+      # workflow publishes nothing.
+      - uses: jdx/mise-action@v3
+        with:
+          install: true
+
+      # `--all-targets` means all target KINDS, not all platform targets.
+      # wasm32 needs its own invocation, and it is the build that ships to edge
+      # runtimes with the least test coverage behind it.
+      - name: Add wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - uses: pnpm/action-setup@v6.0.9
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: cargo test + rustfmt
+        run: pnpm --filter @cipherstash/protect-ffi run test:cargo
+
+      - name: clippy (host + wasm32)
+        working-directory: packages/protect-ffi
+        run: mise run lint:rust
+```
+
+- [ ] **Step 2: Repoint the lintWiring assertion**
+
+```ts
+// The root workflow that actually runs the Rust checks. GitHub only reads
+// workflows from the repository root, so this must never point back inside
+// this package — that was true of the deposited upstream copy, which made the
+// assertion below vacuous until the phase-3 port.
+const testWorkflow = read('../../.github/workflows/tests-rust.yml')
+```
+
+- [ ] **Step 3: Replace the CAVEAT comment**
+
+```ts
+  it('runs the lint entry point in CI, with the wasm32 target installed', () => {
+    // Live again as of the phase-3 port: this reads the root workflow GitHub
+    // actually executes. `lint:rust` is the aggregate entry point — an arm
+    // reachable only by name is an arm nobody runs (#145) — and wasm32 must be
+    // installed before clippy can lint it.
+    expect(testWorkflow).toContain('mise run lint:rust')
+    expect(testWorkflow).toContain('rustup target add wasm32-unknown-unknown')
+  })
+```
+
+- [ ] **Step 4: Run the test**
+
+Run: `pnpm --filter @cipherstash/protect-ffi test`
+Expected: PASS, 79 tests
+
+- [ ] **Step 5: Delete the deposited upstream workflows**
+
+Tasks 4, 7, 8 and this one have consumed all of the reference material.
+
+```bash
+git rm -r packages/protect-ffi/.github
+```
+
+- [ ] **Step 6: Verify nothing else referenced them**
+
+```bash
+grep -rn "protect-ffi/.github" --include="*.ts" --include="*.mjs" --include="*.yml" --include="*.md" . | grep -v node_modules
+```
+Expected: no hits outside `docs/plans/` and `.work/`
+
+- [ ] **Step 7: Run the repo linters**
+
+```bash
+node scripts/lint-no-dead-package-paths.mjs
+./actionlint .github/workflows/tests-rust.yml
+pnpm run test:scripts
+```
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add .github/workflows/tests-rust.yml packages/protect-ffi/src/lintWiring.test.ts
+git rm -r --cached packages/protect-ffi/.github 2>/dev/null || true
+git commit -m "ci: run the Rust checks from a root path-filtered workflow"
+```
+
+---
+
+## Phase 4 — flip
+
+The only irreversible steps.
+
+- [ ] Merge a cutover PR that deletes `scripts/lint-no-ffi-changeset.mjs`, its self-test, its fixtures, the `lint:ffi-changeset` script and the `tests.yml` step; **and** adds the `@cipherstash/protect-ffi` **minor** changeset for the laziness change and `assertNativeBindingAvailable()`. Both halves in one PR — the guard exists to stop that changeset landing early.
+- [ ] Let the Version Packages job create the release PR. Verify it bumps all seven FFI packages to `0.32.0`, rewrites the wrapper's six `optionalDependencies`, and patch-bumps the six Stack packages (expected — see "Release lines are coupled by pinning").
+- [ ] Run `ffi-preflight.yml` against that **versioned release-PR ref**.
+- [ ] **Repoint npm trusted publishing for all seven packages**: `cipherstash/protectjs-ffi` → `cipherstash/stack`, workflow `release.yml`. For each publisher, **explicitly select `npm publish` under "Allowed actions"** — npm made that field required for configurations created after 2026-05-20, and these are new configurations. Confirm `repository.url` already reads `cipherstash/stack` (Task 2) or the publish is rejected. Only after the versioned pre-flight is green.
+- [ ] Merge the Version Packages PR. The gate returns `ffi=true js=true`; artifacts build, six platform packages then the wrapper publish, tags and the GitHub release are created, and `changeset publish` skips the seven and publishes the JS packages.
+- [ ] Verify npm provenance on all seven, the seven git tags, the `protect-ffi-v0.32.0` release, and the Stack tags from changesets. Smoke-test a fresh install.
+- [ ] Archive `cipherstash/protectjs-ffi`.
+
+## Phase 5 — wire `stash doctor`
+
+- [ ] Add a `@cipherstash/stack/diagnostics` subpath (both `import` and `require`). It must import protect-ffi **without** importing `@cipherstash/auth`, be pure, and let the loader error propagate unwrapped.
+- [ ] Rework `packages/cli/src/commands/doctor/index.ts` to probe it, keeping the separate `@cipherstash/auth` probe. This fixes a pre-existing bug: `dist/index.js` statically imports `@cipherstash/auth`, which is eager on two counts (top-level `require`, plus `module.exports = { ...native }` — a spread forces any loader), so today's stack probe silently duplicates the auth probe while rendering two green rows.
+- [ ] Add the missing-binary e2e fixture.
+- [ ] Add changesets for the new Stack subpath and the CLI diagnostic behaviour.
+
+---
+
+## Out of scope: importing EQL
+
+`cipherstash/encrypt-query-language` will also be absorbed. **It needs its own plan** — an independent subsystem with its own release surface (npm + crates.io + a SQL bundle + docs + a Docker image). The release architecture above was derived from it. Four findings that plan must carry:
+
+**A live version skew.** EQL ships npm and crate at one version by construction, but this repo spans two:
+
+| Component | Pins EQL at |
 |---|---|
-| `package-lock.json` | Delete — this is a pnpm workspace |
-| `.github/workflows/{build,release,test}.yml`, `.github/actions/setup/`, `.github/.env` | Not read by GitHub from a subdirectory. Keep as reference through phase 3, then port and delete; do not leave dead workflow files behind |
-| `biome.json` (1.9.4 config) | Reconcile against root Biome 2.5.3 — either delete and inherit, or keep a scoped override deliberately |
-| `mise.toml` | Keep — it pins the Rust toolchain, and it belongs in the Rust path filter |
-| `LICENSE.md`, `CODE_OF_CONDUCT.md` | Dedupe against root |
-| `Cargo.toml` / `Cargo.lock` / `crates/` | Keep in place — the nested cargo workspace is verified working |
-| `.gitignore` | Keep — nested, still covers `dist` / `lib` / `index.node` |
-| `tsconfig*.json`, `vitest.config.ts` | Keep; reconcile versions per below |
+| `packages/stack`, `packages/cli`, `packages/stack-prisma` | `@cipherstash/eql` **3.0.4** |
+| `packages/protect-ffi/crates/protect-ffi` | `eql-bindings` **=3.0.2** |
+| `packages/protect-ffi/integration-tests` | `@cipherstash/eql` **3.0.2** |
 
-Upstream also has uncommitted work: `.serena/`, `.work/`, and an untracked
-`integration-tests/tests/json-array-docs-validation.test.ts`. A subtree carries tracked
-history only — decide explicitly whether that test file comes across.
+The Rust emitting EQL payloads is generated from a different catalog commit than the SQL being installed. A unified Cargo workspace turns that `=3.0.2` registry pin into a path dependency and makes the skew unrepresentable — **the strongest argument for the import, independent of releases.**
 
-**protect-ffi package**
-- Drop `neon update` from `prepack`; drop the `version` script (`neon bump`).
-- Split `test` / `build` from `test:rust` / `build:native` (above).
-- Split `test:format:ts` from `test:format:rust`; only the TypeScript formatter stays
-  on the default test path.
-- If declarations-only option (3) passes, narrow `.gitignore` so exactly the three
-  WASM `.d.ts` files are tracked while runtime WASM output remains ignored.
-- **[rev3]** Add `assertNativeBindingAvailable()` and the lazy
-  `import native = require('./load.cjs')` — in phase 2, in this repo.
-- Move the npm-only `overrides: { vite: "^8.0.5" }` to root `pnpm.overrides` or drop it
-  — pnpm ignores `overrides` outside the workspace root. Note root already carries
-  `vite` in `catalog:security` at `8.1.4` and a scoped `vite@>=7.0.0 <7.3.5` override.
-- Reconcile toolchain to repo catalogs: Node 20 → 22, Biome 1.9.4 → 2.5.3,
-  vitest ^4.1.0 → 3.2.7 (a *downgrade* for FFI — verify its suite still passes).
+**Pin EQL with `workspace:^`, not `workspace:*`.** EQL is 3.x, so `^3.0.4` spans every 3.x release and a 3.1.2 would not force a Stack release. With an exact pin it would drag `stash` and `stack-prisma`, and through the fixed group all six Stack packages, into every EQL release. This is the direct answer to "can stack 1.1 release independently of EQL 3.1.2" — yes, but only with a caret range.
 
-**[rev3] stack, to consume 0.31.0** — the three changes in "The import is also an
-upgrade": the two `ProtectError` value sites, the wasm `newClient` shape (and its
-`as never`), and a check that `CS_CLIENT_KEY` is hex everywhere it is set. Use
-`isProtectErrorCode()` at the two error sites rather than asserting any string-valued
-Node error code into the FFI union. Add a **separate, non-ignored Stack changeset** for
-the 0.31 adoption; do not mix it with the ignored FFI changeset.
+**crates.io trusted publishing needs repointing**, bound to a workflow filename in the same way, and with the same repository-field requirement.
 
-**CI / release**
-- Implement the five-point pipeline above (gate, WASM job, artifact restore,
-  no-rebuild publish command, pack-and-install pre-flight).
-- Keep the Blacksmith-builds / GitHub-hosted-publish split from upstream's
-  `release.yml` — npm rejects provenance from self-hosted runners with E422.
-- Add the new release jobs to `lint-no-workflow-caching.mjs` TARGETS deliberately.
-- npm trusted publishing repointed for all seven packages:
-  `cipherstash/protectjs-ffi` → `cipherstash/stack`. Seven manual npmjs.com changes,
-  hard cutover, no dry run.
+**Changesets cannot put a crate in a `fixed` group** — a Cargo package is not an npm package. Lockstep comes from the `version:` hook (Task 6) writing the computed version into `Cargo.toml`, as EQL's `sync-lockstep-versions.mjs` does.
 
-**Repo meta** (per `AGENTS.md` step 7) — update the Repository Layout in `AGENTS.md`
-and the package list in `SECURITY.md` in the same PR that adds the packages. Review
-`skills/*/SKILL.md` for anything asserting protect-ffi is a separate repo or an
-externally-versioned dependency.
-
-## [rev3] Phased sequence
-
-Reordered. The laziness fix now lands in this repo after the import, and the `stash
-doctor` work is split off to after the flip — see the ignore-window invariant for why.
-The trusted-publishing cutover is still the only irreversible step.
-
-**Phase 1 — import.** Source moves, publishing does not.
-
-- `git subtree` the history into `packages/protect-ffi` (**613 commits, 9.8MB `.git`,
-  200 tracked files**) as a *pure* import commit; everything below follows as separate
-  reviewable commits on top.
-- Deposit cleanup per the table above.
-- Workspace wiring: the `platforms/*` glob, the three `workspace:*` pins, the
-  `minimumReleaseAgeExclude` and Dependabot removals.
-- Changesets: create the seven-package fixed group **and add all seven to `ignore`**.
-- Manifest reconciliation: `prepack`, the `version` script, the `test` / `build` split,
-  `overrides`, toolchain catalogs.
-- **Absorb the 0.30.0 → 0.31.0 breaking delta.** Check `CS_CLIENT_KEY` encoding in CI
-  secrets *first* — if it is base64, every credentialed test fails at once and the
-  cause will not be obvious from the failure.
-- Add a separate, non-ignored changeset for `@cipherstash/stack` describing the 0.31
-  dependency adoption, the hex-only client-key requirement, and the compatibility
-  fixes. Decide its bump level explicitly: repository guidance documents hex, but the
-  previous runtime accepted base64, so this is observable even if treated as a fix.
-- **Run the option-(3) WASM verification.** This phase is where the contributor-Rust
-  conclusion is settled.
-
-> **[rev2] Publication guard — decided.** Once seven public packages are in the
-> workspace, a protect-ffi changeset could trigger a publish before trusted publishing
-> is repointed. `ignore` is the guard. (The first draft offered this *or* holding the
-> workflow; that was a non-decision.) Note changesets' restriction: a single changeset
-> may not mix ignored and non-ignored packages, so from here until the flip an FFI
-> change needs its own changeset, separate from any stack-side change.
-
-Upstream `main` was verified identical to the published `v0.31.0` tag at planning time,
-so the ignore-window interface premise holds. It is **not** true that consumers see no
-change: the next Stack release pins protect-ffi `0.31.0` instead of `0.30.0`, including
-its hex-only key requirement and error-shape changes. The compatibility edits and
-Stack changeset above make that adoption deliberate. Re-check `main...v0.31.0`
-immediately before the subtree import; if upstream has advanced without a release,
-import the tag or account for the additional delta separately.
-
-**Phase 2 — the lazy change.** Entirely inside `packages/protect-ffi`:
-
-- `import native = require('./load.cjs')` in `src/index.cts`; verify the `.mts` entry.
-- Add `assertNativeBindingAvailable()` as a new export — **exported, not yet consumed**.
-- A `@cipherstash/protect-ffi` **minor** changeset. It sits pending under `ignore` and
-  becomes the first monorepo release in phase 4; no synthetic changeset is needed there.
-- `stash doctor` is *not* touched in this phase. Its probe degrades silently (see "The
-  one real regression") from the moment this ships — which is phase 4, and phase 5 is
-  the fix. That gap is the price of dropping the interim release; it is one release
-  wide and affects a diagnostic command, not the encryption path.
-
-**Phase 3 — build the pipeline.** Implement the three-output gate, Version Packages
-job, FFI-only native/WASM branch, artifact restore, and non-rebuilding publish command.
-Expose the artifact build and pack/install pre-flight as a non-publishing reusable or
-manually dispatched workflow that can check a versioned release-PR ref; the `main`
-release path may call the same jobs, but only its final release job may publish.
-Exercise all four workflow states (pending changeset, nothing unpublished, JS-only
-release, FFI release) and the pack-and-install pre-flight. An ordinary JS-only release
-must reach publication with the FFI jobs skipped.
-
-**Phase 4 — flip.** This is a Changesets lifecycle, not one immediate publish command:
-
-1. Merge a cutover PR that removes the seven `ignore` entries. Keep the phase-2 FFI
-   changeset pending; do not run `changeset version` in an unrelated commit.
-2. Let the Version Packages job create/update the release PR. Verify it bumps all seven
-   FFI packages to `0.32.0`, rewrites the wrapper's six optional dependencies, and
-   leaves the separate Stack release metadata correct.
-3. Run the native/WASM matrix and pack/install pre-flight against that **versioned
-   release PR**, so the tarballs tested have the exact versions that will publish.
-4. Repoint npm trusted publishing for all seven packages only after the versioned
-   pre-flight is green. Protect the Version Packages PR from merging before this manual
-   cutover is complete.
-5. Merge the Version Packages PR. The `main` push now has no pending changeset,
-   `shouldPublish == true`, and `needsFfiArtifacts == true`; build, restore, and publish.
-6. Smoke-test the installed artifacts, verify npm provenance, git tags, and the GitHub
-   release, then archive `cipherstash/protectjs-ffi`.
-
-> **[rev2] Removing `ignore` does not cause a publish.** `0.31.0` is already on npm;
-> un-ignoring the packages does not make them unpublished. **[rev3]** What produces the
-> release is the phase-2 changeset, which the dedicated fixed group propagates to all
-> six platform packages — protect-ffi `0.32.0`, the first release built here.
-
-> **[rev2] Install-testing all six platform tarballs on one host is not possible.**
-> npm and pnpm reject an explicitly-requested package whose `os`/`cpu` does not match
-> (`EBADPLATFORM`); the warn-only behaviour observed in the workspace harness applies to
-> *linked* packages, not installed ones. The runtime smoke test installs **the wrapper
-> plus the host-matching platform tarball**. Verify the other five statically (tarball
-> contents, `package.json` `os`/`cpu`/`main`, `index.node` present and non-empty) or in
-> a runner matrix.
-
-**Phase 5 — wire `stash doctor`.** Only now is `assertNativeBindingAvailable()` on npm,
-so stack may consume it:
-
-- Add the `@cipherstash/stack/diagnostics` subpath (both `import` and `require`).
-- Rework doctor to probe it, keeping the separate `@cipherstash/auth` probe — which
-  fixes the pre-existing bug where the stack probe duplicated the auth probe.
-- Add the missing-binary e2e fixture. Nothing in the repo removes a real binary today.
-- Add explicit changesets for the new public Stack subpath and the CLI diagnostic
-  behaviour; fixed-group propagation is not a substitute for accurate changelog text.
-- Ships in an ordinary release.
+---
 
 ## Verification checklist
 
-- [ ] `CS_CLIENT_KEY` is hex-encoded in every CI secret and documented `.env` (**check
-      before phase 1 lands**, not after)
-- [ ] `pnpm install` clean at root with the seven new packages linked
-- [ ] `pnpm --filter @cipherstash/stack build` and `typecheck` pass against workspace
-      protect-ffi `0.31.0` — i.e. the `ProtectError` and wasm `newClient` changes are complete
-- [ ] The 0.31 adoption has its own non-ignored Stack changeset and user-facing note
-- [ ] `pnpm test` at root completes **without invoking cargo**
-- [ ] `pnpm --filter @cipherstash/protect-ffi test` does not reach either `cargo test`
-      or `cargo fmt`; both run in the Rust-specific job
-- [ ] `pnpm turbo build --filter './packages/*'` completes **without invoking cargo**
-- [ ] `pnpm --filter @cipherstash/protect-ffi build:native` produces `platforms/<p>/index.node`
-- [ ] `pnpm --filter @cipherstash/protect-ffi test` passes on vitest 3.2.7 (downgrade) and Biome 2.5.3
-- [ ] Option (3) holds: stack's dts build resolves with `dist/wasm/*.js` and `*.wasm`
-      deleted while `protect_ffi.d.ts`, `protect_ffi_bg.wasm.d.ts`, and `errors.d.ts`
-      remain tracked
-- [ ] WASM job output resolves for both `./wasm` and `./wasm-inline` **from the packed tarball**
-- [ ] `pnpm --filter @cipherstash/stack test` passes with the binary present
-- [ ] Stack's suite passes with the binary **absent**, except the credential-gated files
-      (re-measure the count — the old "3 of 52" figure is stale)
-- [ ] `stash doctor` exits non-zero with a hidden platform package (new fixture, phase 5)
-- [ ] `node packages/cli/dist/bin/stash.js manifest --json` still resolves every command
-      named in `skills/stash-cli/SKILL.md`
-- [ ] `pnpm run code:check` error-free
-- [ ] `node scripts/lint-no-workflow-caching.mjs` passes against the new `release.yml`
-- [ ] `e2e/tests/supply-chain.e2e.test.ts` passes
-- [ ] No dead upstream workflow files left under `packages/protect-ffi/.github/`
-- [ ] A push to `main` with pending changesets does **not** start the native matrix
-- [ ] A push to `main` with **no** changesets and nothing unpublished does **not** start
-      the native matrix (the case the first gate got wrong)
-- [ ] A JS-only release publishes successfully **without** starting native or WASM jobs
-- [ ] An FFI release is the only case that sets `needsFfiArtifacts == true`
-- [ ] The native/WASM artifact and pre-flight workflow can run against a release-PR ref
-      without invoking any publish step
-- [ ] Git tags and the GitHub release are still created on a publish run
-- [ ] All seven tarballs pack and `npm publish --dry-run` clean
-- [ ] Wrapper + host-matching platform tarball install and smoke-test green in a scratch
-      project (`assertNativeBindingAvailable()` succeeds; `./wasm` and `./wasm-inline`
-      both resolve); other five platform tarballs verified statically
-- [ ] Published `@cipherstash/stack` tarball's `dependencies` show a concrete
-      protect-ffi version, not `workspace:*`
-- [ ] Removing the FFI ignore entries creates a versioned release PR; its seven FFI
-      packages are `0.32.0` and pass pre-flight before trusted publishing is repointed
+**Done (phases 1–2)**
+
+- [x] `CS_CLIENT_KEY` is hex — inferred from credentialed suites passing under 0.31's hex-only decoder
+- [x] `pnpm install` clean with the seven new packages linked; `--frozen-lockfile` clean
+- [x] `pnpm --filter @cipherstash/stack build` + `test:types:dist` pass against workspace 0.31.0
+- [x] The 0.31 adoption has its own non-ignored Stack changeset (`minor`)
+- [x] Root `pnpm test` completes without invoking cargo — 0 invocations under a `PATH` trap
+- [x] `pnpm --filter @cipherstash/protect-ffi test` reaches neither `cargo test` nor `cargo fmt`; `test:cargo` does (exit 97 under the trap)
+- [x] `pnpm turbo build --filter './packages/*'` invokes no cargo
+- [x] `build:native` produces a loadable binding
+- [x] protect-ffi suite passes on vitest 3.2.7 and Biome 2.5.3 — 79 tests
+- [x] Option (3) holds — dts build resolves with only the three `.d.ts` present
+- [x] `./wasm` and `./wasm-inline` both resolve from the packed tarball
+- [x] Packed tarball matches published 0.31.0 — 12 files, 226 under `lib/`, `workspace:*` rewritten to concrete versions
+- [x] `pnpm --filter @cipherstash/stack test` passes with the binary present — 1064 tests
+- [x] Binary absent: 11 of 65 files fail, all credential-gated
+- [x] `stash manifest --json` resolves every command in `skills/stash-cli/SKILL.md`
+- [x] `pnpm run code:check` error-free across tracked source — 722 files
+- [x] `e2e/tests/supply-chain.e2e.test.ts` passes — 18 tests
+
+**Phase 3+**
+
+- [ ] All seven FFI manifests read `cipherstash/stack`; no `protectjs-ffi` reference remains
+- [ ] `neon list-platforms` maps all six platforms to Rust triples, and the matrix consumes them
+- [ ] Each packed platform tarball contains `index.node` **of the correct architecture** (`file` check, not size)
+- [ ] Each platform job packs its own package, not the wrapper (name assertion)
+- [ ] The wrapper tarball's six `optionalDependencies` are concrete versions
+- [ ] A push to `main` with nothing unpublished does **not** start the native matrix
+- [ ] A JS-only release publishes with the FFI jobs skipped
+- [ ] **An `ffi-artifacts` failure blocks `changeset publish`** — the skipped-vs-failed distinction
+- [ ] Platform packages publish before the wrapper
+- [ ] Seven git tags and a `protect-ffi-v<version>` GitHub release exist after an FFI release
+- [ ] Stack tags are still created by changesets on the same run
+- [ ] `ffi-preflight.yml` runs against a release-PR ref without any publish step
+- [ ] `release.yml` installs with `--frozen-lockfile`
+- [ ] `cargo test`, `cargo fmt --check` and clippy (host **and** wasm32) run in CI again
+- [ ] No dead upstream workflow files under `packages/protect-ffi/.github/`
+- [ ] `lintWiring.test.ts` asserts against a workflow GitHub actually executes
+- [ ] Published `@cipherstash/stack` tarball's `dependencies` show a concrete protect-ffi version
+- [ ] `stash doctor` exits non-zero with a hidden platform package (phase 5)
+
+---
+
+## Open decisions
+
+1. **Stack changeset bump level.** Currently `minor` in `.changeset/olive-pugs-invite.md`. A 1.0 package where a previously-working credential encoding stops working argues for `major`; against it, hex was always the documented encoding and the fixed group would take five other packages to 2.0.0.
+
+2. **`packages/prisma-next/`, `packages/drizzle/`, `packages/protect/`, `packages/schema/`, `packages/stack-forge/`** are untracked build residue from earlier renames — zero tracked files each.
 
 ## Closed questions
 
-- **[rev3] Why no interim upstream release?** Decided: it buys a de-risking step whose
-  value is largely consumed by the import itself, at the cost of one more cross-repo
-  release dance — the exact thing this work exists to eliminate. The published
-  `0.31.0` would reach almost nobody in the meantime: the only external dependent,
-  `@cipherstash/protect@12.0.1`, pins `0.23.0`. The cost is the ignore-window
-  invariant and the one-release doctor gap, both bounded and both handled above.
-- **Does Windows stay in every release?** Yes. A fixed group publishes all seven
-  packages atomically; moving Windows to a later schedule would mean releasing a group
-  whose members do not all exist yet. Revisit only as part of a deliberately designed
-  prebuilt-artifact system, not as a latency tweak.
-- **Does a Rust-only change need a changeset?** Yes — `AGENTS.md` step 9 already
-  answers it. Rust changes alter published behaviour, so they need a
-  `@cipherstash/protect-ffi` changeset; the dedicated fixed group propagates the bump to
-  the six platform packages.
-
-## Open questions
-
-1. **Does option (3) hold?** Whether committed `.d.ts` files alone satisfy stack's
-   declaration build is the one unverified assumption the contributor-Rust conclusion
-   rests on. Settled in phase 1 by the experiment described above.
-2. **[rev3] Is `CS_CLIENT_KEY` hex in CI?** Unanswerable from the tree. If it is
-   base64, phase 1 breaks every credentialed test simultaneously, and the error message
-   deliberately says nothing beyond "expected a hex-encoded key".
-3. **`packages/prisma-next/`, `packages/drizzle/`, `packages/protect/`,
-   `packages/schema/`, `packages/stack-forge/`** are untracked build residue from
-   earlier renames — zero tracked files each. Unrelated, but they make `packages/*`
-   misleading to read, and this work adds a package directory containing six further
-   nested packages to the same place.
+- **Does option (3) hold?** Yes.
+- **Is `CS_CLIENT_KEY` hex?** Yes; the CI secret is still guarded.
+- **Can Stack release independently of an FFI/EQL release?** Stack-only: always. The reverse depends on the pin — see "Release lines are coupled by pinning".
+- **Why no interim upstream release?** The only external dependent, `@cipherstash/protect@12.0.1`, pins `0.23.0`.
+- **Does Windows stay in every release?** Yes — a fixed group publishes all seven atomically.
+- **Does a Rust-only change need a changeset?** Yes; the fixed group propagates to the six platform packages.
