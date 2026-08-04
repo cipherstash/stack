@@ -47,13 +47,17 @@ describe('skills — Supabase apply commands', () => {
     const prose = body.replace(/\s+/g, ' ').replace(/[*`_]/g, '')
 
     for (const match of prose.matchAll(/supabase migration up/g)) {
-      const qualifier = prose.slice(match.index, match.index + 80)
-      if (qualifier.includes('--linked')) continue
+      // Only what immediately follows the command counts. A window wide
+      // enough to find a "local database" elsewhere in the sentence accepts
+      // the very wording this guard rejects — "apply with supabase migration
+      // up (or supabase db reset locally, once the local database exists)"
+      // qualifies the other command, not this one.
+      const following = prose.slice(match.index + match[0].length)
 
       expect(
-        qualifier.toLowerCase(),
+        following.slice(0, 60),
         '`supabase migration up` applies to the LOCAL database — add `--linked`, say "applies to the local database", or use `supabase db push` for remote',
-      ).toContain('local database')
+      ).toMatch(/^(?: --linked\b| applies to the local database\b)/i)
     }
   })
 })
