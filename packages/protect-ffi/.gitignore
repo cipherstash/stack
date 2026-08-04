@@ -1,0 +1,19 @@
+target
+dist
+index.node
+**/node_modules
+**/.DS_Store
+npm-debug.log*
+lib
+cargo.log
+cross.log
+mise.local.toml
+cipherstash.secret.toml
+cipherstash-*.sql
+.env
+
+# Test coverage
+integration-tests/coverage/
+
+# Git worktrees
+.worktrees/
