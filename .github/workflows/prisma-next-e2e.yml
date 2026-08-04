@@ -67,6 +67,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # This suite encrypts against the live service, so it needs the native
+      # binding. Path-filtered away from the absorption PR that introduced the
+      # need, but it runs on push to main and on any PR touching its paths.
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/build-ffi-binding
+
       # The global-setup hook hard-errors without CS_WORKSPACE_CRN, but a
       # missing sibling secret could still degrade coverage silently — assert
       # all four up front so a rotated / fork-PR-absent secret fails loudly.

@@ -95,8 +95,19 @@ so that stays true for everyone else.
 
 - **The default `test` and `build` never invoke cargo.** Root `pnpm test` runs
   `turbo test --filter './packages/*'`, which reaches this package — so a cargo
-  process on that path is a Rust toolchain on every contributor's machine and
-  every PR job. `test` is the JS chain; `build` is `tsc`.
+  process on that path is a Rust toolchain on every contributor's machine.
+  `test` is the JS chain; `build` is `tsc`.
+- **CI does build the binding, in the jobs that need it.** That is the limit of
+  the rule above: it keeps cargo off the *scripts*, not out of the pipeline.
+  Absorbing protect-ffi turned `lib/`, `index.node` and `dist/wasm/**` from
+  tarball contents into build outputs, so every job that encrypts, decrypts, or
+  typechecks against the package builds them first via
+  `.github/actions/build-ffi-binding` (pass `wasm: 'true'` for the two that
+  load the real WASM). The action caches `index.node` on a content hash of the
+  Rust inputs, so a PR touching no Rust pays a restore rather than a compile.
+  **A new job that runs live encryption needs this step** — without it the
+  failure is `Cannot find module '.../protect-ffi-linux-x64-gnu/index.node'`,
+  reported once per test rather than once per job.
 - **Rust checks live behind `test:cargo`** (`cargo test` + `cargo fmt --check`)
   and `mise run lint:rust` (clippy, host and wasm32). `build:native` carries
   `cargo build --release`.

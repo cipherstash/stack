@@ -1,0 +1,154 @@
+name: Build the protect-ffi binding
+description: >-
+  Compile `packages/protect-ffi` into the artifacts its JS consumers load at
+  runtime — `lib/` (tsc), `index.node` (cargo), and optionally `dist/wasm/**`
+  (wasm-pack) — then prove they load.
+
+  WHY THIS EXISTS: until the monorepo absorption, `@cipherstash/protect-ffi`
+  was installed from npm and all three arrived prebuilt inside the tarball. As
+  a workspace package it ships source only, so every job that encrypts,
+  decrypts, or typechecks against it has to build them first — and nothing else
+  in CI does. Without this action the credentialed suites fail with
+  `Cannot find module '.../protect-ffi-linux-x64-gnu/index.node'`, the Deno
+  smoke test with `Module not found ".../dist/wasm/protect_ffi_inline.js"`, and
+  stack's type tests with four unresolved-declaration errors.
+
+  DO NOT USE FROM A PUBLISHING WORKFLOW. It restores the GitHub Actions cache,
+  which `scripts/lint-no-workflow-caching.mjs` forbids anywhere an artifact
+  gets published. Release builds go through the target-explicit matrix instead,
+  which compiles every platform from scratch.
+
+inputs:
+  wasm:
+    description: >-
+      Also build `dist/wasm/**`. Only jobs that exercise
+      `@cipherstash/stack/wasm-inline` need it — the Deno smoke test and the
+      `integration/wasm/**` suites — and it costs a wasm-pack install plus a
+      second cargo build against wasm32, so it is off by default.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    # `index.node` is a pure function of the Rust inputs, so it caches on a
+    # content hash of them rather than on a lockfile alone — a crates/ edit
+    # must miss. Caching the 13MB output, NOT cargo's `target/`: a release
+    # build of the cipherstash-client graph leaves gigabytes there, which is
+    # slower to save and restore than the compile it saves.
+    #
+    # GitHub scopes a PR's cache writes to its own ref, so the payoff arrives
+    # once this lands on main and PR runs can read main's entry. Until then
+    # each PR pays one cold build and reuses it across re-runs.
+    - name: Restore the compiled binding
+      id: cache-native
+      uses: actions/cache@v4
+      with:
+        path: packages/protect-ffi/index.node
+        key: >-
+          ffi-native-${{ runner.os }}-${{ runner.arch }}-${{
+          hashFiles('packages/protect-ffi/crates/**',
+          'packages/protect-ffi/Cargo.toml',
+          'packages/protect-ffi/Cargo.lock') }}
+
+    # Always, hit or miss: `lib/` is `tsc` over `src/`, which is seconds, and
+    # it tracks a different input set than the cached binary.
+    - name: Build lib/ (the package `main`, and what tsc consumers resolve)
+      shell: bash
+      run: pnpm --filter @cipherstash/protect-ffi run build
+
+    # `build:native` is `tsc && cargo build --release`, then a `postcargo-build`
+    # hook running `neon dist < cargo.log`. That bare `neon dist` writes
+    # `index.node` at the PACKAGE ROOT, which is what `src/load.cts` registers
+    # as its `debug:` fallback — so the loader finds it without any platform
+    # package being populated. Release packaging needs `neon dist -o` to place
+    # a binary inside `platforms/<p>/`; testing deliberately does not.
+    - name: Build index.node (cargo)
+      if: steps.cache-native.outputs.cache-hit != 'true'
+      shell: bash
+      run: pnpm --filter @cipherstash/protect-ffi run build:native
+
+    - name: Restore the compiled WASM output
+      if: inputs.wasm == 'true'
+      id: cache-wasm
+      uses: actions/cache@v4
+      with:
+        path: packages/protect-ffi/dist/wasm
+        key: >-
+          ffi-wasm-${{ runner.os }}-${{
+          hashFiles('packages/protect-ffi/crates/**',
+          'packages/protect-ffi/Cargo.toml',
+          'packages/protect-ffi/Cargo.lock') }}
+
+    # mise carries the pinned wasm-pack (see packages/protect-ffi/mise.toml)
+    # and, run from that directory, trusts the nested config — a bare `mise`
+    # call elsewhere refuses it with "Config files are not trusted", which
+    # reads as a toolchain problem rather than a trust one.
+    #
+    # `install_args` narrows this to wasm-pack alone. A bare `mise install`
+    # would also build `cargo:cargo-zigbuild` from source, which this job has
+    # no use for — zigbuild is the release matrix's glibc-pinning path.
+    #
+    # The argument is the full backend id, matching mise.toml. The short name
+    # is not in mise's registry: `mise install wasm-pack` exits non-zero with
+    # "not found in mise tool registry" and a did-you-mean list.
+    - name: Install wasm-pack
+      if: inputs.wasm == 'true' && steps.cache-wasm.outputs.cache-hit != 'true'
+      uses: jdx/mise-action@v3
+      with:
+        install: true
+        install_args: aqua:wasm-bindgen/wasm-pack
+        working_directory: packages/protect-ffi
+
+    # `--all-targets` in the Rust lint means all target KINDS, not platforms;
+    # wasm32 has to be installed explicitly before anything can build for it.
+    - name: Add the wasm32 target
+      if: inputs.wasm == 'true' && steps.cache-wasm.outputs.cache-hit != 'true'
+      shell: bash
+      run: rustup target add wasm32-unknown-unknown
+
+    - name: Build dist/wasm (wasm-pack)
+      if: inputs.wasm == 'true' && steps.cache-wasm.outputs.cache-hit != 'true'
+      shell: bash
+      run: pnpm --filter @cipherstash/protect-ffi run build:wasm
+
+    # Always, and the reason this action is not just three `run:` lines inline.
+    # A cache that restores nothing, or a build whose output lands somewhere
+    # unexpected, otherwise surfaces as dozens of unrelated encryption failures
+    # deep in a credentialed suite. Fail here instead, naming the artifact.
+    - name: Verify the binding loads
+      shell: bash
+      working-directory: packages/protect-ffi
+      env:
+        WANT_WASM: ${{ inputs.wasm }}
+      run: |
+        set -euo pipefail
+
+        test -s index.node || {
+          echo "::error::index.node was neither restored from cache nor built"
+          exit 1
+        }
+
+        # Exercises the real loader, including the platform-package-then-debug
+        # fallback in src/load.cts. `require` alone proves nothing since the
+        # laziness change — the binding resolves on first use, not on import.
+        node -e "require('./lib/index.cjs').assertNativeBindingAvailable()"
+        echo "index.node loads"
+
+        if [ "$WANT_WASM" = "true" ]; then
+          for f in dist/wasm/protect_ffi.js \
+                   dist/wasm/protect_ffi_inline.js \
+                   dist/wasm/protect_ffi_bg.wasm ; do
+            test -s "$f" || {
+              echo "::error::$f missing — the WASM build did not produce it"
+              exit 1
+            }
+          done
+          node --input-type=module -e "
+            const m = await import('./dist/wasm/protect_ffi_inline.js')
+            if (typeof m.newClient !== 'function') {
+              throw new Error('wasm-inline resolved but exports no newClient')
+            }
+          "
+          echo "dist/wasm loads"
+        fi

@@ -16,6 +16,19 @@
 zig = "0.16.0"
 "cargo:cargo-zigbuild" = "0.23.0"
 
+# `build:wasm` shells out to wasm-pack, and nothing else supplies it. Pinned to
+# the version upstream's build and test workflows both used, for the same
+# reason the two above are pinned: a toolchain upgrade should be a deliberate
+# PR, not ambient breakage discovered at release time. Declared here rather
+# than installed ad-hoc in CI so a contributor running `mise install` in this
+# directory gets the same binary the pipeline uses.
+#
+# Spelled with its full backend id: `wasm-pack` is not a short name in mise's
+# registry (`mise which wasm-pack` answers "not found in mise tool registry"
+# and suggests this), so the bare form resolves to nothing and the tool is
+# silently absent from `mise install`.
+"aqua:wasm-bindgen/wasm-pack" = "0.13.1"
+
 [env]
 PGPORT = "5436"
 PGDATABASE = "cipherstash"

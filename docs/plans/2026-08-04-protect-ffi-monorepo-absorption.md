@@ -45,6 +45,10 @@
 
 **Remaining: phases 3, 4, 5.** Phase 3 is specified as executable tasks below. Phase 4 contains the only irreversible steps. Phase 5 is blocked until phase 4 publishes.
 
+**Phase 3 Task 0 is written and awaiting a CI run.** It is the prerequisite for
+everything after it: PR #858's board is red without it, so no later task can be
+verified against a green baseline.
+
 ---
 
 ## Corrections to earlier revisions
@@ -96,9 +100,19 @@ Bare `neon dist < cargo.log` writes `./index.node` — the `debug:` fallback in 
 
 ## Verified findings
 
-### Option (3) holds — ordinary CI needs no Rust
+### Option (3) holds for the scripts — but not for CI
 
 With every `.js` and `.wasm` deleted from `dist/wasm` and only `protect_ffi.d.ts`, `protect_ffi_bg.wasm.d.ts` and `errors.d.ts` present (11.3KB): stack's `build` (tsup + dts), `test:types:dist`, `test:types` (59) and unit suite (1064) all pass. Confirmed with a `cargo` trap on `PATH` — zero invocations from root `pnpm test` or `turbo build`; `test:cargo` correctly exits 97.
+
+**That measurement was true and the conclusion drawn from it was too broad.** "Ordinary CI needs no Rust" does not follow, because CI is credentialed and does exercise both the native and WASM paths. Seven jobs on PR #858 failed for three distinct reasons, all the same root cause — the three artifacts that used to arrive prebuilt in the npm tarball are now build outputs nobody produces:
+
+| Failing jobs | Missing | Symptom |
+|---|---|---|
+| `Run Tests (Node 22)`, `(Node 24)` | `lib/` | 4 `TypeCheckError`s in `typed-client-v3.test-d.ts` — `tests.yml` calls `pnpm --filter … run test:types` directly, so turbo's `^build` never runs |
+| Drizzle ×2, Supabase, prisma-next | `index.node` | `Cannot find module '.../protect-ffi-linux-x64-gnu/index.node'` |
+| `Run WASM E2E Tests (Deno)` | `dist/wasm/*.js`, `*.wasm` | `Module not found ".../dist/wasm/protect_ffi_inline.js"` |
+
+The unit suite's own `wasm-inline` tests are unaffected: 8 of 10 mock the module and the other two assert on the bundle graph, so none loads the real WASM. Fixed by Task 0.
 
 Re-inclusion must start at the **root** `.gitignore` (git cannot re-include a file whose parent directory is excluded), and `inline-wasm.mjs` removes the `dist/wasm/.gitignore` wasm-pack writes, since the deepest file wins.
 
@@ -174,7 +188,55 @@ Keep `release.yml` as the single npm entry point, so existing Stack packages nee
 
 ## Phase 3 — build the pipeline
 
-Nine tasks.
+Ten tasks. Task 0 is a prerequisite for the rest: until it lands the branch's CI
+is red, so nothing after it can be verified against a green board.
+
+### Task 0: Build the binding in the jobs that need it
+
+The absorption made `lib/`, `index.node` and `dist/wasm/**` build outputs (see
+"Option (3) holds for the scripts — but not for CI"). Seven jobs need one or
+more of them and no job produces any.
+
+A composite action rather than a reusable workflow with an artifact: the
+integration jobs own their database service and credentials, so the build has to
+happen *inside* them, and artifacts do not cross workflow files anyway. Caching
+the 13MB `index.node` on a content hash of the Rust inputs beats caching cargo's
+`target/`, which runs to gigabytes and is slower to save and restore than the
+compile it saves.
+
+**Files:**
+- Create: `.github/actions/build-ffi-binding/action.yml`
+- Modify: `packages/protect-ffi/mise.toml` (pin wasm-pack), `.github/workflows/tests.yml`, `.github/workflows/integration-{drizzle,supabase,prisma-next}.yml`, `.github/workflows/prisma-next-e2e.yml`, `.github/workflows/prisma-example-readme-e2e.yml`, `AGENTS.md`
+
+- [x] **Step 1: Write the composite action**, with a `wasm` input (default
+  `'false'`) and a verification step that runs on both the cache-hit and
+  cache-miss paths. The verification is the point: a cache that restores nothing
+  otherwise surfaces as dozens of unrelated encryption failures deep in a
+  credentialed suite instead of one legible error.
+
+- [x] **Step 2: Pin wasm-pack in `packages/protect-ffi/mise.toml`** at `0.13.1`,
+  the version upstream's build and test workflows both used. Installed with
+  `install_args: wasm-pack` so the step does not also build
+  `cargo:cargo-zigbuild` from source, which only the release matrix needs.
+
+- [x] **Step 3: Wire it into the seven jobs.** `wasm: 'true'` for exactly two —
+  the Deno smoke test, and the Drizzle job, whose `CS_IT_SUITE` includes
+  `integration/wasm/**`. The two prisma e2e workflows are path-filtered away
+  from this PR but run on push to main, so they need it too.
+
+- [x] **Step 4: Add protect-ffi to the integration path filters.** A crate
+  change can now break these suites in a PR touching no TypeScript; without
+  `packages/protect-ffi/crates/**` and `src/**` in `paths:`, it would skip them.
+
+- [x] **Step 5: Correct `AGENTS.md`.** It promised contributors that cargo stays
+  off every PR job. That is now true of the scripts only.
+
+- [ ] **Step 6: Confirm green.** Push and check all seven previously-failing
+  jobs. This is the only step that cannot be verified locally — the cache
+  behaviour, the Linux `debug:`-fallback load, and the wasm-pack install are all
+  first exercised on a runner.
+
+---
 
 ### Task 1: Stop the protect-ffi crate being publishable
 
@@ -1649,6 +1711,10 @@ The Rust emitting EQL payloads is generated from a different catalog commit than
 
 **Phase 3+**
 
+- [ ] Every job that encrypts, decrypts or typechecks against protect-ffi builds the binding first
+- [ ] The build action fails loudly when the artifact is absent, on both the cache-hit and cache-miss paths
+- [ ] A Rust-only change triggers the three integration workflows
+- [ ] All seven previously-failing jobs on PR #858 are green
 - [ ] All seven FFI manifests read `cipherstash/stack`; no `protectjs-ffi` reference remains
 - [ ] `neon list-platforms` maps all six platforms to Rust triples, and the matrix consumes them
 - [ ] Each packed platform tarball contains `index.node` **of the correct architecture** (`file` check, not size)

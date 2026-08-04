@@ -33,6 +33,12 @@ on:
       - '.github/workflows/integration-prisma-next.yml'
       - '.github/actions/integration-setup/**'
       - '.github/actions/integration-db/**'
+      - '.github/actions/build-ffi-binding/**'
+      # The Rust that produces every EQL payload these suites round-trip.
+      # Absorbing protect-ffi put it in-tree, so a crate change can now
+      # break them in a PR that touches no TypeScript at all.
+      - 'packages/protect-ffi/crates/**'
+      - 'packages/protect-ffi/src/**'
   pull_request:
     branches: ['**']
     # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
@@ -52,6 +58,12 @@ on:
       - '.github/workflows/integration-prisma-next.yml'
       - '.github/actions/integration-setup/**'
       - '.github/actions/integration-db/**'
+      - '.github/actions/build-ffi-binding/**'
+      # The Rust that produces every EQL payload these suites round-trip.
+      # Absorbing protect-ffi put it in-tree, so a crate change can now
+      # break them in a PR that touches no TypeScript at all.
+      - 'packages/protect-ffi/crates/**'
+      - 'packages/protect-ffi/src/**'
 
 jobs:
   integration:
@@ -87,6 +99,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/integration-setup
+
+      # No `wasm: true` — the prisma-next family suites go through the native
+      # binding only.
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/build-ffi-binding
 
       # Fast pre-flight: fail in seconds if a secret was rotated or cleared,
       # before the docker pull. The in-test `requireIntegrationEnv` is the
