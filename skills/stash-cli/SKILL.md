@@ -459,6 +459,7 @@ Database checks (skipped with a notice, not a failure, when no database is reach
 | The database column is still plain (no EQL domain) | Error |
 | An `_ord_ore` domain on a database whose EQL install could not create the ORE operator class | Error |
 | A queryable column with no functional index over its term extractor | Info |
+| A declared table name that resolved in the searched schema also exists in another one | Info |
 
 Exits 1 on errors only; warnings and info do not fail the command.
 
@@ -472,6 +473,8 @@ Exits 1 on errors only; warnings and info do not fail the command.
 | absent everywhere | Error — the migration has not been applied |
 
 The `schema.table` case is deliberately not resolved by splitting the name: the only column reader is scoped to `current_schema()`, so `app.users` would silently validate against `public.users` and report an unrelated table's drift as this one's. An explicit "not checked" beats a confident wrong answer.
+
+**An unqualified name that exists in more than one schema is reported too**, as an Info. A bare declared name resolves through `search_path`, so when the same name lives in both the searched schema and another — `users` in `public` and in Supabase's `auth`, which nearly every project has — the declaration does not pin which relation the application reads. Validate names the one it checked (`"public"."users"`), names the others, and gives the connection option to inspect one of those instead. It stays Info rather than Warning on purpose: it must not fail an ordinary Supabase project or report it as unclean, and unlike the four cases above this one *did* check a table — it is qualifying which, not reporting that nothing happened.
 
 **The `_ord_ore` finding is about portability.** `CREATE OPERATOR CLASS` requires superuser, so managed Postgres (Supabase and most hosted providers) installs EQL without the ORE btree operator class, and the bundle then poisons every `_ord_ore` domain with an always-raising CHECK. Prefer the `_ord` (OPE) twin unless you control the database role. With a database reachable, validate confirms which case you are in and upgrades the Warning to an Error when the operator class is genuinely absent.
 

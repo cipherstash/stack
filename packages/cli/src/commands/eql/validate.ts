@@ -76,11 +76,20 @@ export interface ObservedState {
    */
   connectedRole?: string
   /**
-   * For each declared table NOT in {@link searchedSchema}, the other schemas a
-   * relation of that name does live in. This is what separates "your
-   * `search_path` points at the wrong schema" (recoverable, the table is right
-   * there) from "the migration that creates this table has not run" (a real
-   * failure). Empty for a table that exists nowhere.
+   * For each declared table, every schema OTHER than {@link searchedSchema} in
+   * which a relation of that name lives.
+   *
+   * Populated per catalogue ROW, so a name present in the searched schema AND
+   * elsewhere lands here AND in {@link searchedSchemaRelations} — this is NOT
+   * scoped to tables missing from {@link searchedSchema}, and must not be
+   * "tidied" into that invariant: {@link ambiguousTableIssue} reads exactly
+   * that overlap to report a shadowed table name, and narrowing this field
+   * would delete that rule with every test still passing except its own.
+   *
+   * With {@link searchedSchemaRelations} it also separates "your `search_path`
+   * points at the wrong schema" (recoverable, the table is right there) from
+   * "the migration that creates this table has not run" (a real failure). Empty
+   * for a table that exists in no other schema.
    */
   elsewhere: Map<string, string[]>
   /**
@@ -256,10 +265,17 @@ export function validateSchemas(
   const unreachable = new Set<string>()
   if (dbState !== undefined) {
     for (const table of new Set(columns.map((column) => column.table))) {
-      if (dbState.columns.has(table)) continue
+      if (!dbState.columns.has(table)) {
+        unreachable.add(table)
+        issues.push(unreachableTableIssue(table, dbState))
+        continue
+      }
 
-      unreachable.add(table)
-      issues.push(unreachableTableIssue(table, dbState))
+      // Reachable — but possibly not the only relation of that name. Reported
+      // here, in the same per-table pass, so it precedes the column findings it
+      // qualifies rather than trailing them.
+      const ambiguous = ambiguousTableIssue(table, dbState)
+      if (ambiguous !== undefined) issues.push(ambiguous)
     }
   }
 
@@ -455,6 +471,39 @@ function unreachableTableIssue(
   }
 }
 
+/**
+ * A declared table name that resolved here AND exists in another schema.
+ *
+ * The complement of {@link unreachableTableIssue}: that one explains why
+ * nothing was checked, this one qualifies what WAS. A bare name resolves
+ * through `search_path`, so when two schemas carry it the declaration does not
+ * pin which relation the application reads — and every finding around this one
+ * describes whichever `current_schema()` happened to resolve to. Saying which
+ * costs one line and is the difference between a report the reader can trust
+ * and one they have to go and verify by hand.
+ *
+ * Info, deliberately, on all three counts that matter: it does not move the
+ * exit code, so a healthy project stays green; `auth.users` exists in every
+ * Supabase project, so a warning here would report the entire platform as
+ * unclean; and warning is reserved for "nothing was checked", which is the
+ * opposite of this case.
+ *
+ * `undefined` when the name is unambiguous — the overwhelmingly common case.
+ */
+function ambiguousTableIssue(
+  table: string,
+  observed: ObservedState,
+): ValidationIssue | undefined {
+  const others = observed.elsewhere.get(table) ?? []
+  if (others.length === 0) return undefined
+
+  return {
+    table,
+    severity: 'info',
+    message: `Table "${table}" was checked as ${quoteIdent(observed.searchedSchema)}.${quoteIdent(table)}, the relation current_schema() resolves it to — but a relation of the same name also exists in schema ${others.map((schema) => `"${schema}"`).join(' / ')}. A bare table name resolves through search_path, so the declaration does not pin which one your application reads, and everything else validate reports for this table describes the "${observed.searchedSchema}" one. If the encrypted columns live in the other, point the connection at that schema to check it instead (e.g. ?options=-csearch_path%3D${others[0]}).`,
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Reading the database
 // ---------------------------------------------------------------------------
@@ -622,6 +671,20 @@ const SEARCHED_SCHEMA_SQL = `
  * materialized-view and foreign relations: any of them can carry the encrypted
  * columns, and a partitioned table in particular is an ordinary choice for the
  * large tables this command is pointed at.
+ *
+ * The system schemas are excluded because the scan is otherwise database-wide
+ * and `information_schema` publishes views named `columns`, `domains`,
+ * `parameters`, `routines`, `sequences`, `tables` and `triggers` — all ordinary
+ * application table names. A project declaring one of them that had NOT run its
+ * migration matched the system view, so instead of the error that says the
+ * migration never ran it got a warning telling it to point `search_path` at
+ * `information_schema` — and, being a warning, exit 0.
+ *
+ * The regex operators, not `NOT LIKE 'pg\_%'`: this SQL is a JS template
+ * literal, which collapses `\_` to a bare `_`. That leaves a LIKE
+ * single-character wildcard, which also matches `pgbouncer`, `pgsodium` and
+ * every other real `pg`-prefixed schema — hiding relations that genuinely
+ * answer the question. `!~ '^pg_'` needs no escaping to mean what it says.
  */
 const TABLE_SCHEMAS_SQL = `
   SELECT c.relname AS table_name,
@@ -631,6 +694,8 @@ const TABLE_SCHEMAS_SQL = `
   JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
   WHERE c.relname = ANY($1::text[])
     AND c.relkind = ANY(ARRAY['r','p','v','m','f'])
+    AND n.nspname !~ '^pg_'
+    AND n.nspname <> 'information_schema'
   ORDER BY n.nspname`
 
 /** Read everything the database rules need, in six catalogue queries. */

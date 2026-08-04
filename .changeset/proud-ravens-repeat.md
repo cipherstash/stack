@@ -41,6 +41,7 @@ reachable):
 | The database column is still plain (no EQL domain) | Error |
 | An `_ord_ore` domain where the EQL install could not create the ORE operator class | Error |
 | A queryable column with no functional index over its term extractor | Info |
+| A declared table name that resolved in the searched schema also exists in another one | Info |
 
 `--exclude-operator-family` is removed: it warned that an `ore` index would not
 support `ORDER BY` without operator families, and the pinned EQL v3 bundle
@@ -56,6 +57,20 @@ what the role holds a privilege on, so a missing grant is not a missing
 migration. Declared as `schema.table`: a Warning saying it was not checked,
 because validate matches table names unqualified. Absent everywhere: an Error.
 Reported once per table rather than once per column.
+
+The relation lookup that answers those questions excludes `pg_*` and
+`information_schema`. Unscoped it matched the system views named `columns`,
+`domains`, `parameters`, `routines`, `sequences`, `tables` and `triggers` — all
+ordinary application table names — so a project declaring one of them that had
+not run its migration was told the table "exists in schema information_schema",
+as a Warning, and the command exited 0 on a genuinely unapplied migration.
+
+An unqualified name found in more than one schema is now reported as an Info
+naming the relation that was actually checked (`"public"."users"`) and the
+other schemas holding that name. A bare name resolves through `search_path`, so
+`users` in both `public` and Supabase's `auth` left it ambiguous which relation
+every other finding described. Info, not Warning: it must not fail or
+de-clean an ordinary Supabase project.
 
 Two of those used to exit 1 and no longer do: a privilege-invisible table and
 a schema-qualified declaration were both reported as "does not exist in any

@@ -243,6 +243,7 @@ Database checks (skipped with a notice when no database is reachable):
 | The column is still plain (no EQL domain) | Error |
 | An `_ord_ore` domain on a database whose EQL install could not create the ORE operator class | Error |
 | Queryable column with no functional index over its term extractor | Info |
+| A declared table name that resolved in the searched schema also exists in another one | Info |
 
 The command exits with code 1 on errors (not on warnings or info).
 

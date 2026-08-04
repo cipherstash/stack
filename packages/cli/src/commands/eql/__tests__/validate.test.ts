@@ -74,6 +74,18 @@ function observing(
   }
 }
 
+/**
+ * A one-table encrypt config, for the degraded config-only collection path.
+ *
+ * This is the shape `collectDeclaredColumnsFromConfig` reads when the project's
+ * `@cipherstash/stack` predates `getSchemas()`, so every column it yields has
+ * `eqlType: undefined` — which is exactly what the domain-less renderings of
+ * the database findings need, and why this lives at module scope rather than
+ * inside the hand-authored-config block that first needed it.
+ */
+const configWith = (columns: EncryptConfig['tables'][string]): EncryptConfig =>
+  ({ v: 1, tables: { t: columns } }) as EncryptConfig
+
 /** Every functional index a set of declared columns could want. */
 function fullyIndexed(
   columns: ReturnType<typeof collectDeclaredColumns>,
@@ -283,10 +295,6 @@ describe('schema rules that guard hand-authored configs', () => {
    * generator, so they are exercised through the config-only collection path,
    * which is the one such a config actually arrives on.
    */
-  const configWith = (
-    columns: EncryptConfig['tables'][string],
-  ): EncryptConfig => ({ v: 1, tables: { t: columns } }) as EncryptConfig
-
   it('rejects a searchable boolean', () => {
     const columns = collectDeclaredColumnsFromConfig(
       configWith({ flag: { cast_as: 'boolean', indexes: { unique: {} } } }),
@@ -318,8 +326,15 @@ describe('schema rules that guard hand-authored configs', () => {
   })
 
   it('rejects ste_vec without a json cast', () => {
+    // `prefix` is required on a `ste_vec` index and `EncryptedTable.build()`
+    // rewrites its `'enabled'` sentinel to `${table}/${column}`, so a real
+    // emitted config carries `'t/doc'` here. It is beside the point of this
+    // test — the rule keys off `cast_as` — but the config is a typed value and
+    // spelling it right is cheaper than a cast that erases the type.
     const columns = collectDeclaredColumnsFromConfig(
-      configWith({ doc: { cast_as: 'string', indexes: { ste_vec: {} } } }),
+      configWith({
+        doc: { cast_as: 'string', indexes: { ste_vec: { prefix: 't/doc' } } },
+      }),
     )
 
     expect(validateSchemas(columns)).toEqual([
@@ -362,6 +377,98 @@ describe('database rules', () => {
     })
 
     expect(validateSchemas(columns, observed)).toEqual([])
+  })
+
+  /**
+   * A bare declared name resolves through `search_path`, so when the same name
+   * exists in the searched schema AND somewhere else, the declaration does not
+   * pin which relation the application actually reads — `auth.users` versus
+   * `public.users` on Supabase is the case everyone meets. Validate checked one
+   * of them and said nothing about having chosen.
+   *
+   * Info, not warning, for three reasons: `info` does not touch the exit code;
+   * `auth.users` exists in every Supabase project, so a warning would report
+   * healthy projects as not-clean; and the warning bucket means "nothing was
+   * checked", whereas this run did check something and is qualifying WHICH.
+   *
+   * The fixture is the healthy one above, byte for byte, plus the `elsewhere`
+   * override — that test asserts `toEqual([])`, so it is simultaneously the
+   * proof this finding is new and the negative control against the rule
+   * degenerating into "always fires".
+   */
+  it('notes which relation it checked when the table name is shadowed', () => {
+    const observed = observing(healthy, {
+      indexedExtractors: fullyIndexed(columns),
+      elsewhere: new Map([['users', ['auth']]]),
+    })
+
+    const issues = validateSchemas(columns, observed)
+
+    expect(issues).toEqual([
+      {
+        severity: 'info',
+        table: 'users',
+        message: expect.stringContaining('also exists in schema "auth"'),
+      },
+    ])
+    // Naming only the others leaves the reader no better off: the finding has
+    // to say which relation the findings around it actually describe.
+    expect(issues[0].message).toContain('"public"."users"')
+    expect(issues[0].message).toContain('search_path%3Dauth')
+  })
+
+  it('names every other schema holding the shadowed name', () => {
+    const observed = observing(healthy, {
+      indexedExtractors: fullyIndexed(columns),
+      elsewhere: new Map([['users', ['auth', 'archive']]]),
+    })
+
+    const [issue] = validateSchemas(columns, observed)
+
+    expect(issue.message).toContain('"auth" / "archive"')
+  })
+
+  /**
+   * The finding qualifies the column findings for its table, so it has to
+   * precede them — the ordering contract `validateSchemas` documents. Asserted
+   * structurally rather than by message, so a finding appended after the column
+   * loop (the obvious way to write this rule) fails here.
+   */
+  it('places the shadowing note ahead of the column findings it qualifies', () => {
+    const observed = observing(healthy, {
+      elsewhere: new Map([['users', ['auth']]]),
+    })
+
+    expect(
+      validateSchemas(columns, observed).map((issue) => [
+        issue.severity,
+        issue.column,
+      ]),
+    ).toEqual([
+      ['info', undefined],
+      ['info', 'email'],
+      ['info', 'age'],
+    ])
+  })
+
+  /**
+   * The unreachable branch already reports a table that is ONLY elsewhere, and
+   * says far more about it than this rule could. Both firing would print two
+   * findings that contradict each other on whether anything was checked.
+   */
+  it('says nothing when the table is only elsewhere, leaving that to the warning', () => {
+    const observed = observing(
+      {},
+      {
+        elsewhere: new Map([['users', ['app']]]),
+        indexedExtractors: fullyIndexed(columns),
+      },
+    )
+
+    const issues = validateSchemas(columns, observed)
+
+    expect(issues).toHaveLength(1)
+    expect(issues[0].severity).toBe('warning')
   })
 
   /**
@@ -587,6 +694,36 @@ describe('database rules', () => {
     ])
   })
 
+  /**
+   * The same finding on the degraded config-only path — an old
+   * `@cipherstash/stack` with no `getSchemas()`, and a reachable database. That
+   * combination is the whole reason the domain-less fallback exists, and it was
+   * reachable only in production: every other config-only test calls
+   * `validateSchemas` with no `observed`, so the database rules never ran, and
+   * every database-rule test uses real `types.*` columns, which always carry a
+   * domain.
+   *
+   * Asserted as a whole string, not a substring: the point of the test is which
+   * ARM of `${domain ? ... : 'declared EQL'}` rendered, and only an exact match
+   * can tell them apart.
+   */
+  it('names no domain in the migration hint when the degraded path has none', () => {
+    const domainless = collectDeclaredColumnsFromConfig(
+      configWith({ age: { cast_as: 'number', indexes: { ope: {} } } }),
+    )
+    const observed = observing({ t: { other: 'eql_v3_integer_ord' } })
+
+    expect(validateSchemas(domainless, observed)).toEqual([
+      {
+        severity: 'error',
+        table: 't',
+        column: 'age',
+        message:
+          'Column "age" is declared in your encryption schema but does not exist on table "t". Add it in a migration with the declared EQL type.',
+      },
+    ])
+  })
+
   it('reports a column that is still plain', () => {
     const observed = observing(
       { users: { email: 'eql_v3_text_search', age: null } },
@@ -599,6 +736,32 @@ describe('database rules', () => {
         table: 'users',
         column: 'age',
         message: expect.stringContaining('is a plain (non-EQL) column'),
+      },
+    ])
+  })
+
+  /**
+   * The degraded-path twin of the test above, for the same reason. Note that
+   * `stringContaining('is a plain (non-EQL) column')` — what that test asserts —
+   * matches BOTH renderings, so it could never have caught the domain-less arm
+   * dropping out. The sentence has to be asserted whole.
+   */
+  it('claims no domain in the plain-column finding when the degraded path has none', () => {
+    const domainless = collectDeclaredColumnsFromConfig(
+      configWith({ age: { cast_as: 'number', indexes: { ope: {} } } }),
+    )
+    const observed = observing(
+      { t: { age: null } },
+      { indexedExtractors: fullyIndexed(domainless) },
+    )
+
+    expect(validateSchemas(domainless, observed)).toEqual([
+      {
+        severity: 'error',
+        table: 't',
+        column: 'age',
+        message:
+          'Column "age" is a plain (non-EQL) column in the database, but your schema declares it encrypted. Encrypted payloads written to it are unconstrained and unqueryable.',
       },
     ])
   })
@@ -995,6 +1158,89 @@ describe('readObservedState', () => {
     )
 
     expect(observed.connectedRole).toBe('app_readonly')
+  })
+
+  /**
+   * The relation lookup scans EVERY schema, and `information_schema` publishes
+   * views named `columns`, `domains`, `parameters`, `routines`, `sequences`,
+   * `tables` and `triggers` — every one of them a plausible application table
+   * name. So a project that declares `domains` and has NOT run the migration
+   * matched the system view, landed in `elsewhere`, and was told its table
+   * "exists in schema information_schema — point your connection there". That
+   * is absurd advice, and because it is a warning rather than an error it also
+   * flips the exit code from 1 to 0: the unapplied migration ships silently.
+   *
+   * Verified against a live PostgreSQL 14: the unfiltered query returns all
+   * seven of those names out of `information_schema`, and returns none of them
+   * once the two predicates below are added.
+   *
+   * The fake stands in for the catalogue by honouring the query's own exclusion
+   * predicates, which is what a real server does.
+   */
+  it('does not mistake an information_schema view for a declared table', async () => {
+    const excludesSystemSchemas = (text: string) =>
+      /nspname\s*!~\s*'\^pg_'/.test(text) &&
+      /nspname\s*<>\s*'information_schema'/.test(text)
+
+    const client = {
+      query: (text: string) =>
+        Promise.resolve({
+          rows:
+            text.includes('AS relation_schema') && !excludesSystemSchemas(text)
+              ? [
+                  {
+                    table_name: 'domains',
+                    relation_schema: 'information_schema',
+                    is_searched_schema: false,
+                  },
+                ]
+              : [],
+        }),
+    } as unknown as Parameters<typeof readObservedState>[0]
+
+    const declared = collectDeclaredColumns([
+      encryptedTable('domains', { name: types.TextEq('name') }),
+    ])
+    const observed = await readObservedState(client, ['domains'])
+
+    expect(observed.elsewhere.get('domains')).toBeUndefined()
+
+    const [issue] = validateSchemas(declared, {
+      ...observed,
+      eqlInstalled: true,
+    })
+
+    // The migration genuinely has not run, so this must fail the command.
+    expect(issue.severity).toBe('error')
+    expect(issue.message).toContain('does not exist in any schema')
+    expect(issue.message).not.toContain('information_schema')
+  })
+
+  /**
+   * The predicates asserted as SQL text, alongside the behavioural test above:
+   * that one can only prove the rows are gone, not that they were excluded for
+   * the right reason on a server whose catalogue this fake does not model.
+   */
+  it('excludes the system schemas from the relation lookup', async () => {
+    const queries: string[] = []
+    const client = {
+      query: (text: string) => {
+        queries.push(text)
+        return Promise.resolve({ rows: [] })
+      },
+    } as unknown as Parameters<typeof readObservedState>[0]
+
+    await readObservedState(client, ['users'])
+
+    const lookup = queries.find((text) => text.includes('AS relation_schema'))
+
+    expect(lookup).toBeDefined()
+    // The regex form, not `NOT LIKE 'pg\_%'`: this SQL is a JS template
+    // literal, which collapses `\_` to a bare `_` — a LIKE wildcard that also
+    // swallows `pgbouncer`, `pgsodium` and every other real `pg`-prefixed
+    // schema. Confirmed both in node and against PostgreSQL 14.
+    expect(lookup).toMatch(/nspname\s*!~\s*'\^pg_'/)
+    expect(lookup).toMatch(/nspname\s*<>\s*'information_schema'/)
   })
 
   it('asks for the schemas of exactly the declared tables', async () => {

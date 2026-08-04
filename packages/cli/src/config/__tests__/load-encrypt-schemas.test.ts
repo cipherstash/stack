@@ -124,15 +124,29 @@ describe('loadEncryptSchemas against an untrusted client', () => {
   })
 
   /**
-   * A non-string `tableName` doesn't crash — it propagates as
+   * A `tableName` that isn't a string doesn't crash — it propagates as
    * `DeclaredColumn.table === undefined`, which `validateSchemas` then reports
    * as a table missing from the database and exits 1 on. So dropping this arm
    * turns the documented degrade into a hard failure naming a table called
    * "undefined", and nothing else covers it: the well-formed-table case above
    * still passes without it.
+   *
+   * Two fixtures for that one arm, because they are different inputs: a client
+   * can omit `tableName` altogether (an older or hand-rolled stub) or carry a
+   * wrong-typed one. Both pass `columnBuilders: {}`, which makes
+   * `Object.values({}).every()` vacuously true — so the `tableName` check is
+   * the only thing rejecting either one.
    */
-  it('rejects a table whose tableName is not a string', async () => {
+  it('rejects a table whose tableName is missing', async () => {
     writeProject(clientReturning(`[{ columnBuilders: {} }]`))
+
+    const { schemas } = await loadEncryptSchemas('./client.ts')
+
+    expect(schemas).toBeUndefined()
+  })
+
+  it('rejects a table whose tableName is not a string', async () => {
+    writeProject(clientReturning(`[{ tableName: 42, columnBuilders: {} }]`))
 
     const { schemas } = await loadEncryptSchemas('./client.ts')
 
