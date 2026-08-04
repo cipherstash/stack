@@ -76,6 +76,12 @@ describe('v3-only public surface', () => {
       'encryptModel',
       'encryptQuery',
       'getEncryptConfig',
+      // Read-only accessor over the SAME tuple the reconstructor map and the
+      // unknown-table guard were derived from — it hands the captured
+      // `schemas` back and can neither replace nor extend them, so it is not a
+      // re-initialization path. Added for `stash eql validate`, which needs the
+      // concrete domain names that `getEncryptConfig()` drops.
+      'getSchemas',
     ])
   })
 })

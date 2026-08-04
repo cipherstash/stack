@@ -298,6 +298,38 @@ export interface EncryptionClient<
    */
   bulkDecrypt(payloads: BulkDecryptPayload): BulkDecryptOperation
   getEncryptConfig(): ReturnType<UnderlyingNativeClient['getEncryptConfig']>
+
+  /**
+   * The v3 tables this client was initialized with, in the order they were
+   * passed to `Encryption({ schemas })`.
+   *
+   * This is the DOMAIN-BEARING view of the schema, and the reason it exists
+   * alongside {@link getEncryptConfig}. `getEncryptConfig()` is what the FFI
+   * consumes, and `EncryptedV3Column.build()` emits only `{ cast_as, indexes }`
+   * — the concrete domain name is metadata and is deliberately not in there.
+   * So `cast_as: 'number'` with an `ope` index is ambiguous across
+   * `eql_v3_integer_ord`, `smallint_ord`, `real_ord`, `double_ord` and
+   * `numeric_ord`, and any tool that has to reason about the DECLARED domain
+   * (schema linting, drift-checking a live database's `information_schema`
+   * domains) cannot recover it from the encrypt config.
+   *
+   * The tables are usually *imported* into the client file rather than
+   * re-exported from it, so duck-typing the module namespace is unreliable —
+   * hence exposing them here, on the one export every such tool already finds.
+   *
+   * Read a column's domain with `column.getEqlType()`
+   * (`'public.eql_v3_integer_ord'`), its capabilities with
+   * `column.getQueryCapabilities()`, and its DB name with `column.getName()`.
+   *
+   * ```typescript
+   * for (const table of client.getSchemas()) {
+   *   for (const column of Object.values(table.columnBuilders)) {
+   *     console.log(table.tableName, column.getName(), column.getEqlType())
+   *   }
+   * }
+   * ```
+   */
+  getSchemas(): S
 }
 
 /**
@@ -527,6 +559,11 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
       client.bulkEncrypt(plaintexts as BulkEncryptPayload, opts),
     bulkDecrypt: (payloads) => client.bulkDecrypt(payloads),
     getEncryptConfig: () => client.getEncryptConfig(),
+    // The same tuple, by reference — not a copy. `S` is a `const` type
+    // parameter, so the caller's array literal keeps its per-table inference,
+    // and `table` arguments read back off `getSchemas()` stay assignable to
+    // `S[number]` (identity-keyed consumers therefore also keep working).
+    getSchemas: () => schemas,
   }
 
   return typed

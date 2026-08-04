@@ -1002,9 +1002,23 @@ Useful when the backfill needs to run in a worker, on a schedule, or alongside a
 | `bulkDecryptModels` | `(models, table, lockContext?)` | `AuditableDecryptModelOperation<V3DecryptedModel<Table, T>[]>` |
 | `bulkEncrypt` | `(plaintexts, { column, table })` — raw values, each `plaintext` pinned to the column's domain type | `BulkEncryptOperation` |
 | `bulkDecrypt` | `(encryptedPayloads)` — parity passthrough; no `Date` reconstruction | `BulkDecryptOperation` |
-| `getEncryptConfig` | `()` | The client's encrypt config |
+| `getEncryptConfig` | `()` | The client's encrypt config (the protect-ffi view: `cast_as` + index kinds, **no domain names**) |
+| `getSchemas` | `()` | The tables passed to `Encryption({ schemas })`, by reference |
 
 All of these operations are thenable (awaitable) and support `.withLockContext()` and `.audit()` chaining — including `decryptModel`/`bulkDecryptModels`, which also accept the lock context as a third argument. Use one or the other: chaining `.withLockContext()` onto a decrypt that already took a positional lock context throws.
+
+`getSchemas()` is the domain-bearing view of the schema, and the reason it exists alongside `getEncryptConfig()`. The encrypt config is what the FFI consumes: a column builds to `{ cast_as, indexes }`, and the concrete domain name is dropped — so `cast_as: 'number'` with an `ope` index is ambiguous across `eql_v3_integer_ord`, `smallint_ord`, `real_ord`, `double_ord` and `numeric_ord`. Anything reasoning about the *declared* domain reads the tables instead. `stash eql validate` is the built-in consumer; the same accessor lets your own tooling do it:
+
+```typescript
+for (const table of client.getSchemas()) {
+  for (const column of Object.values(table.columnBuilders)) {
+    console.log(table.tableName, column.getName(), column.getEqlType())
+    // users email public.eql_v3_text_search
+  }
+}
+```
+
+Per column: `getName()` is the **DB** column name (not the JS property), `getEqlType()` the concrete domain, `getQueryCapabilities()` the `{ equality, orderAndRange, freeTextSearch, searchableJson? }` flags, and `isQueryable()` whether it carries any query term at all.
 
 ### Schema Builders
 
