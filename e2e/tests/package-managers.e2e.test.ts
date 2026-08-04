@@ -61,7 +61,7 @@ describe('CLI init providers — package-manager-aware Next Steps', () => {
       label: 'supabase',
       create: createSupabaseProvider,
       firstStep: (r) =>
-        `Install EQL: ${r} stash eql install --supabase (prompts for migration vs direct)`,
+        `Install EQL: ${r} stash eql migration --supabase (writes it into supabase/migrations/)`,
     },
   ]
 
