@@ -26,6 +26,16 @@
       "dependsOn": ["^build"],
       "outputs": []
     },
+    // protect-ffi's `build` is `tsc` and emits `lib/**` — the package's `main`
+    // — not `dist/**`. Without this override the repo-wide `outputs` would
+    // cache an empty `dist/`, and a cache HIT would then restore nothing while
+    // reporting success, leaving `lib/` absent and the package unresolvable for
+    // every workspace consumer. `dist/wasm/**` is deliberately not listed: it
+    // comes from `build:wasm`, which needs Rust and is not on this path.
+    "@cipherstash/protect-ffi#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["lib/**"]
+    },
     // These two builds `cpSync('../../skills', 'dist/skills')` — they consume a
     // directory OUTSIDE their own package, which `$TURBO_DEFAULT$` does not
     // cover. Without naming it here a skills-only edit does not invalidate the

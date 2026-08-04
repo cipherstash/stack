@@ -1,5 +1,12 @@
 [tools]
-node = "latest"
+# No `node` entry. This file used to carry `node = "latest"`, which resolved to
+# 25.x and meant `cd packages/protect-ffi` silently switched Node version
+# relative to the rest of the monorepo — whose lockfile, `@types/node` and
+# `@tsconfig/node22` are all resolved for 22, and whose only Node requirement
+# is the root `engines: { node: ">=22" }`. Leaving Node to the workspace keeps
+# one runtime across every package; this file keeps what is genuinely
+# package-local, which is the Rust toolchain.
+#
 # zig + cargo-zigbuild are pinned to the versions proven by the successful
 # v0.27.0 release (run 28709228045). `latest` is how cargo-zigbuild 0.23.0
 # silently broke the Release workflow (its cargo-options bump dropped the

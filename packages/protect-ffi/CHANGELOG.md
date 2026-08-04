@@ -8,12 +8,11 @@ While the project is pre-1.0, breaking changes are released as minor version
 bumps and called out under a `Breaking` heading — an addition to the standard
 Keep a Changelog categories (Added/Changed/Deprecated/Removed/Fixed/Security).
 
-Add notes for unreleased work under the `[Unreleased]` heading below. On
-release, the `version` npm lifecycle hook promotes that section to a dated
-release entry (see `scripts/changelog-release.mjs`), and the release workflow
-uses the promoted section as the GitHub release notes.
-
-## [Unreleased]
+Entries from 0.31.0 down were written by hand under an `[Unreleased]` heading
+and promoted on release by an npm `version` lifecycle hook. That hook is gone:
+since this package moved into the `cipherstash/stack` monorepo, Changesets
+generates each entry from the changesets in a release, and appends it below in
+its own format. Write a changeset, not a section here.
 
 ## [0.31.0] - 2026-07-27
 

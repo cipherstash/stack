@@ -25,17 +25,24 @@ const scripts: Record<string, string> = manifest.scripts
 const miseToml = read('mise.toml')
 const testWorkflow = read('.github/workflows/test.yml')
 
-/** Script names reachable from `npm test`, following `npm run` references. */
-function reachableFromNpmTest(): Set<string> {
+/**
+ * Script names reachable from `root`, following `pnpm run` / `npm run`
+ * references.
+ *
+ * Both spellings are matched. The scripts moved to `pnpm run` when the package
+ * was absorbed into the monorepo, and a stray `npm run` left behind would
+ * otherwise drop a whole subtree from this analysis and read as "no orphans".
+ */
+function reachableFrom(root: string): Set<string> {
   const seen = new Set<string>()
-  const queue = ['test']
+  const queue = [root]
   while (queue.length > 0) {
     const name = queue.pop()
     if (name === undefined || seen.has(name)) continue
     seen.add(name)
     const body = scripts[name]
     if (body === undefined) continue
-    for (const match of body.matchAll(/npm run ([\w:-]+)/g)) {
+    for (const match of body.matchAll(/(?:pnpm|npm) run ([\w:-]+)/g)) {
       queue.push(match[1])
     }
   }
@@ -43,14 +50,32 @@ function reachableFromNpmTest(): Set<string> {
 }
 
 /**
- * Checks `npm test` is not expected to run, each with its reason. Anything
+ * The two entry points every check must hang off, and the split is the point.
+ *
+ * `test` is the default task Turborepo reaches through the root `pnpm test`,
+ * so it must stay JavaScript-only: a cargo process on that path puts the Rust
+ * toolchain on every contributor's machine and every PR job in a repo where
+ * almost nothing else needs it.
+ *
+ * `test:cargo` is the Rust half, run by the path-filtered Rust job. Reachable
+ * from neither is still an orphan — that is the property #145 was about, and
+ * splitting the roots must not become a way to lose it.
+ */
+const ENTRY_POINTS = ['test', 'test:cargo']
+
+function reachableFromAnyEntryPoint(): Set<string> {
+  return new Set(ENTRY_POINTS.flatMap((root) => [...reachableFrom(root)]))
+}
+
+/**
+ * Checks no entry point is expected to run, each with its reason. Anything
  * added here is a deliberate carve-out, which is the point of making it a list.
  */
-const NPM_TEST_EXEMPT: Record<string, string> = {
-  // Runs against the generated wasm .d.ts, so it needs `npm run build:wasm`
-  // first. `npm test` must still pass in a clone with no dist/, so this one
-  // belongs to the wasm job in build.yml.
-  'test:typecheck:wasm': 'needs dist/wasm, run by the wasm job in build.yml',
+const ENTRY_POINT_EXEMPT: Record<string, string> = {
+  // Runs against the generated wasm .d.ts, so it needs `pnpm run build:wasm`
+  // first. The default test must still pass in a clone with no dist/, so this
+  // one belongs to the wasm job.
+  'test:typecheck:wasm': 'needs dist/wasm, run by the wasm job',
 }
 
 describe('lint and format wiring', () => {
@@ -61,21 +86,68 @@ describe('lint and format wiring', () => {
   })
 
   it('has no test:* script that nothing invokes', () => {
-    const reachable = reachableFromNpmTest()
+    const reachable = reachableFromAnyEntryPoint()
     const orphans = Object.keys(scripts)
       .filter((name) => name.startsWith('test:'))
       .filter((name) => !reachable.has(name))
-      .filter((name) => !(name in NPM_TEST_EXEMPT))
+      .filter((name) => !(name in ENTRY_POINT_EXEMPT))
 
     expect(orphans).toEqual([])
   })
 
-  it('runs the Rust format check from npm test', () => {
-    // The specific one that was orphaned. Asserted by name so a rename that
-    // drops it from the chain is caught even if the generic check above is
-    // relaxed later.
-    expect(reachableFromNpmTest()).toContain('test:format:rust')
+  it('runs the Rust format check from the cargo entry point', () => {
+    // The specific one that was orphaned (#145). Asserted by name so a rename
+    // that drops it from the chain is caught even if the generic check above
+    // is relaxed later. It moved off `test` when this package was absorbed
+    // into the monorepo, so the assertion moved with it rather than being
+    // deleted — which is how a check goes quiet.
+    expect(reachableFrom('test:cargo')).toContain('test:format:rust')
     expect(scripts['test:format:rust']).toContain('cargo fmt --check')
+  })
+
+  it('keeps cargo off the default test path', () => {
+    // The load-bearing half of the split. Root `pnpm test` runs
+    // `turbo test --filter './packages/*'`, which reaches this package's
+    // `test` — so anything cargo on that path is cargo on every PR, in a repo
+    // where one package out of eighteen is Rust.
+    const cargoScripts = [...reachableFrom('test')].filter((name) =>
+      scripts[name]?.includes('cargo'),
+    )
+    expect(cargoScripts).toEqual([])
+  })
+
+  it('reaches every cargo check from the cargo entry point', () => {
+    // The mirror of the check above: cargo scripts are allowed to exist, but
+    // not to exist unreachable. Without this, moving a check off `test` and
+    // forgetting to add it to `test:cargo` passes both other assertions.
+    const reachable = reachableFrom('test:cargo')
+    const unreachable = Object.keys(scripts)
+      .filter((name) => name.startsWith('test:'))
+      .filter((name) => scripts[name]?.includes('cargo'))
+      .filter((name) => !reachable.has(name))
+
+    expect(unreachable).toEqual([])
+  })
+
+  it('forwards script arguments without the npm `--` separator', () => {
+    // npm strips the `--` in `npm run x -- --release`; pnpm forwards it
+    // verbatim. Since the cargo scripts end in `> cargo.log`, the appended
+    // args land after the redirect, so pnpm produced
+    //
+    //     cargo build --message-format=… > cargo.log -- --release
+    //
+    // and cargo rejected `--release` as a positional argument. The failure is
+    // at the end of a build, not the start, and the error names `--release`
+    // rather than the separator that caused it.
+    //
+    // The release matrix passes `--target "${CARGO_BUILD_TARGET}.2.28"` this
+    // way to pin glibc, so the phase-3 workflow port must use the same
+    // separator-free spelling.
+    const withSeparator = Object.entries(scripts)
+      .filter(([, body]) => /(?:pnpm|npm) run [\w:-]+ --(?:\s|$)/.test(body))
+      .map(([name]) => name)
+
+    expect(withSeparator).toEqual([])
   })
 
   it('has no lint:rust:* mise task the lint:rust entry point skips', () => {
@@ -105,6 +177,17 @@ describe('lint and format wiring', () => {
   })
 
   it('runs the lint entry point in CI, with the wasm32 target installed', () => {
+    // CAVEAT, and it is the whole reason this comment exists: the workflow
+    // read here is `packages/protect-ffi/.github/workflows/test.yml`, which
+    // GitHub does not execute — it only reads workflows from the repository
+    // root. Since the absorption, this asserts against reference material, not
+    // against a job that runs.
+    //
+    // It is kept, not deleted, because it is the specification the phase-3
+    // pipeline port has to satisfy: whatever root workflow ends up running the
+    // Rust checks must invoke `mise run lint:rust` and install the wasm32
+    // target first. Repoint `testWorkflow` at that file in the same commit
+    // that deletes this directory, and the assertion becomes live again.
     expect(testWorkflow).toContain('mise run lint:rust')
     expect(testWorkflow).toContain('rustup target add wasm32-unknown-unknown')
   })
