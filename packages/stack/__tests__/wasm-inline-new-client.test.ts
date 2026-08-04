@@ -65,7 +65,7 @@ describe('wasm-inline Encryption → newClient (protect-ffi 0.25 single-object f
     expect(call).toHaveLength(1)
   })
 
-  it('nests the resolved strategy and forwards clientId / clientKey', async () => {
+  it('nests the resolved strategy and credentials under their 0.31 keys', async () => {
     await Encryption({
       schemas: [users],
       config: {
@@ -78,15 +78,28 @@ describe('wasm-inline Encryption → newClient (protect-ffi 0.25 single-object f
 
     // biome-ignore lint/suspicious/noExplicitAny: reading the recorded single options object
     const arg = vi.mocked(wasmNewClient).mock.calls[0][0] as any
-    expect(arg.strategy).toEqual({ __mock: 'access-key-strategy' })
-    expect(arg.clientId).toBe('cid')
-    expect(arg.clientKey).toBe('ckey')
+
+    // protect-ffi 0.31 moved the credentials into `clientOpts`, where the Neon
+    // entry has always had them, and renamed `strategy` to `authStrategy`.
+    // Credentials left at the top level are now REJECTED, so that half fails
+    // loudly — but a `keyset` left there is silently ignored and the client
+    // binds to the default keyset, encrypting under the wrong keys. This
+    // config forwards no keyset; if one is added it goes inside `clientOpts`,
+    // and this test is what should catch it landing anywhere else.
+    expect(arg.authStrategy).toEqual({ __mock: 'access-key-strategy' })
+    expect(arg.clientOpts).toEqual({ clientId: 'cid', clientKey: 'ckey' })
+    expect(arg.clientId).toBeUndefined()
+    expect(arg.clientKey).toBeUndefined()
+    expect(arg.strategy).toBeUndefined()
   })
 
-  it('passes a cast_as-normalised encryptConfig (SDK "string" → EQL "text")', async () => {
-    // `types.TextSearch('email')` carries `cast_as: 'string'`; the WASM client
-    // only accepts EQL-native variants, so the factory must run the config
-    // through `normalizeCastAs` before handing it to `newClient`.
+  it('forwards encryptConfig unnormalised, letting the FFI canonicalise', async () => {
+    // `types.TextSearch('email')` carries `cast_as: 'string'`. Under 0.30 the
+    // WASM binding accepted EQL-native variants only, so the factory ran the
+    // config through `normalizeCastAs` first. 0.31 normalizes at the Rust
+    // deserialization boundary on both bindings — verified against the 0.31
+    // wasm build, where `'string'` and `'text'` both get past config parsing to
+    // authentication — so the SDK spelling now goes through untouched.
     await Encryption({
       schemas: [users],
       config: {
@@ -100,7 +113,7 @@ describe('wasm-inline Encryption → newClient (protect-ffi 0.25 single-object f
     // biome-ignore lint/suspicious/noExplicitAny: navigating the recorded encryptConfig
     const arg = vi.mocked(wasmNewClient).mock.calls[0][0] as any
     expect(arg.encryptConfig).toBeDefined()
-    expect(arg.encryptConfig.tables.users.email.cast_as).toBe('text')
+    expect(arg.encryptConfig.tables.users.email.cast_as).toBe('string')
   })
 
   it('uses an explicit config.authStrategy verbatim on the strategy path', async () => {
@@ -117,6 +130,10 @@ describe('wasm-inline Encryption → newClient (protect-ffi 0.25 single-object f
 
     // biome-ignore lint/suspicious/noExplicitAny: reading the recorded single options object
     const arg = vi.mocked(wasmNewClient).mock.calls[0][0] as any
-    expect(arg.strategy).toBe(explicit)
+    // `authStrategy` since 0.31. `strategy` still works there as a deprecated
+    // alias, but this passes the resolved strategy under the current name so
+    // the call does not depend on a field slated for removal.
+    expect(arg.authStrategy).toBe(explicit)
+    expect(arg.strategy).toBeUndefined()
   })
 })
