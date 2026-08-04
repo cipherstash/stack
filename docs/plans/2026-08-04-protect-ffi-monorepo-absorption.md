@@ -25,7 +25,7 @@
 
 ## Status
 
-**Phases 1 and 2 are complete** on branch `import-protect-ffi`, as 11 commits over a pure subtree import (tip `b99cbd92`).
+**Phases 1 and 2 are complete** on branch `feat/protect-ffi-monorepo-absorption`, as 11 commits over a pure subtree import (`0b605912`…`b99cbd92`). Work continues on that branch, not on `import-protect-ffi` — the original import branch, which stops at `b99cbd92`. Every `gh` invocation below names the working branch.
 
 | Commit | Delivers |
 |---|---|
@@ -45,9 +45,9 @@
 
 **Remaining: phases 3, 4, 5.** Phase 3 is specified as executable tasks below. Phase 4 contains the only irreversible steps. Phase 5 is blocked until phase 4 publishes.
 
-**Phase 3 Task 0 is written and awaiting a CI run.** It is the prerequisite for
-everything after it: PR #858's board is red without it, so no later task can be
-verified against a green baseline.
+**Phase 3 Task 0 is committed (`70e1f7da`) and awaiting a CI run.** It is the
+prerequisite for everything after it: PR #858's board is red without it, so no
+later task can be verified against a green baseline.
 
 ---
 
@@ -95,6 +95,16 @@ npm strips the `--` in `npm run x -- --release`; pnpm forwards it, landing it af
 ### `neon dist` needs `-o`
 
 Bare `neon dist < cargo.log` writes `./index.node` — the `debug:` fallback in `load.cts`. Populating a platform package needs `neon dist -o platforms/<p>/index.node`.
+
+### This package's `build` is not upstream's `build`
+
+The matrix was ported verbatim from upstream, including `platform.includes('gnu') ? "zigbuild" : "build"`. Upstream's `build` was the cargo script. **Here `build` is `tsc` and nothing else** — phase 1 moved cargo to `build:native` precisely so the default path stays Rust-free. Ported as-is, four of the six platforms would have run a TypeScript compile, produced no binary, and failed one step later on a missing `cargo.log`.
+
+The two cargo scripts also redirect to different files — `cargo-build` to `cargo.log`, `zig-build` to `zig.log` — and `neon dist` reads that file to locate the artifact. A single hardcoded `< cargo.log` is therefore wrong for the gnu half regardless of which script runs. Both the script and its log file are matrix fields (Task 4).
+
+### A nested `mise.toml` is not found from the repo root
+
+There is no root `mise.toml`; the pinned zig, cargo-zigbuild and wasm-pack all live in `packages/protect-ffi/mise.toml`. `jdx/mise-action` run at the repo root installs nothing, and mise additionally refuses an untrusted config at that path. Every mise step needs `working_directory: packages/protect-ffi`, as `.github/actions/build-ffi-binding` already does. wasm-pack **is** pinned there — it is reached by the same mechanism as the other two, not missing.
 
 ---
 
@@ -144,7 +154,7 @@ Derived from `cipherstash/encrypt-query-language`, verified against its workflow
 
 **One version authority. N idempotent publishers, ordered by dependency, each keyed on the committed version.**
 
-1. **Changesets owns every version**, propagated by a `version:` hook. EQL's `release-plz.yml`: *"There is deliberately NO release-plz `release-pr` job — changesets opens the version PR, so a release-plz PR would fight it."*
+1. **Changesets owns every version.** EQL's `release-plz.yml`: *"There is deliberately NO release-plz `release-pr` job — changesets opens the version PR, so a release-plz PR would fight it."* Every version this repo publishes is npm-side, so `changesets/action`'s default version command suffices; the `version:` hook that carries a computed version into a non-npm manifest belongs to the EQL absorption, which is where the first one appears (see "Out of scope").
 2. **Every publisher is idempotent.** `changeset publish` logs `is not being published because version X is already published on npm` (`@changesets/cli@2.31.0` `changesets-cli.cjs.js:1114`).
 3. **Publishers are ordered.** `changeset publish` packs from the workspace, so if it runs before the native artifacts exist it publishes six binary-less platform packages. Publishing the FFI tarballs first makes changesets skip them.
 
@@ -188,7 +198,7 @@ Keep `release.yml` as the single npm entry point, so existing Stack packages nee
 
 ## Phase 3 — build the pipeline
 
-Ten tasks. Task 0 is a prerequisite for the rest: until it lands the branch's CI
+Nine tasks. Task 0 is a prerequisite for the rest: until it lands the branch's CI
 is red, so nothing after it can be verified against a green board.
 
 ### Task 0: Build the binding in the jobs that need it
@@ -651,11 +661,13 @@ Ports upstream's `build.yml`. **The Rust target must be selected explicitly per 
 
 Upstream's `.github/actions/setup` is **not** ported wholesale: it sets `cache: npm` on `setup-node` and `cache: true` on `mise-action`, which the no-caching policy forbids where artifacts get published.
 
+Action pins match the rest of this repo (`actions/checkout@v6`, `actions/setup-node@v6.5.0`) rather than upstream's older ones. Not cosmetic for `setup-node`: **`package-manager-cache` does not exist before v5**, so on `@v4` the input the caching lint demands is silently ignored and actionlint rejects it outright — *input "package-manager-cache" is not defined in action "actions/setup-node@v4"*.
+
 **Files:**
 - Create: `.github/workflows/_build-ffi-artifacts.yml`
 - Reference: `packages/protect-ffi/.github/workflows/build.yml`, `.../actions/setup/action.yml`
 
-**Interfaces:** Produces artifact `ffi-tarballs` — seven `.tgz` files, consumed by Tasks 5 and 8.
+**Interfaces:** Produces artifact `ffi-tarballs` — seven `.tgz` files, downloaded **by name** in Tasks 5 and 7. Not exposed as a `workflow_call` output: a reusable workflow's `outputs.<id>.value` has to map to a job output (`${{ jobs.x.outputs.y }}`), a literal string is not that, and no caller reads one.
 
 - [ ] **Step 1: Write the workflow**
 
@@ -675,10 +687,6 @@ on:
         description: Commit to build from
         required: true
         type: string
-    outputs:
-      artifact:
-        description: Name of the uploaded tarball artifact
-        value: ffi-tarballs
 
 permissions:
   contents: read
@@ -695,7 +703,7 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.result }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
@@ -705,9 +713,13 @@ jobs:
           run_install: false
           cache: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6.5.0
         with:
           node-version: 22
+          # This workflow's output is published, so it is on the caching
+          # lint's target list (Task 5, Step 5) — which requires the disable
+          # to be explicit, not merely defaulted.
+          package-manager-cache: false
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -716,6 +728,23 @@ jobs:
       # triple. This is the ONLY source of that mapping — `neon.platforms` in
       # package.json lists names, not triples — and getting it wrong silently
       # produces a binary for the runner's own architecture.
+      #
+      # Two matrix fields carry what upstream hardcoded, and both are wrong if
+      # copied across verbatim:
+      #
+      #   script — upstream's non-gnu arm selects `build`, which upstream had
+      #     as its cargo script. Here `build` is `tsc` and nothing else (phase
+      #     1 moved cargo off the default path deliberately), so four of six
+      #     platforms would compile TypeScript, emit no binary, and fail one
+      #     step later on a missing log. The cargo script is `build:native`.
+      #
+      #   log — `cargo-build` redirects to cargo.log, `zig-build` to zig.log,
+      #     and `neon dist` reads that file to locate the artifact. One
+      #     hardcoded `< cargo.log` is wrong for whichever half it does not
+      #     match.
+      #
+      # The body below is a single-quoted shell argument: no apostrophes, or
+      # the quote closes and the rest is parsed by bash.
       - id: matrix
         run: |
           set -euo pipefail
@@ -729,9 +758,12 @@ jobs:
               : "blacksmith-4vcpu-ubuntu-2404"
             // gnu targets cross-compile through cargo-zigbuild so the glibc
             // floor can be pinned; everything else builds with plain cargo.
-            const script = (p) => (p.includes("gnu") ? "zigbuild" : "build")
+            // See the step comment for why the script and log names differ.
+            const gnu = (p) => p.includes("gnu")
             console.log(JSON.stringify(Object.entries(map).map(([platform, target]) => ({
-              platform, target, os: runner(platform), script: script(platform),
+              platform, target, os: runner(platform),
+              script: gnu(platform) ? "zigbuild" : "build:native",
+              log: gnu(platform) ? "zig.log" : "cargo.log",
             }))))
           ' "$triples")
           echo "result=$result" >> "$GITHUB_OUTPUT"
@@ -746,7 +778,7 @@ jobs:
     runs-on: ${{ matrix.cfg.os }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
@@ -776,23 +808,41 @@ jobs:
       - name: Install Rust with the platform's target
         uses: dtolnay/rust-toolchain@stable
         with:
-          target: ${{ matrix.cfg.target }}
+          targets: ${{ matrix.cfg.target }}
 
       - uses: pnpm/action-setup@v6.0.9
         with:
           run_install: false
           cache: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6.5.0
         with:
           node-version: 22
+          # This workflow's output is published, so it is on the caching
+          # lint's target list (Task 5, Step 5) — which requires the disable
+          # to be explicit, not merely defaulted.
+          package-manager-cache: false
 
-      # mise supplies pinned zig + cargo-zigbuild and trusts
-      # packages/protect-ffi/mise.toml. Cache disabled: this job's output is
-      # published.
-      - uses: jdx/mise-action@v3
+      # zig + cargo-zigbuild, pinned in packages/protect-ffi/mise.toml. Only
+      # the zigbuild path uses them, so this is skipped for the four non-gnu
+      # platforms rather than compiling cargo-zigbuild from source on two
+      # macOS and one Windows runner that never call it.
+      #
+      # `working_directory` is load-bearing, not tidiness: the mise config is
+      # nested, and mise refuses a config it has not trusted. Run from the
+      # repo root this installs nothing, and the failure surfaces later as
+      # "cargo-zigbuild: not found" — a toolchain problem rather than the
+      # trust problem it is. Same reason `.github/actions/build-ffi-binding`
+      # sets it.
+      #
+      # Cache disabled: this job's output is published.
+      - name: Install zig + cargo-zigbuild (gnu targets only)
+        if: ${{ contains(matrix.cfg.target, 'gnu') }}
+        uses: jdx/mise-action@v3
         with:
           install: true
+          install_args: zig cargo:cargo-zigbuild
+          working_directory: packages/protect-ffi
           cache: false
 
       - name: Install dependencies
@@ -807,8 +857,14 @@ jobs:
         # `> cargo.log` redirect, where cargo rejects the flag as a positional.
         run: |
           set -euo pipefail
-          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=$(echo "${CARGO_BUILD_TARGET}" | sed 's/unknown-//')-gcc
-          export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=$(echo "${CARGO_BUILD_TARGET}" | sed 's/unknown-//')-gcc
+          # `x86_64-unknown-linux-musl` -> `x86_64-linux-musl-gcc`. Parameter
+          # expansion rather than upstream's `sed`, and assigned before export
+          # rather than through it: actionlint runs shellcheck over `run:`
+          # blocks, and the original spelling draws SC2001 and SC2155 — which
+          # Task 6 turns into a gate failure.
+          linker="${CARGO_BUILD_TARGET/unknown-/}-gcc"
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="$linker"
+          export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$linker"
           if [[ "$CARGO_BUILD_TARGET" =~ musl ]]; then
             wget -4 https://musl.cc/x86_64-linux-musl-native.tgz
             tar zxf x86_64-linux-musl-native.tgz
@@ -830,7 +886,8 @@ jobs:
         # load.cts. Populating a platform package needs an explicit -o.
         run: |
           set -euo pipefail
-          npx neon dist -o "platforms/${{ matrix.cfg.platform }}/index.node" < cargo.log
+          npx neon dist -o "platforms/${{ matrix.cfg.platform }}/index.node" \
+            < "${{ matrix.cfg.log }}"
           test -s "platforms/${{ matrix.cfg.platform }}/index.node"
 
       # `pnpm pack` accepts NO positional directory — passing one is silently
@@ -868,7 +925,7 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
@@ -878,17 +935,36 @@ jobs:
           run_install: false
           cache: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6.5.0
         with:
           node-version: 22
+          # This workflow's output is published, so it is on the caching
+          # lint's target list (Task 5, Step 5) — which requires the disable
+          # to be explicit, not merely defaulted.
+          package-manager-cache: false
 
-      - uses: jdx/mise-action@v3
+      # wasm-pack, pinned in packages/protect-ffi/mise.toml — `build:wasm`
+      # shells out to it and nothing else supplies it. Same two caveats as the
+      # binaries job: `working_directory` because the nested config is
+      # otherwise untrusted and this installs nothing, `install_args` to skip
+      # cargo-zigbuild, which this job never calls and which is a from-source
+      # cargo build. The argument is the full backend id — `wasm-pack` alone
+      # is not a name in mise's registry and resolves to nothing.
+      - name: Install wasm-pack
+        uses: jdx/mise-action@v3
         with:
           install: true
+          install_args: aqua:wasm-bindgen/wasm-pack
+          working_directory: packages/protect-ffi
           cache: false
 
-      - name: Add wasm32 target
-        run: rustup target add wasm32-unknown-unknown
+      # Explicit rather than relying on the runner image's preinstalled
+      # rustup. wasm32 is never a side effect of anything else: `--all-targets`
+      # in the Rust lint means target KINDS, not platforms.
+      - name: Install Rust with the wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -928,7 +1004,11 @@ jobs:
             const deps = Object.entries(j.optionalDependencies ?? {})
             if (deps.length !== 6) { console.error("expected 6 optionalDependencies, got " + deps.length); process.exit(1) }
             for (const [n, v] of deps) {
-              if (!/^\d+\.\d+\.\d+/.test(v)) { console.error(`${n} is "${v}", not a concrete version`); process.exit(1) }
+              // Concatenation, not a template literal: a dollar-brace inside
+              // this single-quoted argument reads as a shell expansion to
+              // shellcheck, which reports SC2016 — and actionlint runs
+              // shellcheck over every run: block.
+              if (!/^\d+\.\d+\.\d+/.test(v)) { console.error(n + " is " + v + ", not a concrete version"); process.exit(1) }
             }
             console.log("optionalDependencies OK")
           '
@@ -942,10 +1022,14 @@ jobs:
       - name: Verify all seven tarballs are present and distinct
         run: |
           set -euo pipefail
-          count=$(ls ffi-dist/*.tgz | wc -l)
+          # A glob into an array, not `ls | wc -l` (SC2012), and `nullglob` so
+          # an empty directory counts 0 rather than one literal `*.tgz`.
+          shopt -s nullglob
+          tarballs=(ffi-dist/*.tgz)
+          count=${#tarballs[@]}
           test "$count" -eq 7 || {
             echo "::error::expected 7 tarballs, found $count"; ls ffi-dist; exit 1; }
-          names=$(for t in ffi-dist/*.tgz ; do
+          names=$(for t in "${tarballs[@]}" ; do
             tar xzOf "$t" package/package.json | node -p \
               'JSON.parse(require("node:fs").readFileSync(0,"utf8")).name'
           done | sort -u | wc -l)
@@ -959,24 +1043,48 @@ jobs:
           if-no-files-found: error
 ```
 
-- [ ] **Step 2: Lint the workflow**
+- [ ] **Step 2: Teach actionlint the self-hosted runner label**
+
+Thirteen jobs already run on `blacksmith-4vcpu-ubuntu-2404` and nothing has ever complained, because **actionlint has never run in this repo** — Task 6 is what introduces it. Its `runner-label` check knows only GitHub-hosted labels, so without this file every Blacksmith job is an error and the new gate is red on arrival:
+
+```yaml
+# .github/actionlint.yaml
+# actionlint validates `runs-on:` against the GitHub-hosted label list.
+# Blacksmith runners are self-hosted from its perspective, so they have to be
+# declared here or every job using one is reported as an unknown label.
+self-hosted-runner:
+  labels:
+    - blacksmith-4vcpu-ubuntu-2404
+```
+
+- [ ] **Step 3: Lint the workflow**
 
 ```bash
 bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
 ./actionlint .github/workflows/_build-ffi-artifacts.yml
 node scripts/lint-no-workflow-caching.mjs .github/workflows/_build-ffi-artifacts.yml
 ```
-Expected: both clean
+Expected: both clean — verified against the workflow above as written.
 
-- [ ] **Step 3: Verify the target mapping locally**
+actionlint bundles shellcheck and applies it to every `run:` block, which is why the snippet departs from upstream in three places that look like style: parameter expansion instead of `sed` into `export` (SC2001, SC2155), a glob-into-array instead of `ls | wc -l` (SC2012), and string concatenation instead of a template literal inside a single-quoted `node -e` (SC2016 — shellcheck reads dollar-brace as a shell expansion). Reintroduce any of them and Task 6's gate is red.
+
+- [ ] **Step 4: Verify the target mapping locally**
 
 Run: `pnpm --dir packages/protect-ffi exec neon list-platforms`
 Expected: JSON mapping all six platform names to Rust triples (`darwin-x64` → `x86_64-apple-darwin`, etc.). This is the mapping the matrix depends on.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Verify the two build scripts and their log files**
 
 ```bash
-git add .github/workflows/_build-ffi-artifacts.yml
+node -p "JSON.stringify(require('./packages/protect-ffi/package.json').scripts, null, 1)" \
+  | grep -E '"(build|build:native|zigbuild|cargo-build|zig-build)"'
+```
+Expected: `build` is `tsc` and nothing else — the matrix must select **`build:native`**, not `build`, for the non-gnu platforms. `build:native` → `cargo-build` → `> cargo.log`; `zigbuild` → `zig-build` → `> zig.log`. The `log` field in the matrix exists because those two differ and `neon dist` reads one of them.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add .github/workflows/_build-ffi-artifacts.yml .github/actionlint.yaml
 git commit -m "ci: add the reusable FFI artifact build workflow"
 ```
 
@@ -1119,9 +1227,17 @@ git commit -m "ci: add the reusable FFI artifact build workflow"
           VERSION: ${{ steps.publish.outputs.version }}
         run: |
           set -euo pipefail
+          # Existence is not the question — WHERE it points is. A re-run after
+          # a partial failure must find its own tags and move on; a tag at a
+          # different commit means this version was released from another tree,
+          # and silently skipping would leave the published artifacts and the
+          # tagged source disagreeing with nothing in the log to say so.
           while read -r tag ; do
-            if gh api "repos/${REPO}/git/ref/tags/${tag}" >/dev/null 2>&1; then
-              echo "tag ${tag} exists — skipping"
+            at=$(gh api "repos/${REPO}/git/ref/tags/${tag}" --jq .object.sha 2>/dev/null || true)
+            if [ -n "$at" ]; then
+              test "$at" = "$GITHUB_SHA" || {
+                echo "::error::tag ${tag} points at ${at}, not ${GITHUB_SHA}"; exit 1; }
+              echo "tag ${tag} already at this commit — skipping"
             else
               gh api -X POST "repos/${REPO}/git/refs" \
                 -f ref="refs/tags/${tag}" -f sha="$GITHUB_SHA" >/dev/null
@@ -1129,15 +1245,23 @@ git commit -m "ci: add the reusable FFI artifact build workflow"
             fi
           done < published.txt
 
-          rel="protect-ffi-v${VERSION}"
-          if gh release view "$rel" --repo "$REPO" >/dev/null 2>&1; then
-            echo "release ${rel} exists — skipping"
-          else
-            gh release create "$rel" --repo "$REPO" --target "$GITHUB_SHA" \
+          # Attached to the wrapper's own tag, which the loop above just
+          # created. A `protect-ffi-v<version>` release name would make `gh
+          # release create` mint an EIGHTH tag for the same commit, and
+          # `--verify-tag` is what refuses that: it aborts rather than creating
+          # a tag that does not already exist. Naming matches what changesets
+          # produces for the JS packages.
+          rel="@cipherstash/protect-ffi@${VERSION}"
+          if ! gh release view "$rel" --repo "$REPO" >/dev/null 2>&1; then
+            gh release create "$rel" --repo "$REPO" --verify-tag \
               --title "protect-ffi v${VERSION}" \
-              --notes "Native FFI bindings ${VERSION}. Published: $(tr '\n' ' ' < published.txt)" \
-              ./ffi-dist/*.tgz
+              --notes "Native FFI bindings ${VERSION}. Published: $(tr '\n' ' ' < published.txt)"
           fi
+          # Unconditional, and separate from creation: a release that exists
+          # with a partial asset set is exactly what a failed re-run leaves
+          # behind, so skipping on existence is not idempotence. `--clobber`
+          # makes the complete case a no-op.
+          gh release upload "$rel" ./ffi-dist/*.tgz --repo "$REPO" --clobber
 ```
 
 - [ ] **Step 4: Order the changesets job correctly**
@@ -1164,13 +1288,19 @@ git commit -m "ci: add the reusable FFI artifact build workflow"
     runs-on: ubuntu-latest
 ```
 
-- [ ] **Step 5: Register the new workflows with the caching lint**
+- [ ] **Step 5: Register the new workflow with the caching lint**
+
+In `scripts/lint-no-workflow-caching.mjs`, `TARGETS`:
 
 ```js
       '.github/workflows/release.yml',
       '.github/workflows/_build-ffi-artifacts.yml',
       '.github/workflows/tests-supply-chain.yml',
 ```
+
+**And in the test.** `scripts/__tests__/lint-no-workflow-caching.test.mjs` keeps its own copy of the list in `TARGET_WORKFLOWS`, and nothing asserts the two agree — the `actions/cache` sweep silently stops covering whatever the test's copy omits. Add the same entry there, and rename the stale `defaults to checking release.yml and tests-supply-chain.yml` case.
+
+Adding the target is what makes the three `package-manager-cache: false` lines in Task 4 load-bearing rather than decorative.
 
 - [ ] **Step 6: Verify**
 
@@ -1179,93 +1309,19 @@ node scripts/lint-no-workflow-caching.mjs
 npx vitest run --config scripts/vitest.config.mjs lint-no-workflow-caching
 ./actionlint .github/workflows/release.yml
 ```
+Expected: the lint names all three workflows, tests pass. Reverting one `package-manager-cache: false` in `_build-ffi-artifacts.yml` must turn the lint red — if it does not, the target never registered.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add .github/workflows/release.yml scripts/lint-no-workflow-caching.mjs
+git add .github/workflows/release.yml scripts/lint-no-workflow-caching.mjs \
+        scripts/__tests__/lint-no-workflow-caching.test.mjs
 git commit -m "ci(release): publish FFI tarballs, tagged, before changeset publish"
 ```
 
 ---
 
-### Task 6: The `version:` hook
-
-`release.yml` passes only `publish:`, so there is no hook point for propagating a version into a non-npm manifest. EQL needs exactly that when `eql-bindings` arrives.
-
-**Files:** Modify `package.json`, `.github/workflows/release.yml`; create `scripts/__tests__/version-hook.test.mjs`
-
-- [ ] **Step 1: Write the failing test**
-
-```js
-// scripts/__tests__/version-hook.test.mjs
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import yaml from 'js-yaml'
-import { describe, expect, it } from 'vitest'
-
-const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
-const pkg = JSON.parse(readFileSync(resolve(REPO_ROOT, 'package.json'), 'utf8'))
-const workflow = yaml.load(
-  readFileSync(resolve(REPO_ROOT, '.github/workflows/release.yml'), 'utf8'),
-)
-
-describe('changesets version hook', () => {
-  it('defines a root `version` script', () => {
-    expect(pkg.scripts.version).toBeDefined()
-  })
-
-  it('runs changeset version', () => {
-    expect(pkg.scripts.version).toContain('changeset version')
-  })
-
-  it('is wired into the release workflow', () => {
-    const step = workflow.jobs.release.steps.find(
-      (s) => typeof s.uses === 'string' && s.uses.startsWith('changesets/action'),
-    )
-    expect(step).toBeDefined()
-    expect(step.with.version).toBe('pnpm run version')
-  })
-})
-```
-
-- [ ] **Step 2: Run the test to verify it fails**
-
-Run: `npx vitest run --config scripts/vitest.config.mjs version-hook`
-Expected: FAIL — `expected undefined to be defined`
-
-- [ ] **Step 3: Add the script**
-
-In root `package.json`, after `"changeset:version"`: `"version": "changeset version",`
-
-- [ ] **Step 4: Wire it into the workflow**
-
-In the `changesets/action` step's `with:` block, above `publish:`:
-
-```yaml
-          # Explicit rather than relying on the action's default, so there is
-          # one place to add cross-ecosystem version propagation — e.g. writing
-          # the computed version into a Cargo.toml, as
-          # cipherstash/encrypt-query-language does for eql-bindings.
-          version: pnpm run version
-```
-
-- [ ] **Step 5: Run the test to verify it passes**
-
-Run: `npx vitest run --config scripts/vitest.config.mjs version-hook`
-Expected: PASS, 3 tests
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add package.json .github/workflows/release.yml scripts/__tests__/version-hook.test.mjs
-git commit -m "ci(release): make the changesets version command explicit"
-```
-
----
-
-### Task 7: Release-tooling lint gate
+### Task 6: Release-tooling lint gate
 
 **Files:** Create `.github/workflows/lint-release.yml`
 
@@ -1286,6 +1342,7 @@ on:
       - .github/workflows/_build-ffi-artifacts.yml
       - .github/workflows/ffi-preflight.yml
       - .github/workflows/lint-release.yml
+      - .github/actionlint.yaml
       - scripts/release-gate.mjs
       - scripts/lint-no-workflow-caching.mjs
       - package.json
@@ -1304,7 +1361,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
@@ -1314,6 +1371,10 @@ jobs:
           bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
           echo "$PWD" >> "$GITHUB_PATH"
 
+      # Picks up `.github/actionlint.yaml` automatically — without it every
+      # Blacksmith `runs-on:` is an unknown-label error (Task 4, Step 2).
+      # actionlint also runs shellcheck over `run:` blocks, which is why the
+      # ported build step avoids `sed`-into-`export` and `ls | wc -l`.
       - name: actionlint (release workflows)
         run: |
           set -euo pipefail
@@ -1328,7 +1389,7 @@ jobs:
           run_install: false
           cache: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6.5.0
         with:
           node-version: 22
 
@@ -1356,7 +1417,7 @@ git commit -m "ci: gate the release machinery on actionlint and script tests"
 
 ---
 
-### Task 8: Pack-and-install pre-flight
+### Task 7: Pack-and-install pre-flight
 
 `changeset publish` has no `--dry-run`, so this is the dry run. It must check **architecture**, not just size: a tarball carrying an ARM binary labelled `x64` installs cleanly and then fails to dlopen.
 
@@ -1407,7 +1468,7 @@ jobs:
           name: ffi-tarballs
           path: ffi-dist
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6.5.0
         with:
           node-version: 22
 
@@ -1439,6 +1500,23 @@ jobs:
             [[ "$desc" =~ ${EXPECT[$platform]} ]] || {
               echo "::error::$platform binary is '$desc', expected ${EXPECT[$platform]}"
               exit 1; }
+
+            # `file` reads linux-x64-gnu and linux-x64-musl identically — both
+            # are "ELF 64-bit ... x86-64" — so the check above passes if the
+            # two are swapped, and the failure lands on an Alpine user at
+            # runtime. The ABI is only visible in the dynamic section: the gnu
+            # build links libc.so.6, the musl build links
+            # libc.musl-x86_64.so.1 (RUSTFLAGS drops crt-static so it stays
+            # dynamic).
+            case "$platform" in
+              linux-x64-gnu|linux-arm64-gnu)
+                readelf -d x/package/index.node | grep -q 'NEEDED.*libc\.so\.6' || {
+                  echo "::error::$platform does not link glibc"; exit 1; } ;;
+              linux-x64-musl)
+                readelf -d x/package/index.node | grep -q 'NEEDED.*libc\.so\.6' && {
+                  echo "::error::linux-x64-musl links glibc — it is the gnu binary"; exit 1; }
+                echo "linux-x64-musl: no glibc NEEDED entry" ;;
+            esac
           done
 
       - name: Install wrapper + host platform package
@@ -1476,12 +1554,18 @@ jobs:
 Run: `./actionlint .github/workflows/ffi-preflight.yml`
 Expected: clean
 
-- [ ] **Step 3: Run it against the current branch**
+- [ ] **Step 3: Run it against the branch**
+
+**`workflow_dispatch` only exists once the file is on the default branch.** GitHub resolves the dispatch trigger from `main`, not from the ref being tested, so `gh workflow run` before this merges fails with *"Workflow does not have 'workflow_dispatch' trigger"* — and the workflow is inert until dispatched, so merging it early costs nothing. Merge the Phase 3 branch, then:
 
 ```bash
-gh workflow run ffi-preflight.yml -f ref=import-protect-ffi
+gh workflow run ffi-preflight.yml --ref feat/protect-ffi-monorepo-absorption \
+  -f ref=feat/protect-ffi-monorepo-absorption
 gh run watch
 ```
+
+(`--ref` selects the code that runs; `-f ref=` is this workflow's own input, the commit the artifacts are built from. They are the same branch here.)
+
 Expected: green. First end-to-end proof of matrix, target selection, packing, architecture and install.
 
 - [ ] **Step 4: Commit**
@@ -1493,7 +1577,7 @@ git commit -m "ci: add the FFI pack-and-install pre-flight"
 
 ---
 
-### Task 9: The Rust CI job, and retiring the deposited workflows
+### Task 8: The Rust CI job, and retiring the deposited workflows
 
 Since the import, the Rust checks run **nowhere**. Phase 1 moved `cargo test` and `cargo fmt --check` into `test:cargo` and clippy into `mise run lint:rust`, but no root workflow calls either. `src/lintWiring.test.ts` asserts against the deposited copy and says so: it is *"the specification the phase-3 pipeline port has to satisfy"*.
 
@@ -1545,7 +1629,7 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
 
@@ -1568,7 +1652,7 @@ jobs:
         with:
           run_install: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6.5.0
         with:
           node-version: 22
 
@@ -1683,7 +1767,7 @@ The Rust emitting EQL payloads is generated from a different catalog commit than
 
 **crates.io trusted publishing needs repointing**, bound to a workflow filename in the same way, and with the same repository-field requirement.
 
-**Changesets cannot put a crate in a `fixed` group** — a Cargo package is not an npm package. Lockstep comes from the `version:` hook (Task 6) writing the computed version into `Cargo.toml`, as EQL's `sync-lockstep-versions.mjs` does.
+**Changesets cannot put a crate in a `fixed` group** — a Cargo package is not an npm package. Lockstep comes from a `version:` hook on `changesets/action` writing the computed version into `Cargo.toml`, as EQL's `sync-lockstep-versions.mjs` does. **That hook is this plan's to add, not phase 3's.** An earlier revision put it in phase 3 as `"version": "changeset version"` — byte-identical to the action's default and to the existing `changeset:version` script, with a test asserting only that the seam existed. A pass-through seam introduced before anything passes through it cannot be wrong, so nothing tells you when it stops being right; add it in the commit that first writes a `Cargo.toml` version, where the test has something to assert.
 
 ---
 
@@ -1717,14 +1801,18 @@ The Rust emitting EQL payloads is generated from a different catalog commit than
 - [ ] All seven previously-failing jobs on PR #858 are green
 - [ ] All seven FFI manifests read `cipherstash/stack`; no `protectjs-ffi` reference remains
 - [ ] `neon list-platforms` maps all six platforms to Rust triples, and the matrix consumes them
-- [ ] Each packed platform tarball contains `index.node` **of the correct architecture** (`file` check, not size)
+- [ ] Every platform job runs a **cargo** script — `build:native` or `zigbuild`, never `build` — and `neon dist` reads the log that script wrote
+- [ ] Every mise step names `working_directory: packages/protect-ffi`; zig/cargo-zigbuild and wasm-pack are actually on PATH in the jobs that call them
+- [ ] `actionlint` is clean over all four release workflows, with `.github/actionlint.yaml` declaring the Blacksmith label
+- [ ] Each packed platform tarball contains `index.node` **of the correct architecture** (`file` check, not size), and the two `linux-x64` binaries are distinguished by **ABI** (`readelf -d`), which `file` cannot see
 - [ ] Each platform job packs its own package, not the wrapper (name assertion)
 - [ ] The wrapper tarball's six `optionalDependencies` are concrete versions
 - [ ] A push to `main` with nothing unpublished does **not** start the native matrix
 - [ ] A JS-only release publishes with the FFI jobs skipped
 - [ ] **An `ffi-artifacts` failure blocks `changeset publish`** — the skipped-vs-failed distinction
 - [ ] Platform packages publish before the wrapper
-- [ ] Seven git tags and a `protect-ffi-v<version>` GitHub release exist after an FFI release
+- [ ] Seven git tags after an FFI release and no eighth, with the GitHub release attached to the wrapper's `@cipherstash/protect-ffi@<version>` tag and carrying all seven tarballs
+- [ ] Re-running the publish job on the same commit is a no-op that still completes a partial asset set (tag targets verified, `release upload --clobber`)
 - [ ] Stack tags are still created by changesets on the same run
 - [ ] `ffi-preflight.yml` runs against a release-PR ref without any publish step
 - [ ] `release.yml` installs with `--frozen-lockfile`
