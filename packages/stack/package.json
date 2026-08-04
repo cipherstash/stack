@@ -216,7 +216,7 @@
 	"dependencies": {
 		"@byteslice/result": "0.2.0",
 		"@cipherstash/auth": "catalog:repo",
-		"@cipherstash/protect-ffi": "0.30.0",
+		"@cipherstash/protect-ffi": "workspace:*",
 		"evlog": "1.11.0",
 		"uuid": "14.0.1",
 		"zod": "3.25.76"

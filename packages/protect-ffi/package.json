@@ -102,6 +102,14 @@
   "dependencies": {
     "@neon-rs/load": "^0.1.82"
   },
+  "optionalDependencies": {
+    "@cipherstash/protect-ffi-darwin-x64": "workspace:*",
+    "@cipherstash/protect-ffi-darwin-arm64": "workspace:*",
+    "@cipherstash/protect-ffi-win32-x64-msvc": "workspace:*",
+    "@cipherstash/protect-ffi-linux-x64-gnu": "workspace:*",
+    "@cipherstash/protect-ffi-linux-arm64-gnu": "workspace:*",
+    "@cipherstash/protect-ffi-linux-x64-musl": "workspace:*"
+  },
   "overrides": {
     "vite": "^8.0.5"
   }
