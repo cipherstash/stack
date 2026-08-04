@@ -17,6 +17,8 @@ This repository is the CipherStash Stack monorepo for JavaScript/TypeScript. It 
 | `@cipherstash/stack-drizzle` | Drizzle ORM integration for `@cipherstash/stack` (EQL v3) |
 | `@cipherstash/stack-supabase` | Supabase integration for `@cipherstash/stack` (EQL v3) |
 | `@cipherstash/wizard` | AI-powered encryption setup |
+| `@cipherstash/protect-ffi` | Native FFI bindings to the CipherStash Client SDK — the Rust core `@cipherstash/stack` encrypts and decrypts through |
+| `@cipherstash/protect-ffi-darwin-arm64`<br>`@cipherstash/protect-ffi-darwin-x64`<br>`@cipherstash/protect-ffi-linux-arm64-gnu`<br>`@cipherstash/protect-ffi-linux-x64-gnu`<br>`@cipherstash/protect-ffi-linux-x64-musl`<br>`@cipherstash/protect-ffi-win32-x64-msvc` | Prebuilt per-platform binaries for `@cipherstash/protect-ffi`. Installed as optional dependencies; one is selected at load time for the host platform |
 
 **Security fixes are released for the latest release line of each package.** Security reports are welcome for any version, but fixes land in the latest release — if you are running an older major version, plan to upgrade to receive them.
 

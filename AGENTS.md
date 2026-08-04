@@ -82,10 +82,46 @@ If these variables are missing, tests that require live encryption will fail or 
 - `packages/nextjs`: Next.js helpers and Clerk integration (`./clerk` export)
 - `packages/utils`: Shared config (`utils/config`) and logger (`utils/logger`)
 - `packages/bench`: Performance / index-engagement benchmarks (private, not published)
+- `packages/protect-ffi`: Native FFI bindings to the CipherStash Client SDK (`@cipherstash/protect-ffi`) — the Rust core that `packages/stack` encrypts and decrypts through, absorbed from `cipherstash/protectjs-ffi`. Contains a **nested Cargo workspace** (`crates/`) and six per-platform binary packages under `platforms/*`, each published as `@cipherstash/protect-ffi-<platform>` and linked here via `workspace:*`. See the "Working on protect-ffi" notes below before touching it — its default `test` and `build` are deliberately Rust-free.
 - `e2e/*`: Cross-package end-to-end tests (package managers, supply chain, Prisma example README)
 - `examples/*`: Working apps (basic, prisma, supabase-worker)
 - `docs/plans/*`: Internal design plans. User-facing documentation lives at https://cipherstash.com/docs (not in this repo).
 - `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-indexing`, `stash-deployment`, `stash-zerokms`, `stash-auth`, `stash-postgres`, `stash-edge`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-prisma`, `stash-supply-chain-security`)
+
+## Working on protect-ffi
+
+`packages/protect-ffi` is the only Rust in this repo, and its scripts are split
+so that stays true for everyone else.
+
+- **The default `test` and `build` never invoke cargo.** Root `pnpm test` runs
+  `turbo test --filter './packages/*'`, which reaches this package — so a cargo
+  process on that path is a Rust toolchain on every contributor's machine and
+  every PR job. `test` is the JS chain; `build` is `tsc`.
+- **Rust checks live behind `test:cargo`** (`cargo test` + `cargo fmt --check`)
+  and `mise run lint:rust` (clippy, host and wasm32). `build:native` carries
+  `cargo build --release`.
+- **`src/lintWiring.test.ts` enforces the split**: no `test:*` script may be
+  unreachable from both entry points, nothing cargo may be reachable from
+  `test`, and every cargo check must be reachable from `test:cargo`. A check
+  nothing invokes reads exactly like a check that passes — that is why the file
+  exists.
+- **Do not write `pnpm run <script> -- --flag`.** npm strips the `--`; pnpm
+  forwards it verbatim, and these scripts end in `> cargo.log`, so the flag
+  lands after the redirect and cargo rejects it. lintWiring asserts this too.
+- **`lib/` is the package `main` and is generated**, so a workspace consumer
+  resolves an empty package until `build` has run. `turbo.json` carries a
+  `@cipherstash/protect-ffi#build` override declaring `outputs: ["lib/**"]`;
+  without it Turbo caches the repo-wide `dist/**` and a cache hit restores
+  nothing while reporting success.
+- **Three WASM declaration files are tracked** (`dist/wasm/*.d.ts`) so stack's
+  declaration build resolves `@cipherstash/protect-ffi/wasm-inline` without
+  Rust. Everything else under `dist/` stays ignored. The re-inclusion chain
+  spans the root `.gitignore`, the package's own, and a `.gitignore` wasm-pack
+  generates — see the comments in each.
+- **Publishing has not moved yet.** All seven packages are still published from
+  `cipherstash/protectjs-ffi` until npm trusted publishing is repointed, so a
+  changeset naming any of them fails CI (`scripts/lint-no-ffi-changeset.mjs`).
+  Change the package freely; its changeset waits for the cutover PR.
 
 ## Agent Skills — these ship to customers
 
