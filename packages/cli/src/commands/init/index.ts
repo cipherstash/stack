@@ -135,14 +135,14 @@ export async function initCommand(
     if (state.eqlInstalled) {
       checkmarks.push('✓ EQL extension installed')
     } else if (state.eqlMigrationPending) {
-      // The Drizzle flow (and Supabase `--migration` mode) GENERATES an EQL
-      // migration rather than applying it — EQL isn't in the database until
-      // the user runs the migration. That's the intended, honest end state
-      // for these flows (applying is the ORM/migration tool's job), so it's
-      // NOT an incomplete setup — but we must not claim "installed" either.
+      // The Drizzle and Supabase flows GENERATE an EQL migration rather than
+      // applying it — EQL isn't in the database until the user runs the
+      // migration. That's the intended, honest end state for these flows
+      // (applying is the migration tool's job), so it's NOT an incomplete
+      // setup — but we must not claim "installed" either.
       const applyCmd =
         state.integration === 'supabase'
-          ? 'supabase db push'
+          ? 'supabase db reset` (local) or `supabase migration up'
           : 'drizzle-kit migrate'
       checkmarks.push(
         `○ EQL migration generated — apply it with \`${applyCmd}\``,
@@ -151,8 +151,8 @@ export async function initCommand(
 
     // EQL is required for encryption. Some integrations install it out-of-band
     // and legitimately leave `eqlInstalled` false here: Prisma Next installs it
-    // via `prisma-next migrate`, and the Drizzle flow generates a migration the
-    // user applies with `drizzle-kit migrate` (`eqlMigrationPending`). Only a
+    // via `prisma-next migrate`, and the Drizzle and Supabase flows generate a
+    // migration the user applies themselves (`eqlMigrationPending`). Only a
     // run that neither installed EQL nor generated a migration to install it is
     // genuinely incomplete — say so and exit non-zero so automation can't read
     // a false success from a run where encryption would fail at query time.

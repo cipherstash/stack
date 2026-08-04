@@ -5,8 +5,10 @@ import { join, resolve } from 'node:path'
 import { MIGRATIONS_SCHEMA_SQL } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
 import { CliExit } from '@/cli/exit.js'
+import { detectSupabaseProject } from '@/commands/db/detect.js'
 import { printNextSteps, SAFE_MIGRATION_NAME } from '@/commands/db/install.js'
 import { rewriteEncryptedAlterColumns } from '@/commands/db/rewrite-migrations.js'
+import { writeSupabaseEqlMigration } from '@/commands/eql/supabase-migration.js'
 import {
   reportSweepFailure,
   reportSweepResult,
@@ -64,12 +66,30 @@ export interface EqlMigrationOptions {
    * migration framework, so there is nothing for this command to emit.
    */
   prisma?: boolean
-  /** Append the Supabase role grants (`eql_v3` + `eql_v3_internal`). */
+  /**
+   * Two roles, decided by whether another target is present:
+   *
+   * - alone, it IS the target — write the install into `supabase/migrations/`;
+   * - with `--drizzle`, it's a modifier that appends the Supabase role grants
+   *   (`eql_v3` + `eql_v3_internal`) to the Drizzle migration.
+   *
+   * The grants are in the emitted SQL either way; only the destination differs.
+   */
   supabase?: boolean
   /** Migration name (Drizzle). Defaults to `install-eql`. */
   name?: string
-  /** Output directory (Drizzle). Defaults to `drizzle`. */
+  /**
+   * Output directory: where drizzle-kit writes under `--drizzle` (default
+   * `drizzle`), or the migrations directory under `--supabase` (default
+   * `supabase/migrations`).
+   */
   out?: string
+  /**
+   * Write a Supabase install migration even though one is already there.
+   * Drizzle doesn't need this — drizzle-kit numbers each generated migration,
+   * so a re-run never collides.
+   */
+  force?: boolean
   /** Describe what would happen without writing anything. */
   dryRun?: boolean
   /**
@@ -109,10 +129,21 @@ export function buildEqlV3MigrationSql(opts: { supabase: boolean }): string {
 
 /**
  * `stash eql migration` — generate an EQL v3 install migration for the target
- * ORM, rather than running SQL directly against the database (that's `stash eql
- * install`). Migration-first is the preferred path: the install lands in the
- * project's migration history and ships to every environment through the ORM's
- * own migrate step.
+ * ORM or platform, rather than running SQL directly against the database
+ * (that's `stash eql install`). Migration-first is the preferred path: the
+ * install lands in the project's migration history and ships to every
+ * environment through that project's own migrate step.
+ *
+ * Two emitters, one SQL body ({@link buildEqlV3MigrationSql}):
+ *
+ * - `--drizzle` scaffolds through drizzle-kit so the migration is journaled;
+ * - `--supabase` (alone) writes into `supabase/migrations/`, which is what
+ *   makes the install survive `supabase db reset` — a reset drops the database
+ *   and replays that directory, so a direct install is wiped by it.
+ *
+ * `--supabase` alongside `--drizzle` is NOT a second target: it's the grants
+ * modifier for a Supabase-hosted Drizzle project. Only a bare `--supabase`
+ * selects the Supabase emitter.
  *
  * v3 only — there is no `--eql-version` here. prisma-next never shipped v2, and
  * the Drizzle v3 surface is the documented one.
@@ -124,15 +155,7 @@ export function buildEqlV3MigrationSql(opts: { supabase: boolean }): string {
 export async function eqlMigrationCommand(
   options: EqlMigrationOptions,
 ): Promise<void> {
-  const targets = [
-    options.drizzle && 'drizzle',
-    options.prisma && 'prisma',
-  ].filter(Boolean)
-  if (targets.length === 0) {
-    p.log.error(messages.eql.migrationNeedsTarget)
-    throw new CliExit(1)
-  }
-  if (targets.length > 1) {
+  if (options.drizzle && options.prisma) {
     p.log.error(messages.eql.migrationOneTarget)
     throw new CliExit(1)
   }
@@ -146,7 +169,99 @@ export async function eqlMigrationCommand(
     throw new CliExit(1)
   }
 
-  await generateDrizzleEqlMigration(options)
+  if (options.drizzle) {
+    await generateDrizzleEqlMigration(options)
+    return
+  }
+
+  if (options.supabase) {
+    await generateSupabaseEqlMigration(options)
+    return
+  }
+
+  p.log.error(messages.eql.migrationNeedsTarget)
+  throw new CliExit(1)
+}
+
+/**
+ * Write the EQL v3 install into `supabase/migrations/`.
+ *
+ * Deliberately unlike the Drizzle path in two ways. There is no drizzle-kit to
+ * scaffold through — Supabase migrations are plain timestamped `.sql` files
+ * with no journal to keep in step, so we write the file ourselves. And there is
+ * no ALTER COLUMN sweep: that exists because `drizzle-kit generate` emits
+ * in-place type changes that cannot run, and nothing here generates SQL from a
+ * schema diff.
+ */
+async function generateSupabaseEqlMigration(
+  options: EqlMigrationOptions,
+): Promise<void> {
+  // Reuses the resolver that already knows the `supabase/migrations` default
+  // and how to resolve a relative --out against the cwd.
+  const { migrationsDir } = detectSupabaseProject(process.cwd(), options.out)
+
+  // Load the SQL up front so a corrupt/missing bundle fails BEFORE we create
+  // any directory, with the same spinner-free error the Drizzle path uses.
+  let sql: string
+  try {
+    // Always with grants: a file written for Supabase is applied by Supabase,
+    // where PostgREST reaches these tables as anon/authenticated/service_role.
+    sql = buildEqlV3MigrationSql({ supabase: true })
+  } catch (error) {
+    p.log.error(error instanceof Error ? error.message : String(error))
+    throw new CliExit(1)
+  }
+
+  const embedded = options.embedded ?? false
+  if (!embedded) p.intro('CipherStash EQL migration')
+
+  if (options.dryRun) {
+    p.note(
+      `Would write the EQL v3 install SQL (with Supabase grants) into a new <timestamp>_cipherstash_eql.sql in ${migrationsDir}`,
+      'Dry Run',
+    )
+    if (!embedded) p.outro('Dry run complete.')
+    return
+  }
+
+  const s = p.spinner()
+  s.start('Writing EQL v3 install migration...')
+  let written: Awaited<ReturnType<typeof writeSupabaseEqlMigration>>
+  try {
+    written = await writeSupabaseEqlMigration({
+      migrationsDir,
+      sql,
+      force: options.force ?? false,
+    })
+    s.stop(`Migration written: ${written.path}`)
+  } catch (error) {
+    s.stop('Failed to write the migration.')
+    p.log.error(error instanceof Error ? error.message : String(error))
+    if (!embedded) p.outro('Migration aborted.')
+    throw new CliExit(1)
+  }
+
+  if (written.overwritten) {
+    // Rewriting a migration that some database has already applied leaves the
+    // file describing a shape that database never got from it — the same
+    // hazard `eql repair` guards against. We can't check that from here (no
+    // connection), so say it plainly.
+    p.log.warn(
+      'Replaced the existing EQL install migration in place, keeping its version. If it had already been applied somewhere, that database has the old bundle — re-run `stash eql install` against it, or reset it.',
+    )
+  }
+
+  p.log.success(
+    `Migration ${written.overwritten ? 'replaced' : 'created'}: ${written.path}`,
+  )
+  p.note(
+    `Apply it:\n\n  supabase db reset        # local — replays every migration\n  supabase migration up    # remote/linked project`,
+    'Next Steps',
+  )
+  if (!embedded) {
+    printNextSteps()
+    p.outro('Done!')
+  }
 }
 
 async function generateDrizzleEqlMigration(

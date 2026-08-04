@@ -325,10 +325,19 @@ export const registry: CommandGroup[] = [
       {
         name: 'eql migration',
         summary:
-          'Generate an EQL v3 install migration for your ORM (Drizzle; Prisma Next installs EQL through its own migrations)',
+          'Generate an EQL v3 install migration (Drizzle, or supabase/migrations/; Prisma Next installs EQL through its own migrations)',
+        long: [
+          'Migration-first is the preferred way to install EQL: it lands in your',
+          'migration history and ships to every environment through the same',
+          'migrate step as the rest of your schema. On Supabase it is the only',
+          'durable way — `supabase db reset` replays the migrations directory, so',
+          'a direct `eql install` is wiped by the next reset.',
+        ].join('\n'),
         examples: [
           'eql migration --drizzle',
           'eql migration --drizzle --supabase',
+          'eql migration --supabase',
+          'eql migration --supabase --out db/migrations --force',
         ],
         flags: [
           {
@@ -344,7 +353,7 @@ export const registry: CommandGroup[] = [
           {
             name: '--supabase',
             description:
-              'Append the Supabase role grants (eql_v3 + eql_v3_internal for anon/authenticated/service_role).',
+              'On its own, write the install into supabase/migrations/ so it survives `supabase db reset`. With --drizzle, instead append the Supabase role grants (eql_v3 + eql_v3_internal for anon/authenticated/service_role) to the Drizzle migration.',
           },
           {
             name: '--name',
@@ -356,7 +365,12 @@ export const registry: CommandGroup[] = [
             name: '--out',
             value: '<path>',
             description:
-              'Directory drizzle-kit writes the migration into (passed to `drizzle-kit generate --out`). Defaults to `drizzle`; set it to match your drizzle.config.ts.',
+              'Where the migration is written. Drizzle: passed to `drizzle-kit generate --out`, defaults to `drizzle` — set it to match your drizzle.config.ts. Supabase: the migrations directory, defaults to `supabase/migrations`.',
+          },
+          {
+            name: '--force',
+            description:
+              'Write a Supabase install migration even though one already exists. Not needed for --drizzle (drizzle-kit numbers each generated migration).',
           },
           DRY_RUN_FLAG,
         ],

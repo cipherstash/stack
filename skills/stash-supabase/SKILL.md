@@ -70,20 +70,41 @@ this is also how **Supabase Edge Functions** get credentials in local dev —
 
 ### 1. Install EQL v3 on the database
 
+Install it as a **migration**, not directly:
+
 ```bash
-stash eql install --supabase
+stash eql migration --supabase   # writes supabase/migrations/<timestamp>_cipherstash_eql.sql
+supabase db reset                # local — replays every migration
+supabase migration up            # remote/linked project
 ```
+
+> ⚠️ **Do not use `stash eql install --supabase` on a project with a local
+> `supabase/` directory.** It applies the SQL straight to the running database,
+> and `supabase db reset` — the ordinary local development loop — drops that
+> database and replays `supabase/migrations/`. EQL is not in there, so it is
+> gone, and the next query fails with `type "eql_v3_encrypted" does not exist`.
+> `stash eql install --supabase` is for a **hosted** project you administer
+> without the Supabase CLI, where there is no migrations directory to write to.
+
+The generated file carries three things, in order: the EQL v3 bundle, the role
+grants, and the `cipherstash.cs_migrations` tracking schema that `stash
+encrypt` records per-column progress in. One `supabase db reset` therefore
+provisions everything — no out-of-band `stash eql install` afterwards.
+
+It refuses to write a second install migration; pass `--force` to regenerate
+the existing one in place (same version, so an applied ledger stays consistent),
+and `--out <dir>` if your migrations live somewhere other than
+`supabase/migrations`.
 
 Since eql-3.0.0 there is **one** v3 SQL artifact for every target — there is
 no separate Supabase variant. The bundle's only superuser-requiring
 statements (the ORE operator class/family) skip themselves when the install
 role lacks the privilege, and the bundle then disables the ORE-opclass-backed
-domains it cannot support. `--supabase` changes one thing: it additionally
-applies the role grants for `anon` / `authenticated` / `service_role` to the
-two schemas the bundle creates — `eql_v3` (the operator-backing functions)
-and `eql_v3_internal` (SEM internals). Without the grants, encrypted queries
-fail loudly with a permission error (e.g. `permission denied for schema
-eql_v3_internal`).
+domains it cannot support. `--supabase` adds the role grants for `anon` /
+`authenticated` / `service_role` on the two schemas the bundle creates —
+`eql_v3` (the operator-backing functions) and `eql_v3_internal` (SEM
+internals). Without the grants, encrypted queries fail loudly with a
+permission error (e.g. `permission denied for schema eql_v3_internal`).
 
 No **Exposed schemas** change is needed: the column domains and their
 operators live in `public`, so bare `col = term` filters resolve under
@@ -665,7 +686,10 @@ ALTER TABLE users
   ADD COLUMN email_encrypted public.eql_v3_text_search;  -- nullable
 ```
 
-Apply with `supabase db reset` locally or `supabase migration up` against the remote project.
+Apply with `supabase db reset` locally or `supabase migration up` against the
+remote project. The reset is safe here because the EQL install is itself a
+migration (step 1) — it is replayed before this one, so the `eql_v3_text_search`
+domain exists by the time this `ALTER TABLE` runs.
 
 No client-side schema change is required — `encryptedSupabase` introspects
 the new column's domain at the next client startup. If you use declared

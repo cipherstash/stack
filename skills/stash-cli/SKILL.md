@@ -224,7 +224,7 @@ Six mechanical steps, no agent handoff. It prompts only when it can't pick a sen
 2. **Resolve database** — per the resolution order above; verifies the connection.
 3. **Build schema** — auto-detects Drizzle, Supabase, and Prisma Next and writes the placeholder encryption client. **Prisma Next is the exception:** it derives schemas from `contract.json`, so no encryption-client file is written and none is needed.
 4. **Install dependencies** — one combined prompt for `@cipherstash/stack` and `stash`.
-5. **Install EQL** — always EQL v3. Drizzle generates `eql migration --drizzle`; Prisma Next installs through `prisma-next migrate`; other integrations install directly.
+5. **Install EQL** — always EQL v3, migration-first wherever there is a migration history to land in. Drizzle generates `eql migration --drizzle`; a Supabase project with a local `supabase/` directory generates `eql migration --supabase`; Prisma Next installs through `prisma-next migrate`; everything else (including a hosted Supabase project with no CLI scaffolding) installs directly. The migration routes leave EQL **generated, not applied** — the summary says so, and you run the migrate step yourself.
 6. **Gather context** — detects available coding agents and writes `.cipherstash/context.json`.
 
 Flags: `--supabase`, `--drizzle`, `--prisma`, `--region <slug>`.
@@ -338,6 +338,7 @@ Flags below are the decision-relevant ones. Run `stash <command> --help` for the
 ```bash
 stash eql install
 stash eql migration --drizzle
+stash eql migration --supabase
 stash eql repair --drizzle
 stash eql upgrade
 stash eql status
@@ -347,7 +348,9 @@ stash eql status
 
 #### `eql install`
 
-Gets a project from zero to a direct EQL v3 install. It loads an existing `stash.config.ts` (or offers to scaffold one), scaffolds the encryption client if missing, and applies the pinned `@cipherstash/eql` bundle. To put installation in Drizzle migration history, use `eql migration --drizzle` instead.
+Gets a project from zero to a direct EQL v3 install. It loads an existing `stash.config.ts` (or offers to scaffold one), scaffolds the encryption client if missing, and applies the pinned `@cipherstash/eql` bundle. To put the installation in migration history instead, use `eql migration` — `--drizzle` for Drizzle, `--supabase` for a Supabase project.
+
+**On Supabase with a local `supabase/` directory, use `eql migration --supabase`, not this.** A direct install does not survive `supabase db reset`, which drops the database and replays `supabase/migrations/`. Reserve `eql install --supabase` for a hosted project administered without the Supabase CLI.
 
 | Flag | Description |
 |---|---|
@@ -362,21 +365,27 @@ The removed `--eql-version`, `--latest`, `--drizzle`, `--migration`, `--direct`,
 
 #### `eql migration`
 
-Generates an **EQL v3 install migration** for your ORM, instead of running SQL directly against the database (`eql install`). Migration-first is the preferred path: the install lands in your migration history and ships to every environment through the ORM's own migrate step. v3 only — there is no `--eql-version` here.
+Generates an **EQL v3 install migration**, instead of running SQL directly against the database (`eql install`). Migration-first is the preferred path: the install lands in your migration history and ships to every environment through the same migrate step as the rest of your schema. On Supabase it is the *only* durable path — `supabase db reset` replays the migrations directory, so a direct install is wiped by the next reset. v3 only — there is no `--eql-version` here.
 
 ```bash
 stash eql migration --drizzle              # Drizzle custom migration in drizzle/
 stash eql migration --drizzle --supabase   # also grant eql_v3 to anon/authenticated/service_role
+stash eql migration --supabase             # supabase/migrations/<timestamp>_cipherstash_eql.sql
 ```
+
+**`--supabase` plays two roles.** On its own it is the target: write the install into `supabase/migrations/`. Combined with `--drizzle` it is a modifier on the Drizzle migration, adding the role grants. Only a bare `--supabase` selects the Supabase emitter.
 
 | Flag | Description |
 |---|---|
 | `--drizzle` | Emit a Drizzle custom migration (via `drizzle-kit generate --custom`, then inject the SQL). Requires `drizzle-kit`. |
 | `--prisma` | **Not needed** — Prisma Next installs the EQL bundle through its own migration framework (the extension pack's `migrations/cipherstash/` contract space; run `prisma-next migrate`). The flag exists only to say so and point you there. |
-| `--supabase` | Append the Supabase role grants (`eql_v3` + `eql_v3_internal` → `anon`, `authenticated`, `service_role`). Harmless when you connect directly as `postgres`; needed when the same tables are reached via PostgREST/RLS. |
+| `--supabase` | Alone: write the install into `supabase/migrations/`, so it survives `supabase db reset`. With `--drizzle`: append the Supabase role grants (`eql_v3` + `eql_v3_internal` → `anon`, `authenticated`, `service_role`) instead. Harmless when you connect directly as `postgres`; needed when the same tables are reached via PostgREST/RLS. |
 | `--name <name>` | Migration name (Drizzle). Default `install-eql`. Letters, numbers, `-`, and `_` only — anything else is rejected. |
-| `--out <path>` | Output directory (Drizzle). Default `drizzle`. Passed straight to `drizzle-kit --out`, so set it to match your `drizzle.config.ts` if that writes elsewhere. |
+| `--out <path>` | Where the migration is written. Drizzle: default `drizzle`, passed straight to `drizzle-kit --out`, so set it to match your `drizzle.config.ts` if that writes elsewhere. Supabase: default `supabase/migrations`. |
+| `--force` | Regenerate the Supabase install migration in place when one already exists (keeping its version, so an applied ledger stays consistent). Without it, a second run exits 1. Not needed for `--drizzle` — drizzle-kit numbers each generated migration. |
 | `--dry-run` | Show what would happen without writing anything. |
+
+The Supabase file is timestamped at generation time, so it sorts **after** everything already applied and pushes cleanly without `--include-all`. It carries the EQL bundle, the role grants, and the `cipherstash.cs_migrations` tracking schema, so one `supabase db reset` provisions everything `stash encrypt` needs.
 
 Pass exactly one of `--drizzle` / `--prisma`. The generated migration also installs the `cs_migrations` tracking schema, so one `drizzle-kit migrate` covers everything `stash encrypt …` needs.
 

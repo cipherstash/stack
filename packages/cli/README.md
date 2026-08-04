@@ -283,9 +283,11 @@ Reads `databaseUrl` from `stash.config.ts`.
 
 ---
 
-## Drizzle migration mode
+## Migration mode
 
-Use `eql migration --drizzle` to add EQL v3 installation to Drizzle migration history instead of applying it directly.
+Use `eql migration` to add the EQL v3 installation to your migration history instead of applying it directly. The install then ships to every environment through the same migrate step as the rest of your schema.
+
+### Drizzle
 
 ```bash
 npx stash eql migration --drizzle
@@ -305,6 +307,22 @@ npx drizzle-kit migrate
 ```
 
 `drizzle-kit` must be installed in your project (`npm install -D drizzle-kit`). The `--out` directory must match your `drizzle.config.ts`.
+
+Add `--supabase` on a Supabase-hosted Drizzle project to append the `anon` / `authenticated` / `service_role` grants.
+
+### Supabase
+
+```bash
+npx stash eql migration --supabase
+supabase db reset          # local
+supabase migration up      # remote/linked project
+```
+
+This writes `supabase/migrations/<timestamp>_cipherstash_eql.sql` containing the EQL v3 bundle, the Supabase role grants, and the `cipherstash.cs_migrations` tracking schema — so one reset provisions everything `stash encrypt` needs.
+
+**Use this rather than `eql install --supabase` whenever the project has a local `supabase/` directory.** A direct install does not survive `supabase db reset`, which drops the database and replays the migrations directory.
+
+The file is timestamped at generation time, so it sorts after everything already applied and pushes without `--include-all`. Pass `--out <dir>` if your migrations live elsewhere, and `--force` to regenerate an existing install migration in place.
 
 ---
 

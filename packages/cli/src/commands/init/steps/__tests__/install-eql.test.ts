@@ -4,9 +4,20 @@ import type { InitProvider, InitState } from '../../types.js'
 // installCommand is the unit under test's collaborator — mock it so we assert
 // what init asks for without touching a database.
 vi.mock('../../../db/install.js', () => ({ installCommand: vi.fn() }))
-// The Drizzle branch generates a v3 migration instead of calling installCommand.
+// The Drizzle and Supabase branches generate a v3 migration instead of calling
+// installCommand.
 vi.mock('../../../eql/migration.js', () => ({
   eqlMigrationCommand: vi.fn(async () => undefined),
+}))
+// Whether a Supabase project has local `supabase/` scaffolding decides between
+// the migration and direct-install routes. Real detection walks the cwd (this
+// package), which has neither — so toggle it per test.
+vi.mock('../../../db/detect.js', () => ({
+  detectSupabaseProject: vi.fn(() => ({
+    hasConfigToml: false,
+    hasMigrationsDir: false,
+    migrationsDir: '/project/supabase/migrations',
+  })),
 }))
 // `eql install` normally scaffolds these; the Drizzle branch does it itself.
 vi.mock('../../../db/config-scaffold.js', () => ({
@@ -34,9 +45,25 @@ import { CliExit } from '../../../../cli/exit.js'
 import { isInteractive } from '../../../../config/tty.js'
 import { ensureEncryptionClient } from '../../../db/client-scaffold.js'
 import { offerStashConfig } from '../../../db/config-scaffold.js'
+import { detectSupabaseProject } from '../../../db/detect.js'
 import { installCommand } from '../../../db/install.js'
 import { eqlMigrationCommand } from '../../../eql/migration.js'
 import { installEqlStep } from '../install-eql.js'
+
+/** Pretend the cwd has (or lacks) `supabase init` scaffolding. */
+function withSupabaseScaffolding(present: boolean): void {
+  vi.mocked(detectSupabaseProject).mockReturnValue({
+    hasConfigToml: present,
+    hasMigrationsDir: present,
+    migrationsDir: '/project/supabase/migrations',
+  })
+}
+
+const supabaseState = {
+  integration: 'supabase',
+  databaseUrl: 'postgresql://localhost:54322/postgres',
+} as unknown as InitState
+const supabaseProvider = { name: 'supabase' } as unknown as InitProvider
 
 const drizzleState = {
   integration: 'drizzle',
@@ -238,6 +265,106 @@ describe('installEqlStep', () => {
         .flat()
         .join('\n')
       expect(logged).not.toContain('hunter2')
+    })
+  })
+
+  describe('Supabase', () => {
+    it('writes the install into supabase/migrations/ so it survives `db reset` (#613)', async () => {
+      // The defect: init ran a direct `eql install`, and `supabase db reset` —
+      // the ordinary local development loop — drops the database and replays
+      // supabase/migrations/, taking EQL with it. The install has to be IN that
+      // directory to come back.
+      withSupabaseScaffolding(true)
+
+      await installEqlStep.run(supabaseState, supabaseProvider)
+
+      expect(installCommand).not.toHaveBeenCalled()
+      expect(eqlMigrationCommand).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(eqlMigrationCommand).mock.calls[0][0]).toMatchObject({
+        supabase: true,
+        embedded: true,
+      })
+      // Not a Drizzle run — `--drizzle` would shell out to drizzle-kit, which
+      // a plain Supabase project does not have.
+      expect(
+        vi.mocked(eqlMigrationCommand).mock.calls[0][0].drizzle,
+      ).toBeFalsy()
+    })
+
+    it('maps the generated migration to eqlMigrationPending, NOT eqlInstalled', async () => {
+      withSupabaseScaffolding(true)
+
+      const result = await installEqlStep.run(supabaseState, supabaseProvider)
+
+      expect(result.eqlInstalled).toBe(false)
+      expect(result.eqlMigrationPending).toBe(true)
+    })
+
+    it('scaffolds stash.config.ts + the client, which `eql install` would have done', async () => {
+      withSupabaseScaffolding(true)
+
+      await installEqlStep.run(supabaseState, supabaseProvider)
+
+      expect(offerStashConfig).toHaveBeenCalledWith({ ensure: true })
+      expect(ensureEncryptionClient).toHaveBeenCalledTimes(1)
+    })
+
+    it('installs directly when the project has no local supabase/ scaffolding', async () => {
+      // A project pointed at a hosted Supabase database with no `supabase init`
+      // has nowhere to write a migration and no `supabase` binary to apply one.
+      // Routing it to the migration path would leave EQL uninstalled.
+      withSupabaseScaffolding(false)
+
+      const result = await installEqlStep.run(supabaseState, supabaseProvider)
+
+      expect(eqlMigrationCommand).not.toHaveBeenCalled()
+      expect(installCommand).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(installCommand).mock.calls[0][0].supabase).toBe(true)
+      expect(result.eqlInstalled).toBe(true)
+    })
+
+    it('degrades to "not installed" (never crashes init) when the write fails', async () => {
+      withSupabaseScaffolding(true)
+      vi.mocked(eqlMigrationCommand).mockRejectedValueOnce(new Error('boom'))
+
+      const result = await installEqlStep.run(supabaseState, supabaseProvider)
+
+      expect(result.eqlInstalled).toBe(false)
+      expect(result.eqlMigrationPending).toBeFalsy()
+    })
+
+    it('does not leak the database URL when the write fails', async () => {
+      withSupabaseScaffolding(true)
+      vi.mocked(eqlMigrationCommand).mockRejectedValueOnce(
+        new Error('connect postgresql://user:hunter2@localhost:54322/postgres'),
+      )
+
+      await installEqlStep.run(supabaseState, supabaseProvider)
+
+      const logged = [
+        ...vi.mocked(p.log.error).mock.calls,
+        ...vi.mocked(p.note).mock.calls,
+      ]
+        .flat()
+        .join('\n')
+      expect(logged).not.toContain('hunter2')
+    })
+
+    it('keeps a Supabase-hosted Drizzle project on the Drizzle route', async () => {
+      // Both signals are true here. Drizzle owns the migration history, so it
+      // must win — `--supabase` degrades to the grants modifier it has always
+      // been on that path.
+      withSupabaseScaffolding(true)
+
+      await installEqlStep.run(
+        { ...drizzleState, integration: 'drizzle' } as InitState,
+        supabaseProvider,
+      )
+
+      expect(vi.mocked(eqlMigrationCommand).mock.calls[0][0]).toMatchObject({
+        drizzle: true,
+        supabase: true,
+      })
     })
   })
 

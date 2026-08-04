@@ -4,18 +4,71 @@ import { isInteractive } from '../../../config/tty.js'
 import { pinnedSpec } from '../../../runtime-versions.js'
 import { ensureEncryptionClient } from '../../db/client-scaffold.js'
 import { offerStashConfig } from '../../db/config-scaffold.js'
+import { detectSupabaseProject } from '../../db/detect.js'
 import { installCommand } from '../../db/install.js'
-import { eqlMigrationCommand } from '../../eql/migration.js'
+import {
+  type EqlMigrationOptions,
+  eqlMigrationCommand,
+} from '../../eql/migration.js'
 import type { InitProvider, InitState, InitStep } from '../types.js'
 import { CancelledError } from '../types.js'
 import { isPackageInstalled } from '../utils.js'
 
 /**
+ * Whether this project has a local `supabase/` directory to write a migration
+ * into. `config.toml` is the stronger signal — `supabase init` writes it before
+ * any migration exists — but an imported project may carry only the migrations
+ * directory, so either counts.
+ */
+function hasLocalSupabaseScaffolding(): boolean {
+  const project = detectSupabaseProject(process.cwd())
+  return project.hasConfigToml || project.hasMigrationsDir
+}
+
+/**
+ * Shared body of the two migration-first routes.
+ *
+ * `eql migration` deliberately does no config/client scaffolding of its own
+ * (unlike `eql install`), so init does it here — otherwise these routes would
+ * silently skip half the init contract every other integration gets.
+ *
+ * The failure path never echoes the underlying error: `eqlMigrationCommand`
+ * has already logged its own actionable diagnostics, and errors on this path
+ * can carry a connection string.
+ */
+async function generateEqlMigration(
+  state: InitState,
+  route: {
+    options: EqlMigrationOptions
+    retryCommand: string
+    failureHint: string
+  },
+): Promise<InitState> {
+  const clientPath = await offerStashConfig({ ensure: true })
+  if (clientPath) {
+    ensureEncryptionClient(clientPath, process.cwd(), state.databaseUrl)
+  }
+
+  try {
+    await eqlMigrationCommand({ ...route.options, embedded: true })
+  } catch {
+    p.log.error(route.failureHint)
+    p.note(`Re-run with: ${route.retryCommand}`, 'You can retry manually')
+    return { ...state, eqlInstalled: false }
+  }
+
+  // A migration file was WRITTEN, not applied — EQL lands in the database when
+  // the user runs their migrate step.
+  return { ...state, eqlInstalled: false, eqlMigrationPending: true }
+}
+
+/**
  * Install EQL programmatically after a y/N confirm.
  *
- * Two routes, both EQL v3: Drizzle projects generate a v3 install migration
- * (`stash eql migration --drizzle`) so the install lands in the project's
- * migration history; everything else runs `stash eql install` directly.
+ * Two routes, both EQL v3. Migration-first wherever the project has a
+ * migration history to land in — Drizzle projects (`stash eql migration
+ * --drizzle`), and Supabase projects with local CLI scaffolding (`stash eql
+ * migration --supabase`). Everything else runs `stash eql install` directly.
  *
  * EQL is the Postgres extension every CipherStash query relies on. Without
  * it, the encryption client can't read or write to encrypted columns.
@@ -23,9 +76,7 @@ import { isPackageInstalled } from '../utils.js'
  * it as the first thing to run before any migration.
  *
  * We pass the URL we already resolved at the start of init (state.databaseUrl)
- * through to `installCommand` so the user is never re-prompted. The installer
- * picks the Supabase migration / direct mode itself based on `--supabase` and
- * project layout — we don't pre-decide it here.
+ * through to `installCommand` so the user is never re-prompted.
  *
  * `installCommand` ends init on a hard failure (mutually-exclusive flag clash,
  * scaffold cancellation, an unsafe `--name`) — either by calling
@@ -117,34 +168,32 @@ export const installEqlStep: InitStep = {
     // `eql install`'s config/client scaffolding isn't part of that command, so
     // we do it here to keep the rest of the init contract identical.
     if (drizzle) {
-      const clientPath = await offerStashConfig({ ensure: true })
-      if (clientPath) {
-        ensureEncryptionClient(clientPath, process.cwd(), state.databaseUrl)
-      }
-
-      try {
-        await eqlMigrationCommand({
-          drizzle: true,
-          supabase: supabase || undefined,
-          embedded: true,
-        })
-      } catch {
-        // Most likely drizzle-kit missing or misconfigured. Don't echo the
-        // error (same reasoning as below re: connection strings) — the command
-        // has already logged its own actionable diagnostics.
-        p.log.error(
+      return await generateEqlMigration(state, {
+        options: { drizzle: true, supabase: supabase || undefined },
+        retryCommand: 'stash eql migration --drizzle',
+        failureHint:
           'Could not generate the EQL migration — check that drizzle-kit is installed and configured.',
-        )
-        p.note(
-          'Re-run with: stash eql migration --drizzle',
-          'You can retry manually',
-        )
-        return { ...state, eqlInstalled: false }
-      }
+      })
+    }
 
-      // A migration file was WRITTEN, not applied — EQL lands in the database
-      // when the user runs `drizzle-kit migrate`.
-      return { ...state, eqlInstalled: false, eqlMigrationPending: true }
+    // Supabase: same migration-first reasoning, different motivation. A direct
+    // install works, and then `supabase db reset` — the ordinary local
+    // development loop — drops the database and replays supabase/migrations/,
+    // taking EQL with it. Writing the install into that directory is the only
+    // way it survives (#613). It also means one `db reset` provisions
+    // everything `stash encrypt` needs, since the emitted SQL carries the
+    // `cs_migrations` tracking schema too.
+    //
+    // Gated on local CLI scaffolding: a project pointed at a hosted Supabase
+    // database with no `supabase/` directory has nowhere to write and no
+    // `supabase` binary to apply it with, so it must keep installing directly.
+    if (supabase && hasLocalSupabaseScaffolding()) {
+      return await generateEqlMigration(state, {
+        options: { supabase: true },
+        retryCommand: 'stash eql migration --supabase',
+        failureHint:
+          'Could not write the EQL migration into supabase/migrations/.',
+      })
     }
 
     try {

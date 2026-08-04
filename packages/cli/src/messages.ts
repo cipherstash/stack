@@ -66,12 +66,15 @@ export const messages = {
      * actionable command + `--force` note are appended at the call site.
      */
     prismaNextDetected: 'This looks like a Prisma Next project',
-    /** `stash eql migration` with no `--drizzle`/`--prisma` target. */
+    /** `stash eql migration` with no `--drizzle`/`--supabase`/`--prisma` target. */
     migrationNeedsTarget:
-      'Specify a target: `stash eql migration --drizzle` (or `--prisma`).',
-    /** More than one target passed to `stash eql migration`. */
+      'Specify a target: `stash eql migration --drizzle` for a Drizzle project, or `stash eql migration --supabase` to write into supabase/migrations/ (or `--prisma`).',
+    /**
+     * `--drizzle --prisma`. Note that `--drizzle --supabase` is NOT this error:
+     * there, `--supabase` is the role-grants modifier, not a second target.
+     */
     migrationOneTarget:
-      'Pass exactly one target: `--drizzle` or `--prisma`, not both.',
+      'Pass exactly one target: `--drizzle` or `--prisma`, not both. (`--supabase` is a target on its own, and the role-grants modifier when combined with `--drizzle`.)',
     /**
      * `--prisma` is registered only to route people to the right mechanism:
      * Prisma Next installs the EQL bundle through its own migration framework

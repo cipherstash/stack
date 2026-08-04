@@ -2,6 +2,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -166,16 +167,127 @@ describe('eqlMigrationCommand — target selection', () => {
       () => messages.eql.migrationOneTarget,
     ],
     ['--prisma', { prisma: true }, () => messages.eql.migrationPrismaNotNeeded],
-    // `--supabase` is a modifier, not a target.
-    [
-      '--supabase alone',
-      { supabase: true },
-      () => messages.eql.migrationNeedsTarget,
-    ],
   ])('exits 1 with an actionable message for %s', async (_label, opts, msg) => {
     await expect(eqlMigrationCommand(opts)).rejects.toBeInstanceOf(CliExit)
     expect(clack.log.error).toHaveBeenCalledWith(msg())
     expect(spawnMock).not.toHaveBeenCalled()
+  })
+
+  it('treats `--drizzle --supabase` as one target, not two', async () => {
+    // `--supabase` is the grants modifier here, not a second target. Counting
+    // it as one would reject the documented Supabase-hosted-Drizzle invocation.
+    const tmp = mkdtempSync(join(tmpdir(), 'stash-eql-targets-'))
+    try {
+      await eqlMigrationCommand({
+        drizzle: true,
+        supabase: true,
+        out: tmp,
+        dryRun: true,
+      })
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+    expect(clack.log.error).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * The Supabase emitter. No drizzle-kit, no journal, no ALTER COLUMN sweep —
+ * just the install SQL written where `supabase db reset` will replay it.
+ */
+describe('eqlMigrationCommand — Supabase', () => {
+  let tmp: string
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'stash-eql-supabase-'))
+  })
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true })
+  })
+
+  it('writes the install into --out and never spawns drizzle-kit', async () => {
+    await eqlMigrationCommand({ supabase: true, out: tmp })
+
+    const written = readdirSync(tmp)
+    expect(written).toHaveLength(1)
+    expect(written[0]).toMatch(/^\d{14}_cipherstash_eql\.sql$/)
+    expect(spawnMock).not.toHaveBeenCalled()
+  })
+
+  it('always includes the role grants — a Supabase file is applied by Supabase', async () => {
+    await eqlMigrationCommand({ supabase: true, out: tmp })
+
+    const body = readFileSync(join(tmp, readdirSync(tmp)[0]), 'utf-8')
+    expect(body).toContain(
+      'GRANT USAGE ON SCHEMA eql_v3 TO anon, authenticated, service_role',
+    )
+    expect(body).toContain(
+      'GRANT USAGE ON SCHEMA eql_v3_internal TO anon, authenticated, service_role',
+    )
+    // One reset provisions everything `stash encrypt` needs.
+    expect(body).toContain('cs_migrations')
+  })
+
+  it('dry run previews the directory and writes nothing', async () => {
+    await eqlMigrationCommand({ supabase: true, out: tmp, dryRun: true })
+
+    expect(readdirSync(tmp)).toHaveLength(0)
+    expect(clack.note).toHaveBeenCalledWith(
+      expect.stringContaining(tmp),
+      'Dry Run',
+    )
+  })
+
+  it('exits 1 rather than adding a second install migration', async () => {
+    await eqlMigrationCommand({ supabase: true, out: tmp })
+    await expect(
+      eqlMigrationCommand({ supabase: true, out: tmp }),
+    ).rejects.toBeInstanceOf(CliExit)
+
+    expect(readdirSync(tmp)).toHaveLength(1)
+    expect(clack.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('already exists'),
+    )
+  })
+
+  it('replaces in place under --force and warns about applied databases', async () => {
+    await eqlMigrationCommand({ supabase: true, out: tmp })
+    const original = readdirSync(tmp)[0]
+
+    await eqlMigrationCommand({ supabase: true, out: tmp, force: true })
+
+    expect(readdirSync(tmp)).toEqual([original])
+    expect(clack.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining('already been applied'),
+    )
+  })
+
+  it('emits the standalone banners by default', async () => {
+    await eqlMigrationCommand({ supabase: true, out: tmp })
+
+    expect(clack.intro).toHaveBeenCalledWith('CipherStash EQL migration')
+    expect(clack.outro).toHaveBeenCalledWith('Done!')
+    expect(printNextSteps).toHaveBeenCalled()
+  })
+
+  it('suppresses intro/outro/next-steps when embedded, but still writes', async () => {
+    // `stash init` renders its own summary and agent handoff; two competing
+    // "what next" blocks is the bug this flag exists to prevent.
+    await eqlMigrationCommand({ supabase: true, out: tmp, embedded: true })
+
+    expect(readdirSync(tmp)).toHaveLength(1)
+    expect(clack.intro).not.toHaveBeenCalled()
+    expect(clack.outro).not.toHaveBeenCalled()
+    expect(printNextSteps).not.toHaveBeenCalled()
+  })
+
+  it('suppresses the abort outro when embedded but still exits 1', async () => {
+    await eqlMigrationCommand({ supabase: true, out: tmp })
+    vi.clearAllMocks()
+
+    await expect(
+      eqlMigrationCommand({ supabase: true, out: tmp, embedded: true }),
+    ).rejects.toBeInstanceOf(CliExit)
+    expect(clack.outro).not.toHaveBeenCalled()
   })
 })
 

@@ -41,7 +41,7 @@ export function validateInstallFlags(
     return '`eql install --drizzle` has been removed. Generate an EQL v3 Drizzle migration with `stash eql migration --drizzle` (and pass --name/--out there).'
   }
   if (options.migration === true || options.migrationsDir !== undefined) {
-    return '`eql install --migration` has been removed. Use `stash eql migration --drizzle` to keep the EQL v3 install in migration history, adding `--supabase` when needed.'
+    return '`eql install --migration` has been removed. Use `stash eql migration` to keep the EQL v3 install in migration history: `--supabase` writes into supabase/migrations/, `--drizzle` emits a Drizzle migration (add `--supabase` there for the role grants). Pass the target directory as `--out`.'
   }
   if (options.direct === true) {
     return '`--direct` has been removed because `stash eql install` is now always a direct EQL v3 install.'

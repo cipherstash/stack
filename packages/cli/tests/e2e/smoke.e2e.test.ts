@@ -118,6 +118,13 @@ describe('stash CLI — non-interactive smoke', () => {
     expect(r.output).toContain('bogus-sub')
   })
 
+  /**
+   * clack hard-wraps to the pty width (100 cols), so any assertion phrase long
+   * enough to straddle a wrap fails on formatting rather than content. Collapse
+   * the wrapping before matching — line breaks here are presentation.
+   */
+  const unwrapped = (output: string): string => output.replace(/\s+/g, ' ')
+
   // The retired `--migration` flag fails before any I/O or prompt, so these
   // cases can observe the install entry path deterministically without a DB.
   it('db install still works as a deprecated alias and warns', async () => {
@@ -128,8 +135,10 @@ describe('stash CLI — non-interactive smoke', () => {
     expect(r.output).toContain('stash db install" is deprecated')
     expect(r.output).toContain('eql install" instead')
     // The alias reaches the real install command (its flag validation ran).
-    expect(r.output).toContain('eql install --migration` has been removed')
-    expect(r.output).toContain('eql migration --drizzle')
+    expect(unwrapped(r.output)).toContain(
+      'eql install --migration` has been removed',
+    )
+    expect(unwrapped(r.output)).toContain('stash eql migration')
   })
 
   it('eql install routes to the install command without a deprecation warning', async () => {
@@ -137,8 +146,13 @@ describe('stash CLI — non-interactive smoke', () => {
     const { exitCode } = await r.exit
     expect(exitCode).toBe(1)
     expect(r.output).not.toContain('is deprecated')
-    expect(r.output).toContain('eql install --migration` has been removed')
-    expect(r.output).toContain('eql migration --drizzle')
+    expect(unwrapped(r.output)).toContain(
+      'eql install --migration` has been removed',
+    )
+    // Both replacements, so a Supabase project is no longer sent to drizzle-kit
+    // (#613) — that misdirection was half the reported bug.
+    expect(unwrapped(r.output)).toContain('`--supabase` writes into')
+    expect(unwrapped(r.output)).toContain('`--drizzle` emits a Drizzle')
   })
 
   it('db migrate is a stub that exits 0 with a "not yet implemented" warning', async () => {
