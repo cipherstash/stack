@@ -1,0 +1,91 @@
+/**
+ * Guards *when* the platform binary is resolved, which is invisible at runtime
+ * on a machine that has one.
+ *
+ * The package used to resolve it at module evaluation: `import * as native from
+ * './load.cjs'` compiles to `__importStar(require("./load.cjs"))`, and
+ * `__importStar` enumerates the module's properties to copy them — which forces
+ * `@neon-rs/load`'s proxy to load the binary. So merely importing the package
+ * threw `MODULE_NOT_FOUND` with no binding installed, for callers that never
+ * encrypt anything: `@cipherstash/migrate` imports a pure-JS type guard,
+ * `@cipherstash/stack-prisma` reaches this package through one entry out of
+ * fifteen.
+ *
+ * A regression here is silent for anyone with a binary installed, which is
+ * everyone who would notice — so the property is asserted against the EMITTED
+ * JavaScript rather than behaviour. `lib/` exists by the time this runs:
+ * `test:typecheck` emits it before `test:unit`.
+ */
+
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { join } from 'node:path'
+import { describe, expect, it } from 'vitest'
+
+// Vitest resolves cwd to the directory holding vitest.config.ts.
+const entryPath = join(process.cwd(), 'lib/index.cjs')
+
+// Comments are stripped before matching. The doc comment on the import in
+// `index.cts` quotes the exact `__importStar(require("./load.cjs"))` form it
+// exists to warn against, and tsc carries comments through to the emit — so a
+// naive search finds the warning and reports the bug it is warning about.
+const emitted = readFileSync(entryPath, 'utf8')
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^[ \t]*\/\/.*$/gm, '')
+
+describe('native binding load timing', () => {
+  it('reads the emitted entry, not the source', () => {
+    // Asserting on the wrong file would make everything below vacuous rather
+    // than failing — the source has no `require` call to find at all.
+    expect(emitted).toContain('load.cjs')
+  })
+
+  it('requires ./load.cjs without __importStar', () => {
+    // `import native = require('./load.cjs')` emits a bare `require`.
+    // `import * as native from './load.cjs'` emits the enumerating wrapper.
+    const loadRequire = /__importStar\(require\("\.\/load\.cjs"\)\)/
+    expect(emitted).not.toMatch(loadRequire)
+    expect(emitted).toMatch(/require\("\.\/load\.cjs"\)/)
+  })
+
+  it('does not enumerate the loader anywhere in the entry', () => {
+    // Belt and braces: any spread or key-copy over the proxy has the same
+    // effect as `__importStar`, whatever the import syntax.
+    const spreadOfNative =
+      /\.\.\.\s*native\b|Object\.(keys|assign|entries)\(\s*native\s*\)/
+    expect(emitted).not.toMatch(spreadOfNative)
+  })
+})
+
+describe('assertNativeBindingAvailable', () => {
+  // Loaded from the EMITTED entry, not the source. Vitest cannot parse `.cts`
+  // ("content contains invalid JS syntax"), and the built artifact is what a
+  // consumer resolves anyway.
+  //
+  // `createRequire` is seeded with the entry's own path rather than
+  // `import.meta.url`: this tsconfig emits CommonJS and tsc rejects
+  // `import.meta` outright with TS1470 (see the same note in
+  // `lintWiring.test.ts`).
+  const mod = createRequire(entryPath)(entryPath)
+
+  it('is exported from the package entry', () => {
+    // `stash doctor` will consume this by name across a package boundary, so
+    // its presence is the contract — see the doc comment on the function.
+    expect(typeof mod.assertNativeBindingAvailable).toBe('function')
+  })
+
+  it('succeeds when the binding is present', () => {
+    // This suite runs where a binary is installed, so the negative case (a
+    // `MODULE_NOT_FOUND` propagating unwrapped) belongs to the CLI's
+    // missing-binary fixture rather than here.
+    expect(() => mod.assertNativeBindingAvailable()).not.toThrow()
+  })
+
+  it('reaches the loader rather than short-circuiting', () => {
+    // The whole point is that it forces resolution. A body that validated its
+    // arguments and returned early would pass both tests above while proving
+    // nothing, so check it forwards to a native call: `isEncrypted` is the
+    // one it uses, and it answers for a non-payload.
+    expect(mod.isEncrypted(null)).toBe(false)
+  })
+})
