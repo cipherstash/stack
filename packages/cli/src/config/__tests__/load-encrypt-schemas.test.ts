@@ -123,11 +123,51 @@ describe('loadEncryptSchemas against an untrusted client', () => {
     expect(schemas).toBeUndefined()
   })
 
+  /**
+   * A non-string `tableName` doesn't crash — it propagates as
+   * `DeclaredColumn.table === undefined`, which `validateSchemas` then reports
+   * as a table missing from the database and exits 1 on. So dropping this arm
+   * turns the documented degrade into a hard failure naming a table called
+   * "undefined", and nothing else covers it: the well-formed-table case above
+   * still passes without it.
+   */
+  it('rejects a table whose tableName is not a string', async () => {
+    writeProject(clientReturning(`[{ columnBuilders: {} }]`))
+
+    const { schemas } = await loadEncryptSchemas('./client.ts')
+
+    expect(schemas).toBeUndefined()
+  })
+
   it('rejects a getSchemas() that does not return an array', async () => {
     writeProject(clientReturning(`{ users: { tableName: 'users' } }`))
 
     const { schemas } = await loadEncryptSchemas('./client.ts')
 
     expect(schemas).toBeUndefined()
+  })
+
+  /**
+   * The one untrusted behaviour the shape checks structurally cannot cover: a
+   * `getSchemas()` that THROWS fails before there is any value to validate. An
+   * adapter-built client, a hand-rolled stub, or a getter with a side effect
+   * can all do it. Left unguarded the throw escapes `loadEncryptSchemas` and
+   * `main.ts` rethrows it as "Fatal error", exiting 1 — the opposite of the
+   * degrade contract this function documents.
+   */
+  it('degrades to config-only when getSchemas() throws', async () => {
+    writeProject(
+      `export const encryptionClient = {
+         getEncryptConfig: () => (${CONFIG}),
+         getSchemas: () => {
+           throw new Error('adapter client cannot enumerate schemas')
+         },
+       }`,
+    )
+
+    const { config, schemas } = await loadEncryptSchemas('./client.ts')
+
+    expect(schemas).toBeUndefined()
+    expect(config.tables.users).toBeDefined()
   })
 })

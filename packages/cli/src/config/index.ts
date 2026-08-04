@@ -282,10 +282,11 @@ export interface LoadedEncryptSchemas {
  * `information_schema.columns.domain_name` — needs the tables themselves.
  *
  * `schemas` is `undefined` when the project's installed `@cipherstash/stack`
- * predates `getSchemas()`. That is a real customer state (the CLI and the
- * library version independently), so it degrades to config-only rather than
- * failing: the caller runs the subset of rules the encrypt config can answer
- * and says which ones it skipped.
+ * predates `getSchemas()` — and, equally, when its `getSchemas()` throws or
+ * hands back something that isn't a list of tables. That is a real customer
+ * state (the CLI and the library version independently), so it degrades to
+ * config-only rather than failing: the caller runs the subset of rules the
+ * encrypt config can answer and says which ones it skipped.
  *
  * Exits with code 1 through the same refusals as {@link loadEncryptConfig}.
  */
@@ -310,7 +311,18 @@ export async function loadEncryptSchemas(
     return { config, schemas: undefined }
   }
 
-  const schemas = getSchemas.call(encryptClient)
+  // The call itself is untrusted, not just its return value: an adapter-built
+  // client, a stub, or a getter with a side effect can throw here, and the
+  // shape check below never gets a value to reject. Unguarded that throw
+  // escapes to `main.ts`, which rethrows it as "Fatal error" and exits 1 —
+  // the opposite of the degrade this function promises. Only the call is
+  // inside the `try`, so a bug in `isV3TableLike` still surfaces.
+  let schemas: readonly AnyV3Table[]
+  try {
+    schemas = getSchemas.call(encryptClient)
+  } catch {
+    return { config, schemas: undefined }
+  }
 
   // A client built by an adapter (or a hand-rolled stub) could return
   // something other than an array of tables. Verify the shape rather than

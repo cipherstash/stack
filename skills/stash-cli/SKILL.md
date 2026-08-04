@@ -433,7 +433,7 @@ stash eql validate [--supabase] [--database-url <url>]
 
 Reads the tables passed to `Encryption({ schemas })` — through the client's `getSchemas()` accessor, so it sees the **concrete domain** of every column, which the built encrypt config does not carry — and checks them against the EQL v3 vocabulary. If a database is reachable it then checks the declaration against what that database actually has.
 
-`getSchemas()` is a recent addition. Against a project on an older `@cipherstash/stack` validate says so and falls back to the built encrypt config: the index-derived rules still run, but every rule that needs a domain (ORE portability, drift, plain-column detection) is skipped. Upgrading `@cipherstash/stack` restores them.
+`getSchemas()` is a recent addition. Against a project on an older `@cipherstash/stack` — or a client whose `getSchemas()` is missing, malformed, or throws — validate says so and falls back to the built encrypt config: the index-derived rules still run, but the rules that need a domain (ORE portability and drift) are skipped. Upgrading `@cipherstash/stack` restores them.
 
 Schema checks (no database needed):
 
@@ -451,6 +451,8 @@ Database checks (skipped with a notice, not a failure, when no database is reach
 |---|---|
 | EQL v3 is not installed — reported once, and the remaining database checks are skipped | Error |
 | A declared table lives in a different schema than the one searched | Warning |
+| A declared table is in the searched schema but invisible to the connected role (missing grant) | Warning |
+| A declared table name carries a schema qualifier (`schema.table`) — not checked | Warning |
 | A declared table exists in no schema at all | Error |
 | A declared column is missing from a table that was found | Error |
 | The database column's domain differs from the declared one | Error |
@@ -460,7 +462,16 @@ Database checks (skipped with a notice, not a failure, when no database is reach
 
 Exits 1 on errors only; warnings and info do not fail the command.
 
-**Validate inspects one schema** — `current_schema()`, the head of `search_path` — but looks the table name up across all of them before deciding what a miss means. Found under another schema (Prisma `multiSchema`, a tenant schema, or a `schema.table` name passed to `encryptedTable`), it is a Warning naming that schema and the connection option to reach it: the project is healthy, just pointed elsewhere. Found under none, the migration has not run, and that is an Error. Findings are reported once per table, not once per column.
+**Validate inspects one schema** — `current_schema()`, the head of `search_path` — but distinguishes four reasons a table can be missing from it, so only the last fails the command. Reported once per table, not once per column.
+
+| The table is… | Finding |
+|---|---|
+| in another schema (Prisma `multiSchema`, a tenant schema) | Warning naming that schema and the connection option to reach it |
+| in the searched schema but invisible to the connected role | Warning with the `GRANT SELECT` to run — `information_schema` reports only what the role holds a privilege on, so a missing grant is not a missing migration |
+| declared as `schema.table` | Warning — validate matches table names unqualified and cannot check this. Declare it unqualified and point the connection at its schema |
+| absent everywhere | Error — the migration has not been applied |
+
+The `schema.table` case is deliberately not resolved by splitting the name: the only column reader is scoped to `current_schema()`, so `app.users` would silently validate against `public.users` and report an unrelated table's drift as this one's. An explicit "not checked" beats a confident wrong answer.
 
 **The `_ord_ore` finding is about portability.** `CREATE OPERATOR CLASS` requires superuser, so managed Postgres (Supabase and most hosted providers) installs EQL without the ORE btree operator class, and the bundle then poisons every `_ord_ore` domain with an always-raising CHECK. Prefer the `_ord` (OPE) twin unless you control the database role. With a database reachable, validate confirms which case you are in and upgrades the Warning to an Error when the operator class is genuinely absent.
 

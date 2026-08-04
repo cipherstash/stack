@@ -8,6 +8,10 @@ const users = encryptedTable('users', {
   createdAt: types.TimestampOrd('created_at'),
 })
 
+const orders = encryptedTable('orders', {
+  total: types.NumericOrdOre('total'),
+})
+
 describe('v3-only Encryption contract', () => {
   it('returns the schema-derived client for a literal tuple', async () => {
     const client = await Encryption({ schemas: [users] })
@@ -47,6 +51,75 @@ describe('v3-only Encryption contract', () => {
     expectTypeOf<Awaited<ReturnType<typeof Encryption>>>().toEqualTypeOf<
       EncryptionClient<readonly AnyV3Table[]>
     >()
+  })
+})
+
+/**
+ * `getSchemas()` is the first member to put `S` in an OUTPUT position. Every
+ * earlier use was `S[number]` or a constraint, so the readonly-vs-mutable
+ * distinction on the schema tuple was unobservable and
+ * `EncryptionClient<[T]>` and `EncryptionClient<readonly [T]>` were literally
+ * the same type. Both spellings arise from ordinary calls — the factory's
+ * `const S` infers the READONLY tuple from an array literal, while a caller
+ * that is itself generic over its schemas (`make` above) infers the MUTABLE
+ * one — and they must keep naming one client type, or the two call styles
+ * silently produce incompatible clients.
+ *
+ * `getSchemas(): Readonly<S>` is what holds that, and it is also the only
+ * honest return type: the accessor hands back `Object.freeze(schemas)`, whose
+ * type is exactly `Readonly<S>`.
+ *
+ * The first test below looks tautological and is not. `Readonly<S>` is a
+ * homomorphic mapped type, which leaves `S`'s variance UNMEASURABLE, so the
+ * identity relation compares the two clients structurally and they agree. The
+ * equivalent-looking `readonly [...S]` makes the variance measurable, the
+ * relation short-circuits to comparing type arguments, and `[T]` is not
+ * identical to `readonly [T]` — so the two client types come apart even though
+ * every member still resolves the same. That failure mode is invisible from
+ * the source; this test is where it shows up.
+ */
+declare const mutableTupleClient: EncryptionClient<
+  [typeof users, typeof orders]
+>
+
+describe('EncryptionClient.getSchemas', () => {
+  it('does not distinguish a mutable schema tuple from a readonly one', () => {
+    expectTypeOf<
+      EncryptionClient<[typeof users, typeof orders]>
+    >().toEqualTypeOf<
+      EncryptionClient<readonly [typeof users, typeof orders]>
+    >()
+  })
+
+  it('returns a readonly tuple even when S itself is mutable', () => {
+    expectTypeOf(mutableTupleClient.getSchemas()).toEqualTypeOf<
+      readonly [typeof users, typeof orders]
+    >()
+  })
+
+  it('keeps each table precise rather than collapsing to AnyV3Table', async () => {
+    const client = await Encryption({ schemas: [users, orders] })
+
+    expectTypeOf(client.getSchemas()).toEqualTypeOf<
+      readonly [typeof users, typeof orders]
+    >()
+    // Positional and per-table. `stash eql validate` reads `getEqlType()` off
+    // each column, so an element type widened to `AnyV3Table` — or a tuple
+    // flattened to `readonly AnyV3Table[]` — would take the domain away.
+    expectTypeOf(client.getSchemas()[0]).toEqualTypeOf<typeof users>()
+    expectTypeOf(client.getSchemas()[1]).toEqualTypeOf<typeof orders>()
+    expectTypeOf(
+      client.getSchemas()[0].columnBuilders.email.getEqlType(),
+    ).toEqualTypeOf<'public.eql_v3_text_eq'>()
+  })
+
+  it('rejects mutation of the tuple it hands back', async () => {
+    const client = await Encryption({ schemas: [users] })
+
+    // @ts-expect-error - the accessor returns the frozen tuple; mutating it
+    // would leave getSchemas() describing a schema set the client's
+    // reconstructor map was never built for.
+    client.getSchemas().push(orders)
   })
 })
 

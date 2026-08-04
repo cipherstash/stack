@@ -328,8 +328,41 @@ export interface EncryptionClient<
    *   }
    * }
    * ```
+   *
+   * Returns `Readonly<S>` rather than `S`, and the spelling is load-bearing on
+   * two counts.
+   *
+   * It is the honest type. The accessor hands back `Object.freeze(schemas)`,
+   * whose type is exactly `Readonly<S>` — frozen because the per-table
+   * reconstructor map was derived from that tuple once, at construction (see
+   * `createEncryptionClient`). Nothing is cast to make the two line up.
+   *
+   * It also keeps `S`'s own mutability unobservable, which matters because
+   * this is the only member putting `S` in an OUTPUT position — everywhere
+   * else `S` appears as `S[number]` or as a constraint, both blind to
+   * `readonly`. Both spellings of the tuple arise from ordinary calls: the
+   * `const` type parameter on `Encryption` infers `readonly [T]` from an array
+   * literal, while a caller generic over its own schemas
+   * (`function make<S extends readonly [AnyV3Table, ...AnyV3Table[]]>(s: S) {
+   * return Encryption({ schemas: s }) }`) infers the mutable `[T]`. Returning
+   * `S` raw made those two call styles produce client types that no longer
+   * matched, over a distinction the client cannot express.
+   *
+   * Keep the homomorphic mapped type; do NOT "simplify" it to the equivalent-
+   * looking `readonly [...S]`. A tuple spread gives TypeScript a MEASURABLE
+   * (covariant) variance for `S`, which lets the identity relation short-
+   * circuit to comparing type arguments — and `[T]` is not identical to
+   * `readonly [T]`, so `EncryptionClient<[T]>` and
+   * `EncryptionClient<readonly [T]>` stop being the same type even though
+   * every member resolves the same. `Readonly<S>` leaves the variance
+   * unmeasurable, so the relation falls back to structural comparison and the
+   * two agree. `encryption-v3-only.test-d.ts` pins this.
+   *
+   * Normalizing costs no precision: `Readonly<[A, B]>` is `readonly [A, B]`,
+   * element for element, so `getSchemas()[0]` stays the exact table type that
+   * `stash eql validate` reads `getEqlType()` off.
    */
-  getSchemas(): S
+  getSchemas(): Readonly<S>
 }
 
 /**
@@ -577,6 +610,9 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
     // reconstruct for. The readonly tuple type already blocks that from
     // TypeScript; this closes it for callers that reach the client untyped —
     // which is exactly how the CLI loads it, out of the user's node_modules.
+    //
+    // No cast: `Object.freeze(schemas)` is typed `Readonly<S>`, which is
+    // verbatim what the interface declares `getSchemas()` to return.
     getSchemas: () => frozenSchemas,
   }
 

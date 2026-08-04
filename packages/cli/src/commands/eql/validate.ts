@@ -70,6 +70,12 @@ export interface ObservedState {
    */
   searchedSchema: string
   /**
+   * `current_user` — the role the connection authenticated as. Carried for the
+   * privilege finding, which is unactionable without naming the role to grant
+   * to. Absent only if the read itself returned nothing.
+   */
+  connectedRole?: string
+  /**
    * For each declared table NOT in {@link searchedSchema}, the other schemas a
    * relation of that name does live in. This is what separates "your
    * `search_path` points at the wrong schema" (recoverable, the table is right
@@ -77,7 +83,26 @@ export interface ObservedState {
    * failure). Empty for a table that exists nowhere.
    */
   elsewhere: Map<string, string[]>
-  /** `table → column → domain_name` (null for a plain, non-domain type). */
+  /**
+   * Declared tables that `pg_catalog` reports IN {@link searchedSchema} — the
+   * third state, and the reason this field exists.
+   *
+   * {@link columns} comes from `information_schema`, which PostgreSQL filters
+   * to objects the connected role holds a privilege on; this comes from
+   * `pg_class`, which it does not filter. A table in here but absent from
+   * `columns` therefore exists, right where the declaration says, and the role
+   * simply cannot see it. Without the distinction that table appears in neither
+   * map and gets "does not exist in any schema of this database" — a false
+   * statement that sends someone to re-run a migration that already ran.
+   */
+  searchedSchemaRelations: Set<string>
+  /**
+   * `table → column → domain_name` (null for a plain, non-domain type).
+   *
+   * Privilege-filtered, per above: absence means "not visible to this role",
+   * which is only the same as "not there" once
+   * {@link searchedSchemaRelations} has been consulted.
+   */
   columns: Map<string, Map<string, string | null>>
   /**
    * `table.column → extractor names` found inside functional index
@@ -234,21 +259,7 @@ export function validateSchemas(
       if (dbState.columns.has(table)) continue
 
       unreachable.add(table)
-      const others = dbState.elsewhere.get(table) ?? []
-
-      issues.push(
-        others.length > 0
-          ? {
-              table,
-              severity: 'warning',
-              message: `Table "${table}" exists in schema ${others.map((schema) => `"${schema}"`).join(' / ')}, not in "${dbState.searchedSchema}" — validate only inspects current_schema() (the head of search_path), so nothing about this table could be checked. Point the connection at that schema to check it (e.g. ?options=-csearch_path%3D${others[0]}).`,
-            }
-          : {
-              table,
-              severity: 'error',
-              message: `Table "${table}" is declared in your encryption schema but does not exist in any schema of this database. The migration that creates it has not been applied.`,
-            },
-      )
+      issues.push(unreachableTableIssue(table, dbState))
     }
   }
 
@@ -375,6 +386,73 @@ export function validateSchemas(
   }
 
   return issues
+}
+
+/**
+ * Why a declared table produced no columns from the database, in the order the
+ * evidence settles it.
+ *
+ * Four situations reach here and only ONE of them is a failure of the
+ * project's migrations. Reporting the others as "the migration has not been
+ * applied" is not a hedge but a false statement — it sends someone to re-run a
+ * migration that already ran, on a database where the table is right there.
+ */
+function unreachableTableIssue(
+  table: string,
+  observed: ObservedState,
+): ValidationIssue {
+  // A `schema.table` name arrives as that literal string, and both catalogue
+  // reads compare it whole against a bare `relname` / `table_name` — so it
+  // matches nothing anywhere and was reported as an unapplied migration.
+  // `@cipherstash/migrate` does accept the spelling (`splitTableName` in
+  // `packages/migrate/src/version.ts`, first dot wins), so the toolchain
+  // disagrees with itself. Resolving it properly needs a schema-aware column
+  // read, which is `fetchPhysicalColumns` — shared with `encrypt status` and
+  // scoped to `current_schema()` by construction. Splitting the name here and
+  // passing the bare half to that reader would be worse than the bug: on a
+  // connection whose `search_path` is `public`, `app.users` would silently
+  // validate against `public.users` and report another table's drift as this
+  // one's. So: say what was not checked, and do not assert anything else.
+  const dot = table.indexOf('.')
+  if (dot >= 0) {
+    return {
+      table,
+      severity: 'warning',
+      message: `Table "${table}" is declared with a schema qualifier, and validate cannot check schema-qualified table names — it inspects current_schema() only and matches table names unqualified, so nothing about this table was checked. This is not a report that the table is missing. Declare it unqualified and point the connection at its schema to check it (e.g. ?options=-csearch_path%3D${table.slice(0, dot)}).`,
+    }
+  }
+
+  // `columns` is read from `information_schema`, which PostgreSQL filters to
+  // objects the role holds a privilege on; `searchedSchemaRelations` is read
+  // from `pg_class`, which it does not. A table in the second and not the first
+  // exists exactly where the declaration says and is merely invisible.
+  //
+  // Checked ahead of `elsewhere` deliberately: the declaration means the table
+  // in the searched schema, so pointing `search_path` at a same-named relation
+  // in some other schema is the wrong instruction even when one exists.
+  if (observed.searchedSchemaRelations.has(table)) {
+    const role = observed.connectedRole
+    return {
+      table,
+      severity: 'warning',
+      message: `Table "${table}" exists in schema "${observed.searchedSchema}" but is not visible to the connected role${role ? ` "${role}"` : ''} — information_schema reports only what the role holds a privilege on, so nothing about this table could be checked. This is a missing grant, not a missing migration${role ? `: GRANT SELECT ON ${quoteIdent(table)} TO ${quoteIdent(role)};` : '.'}`,
+    }
+  }
+
+  const others = observed.elsewhere.get(table) ?? []
+  if (others.length > 0) {
+    return {
+      table,
+      severity: 'warning',
+      message: `Table "${table}" exists in schema ${others.map((schema) => `"${schema}"`).join(' / ')}, not in "${observed.searchedSchema}" — validate only inspects current_schema() (the head of search_path), so nothing about this table could be checked. Point the connection at that schema to check it (e.g. ?options=-csearch_path%3D${others[0]}).`,
+    }
+  }
+
+  return {
+    table,
+    severity: 'error',
+    message: `Table "${table}" is declared in your encryption schema but does not exist in any schema of this database. The migration that creates it has not been applied.`,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -513,28 +591,46 @@ const INDEX_DEFS_SQL = `
   WHERE n.nspname = current_schema()
     AND c.relname = ANY($1::text[])`
 
-/** The schema both catalogue reads are scoped to. Reported in not-found findings. */
-const SEARCHED_SCHEMA_SQL = `SELECT current_schema() AS searched_schema`
+/**
+ * The schema both catalogue reads are scoped to, and the role they run as.
+ * Reported in the not-found findings — which schema was searched, and (for the
+ * privilege case) which role could not see what is in it.
+ */
+const SEARCHED_SCHEMA_SQL = `
+  SELECT current_schema() AS searched_schema,
+         current_user AS connected_role`
 
 /**
- * Where else a declared table name lives. Deliberately NOT scoped to
- * `current_schema()` — this is the query that tells a misconfigured
- * `search_path` apart from an unapplied migration, and it can only do that by
- * looking everywhere the other reads do not.
+ * Every schema a declared table name lives in, INCLUDING `current_schema()`.
+ *
+ * Deliberately unscoped, and deliberately not excluding the searched schema
+ * either. This is the query that tells three situations apart, and it needs
+ * both halves to do it: a name found only in another schema is a misconfigured
+ * `search_path`, a name found in the searched schema but absent from the
+ * privilege-filtered `information_schema` read is a missing grant, and a name
+ * found nowhere is an unapplied migration. `pg_class` is not privilege
+ * filtered, which is precisely why the second case is visible here and nowhere
+ * else.
+ *
+ * The searched/elsewhere split is computed in SQL rather than by comparing
+ * `nspname` against the other read's `searched_schema` in JS: that read falls
+ * back to `'public'` when `current_schema()` is NULL, and a fallback compared
+ * against real catalogue rows would classify a genuine `public` relation as
+ * visible on a connection whose `search_path` resolves to nothing.
  *
  * `relkind IN ('r','p','v','m','f')` covers ordinary, partitioned, view,
  * materialized-view and foreign relations: any of them can carry the encrypted
  * columns, and a partitioned table in particular is an ordinary choice for the
  * large tables this command is pointed at.
  */
-const OTHER_SCHEMAS_SQL = `
+const TABLE_SCHEMAS_SQL = `
   SELECT c.relname AS table_name,
-         n.nspname AS other_schema
+         n.nspname AS relation_schema,
+         n.nspname = current_schema() AS is_searched_schema
   FROM pg_catalog.pg_class c
   JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
   WHERE c.relname = ANY($1::text[])
     AND c.relkind = ANY(ARRAY['r','p','v','m','f'])
-    AND n.nspname <> current_schema()
   ORDER BY n.nspname`
 
 /** Read everything the database rules need, in six catalogue queries. */
@@ -542,25 +638,34 @@ export async function readObservedState(
   client: pg.ClientBase,
   tables: ReadonlyArray<string>,
 ): Promise<ObservedState> {
-  const [installed, ore, schema, others, columns, indexes] = await Promise.all([
-    client.query<{ eql_installed: boolean }>(EQL_INSTALLED_SQL),
-    client.query<{ ore_available: boolean }>(ORE_AVAILABLE_SQL),
-    client.query<{ searched_schema: string }>(SEARCHED_SCHEMA_SQL),
-    client.query<{ table_name: string; other_schema: string }>(
-      OTHER_SCHEMAS_SQL,
-      [tables],
-    ),
-    fetchPhysicalColumns(client, tables),
-    client.query<{ table_name: string; indexdef: string }>(INDEX_DEFS_SQL, [
-      tables,
-    ]),
-  ])
+  const [installed, ore, schema, relations, columns, indexes] =
+    await Promise.all([
+      client.query<{ eql_installed: boolean }>(EQL_INSTALLED_SQL),
+      client.query<{ ore_available: boolean }>(ORE_AVAILABLE_SQL),
+      client.query<{ searched_schema: string; connected_role: string }>(
+        SEARCHED_SCHEMA_SQL,
+      ),
+      client.query<{
+        table_name: string
+        relation_schema: string
+        is_searched_schema: boolean | null
+      }>(TABLE_SCHEMAS_SQL, [tables]),
+      fetchPhysicalColumns(client, tables),
+      client.query<{ table_name: string; indexdef: string }>(INDEX_DEFS_SQL, [
+        tables,
+      ]),
+    ])
 
   const elsewhere = new Map<string, string[]>()
-  for (const row of others.rows) {
+  const searchedSchemaRelations = new Set<string>()
+  for (const row of relations.rows) {
+    if (row.is_searched_schema === true) {
+      searchedSchemaRelations.add(row.table_name)
+      continue
+    }
     elsewhere.set(row.table_name, [
       ...(elsewhere.get(row.table_name) ?? []),
-      row.other_schema,
+      row.relation_schema,
     ])
   }
 
@@ -568,7 +673,9 @@ export async function readObservedState(
     eqlInstalled: installed.rows[0]?.eql_installed === true,
     oreAvailable: ore.rows[0]?.ore_available === true,
     searchedSchema: schema.rows[0]?.searched_schema ?? 'public',
+    connectedRole: schema.rows[0]?.connected_role,
     elsewhere,
+    searchedSchemaRelations,
     columns,
     indexedExtractors: parseIndexedExtractors(
       indexes.rows.map((row) => ({

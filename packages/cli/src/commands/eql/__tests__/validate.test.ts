@@ -1,6 +1,6 @@
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
 import type { EncryptConfig } from '@cipherstash/stack/schema'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   collectDeclaredColumns,
   collectDeclaredColumnsFromConfig,
@@ -8,8 +8,34 @@ import {
   type ObservedState,
   parseIndexedExtractors,
   readObservedState,
+  reportIssues,
+  type ValidationIssue,
   validateSchemas,
 } from '../validate.js'
+
+// clack is chrome — silence it and spy on the channels `reportIssues` prints
+// through. Same shape as the mock in `repair.test.ts`; `spinner` and `intro`
+// are here because the module under test imports the whole namespace.
+const clack = vi.hoisted(() => ({
+  spinnerInstance: { start: vi.fn(), stop: vi.fn() },
+  log: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    success: vi.fn(),
+    step: vi.fn(),
+  },
+  intro: vi.fn(),
+  note: vi.fn(),
+  outro: vi.fn(),
+}))
+vi.mock('@clack/prompts', () => ({
+  spinner: vi.fn(() => clack.spinnerInstance),
+  log: clack.log,
+  intro: clack.intro,
+  note: clack.note,
+  outro: clack.outro,
+}))
 
 /**
  * Built from real `encryptedTable` / `types.*` schemas, not hand-written
@@ -31,7 +57,12 @@ function observing(
     eqlInstalled: true,
     oreAvailable: true,
     searchedSchema: 'public',
+    connectedRole: 'app_rw',
     elsewhere: new Map(),
+    // A table whose columns `information_schema` reports is by definition one
+    // `pg_class` has too, so the default tracks the visible set. Overriding
+    // just this one is what produces the privilege-invisible case.
+    searchedSchemaRelations: new Set(Object.keys(columns)),
     columns: new Map(
       Object.entries(columns).map(([table, cols]) => [
         table,
@@ -334,14 +365,16 @@ describe('database rules', () => {
   })
 
   /**
-   * A table absent from `current_schema()` is TWO different situations, and
-   * `elsewhere` is what separates them.
+   * A table absent from the privilege-filtered `columns` read is FOUR different
+   * situations, and only the last is a failure of the project's migrations:
    *
-   * Found under another schema, the project is healthy and merely pointed at
-   * the wrong `search_path` (Prisma `multiSchema`, a tenant schema, a
-   * `schema.table` name in `encryptedTable` that the reader compares whole
-   * against a bare `table_name`). Found under none, the migration genuinely
-   * has not run. The first must not fail the command; the second must.
+   * - declared `schema.table`, which neither read can match (its own finding);
+   * - present in the searched schema but invisible to the role (a grant);
+   * - present in another schema — Prisma `multiSchema`, a tenant schema — so
+   *   the project is healthy and merely pointed at the wrong `search_path`;
+   * - present nowhere, so the migration genuinely has not run.
+   *
+   * Only the last may fail the command. This case is the third.
    */
   it('warns, naming the schema that has the table, when it is merely elsewhere', () => {
     const observed = observing(
@@ -373,6 +406,118 @@ describe('database rules', () => {
         message: expect.stringContaining('does not exist in any schema'),
       },
     ])
+  })
+
+  /**
+   * The third state, and the one that produced a confidently-wrong Error.
+   *
+   * `columns` comes from `information_schema`, which PostgreSQL filters to
+   * objects the connected role has privileges on; `searchedSchemaRelations`
+   * comes from `pg_class`, which it does not filter. A table in the second and
+   * not the first exists, in the schema being searched, and the role simply
+   * cannot see it — so "the migration that creates it has not been applied" is
+   * a false statement that sends someone to re-run a migration that already
+   * ran. It is a grant, and this is not a failure of the schema.
+   */
+  it('warns about privileges — not a missing migration — for a table the role cannot see', () => {
+    const observed = observing(
+      {},
+      {
+        searchedSchemaRelations: new Set(['users']),
+        connectedRole: 'app_readonly',
+      },
+    )
+
+    const issues = validateSchemas(columns, observed)
+
+    expect(issues).toEqual([
+      {
+        severity: 'warning',
+        table: 'users',
+        message: expect.stringContaining('not visible to the connected role'),
+      },
+    ])
+    expect(issues[0].message).toContain('"app_readonly"')
+    // The remedy is runnable, and names the role to grant to.
+    expect(issues[0].message).toContain(
+      'GRANT SELECT ON "users" TO "app_readonly"',
+    )
+    expect(issues[0].message).not.toContain('does not exist in any schema')
+  })
+
+  it('still names the schema it searched when the role is unknown', () => {
+    const observed = observing(
+      {},
+      {
+        searchedSchema: 'tenant_7',
+        searchedSchemaRelations: new Set(['users']),
+        connectedRole: undefined,
+      },
+    )
+
+    const [issue] = validateSchemas(columns, observed)
+
+    expect(issue.severity).toBe('warning')
+    expect(issue.message).toContain('exists in schema "tenant_7"')
+    expect(issue.message).not.toContain('undefined')
+  })
+
+  /**
+   * A name can be both invisible here and visible in another schema. The
+   * privilege reading wins: the table the declaration means is the one in the
+   * searched schema, and telling someone to re-point `search_path` at an
+   * unrelated same-named relation is the wrong instruction.
+   */
+  it('prefers the privilege reading over the wrong-search_path one', () => {
+    const observed = observing(
+      {},
+      {
+        searchedSchemaRelations: new Set(['users']),
+        elsewhere: new Map([['users', ['archive']]]),
+      },
+    )
+
+    const [issue] = validateSchemas(columns, observed)
+
+    expect(issue.message).toContain('not visible to the connected role')
+    expect(issue.message).not.toContain('search_path%3D')
+  })
+
+  /**
+   * `@cipherstash/migrate` accepts `schema.table` (`splitTableName` in
+   * `packages/migrate/src/version.ts`), so the spelling reaches validate — but
+   * the literal `'app.users'` is compared whole against a bare
+   * `information_schema.columns.table_name`, matches nothing, and was reported
+   * as a missing table. Saying nothing could be checked is honest; saying the
+   * migration never ran is not.
+   */
+  it('says a schema-qualified table name cannot be checked, rather than reporting it missing', () => {
+    const qualified = collectDeclaredColumns([
+      encryptedTable('app.users', { email: types.TextEq('email') }),
+    ])
+
+    const issues = validateSchemas(qualified, observing({}))
+
+    expect(issues).toEqual([
+      {
+        severity: 'warning',
+        table: 'app.users',
+        message: expect.stringContaining('schema-qualified'),
+      },
+    ])
+    expect(issues[0].message).not.toContain('does not exist in any schema')
+    // The way out, named: drop the qualifier and point the connection there.
+    expect(issues[0].message).toContain('search_path%3Dapp')
+  })
+
+  it('says nothing about a qualified name when there is no database to check against', () => {
+    const qualified = collectDeclaredColumns([
+      encryptedTable('app.users', { email: types.TextEq('email') }),
+    ])
+
+    // The finding describes what the DATABASE pass could not do, so with no
+    // database pass there is nothing to report.
+    expect(validateSchemas(qualified)).toEqual([])
   })
 
   /**
@@ -791,9 +936,17 @@ describe('readObservedState', () => {
   it('collects the other schemas a declared table lives in', async () => {
     const observed = await readObservedState(
       fakeClient({
-        'AS other_schema': [
-          { table_name: 'users', other_schema: 'app' },
-          { table_name: 'users', other_schema: 'archive' },
+        'AS relation_schema': [
+          {
+            table_name: 'users',
+            relation_schema: 'app',
+            is_searched_schema: false,
+          },
+          {
+            table_name: 'users',
+            relation_schema: 'archive',
+            is_searched_schema: false,
+          },
         ],
       }),
       ['users'],
@@ -802,7 +955,49 @@ describe('readObservedState', () => {
     expect(observed.elsewhere.get('users')).toEqual(['app', 'archive'])
   })
 
-  it('asks for the other schemas of exactly the declared tables', async () => {
+  /**
+   * The relation lookup used to exclude `current_schema()` in SQL, so a table
+   * present there but invisible to the role appeared in NEITHER read and got
+   * "does not exist in any schema". It now returns the searched schema too, and
+   * the two destinations are what tell the three states apart.
+   */
+  it('separates a relation in the searched schema from one merely elsewhere', async () => {
+    const observed = await readObservedState(
+      fakeClient({
+        'AS relation_schema': [
+          {
+            table_name: 'users',
+            relation_schema: 'public',
+            is_searched_schema: true,
+          },
+          {
+            table_name: 'orders',
+            relation_schema: 'archive',
+            is_searched_schema: false,
+          },
+        ],
+      }),
+      ['users', 'orders'],
+    )
+
+    expect(observed.searchedSchemaRelations).toEqual(new Set(['users']))
+    expect(observed.elsewhere).toEqual(new Map([['orders', ['archive']]]))
+  })
+
+  it('reads the role the privilege finding has to name', async () => {
+    const observed = await readObservedState(
+      fakeClient({
+        'AS searched_schema': [
+          { searched_schema: 'public', connected_role: 'app_readonly' },
+        ],
+      }),
+      ['users'],
+    )
+
+    expect(observed.connectedRole).toBe('app_readonly')
+  })
+
+  it('asks for the schemas of exactly the declared tables', async () => {
     const queries: Array<{ text: string; values?: unknown[] }> = []
     const client = {
       query: (text: string, values?: unknown[]) => {
@@ -813,8 +1008,157 @@ describe('readObservedState', () => {
 
     await readObservedState(client, ['users', 'orders'])
 
-    const lookup = queries.find((q) => q.text.includes('AS other_schema'))
+    const lookup = queries.find((q) => q.text.includes('AS relation_schema'))
 
     expect(lookup?.values).toEqual([['users', 'orders']])
+  })
+
+  /**
+   * The six queries go out through one `Promise.all` and come back positionally
+   * destructured, so a reordered array or a renamed result alias moves a field
+   * onto the wrong read and it silently takes its falsy default. Two of those
+   * defaults are loud-wrong on a healthy database: `eqlInstalled: false` prints
+   * "run `stash eql install`" and skips every database check, and an empty
+   * `columns` reports every declared table as never-migrated and exits 1.
+   *
+   * Nothing else covers it — `fetchPhysicalColumns` has no test of its own and
+   * swallows every exception into an empty map, so `columns` is asserted by
+   * CONTENT here. A presence-only assertion passes vacuously against that catch.
+   */
+  it('maps each query onto the field it feeds', async () => {
+    const observed = await readObservedState(
+      fakeClient({
+        'AS eql_installed': [{ eql_installed: true }],
+        'AS ore_available': [{ ore_available: true }],
+        'AS searched_schema': [
+          { searched_schema: 'tenant_7', connected_role: 'app_rw' },
+        ],
+        'AS relation_schema': [
+          {
+            table_name: 'users',
+            relation_schema: 'tenant_7',
+            is_searched_schema: true,
+          },
+          {
+            table_name: 'users',
+            relation_schema: 'archive',
+            is_searched_schema: false,
+          },
+        ],
+        'information_schema.columns': [
+          {
+            table_name: 'users',
+            column_name: 'email',
+            domain_name: 'eql_v3_text_search',
+          },
+          { table_name: 'users', column_name: 'id', domain_name: null },
+        ],
+        'AS indexdef': [
+          {
+            table_name: 'users',
+            indexdef:
+              'CREATE INDEX i ON tenant_7.users USING btree (eql_v3.eq_term(email))',
+          },
+        ],
+      }),
+      ['users'],
+    )
+
+    expect(observed).toEqual({
+      eqlInstalled: true,
+      oreAvailable: true,
+      searchedSchema: 'tenant_7',
+      connectedRole: 'app_rw',
+      elsewhere: new Map([['users', ['archive']]]),
+      searchedSchemaRelations: new Set(['users']),
+      columns: new Map([
+        [
+          'users',
+          new Map([
+            ['email', 'eql_v3_text_search'],
+            ['id', null],
+          ]),
+        ],
+      ]),
+      indexedExtractors: new Map([['users.email', new Set(['eq_term'])]]),
+    })
+  })
+})
+
+describe('reportIssues', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  /**
+   * The three shapes this command produces. v2 only ever produced the third,
+   * and its formatter prefixed every line unconditionally — under that
+   * formatter the first two render as `undefined.undefined: EQL v3 is not
+   * installed` and `users.undefined: Table "users" exists in schema "app"`.
+   * The rules tests assert those two shapes exist; this is what asserts they
+   * reach a user intact.
+   */
+  const issues: ValidationIssue[] = [
+    { severity: 'error', message: 'EQL v3 is not installed' },
+    {
+      severity: 'warning',
+      table: 'users',
+      message: 'Table "users" exists in schema "app"',
+    },
+    {
+      severity: 'info',
+      table: 'users',
+      column: 'email',
+      message: 'Storage-only column',
+    },
+  ]
+
+  const printed = () => [
+    ...clack.log.error.mock.calls,
+    ...clack.log.warn.mock.calls,
+    ...clack.log.info.mock.calls,
+  ]
+
+  it('prints each severity through its own channel, prefixing only the column-level line', () => {
+    reportIssues(issues)
+
+    expect(clack.log.error.mock.calls).toEqual([['EQL v3 is not installed']])
+    expect(clack.log.warn.mock.calls).toEqual([
+      ['Table "users" exists in schema "app"'],
+    ])
+    expect(clack.log.info.mock.calls).toEqual([
+      ['users.email: Storage-only column'],
+    ])
+  })
+
+  it('never renders an absent table or column as "undefined"', () => {
+    reportIssues(issues)
+
+    expect(printed()).not.toHaveLength(0)
+    for (const [line] of printed()) {
+      expect(line).not.toContain('undefined')
+    }
+  })
+
+  it('returns true — the exit-1 gate — and counts the outro when an error is present', () => {
+    expect(reportIssues(issues)).toBe(true)
+    expect(clack.outro).toHaveBeenCalledWith('1 error, 1 warning.')
+  })
+
+  it('returns false when nothing is an error', () => {
+    const noErrors = issues.filter((issue) => issue.severity !== 'error')
+
+    expect(reportIssues(noErrors)).toBe(false)
+    expect(clack.outro).toHaveBeenCalledWith('No errors found. 1 warning.')
+  })
+
+  it('still says something when every finding is Info', () => {
+    expect(reportIssues(issues.slice(2))).toBe(false)
+    expect(clack.outro).toHaveBeenCalledWith('No errors or warnings. 1 info.')
+  })
+
+  it('says so when there is nothing to report', () => {
+    expect(reportIssues([])).toBe(false)
+    expect(clack.outro).toHaveBeenCalledWith('No issues found.')
   })
 })
