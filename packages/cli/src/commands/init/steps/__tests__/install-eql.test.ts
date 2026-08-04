@@ -399,6 +399,24 @@ describe('installEqlStep', () => {
       expect(logged).toContain('20260804021925_cipherstash_eql.sql')
     })
 
+    it('still scaffolds stash.config.ts when the migration is already there', async () => {
+      // The scaffolding is not the migration's job — `eql migration` writes SQL
+      // and nothing else, so init supplies the config and client every other
+      // route gets (the #581 contract). Skipping the generate call must not
+      // skip that too: a project whose migration came from a standalone `stash
+      // eql migration --supabase` has never had a stash.config.ts written, and
+      // init would report "Setup complete" over a project that cannot load one.
+      withSupabaseScaffolding(true)
+      vi.mocked(findExistingEqlMigration).mockReturnValue(
+        '/project/supabase/migrations/20260804021925_cipherstash_eql.sql',
+      )
+
+      await installEqlStep.run(supabaseState, supabaseProvider)
+
+      expect(offerStashConfig).toHaveBeenCalledWith({ ensure: true })
+      expect(ensureEncryptionClient).toHaveBeenCalledTimes(1)
+    })
+
     it('keeps a Supabase-hosted Drizzle project on the Drizzle route', async () => {
       // Both signals are true here. Drizzle owns the migration history, so it
       // must win — `--supabase` degrades to the grants modifier it has always

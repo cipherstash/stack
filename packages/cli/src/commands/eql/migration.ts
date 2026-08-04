@@ -203,13 +203,6 @@ async function generateSupabaseEqlMigration(
   // and how to resolve a relative --out against the cwd.
   const { migrationsDir } = detectSupabaseProject(process.cwd(), options.out)
 
-  // The filename is fixed (`<timestamp>_cipherstash_eql.sql`) because
-  // `findExistingEqlMigration` matches on that suffix to refuse duplicates.
-  // Silently dropping --name would leave the user believing they renamed it.
-  if (options.name !== undefined) {
-    p.log.warn(messages.eql.migrationNameDrizzleOnly)
-  }
-
   // Load the SQL up front so a corrupt/missing bundle fails BEFORE we create
   // any directory, with the same spinner-free error the Drizzle path uses.
   let sql: string
@@ -224,6 +217,16 @@ async function generateSupabaseEqlMigration(
 
   const embedded = options.embedded ?? false
   if (!embedded) p.intro('CipherStash EQL migration')
+
+  // After the intro, so the line lands inside the frame clack opens rather than
+  // above the banner. Before the dry-run branch, which ignores `--name` too.
+  //
+  // The filename is fixed (`<timestamp>_cipherstash_eql.sql`) because
+  // `findExistingEqlMigration` matches on that suffix to refuse duplicates.
+  // Silently dropping --name would leave the user believing they renamed it.
+  if (options.name !== undefined) {
+    p.log.warn(messages.eql.migrationNameDrizzleOnly)
+  }
 
   if (options.dryRun) {
     // Predict the real run's outcome, including its refusals — a dry run that

@@ -45,11 +45,26 @@ function existingSupabaseMigration(): string | null {
 }
 
 /**
- * Shared body of the two migration-first routes.
- *
  * `eql migration` deliberately does no config/client scaffolding of its own
- * (unlike `eql install`), so init does it here — otherwise these routes would
- * silently skip half the init contract every other integration gets.
+ * (unlike `eql install`), so init does it here — otherwise the migration-first
+ * routes would silently skip half the init contract every other integration
+ * gets (#581).
+ *
+ * Every migration-first exit runs this, including the one that finds the
+ * migration already written: a project whose migration came from a standalone
+ * `stash eql migration --supabase` has never had a `stash.config.ts` written,
+ * and skipping it here would report "Setup complete" over a project that
+ * cannot load one.
+ */
+async function scaffoldConfigAndClient(state: InitState): Promise<void> {
+  const clientPath = await offerStashConfig({ ensure: true })
+  if (clientPath) {
+    ensureEncryptionClient(clientPath, process.cwd(), state.databaseUrl)
+  }
+}
+
+/**
+ * Shared body of the two migration-first routes.
  *
  * The failure path never echoes the underlying error: `eqlMigrationCommand`
  * has already logged its own actionable diagnostics, and errors on this path
@@ -63,10 +78,7 @@ async function generateEqlMigration(
     failureHint: string
   },
 ): Promise<InitState> {
-  const clientPath = await offerStashConfig({ ensure: true })
-  if (clientPath) {
-    ensureEncryptionClient(clientPath, process.cwd(), state.databaseUrl)
-  }
+  await scaffoldConfigAndClient(state)
 
   try {
     await eqlMigrationCommand({ ...route.options, embedded: true })
@@ -209,6 +221,9 @@ export const installEqlStep: InitStep = {
     if (supabase && hasLocalSupabaseScaffolding()) {
       const existing = existingSupabaseMigration()
       if (existing) {
+        // Still scaffold: the migration may have come from a standalone `stash
+        // eql migration --supabase`, which writes SQL and nothing else.
+        await scaffoldConfigAndClient(state)
         p.log.success(`EQL install migration already present: ${existing}`)
         return { ...state, eqlInstalled: false, eqlMigrationPending: true }
       }

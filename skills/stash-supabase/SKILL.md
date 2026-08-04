@@ -780,7 +780,7 @@ email_encrypted IS NULL` at apply time, raises if any remain, and only then
 drops the column. It requires the `backfilled` phase plus a live coverage check
 at generation time. Legacy v2 state is rejected.
 
-Review and apply with `supabase migration up` (or `supabase db reset` locally). Then remove the dual-write code from app paths — the plaintext column is gone; only the encrypted column is written now, through the wrapper.
+Review and apply with `supabase db reset` locally, or `supabase db push` against the remote project. Then remove the dual-write code from app paths — the plaintext column is gone; only the encrypted column is written now, through the wrapper.
 
 ### Inspecting progress at any time
 

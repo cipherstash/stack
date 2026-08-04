@@ -509,7 +509,10 @@ function planSharedNotDoBlock(ctx: SetupPromptContext): string[] {
       `Run \`${cli} encrypt backfill\`, \`${cli} encrypt drop\`, or any other state-mutating command.`,
     ),
     bullet(
-      'Run schema migrations (`drizzle-kit migrate`, `supabase migration up`, `prisma migrate`, etc.).',
+      // `supabase db reset` rather than `migration up`: it is the command an
+      // agent on a local Supabase project would actually reach for, and it
+      // drops the database — the most important one in a do-not-run list.
+      'Run schema migrations (`drizzle-kit migrate`, `supabase db reset`, `prisma migrate`, etc.).',
     ),
     bullet(
       'Modify the placeholder encryption client beyond what is required to read it.',

@@ -304,6 +304,29 @@ describe('eqlMigrationCommand — Supabase', () => {
     expect(readdirSync(tmp)[0]).toMatch(/^\d{14}_cipherstash_eql\.sql$/)
   })
 
+  it('warns about --name inside the command frame, not above it', async () => {
+    // clack renders log lines into the frame the intro opens. Warning first
+    // put the line above the banner, detached from the command it belongs to.
+    await eqlMigrationCommand({ supabase: true, out: tmp, name: 'my-install' })
+
+    const introAt = vi.mocked(clack.intro).mock.invocationCallOrder[0]
+    const warnAt = vi.mocked(clack.log.warn).mock.invocationCallOrder[0]
+    expect(warnAt).toBeGreaterThan(introAt)
+  })
+
+  it('still warns about --name on a dry run, which also ignores it', async () => {
+    await eqlMigrationCommand({
+      supabase: true,
+      out: tmp,
+      name: 'my-install',
+      dryRun: true,
+    })
+
+    expect(clack.log.warn).toHaveBeenCalledWith(
+      messages.eql.migrationNameDrizzleOnly,
+    )
+  })
+
   it('stays quiet about --name when it was not passed', async () => {
     await eqlMigrationCommand({ supabase: true, out: tmp })
 
