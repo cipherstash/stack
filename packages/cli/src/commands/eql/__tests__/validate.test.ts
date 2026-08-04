@@ -31,6 +31,7 @@ function observing(
     eqlInstalled: true,
     oreAvailable: true,
     searchedSchema: 'public',
+    elsewhere: new Map(),
     columns: new Map(
       Object.entries(columns).map(([table, cols]) => [
         table,
@@ -333,41 +334,94 @@ describe('database rules', () => {
   })
 
   /**
-   * A table validate cannot see is NOT proof the table is missing. Both
-   * catalogue reads are scoped to one schema — `current_schema()`, the head of
-   * `search_path` — so a project whose tables live anywhere else (Prisma
-   * `multiSchema`, a tenant schema, a `schema.table` name in `encryptedTable`)
-   * looks identical to a project that never ran its migration.
+   * A table absent from `current_schema()` is TWO different situations, and
+   * `elsewhere` is what separates them.
    *
-   * Validate cannot tell those apart, and one of them is a perfectly healthy
-   * database, so this must not exit 1. It reports the schema it actually
-   * searched instead, which is the fact the user needs to tell which case they
-   * are in. The missing-COLUMN rule below stays an Error: there the table
-   * resolved, so the schema was right and the column really is absent.
+   * Found under another schema, the project is healthy and merely pointed at
+   * the wrong `search_path` (Prisma `multiSchema`, a tenant schema, a
+   * `schema.table` name in `encryptedTable` that the reader compares whole
+   * against a bare `table_name`). Found under none, the migration genuinely
+   * has not run. The first must not fail the command; the second must.
    */
-  it('warns rather than errors when a table is absent, naming the schema searched', () => {
-    const observed = observing({}, { indexedExtractors: fullyIndexed(columns) })
-    const issues = validateSchemas(columns, observed)
-
-    expect(issues).toHaveLength(2)
-    for (const issue of issues) {
-      expect(issue.severity).toBe('warning')
-      expect(issue.message).toMatch(
-        /Table "users" was not found in schema "public"/,
-      )
-      expect(issue.message).toMatch(/search_path/)
-    }
-  })
-
-  it('names whichever schema was actually searched', () => {
+  it('warns, naming the schema that has the table, when it is merely elsewhere', () => {
     const observed = observing(
       {},
-      { searchedSchema: 'tenant_7', indexedExtractors: fullyIndexed(columns) },
+      {
+        elsewhere: new Map([['users', ['app']]]),
+        indexedExtractors: fullyIndexed(columns),
+      },
     )
 
-    expect(validateSchemas(columns, observed)[0]?.message).toContain(
-      'schema "tenant_7"',
+    expect(validateSchemas(columns, observed)).toEqual([
+      {
+        severity: 'warning',
+        table: 'users',
+        message: expect.stringContaining(
+          'exists in schema "app", not in "public"',
+        ),
+      },
+    ])
+  })
+
+  it('errors when the table exists in no schema at all', () => {
+    const observed = observing({}, { indexedExtractors: fullyIndexed(columns) })
+
+    expect(validateSchemas(columns, observed)).toEqual([
+      {
+        severity: 'error',
+        table: 'users',
+        message: expect.stringContaining('does not exist in any schema'),
+      },
+    ])
+  })
+
+  /**
+   * The same reason `validateSchemas` collapses the EQL-not-installed finding:
+   * one fact explains every column, and repeating it per column buries it. A
+   * twenty-column table produced twenty identical paragraphs.
+   */
+  it('reports an absent table once, not once per column', () => {
+    const wide = encryptedTable('wide', {
+      a: types.TextEq('a'),
+      b: types.TextEq('b'),
+      c: types.TextEq('c'),
+    })
+    const observed = observing({})
+
+    const issues = validateSchemas(collectDeclaredColumns([wide]), observed)
+
+    expect(issues).toHaveLength(1)
+    expect(issues[0].column).toBeUndefined()
+  })
+
+  it('still reports each absent table separately', () => {
+    const a = encryptedTable('a', { x: types.TextEq('x') })
+    const b = encryptedTable('b', { y: types.TextEq('y') })
+
+    const issues = validateSchemas(
+      collectDeclaredColumns([a, b]),
+      observing({}),
     )
+
+    expect(issues.map((issue) => issue.table)).toEqual(['a', 'b'])
+  })
+
+  it('names both schemas — the one searched and the one that has the table', () => {
+    const observed = observing(
+      {},
+      {
+        searchedSchema: 'tenant_7',
+        elsewhere: new Map([['users', ['app']]]),
+        indexedExtractors: fullyIndexed(columns),
+      },
+    )
+
+    const [issue] = validateSchemas(columns, observed)
+
+    expect(issue.message).toContain('exists in schema "app"')
+    expect(issue.message).toContain('not in "tenant_7"')
+    // The remedy has to name the schema to point at, not a placeholder.
+    expect(issue.message).toContain('search_path%3Dapp')
   })
 
   it('reports a declared column the table does not have', () => {
@@ -701,18 +755,66 @@ describe('readObservedState', () => {
     expect(indexQuery?.values).toEqual([['users', 'orders']])
   })
 
-  it('reports the schema it searched', async () => {
-    const client = {
-      query: (text: string) =>
-        Promise.resolve({
-          rows: text.includes('current_schema')
-            ? [{ searched_schema: 'tenant_7' }]
-            : [],
-        }),
-    } as unknown as Parameters<typeof readObservedState>[0]
+  /**
+   * Routed on the result ALIAS each query selects, not on a substring that
+   * several of them share: `current_schema()` also appears in the index read,
+   * so an `includes('current_schema')` fake fed schema rows to the index
+   * parser and only survived because `RegExp.exec(undefined)` matches nothing.
+   */
+  const fakeClient = (rowsFor: Record<string, unknown[]>) =>
+    ({
+      query: (text: string) => {
+        const alias = Object.keys(rowsFor).find((key) => text.includes(key))
+        return Promise.resolve({ rows: alias ? rowsFor[alias] : [] })
+      },
+    }) as unknown as Parameters<typeof readObservedState>[0]
 
-    const observed = await readObservedState(client, ['users'])
+  it('reports the schema it searched', async () => {
+    const observed = await readObservedState(
+      fakeClient({ 'AS searched_schema': [{ searched_schema: 'tenant_7' }] }),
+      ['users'],
+    )
 
     expect(observed.searchedSchema).toBe('tenant_7')
+  })
+
+  it('falls back to public when current_schema() answers nothing', async () => {
+    const observed = await readObservedState(fakeClient({}), ['users'])
+
+    expect(observed.searchedSchema).toBe('public')
+  })
+
+  /**
+   * The lookup that separates "your search_path is wrong" from "you never ran
+   * the migration". Without it both look identical and validate has to hedge.
+   */
+  it('collects the other schemas a declared table lives in', async () => {
+    const observed = await readObservedState(
+      fakeClient({
+        'AS other_schema': [
+          { table_name: 'users', other_schema: 'app' },
+          { table_name: 'users', other_schema: 'archive' },
+        ],
+      }),
+      ['users'],
+    )
+
+    expect(observed.elsewhere.get('users')).toEqual(['app', 'archive'])
+  })
+
+  it('asks for the other schemas of exactly the declared tables', async () => {
+    const queries: Array<{ text: string; values?: unknown[] }> = []
+    const client = {
+      query: (text: string, values?: unknown[]) => {
+        queries.push({ text, values })
+        return Promise.resolve({ rows: [] })
+      },
+    } as unknown as Parameters<typeof readObservedState>[0]
+
+    await readObservedState(client, ['users', 'orders'])
+
+    const lookup = queries.find((q) => q.text.includes('AS other_schema'))
+
+    expect(lookup?.values).toEqual([['users', 'orders']])
   })
 })

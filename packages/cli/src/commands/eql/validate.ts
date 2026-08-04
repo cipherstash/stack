@@ -69,6 +69,14 @@ export interface ObservedState {
    * one, and validate has no way to tell that from a missing migration.
    */
   searchedSchema: string
+  /**
+   * For each declared table NOT in {@link searchedSchema}, the other schemas a
+   * relation of that name does live in. This is what separates "your
+   * `search_path` points at the wrong schema" (recoverable, the table is right
+   * there) from "the migration that creates this table has not run" (a real
+   * failure). Empty for a table that exists nowhere.
+   */
+  elsewhere: Map<string, string[]>
   /** `table → column → domain_name` (null for a plain, non-domain type). */
   columns: Map<string, Map<string, string | null>>
   /**
@@ -216,6 +224,34 @@ export function validateSchemas(
 
   const dbState = eqlMissing ? undefined : observed
 
+  // Reported per TABLE, ahead of the column loop, for the same reason the
+  // not-installed finding is reported once: one fact explains every column on
+  // the table, and repeating it per column buries it under itself. The columns
+  // still run their schema rules below; only their database rules are skipped.
+  const unreachable = new Set<string>()
+  if (dbState !== undefined) {
+    for (const table of new Set(columns.map((column) => column.table))) {
+      if (dbState.columns.has(table)) continue
+
+      unreachable.add(table)
+      const others = dbState.elsewhere.get(table) ?? []
+
+      issues.push(
+        others.length > 0
+          ? {
+              table,
+              severity: 'warning',
+              message: `Table "${table}" exists in schema ${others.map((schema) => `"${schema}"`).join(' / ')}, not in "${dbState.searchedSchema}" — validate only inspects current_schema() (the head of search_path), so nothing about this table could be checked. Point the connection at that schema to check it (e.g. ?options=-csearch_path%3D${others[0]}).`,
+            }
+          : {
+              table,
+              severity: 'error',
+              message: `Table "${table}" is declared in your encryption schema but does not exist in any schema of this database. The migration that creates it has not been applied.`,
+            },
+      )
+    }
+  }
+
   for (const column of columns) {
     const at = { table: column.table, column: column.column }
     const domain = column.eqlType
@@ -281,24 +317,11 @@ export function validateSchemas(
 
     if (dbState === undefined) continue
 
-    const observedColumns = dbState.columns.get(column.table)
+    // Already reported once, above, against the table rather than this column.
+    if (unreachable.has(column.table)) continue
 
-    // NOT an error. Both catalogue reads are scoped to one schema, so "absent
-    // from `current_schema()`" covers two very different situations: a
-    // migration that was never applied, and a perfectly healthy project whose
-    // tables live in another schema (Prisma `multiSchema`, a tenant schema, or
-    // a `schema.table` name in `encryptedTable`, which the reader compares
-    // whole against a bare `table_name` and never matches). Validate cannot
-    // distinguish them, so it reports where it looked and leaves the exit code
-    // alone rather than failing a healthy database's CI.
-    if (observedColumns === undefined) {
-      issues.push({
-        ...at,
-        severity: 'warning',
-        message: `Table "${column.table}" was not found in schema "${dbState.searchedSchema}", so nothing about this column could be checked against the database. Validate only inspects current_schema() (the head of search_path) — if this table lives in another schema, point the connection at it (e.g. ?options=-csearch_path%3D<schema>); otherwise the migration that creates it has not been applied.`,
-      })
-      continue
-    }
+    const observedColumns = dbState.columns.get(column.table)
+    if (observedColumns === undefined) continue
 
     if (!observedColumns.has(column.column)) {
       issues.push({
@@ -493,25 +516,59 @@ const INDEX_DEFS_SQL = `
 /** The schema both catalogue reads are scoped to. Reported in not-found findings. */
 const SEARCHED_SCHEMA_SQL = `SELECT current_schema() AS searched_schema`
 
-/** Read everything the database rules need, in five catalogue queries. */
+/**
+ * Where else a declared table name lives. Deliberately NOT scoped to
+ * `current_schema()` — this is the query that tells a misconfigured
+ * `search_path` apart from an unapplied migration, and it can only do that by
+ * looking everywhere the other reads do not.
+ *
+ * `relkind IN ('r','p','v','m','f')` covers ordinary, partitioned, view,
+ * materialized-view and foreign relations: any of them can carry the encrypted
+ * columns, and a partitioned table in particular is an ordinary choice for the
+ * large tables this command is pointed at.
+ */
+const OTHER_SCHEMAS_SQL = `
+  SELECT c.relname AS table_name,
+         n.nspname AS other_schema
+  FROM pg_catalog.pg_class c
+  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  WHERE c.relname = ANY($1::text[])
+    AND c.relkind = ANY(ARRAY['r','p','v','m','f'])
+    AND n.nspname <> current_schema()
+  ORDER BY n.nspname`
+
+/** Read everything the database rules need, in six catalogue queries. */
 export async function readObservedState(
   client: pg.ClientBase,
   tables: ReadonlyArray<string>,
 ): Promise<ObservedState> {
-  const [installed, ore, schema, columns, indexes] = await Promise.all([
+  const [installed, ore, schema, others, columns, indexes] = await Promise.all([
     client.query<{ eql_installed: boolean }>(EQL_INSTALLED_SQL),
     client.query<{ ore_available: boolean }>(ORE_AVAILABLE_SQL),
     client.query<{ searched_schema: string }>(SEARCHED_SCHEMA_SQL),
+    client.query<{ table_name: string; other_schema: string }>(
+      OTHER_SCHEMAS_SQL,
+      [tables],
+    ),
     fetchPhysicalColumns(client, tables),
     client.query<{ table_name: string; indexdef: string }>(INDEX_DEFS_SQL, [
       tables,
     ]),
   ])
 
+  const elsewhere = new Map<string, string[]>()
+  for (const row of others.rows) {
+    elsewhere.set(row.table_name, [
+      ...(elsewhere.get(row.table_name) ?? []),
+      row.other_schema,
+    ])
+  }
+
   return {
     eqlInstalled: installed.rows[0]?.eql_installed === true,
     oreAvailable: ore.rows[0]?.ore_available === true,
     searchedSchema: schema.rows[0]?.searched_schema ?? 'public',
+    elsewhere,
     columns,
     indexedExtractors: parseIndexedExtractors(
       indexes.rows.map((row) => ({

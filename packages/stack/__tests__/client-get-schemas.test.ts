@@ -123,3 +123,21 @@ describe('the tuple getSchemas() hands back', () => {
     expect(client.getSchemas()).toBe(client.getSchemas())
   })
 })
+
+describe('what freezing the tuple does and does not cover', () => {
+  /**
+   * The freeze is shallow, and the comment on it should not imply otherwise: it
+   * stops the ARRAY changing shape, which is what would leave `getSchemas()`
+   * listing tables the reconstructor map was never built for. A table object
+   * inside it is the user's own and stays mutable — pinned here so the claim
+   * and the mechanism cannot drift apart.
+   */
+  it('freezes the array without freezing the tables inside it', () => {
+    const users = encryptedTable('users', { email: types.TextEq('email') })
+    const client = createEncryptionClient(nativeStub, users)
+    const [table] = client.getSchemas()
+
+    expect(Object.isFrozen(client.getSchemas())).toBe(true)
+    expect(Object.isFrozen(table)).toBe(false)
+  })
+})

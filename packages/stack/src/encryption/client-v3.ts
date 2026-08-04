@@ -402,8 +402,10 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
 
   // Frozen once, here, rather than on every `getSchemas()` call. `schemas` is
   // the rest parameter's own array, so this never freezes an array the caller
-  // still owns.
-  const frozenSchemas = Object.freeze(schemas) as S
+  // still owns. SHALLOW by design: it pins the tuple's SHAPE, which is what
+  // `reconstructors` above was derived from. The table objects inside are the
+  // caller's own and stay mutable.
+  const frozenSchemas = Object.freeze(schemas)
 
   // A table not among the schemas this client was initialized with has no
   // precomputed reconstructor. Return a Result failure rather than building one

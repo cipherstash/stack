@@ -450,7 +450,8 @@ Database checks (skipped with a notice, not a failure, when no database is reach
 | Rule | Severity |
 |---|---|
 | EQL v3 is not installed — reported once, and the remaining database checks are skipped | Error |
-| A declared table was not found in the searched schema | Warning |
+| A declared table lives in a different schema than the one searched | Warning |
+| A declared table exists in no schema at all | Error |
 | A declared column is missing from a table that was found | Error |
 | The database column's domain differs from the declared one | Error |
 | The database column is still plain (no EQL domain) | Error |
@@ -459,7 +460,7 @@ Database checks (skipped with a notice, not a failure, when no database is reach
 
 Exits 1 on errors only; warnings and info do not fail the command.
 
-**Validate only inspects one schema** — `current_schema()`, the head of `search_path`. A table declared in your encryption schema but living elsewhere (Prisma `multiSchema`, a tenant schema, or a `schema.table` name passed to `encryptedTable`) is indistinguishable from a table whose migration never ran, so that finding is a Warning naming the schema searched rather than an Error. Point the connection at the right schema (`?options=-csearch_path%3D<schema>`) to check those tables.
+**Validate inspects one schema** — `current_schema()`, the head of `search_path` — but looks the table name up across all of them before deciding what a miss means. Found under another schema (Prisma `multiSchema`, a tenant schema, or a `schema.table` name passed to `encryptedTable`), it is a Warning naming that schema and the connection option to reach it: the project is healthy, just pointed elsewhere. Found under none, the migration has not run, and that is an Error. Findings are reported once per table, not once per column.
 
 **The `_ord_ore` finding is about portability.** `CREATE OPERATOR CLASS` requires superuser, so managed Postgres (Supabase and most hosted providers) installs EQL without the ORE btree operator class, and the bundle then poisons every `_ord_ore` domain with an always-raising CHECK. Prefer the `_ord` (OPE) twin unless you control the database role. With a database reachable, validate confirms which case you are in and upgrades the Warning to an Error when the operator class is genuinely absent.
 
