@@ -100,3 +100,26 @@ describe('EncryptionClient.getSchemas', () => {
     expect(second).toBe('public.eql_v3_double_ord')
   })
 })
+
+describe('the tuple getSchemas() hands back', () => {
+  /**
+   * The client derives its per-table reconstructor map ONCE, at construction,
+   * from this tuple. A consumer that mutated the array afterwards would leave
+   * `getSchemas()` describing a schema set the client does not actually
+   * reconstruct for. The readonly tuple type blocks that from TypeScript;
+   * freezing closes it for untyped callers too, at no runtime cost.
+   */
+  it('is frozen, so it cannot drift from the client it describes', () => {
+    const users = encryptedTable('users', { email: types.TextEq('email') })
+    const client = createEncryptionClient(nativeStub, users)
+
+    expect(Object.isFrozen(client.getSchemas())).toBe(true)
+  })
+
+  it('is the same tuple on every call', () => {
+    const users = encryptedTable('users', { email: types.TextEq('email') })
+    const client = createEncryptionClient(nativeStub, users)
+
+    expect(client.getSchemas()).toBe(client.getSchemas())
+  })
+})

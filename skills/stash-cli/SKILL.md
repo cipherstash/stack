@@ -433,6 +433,8 @@ stash eql validate [--supabase] [--database-url <url>]
 
 Reads the tables passed to `Encryption({ schemas })` — through the client's `getSchemas()` accessor, so it sees the **concrete domain** of every column, which the built encrypt config does not carry — and checks them against the EQL v3 vocabulary. If a database is reachable it then checks the declaration against what that database actually has.
 
+`getSchemas()` is a recent addition. Against a project on an older `@cipherstash/stack` validate says so and falls back to the built encrypt config: the index-derived rules still run, but every rule that needs a domain (ORE portability, drift, plain-column detection) is skipped. Upgrading `@cipherstash/stack` restores them.
+
 Schema checks (no database needed):
 
 | Rule | Severity |
@@ -448,13 +450,16 @@ Database checks (skipped with a notice, not a failure, when no database is reach
 | Rule | Severity |
 |---|---|
 | EQL v3 is not installed — reported once, and the remaining database checks are skipped | Error |
-| A declared table or column does not exist in the database | Error |
+| A declared table was not found in the searched schema | Warning |
+| A declared column is missing from a table that was found | Error |
 | The database column's domain differs from the declared one | Error |
 | The database column is still plain (no EQL domain) | Error |
 | An `_ord_ore` domain on a database whose EQL install could not create the ORE operator class | Error |
 | A queryable column with no functional index over its term extractor | Info |
 
 Exits 1 on errors only; warnings and info do not fail the command.
+
+**Validate only inspects one schema** — `current_schema()`, the head of `search_path`. A table declared in your encryption schema but living elsewhere (Prisma `multiSchema`, a tenant schema, or a `schema.table` name passed to `encryptedTable`) is indistinguishable from a table whose migration never ran, so that finding is a Warning naming the schema searched rather than an Error. Point the connection at the right schema (`?options=-csearch_path%3D<schema>`) to check those tables.
 
 **The `_ord_ore` finding is about portability.** `CREATE OPERATOR CLASS` requires superuser, so managed Postgres (Supabase and most hosted providers) installs EQL without the ORE btree operator class, and the bundle then poisons every `_ord_ore` domain with an always-raising CHECK. Prefer the `_ord` (OPE) twin unless you control the database role. With a database reachable, validate confirms which case you are in and upgrades the Warning to an Error when the operator class is genuinely absent.
 

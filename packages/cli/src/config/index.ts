@@ -322,13 +322,38 @@ export async function loadEncryptSchemas(
   return { config, schemas }
 }
 
-/** Structural check for the parts of an `EncryptedTable` the schema rules read. */
+/**
+ * Structural check for the parts of an `EncryptedTable` the schema rules read.
+ *
+ * Checks the BUILDERS too, not just the map that holds them. The rules call
+ * `build()`, `getName()`, `getEqlType()` and `isQueryable()` on every one, so a
+ * table carrying inert objects is as unusable as a missing map — and
+ * `typeof null === 'object'`, so a null `columnBuilders` would otherwise pass
+ * here and reach `Object.values(null)`, turning a degradable client into a
+ * stack trace.
+ */
 function isV3TableLike(value: unknown): value is AnyV3Table {
-  return (
-    !!value &&
-    typeof value === 'object' &&
-    typeof (value as { tableName?: unknown }).tableName === 'string' &&
-    typeof (value as { columnBuilders?: unknown }).columnBuilders === 'object'
+  if (!value || typeof value !== 'object') return false
+
+  const { tableName, columnBuilders } = value as {
+    tableName?: unknown
+    columnBuilders?: unknown
+  }
+
+  if (typeof tableName !== 'string') return false
+  if (!columnBuilders || typeof columnBuilders !== 'object') return false
+
+  return Object.values(columnBuilders).every(isV3ColumnLike)
+}
+
+/** The column-builder methods `collectDeclaredColumns` calls on every column. */
+function isV3ColumnLike(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false
+
+  const builder = value as Record<string, unknown>
+
+  return (['build', 'getName', 'getEqlType', 'isQueryable'] as const).every(
+    (method) => typeof builder[method] === 'function',
   )
 }
 

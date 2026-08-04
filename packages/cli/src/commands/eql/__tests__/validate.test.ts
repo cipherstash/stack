@@ -7,6 +7,7 @@ import {
   expectedExtractors,
   type ObservedState,
   parseIndexedExtractors,
+  readObservedState,
   validateSchemas,
 } from '../validate.js'
 
@@ -29,6 +30,7 @@ function observing(
   return {
     eqlInstalled: true,
     oreAvailable: true,
+    searchedSchema: 'public',
     columns: new Map(
       Object.entries(columns).map(([table, cols]) => [
         table,
@@ -330,15 +332,42 @@ describe('database rules', () => {
     expect(validateSchemas(columns, observed)).toEqual([])
   })
 
-  it('reports a missing table once, and does not then look for its columns', () => {
+  /**
+   * A table validate cannot see is NOT proof the table is missing. Both
+   * catalogue reads are scoped to one schema — `current_schema()`, the head of
+   * `search_path` — so a project whose tables live anywhere else (Prisma
+   * `multiSchema`, a tenant schema, a `schema.table` name in `encryptedTable`)
+   * looks identical to a project that never ran its migration.
+   *
+   * Validate cannot tell those apart, and one of them is a perfectly healthy
+   * database, so this must not exit 1. It reports the schema it actually
+   * searched instead, which is the fact the user needs to tell which case they
+   * are in. The missing-COLUMN rule below stays an Error: there the table
+   * resolved, so the schema was right and the column really is absent.
+   */
+  it('warns rather than errors when a table is absent, naming the schema searched', () => {
     const observed = observing({}, { indexedExtractors: fullyIndexed(columns) })
     const issues = validateSchemas(columns, observed)
 
     expect(issues).toHaveLength(2)
     for (const issue of issues) {
-      expect(issue.severity).toBe('error')
-      expect(issue.message).toMatch(/Table "users" .* does not exist/)
+      expect(issue.severity).toBe('warning')
+      expect(issue.message).toMatch(
+        /Table "users" was not found in schema "public"/,
+      )
+      expect(issue.message).toMatch(/search_path/)
     }
+  })
+
+  it('names whichever schema was actually searched', () => {
+    const observed = observing(
+      {},
+      { searchedSchema: 'tenant_7', indexedExtractors: fullyIndexed(columns) },
+    )
+
+    expect(validateSchemas(columns, observed)[0]?.message).toContain(
+      'schema "tenant_7"',
+    )
   })
 
   it('reports a declared column the table does not have', () => {
@@ -595,5 +624,95 @@ describe('parseIndexedExtractors', () => {
     ])
 
     expect(parsed.size).toBe(0)
+  })
+})
+
+describe('the encrypt config is user code, not a typed value', () => {
+  /**
+   * `getEncryptConfig()` is read out of the USER's node_modules through jiti,
+   * so its runtime shape is whatever their client hands back — the zod types
+   * that make `indexes` non-optional never run here. A column missing the key
+   * entirely must degrade to "no indexes", not throw on `column.indexes.match`
+   * partway through the rule list.
+   */
+  it('survives a config column with no indexes key at all', () => {
+    const config = {
+      v: 1,
+      tables: { users: { email: { cast_as: 'string' } } },
+    } as unknown as EncryptConfig
+
+    const columns = collectDeclaredColumnsFromConfig(config)
+
+    expect(() => validateSchemas(columns)).not.toThrow()
+    expect(validateSchemas(columns)).toEqual([
+      {
+        severity: 'info',
+        table: 'users',
+        column: 'email',
+        message: expect.stringContaining('Storage-only column'),
+      },
+    ])
+  })
+})
+
+describe('the CREATE INDEX suggestion is meant to be pasted', () => {
+  /**
+   * The Info finding hands the user runnable SQL. A column name containing a
+   * double quote has to be doubled inside the quoted identifier, the same way
+   * `identifiersIn` un-doubles it on the read side — otherwise the suggestion
+   * pastes as a syntax error at best.
+   */
+  it('doubles a quote embedded in an identifier', () => {
+    const table = encryptedTable('we"ird', { 'a"b': types.TextEq('a"b') })
+    const columns = collectDeclaredColumns([table])
+    const observed = observing({ 'we"ird': { 'a"b': 'eql_v3_text_eq' } })
+
+    const [issue] = validateSchemas(columns, observed)
+
+    expect(issue.severity).toBe('info')
+    expect(issue.message).toContain(
+      'CREATE INDEX ON "we""ird" (eql_v3.eq_term("a""b"));',
+    )
+  })
+})
+
+describe('readObservedState', () => {
+  /**
+   * The index read used to scan every index in the schema and hand each
+   * `pg_get_indexdef()` to the parser, to answer a question about a handful of
+   * declared columns. On a large schema that is thousands of definitions
+   * fetched and regex-parsed for nothing.
+   */
+  it('constrains the index scan to the declared tables', async () => {
+    const queries: Array<{ text: string; values?: unknown[] }> = []
+    const client = {
+      query: (text: string, values?: unknown[]) => {
+        queries.push({ text, values })
+        return Promise.resolve({ rows: [] })
+      },
+    } as unknown as Parameters<typeof readObservedState>[0]
+
+    await readObservedState(client, ['users', 'orders'])
+
+    const indexQuery = queries.find((q) => q.text.includes('pg_get_indexdef'))
+
+    expect(indexQuery).toBeDefined()
+    expect(indexQuery?.text).toMatch(/relname\s*=\s*ANY/)
+    expect(indexQuery?.values).toEqual([['users', 'orders']])
+  })
+
+  it('reports the schema it searched', async () => {
+    const client = {
+      query: (text: string) =>
+        Promise.resolve({
+          rows: text.includes('current_schema')
+            ? [{ searched_schema: 'tenant_7' }]
+            : [],
+        }),
+    } as unknown as Parameters<typeof readObservedState>[0]
+
+    const observed = await readObservedState(client, ['users'])
+
+    expect(observed.searchedSchema).toBe('tenant_7')
   })
 })

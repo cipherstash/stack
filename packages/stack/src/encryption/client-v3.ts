@@ -400,6 +400,11 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
     reconstructors.set(table.tableName, rowReconstructor(table))
   }
 
+  // Frozen once, here, rather than on every `getSchemas()` call. `schemas` is
+  // the rest parameter's own array, so this never freezes an array the caller
+  // still owns.
+  const frozenSchemas = Object.freeze(schemas) as S
+
   // A table not among the schemas this client was initialized with has no
   // precomputed reconstructor. Return a Result failure rather than building one
   // inline, which could throw and reject the Result-shaped decrypt promise.
@@ -563,7 +568,14 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
     // parameter, so the caller's array literal keeps its per-table inference,
     // and `table` arguments read back off `getSchemas()` stay assignable to
     // `S[number]` (identity-keyed consumers therefore also keep working).
-    getSchemas: () => schemas,
+    //
+    // Frozen because `reconstructors` above was derived from this tuple once,
+    // at construction: a caller that pushed to or spliced the returned array
+    // would leave `getSchemas()` advertising a schema set the client does not
+    // reconstruct for. The readonly tuple type already blocks that from
+    // TypeScript; this closes it for callers that reach the client untyped —
+    // which is exactly how the CLI loads it, out of the user's node_modules.
+    getSchemas: () => frozenSchemas,
   }
 
   return typed

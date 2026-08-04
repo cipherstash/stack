@@ -62,6 +62,13 @@ export interface ObservedState {
    * bundle poisons every `_ord_ore` domain with an always-raising CHECK.
    */
   oreAvailable: boolean
+  /**
+   * The schema both catalogue reads were scoped to — `current_schema()`, the
+   * head of `search_path`. Carried so the not-found findings can say WHERE
+   * they looked: a table absent from this schema may simply live in another
+   * one, and validate has no way to tell that from a missing migration.
+   */
+  searchedSchema: string
   /** `table → column → domain_name` (null for a plain, non-domain type). */
   columns: Map<string, Map<string, string | null>>
   /**
@@ -125,8 +132,14 @@ export function collectDeclaredColumnsFromConfig(
         column: columnName,
         eqlType: undefined,
         cast_as: column.cast_as,
+        // `?? {}` on BOTH, deliberately. The zod schema makes `indexes`
+        // non-optional, but that zod never runs here: this config came out of
+        // the user's own client through jiti, so the static type is a
+        // description of what it should be, not a guarantee. A column missing
+        // the key must degrade to "no indexes", not throw partway down the
+        // rule list on `column.indexes.match`.
         queryable: Object.keys(column.indexes ?? {}).length > 0,
-        indexes: column.indexes,
+        indexes: column.indexes ?? {},
       })
     }
   }
@@ -137,6 +150,17 @@ export function collectDeclaredColumnsFromConfig(
 // ---------------------------------------------------------------------------
 // The rules
 // ---------------------------------------------------------------------------
+
+/**
+ * Wrap an identifier as a quoted SQL name, doubling any embedded quote.
+ *
+ * The missing-index finding hands the user runnable SQL, so a name carrying a
+ * `"` has to survive the paste — `identifiersIn` already un-doubles it on the
+ * read side, and this is the write side of the same rule.
+ */
+export function quoteIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`
+}
 
 /** Strip the schema qualifier: `'public.eql_v3_integer_ord'` → `'eql_v3_integer_ord'`. */
 export function bareDomainName(eqlType: string): string {
@@ -259,11 +283,19 @@ export function validateSchemas(
 
     const observedColumns = dbState.columns.get(column.table)
 
+    // NOT an error. Both catalogue reads are scoped to one schema, so "absent
+    // from `current_schema()`" covers two very different situations: a
+    // migration that was never applied, and a perfectly healthy project whose
+    // tables live in another schema (Prisma `multiSchema`, a tenant schema, or
+    // a `schema.table` name in `encryptedTable`, which the reader compares
+    // whole against a bare `table_name` and never matches). Validate cannot
+    // distinguish them, so it reports where it looked and leaves the exit code
+    // alone rather than failing a healthy database's CI.
     if (observedColumns === undefined) {
       issues.push({
         ...at,
-        severity: 'error',
-        message: `Table "${column.table}" is declared in your encryption schema but does not exist in the database.`,
+        severity: 'warning',
+        message: `Table "${column.table}" was not found in schema "${dbState.searchedSchema}", so nothing about this column could be checked against the database. Validate only inspects current_schema() (the head of search_path) — if this table lives in another schema, point the connection at it (e.g. ?options=-csearch_path%3D<schema>); otherwise the migration that creates it has not been applied.`,
       })
       continue
     }
@@ -314,7 +346,7 @@ export function validateSchemas(
       issues.push({
         ...at,
         severity: 'info',
-        message: `No functional index over ${missing.map((e) => `\`eql_v3.${e}\``).join(' / ')} — queries against this column sequential-scan the table. e.g. CREATE INDEX ON "${column.table}" (eql_v3.${missing[0]}("${column.column}"));`,
+        message: `No functional index over ${missing.map((e) => `\`eql_v3.${e}\``).join(' / ')} — queries against this column sequential-scan the table. e.g. CREATE INDEX ON ${quoteIdent(column.table)} (eql_v3.${missing[0]}(${quoteIdent(column.column)}));`,
       })
     }
   }
@@ -330,8 +362,12 @@ export function validateSchemas(
  * Matches the head of an extractor call. `ord_term_ore` is listed before
  * `ord_term` because alternation is left-biased and one is a prefix of the
  * other; `\b` alone would not separate them.
+ *
+ * A factory, not a shared constant: a `/g` regex carries `lastIndex`, and a
+ * module-level one would make an otherwise-pure function depend on where the
+ * previous call happened to stop.
  */
-const EXTRACTOR_HEAD =
+const extractorHead = () =>
   /eql_v3\.(ord_term_ore|ord_term|eq_term|match_term)\s*\(/gi
 
 /**
@@ -353,8 +389,8 @@ export function parseIndexedExtractors(
   const out = new Map<string, Set<string>>()
 
   for (const { table, indexdef } of defs) {
-    EXTRACTOR_HEAD.lastIndex = 0
-    let head = EXTRACTOR_HEAD.exec(indexdef)
+    const pattern = extractorHead()
+    let head = pattern.exec(indexdef)
     while (head !== null) {
       const extractor = head[1].toLowerCase()
       const args = balancedArgs(indexdef, head.index + head[0].length)
@@ -364,7 +400,7 @@ export function parseIndexedExtractors(
         set.add(extractor)
         out.set(key, set)
       }
-      head = EXTRACTOR_HEAD.exec(indexdef)
+      head = pattern.exec(indexdef)
     }
   }
 
@@ -439,29 +475,43 @@ const EQL_INSTALLED_SQL = `
     SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = 'eql_v3'
   ) AS eql_installed`
 
+/**
+ * Constrained to the declared tables, not the whole schema. Unfiltered this
+ * fetches and regex-parses every `pg_get_indexdef()` in the database to answer
+ * a question about a handful of columns — on a large schema, thousands of
+ * definitions for nothing.
+ */
 const INDEX_DEFS_SQL = `
   SELECT c.relname AS table_name,
          pg_catalog.pg_get_indexdef(i.indexrelid) AS indexdef
   FROM pg_catalog.pg_index i
   JOIN pg_catalog.pg_class c ON c.oid = i.indrelid
   JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname = current_schema()`
+  WHERE n.nspname = current_schema()
+    AND c.relname = ANY($1::text[])`
 
-/** Read everything the database rules need, in four catalogue queries. */
+/** The schema both catalogue reads are scoped to. Reported in not-found findings. */
+const SEARCHED_SCHEMA_SQL = `SELECT current_schema() AS searched_schema`
+
+/** Read everything the database rules need, in five catalogue queries. */
 export async function readObservedState(
   client: pg.ClientBase,
   tables: ReadonlyArray<string>,
 ): Promise<ObservedState> {
-  const [installed, ore, columns, indexes] = await Promise.all([
+  const [installed, ore, schema, columns, indexes] = await Promise.all([
     client.query<{ eql_installed: boolean }>(EQL_INSTALLED_SQL),
     client.query<{ ore_available: boolean }>(ORE_AVAILABLE_SQL),
+    client.query<{ searched_schema: string }>(SEARCHED_SCHEMA_SQL),
     fetchPhysicalColumns(client, tables),
-    client.query<{ table_name: string; indexdef: string }>(INDEX_DEFS_SQL),
+    client.query<{ table_name: string; indexdef: string }>(INDEX_DEFS_SQL, [
+      tables,
+    ]),
   ])
 
   return {
     eqlInstalled: installed.rows[0]?.eql_installed === true,
     oreAvailable: ore.rows[0]?.ore_available === true,
+    searchedSchema: schema.rows[0]?.searched_schema ?? 'public',
     columns,
     indexedExtractors: parseIndexedExtractors(
       indexes.rows.map((row) => ({
