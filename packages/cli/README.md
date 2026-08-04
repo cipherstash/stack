@@ -66,7 +66,7 @@ export default defineConfig({
 
 The CLI loads `.env` files automatically before reading the config, so `process.env` references work without extra setup. The config file is resolved by walking up from the current working directory.
 
-Commands that consume `stash.config.ts`: `eql install`, `eql upgrade`, `db validate`, `eql status`, `db test-connection`, `schema build`, and `encrypt *`.
+Commands that consume `stash.config.ts`: `eql install`, `eql upgrade`, `eql validate`, `eql status`, `db test-connection`, `schema build`, and `encrypt *`.
 
 ---
 
@@ -214,22 +214,39 @@ The install SQL is idempotent and safe to re-run. If EQL is not installed, the c
 
 ---
 
-### `npx stash db validate`
+### `npx stash eql validate`
 
-Validate your encryption schema for common misconfigurations.
+Validate your encryption schema against the EQL v3 domain vocabulary, and — when
+a database is reachable — against what that database actually has.
 
 ```bash
-npx stash db validate [--supabase] [--exclude-operator-family]
+npx stash eql validate [--supabase] [--database-url <url>]
 ```
+
+Schema checks (no database needed):
 
 | Rule | Severity |
 |------|----------|
-| `freeTextSearch` on a non-string column | Warning |
-| `orderAndRange` without operator families | Warning |
-| No indexes on an encrypted column | Info |
-| `searchableJson` without `dataType("json")` | Error |
+| An `_ord_ore` domain, whose ORE operator class only a superuser can create | Warning |
+| Storage-only column — encrypts and decrypts, carries no query terms | Info |
+| Searchable `boolean` column | Error |
+| Free-text `match` on a non-text domain | Error |
+| Encrypted-JSONB search without `types.Json` | Error |
+
+Database checks (skipped with a notice when no database is reachable):
+
+| Rule | Severity |
+|------|----------|
+| EQL v3 is not installed (reported once; the other database checks are skipped) | Error |
+| Declared column or table absent from the database | Error |
+| The database column's domain has drifted from the declaration | Error |
+| The column is still plain (no EQL domain) | Error |
+| An `_ord_ore` domain on a database whose EQL install could not create the ORE operator class | Error |
+| Queryable column with no functional index over its term extractor | Info |
 
 The command exits with code 1 on errors (not on warnings or info).
+
+`stash db validate` still works as a deprecated alias.
 
 ---
 

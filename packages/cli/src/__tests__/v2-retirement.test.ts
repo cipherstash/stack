@@ -24,6 +24,28 @@ describe('EQL v2 CLI retirement', () => {
     }
   })
 
+  it('leaves no consumer of the operator-family flag anywhere in the manifest', () => {
+    // `db validate` was the last one: its v2 rule warned that an `ore` index
+    // would not support ORDER BY without operator families. EQL v3's install
+    // self-adapts, and `eql validate` reasons about the ORE domain instead —
+    // so the flag has no remaining meaning on any command.
+    for (const command of commands) {
+      const flags = command.flags?.map((flag) => flag.name) ?? []
+      expect(flags).not.toContain('--exclude-operator-family')
+    }
+  })
+
+  it('moves validate into the EQL group, leaving `db validate` a hidden alias', () => {
+    const names = commands.map((command) => command.name)
+
+    expect(names).toContain('eql validate')
+    // The `db` spelling still dispatches (with a deprecation warning), exactly
+    // like `db install` / `db upgrade` / `db status` — but it is deliberately
+    // absent from the registry, so help and `stash manifest --json` advertise
+    // one name.
+    expect(names).not.toContain('db validate')
+  })
+
   it('removes the Proxy choice from init', () => {
     const init = commands.find((command) => command.name === 'init')
     const flags = init?.flags?.map((flag) => flag.name) ?? []

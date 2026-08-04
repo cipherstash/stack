@@ -150,7 +150,7 @@ export async function loadEncryptionContext(): Promise<EncryptionContext> {
     process.exit(1)
   }
 
-  // The same refusal `stash db validate` gets from
+  // The same refusal `stash eql validate` gets from
   // `loadEncryptConfig`, applied here because `stash encrypt` does not go
   // through that loader. Called, not re-implemented: it guards one file, so the
   // two commands must say one thing about it. Without this, `requireTable`

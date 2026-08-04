@@ -83,7 +83,7 @@ export const installEqlStep: InitStep = {
 
     // installCommand scaffolds stash.config.ts (which `import`s from `stash`)
     // for the rest of the workflow. `stash` must be installed or the config the
-    // user relies on next (db validate / encrypt) can't load. Detect
+    // user relies on next (eql validate / encrypt) can't load. Detect
     // the precondition and bail with a clear message instead. install-deps is
     // what installs the package, so a "no" there leaves us here.
     if (!isPackageInstalled('stash')) {

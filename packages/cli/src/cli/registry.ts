@@ -73,10 +73,6 @@ const DRY_RUN_FLAG: Flag = {
   name: '--dry-run',
   description: 'Show what would happen without making changes.',
 }
-const EXCLUDE_OPERATOR_FAMILY_FLAG: Flag = {
-  name: '--exclude-operator-family',
-  description: 'Skip operator family creation.',
-}
 const SUPABASE_COMPAT_FLAG: Flag = {
   name: '--supabase',
   description: 'Use Supabase-compatible mode.',
@@ -419,20 +415,36 @@ export const registry: CommandGroup[] = [
         summary: 'Show EQL installation status',
         flags: [DATABASE_URL_FLAG],
       },
+      {
+        name: 'eql validate',
+        summary: 'Validate your encryption schema against EQL v3',
+        long: [
+          'Read the tables passed to `Encryption({ schemas })` and check each encrypted',
+          'column against the EQL v3 domain vocabulary — then, if a database is',
+          'reachable, against what that database actually has.',
+          '',
+          'Schema checks (no database needed): an `_ord_ore` domain, whose ORE operator',
+          'class only a superuser can create; storage-only columns, reported so an',
+          'unsearchable column is a decision rather than a surprise; and hand-authored',
+          'configs that ask for free-text match on a non-text domain, encrypted-JSONB',
+          'search without `types.Json`, or a searchable boolean.',
+          '',
+          'Database checks (skipped with a notice when no database is reachable):',
+          'declared columns missing from the database, a column whose domain has drifted',
+          'from the schema, an `_ord_ore` column on a database whose EQL install could',
+          'not create the ORE operator class, and queryable columns with no functional',
+          'index over their term extractor.',
+          '',
+          'Exits 1 on errors only — warnings and info do not fail the command.',
+        ].join('\n'),
+        examples: ['eql validate', 'eql validate --database-url postgres://…'],
+        flags: [SUPABASE_COMPAT_FLAG, DATABASE_URL_FLAG],
+      },
     ],
   },
   {
     title: 'Database',
     commands: [
-      {
-        name: 'db validate',
-        summary: 'Validate encryption schema',
-        flags: [
-          SUPABASE_COMPAT_FLAG,
-          EXCLUDE_OPERATOR_FAMILY_FLAG,
-          DATABASE_URL_FLAG,
-        ],
-      },
       {
         // Dispatch currently only prints a "not yet implemented" warning and
         // reads no flags — describe that rather than advertising a working

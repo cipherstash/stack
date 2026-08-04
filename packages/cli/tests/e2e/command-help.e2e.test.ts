@@ -21,8 +21,21 @@ describe('per-command --help', () => {
     expect(r.output).toContain('eql repair')
     expect(r.output).toContain('eql upgrade')
     expect(r.output).toContain('eql status')
+    expect(r.output).toContain('eql validate')
     // A group listing must NOT be the global banner.
     expect(r.output).not.toContain('CipherStash CLI v')
+  })
+
+  it('renders full command help for `eql validate --help`', async () => {
+    const r = await run(['eql', 'validate', '--help'], {
+      env: { npm_config_user_agent: '' },
+    })
+    expect(r.exitCode).toBe(0)
+    expect(r.output).toContain('Usage: npx stash eql validate [options]')
+    expect(r.output).toContain('--supabase')
+    expect(r.output).toContain('--database-url')
+    // Retired with the v2 rule set — the pinned EQL v3 bundle self-adapts.
+    expect(r.output).not.toContain('--exclude-operator-family')
   })
 
   it('renders full command help for `eql migration --help`', async () => {

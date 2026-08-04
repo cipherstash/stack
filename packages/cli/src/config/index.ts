@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
+import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
 import type { EncryptConfig } from '@cipherstash/stack/schema'
 import { z } from 'zod'
 import { detectPackageManager, runnerCommand } from '../commands/init/utils.js'
@@ -184,6 +185,28 @@ To create it by hand, add ${CONFIG_FILENAME} to your project root:
 export async function loadEncryptConfig(
   encryptClientPath: string,
 ): Promise<EncryptConfig | undefined> {
+  const encryptClient = await loadEncryptionClient(encryptClientPath)
+
+  return requireUsableEncryptConfig(
+    encryptClient.getEncryptConfig(),
+    encryptClientPath,
+  )
+}
+
+/**
+ * Find the user's `EncryptionClient` in their encryption-client file.
+ *
+ * Extracted from {@link loadEncryptConfig} so that {@link loadEncryptSchemas}
+ * reaches the same export through the same jiti load and the same refusals —
+ * two loaders that hand-copied this is exactly how the placeholder guard
+ * drifted before (see {@link requireUsableEncryptConfig}).
+ *
+ * Exits with code 1 if the file is missing, fails to load, or exports no
+ * client.
+ */
+async function loadEncryptionClient(
+  encryptClientPath: string,
+): Promise<EncryptionClient> {
   const resolvedPath = path.resolve(process.cwd(), encryptClientPath)
 
   if (!fs.existsSync(resolvedPath)) {
@@ -231,9 +254,81 @@ export async function loadEncryptConfig(
     process.exit(1)
   }
 
-  return requireUsableEncryptConfig(
+  return encryptClient
+}
+
+/** What {@link loadEncryptSchemas} recovers from the user's client file. */
+export interface LoadedEncryptSchemas {
+  /** The built encrypt config — always present, same value `loadEncryptConfig` returns. */
+  config: EncryptConfig
+  /**
+   * The declared v3 tables, when the installed `@cipherstash/stack` exposes
+   * `getSchemas()`. `undefined` on an older release, which is why every caller
+   * has to degrade rather than assume.
+   */
+  schemas: readonly AnyV3Table[] | undefined
+}
+
+/**
+ * Load the user's encryption client and recover BOTH views of its schema: the
+ * built `EncryptConfig` and — when available — the declared v3 tables.
+ *
+ * The two are not interchangeable. `EncryptedV3Column.build()` emits only
+ * `{ cast_as, indexes }`, so the concrete domain name never reaches the encrypt
+ * config: `cast_as: 'number'` with an `ope` index is ambiguous across
+ * `eql_v3_integer_ord`, `smallint_ord`, `real_ord`, `double_ord` and
+ * `numeric_ord`. Any rule that reasons about the DECLARED domain — steering
+ * `_ord_ore` columns, or drift-checking against a live database's
+ * `information_schema.columns.domain_name` — needs the tables themselves.
+ *
+ * `schemas` is `undefined` when the project's installed `@cipherstash/stack`
+ * predates `getSchemas()`. That is a real customer state (the CLI and the
+ * library version independently), so it degrades to config-only rather than
+ * failing: the caller runs the subset of rules the encrypt config can answer
+ * and says which ones it skipped.
+ *
+ * Exits with code 1 through the same refusals as {@link loadEncryptConfig}.
+ */
+export async function loadEncryptSchemas(
+  encryptClientPath: string,
+): Promise<LoadedEncryptSchemas> {
+  const encryptClient = await loadEncryptionClient(encryptClientPath)
+
+  const config = requireUsableEncryptConfig(
     encryptClient.getEncryptConfig(),
     encryptClientPath,
+  )
+
+  // Duck-typed, not a version check: the client comes from the USER's
+  // node_modules via jiti, so its shape is the only reliable signal of what it
+  // supports.
+  const getSchemas = (
+    encryptClient as { getSchemas?: () => readonly AnyV3Table[] }
+  ).getSchemas
+
+  if (typeof getSchemas !== 'function') {
+    return { config, schemas: undefined }
+  }
+
+  const schemas = getSchemas.call(encryptClient)
+
+  // A client built by an adapter (or a hand-rolled stub) could return
+  // something other than an array of tables. Verify the shape rather than
+  // trusting it — the caller's rules dereference `columnBuilders`.
+  if (!Array.isArray(schemas) || !schemas.every(isV3TableLike)) {
+    return { config, schemas: undefined }
+  }
+
+  return { config, schemas }
+}
+
+/** Structural check for the parts of an `EncryptedTable` the schema rules read. */
+function isV3TableLike(value: unknown): value is AnyV3Table {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    typeof (value as { tableName?: unknown }).tableName === 'string' &&
+    typeof (value as { columnBuilders?: unknown }).columnBuilders === 'object'
   )
 }
 
@@ -242,7 +337,7 @@ export async function loadEncryptConfig(
  * cause.
  *
  * Shared rather than duplicated because it guards ONE file reached by two
- * loaders — `loadEncryptConfig` for `stash db validate`, and
+ * loaders — `loadEncryptConfig` for `stash eql validate`, and
  * `loadEncryptionContext` for `stash encrypt backfill`. When the copies were
  * separate they had already drifted on the nullish-config case, so one command
  * named the cause while the other fell through to `requireTable`'s `Table

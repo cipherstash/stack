@@ -465,7 +465,7 @@ SELECT column_name, domain_schema, domain_name
 - `stash-edge` — the WASM entry and running encryption from edge runtimes.
 - `stash-zerokms` — keysets, clients, and grants (canonical for keyset scoping).
 - `stash-auth` — credentials, auth strategies, and lock context (canonical).
-- `stash-cli` — `stash eql install`, `stash db validate`, `stash encrypt backfill`.
+- `stash-cli` — `stash eql install`, `stash eql validate` (schema-vs-database domain drift, and the `eql_v3.*` functional indexes this skill's predicates need), `stash encrypt backfill`.
 
 Upstream:
 

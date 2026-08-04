@@ -96,7 +96,7 @@ function writeStashConfig(configPath: string, clientPath: string): string {
 }
 
 /**
- * Create a `stash.config.ts` for the rest of the workflow (`db validate` and
+ * Create a `stash.config.ts` for the rest of the workflow (`eql validate` and
  * `encrypt *` load the encryption client through it).
  * `eql install` itself doesn't need one — it resolves the database URL
  * directly — so this is a setup convenience, never a blocker.
@@ -136,7 +136,7 @@ export async function offerStashConfig(
   if (!isInteractive()) return null
 
   const create = await p.confirm({
-    message: `Create a ${CONFIG_FILENAME}? (needed later for db validate / encrypt)`,
+    message: `Create a ${CONFIG_FILENAME}? (needed later for eql validate / encrypt)`,
     initialValue: true,
   })
   if (p.isCancel(create) || !create) {
