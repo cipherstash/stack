@@ -39,9 +39,8 @@
 //     would make it permanently skipped: green but inert.
 
 import { OidcFederationStrategy } from '@cipherstash/auth/wasm-inline'
-import { describe, expect, test } from 'vitest'
-
 import type { AuthStrategy } from '@cipherstash/protect-ffi'
+import { describe, expect, test } from 'vitest'
 
 describe('OidcFederation strategy contract', () => {
   test('the published strategy constructs and exposes getToken', () => {

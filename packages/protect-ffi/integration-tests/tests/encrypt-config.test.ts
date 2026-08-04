@@ -1,7 +1,7 @@
 import 'dotenv/config'
-import { describe, expect, test } from 'vitest'
 
 import { type EncryptConfig, newClient } from '@cipherstash/protect-ffi'
+import { describe, expect, test } from 'vitest'
 
 describe('newClient encrypt config', () => {
   test('accepts legacy cast_as vocabulary and ste_vec without mode', async () => {

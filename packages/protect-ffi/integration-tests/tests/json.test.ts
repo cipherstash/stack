@@ -1,8 +1,8 @@
 import 'dotenv/config'
 import {
-  type Identifier,
   decrypt,
   encrypt,
+  type Identifier,
   newClient,
 } from '@cipherstash/protect-ffi'
 import { describe, expect, test } from 'vitest'
@@ -27,82 +27,82 @@ const userProfile: UserColumn = {
 describe.each([
   { encryptConfig: jsonOpaque, description: 'opaque' },
   { encryptConfig: jsonSteVec, description: 'ste_vec' },
-])(
-  'Can round-trip encrypt & decrypt JSON',
-  ({ encryptConfig, description }) => {
-    describe(`using ${description} config`, () => {
-      test('object', async ({ annotate }) => {
-        const client = await newClient({ encryptConfig })
-        const originalPlaintext = { foo: 'bar', baz: 123 }
+])('Can round-trip encrypt & decrypt JSON', ({
+  encryptConfig,
+  description,
+}) => {
+  describe(`using ${description} config`, () => {
+    test('object', async ({ annotate }) => {
+      const client = await newClient({ encryptConfig })
+      const originalPlaintext = { foo: 'bar', baz: 123 }
 
-        const ciphertext = await encrypt(client, {
-          plaintext: originalPlaintext,
-          ...userProfile,
-        })
-
-        const decrypted = await decrypt(client, { ciphertext })
-
-        expect(decrypted).toEqual(originalPlaintext)
+      const ciphertext = await encrypt(client, {
+        plaintext: originalPlaintext,
+        ...userProfile,
       })
 
-      test('array', async () => {
-        const client = await newClient({ encryptConfig })
-        const originalPlaintext = [1, 2, 3]
+      const decrypted = await decrypt(client, { ciphertext })
 
-        const ciphertext = await encrypt(client, {
-          plaintext: originalPlaintext,
-          ...userProfile,
-        })
-
-        const decrypted = await decrypt(client, { ciphertext })
-
-        expect(decrypted).toEqual(originalPlaintext)
-      })
-
-      test('nested array within object', async () => {
-        const client = await newClient({ encryptConfig })
-        const originalPlaintext = { foo: 'bar', baz: [1, 2, 3] }
-
-        const ciphertext = await encrypt(client, {
-          plaintext: originalPlaintext,
-          ...userProfile,
-        })
-
-        const decrypted = await decrypt(client, { ciphertext })
-
-        expect(decrypted).toEqual(originalPlaintext)
-      })
-
-      test('nested object within object', async () => {
-        const client = await newClient({ encryptConfig })
-        const originalPlaintext = { foo: 'bar', baz: { qux: 'quux' } }
-
-        const ciphertext = await encrypt(client, {
-          plaintext: originalPlaintext,
-          ...userProfile,
-        })
-
-        const decrypted = await decrypt(client, { ciphertext })
-
-        expect(decrypted).toEqual(originalPlaintext)
-      })
-
-      test('nested object within array', async () => {
-        const client = await newClient({ encryptConfig })
-        const originalPlaintext = { foo: 'bar', baz: [{ qux: 'quux' }] }
-
-        const ciphertext = await encrypt(client, {
-          plaintext: originalPlaintext,
-          ...userProfile,
-        })
-
-        const decrypted = await decrypt(client, { ciphertext })
-
-        expect(decrypted).toEqual(originalPlaintext)
-      })
+      expect(decrypted).toEqual(originalPlaintext)
     })
-  },
-)
+
+    test('array', async () => {
+      const client = await newClient({ encryptConfig })
+      const originalPlaintext = [1, 2, 3]
+
+      const ciphertext = await encrypt(client, {
+        plaintext: originalPlaintext,
+        ...userProfile,
+      })
+
+      const decrypted = await decrypt(client, { ciphertext })
+
+      expect(decrypted).toEqual(originalPlaintext)
+    })
+
+    test('nested array within object', async () => {
+      const client = await newClient({ encryptConfig })
+      const originalPlaintext = { foo: 'bar', baz: [1, 2, 3] }
+
+      const ciphertext = await encrypt(client, {
+        plaintext: originalPlaintext,
+        ...userProfile,
+      })
+
+      const decrypted = await decrypt(client, { ciphertext })
+
+      expect(decrypted).toEqual(originalPlaintext)
+    })
+
+    test('nested object within object', async () => {
+      const client = await newClient({ encryptConfig })
+      const originalPlaintext = { foo: 'bar', baz: { qux: 'quux' } }
+
+      const ciphertext = await encrypt(client, {
+        plaintext: originalPlaintext,
+        ...userProfile,
+      })
+
+      const decrypted = await decrypt(client, { ciphertext })
+
+      expect(decrypted).toEqual(originalPlaintext)
+    })
+
+    test('nested object within array', async () => {
+      const client = await newClient({ encryptConfig })
+      const originalPlaintext = { foo: 'bar', baz: [{ qux: 'quux' }] }
+
+      const ciphertext = await encrypt(client, {
+        plaintext: originalPlaintext,
+        ...userProfile,
+      })
+
+      const decrypted = await decrypt(client, { ciphertext })
+
+      expect(decrypted).toEqual(originalPlaintext)
+    })
+  })
+})
 
 describe('SteVec output structure', () => {
   test('encrypted output has expected fields', async () => {

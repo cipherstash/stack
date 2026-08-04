@@ -1,20 +1,20 @@
 import 'dotenv/config'
 import {
+  decrypt,
+  decryptBulk,
   type EncryptConfig,
   type EncryptedPayload,
+  encrypt,
+  encryptBulk,
+  encryptQuery,
   type IntegerOrdOpe,
   type IntegerOrdOpeQuery,
   type IntegerOrdOre,
   type IntegerOrdOreQuery,
+  newClient,
   type TextEq,
   type TextEqQuery,
   type TextSearchOreQuery,
-  decrypt,
-  decryptBulk,
-  encrypt,
-  encryptBulk,
-  encryptQuery,
-  newClient,
 } from '@cipherstash/protect-ffi'
 import { Client, type QueryResult } from 'pg'
 import { beforeAll, beforeEach, describe, expect, test } from 'vitest'

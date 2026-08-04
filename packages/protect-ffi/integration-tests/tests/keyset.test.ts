@@ -1,16 +1,17 @@
 import 'dotenv/config'
-import { beforeAll, describe, expect, test } from 'vitest'
 
 import {
-  type Identifier,
   decrypt,
   encrypt,
   ensureKeyset,
+  type Identifier,
   isEncrypted,
   newClient,
 } from '@cipherstash/protect-ffi'
+import { beforeAll, describe, expect, test } from 'vitest'
 
 import { encryptConfig } from './common.js'
+
 type UserColumn = Identifier<typeof encryptConfig>
 
 const stringColumn: UserColumn = {

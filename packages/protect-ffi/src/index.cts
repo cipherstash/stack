@@ -1,19 +1,22 @@
 // This module is the CJS entry point for the library.
 
 import { withEncodedPlaintext, withEncodedPlaintexts } from './bigintWire.js'
-import { type CredentialOpts, withEnvCredentials } from './credentials.js'
-import { type NativeNewClientOptions, newClientArgs } from './newClientArgs.js'
+import { withEnvCredentials } from './credentials.js'
 import * as native from './load.cjs'
+import { type NativeNewClientOptions, newClientArgs } from './newClientArgs.js'
+
 export {
-  withEnvCredentials,
-  type EnvReader,
   type CredentialOpts,
+  type EnvReader,
+  withEnvCredentials,
 } from './credentials.js'
 export * from './eql-v3.js'
-import type { EncryptedV3, EncryptedV3Query } from './eql-v3.js'
+
+import type { EncryptedV3Query } from './eql-v3.js'
+
 export {
-  PROTECT_ERROR_CODES,
   isProtectErrorCode,
+  PROTECT_ERROR_CODES,
   type ProtectErrorCode,
 } from './errors.js'
 
@@ -23,20 +26,19 @@ export {
  * public surface is exactly what it was.
  */
 export * from './types.js'
+
 import type {
   AuthStrategy,
-  ClientOpts,
   DecryptBulkOptions,
   DecryptOptions,
   DecryptResult,
   EncryptBulkOptions,
-  EncryptConfig,
-  EncryptOptions,
-  EncryptQueryBulkOptions,
-  EncryptQueryOptions,
   Encrypted,
   EncryptedPayload,
   EncryptedQuery,
+  EncryptOptions,
+  EncryptQueryBulkOptions,
+  EncryptQueryOptions,
   EnsureKeysetOpts,
   EnsureKeysetResult,
   JsPlaintext,

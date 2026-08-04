@@ -1,14 +1,14 @@
 import 'dotenv/config'
-import { describe, expect, test } from 'vitest'
 
 import {
   type EncryptPayload,
-  type QueryPayload,
   encryptBulk,
   encryptQuery,
   encryptQueryBulk,
   newClient,
+  type QueryPayload,
 } from '@cipherstash/protect-ffi'
+import { describe, expect, test } from 'vitest'
 
 import { assertSteVec, jsonSteVec } from './common.js'
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PROTECT_ERROR_CODES, isProtectErrorCode } from './errors.js'
+import { isProtectErrorCode, PROTECT_ERROR_CODES } from './errors.js'
 
 describe('isProtectErrorCode', () => {
   it('accepts every declared code', () => {

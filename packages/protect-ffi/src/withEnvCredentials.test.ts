@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { withEnvCredentials } from './credentials.js'
 import type { CredentialOpts, EnvReader } from './credentials.js'
+import { withEnvCredentials } from './credentials.js'
 
 function makeEnv(vars: Record<string, string>): EnvReader {
   return (key) => vars[key]

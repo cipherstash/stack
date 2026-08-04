@@ -1,13 +1,13 @@
 import 'dotenv/config'
-import { describe, expect, test } from 'vitest'
 
 import {
-  type Identifier,
   decrypt,
   encrypt,
+  type Identifier,
   isEncrypted,
   newClient,
 } from '@cipherstash/protect-ffi'
+import { describe, expect, test } from 'vitest'
 
 // Import shared configs from common.js
 import {
@@ -50,44 +50,45 @@ const cases: {
   { identifier: numberColumn, plaintext: 123.456, expected: 123.456 },
 ]
 
-describe.each(cases)(
-  'encrypt and decrypt',
-  ({ identifier, plaintext, expected }) => {
-    describe(`using column ${identifier.column} with ${typeof plaintext} value`, () => {
-      test('can round-trip encrypt and decrypt a string', async () => {
-        const client = await newClient({ encryptConfig })
-        const ciphertext = await encrypt(client, {
-          plaintext,
-          ...identifier,
-        })
-
-        expect(isEncrypted(ciphertext)).toBe(true)
-
-        const decrypted = await decrypt(client, { ciphertext })
-        expect(decrypted).toBe(expected)
+describe.each(cases)('encrypt and decrypt', ({
+  identifier,
+  plaintext,
+  expected,
+}) => {
+  describe(`using column ${identifier.column} with ${typeof plaintext} value`, () => {
+    test('can round-trip encrypt and decrypt a string', async () => {
+      const client = await newClient({ encryptConfig })
+      const ciphertext = await encrypt(client, {
+        plaintext,
+        ...identifier,
       })
 
-      test('can explicitly pass in undefined for optional fields', async () => {
-        const client = await newClient({ encryptConfig })
+      expect(isEncrypted(ciphertext)).toBe(true)
 
-        const ciphertext = await encrypt(client, {
-          plaintext,
-          lockContext: undefined,
-          unverifiedContext: undefined,
-          ...identifier,
-        })
-
-        const decrypted = await decrypt(client, {
-          ciphertext,
-          lockContext: undefined,
-          unverifiedContext: undefined,
-        })
-
-        expect(decrypted).toBe(expected)
-      })
+      const decrypted = await decrypt(client, { ciphertext })
+      expect(decrypted).toBe(expected)
     })
-  },
-)
+
+    test('can explicitly pass in undefined for optional fields', async () => {
+      const client = await newClient({ encryptConfig })
+
+      const ciphertext = await encrypt(client, {
+        plaintext,
+        lockContext: undefined,
+        unverifiedContext: undefined,
+        ...identifier,
+      })
+
+      const decrypted = await decrypt(client, {
+        ciphertext,
+        lockContext: undefined,
+        unverifiedContext: undefined,
+      })
+
+      expect(decrypted).toBe(expected)
+    })
+  })
+})
 
 describe('bigint plaintexts', () => {
   const I64_MAX = 2n ** 63n - 1n
