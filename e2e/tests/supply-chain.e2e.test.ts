@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, globSync, readFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import semver from 'semver'
@@ -413,14 +413,69 @@ const MANIFEST_BY_ECOSYSTEM: Record<string, string> = {
   'github-actions': '.github/workflows',
 }
 
+type DependabotUpdate = {
+  'package-ecosystem': string
+  directory?: string
+  directories?: string[]
+  cooldown?: { 'default-days'?: number; 'semver-major-days'?: number }
+}
+
+// Which of an entry's configured locations resolve to no manifest at all —
+// i.e. monitor nothing.
+//
+// The two keys are checked differently on purpose. Dependabot's options
+// reference says: "The `directories` key supports globbing and the wildcard
+// character `*`. These features are not supported by the `directory` key." So a
+// `*` written under the singular `directory` is a literal path segment to
+// Dependabot — an entry that monitors nothing, which is exactly the failure
+// this check exists to catch — and glob-expanding it here would hide it.
+//
+// A glob is satisfied by matching AT LEAST ONE directory holding the manifest,
+// not all of them. `/packages/*` under the npm entry would fail an every-match
+// rule against this very tree today: packages/utils/ holds only config/ and
+// logger/, with no package.json of its own.
+//
+// Expanded with node:fs `globSync` (Node 22, which package.json engines already
+// require) rather than a glob library — this package has none, and a check on
+// dependency policy is a poor place to add a dependency.
+const unmonitoredDirectories = (
+  entry: Pick<DependabotUpdate, 'directory' | 'directories'>,
+  manifest: string,
+): string[] => {
+  const globbed = entry.directories !== undefined
+  const failures: string[] = []
+
+  // `directories: []` monitors nothing, and the loop below would report
+  // nothing about it — it has no iteration to fail on. That is the same
+  // "configured to watch a location Dependabot finds no manifest in" defect
+  // the rest of this function exists to catch, arriving as an absence rather
+  // than a wrong value, so it has to be named separately.
+  if (entry.directories?.length === 0) {
+    return ['`directories` is empty, so this entry monitors nothing']
+  }
+
+  for (const dir of entry.directories ?? [entry.directory ?? '/']) {
+    // Dependabot paths are repo-root-relative with a leading slash; strip it
+    // rather than letting join()/glob read them as absolute.
+    const prefix = dir.replace(/^\/+/, '')
+    const found = globbed
+      ? globSync(prefix ? `${prefix}/${manifest}` : manifest, {
+          cwd: REPO_ROOT,
+        }).length > 0
+      : existsSync(join(REPO_ROOT, prefix, manifest))
+    if (found) continue
+    failures.push(
+      globbed
+        ? `"${dir}" matches no directory containing a ${manifest}`
+        : `"${dir}" contains no ${manifest}`,
+    )
+  }
+  return failures
+}
+
 describe('supply chain — automated dependency updates (Dependabot)', () => {
   const db = readYaml('.github/dependabot.yml') as {
-    updates: Array<{
-      'package-ecosystem': string
-      directory?: string
-      directories?: string[]
-      cooldown?: { 'default-days'?: number; 'semver-major-days'?: number }
-    }>
+    updates: DependabotUpdate[]
   }
 
   it('npm ecosystem has a ≥ 3 day cooldown', () => {
@@ -498,17 +553,46 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
         manifest,
         `unknown ecosystem "${ecosystem}" — add its manifest filename to MANIFEST_BY_ECOSYSTEM`,
       ).toBeDefined()
-      const dirs = entry.directories ?? [entry.directory ?? '/']
-      for (const dir of dirs) {
-        // `directory` is repo-root-relative with a leading slash; join it onto
-        // REPO_ROOT rather than treating it as absolute.
-        const target = join(REPO_ROOT, dir.replace(/^\/+/, ''), manifest)
-        expect(
-          existsSync(target),
-          `${ecosystem} entry points at "${dir}" but there is no ${manifest} there`,
-        ).toBe(true)
-      }
+      expect(
+        unmonitoredDirectories(entry, manifest),
+        `${ecosystem} entry is configured to watch a location Dependabot will find no ${manifest} in`,
+      ).toEqual([])
     }
+  })
+
+  it('a `directories` glob is expanded; the same pattern under `directory` is not', () => {
+    // No entry in .github/dependabot.yml uses `directories` today, so the glob
+    // branch above ships with no live coverage — and the first person to write
+    // `directories: ["/packages/*"]` would otherwise be failed by a check
+    // reporting "no package.json" at a path that was never meant to be literal.
+    // Synthetic entries because this suite asserts against the real config as
+    // committed; exercising a branch must not mean editing it.
+    expect(
+      unmonitoredDirectories({ directories: ['/packages/*'] }, 'package.json'),
+    ).toEqual([])
+    // Literal paths remain valid under `directories` — globbing is an
+    // extension of the key, not a requirement of it.
+    expect(
+      unmonitoredDirectories({ directories: ['/e2e'] }, 'package.json'),
+    ).toEqual([])
+    // The point of the check survives globbing: a pattern matching nothing is
+    // still an entry that monitors nothing.
+    expect(
+      unmonitoredDirectories({ directories: ['/no-such-*'] }, 'package.json'),
+    ).toHaveLength(1)
+    // Dependabot does not expand `directory`, so neither does this — a glob
+    // written there monitors nothing and must fail even though the identical
+    // pattern passes above.
+    expect(
+      unmonitoredDirectories({ directory: '/packages/*' }, 'package.json'),
+    ).toHaveLength(1)
+    // An empty list fails too. It has no entry to be wrong about, so a
+    // per-directory check reports nothing and the entry passes while
+    // monitoring nothing — the failure this whole block exists to catch,
+    // arriving as an absence.
+    expect(
+      unmonitoredDirectories({ directories: [] }, 'package.json'),
+    ).toHaveLength(1)
   })
 })
 
