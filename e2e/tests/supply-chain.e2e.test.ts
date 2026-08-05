@@ -575,6 +575,15 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
     expect(
       unmonitoredDirectories({ directories: ['/e2e'] }, 'package.json'),
     ).toEqual([])
+    // The repo root, which is where both live entries point. It is the one
+    // input that reaches the empty-`prefix` half of the pattern above, and it
+    // needs it: `/package.json` is ABSOLUTE to globSync and matches nothing,
+    // so joining a bare manifest onto an empty prefix reports the repo root
+    // as monitoring nothing. Splicing that branch out leaves every other
+    // assertion in this block green — this is the only one that fails.
+    expect(
+      unmonitoredDirectories({ directories: ['/'] }, 'package.json'),
+    ).toEqual([])
     // The point of the check survives globbing: a pattern matching nothing is
     // still an entry that monitors nothing.
     expect(
