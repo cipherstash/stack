@@ -33,7 +33,10 @@ runs:
   steps:
     # `index.node` is a pure function of the Rust inputs, so it caches on a
     # content hash of them rather than on a lockfile alone — a crates/ edit
-    # must miss. Caching the 13MB output, NOT cargo's `target/`: a release
+    # must miss. The path is one gitignored file, so unlike the WASM step
+    # below there is nothing tracked for a restore to overwrite, and the key
+    # needs nothing beyond the Rust inputs. Caching the 13MB output, NOT
+    # cargo's `target/`: a release
     # build of the cipherstash-client graph leaves gigabytes there, which is
     # slower to save and restore than the compile it saves.
     #
@@ -68,6 +71,33 @@ runs:
       shell: bash
       run: pnpm --filter @cipherstash/protect-ffi run build:native
 
+    # Unlike index.node, this path is NOT purely generated. `dist/wasm` holds
+    # wasm-pack's output alongside three declaration files that are tracked in
+    # git — see packages/protect-ffi/.gitignore for why they have to be. A
+    # restore untars over the checkout, so with a key hashed from the Rust
+    # inputs alone, an entry saved before a `.d.ts` edit silently reverts that
+    # edit: no diff, no log line, and the next `tsc` against wasm-inline
+    # typechecks the old declarations.
+    #
+    # So the `.d.ts` are hashed into the key too. Any edit to one now misses,
+    # and any entry that *does* hit was necessarily saved from a checkout whose
+    # declarations were byte-identical — which makes the overwrite a no-op by
+    # construction rather than by luck. The glob is load-bearing: it covers a
+    # fourth declaration file the day someone tracks one, where three literal
+    # paths would quietly stop covering the set they were written for.
+    #
+    # The alternative — keeping them out of the archive with a `!` exclusion —
+    # does not work, and reads as though it does. `actions/cache` resolves
+    # `path:` with `implicitDescendants: false` and hands the result to
+    # `tar --files-from`; a bare directory therefore resolves to one entry and
+    # tar recurses into it itself, so an exclusion aimed at files underneath
+    # never matches anything. Narrowing to explicit file globs would work, but
+    # trades a no-op overwrite for a worse failure: a file wasm-pack starts
+    # emitting is then silently absent on every cache hit.
+    #
+    # No key prefix bump is needed for the changed hash inputs — and none would
+    # be needed had `path:` changed either, since `getCacheVersion` hashes the
+    # path list into the entry's version.
     - name: Restore the compiled WASM output
       if: inputs.wasm == 'true'
       id: cache-wasm
@@ -78,7 +108,8 @@ runs:
           ffi-wasm-${{ runner.os }}-${{
           hashFiles('packages/protect-ffi/crates/**',
           'packages/protect-ffi/Cargo.toml',
-          'packages/protect-ffi/Cargo.lock') }}
+          'packages/protect-ffi/Cargo.lock',
+          'packages/protect-ffi/dist/wasm/*.d.ts') }}
 
     # mise carries the pinned wasm-pack (see packages/protect-ffi/mise.toml)
     # and, run from that directory, trusts the nested config — a bare `mise`
@@ -92,9 +123,16 @@ runs:
     # The argument is the full backend id, matching mise.toml. The short name
     # is not in mise's registry: `mise install wasm-pack` exits non-zero with
     # "not found in mise tool registry" and a did-you-mean list.
+    #
+    # SHA-pinned, per the convention the deposited upstream workflows already
+    # use for third-party actions. mise-action is a trust dependency this repo
+    # did not have before the absorption, and it runs in jobs holding live
+    # CipherStash credentials — a mutable `@v3` lets the code executing there
+    # change with no commit here. Dependabot moves the pin and the comment
+    # together (.github/dependabot.yml covers github-actions).
     - name: Install wasm-pack
       if: inputs.wasm == 'true' && steps.cache-wasm.outputs.cache-hit != 'true'
-      uses: jdx/mise-action@v3
+      uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
       with:
         install: true
         install_args: aqua:wasm-bindgen/wasm-pack

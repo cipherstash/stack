@@ -58,7 +58,12 @@ jobs:
       # scripts/lint-no-workflow-caching.mjs does not cover it. That matters —
       # `cargo:cargo-zigbuild` builds from source, and the cache makes it a
       # one-off rather than a per-run cost.
-      - uses: jdx/mise-action@v3
+      #
+      # SHA-pinned rather than `@v3`: mise-action is a third-party trust
+      # dependency the absorption introduced, and the tag is mutable. Same pin
+      # as .github/actions/build-ffi-binding — keep the two in step.
+      # scripts/__tests__/ffi-binding-action.test.mjs asserts both.
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
           install: true
           working_directory: packages/protect-ffi
