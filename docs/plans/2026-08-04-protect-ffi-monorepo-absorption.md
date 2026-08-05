@@ -49,6 +49,43 @@
 prerequisite for everything after it: PR #858's board is red without it, so no
 later task can be verified against a green baseline.
 
+### Phase 3 progress
+
+| Commit | Delivers |
+|---|---|
+| `70e1f7da` | Task 0 — build the binding in the jobs that need it |
+| `bc0cb132` | Task 8 (part) — `tests-rust.yml`, the Rust checks running again |
+| `35397412` | Secrets pre-flight ordered before the binding build, with `scripts/__tests__/ffi-binding-step-order.test.mjs` to hold it |
+| `15562406` | Two supply-chain gaps in `build-ffi-binding` |
+| `ee35c801` | Gaps the previous round's guards did not cover; `test:typecheck:wasm` wired into the WASM job |
+| `dfb8f4d3` | The `integration-tests/` suite runs from a root workflow again |
+| `48fb5254` | `lintWiring` exemptions made mechanically checkable; dead `release`/`dryrun` scripts removed |
+| `b5ab1ee5` | Dependabot monitors the in-tree Cargo workspace |
+
+### The absorption was audited against upstream
+
+`~/src/protectjs-ffi` at `ce820bb` (v0.31.0) versus `packages/protect-ffi`, file
+by file. **The import itself is faithful** — 200 tracked files in, 200 out, the
+full 613-commit history grafted, and `crates/`, `Cargo.*`, `docs/`,
+`platforms/*`, `src/eql-v3-types/`, `integration-tests/` and `type-tests/`
+byte-identical. Every content diff reduces to a deliberate commit above; the 16
+integration-test diffs are Biome 2 reflow only, verified by comparing token
+multisets rather than by eye.
+
+The defects were all in what *ran*, not what arrived, and all three shared one
+shape: **a check that came across as files and then executed nowhere, because
+the thing that used to invoke it was the upstream workflow deposited under
+`packages/protect-ffi/.github/`.** That directory is inert — GitHub does not read
+workflows from a subdirectory — so every check it drove went quiet on the day of
+the import while still appearing, to a reader, to be wired up. `test:typecheck:wasm`
+had an exemption *claiming* a job ran it. The 19-file integration suite had no
+claim at all. Prose in a guard is not a guard; the fixes above replace each claim
+with an assertion against the root workflow directory.
+
+Two documentation surfaces had drifted the same way and are fixed in `48fb5254`:
+the README documented deleted scripts, `build` as producing `index.node`, and the
+`--` separator anti-pattern `lintWiring` forbids.
+
 ---
 
 ## Corrections to earlier revisions
@@ -1830,13 +1867,58 @@ The Rust emitting EQL payloads is generated from a different catalog commit than
 - [ ] Stack tags are still created by changesets on the same run
 - [ ] `ffi-preflight.yml` runs against a release-PR ref without any publish step
 - [ ] `release.yml` installs with `--frozen-lockfile`
-- [ ] `cargo test`, `cargo fmt --check` and clippy (host **and** wasm32) run in CI again
+- [x] `cargo test`, `cargo fmt --check` and clippy (host **and** wasm32) run in CI again — `tests-rust.yml` (`bc0cb132`)
 - [ ] No dead upstream workflow files under `packages/protect-ffi/.github/`
 - [x] `lintWiring.test.ts` asserts against a workflow GitHub actually executes
+- [x] `test:typecheck:wasm` runs in CI, and its exemption is checked against the root workflow **directory** rather than a hardcoded filename
+- [x] No package script dispatches a workflow this repo cannot run — trigger and declared inputs, not just the path
+- [x] The `integration-tests/` suite runs from a root workflow, full suite including lock context, with a regression test that rejects a `paths:`-only mention
+- [x] Every lockfile in the tree maps to a monitored Dependabot ecosystem, and every entry's `directory` holds the manifest its ecosystem reads
+- [ ] **`integration-protect-ffi.yml`'s first run is green.** Unproven by construction — there is no Docker daemon and no CipherStash credentials on a dev machine, so nothing about the job's runtime behaviour was verified locally. Watch, in order of likelihood: `pg_isready` missing from the Blacksmith image (`start-db`'s loop retries forever, so the symptom is a 45-minute timeout, not an error); `npm ci` under CI's npm major, since the lock's `".."` entry names protect-ffi 0.29.0 while the manifest says 0.31.0; ZeroKMS/CTS host derivation from the CRN now that upstream's hardcoded `ap-southeast-2` pins are gone; `keyset.test.ts` mutating the shared workspace via `ensureKeyset`; and a long first run from a cold `cargo:cargo-zigbuild` source build plus a cold binding cache (PR cache writes are ref-scoped, so the cache only pays off once this is on `main`)
 - [ ] Published `@cipherstash/stack` tarball's `dependencies` show a concrete protect-ffi version
 - [ ] `stash doctor` exits non-zero with a hidden platform package (phase 5)
 
 ---
+
+## Deferred follow-ups
+
+Each of these was in reach and deliberately left, with the reason.
+
+1. **pnpm-absorb `packages/protect-ffi/integration-tests`.** It is not a workspace
+   member — `packages/*` globs one level and the only deeper entry is
+   `platforms/*` — so it carries its own `package-lock.json` and installs with
+   `npm ci`. Absorbing it means adding it to `pnpm-workspace.yaml`, reconciling
+   `@cipherstash/auth ^0.39.0` / `vitest ^3.1.3` / `@cipherstash/eql 3.0.2` with
+   the catalog, and dropping both the lockfile and the `npm ci` step. **Not done
+   because it changes the suite's dependency versions, and only a credentialed
+   run can show that change is neutral** — doing it blind would confound a
+   wiring fix with a semantic one. Two things resolve with it: the second
+   package manager in CI, and the five npm advisories osv-scanner reports in
+   that lockfile today.
+
+2. **`integration-tests/package-lock.json` gets no Dependabot PRs.** Covered at
+   the ecosystem level, but the npm entry follows the pnpm workspace and this
+   directory is not in it. Adding a second npm entry is ~10 lines; left because
+   (1) deletes the file.
+
+3. **CI and `tasks.toml` have forked.** `test:integration:all` still builds the
+   binding (debug) and the WASM itself, while CI builds once via
+   `build-ffi-binding` and calls vitest directly. Making that build step opt-out
+   in `tasks.toml` would give both one definition.
+
+4. **`.github/actionlint.yaml` does not exist,** so `actionlint` reports
+   `blacksmith-4vcpu-ubuntu-2404` as an unknown runner label on every workflow in
+   the repo. Task 4 already calls for this file; until it lands, actionlint output
+   has to be read past a known-noisy diagnostic, which is how a real finding gets
+   missed.
+
+5. **The integration suite's own `npm test` (`tsc && vitest`)** typechecks
+   `tests/` against `lib/*.d.cts`. Upstream CI never ran it and this round did not
+   add it — a new check landing under a wiring change's name.
+
+6. **`cooldown.semver-major-days: 14` is dead config** on all three Dependabot
+   entries while every one of them ignores `version-update:semver-major`. Left in
+   place for symmetry rather than removed.
 
 ## Open decisions
 
