@@ -54,10 +54,16 @@ CI uses `pnpm install --frozen-lockfile`. If `pnpm-lock.yaml` and any `package.j
 
 ### 5. Cooldown'd auto-updates — practice #6
 
-Dependabot opens grouped, cooldown'd PRs (7 days minor/patch, 14 days major) for both `npm` and `github-actions`. Major bumps stay un-grouped — one PR each, easier to review.
+Dependabot opens grouped, cooldown'd PRs (7 days minor/patch) for `npm`, `cargo` and `github-actions`. Major bumps are not proposed at all — every entry ignores `version-update:semver-major`, so majors are reviewed and applied by hand.
+
+`cargo` covers the in-tree Rust workspace at `packages/protect-ffi` (**not** the repo root — that is where `Cargo.toml`/`Cargo.lock` live). It runs monthly rather than weekly because each bump costs a native rebuild to validate, and it ignores the exact-pinned CipherStash crates (`cipherstash-client`, `cts-common`, `stack-auth`, `stack-profile`, `eql-bindings`, `vitaminc`) — they share a release train with the `@cipherstash/auth` catalog and must be bumped together, manually.
 
 - **Where**: `.github/dependabot.yml`
-- **Test asserts**: cooldown ≥ 3 days, both ecosystems present
+- **Test asserts**: cooldown ≥ 3 days on npm/github-actions; every lockfile present in the repo maps to a monitored `package-ecosystem`; every entry's `directory` actually contains the manifest its ecosystem reads
+
+The ecosystem-coverage assertion is derived from the filesystem, so **adding a lockfile for a new language fails the suite until `dependabot.yml` covers it.** Two lockfiles are exempt because Dependabot has no ecosystem for them (`e2e/wasm/deno.lock`, `.flox/env/manifest.lock`); both are named with their reason in the test.
+
+Note that `ignore` conditions suppress Dependabot **security** PRs too, not just version updates. The compensating control is OSV: `.github/workflows/osv-scanner.yml` scans `--recursive ./`, which reaches every lockfile in the tree (including `Cargo.lock`) and reports to code scanning.
 
 ### 6. Registry pinning — practice #16
 

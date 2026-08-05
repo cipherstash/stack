@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import semver from 'semver'
 import { describe, expect, it } from 'vitest'
@@ -322,10 +323,102 @@ describe('supply chain — CI hardening (.github/workflows/tests.yml)', () => {
   })
 })
 
+// Every path git considers part of the repo: tracked files, plus untracked
+// ones that are not ignored, so a lockfile added in the working tree fails
+// here before it reaches CI. `--exclude-standard` is what keeps node_modules,
+// dist/, target/ and every other generated path out of the scan — hand-rolling
+// that skip list is how a scan silently starts missing things.
+const repoFiles = (): string[] =>
+  execFileSync(
+    'git',
+    ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+    { cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
+  )
+    .split('\0')
+    .filter((p) => p.length > 0)
+
+// What a lockfile *looks like*, matched on shape rather than on a closed list
+// of names. This is the load-bearing half of the coverage test below: the
+// failure it exists to catch is a lockfile for a language nobody thought
+// about, and a name-only list is blind to exactly that case.
+const LOCKFILE_SHAPES = [
+  /\.lock$/i, // Cargo.lock, yarn.lock, poetry.lock, uv.lock, deno.lock
+  /\.lockb$/i, // bun.lockb
+  /\.lockfile$/i, // gradle.lockfile
+  /-lock\.(json|ya?ml)$/i, // package-lock.json, pnpm-lock.yaml
+  /\.lock\.json$/i, // packages.lock.json (NuGet)
+  /^go\.sum$/, // Go has no ".lock" convention
+  /^npm-shrinkwrap\.json$/,
+]
+const looksLikeLockfile = (name: string) =>
+  LOCKFILE_SHAPES.some((re) => re.test(name))
+
+// Lockfile basename -> the `package-ecosystem` value Dependabot monitors it
+// with. Deliberately broader than what the repo contains today: the point is
+// that adding a lockfile is enough to make the test demand its entry, without
+// anyone having to remember to teach the test about the new ecosystem first.
+const ECOSYSTEM_BY_LOCKFILE: Record<string, string> = {
+  'pnpm-lock.yaml': 'npm',
+  'package-lock.json': 'npm',
+  'npm-shrinkwrap.json': 'npm',
+  'yarn.lock': 'npm',
+  'bun.lock': 'bun',
+  'bun.lockb': 'bun',
+  'Cargo.lock': 'cargo',
+  'go.sum': 'gomod',
+  'Gemfile.lock': 'bundler',
+  'composer.lock': 'composer',
+  'Pipfile.lock': 'pip',
+  'poetry.lock': 'pip',
+  'uv.lock': 'uv',
+  'mix.lock': 'mix',
+  'pubspec.lock': 'pub',
+  'packages.lock.json': 'nuget',
+  'gradle.lockfile': 'gradle',
+}
+
+// Lockfiles Dependabot cannot monitor at all, because no `package-ecosystem`
+// covers them. Keyed by basename because that is what the exemption is really
+// about — a property of Dependabot's ecosystem list, not of where the file
+// sits. Naming them here with a reason keeps the gap reviewable instead of
+// filtering it out silently.
+const NO_DEPENDABOT_ECOSYSTEM: Record<string, string> = {
+  // e2e/wasm/deno.lock — JSR specifiers (@std/assert). Dependabot has no Deno
+  // or JSR ecosystem. The suite pins nothing from npm (see e2e/wasm/deno.json:
+  // every import resolves to a file pnpm already installed), so the versions
+  // that matter are covered by pnpm-lock.yaml.
+  'deno.lock': 'Deno/JSR is not a Dependabot ecosystem',
+  // .flox/env/manifest.lock — Flox (Nix) dev-environment lock: node, pnpm,
+  // 1password CLI. A toolchain pin, not an application dependency tree, and
+  // Nixpkgs is not a Dependabot ecosystem.
+  'manifest.lock': 'Flox/Nix environment lock, not a dependency ecosystem',
+}
+
+// Where each ecosystem's *manifest* lives, so a `directory` can be checked for
+// actually pointing at one. Dependabot reports a misaimed directory only in the
+// repo's Dependabot log page, which nobody reads — the visible symptom is
+// simply no PRs, forever.
+const MANIFEST_BY_ECOSYSTEM: Record<string, string> = {
+  npm: 'package.json',
+  bun: 'package.json',
+  cargo: 'Cargo.toml',
+  gomod: 'go.mod',
+  bundler: 'Gemfile',
+  composer: 'composer.json',
+  uv: 'pyproject.toml',
+  mix: 'mix.exs',
+  pub: 'pubspec.yaml',
+  // github-actions is special-cased: Dependabot requires `directory: /` and
+  // discovers .github/workflows itself.
+  'github-actions': '.github/workflows',
+}
+
 describe('supply chain — automated dependency updates (Dependabot)', () => {
   const db = readYaml('.github/dependabot.yml') as {
     updates: Array<{
       'package-ecosystem': string
+      directory?: string
+      directories?: string[]
       cooldown?: { 'default-days'?: number; 'semver-major-days'?: number }
     }>
   }
@@ -342,6 +435,80 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
     )
     expect(gha).toBeDefined()
     expect(gha?.cooldown?.['default-days']).toBeGreaterThanOrEqual(3)
+  })
+
+  it('every lockfile in the tree has a package-ecosystem entry', () => {
+    // Derived from the filesystem, not from a list of ecosystems we expect —
+    // so the NEXT lockfile someone adds (a new language, a nested manifest)
+    // fails here instead of quietly going unmonitored. Absorbing
+    // packages/protect-ffi is precisely that event: it brought a 494-crate
+    // Cargo.lock in-tree, which osv-scanner already scans for known
+    // advisories (`--recursive ./` reaches it) while nothing proposed the
+    // routine version bumps.
+    //
+    // Coverage is asserted per ECOSYSTEM, not per directory. Dependabot's npm
+    // entry at `/` follows the pnpm workspace, which does not include
+    // packages/protect-ffi/integration-tests — that lockfile therefore sits
+    // under a monitored ecosystem but is not itself updated. Deliberate: it is
+    // a standalone `npm install` harness with no published surface, and its
+    // advisories are still visible via osv-scanner.
+    const ecosystems = new Set(db.updates.map((u) => u['package-ecosystem']))
+    const unmonitored: string[] = []
+    const unrecognised: string[] = []
+    let matched = 0
+
+    for (const file of repoFiles()) {
+      const name = basename(file)
+      if (!looksLikeLockfile(name)) continue
+      if (name in NO_DEPENDABOT_ECOSYSTEM) continue
+      const ecosystem = ECOSYSTEM_BY_LOCKFILE[name]
+      if (!ecosystem) {
+        unrecognised.push(file)
+        continue
+      }
+      matched++
+      if (!ecosystems.has(ecosystem)) {
+        unmonitored.push(`${file} needs \`package-ecosystem: ${ecosystem}\``)
+      }
+    }
+
+    // Guard the vacuous case: a scan that finds nothing passes every loop.
+    // pnpm-lock.yaml alone makes this non-zero.
+    expect(matched).toBeGreaterThan(0)
+    expect(
+      unrecognised,
+      'lockfile with no known ecosystem — add it to ECOSYSTEM_BY_LOCKFILE, or to NO_DEPENDABOT_ECOSYSTEM with the reason Dependabot cannot monitor it',
+    ).toEqual([])
+    expect(
+      unmonitored,
+      'lockfile present in the repo with no Dependabot ecosystem monitoring it',
+    ).toEqual([])
+  })
+
+  it("every entry's directory contains the manifest its ecosystem reads", () => {
+    // The other half of coverage: an entry naming the right ecosystem but the
+    // wrong directory monitors nothing, and fails silently — Dependabot logs
+    // "no manifest found" on a page nobody visits, and the symptom is just an
+    // absence of PRs. Load-bearing for cargo, whose workspace root is
+    // packages/protect-ffi, not the repo root.
+    for (const entry of db.updates) {
+      const ecosystem = entry['package-ecosystem']
+      const manifest = MANIFEST_BY_ECOSYSTEM[ecosystem]
+      expect(
+        manifest,
+        `unknown ecosystem "${ecosystem}" — add its manifest filename to MANIFEST_BY_ECOSYSTEM`,
+      ).toBeDefined()
+      const dirs = entry.directories ?? [entry.directory ?? '/']
+      for (const dir of dirs) {
+        // `directory` is repo-root-relative with a leading slash; join it onto
+        // REPO_ROOT rather than treating it as absolute.
+        const target = join(REPO_ROOT, dir.replace(/^\/+/, ''), manifest)
+        expect(
+          existsSync(target),
+          `${ecosystem} entry points at "${dir}" but there is no ${manifest} there`,
+        ).toBe(true)
+      }
+    }
   })
 })
 
