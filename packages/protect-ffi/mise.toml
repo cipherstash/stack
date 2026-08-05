@@ -74,7 +74,12 @@ run = "cargo clippy --no-deps --tests --all-features --all-targets -- -D warning
 # unlinted path. Lib only: the unit tests are host-run.
 #
 # Needs `rustup target add wasm32-unknown-unknown` once. CI does this in the
-# `Add wasm32 target` step of test.yml.
+# `Add wasm32 target` step of .github/workflows/tests-rust.yml — spelled from
+# the repository root because the bare filename this used to give resolved only
+# to the dead upstream copy under packages/protect-ffi/.github/, which GitHub
+# never executes. So the comment described a step that ran nowhere, which is the
+# same defect as a check that runs nowhere. lintWiring.test.ts now fails on a
+# citation that resolves only in that directory.
 [tasks."lint:rust:wasm"]
 description = "cargo clippy for the wasm32 target"
 run = "cargo clippy --no-deps --target wasm32-unknown-unknown -p protect-ffi --all-features -- -D warnings"

@@ -26,12 +26,39 @@ import { describe, expect, it } from 'vitest'
 const packageRoot = process.cwd()
 const workflowDir = join(packageRoot, '../../.github/workflows')
 
+/**
+ * The part of a workflow that actually does something: `jobs:` and everything
+ * under it, with comment lines stripped.
+ *
+ * Every assertion in this file is a substring search, and this file's subject
+ * is that a claim can be satisfied by prose rather than by a step. It was:
+ * deleting the `Build the protect-ffi binding` STEP from
+ * integration-protect-ffi.yml left `build-ffi-binding` in six comments and two
+ * `paths:` entries, and the check stayed green. Deleting the
+ * `Require CipherStash secrets` step left it in a comment and a `paths:` entry.
+ * Dropping `mise run setup` left `mise setup` in the header comment quoting
+ * what upstream ran. Three guards, all green, none of them guarding anything.
+ *
+ * Cutting at `jobs:` is what removes the `on:` / `paths:` block, and that is
+ * also what makes the discovery filter below mean what its comment says: a
+ * `paths:` filter naming the suite is a trigger, not a run.
+ *
+ * `nativeLoading.test.ts` strips comments from the emitted entry for the same
+ * reason — a comment describing a thing is indistinguishable from the thing.
+ */
+function executablePart(body: string): string {
+  const jobsAt = body.search(/^jobs:/m)
+  // No `jobs:` key means nothing runs, so nothing can match. Returning the
+  // whole body here would hand every assertion the header comments instead.
+  return jobsAt === -1 ? '' : body.slice(jobsAt).replace(/^[ \t]*#.*$/gm, '')
+}
+
 /** Every workflow GitHub actually executes, read from the repository root. */
 const rootWorkflows = readdirSync(workflowDir)
   .filter((name) => /\.ya?ml$/.test(name))
   .map((name) => ({
     name,
-    body: readFileSync(join(workflowDir, name), 'utf8'),
+    body: executablePart(readFileSync(join(workflowDir, name), 'utf8')),
   }))
 
 /**
@@ -52,7 +79,10 @@ const SUITE_DIR = 'packages/protect-ffi/integration-tests'
  *    the local entry point (`integration-tests/tasks.toml`).
  *
  * Referencing the directory alone is deliberately not enough: a `paths:` filter
- * naming it is the exact false positive this test exists to reject.
+ * naming it is the exact false positive this test exists to reject — which is
+ * why both halves are matched against `executablePart`, where no `paths:` block
+ * survives. Matched against the raw body, a workflow that merely path-filtered
+ * on the suite and happened to run vitest for something else satisfied this.
  */
 const INVOKES_SUITE = /\bvitest\b|mise run test:integration/
 

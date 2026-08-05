@@ -10,7 +10,7 @@
  * the failure, and it is invisible by construction. Every exemption below has
  * to name why.
  */
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -23,11 +23,26 @@ const read = (relative: string) =>
 const manifest = JSON.parse(read('package.json'))
 const scripts: Record<string, string> = manifest.scripts
 const miseToml = read('mise.toml')
+
+/**
+ * A workflow with its comment lines removed.
+ *
+ * Every workflow assertion below is a substring search, and a comment is prose.
+ * tests-rust.yml's header explains that the Rust checks moved behind
+ * `mise run lint:rust` — so the assertion that CI *runs* the aggregate was
+ * satisfied by the sentence saying it should, and stayed green with the job
+ * running `lint:rust:host` alone. `nativeLoading.test.ts` strips comments from
+ * the emitted entry for the same reason: a comment describing a thing is
+ * indistinguishable from the thing.
+ */
+const withoutComments = (yaml: string) => yaml.replace(/^[ \t]*#.*$/gm, '')
 // The ROOT workflow that actually runs the Rust checks. GitHub only reads
 // workflows from the repository root, so this must never point back inside this
 // package — that was true of the deposited upstream copy this used to read,
 // which made the CI assertion below vacuous from the day of the absorption.
-const testWorkflow = read('../../.github/workflows/tests-rust.yml')
+const testWorkflow = withoutComments(
+  read('../../.github/workflows/tests-rust.yml'),
+)
 // Every root workflow an exempted script may hang off, discovered by reading
 // the DIRECTORY rather than by listing filenames. Same rule as above: root
 // only — a script "run by CI" according to a file under
@@ -43,16 +58,38 @@ const rootWorkflowNames = readdirSync(join(repoRoot, ROOT_WORKFLOW_DIR)).filter(
   (name) => name.endsWith('.yml') || name.endsWith('.yaml'),
 )
 const rootWorkflows = rootWorkflowNames
-  .map((name) => read(`${ROOT_WORKFLOW_DIR}/${name}`))
+  .map((name) => withoutComments(read(`${ROOT_WORKFLOW_DIR}/${name}`)))
   .join('\n')
+
+// The upstream repo's CI, deposited here by the subtree merge and inert since:
+// GitHub reads workflows from the repository root alone. It is kept on purpose
+// — the phase-4 publishing cutover ports `build.yml`'s per-platform
+// `CARGO_BUILD_TARGET` matrix — so this reads the directory rather than
+// assuming it is gone, and the check below goes quiet on its own once the
+// cutover deletes it.
+const DEAD_WORKFLOW_DIR = '.github/workflows'
+const deadWorkflowNames = existsSync(join(repoRoot, DEAD_WORKFLOW_DIR))
+  ? readdirSync(join(repoRoot, DEAD_WORKFLOW_DIR)).filter((name) =>
+      /\.ya?ml$/.test(name),
+    )
+  : []
 
 /**
  * Script names reachable from `root`, following `pnpm run` / `npm run`
- * references.
+ * references and the lifecycle hooks pnpm runs on its own.
  *
  * Both spellings are matched. The scripts moved to `pnpm run` when the package
  * was absorbed into the monorepo, and a stray `npm run` left behind would
  * otherwise drop a whole subtree from this analysis and read as "no orphans".
+ *
+ * `pre<name>` / `post<name>` are followed because pnpm invokes them around
+ * every script it runs, and NOTHING names them — so a walk that only follows
+ * `run` references cannot see them. Verified on the pinned pnpm 10.33.2, which
+ * runs them with no `enable-pre-post-scripts` opt-in, and this manifest already
+ * leans on the behaviour (`postcargo-build`, `postbuild:wasm`, `prepack`). A
+ * `pretest: "cargo test"` is therefore an edit in keeping with the file, and it
+ * would put cargo on every contributor's default `pnpm test` — the one thing
+ * the entry-point split exists to prevent.
  */
 function reachableFrom(root: string): Set<string> {
   const seen = new Set<string>()
@@ -63,11 +100,60 @@ function reachableFrom(root: string): Set<string> {
     seen.add(name)
     const body = scripts[name]
     if (body === undefined) continue
+    queue.push(`pre${name}`, `post${name}`)
     for (const match of body.matchAll(/(?:pnpm|npm) run ([\w:-]+)/g)) {
       queue.push(match[1])
     }
   }
   return seen
+}
+
+/**
+ * A mise task's `[tasks."<name>"]` block, isolated from the next one.
+ *
+ * Comments are stripped first. A block scan runs to the following `[tasks.`
+ * header, so it swallows the prose sitting between two tasks — and the prose
+ * above `[tasks."lint:rust"]` cites `cargo fmt --check` by name, which would
+ * report cargo in `build:debug`, the block before it. Same trap
+ * `nativeLoading.test.ts` documents for the emitted entry: a comment warning
+ * about a thing is indistinguishable from the thing.
+ */
+function miseTask(name: string): string | undefined {
+  const header = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(
+    `^\\[tasks\\."${header}"\\]$(?:\\n(?!\\[tasks\\.)[^\\n]*)*`,
+    'm',
+  ).exec(miseToml.replace(/^[ \t]*#.*$/gm, ''))?.[0]
+}
+
+/**
+ * Whether `mise run <task>` ends in cargo — through the task's own `run`, its
+ * `depends` fan-out, or a hop back into package.json (`build:debug` is
+ * `pnpm run debug`).
+ *
+ * `mise run` is the other way out of this manifest, and the check below cannot
+ * see it by grepping script bodies for `cargo`: mise.toml's `lint:rust` arms
+ * are all cargo, so a `test` ending `&& mise run lint:rust` is cargo on every
+ * contributor's default `pnpm test` with no `cargo` token in package.json at
+ * all.
+ */
+function taskReachesCargo(task: string, seen = new Set<string>()): boolean {
+  if (seen.has(task)) return false
+  seen.add(task)
+  const block = miseTask(task)
+  if (block === undefined) return false
+  if (block.includes('cargo')) return true
+  const depends = /^depends = \[(.*?)\]$/m.exec(block)?.[1] ?? ''
+  return (
+    [...depends.matchAll(/"([^"]+)"/g)].some(([, dep]) =>
+      taskReachesCargo(dep, seen),
+    ) ||
+    [...block.matchAll(/(?:pnpm|npm) run ([\w:-]+)/g)].some(([, script]) =>
+      [...reachableFrom(script)].some((name) =>
+        scripts[name]?.includes('cargo'),
+      ),
+    )
+  )
 }
 
 /**
@@ -189,6 +275,34 @@ describe('lint and format wiring', () => {
     expect(problems).toEqual([])
   })
 
+  it('justifies nothing by pointing into the dead upstream workflow directory', () => {
+    // `packages/protect-ffi/.github/workflows/{build,test,release}.yml` are
+    // still present and still inert, kept until the phase-4 cutover has ported
+    // what it needs from them. Keeping them is the hazard: a comment or an
+    // exemption reason that names `test.yml` reads as a check that runs
+    // somewhere, and the only file with that name is one GitHub never
+    // executes. That is exactly how `test:typecheck:wasm` sat exempt "run by
+    // the wasm job" from the absorption onward with no job running it.
+    //
+    // mise.toml did it too — it told contributors CI installs the wasm32
+    // target "in the `Add wasm32 target` step of test.yml", while the step that
+    // runs is in the root tests-rust.yml.
+    //
+    // Only names unique to that directory are checked: `release.yml` exists at
+    // the root as well, so a citation of it is ambiguous and this under-reports
+    // rather than guessing — the same trade the workflow-dispatch check makes.
+    const deadOnly = deadWorkflowNames.filter(
+      (name) => !rootWorkflowNames.includes(name),
+    )
+    const liveConfig = [
+      miseToml,
+      JSON.stringify(scripts),
+      ...Object.values(ENTRY_POINT_EXEMPT),
+    ].join('\n')
+
+    expect(deadOnly.filter((name) => liveConfig.includes(name))).toEqual([])
+  })
+
   it('runs the Rust format check from the cargo entry point', () => {
     // The specific one that was orphaned (#145). Asserted by name so a rename
     // that drops it from the chain is caught even if the generic check above
@@ -204,10 +318,21 @@ describe('lint and format wiring', () => {
     // `turbo test --filter './packages/*'`, which reaches this package's
     // `test` — so anything cargo on that path is cargo on every PR, in a repo
     // where one package out of eighteen is Rust.
-    const cargoScripts = [...reachableFrom('test')].filter((name) =>
+    //
+    // Two hops out of a script body, because grepping the bodies for `cargo`
+    // only sees one of them. `mise run <task>` leaves package.json entirely,
+    // and `mise run lint:rust` is three cargo invocations — so it is spelled
+    // out here rather than left to the reader of a green test.
+    const reachable = [...reachableFrom('test')]
+    const cargoScripts = reachable.filter((name) =>
       scripts[name]?.includes('cargo'),
     )
-    expect(cargoScripts).toEqual([])
+    const viaMise = reachable.flatMap((name) =>
+      [...(scripts[name]?.matchAll(/mise run ([\w:.-]+)/g) ?? [])]
+        .filter(([, task]) => taskReachesCargo(task))
+        .map(([, task]) => `${name} → mise run ${task}`),
+    )
+    expect([...cargoScripts, ...viaMise]).toEqual([])
   })
 
   it('reaches every cargo check from the cargo entry point', () => {
@@ -278,7 +403,12 @@ describe('lint and format wiring', () => {
     // `lint:rust` is the aggregate entry point — an arm reachable only by name
     // is an arm nobody runs (#145) — and wasm32 must be installed before
     // clippy can lint it.
-    expect(testWorkflow).toContain('mise run lint:rust')
+    //
+    // Terminated, not a prefix. `toContain('mise run lint:rust')` is satisfied
+    // by `mise run lint:rust:host`, so the assertion that CI runs the aggregate
+    // was green for a workflow running one arm and skipping the other two —
+    // which is the #145 failure itself, dressed as the check against it.
+    expect(testWorkflow).toMatch(/mise run lint:rust(?![\w:-])/)
     expect(testWorkflow).toContain('rustup target add wasm32-unknown-unknown')
   })
 })
