@@ -1,6 +1,6 @@
 ---
 name: stash-cli
-description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql install/migration/repair/upgrade/status`, `db validate`, `encrypt backfill/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, credential rules, and the staged EQL v3 rollout lifecycle.
+description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql install/migration/repair/upgrade/status/validate`, `encrypt backfill/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, credential rules, and the staged EQL v3 rollout lifecycle.
 ---
 
 # CipherStash CLI (`stash`)
@@ -199,7 +199,7 @@ export default defineConfig({
 | Option | Required | Default | Purpose |
 |---|---|---|---|
 | `databaseUrl` | yes | — | PostgreSQL connection string |
-| `client` | no | `./src/encryption/index.ts` | Encryption client, loaded by `db validate` and `encrypt backfill` (`schema build` only writes here; `encrypt drop` resolves against the database). **Not required in Prisma Next projects** — see below. |
+| `client` | no | `./src/encryption/index.ts` | Encryption client, loaded by `eql validate` and `encrypt backfill` (`schema build` only writes here; `encrypt drop` resolves against the database). **Not required in Prisma Next projects** — see below. |
 
 In a **Prisma Next** project there is deliberately no client file: encrypted columns are declared in the PSL contract. When the configured `client` path is missing, `encrypt backfill` — the only command that loads it — detects Prisma Next, reads the emitted `contract.json` (searched at `src/prisma/`, `prisma/`, then the project root), and derives the schemas with the adapter's own `deriveStackSchemasV3`, so the CLI's schema view matches the application's. (`encrypt status` and `encrypt drop` never read the client file; they resolve against the database.) Both `@cipherstash/stack-prisma` and `@cipherstash/stack` are resolved from *your* project, not the CLI's dependency tree. Run `prisma-next contract emit` first; if the contract declares no `cipherstash.*()` column, the command says so rather than reporting a missing client file.
 
@@ -425,18 +425,66 @@ The install SQL is safe to re-run — columns and data survive — but it cascad
 
 Whether EQL is installed and at which version, plus database permission status. It retains read-only EQL v2/config-table diagnostics for existing deployments.
 
-### Database
+#### `eql validate` — validate the encryption schema
 
-#### `db validate` — validate the encryption schema
+```bash
+stash eql validate [--supabase] [--database-url <url>]
+```
+
+Reads the tables passed to `Encryption({ schemas })` — through the client's `getSchemas()` accessor, so it sees the **concrete domain** of every column, which the built encrypt config does not carry — and checks them against the EQL v3 vocabulary. If a database is reachable it then checks the declaration against what that database actually has.
+
+`getSchemas()` is a recent addition. Against a project on an older `@cipherstash/stack` — or a client whose `getSchemas()` is missing, malformed, or throws — validate says so and falls back to the built encrypt config: the index-derived rules still run, but the rules that need a domain (ORE portability and drift) are skipped. Upgrading `@cipherstash/stack` restores them.
+
+Schema checks (no database needed):
 
 | Rule | Severity |
 |---|---|
-| `freeTextSearch` on a non-string column | Warning |
-| `orderAndRange` without operator families | Warning |
-| No indexes on an encrypted column | Info |
-| `searchableJson` without `dataType("json")` | Error |
+| An `_ord_ore` domain is declared (`types.NOrdOre`, `types.TextOrdOre`) | Warning |
+| Storage-only column — encrypts and decrypts, carries no query terms | Info |
+| Searchable `boolean` column | Error |
+| Free-text `match` index on a non-text domain | Error |
+| Encrypted-JSONB (`ste_vec`) index without `types.Json` | Error |
 
-Exits 1 on errors only. The "No indexes" Info finding applies to term-carrying (queryable) columns — resolve it with the functional-index recipes in the `stash-indexing` skill. Storage-only columns (bare `types.T`, `types.Boolean`) have no index option by design; for them the finding needs no action.
+Database checks (skipped with a notice, not a failure, when no database is reachable):
+
+| Rule | Severity |
+|---|---|
+| EQL v3 is not installed — reported once, and the remaining database checks are skipped | Error |
+| A declared table lives in a different schema than the one searched | Warning |
+| A declared table is in the searched schema but invisible to the connected role (missing grant) | Warning |
+| A declared table name carries a schema qualifier (`schema.table`) — not checked | Warning |
+| A declared table exists in no schema at all | Error |
+| A declared column is missing from a table that was found | Error |
+| The database column's domain differs from the declared one | Error |
+| The database column is still plain (no EQL domain) | Error |
+| An `_ord_ore` domain on a database whose EQL install could not create the ORE operator class | Error |
+| A queryable column with no functional index over its term extractor | Info |
+| A declared table name that resolved in the searched schema also exists in another one | Info |
+
+Exits 1 on errors only; warnings and info do not fail the command.
+
+**Validate inspects one schema** — `current_schema()`, the head of `search_path` — but distinguishes four reasons a table can be missing from it, so only the last fails the command. Reported once per table, not once per column.
+
+| The table is… | Finding |
+|---|---|
+| in another schema (Prisma `multiSchema`, a tenant schema) | Warning naming that schema and the connection option to reach it |
+| in the searched schema but invisible to the connected role | Warning with the `GRANT SELECT` to run — `information_schema` reports only what the role holds a privilege on, so a missing grant is not a missing migration |
+| declared as `schema.table` | Warning — validate matches table names unqualified and cannot check this. Declare it unqualified and point the connection at its schema |
+| absent everywhere | Error — the migration has not been applied |
+
+The `schema.table` case is deliberately not resolved by splitting the name: the only column reader is scoped to `current_schema()`, so `app.users` would silently validate against `public.users` and report an unrelated table's drift as this one's. An explicit "not checked" beats a confident wrong answer.
+
+**An unqualified name that exists in more than one schema is reported too**, as an Info. A bare declared name resolves through `search_path`, so when the same name lives in both the searched schema and another — `users` in `public` and in Supabase's `auth`, which nearly every project has — the declaration does not pin which relation the application reads. Validate names the one it checked (`"public"."users"`), names the others, and gives the connection option to inspect one of those instead. It stays Info rather than Warning on purpose: it must not fail an ordinary Supabase project or report it as unclean, and unlike the four cases above this one *did* check a table — it is qualifying which, not reporting that nothing happened.
+
+**The `_ord_ore` finding is about portability.** `CREATE OPERATOR CLASS` requires superuser, so managed Postgres (Supabase and most hosted providers) installs EQL without the ORE btree operator class, and the bundle then poisons every `_ord_ore` domain with an always-raising CHECK. Prefer the `_ord` (OPE) twin unless you control the database role. With a database reachable, validate confirms which case you are in and upgrades the Warning to an Error when the operator class is genuinely absent.
+
+The "no functional index" Info applies only to term-carrying (queryable) columns — resolve it with the recipes in the `stash-indexing` skill. Storage-only columns (bare `types.T`, `types.Boolean`) have no index option by design, and `types.Json` is served by a GIN index over the column rather than a scalar extractor; neither is reported.
+
+**Not checked:** the ordered domains reject empty strings through a value-level CHECK enforced at encrypt time. Nothing in the schema or in `information_schema` predicts it, so validate cannot catch it statically.
+
+`stash db validate` still routes here, with a deprecation warning.
+
+### Database
 
 #### `db test-connection`
 

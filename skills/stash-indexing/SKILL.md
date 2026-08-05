@@ -14,7 +14,7 @@ This covers EQL v3 — the bundle `stash eql install` applies (`@cipherstash/eql
 - Writing or reviewing a schema migration that adds or changes an encrypted (`eql_v3_*`) column.
 - Deciding which indexes an encrypted column supports — or explaining why a column has none.
 - An encrypted query is slow, or `EXPLAIN` shows a `Seq Scan` where you expected an index.
-- `stash db validate` reports "No indexes on an encrypted column".
+- `stash eql validate` reports "No functional index over `eql_v3.…`" for a queryable column.
 - Answering whether encrypted columns can be indexed on Supabase or managed PostgreSQL (yes — see the superuser section).
 
 ## Which Columns Support Which Index
@@ -269,7 +269,7 @@ Index not being used:
 ## Reference
 
 - `stash-encryption` — the `types.*` domain catalog, wire-format operators and ordering, and the staged rollout lifecycle.
-- `stash-cli` — `stash eql install`, `stash db validate` (its "No indexes on an encrypted column" Info finding is resolved by this skill), and `stash encrypt backfill` / `drop`.
+- `stash-cli` — `stash eql install`, `stash eql validate` (its "No functional index over `eql_v3.…`" Info finding is resolved by this skill), and `stash encrypt backfill` / `drop`.
 - `stash-drizzle`, `stash-supabase`, `stash-prisma` — per-integration query patterns; index DDL placement per the section above.
 - `stash-postgres` — the hand-written predicate forms these indexes serve (`pg` / `postgres-js`, no ORM).
 - `stash-edge` — the WASM entry, for apps whose queries run on Deno / Workers / Supabase Edge Functions.

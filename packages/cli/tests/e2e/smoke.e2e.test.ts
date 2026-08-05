@@ -27,6 +27,7 @@ describe('stash CLI — non-interactive smoke', () => {
     expect(r.output).toContain('eql repair')
     expect(r.output).toContain('eql upgrade')
     expect(r.output).toContain('eql status')
+    expect(r.output).toContain('eql validate')
     // The dotenv "injected env" banner regression guard lives in the
     // dedicated test below — this cwd has no .env file, so a bare
     // `not.toContain('injected env')` here would pass vacuously.
@@ -130,6 +131,36 @@ describe('stash CLI — non-interactive smoke', () => {
     // The alias reaches the real install command (its flag validation ran).
     expect(r.output).toContain('eql install --migration` has been removed')
     expect(r.output).toContain('eql migration --drizzle')
+  })
+
+  // `validate` moved from the `db` group to the `eql` group. Both spellings
+  // still route; only the old one warns. Run from a directory with no
+  // `stash.config.ts` so the command stops at the config load — deterministic,
+  // and enough to prove the routing.
+  it('db validate still works as a deprecated alias and warns', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'stash-validate-alias-'))
+    try {
+      const r = await run(['db', 'validate'], { cwd: tmpDir })
+      expect(r.exitCode).toBe(1)
+      expect(r.output).toContain('stash db validate" is deprecated')
+      expect(r.output).toContain('eql validate" instead')
+      // It reached the real command (which needs a config it cannot find).
+      expect(r.output).toContain('Could not find stash.config.ts')
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  it('eql validate routes without a deprecation warning', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'stash-validate-'))
+    try {
+      const r = await run(['eql', 'validate'], { cwd: tmpDir })
+      expect(r.exitCode).toBe(1)
+      expect(r.output).not.toContain('is deprecated')
+      expect(r.output).toContain('Could not find stash.config.ts')
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
   })
 
   it('eql install routes to the install command without a deprecation warning', async () => {

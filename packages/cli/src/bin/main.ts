@@ -113,8 +113,8 @@ Commands:
   eql repair           Repair migrations with an un-runnable ALTER COLUMN to an encrypted type
   eql upgrade          Upgrade EQL extensions to the latest version
   eql status           Show EQL installation status
+  eql validate         Validate your encryption schema against EQL v3
 
-  db validate          Validate encryption schema
   db migrate           Run pending encrypt config migrations
   db test-connection   Test database connectivity
 
@@ -219,6 +219,19 @@ async function runUpgrade(
   })
 }
 
+async function runValidate(
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+) {
+  const { validateCommand } = await requireStack(
+    () => import('../commands/eql/validate.js'),
+  )
+  await validateCommand({
+    supabase: flags.supabase,
+    databaseUrl: values['database-url'],
+  })
+}
+
 function rejectRetiredEqlFlags(
   flags: Record<string, boolean>,
   values: Record<string, string>,
@@ -282,6 +295,9 @@ async function runEqlCommand(
     case 'status':
       await dbStatusCommand({ databaseUrl: values['database-url'] })
       break
+    case 'validate':
+      await runValidate(flags, values)
+      break
     default:
       p.log.error(`${messages.eql.unknownSubcommand}: ${sub ?? '(none)'}`)
       console.log()
@@ -318,17 +334,10 @@ async function runDbCommand(
       )
       throw new CliExit(1)
     }
-    case 'validate': {
-      const { validateCommand } = await requireStack(
-        () => import('../commands/db/validate.js'),
-      )
-      await validateCommand({
-        supabase: flags.supabase,
-        excludeOperatorFamily: flags['exclude-operator-family'],
-        databaseUrl,
-      })
+    case 'validate':
+      p.log.warn(messages.db.aliasDeprecated(STASH, 'validate'))
+      await runValidate(flags, values)
       break
-    }
     case 'status':
       p.log.warn(messages.db.aliasDeprecated(STASH, 'status'))
       await dbStatusCommand({ databaseUrl })

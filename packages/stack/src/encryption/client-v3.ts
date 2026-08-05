@@ -298,6 +298,71 @@ export interface EncryptionClient<
    */
   bulkDecrypt(payloads: BulkDecryptPayload): BulkDecryptOperation
   getEncryptConfig(): ReturnType<UnderlyingNativeClient['getEncryptConfig']>
+
+  /**
+   * The v3 tables this client was initialized with, in the order they were
+   * passed to `Encryption({ schemas })`.
+   *
+   * This is the DOMAIN-BEARING view of the schema, and the reason it exists
+   * alongside {@link getEncryptConfig}. `getEncryptConfig()` is what the FFI
+   * consumes, and `EncryptedV3Column.build()` emits only `{ cast_as, indexes }`
+   * — the concrete domain name is metadata and is deliberately not in there.
+   * So `cast_as: 'number'` with an `ope` index is ambiguous across
+   * `eql_v3_integer_ord`, `smallint_ord`, `real_ord`, `double_ord` and
+   * `numeric_ord`, and any tool that has to reason about the DECLARED domain
+   * (schema linting, drift-checking a live database's `information_schema`
+   * domains) cannot recover it from the encrypt config.
+   *
+   * The tables are usually *imported* into the client file rather than
+   * re-exported from it, so duck-typing the module namespace is unreliable —
+   * hence exposing them here, on the one export every such tool already finds.
+   *
+   * Read a column's domain with `column.getEqlType()`
+   * (`'public.eql_v3_integer_ord'`), its capabilities with
+   * `column.getQueryCapabilities()`, and its DB name with `column.getName()`.
+   *
+   * ```typescript
+   * for (const table of client.getSchemas()) {
+   *   for (const column of Object.values(table.columnBuilders)) {
+   *     console.log(table.tableName, column.getName(), column.getEqlType())
+   *   }
+   * }
+   * ```
+   *
+   * Returns `Readonly<S>` rather than `S`, and the spelling is load-bearing on
+   * two counts.
+   *
+   * It is the honest type. The accessor hands back `Object.freeze(schemas)`,
+   * whose type is exactly `Readonly<S>` — frozen because the per-table
+   * reconstructor map was derived from that tuple once, at construction (see
+   * `createEncryptionClient`). Nothing is cast to make the two line up.
+   *
+   * It also keeps `S`'s own mutability unobservable, which matters because
+   * this is the only member putting `S` in an OUTPUT position — everywhere
+   * else `S` appears as `S[number]` or as a constraint, both blind to
+   * `readonly`. Both spellings of the tuple arise from ordinary calls: the
+   * `const` type parameter on `Encryption` infers `readonly [T]` from an array
+   * literal, while a caller generic over its own schemas
+   * (`function make<S extends readonly [AnyV3Table, ...AnyV3Table[]]>(s: S) {
+   * return Encryption({ schemas: s }) }`) infers the mutable `[T]`. Returning
+   * `S` raw made those two call styles produce client types that no longer
+   * matched, over a distinction the client cannot express.
+   *
+   * Keep the homomorphic mapped type; do NOT "simplify" it to the equivalent-
+   * looking `readonly [...S]`. A tuple spread gives TypeScript a MEASURABLE
+   * (covariant) variance for `S`, which lets the identity relation short-
+   * circuit to comparing type arguments — and `[T]` is not identical to
+   * `readonly [T]`, so `EncryptionClient<[T]>` and
+   * `EncryptionClient<readonly [T]>` stop being the same type even though
+   * every member resolves the same. `Readonly<S>` leaves the variance
+   * unmeasurable, so the relation falls back to structural comparison and the
+   * two agree. `encryption-v3-only.test-d.ts` pins this.
+   *
+   * Normalizing costs no precision: `Readonly<[A, B]>` is `readonly [A, B]`,
+   * element for element, so `getSchemas()[0]` stays the exact table type that
+   * `stash eql validate` reads `getEqlType()` off.
+   */
+  getSchemas(): Readonly<S>
 }
 
 /**
@@ -367,6 +432,13 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
   for (const table of schemas) {
     reconstructors.set(table.tableName, rowReconstructor(table))
   }
+
+  // Frozen once, here, rather than on every `getSchemas()` call. `schemas` is
+  // the rest parameter's own array, so this never freezes an array the caller
+  // still owns. SHALLOW by design: it pins the tuple's SHAPE, which is what
+  // `reconstructors` above was derived from. The table objects inside are the
+  // caller's own and stay mutable.
+  const frozenSchemas = Object.freeze(schemas)
 
   // A table not among the schemas this client was initialized with has no
   // precomputed reconstructor. Return a Result failure rather than building one
@@ -527,6 +599,21 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
       client.bulkEncrypt(plaintexts as BulkEncryptPayload, opts),
     bulkDecrypt: (payloads) => client.bulkDecrypt(payloads),
     getEncryptConfig: () => client.getEncryptConfig(),
+    // The same tuple, by reference — not a copy. `S` is a `const` type
+    // parameter, so the caller's array literal keeps its per-table inference,
+    // and `table` arguments read back off `getSchemas()` stay assignable to
+    // `S[number]` (identity-keyed consumers therefore also keep working).
+    //
+    // Frozen because `reconstructors` above was derived from this tuple once,
+    // at construction: a caller that pushed to or spliced the returned array
+    // would leave `getSchemas()` advertising a schema set the client does not
+    // reconstruct for. The readonly tuple type already blocks that from
+    // TypeScript; this closes it for callers that reach the client untyped —
+    // which is exactly how the CLI loads it, out of the user's node_modules.
+    //
+    // No cast: `Object.freeze(schemas)` is typed `Readonly<S>`, which is
+    // verbatim what the interface declares `getSchemas()` to return.
+    getSchemas: () => frozenSchemas,
   }
 
   return typed

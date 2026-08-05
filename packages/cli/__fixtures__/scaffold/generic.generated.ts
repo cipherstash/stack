@@ -7,7 +7,7 @@
  * `Encryption({ schemas: [...] })` call below to reference them.
  *
  * Until that happens, the encryption client is initialised with a single
- * placeholder table so that this file compiles, and `stash db validate` and
+ * placeholder table so that this file compiles, and `stash eql validate` and
  * `stash encrypt backfill` refuse to run and point back here. (`stash
  * encrypt drop` resolves against the database and never reads this file.)
  *
@@ -52,7 +52,7 @@ import { Encryption, encryptedTable, types } from '@cipherstash/stack/v3'
 
 // REPLACE THIS. It exists only so this file compiles before you have declared
 // any encrypted tables — `Encryption` requires at least one. Swap it for your
-// real tables (see the patterns above); `stash db validate` and `stash
+// real tables (see the patterns above); `stash eql validate` and `stash
 // encrypt backfill` refuse to run while the placeholder is still here.
 export const placeholderTable = encryptedTable('__stash_placeholder__', {
   replace_me: types.Text('replace_me'),
