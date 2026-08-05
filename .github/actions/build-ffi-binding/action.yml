@@ -112,19 +112,37 @@ runs:
       uses: actions/cache@v4
       with:
         path: packages/protect-ffi/dist/wasm
-        # The last four are the same build-input argument as on the native key,
+        # The last five are the same build-input argument as on the native key,
         # and `build:wasm` is the longer pipeline of the two: wasm-pack, then
         # `tsc -p tsconfig.wasm-errors.json`, then a `postbuild:wasm` hook
         # running scripts/inline-wasm.mjs — which is what emits the
         # protect_ffi_inline.js that stack's wasm-inline entry imports. An edit
         # to the inliner with no Rust change is the likely one here, and it is
         # exactly the edit a Rust-only hash cannot see.
+        #
+        # src/errors.ts is that tsc step's only input (`files:` in the tsconfig
+        # names it alone), and hashing the EMITTED dist/wasm/*.d.ts does not
+        # stand in for it. Rewriting the body of `isProtectErrorCode` leaves
+        # errors.d.ts byte-identical while changing errors.js — so the key hits,
+        # this step is skipped, and the restored errors.js is the old one.
+        # Nothing tracked forces a miss: errors.js is gitignored. It is not
+        # inert output either — scripts/inline-wasm.mjs re-exports it from both
+        # the ./wasm and ./wasm-inline entries, so the WASM integration suites
+        # would run an implementation the release build does not ship.
+        #
+        # It is the one source file here for the same reason the whole of src/**
+        # is NOT in this key: a wasm miss costs a wasm-pack install and a cargo
+        # wasm32 build of the cipherstash-client graph, and 104 of the 122 files
+        # under src/ are the eql-v3-types declarations, which that tsconfig
+        # never reads. ffi-binding-action.test.mjs walks the tsconfig's imports
+        # and fails if this stops being the complete input set.
         key: >-
           ffi-wasm-${{ runner.os }}-${{
           hashFiles('packages/protect-ffi/crates/**',
           'packages/protect-ffi/Cargo.toml',
           'packages/protect-ffi/Cargo.lock',
           'packages/protect-ffi/dist/wasm/*.d.ts',
+          'packages/protect-ffi/src/errors.ts',
           'packages/protect-ffi/package.json',
           'packages/protect-ffi/mise.toml',
           'packages/protect-ffi/tsconfig.wasm-errors.json',
