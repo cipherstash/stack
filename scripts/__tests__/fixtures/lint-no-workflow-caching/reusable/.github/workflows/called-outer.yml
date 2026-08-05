@@ -1,0 +1,7 @@
+name: Called Outer
+on:
+  workflow_call:
+jobs:
+  forward:
+    uses: ./.github/workflows/called-cache.yml
+    secrets: inherit

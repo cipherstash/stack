@@ -1,0 +1,10 @@
+name: Reusable Input Named Cache
+on:
+  push:
+    tags: ['v*']
+jobs:
+  publish:
+    uses: ./.github/workflows/called-input-named-cache.yml
+    secrets: inherit
+    with:
+      cache: true

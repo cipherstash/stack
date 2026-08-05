@@ -1,0 +1,11 @@
+# The shape that matters: a credential-bearing publishing job that is nothing
+# but a call into another workflow. It has no `steps:` at all, so the gate used
+# to iterate an empty list and print OK over a cache restore.
+name: Reusable Cache
+on:
+  push:
+    tags: ['v*']
+jobs:
+  publish:
+    uses: ./.github/workflows/called-cache.yml
+    secrets: inherit

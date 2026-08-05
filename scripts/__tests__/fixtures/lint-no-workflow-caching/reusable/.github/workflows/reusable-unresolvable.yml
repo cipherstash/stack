@@ -1,0 +1,8 @@
+name: Reusable Unresolvable
+on:
+  push:
+    tags: ['v*']
+jobs:
+  publish:
+    uses: ./.github/workflows/no-such-workflow.yml
+    secrets: inherit

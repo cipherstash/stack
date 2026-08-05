@@ -1,0 +1,8 @@
+name: Reusable Missing Explicit False
+on:
+  push:
+    tags: ['v*']
+jobs:
+  publish:
+    uses: ./.github/workflows/called-missing-explicit-false.yml
+    secrets: inherit

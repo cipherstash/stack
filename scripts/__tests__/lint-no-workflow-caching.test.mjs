@@ -223,6 +223,143 @@ describe('lint-no-workflow-caching', () => {
     })
   })
 
+  // The second indirection the composite traversal left open. A job that calls
+  // a reusable workflow has no `steps:` — it is `jobs.<id>.uses` plus `with:` /
+  // `secrets:` — so `Array.isArray(job?.steps) ? job.steps : []` yielded an
+  // empty list and skipped the job whole. Verified before the fix against a
+  // caller whose job was `uses: ./.github/workflows/reusable.yml` with
+  // `secrets: inherit`, the called workflow holding an `actions/cache@v4` step:
+  // exit 0, `OK`, nothing scanned.
+  describe('reusable workflows', () => {
+    const rfx = (name) =>
+      resolve(
+        fileURLToPath(import.meta.url),
+        `../fixtures/lint-no-workflow-caching/reusable/.github/workflows/${name}`,
+      )
+
+    it('follows a job-level `uses:` into the called workflow', () => {
+      const r = run(rfx('reusable-cache.yml'))
+      expect(r.exitCode).toBe(1)
+      expect(r.output).toMatch(/actions\/cache@/)
+    })
+
+    // The called workflow adds a job of its own between the caller's job and
+    // the step, so a message that names only the caller job sends the reader to
+    // a file with no `actions/cache` in it — and, worse, no `steps:` either.
+    it('names the caller job, the called workflow, and its job and step', () => {
+      const r = run(rfx('reusable-cache.yml'))
+      expect(r.output).toMatch(
+        /job "publish" -> \.github\/workflows\/called-cache\.yml job "release" step "Restore the compiled binding"/,
+      )
+    })
+
+    // The case that proves the two traversals compose rather than each handling
+    // only its own shape: the workflow hop lands on a job whose step hands off
+    // to a local composite, and the cache is inside that.
+    it('composes with the composite traversal: workflow -> composite -> cache', () => {
+      const r = run(rfx('reusable-composite.yml'))
+      expect(r.exitCode).toBe(1)
+      expect(r.output).toMatch(
+        /job "publish" -> \.github\/workflows\/called-composite\.yml job "build" step "Build the protect-ffi binding" -> \.github\/actions\/cachey\/action\.yml step "Restore the compiled binding"/,
+      )
+    })
+
+    it('follows a called workflow that itself calls a called workflow', () => {
+      const r = run(rfx('reusable-nested.yml'))
+      expect(r.exitCode).toBe(1)
+      expect(r.output).toMatch(
+        /job "publish" -> \.github\/workflows\/called-outer\.yml job "forward" -> \.github\/workflows\/called-cache\.yml job "release" step "Restore the compiled binding"/,
+      )
+    })
+
+    // Same reasoning 402af3f3 recorded for composites: the called workflow's
+    // steps default the same way, so exempting them would make "move the step
+    // into a reusable workflow" a supported way out of the rule — one level up
+    // from the way out that commit closed.
+    it('applies the explicit-`false` rules inside a called workflow', () => {
+      const r = run(rfx('reusable-missing-explicit-false.yml'))
+      expect(r.exitCode).toBe(1)
+      expect(r.output).toMatch(/pnpm\/action-setup/)
+      expect(r.output).toMatch(/package-manager-cache/)
+    })
+
+    it('passes on a called workflow that disables caching explicitly', () => {
+      expect(run(rfx('reusable-clean.yml')).exitCode).toBe(0)
+    })
+
+    // A job-level `with:` is inputs to the called workflow, not `with:` on an
+    // action step. Running the step rules over the job object would flag this
+    // caller for passing `cache: true` to an input named `cache` — a finding
+    // about nothing, in the file least able to act on it.
+    it('does not read a called workflow`s inputs as step inputs', () => {
+      expect(run(rfx('reusable-input-named-cache.yml')).exitCode).toBe(0)
+    })
+
+    // The verdict does not turn on how credentials reach the called workflow.
+    // `secrets:` is not the only channel — `permissions:` is inherited
+    // independently, and that is what mints the OIDC token npm trusted
+    // publishing signs with, so a call passing no secrets at all can still
+    // publish. A restore also does not need credentials in its own job to be
+    // the attack: poisoned bytes landing in a build job that hands an artifact
+    // to a publish job is the canonical shape. Conditioning on `secrets:` would
+    // buy nothing and hand an attacker a phrasing that evades the gate.
+    it('flags the cache however credentials are passed, or not passed', () => {
+      for (const name of [
+        'reusable-cache.yml', // secrets: inherit
+        'reusable-explicit-secrets.yml', // secrets: {NPM_TOKEN: ...}
+        'reusable-no-secrets.yml', // no secrets: key at all
+      ]) {
+        expect(run(rfx(name)).exitCode, name).toBe(1)
+      }
+    })
+
+    // `execFileSync` has no timeout here, so an unguarded cycle hangs the suite
+    // rather than failing it. The count is the real assertion — a visited set
+    // that does not span the workflow hops terminates but re-reports the cache
+    // once per path into it.
+    it('terminates on a cyclic reusable reference, reporting once', () => {
+      const r = run(rfx('reusable-cyclic.yml'))
+      expect(r.exitCode).toBe(1)
+      expect(r.output).toMatch(/Found 1 caching issue/)
+    })
+
+    it('exits 2 when a job-level `uses:` resolves to no workflow file', () => {
+      const r = run(rfx('reusable-unresolvable.yml'))
+      expect(r.exitCode).toBe(2)
+      expect(r.output).toMatch(/no-such-workflow/)
+    })
+
+    // A remote reusable workflow is reported, where a remote *step* action is
+    // skipped, and the difference is coverage rather than depth. A marketplace
+    // step sits inside a job whose step list the gate has read end to end; the
+    // residual risk is bounded, and reporting every `actions/checkout@v6` would
+    // make the gate exit 2 forever and mean nothing. A remote job-level `uses:`
+    // is the whole job — the gate reads no steps, reaches no verdict, and
+    // prints OK anyway. That is the exact failure this file exists to stop: a
+    // check that never ran reads like a check that passed. It is also
+    // actionable and rare (zero today), so the report is signal, not noise —
+    // inline the job, or point it at a workflow in this checkout.
+    it('reports a remote reusable workflow as un-auditable rather than passing it', () => {
+      const r = run(rfx('reusable-remote.yml'))
+      expect(r.exitCode).toBe(2)
+      expect(r.output).toMatch(/osv-scanner-reusable\.yml@v2\.3\.8/)
+      expect(r.output).toMatch(/not in this checkout/)
+    })
+
+    // Never reached on GitHub — the schema rejects `steps:` and `uses:` on one
+    // job — but this gate runs on files GitHub has not validated yet. Treating
+    // either key as authoritative would let an invalid file hide a cache behind
+    // the key the gate chose to ignore and still report a pass, so both are
+    // checked and both are counted.
+    it('checks both halves of a job carrying `steps:` and `uses:`', () => {
+      const r = run(rfx('reusable-both.yml'))
+      expect(r.exitCode).toBe(1)
+      expect(r.output).toMatch(/Found 2 caching issue/)
+      expect(r.output).toMatch(/step "Restore the toolchain"/)
+      expect(r.output).toMatch(/called-cache\.yml job "release"/)
+    })
+  })
+
   it('the target workflows contain no `actions/cache` step', () => {
     for (const target of TARGET_WORKFLOWS) {
       const doc = yaml.load(readFileSync(resolve(REPO_ROOT, target), 'utf8'))

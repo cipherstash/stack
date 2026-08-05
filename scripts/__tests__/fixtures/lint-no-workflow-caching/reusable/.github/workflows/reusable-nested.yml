@@ -1,0 +1,8 @@
+name: Reusable Nested
+on:
+  push:
+    tags: ['v*']
+jobs:
+  publish:
+    uses: ./.github/workflows/called-outer.yml
+    secrets: inherit

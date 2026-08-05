@@ -1,0 +1,7 @@
+name: Called Loop A
+on:
+  workflow_call:
+jobs:
+  a:
+    uses: ./.github/workflows/called-loop-b.yml
+    secrets: inherit

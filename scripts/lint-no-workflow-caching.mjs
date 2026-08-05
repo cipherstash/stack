@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import yaml from 'js-yaml'
 
@@ -156,6 +156,101 @@ function walkSteps(steps, prefix, workspaceRoot, visited) {
   })
 }
 
+// Unlike an action, a reusable workflow is named by its file, extension and
+// all (`./.github/workflows/x.yml`), so there is no `.yml`/`.yaml` probing to
+// do here — the path is exact. `isFile` is the guard that matters instead: a
+// path that exists as a directory would otherwise reach `readFileSync` and
+// abort the run with an unhandled EISDIR, which is a worse outcome than the
+// report below.
+function resolveWorkflowFile(workspaceRoot, usesPath) {
+  const file = resolve(workspaceRoot, usesPath)
+  return existsSync(file) && statSync(file).isFile() ? file : null
+}
+
+// Follows `jobs.<id>.uses:` — a job that delegates its whole body to another
+// workflow.
+//
+// WHY: such a job has no `steps:` at all, so the loop below used to hand
+// `walkSteps` an empty list and skip the job entire. Confirmed before this
+// existed against a caller whose only job was
+// `uses: ./.github/workflows/reusable.yml` with `secrets: inherit`, the called
+// workflow holding an `actions/cache@v4` step: exit 0, `OK`, nothing scanned.
+// Same failure the composite traversal closed, one shape over.
+//
+// The verdict deliberately ignores `secrets:`. It is not the only credential
+// channel — `permissions:` is inherited independently, and that is what mints
+// the OIDC token npm trusted publishing signs with, so a call passing no
+// secrets can still publish. Nor does a restore need credentials in its own job
+// to be the attack: poisoned bytes landing in a build job that hands an
+// artifact to a publish job is the canonical shape. Conditioning on `secrets:`
+// would prevent no failure and would hand an attacker a phrasing that evades
+// the gate.
+function followReusableWorkflow(uses, prefix, workspaceRoot, visited) {
+  // A remote reusable workflow is reported, where `walkSteps` skips a remote
+  // *step* action, and the difference is coverage rather than depth. A
+  // marketplace step sits inside a job whose step list this gate has read end
+  // to end; flagging every `actions/checkout@v6` would make it exit 2 forever
+  // and mean nothing. A remote job-level `uses:` is the whole job — no steps
+  // read, no verdict reached, `OK` printed anyway, which is precisely the
+  // "a check that never ran reads like a check that passed" failure this file
+  // exists to stop. It is rare (zero in this repo today) and actionable —
+  // inline the job, or point it at a workflow in this checkout — so the report
+  // is signal rather than noise.
+  if (!LOCAL_USES.test(uses)) {
+    unresolved.push(
+      `${prefix}: \`uses: ${uses}\` — a remote reusable workflow; its jobs are not in this checkout`,
+    )
+    return
+  }
+
+  const file = resolveWorkflowFile(workspaceRoot, uses)
+  if (file === null) {
+    unresolved.push(`${prefix}: \`uses: ${uses}\` — no workflow file there`)
+    return
+  }
+  if (visited.has(file)) return
+  visited.add(file)
+
+  // One `visited` spans both node types, so `a.yml -> b.yml -> a.yml`
+  // terminates the same way `a -> b -> a` does between composites.
+  const doc = yaml.load(readFileSync(file, 'utf8'))
+  for (const [jobName, job] of Object.entries(doc?.jobs ?? {})) {
+    walkJob(
+      job,
+      `${prefix} -> ${relative(workspaceRoot, file)} job "${jobName}"`,
+      workspaceRoot,
+      visited,
+    )
+  }
+}
+
+// A job is one of two shapes, and the recursion has to know both: `steps:` (a
+// normal job, and the shape a composite's `runs.steps` also has) or `uses:` (a
+// call into another workflow, whose own jobs are either shape again).
+//
+// Both are checked rather than one being chosen. Carrying both keys is invalid
+// to GitHub's schema, which rejects the file outright — but this gate runs on
+// files GitHub has not validated yet, and treating either key as authoritative
+// would let such a file hide a cache behind the key the gate ignored and still
+// report a pass.
+//
+// The job object itself is never passed to `checkStep`: at job level `with:` is
+// inputs to the called workflow, not `with:` on an action step, so the step
+// rules would flag a caller for passing `cache: true` to an input that
+// switches something else on entirely.
+function walkJob(job, prefix, workspaceRoot, visited) {
+  walkSteps(
+    Array.isArray(job?.steps) ? job.steps : [],
+    prefix,
+    workspaceRoot,
+    visited,
+  )
+
+  if (typeof job?.uses === 'string') {
+    followReusableWorkflow(job.uses, prefix, workspaceRoot, visited)
+  }
+}
+
 for (const target of TARGETS) {
   const abs = resolve(REPO_ROOT, target)
   const rel = relative(REPO_ROOT, abs)
@@ -163,20 +258,20 @@ for (const target of TARGETS) {
   const doc = yaml.load(readFileSync(abs, 'utf8'))
   const jobs = doc?.jobs ?? {}
   for (const [jobName, job] of Object.entries(jobs)) {
-    const steps = Array.isArray(job?.steps) ? job.steps : []
-    walkSteps(steps, `${rel}: job "${jobName}"`, workspaceRoot, new Set())
+    walkJob(job, `${rel}: job "${jobName}"`, workspaceRoot, new Set())
   }
 }
 
 if (unresolved.length > 0) {
-  console.error(
-    `Found ${unresolved.length} unresolvable local action reference(s):\n`,
-  )
+  console.error(`Found ${unresolved.length} un-auditable reference(s):\n`)
   for (const u of unresolved) console.error(`  ${u}`)
   console.error(
-    '\nA `uses:` pointing at nothing fails the job on GitHub anyway, and until\n' +
-      'it is fixed this gate cannot prove the steps behind it are cache-free.\n' +
-      'Skipping it silently would turn a typo into a permanent exemption.',
+    '\nEach of these hands this gate a step list it cannot open, so it cannot\n' +
+      'prove those steps are cache-free. A local `uses:` pointing at nothing\n' +
+      'fails the job on GitHub anyway; a remote reusable workflow runs fine and\n' +
+      'audits nothing at all. Passing either silently would turn it into a\n' +
+      'permanent exemption — fix the path, inline the job, or point it at a\n' +
+      'workflow in this checkout.',
   )
   // Exit 2, not 1: nothing was found caching — the linter could not look. Same
   // contract as lint-no-hardcoded-runners.mjs uses for a missing scan target.
@@ -191,8 +286,8 @@ if (offenders.length > 0) {
       'cache-poisoning / supply-chain vector for credential-bearing jobs.\n' +
       'Caching must be disabled explicitly (`cache: false`,\n' +
       '`package-manager-cache: false`), including inside any local composite\n' +
-      'action they use. See the "CI/CD Supply-Chain Hardening" section of\n' +
-      'SECURITY.md.',
+      'action or reusable workflow they reach. See the "CI/CD Supply-Chain\n' +
+      'Hardening" section of SECURITY.md.',
   )
   process.exit(1)
 }

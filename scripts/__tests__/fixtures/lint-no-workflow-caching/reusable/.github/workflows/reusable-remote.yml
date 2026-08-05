@@ -1,0 +1,13 @@
+# The reference is the one live job-level `uses:` in this repo, lifted from
+# .github/workflows/osv-scanner.yml, with `secrets: inherit` added to make the
+# hazard shape explicit. osv-scanner.yml is not a target of this gate; this
+# fixture is about what the gate should say if a *publishing* workflow ever
+# delegates a whole job off this filesystem.
+name: Reusable Remote
+on:
+  push:
+    tags: ['v*']
+jobs:
+  publish:
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.8
+    secrets: inherit
