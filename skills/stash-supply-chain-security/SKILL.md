@@ -133,7 +133,8 @@ Constraints baked into that workflow — don't undo them:
 - **`runs-on: ubuntu-latest`, not a self-hosted/Blacksmith runner.** npm rejects provenance from non-GitHub-hosted runners with E422.
 - **Never set `NPM_TOKEN`.** `changesets/action` writes a token `.npmrc` when it sees one, which shadows OIDC and fails every publish with E404 (npm/cli#8976).
 - **npm ≥ 11.5.1 and Node ≥ 22.14.** Node 22 ships npm 10.x, so the workflow installs `npm@^11.5.1` explicitly before publishing.
-- **No Actions cache in this workflow** (no `cache:`, `package-manager-cache: false`, `pnpm/action-setup` with `cache: false`). A poisoned cache entry would execute in a credential-bearing job. Enforced by `scripts/lint-no-workflow-caching.mjs`.
+- **No Actions cache in this workflow** (no `cache:`, `package-manager-cache: false`, `pnpm/action-setup` with `cache: false`). A poisoned cache entry would execute in a credential-bearing job. Enforced by `scripts/lint-no-workflow-caching.mjs`, which also follows any local composite action or reusable workflow the job reaches — the rule is about the whole call tree, not the one file.
+- **Every published `uses:` must be in that script's `AUDITED_ACTIONS` allowlist.** The gate cannot open a published action to check whether it caches, and the ones that do are not all named "cache" — a `setup-<tool>` action that caches by default has no `cache:` input and no telling name. So the list is what is *permitted*, and an action it has never met fails by default. Adding a step to `release.yml` or `tests-supply-chain.yml` means auditing the action and adding it there with the reason, in the same PR.
 
 Trusted publishing is configured **per package** on npmjs.com (package settings →
 Trusted publisher → GitHub Actions): owner/repo `cipherstash/stack`, workflow
