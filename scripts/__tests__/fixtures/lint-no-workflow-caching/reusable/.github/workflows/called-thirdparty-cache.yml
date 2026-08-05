@@ -1,0 +1,11 @@
+name: Called Third Party Cache
+on:
+  workflow_call:
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Restore the Cargo build
+        uses: Swatinem/rust-cache@v2
+      - run: pnpm changeset:publish

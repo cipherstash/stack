@@ -1,0 +1,27 @@
+# The gap this fixture pins: neither of these steps matches
+# `^actions/cache(/(restore|save))?@`, and neither carries a `cache:` input for
+# the `with.cache` rule to read. Both restore the GitHub Actions cache anyway.
+#
+# Not hypothetical. This repo runs eleven jobs on `blacksmith-*` runners, where
+# `useblacksmith/cache` is the documented drop-in for `actions/cache`, and it
+# has just absorbed a Cargo workspace at `packages/protect-ffi`, where
+# `Swatinem/rust-cache` is the conventional choice. Either could be added by
+# someone who reasonably believed this gate would catch the mistake.
+name: Third Party Cache
+on:
+  push:
+    tags: ['v*']
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Restore the compiled binding
+        uses: useblacksmith/cache@v5
+        with:
+          path: index.node
+          key: binding-${{ runner.os }}
+      # No `with:` at all — there is no input here for any rule to inspect.
+      - name: Restore the Cargo build
+        uses: Swatinem/rust-cache@v2
+      - run: pnpm changeset:publish

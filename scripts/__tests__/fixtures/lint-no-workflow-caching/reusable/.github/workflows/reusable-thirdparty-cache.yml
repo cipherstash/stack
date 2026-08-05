@@ -1,0 +1,8 @@
+name: Reusable Third Party Cache
+on:
+  push:
+    tags: ['v*']
+jobs:
+  publish:
+    uses: ./.github/workflows/called-thirdparty-cache.yml
+    secrets: inherit

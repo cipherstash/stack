@@ -182,9 +182,34 @@ describe('lint-no-workflow-caching', () => {
     })
 
     // Marketplace and `docker://` references have no `action.yml` on this
-    // filesystem. Exit 0 is the assertion that the traversal never tried.
-    it('skips `uses:` values that are not local paths', () => {
-      expect(run(cfx('third-party-uses.yml')).exitCode).toBe(0)
+    // filesystem, and the traversal must not try to open them — a traversal
+    // that treats every `uses:` as a path fails here rather than on the
+    // composite fixtures.
+    //
+    // The assertion used to be exit 0. It is no longer, because the allowlist
+    // below reports each of these as unaudited; what is asserted instead is the
+    // property this test was written for, and more directly than exit 0 did:
+    // no message says the path could not be opened. Exit 1, not 2, is the other
+    // half — the gate reached a verdict on every step, it did not fail to look.
+    it('never tries to open a `uses:` that is not a local path', () => {
+      const r = run(cfx('third-party-uses.yml'))
+      expect(r.exitCode).toBe(1)
+      expect(r.output).not.toMatch(/no action\.yml or action\.yaml there/)
+      expect(r.output).toMatch(/docker:\/\/alpine:3\.19/)
+    })
+
+    // GitHub trims a `uses:` before resolving it. Untrimmed, `" ./x"` fails the
+    // `^\.{1,2}/` test, so the composite was never opened — and nothing was
+    // reported either, making this the one unfollowable local reference shape
+    // that exited 0 instead of 2. Trimming makes it followable, which is the
+    // right outcome: this is a valid reference GitHub runs.
+    it('follows a local composite whose `uses:` has leading whitespace', () => {
+      const r = run(cfx('composite-leading-space.yml'))
+      expect(r.exitCode).toBe(1)
+      expect(r.output).toMatch(/actions\/cache@/)
+      expect(r.output).toMatch(
+        /\.github\/actions\/cachey\/action\.yml step "Restore the compiled binding"/,
+      )
     })
 
     // Exit 2, not 1: nothing was found to be caching, the linter simply could
@@ -357,6 +382,116 @@ describe('lint-no-workflow-caching', () => {
       expect(r.output).toMatch(/Found 2 caching issue/)
       expect(r.output).toMatch(/step "Restore the toolchain"/)
       expect(r.output).toMatch(/called-cache\.yml job "release"/)
+    })
+  })
+
+  // The gap both traversals ran straight past. `CACHE_ACTION` recognised only
+  // GitHub's first-party cache action, and the `with.cache` rule only fires on
+  // an action that takes a `cache:` input — so a third-party cache action with
+  // neither was invisible to every rule in the file. Reproduced before the fix
+  // against a composite reached from a targeted workflow holding
+  // `useblacksmith/cache@v5` and `Swatinem/rust-cache@v2`: `OK`, exit 0.
+  //
+  // The fix is not two more names on a regex. See the ALLOWLIST RATIONALE in
+  // the script: every remote `uses:` reachable from a targeted workflow must be
+  // on `AUDITED_ACTIONS`, so the gate fails CLOSED on an action it has never
+  // met — which is the only posture that survives the next vendor.
+  describe('third-party cache actions and unaudited `uses:`', () => {
+    const cfx = (name) =>
+      resolve(
+        fileURLToPath(import.meta.url),
+        `../fixtures/lint-no-workflow-caching/composites/.github/workflows/${name}`,
+      )
+    const rfx = (name) =>
+      resolve(
+        fileURLToPath(import.meta.url),
+        `../fixtures/lint-no-workflow-caching/reusable/.github/workflows/${name}`,
+      )
+
+    it('flags a third-party cache action at workflow level', () => {
+      const r = run(fx('thirdparty-cache.yml'))
+      expect(r.exitCode).toBe(1)
+      expect(r.output).toMatch(/useblacksmith\/cache@v5/)
+      expect(r.output).toMatch(/Swatinem\/rust-cache@v2/)
+    })
+
+    // Two rules could fire on `useblacksmith/cache`: it is cache-shaped AND it
+    // is unaudited. The cache-shaped message wins, because "this restores a
+    // cache" is what the reader needs to act on — "this is not on a list"
+    // invites adding it to the list.
+    it('names a cache-shaped action as a cache, not merely as unaudited', () => {
+      const r = run(fx('thirdparty-cache.yml'))
+      expect(r.output).toMatch(
+        /useblacksmith\/cache@v5` — a third-party cache action/,
+      )
+    })
+
+    // `Swatinem/rust-cache` is the check the shape heuristic had to survive: a
+    // segment-equality test (`owner/cache`) misses it, a substring test does
+    // not. Verified, not assumed.
+    it('flags a cache action whose name is not exactly `cache`', () => {
+      const r = run(fx('cache-family.yml'))
+      expect(r.exitCode).toBe(1)
+      for (const name of [
+        'buildjet/cache',
+        'runs-on/cache',
+        'tespkg/actions-cache',
+      ]) {
+        expect(r.output, name).toContain(name)
+      }
+    })
+
+    // The case the allowlist exists for, and the argument against a denylist of
+    // any kind. `gradle/actions/setup-gradle` caches by default, has no `cache:`
+    // input, and has no "cache" in its name — so no enumeration of cache
+    // actions can see it. The message must say unaudited, not cache: claiming
+    // it caches would be a guess, and the finding is true either way.
+    it('flags a caching setup action that no cache-name rule could see', () => {
+      const r = run(fx('unaudited-setup.yml'))
+      expect(r.exitCode).toBe(1)
+      expect(r.output).toMatch(/gradle\/actions\/setup-gradle@v4/)
+      expect(r.output).toMatch(/AUDITED_ACTIONS/)
+      expect(r.output).not.toMatch(/setup-gradle@v4` — a third-party cache/)
+    })
+
+    // Over-trigger guard. Every `uses:` here is allowlisted and none caches,
+    // `changesets/action` most of all: it is third-party, it is real
+    // (release.yml's publish step), and its name is nowhere near "cache". A
+    // rule that fired here would fire on the live release workflow — which is
+    // what the two live-target assertions above independently confirm.
+    it('does not flag audited actions, including third-party ones', () => {
+      expect(run(fx('audited-actions.yml')).exitCode).toBe(0)
+    })
+
+    it('flags a third-party cache action inside a local composite', () => {
+      const r = run(cfx('composite-thirdparty-cache.yml'))
+      expect(r.exitCode).toBe(1)
+      expect(r.output).toMatch(
+        /step "Build the protect-ffi binding" -> \.github\/actions\/thirdparty-cache\/action\.yml step "Restore the compiled binding"/,
+      )
+      expect(r.output).toMatch(/useblacksmith\/cache@v5/)
+    })
+
+    it('flags a third-party cache action inside a reusable workflow', () => {
+      const r = run(rfx('reusable-thirdparty-cache.yml'))
+      expect(r.exitCode).toBe(1)
+      expect(r.output).toMatch(
+        /job "publish" -> \.github\/workflows\/called-thirdparty-cache\.yml job "release" step "Restore the Cargo build"/,
+      )
+      expect(r.output).toMatch(/Swatinem\/rust-cache@v2/)
+    })
+
+    // A local `uses:` is exempt from the allowlist because this gate opens it
+    // and reads every step — it is audited by construction, not trusted. Losing
+    // that exemption would report `./.github/actions/cachey` as unaudited *as
+    // well as* the `actions/cache@v4` inside it, burying the finding that
+    // matters under one about the wrapper. The count is the assertion; grepping
+    // the output for `AUDITED_ACTIONS` would only find the epilogue, which
+    // names it unconditionally.
+    it('does not report a local composite as unaudited', () => {
+      const r = run(cfx('composite-cache.yml'))
+      expect(r.output).toMatch(/Found 1 caching issue/)
+      expect(r.output).toMatch(/actions\/cache@/)
     })
   })
 
