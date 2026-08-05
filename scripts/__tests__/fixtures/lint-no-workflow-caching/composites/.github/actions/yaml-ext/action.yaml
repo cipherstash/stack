@@ -1,0 +1,10 @@
+name: Yaml Ext
+description: Spelled `action.yaml`, which GitHub accepts alongside `action.yml`.
+runs:
+  using: composite
+  steps:
+    - name: Restore the compiled binding
+      uses: actions/cache@v4
+      with:
+        path: index.node
+        key: binding-${{ runner.os }}

@@ -1,0 +1,7 @@
+name: Outer
+description: A composite whose only job is to call another composite.
+runs:
+  using: composite
+  steps:
+    - name: Delegate to the inner composite
+      uses: ./.github/actions/cachey

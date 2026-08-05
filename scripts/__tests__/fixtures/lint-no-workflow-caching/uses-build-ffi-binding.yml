@@ -1,0 +1,17 @@
+# The exact edit `.github/actions/build-ffi-binding/action.yml` warns against in
+# its "DO NOT USE FROM A PUBLISHING WORKFLOW" header: a credential-bearing
+# publishing job pulling the binding in through the composite. `uses:` here
+# names the real action in this repo, so the test that lints this file proves
+# the header's claim rather than restating it.
+name: Uses Build Ffi Binding
+on:
+  push:
+    tags: ['v*']
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/build-ffi-binding
+      - run: pnpm changeset:publish

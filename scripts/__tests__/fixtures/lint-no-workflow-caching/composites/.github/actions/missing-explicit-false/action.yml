@@ -1,0 +1,12 @@
+name: Missing Explicit False
+description: Sets up the toolchain but never says what it wants from the cache.
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v6
+      with:
+        run_install: false
+    - name: Install Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: 22
