@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 
 const SCRIPT = resolve(
   fileURLToPath(import.meta.url),
@@ -29,6 +30,11 @@ const fx = (name) =>
     fileURLToPath(import.meta.url),
     `../fixtures/lint-no-ffi-changeset/${name}`,
   )
+
+const tempDirs = []
+afterAll(() => {
+  for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true })
+})
 
 describe('lint-no-ffi-changeset', () => {
   it('passes against the real .changeset directory', () => {
@@ -74,6 +80,43 @@ describe('lint-no-ffi-changeset', () => {
     const { output } = run(fx('offending'))
     expect(output).toMatch('brave-lion-jump.md')
     expect(output).toMatch('quiet-moth-wait.md')
+  })
+
+  it('catches an FFI package named on any frontmatter line, not just the first', () => {
+    // The likeliest real offender by some distance: one `pnpm changeset` run
+    // that selects the package you changed AND protect-ffi, which writes both
+    // into a single block. Every other fixture here names exactly one package
+    // on line one, so a parser that read only the first line of frontmatter
+    // passed this whole suite — mutation-tested by appending `.slice(0, 1)`
+    // to the frontmatter split: 10/10 still green. `darwin-arm64` appears in
+    // no other fixture, so matching it proves the second line was read.
+    const { exitCode, output } = run(fx('offending'))
+    expect(exitCode).toBe(1)
+    expect(output).toMatch('@cipherstash/protect-ffi-darwin-arm64')
+    expect(output).toMatch('wise-crane-list.md')
+  })
+
+  it('parses a changeset checked out with CRLF line endings', () => {
+    // `packagesIn` spells its line breaks `\r?\n` in both the frontmatter
+    // regex and the split — deliberate, because a Windows checkout with
+    // `core.autocrlf=true` yields CRLF, and this repo has no `.gitattributes`
+    // forcing otherwise. Nothing exercised it: dropping both `\r?` left the
+    // suite green, and the guard would then wave through every changeset
+    // written on Windows.
+    //
+    // Generated rather than committed for the same reason it needs testing —
+    // a CRLF fixture in git is one `autocrlf=true` commit away from being
+    // silently normalised to LF, which would disarm this test without a diff.
+    const dir = mkdtempSync(join(tmpdir(), 'ffi-changeset-crlf-'))
+    tempDirs.push(dir)
+    writeFileSync(
+      join(dir, 'tidy-vole-climb.md'),
+      "---\r\n'@cipherstash/stack': patch\r\n'@cipherstash/protect-ffi-linux-arm64-gnu': patch\r\n---\r\n\r\nWritten on Windows.\r\n",
+    )
+
+    const { exitCode, output } = run(dir)
+    expect(exitCode).toBe(1)
+    expect(output).toMatch('@cipherstash/protect-ffi-linux-arm64-gnu')
   })
 
   it('ignores an FFI package named only in the prose body', () => {

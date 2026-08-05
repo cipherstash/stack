@@ -44,25 +44,38 @@ const BUILD_FFI = './.github/actions/build-ffi-binding'
 const REQUIRE_SECRETS = './.github/actions/require-cs-secrets'
 
 /**
- * The workflows that pair the two actions today. This is NOT the list the
- * checks iterate — those scan the directory — it is the guard on the scan
- * itself. A discovery test that matches zero files passes and proves nothing,
- * and this repo has been bitten by that shape before (see the exit-2 "the
- * linter could not run" contract in `scripts/lint-no-hardcoded-runners.mjs`,
- * and `lintWiring.test.ts`'s "a check nothing invokes reads exactly like a
- * check that passes").
+ * The JOBS that pair the two actions today. This is NOT the list the checks
+ * iterate — those scan the directory — it is the guard on the scan itself. A
+ * discovery test that matches nothing passes and proves nothing, and this repo
+ * has been bitten by that shape before (see the exit-2 "the linter could not
+ * run" contract in `scripts/lint-no-hardcoded-runners.mjs`, and
+ * `lintWiring.test.ts`'s "a check nothing invokes reads exactly like a check
+ * that passes").
  *
- * Held as a minimum, not an equality: adding a workflow that builds the
- * binding must not fail this. If one of these is renamed or genuinely stops
- * needing the binding, update the list deliberately.
+ * Jobs, not files, and that distinction is the whole guard. The ordering check
+ * below is generated per paired job, so deleting a job's pre-flight does not
+ * fail it — it deletes it. A file-granular list cannot see that: drop the
+ * `Require CipherStash secrets` step from `tests.yml`'s `wasm-e2e-tests` job
+ * and `tests.yml` is still paired via `run-tests`, so the file is still found,
+ * the count still clears its floor, and the suite goes green having stopped
+ * checking the single most expensive job in the repo — the one that builds the
+ * binding with `wasm: 'true'`, i.e. the cold compile this pre-flight exists to
+ * stay ahead of. Mutation-tested: that deletion took the suite from 9 tests to
+ * 8 passing, with nothing red.
+ *
+ * Held as a minimum, not an equality: adding a job that builds the binding
+ * must not fail this. If one is renamed or genuinely stops needing the
+ * binding, update the list deliberately.
  */
-const EXPECTED_PAIRED_WORKFLOWS = [
-  '.github/workflows/integration-drizzle.yml',
-  '.github/workflows/integration-prisma-next.yml',
-  '.github/workflows/integration-supabase.yml',
-  '.github/workflows/prisma-example-readme-e2e.yml',
-  '.github/workflows/prisma-next-e2e.yml',
-  '.github/workflows/tests.yml',
+const EXPECTED_PAIRED_JOBS = [
+  '.github/workflows/integration-drizzle.yml / integration',
+  '.github/workflows/integration-prisma-next.yml / integration',
+  '.github/workflows/integration-protect-ffi.yml / integration',
+  '.github/workflows/integration-supabase.yml / integration',
+  '.github/workflows/prisma-example-readme-e2e.yml / walkthrough',
+  '.github/workflows/prisma-next-e2e.yml / e2e',
+  '.github/workflows/tests.yml / run-tests',
+  '.github/workflows/tests.yml / wasm-e2e-tests',
 ]
 
 function workflowFiles() {
@@ -104,23 +117,27 @@ function pairedJobs(relPath) {
 }
 
 const PAIRED = workflowFiles().flatMap(pairedJobs)
-const PAIRED_FILES = [...new Set(PAIRED.map((entry) => entry.relPath))].sort()
+const PAIRED_JOB_IDS = PAIRED.map(
+  (entry) => `${entry.relPath} / ${entry.jobName}`,
+)
 
 describe('protect-ffi binding builds after the secrets pre-flight', () => {
-  it('finds the workflows that pair the two actions', () => {
+  it('finds the jobs that pair the two actions', () => {
     // The guard on the scan. Without it, a rename of either action path (or a
     // js-yaml parse that quietly returned undefined) would empty `PAIRED` and
     // every check below would pass by vacuum.
-    const missing = EXPECTED_PAIRED_WORKFLOWS.filter(
-      (file) => !PAIRED_FILES.includes(file),
+    //
+    // No separate count assertion: job ids are unique, so an empty `missing`
+    // already means every expected job was found. A `PAIRED.length >= N`
+    // floor is what let the `wasm-e2e-tests` deletion through — it had slack
+    // in it, and slack in a scan guard is where the un-run check hides.
+    const missing = EXPECTED_PAIRED_JOBS.filter(
+      (id) => !PAIRED_JOB_IDS.includes(id),
     )
     expect(
       missing,
-      `These workflows used both ${BUILD_FFI} and ${REQUIRE_SECRETS}, and the scan no longer sees them. Either an action path changed (update the constants in this file) or the pairing was removed deliberately (update EXPECTED_PAIRED_WORKFLOWS).`,
+      `These jobs used both ${BUILD_FFI} and ${REQUIRE_SECRETS}, and the scan no longer sees them. Either an action path changed (update the constants in this file), or a job's pre-flight was dropped — in which case the ordering check for it did not fail, it stopped existing. Restore the step, or update EXPECTED_PAIRED_JOBS deliberately.`,
     ).toEqual([])
-    expect(PAIRED.length).toBeGreaterThanOrEqual(
-      EXPECTED_PAIRED_WORKFLOWS.length,
-    )
   })
 
   for (const file of workflowFiles()) {
