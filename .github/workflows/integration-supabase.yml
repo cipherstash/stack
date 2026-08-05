@@ -55,8 +55,18 @@ on:
       # The Rust that produces every EQL payload these suites round-trip.
       # Absorbing protect-ffi put it in-tree, so a crate change can now
       # break them in a PR that touches no TypeScript at all.
+      #
+      # The manifests are here for the same reason as the sources: a
+      # dependency bump in Cargo.lock changes the compiled encryption core
+      # without touching a .rs file, and package.json / mise.toml carry the
+      # build scripts and the toolchain pin. Matching the filter in
+      # tests-rust.yml, which already covers all four.
       - 'packages/protect-ffi/crates/**'
       - 'packages/protect-ffi/src/**'
+      - 'packages/protect-ffi/Cargo.toml'
+      - 'packages/protect-ffi/Cargo.lock'
+      - 'packages/protect-ffi/package.json'
+      - 'packages/protect-ffi/mise.toml'
   pull_request:
     branches: ['**']
     paths:
@@ -103,8 +113,18 @@ on:
       # The Rust that produces every EQL payload these suites round-trip.
       # Absorbing protect-ffi put it in-tree, so a crate change can now
       # break them in a PR that touches no TypeScript at all.
+      #
+      # The manifests are here for the same reason as the sources: a
+      # dependency bump in Cargo.lock changes the compiled encryption core
+      # without touching a .rs file, and package.json / mise.toml carry the
+      # build scripts and the toolchain pin. Matching the filter in
+      # tests-rust.yml, which already covers all four.
       - 'packages/protect-ffi/crates/**'
       - 'packages/protect-ffi/src/**'
+      - 'packages/protect-ffi/Cargo.toml'
+      - 'packages/protect-ffi/Cargo.lock'
+      - 'packages/protect-ffi/package.json'
+      - 'packages/protect-ffi/mise.toml'
 
 jobs:
   integration:

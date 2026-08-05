@@ -61,7 +61,13 @@ runs:
       env:
         CS_CLIENT_KEY: ${{ inputs.client-key }}
       run: |
-        if printf '%s' "$CS_CLIENT_KEY" | grep -qE '^[0-9a-fA-F]+$' \
+        # `[[ =~ ]]` rather than a pipe into grep, because grep matches per
+        # LINE and `-q` succeeds when ANY line does: a value of
+        # "deadbeef\n<anything>" passed the old spelling whenever its total
+        # length was even, which is the one shape this step exists to reject.
+        # Bash anchors the whole string — a newline is not in the class, and
+        # `$` here is end-of-string, not end-of-line.
+        if [[ "$CS_CLIENT_KEY" =~ ^[0-9a-fA-F]+$ ]] \
           && [ $(( ${#CS_CLIENT_KEY} % 2 )) -eq 0 ]; then
           echo "CS_CLIENT_KEY is hex (${#CS_CLIENT_KEY} chars)."
           exit 0

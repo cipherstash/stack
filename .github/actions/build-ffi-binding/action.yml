@@ -48,11 +48,19 @@ runs:
       uses: actions/cache@v4
       with:
         path: packages/protect-ffi/index.node
+        # package.json and mise.toml are in the key because they are build
+        # INPUTS, not just metadata: `build:native` is `cargo-build` plus a
+        # `postcargo-build` hook (`neon dist < cargo.log`), both defined in
+        # package.json, and mise.toml pins the toolchain that compiles it.
+        # Edit either and the Rust hash is unchanged, so the cache hit skips
+        # the build step below and the job proceeds on a stale index.node.
         key: >-
           ffi-native-${{ runner.os }}-${{ runner.arch }}-${{
           hashFiles('packages/protect-ffi/crates/**',
           'packages/protect-ffi/Cargo.toml',
-          'packages/protect-ffi/Cargo.lock') }}
+          'packages/protect-ffi/Cargo.lock',
+          'packages/protect-ffi/package.json',
+          'packages/protect-ffi/mise.toml') }}
 
     # Always, hit or miss: `lib/` is `tsc` over `src/`, which is seconds, and
     # it tracks a different input set than the cached binary.
@@ -104,12 +112,23 @@ runs:
       uses: actions/cache@v4
       with:
         path: packages/protect-ffi/dist/wasm
+        # The last four are the same build-input argument as on the native key,
+        # and `build:wasm` is the longer pipeline of the two: wasm-pack, then
+        # `tsc -p tsconfig.wasm-errors.json`, then a `postbuild:wasm` hook
+        # running scripts/inline-wasm.mjs — which is what emits the
+        # protect_ffi_inline.js that stack's wasm-inline entry imports. An edit
+        # to the inliner with no Rust change is the likely one here, and it is
+        # exactly the edit a Rust-only hash cannot see.
         key: >-
           ffi-wasm-${{ runner.os }}-${{
           hashFiles('packages/protect-ffi/crates/**',
           'packages/protect-ffi/Cargo.toml',
           'packages/protect-ffi/Cargo.lock',
-          'packages/protect-ffi/dist/wasm/*.d.ts') }}
+          'packages/protect-ffi/dist/wasm/*.d.ts',
+          'packages/protect-ffi/package.json',
+          'packages/protect-ffi/mise.toml',
+          'packages/protect-ffi/tsconfig.wasm-errors.json',
+          'packages/protect-ffi/scripts/inline-wasm.mjs') }}
 
     # mise carries the pinned wasm-pack (see packages/protect-ffi/mise.toml)
     # and, run from that directory, trusts the nested config — a bare `mise`

@@ -215,9 +215,16 @@ and is shown exactly once. Give each environment its own minted set; see
 > names a character of the key and its offset).
 >
 > If every operation starts failing at construction after an upgrade, check
-> the encoding before anything else. Re-encode as hex, or drop
-> `CS_CLIENT_KEY` entirely and let the client read the profile store, which
-> is unaffected — only an explicitly supplied key is hex-only.
+> the encoding before anything else. **Re-encode the key as hex** — that fix
+> works on both entry points.
+>
+> On the native entry you may instead drop `CS_CLIENT_KEY` and let the client
+> read the profile store, which is unaffected: only an explicitly supplied key
+> is hex-only. That escape hatch does **not** exist on
+> `@cipherstash/stack/wasm-inline`, where `clientId` and `clientKey` are
+> required config and the edge runtimes it targets have no `~/.cipherstash` to
+> read. Dropping the variable there replaces one construction failure with
+> another; re-encoding is the only fix.
 
 ## Client lifetime (user-scoped strategies)
 

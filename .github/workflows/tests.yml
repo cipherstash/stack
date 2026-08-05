@@ -404,6 +404,19 @@ jobs:
         with:
           wasm: 'true'
 
+      # The only job that can run this: the type tests read the GENERATED
+      # dist/wasm/*.d.ts (wasm-bindgen emits them from the `typescript_type`
+      # attributes in crates/protect-ffi/src/wasm.rs) and those declarations
+      # import ../../lib/types.js, so it needs both halves of the step above.
+      # That is why it is exempt from protect-ffi's `test` entry point, which
+      # must pass in a fresh clone with no dist/ — and the exemption in
+      # src/lintWiring.test.ts asserts this step exists, because between the
+      # absorption and this line the check ran nowhere at all: the jobs its
+      # exemption named were the upstream copies under
+      # packages/protect-ffi/.github/, which GitHub never executes.
+      - name: Typecheck the generated WASM declarations
+        run: pnpm --filter @cipherstash/protect-ffi run test:typecheck:wasm
+
       # The Deno smoke test imports the locally-built dist/wasm-inline.js
       # via a file URL in e2e/wasm/deno.json — it needs a fresh build.
       - name: Build stack

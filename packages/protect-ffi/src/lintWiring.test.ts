@@ -28,6 +28,10 @@ const miseToml = read('mise.toml')
 // package — that was true of the deposited upstream copy this used to read,
 // which made the CI assertion below vacuous from the day of the absorption.
 const testWorkflow = read('../../.github/workflows/tests-rust.yml')
+// Every other root workflow an exempted script may hang off. Same rule as
+// above: root only. A script "run by CI" according to a file under
+// packages/protect-ffi/.github/ is a script nothing runs.
+const rootWorkflows = testWorkflow + read('../../.github/workflows/tests.yml')
 
 /**
  * Script names reachable from `root`, following `pnpm run` / `npm run`
@@ -74,12 +78,20 @@ function reachableFromAnyEntryPoint(): Set<string> {
 /**
  * Checks no entry point is expected to run, each with its reason. Anything
  * added here is a deliberate carve-out, which is the point of making it a list.
+ *
+ * A carve-out still has to run SOMEWHERE, and the test below enforces that by
+ * requiring the script's name to appear in a root workflow. Without it this
+ * list is a way to launder an orphan into an intention: `test:typecheck:wasm`
+ * sat here from the absorption onward reading "run by the wasm job", and the
+ * only jobs that ran it were the upstream copies under
+ * packages/protect-ffi/.github/ — which GitHub, reading workflows from the
+ * repository root alone, never executed.
  */
 const ENTRY_POINT_EXEMPT: Record<string, string> = {
   // Runs against the generated wasm .d.ts, so it needs `pnpm run build:wasm`
   // first. The default test must still pass in a clone with no dist/, so this
-  // one belongs to the wasm job.
-  'test:typecheck:wasm': 'needs dist/wasm, run by the wasm job',
+  // one belongs to the wasm job in the root tests.yml.
+  'test:typecheck:wasm': 'needs dist/wasm, run by the root wasm-e2e job',
 }
 
 describe('lint and format wiring', () => {
@@ -97,6 +109,18 @@ describe('lint and format wiring', () => {
       .filter((name) => !(name in ENTRY_POINT_EXEMPT))
 
     expect(orphans).toEqual([])
+  })
+
+  it('runs every entry-point-exempt script from a root workflow', () => {
+    // The other half of the exemption list. Being unreachable from `test` and
+    // `test:cargo` is allowed; being unreachable from everything is the bug
+    // the whole file exists to catch, and an exemption is exactly where it
+    // hides — the reason string is prose, and prose does not fail.
+    const notInCi = Object.keys(ENTRY_POINT_EXEMPT).filter(
+      (name) => !rootWorkflows.includes(`run ${name}`),
+    )
+
+    expect(notInCi).toEqual([])
   })
 
   it('runs the Rust format check from the cargo entry point', () => {

@@ -45,7 +45,14 @@ describe('lint-no-ffi-changeset', () => {
   it('does not parse README.md as a changeset', () => {
     // `.changeset/README.md` ships with changesets itself and is not a
     // changeset; parsing it would be a false positive waiting to happen.
-    expect(run(fx('clean')).output).not.toMatch(/README/)
+    //
+    // The fixture README carries guarded frontmatter deliberately. Without it
+    // this assertion held whether or not the skip existed — a README with no
+    // frontmatter yields no package names either way, so the test passed by
+    // describing the fixture rather than the behaviour.
+    const { exitCode, output } = run(fx('clean'))
+    expect(exitCode).toBe(0)
+    expect(output).not.toMatch(/README/)
   })
 
   it('fails when a changeset names the wrapper', () => {
@@ -102,8 +109,17 @@ describe('lint-no-ffi-changeset', () => {
     const ffiGroup = config.fixed.find((group) =>
       group.includes('@cipherstash/protect-ffi'),
     )
-    const guarded = readFileSync(SCRIPT, 'utf8')
+    // Both directions. Asserting only that each configured name appears in the
+    // script catches a package dropped from the guard, but not one dropped
+    // from the fixed group or added to only one of the two — and it is the
+    // guard falling behind a NEW platform package that publishes something.
+    const guardedPackages = [
+      ...readFileSync(SCRIPT, 'utf8').matchAll(
+        /'(@cipherstash\/protect-ffi(?:-[a-z0-9-]+)?)'/g,
+      ),
+    ].map(([, name]) => name)
+
     expect(ffiGroup).toHaveLength(7)
-    for (const name of ffiGroup) expect(guarded).toMatch(`'${name}'`)
+    expect([...new Set(guardedPackages)].sort()).toEqual([...ffiGroup].sort())
   })
 })

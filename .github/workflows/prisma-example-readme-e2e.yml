@@ -18,12 +18,36 @@ on:
     paths:
       - 'examples/prisma/**'
       - '.github/workflows/prisma-example-readme-e2e.yml'
+      # The walkthrough encrypts against the live service, so the native
+      # binding and the action that builds it are inputs to this suite. Added
+      # with that build step: without them a protect-ffi change reaches main
+      # having never run the walkthrough, and the step itself is only ever
+      # exercised by the push-to-main run.
+      - '.github/actions/build-ffi-binding/**'
+      - 'packages/protect-ffi/crates/**'
+      - 'packages/protect-ffi/src/**'
+      - 'packages/protect-ffi/Cargo.toml'
+      - 'packages/protect-ffi/Cargo.lock'
+      - 'packages/protect-ffi/package.json'
+      - 'packages/protect-ffi/mise.toml'
   pull_request:
     branches:
       - '**'
     paths:
       - 'examples/prisma/**'
       - '.github/workflows/prisma-example-readme-e2e.yml'
+      # The walkthrough encrypts against the live service, so the native
+      # binding and the action that builds it are inputs to this suite. Added
+      # with that build step: without them a protect-ffi change reaches main
+      # having never run the walkthrough, and the step itself is only ever
+      # exercised by the push-to-main run.
+      - '.github/actions/build-ffi-binding/**'
+      - 'packages/protect-ffi/crates/**'
+      - 'packages/protect-ffi/src/**'
+      - 'packages/protect-ffi/Cargo.toml'
+      - 'packages/protect-ffi/Cargo.lock'
+      - 'packages/protect-ffi/package.json'
+      - 'packages/protect-ffi/mise.toml'
 
 jobs:
   walkthrough:

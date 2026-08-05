@@ -82,10 +82,17 @@ describe('assertNativeBindingAvailable', () => {
   })
 
   it('reaches the loader rather than short-circuiting', () => {
-    // The whole point is that it forces resolution. A body that validated its
-    // arguments and returned early would pass both tests above while proving
-    // nothing, so check it forwards to a native call: `isEncrypted` is the
-    // one it uses, and it answers for a non-payload.
-    expect(mod.isEncrypted(null)).toBe(false)
+    // The whole point is that it forces resolution, and a body that returned
+    // early would pass both tests above while proving nothing. Asserting on
+    // the emitted body — the technique the first describe block uses, and for
+    // the same reason: on a machine with a binary installed, the difference
+    // between forcing the load and not is invisible at runtime.
+    //
+    // This used to assert `mod.isEncrypted(null) === false`, which exercised
+    // a DIFFERENT exported function that reaches the loader on its own. Empty
+    // this one's body and that assertion still passed.
+    const body =
+      /function assertNativeBindingAvailable\(\)\s*\{\s*native\.\w+\(/
+    expect(emitted).toMatch(body)
   })
 })

@@ -46,7 +46,7 @@
  * changeset lands too.
  */
 import { readdirSync, readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 
 const REPO_ROOT = resolve(import.meta.dirname, '..')
 
@@ -98,7 +98,10 @@ console.error(
   '\nA pending changeset names a @cipherstash/protect-ffi package:\n',
 )
 for (const { file, packages } of offenders) {
-  console.error(`  .changeset/${file}`)
+  // Relative to the repo root, not a literal `.changeset/` — the directory is
+  // overridable by argv for the self-tests, and a hardcoded prefix prints a
+  // path that does not exist whenever it is.
+  console.error(`  ${relative(REPO_ROOT, join(changesetDir, file))}`)
   for (const name of packages) console.error(`      ${name}`)
 }
 console.error(

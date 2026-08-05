@@ -18,6 +18,18 @@ on:
       - 'packages/stack-prisma/**'
       - 'examples/prisma/**'
       - '.github/workflows/prisma-next-e2e.yml'
+      # This suite encrypts against the live service, so the native binding and
+      # the action that builds it are inputs to it. Added with that build step:
+      # without them a protect-ffi change reaches main having never run this
+      # suite, and the step itself is only ever exercised by the push-to-main
+      # run.
+      - '.github/actions/build-ffi-binding/**'
+      - 'packages/protect-ffi/crates/**'
+      - 'packages/protect-ffi/src/**'
+      - 'packages/protect-ffi/Cargo.toml'
+      - 'packages/protect-ffi/Cargo.lock'
+      - 'packages/protect-ffi/package.json'
+      - 'packages/protect-ffi/mise.toml'
   pull_request:
     branches:
       - '**'
@@ -25,6 +37,18 @@ on:
       - 'packages/stack-prisma/**'
       - 'examples/prisma/**'
       - '.github/workflows/prisma-next-e2e.yml'
+      # This suite encrypts against the live service, so the native binding and
+      # the action that builds it are inputs to it. Added with that build step:
+      # without them a protect-ffi change reaches main having never run this
+      # suite, and the step itself is only ever exercised by the push-to-main
+      # run.
+      - '.github/actions/build-ffi-binding/**'
+      - 'packages/protect-ffi/crates/**'
+      - 'packages/protect-ffi/src/**'
+      - 'packages/protect-ffi/Cargo.toml'
+      - 'packages/protect-ffi/Cargo.lock'
+      - 'packages/protect-ffi/package.json'
+      - 'packages/protect-ffi/mise.toml'
 
 jobs:
   e2e:
