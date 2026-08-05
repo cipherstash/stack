@@ -1,8 +1,17 @@
 ---
-'@cipherstash/stack': minor
+'@cipherstash/stack': major
 ---
 
 Adopt protect-ffi 0.31.0.
+
+`major`, not `minor`, because of the first item below: a credential encoding
+that worked on 1.x stops working at client construction, and `@cipherstash/stack`
+pins `@cipherstash/protect-ffi` exactly — so upgrading stack forces the new FFI
+and there is no version of this a caller opts into separately. That hex was
+always the documented encoding describes intent, not the behaviour anyone was
+running against. The fixed group takes `stash`, `wizard` and the three adapters
+to 2.0.0 with it; that is a release-management cost, not an argument about what
+the version number means.
 
 **`clientKey` must now be hex-encoded.** This is the change to check before
 upgrading. The client key used to be decoded by a function that accepted both
