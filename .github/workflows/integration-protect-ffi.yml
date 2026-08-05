@@ -104,9 +104,22 @@ jobs:
     # start-db`, whose readiness loop retries `pg_isready` forever rather than
     # giving up.
     timeout-minutes: 45
-    # Fork PRs have no secrets. Skip cleanly rather than fail on something the
-    # contributor cannot fix — `tests.yml` still gives them a green signal.
-    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    # Everything runs EXCEPT a fork PR, which has no secrets: skip that cleanly
+    # rather than fail on something the contributor cannot fix — `tests.yml`
+    # still gives them a green signal.
+    #
+    # Stated as "not a fork PR", NOT as a list of the events allowed to run.
+    # The previous form (`github.event_name == 'push' || <same-repo check>`)
+    # made the `workflow_dispatch:` above decorative: on a manual dispatch the
+    # event name is neither `push` nor `pull_request`, and the payload carries
+    # no `pull_request` object to reach through, so both operands were false —
+    # the run was created, the only job was skipped, and the run reported
+    # success having executed nothing. This is the one credentialed suite with
+    # no other way to be re-run on demand: its `paths:` filter means an
+    # unrelated commit will not start it either. An allowlist of event names
+    # would break again the day someone adds `schedule:`.
+    # Enforced by scripts/__tests__/workflow-dispatch-job-conditions.test.mjs.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
 
     env:
       # Same split as the other integration workflows: the workspace CRN and
