@@ -17,13 +17,25 @@
  * `test:typecheck` emits it before `test:unit`.
  */
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 // Vitest resolves cwd to the directory holding vitest.config.ts.
 const entryPath = join(process.cwd(), 'lib/index.cjs')
+
+// `lib/` is generated, so this file carries a prerequisite the package's `test`
+// chain satisfies and a bare `test:unit` does not. Without this guard the whole
+// suite fails as `ENOENT: no such file or directory, open '.../lib/index.cjs'`
+// pointed at the readFileSync below — which names the missing file but not the
+// command that produces it, and lands on whoever runs `test:unit` directly
+// (every CI job that splits the chain, and anyone iterating on one test).
+if (!existsSync(entryPath)) {
+  throw new Error(
+    `${entryPath} is missing. These tests assert on the EMITTED entry, and lib/ is a build output: run \`pnpm --filter @cipherstash/protect-ffi run build\` first, or \`pnpm --filter @cipherstash/protect-ffi test\`, whose test:typecheck step emits lib/ before test:unit runs.`,
+  )
+}
 
 // Comments are stripped before matching. The doc comment on the import in
 // `index.cts` quotes the exact `__importStar(require("./load.cjs"))` form it
