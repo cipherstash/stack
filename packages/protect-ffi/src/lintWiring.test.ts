@@ -10,7 +10,7 @@
  * the failure, and it is invisible by construction. Every exemption below has
  * to name why.
  */
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -28,10 +28,23 @@ const miseToml = read('mise.toml')
 // package — that was true of the deposited upstream copy this used to read,
 // which made the CI assertion below vacuous from the day of the absorption.
 const testWorkflow = read('../../.github/workflows/tests-rust.yml')
-// Every other root workflow an exempted script may hang off. Same rule as
-// above: root only. A script "run by CI" according to a file under
+// Every root workflow an exempted script may hang off, discovered by reading
+// the DIRECTORY rather than by listing filenames. Same rule as above: root
+// only — a script "run by CI" according to a file under
 // packages/protect-ffi/.github/ is a script nothing runs.
-const rootWorkflows = testWorkflow + read('../../.github/workflows/tests.yml')
+//
+// The scan is the point. A hardcoded list has to be maintained in step with a
+// set of files nothing forces it to track: move a job to a new workflow and
+// this reads as "the script runs nowhere", and the tempting repair is to widen
+// the list until it includes the dead package-local path. A directory cannot
+// drift out of date with itself.
+const ROOT_WORKFLOW_DIR = '../../.github/workflows'
+const rootWorkflowNames = readdirSync(join(repoRoot, ROOT_WORKFLOW_DIR)).filter(
+  (name) => name.endsWith('.yml') || name.endsWith('.yaml'),
+)
+const rootWorkflows = rootWorkflowNames
+  .map((name) => read(`${ROOT_WORKFLOW_DIR}/${name}`))
+  .join('\n')
 
 /**
  * Script names reachable from `root`, following `pnpm run` / `npm run`
@@ -99,6 +112,13 @@ describe('lint and format wiring', () => {
     // Everything below asserts on file contents resolved from cwd. A wrong cwd
     // would make those assertions vacuous rather than failing, so pin it.
     expect(manifest.name).toBe('@cipherstash/protect-ffi')
+
+    // The two workflow-directory checks below both pass by finding nothing to
+    // contradict, so an empty or mis-resolved scan turns them green. Pin that
+    // it resolved to the root workflow directory, naming files that have to be
+    // there for those checks to mean anything.
+    expect(rootWorkflowNames).toContain('tests.yml')
+    expect(rootWorkflowNames).toContain('release.yml')
   })
 
   it('has no test:* script that nothing invokes', () => {
@@ -116,11 +136,57 @@ describe('lint and format wiring', () => {
     // `test:cargo` is allowed; being unreachable from everything is the bug
     // the whole file exists to catch, and an exemption is exactly where it
     // hides — the reason string is prose, and prose does not fail.
+    //
+    // "Some other job runs it" is only a legitimate exemption while that claim
+    // is mechanically checkable, so it is checked against every workflow in the
+    // root directory rather than against a job named in the reason string.
     const notInCi = Object.keys(ENTRY_POINT_EXEMPT).filter(
       (name) => !rootWorkflows.includes(`run ${name}`),
     )
 
     expect(notInCi).toEqual([])
+  })
+
+  it('has no script dispatching a workflow this repo cannot run', () => {
+    // `release` and `dryrun` were `gh workflow run release.yml -f dryrun=…
+    // -f version=…`, written for the standalone repo's workflow_dispatch
+    // release. This repo has a root release.yml too — Changesets-driven, `on:
+    // push` to main, no inputs — so a check for the file's existence alone is
+    // green while both scripts exit non-zero: the name survived the absorption
+    // and nothing else about the workflow did. Hence the trigger and the
+    // inputs, not just the path.
+    //
+    // Nothing else catches this. These scripts are invoked by hand, so the
+    // failure waits for whoever reaches for them under release pressure — and
+    // a package-level `release` script is also a `turbo run release` target,
+    // where a stale one dispatches a real workflow from an unrelated command.
+
+    // Matches the block form (`on:` → indented `workflow_dispatch:`) and the
+    // inline and flow-sequence spellings on the `on:` line itself.
+    const dispatchable = /^\s+workflow_dispatch:|^on:.*\bworkflow_dispatch\b/m
+
+    const problems = Object.entries(scripts).flatMap(([script, body]) =>
+      [...body.matchAll(/gh workflow run ([\w.-]+)((?: -f [\w-]+=\S+)*)/g)]
+        .flatMap(([, workflow, flags]) => {
+          if (!rootWorkflowNames.includes(workflow)) {
+            return [`no ${ROOT_WORKFLOW_DIR}/${workflow}`]
+          }
+          const definition = read(`${ROOT_WORKFLOW_DIR}/${workflow}`)
+          if (!dispatchable.test(definition)) {
+            return [`${workflow} has no workflow_dispatch trigger`]
+          }
+          // Crude by intent — an input's declaration is `<name>:` somewhere in
+          // the file, and matching that beats a hand-rolled YAML walk. It
+          // under-reports (a coincidental `version:` elsewhere satisfies it)
+          // and never over-reports, so it cannot fail a working script.
+          return [...flags.matchAll(/ -f ([\w-]+)=/g)]
+            .filter(([, input]) => !definition.includes(`${input}:`))
+            .map(([, input]) => `${workflow} declares no ${input} input`)
+        })
+        .map((problem) => `${script}: ${problem}`),
+    )
+
+    expect(problems).toEqual([])
   })
 
   it('runs the Rust format check from the cargo entry point', () => {

@@ -224,42 +224,52 @@ is decided.
 
 In the project directory, you can run:
 
-#### `npm run build`
+Since this package was absorbed into the `cipherstash/stack` monorepo, cargo is deliberately kept off the default `build` and `test` paths: the root `pnpm test` reaches every package, and a cargo process on that path would put a Rust toolchain on every contributor's machine. The Rust work lives behind its own scripts, listed below. `packages/protect-ffi/src/lintWiring.test.ts` enforces the split.
+
+#### `pnpm run build`
+
+Compiles the TypeScript to `lib/` with `tsc`. This is the package `main`, and it is generated — a workspace consumer resolves an empty package until this has run. **It does not build the native addon**; use `build:native` for that.
+
+#### `pnpm run build:native`
 
 Builds the Node addon (`index.node`) from source, generating a release build with `cargo --release`.
 
-Additional [`cargo build`](https://doc.rust-lang.org/cargo/commands/cargo-build.html) arguments may be passed to `npm run build` and similar commands. For example, to enable a [cargo feature](https://doc.rust-lang.org/cargo/reference/features.html):
+Additional [`cargo build`](https://doc.rust-lang.org/cargo/commands/cargo-build.html) arguments may be appended. Note the absence of a `--` separator — pnpm forwards `--` verbatim (npm strips it), and these scripts end in `> cargo.log`, so a separated flag lands *after* the redirect and cargo rejects it as a positional argument. For example, to enable a [cargo feature](https://doc.rust-lang.org/cargo/reference/features.html):
 
+```sh
+pnpm run build:native --feature=beetle
 ```
-npm run build -- --feature=beetle
-```
 
-#### `npm run debug`
+#### `pnpm run debug`
 
-Similar to `npm run build` but generates a debug build with `cargo`.
+Similar to `build:native` but generates a debug build with `cargo`.
 
-#### `npm run cross`
+#### `pnpm run cross`
 
-Similar to `npm run build` but uses [cross-rs](https://github.com/cross-rs/cross) to cross-compile for another platform. Use the [`CARGO_BUILD_TARGET`](https://doc.rust-lang.org/cargo/reference/config.html#buildtarget) environment variable to select the build target.
+Similar to `build:native` but uses [cross-rs](https://github.com/cross-rs/cross) to cross-compile for another platform. Use the [`CARGO_BUILD_TARGET`](https://doc.rust-lang.org/cargo/reference/config.html#buildtarget) environment variable to select the build target. `pnpm run zigbuild` does the same via [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild), which is what the release matrix uses to pin glibc.
 
-#### `npm run release`
+#### `pnpm run build:wasm`
 
-Initiate a full build and publication of a new patch release of this library via GitHub Actions.
+Builds the `wasm32-unknown-unknown` output into `dist/wasm/` with `wasm-pack`, then inlines the `.wasm` as base64 for the `./wasm-inline` entry. Needs the wasm32 target and `wasm-pack` (both supplied by `mise install` in this directory).
 
-#### `npm run dryrun`
+#### `pnpm test`
 
-Initiate a dry run of a patch release of this library via GitHub Actions. This performs a full build but does not publish the final result.
+Typechecks the TypeScript, runs the unit tests (tsc + vitest), and lints and format-checks the TypeScript. **No cargo**, by design — see above.
 
-#### `npm test`
+Note: this does not run the integration tests either.
+For those, see [below](#integration-tests).
 
-Typechecks the TypeScript and runs the unit tests (tsc + vitest), checks formatting for both languages, lints the TypeScript, and runs the Rust tests.
+#### `pnpm run test:cargo`
 
-Note: `npm test` at project root does not run integration tests.
-For integration tests, see [below](#integration-tests).
+The Rust half of the test suite: `cargo test` plus `cargo fmt --check`. Run by a path-filtered root workflow, not by `pnpm test`.
+
+#### `pnpm run test:typecheck:wasm`
+
+Typechecks `type-tests/` against the wasm-bindgen-generated declarations in `dist/wasm/`. Needs `build:wasm` and `build` to have run first, which is why it is not part of `pnpm test` — that has to pass in a fresh clone with no `dist/`.
 
 #### `mise run lint:rust`
 
-Every Rust check CI gates on: clippy against the host target, clippy against `wasm32-unknown-unknown`, and `cargo fmt --check`. `npm test` deliberately leaves clippy out to keep the inner loop fast, so run this before pushing.
+Every Rust check CI gates on: clippy against the host target, clippy against `wasm32-unknown-unknown`, and `cargo fmt --check`. `pnpm test` leaves all of these out, so run this before pushing a Rust change.
 
 The wasm arm needs the target installed once:
 

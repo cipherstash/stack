@@ -34,8 +34,6 @@
     "cross": "pnpm run cross-build --release",
     "zigbuild": "pnpm run zig-build --release",
     "prepack": "tsc",
-    "release": "gh workflow run release.yml -f dryrun=false -f version=patch",
-    "dryrun": "gh workflow run release.yml -f dryrun=true -f version=patch",
     "build:wasm": "wasm-pack build crates/protect-ffi --target bundler --out-dir ../../dist/wasm --no-pack && tsc -p tsconfig.wasm-errors.json",
     "postbuild:wasm": "node scripts/inline-wasm.mjs"
   },
