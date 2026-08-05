@@ -23,7 +23,11 @@ const read = (relative: string) =>
 const manifest = JSON.parse(read('package.json'))
 const scripts: Record<string, string> = manifest.scripts
 const miseToml = read('mise.toml')
-const testWorkflow = read('.github/workflows/test.yml')
+// The ROOT workflow that actually runs the Rust checks. GitHub only reads
+// workflows from the repository root, so this must never point back inside this
+// package — that was true of the deposited upstream copy this used to read,
+// which made the CI assertion below vacuous from the day of the absorption.
+const testWorkflow = read('../../.github/workflows/tests-rust.yml')
 
 /**
  * Script names reachable from `root`, following `pnpm run` / `npm run`
@@ -177,17 +181,13 @@ describe('lint and format wiring', () => {
   })
 
   it('runs the lint entry point in CI, with the wasm32 target installed', () => {
-    // CAVEAT, and it is the whole reason this comment exists: the workflow
-    // read here is `packages/protect-ffi/.github/workflows/test.yml`, which
-    // GitHub does not execute — it only reads workflows from the repository
-    // root. Since the absorption, this asserts against reference material, not
-    // against a job that runs.
+    // Live again: this reads the root workflow GitHub actually executes, so a
+    // failure here means the Rust checks have stopped running — the exact
+    // condition that held silently between the absorption and this port.
     //
-    // It is kept, not deleted, because it is the specification the phase-3
-    // pipeline port has to satisfy: whatever root workflow ends up running the
-    // Rust checks must invoke `mise run lint:rust` and install the wasm32
-    // target first. Repoint `testWorkflow` at that file in the same commit
-    // that deletes this directory, and the assertion becomes live again.
+    // `lint:rust` is the aggregate entry point — an arm reachable only by name
+    // is an arm nobody runs (#145) — and wasm32 must be installed before
+    // clippy can lint it.
     expect(testWorkflow).toContain('mise run lint:rust')
     expect(testWorkflow).toContain('rustup target add wasm32-unknown-unknown')
   })

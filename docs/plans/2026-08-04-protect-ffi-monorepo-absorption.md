@@ -1584,9 +1584,16 @@ Since the import, the Rust checks run **nowhere**. Phase 1 moved `cargo test` an
 **Files:**
 - Create: `.github/workflows/tests-rust.yml`
 - Modify: `packages/protect-ffi/src/lintWiring.test.ts`
-- Delete: `packages/protect-ffi/.github/`
+- Delete: `packages/protect-ffi/.github/` — **deferred, see Step 5**
 
-- [ ] **Step 1: Write the Rust workflow**
+**Steps 1–4 are done** (CIP-3717). Steps 5–8 wait on Task 4: this task was
+pulled forward because the Rust checks running nowhere is a live regression,
+not new pipeline work, but Task 4 still names the deposited
+`packages/protect-ffi/.github/workflows/build.yml` and
+`.../actions/setup/action.yml` as its reference material. Deleting them now
+would remove the source for a task nobody has written yet.
+
+- [x] **Step 1: Write the Rust workflow**
 
 ```yaml
 # .github/workflows/tests-rust.yml
@@ -1638,9 +1645,15 @@ jobs:
       # fails with "Config files ... are not trusted" — which reads as a
       # toolchain problem, not a trust one. Caching is allowed here: this
       # workflow publishes nothing.
+      # `working_directory` is load-bearing: mise reads config from the current
+      # directory and its PARENTS, so an action running at the repo root never
+      # sees packages/protect-ffi/mise.toml. Without it this step installs
+      # nothing and leaves the config untrusted, and the `mise run` below fails
+      # with "Config files ... are not trusted".
       - uses: jdx/mise-action@v3
         with:
           install: true
+          working_directory: packages/protect-ffi
 
       # `--all-targets` means all target KINDS, not all platform targets.
       # wasm32 needs its own invocation, and it is the build that ships to edge
@@ -1667,7 +1680,7 @@ jobs:
         run: mise run lint:rust
 ```
 
-- [ ] **Step 2: Repoint the lintWiring assertion**
+- [x] **Step 2: Repoint the lintWiring assertion**
 
 ```ts
 // The root workflow that actually runs the Rust checks. GitHub only reads
@@ -1677,7 +1690,7 @@ jobs:
 const testWorkflow = read('../../.github/workflows/tests-rust.yml')
 ```
 
-- [ ] **Step 3: Replace the CAVEAT comment**
+- [x] **Step 3: Replace the CAVEAT comment**
 
 ```ts
   it('runs the lint entry point in CI, with the wasm32 target installed', () => {
@@ -1690,14 +1703,15 @@ const testWorkflow = read('../../.github/workflows/tests-rust.yml')
   })
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `pnpm --filter @cipherstash/protect-ffi test`
 Expected: PASS, 79 tests
 
-- [ ] **Step 5: Delete the deposited upstream workflows**
+- [ ] **Step 5: Delete the deposited upstream workflows** — *blocked on Task 4*
 
-Tasks 4, 7, 8 and this one have consumed all of the reference material.
+Only once Tasks 4, 7 and 8 have consumed all of the reference material. Task 4
+still cites `build.yml` and `actions/setup/action.yml`, so this cannot run yet.
 
 ```bash
 git rm -r packages/protect-ffi/.github
@@ -1818,7 +1832,7 @@ The Rust emitting EQL payloads is generated from a different catalog commit than
 - [ ] `release.yml` installs with `--frozen-lockfile`
 - [ ] `cargo test`, `cargo fmt --check` and clippy (host **and** wasm32) run in CI again
 - [ ] No dead upstream workflow files under `packages/protect-ffi/.github/`
-- [ ] `lintWiring.test.ts` asserts against a workflow GitHub actually executes
+- [x] `lintWiring.test.ts` asserts against a workflow GitHub actually executes
 - [ ] Published `@cipherstash/stack` tarball's `dependencies` show a concrete protect-ffi version
 - [ ] `stash doctor` exits non-zero with a hidden platform package (phase 5)
 
