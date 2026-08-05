@@ -96,6 +96,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Fail loudly if any live-test credential is missing, so the v3 live
+      # matrix (and every other `describeLive` suite) can't silently skip.
+      # Before the binding build below, not after: this costs seconds and that
+      # costs minutes on a cold cache.
+      - name: Require CipherStash secrets
+        uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
       # Both halves of this job need it. The type steps below need `lib/` —
       # they call package scripts directly, so turbo's `^build` never runs and
       # protect-ffi's declarations resolve to nothing. `Run tests` needs
@@ -104,16 +116,6 @@ jobs:
       # bundle graph, so none of them loads the real WASM.
       - name: Build the protect-ffi binding
         uses: ./.github/actions/build-ffi-binding
-
-      # Fail loudly if any live-test credential is missing, so the v3 live
-      # matrix (and every other `describeLive` suite) can't silently skip.
-      - name: Require CipherStash secrets
-        uses: ./.github/actions/require-cs-secrets
-        with:
-          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
-          client-id: ${{ vars.CS_CLIENT_ID }}
-          client-key: ${{ secrets.CS_CLIENT_KEY }}
-          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
       - name: Type tests (stack)
         run: pnpm --filter @cipherstash/stack run test:types
@@ -375,6 +377,24 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # The e2e/wasm suites FAIL when any of the four CS_* env vars is
+      # missing (requireEnv throws — no skip gating), so a rotated / cleared
+      # secret can't hide a real WASM regression behind a green job. This
+      # preflight just fails faster, before the two builds below and the Deno
+      # module downloads.
+      #
+      # It is the preflight that moves above the binding build here, not the
+      # binding build that moves below it: `Build stack` consumes
+      # protect-ffi's dist/wasm output, so the two build steps have to stay in
+      # this order.
+      - name: Require CipherStash secrets
+        uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
       # `wasm: true` — this is the job the WASM output exists for. stack's
       # dist/wasm-inline.js imports protect-ffi's dist/wasm/protect_ffi_inline.js
       # by relative path, and only the three .d.ts under dist/wasm are tracked;
@@ -388,18 +408,6 @@ jobs:
       # via a file URL in e2e/wasm/deno.json — it needs a fresh build.
       - name: Build stack
         run: pnpm exec turbo run build --filter @cipherstash/stack
-
-      # The e2e/wasm suites FAIL when any of the four CS_* env vars is
-      # missing (requireEnv throws — no skip gating), so a rotated / cleared
-      # secret can't hide a real WASM regression behind a green job. This
-      # preflight just fails faster, before the Deno module downloads.
-      - name: Require CipherStash secrets
-        uses: ./.github/actions/require-cs-secrets
-        with:
-          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
-          client-id: ${{ vars.CS_CLIENT_ID }}
-          client-key: ${{ secrets.CS_CLIENT_KEY }}
-          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
       - name: Run Deno WASM smoke test
         working-directory: e2e/wasm

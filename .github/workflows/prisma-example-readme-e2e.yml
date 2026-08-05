@@ -65,14 +65,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # The walkthrough encrypts against the live service, so it needs the
-      # native binding. Path-filtered away from the absorption PR that
-      # introduced the need, but it runs on push to main.
-      - name: Build the protect-ffi binding
-        uses: ./.github/actions/build-ffi-binding
-
       # A missing / rotated / fork-PR-absent secret makes the walkthrough skip
       # its live steps silently, hiding regressions behind a green job. Fail loud.
+      # First, ahead of the binding build: this costs seconds and that costs
+      # minutes on a cold cache.
       - name: Require CipherStash secrets
         uses: ./.github/actions/require-cs-secrets
         with:
@@ -80,6 +76,12 @@ jobs:
           client-id: ${{ vars.CS_CLIENT_ID }}
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+      # The walkthrough encrypts against the live service, so it needs the
+      # native binding. Path-filtered away from the absorption PR that
+      # introduced the need, but it runs on push to main.
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/build-ffi-binding
 
       # Build via turbo so `^build` on `@cipherstash/stack-prisma` and
       # its `@cipherstash/stack` peer is honoured. The test's

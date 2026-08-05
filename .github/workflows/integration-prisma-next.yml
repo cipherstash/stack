@@ -100,14 +100,10 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/integration-setup
 
-      # No `wasm: true` — the prisma-next family suites go through the native
-      # binding only.
-      - name: Build the protect-ffi binding
-        uses: ./.github/actions/build-ffi-binding
-
       # Fast pre-flight: fail in seconds if a secret was rotated or cleared,
-      # before the docker pull. The in-test `requireIntegrationEnv` is the
-      # correctness guarantee; this is the cheap one.
+      # before the binding build and the docker pull. The in-test
+      # `requireIntegrationEnv` is the correctness guarantee; this is the cheap
+      # one, so nothing expensive may be ordered ahead of it.
       - name: Require CipherStash secrets
         uses: ./.github/actions/require-cs-secrets
         with:
@@ -115,6 +111,11 @@ jobs:
           client-id: ${{ vars.CS_CLIENT_ID }}
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+      # No `wasm: true` — the prisma-next family suites go through the native
+      # binding only.
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/build-ffi-binding
 
       # No pre-`up` cleanup step any more: the project name is unique per job, so
       # a container leaked by a hard-killed prior run cannot hold this job's
