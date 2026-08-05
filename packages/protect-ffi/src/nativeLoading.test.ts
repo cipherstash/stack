@@ -17,7 +17,7 @@
  * `test:typecheck` emits it before `test:unit`.
  */
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -31,9 +31,20 @@ const entryPath = join(process.cwd(), 'lib/index.cjs')
 // pointed at the readFileSync below — which names the missing file but not the
 // command that produces it, and lands on whoever runs `test:unit` directly
 // (every CI job that splits the chain, and anyone iterating on one test).
-if (!existsSync(entryPath)) {
+// A zero-byte entry counts as missing. An interrupted `tsc` leaves one, and it
+// is the state where naming the build step — the entire point of this guard —
+// otherwise fails to happen: `existsSync` is satisfied, and what the developer
+// sees instead is five assertions reporting `expected '' to match /…/`, none of
+// which says "run build". Not a vacuity fix: `reads the emitted entry, not the
+// source` below already fails loudly on an empty read, which is why it is
+// there. This is so the failure names its own cure.
+//
+// Deliberately only the empty case. A PARTIALLY written entry is not
+// detectable by size and needs no separate handling — the content assertions
+// below go red on any degraded emit; they cannot go quietly green.
+if (!existsSync(entryPath) || statSync(entryPath).size === 0) {
   throw new Error(
-    `${entryPath} is missing. These tests assert on the EMITTED entry, and lib/ is a build output: run \`pnpm --filter @cipherstash/protect-ffi run build\` first, or \`pnpm --filter @cipherstash/protect-ffi test\`, whose test:typecheck step emits lib/ before test:unit runs.`,
+    `${entryPath} is missing or empty. These tests assert on the EMITTED entry, and lib/ is a build output: run \`pnpm --filter @cipherstash/protect-ffi run build\` first, or \`pnpm --filter @cipherstash/protect-ffi test\`, whose test:typecheck step emits lib/ before test:unit runs.`,
   )
 }
 
