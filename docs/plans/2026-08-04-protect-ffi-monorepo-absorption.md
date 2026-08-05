@@ -371,6 +371,8 @@ git commit -m "chore(protect-ffi): mark the crate publish = false"
 
 npm requires `repository.url` to exactly match the repository performing a trusted publish. All seven manifests still name `cipherstash/protectjs-ffi`, so OIDC publication from `cipherstash/stack` would fail. This must land **before** the cutover.
 
+The six platform manifests also carry `repository.directory: platforms/<name>`, resolved from the **root of the repository named in `repository.url`**. That path exists in the old repo and not in this one, where they sit at `packages/protect-ffi/platforms/<name>`. Both fields are correct *today* — the packages still publish from the old repo, whose root really does hold `platforms/` — and both are wrong the moment publishing moves. The two fail differently: a stale `url` fails the publish outright, while a `directory` that does not resolve publishes fine and silently breaks the source link on the package page.
+
 **Files:**
 - Modify: `packages/protect-ffi/package.json`, `packages/protect-ffi/platforms/*/package.json` (six), `packages/protect-ffi/crates/protect-ffi/Cargo.toml`
 - Create: `scripts/__tests__/ffi-repository-urls.test.mjs`
@@ -393,11 +395,11 @@ const FFI = join(REPO_ROOT, 'packages/protect-ffi')
 // publish runs from EXACTLY. A stale URL does not warn — the publish fails.
 const EXPECTED = 'https://github.com/cipherstash/stack'
 
+const PLATFORMS = readdirSync(join(FFI, 'platforms'))
+
 const manifests = [
   join(FFI, 'package.json'),
-  ...readdirSync(join(FFI, 'platforms')).map((p) =>
-    join(FFI, 'platforms', p, 'package.json'),
-  ),
+  ...PLATFORMS.map((p) => join(FFI, 'platforms', p, 'package.json')),
 ]
 
 describe('FFI manifests name this repository', () => {
@@ -420,6 +422,22 @@ describe('FFI manifests name this repository', () => {
     expect(pkg.homepage).toBe(`${EXPECTED}#readme`)
   })
 
+  for (const p of PLATFORMS) {
+    it(`${p} names its own path from the repo root`, () => {
+      // `directory` resolves from the root of the repository named above, so
+      // `platforms/<p>` was right in the old repo and is wrong here. Step 3
+      // rewrites the host and never touches this field — without these six
+      // assertions the suite goes green on a source link that 404s, and Step 4
+      // becomes a step nothing checks.
+      const pkg = JSON.parse(
+        readFileSync(join(FFI, 'platforms', p, 'package.json'), 'utf8'),
+      )
+      expect(pkg.repository.directory).toBe(
+        `packages/protect-ffi/platforms/${p}`,
+      )
+    })
+  }
+
   it('no manifest still references the old repository', () => {
     for (const path of manifests) {
       expect(readFileSync(path, 'utf8')).not.toMatch(/protectjs-ffi/)
@@ -431,7 +449,7 @@ describe('FFI manifests name this repository', () => {
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run --config scripts/vitest.config.mjs ffi-repository-urls`
-Expected: FAIL — seven assertions naming `protectjs-ffi`
+Expected: FAIL — 15 of 16: the seven `repository.url` assertions, the wrapper's `bugs`/`homepage`, the old-repository scan, and the six `repository.directory` paths. Only the manifest count passes.
 
 - [ ] **Step 3: Rewrite the URLs**
 
@@ -463,7 +481,7 @@ In `packages/protect-ffi/crates/protect-ffi/Cargo.toml`, set any `repository` / 
 - [ ] **Step 6: Run the test to verify it passes**
 
 Run: `npx vitest run --config scripts/vitest.config.mjs ffi-repository-urls`
-Expected: PASS, 10 tests
+Expected: PASS, 16 tests. Step 3 alone reaches only 10 of them — the six `directory` assertions are what makes skipping Step 4 visible.
 
 - [ ] **Step 7: Verify the packed manifest carries the new URL**
 
@@ -1850,7 +1868,7 @@ The Rust emitting EQL payloads is generated from a different catalog commit than
 - [ ] The build action fails loudly when the artifact is absent, on both the cache-hit and cache-miss paths
 - [ ] A Rust-only change triggers the three integration workflows
 - [ ] All seven previously-failing jobs on PR #858 are green
-- [ ] All seven FFI manifests read `cipherstash/stack`; no `protectjs-ffi` reference remains
+- [ ] All seven FFI manifests read `cipherstash/stack`; no `protectjs-ffi` reference remains, and the six platform `repository.directory` values read `packages/protect-ffi/platforms/<name>` rather than the old repo's `platforms/<name>`
 - [ ] `neon list-platforms` maps all six platforms to Rust triples, and the matrix consumes them
 - [ ] Every platform job runs a **cargo** script — `build:native` or `zigbuild`, never `build` — and `neon dist` reads the log that script wrote
 - [ ] Every mise step names `working_directory: packages/protect-ffi`; zig/cargo-zigbuild and wasm-pack are actually on PATH in the jobs that call them
