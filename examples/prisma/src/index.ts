@@ -132,7 +132,7 @@ async function main() {
 async function clearUsers(): Promise<void> {
   const removed = await db.orm.public.User.where((u) =>
     u.id.isNotNull(),
-  ).deleteCount()
+  ).deleteAndCount()
   if (removed > 0) {
     console.log(`--- Cleanup ---\nRemoved ${removed} existing user row(s).\n`)
   }

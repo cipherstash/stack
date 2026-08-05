@@ -7,8 +7,11 @@ import {
   type QueryOpKind,
   type TableSpec,
 } from '@cipherstash/test-kit'
-import type { AnyExpression } from '@prisma-next/sql-relational-core/ast'
-import { ColumnRef, OrderByItem } from '@prisma-next/sql-relational-core/ast'
+import type { AnyExpression } from '@prisma/orm-family-sql/relational-core/ast'
+import {
+  ColumnRef,
+  OrderByItem,
+} from '@prisma/orm-family-sql/relational-core/ast'
 import postgres from 'postgres'
 import { EncryptedBigInt } from '../src/execution/envelope-bigint'
 import { EncryptedBoolean } from '../src/execution/envelope-boolean'

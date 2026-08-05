@@ -1,7 +1,7 @@
 /**
  * Cipherstash-internal `RUNTIME.ABORTED` phase wrapping.
  *
- * The framework`s `runtimeAborted(phase)` (`@prisma-next/framework-
+ * The framework`s `runtimeAborted(phase)` (`@prisma/orm-framework/
  * components/runtime`) constructs the canonical `RUNTIME.ABORTED`
  * envelope (`code === 'RUNTIME.ABORTED'`, `category === 'RUNTIME'`,
  * `details.phase`, `cause`) but its `phase` parameter is typed as
@@ -43,11 +43,11 @@
  * cipherstash-internal — no widening of the framework union.
  */
 
-import type { RuntimeErrorEnvelope } from '@prisma-next/framework-components/runtime'
+import type { RuntimeErrorEnvelope } from '@prisma/orm-framework/components/runtime'
 import {
   RUNTIME_ABORTED,
   runtimeError,
-} from '@prisma-next/framework-components/runtime'
+} from '@prisma/orm-framework/components/runtime'
 
 /** Discriminator placed in `details.phase` of cipherstash-issued aborts. */
 export type CipherstashAbortPhase = 'bulk-encrypt' | 'decrypt' | 'decrypt-all'

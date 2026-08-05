@@ -30,8 +30,8 @@
  * @see docs/architecture docs/adrs/ADR 212 - Contract spaces.md
  */
 
-import { assertDescriptorSelfConsistency } from '@prisma-next/migration-tools/spaces'
-import { sqlContractCanonicalizationHooks } from '@prisma-next/sql-contract/canonicalization-hooks'
+import { sqlContractCanonicalizationHooks } from '@prisma/orm-family-sql/contract/canonicalization-hooks'
+import { assertDescriptorSelfConsistency } from '@prisma/orm-toolchain/migration-tools/spaces'
 import { describe, expect, it } from 'vitest'
 import cipherstashExtensionDescriptor from '../src/exports/control'
 import { CIPHERSTASH_SPACE_ID } from '../src/extension-metadata/constants'

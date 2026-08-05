@@ -11,17 +11,17 @@
  *
  * This config is **maintainer-only** — application authors who consume
  * this package do not need it. Their own `prisma-next.config.ts`
- * registers the extension via `extensionPacks: [cipherstash]`; the
+ * registers the extension via `extensions: [cipherstash]`; the
  * descriptor at `src/exports/control.ts` JSON-imports the on-disk
  * artefacts emitted here.
  */
 
-import postgresAdapter from '@prisma-next/adapter-postgres/control'
-import { defineConfig } from '@prisma-next/cli/config-types'
-import sql from '@prisma-next/family-sql/control'
-import { prismaContract } from '@prisma-next/sql-contract-psl/provider'
-import postgres from '@prisma-next/target-postgres/control'
-import { postgresCreateNamespace } from '@prisma-next/target-postgres/types'
+import { prismaContract } from '@prisma/orm-family-sql/contract-psl/provider'
+import sql from '@prisma/orm-family-sql/family/control'
+import postgresAdapter from '@prisma/orm-target-postgres/adapter/control'
+import postgres from '@prisma/orm-target-postgres/target/control'
+import { postgresCreateNamespace } from '@prisma/orm-target-postgres/target/types'
+import { defineConfig } from '@prisma/orm-toolchain/cli/config-types'
 
 export default defineConfig({
   family: sql,

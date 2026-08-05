@@ -15,7 +15,7 @@
 // `public.eql_v3_*` storage domains, the `eql_v3.*` operator functions, and the
 // `eql_v3_internal` helper schema — but **no contract-space storage** (no config
 // table; unlike the retired EQL v2 bundle's `eql_v2_configuration`). The
-// `SqlStorage` IR (`@prisma-next/sql-contract/types`) models tables and
+// `SqlStorage` IR (`@prisma/orm-family-sql/contract/types`) models tables and
 // parameterised type instances, and v3 declares neither at the contract level:
 // the v3 domains carry their own index metadata, so there is no
 // `add_search_config` bookkeeping table to model.

@@ -100,35 +100,32 @@ sort needs the matching `*Eq` / `*Ord` / text-search domain.
 
 ### 2. Register the extension pack in `prisma-next.config.ts`
 
+Since Prisma Next 0.17 an application depends on exactly one database facade
+(`@prisma/orm-postgres`; the retired `@prisma-next/*` scope no longer
+publishes), and the facade's `defineConfig` wires the family, target, adapter,
+driver, and PSL provider internally:
+
 ```typescript
 import cipherstash from '@cipherstash/stack-prisma/control'
-import { defineConfig } from '@prisma-next/cli/config-types'
-import { prismaContract } from '@prisma-next/sql-contract-psl/provider'
-import postgresPack from '@prisma-next/target-postgres/pack'
-import { postgresCreateNamespace } from '@prisma-next/target-postgres/types'
-// ... family, target, driver, adapter
+import { defineConfig } from '@prisma/orm-postgres/config'
 
 export default defineConfig({
-  // ... your existing config
-  extensionPacks: [cipherstash],
-  contract: prismaContract('./prisma/schema.prisma', {
-    output: 'src/prisma/contract.json',
-    target: postgresPack,
-    createNamespace: postgresCreateNamespace,
-  }),
+  contract: './prisma/schema.prisma',
+  output: 'src/prisma',
+  extensions: [cipherstash],
+  db: { connection: process.env['DATABASE_URL']! },
 })
 ```
 
-`createNamespace` is **required** since Prisma Next 0.15 — the SQL family no
-longer materialises a placeholder namespace. Omitting it fails at runtime with
-`createNamespace is not a function` when you run `prisma-next contract emit`.
+The config key is `extensions` (0.17 renamed `extensionPacks`; the old key
+fails loudly).
 
 ### 3. Wire the runtime with `cipherstashFromStack` in `src/db.ts`
 
 ```typescript
 import 'dotenv/config'
 import { cipherstashFromStack } from '@cipherstash/stack-prisma/v3'
-import postgres from '@prisma-next/postgres/runtime'
+import postgres from '@prisma/orm-postgres/runtime'
 import type { Contract } from './prisma/contract.d'
 import contractJson from './prisma/contract.json' with { type: 'json' }
 
@@ -231,7 +228,7 @@ operators — operand casts to `eql_v3.query_*`, per-driver parameter binding �
 see the `stash-postgres` skill.
 
 In a migration, the recipes ride a raw-SQL operation (`rawSql` from
-`@prisma-next/postgres/migration`) in the migration's `operations`:
+`@prisma/orm-postgres/migration`) in the migration's `operations`:
 
 ```typescript
 rawSql({
@@ -361,7 +358,7 @@ Run Prisma Next apps on a Node runtime where the native module loads.
 | Subpath | Purpose |
 |---|---|
 | `@cipherstash/stack-prisma/v3` | The v3 surface: `cipherstashFromStack`, the SDK adapter, envelopes/middleware |
-| `@cipherstash/stack-prisma/control` | The extension pack for `extensionPacks: [...]` |
+| `@cipherstash/stack-prisma/control` | The extension pack for `extensions: [...]` |
 | `@cipherstash/stack-prisma/runtime` | Envelope classes, `decryptAll`, `eql*` operators, `EncryptedString.from()`… |
 | `@cipherstash/stack-prisma/stack` | One-call setup against `@cipherstash/stack`: `cipherstashFromStack` |
 | `@cipherstash/stack-prisma/column-types` | camelCase factories (`textSearch`, `bigIntOrd`, …) for **TS-authored** contracts — emits byte-identical `contract.json` to the PSL constructors |

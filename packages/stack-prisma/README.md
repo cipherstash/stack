@@ -45,10 +45,13 @@ model User {
 ```typescript
 // prisma-next.config.ts
 import cipherstash from "@cipherstash/stack-prisma/control"
-// ... other imports
+import { defineConfig } from "@prisma/orm-postgres/config"
+
 export default defineConfig({
-  // ... family, target, adapter, contract
-  extensionPacks: [cipherstash],
+  contract: "./prisma/schema.prisma",
+  output: "src/prisma",
+  extensions: [cipherstash],
+  db: { connection: process.env.DATABASE_URL! },
 })
 ```
 
@@ -56,7 +59,7 @@ export default defineConfig({
 // src/db.ts
 import "dotenv/config"
 import { cipherstashFromStack } from "@cipherstash/stack-prisma/v3"
-import postgres from "@prisma-next/postgres/runtime"
+import postgres from "@prisma/orm-postgres/runtime"
 import type { Contract } from "./prisma/contract.d"
 import contractJson from "./prisma/contract.json" with { type: "json" }
 

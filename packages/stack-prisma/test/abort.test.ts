@@ -32,7 +32,7 @@
 import {
   isRuntimeError,
   RUNTIME_ABORTED,
-} from '@prisma-next/framework-components/runtime'
+} from '@prisma/orm-framework/components/runtime'
 import { describe, expect, it } from 'vitest'
 import { decryptAll } from '../src/execution/decrypt-all'
 import {

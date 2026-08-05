@@ -89,7 +89,10 @@ blockExoticSubdeps: true
 # Excluded from the 7-day cooldown: first-party packages we publish or
 # integrate against directly. These ship on their own release cadence and
 # are not exotic deps.
-#   - @prisma-next/*       first-party Prisma packages the integration is built against
+#   - @prisma/orm-*, prisma-next  first-party Prisma packages the integration is
+#                                 built against (the 0.17 publish surface; the
+#                                 retired @prisma-next/* scope is kept while
+#                                 examples still pin 0.16)
 #   - @cipherstash/protect-ffi*  CipherStash-published native FFI and its
 #                                 per-platform binary packages (darwin-arm64,
 #                                 linux-x64-gnu, etc.); bumped in lockstep with stack
@@ -101,6 +104,8 @@ blockExoticSubdeps: true
 #                                 payload format protect-ffi emits; bumped in lockstep.
 minimumReleaseAgeExclude:
   - '@prisma-next/*'
+  - '@prisma/orm-*'
+  - 'prisma-next'
   - '@cipherstash/protect-ffi'
   - '@cipherstash/protect-ffi-*'
   - '@cipherstash/auth'

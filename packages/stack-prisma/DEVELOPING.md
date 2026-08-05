@@ -74,6 +74,8 @@ packages/stack-prisma/
     │                                           EQL v3 bundle (baked, digest-verified SQL)
     ├── 20260720T0000_upgrade_eql_v3_3_0_2/    invariant-only self-edge upgrading
     │                                           already-baselined DBs to the pinned release
+    ├── snapshots/<hex>/contract.{json,d.ts}   content-addressed contract store (0.17
+    │                                           layout; replaces sibling end-contract.*)
     └── refs/head.json                          hand-pinned head ref (both v3 invariants)
 ```
 

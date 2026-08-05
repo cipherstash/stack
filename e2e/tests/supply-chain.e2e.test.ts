@@ -78,7 +78,15 @@ describe('supply chain — pnpm configuration', () => {
     const ws = readYaml('pnpm-workspace.yaml') as {
       minimumReleaseAgeExclude?: string[]
     }
-    const FIRST_PARTY = [/^@prisma-next\//, /^@cipherstash\//]
+    const FIRST_PARTY = [
+      // The Prisma Next publish surface: the retired @prisma-next/* scope
+      // (≤ 0.16), the 0.17+ @prisma/orm-* shells, and the prisma-next bin
+      // shim. All first-party packages the integration is built against.
+      /^@prisma-next\//,
+      /^@prisma\/orm-/,
+      /^prisma-next$/,
+      /^@cipherstash\//,
+    ]
     for (const entry of ws.minimumReleaseAgeExclude ?? []) {
       expect(
         FIRST_PARTY.some((re) => re.test(entry)),

@@ -2,7 +2,7 @@
  * Operation type definitions for the cipherstash extension.
  *
  * Re-export from the types module for the public
- * `@prisma-next/extension-cipherstash/operation-types` subpath. The
+ * `@cipherstash/stack-prisma/operation-types` subpath. The
  * contract emitter pulls these via the `types.operationTypes` /
  * `types.queryOperationTypes` import declarations on
  * `cipherstashPackMeta` (see `../extension-metadata/descriptor-meta.ts`); user code
