@@ -98,6 +98,8 @@ jobs:
 
       # Fail loudly if any live-test credential is missing, so the v3 live
       # matrix (and every other `describeLive` suite) can't silently skip.
+      # Before the binding build below, not after: this costs seconds and that
+      # costs minutes on a cold cache.
       - name: Require CipherStash secrets
         uses: ./.github/actions/require-cs-secrets
         with:
@@ -105,6 +107,17 @@ jobs:
           client-id: ${{ vars.CS_CLIENT_ID }}
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+      # Vendoring protect-ffi put it in `turbo test --filter './packages/*'`,
+      # so root `pnpm test` now runs ITS suite too — and
+      # `src/nativeLoading.test.ts` asserts the platform binary loads. Nothing
+      # else in this job produces `index.node`. The type steps below need
+      # `lib/` for the same reason: they call package scripts directly, so
+      # turbo's `^build` never runs and protect-ffi's declarations resolve to
+      # nothing. No `wasm: true` — every `wasm-inline` unit test either mocks
+      # the module or asserts on the bundle graph.
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/build-ffi-binding
 
       - name: Type tests (stack)
         run: pnpm --filter @cipherstash/stack run test:types
