@@ -94,9 +94,6 @@ blockExoticSubdeps: true
 # integrate against directly. These ship on their own release cadence and
 # are not exotic deps.
 #   - @prisma-next/*       first-party Prisma packages the integration is built against
-#   - @cipherstash/protect-ffi*  CipherStash-published native FFI and its
-#                                 per-platform binary packages (darwin-arm64,
-#                                 linux-x64-gnu, etc.); bumped in lockstep with stack
 #   - @cipherstash/auth*         CipherStash-published auth strategies (NAPI +
 #                                 WASM-inline variant); also tracked in lockstep
 #                                 with protect-ffi for the WASM path.
@@ -105,8 +102,6 @@ blockExoticSubdeps: true
 #                                 payload format protect-ffi emits; bumped in lockstep.
 minimumReleaseAgeExclude:
   - '@prisma-next/*'
-  - '@cipherstash/protect-ffi'
-  - '@cipherstash/protect-ffi-*'
   - '@cipherstash/auth'
   - '@cipherstash/auth-*'
   - '@cipherstash/eql'
