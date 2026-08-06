@@ -31,8 +31,8 @@ catalogs:
       specifier: 8.5.1
       version: 8.5.1
     tsx:
-      specifier: 4.23.0
-      version: 4.23.0
+      specifier: 4.23.1
+      version: 4.23.1
     typescript:
       specifier: 5.9.3
       version: 5.9.3
@@ -41,11 +41,11 @@ catalogs:
       version: 3.2.7
   security:
     '@clerk/nextjs':
-      specifier: 7.5.17
-      version: 7.5.17
+      specifier: 7.6.3
+      version: 7.6.3
     next:
-      specifier: 15.5.21
-      version: 15.5.21
+      specifier: 15.5.22
+      version: 15.5.22
 
 overrides:
   next@<15.5.18: ~15.5.18
@@ -82,7 +82,7 @@ importers:
         version: 2.10.4
       vitest:
         specifier: catalog:repo
-        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
 
   e2e:
     dependencies:
@@ -107,7 +107,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -135,7 +135,7 @@ importers:
         version: link:../../packages/cli
       tsx:
         specifier: catalog:repo
-        version: 4.23.0
+        version: 4.23.1
       typescript:
         specifier: catalog:repo
         version: 5.9.3
@@ -196,13 +196,13 @@ importers:
         version: 2.0.3
       tsx:
         specifier: catalog:repo
-        version: 4.23.0
+        version: 4.23.1
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
 
   examples/supabase-worker: {}
 
@@ -232,13 +232,13 @@ importers:
         version: 8.20.0
       tsx:
         specifier: catalog:repo
-        version: 4.23.0
+        version: 4.23.1
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
 
   packages/cli:
     dependencies:
@@ -267,8 +267,8 @@ importers:
         specifier: ^1.1.1
         version: 1.1.1
       posthog-node:
-        specifier: ^5.41.0
-        version: 5.45.2
+        specifier: ^5.46.1
+        version: 5.46.1
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -287,16 +287,16 @@ importers:
         version: 7.2.0
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
       tsx:
         specifier: catalog:repo
-        version: 4.23.0
+        version: 4.23.1
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
     optionalDependencies:
       '@cipherstash/auth-darwin-arm64':
         specifier: catalog:repo
@@ -337,42 +337,42 @@ importers:
         version: 8.22.0
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
 
   packages/nextjs:
     dependencies:
       jose:
-        specifier: ^6.2.3
-        version: 6.2.3
+        specifier: ^6.2.5
+        version: 6.2.5
     devDependencies:
       '@clerk/nextjs':
         specifier: catalog:security
-        version: 7.5.17(next@15.5.21(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        version: 7.6.3(next@15.5.22(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
       next:
         specifier: catalog:security
-        version: 15.5.21(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        version: 15.5.22(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
     optionalDependencies:
       '@rollup/rollup-linux-x64-gnu':
-        specifier: 4.62.2
-        version: 4.62.2
+        specifier: 4.62.3
+        version: 4.62.3
 
   packages/stack:
     dependencies:
@@ -387,7 +387,7 @@ importers:
         version: 0.31.0
       evlog:
         specifier: 1.11.0
-        version: 1.11.0(next@15.5.21(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3)
+        version: 1.11.0(next@15.5.22(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3)
       uuid:
         specifier: 14.0.1
         version: 14.0.1
@@ -442,16 +442,16 @@ importers:
         version: 3.4.9
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
       tsx:
         specifier: catalog:repo
-        version: 4.23.0
+        version: 4.23.1
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
     optionalDependencies:
       '@cipherstash/auth-darwin-arm64':
         specifier: catalog:repo
@@ -501,13 +501,13 @@ importers:
         version: 3.4.9
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
 
   packages/stack-prisma:
     dependencies:
@@ -595,13 +595,13 @@ importers:
         version: 3.4.9
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
 
   packages/stack-supabase:
     dependencies:
@@ -641,13 +641,13 @@ importers:
         version: 3.4.9
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
 
   packages/test-kit:
     dependencies:
@@ -663,16 +663,16 @@ importers:
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
 
   packages/wizard:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.3.207
-        version: 0.3.212(@anthropic-ai/sdk@0.111.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)
+        specifier: ^0.3.220
+        version: 0.3.220(@anthropic-ai/sdk@0.115.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)
       '@anthropic-ai/sdk':
-        specifier: ^0.111.0
-        version: 0.111.0(zod@3.25.76)
+        specifier: ^0.115.0
+        version: 0.115.0(zod@3.25.76)
       '@cipherstash/auth':
         specifier: catalog:repo
         version: 0.42.0(@cipherstash/auth-darwin-arm64@0.42.0)(@cipherstash/auth-darwin-x64@0.42.0)(@cipherstash/auth-linux-arm64-gnu@0.42.0)(@cipherstash/auth-linux-x64-gnu@0.42.0)(@cipherstash/auth-linux-x64-musl@0.42.0)(@cipherstash/auth-win32-x64-msvc@0.42.0)
@@ -689,8 +689,8 @@ importers:
         specifier: ^1.1.1
         version: 1.1.1
       posthog-node:
-        specifier: ^5.41.0
-        version: 5.45.2
+        specifier: ^5.46.1
+        version: 5.46.1
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -700,16 +700,16 @@ importers:
         version: 8.20.0
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
       tsx:
         specifier: catalog:repo
-        version: 4.23.0
+        version: 4.23.1
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
     optionalDependencies:
       '@cipherstash/auth-darwin-arm64':
         specifier: catalog:repo
@@ -732,60 +732,60 @@ importers:
 
 packages:
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.212':
-    resolution: {integrity: sha512-t9t5fP94XNslh5hIWlmwE0F7hrhEpnbzM6ddF9qjqyO3zT6XZQ3U/fT2wuM8WYdSpyAsOO+3WiABe1buzNVQbA==}
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.220':
+    resolution: {integrity: sha512-7VxlbEosK7DODiOnsjoVd0DSJzbnaPrM2jelMHI0y8zx1UnLS3WC6EFUXbvy74F2sXqEznh2tzn7EKWInaRN6Q==}
     cpu: [arm64]
     os: [darwin]
 
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.212':
-    resolution: {integrity: sha512-0dgxPaf0+9lpOOpKYRXPtcXridq27QjhLFz/7UjVANy7roqcojdnwX4Wpjf8hII/URPkjLH+9PlAgZT3Ml1YIg==}
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.220':
+    resolution: {integrity: sha512-X9RwDsSmbF6ultKZroaip+DL8WRgC64gHbrAwrRlAFSPNZV7zmJyP2ur8rW7KrxqmtuehdMMkw8+SAC/6hD2PA==}
     cpu: [x64]
     os: [darwin]
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.212':
-    resolution: {integrity: sha512-oeQr+cQk65eost/O+ZAROQkME0o3affxfLiRWpJjb/focycvA3Z/Z1vI3z6QL+bswMcEGsHp88cXBLoDYC0nNQ==}
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.220':
+    resolution: {integrity: sha512-OHoZOZ8Cf2TBr6oXIXPwyvUxj9jrq2w8E4poA8dMpacXszcPSPiCQCMuuOh4aWJzfeJE1+TtWxhKMVb2csXyZQ==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.212':
-    resolution: {integrity: sha512-laU4i0eN5yq/H/utAfHKDjyugjvSnFuAfMhHYv8idF7PQxl+6YDahDd4gqVPdIifcZvrAsi1HXfpdKayYv6dJg==}
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.220':
+    resolution: {integrity: sha512-WkROPwWskqhKR9XgnmseHQ6rLi9zM9qt57IWoToIjL/eXOqDWipp7JXZ1L5ud+LrA42dunHPZfBwD/vXZ+A7LA==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.212':
-    resolution: {integrity: sha512-MYs7C9UOqhwWv4GgEbGdD37BUp8C8ff6WPDupFHW6/html2wK0DAei72sWjTghoEiUJUlRcxay1nxPCiwB9w1A==}
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.220':
+    resolution: {integrity: sha512-K+FWj+LcGhC1Z7wqeWoLxm1iemcba5xKpLLFVwYm4V6HyMx3ruYd/2r2TiQtjT+JWeNFWIys0ScHiItR6vWAiA==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.212':
-    resolution: {integrity: sha512-sUELD4LP2JLQeFZdven/7NPWS6/TIlE8aNwQJBj8+8RNF4XketoKUbmRdIBO6q8YpXFGn+4DVzirb+Cz6DIbuA==}
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.220':
+    resolution: {integrity: sha512-tkTJFnpR9VifvWX2fmkCAPkT6+8Wk/gVu8B5jsVekKZPiZoWRHmMXO30BnZn+f0TZhgYP+82PSX3S8crH1kn+w==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.212':
-    resolution: {integrity: sha512-fCtzLDJHy8jO4oaK/GC971f3npRWSdVhzDbh2uOQeqsWnHpGnHkxpUVBa7fVeEW5oTvXlRATgjDODjO+3CVLIg==}
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.220':
+    resolution: {integrity: sha512-rIwgq0UwQExWl6KrHUyC4w5KwpL9l6nd95aUTx6RitexaAuEw//xtfTVLnuE4hDDQZFkzEwpdKc3nxDWoGcUbA==}
     cpu: [arm64]
     os: [win32]
 
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.212':
-    resolution: {integrity: sha512-2DCQL7ZfzpoGo4kCzu+jqOifPOKUe+Zc6OgTiSDvatz/JGWxs0kV3jOTTjtxGCCUKpdKnflRjHzOHFjIKjODxA==}
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.220':
+    resolution: {integrity: sha512-MuOuXhbr66HlGaWXD2f3w0k2PsvmnbkwcUZ0dAe2poFLdl72GC2dapwwOBefxm9QmoNqk9+jmv/dSKGOVWyvLw==}
     cpu: [x64]
     os: [win32]
 
-  '@anthropic-ai/claude-agent-sdk@0.3.212':
-    resolution: {integrity: sha512-BSowuUv7+EoeBo36oZbSox8uyY3dqyMLFolAoMyKW3uqAfZLDV8MpvjDsv+WDE+OGCkuWK60JIqfhyPhctGTgg==}
+  '@anthropic-ai/claude-agent-sdk@0.3.220':
+    resolution: {integrity: sha512-glc7SdwPkOkLw8oxwLo9PKTdLJGqW/PIR4urWXFoRtX9YllwozsEVc5Tc1+EvLSkfrsxPJqQWqOgpjUOQXf1oA==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       '@anthropic-ai/sdk': '>=0.93.0'
       '@modelcontextprotocol/sdk': ^1.29.0
       zod: ^4.0.0
 
-  '@anthropic-ai/sdk@0.111.0':
-    resolution: {integrity: sha512-1hUqKi+uJQoS5X90+InwHbFAXMvgq0DnsC5hVLEeSRaODiU5WvmqDAcVCmGS2wC0pN9Z8jtWCbWw7JLzeDdm/Q==}
+  '@anthropic-ai/sdk@0.115.0':
+    resolution: {integrity: sha512-BJrFIVyjNuU8lfDyIJTvlRYzgQg+zEl78BxE7fq8esULsGz9IRQvGtW5spq3tydmtjQb/GFdooKGdGsetpx+lQ==}
     hasBin: true
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
@@ -1033,20 +1033,20 @@ packages:
     resolution: {integrity: sha512-takrEE0nliUz39e8Ct1YG471eBcuU2I1ZStRIU9U0UAIuiNAxNTNuaVZSXaZeK4QTuJtdQhoGy8rvzxr/10Btw==}
     engines: {node: '>=20.9.0'}
 
-  '@clerk/backend@3.11.7':
-    resolution: {integrity: sha512-il2wyzS2I10Gv8v+ECEKQqDfaW7gCD2BWUZp37LOMFBn6/DJ7FhHfe4XwgQLUDBkHyk2LxyTt3Lbg5GnpNJPUQ==}
+  '@clerk/backend@3.14.0':
+    resolution: {integrity: sha512-WsphTvDFHDuQilKI7dyVE5qmt7USu8qSrujAq6SqpEHbVFfNBfINDNuzxlF9M2skOTfHFfgiTE8Jjb1egIBGLg==}
     engines: {node: '>=20.9.0'}
 
-  '@clerk/nextjs@7.5.17':
-    resolution: {integrity: sha512-6RtpFRQ9VhQzMe9vjhVgcVHM6oeSEn+ZP8TYTbnluJG18F+tcIM8FHn4QMGn0tZvPfDxmODKeyZR4gz8FJ620g==}
+  '@clerk/nextjs@7.6.3':
+    resolution: {integrity: sha512-lE7H4vI4xbXYwb6zCaAEYCVQcvmzFl38mXE7hjqk5b0kn3DMO9MnUV8GCXKSNCPU+d+GJ/KU1wCY01ME097pfQ==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       next: ~15.5.18
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
       react-dom: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
 
-  '@clerk/react@6.12.2':
-    resolution: {integrity: sha512-Y+OGZlYfRW+3b+fjdbvSYyYB/IraGitrlLJKYaHxeZYNIwvoUNH0zlreSxUSmxYZ0E2yETSEvkCXszvuZUMa3A==}
+  '@clerk/react@6.12.9':
+    resolution: {integrity: sha512-lQ1UOJhHGDweLCDf4IgT5r3rgkch1Gx21hNqK2/kOohJrJd/XM89fq2F7VK9Kg/Byc14TsfCh64Dm8ej2MyRWw==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
@@ -1064,8 +1064,8 @@ packages:
       react-dom:
         optional: true
 
-  '@clerk/shared@4.25.5':
-    resolution: {integrity: sha512-pb+pA+88OACHSuE0JhsnV7Qzl1j9UhI9KrXivS831x1BJOtNYORnDqRg3xss2SPFcC46clE9S5QqkRQqv1lSsg==}
+  '@clerk/shared@4.25.9':
+    resolution: {integrity: sha512-nw3maGzqPrwmUKjGffOM9Zvw24IyOllq0TkQGzsTfQX312WLu2u5CNvjKntMb6Ok6kXa1Zdc77zmPLn1/EAIFA==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
@@ -1235,8 +1235,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@hono/node-server@1.19.14':
-    resolution: {integrity: sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw==}
+  '@hono/node-server@1.19.17':
+    resolution: {integrity: sha512-dSneS5qhiauZWGDCeK4o695Xd9nUNjviSZCMQrj10eetr8Uln1ucn6bbphOM6UynAMMtNIzZNSpL9vnASJwrPQ==}
     engines: {node: '>=18.14.1'}
     peerDependencies:
       hono: ^4
@@ -1441,57 +1441,57 @@ packages:
   '@neon-rs/load@0.1.82':
     resolution: {integrity: sha512-H4Gu2o5kPp+JOEhRrOQCnJnf7X6sv9FBLttM/wSbb4efsgFWeHzfU/ItZ01E5qqEk+U6QGdeVO7lxXIAtYHr5A==}
 
-  '@next/env@15.5.21':
-    resolution: {integrity: sha512-hjJI/GfrjWHgNguRIBzItjRRu0m3Nrz17GhxsjuHfjIvg9hyg3239REd2dpI+bpMTFuVrVprHzEQ19m++cDtbw==}
+  '@next/env@15.5.22':
+    resolution: {integrity: sha512-O5BlKb3KtsHkvO0gjjV66PuJnAgCtIEIzwkt50HRAHsQkU1t77eksIXSZV84/WMtZJjWrnDUPKHVRi0D62nSAA==}
 
-  '@next/swc-darwin-arm64@15.5.21':
-    resolution: {integrity: sha512-ZfjqPEdi6TRC/fWx7UDbwb1fbVgyh2uD5tVTRKIDZDlYM+UNuE/LafDG2fwuAoZilADpABh46OY/F5qf9JjqLQ==}
+  '@next/swc-darwin-arm64@15.5.22':
+    resolution: {integrity: sha512-/VISwtffSg8+fVvBbXdglsvruCsdbBC4dG25iU6xascKVqfQKsj/OtjGnOEkIS7pX5GB9e9/r5QprpicsGL3gw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
 
-  '@next/swc-darwin-x64@15.5.21':
-    resolution: {integrity: sha512-TlCf1NpxgQLzTrexuev75xwmNCJMd1/qkJpTVP1GRRcih93hlIBn1P72hkh8T0gnRFr6BmWksQtbyG3jT6jnww==}
+  '@next/swc-darwin-x64@15.5.22':
+    resolution: {integrity: sha512-NiA9ve8hbiuhG/Q17a2mZDRVxMTtg3rTOgjLnDaLlE+AEPAQlkkuKrfePEbeOrgYmX0U2KGX4EVEn09hXU5GlQ==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
 
-  '@next/swc-linux-arm64-gnu@15.5.21':
-    resolution: {integrity: sha512-LXRsq1p+HvHSi7ygwNcSEEcK0zuo5jS75ZlqFHtOH+LF7qntXAJVJxah+1Pi/GyBm7EpkwU7m4EgbvIKrMqm9A==}
+  '@next/swc-linux-arm64-gnu@15.5.22':
+    resolution: {integrity: sha512-vAPa9vltW+UW/KWtjXeSUFgV3wb1x9d/BeyC6WFI6eBpL0D2f70oGwtOp6193mNW3qusrpgBzMQferPf+Zh8Dw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@next/swc-linux-arm64-musl@15.5.21':
-    resolution: {integrity: sha512-hyGixhFxpDKjqoev6l4KlcRBlt9AXWrGhDZwmwg49sMJM5tnKQPSi+SEj9+e5n+l/bthRGZUdh59GKIs6lQPRw==}
+  '@next/swc-linux-arm64-musl@15.5.22':
+    resolution: {integrity: sha512-iknK80pWlNDnkdSr13bd8mMuG3Z2oTxODwsZHvuMY7caMk77+rBLdHVWsy8v2EVa3ZojJ/+wJX5fnq8va6Gv8A==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@next/swc-linux-x64-gnu@15.5.21':
-    resolution: {integrity: sha512-qfE+YfOba6S2+13e8qn1/UozDVNZ2clBlrs8UtDoax4s8ediu6sq93z66OEHUYlb69Tffh5JTNkgtsAKiSuugg==}
+  '@next/swc-linux-x64-gnu@15.5.22':
+    resolution: {integrity: sha512-penuEdkwU2OOAiS+n4LE8T/VIoCfAI01QcLZTJ2xc3+l4Q22L/DzURocmI2LU1b+8BMQoLAP1Sze3uYAZT05Bg==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@next/swc-linux-x64-musl@15.5.21':
-    resolution: {integrity: sha512-BXLGG+EvIwp/Rrgl6HY8sqvD6BOUOIRz8/naDbeLNX7mlA5H2XRcL6MW/0IGnJISfj5BA9gNhFyJj5yOoiIDJQ==}
+  '@next/swc-linux-x64-musl@15.5.22':
+    resolution: {integrity: sha512-ZM0BKJm3FZ+guG6WT6PcyOLtp6paZ5tngcJC/uUKvLW4Y0TQnnVi1+UGdo8Q6Yxp5gaS82pmC1rD/oFlhkWB3g==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@next/swc-win32-arm64-msvc@15.5.21':
-    resolution: {integrity: sha512-tNGNOlT0Wn7E4IMsSnufjXN/l2L2/AGdLLpa2vzS89SYCBuihgLn3ngLsIrvndAnWo9nAkus+4gZHTI/Ijx9HA==}
+  '@next/swc-win32-arm64-msvc@15.5.22':
+    resolution: {integrity: sha512-rY/YaumrZaS0//94BnHLF5VSRp0GFUO4GvXNuoCBb0cGSci96yO+p1JaNL2aq9YZAYv9cuZRziV02x5IQH/wjg==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [win32]
 
-  '@next/swc-win32-x64-msvc@15.5.21':
-    resolution: {integrity: sha512-DmIdWmC9p4rdNIiQqo8ap0+Cnj6kKtTZnuSCxoYydSc8sgpDgAg9wFhxplunak9imLV0pTvc5WVCOHwm5eHLtQ==}
+  '@next/swc-win32-x64-msvc@15.5.22':
+    resolution: {integrity: sha512-s5IA4cyrbR2XK/5NWcu5dp8CfPBiKME+UhvNperia7uQybEgg5+LIhGMiY37WQE4rcI4owsDcU4IVUjLoTuDkA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
@@ -1515,11 +1515,11 @@ packages:
   '@petamoriken/float16@3.9.3':
     resolution: {integrity: sha512-8awtpHXCx/bNpFt4mt2xdkgtgVvKqty8VbjHI/WWWQuEw+KLzFot3f4+LkQY9YmOtq7A5GdOnqoIC8Pdygjk2g==}
 
-  '@posthog/core@1.43.1':
-    resolution: {integrity: sha512-hGM8f5sp3we6Em/RQHXbmyYm554hUx9+9jhf92ZQgDS4/xW72KHyZiO9wcFye+qAx2cJAOhOCDIznmO1FV8IbA==}
+  '@posthog/core@1.45.2':
+    resolution: {integrity: sha512-OhEHkojFkqEFbtm/wUtLYgomN1gFNU9IyufvNsuZvpIOh8TZ9tnAvI81Sej/2zu+vyDExs9JroQB5SW3y5QyOw==}
 
-  '@posthog/types@1.397.0':
-    resolution: {integrity: sha512-Pa7FtsBo3V0XrhY4y8Xquwp8U07syuZ2IGQdlsRyxhz0yejQLceFjI58UssCXE5zDCDj3km5l7H3ufD6rHChCg==}
+  '@posthog/types@1.399.0':
+    resolution: {integrity: sha512-/WDwBzqIPko8VJ1B+0rlso2XQEz9+2sqtsY9Tqy3p1GhgTqsFakcz/PmMpAnA321LTEZVRcO6x5hAwABV4yrDw==}
 
   '@prisma-next/adapter-postgres@0.16.0':
     resolution: {integrity: sha512-SUldSFt4NXtg5LY8ywCNuukrZj8lNDBQ2++ijRBF2VMMWRQvqztX/4/+9CoS/UjKnev/0QRbjf5oBf1wqAxcEQ==}
@@ -1931,8 +1931,8 @@ packages:
     os: [linux]
     libc: [glibc]
 
-  '@rollup/rollup-linux-x64-gnu@4.62.2':
-    resolution: {integrity: sha512-5BqxR/pshjey51iliyzTD5Xi3EN0aLmQ2lZ3lvefVV9c82BvrLo2/6OT55iifpWBufs6kdwWbuOKS841DrmK9A==}
+  '@rollup/rollup-linux-x64-gnu@4.62.3':
+    resolution: {integrity: sha512-V4KtWtQfAFMU7+9/A/VDps/VI8CHd3cYz0L8sgJzz8qK7eY7wI4ruFD82UYIYvW9Z4DtlTfhQcsl4XyPHW5uSg==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
@@ -2122,6 +2122,11 @@ packages:
 
   acorn@8.17.0:
     resolution: {integrity: sha512-xRQbDb9BnwDafYNn6Vwl839DYVjqXYb1XVGtWAZ1kcDc6iwAL4hg3B1dZlRiuENFeO2H53gFG3in621AdERVAg==}
+    engines: {node: '>=0.4.0'}
+    hasBin: true
+
+  acorn@8.18.0:
+    resolution: {integrity: sha512-lGq+9yr1/GuAWaVYIHRjvvySG5/4VfKIvC8EWxStPdcDh/Ka7FG3twP6v4d5BkravUilhIAsG4Qj83t02LWUPQ==}
     engines: {node: '>=0.4.0'}
     hasBin: true
 
@@ -2556,8 +2561,8 @@ packages:
     resolution: {integrity: sha512-knvyeauYhqjOYvQ66MznSMs83wmHrCycNEN6Ao+2AeYEfxUIkuiVxdEa1qlGEPK+We3n0THiDciYSsCcgW/DoA==}
     engines: {node: '>=12.0.0'}
 
-  express-rate-limit@8.6.0:
-    resolution: {integrity: sha512-XKJXDsASUOo0LLtFwW5hCcQGH0N4WQc/Rn8/Pvoia+TJFOkkFPvrtW9lZOeeNcxQJspvOIERMwiRLsVFlhHEkA==}
+  express-rate-limit@8.6.1:
+    resolution: {integrity: sha512-0D493aP61w0TJ2A0wy27riRsO7FMQ7FK+KUHOKCSfPvYo0R55aiC6emCVgFUeShH0fq0ICPVzNcgoS+BsbXQCA==}
     engines: {node: '>= 16'}
     peerDependencies:
       express: '>= 4.11'
@@ -2715,8 +2720,8 @@ packages:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
 
-  hono@4.12.30:
-    resolution: {integrity: sha512-emn+JoJjrN9YTpRDS5it/UI2SO9BAE37T6I3d963RxcZ81G9A4pr2SZTEiiaiKbzx+NKRg5BZ89fCL7gCJCUog==}
+  hono@4.12.32:
+    resolution: {integrity: sha512-XcuyW9qE2kJn07PkecMOBd5Vq/hMy7mmGw+idz1yblbg9N17ijJODrvPkn7/dwL3Kulj8LcRJ69DLOWf91dRUg==}
     engines: {node: '>=16.9.0'}
 
   http-errors@2.0.1:
@@ -2750,8 +2755,8 @@ packages:
   inherits@2.0.4:
     resolution: {integrity: sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==}
 
-  ip-address@10.2.0:
-    resolution: {integrity: sha512-/+S6j4E9AHvW9SWMSEY9Xfy66O5PWvVEJ08O0y5JGyEKQpojb0K0GKpz/v5HJ/G0vi3D2sjGK78119oXZeE0qA==}
+  ip-address@10.3.1:
+    resolution: {integrity: sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==}
     engines: {node: '>= 12'}
 
   ipaddr.js@1.9.1:
@@ -2807,8 +2812,8 @@ packages:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
 
-  jose@6.2.3:
-    resolution: {integrity: sha512-YYVDInQKFJfR/xa3ojUTl8c2KoTwiL1R5Wg9YCydwH0x0B9grbzlg5HC7mMjCtUJjbQ/YnGEZIhI5tCgfTb4Hw==}
+  jose@6.2.5:
+    resolution: {integrity: sha512-2E5L2yRp03FnwreJLJX8/r7mHiZICCf8kG7fAsTWkSQTDAcc46NIZoQLKy+EJ8sPoJlxyS4OQR5H70LjIZZlIQ==}
 
   joycon@3.1.1:
     resolution: {integrity: sha512-34wB/Y7MW7bzjKRjUKTa46I2Z7eV62Rkhva+KkopW7Qvv/OSWBqvkSY7vusOPrNuZcUG3tApvdVgNB8POj3SPw==}
@@ -2966,8 +2971,8 @@ packages:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
     engines: {node: '>= 0.4'}
 
-  media-typer@1.1.0:
-    resolution: {integrity: sha512-aisnrDP4GNe06UcKFnV5bfMNPBUw4jsLGaWwWfnH3v02GnBuXX2MCVn5RbrWo0j3pczUilYblq7fQ7Nw2t5XKw==}
+  media-typer@1.1.1:
+    resolution: {integrity: sha512-yz3xRaG20c6/BOzvYoDaGtPmGscs7YivItZEEqe6GbwNfHuxu9YNmvnEkMzKldAGY4/80pRcQRZSEnhquk9XuQ==}
     engines: {node: '>= 0.8'}
 
   merge-descriptors@2.0.0:
@@ -3031,8 +3036,8 @@ packages:
     resolution: {integrity: sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg==}
     engines: {node: '>= 0.6'}
 
-  next@15.5.21:
-    resolution: {integrity: sha512-/TsdBtkWLhkl+NVL3Uqws2UphNd6IPzOtzSk1fHaf+0P7GQKLZDUytyhns/Ykbzdy9+YRjwG7ONvrHaaTDdFqQ==}
+  next@15.5.22:
+    resolution: {integrity: sha512-mrtal1sRxO4YrlDS98sDuIvGZivKbFix8w7oAL9ZynfOgc3cADQOQgvwtMooc18Qr8bKzvQAcHwHZ0mbJ7zcfQ==}
     engines: {node: ^18.18.0 || ^19.8.0 || >= 20.0.0}
     hasBin: true
     peerDependencies:
@@ -3267,8 +3272,8 @@ packages:
     resolution: {integrity: sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw==}
     engines: {node: '>=12'}
 
-  posthog-node@5.45.2:
-    resolution: {integrity: sha512-QhHw/xL0ntMG/DzqA/qdiKu8JY8ChK5Obm8m1nMJor5sjJ7+pfVJSx1yAynC7iUAJfJ9V+OhBNhDCyi5IFWC0Q==}
+  posthog-node@5.46.1:
+    resolution: {integrity: sha512-WjCqExq44pBdyg9MSsH6UAE0tNZ88p4aIuVFicgqhjf2Fbws6IhS4ioYUa4aBrbUPS9EDRXtBTtF5DpP1ml8Pw==}
     engines: {node: ^20.20.0 || >=22.22.0}
     peerDependencies:
       rxjs: ^7.0.0
@@ -3615,8 +3620,8 @@ packages:
       typescript:
         optional: true
 
-  tsx@4.23.0:
-    resolution: {integrity: sha512-eUdUIaCr963q2h5u3+QwvYp0+eqPvn+egeqZUm0hwERCqqx1E3kK5ehbGCvqSE5MQAULr67ww0cA3jKc3YkM1w==}
+  tsx@4.23.1:
+    resolution: {integrity: sha512-GQHnkIfxyx1wYCOS/wonik5MVRZU9hi1TEZmzGZSCJB1y9YgoZ8H6itNE/u4suE+yLmOzuE4E5S4TZ/ZX2wcWQ==}
     engines: {node: '>=18.0.0'}
     hasBin: true
 
@@ -3804,46 +3809,46 @@ packages:
 
 snapshots:
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.212':
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.220':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.212':
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.220':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.212':
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.220':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.212':
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.220':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.212':
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.220':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.212':
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.220':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.212':
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.220':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.212':
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.220':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk@0.3.212(@anthropic-ai/sdk@0.111.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)':
+  '@anthropic-ai/claude-agent-sdk@0.3.220(@anthropic-ai/sdk@0.115.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)':
     dependencies:
-      '@anthropic-ai/sdk': 0.111.0(zod@3.25.76)
+      '@anthropic-ai/sdk': 0.115.0(zod@3.25.76)
       '@modelcontextprotocol/sdk': 1.29.0(zod@3.25.76)
       zod: 3.25.76
     optionalDependencies:
-      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.212
-      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.212
-      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.212
-      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.212
-      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.212
-      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.212
-      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.212
-      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.212
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.220
+      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.220
+      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.220
+      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.220
+      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.220
+      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.220
+      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.220
+      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.220
 
-  '@anthropic-ai/sdk@0.111.0(zod@3.25.76)':
+  '@anthropic-ai/sdk@0.115.0(zod@3.25.76)':
     dependencies:
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.0.0
@@ -4129,29 +4134,29 @@ snapshots:
       - react
       - react-dom
 
-  '@clerk/backend@3.11.7(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/backend@3.14.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@clerk/shared': 4.25.5(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': 4.25.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       standardwebhooks: 1.0.0
       tslib: 2.8.1
     transitivePeerDependencies:
       - react
       - react-dom
 
-  '@clerk/nextjs@7.5.17(next@15.5.21(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/nextjs@7.6.3(next@15.5.22(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@clerk/backend': 3.11.7(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@clerk/react': 6.12.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@clerk/shared': 4.25.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      next: 15.5.21(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/backend': 3.14.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/react': 6.12.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': 4.25.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      next: 15.5.22(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
       server-only: 0.0.1
       tslib: 2.8.1
 
-  '@clerk/react@6.12.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/react@6.12.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@clerk/shared': 4.25.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': 4.25.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
       tslib: 2.8.1
@@ -4166,7 +4171,7 @@ snapshots:
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
 
-  '@clerk/shared@4.25.5(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/shared@4.25.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
       '@tanstack/query-core': 5.101.2
       dequal: 2.0.3
@@ -4259,9 +4264,9 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
-  '@hono/node-server@1.19.14(hono@4.12.30)':
+  '@hono/node-server@1.19.17(hono@4.12.32)':
     dependencies:
-      hono: 4.12.30
+      hono: 4.12.32
 
   '@img/colour@1.0.0':
     optional: true
@@ -4407,7 +4412,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(zod@3.25.76)':
     dependencies:
-      '@hono/node-server': 1.19.14(hono@4.12.30)
+      '@hono/node-server': 1.19.17(hono@4.12.32)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -4416,9 +4421,9 @@ snapshots:
       eventsource: 3.0.7
       eventsource-parser: 3.1.0
       express: 5.2.1
-      express-rate-limit: 8.6.0(express@5.2.1)
-      hono: 4.12.30
-      jose: 6.2.3
+      express-rate-limit: 8.6.1(express@5.2.1)
+      hono: 4.12.32
+      jose: 6.2.5
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
@@ -4429,30 +4434,30 @@ snapshots:
 
   '@neon-rs/load@0.1.82': {}
 
-  '@next/env@15.5.21': {}
+  '@next/env@15.5.22': {}
 
-  '@next/swc-darwin-arm64@15.5.21':
+  '@next/swc-darwin-arm64@15.5.22':
     optional: true
 
-  '@next/swc-darwin-x64@15.5.21':
+  '@next/swc-darwin-x64@15.5.22':
     optional: true
 
-  '@next/swc-linux-arm64-gnu@15.5.21':
+  '@next/swc-linux-arm64-gnu@15.5.22':
     optional: true
 
-  '@next/swc-linux-arm64-musl@15.5.21':
+  '@next/swc-linux-arm64-musl@15.5.22':
     optional: true
 
-  '@next/swc-linux-x64-gnu@15.5.21':
+  '@next/swc-linux-x64-gnu@15.5.22':
     optional: true
 
-  '@next/swc-linux-x64-musl@15.5.21':
+  '@next/swc-linux-x64-musl@15.5.22':
     optional: true
 
-  '@next/swc-win32-arm64-msvc@15.5.21':
+  '@next/swc-win32-arm64-msvc@15.5.22':
     optional: true
 
-  '@next/swc-win32-x64-msvc@15.5.21':
+  '@next/swc-win32-x64-msvc@15.5.22':
     optional: true
 
   '@noble/hashes@2.2.0': {}
@@ -4472,11 +4477,11 @@ snapshots:
   '@petamoriken/float16@3.9.3':
     optional: true
 
-  '@posthog/core@1.43.1':
+  '@posthog/core@1.45.2':
     dependencies:
-      '@posthog/types': 1.397.0
+      '@posthog/types': 1.399.0
 
-  '@posthog/types@1.397.0': {}
+  '@posthog/types@1.399.0': {}
 
   '@prisma-next/adapter-postgres@0.16.0(typanion@3.14.0)(typescript@5.9.3)':
     dependencies:
@@ -4949,7 +4954,7 @@ snapshots:
   '@rollup/rollup-linux-x64-gnu@4.60.4':
     optional: true
 
-  '@rollup/rollup-linux-x64-gnu@4.62.2':
+  '@rollup/rollup-linux-x64-gnu@4.62.3':
     optional: true
 
   '@rollup/rollup-linux-x64-musl@4.60.4':
@@ -5083,21 +5088,13 @@ snapshots:
       chai: 5.3.3
       tinyrainbow: 2.0.0
 
-  '@vitest/mocker@3.2.7(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0))':
+  '@vitest/mocker@3.2.7(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0))':
     dependencies:
       '@vitest/spy': 3.2.7
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
-
-  '@vitest/mocker@3.2.7(vite@7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0))':
-    dependencies:
-      '@vitest/spy': 3.2.7
-      estree-walker: 3.0.3
-      magic-string: 0.30.21
-    optionalDependencies:
-      vite: 7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+      vite: 7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
 
   '@vitest/pretty-format@3.2.7':
     dependencies:
@@ -5131,6 +5128,9 @@ snapshots:
       negotiator: 1.0.0
 
   acorn@8.17.0: {}
+
+  acorn@8.18.0:
+    optional: true
 
   ajv-formats@3.0.1(ajv@8.20.0):
     optionalDependencies:
@@ -5418,9 +5418,9 @@ snapshots:
     dependencies:
       eventsource-parser: 3.1.0
 
-  evlog@1.11.0(next@15.5.21(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3):
+  evlog@1.11.0(next@15.5.22(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3):
     optionalDependencies:
-      next: 15.5.21(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      next: 15.5.22(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       react: 19.2.3
 
   execa@9.6.1:
@@ -5440,11 +5440,11 @@ snapshots:
 
   expect-type@1.3.0: {}
 
-  express-rate-limit@8.6.0(express@5.2.1):
+  express-rate-limit@8.6.1(express@5.2.1):
     dependencies:
       debug: 4.4.3
       express: 5.2.1
-      ip-address: 10.2.0
+      ip-address: 10.3.1
     transitivePeerDependencies:
       - supports-color
 
@@ -5649,7 +5649,7 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hono@4.12.30: {}
+  hono@4.12.32: {}
 
   http-errors@2.0.1:
     dependencies:
@@ -5677,7 +5677,7 @@ snapshots:
 
   inherits@2.0.4: {}
 
-  ip-address@10.2.0: {}
+  ip-address@10.3.1: {}
 
   ipaddr.js@1.9.1: {}
 
@@ -5713,7 +5713,7 @@ snapshots:
 
   jiti@2.7.0: {}
 
-  jose@6.2.3: {}
+  jose@6.2.5: {}
 
   joycon@3.1.1: {}
 
@@ -5837,7 +5837,7 @@ snapshots:
 
   math-intrinsics@1.1.0: {}
 
-  media-typer@1.1.0: {}
+  media-typer@1.1.1: {}
 
   merge-descriptors@2.0.0: {}
 
@@ -5901,9 +5901,9 @@ snapshots:
 
   negotiator@1.0.0: {}
 
-  next@15.5.21(react-dom@19.2.3(react@19.2.3))(react@19.2.3):
+  next@15.5.22(react-dom@19.2.3(react@19.2.3))(react@19.2.3):
     dependencies:
-      '@next/env': 15.5.21
+      '@next/env': 15.5.22
       '@swc/helpers': 0.5.15
       caniuse-lite: 1.0.30001760
       postcss: 8.5.14
@@ -5911,14 +5911,14 @@ snapshots:
       react-dom: 19.2.3(react@19.2.3)
       styled-jsx: 5.1.6(react@19.2.3)
     optionalDependencies:
-      '@next/swc-darwin-arm64': 15.5.21
-      '@next/swc-darwin-x64': 15.5.21
-      '@next/swc-linux-arm64-gnu': 15.5.21
-      '@next/swc-linux-arm64-musl': 15.5.21
-      '@next/swc-linux-x64-gnu': 15.5.21
-      '@next/swc-linux-x64-musl': 15.5.21
-      '@next/swc-win32-arm64-msvc': 15.5.21
-      '@next/swc-win32-x64-msvc': 15.5.21
+      '@next/swc-darwin-arm64': 15.5.22
+      '@next/swc-darwin-x64': 15.5.22
+      '@next/swc-linux-arm64-gnu': 15.5.22
+      '@next/swc-linux-arm64-musl': 15.5.22
+      '@next/swc-linux-x64-gnu': 15.5.22
+      '@next/swc-linux-x64-musl': 15.5.22
+      '@next/swc-win32-arm64-msvc': 15.5.22
+      '@next/swc-win32-x64-msvc': 15.5.22
       sharp: 0.34.5
     transitivePeerDependencies:
       - '@babel/core'
@@ -6065,13 +6065,13 @@ snapshots:
 
   pluralize@8.0.0: {}
 
-  postcss-load-config@6.0.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(yaml@2.9.0):
+  postcss-load-config@6.0.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.1)(yaml@2.9.0):
     dependencies:
       lilconfig: 3.1.3
     optionalDependencies:
       jiti: 2.7.0
       postcss: 8.5.14
-      tsx: 4.23.0
+      tsx: 4.23.1
       yaml: 2.9.0
 
   postcss@8.5.14:
@@ -6092,9 +6092,9 @@ snapshots:
 
   postgres@3.4.9: {}
 
-  posthog-node@5.45.2:
+  posthog-node@5.46.1:
     dependencies:
-      '@posthog/core': 1.43.1
+      '@posthog/core': 1.45.2
 
   prettier@2.8.8: {}
 
@@ -6402,7 +6402,7 @@ snapshots:
   terser@5.44.1:
     dependencies:
       '@jridgewell/source-map': 0.3.11
-      acorn: 8.17.0
+      acorn: 8.18.0
       commander: 2.20.3
       source-map-support: 0.5.21
     optional: true
@@ -6451,7 +6451,7 @@ snapshots:
 
   tslib@2.8.1: {}
 
-  tsup@8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0):
+  tsup@8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0):
     dependencies:
       bundle-require: 5.1.0(esbuild@0.28.1)
       cac: 6.7.14
@@ -6462,7 +6462,7 @@ snapshots:
       fix-dts-default-cjs-exports: 1.0.1
       joycon: 3.1.1
       picocolors: 1.1.1
-      postcss-load-config: 6.0.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(yaml@2.9.0)
+      postcss-load-config: 6.0.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.1)(yaml@2.9.0)
       resolve-from: 5.0.0
       rollup: 4.60.4
       source-map: 0.7.6
@@ -6479,7 +6479,7 @@ snapshots:
       - tsx
       - yaml
 
-  tsx@4.23.0:
+  tsx@4.23.1:
     dependencies:
       esbuild: 0.28.1
     optionalDependencies:
@@ -6499,7 +6499,7 @@ snapshots:
   type-is@2.1.0:
     dependencies:
       content-type: 2.0.0
-      media-typer: 1.1.0
+      media-typer: 1.1.1
       mime-types: 3.0.2
 
   typescript@5.9.3: {}
@@ -6525,13 +6525,13 @@ snapshots:
 
   vary@1.1.2: {}
 
-  vite-node@3.2.4(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0):
+  vite-node@3.2.4(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0):
     dependencies:
       cac: 6.7.14
       debug: 4.4.3
       es-module-lexer: 1.7.0
       pathe: 2.0.3
-      vite: 7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+      vite: 7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
     transitivePeerDependencies:
       - '@types/node'
       - jiti
@@ -6546,13 +6546,13 @@ snapshots:
       - tsx
       - yaml
 
-  vite-node@3.2.4(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0):
+  vite-node@3.2.4(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0):
     dependencies:
       cac: 6.7.14
       debug: 4.4.3
       es-module-lexer: 1.7.0
       pathe: 2.0.3
-      vite: 7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+      vite: 7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
     transitivePeerDependencies:
       - '@types/node'
       - jiti
@@ -6567,7 +6567,7 @@ snapshots:
       - tsx
       - yaml
 
-  vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0):
+  vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0):
     dependencies:
       esbuild: 0.28.1
       fdir: 6.5.0(picomatch@4.0.4)
@@ -6581,10 +6581,10 @@ snapshots:
       jiti: 2.7.0
       lightningcss: 1.30.2
       terser: 5.44.1
-      tsx: 4.23.0
+      tsx: 4.23.1
       yaml: 2.9.0
 
-  vite@7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0):
+  vite@7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0):
     dependencies:
       esbuild: 0.28.1
       fdir: 6.5.0(picomatch@4.0.4)
@@ -6598,14 +6598,14 @@ snapshots:
       jiti: 2.7.0
       lightningcss: 1.30.2
       terser: 5.44.1
-      tsx: 4.23.0
+      tsx: 4.23.1
       yaml: 2.9.0
 
-  vitest@3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0):
+  vitest@3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.7
-      '@vitest/mocker': 3.2.7(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0))
+      '@vitest/mocker': 3.2.7(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0))
       '@vitest/pretty-format': 3.2.7
       '@vitest/runner': 3.2.7
       '@vitest/snapshot': 3.2.7
@@ -6623,8 +6623,8 @@ snapshots:
       tinyglobby: 0.2.16
       tinypool: 1.1.1
       tinyrainbow: 2.0.0
-      vite: 7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
-      vite-node: 3.2.4(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+      vite: 7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
+      vite-node: 3.2.4(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 22.20.1
@@ -6642,11 +6642,11 @@ snapshots:
       - tsx
       - yaml
 
-  vitest@3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0):
+  vitest@3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.7
-      '@vitest/mocker': 3.2.7(vite@7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0))
+      '@vitest/mocker': 3.2.7(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0))
       '@vitest/pretty-format': 3.2.7
       '@vitest/runner': 3.2.7
       '@vitest/snapshot': 3.2.7
@@ -6664,8 +6664,8 @@ snapshots:
       tinyglobby: 0.2.16
       tinypool: 1.1.1
       tinyrainbow: 2.0.0
-      vite: 7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
-      vite-node: 3.2.4(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+      vite: 7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
+      vite-node: 3.2.4(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.1)(yaml@2.9.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 26.1.1
