@@ -1,0 +1,114 @@
+name: Tests (Rust)
+
+# The Rust half of packages/protect-ffi. Path-filtered and separate from
+# tests.yml because it is the only Rust in the repo.
+#
+# Since the absorption these checks ran NOWHERE. Phase 1 deliberately moved
+# `cargo test` + `cargo fmt --check` behind `test:cargo` and clippy behind
+# `mise run lint:rust`, to keep cargo off every contributor's default
+# `pnpm test` — but no root workflow picked them back up.
+# `packages/protect-ffi/src/lintWiring.test.ts` asserts the split from the
+# manifest side; this is the other half, and that test now reads this file.
+#
+# The filter is broader than `crates/**`: dependency, feature and toolchain
+# changes all alter what cargo builds without touching a .rs file.
+
+on:
+  pull_request:
+    paths:
+      - 'packages/protect-ffi/crates/**'
+      - 'packages/protect-ffi/Cargo.toml'
+      - 'packages/protect-ffi/Cargo.lock'
+      - 'packages/protect-ffi/mise.toml'
+      - 'packages/protect-ffi/package.json'
+      - '.github/workflows/tests-rust.yml'
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: cargo test + clippy + rustfmt
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # `working_directory` is load-bearing, not tidiness. mise reads config
+      # from the current directory and its PARENTS, so an action running at the
+      # repo root never sees packages/protect-ffi/mise.toml — it would install
+      # nothing and leave the config untrusted. A later `mise run` then fails
+      # with "Config files ... are not trusted", which reads as a toolchain
+      # problem rather than a trust one.
+      #
+      # Caching is allowed here: this workflow publishes nothing, so
+      # scripts/lint-no-workflow-caching.mjs does not cover it. That matters —
+      # `cargo:cargo-zigbuild` builds from source, and the cache makes it a
+      # one-off rather than a per-run cost.
+      #
+      # SHA-pinned rather than `@v3`: mise-action is a third-party trust
+      # dependency the absorption introduced, and the tag is mutable. Same pin
+      # as .github/actions/build-ffi-binding — keep the two in step.
+      # scripts/__tests__/ffi-binding-action.test.mjs asserts both.
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+        with:
+          install: true
+          working_directory: packages/protect-ffi
+
+      # `--all-targets` in the clippy invocation means all target KINDS (lib,
+      # bins, tests, benches), not all platform targets — it lints the host and
+      # nothing else. wasm32 needs its own invocation, and it is the build that
+      # ships to edge runtimes with the least test coverage behind it.
+      - name: Add wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - uses: pnpm/action-setup@v6.0.9
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      # node-pty's install hook falls back to `node-gyp rebuild` when no
+      # linux-x64 prebuild matches. pnpm/action-setup v6 no longer ships
+      # node-gyp on PATH, so install it explicitly.
+      #
+      # This job compiles no JS and runs no pty — it needs `pnpm install` only
+      # to reach the `test:cargo` script. But node-pty is the repo's one entry
+      # in `pnpm.onlyBuiltDependencies`, its install hook fires on every
+      # workspace install, and the 1.1.0 tarball ships prebuilds for darwin and
+      # win32 ONLY. So the fallback is unconditional on a Linux runner, and
+      # without this step the job dies in `Install dependencies` with
+      # `sh: 1: node-gyp: not found` — before cargo is ever invoked.
+      # Enforced by scripts/__tests__/workflow-node-gyp.test.mjs.
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: cargo test + rustfmt
+        run: pnpm --filter @cipherstash/protect-ffi run test:cargo
+
+      # `lint:rust` is the aggregate entry point, and running it by name rather
+      # than its arms is the point: an arm reachable only by name is an arm
+      # nobody runs (#145). lintWiring.test.ts asserts every `lint:rust:*` task
+      # is in its `depends` list.
+      - name: clippy (host + wasm32)
+        working-directory: packages/protect-ffi
+        run: mise run lint:rust

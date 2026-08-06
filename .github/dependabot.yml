@@ -46,17 +46,93 @@ updates:
       # bug). Bump all seven catalog entries together, manually. Lockstep is
       # enforced by e2e/tests/supply-chain.e2e.test.ts.
       - dependency-name: "@cipherstash/auth-*"
-      # Release-managed manually alongside stack releases. Grouped bumps are
-      # actively harmful here: Dependabot's "group consistency" once upgraded
-      # the (since-removed) `protect` package off its 0.23.0 pin — 0.24+ renamed
-      # the exports it imported — while DOWNGRADING the stack packages from
-      # 0.29.0 (see #673). The surviving consumers (stack, stack-drizzle,
-      # stack-supabase) pin one version between them and must stay in lockstep,
-      # so the rule stands.
-      - dependency-name: "@cipherstash/protect-ffi"
       # 0.x bumps ship breaking type changes (e.g. 0.2 → 0.3 tightened the
       # FailureOption constraint). Review and apply manually.
       - dependency-name: "@byteslice/result"
+      # Major bumps are reviewed and applied manually, not by Dependabot.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  # ── Cargo (packages/protect-ffi — the only Rust in the repo) ────
+  # Absorbing protect-ffi brought a 494-crate Cargo.lock in-tree. osv-scanner
+  # already sees it — `--recursive ./` walks the tree and extracts every
+  # lockfile it recognises — so known advisories were visible from day one, but
+  # nothing proposed routine version updates. That is the gap this entry
+  # closes, and the only one it closes. Coverage is enforced by
+  # e2e/tests/supply-chain.e2e.test.ts, which derives the required ecosystems
+  # from the lockfiles actually present rather than from a list.
+  - package-ecosystem: cargo
+    # NOT `/`. The Cargo workspace root is the package directory — Cargo.toml
+    # and Cargo.lock live there, the crate itself under crates/protect-ffi.
+    # A misaimed directory fails silently: Dependabot records "no manifest
+    # found" on a log page nobody visits, and the symptom is simply that no PR
+    # ever arrives. The e2e test asserts this path holds a Cargo.toml.
+    directory: /packages/protect-ffi
+    # Monthly, where npm and actions are weekly. The deviation is about
+    # validation cost, not risk appetite: a Cargo.lock bump is checked by
+    # tests-rust.yml — one Blacksmith job, 45-minute timeout, cargo test +
+    # clippy on host AND wasm32 — and the release additionally cross-builds
+    # six platform binaries. Security fixes are not delayed by this: Dependabot
+    # security updates are driven by alerts, not by `schedule`.
+    #
+    # No `day:`, unlike the two weekly entries — that key picks a weekday for
+    # `interval: weekly` and has nothing to pick here. Left out rather than
+    # copied across, so it does not read as configuration that does nothing.
+    schedule:
+      interval: monthly
+    # Same community-discovery window as npm above and pnpm's
+    # minimumReleaseAge. crates.io has no unpublish, but it does have
+    # yanking, and a yank is the signal this window waits for.
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    # Lower than npm's 10. Each open PR here costs a full native rebuild to
+    # validate, and the grouping below means one PR normally covers everything.
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - supply-chain
+    commit-message:
+      prefix: "chore"
+      include: scope
+    groups:
+      # One PR for the whole minor/patch sweep, as with actions below. Cargo
+      # resolves the lock as a unit, so per-crate PRs each re-resolve the
+      # others and conflict on every merge.
+      #
+      # Read the diff; do not rubber-stamp it. Dependabot classifies update
+      # types from the version numbers alone, so a 0.2 → 0.3 bump lands in this
+      # group as "minor" even though cargo treats it as breaking — several
+      # direct deps here are 0.x (wasm-bindgen, js-sys, web-sys, getrandom,
+      # serde-wasm-bindgen). The `ignore` on semver-major below does not catch
+      # those. Same trap the @byteslice/result note records on the npm side.
+      cargo-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # The CipherStash crates are pinned with EXACT `=` requirements in
+      # crates/protect-ffi/Cargo.toml and are the same release train as the
+      # @cipherstash/auth catalog entries above — cipherstash-client,
+      # cts-common, stack-auth and stack-profile all sit at =0.42.0, matching
+      # the catalog's 0.42.0. Dependabot bumping a subset is the Rust version
+      # of the rc.2 B1 bug recorded above: it would rewrite one `=` pin and
+      # leave the rest, and the crates do not tolerate skew. Bump them
+      # together, manually, in step with the npm catalog.
+      #
+      # Caveat worth knowing: `ignore` suppresses Dependabot SECURITY PRs too,
+      # not just version updates. osv-scanner is the compensating control —
+      # it scans this lockfile on every PR and on a weekday schedule, and
+      # surfaces crates.io advisories in code scanning.
+      - dependency-name: "cipherstash-client"
+      - dependency-name: "cts-common"
+      - dependency-name: "stack-auth"
+      - dependency-name: "stack-profile"
+      - dependency-name: "eql-bindings"
+      - dependency-name: "vitaminc"
       # Major bumps are reviewed and applied manually, not by Dependabot.
       - dependency-name: "*"
         update-types:

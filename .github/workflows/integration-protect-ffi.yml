@@ -1,0 +1,316 @@
+name: Integration — protect-ffi (native + WASM)
+
+# The `packages/protect-ffi/integration-tests/` suite: 19 files of live
+# encrypt / decrypt / lock-context / keyset / JSON-SteVec / Postgres /
+# WASM-round-trip coverage against real ZeroKMS and a real Postgres.
+#
+# WHY THIS EXISTS: upstream (`cipherstash/protectjs-ffi`) ran this suite on
+# EVERY pull request from `.github/workflows/test.yml` — `mise setup`, then
+# `mise run test:integration:all`. The absorption copied the suite in intact and
+# left that workflow behind under `packages/protect-ffi/.github/`, where GitHub
+# never looks: it reads workflows from the repository root alone. So from the
+# day protect-ffi landed here, none of it ran, and a suite that never starts
+# reads exactly like a suite that passes.
+# `packages/protect-ffi/src/integrationSuiteCi.test.ts` asserts this file (or a
+# successor) still invokes it.
+#
+# WHY THERE IS npm IN A pnpm REPO. `integration-tests/` is deliberately NOT a
+# pnpm workspace member: it pins `@cipherstash/auth ^0.39.0`, `vitest ^3.1.3`
+# and `@cipherstash/eql 3.0.2` independently of the repo catalog, which is part
+# of what it tests — the suite proves the published FFI surface works for a
+# consumer resolving its own dependency tree, not the one the monorepo happens
+# to hoist. So it keeps its own `package-lock.json` and `mise run setup` installs
+# it with `npm ci`. That is not a supply-chain regression: `npm ci` installs the
+# lockfile exactly (it fails rather than resolving anything new) and verifies
+# every tarball against the `integrity` hash recorded there, and the registry is
+# npmjs. Absorbing the suite into the pnpm workspace is a follow-up that changes
+# those pins, and changed pins can only be validated by a credentialed run.
+#
+# Separate from `tests.yml` on purpose, and separate from `tests-rust.yml`: this
+# needs CipherStash credentials AND Docker, and the suites THROW rather than
+# skip when unconfigured. Keeping them out of the unit job is what lets
+# `pnpm test` stay runnable with neither.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # The suite itself: tests, fixtures, its compose file, its `tasks.toml`
+      # and its lockfile.
+      - 'packages/protect-ffi/integration-tests/**'
+      # The Rust the suite round-trips every payload through, and the manifests
+      # that change what cargo builds without touching a .rs file. Matching the
+      # filter in tests-rust.yml.
+      - 'packages/protect-ffi/crates/**'
+      - 'packages/protect-ffi/Cargo.toml'
+      - 'packages/protect-ffi/Cargo.lock'
+      # `src/**` is `lib/`, which is the module every test imports, plus
+      # `load.cts` — the loader that finds `index.node`.
+      - 'packages/protect-ffi/src/**'
+      # `scripts/inline-wasm.mjs` emits `dist/wasm/protect_ffi_inline.js`, which
+      # `tests/wasm-round-trip.test.ts` loads at module-graph time. An edit
+      # there breaks that suite while touching no Rust and no `src/`.
+      - 'packages/protect-ffi/scripts/**'
+      # package.json carries the build scripts and the exports map the suite
+      # resolves through; mise.toml carries the `tasks.toml` include, the
+      # toolchain pins, and the PG* connection env.
+      - 'packages/protect-ffi/package.json'
+      - 'packages/protect-ffi/mise.toml'
+      - '.github/workflows/integration-protect-ffi.yml'
+      - '.github/actions/build-ffi-binding/**'
+      - '.github/actions/require-cs-secrets/**'
+  pull_request:
+    branches: ['**']
+    # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
+    # A one-sided edit disables the job on pull requests while leaving it green
+    # on `main` — the exact inversion of what you want.
+    paths:
+      - 'packages/protect-ffi/integration-tests/**'
+      - 'packages/protect-ffi/crates/**'
+      - 'packages/protect-ffi/Cargo.toml'
+      - 'packages/protect-ffi/Cargo.lock'
+      - 'packages/protect-ffi/src/**'
+      - 'packages/protect-ffi/scripts/**'
+      - 'packages/protect-ffi/package.json'
+      - 'packages/protect-ffi/mise.toml'
+      - '.github/workflows/integration-protect-ffi.yml'
+      - '.github/actions/build-ffi-binding/**'
+      - '.github/actions/require-cs-secrets/**'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+# Ref-scoped, so the only thing it cancels is a superseded commit on the same
+# branch — which is what you want for a job that holds live credentials and a
+# database for tens of minutes. This is NOT the cross-workflow job-level group
+# that `.github/actions/integration-db` was written to remove: that one was
+# shared by three workflows, and GitHub cancels a third contender outright
+# rather than queueing it, which dropped whole signals.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: protect-ffi integration suite
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # Generous, because a cold `build-ffi-binding` compiles the cipherstash
+    # client graph from scratch. It is also the backstop for `mise run
+    # start-db`, whose readiness loop retries `pg_isready` forever rather than
+    # giving up.
+    timeout-minutes: 45
+    # Everything runs EXCEPT a fork PR, which has no secrets: skip that cleanly
+    # rather than fail on something the contributor cannot fix — `tests.yml`
+    # still gives them a green signal.
+    #
+    # Stated as "not a fork PR", NOT as a list of the events allowed to run.
+    # The previous form (`github.event_name == 'push' || <same-repo check>`)
+    # made the `workflow_dispatch:` above decorative: on a manual dispatch the
+    # event name is neither `push` nor `pull_request`, and the payload carries
+    # no `pull_request` object to reach through, so both operands were false —
+    # the run was created, the only job was skipped, and the run reported
+    # success having executed nothing. This is the one credentialed suite with
+    # no other way to be re-run on demand: its `paths:` filter means an
+    # unrelated commit will not start it either. An allowlist of event names
+    # would break again the day someone adds `schedule:`.
+    # Enforced by scripts/__tests__/workflow-dispatch-job-conditions.test.mjs.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+
+    env:
+      # Same split as the other integration workflows: the workspace CRN and
+      # client id are repo `vars`, the two keys are `secrets`.
+      CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
+      CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
+      CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+      #
+      # CS_ZEROKMS_HOST / CS_CTS_HOST are deliberately NOT set. Upstream's
+      # workflow pinned both to `ap-southeast-2`, which was right for the
+      # workspace whose credentials it held and is not portable: the client
+      # derives both hosts from the workspace CRN, so hardcoding a region here
+      # would silently point this repo's shared credentials at the wrong
+      # deployment. No other credentialed workflow in this repo sets them.
+      #
+      # The PG* block is how `tests/postgres*.test.ts` reach the database:
+      # they construct `new Client()` with no arguments, so libpq's environment
+      # is the entire connection string.
+      #
+      # 5436, not 5432. `integration-tests/docker-compose.yml` publishes
+      # `5436:5432`, so 5436 is the only port that reaches the container from
+      # the runner. Upstream's workflow said 5432 and worked anyway because
+      # every invocation went through mise, and `[env]` in
+      # packages/protect-ffi/mise.toml (which says 5436) overrides an inherited
+      # value — verified, not assumed. The suite step below runs vitest
+      # directly, outside mise, so that safety net is gone and this block has to
+      # be right. The values here are identical to mise.toml's, which makes the
+      # override a no-op for the steps that do go through mise.
+      PGHOST: localhost
+      PGPORT: '5436'
+      PGDATABASE: cipherstash
+      PGUSER: cipherstash
+      PGPASSWORD: password
+
+    steps:
+      # Not `./.github/actions/integration-setup`, and the difference is
+      # deliberate: that action builds the `stash` CLI because the stack
+      # integration harness installs EQL v3 by shelling out to it. This suite
+      # installs EQL from its own pinned `@cipherstash/eql` instead (see
+      # `eql:v3:install` in integration-tests/tasks.toml), so the CLI build
+      # would be minutes of runner time for nothing — and it pins Node 24,
+      # where this suite's `npm ci` is verified against the npm that ships with
+      # 22 (see the Node step below).
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6.0.9
+        with:
+          run_install: false
+
+      # Node 22, not the 24 the other integration jobs use. `integration-tests`
+      # is installed with `npm ci` against a lockfile whose `".."` entry
+      # records an OLDER manifest of this very package (protect-ffi 0.29.0, and
+      # different devDependencies) — a link entry npm re-reads from disk. That
+      # resolves cleanly under npm 10, which ships with Node 22 and is what the
+      # lockfile was last verified against; npm 11's stricter
+      # manifest-vs-lockfile agreement check is an unforced risk for a job whose
+      # point is the encryption coverage, not the installer.
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      # node-pty's install hook falls back to `node-gyp rebuild` when no
+      # linux-x64 prebuild matches. pnpm/action-setup v6 no longer ships
+      # node-gyp on PATH, so install it explicitly.
+      #
+      # Nothing in this job uses a pty. node-pty is a dev-dependency of the
+      # `stash` CLI and the repo's one entry in `pnpm.onlyBuiltDependencies`, so
+      # its install hook fires on every workspace install — and the 1.1.0
+      # tarball ships prebuilds for darwin and win32 ONLY, making the fallback
+      # unconditional on a Linux runner. Without this step the job dies in
+      # `Install dependencies` with `sh: 1: node-gyp: not found`, before the
+      # secrets pre-flight, the binding build or a single test.
+      # Enforced by scripts/__tests__/workflow-node-gyp.test.mjs.
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      # The workspace install, needed before the binding build: `build-ffi-binding`
+      # runs `pnpm --filter @cipherstash/protect-ffi run build`, i.e. the repo's
+      # tsc and neon. It is also what puts `@neon-rs/load` in
+      # packages/protect-ffi/node_modules — the suite reaches the package by
+      # symlink, so the parent's own dependencies come from pnpm, not from
+      # `npm ci`.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Fast pre-flight: fail in seconds if a secret was rotated or cleared,
+      # before the binding build and the docker pull. Ordered ahead of anything
+      # expensive on purpose — a pre-flight that runs after a cold Rust build is
+      # not a pre-flight. Enforced by
+      # scripts/__tests__/ffi-binding-step-order.test.mjs.
+      - name: Require CipherStash secrets
+        uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+      # `wasm: 'true'` because `tests/wasm-round-trip.test.ts` and
+      # `tests/wasm-error-codes.test.ts` load `dist/wasm/protect_ffi_inline.js`
+      # from the built package, and both FAIL rather than skip when it is
+      # missing (they `existsSync` it and throw a build hint — the dynamic
+      # `import` is deliberate, so the artifact is needed by the time the suite
+      # runs rather than at collection). No other step in this job produces it.
+      #
+      # This replaces upstream's `mise run build:debug`, and the profile change
+      # is the point. The loader's fallback is `require('../index.node')` at the
+      # package root (see src/load.cts), which is exactly where this action's
+      # `neon dist` puts the RELEASE build — so a release binary satisfies the
+      # suite, and this action caches it on a content hash of the Rust inputs.
+      # Going through the mise task instead would recompile the client SDK in
+      # the debug profile on every run and overwrite the artifact the rest of
+      # CI already paid for. The action also proves both artifacts LOAD, so a
+      # restore that landed nothing fails here naming the file rather than as
+      # 19 unrelated encryption errors.
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/build-ffi-binding
+        with:
+          wasm: 'true'
+
+      # `working_directory` is load-bearing, not tidiness. mise reads config
+      # from the current directory and its PARENTS, so an action running at the
+      # repo root never sees packages/protect-ffi/mise.toml — it would install
+      # nothing and leave the config untrusted, and the later `mise run` fails
+      # with "Config files ... are not trusted", which reads as a toolchain
+      # problem rather than a trust one.
+      #
+      # A bare `install: true`, unlike `.github/actions/build-ffi-binding` which
+      # narrows to wasm-pack with `install_args`. Narrowing would not help here:
+      # `mise run` auto-installs any declared tool that is missing (verified),
+      # so it would only move the zig / cargo-zigbuild build into the middle of
+      # `mise run setup` instead of removing it. Installing up front is what
+      # mise-action's cache can absorb.
+      #
+      # SHA-pinned rather than `@v3`, same pin as
+      # .github/actions/build-ffi-binding and .github/workflows/tests-rust.yml:
+      # mise-action is a third-party trust dependency the absorption introduced,
+      # the tag is mutable, and this job holds live CipherStash credentials.
+      # Dependabot moves the pin and the comment together.
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+        with:
+          install: true
+          working_directory: packages/protect-ffi
+
+      # One task, four things the suite cannot run without (see
+      # integration-tests/tasks.toml): `npm ci` for the suite's own dependency
+      # tree, `docker compose up` for Postgres, the EQL **v2** bundle from a
+      # GitHub release, and EQL **v3** from the pinned `@cipherstash/eql`.
+      #
+      # BOTH EQL versions are required and nothing else in this repo installs
+      # v2: `tests/postgres.test.ts` creates `eql_v2_encrypted` columns and
+      # calls `eql_v2.add_encrypted_constraint`, while
+      # `tests/postgres-v3.test.ts` needs the `eql_v3_*` domains. The repo's
+      # `.github/actions/integration-db` supplies neither — it brings up a
+      # compose stack and hands back a URL, leaving the schema to each suite's
+      # own setup (stack's harness shells out to `stash eql install`).
+      #
+      # That is also why this job does NOT use `integration-db`: the two EQL
+      # install tasks pipe SQL through `docker exec -i protect-ffi-postgres`,
+      # hardwired to the container name in the suite's own compose file, which
+      # `integration-db`'s per-job project names deliberately do not produce.
+      # The fixed host port (5436) that comes with it cannot collide with the
+      # shared stacks, which publish on ephemeral ports.
+      - name: Provision the suite (npm ci, Postgres, EQL v2 + v3)
+        working-directory: packages/protect-ffi
+        run: mise run setup
+
+      # vitest directly rather than `mise run test:integration:all`, because
+      # that task's first two steps are the debug cargo build and a wasm-pack
+      # rebuild that `build-ffi-binding` has already done (above). What it runs
+      # after those is exactly this: `npx vitest`, the whole directory, INCLUDING
+      # `tests/lock-context.test.ts`. Its sibling `test:integration` excludes
+      # that file; upstream CI ran `:all` for a reason, and an invocation that
+      # inherits the exclusion silently drops the identity-aware coverage.
+      #
+      # `npx` resolves the vitest 3 pinned in integration-tests/package-lock.json,
+      # not the workspace catalog's — that pin is part of what the suite fixes.
+      - name: Integration suite (live ZeroKMS + Postgres, native and WASM)
+        working-directory: packages/protect-ffi/integration-tests
+        run: npx vitest run
+
+      # `-v` drops the volume too. The runner is ephemeral, so this is not about
+      # reclaiming it: it is so a re-run on a warm runner cannot inherit a
+      # half-installed EQL schema and report a failure that only reproduces
+      # there. The default compose project name is the directory name, which is
+      # what `mise run start-db` brought the stack up under.
+      - name: Stop Postgres
+        if: always()
+        working-directory: packages/protect-ffi/integration-tests
+        run: docker compose down -v
