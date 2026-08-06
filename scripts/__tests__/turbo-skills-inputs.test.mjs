@@ -18,12 +18,10 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { readJsonc } from './lib/read-jsonc.mjs'
-
-const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
+import { REPO_ROOT } from './lib/repo-root.mjs'
 
 /** Packages whose tsup config copies the repo-root `skills/` into `dist/`. */
 function packagesCopyingSkills() {

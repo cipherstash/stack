@@ -1,8 +1,8 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import yaml from 'js-yaml'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { REPO_ROOT } from './lib/repo-root.mjs'
+import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 
 /**
  * Every job that runs `pnpm install` on a Linux runner must install `node-gyp`
@@ -47,9 +47,6 @@ import { describe, expect, it } from 'vitest'
  * `uses:` it cannot open is a FAILURE rather than a skip — "could not look" and
  * "looked and found nothing" must not produce the same green.
  */
-
-const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
-const WORKFLOW_DIR = '.github/workflows'
 
 /**
  * The JOBS that run a workspace install today. This is NOT the list the checks
@@ -273,17 +270,6 @@ export function auditFlattened(flat) {
 // The repo scan
 // ---------------------------------------------------------------------------
 
-function workflowFiles() {
-  return readdirSync(join(REPO_ROOT, WORKFLOW_DIR))
-    .filter((name) => /\.ya?ml$/.test(name))
-    .map((name) => `${WORKFLOW_DIR}/${name}`)
-    .sort()
-}
-
-function readYaml(relPath) {
-  return yaml.load(readFileSync(join(REPO_ROOT, relPath), 'utf8'))
-}
-
 /**
  * GitHub resolves `uses: ./x` against the checkout root, not the calling file.
  * Both manifest spellings are valid, so probing only `action.yml` would stop
@@ -294,7 +280,7 @@ function resolveRepoComposite(usesPath) {
   for (const name of ['action.yml', 'action.yaml']) {
     const rel = `${dir}/${name}`
     if (existsSync(join(REPO_ROOT, rel))) {
-      const doc = readYaml(rel)
+      const doc = readWorkflow(rel)
       return { id: rel, steps: doc?.runs?.steps ?? [] }
     }
   }
@@ -304,7 +290,7 @@ function resolveRepoComposite(usesPath) {
 function scan() {
   const jobs = []
   for (const relPath of workflowFiles()) {
-    const wf = readYaml(relPath)
+    const wf = readWorkflow(relPath)
     for (const [jobName, job] of Object.entries(wf?.jobs ?? {})) {
       const { flat, unresolved } = flattenSteps(
         job?.steps,

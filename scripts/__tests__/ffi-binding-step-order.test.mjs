@@ -1,8 +1,5 @@
-import { readdirSync, readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
+import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 
 /**
  * `./.github/actions/require-cs-secrets` must run BEFORE
@@ -37,9 +34,6 @@ import { describe, expect, it } from 'vitest'
  * resulting order; the other edit would have broken the job.
  */
 
-const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
-const WORKFLOW_DIR = '.github/workflows'
-
 const BUILD_FFI = './.github/actions/build-ffi-binding'
 const REQUIRE_SECRETS = './.github/actions/require-cs-secrets'
 
@@ -65,7 +59,9 @@ const REQUIRE_SECRETS = './.github/actions/require-cs-secrets'
  *
  * Held as a minimum, not an equality: adding a job that builds the binding
  * must not fail this. If one is renamed or genuinely stops needing the
- * binding, update the list deliberately.
+ * binding, update the list deliberately — the failure prints the ids the scan
+ * DID find (see `scanGuard`), so a rename is a copy from the message into the
+ * list rather than a re-derivation from the workflows.
  */
 const EXPECTED_PAIRED_JOBS = [
   '.github/workflows/integration-drizzle.yml / integration',
@@ -74,20 +70,10 @@ const EXPECTED_PAIRED_JOBS = [
   '.github/workflows/integration-supabase.yml / integration',
   '.github/workflows/prisma-example-readme-e2e.yml / walkthrough',
   '.github/workflows/prisma-next-e2e.yml / e2e',
+  '.github/workflows/tests.yml / e2e-tests',
   '.github/workflows/tests.yml / run-tests',
   '.github/workflows/tests.yml / wasm-e2e-tests',
 ]
-
-function workflowFiles() {
-  return readdirSync(join(REPO_ROOT, WORKFLOW_DIR))
-    .filter((name) => /\.ya?ml$/.test(name))
-    .map((name) => `${WORKFLOW_DIR}/${name}`)
-    .sort()
-}
-
-function readWorkflow(relPath) {
-  return yaml.load(readFileSync(join(REPO_ROOT, relPath), 'utf8'))
-}
 
 /** The `uses:` of a step, normalised — `uses` may carry trailing whitespace. */
 function stepUses(step) {
@@ -95,23 +81,28 @@ function stepUses(step) {
 }
 
 /**
- * Every job that uses BOTH actions, with the step index of each. Indexed by
- * position in the job's own `steps` list, which is the order GitHub runs them.
+ * Every job that uses BOTH actions, with the EARLIEST step index of each.
+ * Indexed by position in the job's own `steps` list, which is the order GitHub
+ * runs them.
+ *
+ * First occurrence, not all of them, and that is the property rather than a
+ * simplification: the claim is "no credentialed work starts before the
+ * pre-flight", so what matters is whether the earliest pre-flight precedes the
+ * earliest build. A job that repeats either step still has to clear that, and
+ * comparing later pairs would let an early unguarded build through on the
+ * strength of a later guarded one.
  */
 function pairedJobs(relPath) {
   const wf = readWorkflow(relPath)
   const found = []
   for (const [jobName, job] of Object.entries(wf?.jobs ?? {})) {
     const steps = Array.isArray(job?.steps) ? job.steps : []
-    const buildAt = []
-    const secretsAt = []
-    steps.forEach((step, index) => {
-      const uses = stepUses(step)
-      if (uses === BUILD_FFI) buildAt.push(index)
-      if (uses === REQUIRE_SECRETS) secretsAt.push(index)
-    })
-    if (buildAt.length === 0 || secretsAt.length === 0) continue
-    found.push({ relPath, jobName, steps, buildAt, secretsAt })
+    const firstBuild = steps.findIndex((step) => stepUses(step) === BUILD_FFI)
+    const firstSecrets = steps.findIndex(
+      (step) => stepUses(step) === REQUIRE_SECRETS,
+    )
+    if (firstBuild === -1 || firstSecrets === -1) continue
+    found.push({ relPath, jobName, steps, firstBuild, firstSecrets })
   }
   return found
 }
@@ -121,33 +112,149 @@ const PAIRED_JOB_IDS = PAIRED.map(
   (entry) => `${entry.relPath} / ${entry.jobName}`,
 )
 
+/**
+ * The four CipherStash credentials, as they appear in a workflow: `${{ vars.X }}`
+ * for the two public ones, `${{ secrets.X }}` for the two that aren't. A job
+ * carrying any of them is a job that intends to talk to the live service.
+ *
+ * Matched against the whole job — `env:` at job level, `env:` on a step, a
+ * `with:` input to the pre-flight action, or a `run:` body that writes a `.env`
+ * file. `run-tests-bun` is the last of those and the reason a job-level-`env`
+ * scan would not have been enough.
+ */
+const CREDENTIAL_EXPRESSION =
+  /\$\{\{\s*(?:vars|secrets)\.CS_(?:WORKSPACE_CRN|CLIENT_ID|CLIENT_KEY|CLIENT_ACCESS_KEY)\s*\}\}/
+
+/** Every job in a workflow that receives at least one CS_* credential. */
+function credentialedJobs(relPath) {
+  const wf = readWorkflow(relPath)
+  const found = []
+  for (const [jobName, job] of Object.entries(wf?.jobs ?? {})) {
+    if (!CREDENTIAL_EXPRESSION.test(JSON.stringify(job))) continue
+    const steps = Array.isArray(job?.steps) ? job.steps : []
+    found.push({
+      relPath,
+      jobName,
+      buildsBinding: steps.some((step) => stepUses(step) === BUILD_FFI),
+    })
+  }
+  return found
+}
+
+const CREDENTIALED = workflowFiles().flatMap(credentialedJobs)
+const CREDENTIALED_JOB_IDS = CREDENTIALED.map(
+  (entry) => `${entry.relPath} / ${entry.jobName}`,
+)
+
+/**
+ * The credentialed JOBS, as the guard on the coverage scan below — same role
+ * as `EXPECTED_PAIRED_JOBS` plays for the ordering scan, and held as a minimum
+ * for the same reason. If the credential names or expression syntax ever
+ * change, this empties the scan, and a coverage check that iterates nothing
+ * passes while proving nothing.
+ */
+const EXPECTED_CREDENTIALED_JOBS = [
+  '.github/workflows/integration-drizzle.yml / integration',
+  '.github/workflows/integration-prisma-next.yml / integration',
+  '.github/workflows/integration-protect-ffi.yml / integration',
+  '.github/workflows/integration-supabase.yml / integration',
+  '.github/workflows/prisma-example-readme-e2e.yml / walkthrough',
+  '.github/workflows/prisma-next-e2e.yml / e2e',
+  '.github/workflows/tests.yml / e2e-tests',
+  '.github/workflows/tests.yml / run-tests',
+  '.github/workflows/tests.yml / run-tests-bun',
+  '.github/workflows/tests.yml / wasm-e2e-tests',
+]
+
+/**
+ * Credentialed jobs that legitimately do NOT build the binding, each with the
+ * reason it doesn't need one. Empty today, and that is the intended steady
+ * state: every job we hand CS_* to currently runs code that encrypts.
+ *
+ * It exists because a job can hold credentials without touching the binding —
+ * one that only validates that the secrets are present, or one that passes them
+ * to a service container and never runs a suite. When that job arrives, name it
+ * here WITH its reason rather than loosening the scan; the second test below
+ * fails on an entry that no longer matches a credentialed job, so a stale
+ * exemption cannot outlive the job it was written for.
+ */
+const BINDING_EXEMPT_JOBS = new Map([
+  // ['<workflow> / <job>', 'why this job never loads index.node or dist/wasm'],
+])
+
+/**
+ * The three hand-maintained lists in this file are checked the same way: every
+ * id in the list must still match something the scan found. Same shape, and —
+ * more to the point — the same failure. A job gets renamed, the list still
+ * names the old id, and the fix is to swap in the new one.
+ *
+ * That fix costs two seconds if the message says what the scan DID find, and a
+ * source dive if it only says what went missing: the developer has the old id
+ * (it is in the diff) and needs the new one, which appears nowhere in the
+ * output. Mutation-tested — renaming `integration-drizzle.yml`'s `integration`
+ * job to `integration-suite` failed both guards, and only the credentialed one
+ * printed the new name.
+ *
+ * So the listing is built HERE rather than at each call site: it is part of
+ * what makes a guard fixable, and a guard that grew its own terser message
+ * would quietly lose that.
+ *
+ * `message` is returned as a value, not passed straight into `expect`, because
+ * vitest only evaluates an assertion message when the assertion FAILS. A
+ * diagnostic that is only read on failure is a diagnostic nothing tests — which
+ * is how it gets stripped back out. `names every job its scan found` below
+ * asserts on these strings directly.
+ */
+function scanGuard({ entries, found, hint }) {
+  return {
+    found,
+    unmatched: entries.filter((id) => !found.includes(id)),
+    message: `${hint}\nThe scan currently sees:\n${
+      found.length === 0
+        ? '  (nothing — the scan matched no jobs)'
+        : found.map((id) => `  ${id}`).join('\n')
+    }`,
+  }
+}
+
+const SCAN_GUARDS = {
+  paired: scanGuard({
+    entries: EXPECTED_PAIRED_JOBS,
+    found: PAIRED_JOB_IDS,
+    hint: `These jobs used both ${BUILD_FFI} and ${REQUIRE_SECRETS}, and the scan no longer sees them. Either an action path changed (update the constants in this file), or a job's pre-flight was dropped — in which case the ordering check for it did not fail, it stopped existing. Restore the step, or update EXPECTED_PAIRED_JOBS deliberately.`,
+  }),
+  credentialed: scanGuard({
+    entries: EXPECTED_CREDENTIALED_JOBS,
+    found: CREDENTIALED_JOB_IDS,
+    hint: `These jobs pass a CS_* credential and the scan no longer sees them. Either the credential names or the \`\${{ }}\` syntax changed (update CREDENTIAL_EXPRESSION), or the job was renamed or deleted — update EXPECTED_CREDENTIALED_JOBS deliberately.`,
+  }),
+  exemptions: scanGuard({
+    entries: [...BINDING_EXEMPT_JOBS.keys()],
+    found: CREDENTIALED_JOB_IDS,
+    hint: 'These BINDING_EXEMPT_JOBS entries do not match any credentialed job. Remove them, or fix the id — an exemption for a job that no longer exists exempts nothing and hides the next one.',
+  }),
+}
+
 describe('protect-ffi binding builds after the secrets pre-flight', () => {
   it('finds the jobs that pair the two actions', () => {
     // The guard on the scan. Without it, a rename of either action path (or a
     // js-yaml parse that quietly returned undefined) would empty `PAIRED` and
     // every check below would pass by vacuum.
     //
-    // No separate count assertion: job ids are unique, so an empty `missing`
+    // No separate count assertion: job ids are unique, so an empty `unmatched`
     // already means every expected job was found. A `PAIRED.length >= N`
     // floor is what let the `wasm-e2e-tests` deletion through — it had slack
     // in it, and slack in a scan guard is where the un-run check hides.
-    const missing = EXPECTED_PAIRED_JOBS.filter(
-      (id) => !PAIRED_JOB_IDS.includes(id),
-    )
-    expect(
-      missing,
-      `These jobs used both ${BUILD_FFI} and ${REQUIRE_SECRETS}, and the scan no longer sees them. Either an action path changed (update the constants in this file), or a job's pre-flight was dropped — in which case the ordering check for it did not fail, it stopped existing. Restore the step, or update EXPECTED_PAIRED_JOBS deliberately.`,
-    ).toEqual([])
+    const guard = SCAN_GUARDS.paired
+    expect(guard.unmatched, guard.message).toEqual([])
   })
 
   for (const file of workflowFiles()) {
     const jobs = pairedJobs(file)
     if (jobs.length === 0) continue
 
-    for (const { jobName, steps, buildAt, secretsAt } of jobs) {
+    for (const { jobName, steps, firstBuild, firstSecrets } of jobs) {
       it(`${file} / ${jobName} requires secrets before building the binding`, () => {
-        const firstSecrets = Math.min(...secretsAt)
-        const firstBuild = Math.min(...buildAt)
         const order = steps
           .map(
             (step, index) =>
@@ -162,4 +269,106 @@ describe('protect-ffi binding builds after the secrets pre-flight', () => {
       })
     }
   }
+})
+
+/**
+ * COVERAGE, where the checks above are ORDER. Those only look at jobs that
+ * already pair the two actions, so a job that never builds the binding at all
+ * is invisible to them — it is not failing them, it is not in them.
+ *
+ * That gap is not theoretical. `packages/protect-ffi` is a workspace package
+ * now, so `lib/`, `index.node` and `dist/wasm/**` are BUILD OUTPUTS rather than
+ * tarball contents, and every job that encrypts has to produce them itself. Two
+ * credentialed jobs in `tests.yml` were missed when the `workspace:*` links
+ * landed: `e2e-tests` (its unfiltered `test:e2e` run picks up
+ * `tests/prisma-example-readme.e2e.test.ts`, whose `describe.skipIf` un-skips
+ * the moment CS_CLIENT_ID and CS_CLIENT_KEY are set, and whose `pnpm start`
+ * step encrypts for real) and `run-tests-bun` (writes the four CS_* into
+ * `packages/stack/.env`, then runs 120 `packages/stack` suites of which only 8
+ * mock protect-ffi).
+ *
+ * The failure mode is `Cannot find module '.../index.node'`, reported once per
+ * test rather than once per job — and in `run-tests-bun` not reported at all,
+ * since it carries `continue-on-error: true` AND a `|| true` around the vitest
+ * invocation. So the omission is silent in exactly the job least likely to be
+ * looked at.
+ *
+ * Discovered, not listed: a new credentialed job is covered the day it lands,
+ * which is the only way this stays true. Exemptions are explicit and carry
+ * their reason (see BINDING_EXEMPT_JOBS).
+ */
+describe('every credentialed job builds the protect-ffi binding', () => {
+  it('finds the jobs that receive CipherStash credentials', () => {
+    const guard = SCAN_GUARDS.credentialed
+    expect(guard.unmatched, guard.message).toEqual([])
+  })
+
+  it('exempts only jobs that are still credentialed', () => {
+    // A stale exemption is the silent-skip failure this whole file exists to
+    // avoid: the named job gets renamed or gains a real need for the binding,
+    // and the entry sits there exempting nothing while reading as deliberate.
+    const guard = SCAN_GUARDS.exemptions
+    expect(guard.unmatched, guard.message).toEqual([])
+  })
+
+  it('builds the binding in every credentialed job', () => {
+    const offenders = CREDENTIALED.filter(
+      (entry) =>
+        !entry.buildsBinding &&
+        !BINDING_EXEMPT_JOBS.has(`${entry.relPath} / ${entry.jobName}`),
+    ).map((entry) => `${entry.relPath} / ${entry.jobName}`)
+
+    expect(
+      offenders,
+      `These jobs receive CipherStash credentials but never run ${BUILD_FFI}.\n\`packages/protect-ffi\` is a workspace package: \`lib/\`, \`index.node\` and \`dist/wasm/**\` are build outputs, not tarball contents, so a job that encrypts or decrypts must build them itself. Without the step the suite fails with \`Cannot find module '.../protect-ffi-linux-x64-gnu/index.node'\`, once per test.\nAdd the step AFTER any \`${REQUIRE_SECRETS}\` pre-flight and BEFORE anything that consumes the binding. Pass \`wasm: 'true'\` only if the job loads the real WASM build.\nIf a job genuinely does not need it, add it to BINDING_EXEMPT_JOBS with the reason.`,
+    ).toEqual([])
+  })
+})
+
+/**
+ * The guards above are only ever read when they FAIL, which is the one moment
+ * their text has to be right and the one moment nothing is watching it. So the
+ * text itself is asserted here, on the real strings the guards carry.
+ *
+ * The property is "the message names every job the scan found", and it is the
+ * difference between a two-second fix and a source dive on the most likely
+ * failure these guards will ever see: a job rename. The developer has the OLD
+ * id — it is in the list, and in the diff — and needs the NEW one. Without the
+ * listing the new id appears nowhere in the output, and the only way to get it
+ * is to open the workflow and re-derive what the scan would have matched.
+ */
+describe('the scan guards name what they found', () => {
+  for (const [label, guard] of Object.entries(SCAN_GUARDS)) {
+    it(`${label}: the failure message lists every job its scan found`, () => {
+      // Not vacuous: an empty scan would satisfy a bare forEach over `found`.
+      // These guards exist precisely because a scan can silently empty out.
+      expect(
+        guard.found.length,
+        `The ${label} scan matched no jobs at all, so this test would pass without checking anything.`,
+      ).toBeGreaterThan(0)
+
+      const unlisted = guard.found.filter((id) => !guard.message.includes(id))
+      expect(
+        unlisted,
+        `The ${label} guard's failure message does not name these jobs, and they are exactly what a reader needs.\nWhen a job is renamed the guard reports the OLD id as missing; the NEW id is only visible if the message lists what the scan found. Keep the listing (see \`scanGuard\`).\nMessage as it stands:\n${guard.message}`,
+      ).toEqual([])
+    })
+  }
+
+  it('says so explicitly when the scan matched nothing', () => {
+    // The empty scan is the catastrophic case, not a corner case: rename either
+    // action path and `pairedJobs` matches nothing at all (mutation-tested —
+    // pointing BUILD_FFI at a path no workflow uses took the file from 17 tests
+    // to 8, with the nine ordering checks not failing but ceasing to exist).
+    // Rendered as a bare empty list the message
+    // ends on a dangling "The scan currently sees:" with vitest's own
+    // `expected [...] to deeply equal []` running on from the same line, which
+    // reads as a broken template rather than as the finding.
+    const guard = scanGuard({
+      entries: ['workflow.yml / job'],
+      found: [],
+      hint: 'hint',
+    })
+    expect(guard.message).toContain('(nothing — the scan matched no jobs)')
+  })
 })

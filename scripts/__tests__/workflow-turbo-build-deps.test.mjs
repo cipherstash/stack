@@ -1,9 +1,9 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import { readJsonc } from './lib/read-jsonc.mjs'
+import { REPO_ROOT } from './lib/repo-root.mjs'
+import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 
 /**
  * A turbo task declaring `dependsOn: ["^build"]` gets its workspace
@@ -27,8 +27,6 @@ import { readJsonc } from './lib/read-jsonc.mjs'
  * This test pins that routing so it cannot be quietly "simplified" back.
  */
 
-const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
-
 /**
  * The workflow that must carry the `typecheck:scaffold` step specifically.
  * Scoped, because "that step exists" is a claim about this file, not about
@@ -44,10 +42,7 @@ const SCAFFOLD_WORKFLOW = '.github/workflows/tests.yml'
  * Narrowing the guard to one file left five real bare invocations unchecked
  * (#787 review follow-up).
  */
-const WORKFLOWS = readdirSync(resolve(REPO_ROOT, '.github/workflows'))
-  .filter((file) => /\.ya?ml$/.test(file))
-  .map((file) => `.github/workflows/${file}`)
-  .sort()
+const WORKFLOWS = workflowFiles()
 
 /**
  * Bare invocations that predate this guard. Each is the same latent trap: it
@@ -118,7 +113,7 @@ const rootScriptDelegatesToTurbo = (task) =>
   typeof rootScripts[task] === 'string' && /\bturbo\b/.test(rootScripts[task])
 
 function workflowRunLines(path) {
-  const doc = yaml.load(readFileSync(resolve(REPO_ROOT, path), 'utf8'))
+  const doc = readWorkflow(path)
   const lines = []
   for (const [jobName, job] of Object.entries(doc?.jobs ?? {})) {
     for (const step of job?.steps ?? []) {

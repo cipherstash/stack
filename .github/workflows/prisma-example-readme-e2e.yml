@@ -20,9 +20,11 @@ on:
       - '.github/workflows/prisma-example-readme-e2e.yml'
       # The walkthrough encrypts against the live service, so the native
       # binding and the action that builds it are inputs to this suite. Added
-      # with that build step: without them a protect-ffi change reaches main
-      # having never run the walkthrough, and the step itself is only ever
-      # exercised by the push-to-main run.
+      # with that build step: without them a protect-ffi change would reach main
+      # having never run the walkthrough. They are repeated verbatim under
+      # `pull_request` below, which is what makes that a gate rather than a
+      # report — a PR touching any of these runs the walkthrough before the
+      # change lands, not after.
       - '.github/actions/build-ffi-binding/**'
       - 'packages/protect-ffi/crates/**'
       - 'packages/protect-ffi/src/**'
@@ -36,11 +38,13 @@ on:
     paths:
       - 'examples/prisma/**'
       - '.github/workflows/prisma-example-readme-e2e.yml'
-      # The walkthrough encrypts against the live service, so the native
-      # binding and the action that builds it are inputs to this suite. Added
-      # with that build step: without them a protect-ffi change reaches main
-      # having never run the walkthrough, and the step itself is only ever
-      # exercised by the push-to-main run.
+      # The same entries as under `push` above, and the copy that does the
+      # work: a PR touching the native binding or the action that builds it
+      # runs the walkthrough on the PR, so a protect-ffi change is gated by
+      # this suite rather than reaching main unexercised. (GitHub Actions has
+      # no YAML anchors, so the list is written twice;
+      # scripts/__tests__/workflow-paths-filter-parity.test.mjs compares the
+      # two copies.)
       - '.github/actions/build-ffi-binding/**'
       - 'packages/protect-ffi/crates/**'
       - 'packages/protect-ffi/src/**'
@@ -107,8 +111,13 @@ jobs:
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
       # The walkthrough encrypts against the live service, so it needs the
-      # native binding. Path-filtered away from the absorption PR that
-      # introduced the need, but it runs on push to main.
+      # native binding — `packages/protect-ffi` is a workspace package now, so
+      # `index.node` is a build output rather than tarball contents. This step
+      # runs on push to main and on any PR whose diff matches the paths filter
+      # above, the absorption PR that introduced the need included: that PR
+      # edits this workflow, the build action, and the package itself, and all
+      # three are in the filter. The exception is a fork PR — it triggers the
+      # workflow, but the job's `if` skips it for want of CS_* credentials.
       - name: Build the protect-ffi binding
         uses: ./.github/actions/build-ffi-binding
 

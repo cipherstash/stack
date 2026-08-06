@@ -39,12 +39,10 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import { readJsonc } from './lib/read-jsonc.mjs'
-
-const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
+import { REPO_ROOT } from './lib/repo-root.mjs'
 
 const ACTION = '.github/actions/build-ffi-binding/action.yml'
 const RUST_WORKFLOW = '.github/workflows/tests-rust.yml'

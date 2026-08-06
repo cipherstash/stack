@@ -1,8 +1,5 @@
-import { readdirSync, readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
+import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 
 /**
  * A workflow that declares `workflow_dispatch:` must actually run when someone
@@ -39,9 +36,6 @@ import { describe, expect, it } from 'vitest'
  * being waved through, because "the evaluator did not understand it" and "the
  * job runs" must not produce the same green.
  */
-
-const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
-const WORKFLOW_DIR = '.github/workflows'
 
 /**
  * Synthetic, and only ever compared against itself: what matters is that the
@@ -347,17 +341,6 @@ const CONTEXTS = {
 // ---------------------------------------------------------------------------
 // Discovery
 // ---------------------------------------------------------------------------
-
-function workflowFiles() {
-  return readdirSync(join(REPO_ROOT, WORKFLOW_DIR))
-    .filter((name) => /\.ya?ml$/.test(name))
-    .map((name) => `${WORKFLOW_DIR}/${name}`)
-    .sort()
-}
-
-function readWorkflow(relPath) {
-  return yaml.load(readFileSync(join(REPO_ROOT, relPath), 'utf8'))
-}
 
 /**
  * `on:` parses as the boolean `true` under YAML 1.1 (the "Norway problem"),
