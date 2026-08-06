@@ -418,7 +418,19 @@ type DependabotUpdate = {
   directory?: string
   directories?: string[]
   cooldown?: { 'default-days'?: number; 'semver-major-days'?: number }
+  ignore?: Array<{ 'dependency-name'?: string; 'update-types'?: string[] }>
 }
+
+// Does this entry refuse major version updates across the board? That is the
+// blanket `dependency-name: "*"` rule, not a per-package one — a named
+// dependency's major can be ignored for its own reasons without saying
+// anything about the entry's policy.
+const ignoresAllSemverMajor = (entry: DependabotUpdate): boolean =>
+  (entry.ignore ?? []).some(
+    (rule) =>
+      rule['dependency-name'] === '*' &&
+      (rule['update-types'] ?? []).includes('version-update:semver-major'),
+  )
 
 // Which of an entry's configured locations resolve to no manifest at all —
 // i.e. monitor nothing.
@@ -490,6 +502,39 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
     )
     expect(gha).toBeDefined()
     expect(gha?.cooldown?.['default-days']).toBeGreaterThanOrEqual(3)
+  })
+
+  it('every entry ignores majors, so none configures a major cooldown window', () => {
+    // One relationship, asserted from both ends, because either end alone
+    // passes on the drift that matters.
+    //
+    // `semver-major-days` delays major VERSION update PRs. Every entry here
+    // ignores `version-update:semver-major` for `*`, so no major version
+    // update is ever proposed for it to delay — and it cannot reach the
+    // security path instead, because "the cooldown option is only available
+    // for version updates, not security updates" (Dependabot options
+    // reference). A major window is therefore dead config, and dead config
+    // reads as policy to the next person: it says majors arrive after 14
+    // days, when in fact they never arrive. Same judgement the cargo entry
+    // records for the `day:` key it leaves out of a monthly schedule.
+    //
+    // Asserting only "if it ignores majors then no window" would pass
+    // vacuously on exactly the change that makes a window live again —
+    // dropping the ignore. So the ignore is pinned too, which also gives the
+    // control documented in skills/stash-supply-chain-security its first
+    // test: majors are reviewed and applied by hand, never proposed.
+    expect(db.updates.length).toBeGreaterThan(0) // no entries, no iterations
+    for (const entry of db.updates) {
+      const ecosystem = entry['package-ecosystem']
+      expect(
+        ignoresAllSemverMajor(entry),
+        `${ecosystem} no longer ignores "version-update:semver-major" for "*" — majors are meant to be applied by hand, and dropping this makes a cooldown window meaningful again`,
+      ).toBe(true)
+      expect(
+        entry.cooldown?.['semver-major-days'],
+        `${ecosystem} sets a semver-major cooldown window while ignoring major version updates — the key delays PRs that are never opened`,
+      ).toBeUndefined()
+    }
   })
 
   it('every lockfile in the tree has a package-ecosystem entry', () => {

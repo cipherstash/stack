@@ -10,9 +10,17 @@ updates:
       timezone: Australia/Sydney
     # Wait for community discovery before opening PRs
     # (lirantal/npm-security-best-practices #2: install with cooldown).
+    #
+    # No `semver-major-days:`, and it is not an oversight. That key delays
+    # major VERSION update PRs, and the `ignore` below stops Dependabot
+    # proposing one at all; nor could it apply on the security path, because
+    # "the cooldown option is only available for version updates, not
+    # security updates" (Dependabot options reference). So it would be
+    # configuration that does nothing — the same reason the cargo entry
+    # below leaves `day:` out of its monthly schedule. Enforced by
+    # e2e/tests/supply-chain.e2e.test.ts, in both directions.
     cooldown:
       default-days: 7
-      semver-major-days: 14
     open-pull-requests-limit: 10
     labels:
       - dependencies
@@ -84,9 +92,12 @@ updates:
     # Same community-discovery window as npm above and pnpm's
     # minimumReleaseAge. crates.io has no unpublish, but it does have
     # yanking, and a yank is the signal this window waits for.
+    #
+    # No `semver-major-days:` here either, for the reason recorded on the npm
+    # entry: majors are ignored below, and cooldown never reaches the security
+    # path, so a major window would have nothing to delay.
     cooldown:
       default-days: 7
-      semver-major-days: 14
     # Lower than npm's 10. Each open PR here costs a full native rebuild to
     # validate, and the grouping below means one PR normally covers everything.
     open-pull-requests-limit: 3
