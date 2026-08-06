@@ -1,5 +1,9 @@
 packages:
   - packages/*
+  # The six per-platform binary packages for @cipherstash/protect-ffi. The
+  # `packages/*` glob above already covers the wrapper itself; these are nested
+  # a level deeper and need their own entry.
+  - packages/protect-ffi/platforms/*
   - examples/*
   - e2e
 

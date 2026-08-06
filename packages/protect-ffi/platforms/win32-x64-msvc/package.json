@@ -1,0 +1,30 @@
+{
+  "name": "@cipherstash/protect-ffi-win32-x64-msvc",
+  "description": "Prebuilt binary package for `@cipherstash/protect-ffi` on `win32-x64-msvc`.",
+  "version": "0.31.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cipherstash/protectjs-ffi.git",
+    "directory": "platforms/win32-x64-msvc"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "index.node",
+  "files": [
+    "index.node"
+  ],
+  "neon": {
+    "type": "binary",
+    "rust": "x86_64-pc-windows-msvc",
+    "node": "win32-x64-msvc",
+    "os": "win32",
+    "arch": "x64",
+    "abi": "msvc"
+  },
+  "author": "CipherStash <humans@cipherstash.com>",
+  "license": "MIT"
+}

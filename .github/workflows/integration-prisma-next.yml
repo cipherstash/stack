@@ -65,7 +65,12 @@ jobs:
     #
     # Fork PRs have no secrets. Skip cleanly rather than fail on something the
     # contributor cannot fix — `tests.yml` still gives them a green signal.
-    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    # Every OTHER event runs, which is why this gates on "not a fork PR" rather
+    # than listing the event names allowed through: the listing form skipped
+    # the job on `workflow_dispatch` in integration-protect-ffi.yml, making a
+    # declared manual trigger do nothing. Enforced by
+    # scripts/__tests__/workflow-dispatch-job-conditions.test.mjs.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
 
     strategy:
       fail-fast: false

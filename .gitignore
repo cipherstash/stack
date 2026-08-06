@@ -4,6 +4,28 @@ dist
 mise.local.toml
 .env
 
+# Three generated WASM declaration files are tracked deliberately. They have to
+# be re-included from HERE: git cannot re-include a file whose parent directory
+# is excluded, and the bare `dist` above excludes the directory itself, so a
+# negation in packages/protect-ffi/.gitignore has no effect on its own.
+#
+# Why they are tracked at all: `packages/stack` value-imports
+# `@cipherstash/protect-ffi/wasm-inline`, so its declaration build cannot
+# resolve the module unless these exist. Generating them needs Rust, the wasm32
+# target and wasm-pack — which would land on every contributor and every PR job
+# purely to typecheck. Export maps resolve `types` and `default` independently,
+# so declarations alone suffice; verified by deleting every `.js` and `.wasm`
+# under dist/wasm and running stack's build, test:types:dist, test:types and
+# unit suite green. The runtime output (7.4MB, regenerated each release) is
+# still ignored. See packages/protect-ffi/.gitignore for the sibling rules.
+!packages/protect-ffi/dist/
+packages/protect-ffi/dist/*
+!packages/protect-ffi/dist/wasm/
+packages/protect-ffi/dist/wasm/*
+!packages/protect-ffi/dist/wasm/protect_ffi.d.ts
+!packages/protect-ffi/dist/wasm/protect_ffi_bg.wasm.d.ts
+!packages/protect-ffi/dist/wasm/errors.d.ts
+
 # dependencies
 /node_modules
 /.pnp

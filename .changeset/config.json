@@ -10,6 +10,15 @@
       "@cipherstash/stack-supabase",
       "@cipherstash/stack-prisma",
       "@cipherstash/wizard"
+    ],
+    [
+      "@cipherstash/protect-ffi",
+      "@cipherstash/protect-ffi-darwin-x64",
+      "@cipherstash/protect-ffi-darwin-arm64",
+      "@cipherstash/protect-ffi-win32-x64-msvc",
+      "@cipherstash/protect-ffi-linux-x64-gnu",
+      "@cipherstash/protect-ffi-linux-arm64-gnu",
+      "@cipherstash/protect-ffi-linux-x64-musl"
     ]
   ],
   "linked": [],
