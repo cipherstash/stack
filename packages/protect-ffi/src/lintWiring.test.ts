@@ -9,16 +9,35 @@
  * So the property under test is reachability: a check that nothing invokes is
  * the failure, and it is invisible by construction. Every exemption below has
  * to name why.
+ *
+ * One test here is not static: `keeps cargo OUTPUT off the default test path
+ * too` re-runs this suite in a child process with the compiled binding made
+ * unresolvable. It sits with the wiring checks because it guards the same rule
+ * as `keeps cargo off the default test path` — the entry-point split — and
+ * because the half it covers cannot be read off the manifest: a test that
+ * requires `index.node` makes cargo a prerequisite of root `pnpm test` without
+ * a `cargo` token appearing anywhere in package.json.
  */
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-// Vitest resolves cwd to the directory holding vitest.config.ts. `import.meta`
-// is unavailable here: tsconfig emits CommonJS, and tsc rejects it (TS1470).
-const repoRoot = process.cwd()
+// Vitest resolves cwd to the directory holding vitest.config.ts — this
+// package, NOT the repository root, which is why every reference to a root
+// workflow below climbs two levels out of it. `import.meta` is unavailable
+// here: tsconfig emits CommonJS, and tsc rejects it (TS1470).
+const packageRoot = process.cwd()
 const read = (relative: string) =>
-  readFileSync(join(repoRoot, relative), 'utf8')
+  readFileSync(join(packageRoot, relative), 'utf8')
 
 const manifest = JSON.parse(read('package.json'))
 const scripts: Record<string, string> = manifest.scripts
@@ -54,9 +73,9 @@ const testWorkflow = withoutComments(
 // the list until it includes the dead package-local path. A directory cannot
 // drift out of date with itself.
 const ROOT_WORKFLOW_DIR = '../../.github/workflows'
-const rootWorkflowNames = readdirSync(join(repoRoot, ROOT_WORKFLOW_DIR)).filter(
-  (name) => name.endsWith('.yml') || name.endsWith('.yaml'),
-)
+const rootWorkflowNames = readdirSync(
+  join(packageRoot, ROOT_WORKFLOW_DIR),
+).filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
 const rootWorkflows = rootWorkflowNames
   .map((name) => withoutComments(read(`${ROOT_WORKFLOW_DIR}/${name}`)))
   .join('\n')
@@ -68,8 +87,8 @@ const rootWorkflows = rootWorkflowNames
 // assuming it is gone, and the check below goes quiet on its own once the
 // cutover deletes it.
 const DEAD_WORKFLOW_DIR = '.github/workflows'
-const deadWorkflowNames = existsSync(join(repoRoot, DEAD_WORKFLOW_DIR))
-  ? readdirSync(join(repoRoot, DEAD_WORKFLOW_DIR)).filter((name) =>
+const deadWorkflowNames = existsSync(join(packageRoot, DEAD_WORKFLOW_DIR))
+  ? readdirSync(join(packageRoot, DEAD_WORKFLOW_DIR)).filter((name) =>
       /\.ya?ml$/.test(name),
     )
   : []
@@ -187,12 +206,85 @@ function reachableFromAnyEntryPoint(): Set<string> {
  * repository root alone, never executed.
  */
 const ENTRY_POINT_EXEMPT: Record<string, string> = {
-  // Empty, and that is the correct state rather than an oversight: every
-  // `test:*` script this package declares is reachable from `test` or
-  // `test:cargo`. `test:typecheck:wasm` is the one carve-out this list was
-  // written for, and it arrives with the root tests.yml job that runs it —
-  // adding the script here before that job exists is precisely the laundering
-  // the paragraph above describes.
+  // Runs against the generated wasm .d.ts, so it needs `pnpm run build:wasm`
+  // first. The default test must still pass in a clone with no dist/, so this
+  // one belongs to the wasm job in the root tests.yml.
+  'test:typecheck:wasm': 'needs dist/wasm, run by the root wasm-e2e job',
+}
+
+/**
+ * Set on the nested `vitest run` the artifact guard below spawns, so the guard
+ * does not spawn itself forever.
+ *
+ * It is the ONE place in this file a test is allowed to disappear, and it is a
+ * bounded one: the only process that ever carries this variable is one the
+ * guard itself started, and the guard then asserts on that process's exit
+ * status. The skip is reported by the assertion that caused it.
+ */
+const ARTIFACT_FREE_RUN = 'PROTECT_FFI_ARTIFACT_FREE_RUN'
+
+/**
+ * A `--require` preload that removes every cargo-built binding from the child's
+ * world: unresolvable through `require`, and absent from `fs`.
+ *
+ * BOTH halves are needed and they are not redundant. `Module._load` is what
+ * `@neon-rs/load`'s proxy goes through — for the six platform packages and for
+ * the `../index.node` debug fallback alike — so patching it simulates the
+ * missing binary. But `nativeLoading.test.ts` decides which case it is in by
+ * looking at the DISK, and it has to: an env var the test consults would be a
+ * back door that silently disables the check for anyone who exports it. So the
+ * filesystem has to agree with the loader, or the child fails the wrong way —
+ * loudly, but for the wrong reason, on precisely the machines this guard exists
+ * to serve.
+ *
+ * `syncBuiltinESMExports` is what makes the fs patch visible to
+ * `import { existsSync } from 'node:fs'`. Without it the named ESM export stays
+ * bound to the original function and only `require('node:fs').existsSync` sees
+ * the patch — a half-applied hook, which reads as a working one.
+ *
+ * The pid log is the proof that the preload reached the test WORKERS and not
+ * just the vitest process that spawns them. `--require` is per-process: forks
+ * inherit it through the environment, worker_threads would not. Vitest's
+ * default pool is forks today, and if that ever changes this guard would run
+ * against unhooked workers and pass by proving nothing — so the parent counts
+ * the pids rather than trusting the pool.
+ */
+function preloadSource(marker: string): string {
+  return `
+const fs = require('node:fs')
+const Module = require('node:module')
+
+// The package root's \`index.node\`, a \`platforms/<target>/index.node\`, and the
+// bare specifier of a platform package — every shape \`src/load.cts\` reaches for.
+const BINDING =
+  /(?:^|[\\\\/])index\\.node$|@cipherstash[\\\\/]protect-ffi-(?:darwin|linux|win32)-/
+
+fs.appendFileSync(${JSON.stringify(marker)}, process.pid + '\\n')
+
+const load = Module._load
+Module._load = function (request, parent, isMain) {
+  if (BINDING.test(request)) {
+    // Shaped like the real thing: \`code\` is what packages/cli keys on.
+    const error = new Error("Cannot find module '" + request + "'")
+    error.code = 'MODULE_NOT_FOUND'
+    throw error
+  }
+  return load.call(this, request, parent, isMain)
+}
+
+const existsSync = fs.existsSync
+fs.existsSync = (path) => (BINDING.test(String(path)) ? false : existsSync(path))
+
+const statSync = fs.statSync
+fs.statSync = (path, ...rest) => {
+  if (!BINDING.test(String(path))) return statSync(path, ...rest)
+  const error = new Error('ENOENT: no such file or directory, stat ' + path)
+  error.code = 'ENOENT'
+  throw error
+}
+
+Module.syncBuiltinESMExports()
+`
 }
 
 describe('lint and format wiring', () => {
@@ -336,6 +428,110 @@ describe('lint and format wiring', () => {
     )
     expect([...cargoScripts, ...viaMise]).toEqual([])
   })
+
+  it.skipIf(process.env[ARTIFACT_FREE_RUN] === '1')(
+    'keeps cargo OUTPUT off the default test path too',
+    () => {
+      // The other half of the rule the test above states, and the half nothing
+      // was checking. Keeping cargo out of the SCRIPTS is worth nothing if a
+      // test then requires what cargo produces: `src/nativeLoading.test.ts`
+      // asserted `assertNativeBindingAvailable()` does not throw, which needs
+      // an `index.node` that only `build:native` writes. Root `pnpm test`
+      // reaches this package through `turbo test --filter './packages/*'`, so
+      // that made a Rust build a prerequisite of the whole repo's default test
+      // — the exact thing the entry-point split exists to prevent, arriving
+      // through the tests instead of through the scripts.
+      //
+      // Static analysis cannot see this. A test does not name `index.node`; it
+      // calls an export that happens to reach the addon, four hops down. So
+      // the suite is RE-RUN with every binding artifact made unresolvable, and
+      // the property is the child's exit status.
+      //
+      // Which is also why it is not enough that this checkout currently has no
+      // binary. The failure is invisible exactly where it is introduced: an
+      // author who ran `build:native` sees green, and so does CI, which builds
+      // the binding before running this suite. Only the artifact-free
+      // contributor sees it — and by then it is on main. In CI this nested run
+      // is the ONLY execution of the artifact-free path.
+      const workspace = mkdtempSync(join(tmpdir(), 'protect-ffi-no-artifact-'))
+      const marker = join(workspace, 'preloaded-pids')
+      const preload = join(workspace, 'hide-binding.cjs')
+      writeFileSync(marker, '')
+      writeFileSync(preload, preloadSource(marker))
+
+      // Resolved through the manifest rather than assumed: `vitest/vitest.mjs`
+      // is the `bin` entry, and pnpm's store path is not guessable.
+      const resolve = createRequire(join(packageRoot, 'package.json'))
+      const manifestPath = resolve.resolve('vitest/package.json')
+      const vitestBin = join(
+        dirname(manifestPath),
+        JSON.parse(readFileSync(manifestPath, 'utf8')).bin.vitest,
+      )
+
+      const env: Record<string, string | undefined> = {
+        ...process.env,
+        [ARTIFACT_FREE_RUN]: '1',
+        // The summary line is asserted on below, and vitest wraps every field
+        // of it in colour escapes when it thinks it has a TTY-ish consumer.
+        NO_COLOR: '1',
+        // Quoted because Node splits NODE_OPTIONS on whitespace unless a value
+        // is wrapped in double quotes, and `preload` sits under `tmpdir()` —
+        // not a path this file chose. No tmpdir on Linux or macOS contains a
+        // space, so this is not reachable here; it is one character against a
+        // failure that would read as "vitest could not start".
+        NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require "${preload}"`]
+          .filter(Boolean)
+          .join(' '),
+      }
+      // This process IS a vitest worker, and its VITEST_* variables describe
+      // that worker. Inherited, they make the child think it is one too.
+      for (const key of Object.keys(env)) {
+        if (key.startsWith('VITEST')) delete env[key]
+      }
+
+      const child = spawnSync(process.execPath, [vitestBin, 'run'], {
+        cwd: packageRoot,
+        env,
+        encoding: 'utf8',
+        timeout: 300_000,
+      })
+      const output = `${child.stdout ?? ''}\n${child.stderr ?? ''}`
+
+      expect(
+        child.error,
+        `Could not start the nested vitest run at ${vitestBin}.`,
+      ).toBeUndefined()
+
+      expect(
+        child.status,
+        `The default test suite does not survive a checkout with no cargo build.\n\`packages/protect-ffi\`'s \`test\` is what root \`pnpm test\` runs through turbo, and it must pass with no \`index.node\` anywhere — the six \`platforms/*\` packages are empty until someone compiles one, and \`build\` is \`tsc\`, not cargo.\nGate the assertion on the artifact being present (see \`builtArtifacts\` in nativeLoading.test.ts) and give the artifact-free case its own contract, rather than making a Rust toolchain a prerequisite of the repo's default test.\nThe nested run said:\n${output}`,
+      ).toBe(0)
+
+      // Non-vacuity, in two parts. A child that ran nothing exits 0 on some
+      // configurations, and a preload that never reached the workers leaves
+      // the artifact visible to them — either one turns this green while
+      // testing nothing.
+      // Recursive, matching `vitest.config.ts`'s `src/**/*.test.ts`. A flat
+      // readdir agrees with it only for as long as nobody nests a test file,
+      // and then this fails on a correct suite.
+      const files = readdirSync(join(packageRoot, 'src'), {
+        recursive: true,
+      }).filter((name) => String(name).endsWith('.test.ts'))
+      expect(
+        output,
+        `The nested run did not report ${files.length} passing test files, so it did not run this suite.\n${output}`,
+      ).toContain(`Test Files  ${files.length} passed (${files.length})`)
+
+      const pids = new Set(
+        readFileSync(marker, 'utf8').split('\n').filter(Boolean),
+      )
+      expect(
+        pids.size,
+        `The preload logged ${pids.size} process(es). It has to reach the vitest process AND the workers that run the test files — \`--require\` travels through the environment to forked children, but not into worker_threads. If vitest's pool is no longer fork-based, this guard ran against workers that could still see the binding.\nPids: ${[...pids].join(', ')}`,
+      ).toBeGreaterThan(1)
+    },
+    300_000,
+  )
 
   it('reaches every cargo check from the cargo entry point', () => {
     // The mirror of the check above: cargo scripts are allowed to exist, but

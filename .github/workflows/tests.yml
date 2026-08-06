@@ -108,14 +108,22 @@ jobs:
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
-      # Vendoring protect-ffi put it in `turbo test --filter './packages/*'`,
-      # so root `pnpm test` now runs ITS suite too — and
-      # `src/nativeLoading.test.ts` asserts the platform binary loads. Nothing
-      # else in this job produces `index.node`. The type steps below need
-      # `lib/` for the same reason: they call package scripts directly, so
-      # turbo's `^build` never runs and protect-ffi's declarations resolve to
-      # nothing. No `wasm: true` — every `wasm-inline` unit test either mocks
-      # the module or asserts on the bundle graph.
+      # `pnpm run test` below runs the `packages/stack` suites, and only 8 of
+      # those 120 files mock `@cipherstash/protect-ffi` — the rest load
+      # `index.node`, which nothing else in this job produces.
+      #
+      # NOT for protect-ffi's own suite, though vendoring it did add
+      # `@cipherstash/protect-ffi#test` to `turbo test --filter './packages/*'`.
+      # That suite must pass with no binding at all (its `build` is `tsc` and
+      # its `test` is deliberately cargo-free), and `src/lintWiring.test.ts`
+      # re-runs it here with the artifact hidden to keep that true — this job
+      # having a binding is exactly why that nested run is the only place the
+      # artifact-free path gets exercised in CI.
+      #
+      # The type steps below need `lib/`: they call package scripts directly,
+      # so turbo's `^build` never runs and protect-ffi's declarations resolve
+      # to nothing. No `wasm: true` — every `wasm-inline` unit test either
+      # mocks the module or asserts on the bundle graph.
       - name: Build the protect-ffi binding
         uses: ./.github/actions/build-ffi-binding
 
@@ -238,6 +246,14 @@ jobs:
       - name: Lint — no references to deleted package directories
         run: pnpm run lint:package-paths
 
+      # TEMPORARY — delete with the script in the phase-4 cutover PR.
+      # The seven protect-ffi packages live here but still publish from
+      # cipherstash/protectjs-ffi. A changeset naming any of them bumps all
+      # seven through their fixed group and the next release tries a publish
+      # npm has not been repointed to trust.
+      - name: Lint — no protect-ffi changeset before the publishing cutover
+        run: pnpm run lint:ffi-changeset
+
       - name: Test — lint script self-tests
         run: pnpm run test:scripts
 
@@ -309,6 +325,23 @@ jobs:
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
+      # `e2e/vitest.config.ts` includes `tests/**/*.e2e.test.ts` and the step
+      # below applies no file filter, so this job runs
+      # `tests/prisma-example-readme.e2e.test.ts` — whose
+      # `describe.skipIf(!authConfigured)` un-skips the moment CS_CLIENT_ID and
+      # CS_CLIENT_KEY are set, which the job env above does. That walkthrough's
+      # `pnpm start` step encrypts against the live service through
+      # `@cipherstash/stack`, so it needs `index.node`; turbo's `^build` only
+      # gets as far as protect-ffi's `build` (tsc → `lib/`), which is the half
+      # that does not encrypt anything.
+      #
+      # After the pre-flight above, per
+      # scripts/__tests__/ffi-binding-step-order.test.mjs. No `wasm: true` —
+      # nothing in `e2e/tests/**` loads the WASM build (the Deno smoke test that
+      # does lives in `e2e/wasm/` and runs in `wasm-e2e-tests`).
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/build-ffi-binding
+
       # Run the standalone `e2e/` workspace via turbo so the `^build`
       # dep on the `test:e2e` task builds cli + wizard first. CLI's own
       # E2E (`packages/cli/tests/e2e/**`) is covered by the `run-tests`
@@ -371,15 +404,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # The Deno smoke test imports the locally-built dist/wasm-inline.js
-      # via a file URL in e2e/wasm/deno.json — it needs a fresh build.
-      - name: Build stack
-        run: pnpm exec turbo run build --filter @cipherstash/stack
-
       # The e2e/wasm suites FAIL when any of the four CS_* env vars is
       # missing (requireEnv throws — no skip gating), so a rotated / cleared
       # secret can't hide a real WASM regression behind a green job. This
-      # preflight just fails faster, before the Deno module downloads.
+      # preflight just fails faster, before the two builds below and the Deno
+      # module downloads.
+      #
+      # It is the preflight that moves above the binding build here, not the
+      # binding build that moves below it: `Build stack` consumes
+      # protect-ffi's dist/wasm output, so the two build steps have to stay in
+      # this order.
       - name: Require CipherStash secrets
         uses: ./.github/actions/require-cs-secrets
         with:
@@ -387,6 +421,33 @@ jobs:
           client-id: ${{ vars.CS_CLIENT_ID }}
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+      # `wasm: true` — this is the job the WASM output exists for. stack's
+      # dist/wasm-inline.js imports protect-ffi's dist/wasm/protect_ffi_inline.js
+      # by relative path, and only the three .d.ts under dist/wasm are tracked;
+      # the .js and .wasm come from wasm-pack and nothing else in CI runs it.
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/build-ffi-binding
+        with:
+          wasm: 'true'
+
+      # The only job that can run this: the type tests read the GENERATED
+      # dist/wasm/*.d.ts (wasm-bindgen emits them from the `typescript_type`
+      # attributes in crates/protect-ffi/src/wasm.rs) and those declarations
+      # import ../../lib/types.js, so it needs both halves of the step above.
+      # That is why it is exempt from protect-ffi's `test` entry point, which
+      # must pass in a fresh clone with no dist/ — and the exemption in
+      # src/lintWiring.test.ts asserts this step exists, because between the
+      # absorption and this line the check ran nowhere at all: the jobs its
+      # exemption named were the upstream copies under
+      # packages/protect-ffi/.github/, which GitHub never executes.
+      - name: Typecheck the generated WASM declarations
+        run: pnpm --filter @cipherstash/protect-ffi run test:typecheck:wasm
+
+      # The Deno smoke test imports the locally-built dist/wasm-inline.js
+      # via a file URL in e2e/wasm/deno.json — it needs a fresh build.
+      - name: Build stack
+        run: pnpm exec turbo run build --filter @cipherstash/stack
 
       - name: Run Deno WASM smoke test
         working-directory: e2e/wasm
@@ -434,6 +495,33 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Fail loudly if any live-test credential is missing. The `.env` written
+      # below feeds the same live suites `run-tests` runs, and this job hides
+      # its own failures twice over (`continue-on-error: true` on the job, `||
+      # true` around the vitest call), so a rotated secret would otherwise show
+      # up as nothing at all.
+      # Before the binding build, not after: this costs seconds and that costs
+      # minutes on a cold cache.
+      - name: Require CipherStash secrets
+        uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+      # The `packages/stack` suites below are the live ones — 120 files, of
+      # which only 8 mock `@cipherstash/protect-ffi` — so they load
+      # `index.node`, and the `Build packages` step below does not produce it
+      # (protect-ffi's `build` is `tsc`, deliberately cargo-free). No
+      # `wasm: true`: every `wasm-inline` unit test resolves the stubs in
+      # `vitest.shared.ts` or asserts on the bundle graph, same as `run-tests`.
+      #
+      # It shares the native cache key with `run-tests`, so in the normal case
+      # this is a restore rather than a compile.
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/build-ffi-binding
 
       - name: Create .env file in ./packages/stack/
         run: |

@@ -1,0 +1,10 @@
+# A workflow file that is nothing but prose. `yaml.load` returns `null` for it —
+# there is no document, only comments — so every property read on the result
+# throws. Shaped like the header of a workflow mid-write, because that is how
+# one of these actually appears: the comment block gets written first and the
+# jobs land in the next commit.
+#
+# on:
+#   pull_request:
+#     paths:
+#       - 'packages/protect-ffi/**'

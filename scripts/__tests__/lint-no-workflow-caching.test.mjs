@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
+import { REPO_ROOT } from './lib/repo-root.mjs'
 
 // Workflows the supply-chain gate is responsible for.
 const TARGET_WORKFLOWS = [
@@ -15,8 +16,6 @@ const SCRIPT = resolve(
   fileURLToPath(import.meta.url),
   '../../lint-no-workflow-caching.mjs',
 )
-const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
-
 function run(...targets) {
   try {
     execFileSync('node', [SCRIPT, ...targets], { encoding: 'utf8' })
@@ -94,9 +93,9 @@ describe('lint-no-workflow-caching', () => {
 
   // The gate read a step's own `uses:` and stopped there, so a workflow could
   // reach `actions/cache` through one indirection — `uses: ./.github/actions/x`
-  // — and stay green. Verified against a copy of release.yml with a
-  // cache-restoring composite spliced in: exit 0, no output, while the
-  // composite it never opened restores two caches.
+  // — and stay green. Verified against a copy of release.yml with
+  // `.github/actions/build-ffi-binding` spliced in: exit 0, no output, while
+  // the composite it never opened restores two caches.
   describe('local composite actions', () => {
     const cfx = (name) =>
       resolve(
@@ -238,6 +237,31 @@ describe('lint-no-workflow-caching', () => {
       expect(r.exitCode).toBe(2)
       expect(r.output).toMatch(/dir-action-yml/)
       expect(r.output).toMatch(/no action\.yml or action\.yaml there/)
+    })
+
+    // A live citation, not a fixture: `.github/actions/build-ffi-binding` is
+    // the composite whose header says publishing workflows must not use it.
+    // The first assertion is what keeps the second honest — drop the caching
+    // from that action and this fails, which is the prompt to fix the header
+    // too, rather than leaving a test that passes because it now proves
+    // nothing.
+    it('flags a publishing workflow that uses .github/actions/build-ffi-binding', () => {
+      const action = yaml.load(
+        readFileSync(
+          resolve(REPO_ROOT, '.github/actions/build-ffi-binding/action.yml'),
+          'utf8',
+        ),
+      )
+      expect(
+        action?.runs?.steps?.filter((s) =>
+          /^actions\/cache(\/(restore|save))?@/.test(s?.uses ?? ''),
+        ),
+      ).not.toHaveLength(0)
+
+      const r = run(fx('uses-build-ffi-binding.yml'))
+      expect(r.exitCode).toBe(1)
+      expect(r.output).toMatch(/build-ffi-binding\/action\.yml/)
+      expect(r.output).toMatch(/actions\/cache@/)
     })
   })
 

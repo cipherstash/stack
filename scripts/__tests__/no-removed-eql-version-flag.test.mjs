@@ -1,10 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-
-const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
+import { REPO_ROOT } from './lib/repo-root.mjs'
 
 /** Tracked executable examples that describe the current public surface. */
 function publicCommandDocs() {

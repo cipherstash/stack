@@ -51,6 +51,11 @@ on:
       # `tests/wasm-round-trip.test.ts` loads at module-graph time. An edit
       # there breaks that suite while touching no Rust and no `src/`.
       - 'packages/protect-ffi/scripts/**'
+      # The other half of the same build: `build:wasm` ends in `tsc -p
+      # tsconfig.wasm-errors.json`, and the inliner re-exports what it emits.
+      # `scripts/**` above does not reach a root tsconfig, so without this an
+      # edit to it rebuilds the bundle that suite loads and starts no job.
+      - 'packages/protect-ffi/tsconfig.wasm-errors.json'
       # package.json carries the build scripts and the exports map the suite
       # resolves through; mise.toml carries the `tasks.toml` include, the
       # toolchain pins, and the PG* connection env.
@@ -71,6 +76,7 @@ on:
       - 'packages/protect-ffi/Cargo.lock'
       - 'packages/protect-ffi/src/**'
       - 'packages/protect-ffi/scripts/**'
+      - 'packages/protect-ffi/tsconfig.wasm-errors.json'
       - 'packages/protect-ffi/package.json'
       - 'packages/protect-ffi/mise.toml'
       - '.github/workflows/integration-protect-ffi.yml'

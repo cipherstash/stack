@@ -102,12 +102,17 @@ so that stays true for everyone else.
   Absorbing protect-ffi turned `lib/`, `index.node` and `dist/wasm/**` from
   tarball contents into build outputs, so every job that encrypts, decrypts, or
   typechecks against the package builds them first via
-  `.github/actions/build-ffi-binding` (pass `wasm: 'true'` for the two that
-  load the real WASM). The action caches `index.node` on a content hash of the
+  `.github/actions/build-ffi-binding` — passing `wasm: 'true'` only where the
+  job loads the real WASM build, which is the minority and costs a second cargo
+  build against wasm32. The action caches `index.node` on a content hash of the
   Rust inputs, so a PR touching no Rust pays a restore rather than a compile.
   **A new job that runs live encryption needs this step** — without it the
   failure is `Cannot find module '.../protect-ffi-linux-x64-gnu/index.node'`,
   reported once per test rather than once per job.
+  `scripts/__tests__/ffi-binding-step-order.test.mjs` holds both halves of this:
+  every job that receives a `CS_*` credential must build the binding, and the
+  `require-cs-secrets` pre-flight must come first. Both scan the workflow
+  directory rather than a list, so a new job is covered the day it lands.
 - **Rust checks live behind `test:cargo`** (`cargo test` + `cargo fmt --check`)
   and `mise run lint:rust` (clippy, host and wasm32). `build:native` carries
   `cargo build --release`.

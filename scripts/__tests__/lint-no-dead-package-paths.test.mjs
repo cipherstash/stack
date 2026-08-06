@@ -4,13 +4,12 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { REPO_ROOT } from './lib/repo-root.mjs'
 
 const SCRIPT = resolve(
   fileURLToPath(import.meta.url),
   '../../lint-no-dead-package-paths.mjs',
 )
-
-const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
 
 function run(...targets) {
   return runWith({}, ...targets)
