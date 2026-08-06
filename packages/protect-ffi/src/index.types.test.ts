@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type {
   AuthStrategy,
-  EncryptQueryOptions,
   EncryptedV3Query,
-  IndexTypeName,
+  EncryptQueryOptions,
   Indexes,
+  IndexTypeName,
   QueryPayload,
   TextSearchOreQuery,
   TextSearchQuery,

@@ -1,6 +1,10 @@
 import { withEnvCredentials } from './credentials.js'
-import type { AuthStrategy, ClientOpts, EncryptConfig } from './types.js'
-import type { NewClientOptions } from './types.js'
+import type {
+  AuthStrategy,
+  ClientOpts,
+  EncryptConfig,
+  NewClientOptions,
+} from './types.js'
 
 /**
  * The options object the addon actually receives — `NewClientOptions` minus the

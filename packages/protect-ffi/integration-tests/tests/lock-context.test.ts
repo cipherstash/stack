@@ -1,13 +1,7 @@
 import 'dotenv/config'
-import { describe, expect, test } from 'vitest'
 
-import {
-  type CastAs,
-  type EncryptConfig,
-  decrypt,
-  encrypt,
-  newClient,
-} from '@cipherstash/protect-ffi'
+import { decrypt, encrypt, newClient } from '@cipherstash/protect-ffi'
+import { describe, expect, test } from 'vitest'
 
 // Import a shared encryptConfig from common.js
 import { encryptConfig } from './common.js'

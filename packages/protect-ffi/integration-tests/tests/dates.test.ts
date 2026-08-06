@@ -1,5 +1,4 @@
 import 'dotenv/config'
-import { describe, expect, test } from 'vitest'
 
 import {
   decrypt,
@@ -8,6 +7,7 @@ import {
   encryptBulk,
   newClient,
 } from '@cipherstash/protect-ffi'
+import { describe, expect, test } from 'vitest'
 
 import { datesConfig } from './common.js'
 

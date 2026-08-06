@@ -1,6 +1,30 @@
 target
-dist
 index.node
+
+# Generated output is not tracked — with three deliberate exceptions.
+#
+# `dist/wasm/**` comes from `wasm-pack` + `scripts/inline-wasm.mjs`, which need
+# Rust, the wasm32 target and wasm-pack. But `packages/stack` value-imports
+# `@cipherstash/protect-ffi/wasm-inline`, so with the whole directory absent its
+# declaration build cannot resolve the module — which would put the Rust
+# toolchain on every contributor and every PR job, for a typecheck.
+#
+# Export maps resolve `types` and `default` independently, so the three
+# declaration files alone are enough: verified by deleting every `.js` and
+# `.wasm` here and running stack's build, `test:types:dist`, `test:types` (59)
+# and unit suite (1064) — all pass. ~11KB, hand-reviewable, rarely changing.
+# The runtime output (7.4MB per release, regenerated) stays ignored.
+#
+# Root Biome excludes `**/dist`, so these stay out of formatting and linting.
+dist/*
+!dist/wasm/
+dist/wasm/*
+# wasm-pack writes its own `dist/wasm/.gitignore` containing `*`, which would
+# re-ignore these three. Negate the files after it rather than deleting a file
+# the build regenerates.
+!dist/wasm/protect_ffi.d.ts
+!dist/wasm/protect_ffi_bg.wasm.d.ts
+!dist/wasm/errors.d.ts
 **/node_modules
 **/.DS_Store
 npm-debug.log*

@@ -374,6 +374,62 @@ importers:
         specifier: 4.62.2
         version: 4.62.2
 
+  packages/protect-ffi:
+    dependencies:
+      '@neon-rs/load':
+        specifier: ^0.1.82
+        version: 0.1.82
+    devDependencies:
+      '@biomejs/biome':
+        specifier: ^2.5.3
+        version: 2.5.3
+      '@neon-rs/cli':
+        specifier: ^0.1.82
+        version: 0.1.82
+      '@tsconfig/node22':
+        specifier: ^22.0.0
+        version: 22.0.5
+      '@types/node':
+        specifier: ^22.20.1
+        version: 22.20.1
+      typescript:
+        specifier: catalog:repo
+        version: 5.9.3
+      vitest:
+        specifier: catalog:repo
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+    optionalDependencies:
+      '@cipherstash/protect-ffi-darwin-arm64':
+        specifier: workspace:*
+        version: link:platforms/darwin-arm64
+      '@cipherstash/protect-ffi-darwin-x64':
+        specifier: workspace:*
+        version: link:platforms/darwin-x64
+      '@cipherstash/protect-ffi-linux-arm64-gnu':
+        specifier: workspace:*
+        version: link:platforms/linux-arm64-gnu
+      '@cipherstash/protect-ffi-linux-x64-gnu':
+        specifier: workspace:*
+        version: link:platforms/linux-x64-gnu
+      '@cipherstash/protect-ffi-linux-x64-musl':
+        specifier: workspace:*
+        version: link:platforms/linux-x64-musl
+      '@cipherstash/protect-ffi-win32-x64-msvc':
+        specifier: workspace:*
+        version: link:platforms/win32-x64-msvc
+
+  packages/protect-ffi/platforms/darwin-arm64: {}
+
+  packages/protect-ffi/platforms/darwin-x64: {}
+
+  packages/protect-ffi/platforms/linux-arm64-gnu: {}
+
+  packages/protect-ffi/platforms/linux-x64-gnu: {}
+
+  packages/protect-ffi/platforms/linux-x64-musl: {}
+
+  packages/protect-ffi/platforms/win32-x64-msvc: {}
+
   packages/stack:
     dependencies:
       '@byteslice/result':
@@ -873,6 +929,56 @@ packages:
 
   '@byteslice/result@0.3.0':
     resolution: {integrity: sha512-nIVjzVJ5LEUsj5jZ196OQ+XFYDPw74JVmHrsKs0g/iX1c8llydLWKbseMKmAtcEnpRj8hdsEue5H/naz7wdC4A==}
+
+  '@cargo-messages/android-arm-eabi@0.1.81':
+    resolution: {integrity: sha512-cpRbgb56e9LmAj96Tixtz9/bTlaJAeplWNNv4obu+eqQyZd3ZjX04TJd9fM1bjHDGVyR9GTVlgBsbQEntIGkwg==}
+    cpu: [arm]
+    os: [android]
+
+  '@cargo-messages/darwin-arm64@0.1.81':
+    resolution: {integrity: sha512-OwGqsw+tbJx37a/vH4T8R9qkrrFYoTIOnckbA9+MhQodE2FSWyk3HvLh+z8jjl+QZa1RSOU9Ax6gt/46h0BiTg==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@cargo-messages/darwin-x64@0.1.81':
+    resolution: {integrity: sha512-Iu761bPk25Ce6yUdDCjjeVuT8/xbBmczyaNB7oYBmAZEE5rshvCJ42TqSShYYP+S7pKkN42nBhkFooaZrqaz9g==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@cargo-messages/linux-arm-gnueabihf@0.1.81':
+    resolution: {integrity: sha512-iIuy7KTJAEhbiqlIlcxQOdW6opI6M9LXlgd/jdsHbP2FjmTyhTLnd3JCJ6JeAeidwknCDs+CFlaVmPxTKSytsg==}
+    cpu: [arm]
+    os: [linux]
+
+  '@cargo-messages/linux-arm64-gnu@0.1.81':
+    resolution: {integrity: sha512-QPQRsHj9m/9ga8wRBlLh8t2AXyr40+/H55FIKVj7zIjV++waY/TbSTPofDZQhMycd5VSGLKztfhahiCO7c/RAQ==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@cargo-messages/linux-arm64-musl@0.1.81':
+    resolution: {integrity: sha512-9O0ATesIOjDTz2L01OtlGHYwP86I31/mzXMC+ryQkzbbIKj7KUiSqmEc29I14I517UYO8/sMeow6q6MVBpehlA==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@cargo-messages/linux-x64-gnu@0.1.81':
+    resolution: {integrity: sha512-wEFYxCdtHNiEvp5KEg17CfRCUdfRTtkL+1GASROyvYEUV6DQf6TXxfHuuWg2xlVxh5fqiTGFSRfiqFrCDL/xrw==}
+    cpu: [x64]
+    os: [linux]
+
+  '@cargo-messages/linux-x64-musl@0.1.81':
+    resolution: {integrity: sha512-zi5pKIh60oPwOCDQapAZ3Mya4y56MI2BoGvY8JtztYaXTorGmAoyf6jjb50Wt+HfoYYjM3OlPt03XMlCFZJnIQ==}
+    cpu: [x64]
+    os: [linux]
+
+  '@cargo-messages/win32-arm64-msvc@0.1.81':
+    resolution: {integrity: sha512-oyiT8AYLoguF7cFOMYDsPv3eirzBcFafOOfRsFyd3+wmaPTl/DdbCq446oThRmSAsEGJpzhzj7TafcnXMBkHbg==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@cargo-messages/win32-x64-msvc@0.1.81':
+    resolution: {integrity: sha512-B5Ukf4AohtIv27uCP/AgM+7vYwQ4RacI6m8ZBr2XKeSrjZXcXguzlZd+wD7bD5+wa0capvXKUskZDnpG/DcYiA==}
+    cpu: [x64]
+    os: [win32]
 
   '@changesets/apply-release-plan@7.1.1':
     resolution: {integrity: sha512-9qPCm/rLx/xoOFXIHGB229+4GOL76S4MC+7tyOuTsR6+1jYlfFDQORdvwR5hDA6y4FL2BPt3qpbcQIS+dW85LA==}
@@ -1437,6 +1543,10 @@ packages:
     peerDependenciesMeta:
       '@cfworker/json-schema':
         optional: true
+
+  '@neon-rs/cli@0.1.82':
+    resolution: {integrity: sha512-QrlGPQp9KOGuMvjjua79lEV2QTcE16m8JatG5ITdQpBAwRQpDw5xab57W9130y2iUEfMzYtp7v6pcN1fUB0Exg==}
+    hasBin: true
 
   '@neon-rs/load@0.1.82':
     resolution: {integrity: sha512-H4Gu2o5kPp+JOEhRrOQCnJnf7X6sv9FBLttM/wSbb4efsgFWeHzfU/ItZ01E5qqEk+U6QGdeVO7lxXIAtYHr5A==}
@@ -2018,6 +2128,9 @@ packages:
 
   '@tanstack/query-core@5.101.2':
     resolution: {integrity: sha512-hH5MLoJhF7KaIGd7q3xTXGXvslI+GYlM1Z/35aSHHWaCJWB7XvTSHYuV3eM7tw+aE0mT/xMro4M4Q9rCGHT0lw==}
+
+  '@tsconfig/node22@22.0.5':
+    resolution: {integrity: sha512-hLf2ld+sYN/BtOJjHUWOk568dvjFQkHnLNa6zce25GIH+vxKfvTgm3qpaH6ToF5tu/NN0IH66s+Bb5wElHrLcw==}
 
   '@turbo/darwin-64@2.10.4':
     resolution: {integrity: sha512-m1MUEI4MJ69r5CwfMYxmHi0H0rrgiYCBOp0tgBZ9x/YVvOb5uu/lRIDyDwdtH054R2yWeQaIigUGu6aCX9f8cA==}
@@ -3905,6 +4018,36 @@ snapshots:
 
   '@byteslice/result@0.3.0': {}
 
+  '@cargo-messages/android-arm-eabi@0.1.81':
+    optional: true
+
+  '@cargo-messages/darwin-arm64@0.1.81':
+    optional: true
+
+  '@cargo-messages/darwin-x64@0.1.81':
+    optional: true
+
+  '@cargo-messages/linux-arm-gnueabihf@0.1.81':
+    optional: true
+
+  '@cargo-messages/linux-arm64-gnu@0.1.81':
+    optional: true
+
+  '@cargo-messages/linux-arm64-musl@0.1.81':
+    optional: true
+
+  '@cargo-messages/linux-x64-gnu@0.1.81':
+    optional: true
+
+  '@cargo-messages/linux-x64-musl@0.1.81':
+    optional: true
+
+  '@cargo-messages/win32-arm64-msvc@0.1.81':
+    optional: true
+
+  '@cargo-messages/win32-x64-msvc@0.1.81':
+    optional: true
+
   '@changesets/apply-release-plan@7.1.1':
     dependencies:
       '@changesets/config': 3.1.4
@@ -4426,6 +4569,19 @@ snapshots:
       zod-to-json-schema: 3.25.2(zod@3.25.76)
     transitivePeerDependencies:
       - supports-color
+
+  '@neon-rs/cli@0.1.82':
+    optionalDependencies:
+      '@cargo-messages/android-arm-eabi': 0.1.81
+      '@cargo-messages/darwin-arm64': 0.1.81
+      '@cargo-messages/darwin-x64': 0.1.81
+      '@cargo-messages/linux-arm-gnueabihf': 0.1.81
+      '@cargo-messages/linux-arm64-gnu': 0.1.81
+      '@cargo-messages/linux-arm64-musl': 0.1.81
+      '@cargo-messages/linux-x64-gnu': 0.1.81
+      '@cargo-messages/linux-x64-musl': 0.1.81
+      '@cargo-messages/win32-arm64-msvc': 0.1.81
+      '@cargo-messages/win32-x64-msvc': 0.1.81
 
   '@neon-rs/load@0.1.82': {}
 
@@ -5018,6 +5174,8 @@ snapshots:
       tslib: 2.8.1
 
   '@tanstack/query-core@5.101.2': {}
+
+  '@tsconfig/node22@22.0.5': {}
 
   '@turbo/darwin-64@2.10.4':
     optional: true

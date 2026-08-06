@@ -1,19 +1,35 @@
 // This module is the CJS entry point for the library.
 
 import { withEncodedPlaintext, withEncodedPlaintexts } from './bigintWire.js'
-import { type CredentialOpts, withEnvCredentials } from './credentials.js'
+import { withEnvCredentials } from './credentials.js'
+
+// `import native = require(...)`, NOT `import * as native from`. The latter
+// compiles to `__importStar(require("./load.cjs"))`, and `__importStar`
+// ENUMERATES the module's properties to copy them — which forces
+// `@neon-rs/load`'s proxy to resolve the platform binary at module-evaluation
+// time. So importing this package at all threw `MODULE_NOT_FOUND` when no
+// binding was installed, even for callers that never encrypt anything.
+//
+// This form emits a plain `require`, leaving the proxy untouched until a
+// wrapper body below actually reads a property off it. The package then
+// imports cleanly with no binary present, and the same `MODULE_NOT_FOUND` —
+// identical `code` and `message` — is raised on first use instead.
+import native = require('./load.cjs')
+
 import { type NativeNewClientOptions, newClientArgs } from './newClientArgs.js'
-import * as native from './load.cjs'
+
 export {
-  withEnvCredentials,
-  type EnvReader,
   type CredentialOpts,
+  type EnvReader,
+  withEnvCredentials,
 } from './credentials.js'
 export * from './eql-v3.js'
-import type { EncryptedV3, EncryptedV3Query } from './eql-v3.js'
+
+import type { EncryptedV3Query } from './eql-v3.js'
+
 export {
-  PROTECT_ERROR_CODES,
   isProtectErrorCode,
+  PROTECT_ERROR_CODES,
   type ProtectErrorCode,
 } from './errors.js'
 
@@ -23,20 +39,19 @@ export {
  * public surface is exactly what it was.
  */
 export * from './types.js'
+
 import type {
   AuthStrategy,
-  ClientOpts,
   DecryptBulkOptions,
   DecryptOptions,
   DecryptResult,
   EncryptBulkOptions,
-  EncryptConfig,
-  EncryptOptions,
-  EncryptQueryBulkOptions,
-  EncryptQueryOptions,
   Encrypted,
   EncryptedPayload,
   EncryptedQuery,
+  EncryptOptions,
+  EncryptQueryBulkOptions,
+  EncryptQueryOptions,
   EnsureKeysetOpts,
   EnsureKeysetResult,
   JsPlaintext,
@@ -173,6 +188,36 @@ export async function decrypt(
  */
 export function isEncrypted(encrypted: unknown): boolean {
   return native.isEncrypted(encrypted)
+}
+
+/**
+ * Resolve the platform binary, throwing if it is not installed.
+ *
+ * A diagnostic entry point — `stash doctor` and anything else that needs to
+ * answer "is this installation actually usable?" without constructing a client,
+ * reading credentials or touching the network.
+ *
+ * **Why this has to exist here.** Since the native load became lazy, importing
+ * this package no longer proves the binary is present: the `@neon-rs/load`
+ * proxy resolves on first property access, inside a wrapper body. Nor can a
+ * caller force it from outside — `require('@cipherstash/protect-ffi/lib/load.cjs')`
+ * fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`, and reaching a wrapper by name is
+ * not enough either, since the exports below are this module's own functions
+ * and touching one never reaches the proxy. Calling through a real wrapper
+ * works but means picking one whose argument validation does not reject first
+ * — `encryptBulk({})` throws a plain validation error before it ever reaches
+ * native. So the forcing has to be an explicit, named, stable operation rather
+ * than a trick that depends on which wrapper is cheapest today.
+ *
+ * `isEncrypted` is the call it forwards to: pure, synchronous, no client, and
+ * it reaches native unconditionally.
+ *
+ * **The error is deliberately not wrapped.** It propagates exactly as the
+ * loader raised it — `MODULE_NOT_FOUND`, same `code` and `message` — so
+ * existing classification of a missing binding keeps working unchanged.
+ */
+export function assertNativeBindingAvailable(): void {
+  native.isEncrypted(null)
 }
 
 export async function encryptBulk(

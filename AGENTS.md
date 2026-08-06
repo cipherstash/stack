@@ -82,10 +82,112 @@ If these variables are missing, tests that require live encryption will fail or 
 - `packages/nextjs`: Next.js helpers and Clerk integration (`./clerk` export)
 - `packages/utils`: Shared config (`utils/config`) and logger (`utils/logger`)
 - `packages/bench`: Performance / index-engagement benchmarks (private, not published)
+- `packages/protect-ffi`: Native FFI bindings to the CipherStash Client SDK (`@cipherstash/protect-ffi`) — the Rust core that `packages/stack` encrypts and decrypts through, absorbed from `cipherstash/protectjs-ffi`. Contains a **nested Cargo workspace** (`crates/`) and six per-platform binary packages under `platforms/*`, each published as `@cipherstash/protect-ffi-<platform>` and linked here via `workspace:*`. See the "Working on protect-ffi" notes below before touching it — its default `test` and `build` are deliberately Rust-free.
 - `e2e/*`: Cross-package end-to-end tests (package managers, supply chain, Prisma example README)
 - `examples/*`: Working apps (basic, prisma, supabase-worker)
 - `docs/plans/*`: Internal design plans. User-facing documentation lives at https://cipherstash.com/docs (not in this repo).
 - `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-indexing`, `stash-deployment`, `stash-zerokms`, `stash-auth`, `stash-postgres`, `stash-edge`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-prisma`, `stash-supply-chain-security`)
+
+## Working on protect-ffi
+
+`packages/protect-ffi` is the only Rust in this repo, and its scripts are split
+so that stays true for everyone else.
+
+- **The default `test` and `build` never invoke cargo.** Root `pnpm test` runs
+  `turbo test --filter './packages/*'`, which reaches this package — so a cargo
+  process on that path is a Rust toolchain on every contributor's machine.
+  `test` is the JS chain; `build` is `tsc`.
+- **CI does build the binding, in the jobs that need it.** That is the limit of
+  the rule above: it keeps cargo off the *scripts*, not out of the pipeline.
+  Absorbing protect-ffi turned `lib/`, `index.node` and `dist/wasm/**` from
+  tarball contents into build outputs, so every job that encrypts, decrypts, or
+  typechecks against the package builds them first via
+  `.github/actions/build-ffi-binding` (pass `wasm: 'true'` for the two that
+  load the real WASM). The action caches `index.node` on a content hash of the
+  Rust inputs, so a PR touching no Rust pays a restore rather than a compile.
+  **A new job that runs live encryption needs this step** — without it the
+  failure is `Cannot find module '.../protect-ffi-linux-x64-gnu/index.node'`,
+  reported once per test rather than once per job.
+- **Rust checks live behind `test:cargo`** (`cargo test` + `cargo fmt --check`)
+  and `mise run lint:rust` (clippy, host and wasm32). `build:native` carries
+  `cargo build --release`.
+- **`src/lintWiring.test.ts` enforces the split**: no `test:*` script may be
+  unreachable from both entry points, nothing cargo may be reachable from
+  `test`, and every cargo check must be reachable from `test:cargo`. A check
+  nothing invokes reads exactly like a check that passes — that is why the file
+  exists.
+- **Do not write `pnpm run <script> -- --flag`.** npm strips the `--`; pnpm
+  forwards it verbatim, and these scripts end in `> cargo.log`, so the flag
+  lands after the redirect and cargo rejects it. lintWiring asserts this too.
+- **`lib/` is the package `main` and is generated**, so a workspace consumer
+  resolves an empty package until `build` has run. `turbo.json` carries a
+  `@cipherstash/protect-ffi#build` override declaring `outputs: ["lib/**"]`;
+  without it Turbo caches the repo-wide `dist/**` and a cache hit restores
+  nothing while reporting success.
+- **Three WASM declaration files are tracked** (`dist/wasm/*.d.ts`) so stack's
+  declaration build resolves `@cipherstash/protect-ffi/wasm-inline` without
+  Rust. Everything else under `dist/` stays ignored. The re-inclusion chain
+  spans the root `.gitignore`, the package's own, and a `.gitignore` wasm-pack
+  generates — see the comments in each.
+- **Publishing has not moved yet.** All seven packages are still published from
+  `cipherstash/protectjs-ffi` until npm trusted publishing is repointed, so a
+  changeset naming any of them fails CI (`scripts/lint-no-ffi-changeset.mjs`).
+  Change the package freely; its changeset waits for the cutover PR.
+
+### The `integration-tests/` suite
+
+`packages/protect-ffi/integration-tests/` is 19 files of **live** coverage —
+encrypt/decrypt, lock context, keysets, JS auth strategies, JSON SteVec,
+Postgres (EQL v2 *and* v3), and a WASM round trip — and it is the only place
+several of those paths are exercised at all. It needs three things a normal
+`pnpm test` does not have: **Docker**, **CipherStash credentials**, and **both
+EQL versions installed** in the database.
+
+- **It is not a pnpm workspace member.** `pnpm-workspace.yaml` globs
+  `packages/*` (one level) plus `packages/protect-ffi/platforms/*`, so this
+  directory is invisible to pnpm and has its own `package-lock.json` with pins
+  that deliberately differ from the repo catalog (`@cipherstash/auth ^0.39.0`,
+  `vitest ^3.1.3`, `@cipherstash/eql 3.0.2`). `npm ci` installs it. Absorbing it
+  into the workspace is a follow-up, not a tidy-up: it changes those pins, and
+  only a credentialed run can prove the change is neutral.
+- **Run it locally** from `packages/protect-ffi`:
+
+  ```bash
+  mise run setup                 # npm ci, docker compose up, EQL v2 + v3
+  mise run test:integration:all  # includes tests/lock-context.test.ts
+  ```
+
+  `mise run test:integration` is the same suite **minus** lock context — prefer
+  `:all`, which is what CI runs. Both tasks live in
+  `integration-tests/tasks.toml`, included from `mise.toml`'s `[task_config]`,
+  and both build the binding themselves (debug) before invoking vitest. Postgres
+  is on **5436** (`docker-compose.yml` publishes `5436:5432`); `mise.toml`'s
+  `[env]` carries the matching `PG*` values, and mise's `[env]` overrides an
+  inherited one, so a stale `PGPORT` in your shell cannot misroute the tests.
+- **In CI it runs from `.github/workflows/integration-protect-ffi.yml`** —
+  path-filtered to this package (and the two actions it uses), credentialed, and
+  fork-PR-skipped like the other `integration-*.yml` jobs. Two things there are
+  deliberately *not* copies of upstream: it builds the binding with
+  `.github/actions/build-ffi-binding` (`wasm: 'true'`) rather than
+  `mise run build:debug`, because a **release** `index.node` at the package root
+  satisfies `src/load.cts`'s `debug:` fallback and that action caches it; and it
+  invokes vitest directly, since the mise task would recompile in the debug
+  profile over the artifact the rest of CI already paid for. It does **not** use
+  `.github/actions/integration-db` — the EQL installs in `tasks.toml` pipe SQL
+  through `docker exec -i protect-ffi-postgres`, which only this suite's own
+  compose file produces, and that action provides no EQL at all.
+- **Nothing else in the repo installs EQL v2.** `eql:download` pulls the
+  `eql-2.2.1` release bundle from GitHub and `eql:install` applies it;
+  `tests/postgres.test.ts` needs it (`eql_v2_encrypted`,
+  `eql_v2.add_encrypted_constraint`) while `tests/postgres-v3.test.ts` needs the
+  `eql_v3_*` domains. Skip either and half the suite fails on missing SQL
+  functions.
+- **`src/integrationSuiteCi.test.ts` asserts a root workflow still runs it.**
+  The suite ran on every upstream PR and then ran *nowhere* for the whole
+  absorption, because the workflow that drove it was deposited under
+  `packages/protect-ffi/.github/` — a directory GitHub never reads. That test is
+  what stops it going quiet again, and it deliberately scans only the repo-root
+  workflow directory.
 
 ## Agent Skills — these ship to customers
 

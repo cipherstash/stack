@@ -12,16 +12,16 @@
 // at all takes the `DenyUnknown` marker in `crates/protect-ffi/src/lib.rs`.
 
 import 'dotenv/config'
-import { beforeAll, describe, expect, test } from 'vitest'
 
 import {
   type Client,
   type EncryptConfig,
-  type NewClientOptions,
   encrypt,
   encryptBulk,
+  type NewClientOptions,
   newClient,
 } from '@cipherstash/protect-ffi'
+import { beforeAll, describe, expect, test } from 'vitest'
 
 const encryptConfig: EncryptConfig = {
   v: 1,

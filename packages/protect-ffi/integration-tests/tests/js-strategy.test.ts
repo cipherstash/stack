@@ -12,8 +12,6 @@
 
 import 'dotenv/config'
 import { AccessKeyStrategy } from '@cipherstash/auth/wasm-inline'
-import { describe, expect, test } from 'vitest'
-
 import {
   type AuthStrategy,
   type ClientOpts,
@@ -21,6 +19,7 @@ import {
   encrypt,
   newClient,
 } from '@cipherstash/protect-ffi'
+import { describe, expect, test } from 'vitest'
 
 import { encryptConfig } from './common.js'
 

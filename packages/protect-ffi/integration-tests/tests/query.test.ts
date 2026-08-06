@@ -1,14 +1,14 @@
 import 'dotenv/config'
-import { describe, expect, test } from 'vitest'
 
 import {
   type EncryptConfig,
-  type Identifier,
-  type QueryPayload,
   encryptQuery,
   encryptQueryBulk,
+  type Identifier,
   newClient,
+  type QueryPayload,
 } from '@cipherstash/protect-ffi'
+import { describe, expect, test } from 'vitest'
 
 // Import shared encryptConfig from common.js
 import { encryptConfig } from './common.js'

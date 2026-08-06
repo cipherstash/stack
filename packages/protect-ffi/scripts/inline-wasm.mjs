@@ -5,7 +5,7 @@
 //
 // Ported from cipherstash-suite/packages/stack-auth/node/scripts/inline-wasm.mjs.
 
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -78,6 +78,19 @@ await writeFile(outPath, shim)
 const pkgPath = resolve(wasmDir, 'package.json')
 await writeFile(pkgPath, `${JSON.stringify({ type: 'module' }, null, 2)}\n`)
 
+// wasm-pack writes its own `dist/wasm/.gitignore` containing `*`, on the
+// assumption that everything it generates is disposable. Three files here are
+// not: `protect_ffi.d.ts`, `protect_ffi_bg.wasm.d.ts` and `errors.d.ts` are
+// tracked so `packages/stack`'s declaration build resolves
+// `@cipherstash/protect-ffi/wasm-inline` without a Rust toolchain (see the
+// repo root `.gitignore`).
+//
+// It has to be removed rather than negated around: the deepest `.gitignore`
+// wins, so that `*` overrides every negation in the two files above it. The
+// runtime output stays ignored by those parent rules regardless.
+const wasmPackIgnore = resolve(wasmDir, '.gitignore')
+await rm(wasmPackIgnore, { force: true })
+
 console.log(
-  `inline-wasm: wrote protect_ffi_inline.js (${wasmBytes.length} wasm bytes -> ${base64.length} b64 chars) and package.json (type=module)`,
+  `inline-wasm: wrote protect_ffi_inline.js (${wasmBytes.length} wasm bytes -> ${base64.length} b64 chars) and package.json (type=module); removed wasm-pack's .gitignore`,
 )

@@ -18,8 +18,18 @@
  * mistake below it, the suppression becomes unused and tsc fails.
  */
 
+import type {
+  Context,
+  DecryptResult,
+  EncryptedPayload,
+  EncryptOptions,
+  JsPlaintext,
+  NewClientOptions,
+  ProtectErrorCode,
+  QueryOpName,
+  WasmClient,
+} from '../dist/wasm/protect_ffi.js'
 import {
-  PROTECT_ERROR_CODES,
   decrypt,
   decryptBulk,
   decryptBulkFallible,
@@ -30,17 +40,7 @@ import {
   isEncrypted,
   isProtectErrorCode,
   newClient,
-} from '../dist/wasm/protect_ffi.js'
-import type {
-  Context,
-  DecryptResult,
-  EncryptOptions,
-  EncryptedPayload,
-  JsPlaintext,
-  NewClientOptions,
-  ProtectErrorCode,
-  QueryOpName,
-  WasmClient,
+  PROTECT_ERROR_CODES,
 } from '../dist/wasm/protect_ffi.js'
 
 declare const client: WasmClient

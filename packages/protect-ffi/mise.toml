@@ -1,5 +1,12 @@
 [tools]
-node = "latest"
+# No `node` entry. This file used to carry `node = "latest"`, which resolved to
+# 25.x and meant `cd packages/protect-ffi` silently switched Node version
+# relative to the rest of the monorepo — whose lockfile, `@types/node` and
+# `@tsconfig/node22` are all resolved for 22, and whose only Node requirement
+# is the root `engines: { node: ">=22" }`. Leaving Node to the workspace keeps
+# one runtime across every package; this file keeps what is genuinely
+# package-local, which is the Rust toolchain.
+#
 # zig + cargo-zigbuild are pinned to the versions proven by the successful
 # v0.27.0 release (run 28709228045). `latest` is how cargo-zigbuild 0.23.0
 # silently broke the Release workflow (its cargo-options bump dropped the
@@ -8,6 +15,19 @@ node = "latest"
 # ambient breakage at release time.
 zig = "0.16.0"
 "cargo:cargo-zigbuild" = "0.23.0"
+
+# `build:wasm` shells out to wasm-pack, and nothing else supplies it. Pinned to
+# the version upstream's build and test workflows both used, for the same
+# reason the two above are pinned: a toolchain upgrade should be a deliberate
+# PR, not ambient breakage discovered at release time. Declared here rather
+# than installed ad-hoc in CI so a contributor running `mise install` in this
+# directory gets the same binary the pipeline uses.
+#
+# Spelled with its full backend id: `wasm-pack` is not a short name in mise's
+# registry (`mise which wasm-pack` answers "not found in mise tool registry"
+# and suggests this), so the bare form resolves to nothing and the tool is
+# silently absent from `mise install`.
+"aqua:wasm-bindgen/wasm-pack" = "0.13.1"
 
 [env]
 PGPORT = "5436"
@@ -21,9 +41,18 @@ includes = [
   "integration-tests/tasks.toml",
 ]
 
+# `pnpm run`, not `npm run`: a leftover from the npm-based upstream repo. The
+# package's scripts moved to pnpm with the absorption (`debug` is
+# `pnpm run cargo-build`, and README.md already documents `pnpm run debug`), so
+# the npm spelling meant a second package manager for one hop with no lockfile
+# behind it. Safe to change — the only callers are the `test:integration` /
+# `test:integration:all` tasks in integration-tests/tasks.toml, and this task
+# carries no `dir`, so it runs in `{{ config_root }}` where pnpm resolves the
+# workspace. CI does not go through it: .github/workflows/integration-protect-ffi.yml
+# builds the binding once, in release, via .github/actions/build-ffi-binding.
 [tasks."build:debug"]
 description = "Build the project in debug mode"
-run = "npm run debug"
+run = "pnpm run debug"
 
 # `lint:rust` is the entry point: it is what CI runs and what a contributor
 # should run before pushing. Every Rust check belongs under it. An arm that is
@@ -45,7 +74,12 @@ run = "cargo clippy --no-deps --tests --all-features --all-targets -- -D warning
 # unlinted path. Lib only: the unit tests are host-run.
 #
 # Needs `rustup target add wasm32-unknown-unknown` once. CI does this in the
-# `Add wasm32 target` step of test.yml.
+# `Add wasm32 target` step of .github/workflows/tests-rust.yml — spelled from
+# the repository root because the bare filename this used to give resolved only
+# to the dead upstream copy under packages/protect-ffi/.github/, which GitHub
+# never executes. So the comment described a step that ran nowhere, which is the
+# same defect as a check that runs nowhere. lintWiring.test.ts now fails on a
+# citation that resolves only in that directory.
 [tasks."lint:rust:wasm"]
 description = "cargo clippy for the wasm32 target"
 run = "cargo clippy --no-deps --target wasm32-unknown-unknown -p protect-ffi --all-features -- -D warnings"
