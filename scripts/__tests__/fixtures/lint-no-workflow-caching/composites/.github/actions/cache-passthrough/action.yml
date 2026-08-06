@@ -1,0 +1,26 @@
+# The fail-closed half of the exemption `input-named-cache` earns. This
+# composite forwards its `cache` input straight into a step that caches, which
+# is what makes skipping the CALLER's `with.cache` safe rather than a hole: the
+# justification for skipping is "the body is audited instead", and here the
+# audit of the body is what produces the finding.
+#
+# `package-manager-cache: false` is set on purpose, and satisfies the
+# explicit-`false` rule, so the single finding this fixture pins is the
+# forwarded `cache:` — the very rule that is exempted at the caller, firing
+# inside the composite where the caching actually happens.
+name: Cache Passthrough
+description: Forwards its `cache` input into actions/setup-node.
+inputs:
+  cache:
+    description: Which package manager's cache to restore, or empty for none.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Install Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: 22
+        cache: ${{ inputs.cache }}
+        package-manager-cache: false

@@ -223,6 +223,69 @@ describe('lint-no-workflow-caching', () => {
     })
   })
 
+  // The step-level twin of the false positive `reusable-input-named-cache`
+  // pins one level up. `with:` on a step that hands off to a LOCAL action is
+  // that action's declared inputs, and a composite is free to declare one
+  // called `cache` — so the step rules reported ``with.cache: true` restores
+  // the GitHub Actions cache` about an input that restores nothing.
+  //
+  // The exemption is narrow on purpose, because its justification is "the body
+  // is audited instead", not "local is trusted". It applies only where this
+  // gate actually opens the action and reads its steps — a resolved
+  // `runs.using: composite`. A local `uses:` that resolves to nothing, or to a
+  // JS or Docker action with no step list, keeps the heuristic, because there
+  // the heuristic is the only signal the gate has: a local `uses:` is already
+  // exempt from AUDITED_ACTIONS as well.
+  describe('`with.cache` on a step that hands off to a local action', () => {
+    const cfx = (name) =>
+      resolve(
+        fileURLToPath(import.meta.url),
+        `../fixtures/lint-no-workflow-caching/composites/.github/workflows/${name}`,
+      )
+
+    it("does not read a composite's declared inputs as step inputs", () => {
+      expect(run(cfx('composite-input-named-cache.yml')).exitCode).toBe(0)
+    })
+
+    // The guard that makes the exemption safe rather than a hole, and the
+    // reason it may only apply where the body is read: a composite that
+    // forwards its `cache` input into a step that caches is still a finding,
+    // and the finding names the step doing the caching rather than the caller
+    // that switched it on. One issue, not two — the caller is not a second
+    // problem to fix.
+    it('still flags a composite that forwards `cache` into a caching step', () => {
+      const r = run(cfx('composite-cache-passthrough.yml'))
+      expect(r.exitCode).toBe(1)
+      expect(r.output).toMatch(/Found 1 caching issue/)
+      expect(r.output).toMatch(
+        /cache-passthrough\/action\.yml step "Install Node\.js": `with\.cache/,
+      )
+      expect(r.output).not.toMatch(
+        /step "Build the protect-ffi binding": `with\.cache/,
+      )
+    })
+
+    // `runs.using: node20`, `main: index.js` — the gate opens the manifest,
+    // finds no step list, and audits nothing. Since a local `uses:` is already
+    // exempt from AUDITED_ACTIONS, the caller's `with:` is all that is left
+    // standing here.
+    it('keeps the `with.cache` rule on a local JavaScript action', () => {
+      const r = run(cfx('local-js-action.yml'))
+      expect(r.exitCode).toBe(1)
+      expect(r.output).toMatch(/with\.cache/)
+    })
+
+    // No manifest to open means no body to audit, so the heuristic stays on —
+    // and its finding has to stay visible next to the exit-2 report rather
+    // than being swallowed by it.
+    it('keeps the `with.cache` rule on a local `uses:` resolving to nothing', () => {
+      const r = run(cfx('composite-unresolvable-with-cache.yml'))
+      expect(r.exitCode).toBe(2)
+      expect(r.output).toMatch(/with\.cache/)
+      expect(r.output).toMatch(/no action\.yml or action\.yaml there/)
+    })
+  })
+
   // The second indirection the composite traversal left open. A job that calls
   // a reusable workflow has no `steps:` — it is `jobs.<id>.uses` plus `with:` /
   // `secrets:` — so `Array.isArray(job?.steps) ? job.steps : []` yielded an
@@ -467,6 +530,31 @@ describe('lint-no-workflow-caching', () => {
       const r = run(cfx('composite-cache.yml'))
       expect(r.output).toMatch(/Found 1 caching issue/)
       expect(r.output).toMatch(/actions\/cache@/)
+    })
+  })
+
+  // The un-auditable list printed and exited before the offender list was
+  // reached, so a run collecting both showed only the reference the gate could
+  // not open. The cache finding — the one with a step to delete — stayed
+  // hidden until the path was fixed, then arrived on the next run looking new.
+  // Both fail CI either way, so this is about what the failure tells you.
+  describe('a run that collects both kinds of finding', () => {
+    const cfx = (name) =>
+      resolve(
+        fileURLToPath(import.meta.url),
+        `../fixtures/lint-no-workflow-caching/composites/.github/workflows/${name}`,
+      )
+
+    it('prints the cache offenders alongside the un-auditable references', () => {
+      const r = run(cfx('mixed-unresolved-and-cache.yml'))
+      // 2 beats 1 on a mixed run: something WAS found caching, but an
+      // incomplete scan is the more severe verdict — the list of what was
+      // found may be short.
+      expect(r.exitCode).toBe(2)
+      expect(r.output).toMatch(/Found 1 un-auditable reference/)
+      expect(r.output).toMatch(/no-such-action/)
+      expect(r.output).toMatch(/Found 1 caching issue/)
+      expect(r.output).toMatch(/actions\/cache@v4/)
     })
   })
 

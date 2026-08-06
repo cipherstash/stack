@@ -172,10 +172,32 @@ const unresolved = []
 // the same defaults. Exempting composites would make "move the step into a
 // composite" a supported way out of the rule — which is the bug this file's
 // traversal exists to close, one level up.
-function checkStep(step, at) {
+//
+// `bodyAudited` says this step hands off to a local composite whose steps this
+// gate reads for itself. It suppresses exactly one rule — see below.
+function checkStep(step, at, bodyAudited = false) {
   // `cache:` under a step's `with:` — covers actions/setup-node,
   // actions/setup-python, etc. An explicit falsy value does not count.
-  if (step?.with && Object.hasOwn(step.with, 'cache') && step.with.cache) {
+  //
+  // Skipped when the step's body is audited, and only then. `with:` on a step
+  // that hands off to a local composite is that composite's declared inputs,
+  // and a composite is free to declare one called `cache` that switches
+  // something else on entirely — the same false positive `walkJob` refuses to
+  // make by never running these rules over a job-level `with:`. The
+  // justification for skipping is "the body is read instead", so it may only
+  // apply where the body is actually read: a composite that forwards `cache`
+  // into a caching step is still reported, on the step doing the caching.
+  //
+  // A local `uses:` that resolves to nothing, or to a JS/Docker action, keeps
+  // the rule. There the gate opens no step list and reaches no verdict, and a
+  // local `uses:` is already exempt from AUDITED_ACTIONS — so this heuristic is
+  // the only thing standing.
+  if (
+    !bodyAudited &&
+    step?.with &&
+    Object.hasOwn(step.with, 'cache') &&
+    step.with.cache
+  ) {
     offenders.push(
       `${at}: \`with.cache: ${JSON.stringify(step.with.cache)}\` restores the GitHub Actions cache`,
     )
@@ -260,25 +282,49 @@ function resolveActionFile(workspaceRoot, usesPath) {
 function walkSteps(steps, prefix, workspaceRoot, visited) {
   steps.forEach((step, idx) => {
     const at = `${prefix} step "${stepLabel(step, idx)}"`
-    checkStep(step, at)
 
+    // The action is resolved BEFORE the step is checked, not after, because
+    // `checkStep` needs to know whether this step's body is about to be
+    // audited. Resolving it twice — once for that answer, once to recurse —
+    // would let the two readings drift apart, which is the one way the
+    // suppression could outlive the audit that justifies it.
     const uses = usesOf(step)
-    if (uses === null || !LOCAL_USES.test(uses)) return
+    if (uses === null || !LOCAL_USES.test(uses)) {
+      checkStep(step, at)
+      return
+    }
 
     const file = resolveActionFile(workspaceRoot, uses)
     if (file === null) {
+      // No manifest to open: nothing here is audited, so every step rule
+      // applies, and the offender it finds prints alongside the report below.
+      checkStep(step, at)
       unresolved.push(
         `${at}: \`uses: ${uses}\` — no action.yml or action.yaml there`,
       )
       return
     }
-    if (visited.has(file)) return
-    visited.add(file)
 
     // An action manifest puts its steps under `runs:`, not `jobs:` — and only
     // when `runs.using` is `composite`. A JavaScript or Docker action has a
     // `runs.main`/`runs.image` and no step list, which lands on the `[]` below.
+    //
+    // Read before the `visited` check rather than after: a second reference to
+    // an already-walked composite still needs the same verdict on its own
+    // `with:`, and its body has been audited by the first reference. Re-parsing
+    // a handful of small manifests is cheaper than the alternatives, and
+    // `visited` still guards the recursion, so nothing is reported twice.
     const doc = yaml.load(readFileSync(file, 'utf8'))
+
+    // Keyed on `runs.using`, not on "did we find a step list", so that a
+    // manifest declaring a JS runtime yet carrying steps — invalid to GitHub,
+    // but this gate runs on files GitHub has not validated — is audited AND
+    // still judged on its caller's `with:`. Both readings, fail-closed.
+    checkStep(step, at, doc?.runs?.using === 'composite')
+
+    if (visited.has(file)) return
+    visited.add(file)
+
     const nested = Array.isArray(doc?.runs?.steps) ? doc.runs.steps : []
 
     // The trail is the whole chain, not just its ends. A message naming only
@@ -374,7 +420,9 @@ function followReusableWorkflow(uses, prefix, workspaceRoot, visited) {
 // The job object itself is never passed to `checkStep`: at job level `with:` is
 // inputs to the called workflow, not `with:` on an action step, so the step
 // rules would flag a caller for passing `cache: true` to an input that
-// switches something else on entirely.
+// switches something else on entirely. `walkSteps` makes the same distinction
+// one level down, for a step whose `uses:` is a local composite — see
+// `bodyAudited`.
 function walkJob(job, prefix, workspaceRoot, visited) {
   walkSteps(
     Array.isArray(job?.steps) ? job.steps : [],
@@ -411,12 +459,13 @@ if (unresolved.length > 0) {
       'permanent exemption — fix the path, inline the job, or point it at a\n' +
       'workflow in this checkout.',
   )
-  // Exit 2, not 1: nothing was found caching — the linter could not look. Same
-  // contract as lint-no-hardcoded-runners.mjs uses for a missing scan target.
-  process.exit(2)
 }
 
 if (offenders.length > 0) {
+  // Separated from the block above only when there is a block above, so the
+  // two epilogues do not run together on a mixed run and the common
+  // single-finding output does not open on a blank line.
+  if (unresolved.length > 0) console.error('')
   console.error(`Found ${offenders.length} caching issue(s) in workflow(s):\n`)
   for (const o of offenders) console.error(`  ${o}`)
   console.error(
@@ -435,8 +484,20 @@ if (offenders.length > 0) {
       'the reason, or drop the step.\n' +
       '\nSee the "CI/CD Supply-Chain Hardening" section of SECURITY.md.',
   )
-  process.exit(1)
 }
+
+// Both lists print before either exit, because a run can collect both and each
+// is acted on separately. Exiting inside the first block hid the cache finding
+// — the one with a step to delete — until the broken path was fixed, at which
+// point it arrived on the next run looking new.
+//
+// Exit 2 outranks 1 on a mixed run, and not because nothing was found caching:
+// on a mixed run something was. An incomplete scan is simply the more severe
+// verdict, since the exit 1 reports what this gate could see and the exit 2
+// says that list may be short. Same contract lint-no-hardcoded-runners.mjs uses
+// for a missing scan target.
+if (unresolved.length > 0) process.exit(2)
+if (offenders.length > 0) process.exit(1)
 
 console.log('OK — GitHub Actions caching is explicitly disabled in:\n')
 for (const target of TARGETS) console.log(target)

@@ -1,0 +1,19 @@
+# `composite-unresolvable.yml` with a `with: {cache: true}` on the broken
+# reference. There is no manifest to open, so there is no body to audit and no
+# way to know whether that input reaches a cache — the heuristic has to stay on,
+# and its finding has to stay visible next to the exit-2 report rather than
+# being swallowed by it.
+name: Composite Unresolvable With Cache
+on:
+  push:
+    branches: [main]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/no-such-action
+        with:
+          cache: true
+      - run: pnpm publish --no-git-checks

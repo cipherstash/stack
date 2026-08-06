@@ -1,0 +1,23 @@
+# The reviewer's repro. A composite declaring a `cache` input, invoked with
+# `cache: true`, was reported as ``with.cache: true` restores the GitHub Actions
+# cache` — a finding about nothing, and the same false positive `walkJob`
+# already refuses to make one level up by never reading a job-level `with:` as
+# step inputs.
+#
+# The `cache` input here decides whether to reuse a binary already in the
+# working tree. Nothing in the composite reaches the Actions cache, and this
+# gate reads every one of its steps to know that.
+name: Composite Input Named Cache
+on:
+  push:
+    branches: [main]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/input-named-cache
+        with:
+          cache: true
+      - run: pnpm publish --no-git-checks

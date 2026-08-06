@@ -1,0 +1,21 @@
+# A local action that is NOT a composite: `runs.using` names a Node runtime and
+# there is no step list in this file or anywhere this gate can reach. Whatever
+# `index.js` does with an input called `cache` is unreadable from here.
+#
+# So the `with.cache` heuristic stays on a caller of this action, and that is
+# the whole reason the exemption is keyed on `runs.using: composite` rather than
+# on "the `uses:` starts with `./`". A local `uses:` is already exempt from
+# AUDITED_ACTIONS — exempt precisely because the gate audits its body instead —
+# so on an action whose body cannot be audited, the caller's `with:` is the only
+# signal left. Dropping it for every local `uses:` would make a two-line
+# `action.yml` a supported way past the gate.
+name: JS Action
+description: A local JavaScript action, with no steps for this gate to audit.
+inputs:
+  cache:
+    description: Passed straight to index.js, which this gate cannot read.
+    required: false
+    default: 'false'
+runs:
+  using: node20
+  main: index.js
