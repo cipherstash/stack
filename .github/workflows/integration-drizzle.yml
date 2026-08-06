@@ -75,6 +75,17 @@ on:
       - 'packages/protect-ffi/Cargo.lock'
       - 'packages/protect-ffi/package.json'
       - 'packages/protect-ffi/mise.toml'
+      # The non-cargo half of `build:wasm`, and the reason this job passes
+      # `wasm: 'true'`: `tsc -p tsconfig.wasm-errors.json`, then a
+      # `postbuild:wasm` hook running `scripts/inline-wasm.mjs`, which is what
+      # emits `dist/wasm/protect_ffi_inline.js` — the bundle the
+      # `integration/wasm/**` suites selected below actually load. Both files
+      # are in the WASM cache key of `.github/actions/build-ffi-binding`, so an
+      # edit to either misses that cache and REBUILDS the bundle; without these
+      # two entries it gets rebuilt and the only suite that loads it never runs.
+      # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
+      - 'packages/protect-ffi/tsconfig.wasm-errors.json'
+      - 'packages/protect-ffi/scripts/inline-wasm.mjs'
   pull_request:
     branches: ['**']
     # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
@@ -138,6 +149,17 @@ on:
       - 'packages/protect-ffi/Cargo.lock'
       - 'packages/protect-ffi/package.json'
       - 'packages/protect-ffi/mise.toml'
+      # The non-cargo half of `build:wasm`, and the reason this job passes
+      # `wasm: 'true'`: `tsc -p tsconfig.wasm-errors.json`, then a
+      # `postbuild:wasm` hook running `scripts/inline-wasm.mjs`, which is what
+      # emits `dist/wasm/protect_ffi_inline.js` — the bundle the
+      # `integration/wasm/**` suites selected below actually load. Both files
+      # are in the WASM cache key of `.github/actions/build-ffi-binding`, so an
+      # edit to either misses that cache and REBUILDS the bundle; without these
+      # two entries it gets rebuilt and the only suite that loads it never runs.
+      # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
+      - 'packages/protect-ffi/tsconfig.wasm-errors.json'
+      - 'packages/protect-ffi/scripts/inline-wasm.mjs'
 
 jobs:
   integration:

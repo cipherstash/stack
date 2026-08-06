@@ -496,6 +496,21 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Fail loudly if any live-test credential is missing. The `.env` written
+      # below feeds the same live suites `run-tests` runs, and this job hides
+      # its own failures twice over (`continue-on-error: true` on the job, `||
+      # true` around the vitest call), so a rotated secret would otherwise show
+      # up as nothing at all.
+      # Before the binding build, not after: this costs seconds and that costs
+      # minutes on a cold cache.
+      - name: Require CipherStash secrets
+        uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
       # The `packages/stack` suites below are the live ones — 120 files, of
       # which only 8 mock `@cipherstash/protect-ffi` — so they load
       # `index.node`, and the `Build packages` step below does not produce it
@@ -503,9 +518,8 @@ jobs:
       # `wasm: true`: every `wasm-inline` unit test resolves the stubs in
       # `vitest.shared.ts` or asserts on the bundle graph, same as `run-tests`.
       #
-      # This job has no `require-cs-secrets` pre-flight to sit behind. It shares
-      # the native cache key with `run-tests`, so in the normal case this is a
-      # restore rather than a compile.
+      # It shares the native cache key with `run-tests`, so in the normal case
+      # this is a restore rather than a compile.
       - name: Build the protect-ffi binding
         uses: ./.github/actions/build-ffi-binding
 

@@ -54,8 +54,15 @@ const REQUIRE_SECRETS = './.github/actions/require-cs-secrets'
  * the count still clears its floor, and the suite goes green having stopped
  * checking the single most expensive job in the repo — the one that builds the
  * binding with `wasm: 'true'`, i.e. the cold compile this pre-flight exists to
- * stay ahead of. Mutation-tested: that deletion took the suite from 9 tests to
- * 8 passing, with nothing red.
+ * stay ahead of. Mutation-tested: against a file-granular list that deletion
+ * took the suite from 9 tests to 8 passing, with nothing red.
+ *
+ * It is no longer the only thing standing there — `every credentialed job runs
+ * the secrets pre-flight first` (below) goes red on that same deletion, because
+ * `wasm-e2e-tests` carries CS_* and so cannot drop out of ITS scan. This list
+ * still earns its place: it names WHICH job stopped being checked, and it
+ * covers a paired job that carries no credential expression, which the other
+ * scan cannot see.
  *
  * Held as a minimum, not an equality: adding a job that builds the binding
  * must not fail this. If one is renamed or genuinely stops needing the
@@ -72,6 +79,7 @@ const EXPECTED_PAIRED_JOBS = [
   '.github/workflows/prisma-next-e2e.yml / e2e',
   '.github/workflows/tests.yml / e2e-tests',
   '.github/workflows/tests.yml / run-tests',
+  '.github/workflows/tests.yml / run-tests-bun',
   '.github/workflows/tests.yml / wasm-e2e-tests',
 ]
 
@@ -125,17 +133,34 @@ const PAIRED_JOB_IDS = PAIRED.map(
 const CREDENTIAL_EXPRESSION =
   /\$\{\{\s*(?:vars|secrets)\.CS_(?:WORKSPACE_CRN|CLIENT_ID|CLIENT_KEY|CLIENT_ACCESS_KEY)\s*\}\}/
 
-/** Every job in a workflow that receives at least one CS_* credential. */
+/**
+ * Every job in a workflow that receives at least one CS_* credential, with the
+ * EARLIEST step index of each action — `-1` when the job does not run it.
+ *
+ * Both indices, not just `buildsBinding`, because this scan is the only one
+ * that can see a job which builds the binding with no pre-flight at all:
+ * `pairedJobs` skips exactly that job. Earliest occurrence for the reason
+ * `pairedJobs` gives — the claim is "no credentialed work starts before the
+ * pre-flight", so a later guarded build cannot vouch for an earlier unguarded
+ * one.
+ */
 function credentialedJobs(relPath) {
   const wf = readWorkflow(relPath)
   const found = []
   for (const [jobName, job] of Object.entries(wf?.jobs ?? {})) {
     if (!CREDENTIAL_EXPRESSION.test(JSON.stringify(job))) continue
     const steps = Array.isArray(job?.steps) ? job.steps : []
+    const firstBuild = steps.findIndex((step) => stepUses(step) === BUILD_FFI)
+    const firstSecrets = steps.findIndex(
+      (step) => stepUses(step) === REQUIRE_SECRETS,
+    )
     found.push({
       relPath,
       jobName,
-      buildsBinding: steps.some((step) => stepUses(step) === BUILD_FFI),
+      firstBuild,
+      firstSecrets,
+      buildsBinding: firstBuild !== -1,
+      runsPreflight: firstSecrets !== -1,
     })
   }
   return found
@@ -183,7 +208,24 @@ const BINDING_EXEMPT_JOBS = new Map([
 ])
 
 /**
- * The three hand-maintained lists in this file are checked the same way: every
+ * Credentialed jobs that legitimately do NOT run the secrets pre-flight, each
+ * with the reason. Empty today, and — like `BINDING_EXEMPT_JOBS` — intended to
+ * stay that way: a job holding CS_* is a job that can be broken by a rotated
+ * secret, and the pre-flight is how it says so in seconds.
+ *
+ * Separate from `BINDING_EXEMPT_JOBS` because the two exemptions are not the
+ * same claim. "This job never loads the binding" says nothing about whether a
+ * missing credential should fail it early, and a job could plausibly want one
+ * without the other. Name a job here WITH its reason rather than narrowing the
+ * scan to jobs that happen to already carry the step — that narrowing is the
+ * exact defect this check exists to close (see the note above the describe).
+ */
+const PREFLIGHT_EXEMPT_JOBS = new Map([
+  // ['<workflow> / <job>', 'why a rotated CS_* secret need not fail this job fast'],
+])
+
+/**
+ * The four hand-maintained lists in this file are checked the same way: every
  * id in the list must still match something the scan found. Same shape, and —
  * more to the point — the same failure. A job gets renamed, the list still
  * names the old id, and the fix is to swap in the new one.
@@ -232,6 +274,11 @@ const SCAN_GUARDS = {
     entries: [...BINDING_EXEMPT_JOBS.keys()],
     found: CREDENTIALED_JOB_IDS,
     hint: 'These BINDING_EXEMPT_JOBS entries do not match any credentialed job. Remove them, or fix the id — an exemption for a job that no longer exists exempts nothing and hides the next one.',
+  }),
+  preflightExemptions: scanGuard({
+    entries: [...PREFLIGHT_EXEMPT_JOBS.keys()],
+    found: CREDENTIALED_JOB_IDS,
+    hint: 'These PREFLIGHT_EXEMPT_JOBS entries do not match any credentialed job. Remove them, or fix the id — an exemption for a job that no longer exists exempts nothing and hides the next one.',
   }),
 }
 
@@ -326,6 +373,51 @@ describe('every credentialed job builds the protect-ffi binding', () => {
 })
 
 /**
+ * ORDER again — but scanned from the CREDENTIALED side, which is the half the
+ * per-job checks at the top of this file structurally cannot reach.
+ *
+ * Those are generated per PAIRED job, and `pairedJobs` skips any job missing
+ * EITHER action. So a credentialed job that builds the binding with no
+ * pre-flight at all is not failing them; it is absent from them — the same
+ * silent-skip shape as the deleted-step case that motivated
+ * `EXPECTED_PAIRED_JOBS`, except no hand-maintained list catches it either,
+ * because the job is a legitimate new entry rather than a missing old one.
+ *
+ * `tests.yml`'s `run-tests-bun` was the live instance: it writes all four CS_*
+ * into `packages/stack/.env` and runs `./.github/actions/build-ffi-binding`
+ * with no pre-flight before it. It appeared in `EXPECTED_CREDENTIALED_JOBS`,
+ * satisfied the coverage check, and generated zero ordering assertions.
+ *
+ * The fix is to derive the check from the credential expression rather than
+ * from the presence of the very step being checked for. A job that skipped the
+ * pre-flight then FAILS this instead of disappearing from it.
+ */
+describe('every credentialed job runs the secrets pre-flight first', () => {
+  it('exempts only jobs that are still credentialed', () => {
+    const guard = SCAN_GUARDS.preflightExemptions
+    expect(guard.unmatched, guard.message).toEqual([])
+  })
+
+  it('runs the pre-flight before the binding build in every credentialed job', () => {
+    const offenders = CREDENTIALED.filter(
+      (entry) =>
+        !PREFLIGHT_EXEMPT_JOBS.has(`${entry.relPath} / ${entry.jobName}`) &&
+        (!entry.runsPreflight ||
+          (entry.buildsBinding && entry.firstSecrets > entry.firstBuild)),
+    ).map((entry) =>
+      entry.runsPreflight
+        ? `${entry.relPath} / ${entry.jobName} — pre-flight at step ${entry.firstSecrets}, binding build at step ${entry.firstBuild}`
+        : `${entry.relPath} / ${entry.jobName} — no ${REQUIRE_SECRETS} step at all`,
+    )
+
+    expect(
+      offenders,
+      `These jobs receive CipherStash credentials without running ${REQUIRE_SECRETS} ahead of ${BUILD_FFI}.\nThe pre-flight costs seconds; a cold Rust build costs minutes. A job that learns its credential was rotated only after the compile has the same cost profile as a job with no pre-flight at all.\nWhen the step is MISSING, add it immediately before the binding build, wiring the four inputs from \`vars.CS_WORKSPACE_CRN\`, \`vars.CS_CLIENT_ID\`, \`secrets.CS_CLIENT_KEY\` and \`secrets.CS_CLIENT_ACCESS_KEY\` — copy the \`Require CipherStash secrets\` step in \`tests.yml\`'s \`run-tests\`.\nWhen it is merely LATE, move the PRE-FLIGHT UP rather than the build down: in \`tests.yml\`'s \`wasm-e2e-tests\` a \`Build stack\` step sits between them and consumes \`dist/wasm/**\`, so the other edit would break the job.\nIf a job genuinely does not need one, add it to PREFLIGHT_EXEMPT_JOBS with the reason.`,
+    ).toEqual([])
+  })
+})
+
+/**
  * The guards above are only ever read when they FAIL, which is the one moment
  * their text has to be right and the one moment nothing is watching it. So the
  * text itself is asserted here, on the real strings the guards carry.
@@ -358,8 +450,8 @@ describe('the scan guards name what they found', () => {
   it('says so explicitly when the scan matched nothing', () => {
     // The empty scan is the catastrophic case, not a corner case: rename either
     // action path and `pairedJobs` matches nothing at all (mutation-tested —
-    // pointing BUILD_FFI at a path no workflow uses took the file from 17 tests
-    // to 8, with the nine ordering checks not failing but ceasing to exist).
+    // pointing BUILD_FFI at a path no workflow uses took the file from 21 tests
+    // to 11, with the ten ordering checks not failing but ceasing to exist).
     // Rendered as a bare empty list the message
     // ends on a dangling "The scan currently sees:" with vitest's own
     // `expected [...] to deeply equal []` running on from the same line, which

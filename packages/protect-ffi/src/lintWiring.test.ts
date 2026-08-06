@@ -31,11 +31,13 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-// Vitest resolves cwd to the directory holding vitest.config.ts. `import.meta`
-// is unavailable here: tsconfig emits CommonJS, and tsc rejects it (TS1470).
-const repoRoot = process.cwd()
+// Vitest resolves cwd to the directory holding vitest.config.ts — this
+// package, NOT the repository root, which is why every reference to a root
+// workflow below climbs two levels out of it. `import.meta` is unavailable
+// here: tsconfig emits CommonJS, and tsc rejects it (TS1470).
+const packageRoot = process.cwd()
 const read = (relative: string) =>
-  readFileSync(join(repoRoot, relative), 'utf8')
+  readFileSync(join(packageRoot, relative), 'utf8')
 
 const manifest = JSON.parse(read('package.json'))
 const scripts: Record<string, string> = manifest.scripts
@@ -71,9 +73,9 @@ const testWorkflow = withoutComments(
 // the list until it includes the dead package-local path. A directory cannot
 // drift out of date with itself.
 const ROOT_WORKFLOW_DIR = '../../.github/workflows'
-const rootWorkflowNames = readdirSync(join(repoRoot, ROOT_WORKFLOW_DIR)).filter(
-  (name) => name.endsWith('.yml') || name.endsWith('.yaml'),
-)
+const rootWorkflowNames = readdirSync(
+  join(packageRoot, ROOT_WORKFLOW_DIR),
+).filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
 const rootWorkflows = rootWorkflowNames
   .map((name) => withoutComments(read(`${ROOT_WORKFLOW_DIR}/${name}`)))
   .join('\n')
@@ -85,8 +87,8 @@ const rootWorkflows = rootWorkflowNames
 // assuming it is gone, and the check below goes quiet on its own once the
 // cutover deletes it.
 const DEAD_WORKFLOW_DIR = '.github/workflows'
-const deadWorkflowNames = existsSync(join(repoRoot, DEAD_WORKFLOW_DIR))
-  ? readdirSync(join(repoRoot, DEAD_WORKFLOW_DIR)).filter((name) =>
+const deadWorkflowNames = existsSync(join(packageRoot, DEAD_WORKFLOW_DIR))
+  ? readdirSync(join(packageRoot, DEAD_WORKFLOW_DIR)).filter((name) =>
       /\.ya?ml$/.test(name),
     )
   : []
@@ -459,7 +461,7 @@ describe('lint and format wiring', () => {
 
       // Resolved through the manifest rather than assumed: `vitest/vitest.mjs`
       // is the `bin` entry, and pnpm's store path is not guessable.
-      const resolve = createRequire(join(repoRoot, 'package.json'))
+      const resolve = createRequire(join(packageRoot, 'package.json'))
       const manifestPath = resolve.resolve('vitest/package.json')
       const vitestBin = join(
         dirname(manifestPath),
@@ -472,7 +474,12 @@ describe('lint and format wiring', () => {
         // The summary line is asserted on below, and vitest wraps every field
         // of it in colour escapes when it thinks it has a TTY-ish consumer.
         NO_COLOR: '1',
-        NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require ${preload}`]
+        // Quoted because Node splits NODE_OPTIONS on whitespace unless a value
+        // is wrapped in double quotes, and `preload` sits under `tmpdir()` —
+        // not a path this file chose. No tmpdir on Linux or macOS contains a
+        // space, so this is not reachable here; it is one character against a
+        // failure that would read as "vitest could not start".
+        NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require "${preload}"`]
           .filter(Boolean)
           .join(' '),
       }
@@ -483,7 +490,7 @@ describe('lint and format wiring', () => {
       }
 
       const child = spawnSync(process.execPath, [vitestBin, 'run'], {
-        cwd: repoRoot,
+        cwd: packageRoot,
         env,
         encoding: 'utf8',
         timeout: 300_000,
@@ -507,7 +514,7 @@ describe('lint and format wiring', () => {
       // Recursive, matching `vitest.config.ts`'s `src/**/*.test.ts`. A flat
       // readdir agrees with it only for as long as nobody nests a test file,
       // and then this fails on a correct suite.
-      const files = readdirSync(join(repoRoot, 'src'), {
+      const files = readdirSync(join(packageRoot, 'src'), {
         recursive: true,
       }).filter((name) => String(name).endsWith('.test.ts'))
       expect(

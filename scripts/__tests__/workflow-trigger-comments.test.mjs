@@ -115,9 +115,13 @@ function overlaps(entry, input) {
  * hence `wf.on ?? wf[true]`. And `Object.hasOwn` rather than a truthiness test:
  * a bare `pull_request:` with no body parses to `null` and triggers on
  * everything, which is the opposite of what `!pr` would conclude.
+ *
+ * `wf` itself is optional-chained because `readWorkflow` hands back whatever
+ * `yaml.load` returned, and that is `null` for a comment-only file and
+ * `undefined` for an empty one — see the fixtures below.
  */
 function pullRequestReach(wf) {
-  const on = wf.on ?? wf[true]
+  const on = wf?.on ?? wf?.[true]
   if (!on || !Object.hasOwn(on, 'pull_request')) return false
   const paths = on.pull_request?.paths
   if (!Array.isArray(paths) || paths.length === 0) return 'unfiltered'
@@ -251,6 +255,53 @@ describe('workflow trigger comments match the trigger', () => {
       missing,
       `These workflows explained their trigger in a comment naming push-to-main, and the scan no longer finds one. If the comments were deliberately reworded, update EXPECTED_CLAIM_FILES; if not, \`commentBlocks\` or NAMES_PUSH_TRIGGER has stopped working and the per-file checks below are no longer being generated at all.`,
     ).toEqual([])
+  })
+
+  /**
+   * `IN_SCOPE` is built at module load, over EVERY file in the workflow
+   * directory, before a single `it` has been registered — so a workflow
+   * `pullRequestReach` cannot read does not fail one test, it aborts collection
+   * and takes this whole file with it. What the reader sees is a TypeError
+   * against a line of test infrastructure, with no mention of the workflow that
+   * caused it and no result at all from the checks that would have run.
+   *
+   * And "cannot read" is not exotic: `yaml.load` returns `null` for a file that
+   * is only comments and `undefined` for an empty one, which is what a workflow
+   * looks like for the length of the commit that adds its header before its
+   * jobs. The sibling `ffi-binding-step-order.test.mjs` has always spelt its
+   * equivalent `wf?.jobs ?? {}`; this one read `wf.on` bare.
+   *
+   * A file that parses to nothing declares no triggers, so `false` — out of
+   * scope — is also the honest answer, not merely the safe one. Fixtures rather
+   * than the real directory, because the failure has to be reproducible without
+   * committing a broken workflow to a directory GitHub reads.
+   */
+  describe('a workflow file that parses to nothing', () => {
+    const UNPARSED = [
+      'scripts/__tests__/fixtures/workflow-trigger-comments/comment-only.yml',
+      'scripts/__tests__/fixtures/workflow-trigger-comments/empty.yml',
+    ]
+
+    for (const relPath of UNPARSED) {
+      it(`reports no reach for ${relPath.split('/').pop()}`, () => {
+        const wf = readWorkflow(relPath)
+        // Both spellings of "nothing" reach this function — `null` from the
+        // comment-only file, `undefined` from the empty one — and optional
+        // chaining is what makes them the same case.
+        expect(wf ?? null).toBeNull()
+        expect(pullRequestReach(wf)).toBe(false)
+      })
+    }
+
+    // The module-level line itself (`IN_SCOPE`), run over the fixtures. The
+    // assertion is `[]`, but the property under test is that the expression
+    // above it evaluates at all.
+    it('drops out of the scan rather than aborting it', () => {
+      const inScope = UNPARSED.filter(
+        (relPath) => pullRequestReach(readWorkflow(relPath)) !== false,
+      )
+      expect(inScope).toEqual([])
+    })
   })
 
   for (const relPath of IN_SCOPE) {
