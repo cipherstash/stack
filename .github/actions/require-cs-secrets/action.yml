@@ -41,3 +41,36 @@ runs:
         if [ "$missing" -ne 0 ]; then
           exit 1
         fi
+
+    # protect-ffi 0.31.0 decodes an explicit `clientKey` as hex ONLY. It used
+    # to go through `SecretKey::from_hex`, which falls back to standard padded
+    # base64 — the encoding `~/.cipherstash/secretkey.json` stores — so a
+    # base64 value pasted into CS_CLIENT_KEY worked. It is now rejected with
+    # `invalid clientKey: expected a hex-encoded key`, and deliberately nothing
+    # more: the underlying hex error names the offending character and its
+    # offset, which would put part of a live key into logs.
+    #
+    # Without this check that lands as every credentialed job failing at client
+    # construction at once, with a message that says nothing about encoding
+    # being the problem. The env var is forwarded as `clientKey` by the Neon
+    # entry, so this is the exact value that gets decoded.
+    #
+    # The key itself is never echoed — only its length and a pass/fail.
+    - name: Assert CS_CLIENT_KEY is hex-encoded
+      shell: bash
+      env:
+        CS_CLIENT_KEY: ${{ inputs.client-key }}
+      run: |
+        # `[[ =~ ]]` rather than a pipe into grep, because grep matches per
+        # LINE and `-q` succeeds when ANY line does: a value of
+        # "deadbeef\n<anything>" passed the old spelling whenever its total
+        # length was even, which is the one shape this step exists to reject.
+        # Bash anchors the whole string — a newline is not in the class, and
+        # `$` here is end-of-string, not end-of-line.
+        if [[ "$CS_CLIENT_KEY" =~ ^[0-9a-fA-F]+$ ]] \
+          && [ $(( ${#CS_CLIENT_KEY} % 2 )) -eq 0 ]; then
+          echo "CS_CLIENT_KEY is hex (${#CS_CLIENT_KEY} chars)."
+          exit 0
+        fi
+        echo "::error::CS_CLIENT_KEY is not hex-encoded (${#CS_CLIENT_KEY} chars). protect-ffi 0.31+ decodes clientKey as hex only — the base64 fallback was removed. A base64 key (uppercase, '+', '/', or trailing '=') must be re-encoded as hex, or the key read from the profile store instead. Every credentialed suite will otherwise fail at client construction with 'invalid clientKey: expected a hex-encoded key'."
+        exit 1
