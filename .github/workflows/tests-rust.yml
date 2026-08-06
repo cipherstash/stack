@@ -82,6 +82,22 @@ jobs:
       - uses: actions/setup-node@v6.5.0
         with:
           node-version: 22
+          cache: 'pnpm'
+
+      # node-pty's install hook falls back to `node-gyp rebuild` when no
+      # linux-x64 prebuild matches. pnpm/action-setup v6 no longer ships
+      # node-gyp on PATH, so install it explicitly.
+      #
+      # This job compiles no JS and runs no pty — it needs `pnpm install` only
+      # to reach the `test:cargo` script. But node-pty is the repo's one entry
+      # in `pnpm.onlyBuiltDependencies`, its install hook fires on every
+      # workspace install, and the 1.1.0 tarball ships prebuilds for darwin and
+      # win32 ONLY. So the fallback is unconditional on a Linux runner, and
+      # without this step the job dies in `Install dependencies` with
+      # `sh: 1: node-gyp: not found` — before cargo is ever invoked.
+      # Enforced by scripts/__tests__/workflow-node-gyp.test.mjs.
+      - name: Install node-gyp
+        run: npm install -g node-gyp
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
