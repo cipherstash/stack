@@ -330,8 +330,10 @@ Pass `--force` to regenerate an existing install migration in place. It keeps it
 
 ```bash
 supabase migration repair --status reverted <version>   # clear the ledger row (applies no SQL)
-supabase db push --include-all                          # re-apply; the version is now a gap in history
+supabase db push                                        # re-apply
 ```
+
+Add `--include-all` to that push only if it aborts with `Found local migration files to be inserted before the last migration on remote database.` — that happens when migrations sort after the install, leaving the reverted version as a gap in the middle of history. Reverting the newest version leaves it at the tail, which a plain push applies. The flag applies every out-of-order migration you have, so don't pass it pre-emptively.
 
 Weigh that before doing it to a populated database: the EQL bundle opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE` (and `eql_v3_internal`), so re-applying also drops every index, constraint, and RLS policy that references those schemas.
 

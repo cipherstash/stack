@@ -372,18 +372,28 @@ describe('eqlMigrationCommand — Supabase', () => {
       expect(lastWarning()).toMatch(/RLS polic/)
     })
 
-    it('gives the repair-then-push-with-include-all remote recipe', async () => {
+    it('gives the repair-then-push remote recipe, with --include-all as a conditional', async () => {
       const version = await replaceInPlace()
 
-      // Both halves are load-bearing: `migration repair --status reverted`
-      // clears the ledger row (tracking table only — it applies no SQL), and
-      // --include-all is required because the reverted version is now a gap in
-      // the middle of remote history, which trips ErrMissingRemote.
+      // `migration repair --status reverted` clears the ledger row (tracking
+      // table only — it applies no SQL), which puts the version back in the
+      // pending set.
       expect(lastNote()).toContain(
         `supabase migration repair --status reverted ${version}`,
       )
-      expect(lastNote()).toContain('supabase db push --include-all')
       expect(lastNote()).toContain('supabase db reset')
+
+      // The plain push is the instruction; --include-all is the fallback for
+      // when it aborts. Reverting the NEWEST version leaves it at the tail of
+      // remote history, where a plain push applies it — only a version with
+      // migrations above it is the gap that trips ErrMissingRemote. Pinned live
+      // in supabase-push.live.test.ts against supabase/cli 2.111.0; an earlier
+      // revision of this message demanded the flag unconditionally, which
+      // applies every out-of-order migration the user has.
+      const note = lastNote()
+      expect(note).toContain('supabase db push\n')
+      expect(note).toMatch(/re-run it as `supabase db push --include-all`/)
+      expect(note).toMatch(/only when the push tells you to/i)
     })
 
     it('keeps the plain apply note when nothing was replaced', async () => {

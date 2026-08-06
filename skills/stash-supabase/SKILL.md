@@ -101,9 +101,13 @@ the Supabase CLI decides what is pending by version, never by file content, so a
 version already in the ledger is never re-run and push reports `Remote database
 is up to date.` Re-apply with `supabase db reset` locally; on a remote, clear
 the ledger row first with `supabase migration repair --status reverted
-<version>` (tracking table only — it applies no SQL) and then `supabase db push
---include-all`, the flag being required because that version is now a gap in the
-middle of remote history. ⚠️ On a populated database, weigh it first: the EQL
+<version>` (tracking table only — it applies no SQL) and then `supabase db
+push`. Add `--include-all` to that push only if it aborts with `Found local
+migration files to be inserted before the last migration on remote database.`,
+which happens when migrations sort after the install; reverting the newest
+version leaves it at the tail, where a plain push applies it. The flag applies
+every out-of-order migration you have, so don't reach for it pre-emptively.
+⚠️ On a populated database, weigh it first: the EQL
 bundle opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE` (and
 `eql_v3_internal`), so re-applying also drops every index, constraint, and RLS
 policy that references those schemas.

@@ -142,13 +142,24 @@ export const messages = {
      * plain "Apply it" note. `migration repair --status reverted` deletes the
      * ledger row and nothing else — Supabase's docs are explicit that it updates
      * the tracking table without applying or reverting any SQL — which puts the
-     * version back in the pending set. `--include-all` is then required because
-     * that version is now a gap in the middle of remote history, which
-     * `FindPendingMigrations` rejects with `ErrMissingRemote` before applying
-     * anything.
+     * version back in the pending set.
+     *
+     * Whether the follow-up push then needs `--include-all` depends on where
+     * the reverted version sits, which is why this does not just print the flag
+     * and be done with it. Reverting the NEWEST version leaves it at the tail of
+     * remote history: `FindPendingMigrations` returns it as ordinary pending
+     * work and a plain `db push` applies it. Only a version with applied
+     * migrations above it is the "gap in the middle" that `ErrMissingRemote`
+     * rejects. Verified live against supabase/cli 2.111.0 — the tail case
+     * pushes clean, the gap case aborts — in `supabase-push.live.test.ts`
+     * ("needs --include-all only when the install is not the newest migration").
+     *
+     * Printing `--include-all` unconditionally would not just be verbose: it
+     * applies EVERY out-of-order local migration, including any the user has
+     * deliberately left unapplied.
      */
     migrationSupabaseReapply: (version: string | null) =>
-      `Re-apply the replaced migration.\n\nLocal:\n\n  supabase db reset\n\nRemote — clear the ledger row first, or the push is a no-op:\n\n  supabase migration repair --status reverted ${version ?? '<version>'}\n  supabase db push --include-all\n\n\`migration repair\` updates the tracking table only; it applies no SQL. \`--include-all\` is required because the reverted version is now a gap in the middle of remote history, which \`db push\` otherwise refuses to step over. Read the CASCADE warning above before doing this to a populated database.`,
+      `Re-apply the replaced migration.\n\nLocal:\n\n  supabase db reset\n\nRemote — clear the ledger row first, or the push is a no-op:\n\n  supabase migration repair --status reverted ${version ?? '<version>'}\n  supabase db push\n\n\`migration repair\` updates the tracking table only; it applies no SQL. If migrations sort AFTER the install (the usual shape — encrypted-column migrations written once EQL was in place), the reverted version is a gap in the middle of remote history and that push aborts with \`Found local migration files to be inserted before the last migration on remote database.\`; re-run it as \`supabase db push --include-all\`. Reach for that flag only when the push tells you to — it applies every out-of-order migration you have, not just this one. Read the CASCADE warning above before doing any of this to a populated database.`,
     /**
      * Migrations already in the directory that reference EQL and sort BEFORE the
      * install this command writes.

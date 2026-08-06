@@ -395,10 +395,10 @@ The Supabase file is timestamped at generation time, so it sorts **after** every
 supabase db reset                                      # local — replays every migration
 
 supabase migration repair --status reverted <version>  # remote — clear the ledger row first
-supabase db push --include-all                         # ...then re-apply
+supabase db push                                       # ...then re-apply
 ```
 
-`migration repair` updates the tracking table only; it applies no SQL. `--include-all` is required because the reverted version is now a gap in the middle of remote history. ⚠️ Before doing this to a populated database: the EQL bundle opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE` (and `eql_v3_internal`), so re-applying also drops every index, constraint, and RLS policy that references those schemas. That is free on a fresh `supabase db reset` and destructive on a live remote.
+`migration repair` updates the tracking table only; it applies no SQL. Add `--include-all` to that push only if it aborts with `Found local migration files to be inserted before the last migration on remote database.` — which happens when migrations sort *after* the install, the usual shape once encrypted-column migrations have been written against it. Reverting the newest version instead leaves it at the tail of remote history, where a plain push applies it. Don't reach for the flag pre-emptively: it applies every out-of-order migration you have, not just this one. ⚠️ Before doing this to a populated database: the EQL bundle opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE` (and `eql_v3_internal`), so re-applying also drops every index, constraint, and RLS policy that references those schemas. That is free on a fresh `supabase db reset` and destructive on a live remote.
 
 **Do not pass `--out` with a bare `--supabase`.** The Supabase CLI's migrations directory is not configurable: `supabase db reset` and `supabase db push` read `<project>/supabase/migrations` and nothing else, there is no `config.toml` key to move it, and `--workdir` / `SUPABASE_WORKDIR` relocates the whole `supabase/` directory rather than this one. An install written anywhere else is simply never applied — the same "EQL is missing after a reset" failure that makes `eql install --supabase` the wrong tool on a CLI-scaffolded project. The command warns rather than refusing, because a project may have its own step that applies that directory; if you do not, drop the flag. (`--out` with `--drizzle --supabase` is unaffected — there it is drizzle-kit's output directory.)
 
