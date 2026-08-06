@@ -156,7 +156,18 @@ export async function initCommand(
         isSupabase && !isDrizzle
           ? 'apply it with `supabase db reset` (local) or `supabase db push` (remote)'
           : 'apply it with `drizzle-kit migrate`'
-      checkmarks.push(`○ EQL migration generated — ${applyStep}`)
+      // `eqlMigrationPending` covers two different runs that need the same
+      // apply guidance: the migration this run wrote, and one an earlier run
+      // (or a standalone `stash eql migration --supabase`) already left on
+      // disk. Only the verb differs — saying "generated" over the second is a
+      // claim about work this run did not do, and the user can disprove it
+      // from their own diff. `eqlMigrationAlreadyPresent` is deliberately not
+      // consulted by the `eqlPending` check below: either way a migration
+      // exists and the setup is complete.
+      const verb = state.eqlMigrationAlreadyPresent
+        ? 'already present'
+        : 'generated'
+      checkmarks.push(`○ EQL migration ${verb} — ${applyStep}`)
     }
 
     // EQL is required for encryption. Some integrations install it out-of-band

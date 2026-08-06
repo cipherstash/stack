@@ -75,6 +75,15 @@ export interface InitState {
    *  summary reports "migration generated, apply it" instead of a false
    *  "installed" or a spurious "setup incomplete". */
   eqlMigrationPending?: boolean
+  /** True when the pending migration was ALREADY on disk — a re-run of `stash
+   *  init --supabase`, or a project whose migration came from a standalone
+   *  `stash eql migration --supabase`. Refines `eqlMigrationPending`, never
+   *  replaces it: the state of the world is the same either way (a migration
+   *  exists, it has not been applied) and so is the apply guidance, so the
+   *  incompleteness check must keep reading `eqlMigrationPending` alone. All
+   *  this changes is the summary's verb — "already present" rather than
+   *  "generated", which was a claim about work this run did not do. */
+  eqlMigrationAlreadyPresent?: boolean
   /** Detected ORM / framework integration. Set by build-schema. */
   integration?: Integration
   /** Schema definitions written to the encryption client. Carries every

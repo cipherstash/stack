@@ -183,6 +183,46 @@ describe('initCommand — honest summary', () => {
     expect(body).toContain('EQL migration generated')
     expect(body).toContain('supabase db reset')
     expect(body).not.toContain('drizzle-kit migrate')
+    // This run really did write the file, so the verb must stay "generated".
+    expect(body).not.toContain('already present')
+  })
+
+  it('says "already present" — not "generated" — when init found the migration on disk', async () => {
+    // `installEqlStep` returns `eqlMigrationPending` for BOTH the migration it
+    // just wrote and one a previous run (or a standalone `stash eql migration
+    // --supabase`) left on disk. The apply guidance is identical either way —
+    // the file still has to be applied — but "EQL migration generated" over a
+    // run that generated nothing is a claim the user can disprove from their
+    // own diff. `eqlMigrationAlreadyPresent` carries the distinction.
+    eqlRun.mockImplementationOnce(async (s: InitState) => ({
+      ...s,
+      // The local-Supabase shape: `detectIntegration` reads the host from the
+      // DATABASE_URL, and `127.0.0.1:54322` lands on 'postgresql' — only the
+      // provider says Supabase.
+      integration: 'postgresql',
+      eqlInstalled: false,
+      eqlMigrationPending: true,
+      eqlMigrationAlreadyPresent: true,
+    }))
+
+    await expect(initCommand({ supabase: true }, {})).resolves.toBeUndefined()
+
+    const summary = vi
+      .mocked(p.note)
+      .mock.calls.find(([, title]) => title === 'Setup complete')
+    expect(summary).toBeDefined()
+    const body = summary?.[0] as string
+    expect(body).toContain('EQL migration already present')
+    expect(body).not.toContain('generated')
+    // Unchanged from the freshly-generated case: the same apply guidance, the
+    // same successful exit. An already-present migration is not an incomplete
+    // setup, so no ✗ line and no non-zero exit.
+    expect(body).toContain('supabase db reset')
+    expect(body).not.toContain('✗ EQL extension NOT installed')
+    expect(vi.mocked(p.note)).not.toHaveBeenCalledWith(
+      expect.any(String),
+      messages.init.setupIncomplete,
+    )
   })
 
   it('still points a Drizzle-on-Supabase run at drizzle-kit', async () => {

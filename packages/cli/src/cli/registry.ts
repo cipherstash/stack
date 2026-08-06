@@ -337,7 +337,12 @@ export const registry: CommandGroup[] = [
           'eql migration --drizzle',
           'eql migration --drizzle --supabase',
           'eql migration --supabase',
-          'eql migration --supabase --out db/migrations --force',
+          // Deliberately no `--out` here. The Supabase CLI reads
+          // `supabase/migrations` and nothing else, so an example pointing the
+          // install elsewhere would teach the exact "EQL isn't in the replayed
+          // directory" failure this command exists to fix. `--force` is what
+          // needed demonstrating; it works fine on its own.
+          'eql migration --supabase --force',
         ],
         flags: [
           {
@@ -365,7 +370,7 @@ export const registry: CommandGroup[] = [
             name: '--out',
             value: '<path>',
             description:
-              'Where the migration is written. Drizzle: passed to `drizzle-kit generate --out`, defaults to `drizzle` — set it to match your drizzle.config.ts. Supabase: the migrations directory, defaults to `supabase/migrations`.',
+              'Where the migration is written. Drizzle: passed to `drizzle-kit generate --out`, defaults to `drizzle` — set it to match your drizzle.config.ts. Supabase: leave it alone. The Supabase CLI replays `supabase/migrations` and has no setting to move it, so pointing elsewhere means `supabase db reset` / `db push` never apply the install; the command warns when you do.',
           },
           {
             name: '--force',

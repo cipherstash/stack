@@ -12,6 +12,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildEqlV3MigrationSql } from '../migration.js'
 import {
+  findEqlDependentMigrationsBefore,
   findExistingEqlMigration,
   SUPABASE_EQL_MIGRATION_SUFFIX,
   writeSupabaseEqlMigration,
@@ -119,10 +120,22 @@ describe('writeSupabaseEqlMigration', () => {
     expect(result.path.endsWith(FIXED_FILENAME)).toBe(true)
   })
 
+  it('reports the version the file carries', async () => {
+    const result = await writeSupabaseEqlMigration({
+      migrationsDir: tmp,
+      sql: 'SELECT 1;',
+      now: FIXED_NOW,
+    })
+    expect(result.version).toBe('20260804021925')
+  })
+
   it('sorts after an already-applied migration rather than before it', async () => {
     // A version BELOW the highest applied one is "out of order" to the Supabase
-    // CLI: `supabase db push` skips it without --include-all. The retired v2
-    // writer used an all-zero prefix and had exactly that problem.
+    // CLI, and it is not merely skipped: `supabase db push` aborts the whole
+    // push with `Found local migration files to be inserted before the last
+    // migration on remote database.` and applies nothing, until the user knows
+    // to re-run with --include-all. The retired v2 writer used an all-zero
+    // prefix and had exactly that problem.
     writeFileSync(join(tmp, '20260101000000_users.sql'), '')
     const result = await writeSupabaseEqlMigration({
       migrationsDir: tmp,
@@ -201,6 +214,9 @@ describe('writeSupabaseEqlMigration', () => {
 
     expect(second.path).toBe(first.path)
     expect(second.overwritten).toBe(true)
+    // The version is what the remote ledger keys on, so it is the thing the
+    // re-apply guidance has to name — reported, not re-derived by the caller.
+    expect(second.version).toBe(first.version)
     expect(readdirSync(tmp)).toHaveLength(1)
     expect(readFileSync(second.path, 'utf-8')).toContain('SELECT 2;')
   })
@@ -233,5 +249,160 @@ describe('writeSupabaseEqlMigration', () => {
     })
 
     expect(readdirSync(tmp)).toEqual([FIXED_FILENAME])
+  })
+})
+
+/**
+ * Brownfield detection. A current-timestamp install sorts LAST, which is right
+ * for a greenfield project and wrong for one that already has encrypted-column
+ * migrations on disk: `supabase db reset` replays in version order with no
+ * dependency awareness, so those run before EQL exists and the reset dies on
+ * `type "eql_v3_text_search" does not exist`.
+ */
+describe('findEqlDependentMigrationsBefore', () => {
+  // What the stash-supabase skill tells people to write by hand for an
+  // encrypted twin: a `public.eql_v3_*` domain the bundle creates.
+  const ENCRYPTED_COLUMN_SQL =
+    'ALTER TABLE users ADD COLUMN email_encrypted public.eql_v3_text_search;\n'
+
+  it('returns nothing for a directory that does not exist', () => {
+    expect(findEqlDependentMigrationsBefore(join(tmp, 'nope'))).toEqual([])
+  })
+
+  it('returns nothing for an empty directory', () => {
+    expect(findEqlDependentMigrationsBefore(tmp, { now: FIXED_NOW })).toEqual(
+      [],
+    )
+  })
+
+  it('finds an earlier migration that names an EQL domain', () => {
+    writeFileSync(
+      join(tmp, '20260101000000_encrypt_email.sql'),
+      ENCRYPTED_COLUMN_SQL,
+    )
+
+    expect(findEqlDependentMigrationsBefore(tmp, { now: FIXED_NOW })).toEqual([
+      '20260101000000_encrypt_email.sql',
+    ])
+  })
+
+  it('finds an earlier migration that calls into the eql_v3 schema', () => {
+    // The other reference form: a function/operator call rather than a column
+    // domain (`eql_v3.query_text(...)`, `eql_v3.ste_vec(...)`).
+    writeFileSync(
+      join(tmp, '20260101000000_index_email.sql'),
+      'CREATE INDEX ON users (eql_v3.hmac_256(email_encrypted));\n',
+    )
+
+    expect(findEqlDependentMigrationsBefore(tmp, { now: FIXED_NOW })).toEqual([
+      '20260101000000_index_email.sql',
+    ])
+  })
+
+  it('ignores a migration that sorts after the install', () => {
+    writeFileSync(
+      join(tmp, '20990101000000_encrypt_email.sql'),
+      ENCRYPTED_COLUMN_SQL,
+    )
+
+    expect(findEqlDependentMigrationsBefore(tmp, { now: FIXED_NOW })).toEqual(
+      [],
+    )
+  })
+
+  it('ignores an earlier migration that never mentions EQL', () => {
+    writeFileSync(
+      join(tmp, '20260101000000_users.sql'),
+      'CREATE TABLE users (id uuid PRIMARY KEY, email text);\n',
+    )
+
+    expect(findEqlDependentMigrationsBefore(tmp, { now: FIXED_NOW })).toEqual(
+      [],
+    )
+  })
+
+  it('does not trip on a longer identifier that merely contains the token', () => {
+    writeFileSync(
+      join(tmp, '20260101000000_notes.sql'),
+      'CREATE TABLE not_eql_v3_notes (id integer);\n',
+    )
+
+    expect(findEqlDependentMigrationsBefore(tmp, { now: FIXED_NOW })).toEqual(
+      [],
+    )
+  })
+
+  it('ignores our own install migrations', () => {
+    // An older `_cipherstash_eql.sql` is another copy of the install, not
+    // something depending on it — reporting it would tell the user to reorder
+    // the install below itself.
+    writeFileSync(
+      join(tmp, '20260101000000_cipherstash_eql.sql'),
+      'CREATE SCHEMA eql_v3;\n',
+    )
+    writeFileSync(join(tmp, '20260301000000_cipherstash_eql.sql'), '')
+
+    expect(findEqlDependentMigrationsBefore(tmp, { now: FIXED_NOW })).toEqual(
+      [],
+    )
+  })
+
+  it('ignores files the Supabase CLI itself skips', () => {
+    // `^([0-9]+)_(.*)\.sql$` in pkg/migration/file.go. A name that fails it is
+    // never applied (the CLI prints `Skipping migration ...` and moves on), so
+    // it cannot break a reset however it sorts.
+    writeFileSync(join(tmp, 'encrypt_email.sql'), ENCRYPTED_COLUMN_SQL)
+    writeFileSync(
+      join(tmp, '20260101000000_encrypt_email.sql.bak'),
+      ENCRYPTED_COLUMN_SQL,
+    )
+    writeFileSync(
+      join(tmp, '.20260101000000_encrypt_email.sql'),
+      ENCRYPTED_COLUMN_SQL,
+    )
+
+    expect(findEqlDependentMigrationsBefore(tmp, { now: FIXED_NOW })).toEqual(
+      [],
+    )
+  })
+
+  it('ignores a directory that carries a migration-shaped name', () => {
+    mkdirSync(join(tmp, '20260101000000_encrypt_email.sql'))
+
+    expect(findEqlDependentMigrationsBefore(tmp, { now: FIXED_NOW })).toEqual(
+      [],
+    )
+  })
+
+  it('sorts the hits so the earliest is first', () => {
+    writeFileSync(
+      join(tmp, '20260201000000_encrypt_name.sql'),
+      ENCRYPTED_COLUMN_SQL,
+    )
+    writeFileSync(
+      join(tmp, '20260101000000_encrypt_email.sql'),
+      ENCRYPTED_COLUMN_SQL,
+    )
+
+    expect(findEqlDependentMigrationsBefore(tmp, { now: FIXED_NOW })).toEqual([
+      '20260101000000_encrypt_email.sql',
+      '20260201000000_encrypt_name.sql',
+    ])
+  })
+
+  it('compares against the version --force keeps, not the clock', () => {
+    // With an install migration already on disk, that file is overwritten in
+    // place and keeps ITS version — so the ordering question is about that
+    // version, not today's. Comparing against the clock would report a
+    // dependant that in fact replays after the install.
+    writeFileSync(join(tmp, '20260101000000_cipherstash_eql.sql'), '')
+    writeFileSync(
+      join(tmp, '20260102000000_encrypt_email.sql'),
+      ENCRYPTED_COLUMN_SQL,
+    )
+
+    expect(findEqlDependentMigrationsBefore(tmp, { now: FIXED_NOW })).toEqual(
+      [],
+    )
   })
 })

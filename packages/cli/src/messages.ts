@@ -94,6 +94,81 @@ export const messages = {
      */
     migrationNameDrizzleOnly:
       '`--name` applies to `--drizzle` only and is ignored here — the Supabase migration is always named `<timestamp>_cipherstash_eql.sql`, which is how a duplicate install is detected.',
+    /**
+     * `--out` with a bare `--supabase`, pointing anywhere other than
+     * `<cwd>/supabase/migrations`.
+     *
+     * The Supabase CLI's migrations directory is NOT configurable. In the Go
+     * implementation it is `filepath.Join(SupabaseDirPath, "migrations")` with
+     * `SupabaseDirPath = "supabase"`, and the path builder that derives it from
+     * a `--config` path still carries a literal `// TODO: make base path
+     * configurable from toml`; the TypeScript CLI hard-codes
+     * `path.join(workdir, "supabase", "migrations")` in both the `db reset` and
+     * `db push` handlers. `--workdir` / `SUPABASE_WORKDIR` moves the whole
+     * project root, not this subdirectory, and `config.toml` has no key for it
+     * (supabase/supabase#33257 is the open request to add one).
+     *
+     * So a file written elsewhere is exactly the failure this command exists to
+     * fix — EQL missing from the directory a reset replays — just relocated.
+     * A warning rather than a hard error, because the user may well have their
+     * own apply step for that directory; what they cannot be allowed to assume
+     * is that `supabase db reset` will pick it up.
+     */
+    migrationSupabaseOutNotReplayed: (migrationsDir: string) =>
+      `--out points at ${migrationsDir}, but the Supabase CLI only ever replays <project>/supabase/migrations — that path is hard-coded, with no config.toml key to move it (--workdir relocates the whole supabase/ directory, not this one). \`supabase db reset\` and \`supabase db push\` will not apply this file, so EQL will still be missing after the next reset. Drop --out to write into supabase/migrations/, unless you have your own step that applies this directory.`,
+    /**
+     * `--supabase --force` replaced an install migration in place.
+     *
+     * Two things the user cannot see from the success line. First, `supabase db
+     * push` will NOT pick the new bundle up: `FindPendingMigrations`
+     * (`pkg/migration/apply.go`) computes the pending set positionally —
+     * `pending := localMigrations[len(remoteMigrations):]` — with no content
+     * hash and no statement diff. (Seed files DO carry a `Hash`/`Dirty` pair and
+     * re-run on change; migrations do not.) Equal counts mean an empty pending
+     * set, so push prints "Remote database is up to date." and applies nothing.
+     * Telling people to `db push` here leaves them believing a remote was
+     * updated when it was not.
+     *
+     * Second, re-applying is not free. The EQL bundle opens with `DROP SCHEMA IF
+     * EXISTS eql_v3 CASCADE;` / `DROP SCHEMA IF EXISTS eql_v3_internal
+     * CASCADE;`, so it takes every dependent index, constraint, and RLS policy
+     * with it. On a fresh `supabase db reset` that is a no-op on an empty
+     * database; on a populated remote it is destructive.
+     */
+    migrationSupabaseForceReplaced:
+      'Replaced the EQL install migration in place, keeping its version. A database that already applied that version still has the OLD bundle, and `supabase db push` will not re-apply it — the Supabase CLI decides what is pending by version, not by content, so a version already in the ledger is never re-run (push just reports "Remote database is up to date."). Re-applying is not free either: the EQL bundle opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE` (and `eql_v3_internal`), which also drops every index, constraint, and RLS policy that references those schemas. Harmless against a fresh `supabase db reset`; destructive against a populated remote.',
+    /**
+     * The re-apply recipe for a replaced install migration, in place of the
+     * plain "Apply it" note. `migration repair --status reverted` deletes the
+     * ledger row and nothing else — Supabase's docs are explicit that it updates
+     * the tracking table without applying or reverting any SQL — which puts the
+     * version back in the pending set. `--include-all` is then required because
+     * that version is now a gap in the middle of remote history, which
+     * `FindPendingMigrations` rejects with `ErrMissingRemote` before applying
+     * anything.
+     */
+    migrationSupabaseReapply: (version: string | null) =>
+      `Re-apply the replaced migration.\n\nLocal:\n\n  supabase db reset\n\nRemote — clear the ledger row first, or the push is a no-op:\n\n  supabase migration repair --status reverted ${version ?? '<version>'}\n  supabase db push --include-all\n\n\`migration repair\` updates the tracking table only; it applies no SQL. \`--include-all\` is required because the reverted version is now a gap in the middle of remote history, which \`db push\` otherwise refuses to step over. Read the CASCADE warning above before doing this to a populated database.`,
+    /**
+     * Migrations already in the directory that reference EQL and sort BEFORE the
+     * install this command writes.
+     *
+     * The brownfield case: `stash eql install` applied EQL straight to the
+     * database, encrypted-column migrations were written against it, and only
+     * then did the project move to the migration-first install. A current
+     * timestamp sorts LAST, so those migrations replay before EQL exists and
+     * `supabase db reset` dies on the first `eql_v3_*` reference.
+     *
+     * Detection and a warning, not a fix: back-dating the install, renaming the
+     * user's migrations, or squashing the lot are all their call, and a
+     * back-dated file has its own remote consequence (`--include-all`) that they
+     * have to be the ones to accept.
+     */
+    migrationSupabaseEqlBeforeInstall: (
+      migrationsDir: string,
+      files: string[],
+    ) =>
+      `Migrations in ${migrationsDir} reference EQL and sort BEFORE the EQL install migration:\n\n  ${files.join('\n  ')}\n\n\`supabase db reset\` replays the directory in version order, with no dependency awareness, so each of those runs before EQL is installed and the reset fails (\`type "eql_v3_text_search" does not exist\`). Rename the install migration to a version below ${files[0]} so it replays first. Pushing a back-dated migration to a remote that already has history then needs \`supabase db push --include-all\`, because it lands as a gap in the middle of that history.`,
     /** `stash eql repair` with no `--drizzle` target. */
     repairNeedsTarget: 'Specify a target: `stash eql repair --drizzle`.',
     /** `--out` (or its `drizzle` default) points at a directory that isn't there. */

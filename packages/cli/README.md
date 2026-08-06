@@ -322,7 +322,20 @@ This writes `supabase/migrations/<timestamp>_cipherstash_eql.sql` containing the
 
 **Use this rather than `eql install --supabase` whenever the project has a local `supabase/` directory.** A direct install does not survive `supabase db reset`, which drops the database and replays the migrations directory.
 
-The file is timestamped at generation time, so it sorts after everything already applied and pushes without `--include-all`. Pass `--out <dir>` if your migrations live elsewhere, and `--force` to regenerate an existing install migration in place.
+The file is timestamped at generation time, so it sorts after everything already applied and pushes with no extra flag. An out-of-order version is not merely skipped — `supabase db push` aborts the whole push with `Found local migration files to be inserted before the last migration on remote database.` and applies nothing until you re-run with `--include-all`.
+
+If the project already has migrations that reference EQL (an `eql_v3_*` column added back when `eql install` was applied directly), those now sort *before* the install. `supabase db reset` replays in version order with no dependency awareness, so they run first and the reset fails with `type "eql_v3_text_search" does not exist`. The command warns and names them; rename the install migration to a version below the earliest of them so it replays first. A back-dated migration pushed to a remote with existing history needs `supabase db push --include-all`.
+
+Pass `--force` to regenerate an existing install migration in place. It keeps its version, so `supabase db push` will **not** re-apply it — pending migrations are decided by version, never by file content, and push reports `Remote database is up to date.` Use `supabase db reset` locally, or on a remote:
+
+```bash
+supabase migration repair --status reverted <version>   # clear the ledger row (applies no SQL)
+supabase db push --include-all                          # re-apply; the version is now a gap in history
+```
+
+Weigh that before doing it to a populated database: the EQL bundle opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE` (and `eql_v3_internal`), so re-applying also drops every index, constraint, and RLS policy that references those schemas.
+
+Don't pass `--out` here. The Supabase CLI reads `<project>/supabase/migrations` and nothing else — the path is not configurable in `config.toml`, and `--workdir` moves the whole `supabase/` directory, not this one. An install written elsewhere is never applied by `supabase db reset` / `db push`, which is the failure this command exists to avoid. The flag still works (and warns) for projects that apply another directory through their own tooling.
 
 ---
 

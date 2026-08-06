@@ -9,6 +9,7 @@ import { detectSupabaseProject } from '@/commands/db/detect.js'
 import { printNextSteps, SAFE_MIGRATION_NAME } from '@/commands/db/install.js'
 import { rewriteEncryptedAlterColumns } from '@/commands/db/rewrite-migrations.js'
 import {
+  findEqlDependentMigrationsBefore,
   findExistingEqlMigration,
   writeSupabaseEqlMigration,
 } from '@/commands/eql/supabase-migration.js'
@@ -85,6 +86,11 @@ export interface EqlMigrationOptions {
    * Output directory: where drizzle-kit writes under `--drizzle` (default
    * `drizzle`), or the migrations directory under `--supabase` (default
    * `supabase/migrations`).
+   *
+   * Under a bare `--supabase` anything other than the default earns a warning —
+   * the Supabase CLI replays `supabase/migrations` and nothing else, so a file
+   * written elsewhere is never applied. See
+   * `messages.eql.migrationSupabaseOutNotReplayed`.
    */
   out?: string
   /**
@@ -228,6 +234,53 @@ async function generateSupabaseEqlMigration(
     p.log.warn(messages.eql.migrationNameDrizzleOnly)
   }
 
+  // `--out` is the one flag here that can quietly undo the whole command. The
+  // Supabase CLI's migrations directory is not configurable — `db reset` and
+  // `db push` read `<project>/supabase/migrations` and nothing else — so an
+  // install written anywhere else is EQL missing from the replayed directory,
+  // which is #613 verbatim, just relocated. Compare RESOLVED paths: an absolute
+  // `--out` is taken verbatim by `detectSupabaseProject`, so `…/migrations/`
+  // and `…/migrations` are the same directory and only one of them is a string
+  // match.
+  //
+  // A warning, not a refusal. Some projects genuinely do apply another
+  // directory through their own tooling, and this command has no way to know —
+  // the same latitude the Drizzle path gives a `drizzle.config.ts` that writes
+  // somewhere unexpected. What the user must not be left assuming is that
+  // `supabase db reset` will pick the file up.
+  //
+  // Above the dry-run branch on purpose: predicting the real run is the dry
+  // run's entire job, and "this file will never be applied" is the most
+  // consequential thing there is to predict.
+  if (
+    resolve(migrationsDir) !== resolve(process.cwd(), 'supabase', 'migrations')
+  ) {
+    p.log.warn(messages.eql.migrationSupabaseOutNotReplayed(migrationsDir))
+  }
+
+  // The install is stamped with the current time, which sorts it LAST. That is
+  // right for a greenfield project — nothing that needs EQL exists yet — and
+  // wrong for one that ran `stash eql install` first and wrote encrypted-column
+  // migrations against the live database. Those already carry `eql_v3_*`
+  // references and now sort BEFORE the install, so the next `supabase db reset`
+  // replays them first and fails on a domain nothing has created.
+  //
+  // Warn, don't fix. Back-dating the install would push a migration below the
+  // remote's last applied version, which is a `--include-all` push and a
+  // decision about someone else's deployed history — not ours to make silently.
+  //
+  // Above the dry-run branch for the same reason as the --out warning: a dry run
+  // that stays quiet about the reset it is about to break is not a prediction.
+  const eqlDependentsBefore = findEqlDependentMigrationsBefore(migrationsDir)
+  if (eqlDependentsBefore.length > 0) {
+    p.log.warn(
+      messages.eql.migrationSupabaseEqlBeforeInstall(
+        migrationsDir,
+        eqlDependentsBefore,
+      ),
+    )
+  }
+
   if (options.dryRun) {
     // Predict the real run's outcome, including its refusals — a dry run that
     // always claims "would write" is worse than no dry run in the one directory
@@ -267,20 +320,24 @@ async function generateSupabaseEqlMigration(
 
   if (written.overwritten) {
     // Rewriting a migration that some database has already applied leaves the
-    // file describing a shape that database never got from it — the same
-    // hazard `eql repair` guards against. We can't check that from here (no
-    // connection), so say it plainly. Lead with the reset: this is the local
-    // case, and it is the path the Supabase docs steer people to.
-    p.log.warn(
-      'Replaced the existing EQL install migration in place, keeping its version. Any database that already applied it still has the old bundle — re-apply with `supabase db reset` (local) or `supabase db push` (remote).',
-    )
+    // file describing a shape that database never got from it — the same hazard
+    // `eql repair` guards against. We can't check that from here (no
+    // connection), so say it plainly, including the two things the success line
+    // cannot show: `db push` will not notice the rewrite (it diffs versions, not
+    // content), and re-applying cascade-drops whatever depends on eql_v3.
+    p.log.warn(messages.eql.migrationSupabaseForceReplaced)
   }
 
   p.log.success(
     `Migration ${written.overwritten ? 'replaced' : 'created'}: ${written.path}`,
   )
   p.note(
-    `Apply it:\n\n  supabase db reset               # local — replays every migration\n  supabase db push                # remote/linked project`,
+    // The plain apply note is only correct for a version no database has seen.
+    // Once the file has been replaced in place, `db push` is a no-op and the
+    // remote needs the ledger row cleared first.
+    written.overwritten
+      ? messages.eql.migrationSupabaseReapply(written.version)
+      : `Apply it:\n\n  supabase db reset               # local — replays every migration\n  supabase db push                # remote/linked project`,
     'Next Steps',
   )
   if (!embedded) {

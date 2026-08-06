@@ -95,9 +95,36 @@ encrypt` records per-column progress in. One `supabase db reset` therefore
 provisions everything — no out-of-band `stash eql install` afterwards.
 
 It refuses to write a second install migration; pass `--force` to regenerate
-the existing one in place (same version, so an applied ledger stays consistent),
-and `--out <dir>` if your migrations live somewhere other than
-`supabase/migrations`.
+the existing one in place (same version, so an applied ledger stays consistent).
+Because the version is unchanged, `supabase db push` will **not** re-apply it —
+the Supabase CLI decides what is pending by version, never by file content, so a
+version already in the ledger is never re-run and push reports `Remote database
+is up to date.` Re-apply with `supabase db reset` locally; on a remote, clear
+the ledger row first with `supabase migration repair --status reverted
+<version>` (tracking table only — it applies no SQL) and then `supabase db push
+--include-all`, the flag being required because that version is now a gap in the
+middle of remote history. ⚠️ On a populated database, weigh it first: the EQL
+bundle opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE` (and
+`eql_v3_internal`), so re-applying also drops every index, constraint, and RLS
+policy that references those schemas.
+
+**If you already have encrypted-column migrations**, note that the generated
+install is stamped with the current time and therefore sorts *after* them. A
+reset replays in version order with no dependency awareness, so those migrations
+run before EQL exists and `supabase db reset` fails with `type
+"eql_v3_text_search" does not exist`. The command detects this and warns, naming
+the files; the fix is to rename the install migration to a version below the
+earliest of them. Pushing a back-dated migration to a remote that already has
+history needs `supabase db push --include-all`.
+
+There is no `--out` to reach for here: the Supabase CLI's migrations directory
+is not configurable. `supabase db reset` and `supabase db push` read
+`<project>/supabase/migrations` and nothing else, `config.toml` has no key for
+it, and `--workdir` / `SUPABASE_WORKDIR` moves the whole `supabase/` directory
+rather than this subdirectory. `stash eql migration --supabase --out <dir>`
+still writes the file, and warns, because a project may have its own step that
+applies that directory — but the Supabase CLI will not, so EQL is gone again
+after the next reset.
 
 Since eql-3.0.0 there is **one** v3 SQL artifact for every target — there is
 no separate Supabase variant. The bundle's only superuser-requiring

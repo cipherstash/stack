@@ -69,6 +69,19 @@ function withSupabaseScaffolding(present: boolean): void {
   })
 }
 
+/** The message the step put in front of the user before acting. */
+function confirmMessage(): string {
+  return vi.mocked(p.confirm).mock.calls[0][0].message
+}
+
+/** Every `p.note` body, joined — the step emits at most one per run. */
+function noteBody(): string {
+  return vi
+    .mocked(p.note)
+    .mock.calls.map(([body]) => body)
+    .join('\n')
+}
+
 const supabaseState = {
   integration: 'supabase',
   databaseUrl: 'postgresql://localhost:54322/postgres',
@@ -195,6 +208,9 @@ describe('installEqlStep', () => {
 
       expect(result.eqlInstalled).toBe(false)
       expect(result.eqlMigrationPending).toBe(true)
+      // This run really did generate it, so the summary's verb must stay
+      // "generated" — only the already-on-disk branch sets this flag.
+      expect(result.eqlMigrationAlreadyPresent).toBeFalsy()
     })
 
     it('scaffolds stash.config.ts + the client, which `eql install` would have done (#581)', async () => {
@@ -383,6 +399,33 @@ describe('installEqlStep', () => {
       expect(result.eqlInstalled).toBe(false)
     })
 
+    it('marks the pending migration as already present, not freshly generated', async () => {
+      // `eqlMigrationPending` alone cannot tell "written this run" from "found
+      // on disk": both routes set it, and both want the same apply guidance.
+      // Without a second signal `initCommand` prints "EQL migration generated"
+      // over a run that generated nothing — a claim the user can disprove from
+      // their own diff.
+      withSupabaseScaffolding(true)
+      vi.mocked(findExistingEqlMigration).mockReturnValue(
+        '/project/supabase/migrations/20260804021925_cipherstash_eql.sql',
+      )
+
+      const result = await installEqlStep.run(supabaseState, supabaseProvider)
+
+      expect(result.eqlMigrationAlreadyPresent).toBe(true)
+    })
+
+    it('does not mark a migration it wrote this run as already present', async () => {
+      // The symmetric negative: `findExistingEqlMigration` returns null, the
+      // step writes the file, and the summary must still say "generated".
+      withSupabaseScaffolding(true)
+
+      const result = await installEqlStep.run(supabaseState, supabaseProvider)
+
+      expect(result.eqlMigrationPending).toBe(true)
+      expect(result.eqlMigrationAlreadyPresent).toBeFalsy()
+    })
+
     it('names the existing migration so the user knows what to apply', async () => {
       withSupabaseScaffolding(true)
       vi.mocked(findExistingEqlMigration).mockReturnValue(
@@ -432,6 +475,120 @@ describe('installEqlStep', () => {
         drizzle: true,
         supabase: true,
       })
+    })
+  })
+
+  describe('the confirm prompt names the action the route will take', () => {
+    // The prompt is the user's only description of what pressing `y` does, and
+    // two of the three routes never touch the database — they write a file.
+    // "Install the EQL extension into your database now?" followed by a
+    // generated migration described the wrong action on both of them.
+
+    it('offers a database install on the direct route', async () => {
+      await installEqlStep.run(baseState, provider)
+
+      expect(confirmMessage()).toContain(
+        'Install the EQL extension into your database',
+      )
+      expect(confirmMessage()).toContain('(required for encryption)')
+    })
+
+    it('offers a generated migration on the Drizzle route', async () => {
+      await installEqlStep.run(drizzleState, drizzleProvider)
+
+      expect(confirmMessage()).toMatch(/migration/i)
+      expect(confirmMessage()).not.toContain(
+        'Install the EQL extension into your database',
+      )
+      expect(confirmMessage()).toContain('(required for encryption)')
+    })
+
+    it('names supabase/migrations/ on the Supabase migration route', async () => {
+      withSupabaseScaffolding(true)
+
+      await installEqlStep.run(supabaseState, supabaseProvider)
+
+      expect(confirmMessage()).toContain('supabase/migrations/')
+      expect(confirmMessage()).not.toContain(
+        'Install the EQL extension into your database',
+      )
+      expect(confirmMessage()).toContain('(required for encryption)')
+    })
+
+    it('keeps the database-install wording for a hosted Supabase project', async () => {
+      // No local scaffolding means the direct route, so the prompt must follow
+      // the ROUTING, not the `--supabase` flag.
+      withSupabaseScaffolding(false)
+
+      await installEqlStep.run(supabaseState, supabaseProvider)
+
+      expect(confirmMessage()).toContain(
+        'Install the EQL extension into your database',
+      )
+    })
+
+    it('still defaults to yes on a migration-first route', async () => {
+      withSupabaseScaffolding(true)
+
+      await installEqlStep.run(supabaseState, supabaseProvider)
+
+      expect(vi.mocked(p.confirm).mock.calls[0][0].initialValue).toBe(true)
+    })
+  })
+
+  describe('declining the prompt', () => {
+    // The retry hint has to name the command for the route the step WOULD have
+    // taken. `stash eql install` is right for exactly one of the three.
+
+    it('points the direct route at `stash eql install`', async () => {
+      vi.mocked(p.confirm).mockResolvedValueOnce(false)
+
+      const result = await installEqlStep.run(baseState, provider)
+
+      expect(result.eqlInstalled).toBe(false)
+      expect(installCommand).not.toHaveBeenCalled()
+      expect(noteBody()).toContain('stash eql install')
+    })
+
+    it('points the Drizzle route at `stash eql migration --drizzle`', async () => {
+      // `stash eql install --drizzle` is v2-only — under the v3 default it
+      // rejects the flag outright — and a bare direct install never lands in
+      // the migration history the project ships from. Sending a declining
+      // Drizzle user there is sending them at the one command this route
+      // exists to avoid.
+      vi.mocked(p.confirm).mockResolvedValueOnce(false)
+
+      const result = await installEqlStep.run(drizzleState, drizzleProvider)
+
+      expect(result.eqlInstalled).toBe(false)
+      expect(eqlMigrationCommand).not.toHaveBeenCalled()
+      expect(noteBody()).toContain('stash eql migration --drizzle')
+    })
+
+    it('points the Supabase migration route at `stash eql migration --supabase`', async () => {
+      // Retrying with `stash eql install --supabase` here reinstates the #613
+      // defect outright: the install is wiped by the next `supabase db reset`.
+      withSupabaseScaffolding(true)
+      vi.mocked(p.confirm).mockResolvedValueOnce(false)
+
+      const result = await installEqlStep.run(supabaseState, supabaseProvider)
+
+      expect(result.eqlInstalled).toBe(false)
+      expect(eqlMigrationCommand).not.toHaveBeenCalled()
+      expect(noteBody()).toContain('stash eql migration --supabase')
+    })
+
+    it('points a hosted Supabase project at `stash eql install`', async () => {
+      // Same flag, other side of the routing fork: with no `supabase/`
+      // directory there is nowhere to write a migration, so the direct install
+      // really is the retry command.
+      withSupabaseScaffolding(false)
+      vi.mocked(p.confirm).mockResolvedValueOnce(false)
+
+      await installEqlStep.run(supabaseState, supabaseProvider)
+
+      expect(noteBody()).toContain('stash eql install')
+      expect(noteBody()).not.toContain('stash eql migration')
     })
   })
 
