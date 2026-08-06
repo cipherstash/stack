@@ -1,0 +1,12 @@
+name: Composite Cache
+on:
+  push:
+    branches: [main]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/cachey
+      - run: pnpm publish --no-git-checks

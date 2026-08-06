@@ -1,0 +1,17 @@
+# Three more vendors, none of them first-party, none with a `cache:` input.
+# The point is that no rule keyed on a list of known cache actions would have
+# had these on it — the list is open-ended and grows without this repo hearing
+# about it.
+name: Cache Family
+on:
+  push:
+    tags: ['v*']
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: buildjet/cache@v4
+      - uses: runs-on/cache@v4
+      - uses: tespkg/actions-cache@v1
+      - run: pnpm changeset:publish

@@ -1,0 +1,16 @@
+# A quoted `uses:` with a leading space. GitHub trims it and resolves the
+# composite; an untrimmed match against `^\.{1,2}/` does not, so the composite
+# is never opened. Contrived on its own — but it was the one unfollowable local
+# reference that exited 0 rather than 2, and silent-pass is the wrong direction
+# for this gate.
+name: Composite Leading Space
+on:
+  push:
+    tags: ['v*']
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build the protect-ffi binding
+        uses: ' ./.github/actions/cachey'
+      - run: pnpm changeset:publish

@@ -1,0 +1,14 @@
+name: Called Cache
+on:
+  workflow_call:
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Restore the compiled binding
+        uses: actions/cache@v4
+        with:
+          path: index.node
+          key: binding-${{ runner.os }}
+      - run: pnpm changeset:publish

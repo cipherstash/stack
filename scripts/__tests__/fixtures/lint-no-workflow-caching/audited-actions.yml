@@ -1,0 +1,27 @@
+# Over-trigger guard. Every `uses:` here is on the allowlist and none of them
+# caches, so the gate must stay silent — including on `changesets/action`,
+# which is real (release.yml's publish step), third-party, and has nothing to
+# do with caching. A rule that fired here would fire on the live release
+# workflow.
+name: Audited Actions
+on:
+  push:
+    tags: ['v*']
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+          cache: false
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Publish to npm
+        uses: changesets/action@v1.9.0
+        with:
+          publish: pnpm run release

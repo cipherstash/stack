@@ -1,0 +1,11 @@
+name: Composite Third Party Cache
+on:
+  push:
+    tags: ['v*']
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/thirdparty-cache
+      - run: pnpm changeset:publish

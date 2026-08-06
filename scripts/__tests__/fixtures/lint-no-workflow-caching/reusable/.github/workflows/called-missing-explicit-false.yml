@@ -1,0 +1,14 @@
+name: Called Missing Explicit False
+on:
+  workflow_call:
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22

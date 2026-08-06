@@ -1,0 +1,16 @@
+name: Clean Composite
+description: Sets up the toolchain with every cache explicitly disabled.
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v6
+      with:
+        run_install: false
+        cache: false
+    - name: Install Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: 22
+        package-manager-cache: false
+    - shell: bash
+      run: pnpm install --frozen-lockfile

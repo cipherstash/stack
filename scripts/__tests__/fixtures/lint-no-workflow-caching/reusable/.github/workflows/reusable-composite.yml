@@ -1,0 +1,8 @@
+name: Reusable Composite
+on:
+  push:
+    tags: ['v*']
+jobs:
+  publish:
+    uses: ./.github/workflows/called-composite.yml
+    secrets: inherit
