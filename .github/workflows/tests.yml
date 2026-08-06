@@ -108,14 +108,22 @@ jobs:
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
-      # Vendoring protect-ffi put it in `turbo test --filter './packages/*'`,
-      # so root `pnpm test` now runs ITS suite too — and
-      # `src/nativeLoading.test.ts` asserts the platform binary loads. Nothing
-      # else in this job produces `index.node`. The type steps below need
-      # `lib/` for the same reason: they call package scripts directly, so
-      # turbo's `^build` never runs and protect-ffi's declarations resolve to
-      # nothing. No `wasm: true` — every `wasm-inline` unit test either mocks
-      # the module or asserts on the bundle graph.
+      # `pnpm run test` below runs the `packages/stack` suites, and only 8 of
+      # those 120 files mock `@cipherstash/protect-ffi` — the rest load
+      # `index.node`, which nothing else in this job produces.
+      #
+      # NOT for protect-ffi's own suite, though vendoring it did add
+      # `@cipherstash/protect-ffi#test` to `turbo test --filter './packages/*'`.
+      # That suite must pass with no binding at all (its `build` is `tsc` and
+      # its `test` is deliberately cargo-free), and `src/lintWiring.test.ts`
+      # re-runs it here with the artifact hidden to keep that true — this job
+      # having a binding is exactly why that nested run is the only place the
+      # artifact-free path gets exercised in CI.
+      #
+      # The type steps below need `lib/`: they call package scripts directly,
+      # so turbo's `^build` never runs and protect-ffi's declarations resolve
+      # to nothing. No `wasm: true` — every `wasm-inline` unit test either
+      # mocks the module or asserts on the bundle graph.
       - name: Build the protect-ffi binding
         uses: ./.github/actions/build-ffi-binding
 

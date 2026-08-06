@@ -11,24 +11,35 @@
  * `@cipherstash/stack-prisma` reaches this package through one entry out of
  * fifteen.
  *
- * A regression here is silent for anyone with a binary installed, which is
- * everyone who would notice — so load timing is asserted against the EMITTED
- * JavaScript rather than behaviour. `lib/` exists by the time this runs:
- * `test:typecheck` emits it before `test:unit`.
+ * A regression here is silent for anyone with a binary installed — every
+ * consumer who installs from npm, and every CI job that has run
+ * `.github/actions/build-ffi-binding` — so the property is asserted against the
+ * EMITTED JavaScript rather than behaviour. `lib/` exists by the time this
+ * runs: `test:typecheck` emits it before `test:unit`.
  *
  * The same blind spot is why the last block goes the other way and asserts
  * behaviour: what `assertNativeBindingAvailable` does with a MISSING binary
  * cannot be read off the emit, so that block substitutes a failing loader
  * under the emitted entry instead of substituting an installation.
+ *
+ * Nothing in this file may REQUIRE a binary, though, and that is a separate
+ * rule from the ones above. `packages/protect-ffi`'s `test` is the default task
+ * root `pnpm test` reaches through `turbo test --filter './packages/*'`, and it
+ * is deliberately Rust-free: `index.node` stopped being tarball content when
+ * this package was absorbed, so on a fresh checkout there is no binary
+ * anywhere and the six `platforms/*` links are empty. `lintWiring.test.ts`
+ * guards that rule for the whole suite by re-running it with the artifact made
+ * unresolvable.
  */
 
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import Module, { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 // Vitest resolves cwd to the directory holding vitest.config.ts.
-const entryPath = join(process.cwd(), 'lib/index.cjs')
+const packageRoot = process.cwd()
+const entryPath = join(packageRoot, 'lib/index.cjs')
 
 // `lib/` is generated, so this file carries a prerequisite the package's `test`
 // chain satisfies and a bare `test:unit` does not. Without this guard the whole
@@ -97,8 +108,79 @@ describe('native binding load timing', () => {
   })
 })
 
+/**
+ * Every path a build of this package leaves an `index.node` at.
+ *
+ * This is the SPLIT the two branches below turn on, and it is deliberately a
+ * filesystem fact rather than `process.env.CI`. `CI` is a claim about which
+ * machine this is; the question is whether a cargo build has happened, which is
+ * observable directly. `CI` also lies in both directions — it is set by `act`,
+ * by pre-commit wrappers, and by anyone who exports it, none of which builds a
+ * binding; and it says nothing about a developer who ran `build:native` and
+ * whose positive case would then never be checked.
+ */
+function binariesUnder(dir: string): string[] {
+  if (!existsSync(dir)) return []
+  return readdirSync(dir).map((name) => join(dir, name, 'index.node'))
+}
+
+const BINDING_ARTIFACTS = [
+  // `build:native` → the `postcargo-build` hook → a bare `neon dist`, which
+  // writes it at the package ROOT. That is the `debug:` fallback registered in
+  // `src/load.cts`, and it is what `.github/actions/build-ffi-binding`
+  // produces — CI never populates a platform package.
+  join(packageRoot, 'index.node'),
+  // `neon dist -o platforms/<target>` — release packaging, and the shape an
+  // `npm install` of `@cipherstash/protect-ffi-<target>` leaves behind. In
+  // this workspace `node_modules/@cipherstash/protect-ffi-*` symlinks to
+  // `platforms/*` so the two overlap; for a consumer only the first exists.
+  ...binariesUnder(join(packageRoot, 'platforms')),
+  ...binariesUnder(join(packageRoot, 'node_modules/@cipherstash')),
+]
+
+// Zero-byte counts as absent, matching the `lib/index.cjs` guard above: an
+// interrupted `neon dist` leaves one, and treating it as present would send
+// this into the branch that demands a successful load.
+const builtArtifacts = BINDING_ARTIFACTS.filter(
+  (path) => existsSync(path) && statSync(path).size > 0,
+)
+
+/**
+ * The platform-package name in a loader failure, as `packages/cli` matches it
+ * (`PLATFORM_PKG` in `packages/cli/src/native.ts`).
+ *
+ * Copied rather than imported — this package does not depend on the CLI, and
+ * should not. The coupling is the point of the assertion: `index.cts`'s doc
+ * comment promises the loader's error propagates UNWRAPPED so that "existing
+ * classification of a missing binding keeps working unchanged", and the CLI is
+ * the code doing that classification. Nothing checked the promise against a
+ * real error until now: the CLI's own suite builds its inputs by hand
+ * (`moduleError("Cannot find module '@cipherstash/protect-ffi-darwin-arm64'")`
+ * in `packages/cli/src/__tests__/native.test.ts`), so it proves the matcher
+ * matches a string, not that the string is what the loader raises.
+ */
+const PLATFORM_PACKAGE =
+  /@cipherstash\/[a-z0-9-]+-(?:darwin|linux|win32)-[a-z0-9-]+/i
+
 describe('assertNativeBindingAvailable', () => {
   const mod = requireFromEntry(entryPath)
+
+  // Called ONCE, here, rather than inside a test: the loader memoises, so a
+  // second call after a first success is not a second load, and the branches
+  // below are two views of the same outcome rather than two attempts.
+  const outcome: { error: unknown } = (() => {
+    try {
+      mod.assertNativeBindingAvailable()
+      return { error: undefined }
+    } catch (error) {
+      return { error }
+    }
+  })()
+
+  const errorDetail =
+    outcome.error instanceof Error
+      ? `${outcome.error.name} [${(outcome.error as NodeJS.ErrnoException).code}]: ${outcome.error.message}`
+      : String(outcome.error)
 
   it('is exported from the package entry', () => {
     // `stash doctor` will consume this by name across a package boundary, so
@@ -106,18 +188,88 @@ describe('assertNativeBindingAvailable', () => {
     expect(typeof mod.assertNativeBindingAvailable).toBe('function')
   })
 
-  it('succeeds when the binding is present', () => {
-    // The positive half only — this suite runs where a binary is installed.
-    // The negative half (a `MODULE_NOT_FOUND` propagating unwrapped) is the
-    // last describe block in this file, which reproduces a missing binary by
-    // swapping the loader under this same emitted entry rather than by
-    // needing an installation without one.
-    expect(() => mod.assertNativeBindingAvailable()).not.toThrow()
+  it('loads a built binding, and fails classifiably when none is built', () => {
+    // This used to be a bare `expect(...).not.toThrow()` justified by "this
+    // suite runs where a binary is installed". That premise died with the
+    // absorption. `index.node` arrived prebuilt inside the npm tarball; as a
+    // workspace package it is a cargo output, the six `platforms/*` links are
+    // empty until someone builds one, and `packages/protect-ffi`'s `test` is
+    // deliberately Rust-free. So on every fresh checkout the assertion failed
+    // — and it failed under root `pnpm test`, which reaches this package via
+    // `turbo test --filter './packages/*'`.
+    //
+    // Both branches assert. A `skipIf` here would be the trade this repo keeps
+    // refusing: it goes quiet on every contributor machine, and quiet is
+    // indistinguishable from passing. What replaces it is that the artifact-
+    // free case has a contract of its OWN worth checking, and it is the one
+    // `stash doctor` and `reportNativeBinaryMissing` depend on.
+    if (builtArtifacts.length > 0) {
+      expect(
+        outcome.error,
+        `A binding is built at ${builtArtifacts.join(', ')}, so the loader must resolve it. It threw instead:\n  ${errorDetail}\nEither the artifact is broken (wrong architecture, truncated write) or \`assertNativeBindingAvailable\` no longer calls a native export that loads cleanly — \`native.isEncrypted(null)\` is chosen because it is pure, synchronous, and validates nothing before reaching the addon.`,
+      ).toBeUndefined()
+      return
+    }
+
+    expect(
+      outcome.error,
+      `No index.node exists under packages/protect-ffi, so the loader cannot succeed and this call must throw. Looked at:\n${BINDING_ARTIFACTS.map((path) => `  ${path}`).join('\n')}\nA success here means the binding came from somewhere none of those paths covers, and the check above is then gated on a list that no longer describes reality.`,
+    ).toBeInstanceOf(Error)
+
+    const error = outcome.error as NodeJS.ErrnoException & {
+      requireStack?: string[]
+    }
+    // The contract `index.cts` documents, verified against the real thing.
+    expect(
+      error.code,
+      `The loader failure must reach callers unwrapped as MODULE_NOT_FOUND. \`packages/cli\`'s \`isNativeBinaryMissing\` tests \`code\` first and returns false for anything else, so a wrapped or re-thrown error turns \`stash doctor\`'s actionable "native binary missing" note back into a raw stack trace. Got: ${errorDetail}`,
+    ).toBe('MODULE_NOT_FOUND')
+    expect(
+      `${error.message}\n${(error.requireStack ?? []).join('\n')}`,
+      `The failure must name the platform package so \`packages/cli\` can tell a missing NATIVE binary from any other missing module. Got: ${errorDetail}`,
+    ).toMatch(PLATFORM_PACKAGE)
+  })
+
+  it('has its success path exercised by the action that builds a binding', () => {
+    // The other half of the split above, and what stops the artifact-free
+    // branch from being a silent skip in disguise. The positive case only runs
+    // where a binding exists, which is no contributor machine by default — so
+    // the claim "it is checked where the artifact is guaranteed" has to be
+    // mechanically checkable rather than a sentence in a comment.
+    //
+    // `.github/actions/build-ffi-binding` is that place: it ends in a `Verify
+    // the binding loads` step calling this function through the emitted entry,
+    // immediately after producing `index.node`, and
+    // `scripts/__tests__/ffi-binding-step-order.test.mjs` requires every
+    // credentialed job (`tests.yml / run-tests` among them) to run it.
+    //
+    // Cut to `runs:` before searching, the way `integrationSuiteCi.test.ts`
+    // cuts to `jobs:`: the action's `description:` is prose, and a description
+    // that mentions proving the binding loads is not a step that proves it.
+    // Comments inside `runs:` go for the same reason.
+    const action = readFileSync(
+      join(packageRoot, '../../.github/actions/build-ffi-binding/action.yml'),
+      'utf8',
+    )
+    const runsAt = action.search(/^runs:/m)
+    expect(
+      runsAt,
+      'build-ffi-binding/action.yml has no `runs:` key, so it defines no steps and the search below would scan prose alone.',
+    ).toBeGreaterThan(-1)
+
+    expect(
+      action.slice(runsAt).replace(/^[ \t]*#.*$/gm, ''),
+      'No step in .github/actions/build-ffi-binding calls `assertNativeBindingAvailable`. That step is the only place the success path runs against a real binding: the test above takes its artifact-free branch on any checkout without one, which is every fresh checkout and every contributor who has not run `build:native`.',
+    ).toContain('assertNativeBindingAvailable')
   })
 
   it('reaches the loader rather than short-circuiting', () => {
     // The whole point is that it forces resolution, and a body that returned
-    // early would pass both tests above while proving nothing. Asserting on
+    // early would pass the load test above on any machine with a binding
+    // while proving nothing. (Without one it is caught there — an empty body
+    // does not throw, and the artifact-free branch requires a throw. Which is
+    // the wrong way round: the machines that have a binding are the ones this
+    // property is invisible on.) Asserting on
     // the emitted body — the technique the first describe block uses, and for
     // the same reason: on a machine with a binary installed, the difference
     // between forcing the load and not is invisible at runtime.
@@ -137,9 +289,15 @@ describe('assertNativeBindingAvailable', () => {
  * Its doc comment promises that when the platform binary is missing the
  * loader's error propagates **unwrapped** — same `code`, same `message` — so
  * that anything already classifying a missing binding keeps working. Nothing
- * asserted that. The test above deferred it to a CLI missing-binary fixture
+ * asserted that: the test above deferred it to a CLI missing-binary fixture
  * that does not exist, which left a promise about error handling verified by
  * prose alone.
+ *
+ * That test now checks the same contract on its artifact-free branch, which is
+ * a complement rather than a duplicate — it only runs where nothing has been
+ * built, so on the machines that DO have a binding (every CI job that ran
+ * `.github/actions/build-ffi-binding`, every developer who ran `build:native`)
+ * this block is the only place the missing-binary path executes at all.
  *
  * Reproduced by swapping the loader, not the environment: the REAL emitted
  * `lib/index.cjs` is re-required with a stand-in for `./load.cjs` whose
