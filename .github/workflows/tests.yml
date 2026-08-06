@@ -238,6 +238,14 @@ jobs:
       - name: Lint — no references to deleted package directories
         run: pnpm run lint:package-paths
 
+      # TEMPORARY — delete with the script in the phase-4 cutover PR.
+      # The seven protect-ffi packages live here but still publish from
+      # cipherstash/protectjs-ffi. A changeset naming any of them bumps all
+      # seven through their fixed group and the next release tries a publish
+      # npm has not been repointed to trust.
+      - name: Lint — no protect-ffi changeset before the publishing cutover
+        run: pnpm run lint:ffi-changeset
+
       - name: Test — lint script self-tests
         run: pnpm run test:scripts
 
@@ -371,15 +379,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # The Deno smoke test imports the locally-built dist/wasm-inline.js
-      # via a file URL in e2e/wasm/deno.json — it needs a fresh build.
-      - name: Build stack
-        run: pnpm exec turbo run build --filter @cipherstash/stack
-
       # The e2e/wasm suites FAIL when any of the four CS_* env vars is
       # missing (requireEnv throws — no skip gating), so a rotated / cleared
       # secret can't hide a real WASM regression behind a green job. This
-      # preflight just fails faster, before the Deno module downloads.
+      # preflight just fails faster, before the two builds below and the Deno
+      # module downloads.
+      #
+      # It is the preflight that moves above the binding build here, not the
+      # binding build that moves below it: `Build stack` consumes
+      # protect-ffi's dist/wasm output, so the two build steps have to stay in
+      # this order.
       - name: Require CipherStash secrets
         uses: ./.github/actions/require-cs-secrets
         with:
@@ -387,6 +396,33 @@ jobs:
           client-id: ${{ vars.CS_CLIENT_ID }}
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+      # `wasm: true` — this is the job the WASM output exists for. stack's
+      # dist/wasm-inline.js imports protect-ffi's dist/wasm/protect_ffi_inline.js
+      # by relative path, and only the three .d.ts under dist/wasm are tracked;
+      # the .js and .wasm come from wasm-pack and nothing else in CI runs it.
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/build-ffi-binding
+        with:
+          wasm: 'true'
+
+      # The only job that can run this: the type tests read the GENERATED
+      # dist/wasm/*.d.ts (wasm-bindgen emits them from the `typescript_type`
+      # attributes in crates/protect-ffi/src/wasm.rs) and those declarations
+      # import ../../lib/types.js, so it needs both halves of the step above.
+      # That is why it is exempt from protect-ffi's `test` entry point, which
+      # must pass in a fresh clone with no dist/ — and the exemption in
+      # src/lintWiring.test.ts asserts this step exists, because between the
+      # absorption and this line the check ran nowhere at all: the jobs its
+      # exemption named were the upstream copies under
+      # packages/protect-ffi/.github/, which GitHub never executes.
+      - name: Typecheck the generated WASM declarations
+        run: pnpm --filter @cipherstash/protect-ffi run test:typecheck:wasm
+
+      # The Deno smoke test imports the locally-built dist/wasm-inline.js
+      # via a file URL in e2e/wasm/deno.json — it needs a fresh build.
+      - name: Build stack
+        run: pnpm exec turbo run build --filter @cipherstash/stack
 
       - name: Run Deno WASM smoke test
         working-directory: e2e/wasm

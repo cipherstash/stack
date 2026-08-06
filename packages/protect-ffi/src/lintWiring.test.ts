@@ -187,12 +187,10 @@ function reachableFromAnyEntryPoint(): Set<string> {
  * repository root alone, never executed.
  */
 const ENTRY_POINT_EXEMPT: Record<string, string> = {
-  // Empty, and that is the correct state rather than an oversight: every
-  // `test:*` script this package declares is reachable from `test` or
-  // `test:cargo`. `test:typecheck:wasm` is the one carve-out this list was
-  // written for, and it arrives with the root tests.yml job that runs it —
-  // adding the script here before that job exists is precisely the laundering
-  // the paragraph above describes.
+  // Runs against the generated wasm .d.ts, so it needs `pnpm run build:wasm`
+  // first. The default test must still pass in a clone with no dist/, so this
+  // one belongs to the wasm job in the root tests.yml.
+  'test:typecheck:wasm': 'needs dist/wasm, run by the root wasm-e2e job',
 }
 
 describe('lint and format wiring', () => {

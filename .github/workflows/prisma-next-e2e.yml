@@ -18,6 +18,18 @@ on:
       - 'packages/stack-prisma/**'
       - 'examples/prisma/**'
       - '.github/workflows/prisma-next-e2e.yml'
+      # This suite encrypts against the live service, so the native binding and
+      # the action that builds it are inputs to it. Added with that build step:
+      # without them a protect-ffi change reaches main having never run this
+      # suite, and the step itself is only ever exercised by the push-to-main
+      # run.
+      - '.github/actions/build-ffi-binding/**'
+      - 'packages/protect-ffi/crates/**'
+      - 'packages/protect-ffi/src/**'
+      - 'packages/protect-ffi/Cargo.toml'
+      - 'packages/protect-ffi/Cargo.lock'
+      - 'packages/protect-ffi/package.json'
+      - 'packages/protect-ffi/mise.toml'
   pull_request:
     branches:
       - '**'
@@ -25,6 +37,18 @@ on:
       - 'packages/stack-prisma/**'
       - 'examples/prisma/**'
       - '.github/workflows/prisma-next-e2e.yml'
+      # This suite encrypts against the live service, so the native binding and
+      # the action that builds it are inputs to it. Added with that build step:
+      # without them a protect-ffi change reaches main having never run this
+      # suite, and the step itself is only ever exercised by the push-to-main
+      # run.
+      - '.github/actions/build-ffi-binding/**'
+      - 'packages/protect-ffi/crates/**'
+      - 'packages/protect-ffi/src/**'
+      - 'packages/protect-ffi/Cargo.toml'
+      - 'packages/protect-ffi/Cargo.lock'
+      - 'packages/protect-ffi/package.json'
+      - 'packages/protect-ffi/mise.toml'
 
 jobs:
   e2e:
@@ -75,6 +99,8 @@ jobs:
       # The global-setup hook hard-errors without CS_WORKSPACE_CRN, but a
       # missing sibling secret could still degrade coverage silently — assert
       # all four up front so a rotated / fork-PR-absent secret fails loudly.
+      # First, ahead of the binding build: this costs seconds and that costs
+      # minutes on a cold cache.
       - name: Require CipherStash secrets
         uses: ./.github/actions/require-cs-secrets
         with:
@@ -82,6 +108,12 @@ jobs:
           client-id: ${{ vars.CS_CLIENT_ID }}
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+      # This suite encrypts against the live service, so it needs the native
+      # binding. Path-filtered away from the absorption PR that introduced the
+      # need, but it runs on push to main and on any PR touching its paths.
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/build-ffi-binding
 
       # Write the CS_* credentials and the harness DATABASE_URL into the
       # example app's .env so the runtime + the `prisma-next migration

@@ -55,8 +55,8 @@ const PARENT_USES = /^\.\.\//
 // `useblacksmith/cache@v5` and `Swatinem/rust-cache@v2`: `OK`, exit 0. Both are
 // live-relevant here — eleven jobs in this repo run on `blacksmith-*` runners,
 // where `useblacksmith/cache` is the documented drop-in for `actions/cache`,
-// and an in-tree Cargo workspace is exactly where someone reaches for
-// `Swatinem/rust-cache`.
+// and the absorbed Cargo workspace at `packages/protect-ffi` is exactly where
+// someone reaches for `Swatinem/rust-cache`.
 //
 // The obvious repair is to enumerate the cache actions — by name
 // (`useblacksmith/cache`, `buildjet/cache`, `runs-on/cache`, `tespkg/actions-

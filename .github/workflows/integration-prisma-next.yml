@@ -33,6 +33,22 @@ on:
       - '.github/workflows/integration-prisma-next.yml'
       - '.github/actions/integration-setup/**'
       - '.github/actions/integration-db/**'
+      - '.github/actions/build-ffi-binding/**'
+      # The Rust that produces every EQL payload these suites round-trip.
+      # Absorbing protect-ffi put it in-tree, so a crate change can now
+      # break them in a PR that touches no TypeScript at all.
+      #
+      # The manifests are here for the same reason as the sources: a
+      # dependency bump in Cargo.lock changes the compiled encryption core
+      # without touching a .rs file, and package.json / mise.toml carry the
+      # build scripts and the toolchain pin. Matching the filter in
+      # tests-rust.yml, which already covers all four.
+      - 'packages/protect-ffi/crates/**'
+      - 'packages/protect-ffi/src/**'
+      - 'packages/protect-ffi/Cargo.toml'
+      - 'packages/protect-ffi/Cargo.lock'
+      - 'packages/protect-ffi/package.json'
+      - 'packages/protect-ffi/mise.toml'
   pull_request:
     branches: ['**']
     # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
@@ -52,6 +68,22 @@ on:
       - '.github/workflows/integration-prisma-next.yml'
       - '.github/actions/integration-setup/**'
       - '.github/actions/integration-db/**'
+      - '.github/actions/build-ffi-binding/**'
+      # The Rust that produces every EQL payload these suites round-trip.
+      # Absorbing protect-ffi put it in-tree, so a crate change can now
+      # break them in a PR that touches no TypeScript at all.
+      #
+      # The manifests are here for the same reason as the sources: a
+      # dependency bump in Cargo.lock changes the compiled encryption core
+      # without touching a .rs file, and package.json / mise.toml carry the
+      # build scripts and the toolchain pin. Matching the filter in
+      # tests-rust.yml, which already covers all four.
+      - 'packages/protect-ffi/crates/**'
+      - 'packages/protect-ffi/src/**'
+      - 'packages/protect-ffi/Cargo.toml'
+      - 'packages/protect-ffi/Cargo.lock'
+      - 'packages/protect-ffi/package.json'
+      - 'packages/protect-ffi/mise.toml'
 
 jobs:
   integration:
@@ -94,8 +126,9 @@ jobs:
       - uses: ./.github/actions/integration-setup
 
       # Fast pre-flight: fail in seconds if a secret was rotated or cleared,
-      # before the docker pull. The in-test `requireIntegrationEnv` is the
-      # correctness guarantee; this is the cheap one.
+      # before the binding build and the docker pull. The in-test
+      # `requireIntegrationEnv` is the correctness guarantee; this is the cheap
+      # one, so nothing expensive may be ordered ahead of it.
       - name: Require CipherStash secrets
         uses: ./.github/actions/require-cs-secrets
         with:
@@ -103,6 +136,11 @@ jobs:
           client-id: ${{ vars.CS_CLIENT_ID }}
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+      # No `wasm: true` — the prisma-next family suites go through the native
+      # binding only.
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/build-ffi-binding
 
       # No pre-`up` cleanup step any more: the project name is unique per job, so
       # a container leaked by a hard-killed prior run cannot hold this job's
