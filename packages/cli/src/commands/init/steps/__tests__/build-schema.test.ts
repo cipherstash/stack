@@ -40,7 +40,7 @@ import { buildSchemaStep } from '../build-schema.js'
 const baseState = {
   databaseUrl: 'postgresql://localhost:5432/app',
 } as unknown as InitState
-const provider = { name: 'postgresql' } as unknown as InitProvider
+const provider = { name: 'base', selected: [] } as unknown as InitProvider
 
 describe('buildSchemaStep', () => {
   beforeEach(() => {
@@ -84,9 +84,31 @@ describe('buildSchemaStep', () => {
     // value stays 'prisma-next' so skill/dep/prompt wiring is unchanged.
     // Prisma Next derives its schema from contract.json, so there is no
     // placeholder client to write.
-    const prismaProvider = { name: 'prisma' } as unknown as InitProvider
+    const prismaProvider = {
+      name: 'prisma',
+      selected: ['prisma'],
+    } as unknown as InitProvider
 
     const result = await buildSchemaStep.run(baseState, prismaProvider)
+
+    expect(result.integration).toBe('prisma-next')
+    expect(result.schemaGenerated).toBe(false)
+    expect(writeFileSyncMock).not.toHaveBeenCalled()
+  })
+
+  it('still forces prisma-next when `--prisma` is combined with another flag', async () => {
+    // `stash init --prisma --supabase` joins the flags into a single provider
+    // name for referrer tracking — 'prisma-supabase', which is not 'prisma'.
+    // Reading that name here dropped the run onto `detectIntegration`, and a
+    // fresh project with no prisma-next config detects as raw postgres: init
+    // then wrote a placeholder client Prisma Next never uses and reported an
+    // integration the rest of the pipeline routes on.
+    const prismaSupabase = {
+      name: 'prisma-supabase',
+      selected: ['supabase', 'prisma'],
+    } as unknown as InitProvider
+
+    const result = await buildSchemaStep.run(baseState, prismaSupabase)
 
     expect(result.integration).toBe('prisma-next')
     expect(result.schemaGenerated).toBe(false)

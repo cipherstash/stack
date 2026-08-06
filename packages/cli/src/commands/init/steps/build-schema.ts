@@ -60,10 +60,14 @@ export const buildSchemaStep: InitStep = {
   name: 'Generate encryption client',
   async run(state: InitState, provider: InitProvider): Promise<InitState> {
     const cwd = process.cwd()
-    const integration =
-      provider.name === 'prisma'
-        ? 'prisma-next'
-        : detectIntegration(cwd, state.databaseUrl)
+    // `provider.selected`, not `provider.name`: a combined run
+    // (`--prisma --supabase`) names itself 'prisma-supabase', so an equality
+    // test here dropped it onto `detectIntegration` — which, on a project whose
+    // prisma-next config isn't in place yet, answers 'postgresql' and sends the
+    // rest of the pipeline down the wrong route.
+    const integration = provider.selected.includes('prisma')
+      ? 'prisma-next'
+      : detectIntegration(cwd, state.databaseUrl)
     const clientFilePath = DEFAULT_CLIENT_PATH
     const resolvedPath = resolve(cwd, clientFilePath)
 

@@ -86,19 +86,37 @@ const supabaseState = {
   integration: 'supabase',
   databaseUrl: 'postgresql://localhost:54322/postgres',
 } as unknown as InitState
-const supabaseProvider = { name: 'supabase' } as unknown as InitProvider
+const supabaseProvider = {
+  name: 'supabase',
+  selected: ['supabase'],
+} as unknown as InitProvider
 
 const drizzleState = {
   integration: 'drizzle',
   databaseUrl: 'postgresql://localhost:5432/app',
 } as unknown as InitState
-const drizzleProvider = { name: 'drizzle' } as unknown as InitProvider
+const drizzleProvider = {
+  name: 'drizzle',
+  selected: ['drizzle'],
+} as unknown as InitProvider
 
 const baseState = {
   integration: 'postgresql',
   databaseUrl: 'postgresql://localhost:5432/app',
 } as unknown as InitState
-const provider = { name: 'postgresql' } as unknown as InitProvider
+const provider = { name: 'base', selected: [] } as unknown as InitProvider
+
+/**
+ * What `resolveProvider` hands the steps for `stash init --drizzle --supabase`:
+ * the first matched provider supplies the UX, `name` combines every matched
+ * flag for referrer tracking, and `selected` carries the flags themselves.
+ * `name` is deliberately neither 'drizzle' nor 'supabase' — that is exactly the
+ * shape the equality checks used to fall through on.
+ */
+const drizzleSupabaseProvider = {
+  name: 'drizzle-supabase',
+  selected: ['supabase', 'drizzle'],
+} as unknown as InitProvider
 
 describe('installEqlStep', () => {
   beforeEach(() => {
@@ -227,7 +245,7 @@ describe('installEqlStep', () => {
     it('forwards --supabase so a Drizzle-on-Supabase project gets the role grants', async () => {
       await installEqlStep.run(
         { ...drizzleState, integration: 'drizzle' } as InitState,
-        { name: 'supabase' } as unknown as InitProvider,
+        supabaseProvider,
       )
 
       expect(vi.mocked(eqlMigrationCommand).mock.calls[0][0].supabase).toBe(
@@ -475,6 +493,107 @@ describe('installEqlStep', () => {
         drizzle: true,
         supabase: true,
       })
+    })
+  })
+
+  describe('combined integration flags (`--drizzle --supabase`)', () => {
+    // The CLI accepts both flags (nothing rejects the combination), and
+    // `resolveProvider` then joins them into a single `name` for referrer
+    // tracking. Every routing decision here reads the FLAGS, never that name —
+    // a name of 'drizzle-supabase' equals neither 'drizzle' nor 'supabase', so
+    // matching on it sent a combined run down the direct-install path.
+
+    it('routes a LOCAL Supabase + Drizzle project to the Drizzle migration, not a direct install (#613)', async () => {
+      // The reported failure. `detectIntegration` reads the DATABASE_URL host
+      // and a local Supabase stack is 127.0.0.1:54322, so `state.integration`
+      // lands on 'postgresql' — the flags are the only signal left. With both
+      // going false, `resolveMigrationRoute` returned null and init installed
+      // EQL directly: no migration file, no Supabase role grants, and the next
+      // `supabase db reset` wipes the install.
+      //
+      // No local `supabase/` scaffolding here on purpose: the Drizzle route
+      // does not need it, so this also pins that the route is Drizzle's.
+      withSupabaseScaffolding(false)
+
+      const result = await installEqlStep.run(
+        {
+          integration: 'postgresql',
+          databaseUrl: 'postgresql://127.0.0.1:54322/postgres',
+        } as unknown as InitState,
+        drizzleSupabaseProvider,
+      )
+
+      expect(installCommand).not.toHaveBeenCalled()
+      expect(eqlMigrationCommand).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(eqlMigrationCommand).mock.calls[0][0]).toMatchObject({
+        drizzle: true,
+        // `--supabase` is the grants modifier on the Drizzle route: without it
+        // the migration omits the anon/authenticated/service_role grants.
+        supabase: true,
+        embedded: true,
+      })
+      expect(result.eqlMigrationPending).toBe(true)
+      expect(result.eqlInstalled).toBe(false)
+    })
+
+    it('takes the same route when the integration was detected as supabase', async () => {
+      withSupabaseScaffolding(true)
+
+      await installEqlStep.run(supabaseState, drizzleSupabaseProvider)
+
+      expect(installCommand).not.toHaveBeenCalled()
+      expect(vi.mocked(eqlMigrationCommand).mock.calls[0][0]).toMatchObject({
+        drizzle: true,
+        supabase: true,
+      })
+    })
+
+    it('takes the same route when the integration was detected as drizzle', async () => {
+      await installEqlStep.run(drizzleState, drizzleSupabaseProvider)
+
+      expect(installCommand).not.toHaveBeenCalled()
+      expect(vi.mocked(eqlMigrationCommand).mock.calls[0][0]).toMatchObject({
+        drizzle: true,
+        supabase: true,
+      })
+    })
+
+    it('offers the migration prompt, not the database-install prompt', async () => {
+      // The prompt must describe the route the run is actually on — the
+      // combined run used to be asked about installing into the database and
+      // then... installed into the database, which at least agreed with itself
+      // but was the wrong route.
+      withSupabaseScaffolding(false)
+
+      await installEqlStep.run(
+        { integration: 'postgresql' } as unknown as InitState,
+        drizzleSupabaseProvider,
+      )
+
+      expect(confirmMessage()).toMatch(/migration/i)
+      expect(confirmMessage()).not.toContain(
+        'Install the EQL extension into your database',
+      )
+    })
+
+    it('keeps the Prisma skip when `--prisma` is combined with another flag', async () => {
+      // `--prisma --supabase` joins to 'prisma-supabase', which is not
+      // 'prisma', so the skip fell through and init ran a duplicate install
+      // that races `prisma-next migrate`'s journal.
+      const prismaSupabase = {
+        name: 'prisma-supabase',
+        selected: ['supabase', 'prisma'],
+      } as unknown as InitProvider
+
+      const result = await installEqlStep.run(
+        { integration: 'postgresql' } as unknown as InitState,
+        prismaSupabase,
+      )
+
+      expect(p.confirm).not.toHaveBeenCalled()
+      expect(installCommand).not.toHaveBeenCalled()
+      expect(eqlMigrationCommand).not.toHaveBeenCalled()
+      expect(result.eqlInstalled).toBe(false)
     })
   })
 

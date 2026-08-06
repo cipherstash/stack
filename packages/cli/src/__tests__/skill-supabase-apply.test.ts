@@ -60,4 +60,44 @@ describe('skills — Supabase apply commands', () => {
       ).toMatch(/^(?: --linked\b| applies to the local database\b)/i)
     }
   })
+
+  /**
+   * `supabase migration repair --status applied <version>` writes a ledger row
+   * and runs no SQL. That is the right move for a back-dated install on a
+   * remote that already HAS EQL — pushing the file there re-runs a bundle
+   * opening with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`. It is unrecoverable on
+   * a remote that does not: the row asserts SQL ran that never did, so no later
+   * push ever installs EQL, and the first `eql_v3` reference fails with nothing
+   * pointing at the cause. Every other remedy in this area fails loudly and can
+   * be retried; this one fails silently and cannot.
+   *
+   * So the rule: wherever a shipped skill recommends the ledger-only repair, a
+   * command that establishes the remote's actual EQL state must appear shortly
+   * BEFORE it. Before, because a check printed after the repair verifies
+   * nothing — the row is already written. `eql_v3.version()` specifically,
+   * because it is created by the bundle's closing statements and so cannot
+   * resolve on a half-applied install, unlike the `eql_v3` schema itself.
+   */
+  it.each(
+    SKILL_FILES,
+  )('$skill never recommends the ledger-only repair without a check above it', ({
+    body,
+  }) => {
+    // Same wrap-collapsing as above, minus the `_` strip: the marker here is
+    // `eql_v3.version()`, which that strip would turn into `eqlv3.version()`.
+    const prose = body.replace(/\s+/g, ' ').replace(/[*`]/g, '')
+
+    for (const match of prose.matchAll(/migration repair --status applied/g)) {
+      // A paragraph's worth of lead-in. Wide enough for the sentence that
+      // introduces the check plus the one that explains what its output means,
+      // narrow enough that an `eql_v3.version()` mention elsewhere in the
+      // document cannot stand in for one attached to this recommendation.
+      const preceding = prose.slice(Math.max(0, match.index - 700), match.index)
+
+      expect(
+        preceding,
+        '`migration repair --status applied` writes a ledger row for SQL that may never have run — an unrecoverable state on a remote without EQL. Print the `select eql_v3.version()` check above this recommendation, not after it',
+      ).toContain('eql_v3.version()')
+    }
+  })
 })

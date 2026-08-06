@@ -206,15 +206,26 @@ export const installEqlStep: InitStep = {
     // migrations — running `stash eql install` here would be a
     // duplicate install and would race with the framework's
     // migration journal. Skip with guidance instead.
-    if (integration === 'prisma-next' || provider.name === 'prisma') {
+    if (integration === 'prisma-next' || provider.selected.includes('prisma')) {
       p.log.success(
         'Skipping `stash eql install` — Prisma Next installs the EQL bundle via `prisma-next migrate` (runs alongside your app migrations).',
       )
       return { ...state, eqlInstalled: false }
     }
 
-    const supabase = integration === 'supabase' || provider.name === 'supabase'
-    const drizzle = integration === 'drizzle' || provider.name === 'drizzle'
+    // Two signals per integration: what the project looks like, and what the
+    // user asked for. The flag half reads `provider.selected` rather than
+    // `provider.name` because the flags combine — `stash init --drizzle
+    // --supabase` names itself 'drizzle-supabase', which equals neither, so
+    // both went false, `resolveMigrationRoute` returned null, and a local
+    // Supabase + Drizzle project (integration 'postgresql', because the host is
+    // 127.0.0.1:54322) got a direct install with no migration file and no role
+    // grants — the #613 failure, reached through a flag combination the CLI
+    // accepts.
+    const supabase =
+      integration === 'supabase' || provider.selected.includes('supabase')
+    const drizzle =
+      integration === 'drizzle' || provider.selected.includes('drizzle')
 
     // Resolved BEFORE the prompt, not at the branch below, because everything
     // the user reads next has to describe the route they are actually on.

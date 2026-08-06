@@ -14,15 +14,26 @@ import { gatherContextStep } from './steps/gather-context.js'
 import { installDepsStep } from './steps/install-deps.js'
 import { installEqlStep } from './steps/install-eql.js'
 import { resolveDatabaseStep } from './steps/resolve-database.js'
-import type { InitProvider, InitState } from './types.js'
+import type { InitProvider, InitState, ProviderKey } from './types.js'
 import { CancelledError } from './types.js'
 import { detectPackageManager, runnerCommand } from './utils.js'
 
-const PROVIDER_MAP: Record<string, () => InitProvider> = {
+/**
+ * The integration flags and the provider each selects. Declaration order is the
+ * tie-break for a multi-flag run: the first match supplies the UX (intro copy),
+ * and `provider.selected` lists the matches in this order — so anything
+ * iterating the selection is deterministic regardless of argv order.
+ */
+const PROVIDER_MAP: Record<ProviderKey, () => InitProvider> = {
   supabase: createSupabaseProvider,
   drizzle: createDrizzleProvider,
   prisma: createPrismaProvider,
 }
+
+/** Derived from the map rather than written out again: a hand-maintained copy
+ * would let a new provider be added in one place only, and the flag would then
+ * silently do nothing. */
+const PROVIDER_KEYS = Object.keys(PROVIDER_MAP) as ProviderKey[]
 
 /**
  * `stash init` does scaffold-once work only: auth, database connection,
@@ -44,24 +55,43 @@ const STEPS = [
   gatherContextStep,
 ]
 
+/**
+ * Turn the integration flags into the provider the pipeline threads through
+ * every step.
+ *
+ * The flags are NOT mutually exclusive — `stash init --drizzle --supabase` is a
+ * real invocation (a Drizzle project on Supabase), and nothing upstream rejects
+ * it. Two separate things fall out of that, and conflating them was the bug:
+ *
+ * - `name` is the REFERRER. A multi-flag run joins every matched flag
+ *   alphabetically, matching what `stash auth login --drizzle --supabase`
+ *   records, and `authenticateStep` passes it to `login()`.
+ * - `selected` is the CAPABILITY SIGNAL. Because the combined name equals no
+ *   single flag, every `provider.name === 'supabase'` test in the pipeline went
+ *   false on a combined run: init installed EQL directly instead of writing a
+ *   migration, skipped the Supabase grants, skipped the Prisma branch, and
+ *   installed no adapter package. Steps read this list instead, so the two
+ *   concerns can't drift back together.
+ */
 function resolveProvider(flags: Record<string, boolean>): InitProvider {
-  // When multiple flags are set, use the first matching provider but
-  // combine all flag names into the provider name for referrer tracking.
-  const matchedKeys = Object.keys(PROVIDER_MAP).filter((key) => flags[key])
+  const matchedKeys = PROVIDER_KEYS.filter((key) => flags[key])
 
   if (matchedKeys.length === 0) {
     return createBaseProvider()
   }
 
-  // Use the first matched provider for UX (intro message, connection options, etc.)
+  // The first matched provider supplies the UX (intro message).
   // matchedKeys[0] is guaranteed by the length check above; the optional chain
   // is just to satisfy biome's no-non-null-assertion rule.
   const factory = PROVIDER_MAP[matchedKeys[0]]
   const provider = factory ? factory() : createBaseProvider()
 
-  // Combine all matched flag names for the referrer
+  provider.selected = matchedKeys
+  // Combine all matched flag names for the referrer. Sorted on a COPY: sorting
+  // `matchedKeys` in place would reorder `selected` too, now that it is the
+  // same array.
   if (matchedKeys.length > 1) {
-    provider.name = matchedKeys.sort().join('-')
+    provider.name = [...matchedKeys].sort().join('-')
   }
 
   return provider
@@ -148,10 +178,16 @@ export async function initCommand(
       // `drizzle-kit migrate` at the very user the Supabase route targets.
       // Drizzle wins when both fire: it owns the migration history there, and
       // `--supabase` is only the grants modifier.
+      //
+      // The flag half reads `provider.selected`, never `provider.name` — a
+      // combined `--drizzle --supabase` run names itself 'drizzle-supabase',
+      // which is neither, so both halves went false and the apply step fell
+      // through to the drizzle-kit default with no reasoning behind it.
       const isDrizzle =
-        state.integration === 'drizzle' || provider.name === 'drizzle'
+        state.integration === 'drizzle' || provider.selected.includes('drizzle')
       const isSupabase =
-        state.integration === 'supabase' || provider.name === 'supabase'
+        state.integration === 'supabase' ||
+        provider.selected.includes('supabase')
       const applyStep =
         isSupabase && !isDrizzle
           ? 'apply it with `supabase db reset` (local) or `supabase db push` (remote)'

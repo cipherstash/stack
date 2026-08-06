@@ -324,7 +324,19 @@ This writes `supabase/migrations/<timestamp>_cipherstash_eql.sql` containing the
 
 The file is timestamped at generation time, so it sorts after everything already applied and pushes with no extra flag. An out-of-order version is not merely skipped — `supabase db push` aborts the whole push with `Found local migration files to be inserted before the last migration on remote database.` and applies nothing until you re-run with `--include-all`.
 
-If the project already has migrations that reference EQL (an `eql_v3_*` column added back when `eql install` was applied directly), those now sort *before* the install. `supabase db reset` replays in version order with no dependency awareness, so they run first and the reset fails with `type "eql_v3_text_search" does not exist`. The command warns and names them; rename the install migration to a version below the earliest of them so it replays first. How that back-dated version reaches a remote depends on the remote. Where `eql install` has already run, EQL is present and only the ledger row is missing — mark it applied with `supabase migration repair --status applied <version>`, which writes the row and runs no SQL. Do not push the file there instead: that re-runs a bundle opening with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, dropping every index, constraint, and RLS policy that references those schemas. A remote that genuinely still needs the SQL applied takes `supabase db push --include-all`.
+If the project already has migrations that reference EQL (an `eql_v3_*` column added back when `eql install` was applied directly), those now sort *before* the install. `supabase db reset` replays in version order with no dependency awareness, so they run first and the reset fails with `type "eql_v3_text_search" does not exist`. The command warns and names them; rename the install migration to a version below the earliest of them so it replays first.
+
+How that back-dated version reaches a remote depends on what that remote actually has, so check before touching the ledger:
+
+```bash
+psql "$REMOTE_DATABASE_URL" -Atc "select eql_v3.version()"
+```
+
+`eql_v3.version()` is created by the bundle's last statements, so it answers "is the whole install there" — a probe for the `eql_v3` schema does not, since that schema is created by the bundle's first statements and survives an install that aborted partway.
+
+If it prints a version, EQL is present and only the ledger row is missing — mark it applied with `supabase migration repair --status applied <version>`, which writes the row and runs no SQL. Do not push the file there instead: that re-runs a bundle opening with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, dropping every index, constraint, and RLS policy that references those schemas.
+
+If it errors, that remote genuinely still needs the SQL applied: `supabase db push --include-all`. Never mark it applied there — the ledger row would claim SQL that never ran, so no later push installs EQL, and the first migration referencing `eql_v3` fails with nothing pointing at the cause.
 
 Pass `--force` to regenerate an existing install migration in place. It keeps its version, so `supabase db push` will **not** re-apply it — pending migrations are decided by version, never by file content, and push reports `Remote database is up to date.` Use `supabase db reset` locally, or on a remote:
 

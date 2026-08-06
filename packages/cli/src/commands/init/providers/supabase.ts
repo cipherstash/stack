@@ -4,6 +4,7 @@ import { type PackageManager, runnerCommand } from '../utils.js'
 export function createSupabaseProvider(): InitProvider {
   return {
     name: 'supabase',
+    selected: ['supabase'],
     introMessage: 'Setting up CipherStash for your Supabase project...',
     getNextSteps(state: InitState, pm: PackageManager): string[] {
       const cli = runnerCommand(pm, 'stash')

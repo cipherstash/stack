@@ -457,6 +457,42 @@ describe('eqlMigrationCommand — Supabase', () => {
       expect(warnings()).toContain('--include-all')
     })
 
+    it('makes the remote state a check to run, ahead of the ledger repair', async () => {
+      // Which half of that split applies turns on a fact the user is otherwise
+      // never asked to establish. Marking a version applied is the one remedy
+      // here with no self-correcting failure: get it wrong and the ledger
+      // claims SQL ran that never did, so no later push installs EQL and the
+      // first `eql_v3` reference fails with nothing pointing at the cause. The
+      // check therefore has to be a printed command, above the repair.
+      writeFileSync(join(tmp, EARLIER), ENCRYPTED_COLUMN_SQL)
+
+      await eqlMigrationCommand({ supabase: true, out: tmp })
+
+      const warning = warnings()
+      expect(warning).toContain(
+        'psql "$REMOTE_DATABASE_URL" -Atc "select eql_v3.version()"',
+      )
+      expect(warning.indexOf('select eql_v3.version()')).toBeLessThan(
+        warning.indexOf('supabase migration repair --status applied'),
+      )
+    })
+
+    it('checks a bundle-final object, which a half-applied install lacks', async () => {
+      // `eql_v3.version()` is created by the bundle's closing statements, so it
+      // is present only if the whole install ran. A probe for the `eql_v3`
+      // schema would pass on an install that aborted halfway — the schema is
+      // created by the bundle's opening statements — and "partially installed"
+      // read as "installed" is exactly the state the ledger row must not be
+      // written for.
+      writeFileSync(join(tmp, EARLIER), ENCRYPTED_COLUMN_SQL)
+
+      await eqlMigrationCommand({ supabase: true, out: tmp })
+
+      expect(warnings()).toMatch(/last statements of the bundle/)
+      // The unrecoverable direction is named, not left as an inference.
+      expect(warnings()).toMatch(/[Nn]ever mark it applied/)
+    })
+
     it('stays quiet when the EQL-referencing migration sorts after the install', async () => {
       writeFileSync(
         join(tmp, '20990101000000_add_email_encrypted.sql'),

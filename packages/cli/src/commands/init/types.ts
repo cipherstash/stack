@@ -4,6 +4,26 @@ import type { PackageManager } from './utils.js'
 
 export type Integration = 'drizzle' | 'supabase' | 'prisma-next' | 'postgresql'
 
+/**
+ * The integration flags `stash init` accepts (`--supabase`, `--drizzle`,
+ * `--prisma`). They are not mutually exclusive — `stash init --drizzle
+ * --supabase` is a real, accepted invocation for a Drizzle project on Supabase.
+ */
+export type ProviderKey = 'supabase' | 'drizzle' | 'prisma'
+
+/**
+ * The {@link Integration} each flag selects. `--prisma` is the odd one out: the
+ * flag is short for consistency with `--supabase` / `--drizzle`, but the
+ * integration it selects is Prisma Next (see providers/prisma.ts).
+ */
+export const PROVIDER_KEY_INTEGRATION: Readonly<
+  Record<ProviderKey, Integration>
+> = {
+  supabase: 'supabase',
+  drizzle: 'drizzle',
+  prisma: 'prisma-next',
+}
+
 export type DataType = 'string' | 'number' | 'boolean' | 'date' | 'json'
 
 /**
@@ -148,7 +168,24 @@ export interface HandoffStep {
 }
 
 export interface InitProvider {
+  /**
+   * Referrer / display identity, NOT a routing signal. A multi-flag run joins
+   * every matched flag alphabetically (`stash init --drizzle --supabase` →
+   * `'drizzle-supabase'`), matching the referrer `stash auth login --drizzle
+   * --supabase` records, and `authenticateStep` passes it straight to
+   * `login()`. Because that combined string equals no single flag name, code
+   * that branched on `provider.name === 'supabase'` fell through on every
+   * combined run — read {@link InitProvider.selected} instead.
+   */
   name: string
+  /**
+   * The integration flags the user actually passed, in `PROVIDER_KEYS` order
+   * (`resolveProvider`, init/index.ts). This is the capability signal: every
+   * step that asks "is this a Supabase run?" tests membership here rather than
+   * parsing `name`, so combined flags keep working and `name` stays free to
+   * carry whatever the referrer needs.
+   */
+  selected: readonly ProviderKey[]
   introMessage: string
   getNextSteps(state: InitState, pm: PackageManager): string[]
 }

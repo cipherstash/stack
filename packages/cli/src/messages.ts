@@ -186,12 +186,29 @@ export const messages = {
      * `--include-all` stays for the other case — a remote that genuinely has not
      * had the SQL applied — where the back-dated version is a gap in the middle
      * of history that `db push` otherwise refuses to step over.
+     *
+     * "Typically" is doing dangerous work in that paragraph, which is why the
+     * message prints a check rather than a premise. Every other remedy here
+     * fails loudly and can be retried; marking a version applied fails silently
+     * and cannot. On a remote that does NOT have EQL — misremembered, a
+     * different environment, reset since — the row asserts SQL that never ran,
+     * so the version is permanently pending-free: no future `db push` will ever
+     * install EQL, and the first migration touching `eql_v3` fails with nothing
+     * in the history pointing at the cause.
+     *
+     * The check is `eql_v3.version()` rather than the more obvious probe for the
+     * `eql_v3` schema because of where each object sits in the bundle. The
+     * schema is created by its opening statements and survives an install that
+     * aborted partway; `version()` is created by its closing ones, so it
+     * resolves only if the whole bundle ran. Marking applied on a half-installed
+     * remote is the same dead end as marking applied on a bare one, so the check
+     * must not pass there.
      */
     migrationSupabaseEqlBeforeInstall: (
       migrationsDir: string,
       files: string[],
     ) =>
-      `Migrations in ${migrationsDir} reference EQL and sort BEFORE the EQL install migration:\n\n  ${files.join('\n  ')}\n\n\`supabase db reset\` replays the directory in version order, with no dependency awareness, so each of those runs before EQL is installed and the reset fails (\`type "eql_v3_text_search" does not exist\`). Rename the install migration to a version below ${files[0]} so it replays first.\n\nHow that back-dated version reaches a remote depends on the remote. If \`stash eql install\` has already run there, EQL is present and only the ledger row is missing — mark it applied, which writes the ledger row and runs no SQL:\n\n  supabase migration repair --status applied <version>\n\nDo NOT push the file to that remote instead: the bundle opens with \`DROP SCHEMA IF EXISTS eql_v3 CASCADE\` (and \`eql_v3_internal\`), so re-applying it drops every index, constraint, and RLS policy that references those schemas. A remote that genuinely still needs the SQL applied takes \`supabase db push --include-all\`, because the back-dated version lands as a gap in the middle of that history.`,
+      `Migrations in ${migrationsDir} reference EQL and sort BEFORE the EQL install migration:\n\n  ${files.join('\n  ')}\n\n\`supabase db reset\` replays the directory in version order, with no dependency awareness, so each of those runs before EQL is installed and the reset fails (\`type "eql_v3_text_search" does not exist\`). Rename the install migration to a version below ${files[0]} so it replays first.\n\nHow that back-dated version reaches a remote depends on what that remote actually has. Check it — do not go by memory:\n\n  psql "$REMOTE_DATABASE_URL" -Atc "select eql_v3.version()"\n\n\`eql_v3.version()\` is created by the last statements of the bundle, so it answers "is the whole install there". The \`eql_v3\` schema alone does not: it is created by the bundle's first statements and survives an install that aborted partway.\n\nIf that prints a version, EQL is present and only the ledger row is missing — mark it applied, which writes the ledger row and runs no SQL:\n\n  supabase migration repair --status applied <version>\n\nDo NOT push the file to that remote instead: the bundle opens with \`DROP SCHEMA IF EXISTS eql_v3 CASCADE\` (and \`eql_v3_internal\`), so re-applying it drops every index, constraint, and RLS policy that references those schemas.\n\nIf it errors instead (\`schema "eql_v3" does not exist\`, or \`function eql_v3.version() does not exist\` on a half-applied install), that remote genuinely still needs the SQL: \`supabase db push --include-all\`, because the back-dated version lands as a gap in the middle of that history. Never mark it applied there — the ledger row would claim SQL that never ran, so no later push installs EQL and the first migration referencing \`eql_v3\` fails with nothing pointing at the cause.`,
     /** `stash eql repair` with no `--drizzle` target. */
     repairNeedsTarget: 'Specify a target: `stash eql repair --drizzle`.',
     /** `--out` (or its `drizzle` default) points at a directory that isn't there. */

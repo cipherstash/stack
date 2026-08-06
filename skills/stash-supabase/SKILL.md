@@ -118,16 +118,33 @@ reset replays in version order with no dependency awareness, so those migrations
 run before EQL exists and `supabase db reset` fails with `type
 "eql_v3_text_search" does not exist`. The command detects this and warns, naming
 the files; the fix is to rename the install migration to a version below the
-earliest of them. How that back-dated version reaches a remote depends on the
-remote. This case only arises on a project that ran `stash eql install`
-directly, so the remote usually has EQL already and is missing only the ledger
-row — mark it applied with `supabase migration repair --status applied
-<version>`, which writes the row and runs no SQL. ⚠️ Do not push the file there
-instead: that re-runs the bundle's opening `DROP SCHEMA IF EXISTS eql_v3
-CASCADE` (and `eql_v3_internal`), dropping every index, constraint, and RLS
-policy that references those schemas. A remote that genuinely still needs the
-SQL applied takes `supabase db push --include-all`, the flag being required
-because the back-dated version is a gap in the middle of that history.
+earliest of them. How that back-dated version reaches a remote depends on what
+that remote actually has. This case only arises on a project that ran `stash eql
+install` directly, so the remote usually has EQL already — but "usually" is not
+what you want to bet a ledger row on, so check it:
+
+```bash
+psql "$REMOTE_DATABASE_URL" -Atc "select eql_v3.version()"
+```
+
+`eql_v3.version()` is created by the bundle's last statements, so it answers "is
+the whole install there". A probe for the `eql_v3` schema does not: that schema
+is created by the bundle's first statements and survives an install that aborted
+partway.
+
+If it prints a version, only the ledger row is missing — mark it applied with
+`supabase migration repair --status applied <version>`, which writes the row and
+runs no SQL. ⚠️ Do not push the file there instead: that re-runs the bundle's
+opening `DROP SCHEMA IF EXISTS eql_v3 CASCADE` (and `eql_v3_internal`), dropping
+every index, constraint, and RLS policy that references those schemas.
+
+If it errors, that remote genuinely still needs the SQL applied: `supabase db
+push --include-all`, the flag being required because the back-dated version is a
+gap in the middle of that history. ⚠️ Never mark it applied there. Every other
+remedy on this page fails loudly and can be retried; this one fails silently —
+the ledger row claims SQL that never ran, so no later push installs EQL, and the
+first query against an encrypted column fails with nothing pointing at the
+cause.
 
 There is no `--out` to reach for here: the Supabase CLI's migrations directory
 is not configurable. `supabase db reset` and `supabase db push` read

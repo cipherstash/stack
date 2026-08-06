@@ -12,6 +12,7 @@ import { type PackageManager, runnerCommand } from '../utils.js'
 export function createPrismaProvider(): InitProvider {
   return {
     name: 'prisma',
+    selected: ['prisma'],
     introMessage: 'Setting up CipherStash for your Prisma Next project...',
     // Note: Prisma Next absorbs the EQL bundle install and schema
     // scaffold steps via its migration framework. The next-steps list
