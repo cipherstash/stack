@@ -1,0 +1,23 @@
+# A target this gate cannot parse. Unguarded, `yaml.load` throws straight out of
+# the run: a stack trace instead of a finding, exit 1 — indistinguishable from
+# "found a caching issue" — and every target listed after this one never scanned
+# at all.
+#
+# An unparseable file is the same problem as a missing one, so it gets the same
+# verdict: it hands the traversal no job list, so nothing below it is audited,
+# and that is what the un-auditable list and exit 2 say.
+#
+# The error is a mis-indented `steps:`. js-yaml puts the position in the first
+# line of its message and follows it with a multi-line source snippet, which is
+# why only the first line reaches the report — the snippet carries its own
+# indentation and would wreck the two-space bullets.
+name: Malformed
+on:
+  push:
+    branches: [main]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+     steps:
+      - uses: actions/checkout@v6
+      - run: pnpm publish --no-git-checks

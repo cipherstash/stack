@@ -206,6 +206,26 @@ access key is minted with the member role — the CLI never mints admin keys —
 and is shown exactly once. Give each environment its own minted set; see
 `stash-deployment` for where each environment's credentials live.
 
+> **`CS_CLIENT_KEY` must be hex.** Hex is what `stash env` emits and what this
+> table has always documented, but older versions also accepted the base64
+> spelling that `~/.cipherstash/secretkey.json` stores on disk — so a key
+> copied out of that file worked. It no longer does: the client now rejects it
+> at construction with `invalid clientKey: expected a hex-encoded key`, and
+> the message says nothing further on purpose (the underlying decode error
+> names a character of the key and its offset).
+>
+> If every operation starts failing at construction after an upgrade, check
+> the encoding before anything else. **Re-encode the key as hex** — that fix
+> works on both entry points.
+>
+> On the native entry you may instead drop `CS_CLIENT_KEY` and let the client
+> read the profile store, which is unaffected: only an explicitly supplied key
+> is hex-only. That escape hatch does **not** exist on
+> `@cipherstash/stack/wasm-inline`, where `clientId` and `clientKey` are
+> required config and the edge runtimes it targets have no `~/.cipherstash` to
+> read. Dropping the variable there replaces one construction failure with
+> another; re-encoding is the only fix.
+
 ## Client lifetime (user-scoped strategies)
 
 An `OidcFederationStrategy` instance holds **one cached CTS token**:

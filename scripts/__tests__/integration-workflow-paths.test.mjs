@@ -1,8 +1,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import yaml from 'js-yaml'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { REPO_ROOT } from './lib/repo-root.mjs'
+import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 
 /**
  * An integration workflow only runs when its `paths:` filter matches the diff.
@@ -28,23 +28,20 @@ import { describe, expect, it } from 'vitest'
  * derives which manifest that is (package manifest for exact pins,
  * `pnpm-workspace.yaml` for `catalog:` ones).
  *
- * Finally, GitHub Actions has no YAML anchors, so every filter is written twice.
- * A one-sided edit disables the job on pull requests while leaving it green on
- * `main` — the exact inversion of what you want — so the two copies are
- * compared directly.
+ * The third property this file used to hold — that the `push` and
+ * `pull_request` copies of each filter are identical, GitHub Actions having no
+ * YAML anchors — now lives in `workflow-paths-filter-parity.test.mjs`. It was
+ * never integration-specific, and holding it here scoped it to the discovery
+ * below: two workflows, out of the nine that write the list twice. The two it
+ * did cover are covered there.
  */
 
-const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
 const STACK_SRC = 'packages/stack/src'
 const STACK_MANIFEST = 'packages/stack/package.json'
 const CATALOG_MANIFEST = 'pnpm-workspace.yaml'
 
 /** Both trigger events, in the order GitHub evaluates them. */
 const TRIGGER_EVENTS = ['push', 'pull_request']
-
-function readWorkflow(relPath) {
-  return yaml.load(readFileSync(join(REPO_ROOT, relPath), 'utf8'))
-}
 
 /**
  * The integration workflows, discovered rather than listed: any workflow whose
@@ -53,27 +50,15 @@ function readWorkflow(relPath) {
  * anyone remembering to add it here.
  */
 function discoverWorkflows() {
-  const dir = join(REPO_ROOT, '.github/workflows')
-  return readdirSync(dir)
-    .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
-    .map((name) => `.github/workflows/${name}`)
-    .filter(
-      (relPath) => suiteFiles(suiteGlobs(readWorkflow(relPath))).length > 0,
-    )
-    .sort()
+  return workflowFiles().filter(
+    (relPath) => suiteFiles(suiteGlobs(readWorkflow(relPath))).length > 0,
+  )
 }
 
 /**
  * `on:` parses as the boolean `true` under YAML 1.1 (the "Norway problem"),
  * which is why this reads both keys rather than `wf.on`.
  */
-function triggerFilters(wf) {
-  const on = wf.on ?? wf[true]
-  return Object.fromEntries(
-    TRIGGER_EVENTS.map((event) => [event, on?.[event]?.paths]),
-  )
-}
-
 function triggerBlocks(wf) {
   const on = wf.on ?? wf[true]
   return TRIGGER_EVENTS.map((event) => on?.[event]).filter(
@@ -203,20 +188,6 @@ describe('integration workflow paths filters', () => {
   })
 
   for (const relPath of WORKFLOWS) {
-    /**
-     * GitHub Actions has no YAML anchors, so each filter is written out twice.
-     * A one-sided edit is silent: the workflow keeps running on `push` to main
-     * and stops running on the PR that introduced the break, which is the only
-     * time it matters. Compare the two lists rather than trusting the comment.
-     */
-    it(`${relPath} repeats an identical paths filter under push and pull_request`, () => {
-      const filters = triggerFilters(readWorkflow(relPath))
-      for (const event of TRIGGER_EVENTS) {
-        expect(Array.isArray(filters[event])).toBe(true)
-      }
-      expect(filters.pull_request).toEqual(filters.push)
-    })
-
     it(`${relPath} triggers on the manifests pinning its suites' dependencies`, () => {
       const wf = readWorkflow(relPath)
       const blocks = triggerBlocks(wf)
@@ -254,6 +225,20 @@ describe('integration workflow paths filters', () => {
       for (const file of files) {
         for (const target of importedSourcePaths(file)) required.add(target)
       }
+
+      // The requirement is DERIVED from `@/`-aliased imports, so "no suite
+      // uses that alias" and "every import is covered" are the same green.
+      // Mutation-tested: rewriting the suites' `from '@/…'` to the public
+      // `@cipherstash/stack/…` entry — an ordinary "test the built package,
+      // not internals" refactor — empties this set, and the check then passed
+      // with `packages/stack/src/dynamodb/**` deleted from the filter, which
+      // is verbatim the #815 gap described at the top of this file. The
+      // sibling manifest check above already asserts its own premise; this one
+      // has to as well.
+      expect(
+        required.size,
+        `No @/-aliased import was resolved from ${files.length} suite file(s) in ${relPath}, so this check has nothing to verify and would pass no matter what the paths filter said. If the suites moved off the @/ alias, teach importedSourcePaths the new form.`,
+      ).toBeGreaterThan(0)
 
       for (const block of blocks) {
         const uncovered = [...required].filter(

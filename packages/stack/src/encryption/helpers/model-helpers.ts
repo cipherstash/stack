@@ -76,6 +76,26 @@ interface BulkOperationPayload {
 }
 
 /**
+ * Strip the stack-side correlation `id` before a payload crosses into
+ * protect-ffi.
+ *
+ * `EncryptPayload` and `BulkDecryptPayload` have never declared an `id`. Up to
+ * 0.30 the Neon entry dropped unrecognised top-level keys, so passing one was
+ * invisible; 0.31 forwards them to Rust, which rejects the whole payload with
+ * ``unknown field `id` `` — every model and bulk operation at once.
+ *
+ * Nothing downstream needs it: `handleSingleModelBulkOperation` and
+ * `handleMultiModelBulkOperation` both correlate results to keys by ARRAY
+ * INDEX through `keyMap`, never by reading an id back off the payload. So this
+ * removes a field that was already inert, rather than moving work elsewhere.
+ */
+function withoutId<T extends BulkOperationPayload>(
+  items: T[],
+): Omit<T, 'id'>[] {
+  return items.map(({ id: _id, ...rest }) => rest)
+}
+
+/**
  * Interface for bulk operation key mapping
  */
 interface BulkOperationKeyMap {
@@ -159,7 +179,7 @@ export async function decryptModelFields<T extends Record<string, unknown>>(
     bulkDecryptPayload,
     (items) =>
       decryptBulk(client, {
-        ciphertexts: items,
+        ciphertexts: withoutId(items),
         unverifiedContext: auditData?.metadata,
       }),
     keyMap,
@@ -213,7 +233,7 @@ export async function encryptModelFields(
     bulkEncryptPayload,
     (items) =>
       encryptBulk(client, {
-        plaintexts: items,
+        plaintexts: withoutId(items),
         unverifiedContext: auditData?.metadata,
       }),
     keyMap,
@@ -271,7 +291,7 @@ export async function decryptModelFieldsWithLockContext<
     bulkDecryptPayload,
     (items) =>
       decryptBulk(client, {
-        ciphertexts: items,
+        ciphertexts: withoutId(items),
         unverifiedContext: auditData?.metadata,
       }),
     keyMap,
@@ -331,7 +351,7 @@ export async function encryptModelFieldsWithLockContext(
     bulkEncryptPayload,
     (items) =>
       encryptBulk(client, {
-        plaintexts: items,
+        plaintexts: withoutId(items),
         unverifiedContext: auditData?.metadata,
       }),
     keyMap,
@@ -389,7 +409,7 @@ export async function bulkEncryptModels(
     bulkEncryptPayload,
     (items) =>
       encryptBulk(client, {
-        plaintexts: items,
+        plaintexts: withoutId(items),
         unverifiedContext: auditData?.metadata,
       }),
     keyMap,
@@ -446,7 +466,7 @@ export async function bulkDecryptModels<T extends Record<string, unknown>>(
     bulkDecryptPayload,
     (items) =>
       decryptBulk(client, {
-        ciphertexts: items,
+        ciphertexts: withoutId(items),
         unverifiedContext: auditData?.metadata,
       }),
     keyMap,
@@ -507,7 +527,7 @@ export async function bulkDecryptModelsWithLockContext<
     bulkDecryptPayload,
     (items) =>
       decryptBulk(client, {
-        ciphertexts: items,
+        ciphertexts: withoutId(items),
         unverifiedContext: auditData?.metadata,
       }),
     keyMap,
@@ -571,7 +591,7 @@ export async function bulkEncryptModelsWithLockContext(
     bulkEncryptPayload,
     (items) =>
       encryptBulk(client, {
-        plaintexts: items,
+        plaintexts: withoutId(items),
         unverifiedContext: auditData?.metadata,
       }),
     keyMap,

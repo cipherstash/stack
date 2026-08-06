@@ -1,0 +1,22 @@
+# One run, both kinds of finding: an `actions/cache@v4` the gate read and
+# judged, and a local reference it could not open at all. The un-auditable
+# reference used to print and exit before the offender list was reached, so the
+# actionable finding — the one with a step to delete — stayed hidden until the
+# path was fixed, then arrived on the next run looking new.
+name: Mixed Unresolved And Cache
+on:
+  push:
+    branches: [main]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Restore the compiled binding
+        uses: actions/cache@v4
+        with:
+          path: index.node
+          key: binding-${{ runner.os }}
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/no-such-action
+      - run: pnpm publish --no-git-checks

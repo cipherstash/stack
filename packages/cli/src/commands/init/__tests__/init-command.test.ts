@@ -2,7 +2,7 @@ import * as p from '@clack/prompts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CliExit } from '../../../cli/exit.js'
 import { messages } from '../../../messages.js'
-import type { InitState } from '../types.js'
+import type { InitProvider, InitState } from '../types.js'
 
 // `--region` is the non-interactive escape hatch for `stash init`; it must land
 // on `state.regionFlag` before the authenticate step runs (that step calls
@@ -10,7 +10,12 @@ import type { InitState } from '../types.js'
 // the pipeline is inert and observable — `authenticateStep.run` is the spy we
 // assert on; the rest just pass state through. Also keeps native-loading steps
 // (`authenticate`, `install-deps`) out of the fast suite.
-const authRun = vi.hoisted(() => vi.fn(async (state: InitState) => state))
+// Typed with the provider argument the pipeline actually passes, so the
+// provider assertions below read it off the call directly instead of asserting
+// their way past a one-element tuple type.
+const authRun = vi.hoisted(() =>
+  vi.fn(async (state: InitState, _provider: InitProvider) => state),
+)
 const passthrough = { run: async (s: InitState) => s }
 // Controllable so the honest-summary tests can vary whether EQL installed.
 const eqlRun = vi.hoisted(() =>
@@ -85,8 +90,40 @@ describe('initCommand — integration flags', () => {
     expect(authRun).toHaveBeenCalledTimes(1)
     // Steps receive the resolved provider as their second argument; `--prisma`
     // must resolve to the Prisma Next provider whose referrer name is `prisma`.
-    const providerArg = authRun.mock.calls[0][1] as { name?: string }
+    const providerArg = authRun.mock.calls[0][1]
     expect(providerArg.name).toBe('prisma')
+  })
+
+  it('keeps the combined name for referrer tracking, and carries both flags on `selected`', async () => {
+    // Two contracts in one run. `name` is the referrer: `authenticateStep`
+    // passes it straight to `login()`, and `stash auth login --drizzle
+    // --supabase` records the same alphabetical 'drizzle-supabase' — a refactor
+    // that changes it silently changes attribution. `selected` is what every
+    // routing decision reads instead, precisely so nothing has to parse `name`.
+    await initCommand({ drizzle: true, supabase: true }, {})
+
+    const providerArg = authRun.mock.calls[0][1]
+    expect(providerArg.name).toBe('drizzle-supabase')
+    expect(providerArg.selected).toEqual(['supabase', 'drizzle'])
+  })
+
+  it('leaves a single-flag run with its plain provider name', async () => {
+    // The other side of the combined case: one flag must still produce the
+    // bare name (the referrer `stash auth login --supabase` records) and a
+    // one-element `selected`.
+    await initCommand({ supabase: true }, {})
+
+    const providerArg = authRun.mock.calls[0][1]
+    expect(providerArg.name).toBe('supabase')
+    expect(providerArg.selected).toEqual(['supabase'])
+  })
+
+  it('leaves a flagless run on the base provider with nothing selected', async () => {
+    await initCommand({}, {})
+
+    const providerArg = authRun.mock.calls[0][1]
+    expect(providerArg.name).toBe('base')
+    expect(providerArg.selected).toEqual([])
   })
 
   it('errors on the renamed `--prisma-next` flag before running any step', async () => {
@@ -156,6 +193,152 @@ describe('initCommand — honest summary', () => {
     expect(body).toContain('EQL migration generated')
     expect(body).toContain('drizzle-kit migrate')
     expect(body).not.toContain('✓ EQL extension installed')
+  })
+
+  it('points a Supabase migration run at supabase, not drizzle-kit', async () => {
+    // Regression: the apply-command branch read `state.integration`, which
+    // `detectIntegration` sets from the DATABASE_URL host — and a LOCAL
+    // Supabase stack is `127.0.0.1:54322`, so integration lands on
+    // 'postgresql' while the provider is 'supabase'. `installEqlStep` routes on
+    // either signal, so it generated a Supabase migration and the summary then
+    // told the user to run `drizzle-kit migrate`, contradicting the provider's
+    // own next-steps block a few lines later. That is exactly the local-dev
+    // user this feature targets.
+    eqlRun.mockImplementationOnce(async (s: InitState) => ({
+      ...s,
+      integration: 'postgresql',
+      eqlInstalled: false,
+      eqlMigrationPending: true,
+    }))
+
+    await expect(initCommand({ supabase: true }, {})).resolves.toBeUndefined()
+
+    const summary = vi
+      .mocked(p.note)
+      .mock.calls.find(([, title]) => title === 'Setup complete')
+    const body = summary?.[0] as string
+    expect(body).toContain('EQL migration generated')
+    expect(body).toContain('supabase db reset')
+    expect(body).not.toContain('drizzle-kit migrate')
+    // This run really did write the file, so the verb must stay "generated".
+    expect(body).not.toContain('already present')
+  })
+
+  it('says "already present" — not "generated" — when init found the migration on disk', async () => {
+    // `installEqlStep` returns `eqlMigrationPending` for BOTH the migration it
+    // just wrote and one a previous run (or a standalone `stash eql migration
+    // --supabase`) left on disk. The apply guidance is identical either way —
+    // the file still has to be applied — but "EQL migration generated" over a
+    // run that generated nothing is a claim the user can disprove from their
+    // own diff. `eqlMigrationAlreadyPresent` carries the distinction.
+    eqlRun.mockImplementationOnce(async (s: InitState) => ({
+      ...s,
+      // The local-Supabase shape: `detectIntegration` reads the host from the
+      // DATABASE_URL, and `127.0.0.1:54322` lands on 'postgresql' — only the
+      // provider says Supabase.
+      integration: 'postgresql',
+      eqlInstalled: false,
+      eqlMigrationPending: true,
+      eqlMigrationAlreadyPresent: true,
+    }))
+
+    await expect(initCommand({ supabase: true }, {})).resolves.toBeUndefined()
+
+    const summary = vi
+      .mocked(p.note)
+      .mock.calls.find(([, title]) => title === 'Setup complete')
+    expect(summary).toBeDefined()
+    const body = summary?.[0] as string
+    expect(body).toContain('EQL migration already present')
+    expect(body).not.toContain('generated')
+    // Unchanged from the freshly-generated case: the same apply guidance, the
+    // same successful exit. An already-present migration is not an incomplete
+    // setup, so no ✗ line and no non-zero exit.
+    expect(body).toContain('supabase db reset')
+    expect(body).not.toContain('✗ EQL extension NOT installed')
+    expect(vi.mocked(p.note)).not.toHaveBeenCalledWith(
+      expect.any(String),
+      messages.init.setupIncomplete,
+    )
+  })
+
+  it('still points a Drizzle-on-Supabase run at drizzle-kit', async () => {
+    // The mirror image: `--supabase` is only the grants modifier there, and
+    // drizzle-kit owns the migration history, so the apply command is its own.
+    eqlRun.mockImplementationOnce(async (s: InitState) => ({
+      ...s,
+      integration: 'drizzle',
+      eqlInstalled: false,
+      eqlMigrationPending: true,
+    }))
+
+    await expect(
+      initCommand({ drizzle: true, supabase: true }, {}),
+    ).resolves.toBeUndefined()
+
+    const summary = vi
+      .mocked(p.note)
+      .mock.calls.find(([, title]) => title === 'Setup complete')
+    const body = summary?.[0] as string
+    expect(body).toContain('drizzle-kit migrate')
+    expect(body).not.toContain('supabase db reset')
+  })
+
+  it('names drizzle-kit for a combined `--drizzle --supabase` run on a local Supabase stack', async () => {
+    // The same host-detection blind spot as the Supabase case above, but with
+    // both flags passed: `integration` lands on 'postgresql', so the apply-step
+    // routing has only the flags to go on. Reading them off the combined
+    // provider name ('drizzle-supabase') matched neither branch, so the run
+    // fell through to the drizzle-kit default for the wrong reason — right
+    // string, no reasoning behind it, and it would have printed `supabase db
+    // reset` the moment the default flipped. Drizzle wins here on purpose: it
+    // owns the migration history and `--supabase` is only the grants modifier.
+    eqlRun.mockImplementationOnce(async (s: InitState) => ({
+      ...s,
+      integration: 'postgresql',
+      eqlInstalled: false,
+      eqlMigrationPending: true,
+    }))
+
+    await expect(
+      initCommand({ drizzle: true, supabase: true }, {}),
+    ).resolves.toBeUndefined()
+
+    const summary = vi
+      .mocked(p.note)
+      .mock.calls.find(([, title]) => title === 'Setup complete')
+    const body = summary?.[0] as string
+    expect(body).toContain('EQL migration generated')
+    expect(body).toContain('drizzle-kit migrate')
+    expect(body).not.toContain('supabase db reset')
+  })
+
+  it('names drizzle-kit for a combined run whose host says supabase', async () => {
+    // A Drizzle project on a HOSTED Supabase database: `detectIntegration`
+    // reads the supabase host and sets integration 'supabase', while the user
+    // passed both flags. `installEqlStep` writes the migration into the
+    // DRIZZLE folder (drizzle owns the history), so the summary has to say
+    // `drizzle-kit migrate`. Matching on the combined provider name made
+    // `isDrizzle` false, leaving only the integration signal — which says
+    // supabase — so the summary told the user to run `supabase db reset` over
+    // a migration that was never written into supabase/migrations/.
+    eqlRun.mockImplementationOnce(async (s: InitState) => ({
+      ...s,
+      integration: 'supabase',
+      eqlInstalled: false,
+      eqlMigrationPending: true,
+    }))
+
+    await expect(
+      initCommand({ drizzle: true, supabase: true }, {}),
+    ).resolves.toBeUndefined()
+
+    const summary = vi
+      .mocked(p.note)
+      .mock.calls.find(([, title]) => title === 'Setup complete')
+    const body = summary?.[0] as string
+    expect(body).toContain('drizzle-kit migrate')
+    expect(body).not.toContain('supabase db reset')
   })
 
   it('summary says "kept (existing file)" when an existing client is kept', async () => {

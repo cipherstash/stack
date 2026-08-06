@@ -54,10 +54,18 @@ CI uses `pnpm install --frozen-lockfile`. If `pnpm-lock.yaml` and any `package.j
 
 ### 5. Cooldown'd auto-updates — practice #6
 
-Dependabot opens grouped, cooldown'd PRs (7 days minor/patch, 14 days major) for both `npm` and `github-actions`. Major bumps stay un-grouped — one PR each, easier to review.
+Dependabot opens grouped, cooldown'd PRs (7 days minor/patch) for `npm`, `cargo` and `github-actions`. Major bumps are not proposed at all — every entry ignores `version-update:semver-major`, so majors are reviewed and applied by hand.
+
+There is deliberately **no `semver-major-days` cooldown** on any entry. It would delay major *version update* PRs, which the `ignore` above means Dependabot never opens, and cooldown does not reach the security path either ("the cooldown option is only available for version updates, not security updates"). Don't add one back as a safety net for the day the `ignore` is dropped — dead config reads as policy, and the test below fails on the pair.
+
+`cargo` covers the in-tree Rust workspace at `packages/protect-ffi` (**not** the repo root — that is where `Cargo.toml`/`Cargo.lock` live). It runs monthly rather than weekly because each bump costs a native rebuild to validate, and it ignores the exact-pinned CipherStash crates (`cipherstash-client`, `cts-common`, `stack-auth`, `stack-profile`, `eql-bindings`, `vitaminc`) — they share a release train with the `@cipherstash/auth` catalog and must be bumped together, manually.
 
 - **Where**: `.github/dependabot.yml`
-- **Test asserts**: cooldown ≥ 3 days, both ecosystems present
+- **Test asserts**: cooldown ≥ 3 days on npm/github-actions; every entry ignores `version-update:semver-major` for `*` **and** sets no `semver-major-days` (both ends, so neither half can drift alone); every lockfile present in the repo maps to a monitored `package-ecosystem`; every entry's `directory` actually contains the manifest its ecosystem reads
+
+The ecosystem-coverage assertion is derived from the filesystem, so **adding a lockfile for a new language fails the suite until `dependabot.yml` covers it.** Two lockfiles are exempt because Dependabot has no ecosystem for them (`e2e/wasm/deno.lock`, `.flox/env/manifest.lock`); both are named with their reason in the test.
+
+Note that `ignore` conditions suppress Dependabot **security** PRs too, not just version updates. The compensating control is OSV: `.github/workflows/osv-scanner.yml` scans `--recursive ./`, which reaches every lockfile in the tree (including `Cargo.lock`) and reports to code scanning.
 
 ### 6. Registry pinning — practice #16
 
@@ -127,7 +135,8 @@ Constraints baked into that workflow — don't undo them:
 - **`runs-on: ubuntu-latest`, not a self-hosted/Blacksmith runner.** npm rejects provenance from non-GitHub-hosted runners with E422.
 - **Never set `NPM_TOKEN`.** `changesets/action` writes a token `.npmrc` when it sees one, which shadows OIDC and fails every publish with E404 (npm/cli#8976).
 - **npm ≥ 11.5.1 and Node ≥ 22.14.** Node 22 ships npm 10.x, so the workflow installs `npm@^11.5.1` explicitly before publishing.
-- **No Actions cache in this workflow** (no `cache:`, `package-manager-cache: false`, `pnpm/action-setup` with `cache: false`). A poisoned cache entry would execute in a credential-bearing job. Enforced by `scripts/lint-no-workflow-caching.mjs`.
+- **No Actions cache in this workflow** (no `cache:`, `package-manager-cache: false`, `pnpm/action-setup` with `cache: false`). A poisoned cache entry would execute in a credential-bearing job. Enforced by `scripts/lint-no-workflow-caching.mjs`, which also follows any local composite action or reusable workflow the job reaches — the rule is about the whole call tree, not the one file.
+- **Every published `uses:` must be in that script's `AUDITED_ACTIONS` allowlist.** The gate cannot open a published action to check whether it caches, and the ones that do are not all named "cache" — a `setup-<tool>` action that caches by default has no `cache:` input and no telling name. So the list is what is *permitted*, and an action it has never met fails by default. Adding a step to `release.yml` or `tests-supply-chain.yml` means auditing the action and adding it there with the reason, in the same PR.
 
 Trusted publishing is configured **per package** on npmjs.com (package settings →
 Trusted publisher → GitHub Actions): owner/repo `cipherstash/stack`, workflow

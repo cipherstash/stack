@@ -4,6 +4,26 @@ import type { PackageManager } from './utils.js'
 
 export type Integration = 'drizzle' | 'supabase' | 'prisma-next' | 'postgresql'
 
+/**
+ * The integration flags `stash init` accepts (`--supabase`, `--drizzle`,
+ * `--prisma`). They are not mutually exclusive — `stash init --drizzle
+ * --supabase` is a real, accepted invocation for a Drizzle project on Supabase.
+ */
+export type ProviderKey = 'supabase' | 'drizzle' | 'prisma'
+
+/**
+ * The {@link Integration} each flag selects. `--prisma` is the odd one out: the
+ * flag is short for consistency with `--supabase` / `--drizzle`, but the
+ * integration it selects is Prisma Next (see providers/prisma.ts).
+ */
+export const PROVIDER_KEY_INTEGRATION: Readonly<
+  Record<ProviderKey, Integration>
+> = {
+  supabase: 'supabase',
+  drizzle: 'drizzle',
+  prisma: 'prisma-next',
+}
+
 export type DataType = 'string' | 'number' | 'boolean' | 'date' | 'json'
 
 /**
@@ -75,6 +95,15 @@ export interface InitState {
    *  summary reports "migration generated, apply it" instead of a false
    *  "installed" or a spurious "setup incomplete". */
   eqlMigrationPending?: boolean
+  /** True when the pending migration was ALREADY on disk — a re-run of `stash
+   *  init --supabase`, or a project whose migration came from a standalone
+   *  `stash eql migration --supabase`. Refines `eqlMigrationPending`, never
+   *  replaces it: the state of the world is the same either way (a migration
+   *  exists, it has not been applied) and so is the apply guidance, so the
+   *  incompleteness check must keep reading `eqlMigrationPending` alone. All
+   *  this changes is the summary's verb — "already present" rather than
+   *  "generated", which was a claim about work this run did not do. */
+  eqlMigrationAlreadyPresent?: boolean
   /** Detected ORM / framework integration. Set by build-schema. */
   integration?: Integration
   /** Schema definitions written to the encryption client. Carries every
@@ -139,7 +168,24 @@ export interface HandoffStep {
 }
 
 export interface InitProvider {
+  /**
+   * Referrer / display identity, NOT a routing signal. A multi-flag run joins
+   * every matched flag alphabetically (`stash init --drizzle --supabase` →
+   * `'drizzle-supabase'`), matching the referrer `stash auth login --drizzle
+   * --supabase` records, and `authenticateStep` passes it straight to
+   * `login()`. Because that combined string equals no single flag name, code
+   * that branched on `provider.name === 'supabase'` fell through on every
+   * combined run — read {@link InitProvider.selected} instead.
+   */
   name: string
+  /**
+   * The integration flags the user actually passed, in `PROVIDER_KEYS` order
+   * (`resolveProvider`, init/index.ts). This is the capability signal: every
+   * step that asks "is this a Supabase run?" tests membership here rather than
+   * parsing `name`, so combined flags keep working and `name` stays free to
+   * carry whatever the referrer needs.
+   */
+  selected: readonly ProviderKey[]
   introMessage: string
   getNextSteps(state: InitState, pm: PackageManager): string[]
 }

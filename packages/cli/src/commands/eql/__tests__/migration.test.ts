@@ -2,12 +2,13 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CliExit } from '../../../cli/exit.js'
 import { messages } from '../../../messages.js'
@@ -166,16 +167,608 @@ describe('eqlMigrationCommand — target selection', () => {
       () => messages.eql.migrationOneTarget,
     ],
     ['--prisma', { prisma: true }, () => messages.eql.migrationPrismaNotNeeded],
-    // `--supabase` is a modifier, not a target.
-    [
-      '--supabase alone',
-      { supabase: true },
-      () => messages.eql.migrationNeedsTarget,
-    ],
   ])('exits 1 with an actionable message for %s', async (_label, opts, msg) => {
     await expect(eqlMigrationCommand(opts)).rejects.toBeInstanceOf(CliExit)
     expect(clack.log.error).toHaveBeenCalledWith(msg())
     expect(spawnMock).not.toHaveBeenCalled()
+  })
+
+  /**
+   * `--prisma --supabase` is not caught by the `drizzle && prisma`
+   * mutual-exclusion check — the only thing standing between it and the
+   * Supabase emitter is BRANCH ORDERING: the `--prisma` rejection sits above
+   * the `--supabase` dispatch, so the command exits before
+   * `generateSupabaseEqlMigration` runs. That guard is invisible in the source
+   * and a future reorder would silently route this invocation into the
+   * emitter, so pin it here.
+   *
+   * `expect(spawnMock).not.toHaveBeenCalled()` (the assertion the sibling cases
+   * use) cannot detect that regression: the Supabase emitter never spawns
+   * anything, it writes files directly. So stub `process.cwd` at a fresh
+   * tmpdir the way the `--out` suite below does and assert the directory is
+   * untouched — the emitter would create `supabase/migrations/` under it.
+   */
+  it('rejects `--prisma --supabase` before the Supabase emitter writes anything', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'stash-eql-prisma-supabase-'))
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(tmp)
+    try {
+      await expect(
+        eqlMigrationCommand({ prisma: true, supabase: true }),
+      ).rejects.toBeInstanceOf(CliExit)
+
+      expect(clack.log.error).toHaveBeenCalledWith(
+        messages.eql.migrationPrismaNotNeeded,
+      )
+      // Nothing written, nothing created, no emitter side effects.
+      expect(readdirSync(tmp)).toHaveLength(0)
+      expect(existsSync(join(tmp, 'supabase', 'migrations'))).toBe(false)
+      expect(clack.log.success).not.toHaveBeenCalled()
+      expect(spawnMock).not.toHaveBeenCalled()
+    } finally {
+      cwd.mockRestore()
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('treats `--drizzle --supabase` as one target, not two', async () => {
+    // `--supabase` is the grants modifier here, not a second target. Counting
+    // it as one would reject the documented Supabase-hosted-Drizzle invocation.
+    const tmp = mkdtempSync(join(tmpdir(), 'stash-eql-targets-'))
+    try {
+      await eqlMigrationCommand({
+        drizzle: true,
+        supabase: true,
+        out: tmp,
+        dryRun: true,
+      })
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+    expect(clack.log.error).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * The Supabase emitter. No drizzle-kit, no journal, no ALTER COLUMN sweep —
+ * just the install SQL written where `supabase db reset` will replay it.
+ */
+describe('eqlMigrationCommand — Supabase', () => {
+  let tmp: string
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'stash-eql-supabase-'))
+  })
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true })
+  })
+
+  it('writes the install into --out and never spawns drizzle-kit', async () => {
+    await eqlMigrationCommand({ supabase: true, out: tmp })
+
+    const written = readdirSync(tmp)
+    expect(written).toHaveLength(1)
+    expect(written[0]).toMatch(/^\d{14}_cipherstash_eql\.sql$/)
+    expect(spawnMock).not.toHaveBeenCalled()
+  })
+
+  it('always includes the role grants — a Supabase file is applied by Supabase', async () => {
+    await eqlMigrationCommand({ supabase: true, out: tmp })
+
+    const body = readFileSync(join(tmp, readdirSync(tmp)[0]), 'utf-8')
+    expect(body).toContain(
+      'GRANT USAGE ON SCHEMA eql_v3 TO anon, authenticated, service_role',
+    )
+    expect(body).toContain(
+      'GRANT USAGE ON SCHEMA eql_v3_internal TO anon, authenticated, service_role',
+    )
+    // One reset provisions everything `stash encrypt` needs.
+    expect(body).toContain('cs_migrations')
+  })
+
+  it('dry run previews the directory and writes nothing', async () => {
+    await eqlMigrationCommand({ supabase: true, out: tmp, dryRun: true })
+
+    expect(readdirSync(tmp)).toHaveLength(0)
+    expect(clack.note).toHaveBeenCalledWith(
+      expect.stringContaining(tmp),
+      'Dry Run',
+    )
+  })
+
+  it('dry run predicts the refusal when an install migration already exists', async () => {
+    // Regression: the preview always claimed it "would write" a new file, even
+    // in a directory where the real run exits 1. A dry run that predicts the
+    // wrong outcome is worse than no dry run.
+    writeFileSync(join(tmp, '20260101000000_cipherstash_eql.sql'), '')
+
+    await eqlMigrationCommand({ supabase: true, out: tmp, dryRun: true })
+
+    const [note] = vi.mocked(clack.note).mock.calls.at(-1) ?? []
+    expect(note).toContain('20260101000000_cipherstash_eql.sql')
+    expect(note).toMatch(/--force/)
+    expect(note).not.toMatch(/Would write/i)
+  })
+
+  it('dry run predicts the in-place overwrite under --force', async () => {
+    writeFileSync(join(tmp, '20260101000000_cipherstash_eql.sql'), '')
+
+    await eqlMigrationCommand({
+      supabase: true,
+      out: tmp,
+      dryRun: true,
+      force: true,
+    })
+
+    const [note] = vi.mocked(clack.note).mock.calls.at(-1) ?? []
+    expect(note).toContain('20260101000000_cipherstash_eql.sql')
+    expect(note).toMatch(/replace/i)
+  })
+
+  it('exits 1 rather than adding a second install migration', async () => {
+    await eqlMigrationCommand({ supabase: true, out: tmp })
+    await expect(
+      eqlMigrationCommand({ supabase: true, out: tmp }),
+    ).rejects.toBeInstanceOf(CliExit)
+
+    expect(readdirSync(tmp)).toHaveLength(1)
+    expect(clack.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('already exists'),
+    )
+  })
+
+  it('replaces in place under --force and warns about applied databases', async () => {
+    await eqlMigrationCommand({ supabase: true, out: tmp })
+    const original = readdirSync(tmp)[0]
+
+    await eqlMigrationCommand({ supabase: true, out: tmp, force: true })
+
+    expect(readdirSync(tmp)).toEqual([original])
+    // The warning must name the hazard, not just note the replacement: a
+    // database that already ran the old file is the whole point of saying
+    // anything.
+    const [warning] = vi.mocked(clack.log.warn).mock.calls.at(-1) ?? []
+    expect(warning).toMatch(/already applied/)
+  })
+
+  /**
+   * The re-apply guidance after an in-place overwrite. `supabase db push` does
+   * NOT re-apply a rewritten file: `FindPendingMigrations`
+   * (`pkg/migration/apply.go`) computes the pending set positionally —
+   * `pending := localMigrations[len(remoteMigrations):]` — with no content hash
+   * and no statement diff, unlike seed files, which carry a `Hash`/`Dirty` pair
+   * and do re-run on change. Equal counts mean an empty pending set, so
+   * `push.Run` prints "Remote database is up to date." and applies nothing. A
+   * user following "re-apply with db push" would believe the remote was updated
+   * when it was not.
+   */
+  describe('--force re-apply guidance', () => {
+    const replaceInPlace = async () => {
+      await eqlMigrationCommand({ supabase: true, out: tmp })
+      const version = readdirSync(tmp)[0].slice(0, 14)
+      vi.clearAllMocks()
+      await eqlMigrationCommand({ supabase: true, out: tmp, force: true })
+      return version
+    }
+    const lastWarning = () =>
+      String(vi.mocked(clack.log.warn).mock.calls.at(-1)?.[0] ?? '')
+    const lastNote = () =>
+      String(vi.mocked(clack.note).mock.calls.at(-1)?.[0] ?? '')
+
+    it('says db push will not re-apply the replaced file', async () => {
+      await replaceInPlace()
+
+      expect(lastWarning()).toMatch(/`supabase db push` will not re-apply/)
+      // The reason, not just the verdict — otherwise it reads as a bug report.
+      expect(lastWarning()).toMatch(/by version, not by content/)
+    })
+
+    it('names the cascade hazard of re-applying to a live database', async () => {
+      // The bundle opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE;` /
+      // `DROP SCHEMA IF EXISTS eql_v3_internal CASCADE;`, so a re-apply takes
+      // every dependent index, constraint, and RLS policy with it. Free on a
+      // fresh `db reset`; not on a populated remote.
+      await replaceInPlace()
+
+      expect(lastWarning()).toContain('DROP SCHEMA IF EXISTS eql_v3 CASCADE')
+      expect(lastWarning()).toMatch(/RLS polic/)
+    })
+
+    it('gives the repair-then-push remote recipe, with --include-all as a conditional', async () => {
+      const version = await replaceInPlace()
+
+      // `migration repair --status reverted` clears the ledger row (tracking
+      // table only — it applies no SQL), which puts the version back in the
+      // pending set.
+      expect(lastNote()).toContain(
+        `supabase migration repair --status reverted ${version}`,
+      )
+      expect(lastNote()).toContain('supabase db reset')
+
+      // The plain push is the instruction; --include-all is the fallback for
+      // when it aborts. Reverting the NEWEST version leaves it at the tail of
+      // remote history, where a plain push applies it — only a version with
+      // migrations above it is the gap that trips ErrMissingRemote. Pinned live
+      // in supabase-push.live.test.ts against supabase/cli 2.111.0; an earlier
+      // revision of this message demanded the flag unconditionally, which
+      // applies every out-of-order migration the user has.
+      const note = lastNote()
+      expect(note).toContain('supabase db push\n')
+      expect(note).toMatch(/re-run it as `supabase db push --include-all`/)
+      expect(note).toMatch(/only when the push tells you to/i)
+    })
+
+    it('keeps the plain apply note when nothing was replaced', async () => {
+      await eqlMigrationCommand({ supabase: true, out: tmp })
+
+      expect(lastNote()).toContain('supabase db push')
+      expect(lastNote()).not.toContain('migration repair')
+    })
+  })
+
+  /**
+   * Brownfield ordering (#613's second act). A user who ran `stash eql install`
+   * directly, then added migrations creating encrypted columns, then found this
+   * command, gets an install stamped with today's date — which sorts AFTER those
+   * migrations. `supabase db reset` replays in version order with no dependency
+   * awareness, so they run first, reference a domain that does not exist yet,
+   * and the reset fails.
+   *
+   * Detection and a warning, deliberately not a fix: back-dating the file or
+   * renaming theirs are both the user's call.
+   */
+  describe('EQL-dependent migrations that sort before the install', () => {
+    const warnings = () =>
+      clack.log.warn.mock.calls.map((c) => String(c[0])).join('\n')
+    /** Distinctive enough to assert absence on. */
+    const FRAGMENT = 'replays the directory in version order'
+    const EARLIER = '20260101000000_add_email_encrypted.sql'
+    const ENCRYPTED_COLUMN_SQL =
+      'ALTER TABLE users ADD COLUMN email_encrypted public.eql_v3_text_search;\n'
+
+    it('warns, naming the file and the consequence', async () => {
+      writeFileSync(join(tmp, EARLIER), ENCRYPTED_COLUMN_SQL)
+
+      await eqlMigrationCommand({ supabase: true, out: tmp })
+
+      expect(clack.log.warn).toHaveBeenCalledWith(
+        messages.eql.migrationSupabaseEqlBeforeInstall(tmp, [EARLIER]),
+      )
+      expect(warnings()).toContain(EARLIER)
+      expect(warnings()).toContain('supabase db reset')
+      // The remedy, including the flag a back-dated push needs.
+      expect(warnings()).toContain('--include-all')
+    })
+
+    it('splits the remote remedy by whether EQL is already installed there', async () => {
+      // The brownfield case this warning fires on is, by definition, a project
+      // that ran `stash eql install` directly — so the remote usually HAS EQL
+      // and is missing only the ledger row. Sending that user to `db push
+      // --include-all` re-runs a bundle opening with `DROP SCHEMA IF EXISTS
+      // eql_v3 CASCADE`, taking every dependent index, constraint, and RLS
+      // policy with it. The ledger-only repair must be the named default, with
+      // --include-all kept for a remote that genuinely lacks the SQL.
+      writeFileSync(join(tmp, EARLIER), ENCRYPTED_COLUMN_SQL)
+
+      await eqlMigrationCommand({ supabase: true, out: tmp })
+
+      expect(warnings()).toContain('supabase migration repair --status applied')
+      expect(warnings()).toContain('DROP SCHEMA IF EXISTS eql_v3 CASCADE')
+      expect(warnings()).toMatch(/RLS polic/)
+      // Both halves present, and the destructive one is the conditional.
+      expect(warnings()).toContain('--include-all')
+    })
+
+    it('makes the remote state a check to run, ahead of the ledger repair', async () => {
+      // Which half of that split applies turns on a fact the user is otherwise
+      // never asked to establish. Marking a version applied is the one remedy
+      // here with no self-correcting failure: get it wrong and the ledger
+      // claims SQL ran that never did, so no later push installs EQL and the
+      // first `eql_v3` reference fails with nothing pointing at the cause. The
+      // check therefore has to be a printed command, above the repair.
+      writeFileSync(join(tmp, EARLIER), ENCRYPTED_COLUMN_SQL)
+
+      await eqlMigrationCommand({ supabase: true, out: tmp })
+
+      const warning = warnings()
+      expect(warning).toContain(
+        'psql "$REMOTE_DATABASE_URL" -Atc "select eql_v3.version()"',
+      )
+      expect(warning.indexOf('select eql_v3.version()')).toBeLessThan(
+        warning.indexOf('supabase migration repair --status applied'),
+      )
+    })
+
+    it('checks a bundle-final object, which a half-applied install lacks', async () => {
+      // `eql_v3.version()` is created by the bundle's closing statements, so it
+      // is present only if the whole install ran. A probe for the `eql_v3`
+      // schema would pass on an install that aborted halfway — the schema is
+      // created by the bundle's opening statements — and "partially installed"
+      // read as "installed" is exactly the state the ledger row must not be
+      // written for.
+      writeFileSync(join(tmp, EARLIER), ENCRYPTED_COLUMN_SQL)
+
+      await eqlMigrationCommand({ supabase: true, out: tmp })
+
+      expect(warnings()).toMatch(/last statements of the bundle/)
+      // The unrecoverable direction is named, not left as an inference.
+      expect(warnings()).toMatch(/[Nn]ever mark it applied/)
+    })
+
+    it('stays quiet when the EQL-referencing migration sorts after the install', async () => {
+      writeFileSync(
+        join(tmp, '20990101000000_add_email_encrypted.sql'),
+        ENCRYPTED_COLUMN_SQL,
+      )
+
+      await eqlMigrationCommand({ supabase: true, out: tmp })
+
+      expect(warnings()).not.toContain(FRAGMENT)
+    })
+
+    it('never warns for an earlier migration that does not reference EQL', async () => {
+      writeFileSync(
+        join(tmp, '20260101000000_users.sql'),
+        'CREATE TABLE users (id uuid PRIMARY KEY, email text);\n',
+      )
+
+      await eqlMigrationCommand({ supabase: true, out: tmp })
+
+      expect(warnings()).not.toContain(FRAGMENT)
+    })
+
+    it('warns on a dry run, which is where the prediction is still free', async () => {
+      writeFileSync(join(tmp, EARLIER), ENCRYPTED_COLUMN_SQL)
+
+      await eqlMigrationCommand({ supabase: true, out: tmp, dryRun: true })
+
+      expect(warnings()).toContain(FRAGMENT)
+      // Nothing written — the user's own migration is all that is there.
+      expect(readdirSync(tmp)).toEqual([EARLIER])
+    })
+
+    it('stays quiet for an empty migrations directory', async () => {
+      await eqlMigrationCommand({ supabase: true, out: tmp })
+
+      expect(warnings()).not.toContain(FRAGMENT)
+    })
+
+    it('stays quiet for a migrations directory that does not exist yet', async () => {
+      await eqlMigrationCommand({ supabase: true, out: join(tmp, 'nope') })
+
+      expect(warnings()).not.toContain(FRAGMENT)
+    })
+
+    it('warns above the dry-run branch, inside the command frame', async () => {
+      // Same placement discipline as the --out warning: after the intro (so
+      // clack renders it inside the frame) and before the dry-run return.
+      writeFileSync(join(tmp, EARLIER), ENCRYPTED_COLUMN_SQL)
+
+      await eqlMigrationCommand({ supabase: true, out: tmp, dryRun: true })
+
+      const introAt = vi.mocked(clack.intro).mock.invocationCallOrder[0]
+      const warnAt = clack.log.warn.mock.calls.findIndex((c) =>
+        String(c[0]).includes(FRAGMENT),
+      )
+      expect(warnAt).toBeGreaterThanOrEqual(0)
+      expect(clack.log.warn.mock.invocationCallOrder[warnAt]).toBeGreaterThan(
+        introAt,
+      )
+    })
+  })
+
+  it('warns that --name is ignored rather than silently dropping it', async () => {
+    // The filename is load-bearing: duplicate detection matches the
+    // `_cipherstash_eql.sql` suffix, so --name cannot be honoured here. Saying
+    // nothing would leave the user believing they had renamed it.
+    await eqlMigrationCommand({ supabase: true, out: tmp, name: 'my-install' })
+
+    expect(clack.log.warn).toHaveBeenCalledWith(
+      messages.eql.migrationNameDrizzleOnly,
+    )
+    expect(readdirSync(tmp)[0]).toMatch(/^\d{14}_cipherstash_eql\.sql$/)
+  })
+
+  it('warns about --name inside the command frame, not above it', async () => {
+    // clack renders log lines into the frame the intro opens. Warning first
+    // put the line above the banner, detached from the command it belongs to.
+    await eqlMigrationCommand({ supabase: true, out: tmp, name: 'my-install' })
+
+    const introAt = vi.mocked(clack.intro).mock.invocationCallOrder[0]
+    const warnAt = vi.mocked(clack.log.warn).mock.invocationCallOrder[0]
+    expect(warnAt).toBeGreaterThan(introAt)
+  })
+
+  it('still warns about --name on a dry run, which also ignores it', async () => {
+    await eqlMigrationCommand({
+      supabase: true,
+      out: tmp,
+      name: 'my-install',
+      dryRun: true,
+    })
+
+    expect(clack.log.warn).toHaveBeenCalledWith(
+      messages.eql.migrationNameDrizzleOnly,
+    )
+  })
+
+  it('stays quiet about --name when it was not passed', async () => {
+    await eqlMigrationCommand({ supabase: true, out: tmp })
+
+    expect(clack.log.warn).not.toHaveBeenCalledWith(
+      messages.eql.migrationNameDrizzleOnly,
+    )
+  })
+
+  it('emits the standalone banners by default', async () => {
+    await eqlMigrationCommand({ supabase: true, out: tmp })
+
+    expect(clack.intro).toHaveBeenCalledWith('CipherStash EQL migration')
+    expect(clack.outro).toHaveBeenCalledWith('Done!')
+    expect(printNextSteps).toHaveBeenCalled()
+  })
+
+  it('suppresses intro/outro/next-steps when embedded, but still writes', async () => {
+    // `stash init` renders its own summary and agent handoff; two competing
+    // "what next" blocks is the bug this flag exists to prevent.
+    await eqlMigrationCommand({ supabase: true, out: tmp, embedded: true })
+
+    expect(readdirSync(tmp)).toHaveLength(1)
+    expect(clack.intro).not.toHaveBeenCalled()
+    expect(clack.outro).not.toHaveBeenCalled()
+    expect(printNextSteps).not.toHaveBeenCalled()
+  })
+
+  it('suppresses the abort outro when embedded but still exits 1', async () => {
+    await eqlMigrationCommand({ supabase: true, out: tmp })
+    vi.clearAllMocks()
+
+    await expect(
+      eqlMigrationCommand({ supabase: true, out: tmp, embedded: true }),
+    ).rejects.toBeInstanceOf(CliExit)
+    expect(clack.outro).not.toHaveBeenCalled()
+  })
+
+  /**
+   * `--out` on a bare `--supabase` can silently reintroduce #613, the very bug
+   * this emitter exists to fix. The Supabase CLI's migrations directory is not
+   * configurable — `db reset` and `db push` read `<project>/supabase/migrations`
+   * and nothing else — so a file written anywhere else is EQL missing from the
+   * replayed directory all over again, just relocated. The flag stays (a user
+   * may have their own apply step) but must not be silent.
+   *
+   * `process.cwd` is stubbed rather than `process.chdir`-ing, because the
+   * default arm has to write a real file and doing that relative to the repo
+   * root would litter it.
+   */
+  describe('--out outside supabase/migrations', () => {
+    const warnings = () =>
+      clack.log.warn.mock.calls.map((c) => String(c[0])).join('\n')
+
+    // Restored here rather than by a global `restoreAllMocks`, which would also
+    // tear down the module-level `vi.fn()` mocks this file depends on.
+    let restoreCwd: (() => void) | undefined
+    const stubCwd = (dir: string) => {
+      const spy = vi.spyOn(process, 'cwd').mockReturnValue(dir)
+      restoreCwd = () => spy.mockRestore()
+    }
+    afterEach(() => {
+      restoreCwd?.()
+      restoreCwd = undefined
+    })
+
+    it('warns for a relative --out that is not the default', async () => {
+      stubCwd(tmp)
+
+      await eqlMigrationCommand({ supabase: true, out: 'db/migrations' })
+
+      expect(clack.log.warn).toHaveBeenCalledWith(
+        messages.eql.migrationSupabaseOutNotReplayed(
+          join(tmp, 'db', 'migrations'),
+        ),
+      )
+      // The consequence, not just the deviation: a user who reads "non-standard
+      // directory" and shrugs is exactly the user this warning is for.
+      expect(warnings()).toContain('supabase db reset')
+    })
+
+    it('warns for an absolute --out that is not the default', async () => {
+      stubCwd(tmp)
+      const out = join(tmp, 'elsewhere')
+
+      await eqlMigrationCommand({ supabase: true, out })
+
+      expect(clack.log.warn).toHaveBeenCalledWith(
+        messages.eql.migrationSupabaseOutNotReplayed(out),
+      )
+    })
+
+    it('stays quiet when --out is omitted', async () => {
+      stubCwd(tmp)
+
+      await eqlMigrationCommand({ supabase: true })
+
+      expect(readdirSync(join(tmp, 'supabase', 'migrations'))).toHaveLength(1)
+      expect(warnings()).not.toContain('--out points at')
+    })
+
+    it('stays quiet when --out resolves to exactly the default', async () => {
+      // Same directory, spelled the long way. Comparing the raw string would
+      // fire here — the check has to compare resolved paths.
+      stubCwd(tmp)
+
+      await eqlMigrationCommand({ supabase: true, out: 'supabase/migrations' })
+
+      expect(readdirSync(join(tmp, 'supabase', 'migrations'))).toHaveLength(1)
+      expect(warnings()).not.toContain('--out points at')
+    })
+
+    it('stays quiet for an absolute --out that normalises to the default', async () => {
+      // An absolute --out is taken verbatim by `detectSupabaseProject`, so the
+      // trailing separator a user typed (or a shell completed) survives into the
+      // comparison. Raw string equality would warn about the directory it is
+      // already writing to.
+      stubCwd(tmp)
+
+      await eqlMigrationCommand({
+        supabase: true,
+        out: `${join(tmp, 'supabase', 'migrations')}${sep}`,
+      })
+
+      expect(warnings()).not.toContain('--out points at')
+    })
+
+    it('warns on a dry run, which is where the prediction matters most', async () => {
+      // A dry run exists to tell you what the real run will do. Withholding the
+      // one thing that makes the real run pointless would defeat it.
+      stubCwd(tmp)
+
+      await eqlMigrationCommand({
+        supabase: true,
+        out: 'db/migrations',
+        dryRun: true,
+      })
+
+      expect(clack.log.warn).toHaveBeenCalledWith(
+        messages.eql.migrationSupabaseOutNotReplayed(
+          join(tmp, 'db', 'migrations'),
+        ),
+      )
+    })
+
+    it('leaves the replacement warning last so --force still reads correctly', async () => {
+      // Both fire on a forced re-run into a custom directory. The out warning is
+      // an up-front flag advisory; the replacement warning is the outcome, and
+      // has to stay adjacent to the success line it qualifies.
+      stubCwd(tmp)
+      await eqlMigrationCommand({ supabase: true, out: 'db/migrations' })
+      // `clearAllMocks` only clears recorded calls; the cwd stub's return value
+      // survives, and re-stubbing would nest a second spy the restore can't undo.
+      vi.clearAllMocks()
+
+      await eqlMigrationCommand({
+        supabase: true,
+        out: 'db/migrations',
+        force: true,
+      })
+
+      const [last] = vi.mocked(clack.log.warn).mock.calls.at(-1) ?? []
+      expect(last).toMatch(/already applied/)
+    })
+
+    it('never warns on the --drizzle --supabase grants path', async () => {
+      // There `--supabase` is the grants modifier and `--out` is a drizzle-kit
+      // output directory, which has nothing to do with supabase/migrations.
+      // Warning would be nonsense advice on the documented invocation.
+      const out = join(tmp, 'drizzle')
+
+      await eqlMigrationCommand({
+        drizzle: true,
+        supabase: true,
+        out,
+        dryRun: true,
+      })
+
+      expect(warnings()).not.toContain('--out points at')
+    })
   })
 })
 

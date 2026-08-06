@@ -1,10 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-
-const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
+import { REPO_ROOT } from './lib/repo-root.mjs'
 
 // The bench exists to prove the functional-index path engages. An index whose
 // expression is merely "a term extractor for the right column" satisfies

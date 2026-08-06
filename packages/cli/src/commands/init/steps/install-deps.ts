@@ -10,7 +10,7 @@ import {
   RUNTIME_PACKAGE_VERSIONS,
 } from '../../../runtime-versions.js'
 import type { InitProvider, InitState, InitStep } from '../types.js'
-import { CancelledError } from '../types.js'
+import { CancelledError, PROVIDER_KEY_INTEGRATION } from '../types.js'
 import {
   combinedInstallCommands,
   detectPackageManager,
@@ -42,6 +42,35 @@ export const INTEGRATION_ADAPTER_PACKAGES: Readonly<Record<string, string>> = {
 function integrationPackageFor(integration?: string): string | null {
   if (!integration) return null
   return INTEGRATION_ADAPTER_PACKAGES[integration] ?? null
+}
+
+/**
+ * Every adapter package this run needs: the one for the DETECTED integration,
+ * plus one for each integration flag the user passed. Deduped, detected first.
+ *
+ * A list rather than a single package because the flags are not mutually
+ * exclusive. `stash init --drizzle --supabase` used to look the adapter up by
+ * provider NAME, and a combined run's name is 'drizzle-supabase' — not a key of
+ * {@link INTEGRATION_ADAPTER_PACKAGES}, so the run installed NEITHER adapter
+ * and whatever the user imported next failed to resolve. Both integrations were
+ * asked for; both packages are real.
+ *
+ * Flags are mapped through {@link PROVIDER_KEY_INTEGRATION} so `--prisma`
+ * resolves `@cipherstash/stack-prisma` on its own name — it used to arrive here
+ * only because `build-schema` runs first and leaves 'prisma-next' on state, and
+ * step ordering is not a contract this should depend on.
+ */
+function adapterPackagesFor(
+  state: InitState,
+  provider: InitProvider,
+): string[] {
+  const packages = [
+    integrationPackageFor(state.integration),
+    ...provider.selected.map((key) =>
+      integrationPackageFor(PROVIDER_KEY_INTEGRATION[key]),
+    ),
+  ].filter((pkg): pkg is string => pkg !== null)
+  return [...new Set(packages)]
 }
 
 /** Sentinel shown when a package directory exists but its manifest can't be
@@ -162,20 +191,11 @@ export const installDepsStep: InitStep = {
   id: 'install-deps',
   name: 'Install dependencies',
   async run(state: InitState, provider: InitProvider): Promise<InitState> {
-    const integrationPkg =
-      integrationPackageFor(state.integration) ??
-      integrationPackageFor(provider.name)
+    const integrationPkgs = adapterPackagesFor(state, provider)
     const stackPresent = isPackageInstalled(STACK_PACKAGE)
     const cliPresent = isPackageInstalled(CLI_PACKAGE)
-    const integrationPresent = integrationPkg
-      ? isPackageInstalled(integrationPkg)
-      : true
 
-    const allPackages = [
-      STACK_PACKAGE,
-      ...(integrationPkg ? [integrationPkg] : []),
-      CLI_PACKAGE,
-    ]
+    const allPackages = [STACK_PACKAGE, ...integrationPkgs, CLI_PACKAGE]
 
     // Surface skew FIRST and unconditionally — before any prompt, decline,
     // failure, or early return can skip it (#661). Every path below inherits
@@ -217,7 +237,9 @@ export const installDepsStep: InitStep = {
     // What's missing outright (pinned, prod/dev split).
     const missing: string[] = []
     if (!stackPresent) missing.push(STACK_PACKAGE)
-    if (integrationPkg && !integrationPresent) missing.push(integrationPkg)
+    for (const pkg of integrationPkgs) {
+      if (!isPackageInstalled(pkg)) missing.push(pkg)
+    }
     if (!cliPresent) missing.push(CLI_PACKAGE)
     const missingSplit = splitProdDev(missing)
 
@@ -250,12 +272,12 @@ export const installDepsStep: InitStep = {
     const offerAlign = skewed.length > 0 && isInteractive()
 
     // Nothing missing and no interactive alignment to offer: `missing` empty
-    // implies all three packages are present, so both flags are true.
+    // implies every package in `allPackages` is present, so both flags are true.
     if (missing.length === 0 && !offerAlign) {
       if (skewed.length === 0) {
-        const installed = integrationPkg
-          ? `${STACK_PACKAGE}, ${integrationPkg} and ${CLI_PACKAGE}`
-          : `${STACK_PACKAGE} and ${CLI_PACKAGE}`
+        // "a and b" / "a, b and c" / "a, b, c and d" — every adapter named,
+        // however many the flags selected.
+        const installed = `${allPackages.slice(0, -1).join(', ')} and ${allPackages[allPackages.length - 1]}`
         p.log.success(`${installed} are already installed.`)
       } else {
         // Non-interactive with skew: warned above; never mutate, print the fix.
@@ -339,18 +361,16 @@ export const installDepsStep: InitStep = {
     // per-package tracking, not a composite flag.
     const stackInstalled = isPackageInstalled(STACK_PACKAGE)
     const cliInstalled = isPackageInstalled(CLI_PACKAGE)
-    const integrationInstalled = integrationPkg
-      ? isPackageInstalled(integrationPkg)
-      : true
+    const missingAdapters = integrationPkgs.filter(
+      (pkg) => !isPackageInstalled(pkg),
+    )
 
-    if (stackInstalled && cliInstalled && integrationInstalled) {
+    if (stackInstalled && cliInstalled && missingAdapters.length === 0) {
       p.log.success('Stack dependencies installed.')
     } else {
       const stillMissing = [
         ...(stackInstalled ? [] : [`${pinnedSpec(STACK_PACKAGE)} (prod)`]),
-        ...(integrationPkg && !integrationInstalled
-          ? [`${pinnedSpec(integrationPkg)} (prod)`]
-          : []),
+        ...missingAdapters.map((pkg) => `${pinnedSpec(pkg)} (prod)`),
         ...(cliInstalled ? [] : [`${pinnedSpec(CLI_PACKAGE)} (dev)`]),
       ]
       p.log.warn(`Still missing: ${stillMissing.join(', ')}.`)

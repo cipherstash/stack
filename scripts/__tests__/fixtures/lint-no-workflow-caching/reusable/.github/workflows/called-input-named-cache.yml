@@ -1,0 +1,21 @@
+# Declares an input called `cache` and does not cache. A job-level `with:` is
+# inputs to a reusable workflow, not `with:` on an action step — reading it
+# with the step rules would flag this caller for passing `cache: true` to an
+# input that switches something else on entirely.
+name: Called Input Named Cache
+on:
+  workflow_call:
+    inputs:
+      cache:
+        type: boolean
+        default: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+          cache: false
+      - run: pnpm changeset:publish

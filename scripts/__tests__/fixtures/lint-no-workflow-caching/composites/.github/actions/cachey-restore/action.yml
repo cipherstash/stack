@@ -1,0 +1,10 @@
+name: Cachey Restore
+description: Restore-only half of the GitHub Actions cache.
+runs:
+  using: composite
+  steps:
+    - name: Restore the compiled binding
+      uses: actions/cache/restore@v4
+      with:
+        path: index.node
+        key: binding-${{ runner.os }}

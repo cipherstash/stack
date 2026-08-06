@@ -4,6 +4,7 @@ import { type PackageManager, runnerCommand } from '../utils.js'
 export function createBaseProvider(): InitProvider {
   return {
     name: 'base',
+    selected: [],
     introMessage: 'Setting up CipherStash for your project...',
     getNextSteps(state: InitState, pm: PackageManager): string[] {
       const cli = runnerCommand(pm, 'stash')

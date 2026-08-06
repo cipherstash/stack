@@ -20,10 +20,13 @@ export const resolveDatabaseStep: InitStep = {
   id: 'resolve-database',
   name: 'Resolve database URL',
   async run(state: InitState, provider: InitProvider): Promise<InitState> {
-    // The provider name carries the integration flag the user passed at the
-    // CLI (`--supabase` → 'supabase'), which lets the resolver try
-    // `supabase status` even before we've inspected the project layout.
-    const supabaseHint = provider.name === 'supabase'
+    // `provider.selected` carries the integration flags the user passed at the
+    // CLI, which lets the resolver try `supabase status` even before we've
+    // inspected the project layout. Membership, not equality on
+    // `provider.name`: the flags combine, and `--drizzle --supabase` names
+    // itself 'drizzle-supabase' — which dropped the hint on exactly the local
+    // Supabase projects whose URL only `supabase status` knows.
+    const supabaseHint = provider.selected.includes('supabase')
     const databaseUrl = await resolveDatabaseUrl({ supabase: supabaseHint })
     return { ...state, databaseUrl }
   },

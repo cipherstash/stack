@@ -13,12 +13,26 @@
  * the mirror, and the chainable half of its coverage matters most — the native
  * clients' encrypt audit trail has no other credential-free test.
  *
+ * `throwPreservingCode` and `handleError` are the two ends of the same seam —
+ * the first exists only so the FFI error code survives `withResult`'s wrapping
+ * long enough for the second to read it back off the rethrown Error — so they
+ * are covered here too.
+ *
  * Every branch was previously reachable only through live ZeroKMS; these move
  * that assurance onto the pure CI lane. No credentials, no network.
  */
 import type { Result } from '@byteslice/result'
-import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type MockInstance,
+  vi,
+} from 'vitest'
+import {
+  handleError,
   resolveDecryptResult,
   resolveEncryptResult,
   throwPreservingCode,
@@ -347,5 +361,126 @@ describe('throwPreservingCode', () => {
     } catch (error) {
       expect((error as { code?: string }).code).toBeUndefined()
     }
+  })
+})
+
+/**
+ * The adapter's error funnel — every operation's `catch` ends here, and the
+ * code it stamps on the way out is what a caller branches on.
+ *
+ * protect-ffi 0.31.0 removed the `ProtectError` class `handleError`'s first
+ * branch matched with `instanceof`, collapsing the two branches into one — and
+ * the collapse fixed a bug. The old fallback accepted ANY string-valued `code`
+ * and asserted it into `ProtectErrorCode`, so a Node error arriving from the
+ * DynamoDB client (`ECONNRESET` on a dropped socket) was handed back as an
+ * encryption error code, and a caller keying retry-vs-fail off `error.code`
+ * read a transport fault as a crypto fault. `isProtectErrorCode` checks the
+ * value against the known set.
+ *
+ * That fix had no test of its own: the predicate was covered directly
+ * (`error-codes.test.ts`), but its use here — the whole point — was reachable
+ * only through live ZeroKMS. These pin it credential-free.
+ */
+describe('handleError', () => {
+  let errorLog: MockInstance
+
+  beforeEach(() => {
+    // `handleError` always calls the shared logger at `error` level, which the
+    // default `STASH_STACK_LOG` emits. Silence it so the reporter stays clean.
+    // The outer `afterEach` un-patches.
+    errorLog = vi.spyOn(logger, 'error').mockImplementation(() => {})
+  })
+
+  it('does not surface a foreign error code as an encryption error code', () => {
+    const error = handleError(
+      { code: 'ECONNRESET', message: 'socket hang up' },
+      'decryptModel',
+    )
+
+    expect(error.code).toBe('DYNAMODB_ENCRYPTION_ERROR')
+    expect(error.name).toBe('EncryptedDynamoDBError')
+    expect(error.details).toEqual({ context: 'decryptModel' })
+  })
+
+  it('preserves a code the FFI actually emits', () => {
+    // `UNKNOWN_COLUMN` is a real member of `PROTECT_ERROR_CODES` in
+    // protect-ffi 0.31.0 — a code the caller is meant to branch on, so the
+    // guard must not flatten it into the generic one.
+    const error = handleError(
+      { code: 'UNKNOWN_COLUMN', message: 'no such column' },
+      'encryptModel',
+    )
+
+    expect(error.code).toBe('UNKNOWN_COLUMN')
+  })
+
+  it('falls back to the generic code when there is no usable code at all', () => {
+    for (const raw of [
+      {},
+      new Error('plain'),
+      { code: 42 },
+      { code: null },
+      'a bare string',
+    ]) {
+      expect(handleError(raw, 'decryptModel').code).toBe(
+        'DYNAMODB_ENCRYPTION_ERROR',
+      )
+    }
+  })
+
+  it('survives the round trip a real failure takes through throwPreservingCode', () => {
+    // The production path: an operation's `{ failure }` is rethrown by
+    // `throwPreservingCode` as an Error carrying `code`, `withResult` catches
+    // it, and `handleError` reads the code back. Both codes must come out the
+    // far side classified the same way they went in.
+    const rethrow = (code: string) => {
+      try {
+        throwPreservingCode({ message: 'boom', code })
+      } catch (error) {
+        return handleError(error, 'bulkDecryptModels')
+      }
+      return expect.unreachable('should have thrown')
+    }
+
+    expect(rethrow('UNKNOWN_COLUMN').code).toBe('UNKNOWN_COLUMN')
+    expect(rethrow('ECONNRESET').code).toBe('DYNAMODB_ENCRYPTION_ERROR')
+  })
+
+  it('extracts the message from an Error, a plain object, or anything else', () => {
+    expect(
+      handleError(new Error('from an Error'), 'decryptModel').message,
+    ).toBe('from an Error')
+    expect(
+      handleError({ message: 'from an object' }, 'decryptModel').message,
+    ).toBe('from an object')
+    // A non-string `message` is not a message; fall through to `String(error)`.
+    expect(handleError({ message: 42 }, 'decryptModel').message).toBe(
+      '[object Object]',
+    )
+    expect(handleError('bare string', 'decryptModel').message).toBe(
+      'bare string',
+    )
+    expect(handleError(null, 'decryptModel').message).toBe('null')
+  })
+
+  it('hands the constructed error to both the errorHandler and the caller logger', () => {
+    const seen: unknown[] = []
+    const callerLog = { error: vi.fn() }
+
+    const error = handleError(
+      { code: 'ECONNRESET', message: 'socket hang up' },
+      'decryptModel',
+      { errorHandler: (e) => seen.push(e), logger: callerLog },
+    )
+
+    // Identity, not structural equality: the handler must receive the SAME
+    // object the caller gets back, so a handler reading `.code` sees the
+    // classified one.
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toBe(error)
+    expect(callerLog.error).toHaveBeenCalledWith('Error in decryptModel', error)
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.stringContaining('DynamoDB error in decryptModel'),
+    )
   })
 })

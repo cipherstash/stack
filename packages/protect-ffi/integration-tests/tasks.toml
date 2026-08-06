@@ -1,0 +1,73 @@
+[start-db]
+description = "Start a local Postgres database in a Docker container"
+dir = "{{ config_root }}/integration-tests"
+run = """
+docker compose up --wait --detach
+
+# wait till postgres is ready
+printf "Waiting for postgres to be ready..."
+until pg_isready -q -h ${PGHOST} -U ${PGUSER} -p ${PGPORT}; do
+    printf "."
+    sleep 0.1
+done
+echo "done"
+"""
+
+["eql:download"]
+description = "Download CipherStash encrypt SQL"
+dir = "{{ config_root }}/integration-tests"
+run = "curl -sLo sql/cipherstash-encrypt.sql https://github.com/cipherstash/encrypt-query-language/releases/download/eql-2.2.1/cipherstash-encrypt.sql"
+
+["eql:install"]
+description = "Install CipherStash encrypt SQL into the database"
+dir = "{{ config_root }}/integration-tests"
+run = "cat sql/cipherstash-encrypt.sql | docker exec -i protect-ffi-postgres psql postgresql://cipherstash:password@postgres:5432/cipherstash -f-"
+
+["eql:v3:install"]
+description = "Install EQL v3 from the locked @cipherstash/eql package"
+dir = "{{ config_root }}/integration-tests"
+run = """
+set -e
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+node --input-type=module -e "import { readInstallSql } from '@cipherstash/eql/sql'; process.stdout.write(readInstallSql())" > "$tmp"
+if [ ! -s "$tmp" ]; then
+    echo "error: @cipherstash/eql returned an empty EQL v3 installer" >&2
+    exit 1
+fi
+docker exec -i protect-ffi-postgres psql postgresql://cipherstash:password@postgres:5432/cipherstash -f- < "$tmp"
+"""
+
+[setup]
+description = "Set up the integration test environment"
+dir = "{{ config_root }}/integration-tests"
+run = [
+    "npm ci",
+    "mise run start-db",
+    "mise run eql:download",
+    "mise run eql:install",
+    "mise run eql:v3:install",
+]
+
+["test:integration"]
+description = "Run the integration tests"
+dir = "{{ config_root }}/integration-tests"
+depends = ["start-db"]
+# The wasm-round-trip suite reads `dist/wasm/protect_ffi_inline.js`, so
+# the wasm artifacts must exist before vitest runs even though the rest
+# of the integration tests only need the Neon binding.
+run = [
+    "mise run build:debug",
+    "npm run --prefix .. build:wasm",
+    "npx vitest --exclude tests/lock-context.test.ts",
+]
+
+["test:integration:all"]
+description = "Run all integration tests (includes lock context tests)"
+dir = "{{ config_root }}/integration-tests"
+depends = ["start-db"]
+run = [
+    "mise run build:debug",
+    "npm run --prefix .. build:wasm",
+    "npx vitest",
+]

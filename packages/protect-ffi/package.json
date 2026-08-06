@@ -1,0 +1,111 @@
+{
+  "name": "@cipherstash/protect-ffi",
+  "version": "0.31.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cipherstash/protectjs-ffi.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cipherstash/protectjs-ffi/issues"
+  },
+  "homepage": "https://github.com/cipherstash/protectjs-ffi#readme",
+  "description": "Native FFI bindings to the CipherStash Client SDK — powers @cipherstash/stack",
+  "main": "./lib/index.cjs",
+  "scripts": {
+    "test": "pnpm run test:typecheck && pnpm run test:unit && pnpm run test:lint && pnpm run test:format:ts",
+    "test:cargo": "pnpm run test:rust && pnpm run test:format:rust",
+    "test:typecheck": "tsc && tsc -p tsconfig.test.json",
+    "test:typecheck:wasm": "tsc -p type-tests/tsconfig.json",
+    "test:unit": "vitest run",
+    "test:rust": "cargo test",
+    "test:lint": "pnpm run test:lint:ts",
+    "test:lint:ts": "biome lint",
+    "test:format:ts": "biome format",
+    "test:format:rust": "cargo fmt --check",
+    "cargo-build": "tsc && cargo build --message-format=json-render-diagnostics > cargo.log",
+    "cross-build": "tsc && cross build --message-format=json-render-diagnostics > cross.log",
+    "zig-build": "tsc && cargo zigbuild --message-format=json-render-diagnostics > zig.log",
+    "postcargo-build": "neon dist < cargo.log",
+    "postcross-build": "neon dist -m /target < cross.log",
+    "postzig-build": "neon dist < zig.log",
+    "debug": "pnpm run cargo-build",
+    "build": "tsc",
+    "build:native": "pnpm run cargo-build --release",
+    "cross": "pnpm run cross-build --release",
+    "zigbuild": "pnpm run zig-build --release",
+    "prepack": "tsc",
+    "build:wasm": "wasm-pack build crates/protect-ffi --target bundler --out-dir ../../dist/wasm --no-pack && tsc -p tsconfig.wasm-errors.json",
+    "postbuild:wasm": "node scripts/inline-wasm.mjs"
+  },
+  "author": "CipherStash <humans@cipherstash.com>",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "node": {
+        "import": {
+          "types": "./lib/index.d.mts",
+          "default": "./lib/index.mjs"
+        },
+        "require": {
+          "types": "./lib/index.d.cts",
+          "default": "./lib/index.cjs"
+        }
+      },
+      "default": "./dist/wasm/protect_ffi.js"
+    },
+    "./wasm": {
+      "types": "./dist/wasm/protect_ffi.d.ts",
+      "default": "./dist/wasm/protect_ffi.js"
+    },
+    "./wasm-inline": {
+      "types": "./dist/wasm/protect_ffi.d.ts",
+      "default": "./dist/wasm/protect_ffi_inline.js"
+    }
+  },
+  "types": "./lib/index.d.cts",
+  "files": [
+    "lib/**/*.?({c,m}){t,j}s",
+    "dist/wasm/package.json",
+    "dist/wasm/protect_ffi.js",
+    "dist/wasm/protect_ffi_bg.js",
+    "dist/wasm/protect_ffi_bg.wasm",
+    "dist/wasm/protect_ffi.d.ts",
+    "dist/wasm/protect_ffi_bg.wasm.d.ts",
+    "dist/wasm/protect_ffi_inline.js",
+    "dist/wasm/errors.js",
+    "dist/wasm/errors.d.ts"
+  ],
+  "neon": {
+    "type": "library",
+    "org": "@cipherstash",
+    "platforms": [
+      "darwin-x64",
+      "darwin-arm64",
+      "win32-x64-msvc",
+      "linux-x64-gnu",
+      "linux-arm64-gnu",
+      "linux-x64-musl"
+    ],
+    "load": "./src/load.cts",
+    "prefix": "protect-ffi-"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.3",
+    "@neon-rs/cli": "^0.1.82",
+    "@tsconfig/node22": "^22.0.0",
+    "@types/node": "^22.20.1",
+    "typescript": "catalog:repo",
+    "vitest": "catalog:repo"
+  },
+  "dependencies": {
+    "@neon-rs/load": "^0.1.82"
+  },
+  "optionalDependencies": {
+    "@cipherstash/protect-ffi-darwin-x64": "workspace:*",
+    "@cipherstash/protect-ffi-darwin-arm64": "workspace:*",
+    "@cipherstash/protect-ffi-win32-x64-msvc": "workspace:*",
+    "@cipherstash/protect-ffi-linux-x64-gnu": "workspace:*",
+    "@cipherstash/protect-ffi-linux-arm64-gnu": "workspace:*",
+    "@cipherstash/protect-ffi-linux-x64-musl": "workspace:*"
+  }
+}

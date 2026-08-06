@@ -1,0 +1,12 @@
+# A job that delegates its whole body to a called workflow whose YAML does not
+# parse. The job has no `steps:` of its own, so the un-auditable report is the
+# only thing between this file and a silent `OK` — and unguarded it was not a
+# report at all but a stack trace.
+name: Reusable Malformed
+on:
+  push:
+    tags: ['v*']
+jobs:
+  publish:
+    uses: ./.github/workflows/called-malformed.yml
+    secrets: inherit

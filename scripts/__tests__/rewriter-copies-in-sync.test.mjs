@@ -1,9 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-
-const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../../..')
+import { REPO_ROOT } from './lib/repo-root.mjs'
 
 /**
  * The ALTER-COLUMN rewriter exists twice: `@cipherstash/wizard`

@@ -1,0 +1,8 @@
+name: Reusable Clean
+on:
+  push:
+    tags: ['v*']
+jobs:
+  publish:
+    uses: ./.github/workflows/called-clean.yml
+    secrets: inherit

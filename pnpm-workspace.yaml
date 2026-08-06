@@ -1,5 +1,9 @@
 packages:
   - packages/*
+  # The six per-platform binary packages for @cipherstash/protect-ffi. The
+  # `packages/*` glob above already covers the wrapper itself; these are nested
+  # a level deeper and need their own entry.
+  - packages/protect-ffi/platforms/*
   - examples/*
   - e2e
 
@@ -91,11 +95,9 @@ blockExoticSubdeps: true
 # are not exotic deps.
 #   - @prisma/orm-*, prisma-next  first-party Prisma packages the integration is
 #                                 built against (the 0.17 publish surface; the
-#                                 retired @prisma-next/* scope is kept while
-#                                 examples still pin 0.16)
-#   - @cipherstash/protect-ffi*  CipherStash-published native FFI and its
-#                                 per-platform binary packages (darwin-arm64,
-#                                 linux-x64-gnu, etc.); bumped in lockstep with stack
+#                                 retired @prisma-next/* scope is kept for
+#                                 historical installs while anything still pins
+#                                 0.16)
 #   - @cipherstash/auth*         CipherStash-published auth strategies (NAPI +
 #                                 WASM-inline variant); also tracked in lockstep
 #                                 with protect-ffi for the WASM path.
@@ -106,8 +108,6 @@ minimumReleaseAgeExclude:
   - '@prisma-next/*'
   - '@prisma/orm-*'
   - 'prisma-next'
-  - '@cipherstash/protect-ffi'
-  - '@cipherstash/protect-ffi-*'
   - '@cipherstash/auth'
   - '@cipherstash/auth-*'
   - '@cipherstash/eql'

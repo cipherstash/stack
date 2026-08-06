@@ -18,14 +18,19 @@ import { EncryptionOperation } from './base-operation'
 
 // Drops nulls so they don't reach protect-ffi's bulk decrypt. The
 // dropped positions are re-inserted as null in `mapDecryptedDataToResult`.
+//
+// The caller's `id` is deliberately NOT forwarded — protect-ffi's
+// `BulkDecryptPayload` is `{ ciphertext, lockContext? }`, and since 0.31
+// unrecognised keys reach Rust and are rejected rather than dropped. Results
+// are correlated positionally by `mapDecryptedDataToResult` against the
+// ORIGINAL array, so the id was never doing work here.
 const createDecryptPayloads = (
   encryptedPayloads: BulkDecryptPayload,
   lockContext?: Context,
 ) => {
   return encryptedPayloads
     .filter(({ data }) => data !== null)
-    .map(({ id, data }) => ({
-      id,
+    .map(({ data }) => ({
       ciphertext: data as CipherStashEncrypted,
       ...(lockContext && { lockContext }),
     }))

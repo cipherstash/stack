@@ -4,6 +4,7 @@ import { type PackageManager, runnerCommand } from '../utils.js'
 export function createDrizzleProvider(): InitProvider {
   return {
     name: 'drizzle',
+    selected: ['drizzle'],
     introMessage: 'Setting up CipherStash for your Drizzle project...',
     getNextSteps(state: InitState, pm: PackageManager): string[] {
       const cli = runnerCommand(pm, 'stash')

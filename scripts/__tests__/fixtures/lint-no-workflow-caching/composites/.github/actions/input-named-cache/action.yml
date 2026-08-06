@@ -1,0 +1,19 @@
+# Declares an input called `cache` and touches no cache at all. `with:` on a
+# step that hands off to a local action is that action's declared inputs — an
+# input named `cache` has no more to do with the GitHub Actions cache than one
+# named `path` does, and a composite is free to declare either.
+#
+# The step-level twin of what `called-input-named-cache.yml` pins one level up.
+name: Input Named Cache
+description: Takes an input called `cache` and restores nothing.
+inputs:
+  cache:
+    description: Reuse `index.node` from the working tree if it is already built.
+    required: false
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Build the binding
+      shell: bash
+      run: echo "build (reuse=${{ inputs.cache }})"

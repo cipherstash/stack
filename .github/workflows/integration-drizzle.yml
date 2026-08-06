@@ -59,6 +59,33 @@ on:
       - '.github/workflows/integration-drizzle.yml'
       - '.github/actions/integration-setup/**'
       - '.github/actions/integration-db/**'
+      - '.github/actions/build-ffi-binding/**'
+      # The Rust that produces every EQL payload these suites round-trip.
+      # Absorbing protect-ffi put it in-tree, so a crate change can now
+      # break them in a PR that touches no TypeScript at all.
+      #
+      # The manifests are here for the same reason as the sources: a
+      # dependency bump in Cargo.lock changes the compiled encryption core
+      # without touching a .rs file, and package.json / mise.toml carry the
+      # build scripts and the toolchain pin. Matching the filter in
+      # tests-rust.yml, which already covers all four.
+      - 'packages/protect-ffi/crates/**'
+      - 'packages/protect-ffi/src/**'
+      - 'packages/protect-ffi/Cargo.toml'
+      - 'packages/protect-ffi/Cargo.lock'
+      - 'packages/protect-ffi/package.json'
+      - 'packages/protect-ffi/mise.toml'
+      # The non-cargo half of `build:wasm`, and the reason this job passes
+      # `wasm: 'true'`: `tsc -p tsconfig.wasm-errors.json`, then a
+      # `postbuild:wasm` hook running `scripts/inline-wasm.mjs`, which is what
+      # emits `dist/wasm/protect_ffi_inline.js` — the bundle the
+      # `integration/wasm/**` suites selected below actually load. Both files
+      # are in the WASM cache key of `.github/actions/build-ffi-binding`, so an
+      # edit to either misses that cache and REBUILDS the bundle; without these
+      # two entries it gets rebuilt and the only suite that loads it never runs.
+      # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
+      - 'packages/protect-ffi/tsconfig.wasm-errors.json'
+      - 'packages/protect-ffi/scripts/inline-wasm.mjs'
   pull_request:
     branches: ['**']
     # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
@@ -106,6 +133,33 @@ on:
       - '.github/workflows/integration-drizzle.yml'
       - '.github/actions/integration-setup/**'
       - '.github/actions/integration-db/**'
+      - '.github/actions/build-ffi-binding/**'
+      # The Rust that produces every EQL payload these suites round-trip.
+      # Absorbing protect-ffi put it in-tree, so a crate change can now
+      # break them in a PR that touches no TypeScript at all.
+      #
+      # The manifests are here for the same reason as the sources: a
+      # dependency bump in Cargo.lock changes the compiled encryption core
+      # without touching a .rs file, and package.json / mise.toml carry the
+      # build scripts and the toolchain pin. Matching the filter in
+      # tests-rust.yml, which already covers all four.
+      - 'packages/protect-ffi/crates/**'
+      - 'packages/protect-ffi/src/**'
+      - 'packages/protect-ffi/Cargo.toml'
+      - 'packages/protect-ffi/Cargo.lock'
+      - 'packages/protect-ffi/package.json'
+      - 'packages/protect-ffi/mise.toml'
+      # The non-cargo half of `build:wasm`, and the reason this job passes
+      # `wasm: 'true'`: `tsc -p tsconfig.wasm-errors.json`, then a
+      # `postbuild:wasm` hook running `scripts/inline-wasm.mjs`, which is what
+      # emits `dist/wasm/protect_ffi_inline.js` — the bundle the
+      # `integration/wasm/**` suites selected below actually load. Both files
+      # are in the WASM cache key of `.github/actions/build-ffi-binding`, so an
+      # edit to either misses that cache and REBUILDS the bundle; without these
+      # two entries it gets rebuilt and the only suite that loads it never runs.
+      # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
+      - 'packages/protect-ffi/tsconfig.wasm-errors.json'
+      - 'packages/protect-ffi/scripts/inline-wasm.mjs'
 
 jobs:
   integration:
@@ -119,7 +173,12 @@ jobs:
     #
     # Fork PRs have no secrets. Skip cleanly rather than fail on something the
     # contributor cannot fix — `tests.yml` still gives them a green signal.
-    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    # Every OTHER event runs, which is why this gates on "not a fork PR" rather
+    # than listing the event names allowed through: the listing form skipped
+    # the job on `workflow_dispatch` in integration-protect-ffi.yml, making a
+    # declared manual trigger do nothing. Enforced by
+    # scripts/__tests__/workflow-dispatch-job-conditions.test.mjs.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
 
     strategy:
       fail-fast: false
@@ -176,8 +235,9 @@ jobs:
       - uses: ./.github/actions/integration-setup
 
       # Fast pre-flight: fail in seconds if a secret was rotated or cleared,
-      # before the docker pull. The in-test `requireIntegrationEnv` is the
-      # correctness guarantee; this is the cheap one.
+      # before the binding build and the docker pull. The in-test
+      # `requireIntegrationEnv` is the correctness guarantee; this is the cheap
+      # one, so nothing expensive may be ordered ahead of it.
       - name: Require CipherStash secrets
         uses: ./.github/actions/require-cs-secrets
         with:
@@ -185,6 +245,14 @@ jobs:
           client-id: ${{ vars.CS_CLIENT_ID }}
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+      # `wasm: true` because CS_IT_SUITE below includes `integration/wasm/**`
+      # — the `@cipherstash/stack/wasm-inline` adapter over the shared v3
+      # matrix — which loads the real WASM, unlike the mocked unit tests.
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/build-ffi-binding
+        with:
+          wasm: 'true'
 
       # No pre-`up` cleanup step any more: the project name is unique per job, so
       # a container leaked by a hard-killed prior run cannot hold this job's

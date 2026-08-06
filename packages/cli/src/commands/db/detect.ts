@@ -33,19 +33,24 @@ export function detectSupabase(databaseUrl: string | undefined): boolean {
  */
 export interface SupabaseProjectInfo {
   /**
-   * Whether the migrations directory exists AND is a directory. Used to pick
-   * the migration-vs-direct default in the `eql install --supabase` prompt.
+   * Whether the migrations directory exists AND is a directory. Together with
+   * {@link hasConfigToml} this is what `stash init --supabase` reads to decide
+   * whether the project has somewhere local to write an install migration —
+   * a hosted Supabase project with no CLI scaffolding does not, and falls back
+   * to a direct `eql install`.
    */
   hasMigrationsDir: boolean
   /**
-   * Whether `supabase/config.toml` exists. Informational only — it doesn't
-   * influence the prompt default but is useful for diagnostics.
+   * Whether `supabase/config.toml` exists. The stronger of the two signals: a
+   * project that has run `supabase init` but never written a migration has the
+   * config and no migrations directory. Also gates the `supabase status`
+   * fallback in the database-URL resolver.
    */
   hasConfigToml: boolean
   /**
-   * Absolute path to the migrations directory we'd write into. Defaults to
+   * Absolute path to the migrations directory to write into. Defaults to
    * `<cwd>/supabase/migrations`, or `override` (resolved against `cwd` when
-   * relative) when supplied via `--migrations-dir`.
+   * relative) when supplied via `eql migration --supabase --out`.
    */
   migrationsDir: string
 }
@@ -53,13 +58,16 @@ export interface SupabaseProjectInfo {
 /**
  * Inspect the working directory for Supabase CLI scaffolding.
  *
- * IMPORTANT: this is a hint for choosing the install-mode prompt default —
- * it does NOT enable `--supabase`. The user must pass `--supabase` explicitly
- * for any of the migration-file flow to activate.
+ * IMPORTANT: this is a hint — it does NOT enable `--supabase`. The user must
+ * pass `--supabase` explicitly for the migration-file flow to activate
+ * (`stash init --supabase` counts as that explicit choice).
+ *
+ * `migrationsDir` is returned whether or not it exists, because it is also the
+ * path `eql migration --supabase` creates.
  *
  * @param cwd - Project root to inspect.
- * @param override - Optional `--migrations-dir` override. Absolute paths are
- *   used as-is; relative paths are resolved against `cwd`.
+ * @param override - Optional `--out` override. Absolute paths are used as-is;
+ *   relative paths are resolved against `cwd`.
  */
 export function detectSupabaseProject(
   cwd: string,

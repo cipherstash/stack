@@ -1,0 +1,17 @@
+# The job-level twin of `parent-uses-step.yml`. A `../` reference is not a
+# workflow in this checkout, and GitHub does not accept one — so the job is
+# reported as un-auditable rather than resolved, which under the old
+# `^\.{1,2}/` reading would have pointed `resolveWorkflowFile` at a path outside
+# the workspace root.
+#
+# The verdict has to name what this actually is. Falling through to the remote
+# branch called it "a remote reusable workflow", which it is not: nothing here
+# is remote, the reference is simply invalid and unfollowable.
+name: Reusable Parent Uses
+on:
+  push:
+    tags: ['v*']
+jobs:
+  publish:
+    uses: ../outside-workflow.yml
+    secrets: inherit

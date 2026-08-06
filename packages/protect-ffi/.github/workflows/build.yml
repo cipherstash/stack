@@ -1,0 +1,291 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'The branch, tag, or SHA to check out'
+        required: true
+        type: string
+      update-version:
+        description: 'Update version before building?'
+        required: false
+        type: boolean
+        default: false
+      version:
+        description: 'Version update (ignored if update-version is false)'
+        required: false
+        type: string
+        default: 'patch'
+      github-release:
+        description: 'Publish GitHub release?'
+        required: false
+        type: boolean
+        default: false
+      tag:
+        description: 'The release tag (ignored if github-release is false)'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  matrix:
+    name: Matrix
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    outputs:
+      matrix: ${{ steps.matrix.outputs.result }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Setup Neon Environment
+        uses: ./.github/actions/setup
+        with:
+          use-rust: false
+      - name: Look Up Matrix Data
+        id: matrixData
+        shell: bash
+        run: |
+          cat package.json
+          echo "json=$(npx neon show ci github | jq -rc)" | tee -a $GITHUB_OUTPUT
+      - name: Compute Matrix
+        id: matrix
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const platforms = ${{ steps.matrixData.outputs.json }};
+            const macOS = platforms.macOS.map(platform => {
+              return { os: "macos-latest", platform, script: "build" };
+            });
+            const windows = platforms.Windows.map(platform => {
+              return { os: "windows-latest", platform, script: "build" };
+            });
+            const linux = platforms.Linux.map(platform => {
+              const script = platform.includes('gnu') ? "zigbuild" : "build";
+              return { os: "blacksmith-4vcpu-ubuntu-2404", platform, script: script };
+            });
+            return [...macOS, ...windows, ...linux];
+
+  binaries:
+    name: Binaries
+    needs: [matrix]
+    strategy:
+      matrix:
+        cfg: ${{ fromJSON(needs.matrix.outputs.matrix) }}
+    runs-on: ${{ matrix.cfg.os }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Install OpenSSL (Windows)
+        if: ${{ matrix.cfg.os == 'windows-latest' }}
+        shell: powershell
+        run: |
+          vcpkg install openssl:x64-windows-static
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          $opensslDir = "$vcpkgRoot\installed\x64-windows-static"
+          echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$opensslDir\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+      - name: Install cross-compile toolchain
+        if: ${{ contains(matrix.cfg.platform, 'linux') }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-13-aarch64-linux-gnu
+          sudo ln -s /usr/bin/aarch64-linux-gnu-gcc-13 /usr/bin/aarch64-linux-gnu-gcc
+      - name: Setup Neon Environment
+        id: neon
+        uses: ./.github/actions/setup
+        with:
+          use-cross: ${{ matrix.cfg.script == 'cross' }}
+          platform: ${{ matrix.cfg.platform }}
+      - name: Update Version
+        if: ${{ inputs.update-version }}
+        shell: bash
+        env:
+          # Bind the input to an env var so it never expands into the shell
+          # body — guards against template-injection via `${{ }}` in `run:`.
+          # Keep this guard in sync with the `wasm` job and release.yml's Tag
+          # Release step.
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          git config --global user.name $ACTIONS_USER
+          git config --global user.email $ACTIONS_EMAIL
+          # Allowlist gate: only npm `version` bump keywords or strict semver
+          # (with optional `v` prefix and pre-release suffix) get through.
+          case "$VERSION_INPUT" in
+            patch|minor|major|prepatch|preminor|premajor|prerelease) ;;
+            v[0-9]*.[0-9]*.[0-9]*|[0-9]*.[0-9]*.[0-9]*) ;;
+            v[0-9]*.[0-9]*.[0-9]*-*|[0-9]*.[0-9]*.[0-9]*-*) ;;
+            *)
+              echo "Invalid version input: '$VERSION_INPUT' (expected an npm bump keyword or semver)" >&2
+              exit 1
+              ;;
+          esac
+          npm version "$VERSION_INPUT" -m "v%s"
+      - name: Build
+        shell: bash
+        env:
+          CARGO_BUILD_TARGET: ${{ steps.neon.outputs.target }}
+          NEON_BUILD_PLATFORM: ${{ matrix.cfg.platform }}
+        run: |
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=$(echo ${CARGO_BUILD_TARGET} | sed 's/unknown-//')-gcc
+          export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=$(echo ${CARGO_BUILD_TARGET} | sed 's/unknown-//')-gcc
+          if [[ $CARGO_BUILD_TARGET =~ musl ]]; then
+            wget -4 https://musl.cc/x86_64-linux-musl-native.tgz
+            tar zxvf x86_64-linux-musl-native.tgz
+            sudo tar zxvf x86_64-linux-musl-native.tgz -C /opt/
+            export PATH="/opt/x86_64-linux-musl-native/bin/:${PATH}"
+            export RUSTFLAGS="-C target-feature=-crt-static"
+            npm run ${{ matrix.cfg.script }}
+          elif [[ $CARGO_BUILD_TARGET =~ gnu ]]; then
+            # Pass the glibc-versioned target as a flag: cargo-zigbuild >= 0.23.0
+            # no longer reads CARGO_BUILD_TARGET from the environment.
+            npm run ${{ matrix.cfg.script }} -- --target "${CARGO_BUILD_TARGET}.2.28"
+          else
+            npm run ${{ matrix.cfg.script }}
+          fi
+      - name: Pack
+        id: pack
+        shell: bash
+        run: |
+          mkdir -p dist
+          echo filename=$(basename $(npm pack ./platforms/${{ matrix.cfg.platform }} --silent --pack-destination=./dist --json | jq -r '.[0].filename')) | tee -a $GITHUB_OUTPUT
+      - name: Release
+        if: ${{ inputs.github-release }}
+        uses: softprops/action-gh-release@9d7c94cfd0a1f3ed45544c887983e9fa900f0564 # v2.0.4
+        with:
+          files: ./dist/${{ steps.pack.outputs.filename }}
+          tag_name: ${{ inputs.tag }}
+
+  wasm:
+    name: Wasm
+    needs: [matrix]
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - name: Setup Neon Environment
+        uses: ./.github/actions/setup
+        with:
+          use-rust: true
+          platform: linux-x64-gnu
+      - name: Install wasm32 target
+        shell: bash
+        run: rustup target add wasm32-unknown-unknown
+      - name: Install wasm-pack
+        uses: baptiste0928/cargo-install@c7dafcfd8a0035d58dfc65d0fbaf71a9ac347715 # v2
+        with:
+          crate: wasm-pack
+          version: '0.13.1'
+      - name: Update Version
+        if: ${{ inputs.update-version }}
+        shell: bash
+        env:
+          # Bind the input to an env var so it never expands into the shell
+          # body — guards against template-injection via `${{ }}` in `run:`.
+          # Keep this guard in sync with the `binaries` job and release.yml's Tag
+          # Release step.
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          git config --global user.name $ACTIONS_USER
+          git config --global user.email $ACTIONS_EMAIL
+          # Allowlist gate: only npm `version` bump keywords or strict semver
+          # (with optional `v` prefix and pre-release suffix) get through.
+          case "$VERSION_INPUT" in
+            patch|minor|major|prepatch|preminor|premajor|prerelease) ;;
+            v[0-9]*.[0-9]*.[0-9]*|[0-9]*.[0-9]*.[0-9]*) ;;
+            v[0-9]*.[0-9]*.[0-9]*-*|[0-9]*.[0-9]*.[0-9]*-*) ;;
+            *)
+              echo "Invalid version input: '$VERSION_INPUT' (expected an npm bump keyword or semver)" >&2
+              exit 1
+              ;;
+          esac
+          npm version "$VERSION_INPUT" -m "v%s"
+      - name: Build wasm + inline shim
+        shell: bash
+        run: npm run build:wasm
+      # The generated .d.ts imports `../../lib/types.js`, and `lib/` is
+      # gitignored — nothing else in this job emits it (`npm ci` has no
+      # `prepare` hook, and `build:wasm` is wasm-pack plus inline-wasm.mjs), so
+      # without this the typecheck below fails on unresolvable imports. Kept a
+      # separate step rather than folded into `test:typecheck:wasm`: a script
+      # named "typecheck" should not emit `lib/` as a side effect.
+      - name: Build lib (declarations for the wasm .d.ts to import)
+        shell: bash
+        run: npx tsc
+      # The wasm .d.ts is generated by wasm-pack from the `typescript_type` /
+      # `typescript_custom_section` attributes in wasm.rs. These tests run
+      # against that output, so they belong here rather than in `npm test`,
+      # which must still pass in a clone with no dist/. They assert the negative
+      # cases with `@ts-expect-error`, so a declaration that stops catching a
+      # mistake fails the build rather than going quiet.
+      - name: Typecheck wasm declarations
+        shell: bash
+        run: npm run test:typecheck:wasm
+      - name: Upload wasm artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: wasm-dist
+          path: dist/wasm
+          retention-days: 1
+
+  main:
+    name: Main
+    needs: [matrix, wasm]
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - name: Setup Neon Environment
+        uses: ./.github/actions/setup
+        with:
+          use-rust: false
+      - name: Download wasm artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: wasm-dist
+          path: dist/wasm
+      - name: Pack
+        id: pack
+        shell: bash
+        run: |
+          mkdir -p dist
+          echo "filename=$(npm pack --silent --pack-destination=./dist)" | tee -a $GITHUB_OUTPUT
+      - name: Extract release notes
+        if: ${{ inputs.github-release }}
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          # A release with no tag is a misconfiguration — fail fast with a
+          # clear message rather than emitting an empty version and a broken
+          # `blob//CHANGELOG.md` fallback link.
+          if [ -z "$TAG" ]; then
+            echo "Extract release notes: inputs.tag is empty but github-release is true" >&2
+            exit 1
+          fi
+          # Source the GitHub release body from the matching CHANGELOG section.
+          # Fall back to a pointer rather than failing the release if it's absent.
+          if ! node scripts/changelog-extract.mjs "${TAG#v}" > RELEASE_NOTES.md; then
+            echo "See [CHANGELOG.md](https://github.com/cipherstash/protectjs-ffi/blob/${TAG}/CHANGELOG.md)." > RELEASE_NOTES.md
+          fi
+          cat RELEASE_NOTES.md
+      - name: Release
+        if: ${{ inputs.github-release }}
+        uses: softprops/action-gh-release@9d7c94cfd0a1f3ed45544c887983e9fa900f0564 # v2.0.4
+        with:
+          files: ./dist/${{ steps.pack.outputs.filename }}
+          tag_name: ${{ inputs.tag }}
+          body_path: RELEASE_NOTES.md

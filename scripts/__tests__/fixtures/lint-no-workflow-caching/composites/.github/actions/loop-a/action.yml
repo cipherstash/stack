@@ -1,0 +1,7 @@
+name: Loop A
+description: Half of a cyclic composite reference.
+runs:
+  using: composite
+  steps:
+    - name: Hand off to B
+      uses: ./.github/actions/loop-b

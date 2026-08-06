@@ -62,7 +62,9 @@ function migrationCommands(
     return {
       tool: 'Supabase CLI',
       generate: 'supabase migration new <name>',
-      apply: 'supabase migration up (remote) or supabase db reset (local)',
+      // A bare `supabase migration up` targets the LOCAL database; the remote
+      // forms are `db push` and `migration up --linked`.
+      apply: 'supabase db push (remote) or supabase db reset (local)',
     }
   }
   return undefined
@@ -507,7 +509,10 @@ function planSharedNotDoBlock(ctx: SetupPromptContext): string[] {
       `Run \`${cli} encrypt backfill\`, \`${cli} encrypt drop\`, or any other state-mutating command.`,
     ),
     bullet(
-      'Run schema migrations (`drizzle-kit migrate`, `supabase migration up`, `prisma migrate`, etc.).',
+      // `supabase db reset` rather than `migration up`: it is the command an
+      // agent on a local Supabase project would actually reach for, and it
+      // drops the database — the most important one in a do-not-run list.
+      'Run schema migrations (`drizzle-kit migrate`, `supabase db reset`, `prisma migrate`, etc.).',
     ),
     bullet(
       'Modify the placeholder encryption client beyond what is required to read it.',
