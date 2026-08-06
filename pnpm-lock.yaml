@@ -383,8 +383,8 @@ importers:
         specifier: catalog:repo
         version: 0.42.0(@cipherstash/auth-darwin-arm64@0.42.0)(@cipherstash/auth-darwin-x64@0.42.0)(@cipherstash/auth-linux-arm64-gnu@0.42.0)(@cipherstash/auth-linux-x64-gnu@0.42.0)(@cipherstash/auth-linux-x64-musl@0.42.0)(@cipherstash/auth-win32-x64-msvc@0.42.0)
       '@cipherstash/protect-ffi':
-        specifier: 0.30.0
-        version: 0.30.0
+        specifier: 0.31.0
+        version: 0.31.0
       evlog:
         specifier: 1.11.0
         version: 1.11.0(next@15.5.21(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3)
@@ -482,8 +482,8 @@ importers:
         version: link:../stack
     devDependencies:
       '@cipherstash/protect-ffi':
-        specifier: 0.30.0
-        version: 0.30.0
+        specifier: 0.31.0
+        version: 0.31.0
       '@cipherstash/test-kit':
         specifier: workspace:*
         version: link:../test-kit
@@ -610,8 +610,8 @@ importers:
         version: link:../stack
     devDependencies:
       '@cipherstash/protect-ffi':
-        specifier: 0.30.0
-        version: 0.30.0
+        specifier: 0.31.0
+        version: 0.31.0
       '@cipherstash/test-kit':
         specifier: workspace:*
         version: link:../test-kit
@@ -988,38 +988,38 @@ packages:
   '@cipherstash/eql@3.0.4':
     resolution: {integrity: sha512-h+/1bMCuglE9pTCZLpVfPTQY2nic5JRoNl+rMQX2B/5cHCWaN5p6Q3OjEOa4Wqf/a7XWn43S/vcJLvWYYvGJuQ==}
 
-  '@cipherstash/protect-ffi-darwin-arm64@0.30.0':
-    resolution: {integrity: sha512-MbUfH0em2ysQxEV8+ed6442Q/EPQbAh5p17p1p4+JLUgbQJwPvxP8gm0yjeVrYBuGnZodsMqZwgOgEGt7360Ig==}
+  '@cipherstash/protect-ffi-darwin-arm64@0.31.0':
+    resolution: {integrity: sha512-ZXMh+hsgddyKxbDSPN3JbpMOoUJK8LXgX3xL+wqb2IZo8RVFuHKfV3D0WSMFb1Avl/vDVjtzXLzCAM811gy14g==}
     cpu: [arm64]
     os: [darwin]
 
-  '@cipherstash/protect-ffi-darwin-x64@0.30.0':
-    resolution: {integrity: sha512-GD2RXtjLvQaxWOPq2kbZEoNKTYWpDNTPQJ/tb9djpJF4RaR15g/jYhvk7Nqe2v3o6gre5RJBUpsaTQqC+G+L9A==}
+  '@cipherstash/protect-ffi-darwin-x64@0.31.0':
+    resolution: {integrity: sha512-O4KsoIgQchylk6ha3/gnetgjpBOO8catgV9WnNNHJ9gfqWW813ytBrCyKHv8zLx79pl7EkaA8UnE/U6YiOF17A==}
     cpu: [x64]
     os: [darwin]
 
-  '@cipherstash/protect-ffi-linux-arm64-gnu@0.30.0':
-    resolution: {integrity: sha512-R/DWCDQDDx/hRksRueJLvqxyQCSpGOZIummKqcVvBNkIhF/6Aos1SZ+zXTHAZ4gvBlfu3ovnRfMMI6eAstZDog==}
+  '@cipherstash/protect-ffi-linux-arm64-gnu@0.31.0':
+    resolution: {integrity: sha512-gYlkx5Ol7iv/cEwS/jy6wFuTI5NaO+BNJnXZnwuu4HrPsXSdcFRd+eY3Z7px9mnb+s6lED72pv6hMcNiwUFZJQ==}
     cpu: [arm64]
     os: [linux]
 
-  '@cipherstash/protect-ffi-linux-x64-gnu@0.30.0':
-    resolution: {integrity: sha512-uLi9kiKkJ9jUki75hgvLnDsDrJOj0RtZ8G0fVaKl4nnhZjCIVqpkn0EMlf0GOq2Bj8WiGSnca7kTGrhVkvgY9w==}
+  '@cipherstash/protect-ffi-linux-x64-gnu@0.31.0':
+    resolution: {integrity: sha512-2zhNkN+T1+FN2hYAMOiUwk4r/oun+w0pwfeV2xKJhNtLzDvAfHO30ta/qyPdNtnGm/9+LBljfl4KGvz/0eVIuw==}
     cpu: [x64]
     os: [linux]
 
-  '@cipherstash/protect-ffi-linux-x64-musl@0.30.0':
-    resolution: {integrity: sha512-ZrPyxc+qi9u9LsyGYbdqoi6oMPeBBx+E+/uZuAzVtp115k8CsI8xlcrmNswQ6Z74EgvAUfLb1ykTn5/P9Ge0rw==}
+  '@cipherstash/protect-ffi-linux-x64-musl@0.31.0':
+    resolution: {integrity: sha512-Ll8T6feLmChCmRXAWnsXNH+GzwWAICD+it824BhJgEma8DF8aNSar+HsazkrHNfDvVWGVcsmBARfzxoP+6Wy4A==}
     cpu: [x64]
     os: [linux]
 
-  '@cipherstash/protect-ffi-win32-x64-msvc@0.30.0':
-    resolution: {integrity: sha512-xew3mH+jf9RlfuIjXQ7KFWTs44Wjur//Ed1U48yFK3zmsyzkZGYVwfN8zieKpKgKqvj844s5x/0kvFXtrJDB0A==}
+  '@cipherstash/protect-ffi-win32-x64-msvc@0.31.0':
+    resolution: {integrity: sha512-fx+61P4z0o+nyPkw7bc8QxC7+wV13I5m1llpvR/dO4juYOeCkrs4q7DdxnUyTIi1GOlQNGwGAV91PMKu70j9RQ==}
     cpu: [x64]
     os: [win32]
 
-  '@cipherstash/protect-ffi@0.30.0':
-    resolution: {integrity: sha512-Xh8X/71ZOW6B6iEKPQlG4KrDgsKYZBw29ohsFnmMKOaTWVR7EodCE6MpSRDJ4uc+zYftp3QWsvUDEFz9gDpg6w==}
+  '@cipherstash/protect-ffi@0.31.0':
+    resolution: {integrity: sha512-qzTJZE0agyWxlukQbA5CG3//gvmohJhM8a1ehYr8tH6awbrLs6p5mgUs2ClgImO8Mv7O5XcYKdnMIdGni5vC4Q==}
 
   '@clack/core@1.4.3':
     resolution: {integrity: sha512-/kr3UWNtdJfxZtPgDqUOmG2pvwlmcLGheex5yiZKdwbzZJxhV+HMNR9QNmyY5cGwTNV6LrR7Jtp+KjhUAP1qBQ==}
@@ -4079,34 +4079,34 @@ snapshots:
 
   '@cipherstash/eql@3.0.4': {}
 
-  '@cipherstash/protect-ffi-darwin-arm64@0.30.0':
+  '@cipherstash/protect-ffi-darwin-arm64@0.31.0':
     optional: true
 
-  '@cipherstash/protect-ffi-darwin-x64@0.30.0':
+  '@cipherstash/protect-ffi-darwin-x64@0.31.0':
     optional: true
 
-  '@cipherstash/protect-ffi-linux-arm64-gnu@0.30.0':
+  '@cipherstash/protect-ffi-linux-arm64-gnu@0.31.0':
     optional: true
 
-  '@cipherstash/protect-ffi-linux-x64-gnu@0.30.0':
+  '@cipherstash/protect-ffi-linux-x64-gnu@0.31.0':
     optional: true
 
-  '@cipherstash/protect-ffi-linux-x64-musl@0.30.0':
+  '@cipherstash/protect-ffi-linux-x64-musl@0.31.0':
     optional: true
 
-  '@cipherstash/protect-ffi-win32-x64-msvc@0.30.0':
+  '@cipherstash/protect-ffi-win32-x64-msvc@0.31.0':
     optional: true
 
-  '@cipherstash/protect-ffi@0.30.0':
+  '@cipherstash/protect-ffi@0.31.0':
     dependencies:
       '@neon-rs/load': 0.1.82
     optionalDependencies:
-      '@cipherstash/protect-ffi-darwin-arm64': 0.30.0
-      '@cipherstash/protect-ffi-darwin-x64': 0.30.0
-      '@cipherstash/protect-ffi-linux-arm64-gnu': 0.30.0
-      '@cipherstash/protect-ffi-linux-x64-gnu': 0.30.0
-      '@cipherstash/protect-ffi-linux-x64-musl': 0.30.0
-      '@cipherstash/protect-ffi-win32-x64-msvc': 0.30.0
+      '@cipherstash/protect-ffi-darwin-arm64': 0.31.0
+      '@cipherstash/protect-ffi-darwin-x64': 0.31.0
+      '@cipherstash/protect-ffi-linux-arm64-gnu': 0.31.0
+      '@cipherstash/protect-ffi-linux-x64-gnu': 0.31.0
+      '@cipherstash/protect-ffi-linux-x64-musl': 0.31.0
+      '@cipherstash/protect-ffi-win32-x64-msvc': 0.31.0
 
   '@clack/core@1.4.3':
     dependencies:

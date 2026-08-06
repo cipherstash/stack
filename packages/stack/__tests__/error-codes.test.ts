@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { ProtectError as FfiProtectError } from '@cipherstash/protect-ffi'
+import { isProtectErrorCode } from '@cipherstash/protect-ffi'
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
 import { encryptedTable, types } from '@/eql/v3'
@@ -39,14 +39,28 @@ describe('FFI Error Code Preservation', () => {
     protectClient = await Encryption({ schemas: [testSchema, noIndexSchema] })
   })
 
-  describe('FfiProtectError class', () => {
-    it('constructs with code and message', () => {
-      const error = new FfiProtectError({
-        code: 'UNKNOWN_COLUMN',
-        message: 'Test error',
-      })
-      expect(error.code).toBe('UNKNOWN_COLUMN')
-      expect(error.message).toBe('Test error')
+  describe('isProtectErrorCode', () => {
+    // protect-ffi 0.31.0 removed the `ProtectError` class this block used to
+    // construct. Both bindings now throw an ordinary `Error` with `code` set by
+    // Rust, so there is no class to match — `instanceof` cost a rewritten stack
+    // trace, made the two bindings throw different things, and was false across
+    // duplicate copies of the package anyway.
+    it('recognises a code the FFI actually emits', () => {
+      expect(isProtectErrorCode('UNKNOWN_COLUMN')).toBe(true)
+    })
+
+    it('rejects a Node error code', () => {
+      // The reason `getErrorCode` checks the code's VALUE rather than the
+      // presence of a `code` property: Node sets `code` on its own errors, so a
+      // presence check would report `ECONNRESET` as an encryption error code.
+      expect(isProtectErrorCode('ECONNRESET')).toBe(false)
+      expect(isProtectErrorCode('MODULE_NOT_FOUND')).toBe(false)
+    })
+
+    it('rejects non-string values', () => {
+      expect(isProtectErrorCode(undefined)).toBe(false)
+      expect(isProtectErrorCode(null)).toBe(false)
+      expect(isProtectErrorCode(42)).toBe(false)
     })
   })
 

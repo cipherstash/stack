@@ -1523,17 +1523,42 @@ export async function Encryption(
   const strategy = resolveStrategy(clientConfig)
 
   // protect-ffi 0.25 takes a single options object with the strategy nested
-  // under `strategy` (0.24 passed the strategy as a separate first argument).
+  // under `strategy` (0.24 passed the strategy as a separate first argument);
+  // 0.31 renamed that field to `authStrategy` and moved the credentials into
+  // `clientOpts`, where the Neon entry has always had them — both entries now
+  // deserialize the same `NewClientOptions`.
+  //
+  // The credential fields fail loudly if they are left at the top level (0.31
+  // rejects unrecognised keys there), but `keyset` does NOT: it is silently
+  // ignored and the client binds to the default keyset, encrypting under the
+  // wrong keys. This config forwards no keyset today; if one is ever added, it
+  // goes inside `clientOpts` with the rest.
+  //
   // `eqlVersion: 3` pins the EQL v3 wire format — this entry is v3 only, so
   // every encrypt/query emits v3 (a v2-mode client cannot resolve the concrete
-  // `eql_v3_*` domains and would fail every encrypt).
+  // `eql_v3_*` domains and would fail every encrypt). It stays top-level.
+  //
+  // No `as never`: 0.30's wasm declarations typed this as `(client, opts: any)`,
+  // so the cast was load-bearing. 0.31 types the options properly, and letting
+  // the compiler check the shape is the point — it is what would have caught
+  // the misplaced credentials above.
+  //
+  // `encryptConfig` goes through unnormalised. Under 0.30 the wasm entry only
+  // accepted EQL-native `cast_as` variants, so this ran `normalizeCastAs`
+  // first; 0.31 normalizes at the Rust deserialization boundary on both
+  // bindings, and its `CanonicalEncryptConfig` is documented as a shape nothing
+  // asks you to build. Verified against the 0.31 wasm build: `cast_as: 'string'`
+  // and `cast_as: 'text'` both get past config parsing to authentication, where
+  // 0.30 rejected the former with ``unknown variant `string` ``.
   const client = await wasmNewClient({
-    strategy,
-    encryptConfig: normalizeCastAs(encryptConfig),
-    clientId: clientConfig.clientId,
-    clientKey: clientConfig.clientKey,
+    authStrategy: strategy,
+    encryptConfig,
+    clientOpts: {
+      clientId: clientConfig.clientId,
+      clientKey: clientConfig.clientKey,
+    },
     eqlVersion: 3,
-  } as never)
+  })
 
   // `INTERNAL_CONSTRUCT` is module-scoped, so this factory is the only
   // code that can build a `WasmEncryptionClient` — external callers hit
@@ -1544,20 +1569,25 @@ export async function Encryption(
 
 /**
  * Convert SDK-facing `cast_as` values (`'string'`, `'number'`, …) to the
- * EQL-native variants (`'text'`, `'double'`, …) that the WASM
- * `newClient` accepts.
+ * EQL-native variants (`'text'`, `'double'`, …).
  *
- * The Node entry of protect-ffi performs this normalization internally
- * via `normalizeEncryptConfig.js`; the WASM bindings do not. Without
- * this, the WASM client rejects a column config whose SDK-facing cast is
- * `string` with
- * `unknown variant `string`, expected one of `big_int`, …`.
+ * @deprecated No longer on the client-construction path, and nothing else
+ * calls it. Under protect-ffi 0.30 the WASM binding accepted only EQL-native
+ * variants — the Node entry normalized internally via
+ * `normalizeEncryptConfig.js` and the WASM one did not — so a config whose
+ * cast was `string` was rejected with
+ * ``unknown variant `string`, expected one of `big_int`, … ``. 0.31 normalizes
+ * at the Rust deserialization boundary on *both* bindings, and types the
+ * result as `CanonicalEncryptConfig` with the note that nothing asks a caller
+ * to build one. Producing that shape here is now both redundant and
+ * untypeable: `CanonicalEncryptConfig` is not assignable to the
+ * `EncryptConfig` that `newClient` declares, so the only way to keep the call
+ * was an assertion that misdescribes the value.
  *
- * `toEqlCastAs` is exhaustive over the current `CastAs` union; if a new
- * SDK-facing variant is added without updating that switch, this
- * function throws synchronously at startup with a clear message rather
- * than handing `undefined` to the WASM serde (which surfaces as an
- * opaque `unknown variant 'null'` error).
+ * Kept, rather than deleted with its tests, because it is the only exhaustive
+ * consumer of `toEqlCastAs` and still throws a clear synchronous error on an
+ * unmapped variant. Removing both is a deliberate cleanup, not a side effect
+ * of a dependency upgrade.
  *
  * @internal exported for unit-test coverage of the drift-guard branch.
  */
