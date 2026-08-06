@@ -1,0 +1,14 @@
+{
+  "//": "Type tests for the GENERATED wasm .d.ts — wasm-bindgen emits it from the `typescript_type` / `typescript_custom_section` attributes in `crates/protect-ffi/src/wasm.rs`. Separate from the root tsconfigs because these need `npm run build:wasm` to have run AND `lib/` to exist (the generated .d.ts imports `../../lib/types.js`) — `npm test` must still pass in a fresh clone with no dist/. Run via `npm run test:typecheck:wasm`.",
+  "//skipLibCheck": "@tsconfig/node20 turns skipLibCheck on. This config exists to check one generated .d.ts, so leaving it on hides the errors that matter: with it on, a missing lib/ reports a spray of TS2305/TS2578 against the test file; with it off, one TS2307 naming the unresolvable module.",
+  "extends": "@tsconfig/node20/tsconfig.json",
+  "compilerOptions": {
+    "module": "node16",
+    "moduleResolution": "node16",
+    "noEmit": true,
+    "declaration": false,
+    "strict": true,
+    "skipLibCheck": false
+  },
+  "include": ["**/*.mts"]
+}

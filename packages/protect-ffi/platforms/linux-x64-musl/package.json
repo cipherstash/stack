@@ -1,0 +1,30 @@
+{
+  "name": "@cipherstash/protect-ffi-linux-x64-musl",
+  "description": "Prebuilt binary package for `@cipherstash/protect-ffi` on `linux-x64-musl`.",
+  "version": "0.31.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cipherstash/protectjs-ffi.git",
+    "directory": "platforms/linux-x64-musl"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "index.node",
+  "files": [
+    "index.node"
+  ],
+  "neon": {
+    "type": "binary",
+    "rust": "x86_64-unknown-linux-musl",
+    "node": "linux-x64-musl",
+    "os": "linux",
+    "arch": "x64",
+    "abi": "musl"
+  },
+  "author": "CipherStash <humans@cipherstash.com>",
+  "license": "MIT"
+}

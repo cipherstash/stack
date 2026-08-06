@@ -1,0 +1,59 @@
+[tools]
+node = "latest"
+# zig + cargo-zigbuild are pinned to the versions proven by the successful
+# v0.27.0 release (run 28709228045). `latest` is how cargo-zigbuild 0.23.0
+# silently broke the Release workflow (its cargo-options bump dropped the
+# CARGO_BUILD_TARGET env binding); pinning makes toolchain
+# upgrades deliberate PRs (bump here, watch the release dry-run) instead of
+# ambient breakage at release time.
+zig = "0.16.0"
+"cargo:cargo-zigbuild" = "0.23.0"
+
+[env]
+PGPORT = "5436"
+PGDATABASE = "cipherstash"
+PGUSER = "cipherstash"
+PGPASSWORD = "password"
+PGHOST = "localhost"
+
+[task_config]
+includes = [
+  "integration-tests/tasks.toml",
+]
+
+[tasks."build:debug"]
+description = "Build the project in debug mode"
+run = "npm run debug"
+
+# `lint:rust` is the entry point: it is what CI runs and what a contributor
+# should run before pushing. Every Rust check belongs under it. An arm that is
+# only reachable by name is an arm nobody runs — that is how `wasm32` went
+# unlinted from the day the target was added, and how `cargo fmt --check` sat in
+# package.json without a caller (#145).
+[tasks."lint:rust"]
+description = "Every Rust check CI gates on: clippy (host + wasm32) and rustfmt"
+depends = ["lint:rust:host", "lint:rust:wasm", "lint:rust:fmt"]
+
+[tasks."lint:rust:host"]
+description = "cargo clippy with all features and no dependencies, includes tests"
+run = "cargo clippy --no-deps --tests --all-features --all-targets -- -D warnings"
+
+# `--all-targets` above means all target *kinds* (lib, bins, tests, benches),
+# not all platform targets — it lints the host and nothing else. wasm32 needs
+# its own invocation, and it is the build that ships to edge runtimes with the
+# least test coverage behind it, so it is the one least able to afford an
+# unlinted path. Lib only: the unit tests are host-run.
+#
+# Needs `rustup target add wasm32-unknown-unknown` once. CI does this in the
+# `Add wasm32 target` step of test.yml.
+[tasks."lint:rust:wasm"]
+description = "cargo clippy for the wasm32 target"
+run = "cargo clippy --no-deps --target wasm32-unknown-unknown -p protect-ffi --all-features -- -D warnings"
+
+[tasks."lint:rust:fmt"]
+description = "cargo fmt in check mode — run `mise run fmt` to fix"
+run = "cargo fmt --check"
+
+[tasks."fmt"]
+description = "Format code with rustfmt"
+run = "cargo fmt"

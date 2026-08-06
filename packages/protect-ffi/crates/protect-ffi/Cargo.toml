@@ -1,0 +1,53 @@
+[package]
+name = "protect-ffi"
+version = "0.1.0"
+license = "MIT"
+description = "Native FFI bindings to the CipherStash Client SDK"
+repository = "https://github.com/cipherstash/protectjs-ffi"
+edition = "2021"
+exclude = ["index.node"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+base85 = "2.0.0"
+chrono = { version = "0.4.42", default-features = false, features = ["serde"] }
+cipherstash-client = { version = "=0.42.0", features = ["tokio"] }
+cts-common = { version = "=0.42.0", default-features = false }
+eql-bindings = { version = "=3.0.2" }
+stack-auth = { version = "=0.42.0" }
+hex = "0.4.3"
+# Carries the error code across the FFI boundary (#146). `derive` is the only
+# feature wanted: `fancy` pulls in the terminal-size / colour-support crates the
+# graphical reporter needs, which is a CLI concern and would not build for
+# `wasm32-unknown-unknown`. miette is already in the tree on both targets —
+# cipherstash-client, stack-auth and cts-common all depend on it.
+miette = { version = "7.6", default-features = false, features = ["derive"] }
+once_cell = "1.20.2"
+rust_decimal = "1.37"
+serde = "1.0.218"
+serde_json = { version = "1.0.139", features = ["raw_value"] }
+thiserror = "2.0.18"
+uuid = { version = "1.7", features = ["serde"] }
+vitaminc = { version = "=0.1.0-pre4.2", features = ["random", "protected"] }
+zeroize = { version = "1.8", features = ["derive"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+neon = { version = "1", features = ["serde", "tokio"] }
+stack-profile = { version = "=0.42.0" }
+tokio = { version = "1", features = ["full"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "sync"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+serde-wasm-bindgen = "0.6"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["console"] }
+console_error_panic_hook = "0.1"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[dev-dependencies]
+quickcheck = "1.0.3"
+quickcheck_macros = "1.0.3"
