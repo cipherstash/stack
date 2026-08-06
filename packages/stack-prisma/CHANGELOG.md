@@ -102,7 +102,7 @@
     - Every v3 codec id registers a control-plane `expandNativeType` hook that strips the `public.` qualifier — `prisma-next migration plan` now renders `CREATE TABLE` columns as bare domain names (`eql_v3_bigint_ord`), matching what introspection reports, with **no `add_search_config` ops** (v3 domains carry their own index metadata). No `onFieldEvent` is registered for v3.
     - The v3 bundle baseline migration op is reclassified `data` (it is a contract-shape-neutral self-edge; the aggregate integrity checker rejects self-edges without a data-class op), unblocking `prisma-next migration plan` / `migrate` in consuming apps.
 
-- d6d23be: Upgrade to Prisma Next 0.14.0 (from 0.8.0). Every `@prisma/orm-*` dependency is now pinned at 0.14.0; consuming apps must run Prisma Next 0.14 to use this release.
+- d6d23be: Upgrade to Prisma Next 0.14.0 (from 0.8.0). Every `@prisma-next/*` dependency is now pinned at 0.14.0; consuming apps must run Prisma Next 0.14 to use this release.
 
   Highlights of the upgrade:
 
@@ -113,7 +113,7 @@
 
 - b7fa61f: Upgrade the Prisma Next integration to Prisma Next 0.16.
 
-  All `@prisma/orm-*` dependencies move from `0.14.0` to `0.16.0`, in lockstep. The
+  All `@prisma-next/*` dependencies move from `0.14.0` to `0.16.0`, in lockstep. The
   CipherStash encryption surface is unchanged — column types, envelopes, the `eql*`
   operators, `cipherstashFromStack`, and every subpath export behave exactly as before.
 
@@ -282,7 +282,7 @@ not a function`. The bundled `stash-prisma` skill documents this too.
 - d2772b0: Renamed `@cipherstash/prisma-next` to **`@cipherstash/stack-prisma`** (#842),
   matching the `@cipherstash/stack-drizzle` / `@cipherstash/stack-supabase`
   adapter naming. Only the npm name changes: the `prisma-next` CLI,
-  `prisma-next.config.ts`, and the `@prisma/orm-*` framework packages are the
+  `prisma-next.config.ts`, and the `@prisma-next/*` framework packages are the
   Prisma Next framework's own surface and keep their names. Update imports
   (`@cipherstash/prisma-next/stack` → `@cipherstash/stack-prisma/stack`, and the
   other subpaths likewise) and the `extensionPacks` import in
@@ -703,7 +703,7 @@ not a function`. The bundled `stash-prisma` skill documents this too.
 
 ### Minor Changes
 
-- d6d23be: Upgrade to Prisma Next 0.14.0 (from 0.8.0). Every `@prisma/orm-*` dependency is now pinned at 0.14.0; consuming apps must run Prisma Next 0.14 to use this release.
+- d6d23be: Upgrade to Prisma Next 0.14.0 (from 0.8.0). Every `@prisma-next/*` dependency is now pinned at 0.14.0; consuming apps must run Prisma Next 0.14 to use this release.
 
   Highlights of the upgrade:
 
@@ -787,7 +787,7 @@ not a function`. The bundled `stash-prisma` skill documents this too.
 
 ### Minor Changes
 
-- f2aca22: Upgrade `@prisma/orm-*` peer/runtime stack from `0.6.0-dev.8` to `0.8.0`.
+- f2aca22: Upgrade `@prisma-next/*` peer/runtime stack from `0.6.0-dev.8` to `0.8.0`.
 
   `@prisma-next/sql-runtime@0.8` reordered the SQL execution pipeline so the `beforeExecute` middleware chain fires _before_ `encodeParams`. `bulkEncryptMiddleware` now mutates params via `replaceValues(...)` ahead of encode, which means `CipherstashCellCodec.encode` is invoked with the wire-format string rather than the original `EncryptedEnvelopeBase`. The cell codec now short-circuits string values through unchanged; the envelope path is preserved for direct (non-runtime) callers such as the codec unit tests.
 

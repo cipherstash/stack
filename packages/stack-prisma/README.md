@@ -108,6 +108,8 @@ See the [full documentation](https://cipherstash.com/docs/stack/cipherstash/encr
 | `./runtime`      | Envelope classes + `CipherstashSdk` + v3 codec runtime + `decryptAll` + `bulkEncryptMiddlewareV3`      |
 | `./pack`         | `cipherstashPackMeta` for TS contract authoring                                                        |
 | `./column-types` | The v3 domain factories: `text` / `textSearch` / `integerOrd` / `bigIntOrd` / `date` / `boolean` / `json` / … |
+| `./codec-types`  | `CodecTypes` — the codec-id-keyed type map generated `contract.d.ts` files import                      |
+| `./operation-types` | `QueryOperationTypes` — the `eql*` operator type surface generated `contract.d.ts` files import     |
 
 `./control` and `./runtime` are tree-shakable. `./stack` sits on top of `./runtime` and additionally pulls in `@cipherstash/stack`; consumers who implement `CipherstashSdk` against a different KMS skip `./stack` and pay no `@cipherstash/stack` bundle cost.
 

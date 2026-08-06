@@ -16,7 +16,6 @@
 import { interpretPslDocumentToSqlContract } from '@prisma/orm-family-sql/contract-psl'
 import type { AuthoringTypeNamespace } from '@prisma/orm-framework/components/authoring'
 import { collectScalarTypeConstructors } from '@prisma/orm-framework/components/authoring'
-import type { Contract } from '@prisma/orm-framework/contract/types'
 import { buildSymbolTable } from '@prisma/orm-framework/psl-parser'
 import { parse } from '@prisma/orm-framework/psl-parser/syntax'
 import { postgresCreateNamespace } from '@prisma/orm-target-postgres/target/types'
@@ -79,10 +78,7 @@ function interpret(schema: string) {
     ),
     composedExtensions: [cipherstashControl.id],
     composedExtensionContracts: new Map([
-      [
-        cipherstashControl.id,
-        cipherstashControl.contractSpace!.contractJson as unknown as Contract,
-      ],
+      [cipherstashControl.id, cipherstashControl.contractSpace!.contractJson],
     ]),
     authoringContributions: { type: authoringTypes, field: {} },
     createNamespace: postgresCreateNamespace,
