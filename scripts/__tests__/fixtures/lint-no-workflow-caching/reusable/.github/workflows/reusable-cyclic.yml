@@ -1,0 +1,8 @@
+name: Reusable Cyclic
+on:
+  push:
+    tags: ['v*']
+jobs:
+  publish:
+    uses: ./.github/workflows/called-loop-a.yml
+    secrets: inherit

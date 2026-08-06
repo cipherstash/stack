@@ -1,0 +1,19 @@
+# `steps:` and `uses:` together is invalid to GitHub's schema, which rejects
+# the file before any of it runs. This gate runs on files GitHub has not
+# validated yet, so it checks both rather than picking one: treating either key
+# as authoritative would let an invalid file hide a cache behind the key the
+# gate chose to ignore, and report a pass.
+name: Reusable Both
+on:
+  push:
+    tags: ['v*']
+jobs:
+  publish:
+    uses: ./.github/workflows/called-cache.yml
+    secrets: inherit
+    steps:
+      - name: Restore the toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache
+          key: toolchain-${{ runner.os }}

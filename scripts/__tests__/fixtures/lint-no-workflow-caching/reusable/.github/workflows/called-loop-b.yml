@@ -1,0 +1,15 @@
+name: Called Loop B
+on:
+  workflow_call:
+jobs:
+  b-caches:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restore the compiled binding
+        uses: actions/cache@v4
+        with:
+          path: index.node
+          key: binding-${{ runner.os }}
+  b-back:
+    uses: ./.github/workflows/called-loop-a.yml
+    secrets: inherit

@@ -1,0 +1,12 @@
+name: Loop B
+description: Half of a cyclic composite reference, and it caches.
+runs:
+  using: composite
+  steps:
+    - name: Restore the compiled binding
+      uses: actions/cache@v4
+      with:
+        path: index.node
+        key: binding-${{ runner.os }}
+    - name: Hand back to A
+      uses: ./.github/actions/loop-a

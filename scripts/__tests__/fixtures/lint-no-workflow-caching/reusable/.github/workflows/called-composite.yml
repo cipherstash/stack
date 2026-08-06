@@ -1,0 +1,14 @@
+# The composed hop: a reusable workflow whose job reaches the cache through a
+# local composite. Neither traversal alone sees this — the job-level one stops
+# at the step list, the composite one is never reached.
+name: Called Composite
+on:
+  workflow_call:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/cachey
+      - run: pnpm changeset:publish

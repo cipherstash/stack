@@ -1,0 +1,19 @@
+# Same caller shape as `composite-input-named-cache.yml` — `with: {cache: true}`
+# on a local composite — with the opposite verdict, because the composite hands
+# the input to `actions/setup-node`. Exempting the caller must not lose the
+# finding, and must not move it: the report names the step inside the composite,
+# which is the step to edit.
+name: Composite Cache Passthrough
+on:
+  push:
+    branches: [main]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/cache-passthrough
+        with:
+          cache: true
+      - run: pnpm publish --no-git-checks

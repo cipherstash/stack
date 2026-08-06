@@ -1,0 +1,12 @@
+name: Third Party Cache
+description: Restores caches through actions that are not actions/cache.
+runs:
+  using: composite
+  steps:
+    - name: Restore the compiled binding
+      uses: useblacksmith/cache@v5
+      with:
+        path: index.node
+        key: binding-${{ runner.os }}
+    - name: Restore the Cargo build
+      uses: Swatinem/rust-cache@v2

@@ -1,0 +1,13 @@
+name: Cachey
+description: Restores a build artifact from the GitHub Actions cache.
+runs:
+  using: composite
+  steps:
+    - name: Restore the compiled binding
+      uses: actions/cache@v4
+      with:
+        path: index.node
+        key: binding-${{ runner.os }}
+    - name: Build the binding
+      shell: bash
+      run: echo build

@@ -1,0 +1,18 @@
+# A local `uses:` that resolves to a JavaScript action rather than a composite.
+# The gate opens the manifest, finds no step list, and audits nothing — so it
+# must keep the `with.cache` heuristic on this caller, unlike the composite
+# callers next to it.
+name: Local JS Action
+on:
+  push:
+    branches: [main]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/js-action
+        with:
+          cache: true
+      - run: pnpm publish --no-git-checks

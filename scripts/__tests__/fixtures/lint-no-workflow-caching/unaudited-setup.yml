@@ -1,0 +1,19 @@
+# The case that decides the design. `gradle/actions/setup-gradle` restores the
+# Actions cache BY DEFAULT, has no `cache:` input to read, and has no "cache"
+# anywhere in its name — so a rule that enumerates cache actions, by exact name
+# or by name shape, cannot see it. The allowlist can: it is not on the list.
+#
+# This class is already present in this file as two hand-maintained entries
+# (`pnpm/action-setup`, `actions/setup-node`) that exist only because somebody
+# happened to notice. This fixture is the third member nobody noticed.
+name: Unaudited Setup
+on:
+  push:
+    tags: ['v*']
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: gradle/actions/setup-gradle@v4
+      - run: pnpm changeset:publish

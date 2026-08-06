@@ -255,6 +255,20 @@ describe('integration workflow paths filters', () => {
         for (const target of importedSourcePaths(file)) required.add(target)
       }
 
+      // The requirement is DERIVED from `@/`-aliased imports, so "no suite
+      // uses that alias" and "every import is covered" are the same green.
+      // Mutation-tested: rewriting the suites' `from '@/…'` to the public
+      // `@cipherstash/stack/…` entry — an ordinary "test the built package,
+      // not internals" refactor — empties this set, and the check then passed
+      // with `packages/stack/src/dynamodb/**` deleted from the filter, which
+      // is verbatim the #815 gap described at the top of this file. The
+      // sibling manifest check above already asserts its own premise; this one
+      // has to as well.
+      expect(
+        required.size,
+        `No @/-aliased import was resolved from ${files.length} suite file(s) in ${relPath}, so this check has nothing to verify and would pass no matter what the paths filter said. If the suites moved off the @/ alias, teach importedSourcePaths the new form.`,
+      ).toBeGreaterThan(0)
+
       for (const block of blocks) {
         const uncovered = [...required].filter(
           (target) => !isCovered(target, block.paths),

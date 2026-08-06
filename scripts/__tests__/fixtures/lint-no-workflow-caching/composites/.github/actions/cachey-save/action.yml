@@ -1,0 +1,10 @@
+name: Cachey Save
+description: Save-only half of the GitHub Actions cache.
+runs:
+  using: composite
+  steps:
+    - name: Save the compiled binding
+      uses: actions/cache/save@v4
+      with:
+        path: index.node
+        key: binding-${{ runner.os }}

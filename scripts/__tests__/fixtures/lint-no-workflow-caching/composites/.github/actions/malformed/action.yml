@@ -1,0 +1,19 @@
+# A composite manifest this gate cannot parse: the `steps:` list is mis-indented
+# and js-yaml refuses the file.
+#
+# This is the unresolvable branch's twin — no step list comes out of it either
+# way — so it is reported as un-auditable, and for the same reason it is NOT
+# treated as a composite. `runs.using` is unreadable here, and assuming
+# `composite` would suppress the caller's `with.cache` heuristic, which is the
+# only signal left standing once the body cannot be read.
+#
+# The `actions/cache@v4` below is deliberate: it is what the caller would be
+# hiding behind an unparseable file, and it must never be reported as found,
+# because this gate never read it.
+name: Malformed Composite
+description: A composite action whose YAML does not parse.
+runs:
+  using: composite
+  steps:
+     - name: Restore the compiled binding
+      uses: actions/cache@v4

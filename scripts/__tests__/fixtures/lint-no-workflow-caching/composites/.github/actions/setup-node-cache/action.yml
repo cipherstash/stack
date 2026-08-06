@@ -1,0 +1,10 @@
+name: Setup Node With Cache
+description: Sets up Node with the package-manager cache switched on.
+runs:
+  using: composite
+  steps:
+    - name: Install Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: 22
+        cache: 'pnpm'

@@ -1,0 +1,23 @@
+# The caller of a composite whose manifest does not parse, with
+# `with: {cache: true}` on the step.
+#
+# Unguarded, the `yaml.load` of that manifest throws out of the whole run. Once
+# it is caught, the null it returns has to fall through the same way the
+# unresolvable branch above it does: no body was audited, so `checkStep` keeps
+# every rule it has — including the `with.cache` heuristic — and that finding
+# has to stay visible next to the exit-2 report rather than being swallowed by
+# it.
+name: Composite Malformed
+on:
+  push:
+    branches: [main]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/malformed
+        with:
+          cache: true
+      - run: pnpm publish --no-git-checks

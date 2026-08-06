@@ -1,0 +1,12 @@
+name: Composite Yaml Ext
+on:
+  push:
+    branches: [main]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/yaml-ext
+      - run: pnpm publish --no-git-checks

@@ -1,0 +1,22 @@
+# A step-level `uses: ../…`. GitHub does not accept one — a reference to a
+# directory in the checkout must start with `./` — but `LOCAL_USES` was
+# `^\.{1,2}/`, which contradicted the comment directly above it and read this as
+# local. Local means two things here, and both were wrong for `../`: exempt from
+# `AUDITED_ACTIONS`, and handed to `resolveActionFile`, which `resolve()`s it
+# clean out of the workspace root. A file OUTSIDE the checkout could be opened
+# and audited as though it were in it, with `../..` trails in the report.
+#
+# It is now reported and never resolved. That is the only fail-closed reading:
+# the gate opens no step list here, so it cannot prove this step does not cache.
+name: Parent Uses Step
+on:
+  push:
+    branches: [main]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the protect-ffi binding
+        uses: ../outside-action
+      - run: pnpm publish --no-git-checks

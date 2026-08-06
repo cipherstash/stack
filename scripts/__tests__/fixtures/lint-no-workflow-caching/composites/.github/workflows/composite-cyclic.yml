@@ -1,0 +1,12 @@
+name: Composite Cyclic
+on:
+  push:
+    branches: [main]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/loop-a
+      - run: pnpm publish --no-git-checks
