@@ -1,0 +1,17 @@
+# A called workflow this gate cannot parse — the third unguarded `yaml.load`,
+# and the same failure one node type over: unguarded it throws out of the run,
+# guarded it hands the traversal no job list, so the hop stops here and the
+# reference is reported as un-auditable.
+#
+# The `actions/cache@v4` below is deliberate. It is exactly what an unparseable
+# called workflow would hide, and the gate must never claim to have found it —
+# it never read this file.
+name: Called Malformed
+on:
+  workflow_call:
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+       - name: Restore the compiled binding
+        uses: actions/cache@v4

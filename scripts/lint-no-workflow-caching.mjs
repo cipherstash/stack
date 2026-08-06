@@ -24,7 +24,26 @@ const SETUP_NODE = /^actions\/setup-node(@|$)/
 // A `uses:` naming a directory in this checkout rather than a published action.
 // GitHub requires the `./` prefix for those, so anything without it is an
 // `owner/repo@ref` or `docker://` reference with nothing here to open.
-const LOCAL_USES = /^\.{1,2}\//
+//
+// `./` only, and the `{1,2}` this used to carry was not a harmless widening. It
+// accepted `../`, which GitHub does not, and "local" means two things here:
+// exempt from `AUDITED_ACTIONS`, and handed to a resolver that `resolve()`s the
+// value against the workspace root. A `../` reference walks straight out of it,
+// so a file OUTSIDE the checkout was opened and audited as though it were
+// inside — confirmed against `uses: ../outside-workflow.yml`, which reported an
+// `actions/cache@v4` it found one directory above the workspace root, `../`
+// trail and all.
+const LOCAL_USES = /^\.\//
+
+// The `../` shape LOCAL_USES no longer claims. It gets its own verdict rather
+// than falling through to the remote branches, which would be fail-closed but
+// misleading in both places: at step level "not in AUDITED_ACTIONS. This gate
+// cannot read a published action's steps" sends the reader to audit a published
+// action that does not exist, and at job level "a remote reusable workflow"
+// describes something remote, which this is not. It is an invalid reference,
+// and that is what the report should say. Reported either way — never resolved,
+// so nothing outside the workspace root is opened.
+const PARENT_USES = /^\.\.\//
 
 // ALLOWLIST RATIONALE — why this is a list of what is permitted, and not a
 // longer list of cache actions.
@@ -166,6 +185,41 @@ function explicitFalseReason(step, inputName) {
 const offenders = []
 const unresolved = []
 
+// Every `yaml.load` in this file goes through here. Unguarded — which all three
+// call sites were — a file this gate cannot read throws straight out of the
+// run: a stack trace instead of a finding, exit 1 (indistinguishable from
+// "found a caching issue"), and every remaining target never scanned at all.
+//
+// A file that will not parse is the same problem as one that is not there. It
+// hands the traversal no step list, so nothing below it is audited — which is
+// exactly what `unresolved` is for, and why this belongs there rather than in
+// `offenders`: exit 2, and the epilogue saying the list of findings may be
+// short. The same reasoning `resolveWorkflowFile` records for a path that
+// exists as a directory, one layer up.
+//
+// The catch is deliberately broad rather than YAMLException-only: EISDIR,
+// EACCES and a vanished file all leave the caller with the same nothing, and
+// all three are worth a report rather than a crash.
+//
+// Only the FIRST line of the error is kept. js-yaml puts the position there
+// (`bad indentation of a mapping entry (3:5)`) and follows it with a multi-line
+// source snippet — numbered lines and a caret ruler, carrying their own
+// indentation — which would wreck the two-space bullets of the report below.
+// The position is the half that lets someone fix the file.
+//
+// Callers get `null` and decide what it means for their own traversal. All of
+// them stop descending; `walkSteps` additionally reads it as a NON-composite
+// manifest, so `checkStep` keeps every rule it has.
+function loadYaml(file, at) {
+  try {
+    return yaml.load(readFileSync(file, 'utf8'))
+  } catch (err) {
+    const [firstLine] = String(err?.message ?? err).split('\n')
+    unresolved.push(`${at} — could not be read: ${firstLine}`)
+    return null
+  }
+}
+
 // Every rule that applies to a single step. Factored out of the job loop
 // because the same rules have to hold for a step written inside a composite
 // action: it runs in the same job, holding the same credentials, and caches by
@@ -225,6 +279,16 @@ function checkStep(step, at, bodyAudited = false) {
     offenders.push(`${at}: uses \`${uses}\` (GitHub Actions cache)`)
   } else if (LOCAL_USES.test(uses)) {
     // Audited by construction: `walkSteps` opens it and checks every step.
+  } else if (PARENT_USES.test(uses)) {
+    // Ahead of the two remote branches because neither describes this: nothing
+    // published is being referenced, so neither "third-party cache action" nor
+    // "not in AUDITED_ACTIONS" would be true. The gate opens no step list here,
+    // which is why it is still a finding.
+    offenders.push(
+      `${at}: uses \`${uses}\` — a \`../\` reference. GitHub only resolves a ` +
+        'local `uses:` that starts with `./`, and this gate will not follow one ' +
+        'out of the workspace root, so these steps cannot be audited',
+    )
   } else if (CACHE_SHAPED_ACTION.test(actionPath(uses))) {
     offenders.push(
       `${at}: uses \`${uses}\` — a third-party cache action (GitHub Actions cache)`,
@@ -253,11 +317,20 @@ function workspaceRootFor(workflowFile) {
 // Both spellings are valid to GitHub, and a repo that mixes them is not doing
 // anything wrong — so accepting only `action.yml` would silently stop
 // traversing half the composites it was pointed at.
+//
+// `isFile` is what keeps this symmetrical with `resolveWorkflowFile` below,
+// which has guarded it since it was written. On a bare `existsSync` a DIRECTORY
+// named `action.yml` passed as the manifest and aborted the run with an
+// unhandled EISDIR at `readFileSync`. Guarded, the directory is skipped, the
+// next candidate name is tried, and a directory under both names returns null —
+// which lands on the "no action.yml or action.yaml there" report the caller
+// already has. `loadYaml` would catch the EISDIR too, but this is the precise
+// fix and it is the one that names the actual problem.
 function resolveActionFile(workspaceRoot, usesPath) {
   const dir = resolve(workspaceRoot, usesPath)
   for (const name of ['action.yml', 'action.yaml']) {
     const file = join(dir, name)
-    if (existsSync(file)) return file
+    if (existsSync(file) && statSync(file).isFile()) return file
   }
   return null
 }
@@ -314,7 +387,14 @@ function walkSteps(steps, prefix, workspaceRoot, visited) {
     // `with:`, and its body has been audited by the first reference. Re-parsing
     // a handful of small manifests is cheaper than the alternatives, and
     // `visited` still guards the recursion, so nothing is reported twice.
-    const doc = yaml.load(readFileSync(file, 'utf8'))
+    //
+    // A manifest that will not parse yields null, which is a non-composite by
+    // every reading below: `runs.using` is not `composite`, so `checkStep`
+    // keeps all its rules — the same verdict the unresolvable branch above
+    // reaches, for the same reason — and `runs.steps` is undefined, so the
+    // traversal stops here rather than claiming to have audited a body it
+    // never read.
+    const doc = loadYaml(file, `${at} -> ${relative(workspaceRoot, file)}`)
 
     // Keyed on `runs.using`, not on "did we find a step list", so that a
     // manifest declaring a JS runtime yet carrying steps — invalid to GitHub,
@@ -369,6 +449,16 @@ function resolveWorkflowFile(workspaceRoot, usesPath) {
 // would prevent no failure and would hand an attacker a phrasing that evades
 // the gate.
 function followReusableWorkflow(uses, prefix, workspaceRoot, visited) {
+  // Checked before the remote branch below, which would otherwise call this "a
+  // remote reusable workflow" — it is not remote, it is unresolvable. Same
+  // list either way: no jobs are read, so the scan is incomplete here.
+  if (PARENT_USES.test(uses)) {
+    unresolved.push(
+      `${prefix}: \`uses: ${uses}\` — a \`../\` reference; GitHub only resolves a local \`uses:\` that starts with \`./\`, and this gate will not follow one out of the workspace root`,
+    )
+    return
+  }
+
   // A remote reusable workflow is reported, where `walkSteps` skips a remote
   // *step* action, and the difference is coverage rather than depth. A
   // marketplace step sits inside a job whose step list this gate has read end
@@ -396,7 +486,10 @@ function followReusableWorkflow(uses, prefix, workspaceRoot, visited) {
 
   // One `visited` spans both node types, so `a.yml -> b.yml -> a.yml`
   // terminates the same way `a -> b -> a` does between composites.
-  const doc = yaml.load(readFileSync(file, 'utf8'))
+  //
+  // A called workflow that will not parse yields null, so it contributes no
+  // jobs and the hop stops here — reported, not silently traversed past.
+  const doc = loadYaml(file, `${prefix} -> ${relative(workspaceRoot, file)}`)
   for (const [jobName, job] of Object.entries(doc?.jobs ?? {})) {
     walkJob(
       job,
@@ -441,7 +534,11 @@ for (const target of TARGETS) {
   const abs = resolve(REPO_ROOT, target)
   const rel = relative(REPO_ROOT, abs)
   const workspaceRoot = workspaceRootFor(abs)
-  const doc = yaml.load(readFileSync(abs, 'utf8'))
+  // A target that will not parse yields null, so it contributes no jobs and
+  // this iteration finds nothing — and, the point of the loop continuing, the
+  // remaining targets are still scanned. A malformed release.yml used to mean
+  // tests-supply-chain.yml was never looked at either.
+  const doc = loadYaml(abs, rel)
   const jobs = doc?.jobs ?? {}
   for (const [jobName, job] of Object.entries(jobs)) {
     walkJob(job, `${rel}: job "${jobName}"`, workspaceRoot, new Set())

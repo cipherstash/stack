@@ -165,10 +165,14 @@ describe('lint-no-workflow-caching', () => {
       )
     })
 
-    // `execFileSync` has no timeout here, so an unguarded cycle hangs the suite
-    // rather than failing it. The offender count is the real assertion: a
-    // visited set that is per-branch rather than per-run terminates but reports
-    // `loop-b` once per path into it.
+    // `execFileSync` has no timeout here, and does not need one: the script is
+    // synchronous end to end, so it has no way to hang. Deleting the `visited`
+    // guard was tried — the recursion blows the stack and the child exits in
+    // well under a second, which a timeout would not improve on.
+    //
+    // The offender count is the real assertion, because that exit is a bare 1
+    // and so is a genuine finding. A visited set that is per-branch rather than
+    // per-run terminates too, but reports `loop-b` once per path into it.
     it('terminates on a cyclic composite reference, reporting once', () => {
       const r = run(cfx('composite-cyclic.yml'))
       expect(r.exitCode).toBe(1)
@@ -220,6 +224,20 @@ describe('lint-no-workflow-caching', () => {
       const r = run(cfx('composite-unresolvable.yml'))
       expect(r.exitCode).toBe(2)
       expect(r.output).toMatch(/no-such-action/)
+    })
+
+    // The sibling asymmetry, and the bug in it. `resolveWorkflowFile` has
+    // guarded `isFile` since it was written; `resolveActionFile` returned on a
+    // bare `existsSync`, so a DIRECTORY named `action.yml` passed as the
+    // manifest and `readFileSync` aborted the run with an unhandled EISDIR.
+    // Guarded, the directory is skipped, `action.yaml` is tried, and this lands
+    // on the report that already exists for a local `uses:` pointing at
+    // nothing — the accurate message rather than a stack trace.
+    it('skips a directory named `action.yml` rather than reading it', () => {
+      const r = run(cfx('composite-dir-action-yml.yml'))
+      expect(r.exitCode).toBe(2)
+      expect(r.output).toMatch(/dir-action-yml/)
+      expect(r.output).toMatch(/no action\.yml or action\.yaml there/)
     })
   })
 
@@ -420,6 +438,131 @@ describe('lint-no-workflow-caching', () => {
       expect(r.output).toMatch(/Found 2 caching issue/)
       expect(r.output).toMatch(/step "Restore the toolchain"/)
       expect(r.output).toMatch(/called-cache\.yml job "release"/)
+    })
+  })
+
+  // Every `yaml.load` in the script was unguarded, so a file this gate cannot
+  // parse — malformed YAML, EISDIR, EACCES — threw straight out of the run: a
+  // stack trace instead of a finding, exit 1 (indistinguishable from "found a
+  // caching issue"), and every remaining target never scanned at all.
+  //
+  // An unparseable file is the same problem as a missing one. It hands the
+  // traversal no step list, so nothing below it is audited — which is exactly
+  // what the un-auditable list, exit 2, and the "this gate could not look"
+  // epilogue are for.
+  describe('a file this gate cannot parse', () => {
+    const cfx = (name) =>
+      resolve(
+        fileURLToPath(import.meta.url),
+        `../fixtures/lint-no-workflow-caching/composites/.github/workflows/${name}`,
+      )
+    const rfx = (name) =>
+      resolve(
+        fileURLToPath(import.meta.url),
+        `../fixtures/lint-no-workflow-caching/reusable/.github/workflows/${name}`,
+      )
+
+    it('reports an unparseable target rather than crashing on it', () => {
+      const r = run(fx('malformed.yml'))
+      expect(r.exitCode).toBe(2)
+      expect(r.output).toMatch(/Found 1 un-auditable reference/)
+      expect(r.output).toMatch(
+        /malformed\.yml — could not be read: bad indentation of a mapping entry \(\d+:\d+\)/,
+      )
+    })
+
+    // js-yaml's message is a position line followed by a multi-line source
+    // snippet — numbered lines and a caret ruler, carrying their own
+    // indentation. Pasting all of it into a two-space bullet wrecks the report,
+    // so the first line is kept and the snippet dropped. The position is the
+    // half that lets someone fix the file.
+    it('keeps the parse error’s position and drops its source snippet', () => {
+      const r = run(fx('malformed.yml'))
+      expect(r.output).toMatch(/\(\d+:\d+\)/)
+      expect(r.output).not.toMatch(/-{4,}\^/)
+      expect(r.output).not.toMatch(/^\s*\d+ \| /m)
+    })
+
+    // The target loop died on the first unparseable file, so a malformed
+    // release.yml meant tests-supply-chain.yml was never scanned — the gate
+    // silently stopped covering the workflow it could still read.
+    it('keeps scanning the remaining targets after an unparseable one', () => {
+      const r = run(fx('malformed.yml'), fx('actions-cache.yml'))
+      expect(r.exitCode).toBe(2)
+      expect(r.output).toMatch(/could not be read/)
+      expect(r.output).toMatch(/Found 1 caching issue/)
+      expect(r.output).toMatch(/actions\/cache@/)
+    })
+
+    // A manifest that does not parse is a NON-composite manifest, for the same
+    // reason the unresolvable branch beside it is: no body was audited, so
+    // every step rule stays on, `with.cache` included. The `actions/cache@v4`
+    // inside the unreadable file must not be reported as found — this gate
+    // never read it, and claiming otherwise would be a guess.
+    it('keeps every step rule on a caller whose composite does not parse', () => {
+      const r = run(cfx('composite-malformed.yml'))
+      expect(r.exitCode).toBe(2)
+      expect(r.output).toMatch(
+        /\.github\/actions\/malformed\/action\.yml — could not be read:/,
+      )
+      expect(r.output).toMatch(/with\.cache/)
+      expect(r.output).not.toMatch(/actions\/cache@v4/)
+    })
+
+    it('stops the workflow hop at a called workflow that does not parse', () => {
+      const r = run(rfx('reusable-malformed.yml'))
+      expect(r.exitCode).toBe(2)
+      expect(r.output).toMatch(/Found 1 un-auditable reference/)
+      expect(r.output).toMatch(
+        /\.github\/workflows\/called-malformed\.yml — could not be read:/,
+      )
+      expect(r.output).not.toMatch(/actions\/cache@v4/)
+    })
+  })
+
+  // `LOCAL_USES` was `^\.{1,2}/`, which accepted `../` while the comment
+  // directly above it said GitHub requires the `./` prefix. GitHub does not
+  // accept `../`, and reading one as local meant two wrong things at once:
+  // exempt from `AUDITED_ACTIONS`, and handed to a resolver that `resolve()`s
+  // it clean out of the workspace root — so a file OUTSIDE the checkout could
+  // be opened and audited as though it were inside it.
+  describe('a `../` reference', () => {
+    const rfx = (name) =>
+      resolve(
+        fileURLToPath(import.meta.url),
+        `../fixtures/lint-no-workflow-caching/reusable/.github/workflows/${name}`,
+      )
+
+    // Falling through to the unaudited branch is fail-closed, so the exit code
+    // was never the problem — the wording was. "This gate cannot read a
+    // published action's steps" sends the reader to audit a published action
+    // that does not exist; the finding is that the reference itself is one
+    // GitHub will not run and this gate will not follow.
+    it('reports a step-level `../` instead of resolving it', () => {
+      const r = run(fx('parent-uses-step.yml'))
+      expect(r.exitCode).toBe(1)
+      expect(r.output).toMatch(
+        /uses `\.\.\/outside-action` — a `\.\.\/` reference/,
+      )
+      expect(r.output).not.toMatch(
+        /uses `\.\.\/outside-action` — not in AUDITED_ACTIONS/,
+      )
+      // Reported, never resolved: nothing outside the workspace root is opened.
+      expect(r.output).not.toMatch(/no action\.yml or action\.yaml there/)
+    })
+
+    // Same at job level, where the fall-through called it "a remote reusable
+    // workflow". Nothing here is remote — the reference is simply invalid.
+    it('reports a job-level `../` instead of resolving it', () => {
+      const r = run(rfx('reusable-parent-uses.yml'))
+      expect(r.exitCode).toBe(2)
+      expect(r.output).toMatch(
+        /`uses: \.\.\/outside-workflow\.yml` — a `\.\.\/` reference/,
+      )
+      expect(r.output).not.toMatch(
+        /outside-workflow\.yml` — a remote reusable workflow/,
+      )
+      expect(r.output).not.toMatch(/no workflow file there/)
     })
   })
 

@@ -1,0 +1,22 @@
+# `./.github/actions/dir-action-yml` holds a DIRECTORY named `action.yml`.
+#
+# `resolveActionFile` returned on a bare `existsSync`, so that directory passed
+# as the manifest and `readFileSync` aborted the whole run with an unhandled
+# EISDIR — while its sibling `resolveWorkflowFile` has guarded exactly this with
+# `statSync(...).isFile()` since it was written. The asymmetry was the bug.
+#
+# Guarded, the directory is skipped, the next candidate name (`action.yaml`) is
+# tried, no regular file is found, and this lands on the report that already
+# exists for a local `uses:` pointing at nothing: exit 2, naming the path.
+name: Composite Dir Action Yml
+on:
+  push:
+    branches: [main]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build the protect-ffi binding
+        uses: ./.github/actions/dir-action-yml
+      - run: pnpm publish --no-git-checks
