@@ -1,5 +1,11 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -133,6 +139,68 @@ describe('lint-no-ffi-changeset', () => {
     const { output } = run(fx('offending'))
     expect(output).toMatch(/cutover PR/)
     expect(output).toMatch(/Change protect-ffi freely/)
+  })
+
+  it('skips a parked `.md.deferred` changeset naming an FFI package', () => {
+    // The window has to leave protect-ffi's changeset somewhere, or the prose
+    // is reconstructed from the git log at cutover time. `.md.deferred` is
+    // that parking spot, and this is the behaviour that makes it one.
+    //
+    // Generated rather than committed so the assertion is about the SKIP. Run
+    // against the real .changeset directory it would also pass if the parked
+    // file simply named nothing guarded.
+    const dir = mkdtempSync(join(tmpdir(), 'ffi-changeset-deferred-'))
+    tempDirs.push(dir)
+    writeFileSync(
+      join(dir, 'parked.md.deferred'),
+      "---\n'@cipherstash/protect-ffi': minor\n---\n\nWaiting for the cutover.\n",
+    )
+
+    expect(run(dir).exitCode).toBe(0)
+  })
+
+  it('has the deferred laziness changeset already written and parked', () => {
+    // Why the guard can be deleted safely at cutover: the changeset it defers
+    // is not a thing someone has to remember to write, it is a `git mv`. The
+    // phase-4 checklist says so; this is what stops the file being deleted,
+    // emptied or renamed out from under that instruction in the meantime.
+    const changesetDir = resolve(REPO_ROOT, '.changeset')
+    const parked = readdirSync(changesetDir).filter((f) =>
+      f.endsWith('.md.deferred'),
+    )
+    expect(
+      parked,
+      'no parked changeset in .changeset/ — the phase-2 laziness changeset must be written before the cutover, not during it',
+    ).not.toHaveLength(0)
+
+    // `@changesets/read` selects changeset files with
+    //   !file.startsWith('.') && file.endsWith('.md') && !/^README\.md$/i
+    // (@changesets/read/dist/changesets-read.esm.js). Reproduced rather than
+    // imported — it is a transitive dependency, not a declared one — because
+    // the failure worth catching is a well-meaning rename to
+    // `<name>.deferred.md`, which changesets WOULD read, publishing all seven
+    // FFI packages into a trusted-publishing configuration that still names
+    // the old repository. Suffix order is the whole safety property.
+    for (const file of parked) {
+      expect(
+        !file.startsWith('.') &&
+          file.endsWith('.md') &&
+          !/^README\.md$/i.test(file),
+        `${file} would be read by changesets as a live changeset`,
+      ).toBe(false)
+    }
+
+    const parkedPackages = parked.flatMap((file) =>
+      [
+        ...readFileSync(join(changesetDir, file), 'utf8').matchAll(
+          /^\s*['"]?(@?[^'":\n]+?)['"]?\s*:\s*(?:major|minor|patch)\s*$/gm,
+        ),
+      ].map(([, name]) => name),
+    )
+    expect(
+      parkedPackages,
+      'a parked changeset must name @cipherstash/protect-ffi — that is the only reason to park one',
+    ).toContain('@cipherstash/protect-ffi')
   })
 
   it('names its own removal condition in the source', () => {

@@ -132,7 +132,11 @@ so that stays true for everyone else.
 - **Publishing has not moved yet.** All seven packages are still published from
   `cipherstash/protectjs-ffi` until npm trusted publishing is repointed, so a
   changeset naming any of them fails CI (`scripts/lint-no-ffi-changeset.mjs`).
-  Change the package freely; its changeset waits for the cutover PR.
+  Change the package freely — but write the changeset and park it as
+  `.changeset/<name>.md.deferred`, don't skip it. Changesets and the guard both
+  select on `.endsWith('.md')`, so that extension is inert to
+  `changeset version`; the cutover PR renames it back. `protect-ffi-lazy-load.md.deferred`
+  is the one already waiting there.
 
 ### The `integration-tests/` suite
 

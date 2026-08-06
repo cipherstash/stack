@@ -1801,7 +1801,13 @@ git commit -m "ci: run the Rust checks from a root path-filtered workflow"
 
 The only irreversible steps.
 
-- [ ] Merge a cutover PR that deletes `scripts/lint-no-ffi-changeset.mjs`, its self-test, its fixtures, the `lint:ffi-changeset` script and the `tests.yml` step; **and** adds the `@cipherstash/protect-ffi` **minor** changeset for the laziness change and `assertNativeBindingAvailable()`. Both halves in one PR — the guard exists to stop that changeset landing early.
+- [ ] Merge a cutover PR that deletes `scripts/lint-no-ffi-changeset.mjs`, its self-test, its fixtures, the `lint:ffi-changeset` script and the `tests.yml` step; **and** activates the deferred `@cipherstash/protect-ffi` **minor** changeset for the laziness change and `assertNativeBindingAvailable()` — it is already written and parked, so this half is a rename, not composition:
+
+  ```bash
+  for f in .changeset/*.md.deferred; do git mv "$f" "${f%.deferred}"; done
+  ```
+
+  Both halves in one PR — the guard exists to stop that changeset landing early. The `.md.deferred` extension is what makes parking safe: `@changesets/read` and the guard both select on `.endsWith('.md')`, so the file is inert to `changeset version`/`publish` until renamed. Check for more than one parked file — any protect-ffi change landing during the window parks its changeset the same way.
 - [ ] Let the Version Packages job create the release PR. Verify it bumps all seven FFI packages to `0.32.0`, rewrites the wrapper's six `optionalDependencies`, and patch-bumps the six Stack packages (expected — see "Release lines are coupled by pinning").
 - [ ] Run `ffi-preflight.yml` against that **versioned release-PR ref**.
 - [ ] **Repoint npm trusted publishing for all seven packages**: `cipherstash/protectjs-ffi` → `cipherstash/stack`, workflow `release.yml`. For each publisher, **explicitly select `npm publish` under "Allowed actions"** — npm made that field required for configurations created after 2026-05-20, and these are new configurations. Confirm `repository.url` already reads `cipherstash/stack` (Task 2) or the publish is rejected. Only after the versioned pre-flight is green.

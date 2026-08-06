@@ -5,7 +5,9 @@
  * TEMPORARY. Delete this script, its self-test, its fixtures, and its
  * `lint:ffi-changeset` entry in the phase-4 cutover PR, at the same moment npm
  * trusted publishing is repointed from `cipherstash/protectjs-ffi` to
- * `cipherstash/stack`.
+ * `cipherstash/stack`. In the same PR, `git mv` every
+ * `.changeset/*.md.deferred` to `*.md` — see "Where a deferred changeset
+ * waits" below.
  *
  * ## Why this exists rather than the changesets `ignore` list
  *
@@ -42,8 +44,31 @@
  *
  * This is *not* a rule against changing protect-ffi. Rust and TypeScript
  * changes are fine and land normally; the constraint is only that their
- * changeset waits for the cutover PR, which is where the phase-2 laziness
- * changeset lands too.
+ * changeset waits for the cutover PR.
+ *
+ * ## Where a deferred changeset waits
+ *
+ * `.changeset/<name>.md.deferred`. Write the changeset now, under that
+ * extension, and the cutover PR is a `git mv` instead of an act of memory —
+ * which matters most for the phase-2 laziness change and
+ * `assertNativeBindingAvailable()`, already parked as
+ * `protect-ffi-lazy-load.md.deferred`. Reconstructing that prose from the git
+ * log months later is how a user-visible behaviour change ships with an empty
+ * changelog.
+ *
+ * The suffix is load-bearing, and it is `.md.deferred` rather than
+ * `.deferred.md` for a reason: `@changesets/read` selects changesets with
+ * `!file.startsWith('.') && file.endsWith('.md') && !/^README\.md$/i`, and the
+ * loop below filters on `.endsWith('.md')` too. A name ending in `.md`
+ * publishes; a name ending in `.deferred` is invisible to both. Nothing else
+ * in changesets touches it either — `getOldChangesets` only descends into
+ * DIRECTORIES, `removeEmptyFolders` swallows the `ENOTDIR` a file raises, and
+ * `applyReleasePlan` deletes strictly `${changeset.id}.md` for ids in the
+ * release plan. Verified against the installed 2.31.0, and by
+ * `changeset status` reporting no FFI package with the file in place.
+ *
+ * The self-test pins all of this: that a parked file exists, that it names a
+ * guarded package, and that its name would NOT be read as a changeset.
  */
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
@@ -110,7 +135,11 @@ console.error(
     'repointed yet. A changeset naming any one of them bumps all seven to\n' +
     '0.32.0 through their fixed group, and the next release then attempts a\n' +
     'publish npm will reject or misattribute.\n\n' +
-    'Change protect-ffi freely — only its changeset has to wait. Add it to\n' +
-    'the cutover PR that repoints trusted publishing and deletes this check.\n',
+    'Change protect-ffi freely — only its changeset has to wait, and it has\n' +
+    'somewhere to wait. Rename the file to end in `.md.deferred`:\n\n' +
+    '    git mv .changeset/<name>.md .changeset/<name>.md.deferred\n\n' +
+    'Changesets does not read that extension and neither does this check, so\n' +
+    'the prose is written now and the cutover PR — the one that repoints\n' +
+    'trusted publishing and deletes this script — renames it back.\n',
 )
 process.exit(1)

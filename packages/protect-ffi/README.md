@@ -384,8 +384,13 @@ packages are already on npm at the version this workspace carries, and npm
 trusted publishing still names `cipherstash/protectjs-ffi` as the publisher. A
 changeset naming any of them would bump all seven and send a publish npm rejects
 or misattributes, so `scripts/lint-no-ffi-changeset.mjs` fails CI on one. Change
-this package freely — only the changeset waits, and it lands in the cutover PR
-that repoints trusted publishing and deletes the guard.
+this package freely — only the changeset waits.
+
+Write it anyway, and park it as `.changeset/<name>.md.deferred`. Changesets
+selects changesets by `.endsWith('.md')`, so that extension is invisible to
+`changeset version` and `changeset publish` (and to the guard), and the cutover
+PR that repoints trusted publishing renames it back rather than reconstructing
+it from the git log.
 
 The GitHub Actions workflows under `.github/` in this directory are the previous
 repository's, kept as the reference for that port. GitHub does not read workflows
