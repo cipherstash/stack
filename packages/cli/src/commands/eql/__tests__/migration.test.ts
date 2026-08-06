@@ -173,6 +173,43 @@ describe('eqlMigrationCommand — target selection', () => {
     expect(spawnMock).not.toHaveBeenCalled()
   })
 
+  /**
+   * `--prisma --supabase` is not caught by the `drizzle && prisma`
+   * mutual-exclusion check — the only thing standing between it and the
+   * Supabase emitter is BRANCH ORDERING: the `--prisma` rejection sits above
+   * the `--supabase` dispatch, so the command exits before
+   * `generateSupabaseEqlMigration` runs. That guard is invisible in the source
+   * and a future reorder would silently route this invocation into the
+   * emitter, so pin it here.
+   *
+   * `expect(spawnMock).not.toHaveBeenCalled()` (the assertion the sibling cases
+   * use) cannot detect that regression: the Supabase emitter never spawns
+   * anything, it writes files directly. So stub `process.cwd` at a fresh
+   * tmpdir the way the `--out` suite below does and assert the directory is
+   * untouched — the emitter would create `supabase/migrations/` under it.
+   */
+  it('rejects `--prisma --supabase` before the Supabase emitter writes anything', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'stash-eql-prisma-supabase-'))
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(tmp)
+    try {
+      await expect(
+        eqlMigrationCommand({ prisma: true, supabase: true }),
+      ).rejects.toBeInstanceOf(CliExit)
+
+      expect(clack.log.error).toHaveBeenCalledWith(
+        messages.eql.migrationPrismaNotNeeded,
+      )
+      // Nothing written, nothing created, no emitter side effects.
+      expect(readdirSync(tmp)).toHaveLength(0)
+      expect(existsSync(join(tmp, 'supabase', 'migrations'))).toBe(false)
+      expect(clack.log.success).not.toHaveBeenCalled()
+      expect(spawnMock).not.toHaveBeenCalled()
+    } finally {
+      cwd.mockRestore()
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
   it('treats `--drizzle --supabase` as one target, not two', async () => {
     // `--supabase` is the grants modifier here, not a second target. Counting
     // it as one would reject the documented Supabase-hosted-Drizzle invocation.
@@ -388,6 +425,25 @@ describe('eqlMigrationCommand — Supabase', () => {
       expect(warnings()).toContain(EARLIER)
       expect(warnings()).toContain('supabase db reset')
       // The remedy, including the flag a back-dated push needs.
+      expect(warnings()).toContain('--include-all')
+    })
+
+    it('splits the remote remedy by whether EQL is already installed there', async () => {
+      // The brownfield case this warning fires on is, by definition, a project
+      // that ran `stash eql install` directly — so the remote usually HAS EQL
+      // and is missing only the ledger row. Sending that user to `db push
+      // --include-all` re-runs a bundle opening with `DROP SCHEMA IF EXISTS
+      // eql_v3 CASCADE`, taking every dependent index, constraint, and RLS
+      // policy with it. The ledger-only repair must be the named default, with
+      // --include-all kept for a remote that genuinely lacks the SQL.
+      writeFileSync(join(tmp, EARLIER), ENCRYPTED_COLUMN_SQL)
+
+      await eqlMigrationCommand({ supabase: true, out: tmp })
+
+      expect(warnings()).toContain('supabase migration repair --status applied')
+      expect(warnings()).toContain('DROP SCHEMA IF EXISTS eql_v3 CASCADE')
+      expect(warnings()).toMatch(/RLS polic/)
+      // Both halves present, and the destructive one is the conditional.
       expect(warnings()).toContain('--include-all')
     })
 

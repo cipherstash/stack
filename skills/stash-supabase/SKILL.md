@@ -114,8 +114,16 @@ reset replays in version order with no dependency awareness, so those migrations
 run before EQL exists and `supabase db reset` fails with `type
 "eql_v3_text_search" does not exist`. The command detects this and warns, naming
 the files; the fix is to rename the install migration to a version below the
-earliest of them. Pushing a back-dated migration to a remote that already has
-history needs `supabase db push --include-all`.
+earliest of them. How that back-dated version reaches a remote depends on the
+remote. This case only arises on a project that ran `stash eql install`
+directly, so the remote usually has EQL already and is missing only the ledger
+row — mark it applied with `supabase migration repair --status applied
+<version>`, which writes the row and runs no SQL. ⚠️ Do not push the file there
+instead: that re-runs the bundle's opening `DROP SCHEMA IF EXISTS eql_v3
+CASCADE` (and `eql_v3_internal`), dropping every index, constraint, and RLS
+policy that references those schemas. A remote that genuinely still needs the
+SQL applied takes `supabase db push --include-all`, the flag being required
+because the back-dated version is a gap in the middle of that history.
 
 There is no `--out` to reach for here: the Supabase CLI's migrations directory
 is not configurable. `supabase db reset` and `supabase db push` read
