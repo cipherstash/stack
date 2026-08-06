@@ -66,12 +66,15 @@ export const messages = {
      * actionable command + `--force` note are appended at the call site.
      */
     prismaNextDetected: 'This looks like a Prisma Next project',
-    /** `stash eql migration` with no `--drizzle`/`--prisma` target. */
+    /** `stash eql migration` with no `--drizzle`/`--supabase`/`--prisma` target. */
     migrationNeedsTarget:
-      'Specify a target: `stash eql migration --drizzle` (or `--prisma`).',
-    /** More than one target passed to `stash eql migration`. */
+      'Specify a target: `stash eql migration --drizzle` for a Drizzle project, or `stash eql migration --supabase` to write into supabase/migrations/ (or `--prisma`).',
+    /**
+     * `--drizzle --prisma`. Note that `--drizzle --supabase` is NOT this error:
+     * there, `--supabase` is the role-grants modifier, not a second target.
+     */
     migrationOneTarget:
-      'Pass exactly one target: `--drizzle` or `--prisma`, not both.',
+      'Pass exactly one target: `--drizzle` or `--prisma`, not both. (`--supabase` is a target on its own, and the role-grants modifier when combined with `--drizzle`.)',
     /**
      * `--prisma` is registered only to route people to the right mechanism:
      * Prisma Next installs the EQL bundle through its own migration framework
@@ -84,6 +87,128 @@ export const messages = {
     /** `--name` carried characters outside `[A-Za-z0-9_-]`. */
     migrationBadName:
       'Migration name must contain only letters, numbers, dashes, and underscores.',
+    /**
+     * `--name` with `--supabase`. The Supabase filename is fixed because
+     * duplicate detection matches on the `_cipherstash_eql.sql` suffix, so the
+     * flag cannot be honoured — warn rather than rename nothing silently.
+     */
+    migrationNameDrizzleOnly:
+      '`--name` applies to `--drizzle` only and is ignored here — the Supabase migration is always named `<timestamp>_cipherstash_eql.sql`, which is how a duplicate install is detected.',
+    /**
+     * `--out` with a bare `--supabase`, pointing anywhere other than
+     * `<cwd>/supabase/migrations`.
+     *
+     * The Supabase CLI's migrations directory is NOT configurable. In the Go
+     * implementation it is `filepath.Join(SupabaseDirPath, "migrations")` with
+     * `SupabaseDirPath = "supabase"`, and the path builder that derives it from
+     * a `--config` path still carries a literal `// TODO: make base path
+     * configurable from toml`; the TypeScript CLI hard-codes
+     * `path.join(workdir, "supabase", "migrations")` in both the `db reset` and
+     * `db push` handlers. `--workdir` / `SUPABASE_WORKDIR` moves the whole
+     * project root, not this subdirectory, and `config.toml` has no key for it
+     * (supabase/supabase#33257 is the open request to add one).
+     *
+     * So a file written elsewhere is exactly the failure this command exists to
+     * fix — EQL missing from the directory a reset replays — just relocated.
+     * A warning rather than a hard error, because the user may well have their
+     * own apply step for that directory; what they cannot be allowed to assume
+     * is that `supabase db reset` will pick it up.
+     */
+    migrationSupabaseOutNotReplayed: (migrationsDir: string) =>
+      `--out points at ${migrationsDir}, but the Supabase CLI only ever replays <project>/supabase/migrations — that path is hard-coded, with no config.toml key to move it (--workdir relocates the whole supabase/ directory, not this one). \`supabase db reset\` and \`supabase db push\` will not apply this file, so EQL will still be missing after the next reset. Drop --out to write into supabase/migrations/, unless you have your own step that applies this directory.`,
+    /**
+     * `--supabase --force` replaced an install migration in place.
+     *
+     * Two things the user cannot see from the success line. First, `supabase db
+     * push` will NOT pick the new bundle up: `FindPendingMigrations`
+     * (`pkg/migration/apply.go`) computes the pending set positionally —
+     * `pending := localMigrations[len(remoteMigrations):]` — with no content
+     * hash and no statement diff. (Seed files DO carry a `Hash`/`Dirty` pair and
+     * re-run on change; migrations do not.) Equal counts mean an empty pending
+     * set, so push prints "Remote database is up to date." and applies nothing.
+     * Telling people to `db push` here leaves them believing a remote was
+     * updated when it was not.
+     *
+     * Second, re-applying is not free. The EQL bundle opens with `DROP SCHEMA IF
+     * EXISTS eql_v3 CASCADE;` / `DROP SCHEMA IF EXISTS eql_v3_internal
+     * CASCADE;`, so it takes every dependent index, constraint, and RLS policy
+     * with it. On a fresh `supabase db reset` that is a no-op on an empty
+     * database; on a populated remote it is destructive.
+     */
+    migrationSupabaseForceReplaced:
+      'Replaced the EQL install migration in place, keeping its version. A database that already applied that version still has the OLD bundle, and `supabase db push` will not re-apply it — the Supabase CLI decides what is pending by version, not by content, so a version already in the ledger is never re-run (push just reports "Remote database is up to date."). Re-applying is not free either: the EQL bundle opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE` (and `eql_v3_internal`), which also drops every index, constraint, and RLS policy that references those schemas. Harmless against a fresh `supabase db reset`; destructive against a populated remote.',
+    /**
+     * The re-apply recipe for a replaced install migration, in place of the
+     * plain "Apply it" note. `migration repair --status reverted` deletes the
+     * ledger row and nothing else — Supabase's docs are explicit that it updates
+     * the tracking table without applying or reverting any SQL — which puts the
+     * version back in the pending set.
+     *
+     * Whether the follow-up push then needs `--include-all` depends on where
+     * the reverted version sits, which is why this does not just print the flag
+     * and be done with it. Reverting the NEWEST version leaves it at the tail of
+     * remote history: `FindPendingMigrations` returns it as ordinary pending
+     * work and a plain `db push` applies it. Only a version with applied
+     * migrations above it is the "gap in the middle" that `ErrMissingRemote`
+     * rejects. Verified live against supabase/cli 2.111.0 — the tail case
+     * pushes clean, the gap case aborts — in `supabase-push.live.test.ts`
+     * ("needs --include-all only when the install is not the newest migration").
+     *
+     * Printing `--include-all` unconditionally would not just be verbose: it
+     * applies EVERY out-of-order local migration, including any the user has
+     * deliberately left unapplied.
+     */
+    migrationSupabaseReapply: (version: string | null) =>
+      `Re-apply the replaced migration.\n\nLocal:\n\n  supabase db reset\n\nRemote — clear the ledger row first, or the push is a no-op:\n\n  supabase migration repair --status reverted ${version ?? '<version>'}\n  supabase db push\n\n\`migration repair\` updates the tracking table only; it applies no SQL. If migrations sort AFTER the install (the usual shape — encrypted-column migrations written once EQL was in place), the reverted version is a gap in the middle of remote history and that push aborts with \`Found local migration files to be inserted before the last migration on remote database.\`; re-run it as \`supabase db push --include-all\`. Reach for that flag only when the push tells you to — it applies every out-of-order migration you have, not just this one. Read the CASCADE warning above before doing any of this to a populated database.`,
+    /**
+     * Migrations already in the directory that reference EQL and sort BEFORE the
+     * install this command writes.
+     *
+     * The brownfield case: `stash eql install` applied EQL straight to the
+     * database, encrypted-column migrations were written against it, and only
+     * then did the project move to the migration-first install. A current
+     * timestamp sorts LAST, so those migrations replay before EQL exists and
+     * `supabase db reset` dies on the first `eql_v3_*` reference.
+     *
+     * Detection and a warning, not a fix: back-dating the install, renaming the
+     * user's migrations, or squashing the lot are all their call, and a
+     * back-dated file has its own remote consequence that they have to be the
+     * ones to accept.
+     *
+     * That consequence is split by the remote's state, and getting it wrong is
+     * destructive. This warning only ever fires on a project that already ran
+     * `stash eql install` — that is what put EQL in the database ahead of the
+     * migration history — so the remote typically HAS the bundle and is missing
+     * only the ledger row. `migration repair --status applied` is the answer
+     * there: it writes the row and runs no SQL. Pushing the file instead re-runs
+     * a bundle that opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, dropping
+     * every index, constraint, and RLS policy that references those schemas.
+     * `--include-all` stays for the other case — a remote that genuinely has not
+     * had the SQL applied — where the back-dated version is a gap in the middle
+     * of history that `db push` otherwise refuses to step over.
+     *
+     * "Typically" is doing dangerous work in that paragraph, which is why the
+     * message prints a check rather than a premise. Every other remedy here
+     * fails loudly and can be retried; marking a version applied fails silently
+     * and cannot. On a remote that does NOT have EQL — misremembered, a
+     * different environment, reset since — the row asserts SQL that never ran,
+     * so the version is permanently pending-free: no future `db push` will ever
+     * install EQL, and the first migration touching `eql_v3` fails with nothing
+     * in the history pointing at the cause.
+     *
+     * The check is `eql_v3.version()` rather than the more obvious probe for the
+     * `eql_v3` schema because of where each object sits in the bundle. The
+     * schema is created by its opening statements and survives an install that
+     * aborted partway; `version()` is created by its closing ones, so it
+     * resolves only if the whole bundle ran. Marking applied on a half-installed
+     * remote is the same dead end as marking applied on a bare one, so the check
+     * must not pass there.
+     */
+    migrationSupabaseEqlBeforeInstall: (
+      migrationsDir: string,
+      files: string[],
+    ) =>
+      `Migrations in ${migrationsDir} reference EQL and sort BEFORE the EQL install migration:\n\n  ${files.join('\n  ')}\n\n\`supabase db reset\` replays the directory in version order, with no dependency awareness, so each of those runs before EQL is installed and the reset fails (\`type "eql_v3_text_search" does not exist\`). Rename the install migration to a version below ${files[0]} so it replays first.\n\nHow that back-dated version reaches a remote depends on what that remote actually has. Check it — do not go by memory:\n\n  psql "$REMOTE_DATABASE_URL" -Atc "select eql_v3.version()"\n\n\`eql_v3.version()\` is created by the last statements of the bundle, so it answers "is the whole install there". The \`eql_v3\` schema alone does not: it is created by the bundle's first statements and survives an install that aborted partway.\n\nIf that prints a version, EQL is present and only the ledger row is missing — mark it applied, which writes the ledger row and runs no SQL:\n\n  supabase migration repair --status applied <version>\n\nDo NOT push the file to that remote instead: the bundle opens with \`DROP SCHEMA IF EXISTS eql_v3 CASCADE\` (and \`eql_v3_internal\`), so re-applying it drops every index, constraint, and RLS policy that references those schemas.\n\nIf it errors instead (\`schema "eql_v3" does not exist\`, or \`function eql_v3.version() does not exist\` on a half-applied install), that remote genuinely still needs the SQL: \`supabase db push --include-all\`, because the back-dated version lands as a gap in the middle of that history. Never mark it applied there — the ledger row would claim SQL that never ran, so no later push installs EQL and the first migration referencing \`eql_v3\` fails with nothing pointing at the cause.`,
     /** `stash eql repair` with no `--drizzle` target. */
     repairNeedsTarget: 'Specify a target: `stash eql repair --drizzle`.',
     /** `--out` (or its `drizzle` default) points at a directory that isn't there. */

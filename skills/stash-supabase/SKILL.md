@@ -70,20 +70,100 @@ this is also how **Supabase Edge Functions** get credentials in local dev —
 
 ### 1. Install EQL v3 on the database
 
+Install it as a **migration**, not directly:
+
 ```bash
-stash eql install --supabase
+stash eql migration --supabase   # writes supabase/migrations/<timestamp>_cipherstash_eql.sql
+supabase db reset                # local — replays every migration
+supabase db push                 # remote/linked project
 ```
+
+> A bare `supabase migration up` applies to the **local** database. The remote
+> forms are `supabase db push` and `supabase migration up --linked`.
+
+> ⚠️ **Do not use `stash eql install --supabase` on a project with a local
+> `supabase/` directory.** It applies the SQL straight to the running database,
+> and `supabase db reset` — the ordinary local development loop — drops that
+> database and replays `supabase/migrations/`. EQL is not in there, so it is
+> gone, and the next query fails with `type "eql_v3_encrypted" does not exist`.
+> `stash eql install --supabase` is for a **hosted** project you administer
+> without the Supabase CLI, where there is no migrations directory to write to.
+
+The generated file carries three things, in order: the EQL v3 bundle, the role
+grants, and the `cipherstash.cs_migrations` tracking schema that `stash
+encrypt` records per-column progress in. One `supabase db reset` therefore
+provisions everything — no out-of-band `stash eql install` afterwards.
+
+It refuses to write a second install migration; pass `--force` to regenerate
+the existing one in place (same version, so an applied ledger stays consistent).
+Because the version is unchanged, `supabase db push` will **not** re-apply it —
+the Supabase CLI decides what is pending by version, never by file content, so a
+version already in the ledger is never re-run and push reports `Remote database
+is up to date.` Re-apply with `supabase db reset` locally; on a remote, clear
+the ledger row first with `supabase migration repair --status reverted
+<version>` (tracking table only — it applies no SQL) and then `supabase db
+push`. Add `--include-all` to that push only if it aborts with `Found local
+migration files to be inserted before the last migration on remote database.`,
+which happens when migrations sort after the install; reverting the newest
+version leaves it at the tail, where a plain push applies it. The flag applies
+every out-of-order migration you have, so don't reach for it pre-emptively.
+⚠️ On a populated database, weigh it first: the EQL
+bundle opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE` (and
+`eql_v3_internal`), so re-applying also drops every index, constraint, and RLS
+policy that references those schemas.
+
+**If you already have encrypted-column migrations**, note that the generated
+install is stamped with the current time and therefore sorts *after* them. A
+reset replays in version order with no dependency awareness, so those migrations
+run before EQL exists and `supabase db reset` fails with `type
+"eql_v3_text_search" does not exist`. The command detects this and warns, naming
+the files; the fix is to rename the install migration to a version below the
+earliest of them. How that back-dated version reaches a remote depends on what
+that remote actually has. This case only arises on a project that ran `stash eql
+install` directly, so the remote usually has EQL already — but "usually" is not
+what you want to bet a ledger row on, so check it:
+
+```bash
+psql "$REMOTE_DATABASE_URL" -Atc "select eql_v3.version()"
+```
+
+`eql_v3.version()` is created by the bundle's last statements, so it answers "is
+the whole install there". A probe for the `eql_v3` schema does not: that schema
+is created by the bundle's first statements and survives an install that aborted
+partway.
+
+If it prints a version, only the ledger row is missing — mark it applied with
+`supabase migration repair --status applied <version>`, which writes the row and
+runs no SQL. ⚠️ Do not push the file there instead: that re-runs the bundle's
+opening `DROP SCHEMA IF EXISTS eql_v3 CASCADE` (and `eql_v3_internal`), dropping
+every index, constraint, and RLS policy that references those schemas.
+
+If it errors, that remote genuinely still needs the SQL applied: `supabase db
+push --include-all`, the flag being required because the back-dated version is a
+gap in the middle of that history. ⚠️ Never mark it applied there. Every other
+remedy on this page fails loudly and can be retried; this one fails silently —
+the ledger row claims SQL that never ran, so no later push installs EQL, and the
+first query against an encrypted column fails with nothing pointing at the
+cause.
+
+There is no `--out` to reach for here: the Supabase CLI's migrations directory
+is not configurable. `supabase db reset` and `supabase db push` read
+`<project>/supabase/migrations` and nothing else, `config.toml` has no key for
+it, and `--workdir` / `SUPABASE_WORKDIR` moves the whole `supabase/` directory
+rather than this subdirectory. `stash eql migration --supabase --out <dir>`
+still writes the file, and warns, because a project may have its own step that
+applies that directory — but the Supabase CLI will not, so EQL is gone again
+after the next reset.
 
 Since eql-3.0.0 there is **one** v3 SQL artifact for every target — there is
 no separate Supabase variant. The bundle's only superuser-requiring
 statements (the ORE operator class/family) skip themselves when the install
 role lacks the privilege, and the bundle then disables the ORE-opclass-backed
-domains it cannot support. `--supabase` changes one thing: it additionally
-applies the role grants for `anon` / `authenticated` / `service_role` to the
-two schemas the bundle creates — `eql_v3` (the operator-backing functions)
-and `eql_v3_internal` (SEM internals). Without the grants, encrypted queries
-fail loudly with a permission error (e.g. `permission denied for schema
-eql_v3_internal`).
+domains it cannot support. `--supabase` adds the role grants for `anon` /
+`authenticated` / `service_role` on the two schemas the bundle creates —
+`eql_v3` (the operator-backing functions) and `eql_v3_internal` (SEM
+internals). Without the grants, encrypted queries fail loudly with a
+permission error (e.g. `permission denied for schema eql_v3_internal`).
 
 No **Exposed schemas** change is needed: the column domains and their
 operators live in `public`, so bare `col = term` filters resolve under
@@ -665,7 +745,10 @@ ALTER TABLE users
   ADD COLUMN email_encrypted public.eql_v3_text_search;  -- nullable
 ```
 
-Apply with `supabase db reset` locally or `supabase migration up` against the remote project.
+Apply with `supabase db reset` locally or `supabase db push` against the
+remote project. The reset is safe here because the EQL install is itself a
+migration (step 1) — it is replayed before this one, so the `eql_v3_text_search`
+domain exists by the time this `ALTER TABLE` runs.
 
 No client-side schema change is required — `encryptedSupabase` introspects
 the new column's domain at the next client startup. If you use declared
@@ -753,7 +836,7 @@ email_encrypted IS NULL` at apply time, raises if any remain, and only then
 drops the column. It requires the `backfilled` phase plus a live coverage check
 at generation time. Legacy v2 state is rejected.
 
-Review and apply with `supabase migration up` (or `supabase db reset` locally). Then remove the dual-write code from app paths — the plaintext column is gone; only the encrypted column is written now, through the wrapper.
+Review and apply with `supabase db reset` locally, or `supabase db push` against the remote project. Then remove the dual-write code from app paths — the plaintext column is gone; only the encrypted column is written now, through the wrapper.
 
 ### Inspecting progress at any time
 

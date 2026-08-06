@@ -29,6 +29,7 @@ const FIXTURE_VERSIONS: Record<string, string> = vi.hoisted(() => ({
   stash: '9.9.9-test.1',
   '@cipherstash/stack': '9.9.9-test.1',
   '@cipherstash/stack-supabase': '9.9.9-test.1',
+  '@cipherstash/stack-drizzle': '9.9.9-test.1',
 }))
 vi.mock('../../../../runtime-versions.js', async (importOriginal) => ({
   // Keep the real pure helpers (compareVersions, parseEmbeddedVersions);
@@ -71,8 +72,17 @@ import {
 import { installDepsStep, versionSkew } from '../install-deps.js'
 
 const baseState = {} as unknown as InitState
-const provider = { name: 'postgresql' } as unknown as InitProvider
-const supabaseProvider = { name: 'supabase' } as unknown as InitProvider
+const provider = { name: 'base', selected: [] } as unknown as InitProvider
+const supabaseProvider = {
+  name: 'supabase',
+  selected: ['supabase'],
+} as unknown as InitProvider
+/** What `resolveProvider` builds for `stash init --drizzle --supabase`: a
+ * combined `name` for referrer tracking, both flags on `selected`. */
+const drizzleSupabaseProvider = {
+  name: 'drizzle-supabase',
+  selected: ['supabase', 'drizzle'],
+} as unknown as InitProvider
 
 /** Presence by package name — clearer and more robust than call counters. */
 function present(...pkgs: string[]) {
@@ -155,6 +165,89 @@ describe('installDepsStep', () => {
       '@cipherstash/stack-supabase@9.9.9-test.1',
     ])
     expect(dev).toEqual(['stash@9.9.9-test.1'])
+  })
+
+  it('installs no adapter package for a flagless run', async () => {
+    // The baseline the combined-flag cases below are measured against: a plain
+    // Postgres project has no adapter to install.
+    await installDepsStep.run(baseState, provider)
+
+    const [, prod, dev] = installCall()
+    expect(prod).toEqual(['@cipherstash/stack@9.9.9-test.1'])
+    expect(dev).toEqual(['stash@9.9.9-test.1'])
+  })
+
+  it('installs BOTH adapters for a combined `--drizzle --supabase` run', async () => {
+    // The adapter was looked up by provider NAME, and a combined run's name is
+    // 'drizzle-supabase' — not a key of the adapter map, so the run installed
+    // neither adapter and the scaffolded client's imports could not resolve.
+    // The user asked for both integrations; both packages are real and both
+    // are needed.
+    await installDepsStep.run(baseState, drizzleSupabaseProvider)
+
+    const [, prod, dev] = installCall()
+    expect(prod).toEqual([
+      '@cipherstash/stack@9.9.9-test.1',
+      '@cipherstash/stack-supabase@9.9.9-test.1',
+      '@cipherstash/stack-drizzle@9.9.9-test.1',
+    ])
+    expect(dev).toEqual(['stash@9.9.9-test.1'])
+  })
+
+  it('lists an adapter once when the detected integration and the flag agree', async () => {
+    // `state.integration` and `provider.selected` both say Supabase on a
+    // hosted Supabase project. The package list is deduped, so the install
+    // command names the adapter once.
+    await installDepsStep.run(
+      { integration: 'supabase' } as unknown as InitState,
+      supabaseProvider,
+    )
+
+    const [, prod] = installCall()
+    expect(prod).toEqual([
+      '@cipherstash/stack@9.9.9-test.1',
+      '@cipherstash/stack-supabase@9.9.9-test.1',
+    ])
+  })
+
+  it('resolves the Prisma adapter from the flag alone', async () => {
+    // `--prisma` names the flag; the integration it selects is `prisma-next`.
+    // Resolving the adapter straight from the provider name missed that, and
+    // the package only got installed because `build-schema` happens to run
+    // first and put 'prisma-next' on state. Step ordering is not the contract.
+    const prismaProvider = {
+      name: 'prisma',
+      selected: ['prisma'],
+    } as unknown as InitProvider
+
+    await installDepsStep.run(baseState, prismaProvider)
+
+    const [, prod] = installCall()
+    expect(prod).toContain('@cipherstash/stack-prisma')
+  })
+
+  it('names every adapter in the already-installed line', async () => {
+    present(
+      '@cipherstash/stack',
+      '@cipherstash/stack-supabase',
+      '@cipherstash/stack-drizzle',
+      'stash',
+    )
+    resolvedVersions({
+      '@cipherstash/stack': FIXTURE_VERSIONS['@cipherstash/stack'],
+      '@cipherstash/stack-supabase':
+        FIXTURE_VERSIONS['@cipherstash/stack-supabase'],
+      '@cipherstash/stack-drizzle':
+        FIXTURE_VERSIONS['@cipherstash/stack-drizzle'],
+      stash: FIXTURE_VERSIONS.stash,
+    })
+
+    await installDepsStep.run(baseState, drizzleSupabaseProvider)
+
+    expect(p.log.success).toHaveBeenCalledWith(
+      '@cipherstash/stack, @cipherstash/stack-supabase, @cipherstash/stack-drizzle and stash are already installed.',
+    )
+    expect(execSyncMock).not.toHaveBeenCalled()
   })
 
   it('warns on version skew and aligns with the dev/prod split intact (#661)', async () => {

@@ -321,10 +321,24 @@ export const registry: CommandGroup[] = [
       {
         name: 'eql migration',
         summary:
-          'Generate an EQL v3 install migration for your ORM (Drizzle; Prisma Next installs EQL through its own migrations)',
+          'Generate an EQL v3 install migration (Drizzle, or supabase/migrations/; Prisma Next installs EQL through its own migrations)',
+        long: [
+          'Migration-first is the preferred way to install EQL: it lands in your',
+          'migration history and ships to every environment through the same',
+          'migrate step as the rest of your schema. On Supabase it is the only',
+          'durable way — `supabase db reset` replays the migrations directory, so',
+          'a direct `eql install` is wiped by the next reset.',
+        ].join('\n'),
         examples: [
           'eql migration --drizzle',
           'eql migration --drizzle --supabase',
+          'eql migration --supabase',
+          // Deliberately no `--out` here. The Supabase CLI reads
+          // `supabase/migrations` and nothing else, so an example pointing the
+          // install elsewhere would teach the exact "EQL isn't in the replayed
+          // directory" failure this command exists to fix. `--force` is what
+          // needed demonstrating; it works fine on its own.
+          'eql migration --supabase --force',
         ],
         flags: [
           {
@@ -340,7 +354,7 @@ export const registry: CommandGroup[] = [
           {
             name: '--supabase',
             description:
-              'Append the Supabase role grants (eql_v3 + eql_v3_internal for anon/authenticated/service_role).',
+              'On its own, write the install into supabase/migrations/ so it survives `supabase db reset`. With --drizzle, instead append the Supabase role grants (eql_v3 + eql_v3_internal for anon/authenticated/service_role) to the Drizzle migration.',
           },
           {
             name: '--name',
@@ -352,7 +366,12 @@ export const registry: CommandGroup[] = [
             name: '--out',
             value: '<path>',
             description:
-              'Directory drizzle-kit writes the migration into (passed to `drizzle-kit generate --out`). Defaults to `drizzle`; set it to match your drizzle.config.ts.',
+              'Where the migration is written. Drizzle: passed to `drizzle-kit generate --out`, defaults to `drizzle` — set it to match your drizzle.config.ts. Supabase: leave it alone. The Supabase CLI replays `supabase/migrations` and has no setting to move it, so pointing elsewhere means `supabase db reset` / `db push` never apply the install; the command warns when you do.',
+          },
+          {
+            name: '--force',
+            description:
+              'Write a Supabase install migration even though one already exists. Not needed for --drizzle (drizzle-kit numbers each generated migration).',
           },
           DRY_RUN_FLAG,
         ],

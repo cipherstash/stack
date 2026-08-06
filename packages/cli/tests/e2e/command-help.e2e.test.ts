@@ -46,6 +46,7 @@ describe('per-command --help', () => {
     expect(r.output).toContain('Usage: npx stash eql migration [options]')
     expect(r.output).toContain('--drizzle')
     expect(r.output).toContain('--supabase')
+    expect(r.output).toContain('--force')
   })
 
   it('renders full command help for `eql install --help`', async () => {

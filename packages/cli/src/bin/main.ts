@@ -109,7 +109,7 @@ Commands:
   telemetry <sub>      Manage anonymous usage analytics (status, enable, disable)
 
   eql install          Scaffold stash.config.ts (if missing) and install EQL extensions
-  eql migration        Generate an EQL v3 install migration for your ORM (Drizzle)
+  eql migration        Generate an EQL v3 install migration (Drizzle, or supabase/migrations/)
   eql repair           Repair migrations with an un-runnable ALTER COLUMN to an encrypted type
   eql upgrade          Upgrade EQL extensions to the latest version
   eql status           Show EQL installation status
@@ -274,6 +274,7 @@ async function runEqlCommand(
         supabase: flags.supabase,
         name: values.name,
         out: values.out,
+        force: flags.force,
         dryRun: flags['dry-run'],
       })
       break
