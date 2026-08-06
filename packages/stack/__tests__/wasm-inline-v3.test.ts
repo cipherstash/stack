@@ -65,12 +65,15 @@ describe('wasm-inline is EQL v3 only (#614)', () => {
     expect(newClientOpts().eqlVersion).toBe(3)
   })
 
-  it('normalises cast_as on the v3 path (SDK "string" → EQL "text")', async () => {
+  it('forwards cast_as unnormalised on the v3 path', async () => {
     await Encryption({ schemas: [users], config })
-    // `types.TextSearch` carries `cast_as: 'string'`; the WASM client only
-    // accepts EQL-native variants, so the factory must map it to `'text'`.
+    // `types.TextSearch` carries `cast_as: 'string'`. Under protect-ffi 0.30
+    // the WASM binding accepted EQL-native variants only, so the factory
+    // mapped it to `'text'` first. 0.31 normalizes at the Rust deserialization
+    // boundary on both bindings and documents `CanonicalEncryptConfig` as a
+    // shape callers do not build, so the SDK spelling goes straight through.
     expect(newClientOpts().encryptConfig.tables.users.email.cast_as).toBe(
-      'text',
+      'string',
     )
   })
 

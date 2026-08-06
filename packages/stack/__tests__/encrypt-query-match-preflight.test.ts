@@ -3,7 +3,11 @@ import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
 
 vi.mock('@cipherstash/protect-ffi', () => ({
-  ProtectError: class ProtectError extends Error {},
+  // 0.31 replaced the `ProtectError` class with this guard; `getErrorCode`
+  // reaches it on the failure path. The preflight rejects before the FFI, so
+  // the errors here carry no `code` and the predicate is never satisfied.
+  isProtectErrorCode: (value: unknown) =>
+    typeof value === 'string' && value === 'UNKNOWN_COLUMN',
   newClient: vi.fn(async () => ({ __mock: 'client' })),
   encryptQuery: vi.fn(async () => ({ v: 3, bf: [1] })),
   encryptQueryBulk: vi.fn(async () => [{ v: 3, bf: [1] }]),

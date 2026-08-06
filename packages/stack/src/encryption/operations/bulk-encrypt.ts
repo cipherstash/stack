@@ -30,6 +30,13 @@ import { EncryptionOperation } from './base-operation'
 // client-side, because protect-ffi's behaviour on such a value is unobservable.
 // Callers that batch instead of looping (the v3 Drizzle `inArray`, for one)
 // must not lose that guard by choosing the bulk path.
+//
+// The caller's `id` is deliberately NOT forwarded. protect-ffi's
+// `EncryptPayload` is `{ plaintext, column, table, lockContext? }` and has never
+// had an `id`; 0.30 silently dropped unrecognised keys, and 0.31 forwards them
+// to Rust, which rejects the payload with ``unknown field `id` ``. Nothing was
+// lost by the drop either way — results are correlated back to ids positionally
+// by `mapEncryptedDataToResult`, reading the ORIGINAL array, not this one.
 const createEncryptPayloads = (
   plaintexts: BulkEncryptPayload,
   column: BuildableColumn,
@@ -38,10 +45,9 @@ const createEncryptPayloads = (
 ) => {
   return plaintexts
     .filter(({ plaintext }) => plaintext !== null)
-    .map(({ id, plaintext }) => {
+    .map(({ plaintext }) => {
       assertValidNumericValue(plaintext)
       return {
-        id,
         plaintext: plaintext as JsPlaintext,
         column: column.getName(),
         table: table.tableName,

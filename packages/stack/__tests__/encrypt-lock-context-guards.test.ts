@@ -25,9 +25,13 @@ import { LockContext } from '@/identity'
 import { Encryption } from '@/index'
 
 vi.mock('@cipherstash/protect-ffi', () => ({
-  // `getErrorCode` does `error instanceof ProtectError` on the failure path,
-  // so the mock must export the class even though the guards throw plain Errors.
-  ProtectError: class ProtectError extends Error {},
+  // `getErrorCode` calls `isProtectErrorCode` on the failure path, so the mock
+  // must export it even though these guards throw plain Errors with no `code`.
+  // Mirrors the real predicate rather than stubbing `false`: a stub would pass
+  // whether or not the guards short-circuit before the FFI, which is the whole
+  // property under test.
+  isProtectErrorCode: (value: unknown) =>
+    typeof value === 'string' && value === 'UNKNOWN_COLUMN',
   newClient: vi.fn(async () => ({ __mock: 'client' })),
   encrypt: vi.fn(async () => ({ v: 2, c: 'ciphertext' })),
   // The model / bulk-model path funnels through `encryptBulk`. Return one
