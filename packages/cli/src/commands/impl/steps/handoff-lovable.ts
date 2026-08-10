@@ -47,19 +47,32 @@ export const handoffLovableStep: HandoffStep = {
       failed: written ? [] : inlinable,
     })
 
+    // The note must reflect what was actually written: telling the user to
+    // commit an AGENTS.md that failed to write sends them hunting for a
+    // file that does not exist (writeAgentsMd already logged the warning).
     p.note(
-      [
-        `Rules at ${AGENTS_MD_REL_PATH}`,
-        `Action plan at ${SETUP_PROMPT_REL_PATH}`,
-        `Context at ${CONTEXT_REL_PATH}`,
-        '',
-        'Lovable only sees these files through its GitHub sync:',
-        `1. Commit and push ${AGENTS_MD_REL_PATH} and .cipherstash/`,
-        '2. In Lovable: Settings → Knowledge, add:',
-        `   "Follow ${AGENTS_MD_REL_PATH} for all CipherStash work.`,
-        `   Start from ${SETUP_PROMPT_REL_PATH}."`,
-        `3. Ask the Lovable agent to read ${SETUP_PROMPT_REL_PATH} and begin.`,
-      ].join('\n'),
+      written
+        ? [
+            `Rules at ${AGENTS_MD_REL_PATH}`,
+            `Action plan at ${SETUP_PROMPT_REL_PATH}`,
+            `Context at ${CONTEXT_REL_PATH}`,
+            '',
+            'Lovable only sees these files through its GitHub sync:',
+            `1. Commit and push ${AGENTS_MD_REL_PATH} and .cipherstash/`,
+            '2. In Lovable: Settings → Knowledge, add:',
+            `   "Follow ${AGENTS_MD_REL_PATH} for all CipherStash work.`,
+            `   Start from ${SETUP_PROMPT_REL_PATH}."`,
+            `3. Ask the Lovable agent to read ${SETUP_PROMPT_REL_PATH} and begin.`,
+          ].join('\n')
+        : [
+            `${AGENTS_MD_REL_PATH} could not be written (see the warning above).`,
+            `Action plan at ${SETUP_PROMPT_REL_PATH}`,
+            `Context at ${CONTEXT_REL_PATH}`,
+            '',
+            'Fix the file permissions and re-run this command so the rules',
+            `land in ${AGENTS_MD_REL_PATH}, then commit, push, and add the`,
+            'Knowledge pointer in Lovable (Settings → Knowledge).',
+          ].join('\n'),
       'Drive the Lovable agent',
     )
 

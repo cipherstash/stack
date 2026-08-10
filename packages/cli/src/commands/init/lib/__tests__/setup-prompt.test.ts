@@ -716,5 +716,58 @@ describe('renderSetupPrompt — honours what the handoff actually wrote', () => 
       expect(out).toContain('cipherstash.com/docs')
       expect(out).not.toContain('.claude/skills/')
     })
+
+    for (const handoff of ['agents-md', 'lovable'] as const) {
+      it(`${handoff} with every skill failed does not point at AGENTS.md (${mode})`, () => {
+        // For these handoffs the skills are inlined INTO AGENTS.md, so
+        // all-failed means writeAgentsMd itself failed — the file does
+        // not exist and the prompt must not send the agent to it.
+        const out = renderSetupPrompt({
+          ...baseCtx,
+          mode,
+          handoff,
+          skills: {
+            installed: [],
+            inlined: [],
+            failed: ['stash-encryption', 'stash-cli'],
+          },
+        })
+        expect(out).toContain('could not be installed')
+        expect(out).not.toContain('AGENTS.md')
+        expect(out).toContain('cipherstash.com/docs')
+      })
+    }
+
+    it(`codex with every skill failed still points at AGENTS.md (${mode})`, () => {
+      // Codex writes its durable rules to AGENTS.md separately from the
+      // skills, so the file exists even when every skill copy failed.
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        mode,
+        handoff: 'codex',
+        skills: {
+          installed: [],
+          inlined: [],
+          failed: ['stash-encryption', 'stash-cli'],
+        },
+      })
+      expect(out).toContain('could not be installed')
+      expect(out).toContain('the durable rules are in `AGENTS.md`')
+    })
+
+    it(`lovable with inlined skills names the GitHub-synced AGENTS.md (${mode})`, () => {
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        mode,
+        handoff: 'lovable',
+        skills: {
+          installed: [],
+          inlined: ['stash-encryption', 'stash-supabase'],
+          failed: [],
+        },
+      })
+      expect(out).toContain('synced into Lovable via GitHub')
+      expect(out).toContain('`stash-supabase`')
+    })
   }
 })

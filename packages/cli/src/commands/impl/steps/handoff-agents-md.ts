@@ -46,15 +46,27 @@ export const handoffAgentsMdStep: HandoffStep = {
       failed: written ? [] : inlinable,
     })
 
+    // Same honesty rule as the Lovable step: only claim AGENTS.md exists
+    // when the write succeeded (writeAgentsMd already logged the warning).
     p.note(
-      [
-        `Rules at ${AGENTS_MD_REL_PATH}`,
-        `Action plan at ${SETUP_PROMPT_REL_PATH}`,
-        `Context at ${CONTEXT_REL_PATH}`,
-        '',
-        'Cursor / Windsurf / Cline pick up AGENTS.md automatically.',
-        `Open your agent and point it at ${SETUP_PROMPT_REL_PATH} to start.`,
-      ].join('\n'),
+      written
+        ? [
+            `Rules at ${AGENTS_MD_REL_PATH}`,
+            `Action plan at ${SETUP_PROMPT_REL_PATH}`,
+            `Context at ${CONTEXT_REL_PATH}`,
+            '',
+            'Cursor / Windsurf / Cline pick up AGENTS.md automatically.',
+            `Open your agent and point it at ${SETUP_PROMPT_REL_PATH} to start.`,
+          ].join('\n')
+        : [
+            `${AGENTS_MD_REL_PATH} could not be written (see the warning above).`,
+            `Action plan at ${SETUP_PROMPT_REL_PATH}`,
+            `Context at ${CONTEXT_REL_PATH}`,
+            '',
+            'Fix the file permissions and re-run this command so the rules',
+            `land in ${AGENTS_MD_REL_PATH}, then open your agent and point it`,
+            `at ${SETUP_PROMPT_REL_PATH} to start.`,
+          ].join('\n'),
       'Drive your editor agent',
     )
 
