@@ -174,7 +174,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: pnpm/action-setup@v6.0.9
+      - uses: pnpm/action-setup@v6.0.10
         with:
           run_install: false
 
