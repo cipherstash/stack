@@ -335,7 +335,7 @@ export async function planCommand(
       // agent-target picker, so name `--target` here rather than letting
       // the user re-discover the flag on the next exit-cleanly hint.
       p.outro(
-        `${planLine}. Review it, then run \`${cli} impl --target <claude-code|codex|agents-md|wizard>\` to implement. The \`--target\` flag is required when running non-interactively.`,
+        `${planLine}. Review it, then run \`${cli} impl --target <${HANDOFF_CHOICES.join('|')}>\` to implement. The \`--target\` flag is required when running non-interactively.`,
       )
     }
   } catch (err) {

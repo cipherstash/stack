@@ -173,6 +173,8 @@ function checked(line: string): string {
  */
 function rulesLocation(handoff: HandoffChoice, skills: SkillsDelivery): string {
   if (handoff === 'agents-md') return '`AGENTS.md` (Cursor / Windsurf / Cline)'
+  if (handoff === 'lovable')
+    return '`AGENTS.md` (synced into Lovable via GitHub)'
   const dir =
     handoff === 'claude-code' ? '`.claude/skills/`' : '`.codex/skills/`'
   const inlined = 'inlined in `AGENTS.md` under "## Skill references"'
@@ -249,14 +251,21 @@ function skillsLoadedLines(
   handoff: HandoffChoice,
   skills: SkillsDelivery,
 ): string[] {
-  const wroteAgentsMd = handoff === 'codex' || handoff === 'agents-md'
+  const wroteAgentsMd =
+    handoff === 'codex' || handoff === 'agents-md' || handoff === 'lovable'
   const delivered = [...skills.installed, ...skills.inlined]
   if (delivered.length === 0) {
     if (skills.failed.length > 0) {
+      // Only the codex handoff writes its durable rules to AGENTS.md
+      // separately from the skills, so only there can the file exist when
+      // every skill failed. For agents-md and lovable the skills are
+      // inlined INTO AGENTS.md — all-failed means the file itself was not
+      // written, and pointing the agent at it would name a file that does
+      // not exist.
       return [
         '## Rules',
         '',
-        wroteAgentsMd
+        handoff === 'codex'
           ? 'The skills could not be installed (the destination was not writable) — the durable rules are in `AGENTS.md`; read it, and consult https://cipherstash.com/docs for the API details the skills would have carried.'
           : 'The skills could not be installed (the destination was not writable) — consult https://cipherstash.com/docs for the encryption API, schema rules, and the rollout/cutover lifecycle.',
       ]

@@ -72,15 +72,22 @@ describe('stash impl — non-TTY safety (BUGS.md reproducer)', () => {
     expect(combined).toContain('wizard')
   })
 
-  it('`impl --help` documents the --target flag and its values', async () => {
-    // The global banner no longer inlines per-command flags; the --target
-    // escape hatch is documented under `impl --help` (rendered from the
-    // command-descriptor registry).
-    const r = await runPiped(['impl', '--help'], { timeoutMs: 5_000 })
+  // `plan` and `impl` each carry their own --target descriptor in the
+  // registry, so both need asserting — dropping a target from one of them
+  // would otherwise ship silently.
+  for (const command of ['impl', 'plan'] as const) {
+    it(`\`${command} --help\` documents the --target flag and its values`, async () => {
+      // The global banner no longer inlines per-command flags; the --target
+      // escape hatch is documented under the command's own --help (rendered
+      // from the command-descriptor registry).
+      const r = await runPiped([command, '--help'], { timeoutMs: 5_000 })
 
-    expect(r.timedOut).toBe(false)
-    expect(r.exitCode).toBe(0)
-    expect(r.stdout).toContain('--target')
-    expect(r.stdout).toContain('claude-code | codex | agents-md | wizard')
-  })
+      expect(r.timedOut).toBe(false)
+      expect(r.exitCode).toBe(0)
+      expect(r.stdout).toContain('--target')
+      expect(r.stdout).toContain(
+        'claude-code | codex | agents-md | lovable | wizard',
+      )
+    })
+  }
 })

@@ -59,7 +59,12 @@ export interface SchemaDef {
   columns: ColumnDef[]
 }
 
-export type HandoffChoice = 'claude-code' | 'codex' | 'agents-md' | 'wizard'
+export type HandoffChoice =
+  | 'claude-code'
+  | 'codex'
+  | 'agents-md'
+  | 'lovable'
+  | 'wizard'
 
 /**
  * Whether the handoff agent should produce a plan first (`plan`) or go

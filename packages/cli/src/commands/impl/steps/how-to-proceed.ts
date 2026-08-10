@@ -9,6 +9,7 @@ import {
 import { handoffAgentsMdStep } from './handoff-agents-md.js'
 import { handoffClaudeStep } from './handoff-claude.js'
 import { handoffCodexStep } from './handoff-codex.js'
+import { handoffLovableStep } from './handoff-lovable.js'
 import { handoffWizardStep } from './handoff-wizard.js'
 
 /**
@@ -20,6 +21,7 @@ export const HANDOFF_CHOICES: readonly HandoffChoice[] = [
   'claude-code',
   'codex',
   'agents-md',
+  'lovable',
   'wizard',
 ] as const
 
@@ -92,6 +94,11 @@ export function buildOptions(
       hint: 'works with Cursor, Windsurf, Cline, and more',
     },
     {
+      value: 'lovable',
+      label: 'Write AGENTS.md for Lovable',
+      hint: 'push via GitHub sync, then add a Knowledge pointer in Lovable',
+    },
+    {
       value: 'wizard',
       label: 'Use the CipherStash Agent',
       hint: 'our hosted setup wizard (runs `stash wizard`)',
@@ -136,6 +143,8 @@ export const howToProceedStep: HandoffStep = {
         return handoffCodexStep.run(next)
       case 'agents-md':
         return handoffAgentsMdStep.run(next)
+      case 'lovable':
+        return handoffLovableStep.run(next)
       case 'wizard':
         return handoffWizardStep.run(next)
     }

@@ -26,16 +26,28 @@ const claudeOnly: InitState = { agents: makeAgents(true, false) }
 const codexOnly: InitState = { agents: makeAgents(false, true) }
 
 describe('howToProceed — buildOptions', () => {
-  it('offers all four targets in implement mode', () => {
+  it('offers all five targets in implement mode', () => {
     const opts = buildOptions(noAgents, 'implement')
     const values = opts.map((o) => o.value)
-    expect(values).toEqual(['claude-code', 'codex', 'agents-md', 'wizard'])
+    expect(values).toEqual([
+      'claude-code',
+      'codex',
+      'agents-md',
+      'lovable',
+      'wizard',
+    ])
   })
 
-  it('offers all four targets in plan mode', () => {
+  it('offers all five targets in plan mode', () => {
     const opts = buildOptions(noAgents, 'plan')
     const values = opts.map((o) => o.value)
-    expect(values).toEqual(['claude-code', 'codex', 'agents-md', 'wizard'])
+    expect(values).toEqual([
+      'claude-code',
+      'codex',
+      'agents-md',
+      'lovable',
+      'wizard',
+    ])
   })
 
   it('reflects detection state in hints regardless of mode', () => {
