@@ -126,4 +126,19 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn wire_version_reads_the_stored_first_byte() {
+        // A byte other than WIRE_VERSION proves the peek reads the buffer
+        // rather than returning a constant.
+        assert_eq!(
+            LocalCipherText::from(vec![7u8, 0, 0]).wire_version(),
+            Some(7)
+        );
+        assert_eq!(
+            LocalCipherText::from(vec![WIRE_VERSION]).wire_version(),
+            Some(WIRE_VERSION)
+        );
+        assert_eq!(LocalCipherText::from(Vec::new()).wire_version(), None);
+    }
 }
