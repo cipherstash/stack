@@ -206,11 +206,12 @@ access key is minted with the member role — the CLI never mints admin keys —
 and is shown exactly once. Give each environment its own minted set; see
 `stash-deployment` for where each environment's credentials live.
 
-> **`CS_CLIENT_KEY` must be hex.** Hex is what `stash env` emits and what this
-> table has always documented, but older versions also accepted the base64
-> spelling that `~/.cipherstash/secretkey.json` stores on disk — so a key
-> copied out of that file worked. It no longer does: the client now rejects it
-> at construction with `invalid clientKey: expected a hex-encoded key`, and
+> **`CS_CLIENT_KEY` must be hex.** Hex is what `stash env` emits and the only
+> encoding this table has ever documented. The decoder underneath used to fall
+> back to standard padded base64 — the spelling `~/.cipherstash/secretkey.json`
+> stores on disk — so a key copied out of that file happened to work despite
+> never being a supported input. It no longer does: the client rejects it at
+> construction with `invalid clientKey: expected a hex-encoded key`, and
 > the message says nothing further on purpose (the underlying decode error
 > names a character of the key and its offset).
 >

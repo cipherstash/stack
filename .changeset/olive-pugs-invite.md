@@ -1,33 +1,27 @@
 ---
-'@cipherstash/stack': major
+'@cipherstash/stack': patch
 ---
 
 Adopt protect-ffi 0.31.0.
 
-`major`, not `minor`, because of the first item below: a credential encoding
-that worked on 1.x stops working at client construction, and `@cipherstash/stack`
-pins `@cipherstash/protect-ffi` exactly — so upgrading stack forces the new FFI
-and there is no version of this a caller opts into separately. That hex was
-always the documented encoding describes intent, not the behaviour anyone was
-running against. The fixed group takes `stash`, `wizard` and the three adapters
-to 2.0.0 with it; that is a release-management cost, not an argument about what
-the version number means.
-
-**`clientKey` must now be hex-encoded.** This is the change to check before
-upgrading. The client key used to be decoded by a function that accepted both
-hex and standard padded base64 — the encoding `~/.cipherstash/secretkey.json`
-stores on disk — so a base64 value in `config.clientKey` or `CS_CLIENT_KEY`
-worked even though the documented encoding is hex. It is now rejected at client
-construction with `invalid clientKey: expected a hex-encoded key`.
+**`clientKey` is hex, and a decoder tolerance that accepted other spellings is
+gone.** Hex has always been the documented and only supported encoding for
+`config.clientKey` / `CS_CLIENT_KEY` — it is what `stash env` emits and what
+the docs and skills have always shown. The decoder underneath happened to fall
+back to standard padded base64, which is the encoding the Rust
+`stash-profile` crate uses for `~/.cipherstash/secretkey.json` on disk; that
+fallback was never part of this package's contract, and nothing in the
+JavaScript stack ever produced or accepted a base64 key. It is now rejected at
+client construction with `invalid clientKey: expected a hex-encoded key`.
 
 The message deliberately says nothing more, because the underlying decode error
 names the offending character and its offset and would put part of a live key
-into your logs. So if every operation starts failing at construction after this
-upgrade, check the encoding of your key first. Re-encode it as hex, or drop the
-explicit key and let the client read it from the profile store.
+into your logs. So if construction starts failing after this upgrade, the key
+you supplied is not hex — re-encode it, or drop the explicit key and let the
+native client read it from the profile store.
 
 Reading the key from `~/.cipherstash/secretkey.json` is unaffected — that path
-still uses base64, and only an explicitly supplied key is now hex-only.
+still uses base64, and only an explicitly supplied key is hex-only.
 
 **DynamoDB errors no longer report foreign error codes as encryption codes.**
 `handleError` accepted any string-valued `code` on a caught error and passed it
