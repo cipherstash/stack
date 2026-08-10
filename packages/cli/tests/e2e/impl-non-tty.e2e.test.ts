@@ -81,6 +81,8 @@ describe('stash impl — non-TTY safety (BUGS.md reproducer)', () => {
     expect(r.timedOut).toBe(false)
     expect(r.exitCode).toBe(0)
     expect(r.stdout).toContain('--target')
-    expect(r.stdout).toContain('claude-code | codex | agents-md | wizard')
+    expect(r.stdout).toContain(
+      'claude-code | codex | agents-md | lovable | wizard',
+    )
   })
 })

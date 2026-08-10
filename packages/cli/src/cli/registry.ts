@@ -156,7 +156,7 @@ export const registry: CommandGroup[] = [
             name: '--target',
             value: '<name>',
             description:
-              'Skip the agent-target picker and hand off directly to one of claude-code | codex | agents-md | wizard. Safe in non-TTY contexts.',
+              'Skip the agent-target picker and hand off directly to one of claude-code | codex | agents-md | lovable | wizard. Safe in non-TTY contexts.',
           },
         ],
       },
@@ -178,7 +178,7 @@ export const registry: CommandGroup[] = [
             name: '--target',
             value: '<name>',
             description:
-              'Skip the agent-target picker and hand off directly to one of claude-code | codex | agents-md | wizard. Safe in non-TTY contexts.',
+              'Skip the agent-target picker and hand off directly to one of claude-code | codex | agents-md | lovable | wizard. Safe in non-TTY contexts.',
           },
         ],
       },
