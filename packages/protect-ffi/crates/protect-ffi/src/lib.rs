@@ -301,7 +301,7 @@ pub enum Error {
     Encryption(#[from] EncryptionError),
     #[error(transparent)]
     Eql(#[from] EqlError),
-    #[error("protect-ffi invariant violation: {0}. This is a bug in protect-ffi. Please file an issue at https://github.com/cipherstash/protectjs-ffi/issues.")]
+    #[error("protect-ffi invariant violation: {0}. This is a bug in protect-ffi. Please file an issue at https://github.com/cipherstash/stack/issues.")]
     #[diagnostic(code("INVARIANT_VIOLATION"))]
     InvariantViolation(String),
     /// An unknown `queryOp` wire value, raised from [`query_op::QueryOpName`]'s

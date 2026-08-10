@@ -10,7 +10,7 @@ version = "0.1.0"
 publish = false
 license = "MIT"
 description = "Native FFI bindings to the CipherStash Client SDK"
-repository = "https://github.com/cipherstash/protectjs-ffi"
+repository = "https://github.com/cipherstash/stack"
 edition = "2021"
 exclude = ["index.node"]
 
