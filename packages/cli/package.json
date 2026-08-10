@@ -76,7 +76,7 @@
 	},
 	"devDependencies": {
 		"@cipherstash/stack": "workspace:*",
-		"@types/pg": "^8.20.0",
+		"@types/pg": "^8.20.3",
 		"node-pty": "^1.1.0",
 		"strip-ansi": "^7.2.0",
 		"tsup": "catalog:repo",
