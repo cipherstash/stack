@@ -10,6 +10,13 @@ const TARGETS = process.argv.slice(2).length
   ? process.argv.slice(2)
   : [
       '.github/workflows/release.yml',
+      // Everything it builds is packed and published with provenance by
+      // release.yml's publish-ffi job, so a poisoned restore here lands in a
+      // tarball on npm. Reached from release.yml anyway (the traversal follows
+      // a job-level `uses:`), and named here so `ffi-preflight.yml` — which
+      // calls it too — cannot become a way to build these artifacts under
+      // different rules.
+      '.github/workflows/_build-ffi-artifacts.yml',
       '.github/workflows/tests-supply-chain.yml',
     ]
 

@@ -7,8 +7,16 @@ import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 
 // Workflows the supply-chain gate is responsible for.
+//
+// A SECOND COPY of the script's own default TARGETS, and it used to be an
+// unchecked one: nothing compared the two, so the `actions/cache` sweep at the
+// bottom of this file silently stopped covering whatever this list omitted. The
+// first test below now reads the script's real target list out of its success
+// output and asserts the two agree, so adding a target in one place and not the
+// other is a failure rather than a quiet loss of coverage.
 const TARGET_WORKFLOWS = [
   '.github/workflows/release.yml',
+  '.github/workflows/_build-ffi-artifacts.yml',
   '.github/workflows/tests-supply-chain.yml',
 ]
 
@@ -18,8 +26,13 @@ const SCRIPT = resolve(
 )
 function run(...targets) {
   try {
-    execFileSync('node', [SCRIPT, ...targets], { encoding: 'utf8' })
-    return { exitCode: 0, output: '' }
+    // stdout is kept on the success path too: on a clean run the script prints
+    // the targets it checked, and that listing is the only way to read its
+    // default TARGETS without importing a file that lints on import.
+    const stdout = execFileSync('node', [SCRIPT, ...targets], {
+      encoding: 'utf8',
+    })
+    return { exitCode: 0, output: String(stdout) }
   } catch (err) {
     return {
       exitCode: err.status,
@@ -35,8 +48,18 @@ describe('lint-no-workflow-caching', () => {
       `../fixtures/lint-no-workflow-caching/${name}`,
     )
 
-  it('defaults to checking release.yml and tests-supply-chain.yml', () => {
-    expect(run().exitCode).toBe(0)
+  it('checks exactly the workflows this file knows about, by default', () => {
+    const r = run()
+    expect(r.exitCode).toBe(0)
+    // The success epilogue lists every target it scanned, one per line.
+    const scanned = r.output
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('.github/workflows/'))
+    expect(
+      scanned.sort(),
+      "The script's default TARGETS and this file's TARGET_WORKFLOWS have diverged. Whichever one is missing an entry, the `actions/cache` sweep below has stopped covering it — and it stopped silently.",
+    ).toEqual([...TARGET_WORKFLOWS].sort())
   })
 
   it('passes on a workflow with no caching', () => {
@@ -78,18 +101,15 @@ describe('lint-no-workflow-caching', () => {
     expect(r.output).toMatch(/package-manager-cache/)
   })
 
-  it('keeps release.yml free of GitHub Actions caching', () => {
-    expect(
-      run(resolve(REPO_ROOT, '.github/workflows/release.yml')).exitCode,
-    ).toBe(0)
-  })
-
-  it('keeps tests-supply-chain.yml free of GitHub Actions caching', () => {
-    expect(
-      run(resolve(REPO_ROOT, '.github/workflows/tests-supply-chain.yml'))
-        .exitCode,
-    ).toBe(0)
-  })
+  // Generated from the target list rather than written out per file: a target
+  // added to TARGET_WORKFLOWS gets its own check for free, which is the whole
+  // reason the two lists are now asserted to agree.
+  for (const target of TARGET_WORKFLOWS) {
+    it(`keeps ${target.replace('.github/workflows/', '')} free of GitHub Actions caching`, () => {
+      const r = run(resolve(REPO_ROOT, target))
+      expect(r.exitCode, r.output).toBe(0)
+    })
+  }
 
   // The gate read a step's own `uses:` and stopped there, so a workflow could
   // reach `actions/cache` through one indirection — `uses: ./.github/actions/x`
