@@ -112,6 +112,23 @@ const AUDITED_ACTIONS = new Set([
   // release.yml's publish step. Runs `pnpm run release` and talks to npm over
   // OIDC; no cache, no cache input.
   'changesets/action',
+  // The three the FFI release path adds. Each was read before being listed —
+  // that reading is the whole cost of this allowlist, and the point of it.
+  //
+  // Artifact transport between the build matrix and the publish job. Neither
+  // touches the GitHub Actions cache: they use the artifact API, which is a
+  // different, per-run store with no cross-run key. Artifact upload/download
+  // was already legal under this policy; what is new is that the gate now
+  // traverses a workflow that uses them.
+  'actions/upload-artifact',
+  'actions/download-artifact',
+  // Supplies zig + cargo-zigbuild (the glibc-pinned gnu builds) and wasm-pack,
+  // all pinned in packages/protect-ffi/mise.toml. It DOES cache by default —
+  // `cache: true` is its documented default — which is exactly why it belongs
+  // here rather than being waved through: every use of it under a targeted
+  // workflow carries an explicit `cache: false`, and the `with.cache` rule
+  // above fails the gate on any that does not. SHA-pinned at every call site.
+  'jdx/mise-action',
 ])
 
 // A secondary, deliberately over-broad read of the action's name. It is NOT the

@@ -30,9 +30,9 @@ describe('unpublished', () => {
 
   it('treats a registry 404 as unpublished', () => {
     // A name that has never been published; `null` is the 404.
-    expect(unpublished([{ name: 'new-pkg', version: '1.0.0' }], () => null)).toEqual(
-      ['new-pkg'],
-    )
+    expect(
+      unpublished([{ name: 'new-pkg', version: '1.0.0' }], () => null),
+    ).toEqual(['new-pkg'])
   })
 
   it('skips private packages', () => {
@@ -51,9 +51,9 @@ describe('unpublished', () => {
     const boom = () => {
       throw new Error('npm view failed: ETIMEDOUT')
     }
-    expect(() =>
-      unpublished([{ name: FFI, version: '0.32.0' }], boom),
-    ).toThrow(/ETIMEDOUT/)
+    expect(() => unpublished([{ name: FFI, version: '0.32.0' }], boom)).toThrow(
+      /ETIMEDOUT/,
+    )
   })
 
   it('looks each package up once, and only the publishable ones', () => {

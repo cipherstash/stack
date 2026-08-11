@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './lib/repo-root.mjs'
@@ -32,7 +32,9 @@ const PLATFORMS = readdirSync(join(FFI, 'platforms'))
 
 const manifests = [
   join(FFI, 'package.json'),
-  ...PLATFORMS.map((platform) => join(FFI, 'platforms', platform, 'package.json')),
+  ...PLATFORMS.map((platform) =>
+    join(FFI, 'platforms', platform, 'package.json'),
+  ),
 ]
 
 describe('FFI manifests name this repository', () => {
@@ -96,10 +98,7 @@ describe('FFI manifests name this repository', () => {
     // repository is archived at the end of the cutover, and an archived
     // repository accepts no issues, so this link stops working for exactly the
     // people it exists to help.
-    const lib = readFileSync(
-      join(FFI, 'crates/protect-ffi/src/lib.rs'),
-      'utf8',
-    )
+    const lib = readFileSync(join(FFI, 'crates/protect-ffi/src/lib.rs'), 'utf8')
     expect(lib).not.toMatch(/protectjs-ffi/)
   })
 })
