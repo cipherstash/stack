@@ -222,11 +222,14 @@ pub trait SeqAccess<'c> {
     /// Returns the next decrypted element, or `None` when the sequence is exhausted.
     ///
     /// Implementations **must authenticate each element against the sequence's associated
-    /// data** — thread the AAD supplied to [`Decipher::decrypt_seq`] into the element's
-    /// [`Decrypt::decrypt_with_aad`]. This mirrors how
-    /// [`SeqCipher::encrypt_next`](crate::SeqCipher::encrypt_next) binds the AAD to each
-    /// element at encrypt time; an implementation that decrypts elements with empty AAD
-    /// produces a silently unauthenticated sequence.
+    /// data** — derive the effective AAD by passing the AAD supplied to
+    /// [`Decipher::decrypt_seq`] through
+    /// [`Aad::for_sequence_element`](crate::Aad::for_sequence_element) and thread it into
+    /// the element's [`Decrypt::decrypt_with_aad`]. This mirrors how
+    /// [`SeqCipher::encrypt_next`](crate::SeqCipher::encrypt_next) binds the derived AAD to
+    /// each element at encrypt time; an implementation that decrypts elements with the bare
+    /// (or empty) AAD produces a sequence that fails to decrypt conforming ciphertexts —
+    /// or, worse, silently accepts re-homed leaves.
     fn next_element<T: Decrypt<'c> + 'c>(&mut self) -> Result<Option<T>, Self::Error>;
 }
 
