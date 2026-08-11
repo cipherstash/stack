@@ -3,10 +3,19 @@ name: Build FFI artifacts
 # Reusable. Builds the six platform bindings and the WASM output, packs all
 # seven npm tarballs, and uploads them as `ffi-tarballs`.
 #
-# IT DOES NOT PUBLISH, and cannot be made to. npm trusted publishing binds to
-# `(repository, workflow filename)`, so the job that performs a publish has to
-# live in the file npm has registered — `release.yml`. A reusable workflow is
-# fine for building artifacts and useless for publishing them.
+# IT DOES NOT PUBLISH, and nothing here should be made to. npm validates a
+# trusted publish against the ENTRY-POINT workflow's filename, and its own docs
+# record what that means for `workflow_call`: "validation checks the calling
+# workflow's name instead of the workflow that actually contains the publish
+# command, which can cause configuration mismatches" — plus `id-token: write` in
+# both parent and child.
+#
+# So a publish in here would be validated against whichever workflow happened to
+# call it, and would depend on behaviour npm documents as a known issue. Keeping
+# the publish in `release.yml` — the registered filename, reached as an
+# entry-point job rather than through a call — is correct whichever way npm
+# resolves that, which is why this workflow grants `contents: read` and no
+# id-token at all.
 #
 # Two callers: `release.yml` (after the gate says an FFI version is
 # unpublished) and `ffi-preflight.yml` (the manual dry run, which has no

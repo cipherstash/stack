@@ -6,8 +6,13 @@ name: FFI release pre-flight
 # them. Point it at the Version Packages PR branch so the tarballs tested carry
 # the exact versions that will publish.
 #
-# It never publishes, and cannot: this workflow grants no `id-token` permission,
-# so there is no OIDC token for npm to accept.
+# It never publishes, and cannot — both authentication paths are absent, which
+# takes more than the one line it looks like. No `id-token` permission closes
+# OIDC; a plain `NPM_TOKEN` would authenticate a publish regardless, so there is
+# also no secret passed (no `secrets: inherit` on the call below), no
+# `registry-url` on setup-node (that is what writes an `_authToken` line into
+# .npmrc), and no NPM_TOKEN or NODE_AUTH_TOKEN anywhere. Adding any one of them
+# turns this dry run into a publisher.
 
 on:
   workflow_dispatch:

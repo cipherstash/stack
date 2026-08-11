@@ -173,17 +173,30 @@ npm ≥ 11.5.1, no Actions cache.
   missing. It is not a cost optimisation: if it wrongly reports nothing to
   publish, changesets publishes six platform packages with no binary in them.
   Every failure mode in it throws rather than answering "nothing to publish".
-- `_build-ffi-artifacts.yml` is a reusable workflow, and only builds — trusted
-  publishing binds to `(repository, workflow filename)`, so the publish step has
-  to live in the registered file. It is on the no-caching gate's target list for
-  the same reason `release.yml` is: everything it produces gets published.
+- `_build-ffi-artifacts.yml` is a reusable workflow, and only builds. npm
+  validates a trusted publish against the **entry-point** workflow's filename,
+  and its docs call out `workflow_call` as a known issue: *"validation checks
+  the calling workflow's name instead of the workflow that actually contains the
+  publish command, which can cause configuration mismatches"*, with
+  `id-token: write` required in **both** parent and child. A publish inside a
+  reusable workflow is therefore validated against whichever workflow called it.
+  Keeping it in `release.yml` — the registered filename, as an entry-point job
+  rather than a call — is correct whichever way that resolves. The reusable
+  workflow is on the no-caching gate's target list for the same reason
+  `release.yml` is: everything it produces gets published.
 - Platform packages publish **before** the wrapper. The wrapper's six
   `optionalDependencies` are exact versions, so publishing it first exposes a
   version whose binaries do not exist yet.
 - `ffi-preflight.yml` is the dry run — `changeset publish` has no `--dry-run`.
   Dispatch it against a Version Packages branch and it builds the real tarballs,
   checks each binary's architecture and libc, installs the host pair and loads
-  it. It has no `id-token` permission, so it cannot publish.
+  it. It cannot publish, and "no `id-token`" is only half of why: that closes
+  the OIDC path, while a plain `NPM_TOKEN` would still authenticate one. Both
+  are absent — the workflow grants `contents: read`, passes no secrets (no
+  `secrets: inherit` on its call into the build workflow), sets no
+  `registry-url` (which is what writes an `_authToken` line into `.npmrc`), and
+  names no `NPM_TOKEN` or `NODE_AUTH_TOKEN`. Keep it that way; adding any one of
+  them turns a dry run into a publisher.
 
 Trusted publishing is configured **per package** on npmjs.com (package settings →
 Trusted publisher → GitHub Actions): owner/repo `cipherstash/stack`, workflow
