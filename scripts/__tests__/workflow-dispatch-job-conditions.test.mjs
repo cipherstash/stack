@@ -55,7 +55,14 @@ const REPOSITORY = 'cipherstash/stack'
  * must not fail this — it must subject that workflow to the check below.
  */
 const EXPECTED_DISPATCHABLE = [
+  // The manual dry run for an FFI release. Dispatch is not a convenience here:
+  // it is the ONLY way to run it, and it exists to be pointed at a Version
+  // Packages branch before the irreversible publish.
+  '.github/workflows/ffi-preflight.yml',
   '.github/workflows/integration-protect-ffi.yml',
+  // Path-filtered to the release machinery, so dispatch is how it gets run
+  // against a branch that changed something the filter does not name.
+  '.github/workflows/lint-release.yml',
   '.github/workflows/osv-scanner.yml',
   '.github/workflows/tests-rust.yml',
 ]
