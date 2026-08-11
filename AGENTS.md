@@ -142,6 +142,19 @@ so that stays true for everyone else.
   select on `.endsWith('.md')`, so that extension is inert to
   `changeset version`; the cutover PR renames it back. `protect-ffi-lazy-load.md.deferred`
   is the one already waiting there.
+- **The pipeline that will publish them is built and inert.** `release.yml`
+  asks `scripts/release-gate.mjs` which committed versions are missing from npm;
+  if any FFI one is, `_build-ffi-artifacts.yml` compiles the six platforms with
+  an explicit `CARGO_BUILD_TARGET` each, packs all seven tarballs, and
+  `publish-ffi` publishes the six platform packages **before** the wrapper and
+  tags all seven — because `changeset publish` packs from the workspace, where
+  `index.node` does not exist, and tags only what it published itself. Nothing
+  fires until a version is unpublished, which the changeset guard above
+  prevents. `ffi-preflight.yml` is the dry run (`changeset publish` has no
+  `--dry-run`); dispatch it against the Version Packages branch before the
+  cutover. The seven manifests already name `cipherstash/stack`, which npm
+  requires of the publishing repository — so a publish attempted from the old
+  repository would now be rejected, and nothing publishes from there.
 
 ### The `integration-tests/` suite
 
