@@ -249,6 +249,62 @@ describe('supply chain — pnpm-lock.yaml integrity', () => {
   })
 })
 
+describe('supply chain — every workflow installs with --frozen-lockfile', () => {
+  /**
+   * The rule is "CI uses `pnpm install --frozen-lockfile`", and it was checked
+   * in one workflow. `release.yml` — the one workflow that publishes to npm —
+   * ran a bare `pnpm install` from the day it was written, so the single
+   * install permitted to resolve outside the lockfile was the one whose output
+   * goes to the registry. A lockfile-free install there can pick up a version
+   * nobody reviewed and publish artifacts built against it.
+   *
+   * Scanned across the directory, and through local composite actions, for the
+   * same reason the caching gate is: `.github/actions/integration-setup`
+   * installs on behalf of four jobs, and a rule that stops at the workflow file
+   * makes "move it into a composite" the way around it.
+   */
+  const PNPM_INSTALL = /\bpnpm\b(?:\s+-{1,2}\S+)*\s+install\b/
+
+  const stepsOf = (relPath: string): Array<{ run?: string; uses?: string }> => {
+    const doc = readYaml(relPath) as {
+      jobs?: Record<string, { steps?: Array<{ run?: string; uses?: string }> }>
+      runs?: { steps?: Array<{ run?: string; uses?: string }> }
+    }
+    return [
+      ...Object.values(doc?.jobs ?? {}).flatMap((job) => job?.steps ?? []),
+      ...(doc?.runs?.steps ?? []),
+    ]
+  }
+
+  const files = [
+    ...globSync('.github/workflows/*.{yml,yaml}', { cwd: REPO_ROOT }),
+    ...globSync('.github/actions/*/action.{yml,yaml}', { cwd: REPO_ROOT }),
+  ].sort()
+
+  it('finds the workflow graph it means to scan', () => {
+    // A discovery test that matches nothing passes while checking nothing.
+    expect(files).toContain('.github/workflows/release.yml')
+    expect(files.length).toBeGreaterThan(10)
+  })
+
+  it('carries --frozen-lockfile on every install', () => {
+    const offenders: string[] = []
+    for (const file of files) {
+      for (const step of stepsOf(file)) {
+        if (typeof step.run !== 'string') continue
+        if (!PNPM_INSTALL.test(step.run)) continue
+        if (!/--frozen-lockfile/.test(step.run)) {
+          offenders.push(`${file}: ${step.run.trim().split('\n')[0]}`)
+        }
+      }
+    }
+    expect(
+      offenders,
+      'A CI install that is not `--frozen-lockfile` resolves versions the lockfile does not name, with no review and no record.',
+    ).toEqual([])
+  })
+})
+
 describe('supply chain — CI hardening (.github/workflows/tests.yml)', () => {
   const workflow = readYaml('.github/workflows/tests.yml') as {
     jobs: Record<
