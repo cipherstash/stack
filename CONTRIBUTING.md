@@ -95,6 +95,72 @@ Then navigate to one of the examples in `examples/` and follow its README.
 
 5. **Add a changeset** if your change affects a published package's public behaviour (see below).
 
+6. **Sign your commits** — every commit in a pull request must be signed (see below).
+
+## Signing Your Commits
+
+**All commits must be cryptographically signed.** This is a hard requirement: pull
+requests containing unsigned commits will not be merged. Signing ties each commit to
+a verified identity, which matters for a repository whose packages ship as
+dependencies into other people's applications — an unsigned commit is an unattributable
+change in a supply chain.
+
+GitHub shows a **Verified** badge next to signed commits. If a commit in your PR
+doesn't have one, it needs to be re-signed.
+
+### Set up signing
+
+You can sign with SSH (simplest if you already push over SSH) or GPG.
+
+**SSH signing** (Git >= 2.34):
+
+```bash
+git config --global gpg.format ssh
+git config --global user.signingkey ~/.ssh/id_ed25519.pub
+git config --global commit.gpgsign true
+```
+
+Then add the same public key to your GitHub account as a **Signing Key**
+(Settings → SSH and GPG keys → New SSH key → key type "Signing Key"). A key
+registered only as an authentication key will not produce a Verified badge.
+
+**GPG signing:**
+
+```bash
+gpg --full-generate-key                       # if you don't already have a key
+gpg --list-secret-keys --keyid-format=long    # copy the key ID
+git config --global user.signingkey <KEY_ID>
+git config --global commit.gpgsign true
+```
+
+Then export the public key (`gpg --armor --export <KEY_ID>`) and add it to GitHub
+under Settings → SSH and GPG keys → New GPG key.
+
+The email on your signing key must match the email in your Git config and be a
+verified email on your GitHub account, or GitHub will mark the commit
+**Unverified** rather than **Verified**.
+
+Full instructions: [GitHub — signing commits](https://docs.github.com/en/authentication/managing-commit-signature-verification/signing-commits).
+
+### Fixing unsigned commits
+
+If you've already pushed unsigned commits, sign them retroactively and force-push
+to your branch:
+
+```bash
+# Sign the last N commits (replace N with the number of commits in your PR)
+git rebase --exec 'git commit --amend --no-edit -S' -i HEAD~N
+
+# Or sign every commit on your branch relative to main
+git rebase --exec 'git commit --amend --no-edit -S' main
+
+git push --force-with-lease
+```
+
+Force-pushing rewrites history on your branch. Only do this on your own PR branch,
+never on `main`, and check with the maintainers first if anyone else has based work
+on your branch.
+
 ## Publish Process (via Changesets)
 
 We use [**Changesets**](https://github.com/changesets/changesets) to manage versioning and publication to npm.

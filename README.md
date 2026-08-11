@@ -353,7 +353,7 @@ npm install @cipherstash/stack   # or: yarn / pnpm / bun add @cipherstash/stack
 
 ## Contributing · Security · License
 
-Contributions are welcome — see [CONTRIBUTE.md][contribute]. For our security policy and responsible
+Contributions are welcome — see [CONTRIBUTING.md][contribute]. For our security policy and responsible
 disclosure, see [SECURITY.md][security-policy]. [MIT licensed][license].
 
 <!-- Link definitions — keep all URLs here. CipherStash links carry README UTM params. -->
@@ -384,6 +384,6 @@ disclosure, see [SECURITY.md][security-policy]. [MIT licensed][license].
 [eql]: https://github.com/cipherstash/encrypt-query-language
 [discord]: https://discord.gg/5qwXUFb6PB
 [examples]: https://github.com/cipherstash/stack/tree/main/examples
-[contribute]: https://github.com/cipherstash/stack/blob/main/CONTRIBUTE.md
+[contribute]: https://github.com/cipherstash/stack/blob/main/CONTRIBUTING.md
 [security-policy]: https://github.com/cipherstash/stack/blob/main/SECURITY.md
 [license]: https://github.com/cipherstash/stack/blob/main/LICENSE.md

@@ -19,7 +19,7 @@ const TARGETS = process.argv.slice(2).length
       'CLAUDE.md',
       'README.md',
       'SECURITY.md',
-      'CONTRIBUTE.md',
+      'CONTRIBUTING.md',
       'docs',
       '.github',
       'skills',
