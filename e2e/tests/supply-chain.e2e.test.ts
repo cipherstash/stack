@@ -278,9 +278,21 @@ describe('supply chain — every workflow installs with --frozen-lockfile', () =
    * A step's `run:` body as the commands it actually runs, one per entry.
    *
    * PER COMMAND, not per step, and the difference is a real hole rather than a
-   * refinement: a multi-line step holding both `pnpm install` and, later,
-   * `pnpm install --frozen-lockfile` satisfies a whole-body search for the
-   * flag while still running the unpinned install.
+   * refinement: a step holding both `pnpm install` and, later,
+   * `pnpm install --frozen-lockfile` satisfies a whole-body search for the flag
+   * while still running the unpinned install.
+   *
+   * A NEWLINE IS NOT WHAT SEPARATES TWO COMMANDS — shell separators do, and
+   * splitting on newlines alone left `pnpm install; pnpm install
+   * --frozen-lockfile` as one "command" carrying the flag, which is the same
+   * defect one level down. `;`, `&&`, `||`, `|` and a trailing `&` all start a
+   * new command, so all of them split.
+   *
+   * The split is quote-blind: `echo "pnpm install; ok"` becomes two fragments.
+   * That is a false POSITIVE at worst — a reported offender that is not one —
+   * and the pattern was already quote-blind before this, since it matched
+   * `pnpm install` inside an `echo` just the same. Fail-closed is the right
+   * direction here.
    *
    * Backslash continuations are joined first, so an install whose flag sits on
    * the next line is still one command and still passes.
@@ -288,9 +300,9 @@ describe('supply chain — every workflow installs with --frozen-lockfile', () =
   const commandsOf = (run: string): string[] =>
     run
       .replace(/\\\r?\n\s*/g, ' ')
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line !== '' && !line.startsWith('#'))
+      .split(/\r?\n|;|&&|\|\||\||&/)
+      .map((fragment) => fragment.trim())
+      .filter((fragment) => fragment !== '' && !fragment.startsWith('#'))
 
   /**
    * The installs in one `run:` body that resolve outside the lockfile.
@@ -370,6 +382,37 @@ describe('supply chain — every workflow installs with --frozen-lockfile', () =
 
     // …and `pnpm run install-x` is not, despite containing the word.
     expect(unpinnedInstalls('pnpm run install-deps')).toEqual([])
+  })
+
+  it('splits shell separators, so one line cannot hide an unpinned install', () => {
+    // The same defect as the multi-line case, one level down. Splitting on
+    // newlines alone leaves `pnpm install; pnpm install --frozen-lockfile` as a
+    // single "command" that contains the flag — so the guard reports nothing
+    // while the first install resolves outside the lockfile. A `run:` block is
+    // shell, and shell does not need a newline to run two commands.
+    expect(
+      unpinnedInstalls('pnpm install; pnpm install --frozen-lockfile'),
+    ).toEqual(['pnpm install'])
+
+    // Every separator that starts a new command, not just `;`.
+    expect(
+      unpinnedInstalls('pnpm install --frozen-lockfile && pnpm install'),
+    ).toEqual(['pnpm install'])
+    expect(
+      unpinnedInstalls('pnpm i || pnpm install --frozen-lockfile'),
+    ).toEqual(['pnpm i'])
+    expect(unpinnedInstalls('echo start | pnpm install')).toEqual([
+      'pnpm install',
+    ])
+
+    // A pinned install keeps passing when it shares a line with other work —
+    // the split must not turn the flag into a different command from the
+    // install it belongs to.
+    expect(
+      unpinnedInstalls(
+        'echo start && pnpm install --frozen-lockfile && echo done',
+      ),
+    ).toEqual([])
   })
 
   it('carries --frozen-lockfile on every install', () => {
