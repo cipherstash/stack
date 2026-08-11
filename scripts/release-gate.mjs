@@ -23,7 +23,6 @@ import { appendFileSync, globSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
-import yaml from 'js-yaml'
 
 const REPO_ROOT = resolve(import.meta.dirname, '..')
 
@@ -61,24 +60,67 @@ export function classify(names) {
 }
 
 /**
+ * The `packages:` globs from `pnpm-workspace.yaml`, parsed without a YAML
+ * library.
+ *
+ * NODE BUILTINS ONLY, DELIBERATELY. This script needs nothing installed, and
+ * that is the whole cost of the job it runs in: the gate fires on EVERY push to
+ * main, and one `import yaml from 'js-yaml'` obliges that job to do a cold
+ * full-workspace install (no caching is permitted in a publishing workflow)
+ * before it can answer a question that is sitting in the tree. An earlier
+ * draft argued exactly that against `pnpm ls -r` and then paid the same cost
+ * for the parse.
+ *
+ * The block is a flat sequence of scalars, so the parse is a block scan rather
+ * than a YAML implementation — and `release-gate.test.mjs` pins the result
+ * against `js-yaml` reading the same file, so a `pnpm-workspace.yaml` written
+ * in a shape this does not handle fails a unit test on the pull request rather
+ * than silently narrowing the gate.
+ *
+ * Narrowing is the failure that matters: a pattern dropped here is a package
+ * never looked up, reported as "nothing to publish", and then published
+ * binary-less by `changeset publish`. So an empty result throws.
+ */
+export function workspacePackagePatterns(source) {
+  const lines = source.split('\n')
+  const start = lines.findIndex((line) => /^packages:\s*(#.*)?$/.test(line))
+  if (start === -1)
+    throw new Error('pnpm-workspace.yaml has no `packages:` key')
+
+  const patterns = []
+  for (const line of lines.slice(start + 1)) {
+    if (/^\s*(#.*)?$/.test(line)) continue
+    // A non-indented line ends the block: the next top-level key.
+    if (!/^\s/.test(line)) break
+    const item = line.match(/^\s+-\s+(['"]?)(.+?)\1\s*(?:#.*)?$/)
+    if (!item) {
+      throw new Error(
+        `unparsable \`packages:\` entry in pnpm-workspace.yaml: ${line}`,
+      )
+    }
+    patterns.push(item[2])
+  }
+
+  if (patterns.length === 0) {
+    throw new Error('pnpm-workspace.yaml lists no `packages:` patterns')
+  }
+  return patterns
+}
+
+/**
  * Every workspace manifest, read from disk.
  *
  * Resolved from `pnpm-workspace.yaml`'s own globs rather than by listing
  * packages here, so a package added tomorrow is gated the day it lands — and
  * read directly rather than through `pnpm ls -r`, which needs an installed
- * `node_modules` to answer. That difference is the whole cost of this job: the
- * gate runs on EVERY push to main, and shelling out to pnpm meant a cold
- * full-workspace install (~1GB) first, to compute something that is sitting in
- * the tree.
+ * `node_modules` to answer.
  */
 export function workspaceManifests() {
-  const workspace = yaml.load(
+  const patterns = workspacePackagePatterns(
     readFileSync(join(REPO_ROOT, 'pnpm-workspace.yaml'), 'utf8'),
-  )
-  const patterns = (workspace?.packages ?? []).map(
-    (pattern) => `${pattern}/package.json`,
-  )
-  return globSync(patterns, { cwd: REPO_ROOT })
+  ).map((pattern) => `${pattern}/package.json`)
+
+  const manifests = globSync(patterns, { cwd: REPO_ROOT })
     .sort()
     .map((relative) =>
       JSON.parse(readFileSync(join(REPO_ROOT, relative), 'utf8')),
@@ -88,6 +130,16 @@ export function workspaceManifests() {
       version,
       private: Boolean(isPrivate),
     }))
+
+  // Same reasoning as the empty-pattern throw: no manifests is indistinguishable
+  // from "everything is published" downstream, and it is the reading that skips
+  // the artifact build.
+  if (manifests.length === 0) {
+    throw new Error(
+      `no workspace manifests matched ${patterns.join(', ')} under ${REPO_ROOT}`,
+    )
+  }
+  return manifests
 }
 
 /**
@@ -121,11 +173,11 @@ function main() {
   )
   console.log(`ffi=${ffi} js=${js}`)
 
+  // `ffi` and `js` only: the unpublished list was written here too and no job
+  // ever declared it as an output, so it was reachable by nothing. The
+  // `console.log` above is where that list is actually read, in the job log.
   if (process.env.GITHUB_OUTPUT) {
-    appendFileSync(
-      process.env.GITHUB_OUTPUT,
-      `ffi=${ffi}\njs=${js}\nunpublished=${missing.join(' ')}\n`,
-    )
+    appendFileSync(process.env.GITHUB_OUTPUT, `ffi=${ffi}\njs=${js}\n`)
   }
 }
 

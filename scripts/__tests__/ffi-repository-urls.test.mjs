@@ -28,7 +28,13 @@ const FFI = join(REPO_ROOT, 'packages/protect-ffi')
 /** The repository these packages publish from as of the cutover. */
 const EXPECTED = 'https://github.com/cipherstash/stack'
 
-const PLATFORMS = readdirSync(join(FFI, 'platforms'))
+// Directories only, matching how `scripts/ffi-release-matrix.mjs` enumerates
+// the same folder. A stray file beside them (a .DS_Store, an editor backup)
+// would otherwise be read as a platform and crash this suite on a missing
+// package.json — a failure about the wrong thing entirely.
+const PLATFORMS = readdirSync(join(FFI, 'platforms'), { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name)
 
 const manifests = [
   join(FFI, 'package.json'),

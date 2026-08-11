@@ -13,16 +13,24 @@ name: Lint release tooling
 
 on:
   pull_request:
+    # Exactly what the job reads: the four workflows actionlint is pointed at,
+    # plus the config it resolves the Blacksmith label from. The filter also
+    # named scripts/release-gate.mjs, scripts/ffi-release-matrix.mjs,
+    # scripts/lint-no-workflow-caching.mjs and package.json — none of which this
+    # job looks at, since it deliberately does not run `test:scripts` (see the
+    # job comment). Editing one booted a runner and downloaded a Go binary to
+    # lint four unchanged files, which is how a job trains reviewers to ignore
+    # it. `tests.yml`'s `lint` job runs `test:scripts` unfiltered on every PR,
+    # so those four are already covered.
+    #
+    # `lint-release-scope.test.mjs` asserts this list and the actionlint
+    # argument list below stay the same set.
     paths:
       - .github/workflows/release.yml
       - .github/workflows/_build-ffi-artifacts.yml
       - .github/workflows/ffi-preflight.yml
       - .github/workflows/lint-release.yml
       - .github/actionlint.yaml
-      - scripts/release-gate.mjs
-      - scripts/ffi-release-matrix.mjs
-      - scripts/lint-no-workflow-caching.mjs
-      - package.json
   workflow_dispatch: {}
 
 permissions:

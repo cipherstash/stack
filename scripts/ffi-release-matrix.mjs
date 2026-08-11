@@ -104,12 +104,7 @@ export function releaseMatrix(triples) {
 }
 
 function main() {
-  // `argv[2]` overrides the tree, for checking a mapping by hand; with no
-  // argument this reads the platform packages and needs nothing installed.
-  const triples = process.argv[2]
-    ? JSON.parse(process.argv[2])
-    : triplesFromPlatformManifests()
-  const matrix = releaseMatrix(triples)
+  const matrix = releaseMatrix(triplesFromPlatformManifests())
 
   if (matrix.length === 0) {
     // An empty matrix builds nothing, uploads nothing, and reports success —
@@ -119,12 +114,17 @@ function main() {
     process.exit(1)
   }
 
+  // Readable form to the log, machine form to the step output — and nothing to
+  // stdout. A third copy went there too, which obliged the only caller to
+  // redirect it to /dev/null and read as though something were being
+  // suppressed.
   console.error(JSON.stringify(matrix, null, 2))
-  const result = JSON.stringify(matrix)
   if (process.env.GITHUB_OUTPUT) {
-    appendFileSync(process.env.GITHUB_OUTPUT, `result=${result}\n`)
+    appendFileSync(
+      process.env.GITHUB_OUTPUT,
+      `result=${JSON.stringify(matrix)}\n`,
+    )
   }
-  console.log(result)
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) main()

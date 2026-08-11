@@ -330,7 +330,7 @@ function checkStep(step, at, bodyAudited = false) {
         'local `uses:` that starts with `./`, and this gate will not follow one ' +
         'out of the workspace root, so these steps cannot be audited',
     )
-  } else if (CACHE_SHAPED_ACTION.test(actionPath(uses))) {
+  } else if (CACHE_SHAPED_ACTION.test(path)) {
     offenders.push(
       `${at}: uses \`${uses}\` — a third-party cache action (GitHub Actions cache)`,
     )

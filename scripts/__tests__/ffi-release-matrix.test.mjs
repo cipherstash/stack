@@ -120,29 +120,68 @@ describe('release matrix', () => {
     }
   })
 
-  it('routes gnu targets through cargo-zigbuild and nothing else', () => {
-    // zigbuild is how the glibc floor gets pinned (`--target <triple>.2.28`).
-    // Applying it to musl or Darwin would be a different build entirely.
-    for (const entry of MATRIX) {
-      expect(entry.script).toBe(
-        entry.platform.includes('gnu') ? 'zigbuild' : 'build:native',
-      )
-    }
+  it('routes every platform to the runner and build it needs', () => {
+    // A LITERAL TABLE, not the ladder re-typed. Both of these were previously
+    // asserted by re-implementing `runnerFor`/`buildFor` in the expectation —
+    // which cannot fail for the error it looks like it guards: a wrong rule in
+    // the script passes as long as the copy in the test is edited the same
+    // wrong way. Spelled as data, every field of every platform is pinned, and
+    // changing a rule means changing rows here.
+    //
+    // zigbuild is how the gnu glibc floor gets pinned (`--target
+    // <triple>.2.28`); applying it to musl or Darwin would be a different build
+    // entirely. Both Darwin platforms share one runner and cross-compile, which
+    // is why `target` is explicit.
+    expect(MATRIX).toEqual([
+      {
+        platform: 'darwin-x64',
+        target: 'x86_64-apple-darwin',
+        os: 'macos-latest',
+        script: 'build:native',
+        log: 'cargo.log',
+      },
+      {
+        platform: 'darwin-arm64',
+        target: 'aarch64-apple-darwin',
+        os: 'macos-latest',
+        script: 'build:native',
+        log: 'cargo.log',
+      },
+      {
+        platform: 'win32-x64-msvc',
+        target: 'x86_64-pc-windows-msvc',
+        os: 'windows-latest',
+        script: 'build:native',
+        log: 'cargo.log',
+      },
+      {
+        platform: 'linux-x64-gnu',
+        target: 'x86_64-unknown-linux-gnu',
+        os: 'blacksmith-4vcpu-ubuntu-2404',
+        script: 'zigbuild',
+        log: 'zig.log',
+      },
+      {
+        platform: 'linux-arm64-gnu',
+        target: 'aarch64-unknown-linux-gnu',
+        os: 'blacksmith-4vcpu-ubuntu-2404',
+        script: 'zigbuild',
+        log: 'zig.log',
+      },
+      {
+        platform: 'linux-x64-musl',
+        target: 'x86_64-unknown-linux-musl',
+        os: 'blacksmith-4vcpu-ubuntu-2404',
+        script: 'build:native',
+        log: 'cargo.log',
+      },
+    ])
   })
 
-  it('sends each platform to a runner that can build it', () => {
-    // Over the matrix rather than four examples: the two gnu platforms had no
-    // runner assertion at all under the example form, and a seventh platform
-    // would arrive with none either.
-    for (const entry of MATRIX) {
-      const expected = entry.platform.startsWith('win32')
-        ? 'windows-latest'
-        : entry.platform.startsWith('darwin')
-          ? 'macos-latest'
-          : 'blacksmith-4vcpu-ubuntu-2404'
-      expect(runnerFor(entry.platform), entry.platform).toBe(expected)
-      expect(entry.os, entry.platform).toBe(expected)
-    }
+  it('sends a platform the table does not name to a Linux runner', () => {
+    // The fallback arm, which the table above cannot reach. A seventh platform
+    // added tomorrow gets Blacksmith unless `runnerFor` is taught otherwise.
+    expect(runnerFor('linux-arm64-musl')).toBe('blacksmith-4vcpu-ubuntu-2404')
   })
 
   it('is empty for an empty mapping, rather than inventing platforms', () => {

@@ -75,7 +75,7 @@ jobs:
       # `neon list-platforms` output. See scripts/ffi-release-matrix.mjs.
       - name: Compute the matrix
         id: matrix
-        run: node scripts/ffi-release-matrix.mjs > /dev/null
+        run: node scripts/ffi-release-matrix.mjs
 
   binaries:
     name: ${{ matrix.cfg.platform }}
@@ -390,8 +390,12 @@ jobs:
             console.log([...paths].sort().join("\n"))
           ' > exports.txt
           cat exports.txt
+          # The listing once, not once per required path — this loop
+          # decompressed the whole tarball on every iteration to answer a
+          # question about the same fixed set of names.
+          tar tzf "$tgz" > listing.txt
           while read -r required ; do
-            tar tzf "$tgz" | grep -qx "$required" || {
+            grep -qx "$required" listing.txt || {
               echo "::error::$required missing from $tgz"; exit 1; }
           done < exports.txt
           # The six optionalDependencies must be concrete versions — pnpm
@@ -400,7 +404,19 @@ jobs:
           tar xzOf "$tgz" package/package.json | node -e '
             const j = JSON.parse(require("node:fs").readFileSync(0, "utf8"))
             const deps = Object.entries(j.optionalDependencies ?? {})
-            if (deps.length !== 6) { console.error("expected 6 optionalDependencies, got " + deps.length); process.exit(1) }
+            // Against the manifests own `neon.platforms`, not a literal 6. The
+            // invariant is "every declared platform has a matching
+            // optionalDependency" and both sides are sitting in this object, so
+            // a seventh platform is covered the day it is added rather than
+            // failing on a magic number nobody greps. Names too, not just the
+            // count: six entries naming five platforms twice would satisfy a
+            // length check.
+            const want = (j.neon?.platforms ?? []).map((p) => j.neon.org + "/" + j.neon.prefix + p)
+            if (want.length === 0) { console.error("wrapper declares no neon.platforms"); process.exit(1) }
+            const got = deps.map(([n]) => n).sort()
+            if (String(got) !== String([...want].sort())) {
+              console.error("optionalDependencies are " + got + ", expected " + [...want].sort()); process.exit(1)
+            }
             for (const [n, v] of deps) {
               // Concatenation rather than a template literal. Everything in
               // this single-quoted argument is read by shellcheck as shell,

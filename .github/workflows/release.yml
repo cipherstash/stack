@@ -30,30 +30,28 @@ jobs:
     name: What needs publishing?
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # `ffi` only. The gate also computes `js`, and it is in the job log, but no
+    # job can be keyed on it: `release` below has to run on every push to main
+    # to open and update the Version Packages PR, published or not. Declaring
+    # it as an output read nothing and implied a gate that does not exist.
     outputs:
       ffi: ${{ steps.gate.outputs.ffi }}
-      js: ${{ steps.gate.outputs.js }}
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-
-      - uses: pnpm/action-setup@v6.0.10
-        with:
-          run_install: false
-          cache: false
 
       - uses: actions/setup-node@v6.5.0
         with:
           node-version: 22
           package-manager-cache: false
 
-      - name: Install node-gyp
-        run: npm install -g node-gyp
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
+      # No pnpm, no install. scripts/release-gate.mjs imports node builtins
+      # only and shells out to the runner image's npm — deliberately, because
+      # this job runs on EVERY push to main and no caching is permitted in a
+      # publishing workflow, so an install here is a cold full-workspace one
+      # (~1GB, node-pty's node-gyp rebuild included) to answer a question the
+      # tree already holds. See the header of that script.
       - name: Compute the gate
         id: gate
         run: node scripts/release-gate.mjs
