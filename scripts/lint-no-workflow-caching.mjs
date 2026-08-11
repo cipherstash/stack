@@ -25,8 +25,17 @@ const CACHE_ACTION = /^actions\/cache(\/(restore|save))?@/
 
 // Steps that must disable their built-in caching *explicitly* — leaving the
 // key off and relying on the default is not enough: the gate asserts intent.
+//
+// `jdx/mise-action` is the one where that rule is not merely about intent. Its
+// `cache:` input DEFAULTS TO TRUE, so a step that simply omits the key restores
+// the GitHub Actions cache — and the `with.cache` rule below only fires on a
+// TRUTHY value, so an omitted key sailed through this gate entirely. Verified
+// against a probe workflow whose only step was a mise-action with no `cache:`:
+// exit 0, `OK`. The other two default to off and are listed for intent; this
+// one is listed because without it the gate is wrong.
 const PNPM_ACTION_SETUP = /^pnpm\/action-setup(@|$)/
 const SETUP_NODE = /^actions\/setup-node(@|$)/
+const MISE_ACTION = /^jdx\/mise-action(@|$)/
 
 // A `uses:` naming a directory in this checkout rather than a published action.
 // GitHub requires the `./` prefix for those, so anything without it is an
@@ -131,10 +140,10 @@ const AUDITED_ACTIONS = new Set([
   'actions/download-artifact',
   // Supplies zig + cargo-zigbuild (the glibc-pinned gnu builds) and wasm-pack,
   // all pinned in packages/protect-ffi/mise.toml. It DOES cache by default —
-  // `cache: true` is its documented default — which is exactly why it belongs
-  // here rather than being waved through: every use of it under a targeted
-  // workflow carries an explicit `cache: false`, and the `with.cache` rule
-  // above fails the gate on any that does not. SHA-pinned at every call site.
+  // `cache: true` is its documented default — so it is subject to the
+  // explicit-`false` rule above alongside the two setup actions, and that rule
+  // is what makes listing it safe: an omitted `cache:` key is reported, not
+  // waved through. SHA-pinned at every call site.
   'jdx/mise-action',
 ])
 
@@ -294,6 +303,10 @@ function checkStep(step, at, bodyAudited = false) {
   if (SETUP_NODE.test(uses)) {
     const reason = explicitFalseReason(step, 'package-manager-cache')
     if (reason) offenders.push(`${at}: actions/setup-node ${reason}`)
+  }
+  if (MISE_ACTION.test(uses)) {
+    const reason = explicitFalseReason(step, 'cache')
+    if (reason) offenders.push(`${at}: jdx/mise-action ${reason}`)
   }
 
   // One verdict per `uses:`, most specific first — a step reported twice reads

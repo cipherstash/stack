@@ -265,6 +265,25 @@ describe('supply chain — every workflow installs with --frozen-lockfile', () =
    */
   const PNPM_INSTALL = /\bpnpm\b(?:\s+-{1,2}\S+)*\s+install\b/
 
+  /**
+   * A step's `run:` body as the commands it actually runs, one per entry.
+   *
+   * PER COMMAND, not per step, and the difference is a real hole rather than a
+   * refinement: a multi-line step holding both `pnpm install` and, later,
+   * `pnpm install --frozen-lockfile` satisfies a whole-body search for the
+   * flag while still running the unpinned install. The pre-existing tests.yml
+   * check has that shape.
+   *
+   * Backslash continuations are joined first, so an install whose flag sits on
+   * the next line is still one command and still passes.
+   */
+  const commandsOf = (run: string): string[] =>
+    run
+      .replace(/\\\r?\n\s*/g, ' ')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '' && !line.startsWith('#'))
+
   const stepsOf = (relPath: string): Array<{ run?: string; uses?: string }> => {
     const doc = readYaml(relPath) as {
       jobs?: Record<string, { steps?: Array<{ run?: string; uses?: string }> }>
@@ -278,13 +297,49 @@ describe('supply chain — every workflow installs with --frozen-lockfile', () =
 
   const files = [
     ...globSync('.github/workflows/*.{yml,yaml}', { cwd: REPO_ROOT }),
-    ...globSync('.github/actions/*/action.{yml,yaml}', { cwd: REPO_ROOT }),
+    // `**` because a composite action does not have to sit one level down:
+    // `uses: ./.github/actions/group/name` is valid, and the flat glob that
+    // covers today's four would silently stop covering a grouped one. Workflows
+    // stay flat on purpose — GitHub reads `.github/workflows/*` and does not
+    // descend, so a nested file there is not a workflow at all.
+    ...globSync('.github/actions/**/action.{yml,yaml}', { cwd: REPO_ROOT }),
   ].sort()
 
   it('finds the workflow graph it means to scan', () => {
     // A discovery test that matches nothing passes while checking nothing.
     expect(files).toContain('.github/workflows/release.yml')
+    expect(files).toContain('.github/actions/integration-setup/action.yml')
     expect(files.length).toBeGreaterThan(10)
+  })
+
+  it('reads one command at a time, so a later flag cannot cover an earlier install', () => {
+    // The property, pinned against synthetic input rather than against the
+    // repo: a repo that happens to be clean says nothing about how strict the
+    // checker is. A step holding both installs is the shape a whole-body search
+    // for the flag waves through.
+    const mixed = 'pnpm install\npnpm install --frozen-lockfile'
+    const unpinned = commandsOf(mixed).filter(
+      (command) =>
+        PNPM_INSTALL.test(command) && !/--frozen-lockfile\b/.test(command),
+    )
+    expect(unpinned).toEqual(['pnpm install'])
+
+    // A continuation is one command, not two, so the flag on the next line
+    // still counts.
+    expect(
+      commandsOf('pnpm install \\\n  --frozen-lockfile').filter(
+        (command) =>
+          PNPM_INSTALL.test(command) && !/--frozen-lockfile\b/.test(command),
+      ),
+    ).toEqual([])
+
+    // A comment naming the flag is not the flag.
+    expect(
+      commandsOf('# always --frozen-lockfile\npnpm install').filter(
+        (command) =>
+          PNPM_INSTALL.test(command) && !/--frozen-lockfile\b/.test(command),
+      ),
+    ).toEqual(['pnpm install'])
   })
 
   it('carries --frozen-lockfile on every install', () => {
@@ -292,9 +347,11 @@ describe('supply chain — every workflow installs with --frozen-lockfile', () =
     for (const file of files) {
       for (const step of stepsOf(file)) {
         if (typeof step.run !== 'string') continue
-        if (!PNPM_INSTALL.test(step.run)) continue
-        if (!/--frozen-lockfile/.test(step.run)) {
-          offenders.push(`${file}: ${step.run.trim().split('\n')[0]}`)
+        for (const command of commandsOf(step.run)) {
+          if (!PNPM_INSTALL.test(command)) continue
+          if (!/--frozen-lockfile\b/.test(command)) {
+            offenders.push(`${file}: ${command}`)
+          }
         }
       }
     }

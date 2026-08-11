@@ -183,6 +183,22 @@ jobs:
           CARGO_BUILD_TARGET: ${{ matrix.cfg.target }}
           NEON_BUILD_PLATFORM: ${{ matrix.cfg.platform }}
           BUILD_SCRIPT: ${{ matrix.cfg.script }}
+          # The musl cross toolchain is fetched from musl.cc over plain HTTPS
+          # with no signature to check, and whatever it hands back LINKS THE
+          # BINARY that this workflow publishes to npm with provenance — a
+          # provenance attestation says where a build ran, not that its inputs
+          # were the intended ones. Upstream's build.yml took the download on
+          # trust; this pins it.
+          #
+          # Trust-on-first-use, and worth being precise about what that buys:
+          # the digest was taken from two independent fetches of the current
+          # artifact (2026-08-11), so it does not authenticate musl.cc — it
+          # makes any later substitution a hard failure instead of a silent one.
+          # If musl.cc rebuilds the tarball this step fails; re-verify the new
+          # artifact deliberately and update the digest here, do not delete the
+          # check to unblock a release.
+          MUSL_TOOLCHAIN_URL: https://musl.cc/x86_64-linux-musl-native.tgz
+          MUSL_TOOLCHAIN_SHA256: eb1db6f0f3c2bdbdbfb993d7ef7e2eeef82ac1259f6a6e1757c33a97dbcef3ad
         # No `--` separator anywhere below: npm strips it, pnpm forwards it
         # verbatim, and these scripts end in `> cargo.log` — so a forwarded flag
         # lands after the redirect and cargo rejects it as a positional.
@@ -196,9 +212,17 @@ jobs:
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="$linker"
           export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$linker"
           if [[ "$CARGO_BUILD_TARGET" =~ musl ]]; then
-            wget -4 https://musl.cc/x86_64-linux-musl-native.tgz
-            tar zxf x86_64-linux-musl-native.tgz
-            sudo tar zxf x86_64-linux-musl-native.tgz -C /opt/
+            wget -4 -O musl-native.tgz "$MUSL_TOOLCHAIN_URL"
+            # Verified BEFORE anything is unpacked: a tarball that fails this
+            # check must not have written a single file, least of all one on the
+            # PATH the compiler is about to use.
+            echo "${MUSL_TOOLCHAIN_SHA256}  musl-native.tgz" | sha256sum -c - || {
+              echo "::error::musl toolchain digest mismatch — got $(sha256sum musl-native.tgz | cut -d' ' -f1)"
+              exit 1; }
+            # Extracted once, into /opt, which is the copy the PATH below names.
+            # Upstream also unpacked a second copy into the working directory
+            # and never used it.
+            sudo tar zxf musl-native.tgz -C /opt/
             export PATH="/opt/x86_64-linux-musl-native/bin/:${PATH}"
             # Keeps the binary dynamically linked against musl, which is what
             # makes the libc check in ffi-preflight.yml meaningful.

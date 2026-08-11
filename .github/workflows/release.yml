@@ -160,8 +160,18 @@ jobs:
           # a different commit means this version was released from another
           # tree, and skipping silently would leave the published artifacts and
           # the tagged source disagreeing with nothing in the log to say so.
+          #
+          # `git/matching-refs`, not `git/ref`. These tag names carry a slash
+          # (`@cipherstash/protect-ffi@0.32.0`), and `git/ref/{ref}` answers a
+          # non-exact match with an ARRAY of refs rather than an object — so
+          # `--jq .object.sha` yields nothing, the branch below reads "no tag",
+          # and the create then fails with 422 "Reference already exists" on a
+          # re-run that should have been a no-op. matching-refs always returns
+          # an array and an empty one for no match, so filtering it for the
+          # exact ref is well-defined in every case.
           while read -r tag ; do
-            at=$(gh api "repos/${REPO}/git/ref/tags/${tag}" --jq .object.sha 2>/dev/null || true)
+            at=$(gh api "repos/${REPO}/git/matching-refs/tags/${tag}" \
+              --jq ".[] | select(.ref == \"refs/tags/${tag}\") | .object.sha" 2>/dev/null || true)
             if [ -n "$at" ]; then
               test "$at" = "$GITHUB_SHA" || {
                 echo "::error::tag ${tag} points at ${at}, not ${GITHUB_SHA}"; exit 1; }

@@ -101,6 +101,19 @@ describe('lint-no-workflow-caching', () => {
     expect(r.output).toMatch(/package-manager-cache/)
   })
 
+  it('fails on a mise-action step that omits `cache:`', () => {
+    // The one action on the allowlist whose caching is ON by default, so an
+    // omitted key is not an intent problem — it is a cache restore. The
+    // `with.cache` rule fires only on a TRUTHY value, so this shape passed the
+    // gate until the explicit-`false` rule covered the action: verified against
+    // this fixture, exit 0 and `OK`, while the step it describes restores the
+    // GitHub Actions cache in a workflow whose artifacts are published.
+    const r = run(fx('mise-default-cache.yml'))
+    expect(r.exitCode).toBe(1)
+    expect(r.output).toMatch(/jdx\/mise-action/)
+    expect(r.output).toMatch(/cache: false/)
+  })
+
   // Generated from the target list rather than written out per file: a target
   // added to TARGET_WORKFLOWS gets its own check for free, which is the whole
   // reason the two lists are now asserted to agree.
