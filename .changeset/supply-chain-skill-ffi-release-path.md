@@ -17,6 +17,13 @@ match the publishing repository exactly (and `repository.directory` resolves
 from that repository's root), and trusted-publisher configurations created after
 2026-05-20 need an explicit "Allowed actions" selection.
 
+It also now states, per action, which input disables that action's built-in
+caching and what that input defaults to. Two of the three default to caching
+ON — `actions/setup-node`'s `package-manager-cache` and `jdx/mise-action`'s
+`cache` — so omitting the key is not "no caching", it is caching spelled
+invisibly, and the gate's generic rule only sees a *truthy* value rather than a
+missing one.
+
 The frozen-lockfile section said the rule was enforced in `tests.yml`, which was
 true and misleading: that is where it was *checked*, and `release.yml` ran a
 bare `pnpm install` from the day it was written — so the single install permitted

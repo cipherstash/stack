@@ -24,15 +24,26 @@ const TARGETS = process.argv.slice(2).length
 const CACHE_ACTION = /^actions\/cache(\/(restore|save))?@/
 
 // Steps that must disable their built-in caching *explicitly* — leaving the
-// key off and relying on the default is not enough: the gate asserts intent.
+// key off and relying on the default is not enough.
 //
-// `jdx/mise-action` is the one where that rule is not merely about intent. Its
-// `cache:` input DEFAULTS TO TRUE, so a step that simply omits the key restores
-// the GitHub Actions cache — and the `with.cache` rule below only fires on a
-// TRUTHY value, so an omitted key sailed through this gate entirely. Verified
-// against a probe workflow whose only step was a mise-action with no `cache:`:
-// exit 0, `OK`. The other two default to off and are listed for intent; this
-// one is listed because without it the gate is wrong.
+// The three do not share an input name or a default, which is the reason each
+// is named here rather than handled by one rule. Defaults read from the pinned
+// versions' own `action.yml`, not from memory:
+//
+//   pnpm/action-setup@v6.0.10 — `cache`, default `'false'`. Explicit `false`
+//     here is about intent: it says the omission was a decision.
+//
+//   actions/setup-node@v6.5.0 — `package-manager-cache`, DEFAULT `true`.
+//     Whether that default turns into an actual restore depends on package.json
+//     metadata the action recognises, so a repo can look uncached today and
+//     start caching after an unrelated manifest edit. Setting it `false`
+//     removes the dependence on that detail entirely.
+//
+//   jdx/mise-action — `cache`, DEFAULT `true`, and this is the one where the
+//     rule is not about intent at all. The `with.cache` rule below fires only
+//     on a TRUTHY value, so a step that omits the key caches AND passes.
+//     Reproduced before the fix against a probe workflow whose only step was a
+//     mise-action with no `cache:` — exit 0, `OK`.
 const PNPM_ACTION_SETUP = /^pnpm\/action-setup(@|$)/
 const SETUP_NODE = /^actions\/setup-node(@|$)/
 const MISE_ACTION = /^jdx\/mise-action(@|$)/

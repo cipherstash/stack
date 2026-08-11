@@ -142,6 +142,23 @@ Constraints baked into that workflow — don't undo them:
 - **npm ≥ 11.5.1 and Node ≥ 22.14.** Node 22 ships npm 10.x, so the workflow installs `npm@^11.5.1` explicitly before publishing.
 - **No Actions cache in this workflow** (no `cache:`, `package-manager-cache: false`, `pnpm/action-setup` with `cache: false`). A poisoned cache entry would execute in a credential-bearing job. Enforced by `scripts/lint-no-workflow-caching.mjs`, which also follows any local composite action or reusable workflow the job reaches — the rule is about the whole call tree, not the one file.
 - **Every published `uses:` must be in that script's `AUDITED_ACTIONS` allowlist.** The gate cannot open a published action to check whether it caches, and the ones that do are not all named "cache" — a `setup-<tool>` action that caches by default has no `cache:` input and no telling name. So the list is what is *permitted*, and an action it has never met fails by default. Adding a step to `release.yml`, `_build-ffi-artifacts.yml` or `tests-supply-chain.yml` means auditing the action and adding it there with the reason, in the same PR.
+- **Three actions must disable caching *explicitly*, and the input differs for each.** Allowlisting an action is not the same as it being safe by default:
+
+  | Action | Input | Its default | Required |
+  |---|---|---|---|
+  | `pnpm/action-setup` | `cache` | `false` | `cache: false` |
+  | `actions/setup-node` | `package-manager-cache` | **`true`** | `package-manager-cache: false` |
+  | `jdx/mise-action` | `cache` | **`true`** | `cache: false` |
+
+  ```yaml
+  - uses: jdx/mise-action@<sha> # v3.6.3
+    with:
+      install: true
+      working_directory: packages/protect-ffi
+      cache: false # defaults to TRUE — omitting this restores the Actions cache
+  ```
+
+  Omitting the key is not "no caching" for the bottom two, it is caching spelled invisibly. The gate's generic rule only fires on a *truthy* `cache:` value, so a missing key is invisible to it — which is exactly how a `mise-action` step with no `cache:` passed until each action got its own explicit-`false` assertion.
 
 ### The native-binding publish path
 
