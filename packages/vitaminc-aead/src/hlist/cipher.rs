@@ -5,7 +5,7 @@
 
 use vitaminc_protected::Protected;
 
-use crate::IntoAad;
+use crate::{Aad, IntoAad};
 
 use super::types::{Absent, Encrypted, Entry, Map, Passthrough};
 use super::{HCons, HList, HNil};
@@ -135,19 +135,40 @@ where
         })
     }
 
-    /// Add a nested map entry — the value is itself a [`Map<Inner>`].
-    pub fn nested_entry<Inner>(
+    /// Add a nested map entry — the value is itself a [`Map<Inner>`], built
+    /// inside `build` against the AAD this method derives.
+    ///
+    /// A nested map has no leaf of its own to seal, so its outer cleartext
+    /// `key` can only be authenticated *through* its entries: `build`
+    /// receives [`Aad::for_map_entry`](crate::Aad::for_map_entry) of the
+    /// caller's AAD and `key`, and every inner entry must be sealed against
+    /// (a derivation of) it — the same chain the dynamic
+    /// [`MapCipher`](crate::MapCipher) composes when it encrypts a nested
+    /// map inside an entry. Renaming the outer key, or splicing in a nested
+    /// map sealed under another record's AAD, then fails at every inner
+    /// open. Open with the counterpart derivation
+    /// ([`Entry::nested_aad`](super::Entry::nested_aad)).
+    ///
+    /// An attacher that accepted a pre-built `Map<Inner>` could not enforce
+    /// any of this — the closure shape is what puts the derived AAD in the
+    /// builder's hands at the only moment binding is possible.
+    pub fn nested_entry<'a, A, Inner, F>(
         self,
         key: &'static str,
-        value: Map<Inner>,
-    ) -> StaticMapBuilder<C, HCons<Entry<Map<Inner>>, L>>
+        aad: A,
+        build: F,
+    ) -> Result<StaticMapBuilder<C, HCons<Entry<Map<Inner>>, L>>, C::Error>
     where
+        A: IntoAad<'a>,
         Inner: HList,
+        F: FnOnce(StaticMapBuilder<C, HNil>, Aad<'static>) -> Result<Map<Inner>, C::Error>,
     {
-        StaticMapBuilder {
+        let nested_aad = aad.into_aad().for_map_entry(key);
+        let value = build(self.cipher.encrypt_map(), nested_aad)?;
+        Ok(StaticMapBuilder {
             cipher: self.cipher,
             list: HCons(Entry { key, value }, self.list),
-        }
+        })
     }
 
     /// Finalise the builder into a [`Map<L>`] container.
