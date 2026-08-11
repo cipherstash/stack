@@ -6,10 +6,13 @@ mod ciphertext;
 mod container;
 mod context;
 mod decipher;
+mod element;
 mod encrypt;
 #[cfg(feature = "hlist")]
 pub mod hlist;
 mod nonce;
+#[cfg(test)]
+mod test_util;
 
 #[doc(inline)]
 pub use aad::{Aad, IntoAad};
@@ -23,6 +26,8 @@ pub use container::CipherText;
 pub use context::ContextTag;
 #[doc(inline)]
 pub use decipher::{Decipher, DecipherVisitor, Decrypt, MapAccess, SeqAccess};
+#[doc(inline)]
+pub use element::Element;
 #[doc(inline)]
 pub use encrypt::Encrypt;
 #[doc(inline)]
