@@ -30,9 +30,13 @@
  * checking them against the package's actual scripts rather than against a copy
  * of this reasoning.
  */
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, readdirSync, readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+
+const REPO_ROOT = resolve(import.meta.dirname, '..')
+const PLATFORMS_DIR = join(REPO_ROOT, 'packages/protect-ffi/platforms')
 
 /**
  * Where each platform builds.
@@ -60,9 +64,35 @@ export function buildFor(platform) {
 }
 
 /**
- * `triples` is `neon list-platforms` output: platform name -> Rust target
- * triple. That command is the ONLY source of the mapping — `neon.platforms` in
- * package.json lists names, not triples.
+ * Platform name -> Rust target triple, read from the platform packages
+ * themselves: each `platforms/<name>/package.json` carries `neon.rust`, written
+ * there by `neon add-platform` and shipped inside the published tarball.
+ *
+ * `neon list-platforms` prints the same mapping, and the matrix used to shell
+ * out to it — which meant a cold full-workspace install (~1GB, no caching
+ * allowed in a publishing workflow) on the critical path ahead of all six
+ * builds, to read six fields that are committed to this repository.
+ * `ffi-release-matrix.test.mjs` pins this against the fixture taken from
+ * `neon list-platforms`, so the two cannot drift silently.
+ */
+export function triplesFromPlatformManifests(dir = PLATFORMS_DIR) {
+  const entries = readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+  return Object.fromEntries(
+    entries.map((platform) => {
+      const pkg = JSON.parse(
+        readFileSync(join(dir, platform, 'package.json'), 'utf8'),
+      )
+      return [pkg.neon.node, pkg.neon.rust]
+    }),
+  )
+}
+
+/**
+ * `triples` is a platform name -> Rust target triple mapping, as
+ * `triplesFromPlatformManifests()` (or `neon list-platforms`) produces.
  */
 export function releaseMatrix(triples) {
   return Object.entries(triples).map(([platform, target]) => ({
@@ -73,32 +103,19 @@ export function releaseMatrix(triples) {
   }))
 }
 
-/**
- * The mapping, from `argv[2]` if given and otherwise from stdin.
- *
- * Async iteration rather than `readFileSync(0)`: a pipe hands Node a
- * non-blocking fd, and the synchronous read throws `EAGAIN` on it — which is
- * how the CI spelling (`neon list-platforms | node …`) fails while reading the
- * same bytes from a file succeeds.
- */
-async function readMapping() {
-  if (process.argv[2]) return process.argv[2]
-  const chunks = []
-  for await (const chunk of process.stdin) chunks.push(chunk)
-  return Buffer.concat(chunks).toString('utf8')
-}
-
-async function main() {
-  const triples = JSON.parse(await readMapping())
+function main() {
+  // `argv[2]` overrides the tree, for checking a mapping by hand; with no
+  // argument this reads the platform packages and needs nothing installed.
+  const triples = process.argv[2]
+    ? JSON.parse(process.argv[2])
+    : triplesFromPlatformManifests()
   const matrix = releaseMatrix(triples)
 
   if (matrix.length === 0) {
     // An empty matrix builds nothing, uploads nothing, and reports success —
     // and the next job would then pack the wrapper against six platform
     // packages that were never built.
-    console.error(
-      'release matrix is empty: neon list-platforms returned no platforms',
-    )
+    console.error('release matrix is empty: no platform packages found')
     process.exit(1)
   }
 

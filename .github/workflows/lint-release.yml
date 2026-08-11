@@ -37,8 +37,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # No pnpm, no Node, no install: actionlint is a downloaded Go binary and
+  # shellcheck ships in the runner image, so this job is a checkout and one
+  # command.
+  #
+  # It deliberately does NOT also run `test:scripts` or `lint:workflow-cache`.
+  # `tests.yml`'s `lint` job runs `test:scripts` on every pull request with no
+  # path filter, and `tests-supply-chain.yml` runs both — so a copy here would
+  # be the second and third run of the same checks on any PR touching the
+  # release machinery, each behind its own uncached full-workspace install. What
+  # this workflow uniquely has is actionlint.
   lint:
-    name: actionlint + release script tests
+    name: actionlint (release workflows)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -65,27 +75,3 @@ jobs:
             .github/workflows/ffi-preflight.yml \
             .github/workflows/lint-release.yml
 
-      - uses: pnpm/action-setup@v6.0.10
-        with:
-          run_install: false
-          cache: false
-
-      - uses: actions/setup-node@v6.5.0
-        with:
-          node-version: 22
-          package-manager-cache: false
-
-      - name: Install node-gyp
-        run: npm install -g node-gyp
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      # Covers the release gate, the platform matrix, and the no-caching lint's
-      # own self-tests — the three pieces of the pipeline that are ordinary code
-      # rather than YAML.
-      - name: Release script unit tests
-        run: pnpm run test:scripts
-
-      - name: No caching in publish workflows
-        run: pnpm run lint:workflow-cache

@@ -23,26 +23,53 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * release-plz run will publish this crate to crates.io".
  */
 
-const CRATES = join(REPO_ROOT, 'packages/protect-ffi/crates')
+const WORKSPACE = join(REPO_ROOT, 'packages/protect-ffi')
 
 /** Crates deliberately published to crates.io. Adding a name here is a decision. */
 const PUBLISHABLE = new Set([])
 
+/**
+ * The workspace's members, expanded from its own `[workspace] members` list.
+ *
+ * Read from the manifest rather than by listing `crates/`, because the manifest
+ * is what cargo obeys: a member added at a path outside that directory
+ * (`members = ["crates/*", "xtask"]`) is one release-plz would publish and a
+ * directory scan would never see. The floor guard below then checks the
+ * expansion found something, so a members list this parser cannot read fails
+ * loudly instead of yielding an empty set that passes.
+ */
+function workspaceMembers() {
+  const manifest = readFileSync(join(WORKSPACE, 'Cargo.toml'), 'utf8')
+  const block = /^members\s*=\s*\[([^\]]*)\]/m.exec(manifest)?.[1] ?? ''
+  return [...block.matchAll(/"([^"]+)"/g)]
+    .flatMap(([, pattern]) =>
+      pattern.endsWith('/*')
+        ? readdirSync(join(WORKSPACE, pattern.slice(0, -2)), {
+            withFileTypes: true,
+          })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => `${pattern.slice(0, -2)}/${entry.name}`)
+        : [pattern],
+    )
+    .sort()
+}
+
 describe('cargo publish opt-out', () => {
-  const members = readdirSync(CRATES, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
+  const members = workspaceMembers()
 
   // The guard on the scan: a discovery test that enumerates nothing passes
   // while checking nothing.
   it('finds the workspace members it means to check', () => {
-    expect(members).toContain('protect-ffi')
+    expect(members).toContain('crates/protect-ffi')
   })
 
-  for (const name of members) {
-    it(`${name} declares publish = false unless allowlisted`, () => {
-      if (PUBLISHABLE.has(name)) return
-      const manifest = readFileSync(join(CRATES, name, 'Cargo.toml'), 'utf8')
+  for (const member of members) {
+    it(`${member} declares publish = false unless allowlisted`, () => {
+      if (PUBLISHABLE.has(member)) return
+      const manifest = readFileSync(
+        join(WORKSPACE, member, 'Cargo.toml'),
+        'utf8',
+      )
       expect(manifest).toMatch(/^publish = false$/m)
     })
   }

@@ -19,12 +19,13 @@
  * other than a 404 throws rather than being read as "already published".
  */
 import { execFileSync } from 'node:child_process'
-import { appendFileSync, readFileSync } from 'node:fs'
+import { appendFileSync, globSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+import yaml from 'js-yaml'
 
-const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '../..')
+const REPO_ROOT = resolve(import.meta.dirname, '..')
 
 /**
  * The wrapper and its six platform packages all start with this, so one prefix
@@ -62,22 +63,25 @@ export function classify(names) {
 /**
  * Every workspace manifest, read from disk.
  *
- * `pnpm ls -r` enumerates the workspace rather than this file listing it, so a
- * package added tomorrow is gated the day it lands. The root manifest is
- * dropped: it is private and publishes nothing.
+ * Resolved from `pnpm-workspace.yaml`'s own globs rather than by listing
+ * packages here, so a package added tomorrow is gated the day it lands — and
+ * read directly rather than through `pnpm ls -r`, which needs an installed
+ * `node_modules` to answer. That difference is the whole cost of this job: the
+ * gate runs on EVERY push to main, and shelling out to pnpm meant a cold
+ * full-workspace install (~1GB) first, to compute something that is sitting in
+ * the tree.
  */
 export function workspaceManifests() {
-  const entries = JSON.parse(
-    execFileSync('pnpm', ['ls', '-r', '--depth', '-1', '--json'], {
-      cwd: REPO_ROOT,
-      encoding: 'utf8',
-      maxBuffer: 32 * 1024 * 1024,
-    }),
+  const workspace = yaml.load(
+    readFileSync(join(REPO_ROOT, 'pnpm-workspace.yaml'), 'utf8'),
   )
-  return entries
-    .filter((entry) => entry.path !== REPO_ROOT)
-    .map((entry) =>
-      JSON.parse(readFileSync(join(entry.path, 'package.json'), 'utf8')),
+  const patterns = (workspace?.packages ?? []).map(
+    (pattern) => `${pattern}/package.json`,
+  )
+  return globSync(patterns, { cwd: REPO_ROOT })
+    .sort()
+    .map((relative) =>
+      JSON.parse(readFileSync(join(REPO_ROOT, relative), 'utf8')),
     )
     .map(({ name, version, private: isPrivate }) => ({
       name,

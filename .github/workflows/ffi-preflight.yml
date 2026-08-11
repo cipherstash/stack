@@ -110,10 +110,13 @@ jobs:
             esac
             checked=$((checked + 1))
           done
-          # Six platforms, or the loop skipped something and reported success
-          # for a set it never saw.
-          test "$checked" -eq 6 || {
-            echo "::error::checked $checked platform binaries, expected 6"; exit 1; }
+          # Every platform in the table above, or the loop skipped one and
+          # reported success for a set it never saw. Counted from the table
+          # rather than hardcoded, so adding a platform does not leave a stale
+          # number reading as a build defect.
+          test "$checked" -eq "${#EXPECT[@]}" || {
+            echo "::error::checked $checked platform binaries, expected ${#EXPECT[@]}"
+            exit 1; }
 
       - name: Install the wrapper and the host platform package
         run: |

@@ -85,18 +85,7 @@ const rootWorkflows = rootWorkflowNames
 // was kept while the release pipeline was ported from it, and deleted once
 // `_build-ffi-artifacts.yml` and `ffi-preflight.yml` had consumed the last of
 // it.
-//
-// The directory is still read rather than assumed gone, because the check below
-// has two jobs now: nothing may cite a workflow that only exists there, and
-// nothing may put one back. A re-deposit is not far-fetched — the next subtree
-// import brings its own `.github/`, and it would arrive looking exactly as
-// authoritative as this one did.
-const DEAD_WORKFLOW_DIR = '.github/workflows'
-const deadWorkflowNames = existsSync(join(packageRoot, DEAD_WORKFLOW_DIR))
-  ? readdirSync(join(packageRoot, DEAD_WORKFLOW_DIR)).filter((name) =>
-      /\.ya?ml$/.test(name),
-    )
-  : []
+const DEAD_GITHUB_DIR = '.github'
 
 /**
  * Script names reachable from `root`, following `pnpm run` / `npm run`
@@ -374,37 +363,25 @@ describe('lint and format wiring', () => {
     expect(problems).toEqual([])
   })
 
-  it('keeps no workflow directory inside this package, and cites none', () => {
+  it('keeps no .github directory inside this package', () => {
     // `packages/protect-ffi/.github/` is gone: the release pipeline ported the
     // last of what it held (`build.yml`'s per-platform CARGO_BUILD_TARGET
     // matrix, and `actions/setup`'s `neon list-platforms` step) into
     // `.github/workflows/_build-ffi-artifacts.yml`.
     //
-    // Both halves of this check matter. A workflow file under a package reads
-    // as live CI and is not — that is how `test:typecheck:wasm` sat exempt
-    // "run by the wasm job" from the absorption onward with no job running it,
-    // and mise.toml told contributors CI installs the wasm32 target "in the
-    // `Add wasm32 target` step of test.yml" while the step that runs is in the
-    // root tests-rust.yml. A citation reads the same way whether the file it
-    // names is present and inert or absent entirely, so both are checked.
-    expect(deadWorkflowNames).toEqual([])
-
-    // The citation half. Only names unique to that directory count:
-    // `release.yml` exists at the root as well, so a citation of it is
-    // ambiguous and this under-reports rather than guessing — the same trade
-    // the workflow-dispatch check makes. With the directory deleted this list
-    // is empty and the assertion is trivially true; it is the assertion above
-    // that keeps that from being a silent loss of coverage.
-    const deadOnly = deadWorkflowNames.filter(
-      (name) => !rootWorkflowNames.includes(name),
-    )
-    const liveConfig = [
-      miseToml,
-      JSON.stringify(scripts),
-      ...Object.values(ENTRY_POINT_EXEMPT),
-    ].join('\n')
-
-    expect(deadOnly.filter((name) => liveConfig.includes(name))).toEqual([])
+    // It must not come back. A workflow file under a package reads as live CI
+    // and is not — that is how `test:typecheck:wasm` sat exempt "run by the
+    // wasm job" from the absorption onward with no job running it, and how
+    // mise.toml told contributors CI installs the wasm32 target "in the `Add
+    // wasm32 target` step of test.yml" while the step that runs is in the root
+    // tests-rust.yml. A re-deposit is not far-fetched: the next subtree import
+    // brings its own `.github/`, and it will arrive looking exactly as
+    // authoritative as this one did.
+    //
+    // The whole directory, not the `.ya?ml` files in it. The deposit also
+    // carried `.env` and `actions/setup/action.yml`, which read as live CI just
+    // as readily as a workflow does.
+    expect(existsSync(join(packageRoot, DEAD_GITHUB_DIR))).toBe(false)
   })
 
   it('runs the Rust format check from the cargo entry point', () => {

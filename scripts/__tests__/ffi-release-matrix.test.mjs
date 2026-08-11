@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { buildFor, releaseMatrix, runnerFor } from '../ffi-release-matrix.mjs'
+import {
+  buildFor,
+  releaseMatrix,
+  runnerFor,
+  triplesFromPlatformManifests,
+} from '../ffi-release-matrix.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 
 /**
@@ -21,10 +26,13 @@ const FFI = join(REPO_ROOT, 'packages/protect-ffi')
 const pkg = JSON.parse(readFileSync(join(FFI, 'package.json'), 'utf8'))
 
 /**
- * `neon list-platforms` output, as of the six platforms this package publishes.
- * Held as a fixture so the matrix can be exercised without running neon — and
- * checked against `neon.platforms` below, so the fixture cannot drift away from
- * the package it stands in for.
+ * `neon list-platforms` output, verbatim, as of the six platforms this package
+ * publishes.
+ *
+ * This is the INDEPENDENT copy. The matrix reads the same mapping out of each
+ * `platforms/<name>/package.json` (`neon.rust`) so the release job needs
+ * nothing installed, and the check below asserts the two agree — without it,
+ * deriving from the manifests would just be trusting the manifests.
  */
 const TRIPLES = {
   'darwin-x64': 'x86_64-apple-darwin',
@@ -53,6 +61,15 @@ const MATRIX = releaseMatrix(TRIPLES)
 describe('the platform fixture matches the package', () => {
   it('covers exactly the platforms this package publishes', () => {
     expect(Object.keys(TRIPLES).sort()).toEqual([...pkg.neon.platforms].sort())
+  })
+
+  it('agrees with the triples committed in the platform packages', () => {
+    // The mapping the release matrix actually uses. A platform package whose
+    // `neon.rust` drifts from what neon computes would cross-compile for the
+    // wrong target under a name that says otherwise — the tarball installs and
+    // then fails to dlopen, which is the failure this whole matrix exists to
+    // prevent.
+    expect(triplesFromPlatformManifests()).toEqual(TRIPLES)
   })
 })
 
@@ -114,10 +131,18 @@ describe('release matrix', () => {
   })
 
   it('sends each platform to a runner that can build it', () => {
-    expect(runnerFor('win32-x64-msvc')).toBe('windows-latest')
-    expect(runnerFor('darwin-arm64')).toBe('macos-latest')
-    expect(runnerFor('darwin-x64')).toBe('macos-latest')
-    expect(runnerFor('linux-x64-musl')).toBe('blacksmith-4vcpu-ubuntu-2404')
+    // Over the matrix rather than four examples: the two gnu platforms had no
+    // runner assertion at all under the example form, and a seventh platform
+    // would arrive with none either.
+    for (const entry of MATRIX) {
+      const expected = entry.platform.startsWith('win32')
+        ? 'windows-latest'
+        : entry.platform.startsWith('darwin')
+          ? 'macos-latest'
+          : 'blacksmith-4vcpu-ubuntu-2404'
+      expect(runnerFor(entry.platform), entry.platform).toBe(expected)
+      expect(entry.os, entry.platform).toBe(expected)
+    }
   })
 
   it('is empty for an empty mapping, rather than inventing platforms', () => {

@@ -56,38 +56,26 @@ jobs:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      - uses: pnpm/action-setup@v6.0.10
-        with:
-          run_install: false
-          cache: false
-
       - uses: actions/setup-node@v6.5.0
         with:
           node-version: 22
           package-manager-cache: false
 
-      # node-pty is the repo's one `onlyBuiltDependencies` entry and ships no
-      # linux prebuild, so every workspace install on a Linux runner compiles it
-      # — and pnpm does not put node-gyp on PATH.
-      - name: Install node-gyp
-        run: npm install -g node-gyp
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      # `neon list-platforms` maps each platform name to its Rust target triple,
-      # and it is the only source of that mapping — `neon.platforms` in
-      # package.json lists names, not triples. The matrix it feeds also decides
-      # which build script each platform runs and which log file `neon dist`
-      # then reads; all three are easy to get wrong in ways that produce a green
-      # job and a broken tarball, so they live in a script with a test rather
-      # than in a `node -e` here. See scripts/ffi-release-matrix.mjs.
+      # No pnpm and no install: the script reads `neon.rust` out of the six
+      # committed `platforms/*/package.json` files, so this job needs nothing
+      # but a checkout and Node. It used to shell out to `neon list-platforms`,
+      # which meant a cold ~1GB workspace install (caching is forbidden here)
+      # on the critical path ahead of all six builds, to read six fields that
+      # are in the tree.
+      #
+      # The matrix also decides which build script each platform runs and which
+      # log file `neon dist` then reads. All three fields are easy to get wrong
+      # in ways that produce a green job and a broken tarball, so they live in a
+      # script with a test — including one pinning the committed triples against
+      # `neon list-platforms` output. See scripts/ffi-release-matrix.mjs.
       - name: Compute the matrix
         id: matrix
-        run: |
-          set -euo pipefail
-          pnpm --dir packages/protect-ffi exec neon list-platforms \
-            | node scripts/ffi-release-matrix.mjs > /dev/null
+        run: node scripts/ffi-release-matrix.mjs > /dev/null
 
   binaries:
     name: ${{ matrix.cfg.platform }}
@@ -120,11 +108,14 @@ jobs:
           echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
           echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
 
-      # The aarch64 linker for the linux-arm64-gnu cross build. Installed for
-      # every Linux platform because the two gnu jobs share this runner
-      # definition with musl, and the package costs seconds.
-      - name: Install cross-compile toolchain (Linux)
-        if: ${{ contains(matrix.cfg.platform, 'linux') }}
+      # The aarch64 linker, for the one platform that cross-compiles to it.
+      # Scoped to that platform rather than to Linux: `linux-x64-musl` puts
+      # musl.cc's own `x86_64-linux-musl-gcc` on PATH below and never calls
+      # this one, and `linux-x64-gnu` is a native x86_64 build — so the other
+      # two legs were paying an `apt-get update` (full package indexes) plus a
+      # ~200MB toolchain they do not link against.
+      - name: Install cross-compile toolchain (linux-arm64-gnu)
+        if: ${{ matrix.cfg.platform == 'linux-arm64-gnu' }}
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -174,8 +165,12 @@ jobs:
       # SHA-pinned, matching .github/actions/build-ffi-binding: mise-action is a
       # trust dependency, and here it runs in the workflow whose output gets
       # published with provenance.
-      - name: Install zig + cargo-zigbuild (gnu targets only)
-        if: ${{ contains(matrix.cfg.target, 'gnu') }}
+      # Keyed on the matrix's own decision rather than re-deriving "is this gnu"
+      # from the triple: scripts/ffi-release-matrix.mjs picks zigbuild, and this
+      # step exists to supply what zigbuild needs. Two spellings of one rule
+      # drift apart the day a platform moves between them.
+      - name: Install zig + cargo-zigbuild (zigbuild platforms only)
+        if: ${{ matrix.cfg.script == 'zigbuild' }}
         uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
           install: true
@@ -217,10 +212,15 @@ jobs:
           # expansion rather than upstream's `sed`, and assigned before export
           # rather than through it: actionlint runs shellcheck over `run:`
           # blocks and the original spelling draws SC2001 and SC2155.
+          #
+          # Each linker variable is exported by the branch that reads it. Set
+          # unconditionally, as upstream had them, both are also set on Windows
+          # and on the two Darwin legs — where `CARGO_TARGET_..._MUSL_LINKER`
+          # ends up naming `x86_64-apple-darwin-gcc`, a binary that does not
+          # exist and that nothing on those platforms reads.
           linker="${CARGO_BUILD_TARGET/unknown-/}-gcc"
-          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="$linker"
-          export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$linker"
           if [[ "$CARGO_BUILD_TARGET" =~ musl ]]; then
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$linker"
             wget -4 -O musl-native.tgz "$MUSL_TOOLCHAIN_URL"
             # Verified BEFORE anything is unpacked: a tarball that fails this
             # check must not have written a single file, least of all one on the
@@ -237,7 +237,8 @@ jobs:
             # makes the libc check in ffi-preflight.yml meaningful.
             export RUSTFLAGS="-C target-feature=-crt-static"
             pnpm run "$BUILD_SCRIPT"
-          elif [[ "$CARGO_BUILD_TARGET" =~ gnu ]]; then
+          elif [ "$BUILD_SCRIPT" = zigbuild ]; then
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="$linker"
             # cargo-zigbuild >= 0.23.0 no longer reads CARGO_BUILD_TARGET from
             # the environment, so the glibc-pinned target is passed as a flag.
             pnpm run "$BUILD_SCRIPT" --target "${CARGO_BUILD_TARGET}.2.28"
@@ -365,15 +366,34 @@ jobs:
         run: |
           set -euo pipefail
           tgz=$(ls ffi-dist/cipherstash-protect-ffi-[0-9]*.tgz)
-          for required in \
-            package/lib/index.cjs \
-            package/lib/index.mjs \
-            package/dist/wasm/protect_ffi.js \
-            package/dist/wasm/protect_ffi_inline.js \
-            package/dist/wasm/protect_ffi_bg.wasm ; do
+          # Every path the manifest's own `exports` map resolves to, walked out
+          # of the packed manifest rather than listed here. A hand-written list
+          # is a snapshot: this one was written with five runtime entries and
+          # silently omitted all three `types` targets, so a wrapper packed
+          # without declarations passed the gate and shipped type-less to every
+          # TypeScript consumer. Derived, it also covers a subpath added later.
+          tar xzOf "$tgz" package/package.json | node -e '
+            const j = JSON.parse(require("node:fs").readFileSync(0, "utf8"))
+            const paths = new Set()
+            const walk = (node) => {
+              if (typeof node === "string") { if (node.startsWith("./")) paths.add("package/" + node.slice(2)) }
+              else if (node && typeof node === "object") { for (const v of Object.values(node)) walk(v) }
+            }
+            walk(j.exports)
+            if (paths.size < 5) { console.error("exports resolved to only " + paths.size + " paths"); process.exit(1) }
+            // The wasm blob is not an export: protect_ffi.js loads it, so it is
+            // the one path that has to be named here. Without it both wasm
+            // entries resolve and then fail at instantiation. (No backticks in
+            // this argument — shellcheck reads them as command substitution and
+            // reports SC2016.)
+            paths.add("package/dist/wasm/protect_ffi_bg.wasm")
+            console.log([...paths].sort().join("\n"))
+          ' > exports.txt
+          cat exports.txt
+          while read -r required ; do
             tar tzf "$tgz" | grep -qx "$required" || {
               echo "::error::$required missing from $tgz"; exit 1; }
-          done
+          done < exports.txt
           # The six optionalDependencies must be concrete versions — pnpm
           # rewrites `workspace:*` at pack time, and a wrapper published without
           # that rewrite resolves no binding for anyone.

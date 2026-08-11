@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, globSync, readFileSync } from 'node:fs'
+import { existsSync, globSync, readdirSync, readFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import semver from 'semver'
@@ -263,7 +263,16 @@ describe('supply chain — every workflow installs with --frozen-lockfile', () =
    * installs on behalf of four jobs, and a rule that stops at the workflow file
    * makes "move it into a composite" the way around it.
    */
-  const PNPM_INSTALL = /\bpnpm\b(?:\s+-{1,2}\S+)*\s+install\b/
+  /**
+   * `pnpm … install` / `pnpm … i` as a whole token.
+   *
+   * The `i` alternative is not decoration: `scripts/__tests__/workflow-node-gyp.test.mjs`
+   * matches it and pins `pnpm i --frozen-lockfile` as a spelling this repo uses,
+   * so a narrower pattern here would leave the two guards disagreeing about what
+   * an install IS — the node-gyp rule would cover a `pnpm i` step and this one
+   * would not.
+   */
+  const PNPM_INSTALL = /(?:^|[\s;&|(])pnpm\s+(?:[^\n]*\s)?(?:install|i)(?:\s|$)/
 
   /**
    * A step's `run:` body as the commands it actually runs, one per entry.
@@ -271,8 +280,7 @@ describe('supply chain — every workflow installs with --frozen-lockfile', () =
    * PER COMMAND, not per step, and the difference is a real hole rather than a
    * refinement: a multi-line step holding both `pnpm install` and, later,
    * `pnpm install --frozen-lockfile` satisfies a whole-body search for the
-   * flag while still running the unpinned install. The pre-existing tests.yml
-   * check has that shape.
+   * flag while still running the unpinned install.
    *
    * Backslash continuations are joined first, so an install whose flag sits on
    * the next line is still one command and still passes.
@@ -284,10 +292,23 @@ describe('supply chain — every workflow installs with --frozen-lockfile', () =
       .map((line) => line.trim())
       .filter((line) => line !== '' && !line.startsWith('#'))
 
-  const stepsOf = (relPath: string): Array<{ run?: string; uses?: string }> => {
+  /**
+   * The installs in one `run:` body that resolve outside the lockfile.
+   *
+   * One definition, used by both the property test and the repo sweep below —
+   * two copies of the predicate would let the test pin a rule the sweep no
+   * longer applies.
+   */
+  const unpinnedInstalls = (run: string): string[] =>
+    commandsOf(run).filter(
+      (command) =>
+        PNPM_INSTALL.test(command) && !/--frozen-lockfile\b/.test(command),
+    )
+
+  const stepsOf = (relPath: string): Array<{ run?: string }> => {
     const doc = readYaml(relPath) as {
-      jobs?: Record<string, { steps?: Array<{ run?: string; uses?: string }> }>
-      runs?: { steps?: Array<{ run?: string; uses?: string }> }
+      jobs?: Record<string, { steps?: Array<{ run?: string }> }>
+      runs?: { steps?: Array<{ run?: string }> }
     }
     return [
       ...Object.values(doc?.jobs ?? {}).flatMap((job) => job?.steps ?? []),
@@ -305,11 +326,24 @@ describe('supply chain — every workflow installs with --frozen-lockfile', () =
     ...globSync('.github/actions/**/action.{yml,yaml}', { cwd: REPO_ROOT }),
   ].sort()
 
-  it('finds the workflow graph it means to scan', () => {
-    // A discovery test that matches nothing passes while checking nothing.
-    expect(files).toContain('.github/workflows/release.yml')
+  it('scans every workflow GitHub reads, with no slack', () => {
+    // Equality against the directory, not a floor with room in it: a
+    // `length > N` guard lets N files drop out of the scan before anything
+    // notices, and this repo has already been bitten by that shape (see the
+    // mutation note in scripts/__tests__/ffi-binding-step-order.test.mjs). The
+    // offender check below is one aggregated assertion, so a file falling out
+    // of `files` does not delete a visible test — it silently narrows this one.
+    const workflows = readdirSync(join(REPO_ROOT, '.github/workflows'))
+      .filter((name) => /\.ya?ml$/.test(name))
+      .map((name) => `.github/workflows/${name}`)
+      .sort()
+    expect(files.filter((f) => f.startsWith('.github/workflows/'))).toEqual(
+      workflows,
+    )
+    // The composite half cannot be compared to a directory listing the same
+    // way — `.github/actions/*` holds directories, not manifests — so it gets
+    // the floor the other half no longer needs.
     expect(files).toContain('.github/actions/integration-setup/action.yml')
-    expect(files.length).toBeGreaterThan(10)
   })
 
   it('reads one command at a time, so a later flag cannot cover an earlier install', () => {
@@ -317,44 +351,37 @@ describe('supply chain — every workflow installs with --frozen-lockfile', () =
     // repo: a repo that happens to be clean says nothing about how strict the
     // checker is. A step holding both installs is the shape a whole-body search
     // for the flag waves through.
-    const mixed = 'pnpm install\npnpm install --frozen-lockfile'
-    const unpinned = commandsOf(mixed).filter(
-      (command) =>
-        PNPM_INSTALL.test(command) && !/--frozen-lockfile\b/.test(command),
-    )
-    expect(unpinned).toEqual(['pnpm install'])
+    expect(
+      unpinnedInstalls('pnpm install\npnpm install --frozen-lockfile'),
+    ).toEqual(['pnpm install'])
 
     // A continuation is one command, not two, so the flag on the next line
     // still counts.
-    expect(
-      commandsOf('pnpm install \\\n  --frozen-lockfile').filter(
-        (command) =>
-          PNPM_INSTALL.test(command) && !/--frozen-lockfile\b/.test(command),
-      ),
-    ).toEqual([])
+    expect(unpinnedInstalls('pnpm install \\\n  --frozen-lockfile')).toEqual([])
 
     // A comment naming the flag is not the flag.
     expect(
-      commandsOf('# always --frozen-lockfile\npnpm install').filter(
-        (command) =>
-          PNPM_INSTALL.test(command) && !/--frozen-lockfile\b/.test(command),
-      ),
+      unpinnedInstalls('# always --frozen-lockfile\npnpm install'),
     ).toEqual(['pnpm install'])
+
+    // `pnpm i` is an install. The node-gyp guard already treats it as one.
+    expect(unpinnedInstalls('pnpm i')).toEqual(['pnpm i'])
+    expect(unpinnedInstalls('pnpm i --frozen-lockfile')).toEqual([])
+
+    // …and `pnpm run install-x` is not, despite containing the word.
+    expect(unpinnedInstalls('pnpm run install-deps')).toEqual([])
   })
 
   it('carries --frozen-lockfile on every install', () => {
-    const offenders: string[] = []
-    for (const file of files) {
-      for (const step of stepsOf(file)) {
-        if (typeof step.run !== 'string') continue
-        for (const command of commandsOf(step.run)) {
-          if (!PNPM_INSTALL.test(command)) continue
-          if (!/--frozen-lockfile\b/.test(command)) {
-            offenders.push(`${file}: ${command}`)
-          }
-        }
-      }
-    }
+    const offenders = files.flatMap((file) =>
+      stepsOf(file)
+        .filter((step) => typeof step.run === 'string')
+        .flatMap((step) =>
+          unpinnedInstalls(step.run as string).map(
+            (command) => `${file}: ${command}`,
+          ),
+        ),
+    )
     expect(
       offenders,
       'A CI install that is not `--frozen-lockfile` resolves versions the lockfile does not name, with no review and no record.',
@@ -377,22 +404,12 @@ describe('supply chain — CI hardening (.github/workflows/tests.yml)', () => {
     >
   }
 
-  it('every `pnpm install` invocation uses --frozen-lockfile', () => {
-    // Allow flag tokens (e.g. `pnpm --filter=foo install`, `pnpm -w install`)
-    // between `pnpm` and `install`, but not arbitrary words — that would
-    // false-match scripts like `pnpm run install-x`.
-    const PNPM_INSTALL = /\bpnpm\b(?:\s+-{1,2}\S+)*\s+install\b/
-    for (const [jobName, job] of Object.entries(workflow.jobs)) {
-      const installSteps = job.steps.filter(
-        (s) => typeof s.run === 'string' && PNPM_INSTALL.test(s.run),
-      )
-      for (const step of installSteps) {
-        expect(step.run, `${jobName} step "${step.run}"`).toMatch(
-          /--frozen-lockfile/,
-        )
-      }
-    }
-  })
+  // The `--frozen-lockfile` check that used to live here is gone, not moved by
+  // accident: the describe above supersedes it in both directions — every
+  // workflow and composite rather than this one file, and per command rather
+  // than per step body. Keeping the narrower copy would be worse than
+  // redundant, because it PASSES on inputs the broader one fails, so a reader
+  // who found it first would get a wrong answer about what this repo enforces.
 
   it('every pnpm-using job runs on Node 22 (literal or matrix incl. 22)', () => {
     for (const [jobName, job] of Object.entries(workflow.jobs)) {
