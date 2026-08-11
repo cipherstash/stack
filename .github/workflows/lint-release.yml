@@ -1,0 +1,91 @@
+name: Lint release tooling
+
+# The release machinery runs roughly once per release, so a syntax error, a
+# shell mistake or an unknown runner label in it surfaces at the worst possible
+# moment — mid-release, with a Version PR already merged. This runs on every
+# pull request that touches any of it.
+#
+# actionlint is introduced here and nowhere else in the repo. It reads
+# `.github/actionlint.yaml` for the Blacksmith runner label, and it runs
+# shellcheck over every `run:` block — which is why the workflows it gates
+# avoid `sed`-into-`export` (SC2001, SC2155), `ls | wc -l` (SC2012), and
+# dollar-braces or backticks inside single-quoted `node -e` arguments (SC2016).
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/workflows/_build-ffi-artifacts.yml
+      - .github/workflows/ffi-preflight.yml
+      - .github/workflows/lint-release.yml
+      - .github/actionlint.yaml
+      - scripts/release-gate.mjs
+      - scripts/ffi-release-matrix.mjs
+      - scripts/lint-no-workflow-caching.mjs
+      - package.json
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: actionlint + release script tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          echo "$PWD" >> "$GITHUB_PATH"
+
+      # Scoped to the release workflows rather than the whole directory: this
+      # gate has to be green on the day it lands, and actionlint has never run
+      # over the other twelve. Widening it is its own change, with its own
+      # findings to work through.
+      - name: actionlint (release workflows)
+        run: |
+          set -euo pipefail
+          actionlint \
+            .github/workflows/release.yml \
+            .github/workflows/_build-ffi-artifacts.yml \
+            .github/workflows/ffi-preflight.yml \
+            .github/workflows/lint-release.yml
+
+      - uses: pnpm/action-setup@v6.0.10
+        with:
+          run_install: false
+          cache: false
+
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Covers the release gate, the platform matrix, and the no-caching lint's
+      # own self-tests — the three pieces of the pipeline that are ordinary code
+      # rather than YAML.
+      - name: Release script unit tests
+        run: pnpm run test:scripts
+
+      - name: No caching in publish workflows
+        run: pnpm run lint:workflow-cache
