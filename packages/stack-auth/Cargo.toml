@@ -1,7 +1,7 @@
 [package]
 name = "stack-auth"
 description = "Authentication library for CipherStash services"
-version = "0.42.0"
+version = "0.42.1"
 edition.workspace = true
 authors.workspace = true
 repository.workspace = true
