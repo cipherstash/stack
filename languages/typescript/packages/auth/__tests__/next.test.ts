@@ -3,6 +3,7 @@ import {
   csFederate,
   csFederationMiddleware,
   csAuthHeader,
+  csSanitizeHeaders,
   csTokenCookieName,
   encodeTokenHeader,
   decodeTokenHeader,
@@ -47,6 +48,22 @@ function tokenResult(overrides: Record<string, unknown> = {}) {
 function requestWith(cookie?: string): Request {
   return new Request("https://example.com/", {
     headers: cookie ? { cookie } : {},
+  });
+}
+
+/** A request carrying a client-forged warmed-token header (the attacker case). */
+function requestWithForgedHeader(
+  headerName = CS_TOKEN_HEADER,
+  overrides: Record<string, unknown> = {
+    token: "forged",
+    services: { zerokms: "https://attacker.example.com" },
+  },
+): Request {
+  return new Request("https://example.com/", {
+    headers: {
+      "x-unrelated": "keep-me",
+      [headerName]: encodeTokenHeader(tokenResult(overrides)),
+    },
   });
 }
 
@@ -230,6 +247,77 @@ describe("csFederationMiddleware", () => {
       headerName: "x-warm",
     });
     expect(headerName).toBe("x-warm");
+  });
+
+  it("returns requestHeaders with the forged inbound header replaced by the minted one", async () => {
+    // The forgery invariant lives in the library: a client-supplied
+    // `x-cs-cts-token` must never survive into the render, even though the
+    // freshly minted `set()` would overwrite it anyway on this (success) path.
+    const { result, requestHeaders } = await csFederationMiddleware({
+      request: requestWithForgedHeader(),
+      responseHeaders: new Headers(),
+      workspaceCrn: WORKSPACE_CRN,
+      getJwt: () => "jwt",
+      cookieName: csTokenCookieName(WORKSPACE_ID),
+    });
+
+    // Downstream reads the real token, not the attacker's.
+    const warmed = csAuthHeader(requestHeaders);
+    expect((await warmed?.getToken())?.data).toEqual(result);
+    expect((await warmed?.getToken())?.data?.services.zerokms).toBe(
+      "https://zerokms.example.com",
+    );
+    // Unrelated inbound headers are preserved for the render.
+    expect(requestHeaders.get("x-unrelated")).toBe("keep-me");
+  });
+
+  it("strips the forged header under a custom header name too", async () => {
+    const { requestHeaders } = await csFederationMiddleware({
+      request: requestWithForgedHeader("x-warm"),
+      responseHeaders: new Headers(),
+      workspaceCrn: WORKSPACE_CRN,
+      getJwt: () => "jwt",
+      cookieName: csTokenCookieName(WORKSPACE_ID),
+      headerName: "x-warm",
+    });
+    expect(
+      (await csAuthHeader(requestHeaders, { headerName: "x-warm" })?.getToken())
+        ?.data?.token,
+    ).toBe("header.payload.signature");
+  });
+});
+
+describe("csSanitizeHeaders", () => {
+  it("deletes a client-forged warmed-token header and keeps the rest", () => {
+    const sanitized = csSanitizeHeaders(requestWithForgedHeader());
+    expect(sanitized.get(CS_TOKEN_HEADER)).toBeNull();
+    expect(csAuthHeader(sanitized)).toBeNull();
+    expect(sanitized.get("x-unrelated")).toBe("keep-me");
+  });
+
+  it("accepts a Headers as well as a Request", () => {
+    const sanitized = csSanitizeHeaders(requestWithForgedHeader().headers);
+    expect(csAuthHeader(sanitized)).toBeNull();
+  });
+
+  it("does not mutate the source headers", () => {
+    const headers = requestWithForgedHeader().headers;
+    csSanitizeHeaders(headers);
+    // Request headers are immutable in the fetch spec, so a delete on the source
+    // would throw rather than silently strip — assert the clone is what changed.
+    expect(headers.get(CS_TOKEN_HEADER)).not.toBeNull();
+  });
+
+  it("strips only the named header", () => {
+    const request = new Request("https://example.com/", {
+      headers: {
+        [CS_TOKEN_HEADER]: encodeTokenHeader(tokenResult()),
+        "x-warm": encodeTokenHeader(tokenResult()),
+      },
+    });
+    const sanitized = csSanitizeHeaders(request, { headerName: "x-warm" });
+    expect(sanitized.get("x-warm")).toBeNull();
+    expect(sanitized.get(CS_TOKEN_HEADER)).not.toBeNull();
   });
 });
 

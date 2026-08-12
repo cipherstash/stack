@@ -98,26 +98,59 @@ export async function csFederate(options) {
 /**
  * @typedef {object} CsFederationMiddlewareResult
  * @property {import("./wasm-types.d.ts").TokenResult} result   The federated token
+ * @property {Headers} requestHeaders                           Sanitised request headers carrying the warmed token — forward these
  * @property {string} headerName                                Request header to forward (default {@link CS_TOKEN_HEADER})
  * @property {string} headerValue                               Encoded warmed-token payload to set on that header
  */
 /**
- * Federate-or-reuse in middleware, then return the request header that delivers
+ * Federate-or-reuse in middleware, then return the request headers that deliver
  * the warmed token to the same-request render (a fresh `Set-Cookie` is not
- * readable in the same request). The caller forwards it via
- * `NextResponse.next({ request: { headers } })` and copies `responseHeaders`
- * (carrying `Set-Cookie`) onto the response.
+ * readable in the same request). The caller forwards `requestHeaders` via
+ * `NextResponse.next({ request: { headers: requestHeaders } })` and copies
+ * `responseHeaders` (carrying `Set-Cookie`) onto the response.
+ *
+ * `requestHeaders` is built with {@link csSanitizeHeaders}, so the inbound
+ * client-supplied warmed-token header is DELETED before the freshly minted one
+ * is set — the library owns that invariant rather than trusting the caller to
+ * overwrite it. On the signed-out / federation-failure path (where this function
+ * throws and no warmed token exists), call {@link csSanitizeHeaders} directly so
+ * the strip still happens.
  *
  * @param {CsFederationMiddlewareOptions} options
  * @returns {Promise<CsFederationMiddlewareResult>}
  */
 export async function csFederationMiddleware(options) {
   const result = await csFederate(options);
-  return {
-    result,
-    headerName: options.headerName ?? CS_TOKEN_HEADER,
-    headerValue: encodeTokenHeader(result),
-  };
+  const headerName = options.headerName ?? CS_TOKEN_HEADER;
+  const headerValue = encodeTokenHeader(result);
+  const requestHeaders = csSanitizeHeaders(options.request, { headerName });
+  requestHeaders.set(headerName, headerValue);
+  return { result, requestHeaders, headerName, headerValue };
+}
+
+/**
+ * Clone a request's headers with the warmed-token header REMOVED, ready to
+ * forward to the render.
+ *
+ * SECURITY: this is the ingress strip that makes {@link csAuthHeader}
+ * trustworthy. Because the warmed-token payload is unauthenticated (see
+ * `csAuthHeader`), any request path on which a client-supplied
+ * {@link CS_TOKEN_HEADER} survives to the render is a forgery hole — and Next.js
+ * middleware `matcher`s routinely exclude paths. Run every forwarded request
+ * through this (directly, or via {@link csFederationMiddleware}, which calls it
+ * for you), including on the signed-out and federation-error paths.
+ *
+ * @param {Request | Headers} source            Incoming request (or its headers)
+ * @param {CsAuthHeaderOptions} [options]       `headerName` to strip (default {@link CS_TOKEN_HEADER})
+ * @returns {Headers}
+ */
+export function csSanitizeHeaders(source, options) {
+  const headerName = options?.headerName ?? CS_TOKEN_HEADER;
+  const headers = new Headers(
+    source instanceof Headers ? source : source.headers,
+  );
+  headers.delete(headerName);
+  return headers;
 }
 
 /**
@@ -142,14 +175,26 @@ export async function csFederationMiddleware(options) {
  * Next's `headers()` result). Returns `null` when no warmed token is present,
  * so callers can fall back to a cold federation.
  *
+ * LIFETIME: unlike `OidcFederationStrategy` / `AccessKeyStrategy`, this strategy
+ * does NOT refresh. `getToken()` returns the same closed-over token on every
+ * call, so it is only valid until that token's TTL expires — after which
+ * downstream CTS/ZeroKMS calls start failing with no refresh path. It is scoped
+ * to the request that warmed it: hold it no longer than the request (a detached
+ * callback is fine *within* the request), and re-read the header on the next one
+ * rather than caching the strategy across requests.
+ *
  * SECURITY: the header payload is opaque base64url JSON, NOT authenticated. The
  * `isTokenResult` guard only rejects malformed *shape*, not a forged-but-valid
- * payload. Only trust this in a context where the inbound client-supplied header
- * is stripped before the request reaches here — i.e. a middleware that always
- * overwrites/deletes {@link CS_TOKEN_HEADER} on ingress (the dashboard does
- * this). Cryptographically pinning the payload to the app (AEAD seal/open with
- * an app-held key) so an un-stripped header can't be forged is tracked in
- * CIP-3112.
+ * payload — and the shape it accepts includes an arbitrary `services` map, so a
+ * forged header can also point the app at an attacker-controlled ZeroKMS
+ * endpoint. The threat is therefore data/key EXFILTRATION, not just identity
+ * confusion. Only trust this where the inbound client-supplied header is
+ * stripped before the request reaches here — use {@link csSanitizeHeaders} (or
+ * {@link csFederationMiddleware}, which applies it) on EVERY path from which
+ * this function is reachable, remembering that Next.js middleware `matcher`s
+ * routinely exclude paths. Cryptographically pinning the payload to the app
+ * (AEAD seal/open with an app-held key) so an un-stripped header can't be forged
+ * is tracked in CIP-3112.
  *
  * @param {{ get(name: string): string | null }} headers
  * @param {CsAuthHeaderOptions} [options]

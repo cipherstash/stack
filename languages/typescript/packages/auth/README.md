@@ -320,31 +320,47 @@ handlers, server actions), then:
 
 ### Middleware — federate, warm, refresh
 
+`csFederationMiddleware` **throws on federation failure** — including the
+ordinary signed-out case, where there's no JWT to federate. Catch it, or every
+unauthenticated request 500s in middleware:
+
 ```ts
 // middleware.ts
 import { NextResponse } from "next/server";
-import { csFederationMiddleware } from "@cipherstash/auth/next";
+import { csFederationMiddleware, csSanitizeHeaders } from "@cipherstash/auth/next";
 
 export async function middleware(request: Request) {
   const responseHeaders = new Headers(); // the refreshed cookie is appended here
 
-  const { headerName, headerValue } = await csFederationMiddleware({
-    request,
-    responseHeaders,
-    workspaceCrn: process.env.CS_WORKSPACE_CRN!, // "crn:<region>:<workspace-id>"
-    getJwt: () => getSessionJwt(),               // your provider's *current* JWT (Clerk, Supabase, …)
-  });
+  let requestHeaders: Headers;
+  try {
+    ({ requestHeaders } = await csFederationMiddleware({
+      request,
+      responseHeaders,
+      workspaceCrn: process.env.CS_WORKSPACE_CRN!, // "crn:<region>:<workspace-id>"
+      getJwt: () => getSessionJwt(),               // your provider's *current* JWT (Clerk, Supabase, …)
+    }));
+  } catch {
+    // Signed out, or federation failed — let the request through unwarmed:
+    // `csAuthHeader` returns null downstream and the render falls back. Still
+    // strip the header, or a client-supplied one would reach the render forgeable.
+    requestHeaders = csSanitizeHeaders(request);
+  }
 
-  // Deliver the warmed token to this request's render...
-  const headers = new Headers(request.headers);
-  headers.set(headerName, headerValue);
-  const response = NextResponse.next({ request: { headers } });
+  // Deliver the warmed token (if any) to this request's render...
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
 
   // ...and copy the refreshed `Set-Cookie` onto the response.
   responseHeaders.forEach((value, key) => response.headers.append(key, value));
   return response;
 }
 ```
+
+`requestHeaders` is a clone of the incoming headers with any *inbound*
+`x-cs-cts-token` deleted and the freshly minted one set — the strip is done by
+the library, not left to your wiring. See
+[Security](#security--the-warmed-token-header-is-not-authenticated) for why that
+matters.
 
 ### Reading the warmed token — Server Components, Route Handlers, protect-ffi
 
@@ -353,6 +369,13 @@ export async function middleware(request: Request) {
 strategy is safe to drive from a detached callback (e.g. protect-ffi). It returns
 `null` when there's no warmed token, so you can fall back to a cold federation or
 render a signed-out state.
+
+> **This strategy does not refresh.** Unlike `OidcFederationStrategy` and
+> `AccessKeyStrategy`, it hands back the *same* token on every `getToken()` — it
+> is valid only until that token's TTL expires, after which downstream ZeroKMS
+> calls fail with no refresh path. Treat it as request-scoped: a detached
+> callback *within* the request is fine, but don't cache the strategy across
+> requests — re-read the header on the next one.
 
 ```ts
 import { headers } from "next/headers";
@@ -363,7 +386,8 @@ export async function loadSecret() {
   const strategy = csAuthHeader(await headers());
   if (!strategy) throw new Error("no warmed token — signed out, or middleware didn't run");
 
-  // Hand the strategy to a CipherStash SDK — it owns getToken() + refresh.
+  // Hand the strategy to a CipherStash SDK — it calls getToken() as needed.
+  // (The warmed strategy itself never refreshes; it's good for this request.)
   const encryption = new Encryption({ authStrategy: strategy });
   // ... encrypt / decrypt with `encryption` ...
 }
@@ -395,19 +419,39 @@ export async function GET(request: Request) {
 
 `csAuthHeader` reads an opaque base64url(JSON) payload from a request header; it
 validates the *shape* of the `TokenResult`, but the payload is **not**
-cryptographically authenticated. Only trust it in a context where the inbound,
-client-supplied header is stripped before the request reaches your code — i.e. a
-middleware that always overwrites (or deletes) `x-cs-cts-token` on ingress, as the
-`csFederationMiddleware` flow above does. Without that guarantee a client could
-forge the header.
+cryptographically authenticated. A forged header is therefore accepted as long as
+it's well-formed — and since the validated shape includes an arbitrary `services`
+map, a forgery can point your app at an **attacker-controlled ZeroKMS endpoint**.
+The exposure is data and key exfiltration, not merely acting as the wrong
+identity.
+
+Only trust it where the inbound, client-supplied header is stripped before the
+request reaches your code. `csFederationMiddleware` does this for you — its
+`requestHeaders` is built by `csSanitizeHeaders(request)`, which deletes any
+inbound `x-cs-cts-token` — but that only covers requests the middleware actually
+runs on:
+
+- **Every** path from which `csAuthHeader` is reachable must be sanitised. Next.js
+  middleware `matcher`s routinely exclude paths (static assets, some API routes);
+  an excluded-but-reachable path is a forgery hole.
+- On the signed-out / federation-error path, `csFederationMiddleware` throws, so
+  call `csSanitizeHeaders(request)` yourself — as the middleware example above
+  does in its `catch`.
+
+Cryptographically pinning the payload to the app (AEAD seal/open with an app-held
+key), so an un-stripped header still can't be forged, is tracked in CIP-3112.
+Until that lands, the ingress strip is the *only* thing standing between an
+un-matched route and a forged token — treat CIP-3112 as a prerequisite for a
+production rollout rather than a nice-to-have.
 
 ### API
 
 | Export | Description |
 |---|---|
-| `csFederationMiddleware(options)` | Federate-or-reuse in middleware. Returns `{ result, headerName, headerValue }` to forward, and appends the refreshed cookie to `responseHeaders`. |
+| `csFederationMiddleware(options)` | Federate-or-reuse in middleware. Returns `{ result, requestHeaders, headerName, headerValue }` — forward `requestHeaders` — and appends the refreshed cookie to `responseHeaders`. Throws on failure (incl. signed out). |
 | `csFederate(options)` | Federate-or-reuse in any writable, in-scope context. Returns a `TokenResult`; throws on failure. |
-| `csAuthHeader(headers, options?)` | Read the warmed token into a no-federation `AuthStrategy`, or `null` if absent. |
+| `csSanitizeHeaders(source, options?)` | Clone a `Request`/`Headers` with the warmed-token header **deleted**. The ingress strip that makes `csAuthHeader` trustworthy — use on every path it's reachable from. |
+| `csAuthHeader(headers, options?)` | Read the warmed token into a no-federation `AuthStrategy`, or `null` if absent. The strategy does **not** refresh — request-scoped only. |
 | `csTokenCookieName(workspaceId)` | The per-workspace cookie name, `cs_token_<workspaceId>`. |
 | `CS_TOKEN_HEADER` | The default warmed-token request header, `x-cs-cts-token`. |
 | `encodeTokenHeader` / `decodeTokenHeader` | The opaque base64url(JSON) header codec (used internally; exported for advanced wiring). |
