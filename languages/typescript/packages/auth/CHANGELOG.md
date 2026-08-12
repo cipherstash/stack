@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.43.0
+
+### Minor Changes
+
+- 5d46b40: Add the `@cipherstash/auth/next` runtime adapter for federated CTS tokens in
+  request/response server frameworks — built for the Next.js App Router, but
+  framework-agnostic by construction (every function operates on WHATWG
+  `Request`/`Headers` and returns plain data).
+
+  `csFederate` / `csFederationMiddleware` federate-or-reuse a CTS service token in
+  any writable, in-scope context (middleware, route handler, server action),
+  persist it to a per-workspace HTTP-only cookie for the cross-request cache, and
+  hand the freshly minted token to the same-request render via a request header.
+  `csAuthHeader` reads that warmed token back into a no-federation `AuthStrategy`
+  that can be driven from a detached callback (e.g. protect-ffi) for the life of
+  the request — it replays the warmed token and does not refresh, so it is valid
+  only until that token's TTL expires. `csSanitizeHeaders` strips a
+  client-supplied warmed-token header on ingress; `csFederationMiddleware` applies
+  it for you and returns the sanitised `requestHeaders` to forward.
+
+  Built on the `Result`-returning strategy surface — `getToken()` resolves a
+  `{ data }` / `{ failure }` `Result`.
+
 ## 0.42.0
 
 ### Minor Changes
