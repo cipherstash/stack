@@ -404,7 +404,7 @@ jobs:
           tar xzOf "$tgz" package/package.json | node -e '
             const j = JSON.parse(require("node:fs").readFileSync(0, "utf8"))
             const deps = Object.entries(j.optionalDependencies ?? {})
-            // Against the manifests own `neon.platforms`, not a literal 6. The
+            // Against the manifests own "neon.platforms", not a literal 6. The
             // invariant is "every declared platform has a matching
             // optionalDependency" and both sides are sitting in this object, so
             // a seventh platform is covered the day it is added rather than
@@ -422,7 +422,16 @@ jobs:
               // this single-quoted argument is read by shellcheck as shell,
               // and it reports SC2016 for a dollar-brace or a backtick in
               // here — actionlint runs shellcheck over every run block, and
-              // Task 6 turns that into a gate failure.
+              // lint-release.yml turns that into a gate failure. A JS comment
+              // is no exception: shell sees one string, and a backtick in a
+              // "//" line up there broke this once. An apostrophe is worse
+              // still, since it ENDS the argument outright.
+              //
+              // Pinned version-independently by
+              // scripts/__tests__/workflow-inline-node-quoting.test.mjs. The
+              // gate alone was not enough: actionlint is pinned but shellcheck
+              // comes from the runner image, and only 0.11.0 began reporting
+              // the backtick form.
               if (!/^\d+\.\d+\.\d+/.test(v)) { console.error(n + " is " + v + ", not a concrete version"); process.exit(1) }
             }
             console.log("optionalDependencies OK")
