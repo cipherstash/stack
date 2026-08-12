@@ -178,9 +178,15 @@ The coupling is correct and should stay: an exact pin is how a wrapper/binary mi
 
 npm strips the `--` in `npm run x -- --release`; pnpm forwards it, landing it after the `> cargo.log` redirect where cargo rejects it as a positional. The release matrix passes `--target "${CARGO_BUILD_TARGET}.2.28"` this way, so the port depends on the separator-free spelling.
 
-### `neon dist` needs `-o`
+### `neon dist` needs `-o` — and therefore also `-n`
 
 Bare `neon dist < cargo.log` writes `./index.node` — the `debug:` fallback in `load.cts`. Populating a platform package needs `neon dist -o platforms/<p>/index.node`.
+
+Passing `-o` is what forces the command to be invoked directly rather than through the `postcargo-build` / `postzig-build` lifecycle hooks, and that is where the second half of this bites. `neon dist` defaults its crate name to `basename($npm_package_name)`, a variable the package-script runner sets. `npx` sets it too — the spelling this plan originally carried — but **`pnpm exec` does not**, so the switch to `pnpm exec` (correct on its own terms: `npx` will fetch a missing binary over the network) silently removed the default's only source. Every platform leg then fails with `error: $npm_package_name is not defined`.
+
+So the invocation is `pnpm exec neon dist -n protect-ffi -o …`, naming the **crate**, not the npm package. `scripts/__tests__/neon-dist-crate-name.test.mjs` holds both halves: the flag is present, and its value matches `crates/protect-ffi/Cargo.toml`. The second matters more than it looks — a renamed crate with a stale `-n` does not error, it finds no artifact.
+
+Caught by the first dispatch of `ffi-preflight.yml` (run 31555436823), against `main`, after the pipeline had merged. This is the failure mode the pre-flight exists for: it would otherwise have surfaced on the first real release, mid-cutover.
 
 ### This package's `build` is not upstream's `build`
 
@@ -988,9 +994,14 @@ jobs:
         working-directory: packages/protect-ffi
         # Bare `neon dist` writes ./index.node — the `debug:` fallback in
         # load.cts. Populating a platform package needs an explicit -o.
+        #
+        # `-n` because the crate name defaults to `basename($npm_package_name)`,
+        # which `pnpm exec` does not set (`npx` did). See "`neon dist` needs
+        # `-o` — and therefore also `-n`" above.
         run: |
           set -euo pipefail
-          npx neon dist -o "platforms/${{ matrix.cfg.platform }}/index.node" \
+          pnpm exec neon dist -n protect-ffi \
+            -o "platforms/${{ matrix.cfg.platform }}/index.node" \
             < "${{ matrix.cfg.log }}"
           test -s "platforms/${{ matrix.cfg.platform }}/index.node"
 

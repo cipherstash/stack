@@ -255,9 +255,18 @@ jobs:
         # load.cts, which is right for local development and wrong here. The log
         # file differs per build script; `neon dist` reads it to locate the
         # artifact.
+        #
+        # `-n` is not optional here, though it looks it. The crate name defaults
+        # to `basename($npm_package_name)`, and that variable is set by a
+        # package-script run — NOT by `pnpm exec`, which is how this step has to
+        # invoke the binary to pass `-o`. Without it every platform fails with
+        # `error: $npm_package_name is not defined`. Upstream never met this:
+        # its `postcargo-build` / `postzig-build` hooks run `neon dist` as
+        # lifecycle scripts, where the variable exists.
         run: |
           set -euo pipefail
-          pnpm exec neon dist -o "platforms/${PLATFORM}/index.node" < "${BUILD_LOG}"
+          pnpm exec neon dist -n protect-ffi \
+            -o "platforms/${PLATFORM}/index.node" < "${BUILD_LOG}"
           test -s "platforms/${PLATFORM}/index.node"
 
       # `pnpm pack` writes into the packed package's own directory by default,
@@ -290,7 +299,20 @@ jobs:
           test "$name" = "@cipherstash/protect-ffi-${PLATFORM}" || {
             echo "::error::packed $name, expected the ${PLATFORM} platform package"
             exit 1; }
-          tar tzf "$tgz" | grep -qx package/index.node || {
+          # Listed into a variable rather than piped into `grep -q`, and that is
+          # not a style preference. `grep -q` exits at the FIRST match, the
+          # writer upstream then takes SIGPIPE, and under `pipefail` — on by
+          # default for `shell: bash` — the pipeline reports 141. A successful
+          # match is read as a failure.
+          #
+          # It is worse than an ordinary bug because it is platform-split: GNU
+          # tar (Linux, and Git-for-Windows on the win32 runner) writes an entry
+          # at a time and hits it, while bsdtar buffers this four-entry listing
+          # into a single write and finishes first. So it passed on both Darwin
+          # legs and failed on the other four, which reads as a cross-compile
+          # problem rather than a shell one.
+          listing=$(tar tzf "$tgz")
+          grep -qx package/index.node <<< "$listing" || {
             echo "::error::$tgz has no index.node"; exit 1; }
 
       - uses: actions/upload-artifact@v4

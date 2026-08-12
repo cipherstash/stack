@@ -97,12 +97,23 @@ jobs:
             # The ABI is only visible in the dynamic section: the gnu build
             # links libc.so.6, the musl build does not (RUSTFLAGS drops
             # crt-static, so it stays dynamic against musl's own libc).
+            #
+            # `readelf` into a VARIABLE, never into `grep -q` — the same
+            # SIGPIPE-under-pipefail trap documented in
+            # _build-ffi-artifacts.yml, and here the musl branch fails OPEN.
+            # A poisoned pipeline is non-zero, the `if` below is therefore
+            # false, and the check reports "no glibc NEEDED entry" for the
+            # exact binary it exists to reject. A dynamic section is far longer
+            # than a tarball listing, so the writer is all but certain to still
+            # be writing when grep leaves.
             case "$platform" in
               linux-x64-gnu|linux-arm64-gnu)
-                readelf -d x/package/index.node | grep -q 'NEEDED.*libc\.so\.6' || {
+                dynamic=$(readelf -d x/package/index.node)
+                grep -q 'NEEDED.*libc\.so\.6' <<< "$dynamic" || {
                   echo "::error::$platform does not link glibc"; exit 1; } ;;
               linux-x64-musl)
-                if readelf -d x/package/index.node | grep -q 'NEEDED.*libc\.so\.6' ; then
+                dynamic=$(readelf -d x/package/index.node)
+                if grep -q 'NEEDED.*libc\.so\.6' <<< "$dynamic" ; then
                   echo "::error::linux-x64-musl links glibc — it is the gnu binary"
                   exit 1
                 fi
