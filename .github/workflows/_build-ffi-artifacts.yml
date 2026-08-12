@@ -255,9 +255,18 @@ jobs:
         # load.cts, which is right for local development and wrong here. The log
         # file differs per build script; `neon dist` reads it to locate the
         # artifact.
+        #
+        # `-n` is not optional here, though it looks it. The crate name defaults
+        # to `basename($npm_package_name)`, and that variable is set by a
+        # package-script run — NOT by `pnpm exec`, which is how this step has to
+        # invoke the binary to pass `-o`. Without it every platform fails with
+        # `error: $npm_package_name is not defined`. Upstream never met this:
+        # its `postcargo-build` / `postzig-build` hooks run `neon dist` as
+        # lifecycle scripts, where the variable exists.
         run: |
           set -euo pipefail
-          pnpm exec neon dist -o "platforms/${PLATFORM}/index.node" < "${BUILD_LOG}"
+          pnpm exec neon dist -n protect-ffi \
+            -o "platforms/${PLATFORM}/index.node" < "${BUILD_LOG}"
           test -s "platforms/${PLATFORM}/index.node"
 
       # `pnpm pack` writes into the packed package's own directory by default,
