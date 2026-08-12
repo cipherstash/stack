@@ -1,11 +1,22 @@
 name: Release JS
 
-# Permissions for the workflow to use Trusted Actions
+# READ-ONLY BY DEFAULT; the two jobs that publish escalate for themselves.
+#
+# npm trusted publishing is bound to a repository AND A WORKFLOW FILENAME, so
+# once this file is the registered publisher, an OIDC token minted by ANY job in
+# it is one npm accepts for a publish — the registry cannot tell `gate` apart
+# from `publish-ffi`. These three scopes were declared here, where they are a
+# default rather than a ceiling, and `gate` (a checkout and one `node` call) and
+# `ffi-artifacts` inherited all of them.
+#
+# Granting them per job is not the same fix as overriding the two that had them
+# wrongly: it makes omission the safe answer, so the next job added to this file
+# has to ASK for the publish credential in its own diff.
+#
 # See https://docs.npmjs.com/trusted-publishers#supported-cicd-providers
+# Enforced by scripts/__tests__/workflow-publish-permissions.test.mjs.
 permissions:
-  id-token: write  # Required for OIDC
-  contents: write  # Required for changesets to commit and push
-  pull-requests: write  # Required for changesets to check existing PRs
+  contents: read
 
 on:
   push:
@@ -15,12 +26,217 @@ on:
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
+  # WHAT STILL HAS TO BE PUBLISHED, asked of the registry rather than of the
+  # `.changeset/` directory. "No unconsumed changesets" is also true of an
+  # ordinary docs commit and of the commit right after a release, so gating the
+  # native matrix on that would fire it routinely; asking npm which committed
+  # versions are missing is exact.
+  #
+  # This gate is load-bearing. A false negative skips the FFI branch below, and
+  # `changeset publish` then packs the six platform workspaces — where
+  # `index.node` is a build output nobody produced — and publishes them. Every
+  # failure mode in scripts/release-gate.mjs therefore throws rather than
+  # reporting "nothing to publish".
+  gate:
+    name: What needs publishing?
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # `ffi` only. The gate also computes `js`, and it is in the job log, but no
+    # job can be keyed on it: `release` below has to run on every push to main
+    # to open and update the Version Packages PR, published or not. Declaring
+    # it as an output read nothing and implied a gate that does not exist.
+    outputs:
+      ffi: ${{ steps.gate.outputs.ffi }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      # No pnpm, no install. scripts/release-gate.mjs imports node builtins
+      # only and shells out to the runner image's npm — deliberately, because
+      # this job runs on EVERY push to main and no caching is permitted in a
+      # publishing workflow, so an install here is a cold full-workspace one
+      # (~1GB, node-pty's node-gyp rebuild included) to answer a question the
+      # tree already holds. See the header of that script.
+      - name: Compute the gate
+        id: gate
+        run: node scripts/release-gate.mjs
+
+  ffi-artifacts:
+    name: Build FFI artifacts
+    needs: [gate]
+    if: needs.gate.outputs.ffi == 'true'
+    uses: ./.github/workflows/_build-ffi-artifacts.yml
+    with:
+      ref: ${{ github.sha }}
+
+  publish-ffi:
+    name: Publish FFI packages
+    needs: [gate, ffi-artifacts]
+    if: needs.gate.outputs.ffi == 'true'
+    # GitHub-hosted for the same reason the release job is: npm rejects
+    # provenance from a self-hosted runner with E422. This job only uploads
+    # prebuilt tarballs, so it needs no toolchain beyond node and npm.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # the seven git tags and the GitHub release
+      id-token: write # npm OIDC trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ffi-tarballs
+          path: ffi-dist
+
+      # No `registry-url:`. setup-node with one writes a
+      # `//registry.npmjs.org/:_authToken` line into .npmrc, which shadows OIDC
+      # and fails every publish with E404.
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@^11.5.1
+
+      # BEFORE `changeset publish`, deliberately: changesets packs from the
+      # workspace, where the platform packages have no index.node, so running it
+      # first would publish six broken tarballs. Once these are on npm,
+      # changesets skips them ("is not being published because version X is
+      # already published on npm") and the ordering needs no extra condition.
+      #
+      # PLATFORM PACKAGES FIRST, WRAPPER LAST. A plain `*.tgz` glob is
+      # lexicographic and puts `cipherstash-protect-ffi-0.32.0.tgz` ahead of
+      # `cipherstash-protect-ffi-darwin-arm64-0.32.0.tgz` ('0' < 'd'), which
+      # would briefly publish a wrapper whose six optionalDependencies do not
+      # exist yet — and `npm install` during that window resolves no binding.
+      #
+      # Idempotent per tarball, so a re-run after a partial failure completes
+      # the set instead of aborting on the first already-published package.
+      - name: Publish the tarballs
+        id: publish
+        run: |
+          set -euo pipefail
+          meta () { tar xzOf "$1" package/package.json | node -p \
+            "JSON.parse(require('node:fs').readFileSync(0,'utf8')).$2"; }
+
+          shopt -s nullglob
+          wrapper=""
+          platforms=()
+          for tgz in ffi-dist/*.tgz ; do
+            if [ "$(meta "$tgz" name)" = "@cipherstash/protect-ffi" ]; then
+              wrapper="$tgz"
+            else
+              platforms+=("$tgz")
+            fi
+          done
+          test -n "$wrapper" || { echo "::error::no wrapper tarball"; exit 1; }
+          test "${#platforms[@]}" -eq 6 || {
+            echo "::error::expected 6 platform tarballs, got ${#platforms[@]}"; exit 1; }
+
+          published=()
+          for tgz in "${platforms[@]}" "$wrapper" ; do
+            name=$(meta "$tgz" name)
+            version=$(meta "$tgz" version)
+            if npm view "${name}@${version}" version >/dev/null 2>&1; then
+              echo "${name}@${version} already published — skipping"
+            else
+              npm publish --access public --provenance "$tgz"
+            fi
+            published+=("${name}@${version}")
+          done
+          printf '%s\n' "${published[@]}" > published.txt
+          echo "version=$(meta "$wrapper" version)" >> "$GITHUB_OUTPUT"
+
+      # Changesets tags only what IT published — `tagPublish` receives
+      # `publishedPackages.filter(p => p.result === "published")` — and it skips
+      # these seven as already-published. Without this step an FFI release has
+      # no git tag and no GitHub release at all.
+      - name: Tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ steps.publish.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Existence is not the question — where the tag POINTS is. A re-run
+          # after a partial failure must find its own tags and move on; a tag at
+          # a different commit means this version was released from another
+          # tree, and skipping silently would leave the published artifacts and
+          # the tagged source disagreeing with nothing in the log to say so.
+          #
+          # `git/matching-refs`, not `git/ref`. These tag names carry a slash
+          # (`@cipherstash/protect-ffi@0.32.0`), and `git/ref/{ref}` answers a
+          # non-exact match with an ARRAY of refs rather than an object — so
+          # `--jq .object.sha` yields nothing, the branch below reads "no tag",
+          # and the create then fails with 422 "Reference already exists" on a
+          # re-run that should have been a no-op. matching-refs always returns
+          # an array and an empty one for no match, so filtering it for the
+          # exact ref is well-defined in every case.
+          while read -r tag ; do
+            at=$(gh api "repos/${REPO}/git/matching-refs/tags/${tag}" \
+              --jq ".[] | select(.ref == \"refs/tags/${tag}\") | .object.sha" 2>/dev/null || true)
+            if [ -n "$at" ]; then
+              test "$at" = "$GITHUB_SHA" || {
+                echo "::error::tag ${tag} points at ${at}, not ${GITHUB_SHA}"; exit 1; }
+              echo "tag ${tag} already at this commit — skipping"
+            else
+              gh api -X POST "repos/${REPO}/git/refs" \
+                -f ref="refs/tags/${tag}" -f sha="$GITHUB_SHA" >/dev/null
+              echo "created ${tag}"
+            fi
+          done < published.txt
+
+          # Attached to the wrapper's own tag, which the loop above just
+          # created. A `protect-ffi-v<version>` release name would make
+          # `gh release create` mint an EIGHTH tag for the same commit;
+          # `--verify-tag` refuses to create a tag that does not already exist.
+          # The name matches what changesets produces for the JS packages.
+          rel="@cipherstash/protect-ffi@${VERSION}"
+          if ! gh release view "$rel" --repo "$REPO" >/dev/null 2>&1; then
+            gh release create "$rel" --repo "$REPO" --verify-tag \
+              --title "protect-ffi v${VERSION}" \
+              --notes "Native FFI bindings ${VERSION}. Published: $(tr '\n' ' ' < published.txt)"
+          fi
+          # Unconditional, and separate from creation: a release that exists
+          # with a partial asset set is what a failed re-run leaves behind, so
+          # skipping on existence is not idempotence. `--clobber` makes the
+          # complete case a no-op.
+          gh release upload "$rel" ffi-dist/*.tgz --repo "$REPO" --clobber
+
   release:
     name: Release
+    needs: [gate, publish-ffi]
+    # `always()` because `publish-ffi` is SKIPPED for an ordinary JS release,
+    # and a skipped dependency would otherwise skip this job too.
+    #
+    # The condition has to tell "skipped because FFI was unnecessary" apart from
+    # "skipped because its prerequisite failed". If `ffi-artifacts` fails,
+    # `publish-ffi` is SKIPPED rather than failed — so the obvious
+    # `result != 'failure'` check passes, and `changeset publish` goes on to
+    # pack and publish the platform workspaces without their binaries. Keyed on
+    # the gate's own output instead: if FFI was in scope, its publish must have
+    # SUCCEEDED.
+    if: >-
+      always() &&
+      needs.gate.result == 'success' &&
+      (
+        needs.gate.outputs.ffi != 'true' ||
+        needs.publish-ffi.result == 'success'
+      )
     # GitHub-hosted (not Blacksmith): npm provenance attestations, which are
     # generated automatically by OIDC trusted publishing, are only accepted
     # from github-hosted runners — self-hosted runners are rejected with E422.
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write # npm OIDC trusted publishing
+      contents: write # changesets commits and pushes the Version Packages branch
+      pull-requests: write # …and opens/updates the PR for it
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
@@ -55,7 +271,7 @@ jobs:
         run: npm install -g npm@^11.5.1
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Publish to npm
         id: changesets

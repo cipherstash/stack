@@ -392,9 +392,13 @@ selects changesets by `.endsWith('.md')`, so that extension is invisible to
 PR that repoints trusted publishing renames it back rather than reconstructing
 it from the git log.
 
-The GitHub Actions workflows under `.github/` in this directory are the previous
-repository's, kept as the reference for that port. GitHub does not read workflows
-from a subdirectory, so nothing there runs.
+The previous repository's GitHub Actions workflows were deposited under
+`.github/` in this directory by the subtree import and kept as the reference for
+that port. They are gone: the six-platform build matrix now lives in the
+repository-root `.github/workflows/_build-ffi-artifacts.yml`, with
+`ffi-preflight.yml` as its manually-dispatched dry run. Nothing under a package
+directory is ever executed by GitHub, which reads workflows from the repository
+root alone — `src/lintWiring.test.ts` fails if one comes back.
 
 ## Learn More
 

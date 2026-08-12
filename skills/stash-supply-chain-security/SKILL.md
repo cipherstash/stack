@@ -49,8 +49,13 @@ Two layers:
 
 CI uses `pnpm install --frozen-lockfile`. If `pnpm-lock.yaml` and any `package.json` drift, the install aborts — no silent registry fetches that bypass the locked versions.
 
-- **Where**: `.github/workflows/tests.yml`
-- **Test asserts**: every `pnpm install` invocation in tests.yml carries `--frozen-lockfile`
+- **Where**: every workflow under `.github/workflows/`, and every local composite action under `.github/actions/`
+- **Test asserts**: no `pnpm install` step anywhere in that graph is missing `--frozen-lockfile`
+
+The check used to read `tests.yml` alone, and `release.yml` — the one workflow
+that publishes to npm — ran a bare `pnpm install` the whole time. The single
+install allowed to resolve outside the lockfile was the one whose output goes to
+the registry.
 
 ### 5. Cooldown'd auto-updates — practice #6
 
@@ -131,18 +136,81 @@ npm view <pkg>@<version> --json | grep -A3 attestations
 
 Constraints baked into that workflow — don't undo them:
 
-- **`permissions: id-token: write`** is what mints the OIDC token. Without it every publish fails.
+- **`permissions: id-token: write`** is what mints the OIDC token. Without it every publish fails — but it belongs on the **publishing jobs**, never at the workflow level. A trusted publisher is registered against a repository *and a workflow filename*, so once `release.yml` is the registered publisher, npm accepts a token minted by **any** job in that file: the registry cannot tell the cheap every-push gate apart from the publish job. Declared at the top, it reaches every job that does not override it, including the one added next month by someone who never read this page. `release.yml` therefore grants `contents: read` at the workflow level and escalates per job, so a new job has to *ask* for the credential in its own diff. Enforced by `scripts/__tests__/workflow-publish-permissions.test.mjs`, which also holds the list of jobs allowed to hold it.
 - **`runs-on: ubuntu-latest`, not a self-hosted/Blacksmith runner.** npm rejects provenance from non-GitHub-hosted runners with E422.
 - **Never set `NPM_TOKEN`.** `changesets/action` writes a token `.npmrc` when it sees one, which shadows OIDC and fails every publish with E404 (npm/cli#8976).
 - **npm ≥ 11.5.1 and Node ≥ 22.14.** Node 22 ships npm 10.x, so the workflow installs `npm@^11.5.1` explicitly before publishing.
 - **No Actions cache in this workflow** (no `cache:`, `package-manager-cache: false`, `pnpm/action-setup` with `cache: false`). A poisoned cache entry would execute in a credential-bearing job. Enforced by `scripts/lint-no-workflow-caching.mjs`, which also follows any local composite action or reusable workflow the job reaches — the rule is about the whole call tree, not the one file.
-- **Every published `uses:` must be in that script's `AUDITED_ACTIONS` allowlist.** The gate cannot open a published action to check whether it caches, and the ones that do are not all named "cache" — a `setup-<tool>` action that caches by default has no `cache:` input and no telling name. So the list is what is *permitted*, and an action it has never met fails by default. Adding a step to `release.yml` or `tests-supply-chain.yml` means auditing the action and adding it there with the reason, in the same PR.
+- **Every published `uses:` must be in that script's `AUDITED_ACTIONS` allowlist.** The gate cannot open a published action to check whether it caches, and the ones that do are not all named "cache" — a `setup-<tool>` action that caches by default has no `cache:` input and no telling name. So the list is what is *permitted*, and an action it has never met fails by default. Adding a step to `release.yml`, `_build-ffi-artifacts.yml` or `tests-supply-chain.yml` means auditing the action and adding it there with the reason, in the same PR.
+- **Three actions must disable caching *explicitly*, and the input differs for each.** Allowlisting an action is not the same as it being safe by default:
+
+  | Action | Input | Its default | Required |
+  |---|---|---|---|
+  | `pnpm/action-setup` | `cache` | `false` | `cache: false` |
+  | `actions/setup-node` | `package-manager-cache` | **`true`** | `package-manager-cache: false` |
+  | `jdx/mise-action` | `cache` | **`true`** | `cache: false` |
+
+  ```yaml
+  - uses: jdx/mise-action@<sha> # v3.6.3
+    with:
+      install: true
+      working_directory: packages/protect-ffi
+      cache: false # defaults to TRUE — omitting this restores the Actions cache
+  ```
+
+  Omitting the key is not "no caching" for the bottom two, it is caching spelled invisibly. The gate's generic rule only fires on a *truthy* `cache:` value, so a missing key is invisible to it — which is exactly how a `mise-action` step with no `cache:` passed until each action got its own explicit-`false` assertion.
+
+### The native-binding publish path
+
+`@cipherstash/protect-ffi` and its six `@cipherstash/protect-ffi-<platform>`
+packages ship compiled binaries, which `changeset publish` cannot produce: it
+packs from the workspace, where `index.node` is a build output. So `release.yml`
+publishes them itself, before changesets runs, and the same constraints apply to
+that job — GitHub-hosted runner, `id-token: write`, no `NPM_TOKEN`,
+npm ≥ 11.5.1, no Actions cache.
+
+- `scripts/release-gate.mjs` asks the registry which committed versions are
+  missing. It is not a cost optimisation: if it wrongly reports nothing to
+  publish, changesets publishes six platform packages with no binary in them.
+  Every failure mode in it throws rather than answering "nothing to publish".
+- `_build-ffi-artifacts.yml` is a reusable workflow, and only builds. npm
+  validates a trusted publish against the **entry-point** workflow's filename,
+  and its docs call out `workflow_call` as a known issue: *"validation checks
+  the calling workflow's name instead of the workflow that actually contains the
+  publish command, which can cause configuration mismatches"*, with
+  `id-token: write` required in **both** parent and child. A publish inside a
+  reusable workflow is therefore validated against whichever workflow called it.
+  Keeping it in `release.yml` — the registered filename, as an entry-point job
+  rather than a call — is correct whichever way that resolves. The reusable
+  workflow is on the no-caching gate's target list for the same reason
+  `release.yml` is: everything it produces gets published.
+- Platform packages publish **before** the wrapper. The wrapper's six
+  `optionalDependencies` are exact versions, so publishing it first exposes a
+  version whose binaries do not exist yet.
+- `ffi-preflight.yml` is the dry run — `changeset publish` has no `--dry-run`.
+  Dispatch it against a Version Packages branch and it builds the real tarballs,
+  checks each binary's architecture and libc, installs the host pair and loads
+  it. It cannot publish, and "no `id-token`" is only half of why: that closes
+  the OIDC path, while a plain `NPM_TOKEN` would still authenticate one. Both
+  are absent — the workflow grants `contents: read`, passes no secrets (no
+  `secrets: inherit` on its call into the build workflow), sets no
+  `registry-url` (which is what writes an `_authToken` line into `.npmrc`), and
+  names no `NPM_TOKEN` or `NODE_AUTH_TOKEN`. Keep it that way; adding any one of
+  them turns a dry run into a publisher.
 
 Trusted publishing is configured **per package** on npmjs.com (package settings →
 Trusted publisher → GitHub Actions): owner/repo `cipherstash/stack`, workflow
 filename `release.yml` (filename only, with extension — not a path), environment
 blank. npm does not validate this on save, so a typo only surfaces as a failed
-publish.
+publish. For configurations created after 2026-05-20 npm also requires an
+explicit **Allowed actions** selection — pick `npm publish`.
+
+**`repository.url` must exactly match the publishing repository**
+(`https://github.com/cipherstash/stack`). npm checks it on a trusted publish and
+rejects a mismatch; nothing warns beforehand. A package moved between
+repositories needs its manifest updated in the same change as its publisher —
+and for a package published from a subdirectory, `repository.directory` is
+resolved from that repository's root, so it moves too.
 
 ### Publishing a package name for the first time
 

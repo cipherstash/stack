@@ -10,17 +10,25 @@ const TARGETS = process.argv.slice(2).length
   ? process.argv.slice(2)
   : [
       '.github/workflows/release.yml',
+      // Everything it builds is packed and published with provenance by
+      // release.yml's publish-ffi job, so a poisoned restore here lands in a
+      // tarball on npm. Reached from release.yml anyway (the traversal follows
+      // a job-level `uses:`), and named here so `ffi-preflight.yml` — which
+      // calls it too — cannot become a way to build these artifacts under
+      // different rules.
+      '.github/workflows/_build-ffi-artifacts.yml',
       '.github/workflows/tests-supply-chain.yml',
     ]
 
 // `uses:` values that pull in the GitHub Actions cache directly.
 const CACHE_ACTION = /^actions\/cache(\/(restore|save))?@/
 
-// Steps that must disable their built-in caching *explicitly* — leaving the
-// key off and relying on the default is not enough: the gate asserts intent.
-const PNPM_ACTION_SETUP = /^pnpm\/action-setup(@|$)/
-const SETUP_NODE = /^actions\/setup-node(@|$)/
-
+// An action that caches must be told not to *explicitly* — leaving the key off
+// and relying on the default is not enough, and for two of the three it is not
+// even "no caching": their input defaults to true. Which input does it, per
+// action, is recorded on the allowlist entry below (`cacheInput`) rather than
+// in a parallel list here, so the audit and the requirement cannot drift.
+//
 // A `uses:` naming a directory in this checkout rather than a published action.
 // GitHub requires the `./` prefix for those, so anything without it is an
 // `owner/repo@ref` or `docker://` reference with nothing here to open.
@@ -89,29 +97,64 @@ const PARENT_USES = /^\.\.\//
 // it was added to — the person adding it is the person told to audit it, in the
 // same PR. A denylist's staleness is an `OK`.
 //
-// The cost is bounded and was measured before choosing it, not assumed. The two
-// targeted workflows are deliberately minimal and reach exactly four actions
-// between them (all four are below); traversal is target-scoped, so nothing
-// outside what release.yml and tests-supply-chain.yml reach is constrained; and
-// they reach no local composite and no reusable workflow today. Adding an
-// action to the npm-publishing workflow costs one line here plus a sentence
-// saying why — which is the review that workflow warrants regardless.
+// The cost is bounded. The three targeted workflows are deliberately minimal
+// and reach seven actions between them (all seven are below); traversal is
+// target-scoped, so nothing outside what they reach is constrained. Adding an
+// action to the npm-publishing path costs one entry here plus a sentence saying
+// why — which is the review that path warrants regardless.
+//
+// `release.yml` does now reach a reusable workflow (`ffi-artifacts` calls
+// `_build-ffi-artifacts.yml`), and `followReusableWorkflow` walks into it, so
+// its jobs are audited as though they were written inline.
 //
 // LOCAL `uses:` IS EXEMPT, and deliberately so: this gate opens a `./` action
 // and reads every one of its steps, so it is audited by construction rather
 // than trusted. Listing it here would report the composite and bury the
 // `actions/cache` inside it — the finding that actually matters.
-const AUDITED_ACTIONS = new Set([
+// ONE ENTRY PER ACTION, carrying BOTH halves of the audit: that a human read
+// it, and what they found about its caching. `cacheInput` is the input that
+// turns its built-in caching off, or `null` for an action that has none.
+//
+// The two used to be separate lists — a bare `Set` here, and hand-written
+// regex/input pairs above — which is exactly the shape this file warns about a
+// few paragraphs up: "This file already carries two hand-maintained members of
+// that class … they are here only because somebody happened to notice. Nothing
+// would have caught the third." The third (`jdx/mise-action`, which caches BY
+// DEFAULT) was indeed caught by noticing, after it had shipped. Keyed together,
+// adding an entry forces answering "which input disables its caching?" at the
+// moment of the audit, rather than after someone reproduces the miss against a
+// probe workflow.
+//
+// Keyed on `actionPath(uses)` — lowercased, `@ref` stripped — so the lookup and
+// the explicit-`false` requirement cannot disagree about which action a step
+// is. They could before: the allowlist matched case-insensitively while the
+// rules tested the raw `uses:`, so `Actions/Setup-Node@v6.5.0` was audited and
+// then skipped its `package-manager-cache: false` requirement.
+const AUDITED_ACTIONS = new Map([
   // First-party checkout. No cache of its own.
-  'actions/checkout',
-  // Both cache on request only, and the explicit-`false` rules above assert
-  // that these two are told not to — they are on this list *and* separately
-  // constrained.
-  'actions/setup-node',
-  'pnpm/action-setup',
+  ['actions/checkout', { cacheInput: null }],
+  // `package-manager-cache` DEFAULTS TO TRUE (read from action.yml at the
+  // pinned v6.5.0). Whether the default becomes a restore depends on
+  // package.json metadata the action recognises, so the explicit `false`
+  // removes the dependence on that detail.
+  ['actions/setup-node', { cacheInput: 'package-manager-cache' }],
+  // `cache` defaults to 'false' at the pinned v6.0.10; the explicit setting
+  // records intent.
+  ['pnpm/action-setup', { cacheInput: 'cache' }],
   // release.yml's publish step. Runs `pnpm run release` and talks to npm over
   // OIDC; no cache, no cache input.
-  'changesets/action',
+  ['changesets/action', { cacheInput: null }],
+  // Artifact transport between the build matrix and the publish job. Neither
+  // touches the GitHub Actions cache: they use the artifact API, a different
+  // per-run store with no cross-run key.
+  ['actions/upload-artifact', { cacheInput: null }],
+  ['actions/download-artifact', { cacheInput: null }],
+  // Supplies zig + cargo-zigbuild (the glibc-pinned gnu builds) and wasm-pack,
+  // all pinned in packages/protect-ffi/mise.toml. `cache` DEFAULTS TO TRUE, so
+  // an omitted key is a cache restore — and the generic `with.cache` rule below
+  // fires only on a truthy value, which is how a mise-action step carrying no
+  // `cache:` passed this gate. SHA-pinned at every call site.
+  ['jdx/mise-action', { cacheInput: 'cache' }],
 ])
 
 // A secondary, deliberately over-broad read of the action's name. It is NOT the
@@ -135,7 +178,7 @@ const AUDITED_ACTIONS = new Set([
 // done the fail-closed work.
 const CACHE_SHAPED_ACTION = /cache/i
 
-for (const audited of AUDITED_ACTIONS) {
+for (const audited of AUDITED_ACTIONS.keys()) {
   if (CACHE_SHAPED_ACTION.test(audited)) {
     throw new Error(
       `AUDITED_ACTIONS must not contain a cache action, found "${audited}". ` +
@@ -260,16 +303,14 @@ function checkStep(step, at, bodyAudited = false) {
   const uses = usesOf(step)
   if (uses === null) return
 
-  // Explicit-disable assertions for the package-manager setup actions. Both are
-  // allowlisted, so these are the additional constraint on them, not a
-  // substitute for one.
-  if (PNPM_ACTION_SETUP.test(uses)) {
-    const reason = explicitFalseReason(step, 'cache')
-    if (reason) offenders.push(`${at}: pnpm/action-setup ${reason}`)
-  }
-  if (SETUP_NODE.test(uses)) {
-    const reason = explicitFalseReason(step, 'package-manager-cache')
-    if (reason) offenders.push(`${at}: actions/setup-node ${reason}`)
+  // The explicit-disable requirement, read off the allowlist entry rather than
+  // from a parallel list of per-action rules. An audited action that caches is
+  // an additional constraint on it, not a substitute for being audited.
+  const path = actionPath(uses)
+  const cacheInput = AUDITED_ACTIONS.get(path)?.cacheInput
+  if (cacheInput) {
+    const reason = explicitFalseReason(step, cacheInput)
+    if (reason) offenders.push(`${at}: ${path} ${reason}`)
   }
 
   // One verdict per `uses:`, most specific first — a step reported twice reads
@@ -289,11 +330,11 @@ function checkStep(step, at, bodyAudited = false) {
         'local `uses:` that starts with `./`, and this gate will not follow one ' +
         'out of the workspace root, so these steps cannot be audited',
     )
-  } else if (CACHE_SHAPED_ACTION.test(actionPath(uses))) {
+  } else if (CACHE_SHAPED_ACTION.test(path)) {
     offenders.push(
       `${at}: uses \`${uses}\` — a third-party cache action (GitHub Actions cache)`,
     )
-  } else if (!AUDITED_ACTIONS.has(actionPath(uses))) {
+  } else if (!AUDITED_ACTIONS.has(path)) {
     offenders.push(
       `${at}: uses \`${uses}\` — not in AUDITED_ACTIONS. This gate cannot read ` +
         'a published action’s steps, so it cannot prove this one does not cache',

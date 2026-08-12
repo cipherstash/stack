@@ -1,0 +1,12 @@
+# actionlint validates every `runs-on:` against the list of GitHub-hosted runner
+# labels it ships with. Blacksmith runners are self-hosted from its perspective,
+# so without this file each of the fourteen jobs using one is reported as an
+# unknown label — and the release lint gate (.github/workflows/lint-release.yml)
+# would be red on the day it lands, for reasons that have nothing to do with the
+# release machinery it exists to check.
+#
+# Nothing complained before because actionlint has never run in this repository;
+# lint-release.yml is what introduces it.
+self-hosted-runner:
+  labels:
+    - blacksmith-4vcpu-ubuntu-2404

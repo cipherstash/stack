@@ -1,0 +1,85 @@
+name: Lint release tooling
+
+# The release machinery runs roughly once per release, so a syntax error, a
+# shell mistake or an unknown runner label in it surfaces at the worst possible
+# moment — mid-release, with a Version PR already merged. This runs on every
+# pull request that touches any of it.
+#
+# actionlint is introduced here and nowhere else in the repo. It reads
+# `.github/actionlint.yaml` for the Blacksmith runner label, and it runs
+# shellcheck over every `run:` block — which is why the workflows it gates
+# avoid `sed`-into-`export` (SC2001, SC2155), `ls | wc -l` (SC2012), and
+# dollar-braces or backticks inside single-quoted `node -e` arguments (SC2016).
+
+on:
+  pull_request:
+    # Exactly what the job reads: the four workflows actionlint is pointed at,
+    # plus the config it resolves the Blacksmith label from. The filter also
+    # named scripts/release-gate.mjs, scripts/ffi-release-matrix.mjs,
+    # scripts/lint-no-workflow-caching.mjs and package.json — none of which this
+    # job looks at, since it deliberately does not run `test:scripts` (see the
+    # job comment). Editing one booted a runner and downloaded a Go binary to
+    # lint four unchanged files, which is how a job trains reviewers to ignore
+    # it. `tests.yml`'s `lint` job runs `test:scripts` unfiltered on every PR,
+    # so those four are already covered.
+    #
+    # `lint-release-scope.test.mjs` asserts this list and the actionlint
+    # argument list below stay the same set.
+    paths:
+      - .github/workflows/release.yml
+      - .github/workflows/_build-ffi-artifacts.yml
+      - .github/workflows/ffi-preflight.yml
+      - .github/workflows/lint-release.yml
+      - .github/actionlint.yaml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # No pnpm, no Node, no install: actionlint is a downloaded Go binary and
+  # shellcheck ships in the runner image, so this job is a checkout and one
+  # command.
+  #
+  # It deliberately does NOT also run `test:scripts` or `lint:workflow-cache`.
+  # `tests.yml`'s `lint` job runs `test:scripts` on every pull request with no
+  # path filter, and `tests-supply-chain.yml` runs both — so a copy here would
+  # be the second and third run of the same checks on any PR touching the
+  # release machinery, each behind its own uncached full-workspace install. What
+  # this workflow uniquely has is actionlint.
+  lint:
+    name: actionlint (release workflows)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          echo "$PWD" >> "$GITHUB_PATH"
+
+      # Scoped to the release workflows rather than the whole directory: this
+      # gate has to be green on the day it lands, and actionlint has never run
+      # over the other twelve. Widening it is its own change, with its own
+      # findings to work through.
+      - name: actionlint (release workflows)
+        run: |
+          set -euo pipefail
+          actionlint \
+            .github/workflows/release.yml \
+            .github/workflows/_build-ffi-artifacts.yml \
+            .github/workflows/ffi-preflight.yml \
+            .github/workflows/lint-release.yml
+

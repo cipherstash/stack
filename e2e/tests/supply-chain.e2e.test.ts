@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, globSync, readFileSync } from 'node:fs'
+import { existsSync, globSync, readdirSync, readFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import semver from 'semver'
@@ -249,6 +249,189 @@ describe('supply chain — pnpm-lock.yaml integrity', () => {
   })
 })
 
+describe('supply chain — every workflow installs with --frozen-lockfile', () => {
+  /**
+   * The rule is "CI uses `pnpm install --frozen-lockfile`", and it was checked
+   * in one workflow. `release.yml` — the one workflow that publishes to npm —
+   * ran a bare `pnpm install` from the day it was written, so the single
+   * install permitted to resolve outside the lockfile was the one whose output
+   * goes to the registry. A lockfile-free install there can pick up a version
+   * nobody reviewed and publish artifacts built against it.
+   *
+   * Scanned across the directory, and through local composite actions, for the
+   * same reason the caching gate is: `.github/actions/integration-setup`
+   * installs on behalf of four jobs, and a rule that stops at the workflow file
+   * makes "move it into a composite" the way around it.
+   */
+  /**
+   * `pnpm … install` / `pnpm … i` as a whole token.
+   *
+   * The `i` alternative is not decoration: `scripts/__tests__/workflow-node-gyp.test.mjs`
+   * matches it and pins `pnpm i --frozen-lockfile` as a spelling this repo uses,
+   * so a narrower pattern here would leave the two guards disagreeing about what
+   * an install IS — the node-gyp rule would cover a `pnpm i` step and this one
+   * would not.
+   */
+  const PNPM_INSTALL = /(?:^|[\s;&|(])pnpm\s+(?:[^\n]*\s)?(?:install|i)(?:\s|$)/
+
+  /**
+   * A step's `run:` body as the commands it actually runs, one per entry.
+   *
+   * PER COMMAND, not per step, and the difference is a real hole rather than a
+   * refinement: a step holding both `pnpm install` and, later,
+   * `pnpm install --frozen-lockfile` satisfies a whole-body search for the flag
+   * while still running the unpinned install.
+   *
+   * A NEWLINE IS NOT WHAT SEPARATES TWO COMMANDS — shell separators do, and
+   * splitting on newlines alone left `pnpm install; pnpm install
+   * --frozen-lockfile` as one "command" carrying the flag, which is the same
+   * defect one level down. `;`, `&&`, `||`, `|` and a trailing `&` all start a
+   * new command, so all of them split.
+   *
+   * The split is quote-blind: `echo "pnpm install; ok"` becomes two fragments.
+   * That is a false POSITIVE at worst — a reported offender that is not one —
+   * and the pattern was already quote-blind before this, since it matched
+   * `pnpm install` inside an `echo` just the same. Fail-closed is the right
+   * direction here.
+   *
+   * Backslash continuations are joined first, so an install whose flag sits on
+   * the next line is still one command and still passes.
+   */
+  const commandsOf = (run: string): string[] =>
+    run
+      .replace(/\\\r?\n\s*/g, ' ')
+      .split(/\r?\n|;|&&|\|\||\||&/)
+      .map((fragment) => fragment.trim())
+      .filter((fragment) => fragment !== '' && !fragment.startsWith('#'))
+
+  /**
+   * The installs in one `run:` body that resolve outside the lockfile.
+   *
+   * One definition, used by both the property test and the repo sweep below —
+   * two copies of the predicate would let the test pin a rule the sweep no
+   * longer applies.
+   */
+  const unpinnedInstalls = (run: string): string[] =>
+    commandsOf(run).filter(
+      (command) =>
+        PNPM_INSTALL.test(command) && !/--frozen-lockfile\b/.test(command),
+    )
+
+  const stepsOf = (relPath: string): Array<{ run?: string }> => {
+    const doc = readYaml(relPath) as {
+      jobs?: Record<string, { steps?: Array<{ run?: string }> }>
+      runs?: { steps?: Array<{ run?: string }> }
+    }
+    return [
+      ...Object.values(doc?.jobs ?? {}).flatMap((job) => job?.steps ?? []),
+      ...(doc?.runs?.steps ?? []),
+    ]
+  }
+
+  const files = [
+    ...globSync('.github/workflows/*.{yml,yaml}', { cwd: REPO_ROOT }),
+    // `**` because a composite action does not have to sit one level down:
+    // `uses: ./.github/actions/group/name` is valid, and the flat glob that
+    // covers today's four would silently stop covering a grouped one. Workflows
+    // stay flat on purpose — GitHub reads `.github/workflows/*` and does not
+    // descend, so a nested file there is not a workflow at all.
+    ...globSync('.github/actions/**/action.{yml,yaml}', { cwd: REPO_ROOT }),
+  ].sort()
+
+  it('scans every workflow GitHub reads, with no slack', () => {
+    // Equality against the directory, not a floor with room in it: a
+    // `length > N` guard lets N files drop out of the scan before anything
+    // notices, and this repo has already been bitten by that shape (see the
+    // mutation note in scripts/__tests__/ffi-binding-step-order.test.mjs). The
+    // offender check below is one aggregated assertion, so a file falling out
+    // of `files` does not delete a visible test — it silently narrows this one.
+    const workflows = readdirSync(join(REPO_ROOT, '.github/workflows'))
+      .filter((name) => /\.ya?ml$/.test(name))
+      .map((name) => `.github/workflows/${name}`)
+      .sort()
+    expect(files.filter((f) => f.startsWith('.github/workflows/'))).toEqual(
+      workflows,
+    )
+    // The composite half cannot be compared to a directory listing the same
+    // way — `.github/actions/*` holds directories, not manifests — so it gets
+    // the floor the other half no longer needs.
+    expect(files).toContain('.github/actions/integration-setup/action.yml')
+  })
+
+  it('reads one command at a time, so a later flag cannot cover an earlier install', () => {
+    // The property, pinned against synthetic input rather than against the
+    // repo: a repo that happens to be clean says nothing about how strict the
+    // checker is. A step holding both installs is the shape a whole-body search
+    // for the flag waves through.
+    expect(
+      unpinnedInstalls('pnpm install\npnpm install --frozen-lockfile'),
+    ).toEqual(['pnpm install'])
+
+    // A continuation is one command, not two, so the flag on the next line
+    // still counts.
+    expect(unpinnedInstalls('pnpm install \\\n  --frozen-lockfile')).toEqual([])
+
+    // A comment naming the flag is not the flag.
+    expect(
+      unpinnedInstalls('# always --frozen-lockfile\npnpm install'),
+    ).toEqual(['pnpm install'])
+
+    // `pnpm i` is an install. The node-gyp guard already treats it as one.
+    expect(unpinnedInstalls('pnpm i')).toEqual(['pnpm i'])
+    expect(unpinnedInstalls('pnpm i --frozen-lockfile')).toEqual([])
+
+    // …and `pnpm run install-x` is not, despite containing the word.
+    expect(unpinnedInstalls('pnpm run install-deps')).toEqual([])
+  })
+
+  it('splits shell separators, so one line cannot hide an unpinned install', () => {
+    // The same defect as the multi-line case, one level down. Splitting on
+    // newlines alone leaves `pnpm install; pnpm install --frozen-lockfile` as a
+    // single "command" that contains the flag — so the guard reports nothing
+    // while the first install resolves outside the lockfile. A `run:` block is
+    // shell, and shell does not need a newline to run two commands.
+    expect(
+      unpinnedInstalls('pnpm install; pnpm install --frozen-lockfile'),
+    ).toEqual(['pnpm install'])
+
+    // Every separator that starts a new command, not just `;`.
+    expect(
+      unpinnedInstalls('pnpm install --frozen-lockfile && pnpm install'),
+    ).toEqual(['pnpm install'])
+    expect(
+      unpinnedInstalls('pnpm i || pnpm install --frozen-lockfile'),
+    ).toEqual(['pnpm i'])
+    expect(unpinnedInstalls('echo start | pnpm install')).toEqual([
+      'pnpm install',
+    ])
+
+    // A pinned install keeps passing when it shares a line with other work —
+    // the split must not turn the flag into a different command from the
+    // install it belongs to.
+    expect(
+      unpinnedInstalls(
+        'echo start && pnpm install --frozen-lockfile && echo done',
+      ),
+    ).toEqual([])
+  })
+
+  it('carries --frozen-lockfile on every install', () => {
+    const offenders = files.flatMap((file) =>
+      stepsOf(file)
+        .filter((step) => typeof step.run === 'string')
+        .flatMap((step) =>
+          unpinnedInstalls(step.run as string).map(
+            (command) => `${file}: ${command}`,
+          ),
+        ),
+    )
+    expect(
+      offenders,
+      'A CI install that is not `--frozen-lockfile` resolves versions the lockfile does not name, with no review and no record.',
+    ).toEqual([])
+  })
+})
+
 describe('supply chain — CI hardening (.github/workflows/tests.yml)', () => {
   const workflow = readYaml('.github/workflows/tests.yml') as {
     jobs: Record<
@@ -264,22 +447,12 @@ describe('supply chain — CI hardening (.github/workflows/tests.yml)', () => {
     >
   }
 
-  it('every `pnpm install` invocation uses --frozen-lockfile', () => {
-    // Allow flag tokens (e.g. `pnpm --filter=foo install`, `pnpm -w install`)
-    // between `pnpm` and `install`, but not arbitrary words — that would
-    // false-match scripts like `pnpm run install-x`.
-    const PNPM_INSTALL = /\bpnpm\b(?:\s+-{1,2}\S+)*\s+install\b/
-    for (const [jobName, job] of Object.entries(workflow.jobs)) {
-      const installSteps = job.steps.filter(
-        (s) => typeof s.run === 'string' && PNPM_INSTALL.test(s.run),
-      )
-      for (const step of installSteps) {
-        expect(step.run, `${jobName} step "${step.run}"`).toMatch(
-          /--frozen-lockfile/,
-        )
-      }
-    }
-  })
+  // The `--frozen-lockfile` check that used to live here is gone, not moved by
+  // accident: the describe above supersedes it in both directions — every
+  // workflow and composite rather than this one file, and per command rather
+  // than per step body. Keeping the narrower copy would be worse than
+  // redundant, because it PASSES on inputs the broader one fails, so a reader
+  // who found it first would get a wrong answer about what this repo enforces.
 
   it('every pnpm-using job runs on Node 22 (literal or matrix incl. 22)', () => {
     for (const [jobName, job] of Object.entries(workflow.jobs)) {

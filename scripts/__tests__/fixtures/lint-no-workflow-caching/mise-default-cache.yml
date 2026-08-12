@@ -1,0 +1,17 @@
+name: Mise Default Cache
+# `jdx/mise-action`'s `cache:` input defaults to TRUE, so omitting the key is
+# not "no caching" — it is caching, spelled invisibly. The `with.cache` rule
+# only fires on a truthy value, so before the explicit-`false` rule covered this
+# action a workflow shaped exactly like this one passed the gate.
+on:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+        with:
+          install: true
+          working_directory: packages/protect-ffi

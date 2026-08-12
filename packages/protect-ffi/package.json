@@ -3,12 +3,12 @@
   "version": "0.31.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cipherstash/protectjs-ffi.git"
+    "url": "git+https://github.com/cipherstash/stack.git"
   },
   "bugs": {
-    "url": "https://github.com/cipherstash/protectjs-ffi/issues"
+    "url": "https://github.com/cipherstash/stack/issues"
   },
-  "homepage": "https://github.com/cipherstash/protectjs-ffi#readme",
+  "homepage": "https://github.com/cipherstash/stack#readme",
   "description": "Native FFI bindings to the CipherStash Client SDK — powers @cipherstash/stack",
   "main": "./lib/index.cjs",
   "scripts": {

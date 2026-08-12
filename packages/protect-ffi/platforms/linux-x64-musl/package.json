@@ -4,8 +4,8 @@
   "version": "0.31.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cipherstash/protectjs-ffi.git",
-    "directory": "platforms/linux-x64-musl"
+    "url": "git+https://github.com/cipherstash/stack.git",
+    "directory": "packages/protect-ffi/platforms/linux-x64-musl"
   },
   "os": [
     "linux"

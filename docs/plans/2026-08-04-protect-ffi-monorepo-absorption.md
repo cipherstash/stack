@@ -14,7 +14,7 @@
 - **Publish jobs run on GitHub-hosted runners.** npm rejects provenance from self-hosted with E422. Build matrices may stay on Blacksmith.
 - **Publish workflows must never restore the GitHub Actions cache.** Enforced by `scripts/lint-no-workflow-caching.mjs`. This is why upstream's `.github/actions/setup` composite action is **not** ported wholesale — it sets `cache: npm` on `setup-node` and `cache: true` on `mise-action`.
 - **npm >= 11.5.1 is required for OIDC trusted publishing**, installed *after* any `mise-action` step.
-- **Trusted publishing binds to `(repository, workflow filename)`.** The job performing a publish must live in the registered file. Reusable workflows are fine for building artifacts, not for publishing.
+- **npm validates a trusted publish against the ENTRY-POINT workflow's filename.** Its docs record `workflow_call` as a known issue — *"validation checks the calling workflow's name instead of the workflow that actually contains the publish command"* — and require `id-token: write` in both parent and child. So a publish inside a reusable workflow is validated against whichever workflow called it; keeping the publish in `release.yml`, as an entry-point job, is correct whichever way that resolves. Reusable workflows are for building artifacts.
 - **`repository.url` must exactly match the publishing GitHub repository** — verified against <https://docs.npmjs.com/trusted-publishers/>: *"your package's `repository.url` field in `package.json` must exactly match your GitHub repository."*
 - **No `NPM_TOKEN` in the release workflow.** `changesets/action` writes a token `.npmrc` that shadows OIDC; every publish then fails with E404 (npm/cli#8976).
 - **`pnpm pack` takes no positional directory argument.** Use `pnpm --dir <dir> pack` or `pnpm --filter <name> pack`. See Task 4.
@@ -43,11 +43,15 @@
 
 **Working-tree state is not part of this plan's guarantees.** An earlier revision claimed "working tree clean"; that was true when written and false shortly after. A prior rewrite of this document was lost by being left uncommitted across a branch switch — **commit plan edits in the session that makes them.**
 
-**Remaining: phases 3, 4, 5.** Phase 3 is specified as executable tasks below. Phase 4 contains the only irreversible steps. Phase 5 is blocked until phase 4 publishes.
+**Phase 3 is built; phases 4 and 5 remain.** Phase 4 contains the only
+irreversible steps and requires seven manual npmjs.com changes. Phase 5 is
+blocked until phase 4 publishes.
 
-**Phase 3 Task 0 is committed (`70e1f7da`) and awaiting a CI run.** It is the
-prerequisite for everything after it: PR #858's board is red without it, so no
-later task can be verified against a green baseline.
+The pipeline is inert until a version is unpublished, and
+`scripts/lint-no-ffi-changeset.mjs` is what keeps that from happening early: an
+FFI changeset stays parked as `.changeset/<name>.md.deferred` until the cutover
+PR renames it. Two are waiting — `protect-ffi-lazy-load.md.deferred` and
+`protect-ffi-repository-url.md.deferred`.
 
 ### Phase 3 progress
 
@@ -61,6 +65,51 @@ later task can be verified against a green baseline.
 | `dfb8f4d3` | The `integration-tests/` suite runs from a root workflow again |
 | `48fb5254` | `lintWiring` exemptions made mechanically checkable; dead `release`/`dryrun` scripts removed |
 | `b5ab1ee5` | Dependabot monitors the in-tree Cargo workspace |
+| `dc6db45c` | Task 1 — the crate is `publish = false`, with a guard over every workspace member |
+| `6ce84816` | Task 2 — all seven manifests, the crate manifest and the runtime issue URL name `cipherstash/stack` |
+| `a9210f69` | Task 3 — `scripts/release-gate.mjs` and its tests |
+| `3f6ca3e8` | Task 4 — `_build-ffi-artifacts.yml`, the matrix script, `.github/actionlint.yaml` |
+| `c1a40299` | Task 5 — gate → artifacts → publish-ffi → changesets, tags and release included |
+| `37c89ecb` | Task 6 — `lint-release.yml` |
+| `54fd265e` | Task 7 — `ffi-preflight.yml` |
+| `872f6f97` | Task 8 — `packages/protect-ffi/.github/` deleted, `lintWiring` guards its absence |
+
+**Phase 3 is complete except for one step that cannot run yet.** Task 7 Step 3
+dispatches `ffi-preflight.yml`, and `workflow_dispatch` is resolved from the
+default branch — so the button does not exist until this merges. Everything else
+is done and verified locally.
+
+### Where the build departed from this plan
+
+Six deviations, each a correction to something the plan specified:
+
+1. **The matrix is a script, not `node -e` in the workflow.**
+   `scripts/ffi-release-matrix.mjs` plus `scripts/__tests__/ffi-release-matrix.test.mjs`.
+   The plan itself argues that all three derived fields are silently wrong if
+   ported verbatim — that is an argument for testing them. The test derives the
+   log filename from the package's own scripts, so moving a redirect fails it.
+2. **`rustup target add`, not `dtolnay/rust-toolchain`.** Every runner image
+   here ships rustup, `tests-rust.yml` and `build-ffi-binding` already do it
+   this way, and the alternative means allowlisting a fourth remote action in
+   the no-caching gate.
+3. **Pack to the package directory and `mv`, not `--pack-destination`.**
+   Verified: under `--dir`, a relative `--pack-destination` resolves against the
+   package directory rather than the CWD. The plan's absolute
+   `${{ github.workspace }}/…` spelling would work, but only the relative form
+   is identical on the Windows runner.
+4. **`AUDITED_ACTIONS` needed three entries**, which the plan did not mention:
+   `actions/upload-artifact`, `actions/download-artifact` and `jdx/mise-action`.
+   Adding the workflow to `TARGETS` without them fails the gate — correctly, and
+   loudly.
+5. **The caching lint's two copies of the target list are now checked against
+   each other.** The plan noted that nothing asserted they agree; the test reads
+   the script's real target list out of its success output, and the per-target
+   `actions/cache` checks are generated from it.
+6. **The frozen-lockfile rule got the guard it was documented to have.** Task 5
+   Step 1 fixes `release.yml`'s bare `pnpm install`; the supply-chain e2e check
+   that was supposed to prevent that read `tests.yml` alone. It now scans every
+   workflow and every local composite action. Mutation-checked: reverting the
+   fix fails the new check and leaves the old one green.
 
 ### The absorption was audited against upstream
 
@@ -295,7 +344,7 @@ The crate has never been on crates.io (verified via its API) but carries no `pub
 
 **Interfaces:** Guard only; nothing consumes it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```js
 // scripts/__tests__/cargo-publish-opt-out.test.mjs
@@ -330,12 +379,12 @@ describe('cargo publish opt-out', () => {
 })
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run --config scripts/vitest.config.mjs cargo-publish-opt-out`
 Expected: FAIL — `protect-ffi declares publish = false unless allowlisted`
 
-- [ ] **Step 3: Add the opt-out**
+- [x] **Step 3: Add the opt-out**
 
 In `packages/protect-ffi/crates/protect-ffi/Cargo.toml`, in `[package]`, after the `version` line:
 
@@ -347,17 +396,17 @@ In `packages/protect-ffi/crates/protect-ffi/Cargo.toml`, in `[package]`, after t
 publish = false
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run --config scripts/vitest.config.mjs cargo-publish-opt-out`
 Expected: PASS
 
-- [ ] **Step 5: Verify cargo still builds**
+- [x] **Step 5: Verify cargo still builds**
 
 Run: `pnpm --filter @cipherstash/protect-ffi build:native`
 Expected: exit 0, `index.node` written
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/protect-ffi/crates/protect-ffi/Cargo.toml \
@@ -379,7 +428,7 @@ The six platform manifests also carry `repository.directory: platforms/<name>`, 
 
 **Interfaces:** Guard only.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```js
 // scripts/__tests__/ffi-repository-urls.test.mjs
@@ -446,12 +495,12 @@ describe('FFI manifests name this repository', () => {
 })
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run --config scripts/vitest.config.mjs ffi-repository-urls`
 Expected: FAIL — 15 of 16: the seven `repository.url` assertions, the wrapper's `bugs`/`homepage`, the old-repository scan, and the six `repository.directory` paths. Only the manifest count passes.
 
-- [ ] **Step 3: Rewrite the URLs**
+- [x] **Step 3: Rewrite the URLs**
 
 ```bash
 cd packages/protect-ffi
@@ -460,7 +509,7 @@ perl -0pi -e 's{github\.com/cipherstash/protectjs-ffi}{github.com/cipherstash/st
 grep -rn "protectjs-ffi" package.json platforms/*/package.json || echo clean
 ```
 
-- [ ] **Step 4: Fix each platform's `repository.directory`**
+- [x] **Step 4: Fix each platform's `repository.directory`**
 
 ```bash
 for d in platforms/*/ ; do
@@ -474,16 +523,16 @@ for d in platforms/*/ ; do
 done
 ```
 
-- [ ] **Step 5: Update the Cargo manifest**
+- [x] **Step 5: Update the Cargo manifest**
 
 In `packages/protect-ffi/crates/protect-ffi/Cargo.toml`, set any `repository` / `homepage` key to `https://github.com/cipherstash/stack`. The crate is `publish = false`, so this is documentation rather than a registry requirement — but a wrong URL in a shipped manifest is still wrong.
 
-- [ ] **Step 6: Run the test to verify it passes**
+- [x] **Step 6: Run the test to verify it passes**
 
 Run: `npx vitest run --config scripts/vitest.config.mjs ffi-repository-urls`
 Expected: PASS, 16 tests. Step 3 alone reaches only 10 of them — the six `directory` assertions are what makes skipping Step 4 visible.
 
-- [ ] **Step 7: Verify the packed manifest carries the new URL**
+- [x] **Step 7: Verify the packed manifest carries the new URL**
 
 ```bash
 pnpm --dir packages/protect-ffi pack --pack-destination /tmp/urlcheck
@@ -491,7 +540,7 @@ tar xzOf /tmp/urlcheck/*.tgz package/package.json | grep -A2 '"repository"'
 ```
 Expected: `cipherstash/stack`
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add packages/protect-ffi/package.json packages/protect-ffi/platforms \
@@ -511,7 +560,7 @@ git commit -m "chore(protect-ffi): point the manifests at cipherstash/stack"
 **Interfaces:**
 - Produces `unpublished(manifests, lookup): string[]` — `manifests` is `[{name, version, private?}]`, `lookup(name)` returns published versions or `null` for a 404; `classify(names): { ffi: boolean, js: boolean }`; CLI writes `ffi=`, `js=`, `unpublished=` to `$GITHUB_OUTPUT`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```js
 // scripts/__tests__/release-gate.test.mjs
@@ -581,12 +630,12 @@ describe('classify', () => {
 })
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run --config scripts/vitest.config.mjs release-gate`
 Expected: FAIL — `Failed to resolve import "../release-gate.mjs"`
 
-- [ ] **Step 3: Write the script**
+- [x] **Step 3: Write the script**
 
 ```js
 // scripts/release-gate.mjs
@@ -689,17 +738,17 @@ function main() {
 if (process.argv[1] === fileURLToPath(import.meta.url)) main()
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run --config scripts/vitest.config.mjs release-gate`
 Expected: PASS, 10 tests
 
-- [ ] **Step 5: Run the script against the live registry**
+- [x] **Step 5: Run the script against the live registry**
 
 Run: `node scripts/release-gate.mjs`
 Expected: `nothing to publish — every committed version is on the registry`, then `ffi=false js=false`.
 
-- [ ] **Step 6: Add the npm script and commit**
+- [x] **Step 6: Add the npm script and commit**
 
 In root `package.json` `scripts`, before `"release"`: `"release:gate": "node scripts/release-gate.mjs",`
 
@@ -724,7 +773,7 @@ Action pins match the rest of this repo (`actions/checkout@v6`, `actions/setup-n
 
 **Interfaces:** Produces artifact `ffi-tarballs` — seven `.tgz` files, downloaded **by name** in Tasks 5 and 7. Not exposed as a `workflow_call` output: a reusable workflow's `outputs.<id>.value` has to map to a job output (`${{ jobs.x.outputs.y }}`), a literal string is not that, and no caller reads one.
 
-- [ ] **Step 1: Write the workflow**
+- [x] **Step 1: Write the workflow**
 
 ```yaml
 # .github/workflows/_build-ffi-artifacts.yml
@@ -1098,7 +1147,7 @@ jobs:
           if-no-files-found: error
 ```
 
-- [ ] **Step 2: Teach actionlint the self-hosted runner label**
+- [x] **Step 2: Teach actionlint the self-hosted runner label**
 
 Thirteen jobs already run on `blacksmith-4vcpu-ubuntu-2404` and nothing has ever complained, because **actionlint has never run in this repo** — Task 6 is what introduces it. Its `runner-label` check knows only GitHub-hosted labels, so without this file every Blacksmith job is an error and the new gate is red on arrival:
 
@@ -1112,7 +1161,7 @@ self-hosted-runner:
     - blacksmith-4vcpu-ubuntu-2404
 ```
 
-- [ ] **Step 3: Lint the workflow**
+- [x] **Step 3: Lint the workflow**
 
 ```bash
 bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
@@ -1123,12 +1172,12 @@ Expected: both clean — verified against the workflow above as written.
 
 actionlint bundles shellcheck and applies it to every `run:` block, which is why the snippet departs from upstream in three places that look like style: parameter expansion instead of `sed` into `export` (SC2001, SC2155), a glob-into-array instead of `ls | wc -l` (SC2012), and string concatenation instead of a template literal inside a single-quoted `node -e` (SC2016 — shellcheck reads dollar-brace as a shell expansion). Reintroduce any of them and Task 6's gate is red.
 
-- [ ] **Step 4: Verify the target mapping locally**
+- [x] **Step 4: Verify the target mapping locally**
 
 Run: `pnpm --dir packages/protect-ffi exec neon list-platforms`
 Expected: JSON mapping all six platform names to Rust triples (`darwin-x64` → `x86_64-apple-darwin`, etc.). This is the mapping the matrix depends on.
 
-- [ ] **Step 5: Verify the two build scripts and their log files**
+- [x] **Step 5: Verify the two build scripts and their log files**
 
 ```bash
 node -p "JSON.stringify(require('./packages/protect-ffi/package.json').scripts, null, 1)" \
@@ -1136,7 +1185,7 @@ node -p "JSON.stringify(require('./packages/protect-ffi/package.json').scripts, 
 ```
 Expected: `build` is `tsc` and nothing else — the matrix must select **`build:native`**, not `build`, for the non-gnu platforms. `build:native` → `cargo-build` → `> cargo.log`; `zigbuild` → `zig-build` → `> zig.log`. The `log` field in the matrix exists because those two differ and `neon dist` reads one of them.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add .github/workflows/_build-ffi-artifacts.yml .github/actionlint.yaml
@@ -1152,7 +1201,7 @@ git commit -m "ci: add the reusable FFI artifact build workflow"
 
 **Interfaces:** Consumes gate outputs `ffi` / `js` (Task 3) and artifact `ffi-tarballs` (Task 4).
 
-- [ ] **Step 1: Fix the existing install**
+- [x] **Step 1: Fix the existing install**
 
 `release.yml` runs bare `pnpm install`, violating the repository's own rule ("CI uses `pnpm install --frozen-lockfile`. Don't drop the flag."):
 
@@ -1161,7 +1210,7 @@ git commit -m "ci: add the reusable FFI artifact build workflow"
         run: pnpm install --frozen-lockfile
 ```
 
-- [ ] **Step 2: Add the gate job**
+- [x] **Step 2: Add the gate job**
 
 ```yaml
   gate:
@@ -1189,7 +1238,7 @@ git commit -m "ci: add the reusable FFI artifact build workflow"
         run: node scripts/release-gate.mjs
 ```
 
-- [ ] **Step 3: Add the artifact and publish jobs**
+- [x] **Step 3: Add the artifact and publish jobs**
 
 ```yaml
   ffi-artifacts:
@@ -1319,7 +1368,7 @@ git commit -m "ci: add the reusable FFI artifact build workflow"
           gh release upload "$rel" ./ffi-dist/*.tgz --repo "$REPO" --clobber
 ```
 
-- [ ] **Step 4: Order the changesets job correctly**
+- [x] **Step 4: Order the changesets job correctly**
 
 ```yaml
   release:
@@ -1343,7 +1392,7 @@ git commit -m "ci: add the reusable FFI artifact build workflow"
     runs-on: ubuntu-latest
 ```
 
-- [ ] **Step 5: Register the new workflow with the caching lint**
+- [x] **Step 5: Register the new workflow with the caching lint**
 
 In `scripts/lint-no-workflow-caching.mjs`, `TARGETS`:
 
@@ -1357,7 +1406,7 @@ In `scripts/lint-no-workflow-caching.mjs`, `TARGETS`:
 
 Adding the target is what makes the three `package-manager-cache: false` lines in Task 4 load-bearing rather than decorative.
 
-- [ ] **Step 6: Verify**
+- [x] **Step 6: Verify**
 
 ```bash
 node scripts/lint-no-workflow-caching.mjs
@@ -1366,7 +1415,7 @@ npx vitest run --config scripts/vitest.config.mjs lint-no-workflow-caching
 ```
 Expected: the lint names all three workflows, tests pass. Reverting one `package-manager-cache: false` in `_build-ffi-artifacts.yml` must turn the lint red — if it does not, the target never registered.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add .github/workflows/release.yml scripts/lint-no-workflow-caching.mjs \
@@ -1380,7 +1429,7 @@ git commit -m "ci(release): publish FFI tarballs, tagged, before changeset publi
 
 **Files:** Create `.github/workflows/lint-release.yml`
 
-- [ ] **Step 1: Write the workflow**
+- [x] **Step 1: Write the workflow**
 
 ```yaml
 # .github/workflows/lint-release.yml
@@ -1458,12 +1507,12 @@ jobs:
         run: pnpm run lint:workflow-cache
 ```
 
-- [ ] **Step 2: Lint it with itself**
+- [x] **Step 2: Lint it with itself**
 
 Run: `./actionlint .github/workflows/lint-release.yml`
 Expected: clean
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/lint-release.yml
@@ -1478,7 +1527,7 @@ git commit -m "ci: gate the release machinery on actionlint and script tests"
 
 **Files:** Create `.github/workflows/ffi-preflight.yml`
 
-- [ ] **Step 1: Write the workflow**
+- [x] **Step 1: Write the workflow**
 
 ```yaml
 # .github/workflows/ffi-preflight.yml
@@ -1604,7 +1653,7 @@ jobs:
           node smoke.mjs
 ```
 
-- [ ] **Step 2: actionlint**
+- [x] **Step 2: actionlint**
 
 Run: `./actionlint .github/workflows/ffi-preflight.yml`
 Expected: clean
@@ -1623,7 +1672,7 @@ gh run watch
 
 Expected: green. First end-to-end proof of matrix, target selection, packing, architecture and install.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add .github/workflows/ffi-preflight.yml
@@ -1763,7 +1812,7 @@ const testWorkflow = read('../../.github/workflows/tests-rust.yml')
 Run: `pnpm --filter @cipherstash/protect-ffi test`
 Expected: PASS, 79 tests
 
-- [ ] **Step 5: Delete the deposited upstream workflows** — *blocked on Task 4*
+- [x] **Step 5: Delete the deposited upstream workflows** — *blocked on Task 4*
 
 Only once Tasks 4, 7 and 8 have consumed all of the reference material. Task 4
 still cites `build.yml` and `actions/setup/action.yml`, so this cannot run yet.
@@ -1772,14 +1821,14 @@ still cites `build.yml` and `actions/setup/action.yml`, so this cannot run yet.
 git rm -r packages/protect-ffi/.github
 ```
 
-- [ ] **Step 6: Verify nothing else referenced them**
+- [x] **Step 6: Verify nothing else referenced them**
 
 ```bash
 grep -rn "protect-ffi/.github" --include="*.ts" --include="*.mjs" --include="*.yml" --include="*.md" . | grep -v node_modules
 ```
 Expected: no hits outside `docs/plans/` and `.work/`
 
-- [ ] **Step 7: Run the repo linters**
+- [x] **Step 7: Run the repo linters**
 
 ```bash
 node scripts/lint-no-dead-package-paths.mjs
@@ -1787,7 +1836,7 @@ node scripts/lint-no-dead-package-paths.mjs
 pnpm run test:scripts
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add .github/workflows/tests-rust.yml packages/protect-ffi/src/lintWiring.test.ts
@@ -1890,9 +1939,9 @@ The Rust emitting EQL payloads is generated from a different catalog commit than
 - [ ] Re-running the publish job on the same commit is a no-op that still completes a partial asset set (tag targets verified, `release upload --clobber`)
 - [ ] Stack tags are still created by changesets on the same run
 - [ ] `ffi-preflight.yml` runs against a release-PR ref without any publish step
-- [ ] `release.yml` installs with `--frozen-lockfile`
+- [x] `release.yml` installs with `--frozen-lockfile` — and the supply-chain e2e check now scans every workflow and composite action for it, not `tests.yml` alone
 - [x] `cargo test`, `cargo fmt --check` and clippy (host **and** wasm32) run in CI again — `tests-rust.yml` (`bc0cb132`)
-- [ ] No dead upstream workflow files under `packages/protect-ffi/.github/`
+- [x] No dead upstream workflow files under `packages/protect-ffi/.github/` — deleted, and `lintWiring.test.ts` now fails if the directory comes back
 - [x] `lintWiring.test.ts` asserts against a workflow GitHub actually executes
 - [x] `test:typecheck:wasm` runs in CI, and its exemption is checked against the root workflow **directory** rather than a hardcoded filename
 - [x] No package script dispatches a workflow this repo cannot run — trigger and declared inputs, not just the path

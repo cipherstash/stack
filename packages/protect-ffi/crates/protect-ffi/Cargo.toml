@@ -1,9 +1,16 @@
 [package]
 name = "protect-ffi"
 version = "0.1.0"
+# Never published to crates.io. This crate is a cdylib compiled into
+# `index.node` and shipped inside the `@cipherstash/protect-ffi-<platform>` npm
+# packages; it has no Rust-consumer identity. Without this key cargo treats it
+# as publishable, so the release-plz adoption that arrives with the EQL import
+# would try to publish it. Guarded by
+# `scripts/__tests__/cargo-publish-opt-out.test.mjs`.
+publish = false
 license = "MIT"
 description = "Native FFI bindings to the CipherStash Client SDK"
-repository = "https://github.com/cipherstash/protectjs-ffi"
+repository = "https://github.com/cipherstash/stack"
 edition = "2021"
 exclude = ["index.node"]
 

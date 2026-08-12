@@ -34,6 +34,7 @@
     "lint:runners": "node scripts/lint-no-hardcoded-runners.mjs",
     "lint:typecheck-scope": "node scripts/lint-typecheck-scope.mjs",
     "lint:workflow-cache": "node scripts/lint-no-workflow-caching.mjs",
+    "release:gate": "node scripts/release-gate.mjs",
     "release": "pnpm run build && changeset publish",
     "test": "turbo test --filter './packages/*'",
     "test:e2e": "turbo run test:e2e",

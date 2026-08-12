@@ -80,18 +80,12 @@ const rootWorkflows = rootWorkflowNames
   .map((name) => withoutComments(read(`${ROOT_WORKFLOW_DIR}/${name}`)))
   .join('\n')
 
-// The upstream repo's CI, deposited here by the subtree merge and inert since:
-// GitHub reads workflows from the repository root alone. It is kept on purpose
-// — the phase-4 publishing cutover ports `build.yml`'s per-platform
-// `CARGO_BUILD_TARGET` matrix — so this reads the directory rather than
-// assuming it is gone, and the check below goes quiet on its own once the
-// cutover deletes it.
-const DEAD_WORKFLOW_DIR = '.github/workflows'
-const deadWorkflowNames = existsSync(join(packageRoot, DEAD_WORKFLOW_DIR))
-  ? readdirSync(join(packageRoot, DEAD_WORKFLOW_DIR)).filter((name) =>
-      /\.ya?ml$/.test(name),
-    )
-  : []
+// The upstream repo's CI was deposited here by the subtree merge and was inert
+// from that moment: GitHub reads workflows from the repository root alone. It
+// was kept while the release pipeline was ported from it, and deleted once
+// `_build-ffi-artifacts.yml` and `ffi-preflight.yml` had consumed the last of
+// it.
+const DEAD_GITHUB_DIR = '.github'
 
 /**
  * Script names reachable from `root`, following `pnpm run` / `npm run`
@@ -369,32 +363,25 @@ describe('lint and format wiring', () => {
     expect(problems).toEqual([])
   })
 
-  it('justifies nothing by pointing into the dead upstream workflow directory', () => {
-    // `packages/protect-ffi/.github/workflows/{build,test,release}.yml` are
-    // still present and still inert, kept until the phase-4 cutover has ported
-    // what it needs from them. Keeping them is the hazard: a comment or an
-    // exemption reason that names `test.yml` reads as a check that runs
-    // somewhere, and the only file with that name is one GitHub never
-    // executes. That is exactly how `test:typecheck:wasm` sat exempt "run by
-    // the wasm job" from the absorption onward with no job running it.
+  it('keeps no .github directory inside this package', () => {
+    // `packages/protect-ffi/.github/` is gone: the release pipeline ported the
+    // last of what it held (`build.yml`'s per-platform CARGO_BUILD_TARGET
+    // matrix, and `actions/setup`'s `neon list-platforms` step) into
+    // `.github/workflows/_build-ffi-artifacts.yml`.
     //
-    // mise.toml did it too — it told contributors CI installs the wasm32
-    // target "in the `Add wasm32 target` step of test.yml", while the step that
-    // runs is in the root tests-rust.yml.
+    // It must not come back. A workflow file under a package reads as live CI
+    // and is not — that is how `test:typecheck:wasm` sat exempt "run by the
+    // wasm job" from the absorption onward with no job running it, and how
+    // mise.toml told contributors CI installs the wasm32 target "in the `Add
+    // wasm32 target` step of test.yml" while the step that runs is in the root
+    // tests-rust.yml. A re-deposit is not far-fetched: the next subtree import
+    // brings its own `.github/`, and it will arrive looking exactly as
+    // authoritative as this one did.
     //
-    // Only names unique to that directory are checked: `release.yml` exists at
-    // the root as well, so a citation of it is ambiguous and this under-reports
-    // rather than guessing — the same trade the workflow-dispatch check makes.
-    const deadOnly = deadWorkflowNames.filter(
-      (name) => !rootWorkflowNames.includes(name),
-    )
-    const liveConfig = [
-      miseToml,
-      JSON.stringify(scripts),
-      ...Object.values(ENTRY_POINT_EXEMPT),
-    ].join('\n')
-
-    expect(deadOnly.filter((name) => liveConfig.includes(name))).toEqual([])
+    // The whole directory, not the `.ya?ml` files in it. The deposit also
+    // carried `.env` and `actions/setup/action.yml`, which read as live CI just
+    // as readily as a workflow does.
+    expect(existsSync(join(packageRoot, DEAD_GITHUB_DIR))).toBe(false)
   })
 
   it('runs the Rust format check from the cargo entry point', () => {

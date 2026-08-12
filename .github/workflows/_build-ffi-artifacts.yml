@@ -1,0 +1,468 @@
+name: Build FFI artifacts
+
+# Reusable. Builds the six platform bindings and the WASM output, packs all
+# seven npm tarballs, and uploads them as `ffi-tarballs`.
+#
+# IT DOES NOT PUBLISH, and nothing here should be made to. npm validates a
+# trusted publish against the ENTRY-POINT workflow's filename, and its own docs
+# record what that means for `workflow_call`: "validation checks the calling
+# workflow's name instead of the workflow that actually contains the publish
+# command, which can cause configuration mismatches" — plus `id-token: write` in
+# both parent and child.
+#
+# So a publish in here would be validated against whichever workflow happened to
+# call it, and would depend on behaviour npm documents as a known issue. Keeping
+# the publish in `release.yml` — the registered filename, reached as an
+# entry-point job rather than through a call — is correct whichever way npm
+# resolves that, which is why this workflow grants `contents: read` and no
+# id-token at all.
+#
+# Two callers: `release.yml` (after the gate says an FFI version is
+# unpublished) and `ffi-preflight.yml` (the manual dry run, which has no
+# id-token permission and so cannot publish either).
+#
+# NO CACHING ANYWHERE IN HERE. These artifacts are published, so the workflow is
+# on `scripts/lint-no-workflow-caching.mjs`'s target list: every
+# `pnpm/action-setup` needs `cache: false`, every `actions/setup-node` needs
+# `package-manager-cache: false`, and every remote action must be in that
+# script's AUDITED_ACTIONS. Upstream's `.github/actions/setup` composite is
+# therefore NOT ported — it sets `cache: npm` and `cache: true`.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to build from
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  matrix:
+    name: Compute platform matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.matrix.outputs.result }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      # No pnpm and no install: the script reads `neon.rust` out of the six
+      # committed `platforms/*/package.json` files, so this job needs nothing
+      # but a checkout and Node. It used to shell out to `neon list-platforms`,
+      # which meant a cold ~1GB workspace install (caching is forbidden here)
+      # on the critical path ahead of all six builds, to read six fields that
+      # are in the tree.
+      #
+      # The matrix also decides which build script each platform runs and which
+      # log file `neon dist` then reads. All three fields are easy to get wrong
+      # in ways that produce a green job and a broken tarball, so they live in a
+      # script with a test — including one pinning the committed triples against
+      # `neon list-platforms` output. See scripts/ffi-release-matrix.mjs.
+      - name: Compute the matrix
+        id: matrix
+        run: node scripts/ffi-release-matrix.mjs
+
+  binaries:
+    name: ${{ matrix.cfg.platform }}
+    needs: [matrix]
+    strategy:
+      # One platform failing must not cancel the other five: the failure is
+      # usually specific to a toolchain, and seeing which of the six are fine
+      # is most of the diagnosis.
+      fail-fast: false
+      matrix:
+        cfg: ${{ fromJSON(needs.matrix.outputs.matrix) }}
+    runs-on: ${{ matrix.cfg.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      # Static OpenSSL; without it the Windows build fails to link.
+      - name: Install OpenSSL (Windows)
+        if: ${{ matrix.cfg.os == 'windows-latest' }}
+        shell: powershell
+        run: |
+          vcpkg install openssl:x64-windows-static
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          $opensslDir = "$vcpkgRoot\installed\x64-windows-static"
+          echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$opensslDir\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+
+      # The aarch64 linker, for the one platform that cross-compiles to it.
+      # Scoped to that platform rather than to Linux: `linux-x64-musl` puts
+      # musl.cc's own `x86_64-linux-musl-gcc` on PATH below and never calls
+      # this one, and `linux-x64-gnu` is a native x86_64 build — so the other
+      # two legs were paying an `apt-get update` (full package indexes) plus a
+      # ~200MB toolchain they do not link against.
+      - name: Install cross-compile toolchain (linux-arm64-gnu)
+        if: ${{ matrix.cfg.platform == 'linux-arm64-gnu' }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gcc-13-aarch64-linux-gnu
+          sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc-13 /usr/bin/aarch64-linux-gnu-gcc
+
+      # Rust comes from the runner image; only the TARGET has to be added. This
+      # is the single most load-bearing line in the matrix — `macos-latest` is
+      # arm64, so without an explicit target both Darwin jobs would emit ARM64
+      # and `darwin-x64` would ship a binary that installs cleanly and then
+      # fails to dlopen.
+      #
+      # `rustup target add` rather than a toolchain action, matching
+      # `tests-rust.yml` and `.github/actions/build-ffi-binding`: every runner
+      # image here ships rustup, and this workflow's `uses:` set is audited by
+      # the no-caching gate, so not adding a fourth action to that list is worth
+      # something on its own.
+      - name: Add the Rust target
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.cfg.target }}
+        run: rustup target add "$CARGO_BUILD_TARGET"
+
+      - uses: pnpm/action-setup@v6.0.10
+        with:
+          run_install: false
+          cache: false
+
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      # zig + cargo-zigbuild, pinned in packages/protect-ffi/mise.toml. Only the
+      # gnu platforms use them, so the four others skip this rather than
+      # compiling cargo-zigbuild from source on runners that never call it.
+      #
+      # `working_directory` is load-bearing, not tidiness: mise reads config
+      # from the current directory and its parents, so an action running at the
+      # repo root never sees the nested config — it installs nothing and leaves
+      # the config untrusted, and the failure surfaces later as
+      # "cargo-zigbuild: not found", a toolchain problem rather than the trust
+      # problem it is.
+      #
+      # SHA-pinned, matching .github/actions/build-ffi-binding: mise-action is a
+      # trust dependency, and here it runs in the workflow whose output gets
+      # published with provenance.
+      # Keyed on the matrix's own decision rather than re-deriving "is this gnu"
+      # from the triple: scripts/ffi-release-matrix.mjs picks zigbuild, and this
+      # step exists to supply what zigbuild needs. Two spellings of one rule
+      # drift apart the day a platform moves between them.
+      - name: Install zig + cargo-zigbuild (zigbuild platforms only)
+        if: ${{ matrix.cfg.script == 'zigbuild' }}
+        uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+        with:
+          install: true
+          install_args: zig cargo:cargo-zigbuild
+          working_directory: packages/protect-ffi
+          cache: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build binding
+        working-directory: packages/protect-ffi
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.cfg.target }}
+          NEON_BUILD_PLATFORM: ${{ matrix.cfg.platform }}
+          BUILD_SCRIPT: ${{ matrix.cfg.script }}
+          # The musl cross toolchain is fetched from musl.cc over plain HTTPS
+          # with no signature to check, and whatever it hands back LINKS THE
+          # BINARY that this workflow publishes to npm with provenance — a
+          # provenance attestation says where a build ran, not that its inputs
+          # were the intended ones. Upstream's build.yml took the download on
+          # trust; this pins it.
+          #
+          # Trust-on-first-use, and worth being precise about what that buys:
+          # the digest was taken from two independent fetches of the current
+          # artifact (2026-08-11), so it does not authenticate musl.cc — it
+          # makes any later substitution a hard failure instead of a silent one.
+          # If musl.cc rebuilds the tarball this step fails; re-verify the new
+          # artifact deliberately and update the digest here, do not delete the
+          # check to unblock a release.
+          MUSL_TOOLCHAIN_URL: https://musl.cc/x86_64-linux-musl-native.tgz
+          MUSL_TOOLCHAIN_SHA256: eb1db6f0f3c2bdbdbfb993d7ef7e2eeef82ac1259f6a6e1757c33a97dbcef3ad
+        # No `--` separator anywhere below: npm strips it, pnpm forwards it
+        # verbatim, and these scripts end in `> cargo.log` — so a forwarded flag
+        # lands after the redirect and cargo rejects it as a positional.
+        run: |
+          set -euo pipefail
+          # `x86_64-unknown-linux-musl` -> `x86_64-linux-musl-gcc`. Parameter
+          # expansion rather than upstream's `sed`, and assigned before export
+          # rather than through it: actionlint runs shellcheck over `run:`
+          # blocks and the original spelling draws SC2001 and SC2155.
+          #
+          # Each linker variable is exported by the branch that reads it. Set
+          # unconditionally, as upstream had them, both are also set on Windows
+          # and on the two Darwin legs — where `CARGO_TARGET_..._MUSL_LINKER`
+          # ends up naming `x86_64-apple-darwin-gcc`, a binary that does not
+          # exist and that nothing on those platforms reads.
+          linker="${CARGO_BUILD_TARGET/unknown-/}-gcc"
+          if [[ "$CARGO_BUILD_TARGET" =~ musl ]]; then
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$linker"
+            wget -4 -O musl-native.tgz "$MUSL_TOOLCHAIN_URL"
+            # Verified BEFORE anything is unpacked: a tarball that fails this
+            # check must not have written a single file, least of all one on the
+            # PATH the compiler is about to use.
+            echo "${MUSL_TOOLCHAIN_SHA256}  musl-native.tgz" | sha256sum -c - || {
+              echo "::error::musl toolchain digest mismatch — got $(sha256sum musl-native.tgz | cut -d' ' -f1)"
+              exit 1; }
+            # Extracted once, into /opt, which is the copy the PATH below names.
+            # Upstream also unpacked a second copy into the working directory
+            # and never used it.
+            sudo tar zxf musl-native.tgz -C /opt/
+            export PATH="/opt/x86_64-linux-musl-native/bin/:${PATH}"
+            # Keeps the binary dynamically linked against musl, which is what
+            # makes the libc check in ffi-preflight.yml meaningful.
+            export RUSTFLAGS="-C target-feature=-crt-static"
+            pnpm run "$BUILD_SCRIPT"
+          elif [ "$BUILD_SCRIPT" = zigbuild ]; then
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="$linker"
+            # cargo-zigbuild >= 0.23.0 no longer reads CARGO_BUILD_TARGET from
+            # the environment, so the glibc-pinned target is passed as a flag.
+            pnpm run "$BUILD_SCRIPT" --target "${CARGO_BUILD_TARGET}.2.28"
+          else
+            pnpm run "$BUILD_SCRIPT"
+          fi
+
+      - name: Place the binding in its platform package
+        working-directory: packages/protect-ffi
+        env:
+          PLATFORM: ${{ matrix.cfg.platform }}
+          BUILD_LOG: ${{ matrix.cfg.log }}
+        # Bare `neon dist` writes ./index.node — the `debug:` fallback in
+        # load.cts, which is right for local development and wrong here. The log
+        # file differs per build script; `neon dist` reads it to locate the
+        # artifact.
+        run: |
+          set -euo pipefail
+          pnpm exec neon dist -o "platforms/${PLATFORM}/index.node" < "${BUILD_LOG}"
+          test -s "platforms/${PLATFORM}/index.node"
+
+      # `pnpm pack` writes into the packed package's own directory by default,
+      # and `--pack-destination` resolves relative to `--dir` rather than to the
+      # CWD (verified). Packing to the default location and moving the result
+      # keeps every path in this step relative to the workspace, which is the
+      # one spelling that behaves identically on the Windows runner.
+      - name: Pack the platform package
+        env:
+          PLATFORM: ${{ matrix.cfg.platform }}
+        run: |
+          set -euo pipefail
+          mkdir -p ffi-dist
+          pnpm --dir "packages/protect-ffi/platforms/${PLATFORM}" pack
+          mv "packages/protect-ffi/platforms/${PLATFORM}"/*.tgz ffi-dist/
+          ls ffi-dist
+
+      - name: Verify the tarball is the platform package, not the wrapper
+        env:
+          PLATFORM: ${{ matrix.cfg.platform }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tarballs=(ffi-dist/*.tgz)
+          test "${#tarballs[@]}" -eq 1 || {
+            echo "::error::expected one tarball, found ${#tarballs[@]}"; exit 1; }
+          tgz="${tarballs[0]}"
+          name=$(tar xzOf "$tgz" package/package.json | node -p \
+            'JSON.parse(require("node:fs").readFileSync(0,"utf8")).name')
+          test "$name" = "@cipherstash/protect-ffi-${PLATFORM}" || {
+            echo "::error::packed $name, expected the ${PLATFORM} platform package"
+            exit 1; }
+          tar tzf "$tgz" | grep -qx package/index.node || {
+            echo "::error::$tgz has no index.node"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffi-platform-${{ matrix.cfg.platform }}
+          path: ffi-dist/*.tgz
+          if-no-files-found: error
+
+  wrapper:
+    name: WASM + wrapper tarball
+    # `needs: [binaries]` is what makes the seven-tarball check below possible:
+    # this job collects the six platform artifacts and uploads the complete set
+    # as one artifact, so a caller downloads `ffi-tarballs` and has everything.
+    needs: [binaries]
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6.0.10
+        with:
+          run_install: false
+          cache: false
+
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      # wasm-pack, pinned in packages/protect-ffi/mise.toml — `build:wasm`
+      # shells out to it and nothing else supplies it. `install_args` narrows
+      # this to wasm-pack alone: a bare `mise install` would also build
+      # cargo-zigbuild from source, which this job never calls. The argument is
+      # the full backend id; the short name is not in mise's registry and
+      # resolves to nothing.
+      - name: Install wasm-pack
+        uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+        with:
+          install: true
+          install_args: aqua:wasm-bindgen/wasm-pack
+          working_directory: packages/protect-ffi
+          cache: false
+
+      # `--all-targets` in the Rust lint means all target KINDS, not platforms;
+      # wasm32 is never a side effect of anything else.
+      - name: Add the wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The wrapper's `files` include dist/wasm/**. Only three .d.ts are
+      # tracked; the runtime .js and .wasm are generated here. Without this the
+      # published `./wasm` and `./wasm-inline` entries resolve to nothing.
+      - name: Build WASM
+        working-directory: packages/protect-ffi
+        run: pnpm run build:wasm
+
+      - name: Pack the wrapper
+        run: |
+          set -euo pipefail
+          mkdir -p ffi-dist
+          pnpm --dir packages/protect-ffi pack
+          mv packages/protect-ffi/*.tgz ffi-dist/
+
+      - name: Verify the wrapper tarball
+        run: |
+          set -euo pipefail
+          tgz=$(ls ffi-dist/cipherstash-protect-ffi-[0-9]*.tgz)
+          # Every path the manifest's own `exports` map resolves to, walked out
+          # of the packed manifest rather than listed here. A hand-written list
+          # is a snapshot: this one was written with five runtime entries and
+          # silently omitted all three `types` targets, so a wrapper packed
+          # without declarations passed the gate and shipped type-less to every
+          # TypeScript consumer. Derived, it also covers a subpath added later.
+          tar xzOf "$tgz" package/package.json | node -e '
+            const j = JSON.parse(require("node:fs").readFileSync(0, "utf8"))
+            const paths = new Set()
+            const walk = (node) => {
+              if (typeof node === "string") { if (node.startsWith("./")) paths.add("package/" + node.slice(2)) }
+              else if (node && typeof node === "object") { for (const v of Object.values(node)) walk(v) }
+            }
+            walk(j.exports)
+            if (paths.size < 5) { console.error("exports resolved to only " + paths.size + " paths"); process.exit(1) }
+            // The wasm blob is not an export: protect_ffi.js loads it, so it is
+            // the one path that has to be named here. Without it both wasm
+            // entries resolve and then fail at instantiation. (No backticks in
+            // this argument — shellcheck reads them as command substitution and
+            // reports SC2016.)
+            paths.add("package/dist/wasm/protect_ffi_bg.wasm")
+            console.log([...paths].sort().join("\n"))
+          ' > exports.txt
+          cat exports.txt
+          # The listing once, not once per required path — this loop
+          # decompressed the whole tarball on every iteration to answer a
+          # question about the same fixed set of names.
+          tar tzf "$tgz" > listing.txt
+          while read -r required ; do
+            grep -qx "$required" listing.txt || {
+              echo "::error::$required missing from $tgz"; exit 1; }
+          done < exports.txt
+          # The six optionalDependencies must be concrete versions — pnpm
+          # rewrites `workspace:*` at pack time, and a wrapper published without
+          # that rewrite resolves no binding for anyone.
+          tar xzOf "$tgz" package/package.json | node -e '
+            const j = JSON.parse(require("node:fs").readFileSync(0, "utf8"))
+            const deps = Object.entries(j.optionalDependencies ?? {})
+            // Against the manifests own "neon.platforms", not a literal 6. The
+            // invariant is "every declared platform has a matching
+            // optionalDependency" and both sides are sitting in this object, so
+            // a seventh platform is covered the day it is added rather than
+            // failing on a magic number nobody greps. Names too, not just the
+            // count: six entries naming five platforms twice would satisfy a
+            // length check.
+            const want = (j.neon?.platforms ?? []).map((p) => j.neon.org + "/" + j.neon.prefix + p)
+            if (want.length === 0) { console.error("wrapper declares no neon.platforms"); process.exit(1) }
+            const got = deps.map(([n]) => n).sort()
+            if (String(got) !== String([...want].sort())) {
+              console.error("optionalDependencies are " + got + ", expected " + [...want].sort()); process.exit(1)
+            }
+            for (const [n, v] of deps) {
+              // Concatenation rather than a template literal. Everything in
+              // this single-quoted argument is read by shellcheck as shell,
+              // and it reports SC2016 for a dollar-brace or a backtick in
+              // here — actionlint runs shellcheck over every run block, and
+              // lint-release.yml turns that into a gate failure. A JS comment
+              // is no exception: shell sees one string, and a backtick in a
+              // "//" line up there broke this once. An apostrophe is worse
+              // still, since it ENDS the argument outright.
+              //
+              // Pinned version-independently by
+              // scripts/__tests__/workflow-inline-node-quoting.test.mjs. The
+              // gate alone was not enough: actionlint is pinned but shellcheck
+              // comes from the runner image, and only 0.11.0 began reporting
+              // the backtick form.
+              if (!/^\d+\.\d+\.\d+/.test(v)) { console.error(n + " is " + v + ", not a concrete version"); process.exit(1) }
+            }
+            console.log("optionalDependencies OK")
+          '
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ffi-platform-*
+          path: ffi-dist
+          merge-multiple: true
+
+      - name: Verify all seven tarballs are present and distinct
+        run: |
+          set -euo pipefail
+          # A glob into an array rather than `ls | wc -l` (SC2012), with
+          # `nullglob` so an empty directory counts 0 instead of one literal
+          # `*.tgz`.
+          shopt -s nullglob
+          tarballs=(ffi-dist/*.tgz)
+          count=${#tarballs[@]}
+          test "$count" -eq 7 || {
+            echo "::error::expected 7 tarballs, found $count"; ls ffi-dist; exit 1; }
+          names=$(for t in "${tarballs[@]}" ; do
+            tar xzOf "$t" package/package.json | node -p \
+              'JSON.parse(require("node:fs").readFileSync(0,"utf8")).name'
+          done | sort -u | wc -l)
+          test "$names" -eq 7 || {
+            echo "::error::expected 7 distinct package names, found $names"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffi-tarballs
+          path: ffi-dist/*.tgz
+          if-no-files-found: error
