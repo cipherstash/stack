@@ -12,6 +12,8 @@
 // and are rejected by spec-conformant cookie libraries (the `@std/http/cookie`
 // failure that bit the supawasm spike on its first end-to-end test).
 
+import { decodeBase64Url, encodeBase64Url } from "./base64url.mjs";
+
 const DEFAULT_NAME = "cs_token";
 const DEFAULT_PATH = "/";
 const DEFAULT_SAFETY_MARGIN_SECONDS = 30;
@@ -130,37 +132,6 @@ function serializeSetCookie(opts) {
   if (opts.secure) parts.push("Secure");
   if (opts.sameSite) parts.push(`SameSite=${opts.sameSite}`);
   return parts.join("; ");
-}
-
-/**
- * @param {string} input
- * @returns {string}
- */
-function encodeBase64Url(input) {
-  // btoa works on binary strings; encode the UTF-8 bytes first so non-ASCII
-  // round-trips. Token JSON is ASCII in practice but be defensive.
-  const bytes = new TextEncoder().encode(input);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++)
-    binary += String.fromCharCode(bytes[i]);
-  return btoa(binary)
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
-}
-
-/**
- * @param {string} input
- * @returns {string}
- */
-function decodeBase64Url(input) {
-  const padded = input.replaceAll("-", "+").replaceAll("_", "/");
-  const pad =
-    padded.length % 4 === 0 ? "" : "=".repeat(4 - (padded.length % 4));
-  const binary = atob(padded + pad);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
 }
 
 /**

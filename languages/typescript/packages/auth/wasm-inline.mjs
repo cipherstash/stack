@@ -57,6 +57,10 @@ function settleGetToken(inner) {
 export class AccessKeyStrategy {
   #inner;
 
+  // Ambient strategy: the credential is a static value readable anywhere, so
+  // `getToken()` self-refreshes and consumers can drive it directly.
+  requiresFederation = false;
+
   /** @param {RawAccessKeyStrategy} inner */
   constructor(inner) {
     this.#inner = inner;
@@ -112,6 +116,12 @@ export class AccessKeyStrategy {
 
 export class OidcFederationStrategy {
   #inner;
+
+  // Federated strategy: the third-party JWT lives in request scope and the
+  // cache is request-scoped, so federation must happen in scope. Consumers
+  // should read a warmed token (see `@cipherstash/auth/next`) rather than drive
+  // `getToken()` from a detached context.
+  requiresFederation = true;
 
   /** @param {RawOidcFederationStrategy} inner */
   constructor(inner) {
