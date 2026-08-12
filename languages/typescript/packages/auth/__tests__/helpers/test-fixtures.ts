@@ -1,7 +1,8 @@
 // Test fixtures that replace the Rust `test-utils` helpers (`saveTestToken` and
-// the JWT minting inside `MockAuthServer`). The stack-auth claim readers call
-// `insecure_disable_signature_validation()`, so a JWT only needs a well-formed
-// header + base64url payload — no real HMAC signing, hence zero crypto deps.
+// the JWT minting inside `MockAuthServer`). The stack-auth claim readers never
+// verify signatures — `decode_jwt_payload` splits on `.`, base64url-decodes the
+// payload segment and deserialises it — so a JWT only needs three segments and a
+// well-formed payload, hence zero crypto deps.
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -15,8 +16,8 @@ function base64url(value: unknown): string {
 /**
  * Mint an unsigned-but-well-formed JWT (`<header>.<payload>.sig`). Mirrors the
  * claims of `mock_auth_server::test_jwt`; `claims` overrides/extends them (e.g.
- * to add a `services` claim). The signature segment is a literal placeholder —
- * only the header `alg` and the payload are ever read.
+ * to add a `services` claim). Only the payload is ever read: the header and
+ * signature segments just have to be present for the three-segment check.
  */
 export function mintJwt(claims: Record<string, unknown> = {}): string {
   const now = Math.floor(Date.now() / 1000);

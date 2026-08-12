@@ -328,11 +328,14 @@ pub(crate) fn ensure_trailing_slash(mut url: url::Url) -> url::Url {
 }
 
 /// Decode a JWT payload by splitting on `.`, base64-decoding the middle
-/// segment, and deserializing the JSON. Used on wasm32 to avoid `jsonwebtoken`
-/// (which pulls `ring`). Signatures are not verified — same posture as the
-/// native path, which calls `insecure_disable_signature_validation()`.
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn decode_jwt_payload_wasm<C>(token: &str) -> Result<C, AuthError>
+/// segment, and deserializing the JSON. Signatures are **not** verified — we
+/// only ever read claims from a token we already hold.
+///
+/// This is the single decode path on every target. It deliberately avoids
+/// `jsonwebtoken`: on wasm32 that crate pulls `ring` (which won't build), and on
+/// native, `jsonwebtoken` 10 rejects any token whose header carries a non-string
+/// field (e.g. Clerk's `srf: true`) before it even looks at the claims.
+pub(crate) fn decode_jwt_payload<C>(token: &str) -> Result<C, AuthError>
 where
     C: serde::de::DeserializeOwned,
 {
