@@ -136,7 +136,7 @@ npm view <pkg>@<version> --json | grep -A3 attestations
 
 Constraints baked into that workflow — don't undo them:
 
-- **`permissions: id-token: write`** is what mints the OIDC token. Without it every publish fails.
+- **`permissions: id-token: write`** is what mints the OIDC token. Without it every publish fails — but it belongs on the **publishing jobs**, never at the workflow level. A trusted publisher is registered against a repository *and a workflow filename*, so once `release.yml` is the registered publisher, npm accepts a token minted by **any** job in that file: the registry cannot tell the cheap every-push gate apart from the publish job. Declared at the top, it reaches every job that does not override it, including the one added next month by someone who never read this page. `release.yml` therefore grants `contents: read` at the workflow level and escalates per job, so a new job has to *ask* for the credential in its own diff. Enforced by `scripts/__tests__/workflow-publish-permissions.test.mjs`, which also holds the list of jobs allowed to hold it.
 - **`runs-on: ubuntu-latest`, not a self-hosted/Blacksmith runner.** npm rejects provenance from non-GitHub-hosted runners with E422.
 - **Never set `NPM_TOKEN`.** `changesets/action` writes a token `.npmrc` when it sees one, which shadows OIDC and fails every publish with E404 (npm/cli#8976).
 - **npm ≥ 11.5.1 and Node ≥ 22.14.** Node 22 ships npm 10.x, so the workflow installs `npm@^11.5.1` explicitly before publishing.

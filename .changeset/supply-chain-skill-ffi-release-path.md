@@ -24,6 +24,13 @@ ON — `actions/setup-node`'s `package-manager-cache` and `jdx/mise-action`'s
 invisibly, and the gate's generic rule only sees a *truthy* value rather than a
 missing one.
 
+The OIDC section said `permissions: id-token: write` is what mints the token and
+left it there. It now says where that grant belongs: on the publishing jobs, not
+at the workflow level. A trusted publisher is registered against a repository
+*and a workflow filename*, so npm accepts a token minted by any job in the
+registered file — declaring the scope at the top hands the publish credential to
+every job that does not override it, including ones added later.
+
 The frozen-lockfile section said the rule was enforced in `tests.yml`, which was
 true and misleading: that is where it was *checked*, and `release.yml` ran a
 bare `pnpm install` from the day it was written — so the single install permitted

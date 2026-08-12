@@ -1,11 +1,22 @@
 name: Release JS
 
-# Permissions for the workflow to use Trusted Actions
+# READ-ONLY BY DEFAULT; the two jobs that publish escalate for themselves.
+#
+# npm trusted publishing is bound to a repository AND A WORKFLOW FILENAME, so
+# once this file is the registered publisher, an OIDC token minted by ANY job in
+# it is one npm accepts for a publish — the registry cannot tell `gate` apart
+# from `publish-ffi`. These three scopes were declared here, where they are a
+# default rather than a ceiling, and `gate` (a checkout and one `node` call) and
+# `ffi-artifacts` inherited all of them.
+#
+# Granting them per job is not the same fix as overriding the two that had them
+# wrongly: it makes omission the safe answer, so the next job added to this file
+# has to ASK for the publish credential in its own diff.
+#
 # See https://docs.npmjs.com/trusted-publishers#supported-cicd-providers
+# Enforced by scripts/__tests__/workflow-publish-permissions.test.mjs.
 permissions:
-  id-token: write  # Required for OIDC
-  contents: write  # Required for changesets to commit and push
-  pull-requests: write  # Required for changesets to check existing PRs
+  contents: read
 
 on:
   push:
@@ -222,6 +233,10 @@ jobs:
     # generated automatically by OIDC trusted publishing, are only accepted
     # from github-hosted runners — self-hosted runners are rejected with E422.
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write # npm OIDC trusted publishing
+      contents: write # changesets commits and pushes the Version Packages branch
+      pull-requests: write # …and opens/updates the PR for it
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
