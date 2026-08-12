@@ -24,14 +24,22 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  * this repository's, and it failed all six platform legs with
  * `error: $npm_package_name is not defined`.
  *
- * Two ways for that to come back, hence two assertions:
+ * Three ways for that to come back:
  *
  *   - the flag is dropped while editing the surrounding shell, and every
  *     platform fails again;
  *   - the crate is renamed and the flag is not, which does NOT fail loudly in
  *     the same way — `neon dist` finds no matching artifact in the log, and the
  *     mode it fails in is a build that produced nothing rather than a build
- *     that errored.
+ *     that errored;
+ *   - a second `neon dist` is added to a step that already has a correct one,
+ *     and inherits none of its flags.
+ *
+ * The third is why the scan is per INVOCATION rather than per step. Matching
+ * once over a step body answers for whichever call came first, and the `-n` it
+ * finds need not belong to a `neon dist` at all — `echo -n protect-ffi` on an
+ * earlier line satisfied it. The last two `it` blocks below hold the scanner
+ * itself to that, since no workflow in the tree exercises either shape.
  *
  * Discovery, not a list: any workflow that grows a `neon dist` call is covered
  * the day it lands.
@@ -64,26 +72,82 @@ function runSteps(workflow) {
 
 const NEON_DIST = /pnpm\s+exec\s+neon\s+dist\b/
 
+/**
+ * Each `pnpm exec neon dist` in a run block, split out as its own command.
+ *
+ * Per INVOCATION, not per step, and the distinction is the whole point. A
+ * single regex over the step body finds one `-n` and stops, so a step holding
+ * two calls is judged by whichever came first — and worse, the flag it finds
+ * need not belong to a `neon dist` at all. `sort -n` or `echo -n protect-ffi`
+ * on an earlier line would satisfy a body-wide match.
+ *
+ * Continuations are joined first, so a newline is a real statement boundary
+ * rather than a wrapped one. `||` is listed before `|` because split()
+ * alternation is ordered and would otherwise cut on the first bar.
+ */
+function neonDistInvocations(run) {
+  return run
+    .replace(/\\\n\s*/g, ' ')
+    .split(/\n|;|&&|\|\||\|/)
+    .map((command) => command.trim())
+    .filter((command) => NEON_DIST.test(command))
+}
+
+/** The `-n` / `--name` value of one command, or undefined if it carries none. */
+function crateNameFlag(command) {
+  return command.match(/(?:^|\s)(?:-n|--name)\s+(\S+)/)?.[1]
+}
+
 describe('neon dist through pnpm exec', () => {
-  const calls = workflowFiles().flatMap((file) =>
-    runSteps(readWorkflow(file))
-      .filter((step) => NEON_DIST.test(step.run))
-      .map((step) => ({ file, ...step })),
+  const invocations = workflowFiles().flatMap((file) =>
+    runSteps(readWorkflow(file)).flatMap((step) =>
+      neonDistInvocations(step.run).map((command, i) => ({
+        file,
+        jobId: step.jobId,
+        name: step.name,
+        nth: i + 1,
+        command,
+      })),
+    ),
   )
 
   it('is invoked somewhere, or this guard is checking nothing', () => {
-    expect(calls.length).toBeGreaterThan(0)
+    expect(invocations.length).toBeGreaterThan(0)
   })
 
-  it.each(calls)('$file › $jobId › $name passes the crate name', ({ run }) => {
-    // Line continuations first: the flag and its value are allowed to be split
-    // across lines, and without this the pattern below would not see them.
-    const flat = run.replace(/\\\n\s*/g, ' ')
-    const named = flat.match(/(?:^|\s)(?:-n|--name)\s+(\S+)/)
+  it.each(
+    invocations,
+  )('$file › $jobId › $name › call $nth passes the crate name', ({
+    command,
+  }) => {
     expect(
-      named,
+      crateNameFlag(command),
       'neon dist needs -n; $npm_package_name is unset under pnpm exec',
-    ).not.toBeNull()
-    expect(named[1]).toBe(crateName())
+    ).toBe(crateName())
+  })
+
+  // The scanner's own coverage. Both of these describe a workflow that does not
+  // exist yet, so nothing above would notice if the splitting regressed to a
+  // body-wide match — which is what it was when this guard first landed.
+  it('sees a second invocation hiding behind a correctly named first', () => {
+    const run = [
+      `pnpm exec neon dist -n ${crateName()} -o one < cargo.log`,
+      'pnpm exec neon dist -o two < cargo.log',
+    ].join('\n')
+
+    expect(neonDistInvocations(run)).toHaveLength(2)
+    expect(neonDistInvocations(run).map(crateNameFlag)).toEqual([
+      crateName(),
+      undefined,
+    ])
+  })
+
+  it('does not count a -n belonging to another command in the same step', () => {
+    const run = [
+      `echo -n ${crateName()}`,
+      'pnpm exec neon dist -o out < cargo.log',
+    ].join('\n')
+
+    expect(neonDistInvocations(run).map(crateNameFlag)).toEqual([undefined])
   })
 })
