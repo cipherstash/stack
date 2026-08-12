@@ -27,6 +27,26 @@ export const messages = {
     /** Leader of the platform check line; the `<platform>-<arch>` is appended. */
     platformLabel: 'Platform',
     allChecksPassed: 'All checks passed.',
+    /** Row detail when a probe reached the loader and no platform binary was there. */
+    nativeBinaryMissing: 'native binary missing',
+    /** Row detail for an absent optional package — recoverable, not a failure. */
+    notInstalledOptional: 'not installed (run `stash init`)',
+    /** Row detail for an absent required package. */
+    notInstalled: 'not installed',
+    /**
+     * Row detail when `@cipherstash/stack` is installed but predates the
+     * `./diagnostics` subpath, so there is no way to force its binding. Not a
+     * failure: the install may be perfectly healthy, we just can't prove it.
+     */
+    cannotProbe: 'installed, but too old to probe — upgrade @cipherstash/stack',
+    problemsFound: 'stash doctor found problems.',
+    /**
+     * Outro when a check could not be run but nothing failed. Distinct from
+     * `allChecksPassed` on purpose: a run that skipped a check has not passed
+     * it, and saying otherwise is the one line of doctor's output a user has no
+     * way to second-guess.
+     */
+    checksIncomplete: 'stash doctor could not run every check.',
   },
   auth: {
     /** Same shape as `cli.usagePrefix` — leader only. */
