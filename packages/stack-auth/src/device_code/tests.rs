@@ -192,6 +192,63 @@ async fn test_poll_for_token_access_denied() {
     assert!(matches!(err, AuthError::AccessDenied(_)));
 }
 
+/// CTS reports a usage limit on this endpoint as `access_denied` plus a
+/// `cs_code`, because RFC 6749 §5.2 fixes the legal `error` values. Matching
+/// on `error` alone told someone who was over their limit that they had been
+/// denied access — the exact confusion the taxonomy exists to remove.
+#[tokio::test(start_paused = true)]
+async fn poll_reports_a_usage_limit_not_access_denied() {
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    mock_code_endpoint(&mut mocks);
+    mocks.mock(|when, then| {
+        when.post().path("/oauth/device/token");
+        then.status(reqwest::StatusCode::PAYMENT_REQUIRED)
+            .json(serde_json::json!({
+                "error": "access_denied",
+                "cs_code": "USAGE_LIMIT_EXCEEDED",
+                "error_description": "Workspace has exceeded its usage limit",
+            }));
+    });
+    let server = start_server(mocks).await;
+
+    let err = begin_pending(&server, &dir)
+        .await
+        .poll_for_token()
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, AuthError::UsageLimitExceeded(_)),
+        "expected a usage limit, got {err:?}",
+    );
+}
+
+/// A 402 with no body at all used to surface as a reqwest decode error,
+/// because the response was parsed as JSON before anything else looked at it.
+#[tokio::test(start_paused = true)]
+async fn poll_classifies_a_bodyless_402() {
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    mock_code_endpoint(&mut mocks);
+    mocks.mock(|when, then| {
+        when.post().path("/oauth/device/token");
+        then.status(reqwest::StatusCode::PAYMENT_REQUIRED);
+    });
+    let server = start_server(mocks).await;
+
+    let err = begin_pending(&server, &dir)
+        .await
+        .poll_for_token()
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(err, AuthError::UsageLimitExceeded(_)),
+        "expected a usage limit, got {err:?}",
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn test_poll_for_token_expired_token() {
     let dir = TempDir::new().unwrap();

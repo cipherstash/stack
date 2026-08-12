@@ -52,8 +52,8 @@ pub use error::StoreError;
 pub use error::{
     AccessDenied, AlreadyConsumed, AuthError, AuthErrorKind, CustomError, InternalError,
     InvalidAccessKeyError, InvalidClient, InvalidCrn, InvalidGrant, InvalidToken, InvalidUrl,
-    InvalidWorkspaceId, MissingWorkspaceCrn, NotAuthenticated, RequestError, ServerError,
-    TokenExpired, UnsupportedRegion, WorkspaceMismatch,
+    InvalidWorkspaceId, MissingWorkspaceCrn, NotAuthenticated, OrgNotProvisioned, RequestError,
+    ServerError, TokenExpired, UnsupportedRegion, UsageLimitExceeded, WorkspaceMismatch,
 };
 
 // Filesystem-backed device identity and the interactive device-code flow are
@@ -456,6 +456,18 @@ mod tests {
             (
                 AuthError::InvalidToken(crate::error::InvalidToken("malformed".into())),
                 "INVALID_TOKEN",
+            ),
+            (
+                AuthError::OrgNotProvisioned(crate::error::OrgNotProvisioned(
+                    "not provisioned".into(),
+                )),
+                "ORG_NOT_PROVISIONED",
+            ),
+            (
+                AuthError::UsageLimitExceeded(crate::error::UsageLimitExceeded(
+                    "over limit".into(),
+                )),
+                "USAGE_LIMIT_EXCEEDED",
             ),
             (
                 AuthError::Custom(crate::error::CustomError("boom".into())),

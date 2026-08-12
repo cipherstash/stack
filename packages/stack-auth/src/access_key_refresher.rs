@@ -63,6 +63,9 @@ impl Refresher for AccessKeyRefresher {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             tracing::debug!(%status, %body, "access key auth failed");
+            if let Some(err) = crate::error::classify_issuance_failure(status.as_u16(), &body) {
+                return Err(err);
+            }
             return Err(AuthError::Server(crate::error::ServerError(format!(
                 "{status}: {body}"
             ))));
@@ -209,6 +212,60 @@ mod tests {
         let token = strategy.get_token().await.unwrap();
 
         assert_eq!(token.as_str(), "new-token");
+    }
+
+    /// A usage denial must not arrive as `SERVER_ERROR`. Clients treat that as
+    /// transient and retry — but no amount of retrying clears a usage limit, so
+    /// they would spin until the plan changes.
+    #[tokio::test]
+    async fn usage_limit_402_is_typed_not_server_error() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/api/authorise");
+            then.status(reqwest::StatusCode::PAYMENT_REQUIRED).json(serde_json::json!({
+                "error": "usage_limit_exceeded",
+                "error_description": "Workspace has exceeded its usage limit and cannot issue an access token",
+            }));
+        });
+        let server = start_server(mocks).await;
+        let strategy = make_access_key_strategy(&server);
+
+        let err = strategy
+            .get_token()
+            .await
+            .expect_err("402 must fail the token request");
+
+        let auth_err = match err {
+            AutoRefreshError::Auth(e) => e,
+            other => panic!("expected an auth error, got {other:?}"),
+        };
+        assert_eq!(auth_err.error_code(), "USAGE_LIMIT_EXCEEDED");
+        assert!(
+            auth_err.to_string().contains("exceeded its usage limit"),
+            "server's description should survive verbatim, got {auth_err}",
+        );
+    }
+
+    /// Only 402 means "usage limit". Other failures must keep their existing
+    /// classification, or this becomes a catch-all that hides real errors.
+    #[tokio::test]
+    async fn non_402_failures_are_unchanged() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/api/authorise");
+            then.internal_server_error()
+                .json(serde_json::json!({"error": "boom"}));
+        });
+        let server = start_server(mocks).await;
+        let strategy = make_access_key_strategy(&server);
+
+        let err = strategy.get_token().await.expect_err("500 must fail");
+
+        let auth_err = match err {
+            AutoRefreshError::Auth(e) => e,
+            other => panic!("expected an auth error, got {other:?}"),
+        };
+        assert_eq!(auth_err.error_code(), "SERVER_ERROR");
     }
 
     #[tokio::test]
@@ -421,7 +478,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_refresh_failure_returns_expired() {
+    async fn refresh_failure_propagates_the_refusal_not_expired() {
         let mut mocks = MockSet::new();
         mocks.mock(|when, then| {
             when.post().path("/api/authorise");
@@ -436,7 +493,333 @@ mod tests {
 
         let err = strategy.get_token().await.unwrap_err();
 
-        assert!(matches!(err, AutoRefreshError::Expired));
+        assert!(
+            matches!(err, AutoRefreshError::Auth(_)),
+            "the caller must see why the refresh was refused; flattening to \
+             Expired tells them to do the one thing that cannot help — {err:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn usage_limit_on_refresh_reaches_the_caller() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/api/authorise");
+            then.status(reqwest::StatusCode::PAYMENT_REQUIRED)
+                .json(serde_json::json!({
+                    "error": "access_denied",
+                    "cs_code": "USAGE_LIMIT_EXCEEDED",
+                    "error_description": "Workspace has exceeded its usage limit",
+                }));
+        });
+        let server = start_server(mocks).await;
+
+        let refresher =
+            AccessKeyRefresher::new(SecretToken::new("test-access-key"), server.url(""), None);
+        let strategy = AutoRefresh::with_token(refresher, make_expired_token("old-token"));
+
+        let AutoRefreshError::Auth(err) = strategy.get_token().await.unwrap_err() else {
+            panic!("expected a typed auth error");
+        };
+
+        assert_eq!(err.error_code(), crate::error::codes::USAGE_LIMIT_EXCEEDED);
+    }
+
+    /// Counts requests to `/api/authorise` and replies with a fixed status and
+    /// body, so a test can assert how many times the client actually went to
+    /// the network rather than only what it returned.
+    async fn start_counting_server(
+        status: axum::http::StatusCode,
+        body: serde_json::Value,
+    ) -> (Url, Arc<AtomicUsize>) {
+        type CountingState = (Arc<AtomicUsize>, axum::http::StatusCode, serde_json::Value);
+
+        async fn handler(
+            axum::extract::State((calls, status, body)): axum::extract::State<CountingState>,
+        ) -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
+            calls.fetch_add(1, Ordering::SeqCst);
+            (status, axum::Json(body))
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = axum::Router::new()
+            .route("/api/authorise", axum::routing::post(handler))
+            .with_state((calls.clone(), status, body));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        (Url::parse(&format!("http://{addr}")).unwrap(), calls)
+    }
+
+    /// A usage limit will not clear by asking again. Without a negative cache
+    /// an over-limit client re-POSTs `/api/authorise` on every `get_token` —
+    /// at its own request rate, against a decision already made.
+    #[tokio::test]
+    async fn a_settled_refusal_is_not_re_issued_on_every_call() {
+        let (url, calls) = start_counting_server(
+            axum::http::StatusCode::PAYMENT_REQUIRED,
+            serde_json::json!({
+                "error": "access_denied",
+                "cs_code": "USAGE_LIMIT_EXCEEDED",
+                "error_description": "Workspace has exceeded its usage limit",
+            }),
+        )
+        .await;
+
+        let refresher = AccessKeyRefresher::new(SecretToken::new("test-access-key"), url, None);
+        let strategy = AutoRefresh::with_token(refresher, make_expired_token("old-token"));
+
+        for call in 1..=5 {
+            let AutoRefreshError::Auth(err) = strategy.get_token().await.unwrap_err() else {
+                panic!("call {call}: expected a typed auth error");
+            };
+            assert_eq!(
+                err.error_code(),
+                crate::error::codes::USAGE_LIMIT_EXCEEDED,
+                "call {call}: the cached refusal must be replayed verbatim",
+            );
+        }
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "five get_token calls against a settled refusal must produce one \
+             HTTP request, not five",
+        );
+    }
+
+    /// Serves a usage limit until `upgraded` is set, then a valid token —
+    /// modelling a customer upgrading their plan while a strategy is live.
+    async fn start_upgradable_server() -> (Url, Arc<AtomicUsize>, Arc<AtomicBool>) {
+        type UpgradableState = (Arc<AtomicUsize>, Arc<AtomicBool>);
+
+        async fn handler(
+            axum::extract::State((calls, upgraded)): axum::extract::State<UpgradableState>,
+        ) -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
+            calls.fetch_add(1, Ordering::SeqCst);
+            if upgraded.load(Ordering::SeqCst) {
+                (
+                    axum::http::StatusCode::OK,
+                    axum::Json(auth_response_json("upgraded-token", 3600)),
+                )
+            } else {
+                (
+                    axum::http::StatusCode::PAYMENT_REQUIRED,
+                    axum::Json(serde_json::json!({
+                        "error": "access_denied",
+                        "cs_code": "USAGE_LIMIT_EXCEEDED",
+                        "error_description": "Workspace has exceeded its usage limit",
+                    })),
+                )
+            }
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let upgraded = Arc::new(AtomicBool::new(false));
+        let app = axum::Router::new()
+            .route("/api/authorise", axum::routing::post(handler))
+            .with_state((calls.clone(), upgraded.clone()));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        (
+            Url::parse(&format!("http://{addr}")).unwrap(),
+            calls,
+            upgraded,
+        )
+    }
+
+    fn now_secs() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    /// A token whose expiry is an absolute instant, for tests driving a frozen
+    /// [`TestClock`](crate::clock::TestClock).
+    ///
+    /// `make_expired_token` reads the wall clock itself, so pairing it with a
+    /// clock frozen at a separately-read `now` is a race: if the two reads
+    /// straddle a second boundary the token is a second short of expired, no
+    /// refresh is attempted, and the test fails only on an unlucky run. Derive
+    /// both from one instant instead.
+    fn make_token_expiring_at(access: &str, expires_at: u64) -> Token {
+        Token {
+            access_token: SecretToken::new(access),
+            token_type: "Bearer".to_string(),
+            expires_at,
+            refresh_token: None,
+            region: None,
+            client_id: None,
+            device_instance_id: None,
+        }
+    }
+
+    /// A cached refusal must not be permanent. Suppressing the retry storm is
+    /// the point; suppressing it forever means a customer who upgrades their
+    /// plan stays locked out until the process restarts.
+    #[tokio::test]
+    async fn a_settled_refusal_is_retried_once_it_expires() {
+        let (url, calls, _upgraded) = start_upgradable_server().await;
+        let start = now_secs();
+        let clock = crate::clock::TestClock::new(start);
+
+        let refresher = AccessKeyRefresher::new(SecretToken::new("test-access-key"), url, None);
+        let strategy = AutoRefresh::with_token_and_clock(
+            refresher,
+            make_token_expiring_at("old-token", start - 3600),
+            clock.shared(),
+        );
+
+        strategy.get_token().await.unwrap_err();
+        strategy.get_token().await.unwrap_err();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "within the window the cached refusal is replayed",
+        );
+
+        clock.advance(super::super::auto_refresh::DENIAL_TTL_SECS + 1);
+        strategy.get_token().await.unwrap_err();
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "once the refusal expires the server must be asked again",
+        );
+    }
+
+    /// The reason the expiry matters: the upgrade has to become visible.
+    #[tokio::test]
+    async fn an_upgraded_plan_is_observed_once_the_refusal_expires() {
+        let (url, _calls, upgraded) = start_upgradable_server().await;
+        let start = now_secs();
+        let clock = crate::clock::TestClock::new(start);
+
+        let refresher = AccessKeyRefresher::new(SecretToken::new("test-access-key"), url, None);
+        let strategy = AutoRefresh::with_token_and_clock(
+            refresher,
+            make_token_expiring_at("old-token", start - 3600),
+            clock.shared(),
+        );
+
+        strategy.get_token().await.unwrap_err();
+
+        // Customer upgrades their plan.
+        upgraded.store(true, Ordering::SeqCst);
+
+        strategy
+            .get_token()
+            .await
+            .expect_err("still inside the refusal window");
+
+        clock.advance(super::super::auto_refresh::DENIAL_TTL_SECS + 1);
+
+        let token = strategy
+            .get_token()
+            .await
+            .expect("an upgraded plan must eventually be observed");
+        assert_eq!(token.as_str(), "upgraded-token");
+    }
+
+    /// A successful refresh clears the refusal outright, so the *next* call
+    /// after recovery does not wait out a stale window.
+    #[tokio::test]
+    async fn a_success_clears_the_refusal_immediately() {
+        let (url, calls, upgraded) = start_upgradable_server().await;
+        let start = now_secs();
+        let clock = crate::clock::TestClock::new(start);
+
+        let refresher = AccessKeyRefresher::new(SecretToken::new("test-access-key"), url, None);
+        let strategy = AutoRefresh::with_token_and_clock(
+            refresher,
+            make_token_expiring_at("old-token", start - 3600),
+            clock.shared(),
+        );
+
+        strategy.get_token().await.unwrap_err();
+        upgraded.store(true, Ordering::SeqCst);
+        clock.advance(super::super::auto_refresh::DENIAL_TTL_SECS + 1);
+        strategy.get_token().await.unwrap();
+
+        let before = calls.load(Ordering::SeqCst);
+        strategy
+            .get_token()
+            .await
+            .expect("cached token is still valid");
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            before,
+            "a valid cached token needs no further round-trip",
+        );
+    }
+
+    /// A wall clock can move backwards — NTP step, VM snapshot restore, a
+    /// manual change. `now - recorded_at` would then underflow, and with a
+    /// wrapping subtraction the refusal would look freshly recorded for
+    /// billions of seconds. Erring towards asking again costs one request.
+    #[tokio::test]
+    async fn a_backwards_clock_does_not_pin_the_refusal() {
+        let (url, calls, upgraded) = start_upgradable_server().await;
+        let start = now_secs();
+        let clock = crate::clock::TestClock::new(start);
+
+        let refresher = AccessKeyRefresher::new(SecretToken::new("test-access-key"), url, None);
+        // Expired well before `start`, so it is still expired after the rewind
+        // — otherwise the token-expiry check short-circuits and the refusal is
+        // never consulted, and the test would prove nothing.
+        let strategy = AutoRefresh::with_token_and_clock(
+            refresher,
+            make_token_expiring_at("old-token", start - 86_400),
+            clock.shared(),
+        );
+
+        strategy.get_token().await.unwrap_err();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        upgraded.store(true, Ordering::SeqCst);
+        clock.set(start - 3600);
+
+        strategy
+            .get_token()
+            .await
+            .expect("a clock that jumped backwards must not pin the refusal");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    /// The mirror of the above: a server fault may clear, so it must *not*
+    /// stick. Treating a transient failure as permanent locks a client out of
+    /// a service that has since recovered — the worse of the two mistakes.
+    #[tokio::test]
+    async fn a_server_fault_is_retried_on_the_next_call() {
+        let (url, calls) = start_counting_server(
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            serde_json::json!({}),
+        )
+        .await;
+
+        let refresher = AccessKeyRefresher::new(SecretToken::new("test-access-key"), url, None);
+        let strategy = AutoRefresh::with_token(refresher, make_expired_token("old-token"));
+
+        for _ in 0..3 {
+            strategy.get_token().await.unwrap_err();
+        }
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            3,
+            "a server fault must be retried; only settled refusals stick",
+        );
     }
 
     // ---- Cascade prevention tests ----
@@ -549,7 +932,7 @@ mod tests {
 
     // ---- Stress tests ----
 
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
     #[derive(Clone)]

@@ -621,6 +621,42 @@ mod tests {
         }
     }
 
+    /// `wasm-types.d.ts` declares the same taxonomy in a different shape — a
+    /// bare `| 'CODE'` union rather than `FailureBase & { type: "CODE" }` — so
+    /// the scrape above cannot see it. It went unchecked long enough to grow a
+    /// phantom `UNKNOWN_ERROR` and lose three real codes.
+    ///
+    /// The wasm build has no `Store` variant (see the `cfg` on `AuthError`),
+    /// so its union is `ERROR_CODES` minus `STORE_ERROR`.
+    #[test]
+    fn wasm_types_union_matches_error_codes() {
+        use std::collections::BTreeSet;
+
+        let dts = include_str!("../wasm-types.d.ts");
+
+        let union: BTreeSet<&str> = dts
+            .match_indices("| '")
+            .map(|(i, _)| {
+                let after = &dts[i + "| '".len()..];
+                let close = after
+                    .find('\'')
+                    .expect("TS union member missing close quote");
+                &after[..close]
+            })
+            .collect();
+
+        let expected: BTreeSet<&str> = AuthError::ERROR_CODES
+            .iter()
+            .copied()
+            .filter(|code| *code != "STORE_ERROR")
+            .collect();
+
+        assert_eq!(
+            union, expected,
+            "AuthErrorCode union in wasm-types.d.ts drifted from AuthError::ERROR_CODES",
+        );
+    }
+
     #[test]
     fn index_dts_retains_hand_written_reexports() {
         // The union test above only guards the `AuthFailure` codes. The other

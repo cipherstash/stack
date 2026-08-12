@@ -162,6 +162,9 @@ impl<P: OidcProvider> Refresher for OidcRefresher<P> {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             tracing::debug!(%status, %body, "OIDC federation failed");
+            if let Some(err) = crate::error::classify_issuance_failure(status.as_u16(), &body) {
+                return Err(err);
+            }
             return Err(AuthError::Server(crate::error::ServerError(format!(
                 "{status}: {body}"
             ))));
@@ -438,6 +441,36 @@ mod tests {
         assert!(
             matches!(err, AutoRefreshError::Auth(AuthError::Server(_))),
             "a 500 from /api/authorise should surface as a server error, got: {err:?}"
+        );
+    }
+
+    /// The OIDC federation path is the third caller of
+    /// `classify_issuance_failure`. The other two are covered; without this
+    /// the claim that all three cannot drift apart is untested here.
+    #[tokio::test]
+    async fn usage_limit_402_is_typed_not_server_error() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/api/authorise");
+            then.status(reqwest::StatusCode::PAYMENT_REQUIRED)
+                .json(serde_json::json!({
+                    "error": "access_denied",
+                    "cs_code": "USAGE_LIMIT_EXCEEDED",
+                    "error_description": "Workspace has exceeded its usage limit",
+                }));
+        });
+        let server = start_server(mocks).await;
+        let (_calls, provider) = counting_provider();
+        let strategy = make_strategy(&server, provider);
+
+        let AutoRefreshError::Auth(err) = strategy.get_token().await.unwrap_err() else {
+            panic!("expected a typed auth error");
+        };
+
+        assert_eq!(
+            err.error_code(),
+            crate::error::codes::USAGE_LIMIT_EXCEEDED,
+            "a usage limit must not be flattened into SERVER_ERROR",
         );
     }
 

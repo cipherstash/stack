@@ -359,7 +359,22 @@ impl PendingDeviceCode {
                 return Ok(token);
             }
 
-            let err: ErrorResponse = resp.json().await?;
+            // Read the body as text before parsing, and classify first. CTS
+            // reports a usage limit here as `access_denied` plus a `cs_code`,
+            // so matching on `error` alone would tell someone who is over
+            // their limit that they were denied access — and a bodyless 402
+            // would surface as a JSON decode error rather than either.
+            let status = resp.status();
+            let body = resp.text().await?;
+            if let Some(err) = crate::error::classify_issuance_failure(status.as_u16(), &body) {
+                return Err(err);
+            }
+
+            let err: ErrorResponse = serde_json::from_str(&body).map_err(|e| {
+                AuthError::Server(crate::error::ServerError(format!(
+                    "{status}: unparseable error body: {e}"
+                )))
+            })?;
             match err.error.as_str() {
                 "authorization_pending" => {
                     tracing::debug!("authorization pending, retrying");
