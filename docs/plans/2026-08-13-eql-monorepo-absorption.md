@@ -144,6 +144,23 @@ EQL's credentialed jobs (`test-eql.yml` lines 133–136 and 601–604) reach Cip
 
 There is also a convention mismatch. EQL reads all four values from `secrets`; this repo reads `CS_WORKSPACE_CRN` and `CS_CLIENT_ID` from `vars` and only the key material from `secrets` (`integration-supabase.yml`, `integration-prisma-next.yml`, `prisma-next-e2e.yml`). Port to this repo's convention or `require-cs-secrets` will report the CRN missing.
 
+### The credentials change WORKSPACE, not just variable plumbing — and two test constants are keyed to the workspace
+
+The finding above treats the credentials as a wiring problem. They are also an *identity* problem, which the first credentialed run found and this plan had not anticipated: `vars.CS_WORKSPACE_CRN` here names a different CipherStash workspace than the one EQL was developed against. Two pinned SteVec selectors are MACs of (column context, JSONPath) **under the workspace keyset**, so they re-pin on the move even though no Rust, no SQL and no fixture logic changed:
+
+- `tests/sqlx/src/fixtures/v3_doc_integer.rs::SELECTOR` — `fce8be75…` → `606a4a44…`, reported identically by two independent runs.
+- `tests/sqlx/src/fixtures/v3_ste_vec.rs::SEL_HELLO_OP` — same keying, value not yet observed.
+
+This is a known, accepted property rather than a defect: the module comment says supporting multiple workspaces "would require runtime selector resolution, which the static `ScalarType::column_expr()` seam cannot do — out of scope here." The consequence to record is that **these pins are now coupled to this repo's CI workspace**, so rotating `CS_WORKSPACE_CRN` re-pins them again, and a contributor running the suite against their own workspace will see the drift message and must not commit their local value.
+
+Three things this cost, all worth fixing rather than absorbing:
+
+1. **Only one of the two constants had a drift guard.** `v3_doc_integer` failed with one copy-pasteable "pinned X, live Y" message. `SEL_HELLO_OP` has no such guard, so its drift surfaces as wrong ANSWERS — `LB3` counting 0 distinct ops, ORDER BY arms returning insertion order — with the live value nowhere in the output. `v3_jsonb_sel_hello_op_matches_fixture` closes that asymmetry. It deliberately does **not** infer the replacement: it prints every op-carrying selector with a row count and `op`-length profile and states the discriminator, because guessing wrong re-pins to the wrong leaf silently — the exact bug already recorded in `SEL_HELLO_OP`'s own history, where it named `$.number` while claiming `$.hello` and survived because equality-only suites cannot separate the two.
+2. **The shards ran fail-fast**, so shard 1 reported 11 failures and skipped 643 of its 710 tests. One environmental fault therefore answered one question per CI round trip. `tasks/test/sqlx-partition.sh` now passes `--no-fail-fast` (nextest's own suggestion in that output); the cost is bounded because the shards run ~5s tests in parallel.
+3. **`tests/sqlx/src/selectors.rs` holds five more workspace-keyed constants (`ROOT`, `HELLO`, `N`, `ARRAY_ELEMENTS`, `ARRAY_ROOT`) with zero consumers** — `rg 'Selectors::'` finds no use outside their own definition — and no guard. They are stale against this workspace and nothing says so. Delete them or guard them before anything starts using them; a dead constant that is silently wrong is worse than a missing one. Not done here: it is unrelated to the failure and belongs in its own change.
+
+The other selector-shaped constants in the tree are **synthetic and unaffected** — `crates/eql-bindings/tests/*` and `tests/sqlx/tests/payload_schema_tests.rs` pair theirs with hand-made ciphertext literals and touch no keyset, and the `00000…01` / `deadbeef…` / `ffffffff…` literals in `v3_jsonb_tests.rs` are forged by construction.
+
 ### Three imported release workflows violate the no-caching rule — by omission, not by setting
 
 The global constraint is that publish workflows never restore the Actions cache. `release-plz.yml` complies explicitly:
