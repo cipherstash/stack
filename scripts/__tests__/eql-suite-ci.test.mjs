@@ -205,9 +205,6 @@ const UNPORTED_DEPOSIT = [
   // Not CI. Ported with the repository settings, not with a workflow.
   '.github/ISSUE_TEMPLATE/docs-feedback.yml',
   '.github/actionlint.yaml',
-  // Two scheduled Rust jobs. Neither gates a merge; both are Phase 4 work.
-  '.github/workflows/bench-eql.yml',
-  '.github/workflows/macro-expand-eql.yml',
 ].sort()
 
 describe('the imported workflow directory is on its way out', () => {

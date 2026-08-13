@@ -1,5 +1,10 @@
 name: "Macro expand EQL"
 
+# Ported from cipherstash/encrypt-query-language with the subtree. See
+# `.github/workflows/test-eql.yml` for what the move costs (three path rewrites
+# here) and `scripts/__tests__/eql-suite-ci.test.mjs` for why a workflow left in
+# `packages/eql/.github/` runs nowhere.
+#
 # Regenerates the matrix `cargo expand` snapshots (one per reachable
 # `scalar_matrix!` arm: integer = [eq, ord], text = [eq, ord, search], boolean =
 # [storage]) and fails if any has drifted from its committed copy. This is a
@@ -36,6 +41,9 @@ env:
 defaults:
   run:
     shell: bash {0}
+    # Every `run:` here is written against the EQL root: `mise.toml` for the
+    # nightly grep, and `tests/sqlx/snapshots` for the drift diff.
+    working-directory: packages/eql
 
 permissions:
   contents: read
@@ -56,10 +64,11 @@ jobs:
           version: 2026.4.0
           install: true
           cache: true
+          working_directory: packages/eql
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: tests/sqlx
+          workspaces: packages/eql/tests/sqlx
           shared-key: sqlx-tests
 
       # Derive the pinned nightly date from mise.toml (single source of truth —
