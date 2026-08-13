@@ -26,9 +26,8 @@ import { render } from '../helpers/pty.js'
 // the code and message pasted on. A fixture like that keeps passing when Node
 // changes either, which is the whole risk being covered.
 
-/** Mirrors the probe labels in `src/commands/doctor/index.ts`. */
-const ENCRYPTION_LABEL = 'Encryption engine (@cipherstash/stack → protect-ffi)'
-const AUTH_LABEL = 'Auth (@cipherstash/auth)'
+const ENCRYPTION_LABEL = messages.doctor.encryptionProbeLabel
+const AUTH_LABEL = messages.doctor.authProbeLabel
 
 interface Unresolve {
   /** The bare specifier to divert. */
@@ -125,7 +124,11 @@ describe.skipIf(!hooksAvailable)('stash doctor — probe classification', () => 
     expect(r.output).toContain(
       `${ENCRYPTION_LABEL} — ${messages.doctor.notInstalledOptional}`,
     )
-    expect(r.output).toContain(messages.doctor.allChecksPassed)
+    // Recoverable, so exit 0 and a green row — but the encryption check did not
+    // run, and the outro must not say it passed. Same distinction the too-old
+    // arm makes below; this arm predates it and claimed a pass.
+    expect(r.output).toContain(messages.doctor.checksIncomplete)
+    expect(r.output).not.toContain(messages.doctor.allChecksPassed)
     expect(r.output).not.toContain('Fatal error')
     // The optional package's absence must not be dressed up as a missing
     // binary — that would send the user to a reinstall for a package they
