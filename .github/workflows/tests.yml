@@ -246,6 +246,13 @@ jobs:
       - name: Lint — no references to deleted package directories
         run: pnpm run lint:package-paths
 
+      # `eql-bindings` emits EQL payloads; `@cipherstash/eql` carries the SQL
+      # that stores them. Both live here now and release at one lockstep
+      # version. A registry pin on either lets them drift apart — it compiles,
+      # it passes every suite, and it fails in a customer's database.
+      - name: Lint — EQL resolves in-tree, not from a registry
+        run: pnpm run lint:eql-pins
+
       # TEMPORARY — delete with the script in the phase-4 cutover PR.
       # The seven protect-ffi packages live here but still publish from
       # cipherstash/protectjs-ffi. A changeset naming any of them bumps all
