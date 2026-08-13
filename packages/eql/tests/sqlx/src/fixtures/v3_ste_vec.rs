@@ -48,7 +48,21 @@ const NAME: &str = "v3_ste_vec";
 /// `op` is `8 * (len + 1) + 1` bits, so `$.hello` is 132 hex chars for
 /// `"world-1"`..`"world-9"` and 148 for `"world-10"`, while `$.number` is a
 /// fixed-width 65-bit number term — 132 on every row.
-pub const SEL_HELLO_OP: &str = "b325a0c77b130af97b805c12ff853ab3";
+///
+/// **Pinned to this repo's CI workspace** (`vars.CS_WORKSPACE_CRN`). The value
+/// below replaced `b325a0c77b130af97b805c12ff853ab3` when the suite moved here
+/// from `cipherstash/encrypt-query-language`: a different workspace means a
+/// different keyset, so the MAC re-pinned with no Rust, SQL or fixture change.
+/// `v3_jsonb_sel_hello_op_matches_fixture` is the drift guard; it reports the
+/// live candidates rather than choosing, so the leaf is identified by the
+/// length rule above, not guessed. Against that workspace the fixture's six
+/// `op`-carrying leaves separate cleanly at `16 * len + 20` hex chars —
+/// `$.empty` 20, `$.accented` 84/180/196 (three lengths, not four: the
+/// `café`/`cafe` collision pair shares one), `$.nested.deep` 148,
+/// `$.number` and `$.large` a fixed 132, and `$.hello` alone spanning 132/148.
+/// A contributor running against their own workspace will see the guard fire
+/// and should NOT commit their local value.
+pub const SEL_HELLO_OP: &str = "6f1db3bd70058dc4dab95cc692599b12";
 
 /// The canonical `payload` column type — the `public.eql_v3_json_search` DOMAIN, so the
 /// domain CHECK runs when the fixture loads.
