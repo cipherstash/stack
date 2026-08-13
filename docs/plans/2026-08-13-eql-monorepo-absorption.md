@@ -149,7 +149,9 @@ There is also a convention mismatch. EQL reads all four values from `secrets`; t
 The finding above treats the credentials as a wiring problem. They are also an *identity* problem, which the first credentialed run found and this plan had not anticipated: `vars.CS_WORKSPACE_CRN` here names a different CipherStash workspace than the one EQL was developed against. Two pinned SteVec selectors are MACs of (column context, JSONPath) **under the workspace keyset**, so they re-pin on the move even though no Rust, no SQL and no fixture logic changed:
 
 - `tests/sqlx/src/fixtures/v3_doc_integer.rs::SELECTOR` — `fce8be75…` → `606a4a44…`, reported identically by two independent runs.
-- `tests/sqlx/src/fixtures/v3_ste_vec.rs::SEL_HELLO_OP` — same keying, value not yet observed.
+- `tests/sqlx/src/fixtures/v3_ste_vec.rs::SEL_HELLO_OP` — `b325a0c7…` → `6f1db3bd…`, identified from the new guard's report.
+
+The identification is over-determined rather than rule-matched, which is the standard a silent mis-pin deserves. The guard printed all six `op`-carrying leaves, and at `16 * len + 20` hex chars every one reconciles against the fixture's known documents: `$.empty` 20, `$.accented` 84/180/196 — three lengths rather than four, because the `café`/`cafe` collision pair the fixture exists to carry shares one — `$.nested.deep` 148 for `"constant"`, `$.number` and `$.large` a fixed-width 132, and `$.hello` alone spanning 132/148 for `world-1..9` vs `world-10`.
 
 This is a known, accepted property rather than a defect: the module comment says supporting multiple workspaces "would require runtime selector resolution, which the static `ScalarType::column_expr()` seam cannot do — out of scope here." The consequence to record is that **these pins are now coupled to this repo's CI workspace**, so rotating `CS_WORKSPACE_CRN` re-pins them again, and a contributor running the suite against their own workspace will see the drift message and must not commit their local value.
 
