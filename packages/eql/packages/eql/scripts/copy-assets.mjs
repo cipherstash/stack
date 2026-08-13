@@ -16,7 +16,9 @@ export async function copyAssets() {
 
   rmSync(join(dist, 'sql'), { recursive: true, force: true })
   if (!existsSync(sqlSrc)) {
-    throw new Error('packages/eql/sql is missing; run mise run release:prepare_bindings_assets --version <identity> before building a release package')
+    throw new Error(
+      'packages/eql/sql is missing; run mise run release:prepare_bindings_assets --version <identity> before building a release package',
+    )
   }
   cpSync(sqlSrc, join(dist, 'sql'), { recursive: true })
 }

@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'vitest'
-import { schemaId, schemaIds, schemaNames } from './schema'
 import type {
   IntegerEq,
   SteVecDocument,
@@ -7,6 +6,7 @@ import type {
   TextSearch,
   TextSearchOre,
 } from './index'
+import { schemaId, schemaIds, schemaNames } from './schema'
 
 describe('@cipherstash/eql generated surface', () => {
   test('exports schema metadata for generated domains', () => {

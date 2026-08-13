@@ -1,11 +1,13 @@
 #!/usr/bin/env node
+import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const pkg = JSON.parse(readFileSync(resolve(packageRoot, 'package.json'), 'utf8'))
+const pkg = JSON.parse(
+  readFileSync(resolve(packageRoot, 'package.json'), 'utf8'),
+)
 // Dist-tag policy (2026-07-08): until 3.0.0 final ships, `latest` tracks the
 // newest release INCLUDING prereleases — the 3.0.0 alphas are the only release
 // line, so a bare `npm install @cipherstash/eql` should resolve to the newest
@@ -24,7 +26,15 @@ console.log(`publishing ${pkg.name}@${pkg.version} with npm dist-tag '${tag}'`)
 // publish path — including `changeset publish` on the production side.
 const result = spawnSync(
   'npm',
-  ['publish', '--access', 'public', '--provenance', '--tag', tag, ...process.argv.slice(2)],
+  [
+    'publish',
+    '--access',
+    'public',
+    '--provenance',
+    '--tag',
+    tag,
+    ...process.argv.slice(2),
+  ],
   { cwd: packageRoot, stdio: 'inherit' },
 )
 

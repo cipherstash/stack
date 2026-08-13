@@ -1,6 +1,11 @@
 import { existsSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
-import { installSqlPath, readInstallSql, releaseManifest, uninstallSqlPath } from './sql'
+import {
+  installSqlPath,
+  readInstallSql,
+  releaseManifest,
+  uninstallSqlPath,
+} from './sql'
 
 describe('@cipherstash/eql SQL assets', () => {
   test('release manifest shape is stable', () => {
