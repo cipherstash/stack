@@ -82,10 +82,10 @@ jobs:
       # reflow trips this step without a real complexity increase, re-measure
       # (`npx fta src --format table`) before assuming the code got worse.
       - name: Analyze stack (eql/v3) complexity
-        run: pnpm --filter @cipherstash/stack run analyze:complexity
+        run: pnpm exec turbo run analyze:complexity --filter @cipherstash/stack
 
       - name: Analyze stack-drizzle complexity
-        run: pnpm --filter @cipherstash/stack-drizzle run analyze:complexity
+        run: pnpm exec turbo run analyze:complexity --filter @cipherstash/stack-drizzle
 
       - name: Analyze stack-supabase complexity
-        run: pnpm --filter @cipherstash/stack-supabase run analyze:complexity
+        run: pnpm exec turbo run analyze:complexity --filter @cipherstash/stack-supabase
