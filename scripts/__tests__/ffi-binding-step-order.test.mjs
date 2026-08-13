@@ -184,6 +184,7 @@ const EXPECTED_CREDENTIALED_JOBS = [
   '.github/workflows/integration-protect-ffi.yml / integration',
   '.github/workflows/integration-supabase.yml / integration',
   '.github/workflows/prisma-example-readme-e2e.yml / walkthrough',
+  '.github/workflows/bench-eql.yml / bench',
   '.github/workflows/prisma-next-e2e.yml / e2e',
   '.github/workflows/test-eql.yml / build-archive',
   '.github/workflows/test-eql.yml / e2e',
@@ -215,6 +216,10 @@ const EXPECTED_CREDENTIALED_JOBS = [
  * pre-flight exemption below is NOT theirs. They run it.
  */
 const BINDING_EXEMPT_JOBS = new Map([
+  [
+    '.github/workflows/bench-eql.yml / bench',
+    'Rust: the `bench`-gated SQLx tests encrypt through cipherstash-client, and never load index.node or dist/wasm.',
+  ],
   [
     '.github/workflows/test-eql.yml / build-archive',
     'Rust: `cargo nextest archive` links cipherstash-client directly, and never loads index.node or dist/wasm.',

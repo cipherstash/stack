@@ -1,0 +1,119 @@
+name: "Bench EQL"
+
+# Ported from cipherstash/encrypt-query-language with the subtree. See
+# `.github/workflows/test-eql.yml` for the full account of what the move costs;
+# this file needed the same four path rewrites plus two changes of its own,
+# noted at the steps that carry them.
+#
+# Runs the slow benchmark / regression / scale SQLx tests gated behind the
+# `bench` cargo feature. Not on pull requests — those use the fast `test-eql`
+# workflow.
+# Triggers:
+#   - push to main (catches regressions before release)
+#   - nightly schedule (additional smoke)
+#   - manual workflow_dispatch (PR triage)
+on:
+  push:
+    branches:
+      - main
+    # Repo-root relative, so every entry gained the subtree prefix. Unprefixed,
+    # `src/**/*.sql` and `tests/sqlx/**/*` match nothing under this repository's
+    # root and the bench would simply stop running on pushes — silently, since
+    # a workflow that never triggers reports nothing at all.
+    paths:
+      - ".github/workflows/bench-eql.yml"
+      - "packages/eql/src/**/*.sql"
+      - "packages/eql/tests/sqlx/**/*"
+      - "packages/eql/tasks/**/*"
+      - "packages/eql/crates/**"
+      - "packages/eql/Cargo.toml"
+      - "packages/eql/Cargo.lock"
+
+  schedule:
+    # 02:00 UTC daily
+    - cron: "0 2 * * *"
+
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  MISE_VERBOSE: "1"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash {0}
+    # Every `run:` here is written against the EQL root.
+    working-directory: packages/eql
+
+jobs:
+  bench:
+    name: "Bench EQL (Postgres 17)"
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 60
+
+    env:
+      POSTGRES_VERSION: "17"
+
+    steps:
+      # SHA-pinned, where upstream used floating major tags. The rest of the
+      # imported suite already pins by SHA; a mutable tag on a job that holds
+      # live CipherStash credentials means the code running there can change
+      # without a commit here. Same three pins as test-eql.yml — keep them in
+      # step. (checkout moves v4 -> v6 with this, matching that file.)
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      # Fast pre-flight: fail in seconds if a secret was rotated or cleared,
+      # before the rust-cache restore and a bench run budgeted at 60 minutes.
+      # This is a scheduled job, so nobody is watching it start — the difference
+      # between failing here and failing in `test:bench` is a legible nightly
+      # failure versus "Auth strategy error: Not authenticated" an hour in.
+      - uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+          # mise reads config from cwd and its PARENTS, so an action running at
+          # the repo root never sees packages/eql/mise.toml.
+          working_directory: packages/eql
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+          shared-key: sqlx-tests
+
+      - name: Setup database
+        run: |
+          mise run postgres:up postgres-${POSTGRES_VERSION} --extra-args "--detach --wait"
+
+      - name: Run bench tests
+        # CS_* scoped to THIS step only (least privilege): test:bench -> test:sqlx:prep
+        # -> fixture:generate:all encrypts via cipherstash-client and needs BOTH a
+        # ZeroKMS auth credential (CS_CLIENT_ACCESS_KEY + CS_WORKSPACE_CRN) AND a client
+        # key (CS_CLIENT_ID + CS_CLIENT_KEY); without them it fails "Auth strategy error:
+        # Not authenticated". Kept off job scope so checkout/mise/rust-cache actions
+        # never see them.
+        #
+        # CS_WORKSPACE_CRN and CS_CLIENT_ID read from `vars.`, not `secrets.` —
+        # this repo keeps the two non-sensitive ones there. Reading them from
+        # `secrets.` yields the empty string rather than an error.
+        env:
+          CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+          CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+          CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
+          CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
+        run: |
+          export active_rust_toolchain=$(rustup show active-toolchain | cut -d' ' -f1)
+          rustup component add --toolchain ${active_rust_toolchain} rustfmt clippy
+          mise run --output prefix test:bench --postgres ${POSTGRES_VERSION}

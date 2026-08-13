@@ -116,6 +116,17 @@ const EXPECTED_ASYMMETRIES = new Map([
     // release machinery never runs the check) is what the single list IS.
     'pull_request is the only trigger; a post-merge copy would report a release-blocking finding too late to act on',
   ],
+  [
+    '.github/workflows/bench-eql.yml',
+    // The mirror image of lint-release.yml: `push: branches: [main]` with a
+    // `paths:` list, and no `pull_request:` trigger at all. Deliberate upstream
+    // and unchanged by the port — the bench suite is budgeted at 60 minutes and
+    // runs the slow `bench`-gated SQLx tests, so it stays off the PR path and
+    // catches regressions after merge and nightly. With one event there is no
+    // second list to drift from, and the direction that would hurt (a narrower
+    // PR filter) does not exist because PRs never run it.
+    'push to main and a nightly schedule are the only triggers; a 60-minute bench deliberately stays off the PR path',
+  ],
 ])
 
 describe('paths filters are written twice, identically', () => {
