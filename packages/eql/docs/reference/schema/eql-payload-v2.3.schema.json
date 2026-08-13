@@ -10,7 +10,6 @@
   ],
 
   "$defs": {
-
     "Version": {
       "title": "Payload version (v)",
       "description": "Configuration version that produced the payload. Hard-coded to 2 in EQL v2; `eql_v2._encrypted_check_v` raises if any other value is present.",
@@ -49,19 +48,21 @@
       "description": "Shape stored in `eql_v2_encrypted` columns for a single encrypted scalar value. `v`, `c`, and `i.{t,c}` are required by `eql_v2.check_encrypted`. Any subset of the index-term fields may be present, depending on the configured indexes for the column. The orderable term at this scope is `ob` (Block ORE); `oc` lives only on `sv` elements. Mutually exclusive with `SteVecPayload`: must not carry `sv`.",
       "type": "object",
       "properties": {
-        "v":  { "$ref": "#/$defs/Version" },
-        "k":  { "type": "string", "const": "ct", "description": "Discriminator: identifies this as the scalar ciphertext form." },
-        "c":  { "$ref": "#/$defs/Ciphertext" },
-        "i":  { "$ref": "#/$defs/Ident" },
+        "v": { "$ref": "#/$defs/Version" },
+        "k": {
+          "type": "string",
+          "const": "ct",
+          "description": "Discriminator: identifies this as the scalar ciphertext form."
+        },
+        "c": { "$ref": "#/$defs/Ciphertext" },
+        "i": { "$ref": "#/$defs/Ident" },
 
         "hm": { "$ref": "#/$defs/IndexTerms/properties/hm" },
         "bf": { "$ref": "#/$defs/IndexTerms/properties/bf" },
         "ob": { "$ref": "#/$defs/IndexTerms/properties/ob" }
       },
       "required": ["v", "c", "i"],
-      "allOf": [
-        { "not": { "required": ["sv"] } }
-      ],
+      "allOf": [{ "not": { "required": ["sv"] } }],
       "additionalProperties": false
     },
 
@@ -70,9 +71,13 @@
       "description": "Shape stored in `eql_v2_encrypted` columns for jsonb / structured values. Carries only the discriminator metadata (`v`, `k`, `i`) and the STE vector array (`sv`). Mutually exclusive with `EncryptedPayload`: must not carry a top-level `c` or any of the scalar index terms — those live on individual `sv` elements instead.",
       "type": "object",
       "properties": {
-        "v":  { "$ref": "#/$defs/Version" },
-        "k":  { "type": "string", "const": "sv", "description": "Discriminator: identifies this as the STE vector form." },
-        "i":  { "$ref": "#/$defs/Ident" },
+        "v": { "$ref": "#/$defs/Version" },
+        "k": {
+          "type": "string",
+          "const": "sv",
+          "description": "Discriminator: identifies this as the STE vector form."
+        },
+        "i": { "$ref": "#/$defs/Ident" },
         "sv": {
           "type": "array",
           "description": "STE vector: array of per-selector encrypted terms used for jsonb containment (`@>`, `<@`) and path queries.",
@@ -121,10 +126,7 @@
         },
         {
           "description": "Exactly one of `hm` or `oc` must be present, mirroring `SteVecElement`.",
-          "oneOf": [
-            { "required": ["hm"] },
-            { "required": ["oc"] }
-          ]
+          "oneOf": [{ "required": ["hm"] }, { "required": ["oc"] }]
         }
       ],
       "additionalProperties": false
@@ -143,7 +145,7 @@
           "type": "boolean",
           "description": "Array marker. True when the selector points at a JSON array context."
         },
-        "c":  { "$ref": "#/$defs/Ciphertext" },
+        "c": { "$ref": "#/$defs/Ciphertext" },
         "hm": { "$ref": "#/$defs/IndexTerms/properties/hm" },
         "oc": { "$ref": "#/$defs/IndexTerms/properties/oc" }
       },
@@ -160,10 +162,7 @@
         },
         {
           "description": "Exactly one of `hm` or `oc` must be present. `hm` covers boolean leaves and array / object root placeholders; `oc` covers string and number leaves. cipherstash-suite never emits both or neither on the same element.",
-          "oneOf": [
-            { "required": ["hm"] },
-            { "required": ["oc"] }
-          ]
+          "oneOf": [{ "required": ["hm"] }, { "required": ["oc"] }]
         }
       ],
       "additionalProperties": false
@@ -174,7 +173,6 @@
       "description": "Catalogue of every deterministic / order-preserving index term emitted by Proxy in v2.3. Defined here so both the root payload and STE vector elements can $ref individual entries without duplicating descriptions.",
       "type": "object",
       "properties": {
-
         "hm": {
           "title": "HMAC-SHA-256 (hm)",
           "description": "Deterministic hex-encoded HMAC used for `=` / `<>` equality. As of v2.3 also used for STE vector element equality (selector + hm = match), replacing the previous `b3` term.",

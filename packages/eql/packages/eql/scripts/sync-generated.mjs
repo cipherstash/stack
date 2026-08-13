@@ -1,8 +1,8 @@
 import {
   existsSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -55,7 +55,12 @@ function renderSchemaManifest(files) {
     return { name, id: json.$id }
   })
   const names = entries.map((entry) => `  '${entry.name}',`).join('\n')
-  const ids = entries.map((entry) => `  ${JSON.stringify(entry.name)}: ${JSON.stringify(entry.id)},`).join('\n')
+  const ids = entries
+    .map(
+      (entry) =>
+        `  ${JSON.stringify(entry.name)}: ${JSON.stringify(entry.id)},`,
+    )
+    .join('\n')
   return `export const schemaNames = [\n${names}\n] as const\n\nexport const schemaIds = {\n${ids}\n} as const\n`
 }
 
@@ -85,7 +90,9 @@ function assertUnchanged(before, dir) {
   const beforeJson = JSON.stringify([...before.entries()].sort())
   const afterJson = JSON.stringify([...after.entries()].sort())
   if (beforeJson !== afterJson) {
-    throw new Error('@cipherstash/eql generated files are stale; run `pnpm --filter @cipherstash/eql sync:generated`')
+    throw new Error(
+      '@cipherstash/eql generated files are stale; run `pnpm --filter @cipherstash/eql sync:generated`',
+    )
   }
 }
 
@@ -106,11 +113,16 @@ const schemaFiles = listFiles(sourceSchemas, '.json')
 for (const file of schemaFiles) {
   copyText(join(sourceSchemas, file), join(generatedSchemas, file))
 }
-write(join(generatedRoot, 'schema-manifest.ts'), renderSchemaManifest(schemaFiles))
+write(
+  join(generatedRoot, 'schema-manifest.ts'),
+  renderSchemaManifest(schemaFiles),
+)
 write(join(generatedRoot, 'release-manifest.ts'), renderReleaseManifest())
 
 if (check) {
   assertUnchanged(before, generatedRoot)
 }
 
-console.log(`synced ${bindingFiles.length} TypeScript bindings and ${schemaFiles.length} JSON schemas`)
+console.log(
+  `synced ${bindingFiles.length} TypeScript bindings and ${schemaFiles.length} JSON schemas`,
+)

@@ -9,7 +9,9 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const pkg = JSON.parse(readFileSync(resolve(packageRoot, 'package.json'), 'utf8'))
+const pkg = JSON.parse(
+  readFileSync(resolve(packageRoot, 'package.json'), 'utf8'),
+)
 
 const manifestPath = resolve(packageRoot, 'sql/release-manifest.json')
 if (!existsSync(manifestPath)) {
@@ -27,7 +29,10 @@ if (manifest.eqlVersion !== pkg.version) {
   process.exit(1)
 }
 
-const installSql = readFileSync(resolve(packageRoot, 'sql/cipherstash-encrypt.sql'), 'utf8')
+const installSql = readFileSync(
+  resolve(packageRoot, 'sql/cipherstash-encrypt.sql'),
+  'utf8',
+)
 if (!installSql.includes('eql_v3')) {
   console.error(
     'refusing to publish: sql/cipherstash-encrypt.sql looks like the DEV placeholder — the bundled SQL was not prepared for this release.',
