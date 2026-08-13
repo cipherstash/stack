@@ -2,15 +2,14 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import {
-  isPackageMissing,
-  isSubpathUnavailable,
-} from '../commands/doctor/index.js'
+import { isPackageMissing, isSubpathUnavailable } from '../module-error.js'
 import { isNativeBinaryMissing } from '../native.js'
 
-// The classifiers `stash doctor` sorts a failed probe with. Each arm renders a
-// different row and a different exit code, so a probe error landing in the
-// wrong one is a wrong diagnosis, not a cosmetic slip.
+// The `module-error.ts` classifiers `stash doctor` sorts a failed probe with.
+// Each arm renders a different row and a different exit code, so a probe error
+// landing in the wrong one is a wrong diagnosis, not a cosmetic slip — and the
+// two here are the ones whose answers are indistinguishable to the user: a
+// green "not installed", or advice to upgrade.
 //
 // Every fixture below is an error NODE raised, never one built by hand with the
 // code and message pasted on. A hand-built fixture asserts on itself: it keeps

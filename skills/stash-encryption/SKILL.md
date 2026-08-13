@@ -195,6 +195,7 @@ The SDK never logs plaintext data.
 | `@cipherstash/stack/schema` | Low-level encrypt-config types and validation helpers; it is not a schema-authoring DSL |
 | `@cipherstash/stack/encryption` | The `Encryption` factory and the chainable operation classes its methods return (`EncryptOperation`, `DecryptOperation`, `EncryptQueryOperation`, `BulkEncryptModelsOperation`, …). Import these only to *name* an operation's type; author schemas and build the client from `@cipherstash/stack/v3` |
 | `@cipherstash/stack/adapter-kit` | The internal seam for the **first-party** adapter packages (`@cipherstash/stack-drizzle`, `@cipherstash/stack-supabase`). Not a general-purpose public API — anything an end user needs has a dedicated subpath above. Do not import it in application code |
+| `@cipherstash/stack/diagnostics` | One export, `assertNativeBindingAvailable()`, for **tooling** that needs to prove the protect-ffi native binding is installed — this is what `stash doctor` calls. Importing it forces nothing; calling it forces the platform binary to load and throws the loader's own error, naming the missing `@cipherstash/protect-ffi-<platform>-<arch>` package, if it is absent. Not part of the encryption API and not needed in application code |
 
 ## Schema Definition
 

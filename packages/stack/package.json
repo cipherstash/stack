@@ -65,6 +65,9 @@
 			],
 			"wasm-inline": [
 				"./dist/wasm-inline.d.ts"
+			],
+			"diagnostics": [
+				"./dist/diagnostics.d.ts"
 			]
 		}
 	},

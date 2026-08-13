@@ -1,9 +1,6 @@
 import * as p from '@clack/prompts'
 import { messages } from '../../messages.js'
-import {
-  isModuleNotFound,
-  moduleNotFoundSpecifier,
-} from '../../module-error.js'
+import { isPackageMissing, isSubpathUnavailable } from '../../module-error.js'
 import {
   currentTarget,
   isNativeBinaryMissing,
@@ -73,64 +70,6 @@ function report(outcome: Outcome, label: string, detail?: string) {
   if (outcome === 'ok') p.log.success(text)
   else if (outcome === 'warn') p.log.warn(text)
   else p.log.error(text)
-}
-
-/**
- * True when `pkg` itself is what failed to resolve — the package is not
- * installed, as opposed to installed and unable to load something.
- *
- * Matched on the SPECIFIER Node quotes, not on the message text. A substring
- * test reads the probe's own import path as a hit: `@cipherstash/stack/
- * diagnostics` failing on a missing `dist/` file names
- * `…/node_modules/@cipherstash/stack/dist/diagnostics.js`, which contains the
- * package name, and doctor would call an installed-but-broken package "not
- * installed" — a green row, and no reason for the user to look further. It also
- * swallowed the neighbours: `@cipherstash/stack-drizzle` contains
- * `@cipherstash/stack`.
- */
-export function isPackageMissing(err: unknown, pkg: string): boolean {
-  if (!isModuleNotFound(err)) return false
-  const specifier = moduleNotFoundSpecifier(err)
-  if (specifier === undefined) return false
-  // The probe imports a subpath, and Node quotes the base package for an absent
-  // one under ESM but the full specifier under CJS. Both mean this package.
-  return specifier === pkg || specifier.startsWith(`${pkg}/`)
-}
-
-/**
- * True when the package is installed but does not publish the subpath THIS
- * probe asked for — an `@cipherstash/stack` older than `./diagnostics`.
- *
- * Its own arm because the alternative is the `else` below: an unclassified
- * error, rethrown, surfacing as a bare `Fatal error` from the launcher. `stash`
- * declares `@cipherstash/stack` as an OPTIONAL PEER with a wide range, so every
- * install predating that subpath lands here — a case a user hits by doing
- * nothing wrong.
- *
- * Narrow on purpose. The row it renders tells the user to upgrade
- * `@cipherstash/stack`, and the error code alone does not mean that: an exports
- * failure can come from anywhere in a probe's import graph, including the auth
- * probe, which asks for no subpath at all. So the probe must name a subpath and
- * the error must be about that one — otherwise a broken install gets an
- * unrelated upgrade and an exit code of 0.
- */
-export function isSubpathUnavailable(
-  err: unknown,
-  probe: { pkg: string; subpath?: string },
-): boolean {
-  if (probe.subpath === undefined) return false
-  if (!(err instanceof Error)) return false
-  if ((err as { code?: string }).code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED') {
-    return false
-  }
-  // Node names both halves: `Package subpath './diagnostics' is not defined by
-  // "exports" in /…/@cipherstash/stack/package.json`. Separators normalised
-  // because win32 is a supported target and that path is built by the OS.
-  const message = err.message.replaceAll('\\', '/')
-  return (
-    message.includes(`'${probe.subpath}'`) &&
-    message.includes(`${probe.pkg}/package.json`)
-  )
 }
 
 export async function doctorCommand(): Promise<void> {

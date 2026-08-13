@@ -146,13 +146,12 @@ describe('stash doctor — a platform binary is missing', () => {
     })
     await r.exit
 
-    const failures = r.output.match(
-      new RegExp(messages.doctor.nativeBinaryMissing, 'g'),
-    )
-    expect(
-      failures,
-      `expected exactly one failing row:\n${r.output}`,
-    ).toHaveLength(1)
+    // Counted by splitting, not by `new RegExp(message)`: the needle is copy
+    // from `messages.ts`, and copy is free to grow a `.`, `(` or `?` — which a
+    // regex would silently reinterpret rather than fail on.
+    const failures =
+      r.output.split(messages.doctor.nativeBinaryMissing).length - 1
+    expect(failures, `expected exactly one failing row:\n${r.output}`).toBe(1)
     expect(r.output).toContain(protectFfi.label)
     expect(r.output).not.toContain('@cipherstash/auth-')
   })
