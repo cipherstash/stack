@@ -65,6 +65,9 @@
 			],
 			"wasm-inline": [
 				"./dist/wasm-inline.d.ts"
+			],
+			"diagnostics": [
+				"./dist/diagnostics.d.ts"
 			]
 		}
 	},
@@ -173,6 +176,16 @@
 			"import": {
 				"types": "./dist/wasm-inline.d.ts",
 				"default": "./dist/wasm-inline.js"
+			}
+		},
+		"./diagnostics": {
+			"import": {
+				"types": "./dist/diagnostics.d.ts",
+				"default": "./dist/diagnostics.js"
+			},
+			"require": {
+				"types": "./dist/diagnostics.d.cts",
+				"default": "./dist/diagnostics.cjs"
 			}
 		},
 		"./package.json": "./package.json"
