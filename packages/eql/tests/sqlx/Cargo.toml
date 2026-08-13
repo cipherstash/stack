@@ -1,0 +1,80 @@
+[package]
+name = "eql_tests"
+version = "0.1.0"
+edition = "2021"
+# Integration-test crate — not published to crates.io. release-plz skips
+# `publish = false` packages, so only eql-bindings is ever released.
+publish = false
+
+[dependencies]
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "macros", "chrono", "rust_decimal"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+hex = "0.4"
+jsonschema = { version = "0.46.4", default-features = false }
+# The published client is the encryption oracle for fixtures and fresh e2e
+# queries. Pin it exactly so its SteVec envelope cannot drift independently of
+# the strict bindings and SQL contract tested in this repository.
+cipherstash-client = { version = "=0.42.0", features = ["tokio"] }
+# chrono is already in the tree transitively (cipherstash-client / ore-rs); pin
+# it as a direct dependency so the harness can name `chrono::NaiveDate` for the
+# `date` scalar (Encode/Decode/Type come from the sqlx `chrono` feature above).
+chrono = { version = "0.4", default-features = false }
+# rust_decimal backs the `numeric` scalar. The sqlx `rust_decimal` feature above
+# provides Encode/Decode/Type<Postgres>; this names the type directly for the
+# harness impls (scalar_domains.rs, eql_plaintext.rs). Already in the tree
+# transitively (cipherstash-client / ore-rs).
+rust_decimal = "1"
+paste = "1"
+eql-domains = { path = "../../crates/eql-domains" }
+# The fixture generator validates cipherstash-client's native v3 payloads
+# against these bindings before staging, so the bindings are a lib dependency
+# now, not just a dev one (they remain a dev-dependency consumer via
+# tests/v3_jsonb_bindings_tests.rs too).
+eql-bindings = { path = "../../crates/eql-bindings" }
+eql-tests-macros = { path = "../../crates/eql-tests-macros" }
+# proptest is a regular dependency (not dev-only): `ScalarType::arbitrary_value`
+# is a non-test trait method returning `proptest::strategy::BoxedStrategy`, so the
+# lib must see proptest when compiled as a normal dependency of the integration
+# test targets (`tests/encrypted_domain`), not just under `cfg(test)`.
+proptest = "1"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Opt-in to slow benchmark / regression / scale tests. Without this feature
+# they're #[ignore]'d or #[cfg]'d out so PR CI stays fast. Enabling `bench`
+# transitively enables `scale` (below), so the `bench-eql` workflow — push to
+# main + nightly, via `tasks/test/bench.sh` (`cargo test --features bench`) —
+# is the runner that exercises the per-combo scale-preference matrix tests.
+# Run locally with: mise run test:bench
+bench = ["scale"]
+# The matrix's per-(variant, index) scale-preference tests
+# (`#[cfg(feature = "scale")]`). Each replicates ONE real fixture payload to
+# ~5000 rows plus a selective pivot and asserts the planner *prefers* the
+# functional index with `enable_seqscan` left ON. The `*_index_engages_*` arms
+# force seqscan off and only prove the index is *usable*. Off in fast PR CI
+# (`mise run test`); activated transitively by `bench` (above), so the
+# `bench-eql` workflow runs them. Not enabled directly anywhere else.
+scale = []
+# Opt-in to the e2e property suite. It generates fresh random
+# plaintexts each run and encrypts them end-to-end through ZeroKMS via
+# cipherstash-client, so it needs the same CS_* creds as fixture generation.
+# `mise run test:sqlx` enables this (CI has the secrets). A bare `cargo test`
+# without it compiles the e2e suite out, so credential-less quick runs and the
+# lean crate path are unaffected. The fixture suite and the catalog suite are
+# NOT gated — they need no fresh encryption.
+proptest-e2e = []
+# Opt-in to compiling the fixture generators. Without this feature the
+# `#[cfg(feature = "fixture-gen")]` generator tests do not exist, so
+# `cargo test` and CI never see them. Generators need a live Postgres and,
+# in the process env, BOTH a ZeroKMS auth credential (`CS_CLIENT_ACCESS_KEY`
+# + `CS_WORKSPACE_CRN`, via AutoStrategy) AND a client key (`CS_CLIENT_ID` +
+# `CS_CLIENT_KEY`, via EnvKeyProvider) — the two pairs are not alternatives.
+# Regenerate all fixtures with:
+#   mise run fixture:generate:all
+fixture-gen = []

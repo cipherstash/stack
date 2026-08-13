@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "Hmac256": {
+      "description": "HMAC-SHA-256 equality term — the `hm` wire key. Backs the `_eq` domains\n(`=`, `<>`). SQL-side constructor: `eql_v3_internal.hmac_256`.",
+      "type": "string"
+    },
+    "Identifier": {
+      "additionalProperties": false,
+      "description": "Table + column identifier — wire shape `{\"t\": \"...\", \"c\": \"...\"}`.\n\nShared by every payload.",
+      "properties": {
+        "c": {
+          "description": "Column name.",
+          "type": "string"
+        },
+        "t": {
+          "description": "Table name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "t",
+        "c"
+      ],
+      "type": "object"
+    },
+    "OpeCllw": {
+      "description": "CLLW-OPE order term — the `op` wire key. Backs the scalar `_ord` (the\ndefault ordering domain), `_ord_ope`, and `text_search` domains, their\n`query_` operands (`=` `<>` `<` `<=` `>` `>=`), and the ordered\n(number/string) path entries of a SteVec document (the only per-entry\nterm — `hm` is retired; exact matching is the value-inclusive selector):\na hex-encoded CLLW OPE ciphertext, sortable via native bytea comparison\nafter hex-decode — unlike `ob` (block-ORE) it needs no custom comparator.\nExtracted by `eql_v3.ord_term` (scalar domains and the\n`public.eql_v3_json_entry` overload alike); SQL-side constructor:\n`eql_v3_internal.ope_cllw`.",
+      "type": "string"
+    },
+    "SchemaVersion": {
+      "const": 3,
+      "description": "The envelope version field (`v`) — always exactly `3` on the wire.",
+      "type": "integer"
+    }
+  },
+  "$id": "https://schemas.cipherstash.com/eql/v3/query_text_ord_ope.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "`eql_v3.query_text_ord_ope` — ordering domain query operand.\n\nOperators: `=` `<>` `<` `<=` `>` `>=`. Required keys: `v` `i` `hm` `op`.",
+  "properties": {
+    "hm": {
+      "$ref": "#/$defs/Hmac256"
+    },
+    "i": {
+      "$ref": "#/$defs/Identifier"
+    },
+    "op": {
+      "$ref": "#/$defs/OpeCllw"
+    },
+    "v": {
+      "$ref": "#/$defs/SchemaVersion"
+    }
+  },
+  "required": [
+    "v",
+    "i",
+    "hm",
+    "op"
+  ],
+  "title": "TextOrdOpeQuery",
+  "type": "object"
+}

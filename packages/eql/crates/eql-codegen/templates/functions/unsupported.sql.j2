@@ -1,0 +1,13 @@
+--! @brief Unsupported operator blocker for {{ dom }}.
+--!
+--! Intercepts an operator that is not supported on {{ dom }} and always raises;
+--! it never returns a value. The declared signature exists only so the operator
+--! resolves to this blocker instead of a base-type fallback.
+--!
+--! @param {{ e.args[0].name }} {{ e.args[0].ty }} left operand of the blocked operator
+--! @param {{ e.args[1].name }} {{ e.args[1].ty }} right operand of the blocked operator
+--! @return {{ e.returns }} never returned — the function always raises "operator not supported"
+CREATE FUNCTION {{ internal_schema }}.{{ e.function_name }}({{ e.args[0].name }} {{ e.args[0].ty }}, {{ e.args[1].name }} {{ e.args[1].ty }})
+RETURNS {{ e.returns }} IMMUTABLE PARALLEL SAFE
+AS $$ BEGIN RAISE EXCEPTION 'operator % is not supported for %', '{{ e.operator_lit }}', '{{ domain_lit }}'; END; $$
+LANGUAGE plpgsql;

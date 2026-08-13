@@ -1,0 +1,60 @@
+{
+  "$defs": {
+    "BloomFilter": {
+      "description": "Bloom-filter match term — the `bf` wire key. Backs the fuzzy-match `@@` (`eql_v3.matches`) surface on the `_match` domains; the containment operators `@>`/`<@` survive only as internal blockers that raise. Signed i16: EQL stores the filter as PostgreSQL `smallint[]`, and filters sized above 32768 emit upper-half bit positions as negative signed values.",
+      "items": {
+        "format": "int16",
+        "maximum": 32767,
+        "minimum": -32768,
+        "type": "integer"
+      },
+      "type": "array"
+    },
+    "Identifier": {
+      "additionalProperties": false,
+      "description": "Table + column identifier — wire shape `{\"t\": \"...\", \"c\": \"...\"}`.\n\nShared by every payload.",
+      "properties": {
+        "c": {
+          "description": "Column name.",
+          "type": "string"
+        },
+        "t": {
+          "description": "Table name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "t",
+        "c"
+      ],
+      "type": "object"
+    },
+    "SchemaVersion": {
+      "const": 3,
+      "description": "The envelope version field (`v`) — always exactly `3` on the wire.",
+      "type": "integer"
+    }
+  },
+  "$id": "https://schemas.cipherstash.com/eql/v3/query_text_match.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "`eql_v3.query_text_match` — match domain query operand.\n\nOperators: `@@`. Required keys: `v` `i` `bf`.",
+  "properties": {
+    "bf": {
+      "$ref": "#/$defs/BloomFilter"
+    },
+    "i": {
+      "$ref": "#/$defs/Identifier"
+    },
+    "v": {
+      "$ref": "#/$defs/SchemaVersion"
+    }
+  },
+  "required": [
+    "v",
+    "i",
+    "bf"
+  ],
+  "title": "TextMatchQuery",
+  "type": "object"
+}

@@ -1,0 +1,57 @@
+{
+  "$defs": {
+    "Identifier": {
+      "additionalProperties": false,
+      "description": "Table + column identifier — wire shape `{\"t\": \"...\", \"c\": \"...\"}`.\n\nShared by every payload.",
+      "properties": {
+        "c": {
+          "description": "Column name.",
+          "type": "string"
+        },
+        "t": {
+          "description": "Table name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "t",
+        "c"
+      ],
+      "type": "object"
+    },
+    "OreBlock256": {
+      "description": "Block-ORE order term — the `ob` wire key. Backs the `_ord_ore` domains and\n`text_search_ore` (`=` `<>` `<` `<=` `>` `>=`); ORE is lossless over the scalar's\ndomain, so it serves equality too. The block count is width-agnostic on the\nwire (8 for the int scalars, 12 for timestamp, 14 for numeric) — the\narray just carries more block strings. Extracted by `eql_v3.ord_term_ore`;\nSQL-side constructor: `eql_v3_internal.ore_block_256`.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "SchemaVersion": {
+      "const": 3,
+      "description": "The envelope version field (`v`) — always exactly `3` on the wire.",
+      "type": "integer"
+    }
+  },
+  "$id": "https://schemas.cipherstash.com/eql/v3/query_numeric_ord_ore.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "`eql_v3.query_numeric_ord_ore` — ordering domain query operand.\n\nOperators: `=` `<>` `<` `<=` `>` `>=`. Required keys: `v` `i` `ob`.",
+  "properties": {
+    "i": {
+      "$ref": "#/$defs/Identifier"
+    },
+    "ob": {
+      "$ref": "#/$defs/OreBlock256"
+    },
+    "v": {
+      "$ref": "#/$defs/SchemaVersion"
+    }
+  },
+  "required": [
+    "v",
+    "i",
+    "ob"
+  ],
+  "title": "NumericOrdOreQuery",
+  "type": "object"
+}

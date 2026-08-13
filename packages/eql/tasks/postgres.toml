@@ -1,0 +1,31 @@
+["postgres:down"]
+description = "Tear down Postgres containers"
+dir = "{{config_root}}/tests"
+run = "docker compose down"
+
+["postgres:up"]
+description = "Run Postgres instances with docker compose"
+dir = "{{config_root}}/tests"
+run = """
+{% set default_service = "postgres-" ~ get_env(name="POSTGRES_VERSION",default="17") %}
+echo docker compose up {{arg(name="service",default=default_service)}} {{option(name="extra-args",default="")}} | bash
+"""
+
+["postgres:reset"]
+description = "Reset database"
+run = """
+mise run postgres:down
+mise run postgres:up --extra-args "--detach --wait"
+"""
+
+["postgres:psql"]
+description = "Run psql"
+run = """
+psql -U {{arg(name="user",default="cipherstash")}} -d {{arg(name="db",default="cipherstash")}} -h localhost -p {{arg(name="port",default="7432")}}
+"""
+
+["eql:install"]
+description = "Install EQL to local postgres"
+run = """
+psql -U {{arg(name="user",default="cipherstash")}} -d {{arg(name="db",default="cipherstash")}} -h localhost -p {{arg(name="port",default="7432")}} -f {{arg(name="file",default="release/cipherstash-encrypt.sql")}}
+"""

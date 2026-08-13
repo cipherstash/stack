@@ -1,0 +1,9 @@
+-- AUTOMATICALLY GENERATED FILE.
+{% for r in requires -%}
+-- REQUIRE: {{ r }}
+{% endfor %}
+--! @file encrypted_domain/{{ family_name }}/{{ name }}_functions.sql
+--! @brief Functions for {{ dom }}.
+{% for e in entries %}
+{% include "functions/" ~ e.kind|lower ~ ".sql.j2" -%}
+{% endfor -%}

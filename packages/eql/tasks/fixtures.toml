@@ -1,0 +1,29 @@
+["fixture:generate:all"]
+description = "Regenerate every scalar SQLx fixture in one process, driven by eql-domains::CATALOG"
+# Replaces the Python-era per-type `fixture:generate <name>` script and the
+# TOML-glob `fixture:generate:all` loop (one `cargo test` per type). The
+# generate_all_fixtures test iterates eql-domains::CATALOG and runs every
+# eql_v3_<T> fixture generator in a SINGLE process. The encrypted-fixture logic
+# is unchanged; only enumeration + entry point changed.
+#
+# Writes tests/sqlx/fixtures/eql_v3_<T>.sql (gitignored — regenerated on every
+# `mise run test:sqlx`).
+#
+# Prerequisites:
+#   - mise run postgres:up   (Postgres with EQL installed)
+#   - CS_* credentials in the shell environment. The generator needs BOTH
+#     pairs — they are not alternatives:
+#       CS_CLIENT_ACCESS_KEY + CS_WORKSPACE_CRN  ZeroKMS auth (AutoStrategy)
+#       CS_CLIENT_ID + CS_CLIENT_KEY             client key (EnvKeyProvider)
+#
+# Must run inside the crate — a workspace member still builds from its own dir.
+dir = "{{config_root}}/tests/sqlx"
+run = """
+#!/usr/bin/env bash
+# bash is pinned via the `#!/usr/bin/env bash` shebang above (mise honors a `#!`
+# first line), so `set -o pipefail` is available regardless of the runner's
+# /bin/sh (dash on the CI images).
+set -euo pipefail
+cargo test --features fixture-gen --test generate_all_fixtures \
+  generate_all -- --ignored --exact --nocapture
+"""

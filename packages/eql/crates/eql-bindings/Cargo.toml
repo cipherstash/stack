@@ -1,0 +1,41 @@
+[package]
+name = "eql-bindings"
+version = "3.0.4"
+edition = "2021"
+description = "Canonical wire types for EQL payloads — single source of truth for Rust, TypeScript (ts-rs), and JSON Schema (schemars)."
+# crates.io metadata. `license` is REQUIRED by crates.io — publish fails without
+# it. The rest drive discoverability and the docs.rs / crates.io sidebar links.
+license = "MIT"
+repository = "https://github.com/cipherstash/encrypt-query-language"
+homepage = "https://github.com/cipherstash/encrypt-query-language"
+readme = "README.md"
+keywords = ["encryption", "postgres", "eql", "cipherstash", "searchable"]
+categories = ["cryptography", "database"]
+include = [
+  "Cargo.toml",
+  "README.md",
+  "CHANGELOG.md",
+  "src/**",
+  "bindings/**",
+  "schema/**",
+  "sql/**",
+]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# Direct dependency again at this layer: SchemaVersion's manual JsonSchema
+# impl pins `const: 2` via serde_json::json!.
+serde_json = "1"
+# no-serde-warnings: ts-rs's serde-compat vocabulary doesn't include
+# `skip_serializing_if`, so it warns and ignores it on SteVecEntry.a — which is
+# exactly what we want (TS optionality is declared explicitly via
+# `#[ts(optional = nullable)]`). Ignored-attr drift that DID matter would be
+# caught by the `types:check` gate on the committed TS/JSON output.
+ts-rs = { version = "10", features = ["no-serde-warnings"] }
+schemars = "1"
+
+[dev-dependencies]
+# Parity oracle: tests/catalog_parity.rs asserts the v3 domain inventory
+# exactly covers eql_domains::CATALOG, so the types here cannot drift from
+# the generated SQL surface.
+eql-domains = { path = "../eql-domains" }

@@ -1,0 +1,23 @@
+# release-plz configuration. Mirrors the canonical cipherstash-suite setup.
+#
+# Scope: this repository's primary artefact is the EQL SQL surface, released
+# manually via `eql-<semver>` git tags (see `.github/workflows/release-eql.yml`
+# and the "Cutting a release" section of CLAUDE.md). release-plz is scoped to
+# the one Rust crate we ship to crates.io: `eql-bindings`. Every other workspace
+# member is `publish = false` in its Cargo.toml, so release-plz skips it
+# automatically (same convention as cipherstash-suite) — no per-package config.
+#
+# The crate is tagged `eql-bindings-v<semver>` (release-plz's default workspace
+# tag). That tag deliberately does NOT match the EQL SQL-release automation: the
+# `eql`-keyed workflows (release-eql, release-postgres-eql-image, rebuild-docs)
+# exclude `eql-bindings-*`, so a crate release never triggers an SQL build,
+# Docker image, or docs-site rebuild.
+
+[workspace]
+changelog_config = "cliff.toml"
+git_tag_enable = true
+git_release_enable = true
+publish = true
+# semver_check is noisy for a pre-1.0 crate and duplicated by the PR review;
+# disabled to match cipherstash-suite.
+semver_check = false
