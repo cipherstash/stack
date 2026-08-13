@@ -27,9 +27,10 @@ fi
 # bytes verbatim and writes a manifest asserting $version over them — so the
 # digest still verifies, `readVerifiedInstallSql()` still passes, and the bundle
 # ships stamped one version while the manifest, the crate and the npm package all
-# claim another. Caught exactly that way on the 4.0.0 bump, in a worktree warm
-# from a plain `mise run build`: the copied SQL read `COMMENT ON SCHEMA eql_v3 IS
-# 'DEV'` under a manifest saying 4.0.0. Rebuilding costs a release task nothing.
+# claim another. Caught exactly that way while bumping the EQL version, in a
+# worktree warm from a plain `mise run build`: the copied SQL read `COMMENT ON
+# SCHEMA eql_v3 IS 'DEV'` under a manifest naming the requested release.
+# Rebuilding costs a release task nothing.
 mise run --force build --version "$version"
 
 install_sql="release/cipherstash-encrypt.sql"

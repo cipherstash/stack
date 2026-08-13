@@ -1131,7 +1131,7 @@ dependencies = [
 
 [[package]]
 name = "eql-bindings"
-version = "4.0.0"
+version = "3.0.5"
 dependencies = [
  "eql-domains",
  "schemars",
