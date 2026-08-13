@@ -1,0 +1,145 @@
+{
+  "$defs": {
+    "EntryCiphertext": {
+      "description": "A SteVec entry's ciphertext — the sv-element `c` key: base85 of the raw\nAEAD output only.\n\nNOT a self-describing record (contrast [`Ciphertext`]): the key material\nlives once in the document's `h` ([`KeyHeader`]) and the AEAD nonce is\nderived from the entry's selector (`hex_decode(s)[..12]`), so the\ndecryption unit is the entry — `h` + `s` + `c`.",
+      "type": "string"
+    },
+    "Identifier": {
+      "additionalProperties": false,
+      "description": "Table + column identifier — wire shape `{\"t\": \"...\", \"c\": \"...\"}`.\n\nShared by every payload.",
+      "properties": {
+        "c": {
+          "description": "Column name.",
+          "type": "string"
+        },
+        "t": {
+          "description": "Table name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "t",
+        "c"
+      ],
+      "type": "object"
+    },
+    "KeyHeader": {
+      "description": "The document key header — the `h` envelope key of a SteVec document.\n\nmp_base85-encoded key-retrieval material (IV, key tag, descriptor, keyset\nid), stored **once** per document: every sv entry encrypts under the\ndocument's single data key, and entry nonces are derived from the\nentries' selectors, so nothing per-entry is repeated. Opaque to SQL — it\nis carried and grafted (`->` merges it onto extracted entries via\n`eql_v3.meta_data`), never parsed database-side.",
+      "type": "string"
+    },
+    "OpeCllw": {
+      "description": "CLLW-OPE order term — the `op` wire key. Backs the scalar `_ord` (the\ndefault ordering domain), `_ord_ope`, and `text_search` domains, their\n`query_` operands (`=` `<>` `<` `<=` `>` `>=`), and the ordered\n(number/string) path entries of a SteVec document (the only per-entry\nterm — `hm` is retired; exact matching is the value-inclusive selector):\na hex-encoded CLLW OPE ciphertext, sortable via native bytea comparison\nafter hex-decode — unlike `ob` (block-ORE) it needs no custom comparator.\nExtracted by `eql_v3.ord_term` (scalar domains and the\n`public.eql_v3_json_entry` overload alike); SQL-side constructor:\n`eql_v3_internal.ope_cllw`.",
+      "type": "string"
+    },
+    "SchemaVersion": {
+      "const": 3,
+      "description": "The envelope version field (`v`) — always exactly `3` on the wire.",
+      "type": "integer"
+    },
+    "Selector": {
+      "description": "A SteVec selector — the `s` wire key. Addresses a JSON path leaf within an\nencrypted document (`public.eql_v3_json_search`); present on every entry and query element.",
+      "type": "string"
+    },
+    "SteVecEntry": {
+      "additionalProperties": false,
+      "description": "`public.eql_v3_json_entry` — one sv element (returned by `->`). Carries a\nselector `s`, raw AEAD ciphertext `c` (see [`EntryCiphertext`] — the\ndecryption unit is `h` + `s` + `c`, with the document `h` grafted onto\nextracted entries by `->`), an optional array-membership marker `a`\n(emitted only when true), and — for ordered (number/string) path entries\nonly — the `op` ordering term. Value entries (value-inclusive selectors)\nand non-orderable path entries are term-less: exact matching is selector\npresence, so no per-entry equality term exists (`hm` is retired). The\noptional `i`/`v`/`h` fields model metadata grafted onto an entry returned by\n`->`; naming them explicitly keeps unknown keys rejectable.",
+      "properties": {
+        "a": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "c": {
+          "$ref": "#/$defs/EntryCiphertext"
+        },
+        "h": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/KeyHeader"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "i": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Identifier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "op": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpeCllw"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "s": {
+          "$ref": "#/$defs/Selector"
+        },
+        "v": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SchemaVersion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "s",
+        "c"
+      ],
+      "type": "object"
+    },
+    "SteVecForm": {
+      "const": "sv",
+      "description": "The `k` envelope form discriminator — always `\"sv\"` for a SteVec document.",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.cipherstash.com/eql/v3/eql_v3_json_search.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "`public.eql_v3_json_search` — a SteVec encrypted-JSON document\n(`{v, k, i, h, sv:[entry]}`, no root ciphertext — the root document\nciphertext lives on the root sv entry). Strict. `k` is the `\"sv\"` form\ndiscriminator (see [`SteVecForm`]); `h` is the document [`KeyHeader`],\nstored once for the whole document (every entry encrypts under the\ndocument's single data key, with per-entry nonces derived from the\nentries' selectors).",
+  "properties": {
+    "h": {
+      "$ref": "#/$defs/KeyHeader"
+    },
+    "i": {
+      "$ref": "#/$defs/Identifier"
+    },
+    "k": {
+      "$ref": "#/$defs/SteVecForm"
+    },
+    "sv": {
+      "items": {
+        "$ref": "#/$defs/SteVecEntry"
+      },
+      "type": "array"
+    },
+    "v": {
+      "$ref": "#/$defs/SchemaVersion"
+    }
+  },
+  "required": [
+    "v",
+    "k",
+    "i",
+    "h",
+    "sv"
+  ],
+  "title": "SteVecDocument",
+  "type": "object"
+}

@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cipherstash.com/schemas/eql/v2.2/payload.schema.json",
+  "title": "EQL v2.2 payload",
+  "description": "JSON Schema describing the on-the-wire EQL payload format as of release v2.2 — the baseline before v2.3 schema changes. Two top-level shapes are accepted, mutually exclusive: an `EncryptedPayload` (a single encrypted scalar value, with any combination of index terms) and an `SteVecPayload` (an STE vector for jsonb / containment queries). The encrypted root form is what `eql_v2.check_encrypted` validates and what `eql_v2_encrypted` columns hold. STE-vector elements (inside `sv`) follow a distinct sub-shape and never carry `hm` or a top-level `i`.",
+
+  "oneOf": [
+    { "$ref": "#/$defs/EncryptedPayload" },
+    { "$ref": "#/$defs/SteVecPayload" }
+  ],
+
+  "$defs": {
+
+    "Version": {
+      "title": "Payload version (v)",
+      "description": "Configuration version that produced the payload. Hard-coded to 2 in EQL v2; `eql_v2._encrypted_check_v` raises if any other value is present.",
+      "type": "integer",
+      "const": 2
+    },
+
+    "Kind": {
+      "title": "Payload kind (k)",
+      "description": "Disambiguates payload shape. `ct` = ciphertext scalar (the EncryptedPayload form), `sv` = STE vector (the SteVecPayload form). Not currently enforced by `eql_v2.check_encrypted`, but always present in payloads emitted by Proxy / Protect.js and used as the discriminator between the two top-level variants.",
+      "type": "string",
+      "enum": ["ct", "sv"]
+    },
+
+    "Ident": {
+      "title": "Column ident (i)",
+      "description": "Identifies the table and column the payload belongs to. Required on every encrypted payload; both `t` and `c` must be present (enforced by `eql_v2._encrypted_check_i_ct`).",
+      "type": "object",
+      "properties": {
+        "t": { "type": "string", "description": "Table name." },
+        "c": { "type": "string", "description": "Column name." }
+      },
+      "required": ["t", "c"],
+      "additionalProperties": false
+    },
+
+    "Ciphertext": {
+      "title": "Ciphertext (c)",
+      "description": "Opaque, non-deterministic encrypted blob produced by Proxy. Required on every encrypted payload (enforced by `eql_v2._encrypted_check_c`). Excluded from GIN containment comparison via `eql_v2.jsonb_array`, which keeps only deterministic index-term fields.",
+      "type": "string",
+      "minLength": 1
+    },
+
+    "EncryptedPayload": {
+      "title": "Encrypted payload (scalar, database side)",
+      "description": "Shape stored in `eql_v2_encrypted` columns for a single encrypted scalar value. `v`, `c`, and `i.{t,c}` are required by `eql_v2.check_encrypted`. Any subset of the index-term fields may be present, depending on the configured indexes for the column. Mutually exclusive with `SteVecPayload`: must not carry `sv`.",
+      "type": "object",
+      "properties": {
+        "v":  { "$ref": "#/$defs/Version" },
+        "k":  { "type": "string", "const": "ct", "description": "Discriminator: identifies this as the scalar ciphertext form." },
+        "c":  { "$ref": "#/$defs/Ciphertext" },
+        "i":  { "$ref": "#/$defs/Ident" },
+
+        "hm":  { "$ref": "#/$defs/IndexTerms/properties/hm" },
+        "b3":  { "$ref": "#/$defs/IndexTerms/properties/b3" },
+        "bf":  { "$ref": "#/$defs/IndexTerms/properties/bf" },
+        "ob":  { "$ref": "#/$defs/IndexTerms/properties/ob" },
+        "ocf": { "$ref": "#/$defs/IndexTerms/properties/ocf" },
+        "ocv": { "$ref": "#/$defs/IndexTerms/properties/ocv" },
+        "opf": { "$ref": "#/$defs/IndexTerms/properties/opf" },
+        "opv": { "$ref": "#/$defs/IndexTerms/properties/opv" }
+      },
+      "required": ["v", "c", "i"],
+      "not": { "required": ["sv"] },
+      "additionalProperties": false
+    },
+
+    "SteVecPayload": {
+      "title": "STE vector payload (database side)",
+      "description": "Shape stored in `eql_v2_encrypted` columns for jsonb / structured values. Carries only the discriminator metadata (`v`, `k`, `i`) and the STE vector array (`sv`). Mutually exclusive with `EncryptedPayload`: must not carry a top-level `c` or any of the scalar index terms — those live on individual `sv` elements instead.",
+      "type": "object",
+      "properties": {
+        "v":  { "$ref": "#/$defs/Version" },
+        "k":  { "type": "string", "const": "sv", "description": "Discriminator: identifies this as the STE vector form." },
+        "i":  { "$ref": "#/$defs/Ident" },
+        "sv": {
+          "type": "array",
+          "description": "STE vector: array of per-selector encrypted terms used for jsonb containment (`@>`, `<@`) and path queries.",
+          "items": { "$ref": "#/$defs/SteVecElement" }
+        }
+      },
+      "required": ["v", "k", "i", "sv"],
+      "additionalProperties": false
+    },
+
+    "SteVecElement": {
+      "title": "STE vector element",
+      "description": "One entry inside `sv`. Distinct from the root payload: carries a per-element selector `s` and an array flag `a`, but never an `i`, `v`, or `hm`. Equality on `sv` elements is matched by `s` plus `b3` (see `eql_v2.ste_vec_contains`).",
+      "type": "object",
+      "properties": {
+        "s": {
+          "type": "string",
+          "description": "Selector — deterministic per (path, key) within the document. Required: equality matching of STE vector elements compares selectors first."
+        },
+        "a": {
+          "type": "boolean",
+          "description": "Array marker. True when the selector points at a JSON array context."
+        },
+        "c":   { "$ref": "#/$defs/Ciphertext" },
+        "b3":  { "$ref": "#/$defs/IndexTerms/properties/b3" },
+        "ocf": { "$ref": "#/$defs/IndexTerms/properties/ocf" },
+        "ocv": { "$ref": "#/$defs/IndexTerms/properties/ocv" },
+        "opf": { "$ref": "#/$defs/IndexTerms/properties/opf" },
+        "opv": { "$ref": "#/$defs/IndexTerms/properties/opv" },
+        "ob":  { "$ref": "#/$defs/IndexTerms/properties/ob" }
+      },
+      "required": ["s", "c"],
+      "not": {
+        "anyOf": [
+          { "required": ["hm"] },
+          { "required": ["i"] },
+          { "required": ["v"] },
+          { "required": ["sv"] }
+        ]
+      },
+      "additionalProperties": false
+    },
+
+    "IndexTerms": {
+      "title": "Index term field catalogue",
+      "description": "Catalogue of every deterministic / order-preserving index term currently emitted by Proxy. Defined here so both the root payload and STE vector elements can $ref individual entries without duplicating descriptions. Field names match the strings hard-coded in `eql_v2.jsonb_array` for GIN containment.",
+      "type": "object",
+      "properties": {
+
+        "hm": {
+          "title": "HMAC-SHA-256 (hm)",
+          "description": "Deterministic hex-encoded HMAC used for `=` / `<>` equality. Top-level only — never appears in STE vector elements (see `ste_vec_contains` notes). Required for the bare-form equality operator path post #193.",
+          "type": "string",
+          "pattern": "^[0-9a-f]+$"
+        },
+
+        "b3": {
+          "title": "Blake3 (b3)",
+          "description": "Deterministic hex-encoded Blake3 digest. Used inside STE vector elements as the equality term (selector + b3 = match). Also the index term for `eql_v2.compare_blake3`.",
+          "type": "string",
+          "pattern": "^[0-9a-f]+$"
+        },
+
+        "bf": {
+          "title": "Bloom filter (bf)",
+          "description": "Bloom filter representation as an array of set bit positions. Used by `LIKE` / `ILIKE` (`~~`, `~~*`) via `eql_v2.bloom_filter` and the corresponding GIN index.",
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 }
+        },
+
+        "ob": {
+          "title": "ORE block u64_8_256 (ob)",
+          "description": "Order-Revealing Encryption term used for ordered comparisons (`<`, `<=`, `>`, `>=`) via the custom `eql_v2.ore_block_u64_8_256` comparator. Stored as an array of hex-encoded ORE blocks.",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[0-9a-f]+$" }
+        },
+
+        "ocf": {
+          "title": "ORE CLLW u64_8 fixed (ocf)",
+          "description": "CLLW Order-Revealing Encryption, fixed-width (numeric). Hex-encoded.",
+          "type": "string",
+          "pattern": "^[0-9a-f]+$"
+        },
+
+        "ocv": {
+          "title": "ORE CLLW var_8 (ocv)",
+          "description": "CLLW Order-Revealing Encryption, variable-width (text). Hex-encoded.",
+          "type": "string",
+          "pattern": "^[0-9a-f]+$"
+        },
+
+        "opf": {
+          "title": "OPE CLLW u64_65 fixed (opf)",
+          "description": "CLLW Order-Preserving Encryption, fixed-width (numeric). Sortable with native bytea ordering — used in environments without custom comparators.",
+          "type": "string",
+          "pattern": "^[0-9a-f]+$"
+        },
+
+        "opv": {
+          "title": "OPE CLLW var_8 (opv)",
+          "description": "CLLW Order-Preserving Encryption, variable-width (text). Sortable with native bytea ordering.",
+          "type": "string",
+          "pattern": "^[0-9a-f]+$"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,69 @@
+services:
+  postgres: &postgres
+    container_name: postgres
+    image: postgres:17
+    # max_locks_per_transaction is NOT a per-transaction cap — it sizes the
+    # CLUSTER-WIDE shared lock table as max_locks_per_transaction *
+    # max_connections. The shipped uninstaller drops both eql_v3 schemas with
+    # DROP ... CASCADE, which takes a lock on every one of the ~5,700 objects it
+    # removes and holds them all until commit (sqlx sends the script as a single
+    # implicit transaction). At the stock 64 * 100 = 6,400 slots, ONE uninstall
+    # already consumes ~89% of the table, so two concurrent ones exhaust it and
+    # every backend — including unrelated tests merely installing EQL — fails
+    # with `53200 out of shared memory`. nextest runs one test per core (16 in
+    # CI), so size for the worst case: 16 * 5,700 ~= 91k slots. 1024 * 100 =
+    # 102,400 covers it, and costs ~42MB of shared memory (well inside the 2GB
+    # limit below). Keep tests/sqlx/tests/lock_capacity_tests.rs in sync.
+    command: postgres -c track_functions=all -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all -c max_locks_per_transaction=1024
+    ports:
+      - 7432:7432
+    environment:
+      - PGPORT=${POSTGRES_PORT:-7432}
+      - PGUSER=${POSTGRES_USER:-cipherstash}
+      - POSTGRES_DB=${POSTGRES_DB:-cipherstash}
+      - POSTGRES_USER=${POSTGRES_USER:-cipherstash}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+    networks:
+      - postgres
+    deploy:
+      resources:
+        limits:
+          cpus: "${CPU_LIMIT:-2}"
+          memory: 2048mb
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 1s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  postgres-17:
+    <<: *postgres
+    image: postgres:17
+    container_name: postgres-17
+    #volumes: # uncomment if you need to inspect the container contents
+    #- ./pg/data-17:/var/lib/postgresql/data
+
+  postgres-16:
+    <<: *postgres
+    image: postgres:16
+    container_name: postgres-16
+
+  postgres-15:
+    <<: *postgres
+    image: postgres:15
+    container_name: postgres-15
+
+  postgres-14:
+    <<: *postgres
+    image: postgres:14
+    container_name: postgres-14
+
+networks:
+  postgres:
+    driver: bridge

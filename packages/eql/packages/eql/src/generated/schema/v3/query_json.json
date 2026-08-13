@@ -1,0 +1,52 @@
+{
+  "$defs": {
+    "OpeCllw": {
+      "description": "CLLW-OPE order term — the `op` wire key. Backs the scalar `_ord` (the\ndefault ordering domain), `_ord_ope`, and `text_search` domains, their\n`query_` operands (`=` `<>` `<` `<=` `>` `>=`), and the ordered\n(number/string) path entries of a SteVec document (the only per-entry\nterm — `hm` is retired; exact matching is the value-inclusive selector):\na hex-encoded CLLW OPE ciphertext, sortable via native bytea comparison\nafter hex-decode — unlike `ob` (block-ORE) it needs no custom comparator.\nExtracted by `eql_v3.ord_term` (scalar domains and the\n`public.eql_v3_json_entry` overload alike); SQL-side constructor:\n`eql_v3_internal.ope_cllw`.",
+      "type": "string"
+    },
+    "Selector": {
+      "description": "A SteVec selector — the `s` wire key. Addresses a JSON path leaf within an\nencrypted document (`public.eql_v3_json_search`); present on every entry and query element.",
+      "type": "string"
+    },
+    "SteVecQueryEntry": {
+      "additionalProperties": false,
+      "description": "One element of a SteVec containment needle: a selector plus — for ordered\npath entries only — the `op` ordering term; value-selector and structural\nentries are selector-only (matched on presence), and (per the SQL CHECK)\nno element carries a ciphertext. Unknown fields are rejected so the Rust\nparser and published JSON Schema enforce the same boundary as PostgreSQL.",
+      "properties": {
+        "op": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpeCllw"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "s": {
+          "$ref": "#/$defs/Selector"
+        }
+      },
+      "required": [
+        "s"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.cipherstash.com/eql/v3/query_json.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "`eql_v3.query_json` — a containment needle (`{sv:[query-entry]}`). Strict.",
+  "properties": {
+    "sv": {
+      "items": {
+        "$ref": "#/$defs/SteVecQueryEntry"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "sv"
+  ],
+  "title": "SteVecQuery",
+  "type": "object"
+}

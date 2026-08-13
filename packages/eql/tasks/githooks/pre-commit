@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#
+# Pre-commit drift gate for the generated surfaces.
+#
+# When a commit touches the catalog (eql-domains), the generator (eql-codegen),
+# or any committed generated output (the scalar SQL surface or the eql-bindings
+# Rust/TS/JSON), regenerate and fail the commit if the committed output would be
+# stale. This mirrors the CI gates (`codegen:parity`, `types:check`) so drift is
+# caught before push instead of in CI — committed SQL and committed bindings get
+# the SAME freshness guarantee, closing the local-staleness gap for both.
+#
+# Install once per clone: `mise run install-hooks` (sets core.hooksPath).
+# Unrelated commits skip the gate entirely, so this is a no-op for most commits.
+set -euo pipefail
+
+staged=$(git diff --cached --name-only --diff-filter=ACMRD)
+
+if echo "$staged" | grep -Eq '^(crates/eql-domains/|crates/eql-codegen/|src/v3/scalars/|crates/eql-bindings/src/v3/|crates/eql-bindings/bindings/|crates/eql-bindings/schema/)'; then
+  echo "pre-commit: catalog/generator/generated surface touched — verifying freshness…"
+  mise run codegen:parity
+  mise run types:check
+fi
+
+# Schema-split parity: the SQL owned_schemas() array (src/v3/schema.sql) and the
+# Rust codegen consts (crates/eql-codegen/src/consts.rs) must agree. Trigger on
+# either side so a one-sided rename can't slip through locally.
+if echo "$staged" | grep -Eq '^(src/v3/schema\.sql|crates/eql-codegen/src/consts\.rs|crates/eql-codegen/src/lib\.rs)'; then
+  echo "pre-commit: schema split declaration touched — verifying SQL/Rust parity…"
+  mise run test:schemas:parity
+fi

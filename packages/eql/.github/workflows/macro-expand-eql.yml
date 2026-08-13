@@ -1,0 +1,86 @@
+name: "Macro expand EQL"
+
+# Regenerates the matrix `cargo expand` snapshots (one per reachable
+# `scalar_matrix!` arm: integer = [eq, ord], text = [eq, ord, search], boolean =
+# [storage]) and fails if any has drifted from its committed copy. This is a
+# body-level fidelity backstop for the matrix macros — the name-inventory
+# snapshot (test-eql.yml `matrix-coverage` job) catches add/remove of whole
+# arms; this catches changes *inside* the generated bodies.
+#
+# Non-blocking by design: it is NOT a required PR check. `cargo expand` needs a
+# nightly toolchain, so it is isolated off the PR path.
+#   - nightly schedule (the backstop that flags a forgotten local regen)
+#   - manual workflow_dispatch
+#
+# GAP (intended): there is no `pull_request` trigger, so a change that only
+# touches macro *bodies* (no arm add/remove) can merge without ever running
+# here and will first surface as a red nightly run afterwards. Accept this — the
+# expand lane needs nightly and stays off the PR critical path by design.
+#
+# The pinned nightly date lives in ONE place: the `cargo +nightly-...` invocation
+# in the `test:matrix:expand` mise task. The install step below DERIVES the date
+# from mise.toml (grep), so there is nothing to keep in lockstep — bump it once in
+# mise.toml. The snapshot then only moves when the macro moves, not when nightly
+# reformats its expansion.
+on:
+  schedule:
+    # 03:00 UTC daily
+    - cron: "0 3 * * *"
+
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  MISE_VERBOSE: "1"
+
+defaults:
+  run:
+    shell: bash {0}
+
+permissions:
+  contents: read
+
+jobs:
+  macro-expand:
+    name: "Macro expand drift (nightly)"
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: tests/sqlx
+          shared-key: sqlx-tests
+
+      # Derive the pinned nightly date from mise.toml (single source of truth —
+      # the `cargo +nightly-...` invocation in the `test:matrix:expand` task) so
+      # there is nothing to bump in lockstep here. cargo-expand is likewise pinned
+      # once in mise.toml's [tools] (`cargo:cargo-expand`) and installed by the
+      # mise-action step above, so its version is single-sourced too — no
+      # hardcoded version lives in this workflow. It drives the rustfmt pass, so
+      # an unpinned version could drift the snapshot even with a frozen macro +
+      # nightly. The snapshot then only moves when the macro moves.
+      - name: Install pinned nightly toolchain
+        run: |
+          NIGHTLY=$(grep -oE 'nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}' mise.toml | head -1)
+          test -n "$NIGHTLY" || { echo "could not find pinned nightly in mise.toml"; exit 1; }
+          rustup toolchain install "$NIGHTLY" --profile minimal --component rustfmt
+
+      - name: Regenerate and verify the matrix expansion snapshots
+        run: |
+          mise run test:matrix:expand
+          git diff --exit-code -- \
+            tests/sqlx/snapshots/integer_expanded.rs \
+            tests/sqlx/snapshots/text_expanded.rs \
+            tests/sqlx/snapshots/boolean_expanded.rs \
+            || { echo "Expansion snapshot stale — run 'mise run test:matrix:expand' (needs the pinned nightly) and commit."; exit 1; }

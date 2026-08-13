@@ -1,0 +1,426 @@
+name: "Release"
+
+# Single release entry point for the EQL release line.
+#
+# - `main` uses Changesets to version and publish the production release.
+# - Any non-`main` branch can cut a prerelease from an explicit conventional
+#   release commit, triggered via workflow_dispatch against that branch (e.g.
+#   `gh workflow run release.yml --ref eql-3.0.1`). The release commit itself is
+#   the marker: `chore(release): ...`. This lets a batching branch ship an
+#   alpha/rc for pre-merge testing without merging to `main`.
+#
+# Prereleases publish the npm package directly from this workflow and dispatch
+# the Rust crate publish through `release-plz.yml` so crates.io Trusted
+# Publishing still sees the correct entry-point workflow. The SQL GitHub
+# release and docs are built in the same workflow run.
+#
+# npm Trusted Publishing must be configured for this workflow filename:
+# `release.yml`.
+
+permissions:
+  id-token: write # npm OIDC trusted publishing
+  contents: write # changesets commits the Version PR / tags; SQL release attach
+  pull-requests: write # changesets opens the Version PR
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+# No `defaults.run.shell` override: GitHub's default `bash` shell runs with
+# `-eo pipefail`, which is exactly what a publish workflow wants. (An explicit
+# `bash {0}` would silently DISABLE errexit/pipefail for any step that forgets
+# its own `set -euo pipefail`.)
+
+jobs:
+  classify:
+    name: Classify release intent
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.classify.outputs.mode }}
+      version: ${{ steps.classify.outputs.version }}
+      prerelease: ${{ steps.classify.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: classify
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_REF_NAME}"
+          subject="$(git log -1 --format=%s)"
+          mode="skip"
+          version=""
+          prerelease="false"
+
+          if [[ "$branch" == "main" ]]; then
+            mode="production"
+          else
+            # Any non-main branch cuts a prerelease from an explicit
+            # conventional release commit (dispatched via workflow_dispatch).
+            # Safety comes from the three guards below — the marker commit, the
+            # prerelease-shaped version, and the tag-idempotency short-circuit —
+            # not from the branch name. Exactly `chore(release):`; a bare
+            # `release:` prefix must NOT re-trigger the publish pipeline for the
+            # currently pinned identity.
+            case "$subject" in
+              chore\(release\):*)
+                mode="prerelease"
+                ;;
+            esac
+          fi
+
+          if [[ "$mode" == "prerelease" ]]; then
+            version="$(node -p "require('./packages/eql/package.json').version")"
+            if [[ "$version" != *-* ]]; then
+              echo "::error::prerelease release commits must already pin a prerelease version in packages/eql/package.json" >&2
+              exit 1
+            fi
+            # Idempotency short-circuit: if this identity's npm tag already
+            # exists, the release was already cut — a re-push of the marker (or
+            # a rerun) must not re-publish. Individual steps are also
+            # idempotent; this just skips the whole pipeline up front.
+            if git ls-remote --exit-code --tags origin "refs/tags/eql-typescript-v${version}" >/dev/null 2>&1; then
+              echo "eql-typescript-v${version} already exists; prerelease ${version} was already published — skipping"
+              mode="skip"
+              version=""
+            else
+              prerelease="true"
+            fi
+          fi
+
+          {
+            echo "mode=$mode"
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Version or publish (changesets)
+    needs: classify
+    if: ${{ needs.classify.outputs.mode == 'production' }}
+    # GitHub-hosted (not Blacksmith): npm provenance from OIDC trusted
+    # publishing is only accepted from github-hosted runners (self-hosted -> E422).
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
+      version: ${{ steps.ver.outputs.version }}
+      prerelease: ${{ steps.ver.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6.0.8
+        name: Install pnpm
+        with:
+          run_install: false
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: jdx/mise-action@v3
+        with:
+          version: 2026.4.0
+          install: true
+          # Publish workflows must not restore caches (lint-no-workflow-caching
+          # covers mise-action too): a poisoned toolchain cache would run inside
+          # the job that holds npm OIDC publishing power.
+          cache: false
+
+      # AFTER mise-action, deliberately: mise's node (from [tools]) is first on
+      # PATH and its bundled npm 10.x has no OIDC trusted publishing — upgrading
+      # before mise-action upgrades an npm that never runs (the exact cause of
+      # the alpha.3 ENEEDAUTH failures).
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@11.5.1
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `version:` runs `changeset version && sync-lockstep-versions.mjs` (bumps
+      # package.json + Cargo.toml + builds/bundles SQL to V) for the Version PR;
+      # `publish:` runs `pnpm run build && changeset publish` to publish npm.
+      - name: Version or publish
+        id: changesets
+        uses: changesets/action@v1.8.0
+        with:
+          version: pnpm run version
+          publish: pnpm run release
+          commitMode: "github-api"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve published version
+        id: ver
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          PUBLISHED: ${{ steps.changesets.outputs.publishedPackages }}
+        run: |
+          set -euo pipefail
+          version="$(node -e "const p=JSON.parse(process.env.PUBLISHED);const e=p.find(x=>x.name==='@cipherstash/eql');if(!e){process.exit(1)}console.log(e.version)")"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-sql:
+    name: Build + attach SQL release
+    needs: release
+    if: ${{ needs.release.outputs.published == 'true' }}
+    permissions:
+      contents: write
+    secrets:
+      MULTITUDES_ACCESS_TOKEN: ${{ secrets.MULTITUDES_ACCESS_TOKEN }}
+    uses: ./.github/workflows/_build-sql.yml
+    with:
+      ref: ${{ github.sha }}
+      tag: eql-${{ needs.release.outputs.version }}
+      attach: true
+      target_commitish: ${{ github.sha }}
+      prerelease: ${{ needs.release.outputs.prerelease == 'true' }}
+
+  build-docs:
+    name: Build + attach docs
+    needs: [release, build-sql]
+    if: ${{ needs.release.outputs.published == 'true' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/_build-docs.yml
+    with:
+      ref: ${{ github.sha }}
+      tag: eql-${{ needs.release.outputs.version }}
+
+  build-image:
+    name: Dispatch Postgres + EQL image build
+    needs: [release, build-sql, build-docs]
+    # Production finals only: the floating :latest / :<version> image tags must
+    # not move for a prerelease. Alpha images can still be built on demand via
+    # release-postgres-eql-image.yml's workflow_dispatch. Dispatched (not an
+    # `on: release` fan-out) because a GITHUB_TOKEN-created release does not
+    # trigger `on: release`, whereas a GITHUB_TOKEN workflow_dispatch does.
+    if: ${{ needs.release.outputs.published == 'true' && needs.release.outputs.prerelease == 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch release-postgres-eql-image.yml
+        # Dispatch against the eql-<VERSION> tag, not the branch: build-sql
+        # (a `needs`) already created that tag at the release commit via
+        # _build-sql.yml's target_commitish, and the image workflow file exists
+        # at that commit. Pinning to the tag builds the image from the exact
+        # released source even if the branch has advanced since publish.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          # This job deliberately has no checkout. Pass --repo explicitly so
+          # gh does not try to infer the repository from a nonexistent .git
+          # directory.
+          gh workflow run release-postgres-eql-image.yml \
+            --repo "${GITHUB_REPOSITORY}" \
+            --ref "eql-${VERSION}" \
+            -f eql_version="$VERSION" \
+            -f update_floating_tags=true
+
+  prerelease-build-sql:
+    name: Build + attach prerelease SQL
+    needs: classify
+    if: ${{ needs.classify.outputs.mode == 'prerelease' }}
+    permissions:
+      contents: write
+    secrets:
+      MULTITUDES_ACCESS_TOKEN: ${{ secrets.MULTITUDES_ACCESS_TOKEN }}
+    uses: ./.github/workflows/_build-sql.yml
+    with:
+      ref: ${{ github.sha }}
+      tag: eql-${{ needs.classify.outputs.version }}
+      attach: true
+      target_commitish: ${{ github.sha }}
+      prerelease: true
+
+  prerelease-build-docs:
+    name: Build + attach prerelease docs
+    needs: [classify, prerelease-build-sql]
+    if: ${{ needs.classify.outputs.mode == 'prerelease' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/_build-docs.yml
+    with:
+      ref: ${{ github.sha }}
+      tag: eql-${{ needs.classify.outputs.version }}
+
+  prerelease-publish-npm:
+    name: Publish prerelease npm package
+    needs: [classify, prerelease-build-sql, prerelease-build-docs]
+    if: ${{ needs.classify.outputs.mode == 'prerelease' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6.0.8
+        name: Install pnpm
+        with:
+          run_install: false
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: jdx/mise-action@v3
+        with:
+          version: 2026.4.0
+          install: true
+          # Publish workflows must not restore caches (lint-no-workflow-caching
+          # covers mise-action too): a poisoned toolchain cache would run inside
+          # the job that holds npm OIDC publishing power.
+          cache: false
+
+      # AFTER mise-action, deliberately: mise's node (from [tools]) is first on
+      # PATH and its bundled npm 10.x has no OIDC trusted publishing — upgrading
+      # before mise-action upgrades an npm that never runs (the exact cause of
+      # the alpha.3 ENEEDAUTH failures).
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@11.5.1
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify prerelease marker and version
+        env:
+          VERSION: ${{ needs.classify.outputs.version }}
+        run: |
+          set -euo pipefail
+          actual="$(node -p "require('./packages/eql/package.json').version")"
+          test "$actual" = "$VERSION" || {
+            echo "package version ${actual} does not match prerelease identity ${VERSION}" >&2
+            exit 1
+          }
+
+      - name: Prepare exact SQL assets
+        env:
+          VERSION: ${{ needs.classify.outputs.version }}
+        run: mise run release:prepare_bindings_assets --version "$VERSION"
+
+      - name: Build package
+        run: pnpm --filter @cipherstash/eql build
+
+      - name: Publish package
+        working-directory: packages/eql
+        env:
+          VERSION: ${{ needs.classify.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "$(npm view "@cipherstash/eql@${VERSION}" version 2>/dev/null)" ]; then
+            echo "@cipherstash/eql@${VERSION} is already published; skipping publish"
+          else
+            node scripts/npm-publish.mjs
+          fi
+
+      - name: Tag TypeScript release
+        env:
+          VERSION: ${{ needs.classify.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Create the tag via the REST API with GH_TOKEN — the checkout has
+          # persist-credentials: false (deliberate hardening) and a git-level
+          # extraheader hack proved unreliable ("could not read Username").
+          tag="eql-typescript-v${VERSION}"
+          if gh api "repos/${REPO}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            echo "tag ${tag} already exists on the remote; skipping"
+          else
+            gh api -X POST "repos/${REPO}/git/refs" \
+              -f ref="refs/tags/${tag}" -f sha="$GITHUB_SHA" >/dev/null
+            echo "created ${tag} at ${GITHUB_SHA}"
+          fi
+
+  prerelease-publish-rust:
+    name: Dispatch prerelease Rust publish
+    needs: [classify, prerelease-build-sql, prerelease-build-docs]
+    if: ${{ needs.classify.outputs.mode == 'prerelease' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: write # create/update the release/eql-<V> branch ref
+    steps:
+      - name: Dispatch release-plz.yml at the release commit
+        # release-plz refuses detached HEADs ("cannot determine current
+        # branch"), so a tag dispatch does not work. To still publish from the
+        # EXACT commit the SQL + npm artifacts shipped from — even if eql_v3
+        # has advanced since the marker push — pin a release/eql-<VERSION>
+        # branch at this run's commit and dispatch against that. The branch is
+        # a stable pointer per identity: force-updated on retries of the same
+        # identity, never reused across identities.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.classify.outputs.version }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          branch="release/eql-${VERSION}"
+          if ! gh api -X POST "repos/${REPO}/git/refs" \
+              -f ref="refs/heads/${branch}" -f sha="$SHA" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/${REPO}/git/refs/heads/${branch}" \
+              -f sha="$SHA" -F force=true >/dev/null
+          fi
+          # --repo is required: this job has no checkout, and without it gh
+          # tries to resolve the workflow through a local git repo and dies
+          # with "not a git repository".
+          gh workflow run release-plz.yml --repo "$REPO" --ref "$branch"
+
+  summary:
+    name: Summary
+    runs-on: ubuntu-latest
+    needs: [classify, release, build-sql, build-docs, build-image, prerelease-build-sql, prerelease-build-docs, prerelease-publish-npm, prerelease-publish-rust]
+    if: always()
+    steps:
+      - name: Emit run summary
+        env:
+          MODE: ${{ needs.classify.outputs.mode }}
+          VERSION: ${{ needs.classify.outputs.version }}
+          CLASSIFY_RESULT: ${{ needs.classify.result }}
+          RELEASE_RESULT: ${{ needs.release.result }}
+          BUILD_SQL_RESULT: ${{ needs.build-sql.result }}
+          BUILD_DOCS_RESULT: ${{ needs.build-docs.result }}
+          BUILD_IMAGE_RESULT: ${{ needs.build-image.result }}
+          PRE_BUILD_SQL_RESULT: ${{ needs.prerelease-build-sql.result }}
+          PRE_BUILD_DOCS_RESULT: ${{ needs.prerelease-build-docs.result }}
+          PRE_PUBLISH_NPM_RESULT: ${{ needs.prerelease-publish-npm.result }}
+          PRE_PUBLISH_RUST_RESULT: ${{ needs.prerelease-publish-rust.result }}
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Release result"
+            echo ""
+            echo "- mode: \`${MODE}\`"
+            echo "- version: \`${VERSION}\`"
+            echo "- classify: ${CLASSIFY_RESULT} | release: ${RELEASE_RESULT} | build-sql: ${BUILD_SQL_RESULT} | build-docs: ${BUILD_DOCS_RESULT} | build-image: ${BUILD_IMAGE_RESULT} | prerelease-build-sql: ${PRE_BUILD_SQL_RESULT} | prerelease-build-docs: ${PRE_BUILD_DOCS_RESULT} | prerelease-publish-npm: ${PRE_PUBLISH_NPM_RESULT} | prerelease-publish-rust: ${PRE_PUBLISH_RUST_RESULT}"
+            echo ""
+            echo "Run: ${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
+          } >> "$GITHUB_STEP_SUMMARY"

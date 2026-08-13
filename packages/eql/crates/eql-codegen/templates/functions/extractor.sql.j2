@@ -1,0 +1,7 @@
+--! @brief Index extractor for {{ dom }}.
+--! @param a {{ dom }}
+--! @return {{ e.ret }}
+CREATE FUNCTION {{ schema }}.{{ e.extractor }}(a {{ dom }})
+RETURNS {{ e.ret }}
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$ SELECT {{ internal_schema }}.{{ e.ctor }}(a::jsonb) $$;

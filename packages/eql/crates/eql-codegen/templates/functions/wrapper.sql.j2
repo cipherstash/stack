@@ -1,0 +1,7 @@
+--! @brief Operator wrapper for {{ dom }}.
+--! @param {{ e.args[0].name }} {{ e.args[0].ty }}
+--! @param {{ e.args[1].name }} {{ e.args[1].ty }}
+--! @return boolean
+CREATE FUNCTION {{ schema }}.{{ e.function_name }}({{ e.args[0].name }} {{ e.args[0].ty }}, {{ e.args[1].name }} {{ e.args[1].ty }})
+RETURNS boolean LANGUAGE sql IMMUTABLE{% if not e.empty_bloom_guard %} STRICT{% endif %} PARALLEL SAFE
+AS $$ SELECT {{ e.call_a }} {{ e.op }} {{ e.call_b }}{% if e.empty_bloom_guard %} AND (cardinality({{ e.call_b }}) > 0 OR cardinality({{ e.call_a }}) = 0){% endif %} $$;

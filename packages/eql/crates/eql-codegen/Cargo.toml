@@ -1,0 +1,27 @@
+[package]
+name = "eql-codegen"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+eql-domains = { path = "../eql-domains" }
+minijinja = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+quote = "1"
+proc-macro2 = "1"
+syn = { version = "2", features = ["full"] }
+prettyplease = "=0.2.37"
+
+[[bin]]
+name = "eql-codegen"
+path = "src/main.rs"
+
+[lib]
+name = "eql_codegen"
+path = "src/lib.rs"
+
+[lints]
+workspace = true

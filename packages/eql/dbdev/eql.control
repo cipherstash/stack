@@ -1,0 +1,3 @@
+default_version = 2.2.1
+comment = 'Index and search encrypted data in PostgreSQL with SQL'
+relocatable = true

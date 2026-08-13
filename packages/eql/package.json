@@ -1,0 +1,26 @@
+{
+  "name": "@cipherstash/eql-workspace",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "scripts": {
+    "build": "pnpm --filter @cipherstash/eql build",
+    "test": "pnpm --filter @cipherstash/eql test",
+    "types:generate": "pnpm --filter @cipherstash/eql sync:generated",
+    "types:check": "pnpm --filter @cipherstash/eql check:generated",
+    "changeset": "changeset",
+    "changeset:version": "changeset version",
+    "version": "changeset version && node scripts/sync-lockstep-versions.mjs",
+    "release": "pnpm run build && changeset publish",
+    "lint:workflow-cache": "node scripts/lint-no-workflow-caching.mjs",
+    "test:scripts": "vitest run --config scripts/vitest.config.mjs"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.31.0",
+    "@types/node": "^22.13.14",
+    "js-yaml": "^4.1.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

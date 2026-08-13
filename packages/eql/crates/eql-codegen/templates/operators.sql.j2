@@ -1,0 +1,13 @@
+-- AUTOMATICALLY GENERATED FILE.
+{% for r in requires -%}
+-- REQUIRE: {{ r }}
+{% endfor %}
+--! @file encrypted_domain/{{ family_name }}/{{ name }}_operators.sql
+--! @brief Operators for {{ dom }}.
+{% for o in operators %}
+CREATE OPERATOR {{ o.symbol }} (
+  FUNCTION = {{ o.function_schema }}.{{ o.function_name }},
+  LEFTARG = {{ o.leftarg }}, RIGHTARG = {{ o.rightarg }}{% if o.metadata %},
+  {{ o.metadata }}{% endif %}
+);
+{% endfor -%}

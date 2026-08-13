@@ -1,0 +1,34 @@
+# git-cliff changelog template for release-plz (mirrors cipherstash-suite).
+# Drives the per-crate CHANGELOG.md that release-plz generates for eql-bindings.
+# The repository-root CHANGELOG.md is the hand-maintained EQL SQL-surface
+# changelog and is NOT touched by release-plz.
+[changelog]
+header = ""
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+{% for commit in commits %}
+- {{ commit.message | split(pat="\n") | first | trim }}\
+{% endfor %}
+{% endfor %}
+"""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+# `review(...)` commits are PR-feedback housekeeping (addressing reviewer
+# comments). They don't represent user-facing changes — the underlying
+# feat/fix/refactor commits already capture those — so skip them rather than
+# letting the raw `review` type become a stray "### Review" changelog section.
+commit_parsers = [
+    { message = "^review", skip = true },
+    { message = "^feat", group = "Features" },
+    { message = "^fix", group = "Fixes" },
+    { message = "^docs", group = "Documentation" },
+    { message = "^perf", group = "Performance" },
+    { message = "^refactor", group = "Refactoring" },
+    { message = "^test", group = "Testing" },
+    { message = "^chore", group = "Miscellaneous" },
+    { message = "^ci", group = "CI" },
+]

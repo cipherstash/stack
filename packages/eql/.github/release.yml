@@ -1,0 +1,5 @@
+changelog:
+  categories:
+    - title: Changes since the last release
+      labels:
+        - "*"

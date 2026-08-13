@@ -1,0 +1,43 @@
+-- AUTOMATICALLY GENERATED FILE.
+-- REQUIRE: src/v3/schema.sql
+
+--! @file v3/scalars/{{ family_name }}/query_{{ family_name }}_types.sql
+--! @brief Query-operand domains for {{ family_name }} (index-terms-only, no ciphertext).
+--! @note Query-operand domains live in `{{ schema }}` (not `public`): they are
+--!       never valid column types, so they don't belong in the column-type
+--!       namespace, and dropping the EQL-owned schema can never drop an
+--!       application column.
+--! @note Cast a query operand explicitly to its `query_` domain in a predicate
+--!       (e.g. `WHERE col = $1::{{ schema }}.query_{{ family_name }}_eq`). A bare,
+--!       uncast literal RHS is ambiguous between the `query_` and `jsonb`
+--!       operator overloads and will not resolve.
+
+DO $$
+BEGIN
+{%- for d in domains %}
+  --! @brief Query-operand domain {{ schema }}.{{ d.name }} (term-only; no `c`).
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type
+    WHERE typname = '{{ d.typname }}' AND typnamespace = '{{ schema }}'::regnamespace
+  ) THEN
+    CREATE DOMAIN {{ schema }}.{{ d.name }} AS jsonb
+      CHECK (
+        jsonb_typeof(VALUE) = 'object'
+        {%- for k in d.keys %}
+        AND VALUE ? '{{ k }}'
+        {%- endfor %}
+        {%- for k in d.forbidden_keys %}
+        AND NOT (VALUE ? '{{ k }}')
+        {%- endfor %}
+        {%- for k in d.nonempty_array_keys %}
+        AND jsonb_typeof(VALUE -> '{{ k }}') = 'array'
+        AND jsonb_array_length(VALUE -> '{{ k }}') > 0
+        {%- endfor %}
+        AND VALUE->>'v' = '3'
+      );
+  END IF;
+
+  COMMENT ON DOMAIN {{ schema }}.{{ d.name }} IS '{{ d.comment }}';
+{% endfor -%}
+END
+$$;

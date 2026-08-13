@@ -1,0 +1,85 @@
+name: "Build docs (reusable)"
+
+# Reusable docs build+attach. Called inline by release.yml (production and
+# prerelease paths). The target release already exists: _build-sql.yml creates
+# it in the same run before this docs job attaches to it.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref/SHA to build docs from. Empty -> default checkout (github.sha)."
+        required: false
+        type: string
+        default: ""
+      tag:
+        description: "Full release tag. Empty -> build only, no attach."
+        required: false
+        type: string
+        default: ""
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  MISE_VERBOSE: "1"
+
+defaults:
+  run:
+    shell: bash {0}
+
+permissions:
+  contents: write
+
+jobs:
+  publish-docs:
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    name: Build and Publish Documentation
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+
+      - uses: jdx/mise-action@v3
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+
+      - name: Install Doxygen
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y doxygen
+
+      - name: Generate documentation
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          mise run docs:generate
+          mise run docs:generate:markdown -- "${TAG}"
+          mise run docs:generate:json -- "${TAG}"
+
+      - name: Package documentation
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          mise run docs:package "${TAG}"
+
+      - name: Upload documentation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: eql-docs
+          path: |
+            release/eql-docs-*.zip
+            release/eql-docs-*.tar.gz
+
+      - name: Publish documentation to release
+        if: ${{ inputs.tag != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: |
+            release/eql-docs-*.zip
+            release/eql-docs-*.tar.gz
