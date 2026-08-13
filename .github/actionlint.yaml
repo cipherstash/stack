@@ -10,3 +10,9 @@
 self-hosted-runner:
   labels:
     - blacksmith-4vcpu-ubuntu-2404
+    # Every job in the imported EQL suite. Sixteen of them, and the size is
+    # deliberate upstream: the sharded SQLx matrix compiles the full Rust
+    # dependency tree, so the runner is chosen for the compile rather than for
+    # the tests. Kept as its own label rather than renamed to the 4vcpu one —
+    # rehoming those jobs is a cost decision, not a lint fix.
+    - blacksmith-16vcpu-ubuntu-2204

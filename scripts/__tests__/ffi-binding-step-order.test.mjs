@@ -185,6 +185,8 @@ const EXPECTED_CREDENTIALED_JOBS = [
   '.github/workflows/integration-supabase.yml / integration',
   '.github/workflows/prisma-example-readme-e2e.yml / walkthrough',
   '.github/workflows/prisma-next-e2e.yml / e2e',
+  '.github/workflows/test-eql.yml / build-archive',
+  '.github/workflows/test-eql.yml / e2e',
   '.github/workflows/tests.yml / e2e-tests',
   '.github/workflows/tests.yml / run-tests',
   '.github/workflows/tests.yml / run-tests-bun',
@@ -193,8 +195,7 @@ const EXPECTED_CREDENTIALED_JOBS = [
 
 /**
  * Credentialed jobs that legitimately do NOT build the binding, each with the
- * reason it doesn't need one. Empty today, and that is the intended steady
- * state: every job we hand CS_* to currently runs code that encrypts.
+ * reason it doesn't need one.
  *
  * It exists because a job can hold credentials without touching the binding —
  * one that only validates that the secrets are present, or one that passes them
@@ -202,9 +203,26 @@ const EXPECTED_CREDENTIALED_JOBS = [
  * here WITH its reason rather than loosening the scan; the second test below
  * fails on an entry that no longer matches a credentialed job, so a stale
  * exemption cannot outlive the job it was written for.
+ *
+ * The two entries are the EQL suite, and they are the first jobs in this repo
+ * to encrypt WITHOUT the Node binding. `index.node` is the Node-API wrapper
+ * `packages/stack` loads; these are Rust tests linking `cipherstash-client`
+ * directly, so a `build-ffi-binding` step here would compile a binding nothing
+ * in the job can load and add minutes to the critical path of a suite that
+ * already compiles its own encryption core. They still hold live credentials —
+ * `test:sqlx:archive` regenerates the per-type fixtures through ZeroKMS at
+ * compile time, and `test:sqlx:e2e` encrypts fresh values at run time — so the
+ * pre-flight exemption below is NOT theirs. They run it.
  */
 const BINDING_EXEMPT_JOBS = new Map([
-  // ['<workflow> / <job>', 'why this job never loads index.node or dist/wasm'],
+  [
+    '.github/workflows/test-eql.yml / build-archive',
+    'Rust: `cargo nextest archive` links cipherstash-client directly, and never loads index.node or dist/wasm.',
+  ],
+  [
+    '.github/workflows/test-eql.yml / e2e',
+    'Rust: the proptest-e2e oracle encrypts through cipherstash-client, and never loads index.node or dist/wasm.',
+  ],
 ])
 
 /**

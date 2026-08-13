@@ -1,11 +1,43 @@
 name: "Test EQL"
 
+# The EQL suite, ported from cipherstash/encrypt-query-language when the subtree
+# landed at `packages/eql`. It arrived under `packages/eql/.github/workflows/` —
+# a directory GitHub never reads — so between the import and this file it ran
+# NOWHERE. That is the same failure the protect-ffi absorption hit, and
+# `scripts/__tests__/eql-suite-ci.test.mjs` is what stops it recurring.
+#
+# Four things changed in the port, all of them because the tree moved one level
+# down. Each is silent when wrong:
+#
+#   * `defaults.run.working-directory` — every `run:` here is written against
+#     the EQL root (`mise run …`, `release/*.sql`, `tests/sqlx/snapshots`).
+#     Without it they resolve against the monorepo root and fail with paths that
+#     look like typos.
+#   * `working_directory:` on each mise-action step — mise reads config from the
+#     current directory and its PARENTS, so an action running at the repo root
+#     never sees `packages/eql/mise.toml`. It would install nothing and leave the
+#     config untrusted, and the first `mise run` fails with "Config files … are
+#     not trusted", which reads as a toolchain problem rather than a path one.
+#     `defaults.run` does not reach a `uses:` step, so this is separate.
+#   * `workspaces:` on each rust-cache step — the Cargo workspace is nested now.
+#   * artifact `path:`/`path:` on upload/download — those are workspace-root
+#     relative and `defaults.run` does not touch them either.
+#
+# The credentials also changed shape. Upstream read all four from `secrets.`;
+# this repo keeps the two non-sensitive ones in `vars.` (see
+# `.github/actions/require-cs-secrets`), so `CS_WORKSPACE_CRN` and
+# `CS_CLIENT_ID` are `vars.` here. Reading them from `secrets.` would not error
+# — it yields the empty string, and the suite would fail at client construction
+# in every shard instead of saying what was missing.
+#
 # NB: NO path filter at on: level. A workflow skipped by a path/branch filter
 # leaves its required checks stuck Pending and blocks merge. Relevance is
 # computed by the `changes` job and applied per-job via `if:` instead.
 #
-# NB: NO `push:` trigger. Under a required merge queue, push-to-main validation
-# is redundant — the queue already validated the exact merge commit, and branch
+# NB: NO `push:` trigger, and that is not the same as "runs rarely". This runs
+# on `pull_request` — every PR, unfiltered, with relevance applied per job — and
+# on `merge_group`. Under a required merge queue, push-to-main validation is
+# redundant: the queue already validated the exact merge commit, and branch
 # protection blocks direct pushes. (Resolves the design's ambiguous "light jobs
 # only on push:main" sanity net by dropping the trigger entirely.)
 on:
@@ -27,6 +59,10 @@ env:
 defaults:
   run:
     shell: bash {0}
+    # Every `run:` in this workflow is written against the EQL root. This is the
+    # one-line form of what would otherwise be ~30 per-step `working-directory:`
+    # lines, each of which could be forgotten independently.
+    working-directory: packages/eql
 
 permissions:
   contents: read
@@ -57,17 +93,23 @@ jobs:
         if: github.event_name == 'pull_request'
         uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
         with:
+          # Every path except the workflow itself gained the `packages/eql/`
+          # prefix with the subtree. dorny/paths-filter matches against
+          # repo-root-relative paths, so the unprefixed globs would match
+          # `packages/stack/src/**` and friends instead — firing the whole
+          # matrix on changes that cannot affect EQL, and (worse) NOT firing on
+          # EQL's own `src/`, since nothing at the repo root is called that.
           filters: |
             relevant:
               - ".github/workflows/test-eql.yml"
-              - "src/**"
-              - "sql/**"
-              - "tests/**"
-              - "tasks/**"
-              - "crates/**"
-              - "Cargo.toml"
-              - "Cargo.lock"
-              - "mise.toml"
+              - "packages/eql/src/**"
+              - "packages/eql/sql/**"
+              - "packages/eql/tests/**"
+              - "packages/eql/tasks/**"
+              - "packages/eql/crates/**"
+              - "packages/eql/Cargo.toml"
+              - "packages/eql/Cargo.lock"
+              - "packages/eql/mise.toml"
 
       # Explicit default (not `|| 'true'`, which trips GitHub's inconsistent
       # treatment of the string 'false'). merge_group/workflow_dispatch never
@@ -131,23 +173,34 @@ jobs:
       # fork-PR runs.
       POSTGRES_VERSION: "17"
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
-      CS_WORKSPACE_CRN: ${{ secrets.CS_WORKSPACE_CRN }}
-      CS_CLIENT_ID: ${{ secrets.CS_CLIENT_ID }}
+      CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
+      # Fast pre-flight: fail in seconds if a secret was rotated or cleared,
+      # before the rust-cache restore and the ~4-minute nextest archive build.
+      # Ordering is asserted by scripts/__tests__/ffi-binding-step-order.test.mjs.
+      - uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
         with:
           version: 2026.4.0
           install: true
           cache: true
+          working_directory: packages/eql
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: .
+          workspaces: packages/eql
           shared-key: sqlx-tests
           # The sole saver of the shared cache: this job compiles the full heavy
           # dep tree, so it must own the `sqlx-tests` key. All other jobs set
@@ -166,12 +219,19 @@ jobs:
       # cipherstash-encrypt{,-uninstall}.sql from ../../release at RUN time
       # (std::fs, not embedded), and release/ is gitignored so the shard checkout
       # has none of them. `mise run build` (via prep) produced them in build-archive.
+      #
+      # `path:` is workspace-root relative — `defaults.run.working-directory`
+      # does not reach a `uses:` step — hence the prefix. upload-artifact v4
+      # roots the archive at the least common ancestor of everything it matched,
+      # which for these two is `packages/eql`, so the artifact still contains
+      # `nextest.tar.zst` and `release/*.sql` at its top level and the shard's
+      # `download-artifact` puts them back where the archive expects them.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nextest-archive
           path: |
-            nextest.tar.zst
-            release/*.sql
+            packages/eql/nextest.tar.zst
+            packages/eql/release/*.sql
           retention-days: 1
           if-no-files-found: error
 
@@ -210,16 +270,21 @@ jobs:
           version: 2026.4.0
           install: true
           cache: true
+          working_directory: packages/eql
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: .
+          workspaces: packages/eql
           shared-key: sqlx-tests
           save-if: false
 
+      # Extracts to the workspace root by default, which would drop
+      # `nextest.tar.zst` and `release/` two levels above where the archive's
+      # workspace remap and the build_validation_tests expect them.
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: nextest-archive
+          path: packages/eql
 
       - name: Setup database (Postgres ${{ matrix.postgres-version }})
         run: |
@@ -256,10 +321,11 @@ jobs:
           version: 2026.4.0
           install: true
           cache: true
+          working_directory: packages/eql
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: .
+          workspaces: packages/eql
           shared-key: sqlx-tests
           save-if: false
 
@@ -297,9 +363,10 @@ jobs:
           version: 2026.4.0
           install: true
           cache: true
+          working_directory: packages/eql
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: .
+          workspaces: packages/eql
           shared-key: sqlx-tests
           save-if: false
       - name: Validate v2.2 / v2.3 payload schemas
@@ -323,9 +390,10 @@ jobs:
           version: 2026.4.0
           install: true
           cache: true
+          working_directory: packages/eql
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: .
+          workspaces: packages/eql
           shared-key: sqlx-tests
           save-if: false
       # `mise run test:crates` runs `cargo fmt --check` at the workspace root,
@@ -371,9 +439,10 @@ jobs:
           version: 2026.4.0
           install: true
           cache: true
+          working_directory: packages/eql
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: .
+          workspaces: packages/eql
           shared-key: sqlx-tests
           save-if: false
       - name: Verify generator parity (golden)
@@ -400,9 +469,10 @@ jobs:
           version: 2026.4.0
           install: true
           cache: true
+          working_directory: packages/eql
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: .
+          workspaces: packages/eql
           shared-key: sqlx-tests
           save-if: false
       - name: Build EQL
@@ -433,9 +503,10 @@ jobs:
           version: 2026.4.0
           install: true
           cache: true
+          working_directory: packages/eql
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: .
+          workspaces: packages/eql
           shared-key: sqlx-tests
           save-if: false
       - name: Verify the matrix test-name inventory
@@ -474,6 +545,7 @@ jobs:
           version: 2026.4.0
           install: true
           cache: true
+          working_directory: packages/eql
       - name: Setup database
         run: |
           mise run postgres:up postgres-${POSTGRES_VERSION} --extra-args "--detach --wait"
@@ -505,9 +577,10 @@ jobs:
           version: 2026.4.0
           install: true
           cache: true
+          working_directory: packages/eql
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: .
+          workspaces: packages/eql
           shared-key: sqlx-tests
           save-if: false
       - name: Validate SQL doc coverage + required tags
@@ -544,6 +617,7 @@ jobs:
           version: 2026.4.0
           install: true
           cache: true
+          working_directory: packages/eql
       # The gate detects drift by cross-checking a loose declaration count against
       # a strict parse, so an over-accepting parser defeats it silently. Runs
       # first, and needs no token: a broken parser makes the gate below
@@ -576,6 +650,7 @@ jobs:
           version: 2026.4.0
           install: true
           cache: true
+          working_directory: packages/eql
       - name: Every intra-document anchor link resolves
         run: |
           mise run test:doc-anchors
@@ -599,21 +674,30 @@ jobs:
     env:
       POSTGRES_VERSION: "17"
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
-      CS_WORKSPACE_CRN: ${{ secrets.CS_WORKSPACE_CRN }}
-      CS_CLIENT_ID: ${{ secrets.CS_CLIENT_ID }}
+      CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
+      # Fast pre-flight: fail in seconds if a secret was rotated or cleared,
+      # before the rust-cache restore and the proptest-e2e compile.
+      - uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
         with:
           version: 2026.4.0
           install: true
           cache: true
+          working_directory: packages/eql
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: .
+          workspaces: packages/eql
           shared-key: sqlx-tests
           save-if: false
       - name: Setup database (Postgres 17)
