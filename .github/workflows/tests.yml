@@ -152,10 +152,20 @@ jobs:
       # `@ts-expect-error` assertions (an unsupported operator on a column
       # must be a compile error). Those only fire when tsc processes them,
       # so the package `typecheck` must run — and be required — here (#684).
-      # Its tsconfig resolves stack subpaths to SOURCE, so no build step is
-      # needed first.
+      # Its tsconfig resolves stack subpaths to SOURCE — but NOT
+      # `@cipherstash/eql`, which it reaches through the package `exports` map
+      # at `./dist/sql.d.ts`. That used to be a registry tarball with `dist/`
+      # already in it, so a bare `pnpm --filter` resolved it whatever CI had
+      # built. The EQL subtree import made it a workspace package whose `dist/`
+      # is a build output, and this step became the first in the job to need
+      # something built — failing `TS2307` on three files.
+      #
+      # Through turbo, so `typecheck`'s `dependsOn: ["^build"]` builds
+      # `@cipherstash/eql` first. This is the trap
+      # `workflow-turbo-build-deps.test.mjs` was written for; the step was on
+      # its grandfathered KNOWN_BARE list, and the import is what collected.
       - name: Typecheck (prisma-next — enforces v3 operator-capability gating)
-        run: pnpm --filter @cipherstash/stack-prisma run typecheck
+        run: pnpm exec turbo run typecheck --filter @cipherstash/stack-prisma
 
       # `packages/bench` is a live importer of `@cipherstash/stack` and
       # `@cipherstash/stack-drizzle`, but it has no `test` script (its suites

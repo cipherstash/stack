@@ -51,7 +51,17 @@ const WORKFLOWS = workflowFiles()
  * not add to it. Route new steps through `turbo run` instead.
  */
 const KNOWN_BARE = new Set([
-  'pnpm --filter @cipherstash/stack-prisma run typecheck',
+  // `pnpm --filter @cipherstash/stack-prisma run typecheck` was here, and the
+  // EQL subtree import is what collected on it. `stack-prisma` reaches
+  // `@cipherstash/eql/sql` through that package's `exports` map, at
+  // `./dist/sql.d.ts`. While `@cipherstash/eql` came from the registry, `dist/`
+  // arrived inside the tarball and the bare step resolved it no matter what CI
+  // had built; as a workspace package `dist/` is a build output, and the step
+  // was the first in its job to need one. It now runs through turbo.
+  //
+  // Left as a comment rather than deleted silently, because the useful part of
+  // this list is not which lines are on it — it is that every entry is a bet
+  // that no future change makes the implicit ordering false. This one lost.
   'pnpm --filter @cipherstash/wizard run typecheck',
 ])
 
