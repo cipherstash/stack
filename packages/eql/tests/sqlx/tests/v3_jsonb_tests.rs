@@ -649,6 +649,81 @@ async fn v3_jsonb_ord_ope_term_entry_branches(pool: PgPool) -> anyhow::Result<()
     Ok(())
 }
 
+// ============================================================================
+// Drift guard for the workspace-keyed `$.hello` op selector.
+//
+// `SEL_HELLO_OP` is a MAC of (column context, JSONPath) under the workspace
+// keyset, so regenerating the fixture against a different CipherStash workspace
+// re-pins it. Its sibling `v3_doc_integer::SELECTOR` has carried such a guard
+// since upstream; this constant did not, and the asymmetry has a cost: when the
+// suite moved to `cipherstash/stack` the workspace changed, every
+// `payload -> SEL_HELLO_OP` lookup returned NULL, and the suite reported wrong
+// ANSWERS — LB3 counting 0 distinct ops, ordering arms seeing unordered rows —
+// rather than the one wrong CONSTANT behind all of them.
+//
+// The live selector cannot be derived without credentials, so on failure this
+// prints every op-carrying selector with the profile needed to pick the right
+// one. It deliberately does NOT choose automatically: guessing wrong would
+// re-pin to the wrong leaf silently, which is the exact bug recorded in
+// `v3_ste_vec::SEL_HELLO_OP`'s history (it once named `$.number` while claiming
+// `$.hello`, and survived because equality-only suites cannot separate them).
+//
+// `$.hello` is the selector on all 10 rows whose `op` length takes exactly TWO
+// values in a 9/1 split: a string op term is 8 * (len + 1) + 1 bits, and the
+// values are `world-1`..`world-9` (equal length) plus the one-longer
+// `world-10`. `$.number` and `$.large` are fixed-width numeric terms (one
+// length), `$.accented` spans four, and `$.empty` / `$.nested.deep` are
+// constant.
+// ============================================================================
+
+#[sqlx::test(fixtures(path = "../fixtures", scripts("v3_ste_vec")))]
+async fn v3_jsonb_sel_hello_op_matches_fixture(pool: PgPool) -> anyhow::Result<()> {
+    let carrying: i64 = sqlx::query_scalar(&format!(
+        "SELECT count(*) FROM fixtures.v3_ste_vec f \
+         WHERE EXISTS ( \
+           SELECT 1 FROM jsonb_array_elements(f.payload::jsonb->'sv') e \
+           WHERE e->>'s' = '{SEL_HELLO_OP}' AND e ? 'op' \
+         )"
+    ))
+    .fetch_one(&pool)
+    .await?;
+
+    if carrying == 10 {
+        return Ok(());
+    }
+
+    let menu: Vec<(String, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT e->>'s', \
+                count(DISTINCT f.id), \
+                count(DISTINCT length(e->>'op')), \
+                min(length(e->>'op'))::bigint, \
+                max(length(e->>'op'))::bigint \
+         FROM fixtures.v3_ste_vec f, jsonb_array_elements(f.payload::jsonb->'sv') e \
+         WHERE e ? 'op' \
+         GROUP BY 1 ORDER BY 1",
+    )
+    .fetch_all(&pool)
+    .await?;
+
+    let table = menu
+        .iter()
+        .map(|(sel, rows, lengths, lo, hi)| {
+            format!("    {sel}  rows={rows} distinct_op_lengths={lengths} min={lo} max={hi}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    anyhow::bail!(
+        "v3_ste_vec $.hello op-selector drifted from the pinned constant.\n  \
+         pinned v3_ste_vec::SEL_HELLO_OP = {SEL_HELLO_OP}\n  \
+         carries `op` on {carrying}/10 rows (want 10)\n  \
+         live op-carrying selectors:\n{table}\n\
+         The SteVec selector is keyed by the CipherStash workspace. Pick the entry with \
+         rows=10 and distinct_op_lengths=2 (the 9/1 `world-1..9` vs `world-10` split), \
+         re-pin SEL_HELLO_OP to it, and re-run.",
+    )
+}
+
 /// LB1–LB3 structural invariants of the GENERATED fixture, asserted directly
 /// (the containment / index oracles only imply them). This is the "generated
 /// fixture matches the load-bearing properties" guard, and it doubles as the

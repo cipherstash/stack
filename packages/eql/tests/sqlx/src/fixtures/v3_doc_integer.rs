@@ -46,7 +46,17 @@ const FIELD: &str = "field";
 /// derived from the workspace keyset + the fixed STE_VEC_PREFIX + the `field`
 /// path, so it is stable for a given CipherStash workspace; if it drifts,
 /// regenerate the fixture and re-pin from the emitted `"s"`.
-pub const SELECTOR: &str = "fce8be759db230351b10a058b7ba50a7";
+///
+/// **Pinned to this repo's CI workspace** (`vars.CS_WORKSPACE_CRN`), which is
+/// not the workspace the suite was developed against. The value below replaced
+/// `fce8be759db230351b10a058b7ba50a7` when the suite moved here from
+/// `cipherstash/encrypt-query-language`: the selector is keyed by the workspace
+/// keyset, so absorbing the repo re-pinned it even though no Rust, no SQL and
+/// no fixture logic changed. That is a property of the design, not a defect —
+/// `jsonb_entry_integer_selector_matches_fixture` exists precisely to report it
+/// as one copy-pasteable message. A contributor running the suite against their
+/// own workspace will see that message and should NOT commit their local value.
+pub const SELECTOR: &str = "606a4a449a26442d80915f78d142694f";
 
 /// Build the plaintext documents: `{"field": <value>}` per integer fixture value,
 /// paired with the bare integer oracle value.

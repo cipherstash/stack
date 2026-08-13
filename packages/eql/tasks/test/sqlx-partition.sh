@@ -37,7 +37,15 @@ test -f "${ARCHIVE_PATH}" \
 # the prebuilt binaries.
 echo "==> running nextest partition hash:${SHARD}/${SHARD_TOTAL} from ${ARCHIVE_PATH}"
 cd tests/sqlx
+# --no-fail-fast: this suite is sharded, and one environmental fault is enough to
+# blank a shard. When the workspace-keyed SteVec selector drifted on the move to
+# `cipherstash/stack`, shard 1 reported 11 failures and skipped 643 of its 710
+# tests — so the run answered "the selector is wrong" and nothing else, and every
+# further question cost another full CI round trip. Running to completion turns
+# that into one report per push. The cost is bounded: the shards run ~5s tests in
+# parallel, so a fully-failing shard finishes in a couple of minutes.
 cargo nextest run \
   --archive-file "${ARCHIVE_PATH}" \
   --workspace-remap "${REPO_ROOT}" \
+  --no-fail-fast \
   --partition "hash:${SHARD}/${SHARD_TOTAL}"
