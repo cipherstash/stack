@@ -1,6 +1,6 @@
 [package]
 name = "eql-bindings"
-version = "3.0.4"
+version = "4.0.0"
 edition = "2021"
 description = "Canonical wire types for EQL payloads — single source of truth for Rust, TypeScript (ts-rs), and JSON Schema (schemars)."
 # crates.io metadata. `license` is REQUIRED by crates.io — publish fails without

@@ -59437,7 +59437,7 @@ DROP FUNCTION IF EXISTS eql_v3.version();
 --! @brief EQL version reporting (self-contained eql_v3 surface)
 --!
 --! This file is auto-generated from src/v3/version.template during build.
---! The 3.0.4 placeholder is replaced with the actual release
+--! The 4.0.0 placeholder is replaced with the actual release
 --! version (bare semver, e.g. "3.0.0") supplied via `mise run build --version`,
 --! or "DEV" for development builds.
 
@@ -59456,14 +59456,14 @@ CREATE FUNCTION eql_v3.version()
   RETURNS text
   IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT '3.0.4';
+  SELECT '4.0.0';
 $$ LANGUAGE SQL;
 
 --! @brief Schema-level version marker for obj_description() discoverability
 --!
 --! Mirrors eql_v3.version() as a comment on the schema so the installed
 --! version can also be read via obj_description('eql_v3'::regnamespace).
-COMMENT ON SCHEMA eql_v3 IS '3.0.4';
+COMMENT ON SCHEMA eql_v3 IS '4.0.0';
 --! @file pin_search_path_v3.sql
 --! @brief Post-install: pin search_path on every eql_v3.* function.
 --!

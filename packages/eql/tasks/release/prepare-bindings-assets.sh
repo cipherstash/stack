@@ -20,12 +20,33 @@ if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; th
   exit 1
 fi
 
-mise run build --version "$version"
+# --force, and then verify the stamp. `tasks/build.sh`'s `#MISE sources` are the
+# SQL and Rust inputs; `--version` is NOT among them, so `mise run build
+# --version X` is a cache HIT whenever those sources are unchanged and re-serves
+# whatever version the PREVIOUS build stamped. Everything below then copies those
+# bytes verbatim and writes a manifest asserting $version over them — so the
+# digest still verifies, `readVerifiedInstallSql()` still passes, and the bundle
+# ships stamped one version while the manifest, the crate and the npm package all
+# claim another. Caught exactly that way on the 4.0.0 bump, in a worktree warm
+# from a plain `mise run build`: the copied SQL read `COMMENT ON SCHEMA eql_v3 IS
+# 'DEV'` under a manifest saying 4.0.0. Rebuilding costs a release task nothing.
+mise run --force build --version "$version"
 
 install_sql="release/cipherstash-encrypt.sql"
 uninstall_sql="release/cipherstash-encrypt-uninstall.sql"
 test -f "$install_sql"
 test -f "$uninstall_sql"
+
+# The stamp is the one property `test -f` cannot see, and the one the manifest is
+# about to assert. Belt to the --force brace: any other route to a stale artefact
+# (a partial build, a hand-edited release/, a future change to the cache key)
+# fails here rather than shipping.
+stamped="$(sed -n "s/^COMMENT ON SCHEMA eql_v3 IS '\(.*\)';\$/\1/p" "$install_sql" | head -1)"
+if [ "$stamped" != "$version" ]; then
+  echo "error: ${install_sql} is stamped '${stamped}', not the requested '${version}'." >&2
+  echo "       Refusing to write a release manifest that disagrees with the SQL it hashes." >&2
+  exit 1
+fi
 
 install_hash="$(shasum -a 256 "$install_sql" | awk '{print $1}')"
 uninstall_hash="$(shasum -a 256 "$uninstall_sql" | awk '{print $1}')"
