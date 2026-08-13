@@ -163,6 +163,27 @@ Three things this cost, all worth fixing rather than absorbing:
 
 The other selector-shaped constants in the tree are **synthetic and unaffected** — `crates/eql-bindings/tests/*` and `tests/sqlx/tests/payload_schema_tests.rs` pair theirs with hand-made ciphertext literals and touch no keyset, and the `00000…01` / `deadbeef…` / `ffffffff…` literals in `v3_jsonb_tests.rs` are forged by construction.
 
+### `workspace:^` silently moved every consumer from EQL's last RELEASE to its unreleased HEAD — and HEAD is not 3.0.4
+
+The plan argued the `workspace:^` range on version grounds ("EQL is 3.x; `^3.0.4` spans every 3.x release, so a 3.1.2 does not drag `stash`…"). That reasoning is about *published* versions and misses what a workspace link actually does: it resolves to the working tree, so the range never applies. Before the absorption `@cipherstash/eql` was a registry tarball; after it, every consumer builds from source. Those are not the same artefact, and here they differ:
+
+| | `installSqlSha256` |
+|---|---|
+| published `@cipherstash/eql@3.0.4` (npm tarball) | `63104a81…` |
+| in-tree `packages/eql`, also calling itself **3.0.4** | `a92cc041…` |
+
+The entire diff is one rename — `eql_v3.ste_vec_contains` → `eql_v3.jsonb_document_contains`, 14 lines, arriving with `63af028e chore(release): regenerate bundled installer SQL for jsonb_document_contains rename`. Upstream renamed it, regenerated the bundle, and **never released it**: npm's newest is 3.0.4, `packages/eql/packages/eql/package.json` still says `3.0.4`, the CHANGELOG's newest entry is 3.0.4, and there is no changeset for the rename. So `sql/release-manifest.json` currently asserts `"eqlVersion": "3.0.4"` over SQL that is not 3.0.4's.
+
+`packages/stack-prisma`'s lockstep test is the only thing in the repo that noticed — it requires the installed release's SQL to be baked by some published migration, and `a92cc041…` is baked by none. That is the guard working, not a false positive. The reach is wider than one test:
+
+- **`stash eql install` would install the renamed function under the name "3.0.4".** `packages/cli/src/installer/index.ts` calls `readInstallSql()` directly, with no digest check, so a customer database would end up carrying `jsonb_document_contains` while `eql_v3` reports a version whose published SQL defines `ste_vec_contains`. Two databases both truthfully reporting 3.0.4 would disagree on the function set.
+- **A SQL function rename is breaking for direct callers** — the wrappers are public precisely so platforms without operator support (Supabase/PostgREST) can invoke them by name.
+- **`examples/prisma/migrations/cipherstash/…/ops.json` bakes the old SQL**, as do the three `PUBLISHED_MIGRATIONS`; those artefacts sit byte-for-byte in consumers' repos and database ledgers, so they are frozen history, not files to edit.
+
+**This is a release decision and is deliberately left open** rather than patched to green. Making the test pass requires either bumping the in-tree EQL version and shipping a new baseline migration that bakes the new SQL (a new customer-facing artefact, and the rename's severity — patch vs minor vs major — is upstream's call), or reverting the rename until a deliberate release. Inventing either would forge exactly the kind of record the surrounding guards exist to protect. It belongs with the Phase 5 release cutover, and it is the one blocker that cannot be resolved from inside this PR.
+
+The narrower lesson for the absorption: **absorbing a repo swaps "last published release" for "current HEAD" across every consumer**, and nothing in the dependency graph announces that. Only a digest pin caught it here. Any other package this repo absorbs by workspace link deserves the same check — diff the built artefact against the published tarball — before the link is treated as neutral.
+
 ### Three imported release workflows violate the no-caching rule — by omission, not by setting
 
 The global constraint is that publish workflows never restore the Actions cache. `release-plz.yml` complies explicitly:
