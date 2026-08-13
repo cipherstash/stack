@@ -4,11 +4,13 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 // `@cipherstash/stack/diagnostics` exists so `stash doctor` can prove the
@@ -140,32 +142,87 @@ Module.syncBuiltinESMExports()
   return file
 }
 
+/** Thrown by the stand-in's `isEncrypted`, so the call is observable. */
+const PUBLISHED_SURFACE_MARKER = 'reached the published protect-ffi surface'
+
 /**
- * Runs `script` in a child process resolved from this package, optionally with
- * the binding hidden. A child rather than an in-process require: the point is
- * to go through Node's own resolution of `@cipherstash/stack/diagnostics`
- * against the published `exports` map, which Vitest's aliases would bypass.
+ * A preload that swaps `@cipherstash/protect-ffi` for a stand-in carrying the
+ * surface of the version on npm — `isEncrypted`, and no
+ * `assertNativeBindingAvailable`.
+ *
+ * This entry is the one part of the package whose correctness depends on WHICH
+ * protect-ffi is installed, and `workspace:*` hides that: it resolves to the
+ * sibling directory here and to whatever version publishing pins there. The
+ * stand-in's `isEncrypted` throws a marker instead of loading a binding, so the
+ * assertion is that the call reaches it at all — that the entry probes through
+ * an export the published package actually has. The tests above cover the other
+ * half, against the real protect-ffi and a real binding.
+ */
+function publishedFfiSurfacePreload(): string {
+  // Realpath'd, and it is load-bearing. `os.tmpdir()` is behind a symlink on
+  // macOS (`/var` → `/private/var`), and a CJS module reached through one is
+  // loaded TWICE: the ESM loader keys the module on the symlinked URL it was
+  // given, while executing a `.cjs` goes through the CJS loader, which
+  // realpaths. The stand-in's named exports then bind against the instance
+  // that never ran, so `isEncrypted` arrives `undefined` — a failure that
+  // looks exactly like the bug under test and is not one.
+  const dir = realpathSync(
+    mkdtempSync(path.join(tmpdir(), 'stack-diagnostics-ffi-')),
+  )
+  const standIn = path.join(dir, 'protect-ffi-as-published.cjs')
+  writeFileSync(
+    standIn,
+    `exports.isEncrypted = function isEncrypted() {
+  throw new Error('${PUBLISHED_SURFACE_MARKER}')
+}
+exports.encrypt = function encrypt() {}
+`,
+  )
+  const hook = path.join(dir, 'substitute-ffi.mjs')
+  writeFileSync(
+    hook,
+    `import { registerHooks } from 'node:module'
+import { pathToFileURL } from 'node:url'
+
+const STAND_IN = pathToFileURL(${JSON.stringify(standIn)}).href
+
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier === '@cipherstash/protect-ffi') {
+      return { url: STAND_IN, shortCircuit: true }
+    }
+    return nextResolve(specifier, context)
+  },
+})
+`,
+  )
+  return `--import "${pathToFileURL(hook).href}"`
+}
+
+/**
+ * Runs `script` in a child process resolved from this package. A child rather
+ * than an in-process require: the point is to go through Node's own resolution
+ * of `@cipherstash/stack/diagnostics` against the published `exports` map,
+ * which Vitest's aliases would bypass.
  */
 function runNode(
   script: string,
-  { esm = false, hideBinding = false } = {},
+  { esm = false, hideBinding = false, publishedFfi = false } = {},
 ): string {
   const args = esm ? ['--input-type=module', '-e', script] : ['-e', script]
+  const preloads = [
+    process.env.NODE_OPTIONS,
+    hideBinding ? `--require "${hideBindingPreload()}"` : undefined,
+    publishedFfi ? publishedFfiSurfacePreload() : undefined,
+  ].filter(Boolean)
   return execFileSync(process.execPath, args, {
     cwd: packageRoot,
     encoding: 'utf8',
     stdio: 'pipe',
-    env: hideBinding
-      ? {
-          ...process.env,
-          NODE_OPTIONS: [
-            process.env.NODE_OPTIONS,
-            `--require "${hideBindingPreload()}"`,
-          ]
-            .filter(Boolean)
-            .join(' '),
-        }
-      : process.env,
+    env:
+      preloads.length > 0
+        ? { ...process.env, NODE_OPTIONS: preloads.join(' ') }
+        : process.env,
   })
 }
 
@@ -184,6 +241,36 @@ describe('@cipherstash/stack/diagnostics', () => {
         '@cipherstash/protect-ffi',
       ])
     }
+  })
+
+  // `@cipherstash/protect-ffi` is a `workspace:*` dependency, so this entry is
+  // built against the sibling directory and shipped against whatever version
+  // publishing pins — today 0.31.0, which is on npm WITHOUT
+  // `assertNativeBindingAvailable`: that export arrived with the lazy load,
+  // whose changeset is parked as `.deferred` until the publishing cutover, so
+  // no version carrying it exists. Re-exporting it would ship an entry that
+  // dies on import under ESM ("Named export … not found", a link-time
+  // SyntaxError) and hands back `undefined` under CJS — and `stash doctor`
+  // classifies neither, so it would print a bare `Fatal error` for every user
+  // on a released install.
+  it.each([
+    ['require', false],
+    ['import', true],
+  ])('probes through an export the published protect-ffi has, so %s survives it', (_label, esm) => {
+    const call = `let raised = 'none'
+         try { d.assertNativeBindingAvailable() } catch (e) { raised = e.message }
+         process.stdout.write('imported ' + raised)`
+    const script = esm
+      ? `const d = await import('@cipherstash/stack/diagnostics')\n${call}`
+      : `const d = require('@cipherstash/stack/diagnostics')\n${call}`
+
+    const output = runNode(script, { esm, publishedFfi: true })
+
+    // Reaching stdout at all means the entry loaded against that surface.
+    expect(output).toMatch(/^imported /)
+    // And that the probe ran, rather than resolving to `undefined` and
+    // throwing a TypeError the CLI would report as an unknown failure.
+    expect(output).toContain(PUBLISHED_SURFACE_MARKER)
   })
 
   it('is importable from both module systems', () => {

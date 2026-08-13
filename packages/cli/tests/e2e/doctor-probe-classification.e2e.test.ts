@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,7 +9,7 @@ import { render } from '../helpers/pty.js'
 
 // `doctor` sorts a probe failure into four arms, and only one of them — the
 // missing platform binary — had coverage (`doctor-missing-binary.e2e.test.ts`).
-// These are the two a user reaches by doing nothing wrong:
+// These are the ones a user reaches by doing nothing wrong:
 //
 //   * `@cipherstash/stack` absent. It is an OPTIONAL PEER, so `npx stash
 //     doctor` in a project that has not run `stash init` lands here. Must read
@@ -18,12 +18,13 @@ import { render } from '../helpers/pty.js'
 //     subpath — every version inside the `>=1.0.0-rc.0` peer range that the CLI
 //     itself permits. Unclassified, this reaches doctor's `else`, is rethrown,
 //     and surfaces as the launcher's bare `Fatal error`.
+//   * The same error code from a probe that asks for no subpath, which cannot
+//     mean "upgrade `@cipherstash/stack`" and must not be answered with it.
 //
-// Both errors are raised by NODE'S OWN resolver, never hand-built: a
-// `module.registerHooks` resolve hook re-points the specifier and lets
-// resolution fail on its own terms. A fixture that pasted the message and code
-// on by hand would keep passing if Node ever changed either, which is the whole
-// risk being covered here.
+// Every error here is raised by NODE'S OWN resolver against a package layout
+// this file builds — an absent package, an older one — never hand-built with
+// the code and message pasted on. A fixture like that keeps passing when Node
+// changes either, which is the whole risk being covered.
 
 /** Mirrors the probe labels in `src/commands/doctor/index.ts`. */
 const ENCRYPTION_LABEL = 'Encryption engine (@cipherstash/stack → protect-ffi)'
@@ -33,44 +34,60 @@ interface Unresolve {
   /** The bare specifier to divert. */
   specifier: string
   /**
-   * Resolve this instead — a subpath the package really does not publish, so
-   * Node raises its own `ERR_PACKAGE_PATH_NOT_EXPORTED`. Omit to keep the
-   * specifier and move the IMPORTER to an empty directory instead, which is how
-   * an absent package is staged: same specifier, no `node_modules` chain to
-   * find it in, so Node raises `ERR_MODULE_NOT_FOUND` naming the base package.
+   * A package to install into the directory the specifier is re-resolved from,
+   * carrying an `exports` map that does not answer what the probe asks for.
+   * Omit and the directory stays empty, which is how an ABSENT package is
+   * staged — no `node_modules` chain to find it in, so Node raises
+   * `ERR_MODULE_NOT_FOUND` naming the base package.
    */
-  redirectTo?: string
+  installed?: { pkg: string; exports: Record<string, string> }
 }
 
 /**
- * Writes a hook module that makes `specifier` unresolvable in the spawned CLI,
- * and returns the `NODE_OPTIONS` value that loads it.
+ * Writes a hook module that re-resolves `specifier` against a directory this
+ * test controls, and returns the `NODE_OPTIONS` value that loads it.
+ *
+ * Moving the IMPORTER rather than rewriting the specifier: the specifier the
+ * CLI asks for has to reach Node's resolver unchanged, because what the
+ * classifier keys on is which subpath of which package the error names. A
+ * redirect to some other subpath produces the right error CODE against the
+ * wrong subpath, which is a shape the real failure never has.
  *
  * A resolve hook rather than the `Module._load` patch its sibling suite uses:
  * the probe is an `await import()` of a real ESM package, so it never reaches
  * the CJS loader. `registerHooks` is synchronous and in-process, so the error
  * propagates out of the dynamic import exactly as an unhooked failure would.
  */
-function unresolve({ specifier, redirectTo }: Unresolve): string {
+function unresolve({ specifier, installed }: Unresolve): string {
   const dir = mkdtempSync(join(tmpdir(), 'stash-doctor-probe-'))
+  if (installed) {
+    const pkgDir = join(dir, 'node_modules', ...installed.pkg.split('/'))
+    mkdirSync(pkgDir, { recursive: true })
+    writeFileSync(
+      join(pkgDir, 'package.json'),
+      JSON.stringify({
+        name: installed.pkg,
+        version: '0.0.0',
+        exports: installed.exports,
+      }),
+    )
+  }
+  // The importer is never written — resolution fails before anything is read.
+  // It only has to sit in this directory, so that what is (or is not) in the
+  // `node_modules` beside it is what Node resolves against.
+  const parent = pathToFileURL(join(dir, 'importer.mjs')).href
   const hook = join(dir, 'unresolve.mjs')
-  // Importer inside the fresh temp dir. It is never written — resolution fails
-  // before anything is read — it only has to sit somewhere with no
-  // `node_modules` above it holding the package.
-  const emptyParent = pathToFileURL(join(dir, 'importer.mjs')).href
   writeFileSync(
     hook,
     `import { registerHooks } from 'node:module'
 
 const SPECIFIER = ${JSON.stringify(specifier)}
-const REDIRECT = ${JSON.stringify(redirectTo ?? null)}
-const EMPTY_PARENT = ${JSON.stringify(emptyParent)}
+const PARENT = ${JSON.stringify(parent)}
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier !== SPECIFIER) return nextResolve(specifier, context)
-    if (REDIRECT) return nextResolve(REDIRECT, context)
-    return nextResolve(specifier, { ...context, parentURL: EMPTY_PARENT })
+    return nextResolve(specifier, { ...context, parentURL: PARENT })
   },
 })
 `,
@@ -126,7 +143,12 @@ describe.skipIf(!hooksAvailable)('stash doctor — probe classification', () => 
       env: {
         NODE_OPTIONS: unresolve({
           specifier: '@cipherstash/stack/diagnostics',
-          redirectTo: '@cipherstash/stack/no-such-subpath',
+          // An `@cipherstash/stack` from before the subpath existed: present,
+          // resolvable, and its `exports` answers `.` and nothing else.
+          installed: {
+            pkg: '@cipherstash/stack',
+            exports: { '.': './dist/index.js' },
+          },
         }),
       },
       cols: 140,
@@ -142,6 +164,36 @@ describe.skipIf(!hooksAvailable)('stash doctor — probe classification', () => 
     // The arm exists to keep this error out of doctor's `else`, where it is
     // rethrown and the launcher prints it raw.
     expect(r.output).not.toContain('Fatal error')
+  })
+
+  it('does not answer an exports failure elsewhere with stack-upgrade advice', async () => {
+    // The too-old-to-probe arm keys on an error code, and every probe's failure
+    // is offered to it. `ERR_PACKAGE_PATH_NOT_EXPORTED` can come from anywhere
+    // in a probe's import graph — a dependency with an exports problem of its
+    // own — and on the auth probe, which imports no subpath at all, it cannot
+    // mean "your @cipherstash/stack is too old". Answering a broken install
+    // with an unrelated upgrade and exiting 0 is a worse outcome than not
+    // classifying it.
+    const r = render(['doctor'], {
+      env: {
+        NODE_OPTIONS: unresolve({
+          specifier: '@cipherstash/auth',
+          // An auth package whose `exports` does not answer its own root —
+          // same error code as the case above, from a package the arm has no
+          // advice for.
+          installed: {
+            pkg: '@cipherstash/auth',
+            exports: { './sub': './sub.js' },
+          },
+        }),
+      },
+      cols: 140,
+    })
+    const { exitCode } = await r.exit
+
+    expect(r.output).not.toContain(messages.doctor.cannotProbe)
+    expect(r.output).not.toContain(messages.doctor.allChecksPassed)
+    expect(exitCode, r.output).toBe(1)
   })
 
   it('fails on an absent required package', async () => {

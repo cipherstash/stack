@@ -35,6 +35,11 @@ function resolutionError(specifier: string): unknown {
 // error reaches doctor's `else` and is rethrown, surfacing as the launcher's
 // bare `Fatal error` for an install that may be perfectly healthy.
 describe('isSubpathUnavailable', () => {
+  // The two probes as `doctor` declares them: one imports a subpath, one does
+  // not.
+  const encryption = { pkg: '@cipherstash/stack', subpath: './no-such-subpath' }
+  const auth = { pkg: '@cipherstash/auth' }
+
   it('matches an installed package that does not publish the subpath', () => {
     // A real package (so resolution gets as far as reading its exports map)
     // with a subpath it has never had.
@@ -43,7 +48,30 @@ describe('isSubpathUnavailable', () => {
     expect((err as { code?: string }).code).toBe(
       'ERR_PACKAGE_PATH_NOT_EXPORTED',
     )
-    expect(isSubpathUnavailable(err)).toBe(true)
+    expect(isSubpathUnavailable(err, encryption)).toBe(true)
+  })
+
+  it('does not match a probe that imports no subpath', () => {
+    // The advice this arm renders names `@cipherstash/stack` and tells the user
+    // to upgrade it. Applied to the auth probe — which imports the package root
+    // — any exports failure raised somewhere inside auth's own dependency graph
+    // would answer a broken install with an unrelated upgrade and exit 0.
+    const err = resolutionError('@cipherstash/stack/no-such-subpath')
+
+    expect(isSubpathUnavailable(err, auth)).toBe(false)
+  })
+
+  it('does not match a failure on a different subpath of the same package', () => {
+    // A dependency deeper in the probe's own import graph with an exports
+    // problem of its own is not "your @cipherstash/stack is too old".
+    const err = resolutionError('@cipherstash/stack/no-such-subpath')
+
+    expect(
+      isSubpathUnavailable(err, {
+        pkg: '@cipherstash/stack',
+        subpath: './diagnostics',
+      }),
+    ).toBe(false)
   })
 
   it('does not match the errors the other arms own', () => {
@@ -52,20 +80,23 @@ describe('isSubpathUnavailable', () => {
     // subpath, and why this must not be mistaken for a stale install.
     const missing = resolutionError('@cipherstash/no-such-package/diagnostics')
     expect((missing as { code?: string }).code).toBe('MODULE_NOT_FOUND')
-    expect(isSubpathUnavailable(missing)).toBe(false)
+    expect(isSubpathUnavailable(missing, encryption)).toBe(false)
 
     const binary = new Error(
       "Cannot find module '@cipherstash/protect-ffi-darwin-arm64'",
     ) as Error & { code?: string }
     binary.code = 'MODULE_NOT_FOUND'
-    expect(isSubpathUnavailable(binary)).toBe(false)
+    expect(isSubpathUnavailable(binary, encryption)).toBe(false)
     expect(isNativeBinaryMissing(binary)).toBe(true)
   })
 
   it('ignores non-Error values', () => {
-    expect(isSubpathUnavailable(undefined)).toBe(false)
+    expect(isSubpathUnavailable(undefined, encryption)).toBe(false)
     expect(
-      isSubpathUnavailable({ code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' }),
+      isSubpathUnavailable(
+        { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' },
+        encryption,
+      ),
     ).toBe(false)
   })
 })

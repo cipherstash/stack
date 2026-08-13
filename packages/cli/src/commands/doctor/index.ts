@@ -27,6 +27,12 @@ interface Probe {
    * classifies against `@cipherstash/stack`.
    */
   pkg: string
+  /**
+   * The subpath of `pkg` that `force()` imports, when it imports one. Only a
+   * probe that asks for a subpath can fail for want of it, so this is what
+   * scopes the too-old-to-probe arm to the probe it has advice for.
+   */
+  subpath?: string
   /** May legitimately be absent until `stash init`, so absence is not failure. */
   optional?: boolean
   force(): Promise<void>
@@ -36,6 +42,7 @@ const PROBES: Probe[] = [
   {
     label: 'Encryption engine (@cipherstash/stack → protect-ffi)',
     pkg: '@cipherstash/stack',
+    subpath: './diagnostics',
     optional: true,
     async force() {
       // `@cipherstash/stack/diagnostics` exists for this call: it reaches
@@ -91,18 +98,39 @@ export function isPackageMissing(err: unknown, pkg: string): boolean {
 }
 
 /**
- * True when the package is installed but does not publish the subpath the probe
- * asked for — an `@cipherstash/stack` older than `./diagnostics`.
+ * True when the package is installed but does not publish the subpath THIS
+ * probe asked for — an `@cipherstash/stack` older than `./diagnostics`.
  *
  * Its own arm because the alternative is the `else` below: an unclassified
  * error, rethrown, surfacing as a bare `Fatal error` from the launcher. `stash`
  * declares `@cipherstash/stack` as an OPTIONAL PEER with a wide range, so every
  * install predating that subpath lands here — a case a user hits by doing
  * nothing wrong.
+ *
+ * Narrow on purpose. The row it renders tells the user to upgrade
+ * `@cipherstash/stack`, and the error code alone does not mean that: an exports
+ * failure can come from anywhere in a probe's import graph, including the auth
+ * probe, which asks for no subpath at all. So the probe must name a subpath and
+ * the error must be about that one — otherwise a broken install gets an
+ * unrelated upgrade and an exit code of 0.
  */
-export function isSubpathUnavailable(err: unknown): boolean {
+export function isSubpathUnavailable(
+  err: unknown,
+  probe: { pkg: string; subpath?: string },
+): boolean {
+  if (probe.subpath === undefined) return false
   if (!(err instanceof Error)) return false
-  return (err as { code?: string }).code === 'ERR_PACKAGE_PATH_NOT_EXPORTED'
+  if ((err as { code?: string }).code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED') {
+    return false
+  }
+  // Node names both halves: `Package subpath './diagnostics' is not defined by
+  // "exports" in /…/@cipherstash/stack/package.json`. Separators normalised
+  // because win32 is a supported target and that path is built by the OS.
+  const message = err.message.replaceAll('\\', '/')
+  return (
+    message.includes(`'${probe.subpath}'`) &&
+    message.includes(`${probe.pkg}/package.json`)
+  )
 }
 
 export async function doctorCommand(): Promise<void> {
@@ -150,7 +178,7 @@ export async function doctorCommand(): Promise<void> {
             : messages.doctor.notInstalled,
         )
         if (!probe.optional) failed = true
-      } else if (isSubpathUnavailable(err)) {
+      } else if (isSubpathUnavailable(err, probe)) {
         report('warn', probe.label, messages.doctor.cannotProbe)
         incomplete = true
       } else {
