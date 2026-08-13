@@ -128,14 +128,14 @@ jobs:
         uses: ./.github/actions/build-ffi-binding
 
       - name: Type tests (stack)
-        run: pnpm --filter @cipherstash/stack run test:types
+        run: pnpm exec turbo run test:types --filter @cipherstash/stack
 
       # The v3 domain catalog lives in the test kit, and its
       # `satisfies Record<EqlV3TypeName, DomainSpec>` is what forces a new SDK
       # domain to be covered. That check only fires under `tsc`, so without this
       # step a domain added to stack would slip through untested.
       - name: Type tests (test-kit — enforces v3 domain coverage)
-        run: pnpm --filter @cipherstash/test-kit run test:types
+        run: pnpm exec turbo run test:types --filter @cipherstash/test-kit
 
       # The adapter packages carry their own `.test-d.ts` type-contract guards
       # (the M1 client-surface / #622 erasure guards, the Supabase key-set
@@ -143,10 +143,10 @@ jobs:
       # were never wired into CI, so type-level regressions in them went
       # undetected — run them explicitly.
       - name: Type tests (stack-drizzle)
-        run: pnpm --filter @cipherstash/stack-drizzle run test:types
+        run: pnpm exec turbo run test:types --filter @cipherstash/stack-drizzle
 
       - name: Type tests (stack-supabase)
-        run: pnpm --filter @cipherstash/stack-supabase run test:types
+        run: pnpm exec turbo run test:types --filter @cipherstash/stack-supabase
 
       # prisma-next's operator-capability gating is proven by `.test-d.ts`
       # `@ts-expect-error` assertions (an unsupported operator on a column
@@ -181,7 +181,7 @@ jobs:
       # nothing here caught the three `auth.AutoStrategy` resolution errors that
       # sat in `main` until #771. Gate it so they cannot come back silently.
       - name: Typecheck (wizard)
-        run: pnpm --filter @cipherstash/wizard run typecheck
+        run: pnpm exec turbo run typecheck --filter @cipherstash/wizard
 
       # `examples/*` are standalone apps outside the `./packages/*` filter that
       # root `build`/`test` use, so nothing in CI compiled them. `examples/basic`

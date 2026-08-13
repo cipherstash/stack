@@ -65,6 +65,18 @@
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$"]
     },
+    "test:types": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$"]
+    },
+    "analyze:complexity": {
+      "inputs": ["$TURBO_DEFAULT$"]
+    },
+    "emit": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "cache": false
+    },
     "typecheck:scaffold": {
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$"]

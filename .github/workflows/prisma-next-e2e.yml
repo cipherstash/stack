@@ -149,7 +149,7 @@ jobs:
         run: pnpm exec turbo run build --filter @cipherstash/stack-prisma
 
       - name: Emit example contract
-        run: pnpm --filter @cipherstash/prisma-example emit
+        run: pnpm exec turbo run emit --filter @cipherstash/prisma-example
 
       - name: Start E2E Postgres container
         working-directory: examples/prisma
