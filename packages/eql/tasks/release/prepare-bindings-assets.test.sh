@@ -96,8 +96,8 @@ expect_accept "3.0.0"
 expect_accept "3.0.0-alpha.7"
 expect_accept "10.20.30-rc.2"
 
-expect_stamp_mismatch "4.0.0" "DEV"    # the case that actually happened
-expect_stamp_mismatch "4.0.0" "3.0.4"  # a warm release/ from the previous version
+expect_stamp_mismatch "3.0.5" "DEV"    # the case that actually happened
+expect_stamp_mismatch "3.0.5" "3.0.4"  # a warm release/ from the previous version
 
 if [[ "$failures" -gt 0 ]]; then
   echo "prepare-bindings-assets.test.sh: ${failures} failure(s)" >&2
