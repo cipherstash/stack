@@ -171,6 +171,214 @@ describe('the relevance filter still selects the imported tree', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Every cargo check EQL owns is reached by a root workflow
+// ---------------------------------------------------------------------------
+
+/**
+ * The other half of the split this repo insists on for `packages/protect-ffi`.
+ *
+ * There, `lintWiring.test.ts` holds two properties from the manifest side: no
+ * cargo on the default `test` path, and every cargo check reachable from
+ * `test:cargo`. EQL has no npm-script layer over its cargo work at all — its
+ * checks are mise tasks, invoked directly by workflows — so the first property
+ * is free (`@cipherstash/eql`'s `test` is `vitest run`, and the repo-wide
+ * PATH-trap check covers the rest) and the second has nowhere to attach except
+ * CI itself.
+ *
+ * So this asserts the property one level up: a mise task that compiles or runs
+ * Rust must be reached by some workflow GitHub actually executes. Fifteen tasks
+ * qualify, and they arrived from a repository where a different set of
+ * workflows ran them — which is exactly the state in which one goes quiet
+ * without anyone noticing.
+ */
+
+const MISE_CONFIGS = [
+  'packages/eql/mise.toml',
+  'packages/eql/tasks/fixtures.toml',
+  'packages/eql/tasks/postgres.toml',
+]
+
+/**
+ * The scripts a task block delegates to, inlined.
+ *
+ * Most of EQL's heavier tasks are one line — `run = "bash tasks/test/foo.sh"` —
+ * and every cargo invocation lives in the script. Reading only the block would
+ * therefore see cargo in nine tasks and miss `test:sqlx:archive`,
+ * `test:sqlx:partition`, `codegen:parity` and the rest, which is the whole
+ * class of task most worth checking. One hop is enough: no script here invokes
+ * another via a second `tasks/` path.
+ *
+ * A path that does not resolve contributes nothing rather than throwing — a
+ * task naming a script that does not exist is a different defect, and mise
+ * fails loudly on it.
+ */
+function scriptBodies(block) {
+  const paths = [...block.matchAll(/\btasks\/[\w./-]+\.sh\b/g)].map((m) => m[0])
+  return paths
+    .map((rel) => {
+      const abs = join(REPO_ROOT, 'packages/eql', rel)
+      return existsSync(abs) ? readFileSync(abs, 'utf8') : ''
+    })
+    .join('\n')
+}
+
+/**
+ * mise's task blocks, without a TOML parser.
+ *
+ * Adding one is an audit decision in this repo, and the shape needed here is
+ * small: a `[tasks."<name>"]` header, an optional `depends = [...]`, and the
+ * body text. `taskGraph` is guarded below on both the task count and a named
+ * sample, so a format change empties nothing silently — it fails.
+ */
+function taskGraph() {
+  const tasks = new Map()
+  for (const rel of MISE_CONFIGS) {
+    const text = readFileSync(join(REPO_ROOT, rel), 'utf8')
+    // Split on top-level table headers; keep the header with its body.
+    const blocks = text.split(/^(?=\[)/m)
+    for (const block of blocks) {
+      const header = /^\[tasks\.(?:"([^"]+)"|([\w:.-]+))\]/.exec(block)
+      if (!header) continue
+      const name = header[1] ?? header[2]
+      const depends = /^depends\s*=\s*\[([^\]]*)\]/m.exec(block)
+      tasks.set(name, {
+        file: rel,
+        body: block + scriptBodies(block),
+        depends: depends
+          ? [...depends[1].matchAll(/"([^"]+)"|'([^']+)'/g)].map(
+              (m) => m[1] ?? m[2],
+            )
+          : [],
+      })
+    }
+  }
+  return tasks
+}
+
+const TASKS = taskGraph()
+
+/** Tasks whose body shells out to cargo. */
+const CARGO_TASKS = [...TASKS]
+  .filter(([, task]) => /(^|[^\w-])cargo(\s|$)/m.test(task.body))
+  .map(([name]) => name)
+  .sort()
+
+/**
+ * Whether a workflow's executable part invokes a task BY NAME.
+ *
+ * The trailing guard is what makes `test:sqlx` distinct from
+ * `test:sqlx:archive`: a plain substring search would mark the former reached
+ * by any mention of the latter, and `test:sqlx` is precisely one of the tasks
+ * that is NOT in CI (the archive/partition split replaced it). Getting that
+ * wrong turns the exemption list below into a list of tasks that appear to run.
+ */
+function invokes(body, taskName) {
+  const escaped = taskName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(
+    `mise\\s+run\\s+[^\\n]*?(?<![\\w:.-])${escaped}(?![\\w:.-])`,
+  ).test(body)
+}
+
+/** Task names any root workflow runs, closed over `depends`. */
+function reachableFromCi() {
+  const seen = new Set()
+  const queue = [...TASKS.keys()].filter((name) =>
+    rootWorkflows.some(({ body }) => invokes(body, name)),
+  )
+  while (queue.length > 0) {
+    const name = queue.pop()
+    if (seen.has(name)) continue
+    seen.add(name)
+    queue.push(...(TASKS.get(name)?.depends ?? []))
+  }
+  return seen
+}
+
+/**
+ * Cargo tasks no workflow runs, each with the reason. Every entry is either a
+ * developer convenience or the WRITE half of a regenerate-and-diff pair whose
+ * READ half is in CI — never "we decided not to check this".
+ */
+const CI_EXEMPT_CARGO_TASKS = new Map([
+  [
+    'test:sqlx',
+    'The unsharded run of the SQLx suite, for local use. CI runs it as `test:sqlx:archive` compiled once plus `test:sqlx:partition` per shard.',
+  ],
+  ['test:sqlx:watch', 'A file watcher. There is nothing for CI to watch.'],
+  [
+    'test:matrix:snapshots:regen',
+    'Writes the matrix snapshots. CI runs the read half — `test:matrix:inventory` and friends, then `git diff --exit-code` — in test-eql.yml `matrix-coverage`.',
+  ],
+  [
+    'test:surface:snapshot:regen',
+    'Writes the public-surface snapshot. Its read half runs inside `test:crates`.',
+  ],
+  [
+    'test:codegen',
+    "The generator's own unit tests, which `test:crates` already runs as part of the workspace. CI runs the stronger check: `codegen:parity` regenerates and diffs against the golden output.",
+  ],
+])
+
+describe('every cargo check EQL owns is reached by a root workflow', () => {
+  const reachable = reachableFromCi()
+
+  it('parses the mise task graph', () => {
+    // The guard on the scan. A `[tasks."x"]` spelling change, or a config file
+    // moving, would empty `TASKS` — and every check below would then pass
+    // having examined nothing.
+    expect(TASKS.size).toBeGreaterThanOrEqual(30)
+    expect([...TASKS.keys()]).toContain('test:sqlx:archive')
+    expect(TASKS.get('test:sqlx')?.depends).toEqual(['test:sqlx:prep'])
+  })
+
+  it('finds the tasks that invoke cargo, including through a script', () => {
+    // 19 today. The floor is set above the 15 that block-only parsing finds, so
+    // losing `scriptBodies` fails here rather than silently shrinking the set
+    // by the four tasks most worth checking.
+    expect(CARGO_TASKS.length).toBeGreaterThanOrEqual(18)
+
+    // The named case: `run = "bash tasks/test/sqlx-archive.sh"`. Nothing in the
+    // task block mentions cargo; `cargo nextest archive` is in the script.
+    expect(CARGO_TASKS).toContain('test:sqlx:archive')
+  })
+
+  it('distinguishes a task name from a longer task that starts with it', () => {
+    // The property `invokes` exists for. Without the trailing guard,
+    // `test:sqlx` reads as reached by test-eql.yml's archive and partition
+    // steps, and drops out of the exemption list silently.
+    const body = 'run: mise run test:sqlx:archive\nrun: mise run test:schema\n'
+    expect(invokes(body, 'test:sqlx:archive')).toBe(true)
+    expect(invokes(body, 'test:sqlx')).toBe(false)
+    expect(invokes(body, 'test:schema')).toBe(true)
+  })
+
+  it('runs every cargo task, or names it as exempt with a reason', () => {
+    const orphans = CARGO_TASKS.filter(
+      (name) => !reachable.has(name) && !CI_EXEMPT_CARGO_TASKS.has(name),
+    )
+    expect(
+      orphans,
+      `These mise tasks invoke cargo and no workflow in ${WORKFLOW_DIR} reaches them, directly or through \`depends\`. A check nothing invokes reads exactly like a check that passes. Either add it to a workflow, or add it to CI_EXEMPT_CARGO_TASKS with the reason it does not belong in CI:\n${orphans
+        .map((name) => `  ${name}`)
+        .join('\n')}`,
+    ).toEqual([])
+  })
+
+  it('keeps no exemption for a task that is run, or has gone', () => {
+    // Both directions. An exemption for a task CI now runs is noise that hides
+    // the next one; an exemption for a task that no longer exists is a claim
+    // about nothing.
+    const stale = [...CI_EXEMPT_CARGO_TASKS.keys()].filter(
+      (name) => !TASKS.has(name) || reachable.has(name),
+    )
+    expect(
+      stale,
+      'These CI_EXEMPT_CARGO_TASKS entries no longer describe an unreached cargo task — the task was deleted, renamed, or is now run by a workflow. Remove them.',
+    ).toEqual([])
+  })
+})
+
 /**
  * What is still allowed to sit in the deposited `.github`, and why.
  *
