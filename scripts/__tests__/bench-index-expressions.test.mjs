@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -25,11 +25,29 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
 
 const require = createRequire(resolve(REPO_ROOT, 'packages/cli/package.json'))
 
-/** The EQL v3 bundle `stash eql install --eql-version 3` applies. */
+/**
+ * The EQL v3 bundle `stash eql install --eql-version 3` applies.
+ *
+ * Reads the package's COMMITTED `sql/`, not the `dist/sql/` its export map
+ * points consumers at. Those are the same bytes — `scripts/copy-assets.mjs`
+ * populates `dist/sql` with a plain recursive `cpSync` of `sql`, no transform —
+ * but they differ in when they exist.
+ *
+ * Before the encrypt-query-language subtree landed, `@cipherstash/eql` resolved
+ * to a published tarball, which ships `dist/` prebuilt. It is now a workspace
+ * package, so `dist/` is a build output: absent on a fresh clone, and absent in
+ * the `lint` jobs that run this suite (`tests.yml`, `tests-supply-chain.yml`),
+ * neither of which builds anything. Pointing at `dist/` there turns a test whose
+ * whole design property is "no database, no credentials, no build" into one that
+ * fails on a clean checkout.
+ */
+function eqlPackageRoot() {
+  return dirname(require.resolve('@cipherstash/eql/package.json'))
+}
+
 function bundleSql() {
-  const pkgJson = require.resolve('@cipherstash/eql/package.json')
   return readFileSync(
-    resolve(dirname(pkgJson), 'dist/sql/cipherstash-encrypt.sql'),
+    resolve(eqlPackageRoot(), 'sql/cipherstash-encrypt.sql'),
     'utf8',
   )
 }
@@ -136,5 +154,26 @@ describe('bench index expressions match the EQL v3 operator lowering', () => {
       expect(header.toLowerCase(), operator).toMatch(/language sql/)
       expect(header.toLowerCase(), operator).toMatch(/immutable/)
     }
+  })
+})
+
+/**
+ * The assertions above read the committed `sql/` because `dist/` is a build
+ * output (see `bundleSql`). This is what keeps that substitution honest: when a
+ * build HAS run, the shipped copy must be byte-identical to the file the rest of
+ * this suite reasons about.
+ *
+ * It is conditional on `dist/` existing, which is the one shape of skip worth
+ * accepting here — every assertion above runs unconditionally against the
+ * committed bundle, so this adds a check on built trees rather than replacing
+ * one. What it catches is `copy-assets.mjs` growing a transform, at which point
+ * "same bytes" stops being true and this suite would otherwise be silently
+ * describing a file nobody installs.
+ */
+describe('the shipped bundle is a verbatim copy of the committed one', () => {
+  const shipped = resolve(eqlPackageRoot(), 'dist/sql/cipherstash-encrypt.sql')
+
+  it.runIf(existsSync(shipped))('dist/sql matches sql', () => {
+    expect(readFileSync(shipped, 'utf8')).toBe(bundleSql())
   })
 })

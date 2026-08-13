@@ -4,6 +4,13 @@ packages:
   # `packages/*` glob above already covers the wrapper itself; these are nested
   # a level deeper and need their own entry.
   - packages/protect-ffi/platforms/*
+  # @cipherstash/eql, from the encrypt-query-language subtree. The subtree is
+  # imported at a VERBATIM prefix so its repo-root-relative paths keep resolving
+  # (mise tasks, Doxyfile, sync-generated.mjs), which puts the npm package two
+  # levels down. `packages/*` matches the subtree ROOT, which carries no
+  # package.json by design — the private @cipherstash/eql-workspace manifest was
+  # deleted so this glob contributes exactly one member.
+  - packages/eql/packages/*
   - examples/*
   - e2e
 
@@ -28,6 +35,7 @@ catalogs:
     '@cipherstash/auth-linux-x64-gnu': 0.42.0
     '@cipherstash/auth-linux-x64-musl': 0.42.0
     '@cipherstash/auth-win32-x64-msvc': 0.42.0
+    '@types/node': 22.20.1
     tsup: 8.5.1
     tsx: 4.23.0
     typescript: 5.9.3
@@ -97,11 +105,14 @@ blockExoticSubdeps: true
 #   - @cipherstash/auth*         CipherStash-published auth strategies (NAPI +
 #                                 WASM-inline variant); also tracked in lockstep
 #                                 with protect-ffi for the WASM path.
-#   - @cipherstash/eql           CipherStash-published EQL SQL bundle + wire types,
-#                                 generated from the same eql-bindings commit as the
-#                                 payload format protect-ffi emits; bumped in lockstep.
+#
+# @cipherstash/eql was listed here until the encrypt-query-language subtree
+# landed. It is now a workspace package, so no pnpm install ever resolves it
+# from the registry and the entry became dead config. Note this stays true even
+# though packages/protect-ffi/integration-tests still pins it by version:
+# that directory is not a workspace member and installs with `npm ci`, and
+# minimumReleaseAge is a pnpm setting that never applied to it.
 minimumReleaseAgeExclude:
   - '@prisma-next/*'
   - '@cipherstash/auth'
   - '@cipherstash/auth-*'
-  - '@cipherstash/eql'
