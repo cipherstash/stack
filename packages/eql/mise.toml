@@ -42,6 +42,17 @@
 includes = ["tasks", "tasks/postgres.toml", "tasks/fixtures.toml"]
 
 [env]
+# Two task scripts locate the EQL root with `git rev-parse --show-toplevel`
+# (tasks/test/doc-anchors.sh, tasks/test/known-failures.sh). Since the subtree
+# import that returns the MONOREPO root, not this directory. Both honour this
+# override, so setting it here is the whole fix — and mise's [env] beats an
+# inherited value, so a stale EQL_ROOT in a shell cannot defeat it.
+#
+# known-failures.sh fails loudly when this is wrong (exit 2, missing file).
+# doc-anchors.sh does not: it cd's to the computed root and validates anchors
+# against whatever tree it finds, reporting success. Do not treat a passing
+# doc-anchors.sh as evidence this is set correctly.
+EQL_ROOT = "{{config_root}}"
 POSTGRES_DB = "cipherstash"
 POSTGRES_USER = "cipherstash"
 POSTGRES_PASSWORD = "password"

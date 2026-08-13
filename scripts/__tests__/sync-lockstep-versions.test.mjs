@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { bumpCargoPackageVersion } from './sync-lockstep-versions.mjs'
+import { bumpCargoPackageVersion } from '../sync-lockstep-versions.mjs'
 
 const CARGO = `[package]
 name = "eql-bindings"
@@ -32,9 +32,9 @@ version = "0.4.2"
   })
 
   test('fails loudly when there is no [package] section or version line', () => {
-    expect(() => bumpCargoPackageVersion('[dependencies]\nserde = "1"\n', '3.0.0')).toThrow(
-      /no \[package\] section/,
-    )
+    expect(() =>
+      bumpCargoPackageVersion('[dependencies]\nserde = "1"\n', '3.0.0'),
+    ).toThrow(/no \[package\] section/)
     expect(() =>
       bumpCargoPackageVersion('[package]\nname = "eql-bindings"\n', '3.0.0'),
     ).toThrow(/did not find a version line/)

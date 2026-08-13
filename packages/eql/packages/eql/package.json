@@ -57,9 +57,9 @@
     "access": "public"
   },
   "devDependencies": {
-    "@types/node": "catalog:",
-    "tsup": "catalog:",
-    "typescript": "catalog:",
-    "vitest": "catalog:"
+    "@types/node": "catalog:repo",
+    "tsup": "catalog:repo",
+    "typescript": "catalog:repo",
+    "vitest": "catalog:repo"
   }
 }

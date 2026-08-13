@@ -27,6 +27,9 @@ catalogs:
     '@cipherstash/auth-win32-x64-msvc':
       specifier: 0.42.0
       version: 0.42.0
+    '@types/node':
+      specifier: 22.20.1
+      version: 22.20.1
     tsup:
       specifier: 8.5.1
       version: 8.5.1
@@ -246,8 +249,8 @@ importers:
         specifier: catalog:repo
         version: 0.42.0(@cipherstash/auth-darwin-arm64@0.42.0)(@cipherstash/auth-darwin-x64@0.42.0)(@cipherstash/auth-linux-arm64-gnu@0.42.0)(@cipherstash/auth-linux-x64-gnu@0.42.0)(@cipherstash/auth-linux-x64-musl@0.42.0)(@cipherstash/auth-win32-x64-msvc@0.42.0)
       '@cipherstash/eql':
-        specifier: 3.0.4
-        version: 3.0.4
+        specifier: workspace:^
+        version: link:../eql/packages/eql
       '@cipherstash/migrate':
         specifier: workspace:*
         version: link:../migrate
@@ -316,6 +319,21 @@ importers:
       '@cipherstash/auth-win32-x64-msvc':
         specifier: catalog:repo
         version: 0.42.0
+
+  packages/eql/packages/eql:
+    devDependencies:
+      '@types/node':
+        specifier: catalog:repo
+        version: 22.20.1
+      tsup:
+        specifier: catalog:repo
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: catalog:repo
+        version: 5.9.3
+      vitest:
+        specifier: catalog:repo
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
 
   packages/migrate:
     dependencies:
@@ -452,8 +470,8 @@ importers:
         version: 3.25.76
     devDependencies:
       '@cipherstash/eql':
-        specifier: 3.0.4
-        version: 3.0.4
+        specifier: workspace:^
+        version: link:../eql/packages/eql
       '@clack/prompts':
         specifier: ^1.7.0
         version: 1.7.0
@@ -568,8 +586,8 @@ importers:
   packages/stack-prisma:
     dependencies:
       '@cipherstash/eql':
-        specifier: 3.0.4
-        version: 3.0.4
+        specifier: workspace:^
+        version: link:../eql/packages/eql
       '@cipherstash/stack':
         specifier: workspace:*
         version: link:../stack
@@ -1090,9 +1108,6 @@ packages:
         optional: true
       '@cipherstash/auth-win32-x64-msvc':
         optional: true
-
-  '@cipherstash/eql@3.0.4':
-    resolution: {integrity: sha512-h+/1bMCuglE9pTCZLpVfPTQY2nic5JRoNl+rMQX2B/5cHCWaN5p6Q3OjEOa4Wqf/a7XWn43S/vcJLvWYYvGJuQ==}
 
   '@clack/core@1.4.3':
     resolution: {integrity: sha512-/kr3UWNtdJfxZtPgDqUOmG2pvwlmcLGheex5yiZKdwbzZJxhV+HMNR9QNmyY5cGwTNV6LrR7Jtp+KjhUAP1qBQ==}
@@ -2599,8 +2614,8 @@ packages:
     resolution: {integrity: sha512-aIL5Fx7mawVa300al2BnEE4iNvo1qETxLrPI/o05L7z6go7fCw1J6EQmbK4FmJ2AS7kgVF/KEZWufBfdClMcPg==}
     engines: {node: '>= 0.6'}
 
-  eventsource-parser@3.1.1:
-    resolution: {integrity: sha512-EKN1vKAMcZ8MlYMpaNuxN6R9yakzH6uajHcHVTqWJzvu5pWw9DyhbP35HH8MVBQ+dZjAfDxk+A8NiR9KWaXiyQ==}
+  eventsource-parser@3.1.0:
+    resolution: {integrity: sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==}
     engines: {node: '>=18.0.0'}
 
   eventsource@3.0.7:
@@ -2800,8 +2815,8 @@ packages:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
 
-  hono@4.13.1:
-    resolution: {integrity: sha512-kdJoFVv2xmayw6cY09H7AbMJMt8Jn5jdlEdXsP7AGBdF2DIptVlKlOLKXP41yPip4/a3yQPv9gVcJYI8YY04dw==}
+  hono@4.13.0:
+    resolution: {integrity: sha512-jhunvfHWxd7J5EFfSgH4xsYJzSe/lfqbUCxiyyeaQasUsXeEHXtzVid+7EOGByc5JnFa23SSFL3Y2RV/z1T+eQ==}
     engines: {node: '>=16.9.0'}
 
   http-errors@2.0.1:
@@ -2835,8 +2850,8 @@ packages:
   inherits@2.0.4:
     resolution: {integrity: sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==}
 
-  ip-address@10.5.0:
-    resolution: {integrity: sha512-R5SnVLJmgYYvf2F2ZgwSBnelz5G4q5AxIC277GDfUaNbrZKNANcBC7RHqYYePlszf4kBolVkJauG0ZjHHFh55g==}
+  ip-address@10.4.0:
+    resolution: {integrity: sha512-oSK96Grm3aP6OrS263xVxbNDGVL7rzBtYdpGqlDG8iQdoenDoTs/nkki+DflYbAEE8Xl6o5YxhxlrKvI3nqKXQ==}
     engines: {node: '>= 12'}
 
   ipaddr.js@1.9.1:
@@ -4195,8 +4210,6 @@ snapshots:
       '@cipherstash/auth-linux-x64-musl': 0.42.0
       '@cipherstash/auth-win32-x64-msvc': 0.42.0
 
-  '@cipherstash/eql@3.0.4': {}
-
   '@clack/core@1.4.3':
     dependencies:
       fast-wrap-ansi: 0.2.0
@@ -4348,9 +4361,9 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
-  '@hono/node-server@1.19.17(hono@4.13.1)':
+  '@hono/node-server@1.19.17(hono@4.13.0)':
     dependencies:
-      hono: 4.13.1
+      hono: 4.13.0
 
   '@img/colour@1.0.0':
     optional: true
@@ -4496,17 +4509,17 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(zod@3.25.76)':
     dependencies:
-      '@hono/node-server': 1.19.17(hono@4.13.1)
+      '@hono/node-server': 1.19.17(hono@4.13.0)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
       cors: 2.8.6
       cross-spawn: 7.0.6
       eventsource: 3.0.7
-      eventsource-parser: 3.1.1
+      eventsource-parser: 3.1.0
       express: 5.2.1
       express-rate-limit: 8.6.2(express@5.2.1)
-      hono: 4.13.1
+      hono: 4.13.0
       jose: 6.2.8
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -5519,11 +5532,11 @@ snapshots:
 
   etag@1.8.1: {}
 
-  eventsource-parser@3.1.1: {}
+  eventsource-parser@3.1.0: {}
 
   eventsource@3.0.7:
     dependencies:
-      eventsource-parser: 3.1.1
+      eventsource-parser: 3.1.0
 
   evlog@1.11.0(next@15.5.21(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3):
     optionalDependencies:
@@ -5551,7 +5564,7 @@ snapshots:
     dependencies:
       debug: 4.4.3
       express: 5.2.1
-      ip-address: 10.5.0
+      ip-address: 10.4.0
     transitivePeerDependencies:
       - supports-color
 
@@ -5756,7 +5769,7 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hono@4.13.1: {}
+  hono@4.13.0: {}
 
   http-errors@2.0.1:
     dependencies:
@@ -5784,7 +5797,7 @@ snapshots:
 
   inherits@2.0.4: {}
 
-  ip-address@10.5.0: {}
+  ip-address@10.4.0: {}
 
   ipaddr.js@1.9.1: {}
 

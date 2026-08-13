@@ -278,6 +278,15 @@ jobs:
         uses: changesets/action@v1.9.0
         with:
           publish: pnpm run release
+          # LOAD-BEARING, and it fails OPEN if removed. Without `version:` the
+          # action runs its own built-in `changeset version` and never invokes
+          # the root `version` script — so `scripts/sync-lockstep-versions.mjs`
+          # would not run, npm would bump while
+          # packages/eql/crates/eql-bindings/Cargo.toml and the bundled SQL
+          # assets kept the old version, and the first symptom would be a
+          # published crate disagreeing with the SQL bundle it ships.
+          # Asserted by scripts/__tests__/release-version-hook.test.mjs.
+          version: pnpm run version
           commitMode: 'github-api'
         env:
           # No NPM_TOKEN — publishing authenticates via npm OIDC trusted

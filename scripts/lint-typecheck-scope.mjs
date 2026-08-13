@@ -29,7 +29,26 @@ const REPO_ROOT = resolve(import.meta.dirname, '..')
 
 // Roots holding workspace members, mirroring `pnpm-workspace.yaml`. Override
 // with argv[2..] for tests / ad-hoc checks (each arg is a package directory).
-const WORKSPACE_ROOTS = ['packages', 'examples']
+//
+// NESTED roots are listed separately because the walk below is one level deep,
+// matching how pnpm globs `packages/*`. Two subtrees put packages a level
+// further down and need their own entry here for the same reason they need one
+// in `pnpm-workspace.yaml`:
+//
+//   packages/protect-ffi/platforms/*   the six per-platform binary packages
+//   packages/eql/packages/*            @cipherstash/eql, from the EQL subtree
+//
+// Getting this wrong is silent in the direction that matters: a package outside
+// the scan is never reported, which reads exactly like a package that passed.
+// `packages/eql` itself is matched by the `packages` root and carries no
+// package.json (the private workspace manifest was deleted with the import), so
+// the loop skips it and only the nested member is checked.
+const WORKSPACE_ROOTS = [
+  'packages',
+  'examples',
+  'packages/protect-ffi/platforms',
+  'packages/eql/packages',
+]
 
 /** Every directory that looks like a workspace member. */
 function discoverPackages() {

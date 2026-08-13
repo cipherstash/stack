@@ -35,8 +35,9 @@
     "lint:typecheck-scope": "node scripts/lint-typecheck-scope.mjs",
     "lint:workflow-cache": "node scripts/lint-no-workflow-caching.mjs",
     "release:gate": "node scripts/release-gate.mjs",
+    "version": "changeset version && node scripts/sync-lockstep-versions.mjs",
     "release": "pnpm run build && changeset publish",
-    "test": "turbo test --filter './packages/*'",
+    "test": "turbo test --filter './packages/**'",
     "test:e2e": "turbo run test:e2e",
     "test:scripts": "vitest run --config scripts/vitest.config.mjs"
   },

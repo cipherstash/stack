@@ -8,9 +8,9 @@
 // complete, consistent lockstep bump (which release-plz then publishes verbatim
 // from the committed tree).
 //
-// It:
-//   1. reads V from packages/eql/package.json,
-//   2. sets crates/eql-bindings/Cargo.toml [package] version = V,
+// It (paths relative to the monorepo root):
+//   1. reads V from packages/eql/packages/eql/package.json,
+//   2. sets packages/eql/crates/eql-bindings/Cargo.toml [package] version = V,
 //   3. runs `mise run release:prepare_bindings_assets --version V`, which builds
 //      the exact-version SQL and writes it (+ release manifests) into both the
 //      crate and the npm package.
@@ -18,14 +18,14 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 
 // Set the `[package]` section's version in Cargo.toml text. Anchored to the
 // section header rather than "first `version = ...` line in the file" so a
 // dependency table that happens to carry a column-0 `version = "..."` line
 // (e.g. `[dependencies.foo]` long form) can never be rewritten by mistake.
-// Exported for scripts/sync-lockstep-versions.test.mjs.
+// Exported for scripts/__tests__/sync-lockstep-versions.test.mjs.
 export function bumpCargoPackageVersion(cargo, version) {
   const packageSection = cargo.match(/^\[package\]\n(?:(?!^\[).*\n)*/m)
   if (!packageSection) {
@@ -42,24 +42,39 @@ export function bumpCargoPackageVersion(cargo, version) {
 }
 
 function main() {
-  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
+  // This script lives at the monorepo root (`scripts/`) because Changesets only
+  // runs the ROOT `version` script — but every path it touches is inside the EQL
+  // subtree, and `mise` needs the subtree's own `mise.toml`, which is not found
+  // from the monorepo root. So resolve the EQL root explicitly rather than
+  // treating the script's parent directory as the base.
+  const stackRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const eqlRoot = join(stackRoot, 'packages/eql')
 
-  const pkgPath = join(repoRoot, 'packages/eql/package.json')
+  const pkgPath = join(eqlRoot, 'packages/eql/package.json')
   const version = JSON.parse(readFileSync(pkgPath, 'utf8')).version
   if (typeof version !== 'string' || version.length === 0) {
     throw new Error(`could not read a version from ${pkgPath}`)
   }
 
-  const cargoPath = join(repoRoot, 'crates/eql-bindings/Cargo.toml')
-  writeFileSync(cargoPath, bumpCargoPackageVersion(readFileSync(cargoPath, 'utf8'), version))
+  const cargoPath = join(eqlRoot, 'crates/eql-bindings/Cargo.toml')
+  writeFileSync(
+    cargoPath,
+    bumpCargoPackageVersion(readFileSync(cargoPath, 'utf8'), version),
+  )
 
   // Build the exact-version SQL and copy it (+ manifests) into both packages.
-  execFileSync('mise', ['run', 'release:prepare_bindings_assets', '--version', version], {
-    cwd: repoRoot,
-    stdio: 'inherit',
-  })
+  execFileSync(
+    'mise',
+    ['run', 'release:prepare_bindings_assets', '--version', version],
+    {
+      cwd: eqlRoot,
+      stdio: 'inherit',
+    },
+  )
 
-  console.log(`synced EQL lockstep version ${version} to Cargo.toml + bundled SQL assets`)
+  console.log(
+    `synced EQL lockstep version ${version} to Cargo.toml + bundled SQL assets`,
+  )
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
