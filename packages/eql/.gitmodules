@@ -1,3 +1,0 @@
-[submodule "languages/go/goeql"]
-	path = languages/go/goeql
-	url = https://github.com/cipherstash/goeql
