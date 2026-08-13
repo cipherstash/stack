@@ -128,6 +128,14 @@ jobs:
   setup:
     name: "Compute matrix"
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    # Opts out of the workflow-level `working-directory: packages/eql`. This job
+    # deliberately does not check out — it is pure bash deriving a matrix — so
+    # `packages/eql` does not exist on the runner and every `run:` step fails
+    # before its first line, with `chdir: No such file or directory`. Guarded by
+    # `scripts/__tests__/workflow-working-directory.test.mjs`.
+    defaults:
+      run:
+        working-directory: .
     outputs:
       pg-versions: ${{ steps.cfg.outputs.pg }}
       shard-total: ${{ steps.cfg.outputs.shard_total }}
@@ -720,6 +728,14 @@ jobs:
             known-failures, doc-anchors, e2e]
     if: always()
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    # Same opt-out as `setup`, and this is the worse of the two to get wrong:
+    # this job is the required check. It reads `needs.*.result` and checks out
+    # nothing, so under the workflow-level `working-directory` it fails for a
+    # reason unrelated to any job it is reporting on — a red required check that
+    # says nothing about the suite.
+    defaults:
+      run:
+        working-directory: .
     steps:
       - name: Assert all required jobs passed or were skipped
         run: |
