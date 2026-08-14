@@ -27,6 +27,8 @@ import { installEqlV3IfNeeded, uninstallEqlV3 } from './helpers/eql-v3'
 import { liveConnection } from './helpers/harness'
 import { describeLivePg } from './helpers/live-gate'
 
+const INSTALL_OP_ID = 'cipherstash.install-eql-v3-bundle'
+
 interface MigrationOp {
   readonly id: string
   readonly invariantId: string
@@ -41,14 +43,28 @@ interface MigrationOp {
   }>
 }
 
+/**
+ * The baseline's SQL-bearing install op, selected BY ID rather than by
+ * position or by "the only op": the edge also carries one no-SQL invariant
+ * carrier per EQL upgrade release, and that list grows with every bump.
+ * (An earlier version of this helper demanded exactly one op and was left
+ * stale by the re-emit that introduced the carriers — it went unnoticed
+ * because this suite only runs against a live database.)
+ */
 function readRuntimeDescriptorOp(): MigrationOp {
   const migration = cipherstashDescriptor.contractSpace?.migrations.find(
     ({ dirName }) => dirName === CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
   )
-  const op = migration?.ops[0] as MigrationOp | undefined
-  if (migration?.ops.length !== 1 || !op) {
+  const op = migration?.ops.find(({ id }) => id === INSTALL_OP_ID) as
+    | MigrationOp
+    | undefined
+  if (!op) {
     throw new Error(
-      `expected exactly one op in the v3 baseline migration, got ${migration?.ops.length ?? 0}`,
+      `expected an op with id "${INSTALL_OP_ID}" in the v3 baseline migration, got [${(
+        migration?.ops ?? []
+      )
+        .map(({ id }) => id)
+        .join(', ')}]`,
     )
   }
   return op
@@ -74,9 +90,11 @@ describeLivePg('v3 baseline migration bundle against live Postgres', () => {
 
   it('the applied SQL is byte-for-byte the runtime descriptor op, carrying the v3 invariant', () => {
     const op = readRuntimeDescriptorOp()
-    expect(op.id).toBe('cipherstash.install-eql-v3-bundle')
+    expect(op.id).toBe(INSTALL_OP_ID)
     expect(op.invariantId).toBe(CIPHERSTASH_V3_INVARIANTS.installBundle)
-    expect(op.operationClass).toBe('data')
+    // `additive`, not `data`: this is a genesis edge (from: null), not a
+    // self-edge, and `db init` runs additive-only. See the migration file.
+    expect(op.operationClass).toBe('additive')
     expect(op.execute).toHaveLength(1)
     // Byte identity: what installEqlV3IfNeeded just applied IS the migration
     // bundle the control descriptor gives to `prisma-next migrate`.

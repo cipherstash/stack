@@ -25,14 +25,33 @@
  * into consumer repos; a re-emit that changes them orphans every vendored
  * copy. An EQL version bump ships as a NEW upgrade migration directory
  * (see `20260720T0000_upgrade_eql_v3_3_0_2`), never as an edit here.
- * (One authorized pre-GA re-emit happened on the 1.0 release branch: the
- * install op was reclassified `data` → `additive`, the baked bundle was
- * bumped to eql-3.0.4, and a no-SQL carrier op per upgrade invariant
- * (3.0.2 and 3.0.4) was added so fresh-database `db init` passes its
- * additive-only policy. Both the `migrationHash` and the baked
- * `installSqlSha256` changed. RC consumers must delete
- * `migrations/cipherstash/` and re-run `prisma-next migration plan` to
- * pick up the re-emitted artefacts.)
+ *
+ * TWO authorized re-emits have happened, both recorded here in full:
+ *
+ *   1. Pre-GA, on the 1.0 release branch: the install op was reclassified
+ *      `data` → `additive`, the baked bundle was bumped to eql-3.0.4, and
+ *      a no-SQL carrier op per upgrade invariant (3.0.2 and 3.0.4) was
+ *      added so fresh-database `db init` passes its additive-only policy.
+ *   2. For eql-3.0.5 (published 1.0.0 → next release): the baked bundle
+ *      moved to eql-3.0.5 and a third carrier op was added for its
+ *      invariant. Unlike (1) this rewrites a GA-published artefact, and
+ *      it was taken deliberately: at 14 days and negligible adoption the
+ *      blast radius was small and knowable, where the append-only
+ *      alternative (a second `from: null` genesis edge carrying every
+ *      invariant) would have added ~5 MB of duplicated bundle SQL to the
+ *      tarball per EQL patch, permanently.
+ *
+ * Both re-emits changed the `migrationHash` and the baked
+ * `installSqlSha256`. Consumers must delete `migrations/cipherstash/` and
+ * re-run `prisma-next migration plan` to pick up the re-emitted artefacts;
+ * databases keep their markers, so already-applied invariants are not
+ * re-run.
+ *
+ * The append-only rule is the default and holds for every release after
+ * this one. Re-emitting again is a decision to be argued on adoption
+ * numbers, not a routine step of an EQL bump: once this package has real
+ * consumers, the second genesis edge is the correct shape and the size
+ * cost is the price of not orphaning them.
  *
  * Authoring loop (pre-publication only): hand-edit, then re-emit
  * `ops.json` / `migration.json` via
@@ -116,7 +135,7 @@ export default class M extends Migration {
         ],
       }),
       // Invariant carrier: the install op above already ships the pinned
-      // release's bundle (eql-3.0.4 — `readVerifiedInstallSql()` is digest-
+      // release's bundle (eql-3.0.5 — `readVerifiedInstallSql()` is digest-
       // verified against the installed manifest), so a fresh database that
       // walks this genesis edge IS at the pinned release — a superset of
       // every earlier v3 surface, so the 3.0.2 invariant is honestly
@@ -151,6 +170,27 @@ export default class M extends Migration {
           'EQL 3.0.4 invariant — provided by the install bundle above (no additional SQL)',
         operationClass: 'additive',
         invariantId: CIPHERSTASH_V3_INVARIANTS.upgradeBundle304,
+        target: { id: 'postgres' },
+        precheck: [],
+        execute: [],
+        postcheck: [
+          {
+            description: `verify eql_v3.version() reports ${releaseManifest.eqlVersion}`,
+            sql: `SELECT eql_v3.version() = '${releaseManifest.eqlVersion}'`,
+          },
+        ],
+      }),
+      // The pinned release IS 3.0.5, so the install op above satisfies this
+      // invariant on the same terms as the two carriers before it. The
+      // postcheck is identical to 3.0.4's by construction — both interpolate
+      // the emit-time `releaseManifest.eqlVersion`, and one bundle satisfies
+      // every invariant up to its own version.
+      rawSql({
+        id: 'cipherstash.install-provides-eql-v3-3-0-5',
+        label:
+          'EQL 3.0.5 invariant — provided by the install bundle above (no additional SQL)',
+        operationClass: 'additive',
+        invariantId: CIPHERSTASH_V3_INVARIANTS.upgradeBundle305,
         target: { id: 'postgres' },
         precheck: [],
         execute: [],

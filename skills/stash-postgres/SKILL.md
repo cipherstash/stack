@@ -190,9 +190,8 @@ alone** — in this order:
    SELECT eql_v3.version();   -- which bundle is actually installed
    ```
 
-The `stash` CLI depends on `@cipherstash/eql` and pins an exact version, so
-2 and 3 are available in any project that has the CLI installed, with no
-database connection required.
+The `stash` CLI depends on `@cipherstash/eql`, so 2 and 3 are available in any
+project that has the CLI installed, with no database connection required.
 
 If an operator is absent from all of these, that is an upstream question, not
 a client-library one — the operator set lives in `encrypt-query-language`.
