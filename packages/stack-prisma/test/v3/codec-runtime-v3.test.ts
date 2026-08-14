@@ -16,8 +16,9 @@
  *     composite literal.
  */
 
-import type { CodecInstanceContext } from '@prisma-next/framework-components/codec'
-import type { SqlCodecCallContext } from '@prisma-next/sql-relational-core/ast'
+import type { SqlCodecCallContext } from '@prisma/orm-family-sql/relational-core/ast'
+import type { CodecInstanceContext } from '@prisma/orm-framework/components/codec'
+import { isPostgresCodecDescriptor } from '@prisma/orm-target-postgres/target/codec-descriptor'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EncryptedBigInt } from '../../src/execution/envelope-bigint'
 import { EncryptedJson } from '../../src/execution/envelope-json'
@@ -61,9 +62,17 @@ describe('createV3CodecDescriptors — descriptor metadata', () => {
     )
     expect(textSearch).toBeDefined()
     expect(textSearch?.targetTypes).toEqual(['public.eql_v3_text_search'])
-    expect(textSearch?.meta).toEqual({
-      db: { sql: { postgres: { nativeType: 'public.eql_v3_text_search' } } },
-    })
+    // 0.17: the `meta.db.sql.postgres.nativeType` channel is replaced by
+    // the postgres target-descriptor protocol (`nativeTypeFor`).
+    expect(isPostgresCodecDescriptor(textSearch)).toBe(true)
+    expect(
+      textSearch !== undefined && isPostgresCodecDescriptor(textSearch)
+        ? textSearch.nativeTypeFor({
+            codecId: 'cipherstash/eql-v3/eql_v3_text_search@1',
+            typeParams: { castAs: 'string', capabilities: {} },
+          })
+        : undefined,
+    ).toBe('public.eql_v3_text_search')
     expect(textSearch?.isParameterized).toBe(true)
     for (const d of ds) {
       expect(d.targetTypes).toHaveLength(1)

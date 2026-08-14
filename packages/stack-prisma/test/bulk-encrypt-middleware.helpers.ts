@@ -7,17 +7,17 @@
  * caller's `encryptImpl` produces.
  */
 
-import type { Contract, PlanMeta } from '@prisma-next/contract/types'
-import type { SqlStorage } from '@prisma-next/sql-contract/types'
+import type { SqlStorage } from '@prisma/orm-family-sql/contract/types'
 import {
   type ColumnRef,
   InsertAst,
   ParamRef,
   TableSource,
   UpdateAst,
-} from '@prisma-next/sql-relational-core/ast'
-import type { SqlExecutionPlan } from '@prisma-next/sql-relational-core/plan'
-import type { SqlMiddlewareContext } from '@prisma-next/sql-runtime'
+} from '@prisma/orm-family-sql/relational-core/ast'
+import type { SqlExecutionPlan } from '@prisma/orm-family-sql/relational-core/plan'
+import type { SqlMiddlewareContext } from '@prisma/orm-family-sql/runtime'
+import type { Contract, PlanMeta } from '@prisma/orm-framework/contract/types'
 import { vi } from 'vitest'
 import type {
   CipherstashBulkDecryptArgs,
@@ -30,11 +30,11 @@ import type {
 // specific domain pass their own). A searchable v3 text domain.
 const DEFAULT_CODEC_ID = 'cipherstash/eql-v3/eql_v3_text_search@1'
 
-export { createSqlParamRefMutator } from '@prisma-next/sql-relational-core/middleware'
+export { createSqlParamRefMutator } from '@prisma/orm-family-sql/relational-core/middleware'
 
 export const baseMeta: PlanMeta = {
   target: 'postgres',
-  storageHash: 'sha256:test',
+  storageHash: 'test',
   lane: 'dsl',
 }
 

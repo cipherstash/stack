@@ -60,7 +60,7 @@
  * observing the signal.
  */
 
-import { ifDefined } from '@prisma-next/utils/defined'
+import { ifDefined } from '@prisma/orm-framework/utils/defined'
 import { checkCipherstashAborted, raceCipherstashAbort } from './abort'
 import { EncryptedEnvelopeBase, isHandleDecrypted } from './envelope-base'
 import type { CipherstashRoutingKey, CipherstashSdk } from './sdk'

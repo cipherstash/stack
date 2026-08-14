@@ -10,7 +10,7 @@
  * The descriptor wires those JSON artefacts via JSON-import declarations
  * so they flow through the consuming application's module resolver
  * without filesystem assumptions, and synthesises the canonical
- * {@link import('@prisma-next/framework-components/control').MigrationPackage}
+ * {@link import('@prisma/orm-framework/components/control').MigrationPackage}
  * shape for the framework's runner / verifier to consume.
  *
  * Wired surfaces:
@@ -29,10 +29,10 @@
  *   (contract-space package layout convention).
  */
 
-import type { Contract } from '@prisma-next/contract/types'
-import type { SqlControlExtensionDescriptor } from '@prisma-next/family-sql/control'
-import { contractSpaceFromJson } from '@prisma-next/migration-tools/spaces'
-import type { SqlStorage } from '@prisma-next/sql-contract/types'
+import type { SqlStorage } from '@prisma/orm-family-sql/contract/types'
+import type { SqlControlExtensionDescriptor } from '@prisma/orm-family-sql/family/control'
+import type { Contract } from '@prisma/orm-framework/contract/types'
+import { contractSpaceFromJson } from '@prisma/orm-toolchain/migration-tools/spaces'
 import v3BaselineMetadata from '../../migrations/20260601T0100_install_eql_v3_bundle/migration.json' with {
   type: 'json',
 }
@@ -111,14 +111,14 @@ const cipherstashExtensionDescriptor: SqlControlExtensionDescriptor<'postgres'> 
     // Spread pack-meta first so it contributes `kind` / `id` / `familyId`
     // / `targetId` / `version` / `authoring` / `types.{codecTypes,storage}`
     // — then overlay the contract-space block and the codec lifecycle
-    // hook on top. The two `types.codecTypes` slots (`codecInstances`
+    // hook on top. The two `types.codecTypes` slots (`codecDescriptors`
     // from pack-meta, `controlPlaneHooks` from this descriptor) coexist
     // on the same path and are merged below.
     ...cipherstashPackMeta,
     contractSpace: cipherstashContractSpace,
     /**
      * Free-form `types.codecTypes.controlPlaneHooks` block — the SQL
-     * family's `extractCodecControlHooks` (in `@prisma-next/family-sql/
+     * family's `extractCodecControlHooks` (in `@prisma/orm-family-sql/family/
      * control`) finds hooks via duck-typing on this exact path. Mirrors
      * pgvector's wiring at `packages/3-extensions/pgvector/src/exports/
      * control.ts`.

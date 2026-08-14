@@ -45,10 +45,13 @@ model User {
 ```typescript
 // prisma-next.config.ts
 import cipherstash from "@cipherstash/stack-prisma/control"
-// ... other imports
+import { defineConfig } from "@prisma/orm-postgres/config"
+
 export default defineConfig({
-  // ... family, target, adapter, contract
-  extensionPacks: [cipherstash],
+  contract: "./prisma/schema.prisma",
+  output: "src/prisma",
+  extensions: [cipherstash],
+  db: { connection: process.env.DATABASE_URL! },
 })
 ```
 
@@ -56,7 +59,7 @@ export default defineConfig({
 // src/db.ts
 import "dotenv/config"
 import { cipherstashFromStack } from "@cipherstash/stack-prisma/v3"
-import postgres from "@prisma-next/postgres/runtime"
+import postgres from "@prisma/orm-postgres/runtime"
 import type { Contract } from "./prisma/contract.d"
 import contractJson from "./prisma/contract.json" with { type: "json" }
 
@@ -105,6 +108,8 @@ See the [full documentation](https://cipherstash.com/docs/stack/cipherstash/encr
 | `./runtime`      | Envelope classes + `CipherstashSdk` + v3 codec runtime + `decryptAll` + `bulkEncryptMiddlewareV3`      |
 | `./pack`         | `cipherstashPackMeta` for TS contract authoring                                                        |
 | `./column-types` | The v3 domain factories: `text` / `textSearch` / `integerOrd` / `bigIntOrd` / `date` / `boolean` / `json` / … |
+| `./codec-types`  | `CodecTypes` — the codec-id-keyed type map generated `contract.d.ts` files import                      |
+| `./operation-types` | `QueryOperationTypes` — the `eql*` operator type surface generated `contract.d.ts` files import     |
 
 `./control` and `./runtime` are tree-shakable. `./stack` sits on top of `./runtime` and additionally pulls in `@cipherstash/stack`; consumers who implement `CipherstashSdk` against a different KMS skip `./stack` and pay no `@cipherstash/stack` bundle cost.
 

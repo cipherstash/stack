@@ -79,25 +79,25 @@ import {
   parseSelectorSegments,
   unsupportedLeafReason,
 } from '@cipherstash/stack/adapter-kit'
-import type { CodecTrait } from '@prisma-next/framework-components/codec'
 import type {
   SqlOperationDescriptor,
   SqlOperationDescriptors,
-} from '@prisma-next/sql-operations'
+} from '@prisma/orm-family-sql/operations'
 import {
   type AnyExpression,
   type CodecRef,
   type ColumnRef,
   OrderByItem,
   ParamRef,
-} from '@prisma-next/sql-relational-core/ast'
+} from '@prisma/orm-family-sql/relational-core/ast'
 import {
   buildOperation,
   codecOf,
   type Expression,
   type ScopeField,
   toExpr,
-} from '@prisma-next/sql-relational-core/expression'
+} from '@prisma/orm-family-sql/relational-core/expression'
+import type { CodecTrait } from '@prisma/orm-framework/components/codec'
 import {
   type EncryptedEnvelopeBase,
   setHandleRoutingKey,

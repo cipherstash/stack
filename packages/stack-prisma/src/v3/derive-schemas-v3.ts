@@ -45,7 +45,7 @@ interface V3TableView {
  * reads — the 0.14 `storage.namespaces.<ns>.entries.table` envelope,
  * mirroring the v2 `ContractStorageView`. Declared structurally (vs
  * importing the framework type) so the derivation has no
- * `@prisma-next/*` import-edge and is callable against a raw
+ * `@prisma/orm-*` import-edge and is callable against a raw
  * JSON-typed import.
  */
 export interface V3ContractShape {

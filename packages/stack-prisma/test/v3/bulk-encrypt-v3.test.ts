@@ -20,8 +20,8 @@ import {
   ProjectionItem,
   SelectAst,
   TableSource,
-} from '@prisma-next/sql-relational-core/ast'
-import type { SqlExecutionPlan } from '@prisma-next/sql-relational-core/plan'
+} from '@prisma/orm-family-sql/relational-core/ast'
+import type { SqlExecutionPlan } from '@prisma/orm-family-sql/relational-core/plan'
 import { describe, expect, it } from 'vitest'
 import type { EncryptedEnvelopeBase } from '../../src/execution/envelope-base'
 import { setHandleRoutingKey } from '../../src/execution/envelope-base'
