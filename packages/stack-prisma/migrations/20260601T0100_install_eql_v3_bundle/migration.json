@@ -4,8 +4,9 @@
   "providedInvariants": [
     "cipherstash:install-eql-v3-bundle-v1",
     "cipherstash:upgrade-eql-v3-bundle-3.0.2-v1",
-    "cipherstash:upgrade-eql-v3-bundle-3.0.4-v1"
+    "cipherstash:upgrade-eql-v3-bundle-3.0.4-v1",
+    "cipherstash:upgrade-eql-v3-bundle-3.0.5-v1"
   ],
   "createdAt": "2026-07-14T20:10:24.325Z",
-  "migrationHash": "sha256:fc495f7f59e6d18ae8e3df594a38898263ca91f8f5fb5f625bff20d04a0d7223"
+  "migrationHash": "sha256:1ae732828e9a6fb3574ab8dbede16e99bf1173bd4e5cd7a4b522138e71bc5d05"
 }
