@@ -191,63 +191,69 @@ Two things are Prisma-Next-specific:
 
 The adapter emits the encrypted query operators, but **no index DDL** — without
 functional indexes over the `eql_v3.*` extractors, every encrypted predicate
-sequential-scans. Two facts shape where the DDL goes:
-
-- **`schema.prisma` cannot express functional indexes** (`@@index` takes
-  fields, not expressions), so the schema file is not an option.
-- Prisma Next migrations execute **raw SQL operations**, so an index migration
-  is just an operation whose statements are the `CREATE INDEX` recipes —
-  authored in the same migration history that installs the EQL bundle, applied
-  by the same `prisma-next migrate`. Never run index DDL out-of-band.
+sequential-scans. Since Prisma Next 0.17, `@@index` takes an `expression`
+argument, so the indexes are declared in `schema.prisma` next to the columns
+they serve and ride the same `prisma-next migration plan` / `prisma-next
+migrate` flow as everything else. Never run index DDL out-of-band.
 
 One index per capability the column's domain carries:
 
-```sql
--- cipherstash.TextEq / TextSearch: equality
-CREATE INDEX users_email_eq ON users USING btree (eql_v3.eq_term(email));
--- cipherstash.*Ord / TextSearch: ordering + range (on numeric/date/timestamp
--- _ord domains this one index serves = too; TextOrd needs the eq_term index
--- above as well)
-CREATE INDEX users_created_at_ord ON users USING btree (eql_v3.ord_term(created_at));
--- cipherstash.TextMatch / TextSearch: free-text match
-CREATE INDEX users_bio_match ON users USING gin (eql_v3.match_term(bio));
--- cipherstash.Json: containment
-CREATE INDEX users_profile_json
-  ON users USING gin ((eql_v3.to_ste_vec_query(profile)::jsonb) jsonb_path_ops);
+```prisma
+model User {
+  // ... fields, including the encrypted columns ...
 
-ANALYZE users;
+  // cipherstash.TextEq / TextSearch: equality
+  @@index(expression: "eql_v3.eq_term(email)", name: "users_email_eq", type: "btree")
+  // cipherstash.*Ord / TextSearch: ordering + range (on numeric/date/timestamp
+  // _ord domains this one index serves = too; TextOrd needs the eq_term index
+  // above as well)
+  @@index(expression: "eql_v3.ord_term(created_at)", name: "users_created_at_ord", type: "btree")
+  // cipherstash.TextMatch / TextSearch: free-text match
+  @@index(expression: "eql_v3.match_term(bio)", name: "users_bio_match", type: "gin")
+  // cipherstash.Json: containment
+  @@index(expression: "(eql_v3.to_ste_vec_query(profile)::jsonb) jsonb_path_ops", name: "users_profile_json", type: "gin")
+}
 ```
 
-The `ANALYZE` is part of the recipe — an expression index has no statistics
-until it runs. Works as a non-superuser role (Supabase included); only the
+Three rules the interpreter enforces: an `@@index` takes exactly one of a
+fields list or an `expression`; an expression index **requires `name` or
+`map`** (no default name can be derived from an expression); and an `options`
+argument requires `type`. The expression string is the entire element list
+between the parens of `CREATE INDEX`, inserted verbatim — which is why the
+Json recipe carries its own parens and the `jsonb_path_ops` opclass. TS-authored
+contracts have the same surface: `index({ expression, name, type })` alongside
+the column factories.
+
+`ANALYZE` is still part of the recipe — an expression index has no statistics
+until it runs, and PSL cannot express it — so it rides a raw-SQL operation
+(`rawSql` from `@prisma/orm-postgres/migration`) in the migration that
+introduces the indexes:
+
+```typescript
+rawSql({
+  id: 'analyze.users',
+  label: 'Refresh statistics for the new expression indexes',
+  operationClass: 'additive',
+  target: {
+    id: 'postgres',
+    details: { schema: 'public', objectType: 'table', name: 'users' },
+  },
+  precheck: [],
+  execute: [{ description: 'refresh statistics', sql: 'ANALYZE "public"."users"' }],
+  postcheck: [],
+})
+```
+
+(`rawSql` also remains the fallback for index DDL itself if you need something
+PSL doesn't carry — `CREATE INDEX CONCURRENTLY`, for instance.)
+
+Everything above works as a non-superuser role (Supabase included); only the
 ORE-flavour (`_ord_ore`) ordering opclass is superuser-gated. For the full
 model — which domains take which index, engagement rules, `EXPLAIN`
 verification, rollout timing — see the `stash-indexing` skill. For encrypted
 predicates written as raw SQL rather than through the `cipherstash:*`
 operators — operand casts to `eql_v3.query_*`, per-driver parameter binding —
 see the `stash-postgres` skill.
-
-In a migration, the recipes ride a raw-SQL operation (`rawSql` from
-`@prisma/orm-postgres/migration`) in the migration's `operations`:
-
-```typescript
-rawSql({
-  id: 'index.users.encrypted',
-  label: 'Index encrypted columns on users',
-  operationClass: 'additive',
-  target: {
-    id: 'postgres',
-    details: { schema: 'public', objectType: 'index', name: 'users_email_eq', table: 'users' },
-  },
-  precheck: [],
-  execute: [
-    { description: 'equality index',
-      sql: 'CREATE INDEX IF NOT EXISTS users_email_eq ON "public"."users" USING btree (eql_v3.eq_term(email))' },
-    { description: 'refresh statistics', sql: 'ANALYZE "public"."users"' },
-  ],
-  postcheck: [],
-})
-```
 
 ## Writing and reading encrypted values
 
