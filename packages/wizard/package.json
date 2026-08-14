@@ -50,7 +50,7 @@
 		"@cipherstash/auth-win32-x64-msvc": "catalog:repo"
 	},
 	"devDependencies": {
-		"@types/pg": "^8.20.0",
+		"@types/pg": "^8.20.4",
 		"tsup": "catalog:repo",
 		"tsx": "catalog:repo",
 		"typescript": "catalog:repo",

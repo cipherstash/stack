@@ -41,12 +41,12 @@
     "test:scripts": "vitest run --config scripts/vitest.config.mjs"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.3",
-    "@changesets/cli": "^2.31.0",
+    "@biomejs/biome": "^2.5.7",
+    "@changesets/cli": "^2.31.1",
     "@types/node": "^22.20.1",
     "js-yaml": "^4.3.1",
     "rimraf": "^6.1.3",
-    "turbo": "2.10.4",
+    "turbo": "2.10.8",
     "vitest": "catalog:repo"
   },
   "packageManager": "pnpm@10.33.2",
