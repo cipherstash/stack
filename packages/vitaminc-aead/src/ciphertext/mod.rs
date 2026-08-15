@@ -5,6 +5,22 @@ use read_monads::CipherTextReader;
 use serde::{Deserialize, Serialize};
 pub use write_monads::CipherTextBuilder;
 
+/// First byte of every [`LocalCipherText`] — the wire-format version.
+///
+/// The leaf is the only byte-format commitment the crate makes (the
+/// container tree has no canonical encoding), so the version discriminator
+/// lives here and rides inside every persisted leaf for free. Bump it on
+/// any break to the leaf layout *or* to the AAD derivation rules; decrypt
+/// rejects versions it does not know how to parse.
+///
+/// The byte is authenticated, not merely parsed: every leaf's effective
+/// AAD binds it via [`Aad::for_leaf`](crate::Aad::for_leaf), so relabeling
+/// a stored leaf's version fails tag verification instead of selecting a
+/// different (perhaps weaker) set of derivation rules — a downgrade is
+/// foreclosed by construction, not by parser luck.
+pub const WIRE_VERSION: u8 = 1;
+
+/// A sealed leaf: `version(1) ‖ nonce ‖ ciphertext ‖ tag`.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct LocalCipherText(Bytes);
@@ -16,6 +32,16 @@ impl LocalCipherText {
 
     pub fn into_reader(self) -> CipherTextReader {
         CipherTextReader::new(self.0)
+    }
+
+    /// The stored wire-format version, readable without the key — for
+    /// diagnostics and migration tooling (an operator can tell "old
+    /// format" from "current format" on a decrypt failure). `None` means
+    /// the buffer is empty. This is an *unauthenticated peek*: trust it
+    /// for triage, never for parsing decisions outside the reader, which
+    /// re-checks it under the AEAD tag.
+    pub fn wire_version(&self) -> Option<u8> {
+        self.0.first().copied()
     }
 }
 
@@ -51,10 +77,13 @@ mod tests {
             })
             .build()?;
 
-        assert_eq!(ciphertext.0.len(), 38);
-        assert_eq!(&ciphertext.0[..12], &[1u8; 12]);
-        assert_eq!(&ciphertext.0[12..22], &[2u8; 10]);
-        assert_eq!(&ciphertext.0[22..], &[3u8; 16]);
+        // version(1) ‖ nonce(12) ‖ ciphertext(10) ‖ tag(16)
+        assert_eq!(ciphertext.0.len(), 39);
+        assert_eq!(ciphertext.0[0], WIRE_VERSION);
+        assert_eq!(ciphertext.wire_version(), Some(WIRE_VERSION));
+        assert_eq!(&ciphertext.0[1..13], &[1u8; 12]);
+        assert_eq!(&ciphertext.0[13..23], &[2u8; 10]);
+        assert_eq!(&ciphertext.0[23..], &[3u8; 16]);
 
         Ok(())
     }
@@ -76,6 +105,8 @@ mod tests {
 
         let (nonce, reader) = ciphertext
             .into_reader()
+            .read_version()
+            .map_err(|_| ())?
             .read_nonce::<12>()
             .map_err(|_| ())?;
 
@@ -94,5 +125,20 @@ mod tests {
         assert_eq!(plaintext.risky_unwrap()[..10], vec![0u8; 10]);
 
         Ok(())
+    }
+
+    #[test]
+    fn wire_version_reads_the_stored_first_byte() {
+        // A byte other than WIRE_VERSION proves the peek reads the buffer
+        // rather than returning a constant.
+        assert_eq!(
+            LocalCipherText::from(vec![7u8, 0, 0]).wire_version(),
+            Some(7)
+        );
+        assert_eq!(
+            LocalCipherText::from(vec![WIRE_VERSION]).wire_version(),
+            Some(WIRE_VERSION)
+        );
+        assert_eq!(LocalCipherText::from(Vec::new()).wire_version(), None);
     }
 }

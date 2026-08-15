@@ -1,4 +1,4 @@
-use crate::LocalCipherText;
+use crate::{Aad, IntoAad, LocalCipherText};
 
 use super::HList;
 
@@ -72,4 +72,17 @@ pub struct Seq<L: HList>(pub L);
 pub struct Entry<V> {
     pub key: &'static str,
     pub value: V,
+}
+
+impl<Inner: HList> Entry<Map<Inner>> {
+    /// Derives the AAD this nested map's entries were built against —
+    /// [`Aad::for_map_entry`](crate::Aad::for_map_entry) of the enclosing
+    /// map's AAD and this entry's key. The open-side counterpart to
+    /// [`StaticMapBuilder::nested_entry`](super::StaticMapBuilder::nested_entry):
+    /// pass the result (or a further derivation of it) when opening each
+    /// inner entry, so a renamed outer key or a spliced-in foreign nested
+    /// map fails inner verification.
+    pub fn nested_aad<'a, A: IntoAad<'a>>(&self, aad: A) -> Aad<'static> {
+        aad.into_aad().for_map_entry(self.key)
+    }
 }

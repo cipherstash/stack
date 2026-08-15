@@ -318,131 +318,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        cipher::{MapCipher, SeqCipher},
-        DecipherVisitor, Unspecified,
-    };
-    use std::any::Any;
+    use crate::test_util::MockCipher;
+    use crate::DecipherVisitor;
     use std::cell::RefCell;
     use std::rc::Rc;
-    use vitaminc_protected::{Controlled, Protected};
-
-    /// A minimal [`Cipher`] that records the AAD bytes it is handed and echoes the plaintext back
-    /// as its "ciphertext". Only the byte path is exercised by the leaf `Encrypt` impls used in
-    /// these tests (`&str`, `String`, `[u8; N]`); the sequence/map sub-ciphers exist solely to
-    /// satisfy the trait and are never driven.
-    struct MockCipher {
-        captured_aad: RefCell<Vec<u8>>,
-    }
-
-    impl MockCipher {
-        fn new() -> Self {
-            MockCipher {
-                captured_aad: RefCell::new(Vec::new()),
-            }
-        }
-
-        fn captured_aad(&self) -> Vec<u8> {
-            self.captured_aad.borrow().clone()
-        }
-    }
-
-    struct UnusedSeq;
-    struct UnusedMap;
-
-    impl Cipher for &MockCipher {
-        type Ok = Vec<u8>;
-        type Error = Unspecified;
-        type SeqCipher = UnusedSeq;
-        type MapCipher = UnusedMap;
-
-        fn encrypt_bytes_vec<'a, A>(
-            self,
-            data: Protected<Vec<u8>>,
-            aad: A,
-        ) -> Result<Self::Ok, Self::Error>
-        where
-            A: IntoAad<'a>,
-        {
-            *self.captured_aad.borrow_mut() = aad.into_aad().as_bytes().to_vec();
-            Ok(data.risky_unwrap())
-        }
-
-        fn encrypt_seq(self, _size_hint: Option<usize>) -> Self::SeqCipher {
-            UnusedSeq
-        }
-
-        fn encrypt_map(self) -> Self::MapCipher {
-            UnusedMap
-        }
-
-        fn encrypt_none<'a, A>(self, aad: A) -> Result<Self::Ok, Self::Error>
-        where
-            A: IntoAad<'a>,
-        {
-            *self.captured_aad.borrow_mut() = aad.into_aad().as_bytes().to_vec();
-            Ok(Vec::new())
-        }
-
-        fn passthrough<U>(self, _value: U) -> Result<Self::Ok, Self::Error>
-        where
-            U: Any + Send + 'static,
-        {
-            Ok(Vec::new())
-        }
-    }
-
-    impl SeqCipher for UnusedSeq {
-        type Ok = Vec<u8>;
-        type Error = Unspecified;
-
-        fn encrypt_next<'a, T, A>(self, _data: T, _aad: A) -> Result<Self, Self::Error>
-        where
-            T: Encrypt,
-            A: IntoAad<'a>,
-        {
-            Ok(self)
-        }
-
-        fn passthrough_next<T>(self, _value: T) -> Result<Self, Self::Error>
-        where
-            T: Any + Send + 'static,
-        {
-            Ok(self)
-        }
-
-        fn end(self) -> Result<Self::Ok, Self::Error> {
-            Ok(Vec::new())
-        }
-    }
-
-    impl MapCipher for UnusedMap {
-        type Ok = Vec<u8>;
-        type Error = Unspecified;
-
-        fn encrypt_key(self, _key: &'static str) -> Result<Self, Self::Error> {
-            Ok(self)
-        }
-
-        fn encrypt_value<'a, T, A>(self, _value: T, _aad: A) -> Result<Self, Self::Error>
-        where
-            T: Encrypt,
-            A: IntoAad<'a>,
-        {
-            Ok(self)
-        }
-
-        fn passthrough_entry<T>(self, _key: &'static str, _value: T) -> Result<Self, Self::Error>
-        where
-            T: Any + Send + 'static,
-        {
-            Ok(self)
-        }
-
-        fn end(self) -> Result<Self::Ok, Self::Error> {
-            Ok(Vec::new())
-        }
-    }
 
     #[test]
     fn encrypts_inner_value_and_binds_tag() {
@@ -625,6 +504,8 @@ mod tests {
         where
             T: Send + 'c;
 
+        type Passthrough = ();
+
         fn map_ok<T, U, F>(ok: Self::Ok<T>, f: F) -> Self::Ok<U>
         where
             T: Send + 'c,
@@ -659,10 +540,15 @@ mod tests {
             None
         }
 
-        fn decrypt_passthrough<T>(self) -> Self::Ok<T>
+        fn decrypt_any<'a, V, A>(self, _visitor: V, _aad: A) -> Self::Ok<V::Value>
         where
-            T: Any + Send + 'static,
+            V: DecipherVisitor<'c> + Send + 'c,
+            A: IntoAad<'a>,
         {
+            None
+        }
+
+        fn decrypt_passthrough(self) -> Self::Ok<Self::Passthrough> {
             None
         }
 

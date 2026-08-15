@@ -45,6 +45,9 @@ pub struct MyMapCipher<'c>(&'c MyCipher /* + state */);
 impl<'c> Cipher for &'c MyCipher {
     type Ok = MyCipherText;
     type Error = Unspecified;
+    // The passthrough payload type: Box<dyn Any + Send> for Rust-native use
+    // (callers box in, downcast out), or an owned host-value type for FFI.
+    type Passthrough = Box<dyn Any + Send + 'static>;
     type SeqCipher = MySeqCipher<'c>;
     type MapCipher = MyMapCipher<'c>;
 
@@ -59,12 +62,20 @@ impl<'c> Cipher for &'c MyCipher {
         unimplemented!("seal `data` with AAD and return a ciphertext")
     }
 
-    fn encrypt_seq(self, size_hint: Option<usize>) -> Self::SeqCipher {
-        unimplemented!("return a SeqCipher initialised with `size_hint` capacity")
+    // The AAD is captured here, once, and covers every element and the
+    // empty marker — the sub-cipher methods take none of their own.
+    fn encrypt_seq<'a, A>(self, size_hint: Option<usize>, aad: A) -> Self::SeqCipher
+    where
+        A: IntoAad<'a>,
+    {
+        unimplemented!("return a SeqCipher holding `aad`, sized by `size_hint`")
     }
 
-    fn encrypt_map(self) -> Self::MapCipher {
-        unimplemented!("return a MapCipher")
+    fn encrypt_map<'a, A>(self, aad: A) -> Self::MapCipher
+    where
+        A: IntoAad<'a>,
+    {
+        unimplemented!("return a MapCipher holding `aad`")
     }
 
     fn encrypt_none<'a, A>(self, _aad: A) -> Result<Self::Ok, Self::Error>
@@ -74,28 +85,33 @@ impl<'c> Cipher for &'c MyCipher {
         unimplemented!("produce an authenticated 'absent' marker bound to `aad`")
     }
 
-    fn passthrough<T>(self, _value: T) -> Result<Self::Ok, Self::Error>
-    where
-        T: Any + Send + 'static,
-    {
+    fn passthrough(self, _value: Self::Passthrough) -> Result<Self::Ok, Self::Error> {
         unimplemented!("store `value` unencrypted inside the cipher's output container")
+    }
+
+    fn passthrough_boxed(
+        self,
+        _value: Box<dyn Any + Send + 'static>,
+    ) -> Result<Self::Ok, Self::Error> {
+        // Type-erased passthrough for self-describing encoders (e.g. FfiValue).
+        // When the payload type IS `Box<dyn Any + Send>`, forward to `passthrough`.
+        unimplemented!("store the boxed value unencrypted (or downcast to an owned type)")
     }
 }
 
 impl<'c> SeqCipher for MySeqCipher<'c> {
     type Ok = MyCipherText;
     type Error = Unspecified;
+    type Passthrough = Box<dyn Any + Send + 'static>;
 
-    fn encrypt_next<'a, T, A>(self, _data: T, _aad: A) -> Result<Self, Self::Error>
+    fn encrypt_next<T>(self, _data: T) -> Result<Self, Self::Error>
     where
         T: vitaminc_aead::Encrypt,
-        A: IntoAad<'a>,
     { unimplemented!() }
 
-    fn passthrough_next<T>(self, _value: T) -> Result<Self, Self::Error>
-    where
-        T: Any + Send + 'static,
-    { unimplemented!() }
+    fn passthrough_next(self, _value: Self::Passthrough) -> Result<Self, Self::Error> {
+        unimplemented!()
+    }
 
     fn end(self) -> Result<Self::Ok, Self::Error> { unimplemented!() }
 }
@@ -103,18 +119,24 @@ impl<'c> SeqCipher for MySeqCipher<'c> {
 impl<'c> MapCipher for MyMapCipher<'c> {
     type Ok = MyCipherText;
     type Error = Unspecified;
+    type Passthrough = Box<dyn Any + Send + 'static>;
 
-    fn encrypt_key(self, _key: &'static str) -> Result<Self, Self::Error> { unimplemented!() }
-
-    fn encrypt_value<'a, T, A>(self, _value: T, _aad: A) -> Result<Self, Self::Error>
+    fn encrypt_key<K>(self, _key: K) -> Result<Self, Self::Error>
     where
-        T: vitaminc_aead::Encrypt,
-        A: IntoAad<'a>,
+        K: Into<std::borrow::Cow<'static, str>>,
     { unimplemented!() }
 
-    fn passthrough_entry<T>(self, _key: &'static str, _value: T) -> Result<Self, Self::Error>
+    // Must seal the value against `Aad::for_map_entry(aad, key)` of the AAD
+    // this MapCipher was constructed with — see the `MapCipher` docs on key
+    // authentication.
+    fn encrypt_value<T>(self, _value: T) -> Result<Self, Self::Error>
     where
-        T: Any + Send + 'static,
+        T: vitaminc_aead::Encrypt,
+    { unimplemented!() }
+
+    fn passthrough_entry<K>(self, _key: K, _value: Self::Passthrough) -> Result<Self, Self::Error>
+    where
+        K: Into<std::borrow::Cow<'static, str>>,
     { unimplemented!() }
 
     fn end(self) -> Result<Self::Ok, Self::Error> { unimplemented!() }
@@ -160,7 +182,7 @@ let plaintext: String = cipher.decrypt_with_aad(ciphertext, "context data")?;
 
 `String`, `Vec<u8>`, `[u8; N]`, `u32`, `Vec<T: Decrypt>`, `HashMap<String, T: Decrypt>`, and `Protected<T: Decrypt>` all implement `Decrypt` out of the box.
 
-> **Note on maps:** `HashMap` decryption yields `HashMap<String, T>`, but map *encryption* requires statically known keys — only `HashMap<&'static str, T>` implements `Encrypt`. Map keys are passed to [`MapCipher::encrypt_key`], which takes a `&'static str`. A `HashMap<String, T>` with runtime-derived keys can therefore be decrypted but not encrypted directly.
+> **Note on maps:** both `HashMap<&'static str, T>` and `HashMap<String, T>` implement `Encrypt` (keys are anything `Into<Cow<'static, str>>`), and decryption yields `HashMap<String, T>`. Map keys travel in the clear but are bound into each value's AAD via [`Aad::for_map_entry`], so swapping or renaming keys inside a stored ciphertext causes decryption to fail.
 
 ### Additional Authenticated Data (AAD)
 
@@ -224,9 +246,10 @@ impl Encrypt for User {
         // Encrypt the user as a map of named fields, encrypting only the
         // password hash. id and email are not stored here for brevity —
         // a real implementation would also encrypt or pass them through.
+        // The AAD is supplied once, to `encrypt_map`.
         cipher
-            .encrypt_map()
-            .encrypt_entry("password_hash", self.password_hash, aad)?
+            .encrypt_map(aad)
+            .encrypt_entry("password_hash", self.password_hash)?
             .end()
     }
 }

@@ -40,16 +40,141 @@ impl<'a> Aad<'a> {
         self.0.is_empty()
     }
 
-    /// Converts a borrowed `Aad` into an owned one, copying the bytes if necessary.
-    pub fn into_owned(self) -> Aad<'a> {
+    /// Converts a borrowed `Aad` into an owned one, copying the bytes if
+    /// necessary. The result borrows nothing, so it can outlive the input —
+    /// which is what lets the sequence and map sub-ciphers hold the AAD they
+    /// were constructed with for the lifetime of the builder chain.
+    pub fn into_owned(self) -> Aad<'static> {
         match self.0 {
-            x @ Cow::Borrowed(_) => Self(x.into_owned().into()),
-            Cow::Owned(_) => self,
+            Cow::Borrowed(slice) => Aad(Cow::Owned(slice.to_vec())),
+            Cow::Owned(owned) => Aad(Cow::Owned(owned)),
         }
     }
 
-    pub(crate) fn pae(pieces: &[&[u8]]) -> Self {
+    /// Pre-Authentication Encoding of a list of byte pieces (from the PASETO
+    /// spec): `LE64(count) || (LE64(len(piece)) || piece)*`. Structurally
+    /// distinct inputs always encode to distinct byte strings, so this is the
+    /// building block upstream crates use to define their own domain-separated
+    /// composite AAD shapes (see [`IntoAad`]).
+    pub fn pae(pieces: &[&[u8]]) -> Self {
         pae::encode(pieces)
+    }
+
+    /// Derives the AAD a map entry's value must be sealed against, binding the
+    /// entry `key` to this (caller-supplied) AAD.
+    ///
+    /// Map keys travel in the clear inside a ciphertext container, so without
+    /// this binding an attacker holding a stored ciphertext could swap or
+    /// rename keys undetected, silently reassigning values to different
+    /// fields. [`MapCipher::encrypt_value`](crate::MapCipher::encrypt_value)
+    /// and [`MapAccess::next_entry`](crate::MapAccess::next_entry)
+    /// implementations are required to derive each entry's effective AAD
+    /// through this method — both sides must use it, or nothing decrypts.
+    ///
+    /// The encoding is `PAE(domain, aad, key)`. The leading domain-separation
+    /// label keeps the result disjoint from user-supplied composite AAD: a
+    /// caller binding the tuple `(aad, key)` at the top level (e.g. via
+    /// [`ContextTag`](crate::ContextTag)) encodes `PAE(aad, key)`, which can
+    /// never collide with a map entry's three-piece, labelled encoding.
+    pub fn for_map_entry(&self, key: &str) -> Aad<'static> {
+        const MAP_ENTRY_DOMAIN: &[u8] = b"vitaminc/aead/map-entry/v1";
+        pae::encode(&[MAP_ENTRY_DOMAIN, self.as_bytes(), key.as_bytes()])
+    }
+
+    /// Derives the AAD a structural marker must be sealed against.
+    ///
+    /// Markers are sealed empty plaintexts whose tag is the only thing
+    /// authenticating a structural fact — "this sequence is empty", "this
+    /// map is empty", "this value is absent". Like [`for_map_entry`], the
+    /// encoding is a labelled three-piece `PAE(domain, aad, kind)`: the
+    /// leading domain label keeps marker AAD disjoint from user-supplied
+    /// composite AAD (a two-piece `PAE(label, aad)` would collide with a
+    /// caller binding the tuple `(label, aad)` at the top level), and the
+    /// `kind` piece keeps the marker kinds disjoint from each other, so a
+    /// stored marker can never be replayed as a different structural claim.
+    ///
+    /// [`Cipher::encrypt_none`](crate::Cipher::encrypt_none),
+    /// [`SeqCipher::end`](crate::SeqCipher::end) and
+    /// [`MapCipher::end`](crate::MapCipher::end) implementations are
+    /// required to derive marker AAD through these methods — both sides
+    /// must use them, or nothing decrypts.
+    ///
+    /// [`for_map_entry`]: Aad::for_map_entry
+    fn for_marker(&self, kind: &[u8]) -> Aad<'static> {
+        const MARKER_DOMAIN: &[u8] = b"vitaminc/aead/marker/v1";
+        pae::encode(&[MARKER_DOMAIN, self.as_bytes(), kind])
+    }
+
+    /// Derives the effective AAD every leaf is sealed against, binding the
+    /// wire-format `version` byte that prefixes the stored leaf
+    /// ([`WIRE_VERSION`](crate::WIRE_VERSION)).
+    ///
+    /// This is the outermost derivation: ciphers apply it at the AEAD
+    /// seal/open boundary, *after* any structural derivation
+    /// ([`for_map_entry`](Aad::for_map_entry),
+    /// [`for_sequence_element`](Aad::for_sequence_element), the markers) has
+    /// produced the caller-visible AAD. Binding the version under the tag is
+    /// what makes it more than a parse hint: a stored leaf relabeled with a
+    /// different version byte fails verification instead of selecting a
+    /// different (perhaps weaker) set of parsing and derivation rules — the
+    /// downgrade is foreclosed by construction.
+    ///
+    /// The domain label deliberately carries no `/v1` suffix: the version is
+    /// a *parameter* here, not part of the label.
+    pub fn for_leaf(&self, version: u8) -> Aad<'static> {
+        const LEAF_DOMAIN: &[u8] = b"vitaminc/aead/leaf";
+        pae::encode(&[LEAF_DOMAIN, &[version], self.as_bytes()])
+    }
+
+    /// Derives the AAD a sequence element must be sealed against.
+    ///
+    /// Without this derivation, sequence elements share the caller's bare
+    /// AAD with a top-level `Single` — byte-identical — so an attacker
+    /// holding a stored ciphertext could rewrap a `Single` leaf as a
+    /// one-element `Sequence` (or nest an `EmptySequence` marker one level
+    /// deeper) and the self-describing decrypt path would verify it: the
+    /// container *shape* was never authenticated. Sealing elements against
+    /// a labelled derivation forecloses every such re-homing — a leaf
+    /// verifies only in the position it was sealed for.
+    ///
+    /// Like [`for_map_entry`](Aad::for_map_entry), the encoding is a
+    /// labelled three-piece `PAE(domain, aad, kind)` so it can never
+    /// collide with a caller's tuple AAD (see
+    /// [`for_marker`](Aad::for_marker)).
+    ///
+    /// The element *index* is deliberately not bound: records are retrieved
+    /// in a different order than they were inserted, so element order is a
+    /// caller obligation, not an authenticated fact. Explicit sequence
+    /// commitment is tracked separately.
+    ///
+    /// [`SeqCipher::encrypt_next`](crate::SeqCipher::encrypt_next) and
+    /// [`SeqAccess::next_element`](crate::SeqAccess::next_element)
+    /// implementations are required to derive each element's effective AAD
+    /// through this method — both sides must use it, or nothing decrypts.
+    pub fn for_sequence_element(&self) -> Aad<'static> {
+        const SEQ_ELEMENT_DOMAIN: &[u8] = b"vitaminc/aead/seq-element/v1";
+        pae::encode(&[SEQ_ELEMENT_DOMAIN, self.as_bytes(), b"element"])
+    }
+
+    /// Marker AAD for an empty sequence — see [`for_marker`](Aad::for_marker)
+    /// (private; this method and its siblings are the public surface).
+    pub fn for_empty_sequence(&self) -> Aad<'static> {
+        self.for_marker(b"empty-sequence")
+    }
+
+    /// Marker AAD for an empty map.
+    pub fn for_empty_map(&self) -> Aad<'static> {
+        self.for_marker(b"empty-map")
+    }
+
+    /// Marker AAD for an authenticated absent value (`Option::None`).
+    ///
+    /// Domain separation here is what stops a `Single` leaf sealed under the
+    /// bare AAD from being re-tagged as a `None` marker (silent authenticated
+    /// data deletion) — and, symmetrically, an absence marker from validating
+    /// as an encrypted empty byte string.
+    pub fn for_none(&self) -> Aad<'static> {
+        self.for_marker(b"none")
     }
 }
 
@@ -243,6 +368,123 @@ mod tests {
         // `None` is PAE-encoded as zero pieces: LE64(0) = 8 zero bytes.
         assert_eq!(none_aad.as_bytes(), &[0u8; 8]);
         assert_ne!(none_aad.as_bytes(), some_aad.as_bytes());
+    }
+
+    #[test]
+    fn for_map_entry_pins_encoding() {
+        // The exact bytes are a wire-format commitment: PAE(domain, aad, key).
+        // Changing them breaks decryption of existing ciphertexts.
+        let bound = Aad::from_slice(b"ctx").for_map_entry("name");
+        let expected = Aad::pae(&[b"vitaminc/aead/map-entry/v1", b"ctx", b"name"]);
+        assert_eq!(bound.as_bytes(), expected.as_bytes());
+    }
+
+    #[test]
+    fn for_map_entry_differs_from_tuple_aad() {
+        // The domain label keeps map-entry AAD disjoint from a user binding
+        // the same (aad, key) pair as tuple AAD at the top level.
+        let bound = Aad::from_slice(b"ctx").for_map_entry("name");
+        let tuple = (Aad::from_slice(b"ctx"), "name").into_aad();
+        assert_ne!(bound.as_bytes(), tuple.as_bytes());
+    }
+
+    #[test]
+    fn marker_aads_pin_encoding() {
+        // The exact bytes are a wire-format commitment: PAE(domain, aad, kind).
+        // Changing them breaks decryption of existing markers.
+        let aad = Aad::from_slice(b"ctx");
+        for (derived, kind) in [
+            (aad.for_empty_sequence(), b"empty-sequence".as_slice()),
+            (aad.for_empty_map(), b"empty-map"),
+            (aad.for_none(), b"none"),
+        ] {
+            let expected = Aad::pae(&[b"vitaminc/aead/marker/v1", b"ctx", kind]);
+            assert_eq!(derived.as_bytes(), expected.as_bytes());
+        }
+    }
+
+    #[test]
+    fn marker_aads_differ_from_tuple_aad_and_each_other() {
+        // The domain label keeps marker AAD disjoint from a user binding a
+        // matching (label, aad) tuple at the top level, and the kind piece
+        // keeps the three markers disjoint from one another.
+        let aad = Aad::from_slice(b"ctx");
+        let markers = [
+            aad.for_empty_sequence(),
+            aad.for_empty_map(),
+            aad.for_none(),
+        ];
+        for (i, m) in markers.iter().enumerate() {
+            let tuple = (
+                b"vitaminc/aead/marker/v1".as_slice(),
+                Aad::from_slice(b"ctx"),
+            )
+                .into_aad();
+            assert_ne!(m.as_bytes(), tuple.as_bytes());
+            for other in &markers[i + 1..] {
+                assert_ne!(m.as_bytes(), other.as_bytes());
+            }
+        }
+    }
+
+    #[test]
+    fn for_leaf_pins_encoding() {
+        // The exact bytes are a wire-format commitment: PAE(domain, [ver], aad).
+        // Changing them breaks decryption of every existing leaf.
+        let derived = Aad::from_slice(b"ctx").for_leaf(1);
+        let expected = Aad::pae(&[b"vitaminc/aead/leaf", &[1u8], b"ctx"]);
+        assert_eq!(derived.as_bytes(), expected.as_bytes());
+    }
+
+    #[test]
+    fn for_leaf_is_version_sensitive_and_disjoint() {
+        let aad = Aad::from_slice(b"ctx");
+        // A relabeled version byte must change the effective AAD — that is
+        // the whole downgrade defence.
+        assert_ne!(aad.for_leaf(1).as_bytes(), aad.for_leaf(2).as_bytes());
+        // Disjoint from the bare AAD and from a caller tuple binding the
+        // same shape at the top level.
+        assert_ne!(aad.for_leaf(1).as_bytes(), aad.as_bytes());
+        let tuple = (b"vitaminc/aead/leaf".as_slice(), "ctx").into_aad();
+        assert_ne!(aad.for_leaf(1).as_bytes(), tuple.as_bytes());
+    }
+
+    #[test]
+    fn for_sequence_element_pins_encoding() {
+        // The exact bytes are a wire-format commitment: PAE(domain, aad, kind).
+        // Changing them breaks decryption of existing sequence ciphertexts.
+        let derived = Aad::from_slice(b"ctx").for_sequence_element();
+        let expected = Aad::pae(&[b"vitaminc/aead/seq-element/v1", b"ctx", b"element"]);
+        assert_eq!(derived.as_bytes(), expected.as_bytes());
+    }
+
+    #[test]
+    fn for_sequence_element_differs_from_bare_aad_and_sibling_derivations() {
+        // The whole point: a leaf sealed at the top level (bare AAD), as a
+        // map entry, or as a marker must never verify in element position.
+        let aad = Aad::from_slice(b"ctx");
+        let elem = aad.for_sequence_element();
+        assert_ne!(elem.as_bytes(), aad.as_bytes());
+        assert_ne!(elem.as_bytes(), aad.for_map_entry("element").as_bytes());
+        assert_ne!(elem.as_bytes(), aad.for_empty_sequence().as_bytes());
+        assert_ne!(elem.as_bytes(), aad.for_none().as_bytes());
+        // And it must not collide with a caller binding a matching tuple.
+        let tuple = (b"vitaminc/aead/seq-element/v1".as_slice(), "ctx").into_aad();
+        assert_ne!(elem.as_bytes(), tuple.as_bytes());
+    }
+
+    #[test]
+    fn for_map_entry_is_key_sensitive() {
+        let aad = Aad::from_slice(b"ctx");
+        assert_ne!(
+            aad.for_map_entry("a").as_bytes(),
+            aad.for_map_entry("b").as_bytes()
+        );
+        // Moving bytes between AAD and key must not collide (PAE injectivity).
+        assert_ne!(
+            Aad::from_slice(b"ctxa").for_map_entry("").as_bytes(),
+            Aad::from_slice(b"ctx").for_map_entry("a").as_bytes()
+        );
     }
 
     #[test]
