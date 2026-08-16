@@ -90,8 +90,8 @@
     "prefix": "protect-ffi-"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.3",
-    "@neon-rs/cli": "^0.1.82",
+    "@biomejs/biome": "^2.5.7",
+    "@neon-rs/cli": "^0.2.6",
     "@tsconfig/node22": "^22.0.0",
     "@types/node": "^22.20.1",
     "typescript": "catalog:repo",
