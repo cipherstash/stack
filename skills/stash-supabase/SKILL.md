@@ -101,6 +101,12 @@ supabase db push                 # remote/linked project
 > preflight` (`--json` for agents), which reports membership of `postgres`
 > alongside the other role capabilities.
 
+> **TLS:** the CLI bundles the Supabase root CA, so `sslmode=verify-full`
+> against Supabase hosts (direct and pooler) verifies out of the box — no
+> certificate download, and never `NODE_TLS_REJECT_UNAUTHORIZED=0` (it is
+> process-wide and would also disable verification for CipherStash credential
+> traffic). A supplied `sslrootcert=<path>` or `PGSSLROOTCERT` still wins.
+
 The generated file carries three things, in order: the EQL v3 bundle, the role
 grants, and the `cipherstash.cs_migrations` tracking schema that `stash
 encrypt` records per-column progress in. One `supabase db reset` therefore

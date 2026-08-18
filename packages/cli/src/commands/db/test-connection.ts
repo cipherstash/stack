@@ -1,8 +1,8 @@
 import * as p from '@clack/prompts'
-import pg from 'pg'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { detectDotenvFile } from '@/config/database-url.js'
 import { loadStashConfig } from '@/config/index.js'
+import { createPgClient, explainTlsError } from '@/db/client.js'
 import { messages } from '@/messages.js'
 
 export async function testConnectionCommand(
@@ -16,7 +16,7 @@ export async function testConnectionCommand(
   const config = await loadStashConfig({ databaseUrlFlag: options.databaseUrl })
   s.stop('Configuration loaded.')
 
-  const client = new pg.Client({ connectionString: config.databaseUrl })
+  const client = createPgClient(config.databaseUrl)
 
   try {
     s.start('Connecting to database...')
@@ -48,7 +48,12 @@ export async function testConnectionCommand(
     const message =
       error instanceof Error ? error.message : 'An unknown error occurred'
 
-    p.log.error(`Failed to connect to database: ${message}`)
+    const tlsExplanation = explainTlsError(error, config.databaseUrl)
+    if (tlsExplanation) {
+      p.log.error(tlsExplanation)
+    } else {
+      p.log.error(`Failed to connect to database: ${message}`)
+    }
     console.log()
     p.log.info(messages.db.urlConnectionFailedHint(detectDotenvFile()))
     process.exit(1)

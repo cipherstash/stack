@@ -1,8 +1,8 @@
 import { installMigrationsSchema } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
-import pg from 'pg'
 import { resolveDatabaseUrl } from '@/config/database-url.js'
 import { findConfigFile, loadStashConfig } from '@/config/index.js'
+import { createPgClient } from '@/db/client.js'
 import { EQLInstaller } from '@/installer/index.js'
 import { messages } from '@/messages.js'
 import { detectPackageManager, runnerCommand } from '../init/utils.js'
@@ -186,7 +186,7 @@ export async function installCommand(
   if (supabase) reportSupabaseGrantsOutcome(installResult)
 
   s.start('Installing cs_migrations tracking schema...')
-  const migrationsDb = new pg.Client({ connectionString: databaseUrl })
+  const migrationsDb = createPgClient(databaseUrl)
   try {
     await migrationsDb.connect()
     await installMigrationsSchema(migrationsDb)

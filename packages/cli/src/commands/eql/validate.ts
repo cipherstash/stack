@@ -1,10 +1,10 @@
 import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
 import type { ColumnSchema, EncryptConfig } from '@cipherstash/stack/schema'
 import * as p from '@clack/prompts'
-import pg from 'pg'
 import { fetchPhysicalColumns } from '@/commands/encrypt/lib/db-readers.js'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadEncryptSchemas, loadStashConfig } from '@/config/index.js'
+import { createPgClient } from '@/db/client.js'
 
 // ---------------------------------------------------------------------------
 // The vocabulary
@@ -875,7 +875,7 @@ async function tryReadObservedState(
   }
 
   const tables = [...new Set(columns.map((column) => column.table))]
-  const client = new pg.Client({ connectionString: databaseUrl })
+  const client = createPgClient(databaseUrl)
 
   try {
     await client.connect()

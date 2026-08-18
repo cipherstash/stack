@@ -1,7 +1,7 @@
 import * as p from '@clack/prompts'
-import pg from 'pg'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
+import { createPgClient } from '@/db/client.js'
 import { EQLInstaller } from '@/installer/index.js'
 
 export async function statusCommand(options: { databaseUrl?: string } = {}) {
@@ -110,7 +110,7 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
 
   s.start('Checking encrypt configuration...')
 
-  const client = new pg.Client({ connectionString: config.databaseUrl })
+  const client = createPgClient(config.databaseUrl)
 
   try {
     await client.connect()
