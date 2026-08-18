@@ -1,0 +1,132 @@
+---
+name: stash-managed-platforms
+description: Implement CipherStash encryption on a managed AI app platform — Lovable, v0, Bolt, Replit, and anything else with no developer-controlled shell, an edge/Workers runtime, a database role that is not `postgres`, and schema changes only through the platform's own migration tool. Covers the one fact that decides whether the product works there at all (use `@cipherstash/stack` with the `wasm-inline` entry — `@cipherstash/protect` is the deprecated predecessor and its native module will not load), running `stash auth login --json` headlessly in an ephemeral sandbox, minting deployment credentials with `stash env`, installing EQL as a role that is not `postgres`, which query predicates survive PostgREST, and why `encryptedSupabase` cannot be constructed inside a Worker. Use when the project is hosted on one of these platforms, when there is no terminal you control, when a native module fails to load in the deployed runtime, or when you are about to conclude CipherStash cannot be used here.
+---
+
+# CipherStash on Managed AI App Platforms
+
+## Read this first: it does work here
+
+If you are on Lovable, v0, Bolt, Replit, or a similar hosted builder, and you have found `@cipherstash/protect` and inferred from its `@cipherstash/protect-ffi` dependency that CipherStash needs a native Rust addon and therefore cannot run on an edge runtime — **that inference is about the wrong package.**
+
+- **`@cipherstash/stack` is the current package.** Import the `@cipherstash/stack/wasm-inline` entry. It carries the WASM build of the same engine as a base64 blob inside the JS: no native binding, no separate `.wasm` fetch, nothing for a bundler to externalise, no `--allow-ffi`.
+- **`@cipherstash/protect` is the deprecated predecessor.** Its native FFI will not load in a Worker or an Edge Function. Do not install it, and do not use it to decide what the product can do.
+
+An agent working on one of these platforms previously spent a full turn concluding CipherStash was impossible in a Lovable project before finding `stash` and the WASM entry. Nothing about that conclusion was true. Everything below is the rest of what that turn had to discover.
+
+The `stash-edge` skill is the full guide to the WASM entry (per-runtime import specifiers, the client surface, why schema modules cannot be shared across entries). This page covers what is specific to *managed* platforms.
+
+## When to Use This Skill
+
+Use it when the environment has any of these four properties — they travel together and each one changes the setup:
+
+1. **No shell the developer controls.** Commands run in an ephemeral sandbox, or not at all.
+2. **An edge / Workers runtime** for server code.
+3. **A database role that is not `postgres`** and is not a member of it (Lovable's is `sandbox_exec`).
+4. **Database changes only through the platform's migration tool**, not a psql session.
+
+Do not use it for a normal Node deployment on a VM or a container — that is `stash-deployment`.
+
+## The CLI authenticates headlessly. Use it.
+
+The most common wrong turn after the WASM one is assuming the CLI cannot log in without a browser on the machine, and reaching for a raw EQL `.sql` release asset instead. The device flow is designed for exactly this case.
+
+```bash
+stash auth login --json --region us-east-1
+```
+
+`--json` emits newline-delimited JSON on stdout, one object per line, and deliberately does **not** open a browser — the human opens the URL, not the agent's host. The first event, `authorization_required`, carries `verificationUri` / `verificationUriComplete` and a `userCode`; print it and ask the person to approve it. Credentials are written to `~/.cipherstash`, which exists fine inside a sandbox.
+
+Three things to get right:
+
+- **`--region` is required in a non-TTY.** Without it (or `STASH_REGION`) the region picker cannot render and the command exits `region_required`. `stash auth regions --json` lists the valid slugs.
+- **After printing `authorization_required` the command blocks**, polling until approval or expiry (~900 s). Run it as a background task with a generous timeout — do not treat the pause as a hang.
+- **Authenticate before `stash init`.** An unauthenticated `init` tries to start a login of its own.
+
+Then drive everything else through the CLI: `stash manifest --json` is the authoritative command surface, and `--json` modes exist on the commands an agent needs. Never `cat` anything under `~/.cipherstash` — the CLI reads it for you, and its contents are secrets.
+
+## Deployment credentials: `stash env`
+
+The four `CS_*` variables a deployed app needs are minted in one command:
+
+```bash
+stash env --name my-app-prod --write .env.production.local
+```
+
+`--name` is **required** in a non-interactive run. Without `--write` the dotenv block goes to stdout and progress UI goes to stderr, so redirecting into a file or piping into a secret store is safe. With `--write` the file is mode 0600, and an existing file is *refused* non-interactively rather than silently overwritten. The access key is shown exactly once.
+
+Put those four values into the platform's backend-secrets UI. That is the whole story on these platforms and it works as-is — `stash-auth` is canonical for what each variable is and how the strategies use them.
+
+## The database role is not `postgres`, and that is fine
+
+`stash eql install` completes as a non-`postgres` role. Only three owner-scoped `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` statements are skipped, and they are **optional**: they cover EQL objects `postgres` might later create outside stash tooling, and stash re-grants every object on each install and upgrade. The CLI prints the skipped statements under "Optional SQL — requires postgres" for an operator who wants to apply them another way.
+
+**Check before you install**, and pass the report to the human rather than guessing:
+
+```bash
+stash eql preflight --json
+```
+
+It reports `current_user`, superuser, membership of `postgres` (never blocking), `CREATE` on the database and on `public`, `pgcrypto` presence *and placement*, whether the role can create an operator class, and whether the EQL schemas already exist. Each blocked row names the statement it blocks. Exit 1 means a genuine blocker.
+
+Two of its answers change what you write afterwards:
+
+- **`ORE operator class: not creatable`** — declare ordered columns `types.*Ord`, never `types.*OrdOre`. See the capability matrix in `stash-encryption`; the short version is that the ORE domains get an always-raising CHECK on such a database, so writes to them fail.
+- **`pgcrypto` outside `extensions` / `public`** aborts the bundle for *any* role, superuser included.
+
+### Getting the SQL applied through the platform's migration tool
+
+Where you cannot hold a connection open — or where the platform replays a migrations directory and would wipe a direct install — generate a migration instead of installing:
+
+```bash
+stash eql migration --supabase     # writes into supabase/migrations/
+stash eql migration --drizzle      # a Drizzle custom migration
+```
+
+On a Supabase-backed platform this is the **only durable** option: `supabase db reset` replays `supabase/migrations/` and discards anything a direct `eql install` did. The generated Supabase migration wraps the owner-scoped statements in a `pg_has_role` guard, so it applies cleanly whatever role the platform's migration runner uses — a non-member role skips them instead of aborting the whole migration.
+
+Then commit the migration through the platform's Git sync and let its own migrate step apply it.
+
+## What survives PostgREST
+
+If the app talks to the database through Supabase's Data API rather than a Postgres connection, the predicate surface is narrower than the type surface. Agents guess wrong in **both** directions on this, so take it from the table:
+
+| Through PostgREST | Works? |
+|---|---|
+| `eq`, `neq`, `in`, `match()` | ✅ — the adapter encrypts each filter value with the full storage path |
+| `gt`, `gte`, `lt`, `lte` | ✅ on range-capable domains (`*_ord`, `text_search`) |
+| `order()` | ✅ on OPE-backed ordering columns only (`*_ord`, `text_ord`, `text_search`) |
+| `matches()` — encrypted free-text | ❌ needs `@@` with an `eql_v3.query_*` cast PostgREST cannot emit |
+| encrypted `contains()` / `selectorEq()` / `selectorNe()` | ❌ needs an `eql_v3.query_json` cast, likewise |
+
+The wrapper fails fast on the unsupported ones rather than silently returning wrong rows. Do not reach for `like` / `ilike` / raw `cs` as substitutes — they are not equivalent and will not match encrypted data.
+
+When you need free-text or encrypted-JSON predicates, the query has to go through something that can emit a cast: Drizzle, Prisma Next, or hand-written SQL in an RPC (`stash-postgres` has the raw forms). `stash-supabase` is canonical for the adapter's full behaviour, including the security note about filter operands travelling in GET query strings.
+
+## `encryptedSupabase` cannot be constructed in a Worker
+
+`encryptedSupabase` introspects the database to build its schema, so it needs a **Postgres connection** — which a Worker or an Edge Function does not have (cipherstash/stack#708). Constructing it there fails; this is a property of the wrapper, not a configuration mistake to debug.
+
+Two supported shapes:
+
+- **Construct it server-side** where a Postgres connection exists, and keep the Worker to code paths that do not need it.
+- **In the edge runtime, use `@cipherstash/stack/wasm-inline` directly**: encrypt and decrypt with the client, and send the resulting EQL payloads through the Supabase JS client or raw SQL yourself. `stash-edge` covers the client surface and `stash-postgres` the SQL forms.
+
+## Order of operations
+
+1. `stash auth login --json --region <slug>` — hand the verification URL to the human.
+2. `stash eql preflight --json` — report the role's capability before changing anything.
+3. `stash eql migration --supabase` (or `--drizzle`), committed through the platform's Git sync — not a direct `eql install`, if the platform replays a migrations directory.
+4. `stash init`, then `stash plan` / `stash impl --target <target>` to scaffold and hand off. On Lovable, `--target lovable` writes an `AGENTS.md` whose next-steps are platform-specific.
+5. `stash env --name <env> --write` — put the four `CS_*` values into the platform's backend secrets.
+6. Write the schema with `types.*Ord`, not `*OrdOre`, unless preflight said the operator class is creatable.
+7. `stash eql verify` — confirm the installed surface is complete before shipping.
+
+## Related skills
+
+- `stash-edge` — the WASM entry in depth: per-runtime imports, the client surface, credentials on the edge.
+- `stash-supabase` — the `encryptedSupabase` wrapper, its filters, and the full PostgREST behaviour.
+- `stash-cli` — every command, its flags, and the non-interactive escape hatches.
+- `stash-auth` — canonical for `CS_*`, auth strategies, and lock context.
+- `stash-encryption` — the capability matrix: which `types.*` factory supports which predicate.
+- `stash-postgres` — raw SQL with the `eql_v3.query_*` operand casts, for the no-ORM fallback.
