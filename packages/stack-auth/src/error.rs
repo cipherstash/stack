@@ -54,8 +54,15 @@ pub(crate) mod codes {
     pub(crate) const EXPIRED_TOKEN: &str = "EXPIRED_TOKEN";
     pub(crate) const INVALID_ACCESS_KEY: &str = "INVALID_ACCESS_KEY";
     pub(crate) const INVALID_TOKEN: &str = "INVALID_TOKEN";
-    pub(crate) const USAGE_LIMIT_EXCEEDED: &str = "USAGE_LIMIT_EXCEEDED";
-    pub(crate) const ORG_NOT_PROVISIONED: &str = "ORG_NOT_PROVISIONED";
+    // Aliased rather than re-declared: `CS_CODE_USAGE_LIMIT_EXCEEDED` /
+    // `CS_CODE_ORG_NOT_PROVISIONED` are the wire values CTS actually sends
+    // (`classify_issuance_failure` matches against them directly), and
+    // `StickyDenial` round-trips through these FFI codes via `error_code()`
+    // / `from_error_code`. A second, independent literal here would let the
+    // two drift — editing one without the other silently breaks either the
+    // wire classification or denial replay.
+    pub(crate) const USAGE_LIMIT_EXCEEDED: &str = super::CS_CODE_USAGE_LIMIT_EXCEEDED;
+    pub(crate) const ORG_NOT_PROVISIONED: &str = super::CS_CODE_ORG_NOT_PROVISIONED;
     pub(crate) const SERVER_ERROR: &str = "SERVER_ERROR";
     pub(crate) const ALREADY_CONSUMED: &str = "ALREADY_CONSUMED";
     pub(crate) const INTERNAL_ERROR: &str = "INTERNAL_ERROR";
@@ -556,6 +563,48 @@ impl AuthError {
         }
     }
 
+    /// Whether this failure refuses the *account* — as opposed to the
+    /// credential presented — and is therefore safe to negatively-cache
+    /// across separate `get_token` calls until something outside the client
+    /// changes (a plan upgrade, provisioning).
+    ///
+    /// Deliberately narrower than [`is_retryable`](Self::is_retryable): most
+    /// non-retryable failures (`invalid_grant`, `invalid_client`, ...) are
+    /// verdicts on the *credential*, and a refresher restores that credential
+    /// precisely so a later attempt can succeed once the caller supplies a
+    /// good one — caching those would defeat the restore path. Only a
+    /// verdict on the account itself is safe to replay without re-asking.
+    ///
+    /// Matched exhaustively, like `is_retryable`, so a new variant has to
+    /// declare which side of this boundary it's on rather than silently not
+    /// being cached.
+    pub(crate) fn is_account_refusal(&self) -> bool {
+        match self {
+            Self::UsageLimitExceeded(_) | Self::OrgNotProvisioned(_) => true,
+
+            Self::Request(_)
+            | Self::AccessDenied(_)
+            | Self::InvalidGrant(_)
+            | Self::InvalidClient(_)
+            | Self::InvalidUrl(_)
+            | Self::Region(_)
+            | Self::InvalidCrn(_)
+            | Self::WorkspaceMismatch(_)
+            | Self::InvalidWorkspaceId(_)
+            | Self::MissingWorkspaceCrn(_)
+            | Self::NotAuthenticated(_)
+            | Self::TokenExpired(_)
+            | Self::InvalidAccessKey(_)
+            | Self::InvalidToken(_)
+            | Self::Server(_)
+            | Self::AlreadyConsumed(_)
+            | Self::Internal(_)
+            | Self::Custom(_) => false,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Store(_) => false,
+        }
+    }
+
     /// Reconstruct an `AuthError` from its stable FFI wire form — the `type`
     /// code, rendered `message`, and structured `payload` a serialized
     /// [`AuthError`] carries across the boundary (e.g. the `{ failure }` a
@@ -654,10 +703,27 @@ pub(crate) fn classify_issuance_failure(status: u16, body: &str) -> Option<AuthE
         return None;
     }
 
-    let parsed: Option<serde_json::Value> = serde_json::from_str(body).ok();
+    // An empty body is the one shape a 402 from CTS itself can take without
+    // being JSON: pre-`cs_code` deployments sent no body at all for a usage
+    // limit, so that remains the reading for a bare 402.
+    if body.trim().is_empty() {
+        return Some(UsageLimitExceeded(UsageLimitExceeded::DEFAULT_MESSAGE.to_string()).into());
+    }
+
+    // Anything else has to actually parse as a JSON object to be CTS-shaped —
+    // a non-empty body that isn't valid JSON, or that parses to a JSON value
+    // that isn't an object (an array, a bare string, `null`, ...), is not a
+    // response CTS ever sends. That's a 402 from something else entirely —
+    // a proxy, a WAF, a gateway in front of CTS — and reporting it as a usage
+    // limit would sticky-cache a permanent, non-retryable refusal for a
+    // condition that may well be transient. Declining sends the caller down
+    // its own generic, retryable handling instead.
+    let parsed = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .filter(serde_json::Value::is_object)?;
+
     let field = |name: &str| -> Option<String> {
         parsed
-            .as_ref()?
             .get(name)?
             .as_str()
             .map(|s| s.trim().to_string())
@@ -671,10 +737,15 @@ pub(crate) fn classify_issuance_failure(status: u16, body: &str) -> Option<AuthE
     // guard is for. Anything present but not recognised declines, which sends
     // the caller down the generic path rather than asserting a remedy on the
     // strength of a body we could not read.
-    // Compared explicitly rather than matched as patterns: these are `&str`
-    // consts from another crate, and in pattern position they bind instead of
-    // comparing — which would make the first arm match everything and classify
-    // every code as a usage limit.
+    //
+    // Compared explicitly with `==` rather than matched as patterns. Neither
+    // footgun that phrasing might suggest actually applies here: these names
+    // are brought into scope by `use`, so as bare-identifier patterns they'd
+    // correctly resolve to the consts and compare (not bind) — an unqualified
+    // identifier only binds when it fails to resolve to a const/unit-variant
+    // at all — and a *qualified* path that fails to resolve is a compile
+    // error (E0531), never a silent binding. `==` is simply the more obviously
+    // correct form, not a workaround for either.
     let recognised = |code: &str| {
         if code == CS_CODE_USAGE_LIMIT_EXCEEDED {
             Some(Refusal::UsageLimit)
@@ -685,7 +756,7 @@ pub(crate) fn classify_issuance_failure(status: u16, body: &str) -> Option<AuthE
         }
     };
 
-    let refusal = match parsed.as_ref().and_then(|v| v.get("cs_code")) {
+    let refusal = match parsed.get("cs_code") {
         Some(value) => recognised(value.as_str().map(str::trim).unwrap_or_default())?,
         // Absent: pre-`cs_code` deployments only ever sent 402 for a usage
         // limit, so that remains the reading for a bare 402.
@@ -935,6 +1006,33 @@ mod classify_issuance_failure_tests {
         }
     }
 
+    /// A non-empty body that isn't CTS-shaped JSON — an HTML error page, a
+    /// bare JSON array/string/number, or outright invalid JSON — must decline
+    /// to classify rather than falling back to a usage limit. CTS itself
+    /// either sends no body at all (the legacy bare-402 case, still handled)
+    /// or a JSON object; anything else is a 402 from something in front of
+    /// CTS (a proxy, a WAF, a gateway), and sticky-caching a permanent,
+    /// non-retryable refusal for it would misdiagnose what could be a
+    /// transient condition.
+    #[test]
+    fn non_cts_shaped_bodies_decline_to_classify() {
+        for body in [
+            "<html>502 Bad Gateway</html>",
+            "[]",
+            "null",
+            "7",
+            "\"a string\"",
+            "{",
+            "not json at all",
+        ] {
+            assert!(
+                classify_issuance_failure(402, body).is_none(),
+                "a 402 whose body is not CTS-shaped JSON must not be classified \
+                 as a usage limit: {body:?}",
+            );
+        }
+    }
+
     mod properties {
         use super::*;
         use proptest::prelude::*;
@@ -981,12 +1079,19 @@ mod classify_issuance_failure_tests {
             ]
         }
 
-        /// Whether a body's `cs_code` permits classification, derived
-        /// independently of the implementation.
+        /// Whether a body permits classification, derived independently of
+        /// the implementation: an empty body always does (the legacy bare-402
+        /// reading); a non-empty body only does if it parses as a JSON object
+        /// whose `cs_code` (if present at all) matches the usage-limit code.
         fn cs_code_permits(body: &str) -> bool {
-            serde_json::from_str::<serde_json::Value>(body)
-                .ok()
-                .and_then(|v| v.get("cs_code").cloned())
+            if body.trim().is_empty() {
+                return true;
+            }
+            let Ok(serde_json::Value::Object(obj)) = serde_json::from_str::<serde_json::Value>(body)
+            else {
+                return false;
+            };
+            obj.get("cs_code")
                 .is_none_or(|v| v.as_str().map(str::trim) == Some(CS_CODE_USAGE_LIMIT_EXCEEDED))
         }
 
@@ -1098,6 +1203,30 @@ mod classify_issuance_failure_tests {
                 err.is_retryable(),
                 RETRYABLE.contains(code),
                 "{code} is on the wrong side of the retry boundary",
+            );
+        }
+    }
+
+    /// Same contract as `retryability_is_pinned_for_every_error_code`, for the
+    /// account-refusal axis: every code states whether it's safe to
+    /// negatively-cache across `get_token` calls, so a new variant can't
+    /// silently fall out of storm suppression (or, worse, silently start
+    /// caching a credential-scoped failure that should have gone through the
+    /// restore path instead).
+    #[test]
+    fn account_refusal_is_pinned_for_every_error_code() {
+        const ACCOUNT_REFUSAL: &[&str] = &[codes::USAGE_LIMIT_EXCEEDED, codes::ORG_NOT_PROVISIONED];
+
+        let payload = serde_json::Map::new();
+        for code in AuthError::ERROR_CODES {
+            let err = AuthError::from_error_code(code, "message", &payload);
+            if err.error_code() != *code {
+                continue;
+            }
+            assert_eq!(
+                err.is_account_refusal(),
+                ACCOUNT_REFUSAL.contains(code),
+                "{code} is on the wrong side of the account-refusal boundary",
             );
         }
     }
