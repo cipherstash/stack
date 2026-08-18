@@ -20,10 +20,10 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 base85 = "2.0.0"
 chrono = { version = "0.4.42", default-features = false, features = ["serde"] }
-cipherstash-client = { version = "=0.42.0", features = ["tokio"] }
-cts-common = { version = "=0.42.0", default-features = false }
+cipherstash-client = { version = "=0.42.2", features = ["tokio"] }
+cts-common = { version = "=0.42.2", default-features = false }
 eql-bindings = { version = "=3.0.2" }
-stack-auth = { version = "=0.42.0" }
+stack-auth = { version = "=0.42.2" }
 hex = "0.4.3"
 # Carries the error code across the FFI boundary (#146). `derive` is the only
 # feature wanted: `fancy` pulls in the terminal-size / colour-support crates the
@@ -42,7 +42,7 @@ zeroize = { version = "1.8", features = ["derive"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 neon = { version = "1", features = ["serde", "tokio"] }
-stack-profile = { version = "=0.42.0" }
+stack-profile = { version = "=0.42.2" }
 tokio = { version = "1", features = ["full"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
