@@ -1,8 +1,7 @@
 import * as p from '@clack/prompts'
 import { emitJsonError, emitJsonEvent } from '@/commands/auth/events.js'
+import { resolveDiagnosticDatabaseUrl } from '@/commands/db/resolve-diagnostic-url.js'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
-import { resolveDatabaseUrl } from '@/config/database-url.js'
-import { findConfigFile, loadStashConfig } from '@/config/index.js'
 import type { SurfaceFinding, VerifyReport } from '@/installer/verify.js'
 import { verifyEqlSurface } from '@/installer/verify.js'
 
@@ -13,103 +12,74 @@ import { verifyEqlSurface } from '@/installer/verify.js'
  * success at install time and fails at query time on a specific predicate;
  * this is the check that catches it early.
  *
- * Exit code: 1 when the install is damaged or absent (`status` of
- * `incomplete` or `not-installed`), else 0. The ORE operator class being
- * absent WITH its loud-failure fallback in place is a supported
- * managed-Postgres configuration and reads as such, not as damage.
+ * ONE exit predicate for both output modes: `report.ok`, true only when the
+ * surface was checked and found complete. `not-installed`, `incomplete`, and
+ * `version-mismatch` (checked nothing — "could not verify" must never read as
+ * "verified") all exit 1. The ORE operator class being absent WITH its
+ * loud-failure fallback in place is a supported managed-Postgres
+ * configuration and reads as such, not as damage.
+ *
+ * `--database-url` is a one-shot, like `eql install`'s: it bypasses config
+ * loading, so the database the user named is the database that gets judged
+ * (see {@link resolveDiagnosticDatabaseUrl}).
  */
 export async function verifyCommand(
   options: { databaseUrl?: string; json?: boolean } = {},
 ): Promise<void> {
-  if (options.json) {
-    const databaseUrl = await resolveVerifyDatabaseUrl(
-      options.databaseUrl,
-      true,
-    )
-    let report: VerifyReport
-    try {
-      report = await verifyEqlSurface(databaseUrl)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      emitJsonError('verify_failed', message)
-      process.exit(1)
-    }
-    emitJsonEvent({ ...report })
-    if (!report.ok) process.exit(1)
-    return
-  }
+  const json = options.json === true
 
-  p.intro(runnerCommand(detectPackageManager(), 'stash eql verify'))
+  if (!json) {
+    p.intro(runnerCommand(detectPackageManager(), 'stash eql verify'))
+  }
 
   // Resolve the URL before any spinner exists: tier 4 of the resolver is an
   // interactive prompt, and a live spinner would redraw over it.
-  const databaseUrl = await resolveVerifyDatabaseUrl(options.databaseUrl, false)
+  const databaseUrl = await resolveDiagnosticDatabaseUrl({
+    databaseUrlFlag: options.databaseUrl,
+    json,
+    flagWins: true,
+    verb: 'Verifying',
+  })
 
-  const s = p.spinner()
-  s.start('Comparing the installed EQL surface with the pinned bundle...')
+  const s = json ? null : p.spinner()
+  s?.start('Comparing the installed EQL surface with the pinned bundle...')
   let report: VerifyReport
   try {
     report = await verifyEqlSurface(databaseUrl)
   } catch (error) {
-    s.stop('Verification failed.')
-    p.log.error(error instanceof Error ? error.message : String(error))
-    p.outro('Verification failed.')
+    const message = error instanceof Error ? error.message : String(error)
+    if (json) {
+      emitJsonError('verify_failed', message)
+    } else {
+      s?.stop('Verification failed.')
+      p.log.error(message)
+      p.outro('Verification failed.')
+    }
     process.exit(1)
   }
-  s.stop('Surface compared.')
+  s?.stop('Surface compared.')
 
-  reportVerifyFindings(report)
-
-  switch (report.status) {
-    case 'complete':
-      p.outro(`EQL ${report.bundleVersion} install is complete.`)
-      return
-    case 'version-mismatch':
-      p.outro('Surface not verified — version mismatch.')
-      return
-    case 'not-installed':
-      p.outro('EQL is not installed.')
-      process.exit(1)
-      break
-    case 'incomplete':
-      p.outro('The EQL install is incomplete — see the damage above.')
-      process.exit(1)
-  }
-}
-
-/**
- * Like preflight, verify must work without a stash.config.ts — fall back to
- * the plain DATABASE_URL resolution chain. In json mode the resolver keeps
- * stdout parseable (quiet chrome, shared error envelope).
- */
-async function resolveVerifyDatabaseUrl(
-  databaseUrlFlag: string | undefined,
-  json: boolean,
-): Promise<string> {
-  const configPath = findConfigFile(process.cwd())
-  if (configPath) {
-    const config = await loadStashConfig(
-      { databaseUrlFlag, quiet: json, jsonErrors: json },
-      configPath,
-    )
-    if (
-      databaseUrlFlag !== undefined &&
-      config.databaseUrl !== databaseUrlFlag.trim()
-    ) {
-      const warning = `Ignoring --database-url: ${configPath} sets an explicit databaseUrl that takes precedence. Verifying the config's database.`
-      if (json) {
-        process.stderr.write(`${warning}\n`)
-      } else {
-        p.log.warn(warning)
-      }
+  if (json) {
+    emitJsonEvent({ ...report })
+  } else {
+    reportVerifyFindings(report)
+    switch (report.status) {
+      case 'complete':
+        p.outro(`EQL ${report.bundleVersion} install is complete.`)
+        break
+      case 'version-mismatch':
+        p.outro('Surface not verified — version mismatch.')
+        break
+      case 'not-installed':
+        p.outro('EQL is not installed.')
+        break
+      case 'incomplete':
+        p.outro('The EQL install is incomplete — see the damage above.')
+        break
     }
-    return config.databaseUrl
   }
-  return resolveDatabaseUrl({
-    databaseUrlFlag,
-    quiet: json,
-    jsonErrors: json,
-  })
+
+  if (!report.ok) process.exit(1)
 }
 
 /**

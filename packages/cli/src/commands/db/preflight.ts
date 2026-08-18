@@ -1,49 +1,19 @@
 import * as p from '@clack/prompts'
 import { emitJsonError, emitJsonEvent } from '@/commands/auth/events.js'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
-import { resolveDatabaseUrl } from '@/config/database-url.js'
-import { findConfigFile, loadStashConfig } from '@/config/index.js'
 import { EQLInstaller, type PreflightResult } from '@/installer/index.js'
+import { resolveDiagnosticDatabaseUrl } from './resolve-diagnostic-url.js'
 
-/**
- * Preflight runs BEFORE anything is set up, so a missing stash.config.ts must
- * not fail it — fall back to the plain DATABASE_URL resolution chain the
- * installer itself uses when no config exists yet. In `json` mode the
- * resolver keeps stdout parseable: informational chrome and the interactive
- * prompt are suppressed (`quiet`) and failures come out as the shared
- * `{ status: 'error', code, message }` envelope (`jsonErrors`).
- *
- * Mirrors `installCommand`'s precedence caveat: a hand-set literal
- * `databaseUrl` in stash.config.ts beats `--database-url`. That is surprising
- * enough to say out loud — to stderr in json mode, so stdout stays JSON.
- */
-async function resolvePreflightDatabaseUrl(
+/** See {@link resolveDiagnosticDatabaseUrl} — preflight keeps config-wins. */
+function resolvePreflightDatabaseUrl(
   databaseUrlFlag: string | undefined,
   json: boolean,
 ): Promise<string> {
-  const configPath = findConfigFile(process.cwd())
-  if (configPath) {
-    const config = await loadStashConfig(
-      { databaseUrlFlag, quiet: json, jsonErrors: json },
-      configPath,
-    )
-    if (
-      databaseUrlFlag !== undefined &&
-      config.databaseUrl !== databaseUrlFlag.trim()
-    ) {
-      const warning = `Ignoring --database-url: ${configPath} sets an explicit databaseUrl that takes precedence. Probing the config's database.`
-      if (json) {
-        process.stderr.write(`${warning}\n`)
-      } else {
-        p.log.warn(warning)
-      }
-    }
-    return config.databaseUrl
-  }
-  return resolveDatabaseUrl({
+  return resolveDiagnosticDatabaseUrl({
     databaseUrlFlag,
-    quiet: json,
-    jsonErrors: json,
+    json,
+    flagWins: false,
+    verb: 'Probing',
   })
 }
 

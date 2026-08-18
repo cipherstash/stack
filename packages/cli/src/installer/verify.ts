@@ -2,6 +2,7 @@ import { readInstallSql, releaseManifest } from '@cipherstash/eql/sql'
 import type pg from 'pg'
 import { createPgClient, TlsVerificationError } from '@/db/client.js'
 import { EQL_V3_INTERNAL_SCHEMA_NAME, EQL_V3_SCHEMA_NAME } from './grants.js'
+import { SUPPORTED_PGCRYPTO_SCHEMAS } from './index.js'
 
 /**
  * `stash eql verify` — assert that the installed EQL surface is complete and
@@ -33,11 +34,15 @@ export interface ExpectedSurface {
   /** Qualified composite type names (the ORE term/block types). */
   types: string[]
   /**
-   * Distinct overload count per qualified routine name (functions and
+   * Distinct type-only signatures per qualified routine name (functions and
    * aggregates share `pg_proc`, so they share this map). Quoted names are
-   * stored unquoted: `eql_v3_internal.-`, matching `pg_proc.proname`.
+   * stored unquoted: `eql_v3_internal.-`, matching `pg_proc.proname`. Each
+   * signature is the comma-joined argument type list (`''` for zero-arg), in
+   * the same spelling {@link InstalledSurface.functionSignatures} produces —
+   * signatures, not counts, so a stale same-name function cannot mask a
+   * missing overload.
    */
-  functions: Map<string, number>
+  functions: Map<string, string[]>
   /** Operator identities: `<name> (<leftarg>, <rightarg>)`, lowercase. */
   operators: string[]
   /** Casts as `<source> AS <target>`. */
@@ -109,7 +114,11 @@ export interface VerifyReport {
     state: OreSurfaceState
   } | null
   findings: SurfaceFinding[]
-  /** True when no damage was found. */
+  /**
+   * True ONLY when the surface was actually checked and found complete
+   * (`status: 'complete'`). A `version-mismatch` — where the checks were
+   * skipped — is NOT ok: "could not verify" must never read as "verified".
+   */
   ok: boolean
 }
 
@@ -139,6 +148,35 @@ function unquoteName(raw: string): string {
 }
 
 /**
+ * SQL type-name aliases mapped to the canonical spelling `format_type()`
+ * emits, so a future bundle writing `int8` or `timestamptz` still meets the
+ * catalogue read. The current bundle only uses spellings that are already
+ * canonical (`integer`, `text[]`, `jsonb`, …) — the live suite is what proves
+ * that on every run, this map is the cheap safety margin for a bump.
+ */
+const TYPE_ALIASES: Record<string, string> = {
+  int: 'integer',
+  int2: 'smallint',
+  int4: 'integer',
+  int8: 'bigint',
+  bool: 'boolean',
+  float4: 'real',
+  float8: 'double precision',
+  decimal: 'numeric',
+  timestamptz: 'timestamp with time zone',
+  varchar: 'character varying',
+  char: 'character',
+}
+
+function canonicalType(raw: string): string {
+  const lower = raw.toLowerCase()
+  const array = lower.endsWith('[]')
+  const base = array ? lower.slice(0, -2) : lower
+  const canonical = TYPE_ALIASES[base] ?? base
+  return array ? `${canonical}[]` : canonical
+}
+
+/**
  * Reduce one routine argument to its type: the bundle names every argument
  * (`a public.eql_v3_bigint`, `val jsonb`) and uses no DEFAULTs or arg modes,
  * so dropping the first token of a multi-token entry leaves the type —
@@ -147,7 +185,7 @@ function unquoteName(raw: string): string {
  */
 function argType(entry: string): string {
   const tokens = entry.trim().split(/\s+/)
-  return (tokens.length > 1 ? tokens.slice(1) : tokens).join(' ').toLowerCase()
+  return canonicalType((tokens.length > 1 ? tokens.slice(1) : tokens).join(' '))
 }
 
 /** Parse the pinned install SQL into the surface it creates unconditionally. */
@@ -167,9 +205,10 @@ export function parseExpectedSurface(sql: string): ExpectedSurface {
     types.add(match[1].toLowerCase())
   }
 
-  // Functions and aggregates: count DISTINCT type-signatures per name (the
-  // bundle re-CREATEs some signatures, which must not inflate the expectation)
-  // and fold both into one map — they share pg_proc on the observed side.
+  // Functions and aggregates: DISTINCT type-only signatures per name (the
+  // bundle re-CREATEs some signatures, which must not inflate the
+  // expectation), folded into one map — they share pg_proc on the observed
+  // side.
   const signatures = new Map<string, Set<string>>()
   const routinePattern =
     /^CREATE (?:OR REPLACE )?(?:FUNCTION|AGGREGATE)\s+((?:[\w]+\.)?(?:"[^"]+"|[\w]+))\s*\(([^)]*)\)/gim
@@ -181,26 +220,32 @@ export function parseExpectedSurface(sql: string): ExpectedSurface {
     existing.add(signature)
     signatures.set(name, existing)
   }
-  const functions = new Map<string, number>()
-  for (const [name, sigs] of signatures) functions.set(name, sigs.size)
+  const functions = new Map<string, string[]>()
+  for (const [name, sigs] of signatures) functions.set(name, [...sigs].sort())
 
-  // Operators: identity is (name, leftarg, rightarg). Names are created
-  // unqualified (or explicitly `public.`) — either way they land in `public`,
-  // so the schema is dropped from the key.
+  // Operators: identity is (name, leftarg, rightarg) — deliberately WITHOUT
+  // the operator's schema. Most of the bundle's operators are created
+  // unqualified, so they land in the first existing schema of the
+  // install-time search_path: usually `public`, but a "$user" schema named
+  // after the installing role (common on provisioned databases) legitimately
+  // captures them instead. Only the six ore_block_256 comparison operators
+  // are explicitly `public.`-qualified (the opclass block references them by
+  // that name). Scoping the check to one schema would therefore phantom-fail
+  // healthy installs — the live suite runs against exactly such a database.
   const operators = new Set<string>()
   const operatorPattern = /^CREATE OPERATOR\s+([^\s(]+)\s*\(([\s\S]*?)\);/gim
   for (const match of stripped.matchAll(operatorPattern)) {
     const name = match[1].toLowerCase().replace(/^public\./, '')
     const left = /LEFTARG\s*=\s*([\w.[\]]+)/i.exec(match[2])?.[1] ?? 'none'
     const right = /RIGHTARG\s*=\s*([\w.[\]]+)/i.exec(match[2])?.[1] ?? 'none'
-    operators.add(`${name} (${left.toLowerCase()}, ${right.toLowerCase()})`)
+    operators.add(`${name} (${canonicalType(left)}, ${canonicalType(right)})`)
   }
 
   const casts = new Set<string>()
   for (const match of stripped.matchAll(
     /^CREATE CAST\s*\(\s*([\w.[\]]+)\s+AS\s+([\w.[\]]+)\s*\)/gim,
   )) {
-    casts.add(`${match[1].toLowerCase()} AS ${match[2].toLowerCase()}`)
+    casts.add(`${canonicalType(match[1])} AS ${canonicalType(match[2])}`)
   }
 
   const sortedDomains = [...domains].sort()
@@ -236,9 +281,12 @@ export interface InstalledSurface {
   eqlV3SchemaPresent: boolean
   eqlV3InternalSchemaPresent: boolean
   pgcryptoInstalled: boolean
+  /** The schema pgcrypto lives in, `null` when not installed. */
+  pgcryptoSchema: string | null
   installedVersion: string | null
   presentTypes: Set<string>
-  functionCounts: Map<string, number>
+  /** Type-only argument signatures per qualified routine name. */
+  functionSignatures: Map<string, Set<string>>
   presentOperators: Set<string>
   presentCasts: Set<string>
   oreOpclassPresent: boolean
@@ -249,7 +297,10 @@ const SCHEMAS_SQL = `
   SELECT
     EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = '${EQL_V3_SCHEMA_NAME}') AS eql_v3_present,
     EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = '${EQL_V3_INTERNAL_SCHEMA_NAME}') AS eql_v3_internal_present,
-    EXISTS (SELECT 1 FROM pg_catalog.pg_extension WHERE extname = 'pgcrypto') AS pgcrypto_installed
+    EXISTS (SELECT 1 FROM pg_catalog.pg_extension WHERE extname = 'pgcrypto') AS pgcrypto_installed,
+    (SELECT n.nspname FROM pg_catalog.pg_extension e
+      JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
+      WHERE e.extname = 'pgcrypto') AS pgcrypto_schema
 `
 
 /** Domains and composite types by qualified name, in one probe. */
@@ -260,28 +311,44 @@ const TYPES_SQL = `
   WHERE n.nspname || '.' || t.typname = ANY($1::text[])
 `
 
-const FUNCTION_COUNTS_SQL = `
-  SELECT n.nspname || '.' || p.proname AS name, count(*)::int AS overloads
+/**
+ * One row per overload of an expected routine name, with its input argument
+ * types rendered by `format_type` — which, under the empty `search_path` the
+ * surrounding transaction pins (see {@link readInstalledSurface}), emits the
+ * same spelling the parser produces: catalogue types unqualified (`integer`,
+ * `text[]`), everything else schema-qualified, arrays with a `[]` suffix
+ * (`eql_v3_internal.ore_block_256_term[]`, where the raw catalogue row would
+ * say `_ore_block_256_term`). Signatures rather than counts, so a stale
+ * same-name function cannot mask a genuinely missing overload. `proargtypes`
+ * is input arguments only, which is exactly what the parsed
+ * `CREATE FUNCTION`/`AGGREGATE` argument lists carry.
+ */
+const FUNCTION_SIGNATURES_SQL = `
+  SELECT n.nspname || '.' || p.proname AS name,
+         COALESCE((
+           SELECT string_agg(pg_catalog.format_type(a.oid, NULL), ', ' ORDER BY a.ordinality)
+           FROM unnest(p.proargtypes) WITH ORDINALITY AS a(oid, ordinality)
+         ), '') AS signature
   FROM pg_catalog.pg_proc p
   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
   WHERE n.nspname || '.' || p.proname = ANY($1::text[])
-  GROUP BY 1
 `
 
 /**
- * Every operator with an EQL operand, in the same `<name> (<left>, <right>)`
- * spelling the bundle parser produces: catalog types via `format_type` (so
- * `integer`, `text[]`), everything else as `schema.typname`. Extra operators
- * (a user's own) are harmless — the differ only looks for absences.
+ * Every operator with an EQL operand — in ANY schema, for the reason the
+ * parser comment gives: unqualified `CREATE OPERATOR` follows the
+ * install-time search_path, so a "$user" schema legitimately holds them.
+ * Operand types via `format_type` under the pinned empty search_path, so the
+ * spelling matches the parser's (`integer`, `text[]`, `public.eql_v3_bigint`).
+ * Extra operators (a user's own) are harmless — the differ only looks for
+ * absences.
  */
 const OPERATORS_SQL = `
   SELECT o.oprname AS name,
          CASE WHEN o.oprleft = 0 THEN 'none'
-              WHEN ln.nspname = 'pg_catalog' THEN pg_catalog.format_type(o.oprleft, NULL)
-              ELSE ln.nspname || '.' || lt.typname END AS leftarg,
+              ELSE pg_catalog.format_type(o.oprleft, NULL) END AS leftarg,
          CASE WHEN o.oprright = 0 THEN 'none'
-              WHEN rn.nspname = 'pg_catalog' THEN pg_catalog.format_type(o.oprright, NULL)
-              ELSE rn.nspname || '.' || rt.typname END AS rightarg
+              ELSE pg_catalog.format_type(o.oprright, NULL) END AS rightarg
   FROM pg_catalog.pg_operator o
   LEFT JOIN pg_catalog.pg_type lt ON lt.oid = o.oprleft
   LEFT JOIN pg_catalog.pg_namespace ln ON ln.oid = lt.typnamespace
@@ -294,8 +361,8 @@ const OPERATORS_SQL = `
 `
 
 const CASTS_SQL = `
-  SELECT sn.nspname || '.' || st.typname AS source,
-         tn.nspname || '.' || tt.typname AS target
+  SELECT pg_catalog.format_type(c.castsource, NULL) AS source,
+         pg_catalog.format_type(c.casttarget, NULL) AS target
   FROM pg_catalog.pg_cast c
   JOIN pg_catalog.pg_type st ON st.oid = c.castsource
   JOIN pg_catalog.pg_namespace sn ON sn.oid = st.typnamespace
@@ -309,8 +376,12 @@ const CASTS_SQL = `
  * The two halves of the bundle's conditional ORE story: the default btree
  * operator class over `ore_block_256` (mirrors `eql validate`'s probe — see
  * `ORE_AVAILABLE_SQL` there for why `to_regtype`, not a `::regtype` cast),
- * and how many domains carry the `eql_ore_unavailable` poison CHECK the
- * bundle installs when the class could not be created.
+ * and how many of the EXPECTED ORE domains ($1) carry the
+ * `eql_ore_unavailable` poison CHECK the bundle installs when the class could
+ * not be created. Scoped to those domains rather than counting by constraint
+ * name alone — constraint names are not globally unique, so a same-named
+ * CHECK on an unrelated domain must not flip a healthy install to
+ * incoherent (or mask a missing poison on a fallback install).
  */
 const ORE_STATE_SQL = `
   SELECT
@@ -324,8 +395,11 @@ const ORE_STATE_SQL = `
     ) AS ore_opclass_present,
     (
       SELECT count(*)::int
-      FROM pg_catalog.pg_constraint
-      WHERE conname = 'eql_ore_unavailable' AND contypid <> 0
+      FROM pg_catalog.pg_constraint c
+      JOIN pg_catalog.pg_type t ON t.oid = c.contypid
+      JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace
+      WHERE c.conname = 'eql_ore_unavailable'
+        AND tn.nspname || '.' || t.typname = ANY($1::text[])
     ) AS poisoned_domains
 `
 
@@ -335,16 +409,32 @@ async function readInstalledSurface(
 ): Promise<InstalledSurface> {
   // Sequential on purpose: a single pg.Client serialises concurrent query()
   // calls anyway (and deprecates them); these are six fast catalogue reads.
+  //
+  // The read-only transaction exists for `SET LOCAL search_path = ''`:
+  // `format_type` qualifies a name exactly when the type is not visible on
+  // the search_path, so pinning it empty makes every non-catalogue type come
+  // out fully qualified (`public.eql_v3_bigint`,
+  // `eql_v3_internal.ore_block_256_term[]`) while `pg_catalog` — always
+  // implicitly searched — keeps its canonical unqualified spellings
+  // (`integer`, `text[]`). That is precisely the spelling the bundle parser
+  // produces; without the pin the output would vary with the connection's
+  // search_path. SET LOCAL dies with the transaction, so the caller's
+  // session is untouched (the version() probe below runs after COMMIT and
+  // needs the default path restored — `eql_v3.version` is qualified, but its
+  // body's search_path is its own SET clause either way).
+  await client.query('BEGIN READ ONLY')
+  await client.query(`SET LOCAL search_path = ''`)
   const schemas = await client.query<{
     eql_v3_present: boolean
     eql_v3_internal_present: boolean
     pgcrypto_installed: boolean
+    pgcrypto_schema: string | null
   }>(SCHEMAS_SQL)
   const types = await client.query<{ name: string }>(TYPES_SQL, [
     [...expected.domains, ...expected.types],
   ])
-  const functions = await client.query<{ name: string; overloads: number }>(
-    FUNCTION_COUNTS_SQL,
+  const functions = await client.query<{ name: string; signature: string }>(
+    FUNCTION_SIGNATURES_SQL,
     [[...expected.functions.keys()]],
   )
   const operators = await client.query<{
@@ -358,7 +448,10 @@ async function readInstalledSurface(
   const ore = await client.query<{
     ore_opclass_present: boolean
     poisoned_domains: number
-  }>(ORE_STATE_SQL)
+  }>(ORE_STATE_SQL, [expected.oreDomains])
+  // Ends the SET LOCAL scope. On a mid-transaction error the caller's
+  // client.end() discards the aborted transaction with the connection.
+  await client.query('COMMIT')
 
   const eqlV3SchemaPresent = schemas.rows[0]?.eql_v3_present === true
   let installedVersion: string | null = null
@@ -368,10 +461,32 @@ async function readInstalledSurface(
         `SELECT ${EQL_V3_SCHEMA_NAME}.version() AS version`,
       )
       installedVersion = version.rows[0]?.version ?? null
-    } catch {
-      // A missing version() on a present schema is itself reported by the
-      // differ — the function is part of the expected surface.
+    } catch (error) {
+      // Only a genuinely absent function reads as "version missing" (the
+      // differ reports that as damage — the bundle always installs it).
+      // Anything else — EXECUTE denied, statement_timeout — is a failure to
+      // verify, not evidence of damage; letting it fall through here would
+      // produce a full phantom object diff against a healthy install.
+      const code =
+        error !== null && typeof error === 'object' && 'code' in error
+          ? (error as { code?: string }).code
+          : undefined
+      if (code !== '42883') {
+        const detail = error instanceof Error ? error.message : String(error)
+        throw new Error(
+          `Could not read ${EQL_V3_SCHEMA_NAME}.version(): ${detail}`,
+          { cause: error },
+        )
+      }
     }
+  }
+
+  const functionSignatures = new Map<string, Set<string>>()
+  for (const row of functions.rows) {
+    const name = row.name.toLowerCase()
+    const existing = functionSignatures.get(name) ?? new Set<string>()
+    existing.add(row.signature.toLowerCase())
+    functionSignatures.set(name, existing)
   }
 
   return {
@@ -379,11 +494,13 @@ async function readInstalledSurface(
     eqlV3InternalSchemaPresent:
       schemas.rows[0]?.eql_v3_internal_present === true,
     pgcryptoInstalled: schemas.rows[0]?.pgcrypto_installed === true,
+    pgcryptoSchema:
+      typeof schemas.rows[0]?.pgcrypto_schema === 'string'
+        ? schemas.rows[0].pgcrypto_schema
+        : null,
     installedVersion,
     presentTypes: new Set(types.rows.map((row) => row.name.toLowerCase())),
-    functionCounts: new Map(
-      functions.rows.map((row) => [row.name.toLowerCase(), row.overloads]),
-    ),
+    functionSignatures,
     presentOperators: new Set(
       operators.rows.map(
         (row) =>
@@ -480,7 +597,10 @@ export function diffSurface(
           message: `EQL ${installed.installedVersion} is installed, but this CLI pins EQL ${expected.eqlVersion} — the object-level surface checks only know the pinned bundle, so they were skipped. Run \`stash eql upgrade\`, then verify again.`,
         },
       ],
-      ok: true,
+      // NOT ok: nothing was verified. `ok` must mean "checked and complete" —
+      // an exit-0 here would let `stash eql verify || fail` pass on a damaged
+      // older install, the command's headline scenario.
+      ok: false,
     }
   }
 
@@ -497,6 +617,18 @@ export function diffSurface(
       kind: 'extension',
       message:
         'The pgcrypto extension is not installed — every EQL hashing function fails without it.',
+    })
+  } else if (
+    installed.pgcryptoSchema !== null &&
+    !SUPPORTED_PGCRYPTO_SCHEMAS.includes(installed.pgcryptoSchema)
+  ) {
+    // Same rule as the install preflight: the EQL functions' pinned
+    // search_path only resolves pgcrypto from these schemas, so presence
+    // alone is not enough — a relocated extension fails at runtime.
+    findings.push({
+      severity: 'damage',
+      kind: 'extension',
+      message: `pgcrypto is installed in schema "${installed.pgcryptoSchema}", which is not on the EQL search_path — every EQL hashing function fails at runtime. Fix with: ALTER EXTENSION pgcrypto SET SCHEMA extensions`,
     })
   }
   if (installed.installedVersion === null) {
@@ -527,24 +659,31 @@ export function diffSurface(
     }
   }
 
+  // Signature-level, not count-level: a stale or hand-created same-name
+  // function must not mask a genuinely missing overload.
   let functionsPresent = 0
-  for (const [name, expectedOverloads] of expected.functions) {
-    const present = installed.functionCounts.get(name) ?? 0
-    functionsPresent += Math.min(present, expectedOverloads)
-    if (present === 0) {
+  for (const [name, expectedSignatures] of expected.functions) {
+    const present = installed.functionSignatures.get(name) ?? new Set<string>()
+    const missing = expectedSignatures.filter(
+      (signature) => !present.has(signature),
+    )
+    functionsPresent += expectedSignatures.length - missing.length
+    if (missing.length === expectedSignatures.length) {
       findings.push({
         severity: 'damage',
         kind: 'function',
         domain: domainMentioned(name),
-        message: `Function \`${name}\` is missing (expected ${expectedOverloads} overload${expectedOverloads === 1 ? '' : 's'}).`,
+        message: `Function \`${name}\` is missing (expected ${expectedSignatures.length} overload${expectedSignatures.length === 1 ? '' : 's'}).`,
       })
-    } else if (present < expectedOverloads) {
-      findings.push({
-        severity: 'damage',
-        kind: 'function',
-        domain: domainMentioned(name),
-        message: `Function \`${name}\` has ${present} of ${expectedOverloads} expected overloads.`,
-      })
+    } else {
+      for (const signature of missing) {
+        findings.push({
+          severity: 'damage',
+          kind: 'function',
+          domain: domainMentioned(`${name}(${signature})`),
+          message: `Function \`${name}(${signature})\` is missing.`,
+        })
+      }
     }
   }
 
@@ -643,7 +782,7 @@ export function diffSurface(
       },
       functions: {
         expected: [...expected.functions.values()].reduce(
-          (sum, count) => sum + count,
+          (sum, signatures) => sum + signatures.length,
           0,
         ),
         present: functionsPresent,

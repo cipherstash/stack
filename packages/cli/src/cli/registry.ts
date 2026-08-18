@@ -359,14 +359,16 @@ export const registry: CommandGroup[] = [
           'Expected absences read as such: on managed Postgres the bundle',
           'legitimately skips the ORE operator class (creating it requires',
           'superuser) and poisons the `_ord_ore` domains to fail loudly — that',
-          'is a supported configuration, reported as info. Anything else',
-          'missing is a broken install and exits 1.',
+          'is a supported configuration, reported as info.',
           '',
-          'When the installed EQL version differs from the pinned bundle, the',
-          'object-level checks are skipped (the pinned bundle is the wrong',
-          'manifest to diff against) and the command suggests `eql upgrade`.',
+          'Exit 0 means exactly one thing: the surface was checked and found',
+          'complete. Damage, EQL not installed, and a version mismatch with',
+          'the pinned bundle all exit 1 — on a mismatch the object-level diff',
+          'is skipped (the pinned bundle is the wrong manifest to compare',
+          'against) and the command suggests `eql upgrade`.',
           '',
-          'Runs automatically at the end of `stash eql install`.',
+          'Runs automatically at the end of `stash eql install`, on the',
+          'fresh-install path and the already-installed early exit alike.',
         ].join('\n'),
         examples: ['eql verify', 'eql verify --json'],
         flags: [
@@ -375,7 +377,13 @@ export const registry: CommandGroup[] = [
             description:
               'Emit the machine-readable verification report instead of the table.',
           },
-          DATABASE_URL_FLAG,
+          {
+            name: '--database-url',
+            value: '<url>',
+            description:
+              "One-shot, like `eql install`'s: bypasses config loading entirely, so the database you name is the database that gets judged. Also settable via DATABASE_URL.",
+            env: 'DATABASE_URL',
+          },
         ],
       },
       {

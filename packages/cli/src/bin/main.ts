@@ -258,6 +258,29 @@ function rejectRetiredEqlFlags(
   }
 }
 
+/**
+ * `parseArgs` booleanises a `--database-url` whose value is missing (next
+ * token starts with `-`), so a typo'd `--database-url --json` would silently
+ * fall back to env/config resolution — and the read-only diagnostics would
+ * judge a different database than the user targeted. Reject it up front,
+ * keeping stdout parseable in `--json` mode (same pattern as `stash env`'s
+ * `nameMissingValue`).
+ */
+async function rejectMissingDatabaseUrlValue(
+  flags: Record<string, boolean>,
+): Promise<void> {
+  if (flags['database-url'] !== true) return
+  const message =
+    '`--database-url` needs a value (e.g. --database-url postgres://...). Without one the command would silently resolve a different database from DATABASE_URL or stash.config.ts.'
+  if (flags.json) {
+    const { emitJsonError } = await import('../commands/auth/events.js')
+    emitJsonError('missing_flag_value', message)
+  } else {
+    p.log.error(message)
+  }
+  throw new CliExit(1)
+}
+
 async function runEqlCommand(
   sub: string | undefined,
   flags: Record<string, boolean>,
@@ -265,6 +288,7 @@ async function runEqlCommand(
 ) {
   switch (sub) {
     case 'preflight':
+      await rejectMissingDatabaseUrlValue(flags)
       await preflightCommand({
         databaseUrl: values['database-url'],
         json: flags.json,
@@ -274,6 +298,7 @@ async function runEqlCommand(
       await runInstall(flags, values)
       break
     case 'verify': {
+      await rejectMissingDatabaseUrlValue(flags)
       const { verifyCommand } = await import('../commands/eql/verify.js')
       await verifyCommand({
         databaseUrl: values['database-url'],

@@ -50,17 +50,27 @@ describe('parseExpectedSurface (pinned bundle)', () => {
     expect(expected.oreDomains).toHaveLength(20)
   })
 
-  it('counts function overloads per name, including quoted names and aggregates', () => {
-    expect(expected.functions.get('eql_v3.version')).toBe(1)
-    // The term extractors — one overload per queryable domain.
-    expect(expected.functions.get('eql_v3.eq_term') ?? 0).toBeGreaterThan(5)
-    expect(expected.functions.get('eql_v3.ord_term') ?? 0).toBeGreaterThan(5)
+  it('collects type-only signatures per name, including quoted names and aggregates', () => {
+    // Zero-arg signature is the empty string.
+    expect(expected.functions.get('eql_v3.version')).toEqual([''])
+    // The term extractors — one overload per queryable domain, each keyed by
+    // its argument type so a stale same-name function cannot stand in for it.
+    const eqTerm = expected.functions.get('eql_v3.eq_term') ?? []
+    expect(eqTerm.length).toBeGreaterThan(5)
+    expect(eqTerm).toContain('public.eql_v3_text_eq')
     // Quoted operator-implementation names are stored unquoted, as pg_proc
     // spells them.
-    expect(expected.functions.get('eql_v3_internal.-') ?? 0).toBeGreaterThan(0)
-    // Aggregates share pg_proc with functions, so they share the map.
-    expect(expected.functions.get('eql_v3.min') ?? 0).toBeGreaterThan(0)
-    expect(expected.functions.get('eql_v3.max') ?? 0).toBeGreaterThan(0)
+    expect(
+      (expected.functions.get('eql_v3_internal.-') ?? []).length,
+    ).toBeGreaterThan(0)
+    // Aggregates share pg_proc with functions, so they share the map — and
+    // their argument lists are types-only already.
+    expect(expected.functions.get('eql_v3.min') ?? []).toContain(
+      'public.eql_v3_json_entry',
+    )
+    expect((expected.functions.get('eql_v3.max') ?? []).length).toBeGreaterThan(
+      0,
+    )
   })
 
   it('excludes the bundle-conditional objects (DO-block bodies)', () => {
@@ -99,9 +109,15 @@ function completeInstall(
     eqlV3SchemaPresent: true,
     eqlV3InternalSchemaPresent: true,
     pgcryptoInstalled: true,
+    pgcryptoSchema: 'extensions',
     installedVersion: surface.eqlVersion,
     presentTypes: new Set([...surface.domains, ...surface.types]),
-    functionCounts: new Map(surface.functions),
+    functionSignatures: new Map(
+      [...surface.functions].map(([name, signatures]) => [
+        name,
+        new Set(signatures),
+      ]),
+    ),
     presentOperators: new Set(surface.operators),
     presentCasts: new Set(surface.casts),
     oreOpclassPresent: true,
@@ -171,15 +187,13 @@ describe('diffSurface', () => {
     expect(report.counts?.operators.present).toBe(expected.operators.length - 1)
   })
 
-  it('detects a wholly missing function and a partially missing overload set', () => {
-    const counts = new Map(expected.functions)
-    counts.delete('eql_v3.eq_term')
-    const expectedOrd = expected.functions.get('eql_v3.ord_term') ?? 0
-    counts.set('eql_v3.ord_term', expectedOrd - 1)
-    const report = diffSurface(
-      expected,
-      completeInstall(expected, { functionCounts: counts }),
-    )
+  it('detects a wholly missing function and names a missing overload by signature', () => {
+    const installed = completeInstall(expected)
+    installed.functionSignatures.delete('eql_v3.eq_term')
+    const ordSignatures = installed.functionSignatures.get('eql_v3.ord_term')
+    expect(ordSignatures?.has('public.eql_v3_text_ord')).toBe(true)
+    ordSignatures?.delete('public.eql_v3_text_ord')
+    const report = diffSurface(expected, installed)
     expect(report.status).toBe('incomplete')
     const messages = report.findings
       .filter((f) => f.kind === 'function')
@@ -187,10 +201,26 @@ describe('diffSurface', () => {
     expect(
       messages.some((m) => m.includes('`eql_v3.eq_term` is missing')),
     ).toBe(true)
+    // The missing overload is named by its argument types, not a count.
+    expect(messages).toContain(
+      'Function `eql_v3.ord_term(public.eql_v3_text_ord)` is missing.',
+    )
+  })
+
+  it('is not fooled by a stale same-name function standing in for a missing overload', () => {
+    // The count-level trap: 1 current overload removed, 1 impostor added —
+    // the per-name COUNT is unchanged, but the signature diff still names
+    // the missing one. This is the #890 false-negative class.
+    const installed = completeInstall(expected)
+    const ordSignatures = installed.functionSignatures.get('eql_v3.ord_term')
+    ordSignatures?.delete('public.eql_v3_text_ord')
+    ordSignatures?.add('public.some_hand_rolled_type')
+    const report = diffSurface(expected, installed)
+    expect(report.status).toBe('incomplete')
     expect(
-      messages.some((m) =>
-        m.includes(
-          `\`eql_v3.ord_term\` has ${expectedOrd - 1} of ${expectedOrd} expected overloads`,
+      report.findings.some((f) =>
+        f.message.includes(
+          'Function `eql_v3.ord_term(public.eql_v3_text_ord)` is missing.',
         ),
       ),
     ).toBe(true)
@@ -221,7 +251,7 @@ describe('diffSurface', () => {
     expect(report.ok).toBe(false)
   })
 
-  it('skips the object diff on a version mismatch instead of reporting noise', () => {
+  it('skips the object diff on a version mismatch, and does NOT report ok', () => {
     const report = diffSurface(
       expected,
       completeInstall(expected, {
@@ -229,11 +259,13 @@ describe('diffSurface', () => {
         // Even with everything missing, a different version must not produce
         // object-level damage — the pinned bundle is the wrong manifest.
         presentOperators: new Set(),
-        functionCounts: new Map(),
+        functionSignatures: new Map(),
       }),
     )
     expect(report.status).toBe('version-mismatch')
-    expect(report.ok).toBe(true)
+    // Nothing was verified, so `ok` must be false — a `verify || fail` gate
+    // must not pass on an install the command could not actually check.
+    expect(report.ok).toBe(false)
     expect(report.counts).toBeNull()
     expect(report.findings).toHaveLength(1)
     expect(report.findings[0].message).toContain('stash eql upgrade')
@@ -252,9 +284,27 @@ describe('diffSurface', () => {
   it('treats missing pgcrypto as damage', () => {
     const report = diffSurface(
       expected,
-      completeInstall(expected, { pgcryptoInstalled: false }),
+      completeInstall(expected, {
+        pgcryptoInstalled: false,
+        pgcryptoSchema: null,
+      }),
     )
     expect(report.status).toBe('incomplete')
     expect(report.findings.some((f) => f.kind === 'extension')).toBe(true)
+  })
+
+  it('treats pgcrypto relocated off the EQL search_path as damage', () => {
+    // Presence alone is not enough — the EQL functions pin
+    // `search_path = pg_catalog, extensions, public`, so a pgcrypto in any
+    // other schema fails at runtime (same rule as the install preflight).
+    const report = diffSurface(
+      expected,
+      completeInstall(expected, { pgcryptoSchema: 'crypto_tools' }),
+    )
+    expect(report.status).toBe('incomplete')
+    const finding = report.findings.find((f) => f.kind === 'extension')
+    expect(finding?.severity).toBe('damage')
+    expect(finding?.message).toContain('crypto_tools')
+    expect(finding?.message).toContain('ALTER EXTENSION pgcrypto SET SCHEMA')
   })
 })

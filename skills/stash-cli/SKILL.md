@@ -391,20 +391,20 @@ The removed `--eql-version`, `--latest`, `--drizzle`, `--migration`, `--direct`,
 
 **`--database-url` is a one-shot.** It installs against that database and leaves the project untouched — no config is loaded, and none is scaffolded, nor is an encryption client. This lets `npx --package=stash@1.0.0 stash eql install --database-url 'postgres://...'` run in a bare project with no CipherStash dependencies while pinning the CLI to this skill's release. It also means the flag always wins: loading a config could pick up a parent-directory `databaseUrl` literal and install against the wrong database.
 
-**The install verifies itself.** `eql install` ends by running the same surface check as `eql verify` (below) and exits 1 if the committed install is incomplete — "install succeeded" now means the full query-time surface is present, not just that the SQL ran.
+**The install verifies itself.** `eql install` ends by running the same surface check as `eql verify` (below) — on the fresh-install path *and* on the already-installed early exit, so a plain re-run over a damaged database fails rather than printing "Nothing to do." It exits 1 if the surface is incomplete; if the check itself cannot run (connection dropped mid-verify), it warns and points at `stash eql verify` instead of failing the committed install.
 
 #### `eql verify`
 
 Read-only check that the **installed EQL surface is complete**, independent of any application schema. It compares what the database actually has against everything the pinned bundle installs — every domain, function overload, operator, cast, and the ORE operator class — via catalog queries, and reports damage grouped per domain. This catches the failure `eql validate` cannot: a partial install where the domains exist but some comparison functions or operators do not, so `weight >= x` errors at query time long after "install succeeded".
 
-Expected absences read as info, not damage: on managed Postgres the bundle legitimately skips the ORE operator class (creating one requires superuser) and poisons the `_ord_ore` domains to fail loudly — `eql verify` reports that as the supported configuration it is. Exits 1 only for genuine damage (missing objects, or an incoherent ORE state) or when EQL is not installed at all. When the installed EQL version differs from the pinned bundle, the object-level diff is skipped (the pinned bundle is the wrong manifest to compare against) and the command suggests `eql upgrade`.
+Expected absences read as info, not damage: on managed Postgres the bundle legitimately skips the ORE operator class (creating one requires superuser) and poisons the `_ord_ore` domains to fail loudly — `eql verify` reports that as the supported configuration it is. Exit 0 means exactly one thing: the surface was checked and found complete. Genuine damage, EQL not installed, and a version mismatch with the pinned bundle all exit 1 — on a mismatch the object-level diff is skipped (the pinned bundle is the wrong manifest to compare against) and the command suggests `eql upgrade`; "could not verify" never reads as "verified".
 
 Run it whenever query-time behaviour looks inconsistent with a "successful" install — e.g. an `operator does not exist` or `function ... does not exist` error naming an `eql_v3` object.
 
 | Flag | Description |
 |---|---|
-| `--json` | Machine-readable report. `status` is the discriminator: `complete`, `incomplete` (exit 1), `not-installed` (exit 1), or `version-mismatch`; `findings[]` carries per-object damage with a `domain` attribution |
-| `--database-url <url>` | Verify that database (no config needed). A hand-set literal `databaseUrl` in stash.config.ts still wins, with a warning (stderr in `--json` mode) |
+| `--json` | Machine-readable report. `status` is the discriminator: `complete` (the only exit-0 status), `incomplete`, `not-installed`, or `version-mismatch`; `findings[]` carries per-object damage with a `domain` attribution |
+| `--database-url <url>` | One-shot, like `eql install`'s: bypasses config loading entirely, so the database you name is the database that gets judged |
 
 #### `eql migration`
 

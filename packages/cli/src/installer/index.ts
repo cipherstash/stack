@@ -145,7 +145,7 @@ const PREFLIGHT_SQL = `
 `
 
 /** The schemas the pinned bundle accepts `pgcrypto` in (its search_path). */
-const SUPPORTED_PGCRYPTO_SCHEMAS = ['extensions', 'public']
+export const SUPPORTED_PGCRYPTO_SCHEMAS = ['extensions', 'public']
 
 export class EQLInstaller {
   private readonly databaseUrl: string

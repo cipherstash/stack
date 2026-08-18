@@ -130,7 +130,7 @@ SELECT * FROM orders ORDER BY eql_v3.ord_term(data_encrypted -> '<selector>'::te
 
 The `_ord_ore` restriction, precisely: its btree ordering depends on a hand-written operator class created by the EQL installer, and `CREATE OPERATOR CLASS` is a superuser-gated command in stock PostgreSQL. Whether that blocks ORE is per-platform, not a blanket managed-Postgres rule: **AWS RDS and Aurora fully support it** (their master role can create operator classes), while **cloud-hosted Supabase is the one confirmed platform that refuses it**. Where the install role can't create the opclass, the installer detects this and **disables the `_ord_ore` domains** — using one raises `feature_not_supported` with a hint naming the alternatives.
 
-**The silent-failure mode to check for:** if an `_ord_ore` column somehow exists without the opclass, `CREATE INDEX … USING btree (eql_v3.ord_term_ore(col))` does **not** fail — PostgreSQL binds the generic `record_ops` instead. The index builds, occupies space, and never engages. Verify which opclass an ORE index actually bound:
+**The silent-failure mode to check for:** if an `_ord_ore` column somehow exists without the opclass, `CREATE INDEX … USING btree (eql_v3.ord_term_ore(col))` does **not** fail — PostgreSQL binds the generic `record_ops` instead. The index builds, occupies space, and never engages. Run `stash eql verify` first: it reads the ORE state directly and distinguishes the two healthy configurations (opclass present, or opclass skipped with every `_ord_ore` domain disabled) from the incoherent half-working state that makes this trap possible — and `stash eql install` runs the same check automatically. What `verify` does not tell you is which opclass an *existing index* bound at build time; for that, check the index itself:
 
 ```sql
 SELECT i.relname, oc.opcname
@@ -269,7 +269,7 @@ Index not being used:
 ## Reference
 
 - `stash-encryption` — the `types.*` domain catalog, wire-format operators and ordering, and the staged rollout lifecycle.
-- `stash-cli` — `stash eql install`, `stash eql validate` (its "No functional index over `eql_v3.…`" Info finding is resolved by this skill), and `stash encrypt backfill` / `drop`.
+- `stash-cli` — `stash eql install`, `stash eql verify` (is the installed operator/opclass surface complete and the ORE state coherent), `stash eql validate` (its "No functional index over `eql_v3.…`" Info finding is resolved by this skill), and `stash encrypt backfill` / `drop`.
 - `stash-drizzle`, `stash-supabase`, `stash-prisma` — per-integration query patterns; index DDL placement per the section above.
 - `stash-postgres` — the hand-written predicate forms these indexes serve (`pg` / `postgres-js`, no ORM).
 - `stash-edge` — the WASM entry, for apps whose queries run on Deno / Workers / Supabase Edge Functions.
