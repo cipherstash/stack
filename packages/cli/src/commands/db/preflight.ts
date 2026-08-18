@@ -1,4 +1,5 @@
 import * as p from '@clack/prompts'
+import { emitJsonError, emitJsonEvent } from '@/commands/auth/events.js'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { resolveDatabaseUrl } from '@/config/database-url.js'
 import { findConfigFile, loadStashConfig } from '@/config/index.js'
@@ -7,17 +8,43 @@ import { EQLInstaller, type PreflightResult } from '@/installer/index.js'
 /**
  * Preflight runs BEFORE anything is set up, so a missing stash.config.ts must
  * not fail it — fall back to the plain DATABASE_URL resolution chain the
- * installer itself uses when no config exists yet.
+ * installer itself uses when no config exists yet. In `json` mode the
+ * resolver keeps stdout parseable: informational chrome and the interactive
+ * prompt are suppressed (`quiet`) and failures come out as the shared
+ * `{ status: 'error', code, message }` envelope (`jsonErrors`).
+ *
+ * Mirrors `installCommand`'s precedence caveat: a hand-set literal
+ * `databaseUrl` in stash.config.ts beats `--database-url`. That is surprising
+ * enough to say out loud — to stderr in json mode, so stdout stays JSON.
  */
 async function resolvePreflightDatabaseUrl(
   databaseUrlFlag: string | undefined,
-  quiet: boolean,
+  json: boolean,
 ): Promise<string> {
-  if (findConfigFile(process.cwd())) {
-    const config = await loadStashConfig({ databaseUrlFlag, quiet })
+  const configPath = findConfigFile(process.cwd())
+  if (configPath) {
+    const config = await loadStashConfig(
+      { databaseUrlFlag, quiet: json, jsonErrors: json },
+      configPath,
+    )
+    if (
+      databaseUrlFlag !== undefined &&
+      config.databaseUrl !== databaseUrlFlag.trim()
+    ) {
+      const warning = `Ignoring --database-url: ${configPath} sets an explicit databaseUrl that takes precedence. Probing the config's database.`
+      if (json) {
+        process.stderr.write(`${warning}\n`)
+      } else {
+        p.log.warn(warning)
+      }
+    }
     return config.databaseUrl
   }
-  return resolveDatabaseUrl({ databaseUrlFlag, quiet })
+  return resolveDatabaseUrl({
+    databaseUrlFlag,
+    quiet: json,
+    jsonErrors: json,
+  })
 }
 
 /**
@@ -28,7 +55,7 @@ async function resolvePreflightDatabaseUrl(
  *
  * Exit code: 1 when a blocking gap is present (`result.ok === false`), else 0.
  * Membership of `postgres` is reported but never blocks — the installer
- * defers the owner-scoped Supabase grants for non-member roles.
+ * skips the optional owner-scoped Supabase grants for non-member roles.
  */
 export async function preflightCommand(
   options: { databaseUrl?: string; json?: boolean } = {},
@@ -44,24 +71,26 @@ export async function preflightCommand(
       result = await installer.preflight()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      console.log(JSON.stringify({ status: 'error', message }))
+      emitJsonError('preflight_failed', message)
       process.exit(1)
     }
-    console.log(JSON.stringify({ status: 'ok', ...result }))
+    // `status` is the discriminator agents gate on, so blockers must not
+    // masquerade as 'ok' — 'blocked' means the probe worked and found gaps.
+    emitJsonEvent({ status: result.ok ? 'ok' : 'blocked', ...result })
     if (!result.ok) process.exit(1)
     return
   }
 
   p.intro(runnerCommand(detectPackageManager(), 'stash eql preflight'))
-  const s = p.spinner()
 
-  s.start('Resolving database URL...')
+  // Resolve the URL before any spinner exists: tier 4 of the resolver is an
+  // interactive prompt, and a live spinner would redraw over it.
   const databaseUrl = await resolvePreflightDatabaseUrl(
     options.databaseUrl,
     false,
   )
-  s.stop('Database URL resolved.')
 
+  const s = p.spinner()
   s.start('Probing database role capability...')
   const installer = new EQLInstaller({ databaseUrl })
   let result: PreflightResult
@@ -97,6 +126,13 @@ export async function preflightCommand(
 /** The human-readable rows, aligned. Exported for unit tests. */
 export function renderPreflightReport(result: PreflightResult): string {
   const yesNo = (value: boolean) => (value ? 'yes' : 'no')
+  const pgcryptoValue = result.pgcryptoInstalled
+    ? `present${result.pgcryptoSchema ? ` (in ${result.pgcryptoSchema})` : ''}`
+    : 'absent'
+  const pgcryptoUnsupported =
+    result.pgcryptoInstalled &&
+    result.pgcryptoSchema !== null &&
+    !['extensions', 'public'].includes(result.pgcryptoSchema)
   const rows: Array<[string, string, string?]> = [
     ['current_user', result.currentUser],
     ['superuser', yesNo(result.isSuperuser)],
@@ -125,10 +161,14 @@ export function renderPreflightReport(result: PreflightResult): string {
     ],
     [
       'pgcrypto',
-      result.pgcryptoInstalled ? 'present' : 'absent',
-      result.pgcryptoInstalled || result.hasDatabaseCreate || result.isSuperuser
-        ? undefined
-        : '<- blocks: CREATE EXTENSION pgcrypto',
+      pgcryptoValue,
+      pgcryptoUnsupported
+        ? '<- blocks: not on the EQL search_path (ALTER EXTENSION pgcrypto SET SCHEMA extensions)'
+        : !result.pgcryptoInstalled &&
+            !result.hasDatabaseCreate &&
+            !result.isSuperuser
+          ? '<- blocks: CREATE EXTENSION pgcrypto'
+          : undefined,
     ],
     ['eql_v3 schema', result.eqlV3SchemaPresent ? 'present' : 'absent'],
     [
@@ -136,6 +176,23 @@ export function renderPreflightReport(result: PreflightResult): string {
       result.eqlV3InternalSchemaPresent ? 'present' : 'absent',
     ],
   ]
+  // Ownership only matters (and is only known) when a schema already exists:
+  // a reinstall opens with DROP SCHEMA ... CASCADE.
+  if (
+    result.canDropEqlV3Schema !== null ||
+    result.canDropEqlV3InternalSchema !== null
+  ) {
+    const canDrop =
+      result.canDropEqlV3Schema !== false &&
+      result.canDropEqlV3InternalSchema !== false
+    rows.push([
+      'can drop EQL schemas',
+      yesNo(canDrop),
+      canDrop
+        ? undefined
+        : '<- blocks: reinstall (DROP SCHEMA ... CASCADE needs the owner or a superuser)',
+    ])
+  }
   const labelWidth = Math.max(...rows.map(([label]) => label.length))
   return rows
     .map(([label, value, annotation]) =>

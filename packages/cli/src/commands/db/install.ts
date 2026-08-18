@@ -164,6 +164,16 @@ export async function installCommand(
     const installed = await installer.isInstalled()
     s.stop(installed ? 'EQL is already installed.' : 'EQL is not installed.')
     if (installed) {
+      // Re-apply the grants even when the bundle is present: since the bundle
+      // commits before the grants run, a grants failure leaves an installed-
+      // but-ungranted database, and a plain re-run must heal it rather than
+      // early-exit past it. Idempotent, a handful of statements.
+      if (supabase) {
+        s.start('Re-applying Supabase role grants...')
+        const grantsResult = await installer.applySupabaseGrants()
+        s.stop('Supabase role grants applied.')
+        reportSupabaseGrantsOutcome(grantsResult)
+      }
       p.log.info('Use --force to re-run the install script.')
       p.outro('Nothing to do.')
       return 'already-installed'

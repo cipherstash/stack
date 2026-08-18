@@ -74,6 +74,19 @@ describeLive('EQLInstaller.preflight — live Postgres', () => {
     expect(result.currentUser).toBe('cipherstash')
     expect(result.isSuperuser).toBe(true)
     expect(result.ok).toBe(true)
+    // The pgcrypto-placement and schema-ownership probes must be answers, not
+    // query failures, whatever state the shared database is in.
+    if (result.pgcryptoInstalled) {
+      expect(typeof result.pgcryptoSchema).toBe('string')
+    } else {
+      expect(result.pgcryptoSchema).toBeNull()
+    }
+    if (result.eqlV3SchemaPresent) {
+      // A superuser can always drop.
+      expect(result.canDropEqlV3Schema).toBe(true)
+    } else {
+      expect(result.canDropEqlV3Schema).toBeNull()
+    }
     if (await postgresRoleExists()) {
       // Image variant that ships a postgres role: a superuser is a member.
       expect(result.memberOfPostgres).toBe(true)

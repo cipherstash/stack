@@ -24,6 +24,7 @@ import { execSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import * as p from '@clack/prompts'
+import { emitJsonError } from '../commands/auth/events.js'
 import { detectSupabaseProject } from '../commands/db/detect.js'
 import { detectPackageManager, runnerCommand } from '../commands/init/utils.js'
 import { messages } from '../messages.js'
@@ -43,6 +44,14 @@ export interface ResolveDatabaseUrlOptions {
    * Error paths still print (and exit 1) — a failure should stay diagnosable.
    */
   quiet?: boolean
+  /**
+   * Surface resolution failures as the shared `{ status: 'error', code,
+   * message }` NDJSON envelope instead of clack chrome, keeping a `--json`
+   * command's stdout parseable on its most likely first-run failure (no
+   * DATABASE_URL configured). Exit code stays 1. Implies nothing about
+   * `quiet` — pass both for a JSON command.
+   */
+  jsonErrors?: boolean
 }
 
 // The CLI ships as two tsup bundles (`dist/index.js` for the library and
@@ -192,7 +201,11 @@ export async function resolveDatabaseUrl(
   if (ctx.databaseUrlFlag !== undefined) {
     const trimmed = ctx.databaseUrlFlag.trim()
     if (!trimmed || !isUrlParseable(trimmed)) {
-      p.log.error(messages.db.urlFlagMalformed)
+      if (ctx.jsonErrors) {
+        emitJsonError('database_url_invalid', messages.db.urlFlagMalformed)
+      } else {
+        p.log.error(messages.db.urlFlagMalformed)
+      }
       process.exit(1)
     }
     if (!ctx.quiet) p.log.info(messages.db.urlResolvedFromFlag)
@@ -231,8 +244,13 @@ export async function resolveDatabaseUrl(
   }
 
   // 5. Hard fail.
-  p.log.error(
-    isCi ? messages.db.urlMissingCi : messages.db.urlMissingInteractive,
-  )
+  const missingMessage = isCi
+    ? messages.db.urlMissingCi
+    : messages.db.urlMissingInteractive
+  if (ctx.jsonErrors) {
+    emitJsonError('database_url_missing', missingMessage)
+  } else {
+    p.log.error(missingMessage)
+  }
   process.exit(1)
 }

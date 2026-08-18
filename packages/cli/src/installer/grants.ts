@@ -158,3 +158,34 @@ export const DEFERRED_GRANTS_HEADER = `-- Optional: the statements below require
 -- (stash re-grants every object on each install/upgrade). If you want them,
 -- apply them via your platform's migration tool or the Supabase SQL editor.
 `
+
+/**
+ * The owner-scoped statements wrapped in a membership guard, for SQL that
+ * ships in a generated migration file. A migration runs as whatever role the
+ * project's migration runner uses — on Lovable that is `sandbox_exec`, and a
+ * bare `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` would fail there and roll
+ * back the entire migration (bundle included). The guard makes the file safe
+ * for every role: members apply the statements, non-members skip them —
+ * losing only the optional future-object rules, exactly as `stash eql
+ * install` behaves.
+ */
+export const SUPABASE_GUARDED_DEFAULT_PRIVILEGES_SQL_V3 = `DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres')
+     AND pg_has_role(current_user, 'postgres', 'MEMBER') THEN
+    ${SUPABASE_DEFAULT_PRIVILEGES_SQL_V3.trim().split('\n').join('\n    ')}
+  END IF;
+END $$;
+`
+
+/**
+ * The grants block for generated migration files: the plain `GRANT`s
+ * verbatim, then the owner-scoped statements behind the membership guard.
+ * `SUPABASE_PERMISSIONS_SQL_V3` (the direct-install block) is deliberately
+ * NOT reused here — its unguarded owner-scoped statements would abort a
+ * migration applied by a non-member role.
+ */
+export const SUPABASE_MIGRATION_GRANTS_SQL_V3 = `${SUPABASE_IMMEDIATE_GRANTS_SQL_V3}-- Optional owner-scoped default privileges: applied only when the migration
+-- runs as a member of \`postgres\` (they cover EQL objects \`postgres\` might
+-- later create outside stash tooling; stash re-grants on every install).
+${SUPABASE_GUARDED_DEFAULT_PRIVILEGES_SQL_V3}`

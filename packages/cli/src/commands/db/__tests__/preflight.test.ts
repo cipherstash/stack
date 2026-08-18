@@ -9,8 +9,11 @@ const CAPABLE: PreflightResult = {
   hasDatabaseCreate: true,
   hasPublicCreate: true,
   pgcryptoInstalled: true,
+  pgcryptoSchema: 'extensions',
   eqlV3SchemaPresent: false,
   eqlV3InternalSchemaPresent: false,
+  canDropEqlV3Schema: null,
+  canDropEqlV3InternalSchema: null,
   missing: [],
   ok: true,
 }
@@ -62,6 +65,39 @@ describe('renderPreflightReport', () => {
     expect(report).toContain('<- blocks: CREATE SCHEMA / CREATE EXTENSION')
     expect(report).toContain('<- blocks: CREATE DOMAIN public.eql_v3_*')
     expect(report).toContain('<- blocks: CREATE EXTENSION pgcrypto')
+  })
+
+  it('flags a relocated pgcrypto and shows its schema', () => {
+    const report = renderPreflightReport({
+      ...CAPABLE,
+      pgcryptoSchema: 'crypto_home',
+      missing: ['x'],
+      ok: false,
+    })
+    expect(report).toContain('present (in crypto_home)')
+    expect(report).toContain('<- blocks: not on the EQL search_path')
+  })
+
+  it('adds the drop-ownership row only when an EQL schema exists', () => {
+    expect(renderPreflightReport(CAPABLE)).not.toContain('can drop EQL schemas')
+    const blocked = renderPreflightReport({
+      ...CAPABLE,
+      eqlV3SchemaPresent: true,
+      eqlV3InternalSchemaPresent: true,
+      canDropEqlV3Schema: false,
+      canDropEqlV3InternalSchema: false,
+      missing: ['x'],
+      ok: false,
+    })
+    expect(blocked).toContain('can drop EQL schemas  no')
+    expect(blocked).toContain('<- blocks: reinstall')
+    const fine = renderPreflightReport({
+      ...CAPABLE,
+      eqlV3SchemaPresent: true,
+      canDropEqlV3Schema: true,
+      canDropEqlV3InternalSchema: true,
+    })
+    expect(fine).toContain('can drop EQL schemas  yes')
   })
 
   it('suppresses privilege annotations for a superuser', () => {

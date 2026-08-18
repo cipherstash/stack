@@ -22,8 +22,11 @@ const CAPABLE_ROW = {
   has_database_create: true,
   has_public_create: true,
   pgcrypto_installed: true,
+  pgcrypto_schema: 'extensions',
   eql_v3_present: false,
   eql_v3_internal_present: false,
+  can_drop_eql_v3: null,
+  can_drop_eql_v3_internal: null,
 }
 
 describe('EQLInstaller', () => {
@@ -121,6 +124,85 @@ describe('EQLInstaller', () => {
     await expect(installer.preflight()).resolves.toMatchObject({
       memberOfPostgres: null,
       ok: true,
+    })
+  })
+
+  it('blocks a relocated pgcrypto, even for a superuser', async () => {
+    mockConnect.mockResolvedValue(undefined)
+    mockQuery.mockResolvedValue({
+      rows: [{ ...CAPABLE_ROW, pgcrypto_schema: 'crypto_home' }],
+      rowCount: 1,
+    })
+    mockEnd.mockResolvedValue(undefined)
+    const { EQLInstaller } = await import('@/installer/index.ts')
+    const installer = new EQLInstaller({ databaseUrl: 'postgres://test' })
+
+    const result = await installer.preflight()
+    expect(result.ok).toBe(false)
+    expect(result.missing).toEqual([
+      expect.stringContaining('pgcrypto relocated'),
+    ])
+    expect(result.missing[0]).toContain('crypto_home')
+    expect(result.missing[0]).toContain('ALTER EXTENSION pgcrypto SET SCHEMA')
+  })
+
+  it('accepts pgcrypto in either supported schema', async () => {
+    mockConnect.mockResolvedValue(undefined)
+    mockEnd.mockResolvedValue(undefined)
+    const { EQLInstaller } = await import('@/installer/index.ts')
+    const installer = new EQLInstaller({ databaseUrl: 'postgres://test' })
+    for (const schema of ['extensions', 'public']) {
+      mockQuery.mockResolvedValue({
+        rows: [{ ...CAPABLE_ROW, pgcrypto_schema: schema }],
+        rowCount: 1,
+      })
+      await expect(installer.preflight()).resolves.toMatchObject({
+        ok: true,
+        pgcryptoSchema: schema,
+      })
+    }
+  })
+
+  it('blocks a role that cannot drop an existing EQL schema', async () => {
+    mockConnect.mockResolvedValue(undefined)
+    mockQuery.mockResolvedValue({
+      rows: [
+        {
+          ...CAPABLE_ROW,
+          role_name: 'other_admin',
+          is_superuser: false,
+          member_of_postgres: false,
+          eql_v3_present: true,
+          eql_v3_internal_present: true,
+          can_drop_eql_v3: false,
+          can_drop_eql_v3_internal: false,
+        },
+      ],
+      rowCount: 1,
+    })
+    mockEnd.mockResolvedValue(undefined)
+    const { EQLInstaller } = await import('@/installer/index.ts')
+    const installer = new EQLInstaller({ databaseUrl: 'postgres://test' })
+
+    const result = await installer.preflight()
+    expect(result.ok).toBe(false)
+    expect(result.missing).toEqual([
+      expect.stringContaining('ownership of the existing EQL schemas'),
+    ])
+    expect(result.canDropEqlV3Schema).toBe(false)
+  })
+
+  it('keeps the deprecated checkPermissions() adapter shape', async () => {
+    mockConnect.mockResolvedValue(undefined)
+    mockQuery.mockResolvedValue({ rows: [CAPABLE_ROW], rowCount: 1 })
+    mockEnd.mockResolvedValue(undefined)
+    const { EQLInstaller } = await import('@/installer/index.ts')
+    const installer = new EQLInstaller({ databaseUrl: 'postgres://test' })
+
+    await expect(installer.checkPermissions()).resolves.toEqual({
+      ok: true,
+      missing: [],
+      isSuperuser: true,
     })
   })
 
@@ -329,6 +411,36 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA eql_v3_internal GRANT EXECU
     }
     for (const line of statements(SUPABASE_IMMEDIATE_GRANTS_SQL_V3)) {
       expect(line).toMatch(/^GRANT /)
+    }
+  })
+
+  it('guards every owner-scoped statement behind the membership check for migrations', async () => {
+    const {
+      SUPABASE_DEFAULT_PRIVILEGES_SQL_V3,
+      SUPABASE_GUARDED_DEFAULT_PRIVILEGES_SQL_V3,
+      SUPABASE_MIGRATION_GRANTS_SQL_V3,
+      SUPABASE_IMMEDIATE_GRANTS_SQL_V3,
+    } = await import('@/installer/grants.ts')
+    // Every owner-scoped statement appears inside the DO block.
+    for (const line of SUPABASE_DEFAULT_PRIVILEGES_SQL_V3.trim().split('\n')) {
+      expect(SUPABASE_GUARDED_DEFAULT_PRIVILEGES_SQL_V3).toContain(line)
+    }
+    expect(SUPABASE_GUARDED_DEFAULT_PRIVILEGES_SQL_V3).toContain(
+      "pg_has_role(current_user, 'postgres', 'MEMBER')",
+    )
+    expect(SUPABASE_GUARDED_DEFAULT_PRIVILEGES_SQL_V3).toContain(
+      "EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres')",
+    )
+    // The migration block = immediate grants + guarded owner-scoped block,
+    // with NO bare (unguarded) owner-scoped statement: every ALTER line must
+    // be indented inside the DO body.
+    expect(SUPABASE_MIGRATION_GRANTS_SQL_V3).toContain(
+      SUPABASE_IMMEDIATE_GRANTS_SQL_V3,
+    )
+    for (const line of SUPABASE_MIGRATION_GRANTS_SQL_V3.split('\n')) {
+      if (line.includes('ALTER DEFAULT PRIVILEGES')) {
+        expect(line).toMatch(/^\s+ALTER DEFAULT PRIVILEGES/)
+      }
     }
   })
 })

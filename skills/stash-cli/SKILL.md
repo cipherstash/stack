@@ -358,8 +358,8 @@ Membership of `postgres` is reported but never blocks: `eql install` handles a n
 
 | Flag | Description |
 |---|---|
-| `--json` | Machine-readable result instead of the table |
-| `--database-url <url>` | Probe that database (no config needed) |
+| `--json` | Machine-readable result instead of the table. Stdout is pure JSON even on failure: success is `{ status: 'ok', ... }`, blockers are `{ status: 'blocked', ... }` (exit 1), and failures — including a missing/malformed DATABASE_URL — are the shared `{ status: 'error', code, message }` envelope |
+| `--database-url <url>` | Probe that database (no config needed). A hand-set literal `databaseUrl` in stash.config.ts still wins, with a warning (stderr in `--json` mode) |
 
 #### `eql install`
 
@@ -372,9 +372,9 @@ Gets a project from zero to a direct EQL v3 install. It loads an existing `stash
 | `--force` | Reinstall even if EQL is present |
 | `--dry-run` | Show what would happen |
 | `--supabase` | Supabase-compatible install; grants `anon`, `authenticated`, and `service_role` |
-
-**Non-`postgres` roles.** The Supabase grants include three owner-scoped `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` statements that only a member of `postgres` can run. When the connecting role is not a member (checked up front), the install still succeeds and is **complete**: the bundle and every plain `GRANT` are applied, covering all existing objects. The skipped statements are printed under "Optional SQL — requires postgres" purely as information — they only cover EQL objects `postgres` might later create outside stash tooling, and every `stash eql install`/`eql upgrade` re-grants all objects anyway (the generated Supabase migration embeds the grants too). Do not treat them as a required follow-up, and never work around a grants failure by disabling anything — the install itself is no longer rolled back by a grants failure (the bundle commits in its own transaction; grants run after it).
 | `--database-url <url>` | One-shot install (see below) |
+
+**Non-`postgres` roles.** The Supabase grants include three owner-scoped `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` statements that only a member of `postgres` can run. When the connecting role is not a member (checked up front), the install still succeeds and is **complete**: the bundle and every plain `GRANT` are applied, covering all existing objects. The skipped statements are printed under "Optional SQL — requires postgres" purely as information — they only cover EQL objects `postgres` might later create outside stash tooling, and every `stash eql install`/`eql upgrade` re-grants all objects anyway (the generated Supabase migration wraps them in a membership guard, so it is safe for any role). Do not treat them as a required follow-up, and never work around a grants failure by disabling anything — the install itself is no longer rolled back by a grants failure (the bundle commits in its own transaction; grants run after it), and a plain re-run of `eql install` re-applies the grants on an already-installed database.
 
 The removed `--eql-version`, `--latest`, `--drizzle`, `--migration`, `--direct`, `--migrations-dir`, and `--exclude-operator-family` options fail clearly instead of being ignored. A request for EQL v2 points dump-recovery users to the upstream EQL 2.3.1 SQL release. New installs are EQL v3 only; its pinned bundle self-adapts when a database role cannot create the optional operator family.
 
@@ -679,9 +679,11 @@ import {
 const installer = new EQLInstaller({ databaseUrl: 'postgresql://...' })
 
 await installer.preflight()                         // PreflightResult
+await installer.checkPermissions()                  // deprecated adapter over preflight()
 await installer.isInstalled()                       // boolean (v3)
 await installer.getInstalledVersion()               // string | 'unknown' | null
 await installer.install({ supabase: true })         // InstallResult
+await installer.applySupabaseGrants()               // InstallResult (grants only, idempotent)
 ```
 
 `install` installs EQL v3 only and accepts `supabase`. `isInstalled` and `getInstalledVersion` retain an optional `{ eqlVersion: 2 | 3 }` solely for read-only diagnostics of existing v2 databases.
@@ -694,10 +696,13 @@ type PreflightResult = {
   isSuperuser: boolean
   memberOfPostgres: boolean | null  // null: no postgres role exists; false never blocks (it only skips optional statements)
   hasDatabaseCreate: boolean
-  hasPublicCreate: boolean
+  hasPublicCreate: boolean          // false (blocking) when the public schema is missing entirely
   pgcryptoInstalled: boolean
+  pgcryptoSchema: string | null     // blocks (even superusers) when outside extensions/public — the bundle aborts
   eqlV3SchemaPresent: boolean
   eqlV3InternalSchemaPresent: boolean
+  canDropEqlV3Schema: boolean | null          // null: schema absent; false blocks reinstall (DROP SCHEMA ... CASCADE)
+  canDropEqlV3InternalSchema: boolean | null
 }
 
 type InstallResult = {
