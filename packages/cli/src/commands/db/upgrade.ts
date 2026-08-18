@@ -2,6 +2,7 @@ import * as p from '@clack/prompts'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
 import { EQLInstaller } from '@/installer/index.js'
+import { reportSupabaseGrantsOutcome } from './grants-report.js'
 
 export async function upgradeCommand(options: {
   dryRun?: boolean
@@ -44,9 +45,9 @@ export async function upgradeCommand(options: {
   }
 
   s.start('Upgrading EQL v3 extensions (pinned bundle)...')
-  await installer.install({ supabase: options.supabase })
+  const result = await installer.install({ supabase: options.supabase })
   s.stop('EQL extensions upgraded.')
-  if (options.supabase) p.log.success('Supabase role permissions granted.')
+  if (options.supabase) reportSupabaseGrantsOutcome(result)
 
   s.start('Verifying new version...')
   const newVersion = await installer.getInstalledVersion()

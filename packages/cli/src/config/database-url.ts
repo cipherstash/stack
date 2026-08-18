@@ -36,6 +36,13 @@ export interface ResolveDatabaseUrlOptions {
   supabase?: boolean
   /** Override cwd for project detection (mainly for tests). */
   cwd?: string
+  /**
+   * Suppress the informational chrome and skip the interactive-prompt tier.
+   * For `--json` commands: their stdout is a machine-readable contract, so
+   * neither a "Using DATABASE_URL from …" line nor a prompt may appear on it.
+   * Error paths still print (and exit 1) — a failure should stay diagnosable.
+   */
+  quiet?: boolean
 }
 
 // The CLI ships as two tsup bundles (`dist/index.js` for the library and
@@ -188,7 +195,7 @@ export async function resolveDatabaseUrl(
       p.log.error(messages.db.urlFlagMalformed)
       process.exit(1)
     }
-    p.log.info(messages.db.urlResolvedFromFlag)
+    if (!ctx.quiet) p.log.info(messages.db.urlResolvedFromFlag)
     return trimmed
   }
 
@@ -203,7 +210,7 @@ export async function resolveDatabaseUrl(
   if (ctx.supabase || supabaseProject.hasConfigToml) {
     const fromSupabase = trySupabaseStatus()
     if (fromSupabase) {
-      p.log.info(messages.db.urlResolvedFromSupabase)
+      if (!ctx.quiet) p.log.info(messages.db.urlResolvedFromSupabase)
       return fromSupabase
     }
   }
@@ -213,7 +220,7 @@ export async function resolveDatabaseUrl(
   // CI-truthy spellings (`true`, `1`, case-insensitive) since not every CI
   // provider sets `CI=true` exactly.
   const isCi = isCiEnv()
-  if (isInteractive()) {
+  if (!ctx.quiet && isInteractive()) {
     const fromPrompt = await promptForUrl(cwd)
     if (fromPrompt) {
       p.log.info(messages.db.urlResolvedFromPrompt)

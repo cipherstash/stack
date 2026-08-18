@@ -9,6 +9,7 @@ import { detectPackageManager, runnerCommand } from '../init/utils.js'
 import { ensureEncryptionClient } from './client-scaffold.js'
 import { offerStashConfig } from './config-scaffold.js'
 import { detectPrismaNext, detectSupabase } from './detect.js'
+import { reportSupabaseGrantsOutcome } from './grants-report.js'
 
 export const SAFE_MIGRATION_NAME = /^[\w-]+$/
 
@@ -138,7 +139,7 @@ export async function installCommand(
 
   const installer = new EQLInstaller({ databaseUrl })
   s.start('Checking database permissions...')
-  const permissions = await installer.checkPermissions()
+  const permissions = await installer.preflight()
   if (!permissions.ok) {
     s.stop('Insufficient database permissions.')
     p.log.error('The connected database role is missing required permissions:')
@@ -151,6 +152,11 @@ export async function installCommand(
     )
   } else {
     s.stop('Database permissions verified.')
+  }
+  if (supabase && permissions.memberOfPostgres !== true) {
+    p.log.warn(
+      `The connected role (${permissions.currentUser}) is not a member of \`postgres\`, so the \`ALTER DEFAULT PRIVILEGES FOR ROLE postgres\` grants cannot run here. The install will proceed; those statements will be printed at the end for you to apply with sufficient privileges.`,
+    )
   }
 
   if (!options.force) {
@@ -165,9 +171,9 @@ export async function installCommand(
   }
 
   s.start('Installing EQL v3 extensions (pinned bundle)...')
-  await installer.install({ supabase })
+  const installResult = await installer.install({ supabase })
   s.stop('EQL extensions installed.')
-  if (supabase) p.log.success('Supabase role permissions granted.')
+  if (supabase) reportSupabaseGrantsOutcome(installResult)
 
   s.start('Installing cs_migrations tracking schema...')
   const migrationsDb = new pg.Client({ connectionString: databaseUrl })

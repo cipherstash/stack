@@ -1,14 +1,20 @@
 import { readInstallSql } from '@cipherstash/eql/sql'
 import pg from 'pg'
 import {
+  DEFERRED_GRANTS_HEADER,
   EQL_V3_INTERNAL_SCHEMA_NAME,
   EQL_V3_SCHEMA_NAME,
+  SUPABASE_DEFAULT_PRIVILEGES_SQL_V3,
+  SUPABASE_IMMEDIATE_GRANTS_SQL_V3,
   SUPABASE_PERMISSIONS_SQL_V3,
 } from './grants.js'
 
 export {
+  DEFERRED_GRANTS_HEADER,
   EQL_V3_INTERNAL_SCHEMA_NAME,
   EQL_V3_SCHEMA_NAME,
+  SUPABASE_DEFAULT_PRIVILEGES_SQL_V3,
+  SUPABASE_IMMEDIATE_GRANTS_SQL_V3,
   SUPABASE_PERMISSIONS_SQL_V3,
   supabaseInternalPermissionsSql,
   supabasePermissionsSql,
@@ -36,11 +42,62 @@ export function supabaseGrantsFor(): string {
   return SUPABASE_PERMISSIONS_SQL_V3
 }
 
-export interface PermissionCheckResult {
-  ok: boolean
-  missing: string[]
+/**
+ * Read-only database preflight: everything the install needs from the role,
+ * gathered before anything is attempted.
+ *
+ * `missing` lists only the gaps that abort the install. Membership of
+ * `postgres` is deliberately NOT one of them — a non-member role installs
+ * fine; the installer defers the owner-scoped Supabase default-privilege
+ * statements instead (see {@link InstallResult.deferredGrantsSql}).
+ */
+export interface PreflightResult {
+  currentUser: string
   isSuperuser: boolean
+  /**
+   * Whether `current_user` can run `ALTER DEFAULT PRIVILEGES FOR ROLE
+   * postgres`. `null` when the database has no `postgres` role at all.
+   */
+  memberOfPostgres: boolean | null
+  hasDatabaseCreate: boolean
+  hasPublicCreate: boolean
+  pgcryptoInstalled: boolean
+  eqlV3SchemaPresent: boolean
+  eqlV3InternalSchemaPresent: boolean
+  missing: string[]
+  ok: boolean
 }
+
+/** What `install()` actually did, beyond succeeding. */
+export interface InstallResult {
+  /**
+   * The owner-scoped `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` statements
+   * that were skipped because the connecting role is not a member of
+   * `postgres` (prefixed with the explanatory header comment), or `null` when
+   * every grant ran. The caller should surface this SQL for the operator to
+   * apply via a migration tool or the Supabase SQL editor.
+   */
+  deferredGrantsSql: string | null
+}
+
+/**
+ * One query answering every preflight question. `pg_has_role` is guarded by
+ * the `CASE`: it raises on a nonexistent role name, and not every database
+ * has a `postgres` role.
+ */
+const PREFLIGHT_SQL = `
+  SELECT
+    current_user AS role_name,
+    (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS is_superuser,
+    CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres')
+         THEN pg_has_role(current_user, 'postgres', 'MEMBER')
+    END AS member_of_postgres,
+    has_database_privilege(current_user, current_database(), 'CREATE') AS has_database_create,
+    has_schema_privilege(current_user, 'public', 'CREATE') AS has_public_create,
+    EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto') AS pgcrypto_installed,
+    EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = '${EQL_V3_SCHEMA_NAME}') AS eql_v3_present,
+    EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = '${EQL_V3_INTERNAL_SCHEMA_NAME}') AS eql_v3_internal_present
+`
 
 export class EQLInstaller {
   private readonly databaseUrl: string
@@ -49,51 +106,47 @@ export class EQLInstaller {
     this.databaseUrl = options.databaseUrl
   }
 
-  async checkPermissions(): Promise<PermissionCheckResult> {
+  async preflight(): Promise<PreflightResult> {
     const client = new pg.Client({ connectionString: this.databaseUrl })
     try {
       await client.connect()
+      const result = await client.query(PREFLIGHT_SQL)
+      const row = result.rows[0] ?? {}
+      const isSuperuser = row.is_superuser === true
+      const hasDatabaseCreate = row.has_database_create === true
       const missing: string[] = []
-      const roleResult = await client.query(`
-        SELECT rolsuper, rolcreatedb
-        FROM pg_roles
-        WHERE rolname = current_user
-      `)
-      const role = roleResult.rows[0]
-      const isSuperuser = role?.rolsuper === true
-      if (isSuperuser) return { ok: true, missing: [], isSuperuser: true }
-
-      const dbCreateResult = await client.query(`
-        SELECT has_database_privilege(current_user, current_database(), 'CREATE') AS has_create
-      `)
-      if (!dbCreateResult.rows[0]?.has_create) {
-        missing.push(
-          'CREATE on database (required for CREATE SCHEMA and CREATE EXTENSION)',
-        )
+      if (!isSuperuser) {
+        if (!hasDatabaseCreate) {
+          missing.push(
+            'CREATE on database (required for CREATE SCHEMA and CREATE EXTENSION)',
+          )
+        }
+        if (row.has_public_create !== true) {
+          missing.push(
+            'CREATE on public schema (required for CREATE DOMAIN public.eql_v3_*)',
+          )
+        }
+        if (row.pgcrypto_installed !== true && !hasDatabaseCreate) {
+          missing.push(
+            'SUPERUSER or extension owner (required for CREATE EXTENSION pgcrypto)',
+          )
+        }
       }
-
-      const schemaCreateResult = await client.query(`
-        SELECT has_schema_privilege(current_user, 'public', 'CREATE') AS has_create
-      `)
-      if (!schemaCreateResult.rows[0]?.has_create) {
-        missing.push(
-          'CREATE on public schema (required for CREATE DOMAIN public.eql_v3_*)',
-        )
+      return {
+        currentUser: String(row.role_name ?? 'unknown'),
+        isSuperuser,
+        memberOfPostgres:
+          typeof row.member_of_postgres === 'boolean'
+            ? row.member_of_postgres
+            : null,
+        hasDatabaseCreate,
+        hasPublicCreate: row.has_public_create === true,
+        pgcryptoInstalled: row.pgcrypto_installed === true,
+        eqlV3SchemaPresent: row.eql_v3_present === true,
+        eqlV3InternalSchemaPresent: row.eql_v3_internal_present === true,
+        missing,
+        ok: missing.length === 0,
       }
-
-      const pgcryptoResult = await client.query(`
-        SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto'
-      `)
-      if (
-        (pgcryptoResult.rowCount === 0 || pgcryptoResult.rowCount === null) &&
-        !dbCreateResult.rows[0]?.has_create
-      ) {
-        missing.push(
-          'SUPERUSER or extension owner (required for CREATE EXTENSION pgcrypto)',
-        )
-      }
-
-      return { ok: missing.length === 0, missing, isSuperuser: false }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`Failed to connect to database: ${detail}`, {
@@ -165,8 +218,20 @@ export class EQLInstaller {
     }
   }
 
-  /** Install the pinned EQL v3 bundle. */
-  async install(options?: { supabase?: boolean }): Promise<void> {
+  /**
+   * Install the pinned EQL v3 bundle, then (in Supabase mode) the role
+   * grants.
+   *
+   * The bundle runs in its own transaction. The grants deliberately run
+   * AFTER its COMMIT: they are idempotent and separately re-runnable, so a
+   * grants failure must not roll back a working install — one refused
+   * statement used to take all ~194 functions down with it. When the
+   * connecting role is not a member of `postgres`, the owner-scoped
+   * `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` statements are skipped and
+   * returned for the operator to apply with sufficient privileges; the plain
+   * `GRANT`s still run, so everything that exists is usable immediately.
+   */
+  async install(options?: { supabase?: boolean }): Promise<InstallResult> {
     const client = new pg.Client({ connectionString: this.databaseUrl })
     try {
       await client.connect()
@@ -178,16 +243,43 @@ export class EQLInstaller {
     }
 
     try {
-      await client.query('BEGIN')
-      await client.query(loadBundledEqlSql())
-      if (options?.supabase) {
-        await client.query(SUPABASE_PERMISSIONS_SQL_V3)
+      try {
+        await client.query('BEGIN')
+        await client.query(loadBundledEqlSql())
+        await client.query('COMMIT')
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {})
+        const detail = error instanceof Error ? error.message : String(error)
+        throw new Error(
+          `Failed to install EQL: ${detail}. Nothing was applied — the install runs in a transaction and was rolled back.`,
+          { cause: error },
+        )
       }
-      await client.query('COMMIT')
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => {})
-      const detail = error instanceof Error ? error.message : String(error)
-      throw new Error(`Failed to install EQL: ${detail}`, { cause: error })
+
+      if (!options?.supabase) return { deferredGrantsSql: null }
+
+      try {
+        const memberResult = await client.query(`
+          SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres')
+                 THEN pg_has_role(current_user, 'postgres', 'MEMBER')
+          END AS member_of_postgres
+        `)
+        if (memberResult.rows[0]?.member_of_postgres === true) {
+          await client.query(SUPABASE_PERMISSIONS_SQL_V3)
+          return { deferredGrantsSql: null }
+        }
+        await client.query(SUPABASE_IMMEDIATE_GRANTS_SQL_V3)
+        return {
+          deferredGrantsSql:
+            DEFERRED_GRANTS_HEADER + SUPABASE_DEFAULT_PRIVILEGES_SQL_V3,
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        throw new Error(
+          `EQL v3 is installed, but granting the Supabase roles failed: ${detail}. The install itself was NOT rolled back — apply the grants from \`stash eql migration --supabase\`, or re-run \`stash eql install --force\`.`,
+          { cause: error },
+        )
+      }
     } finally {
       await client.end()
     }

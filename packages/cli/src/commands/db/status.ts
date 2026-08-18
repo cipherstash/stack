@@ -73,7 +73,7 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
   s.start('Checking database permissions...')
 
   try {
-    const permissions = await installer.checkPermissions()
+    const permissions = await installer.preflight()
     s.stop('Permissions checked.')
 
     if (permissions.ok) {

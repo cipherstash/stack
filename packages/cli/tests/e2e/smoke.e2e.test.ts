@@ -22,6 +22,7 @@ describe('stash CLI — non-interactive smoke', () => {
     // Command-list items — these are the literal command names users type, not
     // copy strings, so they stay inline.
     expect(r.output).toContain('init')
+    expect(r.output).toContain('eql preflight')
     expect(r.output).toContain('eql install')
     expect(r.output).toContain('eql migration')
     expect(r.output).toContain('eql repair')

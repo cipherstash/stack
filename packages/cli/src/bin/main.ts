@@ -32,6 +32,7 @@ import {
   installCommand,
   manifestCommand,
   planCommand,
+  preflightCommand,
   statusCommand,
   telemetryCommand,
   testConnectionCommand,
@@ -108,6 +109,7 @@ Commands:
   manifest             Print the structured, versioned command surface (--json for docs/agents)
   telemetry <sub>      Manage anonymous usage analytics (status, enable, disable)
 
+  eql preflight        Report whether this database role can install EQL, before trying
   eql install          Scaffold stash.config.ts (if missing) and install EQL extensions
   eql migration        Generate an EQL v3 install migration (Drizzle, or supabase/migrations/)
   eql repair           Repair migrations with an un-runnable ALTER COLUMN to an encrypted type
@@ -261,6 +263,12 @@ async function runEqlCommand(
   values: Record<string, string>,
 ) {
   switch (sub) {
+    case 'preflight':
+      await preflightCommand({
+        databaseUrl: values['database-url'],
+        json: flags.json,
+      })
+      break
     case 'install':
       await runInstall(flags, values)
       break
