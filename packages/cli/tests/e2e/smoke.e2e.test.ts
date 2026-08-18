@@ -24,6 +24,7 @@ describe('stash CLI — non-interactive smoke', () => {
     expect(r.output).toContain('init')
     expect(r.output).toContain('eql preflight')
     expect(r.output).toContain('eql install')
+    expect(r.output).toContain('eql verify')
     expect(r.output).toContain('eql migration')
     expect(r.output).toContain('eql repair')
     expect(r.output).toContain('eql upgrade')

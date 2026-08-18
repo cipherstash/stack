@@ -345,6 +345,40 @@ export const registry: CommandGroup[] = [
         ],
       },
       {
+        name: 'eql verify',
+        summary:
+          'Check the installed EQL surface is complete, not just present',
+        long: [
+          'Compare what the database actually has against everything the pinned',
+          'EQL v3 bundle installs — every domain, function overload, operator,',
+          'cast, and the ORE operator class — via read-only catalog queries. A',
+          'partial install (domains present, some comparison functions or',
+          'operators absent) reports success at install time and fails at query',
+          'time on a specific predicate; this is the check that catches it.',
+          '',
+          'Expected absences read as such: on managed Postgres the bundle',
+          'legitimately skips the ORE operator class (creating it requires',
+          'superuser) and poisons the `_ord_ore` domains to fail loudly — that',
+          'is a supported configuration, reported as info. Anything else',
+          'missing is a broken install and exits 1.',
+          '',
+          'When the installed EQL version differs from the pinned bundle, the',
+          'object-level checks are skipped (the pinned bundle is the wrong',
+          'manifest to diff against) and the command suggests `eql upgrade`.',
+          '',
+          'Runs automatically at the end of `stash eql install`.',
+        ].join('\n'),
+        examples: ['eql verify', 'eql verify --json'],
+        flags: [
+          {
+            name: '--json',
+            description:
+              'Emit the machine-readable verification report instead of the table.',
+          },
+          DATABASE_URL_FLAG,
+        ],
+      },
+      {
         name: 'eql migration',
         summary:
           'Generate an EQL v3 install migration (Drizzle, or supabase/migrations/; Prisma Next installs EQL through its own migrations)',

@@ -4,6 +4,7 @@ import { resolveDatabaseUrl } from '@/config/database-url.js'
 import { findConfigFile, loadStashConfig } from '@/config/index.js'
 import { createPgClient } from '@/db/client.js'
 import { EQLInstaller } from '@/installer/index.js'
+import { verifyEqlSurface } from '@/installer/verify.js'
 import { messages } from '@/messages.js'
 import { detectPackageManager, runnerCommand } from '../init/utils.js'
 import { ensureEncryptionClient } from './client-scaffold.js'
@@ -184,6 +185,38 @@ export async function installCommand(
   const installResult = await installer.install({ supabase })
   s.stop('EQL extensions installed.')
   if (supabase) reportSupabaseGrantsOutcome(installResult)
+
+  // #890: an install can commit and still be incomplete at query time (the
+  // bundle's own conditional paths, platform quirks, concurrent DDL). Verify
+  // the surface against the pinned bundle before declaring success — the
+  // check is a handful of read-only catalog queries.
+  s.start('Verifying the installed EQL surface...')
+  try {
+    const report = await verifyEqlSurface(databaseUrl)
+    if (report.ok) {
+      s.stop(
+        report.ore?.state === 'fallback'
+          ? 'EQL surface verified (ORE operator class skipped — expected for this role; use the `_ord_ope` ordering domains).'
+          : 'EQL surface verified — install is complete.',
+      )
+    } else {
+      s.stop('The install committed but its surface is incomplete.')
+      const { reportVerifyFindings } = await import('../eql/verify.js')
+      reportVerifyFindings(report)
+      p.log.error(
+        'Queries against the missing objects will fail. Re-run `stash eql install --force`, and if this persists, please report it: https://github.com/cipherstash/stack/issues',
+      )
+      p.outro('Installation incomplete.')
+      process.exit(1)
+    }
+  } catch (err) {
+    // A verification error is not an install failure — the install itself
+    // committed. Say so and keep going.
+    s.stop('Could not verify the installed EQL surface.')
+    p.log.warn(
+      `${err instanceof Error ? err.message : String(err)} — run \`stash eql verify\` to check the install later.`,
+    )
+  }
 
   s.start('Installing cs_migrations tracking schema...')
   const migrationsDb = createPgClient(databaseUrl)

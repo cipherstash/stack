@@ -1,6 +1,6 @@
 ---
 name: stash-cli
-description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql preflight/install/migration/repair/upgrade/status/validate`, `encrypt backfill/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, credential rules, and the staged EQL v3 rollout lifecycle.
+description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql preflight/install/verify/migration/repair/upgrade/status/validate`, `encrypt backfill/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, credential rules, and the staged EQL v3 rollout lifecycle.
 ---
 
 # CipherStash CLI (`stash`)
@@ -351,6 +351,7 @@ Flags below are the decision-relevant ones. Run `stash <command> --help` for the
 ```bash
 stash eql preflight
 stash eql install
+stash eql verify
 stash eql migration --drizzle
 stash eql migration --supabase
 stash eql repair --drizzle
@@ -389,6 +390,21 @@ Gets a project from zero to a direct EQL v3 install. It loads an existing `stash
 The removed `--eql-version`, `--latest`, `--drizzle`, `--migration`, `--direct`, `--migrations-dir`, and `--exclude-operator-family` options fail clearly instead of being ignored. A request for EQL v2 points dump-recovery users to the upstream EQL 2.3.1 SQL release. New installs are EQL v3 only; its pinned bundle self-adapts when a database role cannot create the optional operator family.
 
 **`--database-url` is a one-shot.** It installs against that database and leaves the project untouched — no config is loaded, and none is scaffolded, nor is an encryption client. This lets `npx --package=stash@1.0.0 stash eql install --database-url 'postgres://...'` run in a bare project with no CipherStash dependencies while pinning the CLI to this skill's release. It also means the flag always wins: loading a config could pick up a parent-directory `databaseUrl` literal and install against the wrong database.
+
+**The install verifies itself.** `eql install` ends by running the same surface check as `eql verify` (below) and exits 1 if the committed install is incomplete — "install succeeded" now means the full query-time surface is present, not just that the SQL ran.
+
+#### `eql verify`
+
+Read-only check that the **installed EQL surface is complete**, independent of any application schema. It compares what the database actually has against everything the pinned bundle installs — every domain, function overload, operator, cast, and the ORE operator class — via catalog queries, and reports damage grouped per domain. This catches the failure `eql validate` cannot: a partial install where the domains exist but some comparison functions or operators do not, so `weight >= x` errors at query time long after "install succeeded".
+
+Expected absences read as info, not damage: on managed Postgres the bundle legitimately skips the ORE operator class (creating one requires superuser) and poisons the `_ord_ore` domains to fail loudly — `eql verify` reports that as the supported configuration it is. Exits 1 only for genuine damage (missing objects, or an incoherent ORE state) or when EQL is not installed at all. When the installed EQL version differs from the pinned bundle, the object-level diff is skipped (the pinned bundle is the wrong manifest to compare against) and the command suggests `eql upgrade`.
+
+Run it whenever query-time behaviour looks inconsistent with a "successful" install — e.g. an `operator does not exist` or `function ... does not exist` error naming an `eql_v3` object.
+
+| Flag | Description |
+|---|---|
+| `--json` | Machine-readable report. `status` is the discriminator: `complete`, `incomplete` (exit 1), `not-installed` (exit 1), or `version-mismatch`; `findings[]` carries per-object damage with a `domain` attribution |
+| `--database-url <url>` | Verify that database (no config needed). A hand-set literal `databaseUrl` in stash.config.ts still wins, with a warning (stderr in `--json` mode) |
 
 #### `eql migration`
 
