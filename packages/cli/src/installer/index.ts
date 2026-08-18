@@ -1,6 +1,6 @@
 import { readInstallSql } from '@cipherstash/eql/sql'
 import type pg from 'pg'
-import { createPgClient, explainTlsError } from '@/db/client.js'
+import { createPgClient, TlsVerificationError } from '@/db/client.js'
 import {
   DEFERRED_GRANTS_HEADER,
   EQL_V3_INTERNAL_SCHEMA_NAME,
@@ -159,13 +159,14 @@ export class EQLInstaller {
     try {
       await client.connect()
     } catch (error) {
-      const tlsExplanation = explainTlsError(error, this.databaseUrl)
-      const detail = error instanceof Error ? error.message : String(error)
       await client.end().catch(() => {})
-      throw new Error(
-        tlsExplanation ?? `Failed to connect to database: ${detail}`,
-        { cause: error },
-      )
+      // Already shaped centrally by createPgClient's connect wrapper — the
+      // message is self-contained; adding framing would bury the remedy.
+      if (error instanceof TlsVerificationError) throw error
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new Error(`Failed to connect to database: ${detail}`, {
+        cause: error,
+      })
     }
     try {
       const result = await client.query(PREFLIGHT_SQL)
@@ -276,12 +277,11 @@ export class EQLInstaller {
       )
       return result.rows[0]?.found === requiredSchemas.length
     } catch (error) {
-      const tlsExplanation = explainTlsError(error, this.databaseUrl)
+      if (error instanceof TlsVerificationError) throw error
       const detail = error instanceof Error ? error.message : String(error)
-      throw new Error(
-        tlsExplanation ?? `Failed to connect to database: ${detail}`,
-        { cause: error },
-      )
+      throw new Error(`Failed to connect to database: ${detail}`, {
+        cause: error,
+      })
     } finally {
       await client.end()
     }
@@ -315,12 +315,11 @@ export class EQLInstaller {
       }
       return 'unknown'
     } catch (error) {
-      const tlsExplanation = explainTlsError(error, this.databaseUrl)
+      if (error instanceof TlsVerificationError) throw error
       const detail = error instanceof Error ? error.message : String(error)
-      throw new Error(
-        tlsExplanation ?? `Failed to connect to database: ${detail}`,
-        { cause: error },
-      )
+      throw new Error(`Failed to connect to database: ${detail}`, {
+        cause: error,
+      })
     } finally {
       await client.end()
     }
@@ -345,12 +344,11 @@ export class EQLInstaller {
     try {
       await client.connect()
     } catch (error) {
-      const tlsExplanation = explainTlsError(error, this.databaseUrl)
+      if (error instanceof TlsVerificationError) throw error
       const detail = error instanceof Error ? error.message : String(error)
-      throw new Error(
-        tlsExplanation ?? `Failed to connect to database: ${detail}`,
-        { cause: error },
-      )
+      throw new Error(`Failed to connect to database: ${detail}`, {
+        cause: error,
+      })
     }
 
     try {
@@ -394,13 +392,14 @@ export class EQLInstaller {
     try {
       await client.connect()
     } catch (error) {
-      const tlsExplanation = explainTlsError(error, this.databaseUrl)
-      const detail = error instanceof Error ? error.message : String(error)
       await client.end().catch(() => {})
-      throw new Error(
-        tlsExplanation ?? `Failed to connect to database: ${detail}`,
-        { cause: error },
-      )
+      // Already shaped centrally by createPgClient's connect wrapper — the
+      // message is self-contained; adding framing would bury the remedy.
+      if (error instanceof TlsVerificationError) throw error
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new Error(`Failed to connect to database: ${detail}`, {
+        cause: error,
+      })
     }
     try {
       return await this.runSupabaseGrants(client)

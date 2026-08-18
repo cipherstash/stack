@@ -42,6 +42,16 @@ const HANDLED_PARAMS = ['sslmode', 'sslrootcert'] as const
 /** Params that mean "hand-tuned TLS setup — don't touch the URL". */
 const PASSTHROUGH_PARAMS = ['sslcert', 'sslkey', 'sslpassword', 'ssl'] as const
 
+/** The PGSSLMODE values node-postgres itself recognises — mirrored exactly. */
+const ENV_SSLMODES = [
+  'disable',
+  'prefer',
+  'require',
+  'verify-ca',
+  'verify-full',
+  'no-verify',
+]
+
 let warnedNoVerify = false
 
 /** Test hook: reset the once-per-process no-verify warning. */
@@ -65,10 +75,22 @@ export function buildPgClientConfig(
   if (PASSTHROUGH_PARAMS.some((name) => params.has(name))) {
     return { ...extra, connectionString: databaseUrl }
   }
-  const sslmode = params.get('sslmode')
+  let sslmode = params.get('sslmode')
   const sslrootcert = params.get('sslrootcert')
   if (sslmode === null && sslrootcert === null) {
-    return { ...extra, connectionString: databaseUrl }
+    // Environment tier, mirroring node-postgres's own PGSSLMODE handling
+    // (connection-parameters.js `readSSLConfigFromEnvironment`) — pg enables
+    // TLS from this variable but ignores PGSSLROOTCERT entirely, so without
+    // taking this branch ourselves an env-configured connection would verify
+    // against the wrong trust anchors. URL parameters win when present
+    // (libpq precedence); an unset or unrecognised PGSSLMODE stays a pure
+    // passthrough.
+    const envMode = process.env.PGSSLMODE
+    if (envMode !== undefined && ENV_SSLMODES.includes(envMode)) {
+      sslmode = envMode
+    } else {
+      return { ...extra, connectionString: databaseUrl }
+    }
   }
 
   for (const name of HANDLED_PARAMS) params.delete(name)
@@ -150,6 +172,14 @@ const TLS_FAILURE_PATTERNS = [
   'ERR_TLS_CERT_ALTNAME_INVALID',
   'Hostname/IP does not match',
 ]
+
+/**
+ * A certificate-verification failure, re-thrown by the factory's connect
+ * wrapper with the shaped remedy as its message. Call sites that add their
+ * own "Failed to connect" framing should rethrow/print this one verbatim —
+ * the message is self-contained, and re-shaping it nests explanations.
+ */
+export class TlsVerificationError extends Error {}
 
 /**
  * When `error` is a certificate-verification failure, return a message that

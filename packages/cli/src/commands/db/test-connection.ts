@@ -2,7 +2,7 @@ import * as p from '@clack/prompts'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { detectDotenvFile } from '@/config/database-url.js'
 import { loadStashConfig } from '@/config/index.js'
-import { createPgClient, explainTlsError } from '@/db/client.js'
+import { createPgClient, TlsVerificationError } from '@/db/client.js'
 import { messages } from '@/messages.js'
 
 export async function testConnectionCommand(
@@ -48,9 +48,9 @@ export async function testConnectionCommand(
     const message =
       error instanceof Error ? error.message : 'An unknown error occurred'
 
-    const tlsExplanation = explainTlsError(error, config.databaseUrl)
-    if (tlsExplanation) {
-      p.log.error(tlsExplanation)
+    if (error instanceof TlsVerificationError) {
+      // Shaped centrally by createPgClient — self-contained, print verbatim.
+      p.log.error(error.message)
     } else {
       p.log.error(`Failed to connect to database: ${message}`)
     }

@@ -159,12 +159,12 @@ The resolved URL is returned in memory only. It is never written to disk or into
 
 ### TLS to the database
 
-Every CLI database connection honours `sslmode` and `sslrootcert` from the connection string:
+Every CLI database connection honours `sslmode` and `sslrootcert` from the connection string, and the `PGSSLMODE` / `PGSSLROOTCERT` environment variables when the URL carries no TLS parameters (URL parameters win, libpq precedence — and unlike raw node-postgres, `PGSSLROOTCERT` is actually consumed):
 
 - `sslmode=verify-full` (and `require` / `verify-ca` / `prefer`, which the CLI treats identically — full verification, matching node-postgres's current behaviour) verifies the server certificate. CA resolution order: `sslrootcert=<path>` in the URL (libpq semantics — that file becomes the only trust anchor; `sslrootcert=system` selects the system store) → the `PGSSLROOTCERT` environment variable → for `*.supabase.co` / `*.supabase.com` hosts, the CLI's **bundled Supabase root CA** (appended to the system roots) → the system trust store.
 - Supabase therefore verifies out of the box — direct hosts and the pgBouncer pooler alike. No certificate download needed.
 - `sslmode=no-verify` is honoured but prints a one-line stderr warning: the connection is encrypted, the server is not authenticated. `sslmode=disable` turns TLS off.
-- **Never set `NODE_TLS_REJECT_UNAUTHORIZED=0`** — it disables TLS verification for every connection in the process, including the ones carrying CipherStash credentials. A certificate-verification failure from the CLI names the host and the supported remedies; follow those instead.
+- **Never set `NODE_TLS_REJECT_UNAUTHORIZED=0`** — it disables TLS verification for every connection in the process, including the ones carrying CipherStash credentials. A certificate-verification failure from any CLI command names the host and the supported remedies (shaped centrally in the connection factory); follow those instead.
 - URLs using client certificates (`sslcert` / `sslkey`) or the raw `ssl` param are passed to node-postgres untouched.
 
 ## Telemetry

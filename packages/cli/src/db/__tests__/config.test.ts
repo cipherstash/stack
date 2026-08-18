@@ -158,6 +158,60 @@ describe('buildPgClientConfig', () => {
   })
 })
 
+describe('PGSSLMODE environment tier', () => {
+  beforeEach(() => {
+    resetNoVerifyWarningForTests()
+    vi.unstubAllEnvs()
+  })
+
+  it('enables verification from PGSSLMODE=require, with CA resolution', () => {
+    vi.stubEnv('PGSSLMODE', 'require')
+    const config = buildPgClientConfig(
+      'postgres://u@aws-0-us-east-1.pooler.supabase.com:5432/postgres',
+    )
+    expect(ssl(config).rejectUnauthorized).toBe(true)
+    // The whole point over pg's own env handling: the CA tier runs, so the
+    // bundled Supabase root applies (pg ignores PGSSLROOTCERT entirely).
+    expect(ssl(config).ca).toContain(SUPABASE_ROOT_CA_PEM)
+  })
+
+  it('honours PGSSLROOTCERT alongside PGSSLMODE', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stash-ca-'))
+    const caPath = join(dir, 'env-tier.pem')
+    writeFileSync(caPath, 'ENV TIER PEM')
+    vi.stubEnv('PGSSLMODE', 'verify-full')
+    vi.stubEnv('PGSSLROOTCERT', caPath)
+    const config = buildPgClientConfig('postgres://u@db.example.com/app')
+    expect(ssl(config).rejectUnauthorized).toBe(true)
+    expect(ssl(config).ca).toBe('ENV TIER PEM')
+  })
+
+  it('mirrors pg for PGSSLMODE=disable and no-verify', () => {
+    vi.stubEnv('PGSSLMODE', 'disable')
+    expect(buildPgClientConfig('postgres://u@h/app').ssl).toBe(false)
+    vi.stubEnv('PGSSLMODE', 'no-verify')
+    const stderr = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(() => true)
+    expect(
+      ssl(buildPgClientConfig('postgres://u@h/app')).rejectUnauthorized,
+    ).toBe(false)
+    expect(stderr).toHaveBeenCalledTimes(1)
+  })
+
+  it('passes through on an unrecognised PGSSLMODE, exactly like pg', () => {
+    vi.stubEnv('PGSSLMODE', 'allow')
+    const url = 'postgres://u@h/app'
+    expect(buildPgClientConfig(url)).toEqual({ connectionString: url })
+  })
+
+  it('lets URL parameters beat the environment (libpq precedence)', () => {
+    vi.stubEnv('PGSSLMODE', 'require')
+    const config = buildPgClientConfig('postgres://u@h/app?sslmode=disable')
+    expect(config.ssl).toBe(false)
+  })
+})
+
 describe('explainTlsError', () => {
   const url = 'postgres://u@aws-0-ap-southeast-2.pooler.supabase.com/postgres'
 
