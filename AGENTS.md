@@ -137,10 +137,12 @@ so that stays true for everyone else.
 - **Publishing has moved here.** All seven packages publish from this repo, via
   npm trusted publishing bound to `release.yml`. Write changesets for them
   normally. The `.md.deferred` parking convention and the
-  `lint-no-ffi-changeset` guard that enforced it are both gone — if you find a
-  `.md.deferred` file anywhere, it is a leftover from a branch cut before this
-  PR and needs renaming back, because nothing reads that extension and nothing
-  warns about it any more.
+  `lint-no-ffi-changeset` guard that enforced it are both gone — so a
+  `.md.deferred` file is now silently inert rather than a CI failure. If you
+  find one, it was written on a branch cut before the cutover and needs
+  `git mv`-ing back to `.md`, or the change it describes ships with no
+  changelog entry. **#905 carries one** (`protect-ffi-jsonwebtoken-cve`); rename
+  it on that branch before merging.
 - **The pipeline that publishes them.** `release.yml` asks
   `scripts/release-gate.mjs` which committed versions are missing from npm; if
   any FFI one is, `_build-ffi-artifacts.yml` compiles the six platforms with an
