@@ -1,4 +1,15 @@
 
+## [0.42.2] - 2026-08-17
+
+
+### Documentation
+
+- 🩹 correct the fixture comment for the hand-rolled decode
+
+### Fixes
+
+- upgrade jsonwebtoken 9→10 (CVE-2026-25537)
+
 ## [0.42.1] - 2026-08-12
 
 
