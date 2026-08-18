@@ -265,9 +265,12 @@ impl AuthErrorKind for InvalidToken {
 /// wording stays owned by CTS rather than duplicated here.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("{0}")]
-#[diagnostic(help(
-    "The organisation has used its allowance for the current billing period. Upgrade the plan from the CipherStash dashboard, then retry."
-))]
+#[diagnostic(
+    help(
+        "The organisation has used its allowance for the current billing period. Upgrade the plan from the CipherStash dashboard, then retry."
+    ),
+    url("https://dashboard.cipherstash.com/billing")
+)]
 pub struct UsageLimitExceeded(pub String);
 
 impl UsageLimitExceeded {
@@ -283,9 +286,12 @@ impl UsageLimitExceeded {
 /// the caller to upgrade one sends them somewhere that cannot help.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("{0}")]
-#[diagnostic(help(
-    "The organisation is not set up for usage tracking. Contact CipherStash support — retrying and upgrading the plan will both fail."
-))]
+#[diagnostic(
+    help(
+        "The organisation is not set up for usage tracking. Contact CipherStash support — retrying and upgrading the plan will both fail."
+    ),
+    url("https://cipherstash.com/support")
+)]
 pub struct OrgNotProvisioned(pub String);
 
 impl OrgNotProvisioned {
@@ -1269,6 +1275,27 @@ mod classify_issuance_failure_tests {
         assert!(help(&limit).to_lowercase().contains("upgrade"));
         assert!(help(&missing).to_lowercase().contains("support"));
         assert_ne!(help(&limit), help(&missing));
+    }
+
+    /// `help()` says what to do; `url()` says where — a caller building a UI
+    /// around this should be able to render an actual link, not just prose.
+    #[test]
+    fn the_two_account_refusals_link_to_where_to_act() {
+        use miette::Diagnostic;
+
+        let limit: AuthError = UsageLimitExceeded("over".into()).into();
+        let missing: AuthError = OrgNotProvisioned("absent".into()).into();
+
+        let url = |e: &AuthError| e.url().map(|u| u.to_string());
+
+        assert_eq!(
+            url(&limit).as_deref(),
+            Some("https://dashboard.cipherstash.com/billing"),
+        );
+        assert_eq!(
+            url(&missing).as_deref(),
+            Some("https://cipherstash.com/support"),
+        );
     }
 
     /// Neither clears by asking again.
