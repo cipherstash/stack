@@ -163,23 +163,25 @@ impl State {
         }
     }
 
-    /// Remember `err` if it refuses the *account* rather than the credential.
+    /// Record the outcome of a failed refresh attempt. Every failure path
+    /// calls this exactly once, so the two things a failure needs to update
+    /// can't drift apart by a call site remembering one and not the other:
     ///
-    /// A usage limit is different in kind from most non-retryable failures:
-    /// the credential was never the problem, so re-presenting it cannot
-    /// change the answer. See [`AuthError::is_account_refusal`] for why this
-    /// is narrower than [`is_retryable`](crate::AuthError::is_retryable).
-    /// Only that class sticks, and only until a refresh succeeds.
-    fn record_if_account_refused(&mut self, err: &crate::AuthError, now: u64) {
+    /// - if `err` refuses the *account* rather than the credential, it
+    ///   becomes the sticky, TTL'd [`denial`](Self::fresh_denial) replayed to
+    ///   this refresher's own future `get_token` calls. A usage limit is
+    ///   different in kind from most non-retryable failures: the credential
+    ///   was never the problem, so re-presenting it cannot change the answer.
+    ///   See [`AuthError::is_account_refusal`] for why this is narrower than
+    ///   [`is_retryable`](crate::AuthError::is_retryable).
+    /// - `err` always becomes [`last_refresh_error`](Self::last_refresh_error),
+    ///   regardless of its class, for any caller parked in
+    ///   `wait_for_in_flight_refresh` to see the same answer this refresh
+    ///   attempt actually got.
+    fn record_refusal(&mut self, err: &crate::AuthError, now: u64) {
         if err.is_account_refusal() {
             self.denial = Some(StickyDenial::new(err, now));
         }
-    }
-
-    /// Remember `err` as the outcome of the refresh attempt that just
-    /// completed, for [`last_refresh_error`](Self::last_refresh_error) to
-    /// hand to any caller that was waiting on it.
-    fn record_last_refresh_error(&mut self, err: &crate::AuthError) {
         self.last_refresh_error = Some((err.error_code(), err.to_string()));
     }
 
@@ -362,8 +364,7 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
             Err(err) => {
                 guard.defuse();
                 self.refresh_in_progress.store(false, Ordering::Release);
-                state.record_if_account_refused(&err, self.clock.now_unix_secs());
-                state.record_last_refresh_error(&err);
+                state.record_refusal(&err, self.clock.now_unix_secs());
                 Err(AutoRefreshError::Auth(err))
             }
         }
@@ -501,13 +502,11 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
                 }
                 self.refresh_in_progress.store(false, Ordering::Release);
                 // The cached token is still usable, so this call still
-                // succeeds — but record a settled refusal so the next call
-                // doesn't re-issue the same request, and the one after that.
-                state.record_if_account_refused(&err, self.clock.now_unix_secs());
-                // Record the raw outcome too, regardless of its class, so a
+                // succeeds — but record the refusal so the next call doesn't
+                // re-issue the same request (if it's account-level), and so a
                 // caller parked in `wait_for_in_flight_refresh` sees the same
-                // answer this refresh actually got.
-                state.record_last_refresh_error(&err);
+                // answer this refresh actually got (regardless of its class).
+                state.record_refusal(&err, self.clock.now_unix_secs());
                 guard.defuse();
             }
         }
@@ -549,8 +548,7 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
                     self.refresher.restore(token, credential);
                 }
                 self.refresh_in_progress.store(false, Ordering::Release);
-                state.record_if_account_refused(&err, self.clock.now_unix_secs());
-                state.record_last_refresh_error(&err);
+                state.record_refusal(&err, self.clock.now_unix_secs());
                 // Propagate the refuser's own answer. Flattening to `Expired`
                 // here would tell a caller who is over their usage limit that
                 // their token expired, and send them round the same loop.
@@ -740,7 +738,9 @@ mod tests {
             assert!(
                 matches!(
                     first,
-                    Err(AutoRefreshError::Auth(crate::AuthError::UsageLimitExceeded(_)))
+                    Err(AutoRefreshError::Auth(
+                        crate::AuthError::UsageLimitExceeded(_)
+                    ))
                 ),
                 "expected UsageLimitExceeded, got: {first:?}"
             );
@@ -754,7 +754,9 @@ mod tests {
             assert!(
                 matches!(
                     second,
-                    Err(AutoRefreshError::Auth(crate::AuthError::UsageLimitExceeded(_)))
+                    Err(AutoRefreshError::Auth(
+                        crate::AuthError::UsageLimitExceeded(_)
+                    ))
                 ),
                 "expected UsageLimitExceeded, got: {second:?}"
             );
@@ -2258,10 +2260,10 @@ mod expiry_crossing_regression {
     /// of the two account-level codes the sticky denial cache exists for.
     /// `invalid_grant` is a settled, non-retryable answer (the refresh token
     /// was rotated or revoked) — but because it isn't an account refusal,
-    /// `record_if_account_refused` never caches it, so a waiter woken from
-    /// `wait_for_in_flight_refresh` used to fall all the way through to a
-    /// generic `Expired`, hiding *why* the refresh failed from every caller
-    /// except the one that happened to perform it.
+    /// `record_refusal` never caches it as a sticky `denial`, so a waiter
+    /// woken from `wait_for_in_flight_refresh` used to fall all the way
+    /// through to a generic `Expired`, hiding *why* the refresh failed from
+    /// every caller except the one that happened to perform it.
     #[tokio::test]
     async fn waiters_get_the_issuers_error_even_when_it_is_not_an_account_refusal() {
         let clock = TestClock::new(1_000_000);

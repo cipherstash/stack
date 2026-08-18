@@ -645,26 +645,32 @@ impl AuthError {
             // codes above: the description is CTS's wording, not ours. Falls
             // back to the same default the classifier uses, so an empty
             // message never produces a blank `Display`.
-            codes::USAGE_LIMIT_EXCEEDED => {
-                let message: String = message.into();
-                let message = match message.trim() {
-                    "" => UsageLimitExceeded::DEFAULT_MESSAGE.to_string(),
-                    _ => message,
-                };
-                UsageLimitExceeded(message).into()
-            }
-            codes::ORG_NOT_PROVISIONED => {
-                let message: String = message.into();
-                let message = match message.trim() {
-                    "" => OrgNotProvisioned::DEFAULT_MESSAGE.to_string(),
-                    _ => message,
-                };
-                OrgNotProvisioned(message).into()
-            }
+            codes::USAGE_LIMIT_EXCEEDED => UsageLimitExceeded(default_if_blank(
+                message,
+                UsageLimitExceeded::DEFAULT_MESSAGE,
+            ))
+            .into(),
+            codes::ORG_NOT_PROVISIONED => OrgNotProvisioned(default_if_blank(
+                message,
+                OrgNotProvisioned::DEFAULT_MESSAGE,
+            ))
+            .into(),
             codes::WORKSPACE_MISMATCH => workspace_mismatch_from_payload(payload)
                 .unwrap_or_else(|| CustomError(message.into()).into()),
             _ => CustomError(message.into()).into(),
         }
+    }
+}
+
+/// `message.trim()`, or `default` if that's blank — the shared fallback for
+/// the account-refusal codes in [`AuthError::from_error_code`], so an empty
+/// message never produces a blank `Display` and the two codes can't drift
+/// apart in how they apply that fallback.
+fn default_if_blank(message: impl Into<String>, default: &str) -> String {
+    let message = message.into();
+    match message.trim() {
+        "" => default.to_string(),
+        _ => message,
     }
 }
 
@@ -1087,7 +1093,8 @@ mod classify_issuance_failure_tests {
             if body.trim().is_empty() {
                 return true;
             }
-            let Ok(serde_json::Value::Object(obj)) = serde_json::from_str::<serde_json::Value>(body)
+            let Ok(serde_json::Value::Object(obj)) =
+                serde_json::from_str::<serde_json::Value>(body)
             else {
                 return false;
             };
