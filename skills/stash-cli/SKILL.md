@@ -1,6 +1,6 @@
 ---
 name: stash-cli
-description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql install/migration/repair/upgrade/status/validate`, `encrypt backfill/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, credential rules, and the staged EQL v3 rollout lifecycle.
+description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql preflight/install/migration/repair/upgrade/status/validate`, `encrypt backfill/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, credential rules, and the staged EQL v3 rollout lifecycle.
 ---
 
 # CipherStash CLI (`stash`)
@@ -339,6 +339,7 @@ Flags below are the decision-relevant ones. Run `stash <command> --help` for the
 ### EQL
 
 ```bash
+stash eql preflight
 stash eql install
 stash eql migration --drizzle
 stash eql migration --supabase
@@ -348,6 +349,17 @@ stash eql status
 ```
 
 > `stash db install`, `db upgrade`, and `db status` still work but print a deprecation warning and forward to `eql <sub>`. Use the `eql` spelling.
+
+#### `eql preflight`
+
+Read-only report of whether the connected role can install EQL, run before anything is attempted. It probes: `current_user`, superuser, **membership of `postgres`**, `CREATE` on the database and on `public`, `pgcrypto`, and whether the `eql_v3` / `eql_v3_internal` schemas already exist. Each blocked row names the statement it blocks. Exits 1 when a gap would abort `eql install`; `--json` emits the structured result for agents (stdout is pure JSON).
+
+Membership of `postgres` is reported but never blocks: `eql install` handles a non-member role by skipping the owner-scoped `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` statements, which are **optional** — the install is complete without them (see `eql install` below). This matters on managed platforms whose database role is not `postgres` and not a member of it (e.g. Lovable's `sandbox_exec`).
+
+| Flag | Description |
+|---|---|
+| `--json` | Machine-readable result instead of the table. Stdout is pure JSON even on failure: success is `{ status: 'ok', ... }`, blockers are `{ status: 'blocked', ... }` (exit 1), and failures — including a missing/malformed DATABASE_URL — are the shared `{ status: 'error', code, message }` envelope |
+| `--database-url <url>` | Probe that database (no config needed). A hand-set literal `databaseUrl` in stash.config.ts still wins, with a warning (stderr in `--json` mode) |
 
 #### `eql install`
 
@@ -361,6 +373,8 @@ Gets a project from zero to a direct EQL v3 install. It loads an existing `stash
 | `--dry-run` | Show what would happen |
 | `--supabase` | Supabase-compatible install; grants `anon`, `authenticated`, and `service_role` |
 | `--database-url <url>` | One-shot install (see below) |
+
+**Non-`postgres` roles.** The Supabase grants include three owner-scoped `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` statements that only a member of `postgres` can run. When the connecting role is not a member (checked up front), the install still succeeds and is **complete**: the bundle and every plain `GRANT` are applied, covering all existing objects. The skipped statements are printed under "Optional SQL — requires postgres" purely as information — they only cover EQL objects `postgres` might later create outside stash tooling, and every `stash eql install`/`eql upgrade` re-grants all objects anyway (the generated Supabase migration wraps them in a membership guard, so it is safe for any role). Do not treat them as a required follow-up, and never work around a grants failure by disabling anything — the install itself is no longer rolled back by a grants failure (the bundle commits in its own transaction; grants run after it), and a plain re-run of `eql install` re-applies the grants on an already-installed database.
 
 The removed `--eql-version`, `--latest`, `--drizzle`, `--migration`, `--direct`, `--migrations-dir`, and `--exclude-operator-family` options fail clearly instead of being ignored. A request for EQL v2 points dump-recovery users to the upstream EQL 2.3.1 SQL release. New installs are EQL v3 only; its pinned bundle self-adapts when a database role cannot create the optional operator family.
 
@@ -664,34 +678,56 @@ import {
 ```typescript
 const installer = new EQLInstaller({ databaseUrl: 'postgresql://...' })
 
-await installer.checkPermissions()                  // PermissionCheckResult
+await installer.preflight()                         // PreflightResult
+await installer.checkPermissions()                  // deprecated adapter over preflight()
 await installer.isInstalled()                       // boolean (v3)
 await installer.getInstalledVersion()               // string | 'unknown' | null
-await installer.install({ supabase: true })         // executes in a transaction
+await installer.install({ supabase: true })         // InstallResult
+await installer.applySupabaseGrants()               // InstallResult (grants only, idempotent)
 ```
 
 `install` installs EQL v3 only and accepts `supabase`. `isInstalled` and `getInstalledVersion` retain an optional `{ eqlVersion: 2 | 3 }` solely for read-only diagnostics of existing v2 databases.
 
 ```typescript
-type PermissionCheckResult = {
-  ok: boolean           // all required permissions present
-  missing: string[]     // what's absent
-  isSuperuser: boolean  // permission diagnostic; the v3 bundle self-adapts
+type PreflightResult = {
+  ok: boolean                       // no blocking gaps
+  missing: string[]                 // blocking gaps, each naming what it blocks
+  currentUser: string
+  isSuperuser: boolean
+  memberOfPostgres: boolean | null  // null: no postgres role exists; false never blocks (it only skips optional statements)
+  hasDatabaseCreate: boolean
+  hasPublicCreate: boolean          // false (blocking) when the public schema is missing entirely
+  pgcryptoInstalled: boolean
+  pgcryptoSchema: string | null     // blocks (even superusers) when outside extensions/public — the bundle aborts
+  eqlV3SchemaPresent: boolean
+  eqlV3InternalSchemaPresent: boolean
+  canDropEqlV3Schema: boolean | null          // null: schema absent; false blocks reinstall (DROP SCHEMA ... CASCADE)
+  canDropEqlV3InternalSchema: boolean | null
+}
+
+type InstallResult = {
+  // The skipped ALTER DEFAULT PRIVILEGES FOR ROLE postgres statements (with an
+  // explanatory header) when the role is not a member of postgres; null when
+  // every grant ran. Optional SQL — surface as information, never as a
+  // required step: stash re-grants every object on each install/upgrade.
+  deferredGrantsSql: string | null
 }
 ```
+
+The bundle runs in its own transaction; the Supabase grants run after its commit, so a grants failure no longer rolls back a working install.
 
 Required: `SUPERUSER`, **or** `CREATE` on the database *and* on the `public` schema. If `pgcrypto` is absent, also `SUPERUSER` or `CREATEDB`.
 
 ## Requirements
 
 - Node.js >= 22
-- PostgreSQL with sufficient permissions (see `checkPermissions()`)
+- PostgreSQL with sufficient permissions (check with `stash eql preflight`)
 - `stash.config.ts` with a valid `databaseUrl` — or run `stash init` / `stash eql install` to scaffold it
 - Optional peer dependency: `@cipherstash/stack` >= 0.6.0 (required for the commands that load your encryption client)
 
 ## Common issues
 
-**Permission errors during install.** The role needs `CREATE` on the database and the `public` schema, or `SUPERUSER`. Check the CLI output for exactly what's missing.
+**Permission errors during install.** The role needs `CREATE` on the database and the `public` schema, or `SUPERUSER`. Run `stash eql preflight` for a row-by-row report of exactly what's missing and which statement each gap blocks.
 
 **Config not found.** `stash.config.ts` must be in the project root or a parent, and must `export default defineConfig(...)`. Fastest fix: `stash init`. For a CLI-only setup, `stash eql install` scaffolds it too.
 

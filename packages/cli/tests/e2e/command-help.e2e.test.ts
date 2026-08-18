@@ -16,6 +16,7 @@ describe('per-command --help', () => {
     })
     expect(r.exitCode).toBe(0)
     expect(r.output).toContain('Usage: npx stash eql <command> [options]')
+    expect(r.output).toContain('eql preflight')
     expect(r.output).toContain('eql install')
     expect(r.output).toContain('eql migration')
     expect(r.output).toContain('eql repair')
@@ -47,6 +48,16 @@ describe('per-command --help', () => {
     expect(r.output).toContain('--drizzle')
     expect(r.output).toContain('--supabase')
     expect(r.output).toContain('--force')
+  })
+
+  it('renders full command help for `eql preflight --help`', async () => {
+    const r = await run(['eql', 'preflight', '--help'], {
+      env: { npm_config_user_agent: '' },
+    })
+    expect(r.exitCode).toBe(0)
+    expect(r.output).toContain('Usage: npx stash eql preflight [options]')
+    expect(r.output).toContain('--json')
+    expect(r.output).toContain('--database-url')
   })
 
   it('renders full command help for `eql install --help`', async () => {

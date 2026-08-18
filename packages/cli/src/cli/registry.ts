@@ -301,6 +301,32 @@ export const registry: CommandGroup[] = [
     title: 'EQL',
     commands: [
       {
+        name: 'eql preflight',
+        summary:
+          'Report whether this database role can install EQL, before trying',
+        long: [
+          'Read-only: probes the connected role — superuser, membership of',
+          '`postgres`, CREATE on the database and on `public`, pgcrypto, and',
+          'whether the EQL v3 schemas already exist — and names the statement',
+          'each gap blocks. Exits 1 when a gap would abort `eql install`.',
+          '',
+          'Membership of `postgres` is reported but never blocks: on managed',
+          'platforms whose role is not a member (e.g. Lovable), `eql install`',
+          'skips the optional owner-scoped ALTER DEFAULT PRIVILEGES statements',
+          '— the install is complete without them, since stash re-grants every',
+          'object on each install/upgrade.',
+        ].join('\n'),
+        examples: ['eql preflight', 'eql preflight --json'],
+        flags: [
+          {
+            name: '--json',
+            description:
+              'Emit the machine-readable preflight result instead of the table.',
+          },
+          DATABASE_URL_FLAG,
+        ],
+      },
+      {
         name: 'eql install',
         summary:
           'Scaffold stash.config.ts (if missing) and install EQL extensions',

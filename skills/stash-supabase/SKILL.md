@@ -89,6 +89,18 @@ supabase db push                 # remote/linked project
 > `stash eql install --supabase` is for a **hosted** project you administer
 > without the Supabase CLI, where there is no migrations directory to write to.
 
+> **Connecting as a role that is not `postgres` (or a member of it)** — common
+> on managed AI platforms such as Lovable — is fine: the install proceeds and
+> is complete. Only the three owner-scoped `ALTER DEFAULT PRIVILEGES FOR ROLE
+> postgres` statements are skipped, and they are **optional**: they cover EQL
+> objects `postgres` might later create outside stash tooling, and every
+> `stash eql install`/`eql upgrade` re-grants all objects anyway. The CLI
+> prints them as "Optional SQL — requires postgres" for operators who want
+> them (Supabase SQL editor / migration tool); on platforms where nobody can
+> act as `postgres`, nothing is lost. Check ahead of time with `stash eql
+> preflight` (`--json` for agents), which reports membership of `postgres`
+> alongside the other role capabilities.
+
 The generated file carries three things, in order: the EQL v3 bundle, the role
 grants, and the `cipherstash.cs_migrations` tracking schema that `stash
 encrypt` records per-column progress in. One `supabase db reset` therefore

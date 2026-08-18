@@ -9,6 +9,7 @@ import { detectPackageManager, runnerCommand } from '../init/utils.js'
 import { ensureEncryptionClient } from './client-scaffold.js'
 import { offerStashConfig } from './config-scaffold.js'
 import { detectPrismaNext, detectSupabase } from './detect.js'
+import { reportSupabaseGrantsOutcome } from './grants-report.js'
 
 export const SAFE_MIGRATION_NAME = /^[\w-]+$/
 
@@ -138,7 +139,7 @@ export async function installCommand(
 
   const installer = new EQLInstaller({ databaseUrl })
   s.start('Checking database permissions...')
-  const permissions = await installer.checkPermissions()
+  const permissions = await installer.preflight()
   if (!permissions.ok) {
     s.stop('Insufficient database permissions.')
     p.log.error('The connected database role is missing required permissions:')
@@ -152,12 +153,27 @@ export async function installCommand(
   } else {
     s.stop('Database permissions verified.')
   }
+  if (supabase && permissions.memberOfPostgres !== true) {
+    p.log.info(
+      `The connected role (${permissions.currentUser}) is not a member of \`postgres\`, so the optional \`ALTER DEFAULT PRIVILEGES FOR ROLE postgres\` statements will be skipped. The install proceeds and is complete without them — stash re-grants every object on each install/upgrade.`,
+    )
+  }
 
   if (!options.force) {
     s.start('Checking if EQL is already installed...')
     const installed = await installer.isInstalled()
     s.stop(installed ? 'EQL is already installed.' : 'EQL is not installed.')
     if (installed) {
+      // Re-apply the grants even when the bundle is present: since the bundle
+      // commits before the grants run, a grants failure leaves an installed-
+      // but-ungranted database, and a plain re-run must heal it rather than
+      // early-exit past it. Idempotent, a handful of statements.
+      if (supabase) {
+        s.start('Re-applying Supabase role grants...')
+        const grantsResult = await installer.applySupabaseGrants()
+        s.stop('Supabase role grants applied.')
+        reportSupabaseGrantsOutcome(grantsResult)
+      }
       p.log.info('Use --force to re-run the install script.')
       p.outro('Nothing to do.')
       return 'already-installed'
@@ -165,9 +181,9 @@ export async function installCommand(
   }
 
   s.start('Installing EQL v3 extensions (pinned bundle)...')
-  await installer.install({ supabase })
+  const installResult = await installer.install({ supabase })
   s.stop('EQL extensions installed.')
-  if (supabase) p.log.success('Supabase role permissions granted.')
+  if (supabase) reportSupabaseGrantsOutcome(installResult)
 
   s.start('Installing cs_migrations tracking schema...')
   const migrationsDb = new pg.Client({ connectionString: databaseUrl })
