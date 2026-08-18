@@ -58,7 +58,8 @@ overrides:
   # #133 GHSA-qjx8-664m-686j — js-cookie attribute injection
   'js-cookie@<3.0.7': '^3.0.7'
   # #102 GHSA-qx2v-qp2m-jg93 — postcss XSS via unescaped </style>
-  'postcss@<8.5.10': '^8.5.10'
+  # CVE-2026-69153 — bumped floor to 8.5.23, the next patched release.
+  'postcss@<8.5.23': '^8.5.23'
   # #145 GHSA-fx2h-pf6j-xcff, #146 GHSA-v6wh-96g9-6wx3 — vite dev server (Windows)
   'vite@>=7.0.0 <7.3.5': '~7.3.5'
   # #142 GHSA-g7r4-m6w7-qqqr — esbuild dev server. 0.28.1 is the FIRST patched
