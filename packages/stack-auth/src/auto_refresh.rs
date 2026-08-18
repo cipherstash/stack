@@ -133,6 +133,17 @@ impl StickyDenial {
 ///
 /// On the normal path (success or handled error), the guard is defused before
 /// drop so that the regular cleanup code runs instead.
+///
+/// Unlike the normal paths, `Drop` is synchronous and so notifies without
+/// taking the state lock. A caller that has read `refresh_in_progress` as
+/// `true` and is on its way into
+/// [`wait_for_in_flight_refresh`](AutoRefresh::wait_for_in_flight_refresh)
+/// holds that lock, which does not block this notification — so if the refresh
+/// future is cancelled in that window, the wake still lands on an empty list
+/// and that caller parks with nothing left to wake it. The `enable()` call in
+/// `wait_for_in_flight_refresh` does not close this narrower variant; doing so
+/// needs the notify moved under the state lock or a bounded wait, and is
+/// tracked separately.
 struct CancelGuard<'a> {
     in_progress: &'a AtomicBool,
     notify: &'a Notify,
@@ -411,7 +422,23 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
         }
         // Token crossed real expiry during in-flight refresh. Wait for the
         // refresh to complete rather than returning Expired.
-        let notified = self.refresh_notify.notified();
+        //
+        // `Notified` does not join the notify list until it is first polled,
+        // and `notify_waiters` stores no permit for futures that are not yet
+        // on it. Registering only at `.await` would leave a window after the
+        // lock drops in which the in-flight refresh can complete, notify an
+        // empty list, and leave this caller parked until some later refresh
+        // cycle notifies again — which for an idle client may be never.
+        // `enable()` joins the list while the state lock is still held, and
+        // `refresh_non_blocking` takes that same lock to record its outcome
+        // before it notifies, so the notification cannot land before we are
+        // listed. This does not cover `CancelGuard::drop`, which notifies
+        // without the lock — see the note on that impl.
+        let mut notified = std::pin::pin!(self.refresh_notify.notified());
+        // The `bool` reports whether a stored permit was consumed, which only
+        // `notify_one` produces; this `Notify` is only ever driven by
+        // `notify_waiters`, so there is nothing to act on.
+        let _ = notified.as_mut().enable();
         drop(state);
         notified.await;
         // Re-check after wake — refresh may have failed. Re-read the clock: an
