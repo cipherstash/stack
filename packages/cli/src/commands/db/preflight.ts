@@ -2,6 +2,7 @@ import * as p from '@clack/prompts'
 import { emitJsonError, emitJsonEvent } from '@/commands/auth/events.js'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { EQLInstaller, type PreflightResult } from '@/installer/index.js'
+import { describeOreCreatable, ORE_FALLBACK_REMEDY } from '@/installer/ore.js'
 import { resolveDiagnosticDatabaseUrl } from './resolve-diagnostic-url.js'
 
 /** See {@link resolveDiagnosticDatabaseUrl} — preflight keeps config-wins. */
@@ -90,6 +91,14 @@ export async function preflightCommand(
       'Not a member of `postgres`: in Supabase mode the optional `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` statements are skipped. The install is complete without them — they only cover EQL objects created outside stash tooling, and stash re-grants every object on each install/upgrade.',
     )
   }
+  // Said here so the ordering trade is known before a schema is written. The
+  // same sentence is printed by `eql install` and `eql status` against the
+  // installed state, so the answer survives past this command's output (#891).
+  if (result.canCreateOperatorClass === false) {
+    p.log.info(
+      `This role cannot create an operator class, so \`eql install\` will skip the ORE one and install its loud-failure fallback instead. That is a complete install. ${ORE_FALLBACK_REMEDY}`,
+    )
+  }
   p.outro('This role can install EQL.')
 }
 
@@ -139,6 +148,16 @@ export function renderPreflightReport(result: PreflightResult): string {
             !result.isSuperuser
           ? '<- blocks: CREATE EXTENSION pgcrypto'
           : undefined,
+    ],
+    // Never annotated as a blocker: the bundle skips the class and installs
+    // its loud-failure fallback, which is a complete install (#891).
+    // Same label `eql verify` uses for the installed state, so the row an
+    // operator reads before the install and the row they read after it are
+    // recognisably about the same thing. The value carries the tense.
+    [
+      'ORE operator class',
+      describeOreCreatable(result.canCreateOperatorClass).value,
+      describeOreCreatable(result.canCreateOperatorClass).annotation,
     ],
     ['eql_v3 schema', result.eqlV3SchemaPresent ? 'present' : 'absent'],
     [

@@ -129,4 +129,40 @@ describeLive('EQLInstaller.preflight — live Postgres', () => {
     }).preflight()
     expect(asMember.memberOfPostgres).toBe(true)
   })
+
+  /**
+   * The ORE probe (#891) attempts `CREATE OPERATOR FAMILY` and rolls it back.
+   * Only a live server can prove the two things that matter: that the
+   * privilege gate answers `false` for an unprivileged role rather than
+   * throwing, and that the rollback leaves nothing behind — the claim that
+   * preflight is read-only.
+   */
+  it('probes operator-class creation truthfully, and leaves nothing behind', async () => {
+    const { EQLInstaller } = await import('../index.js')
+    await adminQuery(
+      `DO $$ BEGIN CREATE ROLE ${MEMBER_ROLE} LOGIN PASSWORD '${MEMBER_PASSWORD}';
+         EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
+    )
+
+    const asSuperuser = await new EQLInstaller({
+      databaseUrl: DATABASE_URL as string,
+    }).preflight()
+    expect(asSuperuser.canCreateOperatorClass).toBe(true)
+
+    // A plain login role cannot: `CREATE OPERATOR FAMILY` is superuser-gated,
+    // and the 42501 it raises is the answer, not a probe failure.
+    const asOutsider = await new EQLInstaller({
+      databaseUrl: urlAs(MEMBER_ROLE, MEMBER_PASSWORD),
+    }).preflight()
+    expect(asOutsider.isSuperuser).toBe(false)
+    expect(asOutsider.canCreateOperatorClass).toBe(false)
+
+    // The successful arm rolled back: no operator family survives. This is
+    // what keeps `eql preflight` honest about being read-only.
+    const leftovers = await adminQuery<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_catalog.pg_opfamily
+        WHERE opfname = 'stash_preflight_opclass_probe'`,
+    )
+    expect(leftovers[0]?.n).toBe(0)
+  })
 })

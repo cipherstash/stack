@@ -14,6 +14,7 @@ const CAPABLE: PreflightResult = {
   eqlV3InternalSchemaPresent: false,
   canDropEqlV3Schema: null,
   canDropEqlV3InternalSchema: null,
+  canCreateOperatorClass: true,
   missing: [],
   ok: true,
 }
@@ -76,6 +77,40 @@ describe('renderPreflightReport', () => {
     })
     expect(report).toContain('present (in crypto_home)')
     expect(report).toContain('<- blocks: not on the EQL search_path')
+  })
+
+  // #891: the ORE trade is reported so it is known before a schema is
+  // written. It must never read as a blocker — the bundle's fallback makes an
+  // install without the operator class a complete install.
+  it('names the ORE consequence for a role that cannot create an operator class', () => {
+    const report = renderPreflightReport({
+      ...CAPABLE,
+      currentUser: 'sandbox_exec',
+      isSuperuser: false,
+      canCreateOperatorClass: false,
+    })
+    expect(report).toMatch(/ORE operator class\s+not creatable/)
+    expect(report).toContain('<- skips: ORE opclass')
+    expect(report).toContain('`types.*Ord`, not `types.*OrdOre`')
+    expect(report).not.toContain('<- blocks')
+  })
+
+  it('leaves the ORE row unannotated for a role that can create one', () => {
+    const report = renderPreflightReport(CAPABLE)
+    expect(report).toMatch(/ORE operator class\s+creatable/)
+    expect(report).not.toContain('<- skips: ORE opclass')
+  })
+
+  // A probe that could not ask the question must not be rendered as either
+  // answer — "unknown" is the honest third state.
+  it('renders an unanswerable ORE probe as unknown, not as no', () => {
+    const report = renderPreflightReport({
+      ...CAPABLE,
+      canCreateOperatorClass: null,
+    })
+    expect(report).toMatch(/ORE operator class\s+unknown/)
+    expect(report).toContain('`stash eql verify` reports it after install')
+    expect(report).not.toContain('not creatable')
   })
 
   it('adds the drop-ownership row only when an EQL schema exists', () => {
