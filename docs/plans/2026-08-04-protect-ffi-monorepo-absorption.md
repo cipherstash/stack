@@ -153,7 +153,7 @@ error The package "@cipherstash/stack" depends on the skipped package
       Please add "@cipherstash/stack" to the `ignore` option.
 ```
 
-An ignored package's dependents must also be ignored, cascading through the Stack fixed group to a total release freeze — the alternative this plan rejected. Replaced by `scripts/lint-no-ffi-changeset.mjs`. All seven packages are already on npm at `0.31.0`, and `changeset publish` only publishes versions absent from the registry, so a release is *already* a no-op for them. Full analysis: `.work/2026-08-04-protect-ffi-changesets-ignore-analysis.md`.
+An ignored package's dependents must also be ignored, cascading through the Stack fixed group to a total release freeze — the alternative this plan rejected. Replaced for the duration of the cutover window by `scripts/lint-no-ffi-changeset.mjs`, deleted in Phase 4. All seven packages were already on npm at `0.31.0`, and `changeset publish` only publishes versions absent from the registry, so a release was *already* a no-op for them. Full analysis: `.work/2026-08-04-protect-ffi-changesets-ignore-analysis.md`.
 
 ### `optionalDependencies` were never tracked
 
@@ -1882,7 +1882,7 @@ The only irreversible steps.
 
   **Do not expect a Stack patch.** This criterion originally read "patch-bumps the six Stack packages", which follows from the pinning analysis and is the right prediction for an FFI bump in isolation. It is not what will happen: `.changeset/prisma-next-0-17.md` carries `'@cipherstash/stack-prisma': major`, which propagates through the Stack fixed group, so `changeset status` reports all six Stack packages at **major** — and does so on `origin/main` too, with no FFI changeset in play. The Stack major is unrelated to this phase and must not be read as evidence the FFI bump misbehaved.
 - [ ] Run `ffi-preflight.yml` against that **versioned release-PR ref**.
-- [x] **Repoint npm trusted publishing for all seven packages**: `cipherstash/protectjs-ffi` → `cipherstash/stack`, workflow `release.yml`. For each publisher, **explicitly select `npm publish` under "Allowed actions"** — npm made that field required for configurations created after 2026-05-20, and these are new configurations. Confirm `repository.url` already reads `cipherstash/stack` (Task 2) or the publish is rejected.
+- [x] **Repoint npm trusted publishing for all seven packages**: `cipherstash/protectjs-ffi` → `cipherstash/stack`, workflow `release.yml`. For each publisher, **explicitly select `npm publish` under "Allowed actions"** — npm made that field required for configurations created after 2026-05-20, and these are new configurations. Confirm `repository.url` already reads `cipherstash/stack` (Task 2) or the publish is rejected. Only after the versioned pre-flight is green.
 
   Done ahead of the pre-flight rather than after it, which inverts the "only after the versioned pre-flight is green" sequencing above. That ordering was about not repointing until the pipeline was known good; the pipeline is built and its jobs have run, so the residual risk is a misconfigured publisher rather than a broken workflow.
 

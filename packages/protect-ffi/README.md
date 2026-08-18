@@ -384,6 +384,9 @@ repository-root `release.yml`, so a changeset here releases like any other
 package. The temporary guard that blocked one during the cutover window, and the
 `.md.deferred` convention for parking one behind it, are both gone.
 
+No FFI release has run from this repository yet — 0.31.0 was published from the
+old one. Until the first one lands, the path is configured rather than proven.
+
 The previous repository's GitHub Actions workflows were deposited under
 `.github/` in this directory by the subtree import and kept as the reference for
 that port. They are gone: the six-platform build matrix now lives in the

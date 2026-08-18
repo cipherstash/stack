@@ -134,15 +134,17 @@ so that stays true for everyone else.
   Rust. Everything else under `dist/` stays ignored. The re-inclusion chain
   spans the root `.gitignore`, the package's own, and a `.gitignore` wasm-pack
   generates — see the comments in each.
-- **Publishing has moved here.** All seven packages publish from this repo, via
-  npm trusted publishing bound to `release.yml`. Write changesets for them
-  normally. The `.md.deferred` parking convention and the
-  `lint-no-ffi-changeset` guard that enforced it are both gone — so a
-  `.md.deferred` file is now silently inert rather than a CI failure. If you
-  find one, it was written on a branch cut before the cutover and needs
-  `git mv`-ing back to `.md`, or the change it describes ships with no
-  changelog entry. **#905 carries one** (`protect-ffi-jsonwebtoken-cve`); rename
-  it on that branch before merging.
+- **Publishing has moved here.** npm trusted publishing for all seven packages
+  is repointed at this repo, bound to `release.yml`, so write changesets for
+  them normally. Nothing has actually published from here yet — the first FFI
+  release is still ahead, and until it lands treat the path as configured rather
+  than proven. The remaining steps and what is still unverified live in
+  `docs/plans/2026-08-04-protect-ffi-monorepo-absorption.md`, Phase 4.
+- **A `.md.deferred` changeset is now inert, not a CI failure.** The parking
+  convention and the `lint-no-ffi-changeset` guard that enforced it are both
+  gone. If you find such a file, it was written on a branch cut before the
+  cutover: `git mv` it back to `.md`, or the change it describes ships with no
+  changelog entry. Nothing detects one for you.
 - **The pipeline that publishes them.** `release.yml` asks
   `scripts/release-gate.mjs` which committed versions are missing from npm; if
   any FFI one is, `_build-ffi-artifacts.yml` compiles the six platforms with an
