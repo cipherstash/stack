@@ -1,5 +1,6 @@
 import { readInstallSql } from '@cipherstash/eql/sql'
-import pg from 'pg'
+import type pg from 'pg'
+import { createPgClient, TlsVerificationError } from '@/db/client.js'
 import {
   DEFERRED_GRANTS_HEADER,
   EQL_V3_INTERNAL_SCHEMA_NAME,
@@ -154,12 +155,15 @@ export class EQLInstaller {
   }
 
   async preflight(): Promise<PreflightResult> {
-    const client = new pg.Client({ connectionString: this.databaseUrl })
+    const client = createPgClient(this.databaseUrl)
     try {
       await client.connect()
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
       await client.end().catch(() => {})
+      // Already shaped centrally by createPgClient's connect wrapper — the
+      // message is self-contained; adding framing would bury the remedy.
+      if (error instanceof TlsVerificationError) throw error
+      const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`Failed to connect to database: ${detail}`, {
         cause: error,
       })
@@ -260,7 +264,7 @@ export class EQLInstaller {
 
   /** Generation-aware read-only detection retained for legacy diagnostics. */
   async isInstalled(options?: { eqlVersion?: EqlVersion }): Promise<boolean> {
-    const client = new pg.Client({ connectionString: this.databaseUrl })
+    const client = createPgClient(this.databaseUrl)
     const requiredSchemas =
       (options?.eqlVersion ?? 3) === 3
         ? [EQL_V3_SCHEMA_NAME, EQL_V3_INTERNAL_SCHEMA_NAME]
@@ -273,6 +277,7 @@ export class EQLInstaller {
       )
       return result.rows[0]?.found === requiredSchemas.length
     } catch (error) {
+      if (error instanceof TlsVerificationError) throw error
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`Failed to connect to database: ${detail}`, {
         cause: error,
@@ -288,7 +293,7 @@ export class EQLInstaller {
   }): Promise<string | null> {
     const schemaName =
       (options?.eqlVersion ?? 3) === 3 ? EQL_V3_SCHEMA_NAME : EQL_V2_SCHEMA_NAME
-    const client = new pg.Client({ connectionString: this.databaseUrl })
+    const client = createPgClient(this.databaseUrl)
     try {
       await client.connect()
       const schemaResult = await client.query(
@@ -310,6 +315,7 @@ export class EQLInstaller {
       }
       return 'unknown'
     } catch (error) {
+      if (error instanceof TlsVerificationError) throw error
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`Failed to connect to database: ${detail}`, {
         cause: error,
@@ -334,10 +340,11 @@ export class EQLInstaller {
    * install/upgrade — the install is complete without them.
    */
   async install(options?: { supabase?: boolean }): Promise<InstallResult> {
-    const client = new pg.Client({ connectionString: this.databaseUrl })
+    const client = createPgClient(this.databaseUrl)
     try {
       await client.connect()
     } catch (error) {
+      if (error instanceof TlsVerificationError) throw error
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`Failed to connect to database: ${detail}`, {
         cause: error,
@@ -381,12 +388,15 @@ export class EQLInstaller {
    * path, so a plain re-run recovers without `--force`.
    */
   async applySupabaseGrants(): Promise<InstallResult> {
-    const client = new pg.Client({ connectionString: this.databaseUrl })
+    const client = createPgClient(this.databaseUrl)
     try {
       await client.connect()
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
       await client.end().catch(() => {})
+      // Already shaped centrally by createPgClient's connect wrapper — the
+      // message is self-contained; adding framing would bury the remedy.
+      if (error instanceof TlsVerificationError) throw error
+      const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`Failed to connect to database: ${detail}`, {
         cause: error,
       })

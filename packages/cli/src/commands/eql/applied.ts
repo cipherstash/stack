@@ -5,6 +5,8 @@
  * `migrations.table` in drizzle.config.ts); a project that overrides them must
  * say so, because the probe cannot discover it — see {@link LEDGER_ABSENT}.
  */
+import { buildPgClientConfig } from '@/db/config.js'
+
 export const DEFAULT_MIGRATIONS_RELATION = 'drizzle.__drizzle_migrations'
 
 /**
@@ -93,7 +95,7 @@ export async function latestAppliedMillis(
   relation: string = DEFAULT_MIGRATIONS_RELATION,
 ): Promise<number | typeof NOTHING_APPLIED | typeof LEDGER_ABSENT> {
   const { default: pg } = await import('pg')
-  const client = new pg.Client({ connectionString: databaseUrl })
+  const client = new pg.Client(buildPgClientConfig(databaseUrl))
   try {
     await client.connect()
     const result = await client.query<{ max_created_at: string | null }>(
