@@ -29,8 +29,6 @@ const OUTSIDER = `stash_guard_outsider_${process.pid}`
 const MEMBER = `stash_guard_member_${process.pid}`
 const PASSWORD = 'stash-guard-test'
 
-let createdPostgresRole = false
-
 async function query<T = unknown>(sql: string, url?: string): Promise<T[]> {
   const { default: pg } = await import('pg')
   const client = new pg.Client({ connectionString: url ?? DATABASE_URL })
@@ -69,13 +67,11 @@ describeLive('guarded owner-scoped grants — live Postgres', () => {
     }
     await query('CREATE SCHEMA IF NOT EXISTS eql_v3')
     await query('CREATE SCHEMA IF NOT EXISTS eql_v3_internal')
-    const rows = await query<{ n: number }>(
-      "SELECT count(*)::int AS n FROM pg_roles WHERE rolname = 'postgres'",
+    // Race-safe against the preflight live suite creating it concurrently;
+    // left behind afterwards for the same reason (the database is ephemeral).
+    await query(
+      'DO $$ BEGIN CREATE ROLE postgres; EXCEPTION WHEN duplicate_object THEN NULL; END $$',
     )
-    if (rows[0]?.n === 0) {
-      await query('CREATE ROLE postgres')
-      createdPostgresRole = true
-    }
     await query(`CREATE ROLE ${OUTSIDER} LOGIN PASSWORD '${PASSWORD}'`)
     await query(`CREATE ROLE ${MEMBER} LOGIN PASSWORD '${PASSWORD}'`)
     await query(`GRANT postgres TO ${MEMBER}`)
@@ -100,9 +96,6 @@ describeLive('guarded owner-scoped grants — live Postgres', () => {
     ).catch(() => undefined)
     await query(`DROP ROLE IF EXISTS ${OUTSIDER}`).catch(() => undefined)
     await query(`DROP ROLE IF EXISTS ${MEMBER}`).catch(() => undefined)
-    if (createdPostgresRole) {
-      await query('DROP ROLE IF EXISTS postgres').catch(() => undefined)
-    }
   })
 
   it('succeeds silently for a role that is not a member of postgres', async () => {

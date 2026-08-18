@@ -25,8 +25,6 @@ const describeLive = DATABASE_URL ? describe : describe.skip
 const MEMBER_ROLE = `stash_preflight_member_${process.pid}`
 const MEMBER_PASSWORD = 'stash-preflight-test'
 
-let createdPostgresRole = false
-
 async function adminQuery<T = unknown>(sql: string): Promise<T[]> {
   const { default: pg } = await import('pg')
   const client = new pg.Client({ connectionString: DATABASE_URL })
@@ -58,9 +56,9 @@ describeLive('EQLInstaller.preflight — live Postgres', () => {
     await adminQuery(`DROP ROLE IF EXISTS ${MEMBER_ROLE}`).catch(
       () => undefined,
     )
-    if (createdPostgresRole) {
-      await adminQuery('DROP ROLE IF EXISTS postgres').catch(() => undefined)
-    }
+    // The `postgres` role is deliberately left behind: the guarded-grants
+    // live suite shares it in the same run, and the compose database is
+    // ephemeral (no volume), so dropping it here would only create races.
   })
 
   it('runs the real preflight query, guarding pg_has_role against a missing postgres role', async () => {
@@ -69,7 +67,11 @@ describeLive('EQLInstaller.preflight — live Postgres', () => {
       databaseUrl: DATABASE_URL as string,
     })
     // The assertion that matters is that this does not throw: an unguarded
-    // pg_has_role('postgres') raises when the role is absent.
+    // pg_has_role('postgres') raises when the role is absent. The sibling
+    // guarded-grants suite may create the role concurrently, so sample
+    // existence on both sides of the probe and only pin the null arm when it
+    // was absent throughout.
+    const existedBefore = await postgresRoleExists()
     const result = await installer.preflight()
     expect(result.currentUser).toBe('cipherstash')
     expect(result.isSuperuser).toBe(true)
@@ -87,20 +89,21 @@ describeLive('EQLInstaller.preflight — live Postgres', () => {
     } else {
       expect(result.canDropEqlV3Schema).toBeNull()
     }
-    if (await postgresRoleExists()) {
-      // Image variant that ships a postgres role: a superuser is a member.
+    const existedAfter = await postgresRoleExists()
+    if (existedBefore) {
+      // A superuser is a member of every role.
       expect(result.memberOfPostgres).toBe(true)
-    } else {
+    } else if (!existedAfter) {
       expect(result.memberOfPostgres).toBeNull()
     }
+    // Role appeared mid-probe (parallel suite): either arm is legitimate.
   })
 
   it('reports membership truthfully for member and non-member roles', async () => {
     const { EQLInstaller } = await import('../index.js')
-    if (!(await postgresRoleExists())) {
-      await adminQuery('CREATE ROLE postgres')
-      createdPostgresRole = true
-    }
+    await adminQuery(
+      'DO $$ BEGIN CREATE ROLE postgres; EXCEPTION WHEN duplicate_object THEN NULL; END $$',
+    )
     await adminQuery(
       `CREATE ROLE ${MEMBER_ROLE} LOGIN PASSWORD '${MEMBER_PASSWORD}'`,
     )
