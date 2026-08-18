@@ -43,15 +43,19 @@
 
 **Working-tree state is not part of this plan's guarantees.** An earlier revision claimed "working tree clean"; that was true when written and false shortly after. A prior rewrite of this document was lost by being left uncommitted across a branch switch — **commit plan edits in the session that makes them.**
 
-**Phase 3 is built; phases 4 and 5 remain.** Phase 4 contains the only
-irreversible steps and requires seven manual npmjs.com changes. Phase 5 is
-blocked until phase 4 publishes.
+**Phases 3 and 5 are built; phase 4 is in flight.** Phase 5 (`stash doctor`)
+landed ahead of phase 4 rather than behind it — see #883; the "blocked until
+phase 4 publishes" sequencing an earlier revision asserted did not hold, because
+the diagnostics subpath probes the binding in the workspace and needs no
+release.
 
-The pipeline is inert until a version is unpublished, and
-`scripts/lint-no-ffi-changeset.mjs` is what keeps that from happening early: an
-FFI changeset stays parked as `.changeset/<name>.md.deferred` until the cutover
-PR renames it. Two are waiting — `protect-ffi-lazy-load.md.deferred` and
-`protect-ffi-repository-url.md.deferred`.
+Phase 4 contains the only irreversible steps. Its guard —
+`scripts/lint-no-ffi-changeset.mjs`, which held FFI changesets parked as
+`.changeset/<name>.md.deferred` — is **deleted** as of the cutover PR, and the
+two files it was holding (`protect-ffi-lazy-load`, `protect-ffi-repository-url`)
+are renamed back and live. What remains is the release itself: pre-flight
+against the versioned ref, merge Version Packages, verify, archive the old
+repository.
 
 ### Phase 3 progress
 
@@ -1861,13 +1865,15 @@ git commit -m "ci: run the Rust checks from a root path-filtered workflow"
 
 The only irreversible steps.
 
-- [ ] Merge a cutover PR that deletes `scripts/lint-no-ffi-changeset.mjs`, its self-test, its fixtures, the `lint:ffi-changeset` script and the `tests.yml` step; **and** activates the deferred `@cipherstash/protect-ffi` **minor** changeset for the laziness change and `assertNativeBindingAvailable()` — it is already written and parked, so this half is a rename, not composition:
+- [x] Merge a cutover PR that deletes `scripts/lint-no-ffi-changeset.mjs`, its self-test, the `lint:ffi-changeset` script and the `tests.yml` step; **and** activates the deferred `@cipherstash/protect-ffi` **minor** changeset for the laziness change and `assertNativeBindingAvailable()` — it is already written and parked, so this half is a rename, not composition:
 
   ```bash
   for f in .changeset/*.md.deferred; do git mv "$f" "${f%.deferred}"; done
   ```
 
   Both halves in one PR — the guard exists to stop that changeset landing early. The `.md.deferred` extension is what makes parking safe: `@changesets/read` and the guard both select on `.endsWith('.md')`, so the file is inert to `changeset version`/`publish` until renamed. Check for more than one parked file — any protect-ffi change landing during the window parks its changeset the same way.
+
+  Done in the PR that ticks this box. Two parked files were renamed, not one: `protect-ffi-lazy-load.md` (minor) and `protect-ffi-repository-url.md` (patch). There were no fixtures to delete — the self-test wrote its own to a tmpdir, so the "its fixtures" in the line above was always wrong. **A third changeset is parked on the branch of #905** (the `jsonwebtoken` CVE bump); once this lands, nothing reads or warns about that extension, so #905 must rename its own file before merging or the fix ships with an empty changelog.
 - [ ] Let the Version Packages job create the release PR. Verify it bumps all seven FFI packages to `0.32.0`, rewrites the wrapper's six `optionalDependencies`, and patch-bumps the six Stack packages (expected — see "Release lines are coupled by pinning").
 - [ ] Run `ffi-preflight.yml` against that **versioned release-PR ref**.
 - [ ] **Repoint npm trusted publishing for all seven packages**: `cipherstash/protectjs-ffi` → `cipherstash/stack`, workflow `release.yml`. For each publisher, **explicitly select `npm publish` under "Allowed actions"** — npm made that field required for configurations created after 2026-05-20, and these are new configurations. Confirm `repository.url` already reads `cipherstash/stack` (Task 2) or the publish is rejected. Only after the versioned pre-flight is green.

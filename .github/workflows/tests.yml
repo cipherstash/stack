@@ -246,14 +246,6 @@ jobs:
       - name: Lint — no references to deleted package directories
         run: pnpm run lint:package-paths
 
-      # TEMPORARY — delete with the script in the phase-4 cutover PR.
-      # The seven protect-ffi packages live here but still publish from
-      # cipherstash/protectjs-ffi. A changeset naming any of them bumps all
-      # seven through their fixed group and the next release tries a publish
-      # npm has not been repointed to trust.
-      - name: Lint — no protect-ffi changeset before the publishing cutover
-        run: pnpm run lint:ffi-changeset
-
       - name: Test — lint script self-tests
         run: pnpm run test:scripts
 

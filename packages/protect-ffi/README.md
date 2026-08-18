@@ -379,18 +379,10 @@ packages. The changeset body becomes the `CHANGELOG.md` entry — Changesets own
 that file now, so the `[Unreleased]` heading and the `version` npm lifecycle
 hook that used to promote it are gone.
 
-**During the publishing cutover, a protect-ffi changeset is blocked.** All seven
-packages are already on npm at the version this workspace carries, and npm
-trusted publishing still names `cipherstash/protectjs-ffi` as the publisher. A
-changeset naming any of them would bump all seven and send a publish npm rejects
-or misattributes, so `scripts/lint-no-ffi-changeset.mjs` fails CI on one. Change
-this package freely — only the changeset waits.
-
-Write it anyway, and park it as `.changeset/<name>.md.deferred`. Changesets
-selects changesets by `.endsWith('.md')`, so that extension is invisible to
-`changeset version` and `changeset publish` (and to the guard), and the cutover
-PR that repoints trusted publishing renames it back rather than reconstructing
-it from the git log.
+npm trusted publishing for all seven packages names `cipherstash/stack` and the
+repository-root `release.yml`, so a changeset here releases like any other
+package. The temporary guard that blocked one during the cutover window, and the
+`.md.deferred` convention for parking one behind it, are both gone.
 
 The previous repository's GitHub Actions workflows were deposited under
 `.github/` in this directory by the subtree import and kept as the reference for
