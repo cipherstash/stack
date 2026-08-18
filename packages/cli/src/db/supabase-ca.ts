@@ -18,7 +18,7 @@
  *   Expires:  2031-04-26
  *
  * Rotation: re-run the capture + cross-check above. The CA is only ever
- * APPENDED to the system trust roots (see `resolveCa` in client.ts), so a
+ * APPENDED to the system trust roots (see `resolveCa` in config.ts), so a
  * future Supabase move to a publicly-trusted CA keeps verifying.
  */
 export const SUPABASE_ROOT_CA_PEM = `-----BEGIN CERTIFICATE-----
