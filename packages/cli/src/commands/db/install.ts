@@ -154,8 +154,8 @@ export async function installCommand(
     s.stop('Database permissions verified.')
   }
   if (supabase && permissions.memberOfPostgres !== true) {
-    p.log.warn(
-      `The connected role (${permissions.currentUser}) is not a member of \`postgres\`, so the \`ALTER DEFAULT PRIVILEGES FOR ROLE postgres\` grants cannot run here. The install will proceed; those statements will be printed at the end for you to apply with sufficient privileges.`,
+    p.log.info(
+      `The connected role (${permissions.currentUser}) is not a member of \`postgres\`, so the optional \`ALTER DEFAULT PRIVILEGES FOR ROLE postgres\` statements will be skipped. The install proceeds and is complete without them — stash re-grants every object on each install/upgrade.`,
     )
   }
 

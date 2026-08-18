@@ -143,9 +143,18 @@ export const SUPABASE_DEFAULT_PRIVILEGES_SQL_V3 =
   supabaseInternalDefaultPrivilegesSql(EQL_V3_INTERNAL_SCHEMA_NAME)
 
 /**
- * Comment prefix for the deferred owner-scoped statements when they are
- * printed for the operator (or a future `--print-sql`) instead of executed.
+ * Comment prefix for the skipped owner-scoped statements when they are
+ * surfaced for the operator (or a future `--print-sql`) instead of executed.
+ *
+ * Framed as OPTIONAL, deliberately: every `stash eql install` / `eql upgrade`
+ * re-runs the blanket grants over all objects, and the generated Supabase
+ * migration embeds them alongside the bundle — so the default-privileges
+ * rules only matter for EQL objects created outside stash tooling. On
+ * platforms where no operator can act as `postgres` (e.g. Lovable), nothing
+ * is lost by never applying them.
  */
-export const DEFERRED_GRANTS_HEADER = `-- The statements below require a role that is a member of \`postgres\`.
--- Apply them via your platform's migration tool or the Supabase SQL editor.
+export const DEFERRED_GRANTS_HEADER = `-- Optional: the statements below require a role that is a member of \`postgres\`.
+-- They are only needed if EQL objects are later created outside stash tooling
+-- (stash re-grants every object on each install/upgrade). If you want them,
+-- apply them via your platform's migration tool or the Supabase SQL editor.
 `

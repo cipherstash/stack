@@ -35,7 +35,7 @@ describe('renderPreflightReport', () => {
     })
     expect(report).toContain('member of postgres  no')
     expect(report).toContain(
-      '<- blocks: ALTER DEFAULT PRIVILEGES FOR ROLE postgres',
+      '<- skips optional: ALTER DEFAULT PRIVILEGES FOR ROLE postgres',
     )
   })
 

@@ -74,8 +74,10 @@ export interface InstallResult {
    * The owner-scoped `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` statements
    * that were skipped because the connecting role is not a member of
    * `postgres` (prefixed with the explanatory header comment), or `null` when
-   * every grant ran. The caller should surface this SQL for the operator to
-   * apply via a migration tool or the Supabase SQL editor.
+   * every grant ran. OPTIONAL from the operator's perspective: they only
+   * cover EQL objects created outside stash tooling, and every
+   * install/upgrade re-grants all objects — surface the SQL as information,
+   * not as a required step.
    */
   deferredGrantsSql: string | null
 }
@@ -228,8 +230,9 @@ export class EQLInstaller {
    * statement used to take all ~194 functions down with it. When the
    * connecting role is not a member of `postgres`, the owner-scoped
    * `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` statements are skipped and
-   * returned for the operator to apply with sufficient privileges; the plain
-   * `GRANT`s still run, so everything that exists is usable immediately.
+   * returned as optional SQL; the plain `GRANT`s still run, so everything
+   * that exists is usable immediately, and stash re-grants on every
+   * install/upgrade — the install is complete without them.
    */
   async install(options?: { supabase?: boolean }): Promise<InstallResult> {
     const client = new pg.Client({ connectionString: this.databaseUrl })

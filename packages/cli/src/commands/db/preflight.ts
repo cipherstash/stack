@@ -88,7 +88,7 @@ export async function preflightCommand(
 
   if (result.memberOfPostgres !== true) {
     p.log.info(
-      'Not a member of `postgres`: in Supabase mode the `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` grants will be skipped and printed for you to apply separately. Everything else installs normally.',
+      'Not a member of `postgres`: in Supabase mode the optional `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` statements are skipped. The install is complete without them — they only cover EQL objects created outside stash tooling, and stash re-grants every object on each install/upgrade.',
     )
   }
   p.outro('This role can install EQL.')
@@ -106,7 +106,7 @@ export function renderPreflightReport(result: PreflightResult): string {
         ? 'n/a (no postgres role)'
         : yesNo(result.memberOfPostgres),
       result.memberOfPostgres === false
-        ? '<- blocks: ALTER DEFAULT PRIVILEGES FOR ROLE postgres'
+        ? '<- skips optional: ALTER DEFAULT PRIVILEGES FOR ROLE postgres'
         : undefined,
     ],
     [

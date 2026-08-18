@@ -312,8 +312,9 @@ export const registry: CommandGroup[] = [
           '',
           'Membership of `postgres` is reported but never blocks: on managed',
           'platforms whose role is not a member (e.g. Lovable), `eql install`',
-          'skips the owner-scoped ALTER DEFAULT PRIVILEGES statements and',
-          'prints them for you to apply separately.',
+          'skips the optional owner-scoped ALTER DEFAULT PRIVILEGES statements',
+          '— the install is complete without them, since stash re-grants every',
+          'object on each install/upgrade.',
         ].join('\n'),
         examples: ['eql preflight', 'eql preflight --json'],
         flags: [
