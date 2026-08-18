@@ -17,7 +17,7 @@
  *   export STASH_TEST_DATABASE_URL=postgres://cipherstash:password@localhost:55432/cipherstash
  */
 
-import { beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { EQLInstaller } from '../index.js'
 import { verifyEqlSurface } from '../verify.js'
 
@@ -41,6 +41,15 @@ describeLive('verifyEqlSurface — live Postgres', () => {
     // the ORE operator class is created and the expected state is
     // `indexable`. Re-running over a previous (possibly broken-by-this-suite)
     // install is exactly what the bundle supports.
+    const url = DATABASE_URL ?? ''
+    await new EQLInstaller({ databaseUrl: url }).install()
+  }, 180_000)
+
+  afterAll(async () => {
+    // The tests below drop an operator and eql_v3.version() — reinstall so
+    // the damage does not outlive this file into whatever runs against the
+    // database next (the live suites run serially in the `live` project, so
+    // "next" is a real thing, not a race).
     const url = DATABASE_URL ?? ''
     await new EQLInstaller({ databaseUrl: url }).install()
   }, 180_000)

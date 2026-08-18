@@ -260,11 +260,14 @@ function rejectRetiredEqlFlags(
 
 /**
  * `parseArgs` booleanises a `--database-url` whose value is missing (next
- * token starts with `-`), so a typo'd `--database-url --json` would silently
- * fall back to env/config resolution — and the read-only diagnostics would
- * judge a different database than the user targeted. Reject it up front,
- * keeping stdout parseable in `--json` mode (same pattern as `stash env`'s
- * `nameMissingValue`).
+ * token starts with `-`, or the flag is last), so a typo'd `--database-url
+ * --force` would silently fall back to env/config resolution — and the
+ * command would act on a different database than the user targeted, without
+ * ever naming it. Harmless for the read-only diagnostics, catastrophic for
+ * `eql install --force` (DROP SCHEMA … CASCADE, no confirmation). A valueless
+ * `--database-url` is always a typo, so `dispatch()` rejects it for EVERY
+ * command rather than per-case, keeping stdout parseable in `--json` mode
+ * (same pattern as `stash env`'s `nameMissingValue`).
  */
 async function rejectMissingDatabaseUrlValue(
   flags: Record<string, boolean>,
@@ -288,7 +291,6 @@ async function runEqlCommand(
 ) {
   switch (sub) {
     case 'preflight':
-      await rejectMissingDatabaseUrlValue(flags)
       await preflightCommand({
         databaseUrl: values['database-url'],
         json: flags.json,
@@ -298,7 +300,6 @@ async function runEqlCommand(
       await runInstall(flags, values)
       break
     case 'verify': {
-      await rejectMissingDatabaseUrlValue(flags)
       const { verifyCommand } = await import('../commands/eql/verify.js')
       await verifyCommand({
         databaseUrl: values['database-url'],
@@ -578,6 +579,7 @@ async function dispatch(
   flags: Record<string, boolean>,
   values: Record<string, string>,
 ) {
+  await rejectMissingDatabaseUrlValue(flags)
   switch (command) {
     case 'init':
       await initCommand(flags, values)

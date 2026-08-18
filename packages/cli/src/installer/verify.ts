@@ -594,7 +594,10 @@ export function diffSurface(
         {
           severity: 'warning',
           kind: 'version',
-          message: `EQL ${installed.installedVersion} is installed, but this CLI pins EQL ${expected.eqlVersion} — the object-level surface checks only know the pinned bundle, so they were skipped. Run \`stash eql upgrade\`, then verify again.`,
+          // Both remedies run the same pinned-bundle DDL, but `eql upgrade`
+          // requires a stash.config.ts — on a one-shot `--database-url`
+          // database, `install --force` is the one that actually works.
+          message: `EQL ${installed.installedVersion} is installed, but this CLI pins EQL ${expected.eqlVersion} — the object-level surface checks only know the pinned bundle, so they were skipped. Run \`stash eql upgrade\` (or \`stash eql install --force --database-url ...\` for a database without a stash.config.ts), then verify again.`,
         },
       ],
       // NOT ok: nothing was verified. `ok` must mean "checked and complete" —

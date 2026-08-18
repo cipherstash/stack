@@ -231,8 +231,10 @@ export async function installCommand(
  * already-installed path. Exits 1 on damage; a verification ERROR (the
  * database dropped the connection, a timeout) is a warning, not a failure —
  * the install itself is committed, and `stash eql verify` can re-check later.
+ *
+ * Exported for the unit suite only — the command surface is `installCommand`.
  */
-async function verifySurfaceOrExit(
+export async function verifySurfaceOrExit(
   databaseUrl: string,
   s: ReturnType<typeof p.spinner>,
   options: { remedy: string },
@@ -246,6 +248,20 @@ async function verifySurfaceOrExit(
     p.log.warn(
       `${err instanceof Error ? err.message : String(err)} — run \`stash eql verify\` to check the install later.`,
     )
+    return
+  }
+  if (report.status === 'version-mismatch') {
+    // `ok: false`, but NOT damage: the pinned bundle is the wrong manifest to
+    // diff against, so nothing was actually checked. `stash eql verify` stays
+    // strict about that (exit 1 — could-not-verify must never gate as
+    // verified), but a no-op `eql install` re-run over an older EQL was exit 0
+    // before verification existed, and idempotent provisioning scripts depend
+    // on that. Warn with the skew and the remedy, and carry on.
+    s.stop(
+      'Installed EQL version differs from the pinned bundle — surface not verified.',
+    )
+    const mismatch = report.findings[0]?.message
+    if (mismatch) p.log.warn(mismatch)
     return
   }
   if (report.ok) {
