@@ -1,6 +1,6 @@
 {
   "name": "@cipherstash/protect-ffi",
-  "version": "0.32.0",
+  "version": "0.31.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/cipherstash/stack.git"

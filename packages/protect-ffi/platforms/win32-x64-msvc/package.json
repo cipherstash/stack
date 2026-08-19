@@ -1,7 +1,7 @@
 {
   "name": "@cipherstash/protect-ffi-win32-x64-msvc",
   "description": "Prebuilt binary package for `@cipherstash/protect-ffi` on `win32-x64-msvc`.",
-  "version": "0.32.0",
+  "version": "0.31.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/cipherstash/stack.git",

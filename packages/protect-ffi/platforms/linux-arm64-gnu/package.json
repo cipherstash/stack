@@ -1,7 +1,7 @@
 {
   "name": "@cipherstash/protect-ffi-linux-arm64-gnu",
   "description": "Prebuilt binary package for `@cipherstash/protect-ffi` on `linux-arm64-gnu`.",
-  "version": "0.32.0",
+  "version": "0.31.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/cipherstash/stack.git",
