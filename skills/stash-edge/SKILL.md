@@ -41,6 +41,14 @@ together.
 | Bun | `@cipherstash/stack/wasm-inline` | Works, and avoids native-module resolution differences |
 | Anywhere bundling server code | `@cipherstash/stack/wasm-inline` | Bundles cleanly; nothing to externalise |
 
+**The Supabase adapter has its own edge entry.** If you are using
+`@cipherstash/stack-supabase`, import
+`@cipherstash/stack-supabase/wasm-inline` (not the package root, which pulls
+the native engine) and **declare your `schemas`** — the adapter's default
+behaviour is to introspect the database for its column config, which needs a
+Postgres connection. Declaring skips it. See `stash-supabase` and
+`stash-managed-platforms`.
+
 **`@cipherstash/protect` is not one of the options.** It is the deprecated
 predecessor of `@cipherstash/stack`; its native `@cipherstash/protect-ffi`
 dependency will not load in any of the runtimes above. Reasoning from *that*

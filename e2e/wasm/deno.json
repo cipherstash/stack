@@ -1,6 +1,7 @@
 {
-  "//1": "Deno smoke test for @cipherstash/stack/wasm-inline. Run `pnpm exec turbo run build --filter @cipherstash/stack` first so dist/ is fresh.",
+  "//1": "Deno smoke tests for @cipherstash/stack/wasm-inline and @cipherstash/stack-supabase/wasm-inline. Run `pnpm exec turbo run build --filter @cipherstash/stack --filter @cipherstash/stack-supabase` first so both dist/ trees are fresh.",
   "//2": "Everything resolves to files pnpm already installed in the workspace — no `npm:` specifiers, so Deno never re-resolves against the registry. stack is its locally-built dist; auth and protect-ffi are the WASM-inline entries of the exact versions the catalog pinned, reached via stack's own node_modules symlink (`packages/stack/node_modules/@cipherstash/*`). Both entries import only their own relative wasm bindings, so there are no transitive npm deps to resolve. This keeps the versions in lockstep with the catalog automatically (a bump to pnpm-workspace.yaml needs no edit here) and sidesteps Deno 2.9's default 24h npm freshness cooldown, which would otherwise reject a just-published first-party version and block lockstep bumps for a day. The real supply-chain gate is pnpm's `minimumReleaseAge` (see skills/stash-supply-chain-security/), which already exempts first-party @cipherstash packages.",
+  "//4": "The stack-supabase edge entry imports three of stack's native-free subpaths (adapter-kit, eql/v3, errors) — mapped here because Deno resolves the bare specifiers in the emitted bundle, not because the entry needs anything extra. It imports NO Postgres driver, which packages/stack-supabase/__tests__/wasm-entry-edge-safety.test.ts asserts against the emitted file; if that ever regressed, this Deno run would fail on an unmapped `pg` specifier.",
   "//3": "No --allow-ffi grant. If protect-ffi ever silently fell back to a native binding under Deno, the test would fail on missing FFI permission — this is the WASM guarantee.",
   "nodeModulesDir": "auto",
   "tasks": {
@@ -9,6 +10,10 @@
   },
   "imports": {
     "@cipherstash/stack/wasm-inline": "../../packages/stack/dist/wasm-inline.js",
+    "@cipherstash/stack-supabase/wasm-inline": "../../packages/stack-supabase/dist/wasm-inline.js",
+    "@cipherstash/stack/adapter-kit": "../../packages/stack/dist/adapter-kit.js",
+    "@cipherstash/stack/eql/v3": "../../packages/stack/dist/eql/v3/index.js",
+    "@cipherstash/stack/errors": "../../packages/stack/dist/errors/index.js",
     "@cipherstash/protect-ffi/wasm-inline": "../../packages/stack/node_modules/@cipherstash/protect-ffi/dist/wasm/protect_ffi_inline.js",
     "@cipherstash/auth/wasm-inline": "../../packages/stack/node_modules/@cipherstash/auth/wasm-inline.mjs"
   }

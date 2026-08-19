@@ -148,22 +148,29 @@ export class EncryptedQueryBuilderImpl<
   // Mutation methods
   // ---------------------------------------------------------------------------
 
+  /**
+   * Expand `*` to the known column list, or refuse.
+   *
+   * `allColumns` comes only from introspection, so it is absent whenever the
+   * client was built from declared schemas alone (#708). Refusing is the
+   * fail-closed answer: an unexpanded `*` reaches PostgREST without the
+   * `::jsonb` casts, and every encrypted column comes back uncast.
+   */
+  private expandStarOrThrow(): string {
+    if (this.allColumns === null || this.allColumns.length === 0) {
+      throw new Error(
+        "encryptedSupabase does not support select('*'). Please list columns explicitly so that encrypted columns can be cast with ::jsonb. (A client built from declared `schemas` has no introspected column list to expand — either list the columns, or pass `databaseUrl` as well so the table can be introspected.)",
+      )
+    }
+    return this.columns.expandAllColumns(this.allColumns).join(', ')
+  }
+
   select(
     columns = '*',
     options?: { head?: boolean; count?: 'exact' | 'planned' | 'estimated' },
   ): this {
-    if (columns === '*') {
-      if (this.allColumns === null || this.allColumns.length === 0) {
-        throw new Error(
-          "encryptedSupabase does not support select('*'). Please list columns explicitly so that encrypted columns can be cast with ::jsonb.",
-        )
-      }
-      this.selectColumns = this.columns
-        .expandAllColumns(this.allColumns)
-        .join(', ')
-    } else {
-      this.selectColumns = columns
-    }
+    this.selectColumns =
+      columns === '*' ? this.expandStarOrThrow() : (columns as string)
     this.selectOptions = options
     return this
   }
@@ -693,12 +700,22 @@ export class EncryptedQueryBuilderImpl<
       }
     }
 
-    // Apply select
+    // Apply select.
+    //
+    // A read awaited without any `.select()` call lands in the second branch.
+    // It used to send a raw `*`, which is exactly what `select('*')` refuses
+    // one method above — an unexpanded star cannot carry the `::jsonb` casts,
+    // so every encrypted column came back as an uncast value. Route it through
+    // the same expansion so the two spellings of "give me everything" behave
+    // identically, and fail the same way when no column list exists to expand
+    // (declared mode, #708).
     if (selectString !== null) {
       query = query.select(selectString, this.selectOptions)
     } else if (!this.mutation) {
-      // Default select without explicit columns - shouldn't happen but fallback
-      query = query.select('*' as DbSelect, this.selectOptions)
+      query = query.select(
+        this.expandStarOrThrow() as DbSelect,
+        this.selectOptions,
+      )
     }
 
     // Apply resolved filters
