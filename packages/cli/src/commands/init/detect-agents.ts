@@ -18,6 +18,8 @@ export interface AgentEnvironment {
     claudeMd: boolean
     /** A `.claude/skills/` directory exists at the project root. */
     claudeSkillsDir: boolean
+    /** A `.codex/` directory exists at the project root. */
+    codexDir: boolean
     /** An `AGENTS.md` file exists at the project root. */
     agentsMd: boolean
   }
@@ -86,6 +88,7 @@ export function detectAgents(
       claudeDir: isDirectory(resolve(cwd, '.claude')),
       claudeMd: existsSync(resolve(cwd, 'CLAUDE.md')),
       claudeSkillsDir: isDirectory(resolve(cwd, '.claude', 'skills')),
+      codexDir: isDirectory(resolve(cwd, '.codex')),
       agentsMd: existsSync(resolve(cwd, 'AGENTS.md')),
     },
     editor: detectEditor(env),

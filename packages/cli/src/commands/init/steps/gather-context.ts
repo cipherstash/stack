@@ -15,7 +15,10 @@ export const gatherContextStep: InitStep = {
   name: 'Gather setup context',
   async run(state: InitState, _provider: InitProvider): Promise<InitState> {
     const cwd = process.cwd()
-    const agents = detectAgents(cwd, process.env)
+    // `install-skills` (the first step) already walked PATH and stat'd the
+    // project. Reuse its answer; only re-detect if this step is called
+    // outside the init pipeline.
+    const agents = state.agents ?? detectAgents(cwd, process.env)
     const pm = detectPackageManager()
     const envKeyCount = state.envKeys?.length ?? 0
 
@@ -25,6 +28,8 @@ export const gatherContextStep: InitStep = {
     detectedBits.push(`package manager: ${pm}`)
     if (agents.cli.claudeCode) detectedBits.push('Claude Code CLI: yes')
     if (agents.cli.codex) detectedBits.push('Codex CLI: yes')
+    const skillCount = state.skills?.installed.length ?? 0
+    if (skillCount > 0) detectedBits.push(`agent skills: ${skillCount}`)
     if (envKeyCount > 0) {
       detectedBits.push(`env keys: ${envKeyCount} found`)
     }

@@ -2,7 +2,7 @@ import * as p from '@clack/prompts'
 import { CliExit } from '../../cli/exit.js'
 import { isInteractive } from '../../config/tty.js'
 import { messages } from '../../messages.js'
-import { HANDOFF_CHOICES } from '../impl/steps/how-to-proceed.js'
+import { HANDOFF_CHOICES, resolveTarget } from '../impl/steps/how-to-proceed.js'
 import { planCommand } from '../plan/index.js'
 import { createBaseProvider } from './providers/base.js'
 import { createDrizzleProvider } from './providers/drizzle.js'
@@ -13,6 +13,7 @@ import { buildSchemaStep } from './steps/build-schema.js'
 import { gatherContextStep } from './steps/gather-context.js'
 import { installDepsStep } from './steps/install-deps.js'
 import { installEqlStep } from './steps/install-eql.js'
+import { installSkillsStep } from './steps/install-skills.js'
 import { resolveDatabaseStep } from './steps/resolve-database.js'
 import type { InitProvider, InitState, ProviderKey } from './types.js'
 import { CancelledError } from './types.js'
@@ -47,6 +48,16 @@ const PROVIDER_KEYS = Object.keys(PROVIDER_MAP) as ProviderKey[]
  * to the longer agent-driven phase.
  */
 const STEPS = [
+  // `install-skills` runs FIRST, and deliberately. It is the only step that
+  // needs neither network, credentials, nor a database, and the guidance it
+  // writes is what an agent needs most when a LATER step fails — auth, the
+  // database URL and EQL all exit non-zero, and `stash-cli` is the skill that
+  // covers recovering from each. Ordering it last is how #923 happened: the
+  // only callers of `installSkills` were the handoff steps, which `stash init`
+  // never reaches, so init shipped zero skills for an entire release.
+  // Guarded by `__tests__/steps-wiring.test.ts` — a unit test of the step
+  // alone would not have caught a pipeline that stopped calling it.
+  installSkillsStep,
   authenticateStep,
   resolveDatabaseStep,
   buildSchemaStep,
@@ -123,10 +134,24 @@ export async function initCommand(
 
   const provider = resolveProvider(flags)
 
+  // `--target` on `init` selects the SKILLS DESTINATION and nothing else — it
+  // does not perform a handoff the way `plan --target` / `impl --target` do.
+  // Validated against the same `HANDOFF_CHOICES` so the three commands never
+  // drift on what a target name means. Absent means "auto-detect".
+  const targetFlag = values.target
+  const target = resolveTarget(targetFlag)
+  if (targetFlag && !target) {
+    p.log.error(
+      `Unknown --target \`${targetFlag}\`. Valid values: ${HANDOFF_CHOICES.join(', ')}.`,
+    )
+    throw new CliExit(1)
+  }
+
   p.intro('CipherStash Stack Setup')
   p.log.info(provider.introMessage)
 
   let state: InitState = {}
+  if (target) state.targetFlag = target
 
   // Thread `--region <slug>` through to the authenticate step so init can run
   // non-interactively (STASH_REGION works even without this, via the env
@@ -206,6 +231,29 @@ export async function initCommand(
       checkmarks.push(`○ EQL migration ${verb} — ${applyStep}`)
     }
 
+    // Report the skills outcome in the summary, both ways. A silent
+    // `installedSkills: []` is what let #923 hide for a release: init printed
+    // success, the context file looked plausible, and the agent driving the
+    // setup was never told the guidance it needed was sitting unread in
+    // `node_modules`. Absent skills are degraded guidance, not a broken
+    // setup, so this never changes the exit code — unlike `eqlPending` below.
+    //
+    // Pushed BEFORE the EQL check so it appears on the failing summary too.
+    // That run is the one where it matters most: the agent is about to be
+    // told setup is incomplete, and `stash-cli` is the skill that covers
+    // `stash eql install`.
+    const installedSkills = state.skills?.installed ?? []
+    if (installedSkills.length > 0) {
+      checkmarks.push(
+        `✓ ${installedSkills.length} agent skill${installedSkills.length !== 1 ? 's' : ''} installed`,
+      )
+    } else {
+      const suggestion = state.targetFlag ?? 'claude-code'
+      checkmarks.push(
+        `○ No agent skills installed — no coding agent detected. Run \`${cli} plan --target ${suggestion}\` to install them.`,
+      )
+    }
+
     // EQL is required for encryption. Some integrations install it out-of-band
     // and legitimately leave `eqlInstalled` false here: Prisma Next installs it
     // via `prisma-next migrate`, and the Drizzle and Supabase flows generate a
@@ -247,7 +295,10 @@ export async function initCommand(
       })
       if (!p.isCancel(proceed) && proceed) {
         p.outro('Setup complete — handing off to `stash plan`.')
-        await planCommand()
+        // Forward an explicit `--target`: the user already named their agent
+        // once, so re-asking with the picker would be asking the same
+        // question twice. Without the flag, `plan` prompts as before.
+        await planCommand({}, target ? { target } : {})
         return
       }
       p.outro(`Next: run \`${cli} plan\` to draft your encryption plan.`)
@@ -257,7 +308,9 @@ export async function initCommand(
       // /dev/tty. Steer them at `--target` up front so the next command
       // doesn't surprise them.
       p.outro(
-        `Next: run \`${cli} plan --target <${HANDOFF_CHOICES.join('|')}>\` to draft your encryption plan. The \`--target\` flag is required when running non-interactively (skips the agent-target picker).`,
+        target
+          ? `Next: run \`${cli} plan --target ${target}\` to draft your encryption plan.`
+          : `Next: run \`${cli} plan --target <${HANDOFF_CHOICES.join('|')}>\` to draft your encryption plan. The \`--target\` flag is required when running non-interactively (skips the agent-target picker).`,
       )
     }
   } catch (err) {

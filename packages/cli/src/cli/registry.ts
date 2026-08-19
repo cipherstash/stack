@@ -111,6 +111,7 @@ export const registry: CommandGroup[] = [
           'init --supabase',
           'init --prisma',
           'init --region us-east-1',
+          'init --target claude-code',
         ],
         flags: [
           {
@@ -130,6 +131,12 @@ export const registry: CommandGroup[] = [
             ...REGION_FLAG,
             description:
               'Region to authenticate against (e.g. us-east-1). Skips the interactive region picker. Required for non-interactive init when not already logged in.',
+          },
+          {
+            name: '--target',
+            value: '<name>',
+            description:
+              'Which agent to install the bundled skills for: claude-code (.claude/skills) or codex (.codex/skills). Skips agent detection. Unlike `plan --target` and `impl --target`, this selects the skills destination only — init performs no handoff. agents-md, lovable and wizard install no skill directories (those handoffs inline the skills instead), so passing one here installs nothing.',
           },
         ],
       },

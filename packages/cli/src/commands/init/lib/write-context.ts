@@ -7,6 +7,7 @@ import type {
   InitState,
   Integration,
   SchemaDef,
+  SkillsDelivery,
 } from '../types.js'
 import {
   detectPackageManager,
@@ -19,25 +20,11 @@ import { renderSetupPrompt, type SetupPromptContext } from './setup-prompt.js'
 export const CONTEXT_REL_PATH = '.cipherstash/context.json'
 export const SETUP_PROMPT_REL_PATH = '.cipherstash/setup-prompt.md'
 
-/**
- * How the per-integration skills reached (or failed to reach) the project.
- * Threaded into `context.json` and the setup prompt so both describe what
- * actually happened, not what the handoff hoped for:
- *
- *   installed — copied into a skills directory (`.claude/skills`,
- *               `.codex/skills`)
- *   inlined   — bodies written into AGENTS.md under "## Skill references"
- *               (the editor-agent handoff, and the Codex fallback for an
- *               unwritable `.codex/` — #736)
- *   failed    — bundled skills that ended up nowhere (destination
- *               unwritable with no inline fallback, or AGENTS.md itself
- *               unwritable)
- */
-export interface SkillsDelivery {
-  installed: string[]
-  inlined: string[]
-  failed: string[]
-}
+// `SkillsDelivery` moved to `../types.js` so `InitState` can carry one
+// without types.ts importing this module back. Re-exported here because
+// every existing consumer (setup-prompt, handoff-helpers) imports it from
+// this path.
+export type { SkillsDelivery } from '../types.js'
 
 export interface ContextFile {
   cliVersion: string
@@ -116,6 +103,12 @@ function ensureDir(path: string): void {
  * which columns to encrypt, so there are no inferred schemas at init time.
  * The agent (or `stash encrypt` commands later) populates this when real
  * encrypted tables exist.
+ *
+ * The skill lists come from `state.skills`, which accumulates across every
+ * hop that delivers skills (the init step, then any later handoff). They
+ * used to be hardcoded empty here and set only by `writeArtifacts`, so a
+ * `context.json` written by `stash init` always reported no skills — the
+ * visible half of #923.
  */
 export function buildContextFile(state: InitState): ContextFile {
   const integration = state.integration ?? 'postgresql'
@@ -129,8 +122,8 @@ export function buildContextFile(state: InitState): ContextFile {
     installCommand: prodInstallCommand(pm, pinnedSpec('@cipherstash/stack')),
     envKeys: [],
     schemas: state.schemas ?? [],
-    installedSkills: [],
-    inlinedSkills: [],
+    installedSkills: state.skills?.installed ?? [],
+    inlinedSkills: state.skills?.inlined ?? [],
     planStep: state.planStep,
     generatedAt: new Date().toISOString(),
   }

@@ -2,19 +2,19 @@ import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as p from '@clack/prompts'
-import type { HandoffChoice, InitState } from '../types.js'
+import type { HandoffChoice, InitState, SkillsDelivery } from '../types.js'
+import { mergeSkillsDelivery } from '../types.js'
 import { upsertManagedBlock } from './sentinel-upsert.js'
 import {
   buildContextFile,
   buildSetupPromptContext,
   CONTEXT_REL_PATH,
   SETUP_PROMPT_REL_PATH,
-  type SkillsDelivery,
   writeContextFile,
   writeSetupPrompt,
 } from './write-context.js'
 
-export type { SkillsDelivery } from './write-context.js'
+export type { SkillsDelivery } from '../types.js'
 
 export const AGENTS_MD_REL_PATH = 'AGENTS.md'
 
@@ -78,9 +78,17 @@ export function writeAgentsMd(cwd: string, managed: string): boolean {
  * paths, which all need the same artifacts with handoff-specific values
  * threaded into the setup prompt.
  *
- * `skills` records where the skills actually ended up (installed as
- * directories, inlined into AGENTS.md, or failed) so the generated prompt
- * never mislabels an unwritable destination as a stripped build.
+ * `skills` records where THIS handoff put them (installed as directories,
+ * inlined into AGENTS.md, or failed) so the generated prompt never mislabels
+ * an unwritable destination as a stripped build. It is MERGED with whatever
+ * `state.skills` already carries rather than replacing it: `stash init`
+ * installs skills up front now, and a handoff that installs none of its own
+ * — `agents-md`, `lovable` — used to overwrite `installedSkills` with `[]`
+ * and erase them from the record (#923, one command later).
+ *
+ * The setup prompt is rendered from the merged view for the same reason: it
+ * tells the agent where the rules are, and "nowhere" is wrong when init put
+ * them in `.claude/skills/`.
  */
 export function writeArtifacts(
   cwd: string,
@@ -88,14 +96,13 @@ export function writeArtifacts(
   handoff: HandoffChoice,
   skills: SkillsDelivery,
 ): void {
-  const ctx = buildContextFile(state)
+  const merged = mergeSkillsDelivery(state.skills, skills)
+  const ctx = buildContextFile({ ...state, skills: merged })
   ctx.envKeys = state.envKeys ?? []
-  ctx.installedSkills = skills.installed
-  ctx.inlinedSkills = skills.inlined
   writeContextFile(resolve(cwd, CONTEXT_REL_PATH), ctx)
   p.log.success(`Wrote ${CONTEXT_REL_PATH}`)
 
-  const promptCtx = buildSetupPromptContext(state, handoff, skills)
+  const promptCtx = buildSetupPromptContext(state, handoff, merged)
   if (promptCtx) {
     writeSetupPrompt(resolve(cwd, SETUP_PROMPT_REL_PATH), promptCtx)
     p.log.success(`Wrote ${SETUP_PROMPT_REL_PATH}`)

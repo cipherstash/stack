@@ -35,6 +35,15 @@ function buildStateFromContext(
     clientFilePath: ctx.encryptionClientPath,
     schemas: ctx.schemas,
     envKeys: ctx.envKeys,
+    // Carry the skills already on disk so the handoff's `writeArtifacts`
+    // merges into them instead of overwriting the record with just its own
+    // delivery — an `agents-md` handoff installs no directories, and used to
+    // reset `installedSkills` to `[]` on a project that had them (#923).
+    skills: {
+      installed: ctx.installedSkills ?? [],
+      inlined: ctx.inlinedSkills ?? [],
+      failed: [],
+    },
     stackInstalled: true,
     cliInstalled: true,
     eqlInstalled: true,

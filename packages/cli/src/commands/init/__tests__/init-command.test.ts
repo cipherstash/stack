@@ -17,11 +17,24 @@ const authRun = vi.hoisted(() =>
   vi.fn(async (state: InitState, _provider: InitProvider) => state),
 )
 const passthrough = { run: async (s: InitState) => s }
+// Controllable so the skills-summary tests can vary what the first step
+// delivered. Mocked like every other step — the REAL one copies files into
+// `process.cwd()`, which in this suite is the package root, so leaving it
+// unmocked writes `.claude/skills/` into the repo on every test run.
+const skillsRun = vi.hoisted(() =>
+  vi.fn(async (s: InitState) => ({
+    ...s,
+    skills: { installed: ['stash-cli'], inlined: [], failed: [] },
+  })),
+)
 // Controllable so the honest-summary tests can vary whether EQL installed.
 const eqlRun = vi.hoisted(() =>
   vi.fn(async (s: InitState) => ({ ...s, eqlInstalled: true })),
 )
 
+vi.mock('../steps/install-skills.js', () => ({
+  installSkillsStep: { id: 'install-skills', name: 'Skills', run: skillsRun },
+}))
 vi.mock('../steps/authenticate.js', () => ({
   authenticateStep: { id: 'authenticate', name: 'Authenticate', run: authRun },
 }))
@@ -476,5 +489,51 @@ describe('initCommand — CI detection on the `stash plan` chain offer', () => {
     expect(vi.mocked(p.outro)).not.toHaveBeenCalledWith(
       expect.stringContaining('--target'),
     )
+  })
+})
+
+describe('initCommand — skills summary and --target', () => {
+  const summaryBody = () =>
+    vi
+      .mocked(p.note)
+      .mock.calls.find(([, title]) => title === 'Setup complete')?.[0] as
+      | string
+      | undefined
+
+  it('reports how many skills were installed', async () => {
+    await initCommand({}, {})
+    expect(summaryBody()).toContain('✓ 1 agent skill installed')
+  })
+
+  /**
+   * The visible half of #923. Init printed an unqualified "Setup complete"
+   * while delivering no guidance at all, and `context.json` recorded an
+   * `installedSkills: []` that looked like a normal empty field. Three of
+   * four skilltester runs against 1.1.0 ended exactly here, with each agent
+   * left to find the bundled skills in `node_modules` on its own.
+   */
+  it('says so loudly, with a remedy, when nothing was installed', async () => {
+    skillsRun.mockImplementationOnce(async (s: InitState) => ({
+      ...s,
+      skills: { installed: [], inlined: [], failed: [] },
+    }))
+
+    await initCommand({}, {})
+
+    const body = summaryBody()
+    expect(body).toContain('No agent skills installed')
+    expect(body).toContain('plan --target claude-code')
+  })
+
+  it('threads a valid --target onto state for the skills step', async () => {
+    await initCommand({}, { target: 'codex' })
+    expect(skillsRun.mock.calls[0]?.[0].targetFlag).toBe('codex')
+  })
+
+  it('rejects an unknown --target before doing any work', async () => {
+    await expect(initCommand({}, { target: 'emacs' })).rejects.toBeInstanceOf(
+      CliExit,
+    )
+    expect(skillsRun).not.toHaveBeenCalled()
   })
 })

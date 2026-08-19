@@ -18,6 +18,7 @@ import type {
 } from '../types.js'
 import { CancelledError } from '../types.js'
 import { generatePlaceholderClient } from '../utils.js'
+import { topUpSkills } from './install-skills.js'
 
 /**
  * Pick the integration template by reading the same signals `eql install`
@@ -89,6 +90,7 @@ export const buildSchemaStep: InitStep = {
         schemas: [],
         schemaFromIntrospection: false,
         envKeys,
+        skills: topUpSkills(cwd, state, integration),
       }
       writeBaselineContextFile(nextState, cwd, envKeys)
       return nextState
@@ -153,12 +155,19 @@ export const buildSchemaStep: InitStep = {
       // state for now to avoid a wider type change; always false.
       schemaFromIntrospection: false,
       envKeys,
+      // The install-skills step ran before `DATABASE_URL` was resolved, so a
+      // bare `stash init` against a Supabase-hosted database got the base
+      // skill set. Now that `integration` is known, top it up — idempotent,
+      // and a no-op when the first-step guess already matched.
+      skills: topUpSkills(cwd, state, integration),
     }
 
     // Write a baseline `.cipherstash/context.json` immediately so it tracks
-    // the placeholder we just wrote. Handoff steps refresh it later with
-    // the list of installed skills; this baseline guarantees the file
-    // exists even if init aborts before the handoff fires.
+    // the placeholder we just wrote — including the skills installed by the
+    // first step, so the file never claims `installedSkills: []` over a
+    // project that has them (#923). Handoff steps merge their own delivery
+    // in later; this baseline guarantees the file exists, and is honest,
+    // even if init aborts before any handoff fires.
     writeBaselineContextFile(nextState, cwd, envKeys)
 
     return nextState
