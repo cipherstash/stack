@@ -6,7 +6,7 @@
  *
  * The 3.0.5 release re-emitted the published baseline
  * (`20260601T0100_install_eql_v3_bundle`): its bytes, and so its
- * `migrationHash`, changed from `sha256:fc495f7f…` to `sha256:1ae73282…`.
+ * `migrationHash`, changed from `sha256:fc495f7f…` to `sha256:23c98b03…`.
  * These artefacts are content-addressed and normally append-only, so a
  * re-emit is the one case the machinery was never designed for. The
  * changeset tells consumers to delete the vendored directory and re-run
@@ -307,9 +307,14 @@ describe('stale vendored migrations/cipherstash/ (generated against 1.0.0)', () 
     // …and it is genuinely NOT what the package ships today.
     expect(v3BaselineMetadata.migrationHash).not.toBe(STALE_1_0_0_BASELINE_HASH)
     expect(v3BaselineMetadata.migrationHash).toBe(
-      'sha256:1ae732828e9a6fb3574ab8dbede16e99bf1173bd4e5cd7a4b522138e71bc5d05',
+      'sha256:23c98b0368d22794507a4ef7b02ed4cb04249f36bfcb0b20488005aa62488313',
     )
-    // The stale bundle is pre-rename; the shipped one is post-rename.
+    // The stale bundle is 3.0.4: the old name only. Asserted on the STALE
+    // side alone, deliberately — the shipped 3.0.5 bundle carries BOTH names
+    // (the new one plus the old restored as a deprecated alias in upstream
+    // 142f41d8), so `not.toContain('ste_vec_contains')` is false there and
+    // would be the wrong shape of check. What distinguishes the two artefacts
+    // is that 3.0.4 has no `jsonb_document_contains` at all.
     const staleSql = stale.ops[0]?.execute[0]?.sql ?? ''
     expect(staleSql).toContain('ste_vec_contains')
     expect(staleSql).not.toContain('jsonb_document_contains')

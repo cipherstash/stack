@@ -10,24 +10,28 @@
   `jsonb_query`). The function backs the `json` `@>` / `<@` containment operators;
   its behaviour is unchanged.
 
-  **Who is affected is narrower than a rename usually implies.** The operators are
-  untouched, and so are the two function-form entry points a PostgREST deployment
-  actually calls — `eql_v3.jsonb_contains(jsonb, jsonb)` and
-  `eql_v3.jsonb_contained_by(jsonb, jsonb)` are byte-identical to 3.0.4. What
-  breaks is hand-written SQL that names `ste_vec_contains` directly: queries,
-  views, RLS policies, and per-function `GRANT`s. The schema-wide grant scripts in
-  `docs/reference/permissions.md` pick the new name up on their next run, and a
-  stale per-function grant fails loudly (`function … does not exist`) rather than
-  silently granting nothing. See [U-001](../../docs/upgrading/v3.0.5.md#u-001-the-containment-implementation-is-renamed),
-  and [U-002](../../docs/upgrading/v3.0.5.md#u-002-grants-and-dependent-objects-do-not-survive-an-install)
-  for the larger fact underneath it — the installer opens with
-  `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, so *every* EQL install drops grants,
-  functional indexes and dependent views, not just this one.
+  **Nothing breaks.** The old name remains as a deprecated delegating alias, both
+  overloads, so direct callers keep working. The operators never moved, and
+  neither did the two function-form entry points a PostgREST deployment actually
+  calls — `eql_v3.jsonb_contains(jsonb, jsonb)` and
+  `eql_v3.jsonb_contained_by(jsonb, jsonb)` are byte-identical to 3.0.4. Hand-written
+  SQL naming `ste_vec_contains` — queries, views, RLS policies, per-function
+  `GRANT`s — continues to resolve; update it at your convenience, not under
+  pressure. See [U-001](../../docs/upgrading/v3.0.5.md#u-001-the-containment-implementation-is-renamed).
+
+  **The thing in this release that does have consequences is not the rename.**
+  The installer opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, so *every* EQL
+  install drops grants, functional indexes and dependent views — true of every
+  release, not just this one, and now the only item here with operational weight.
+  See [U-002](../../docs/upgrading/v3.0.5.md#u-002-grants-and-dependent-objects-do-not-survive-an-install).
 
   Released as a **patch**, matching 3.0.1, which shipped the fuzzy-match operator
   change (`@>` / `<@` → `@@`) at the same level. The parked changeset proposed
   `major`; a patch reaches every consumer already on a `^3.x` range at their next
-  install, which a major would not have done.
+  install, which a major would not have done — and with the alias in place the
+  patch level is not a judgement call at all. Upstream reached the same
+  conclusion independently, retargeting its own changeset from `major` to `patch`
+  in the commit that restored the aliases.
 
   Entered by hand rather than by `changeset version`. The rename landed in the
   tree with the monorepo import and was never released, so the package shipped
@@ -37,6 +41,14 @@
   the whole repository. The bump is therefore applied directly and
   `.changeset/rename-ste-vec-contains.md.deferred` is deleted with it, so the
   cutover cannot apply the same bump a second time.
+
+  The SQL that actually shipped is upstream's, not this tree's: `@cipherstash/eql@3.0.5`
+  was published from `cipherstash/encrypt-query-language` (the last release from
+  there) and carries the restored aliases from upstream `142f41d8`, which this
+  tree did not have when the entry above was first written. The subtree was
+  re-synced to that release so the bundle here is byte-identical to the published
+  one — `installSqlSha256: accde0030…`. The generated entry below is upstream's
+  own changeset for the same release.
 - 4c2bb92: **`eql_v3.ste_vec_contains` is renamed to `eql_v3.jsonb_document_contains`.** This
   consolidates the last `ste_vec_*`-named public object into the `jsonb_*` family,
   matching the earlier renames of the SteVec entry/query surface (`jsonb_entry`,
