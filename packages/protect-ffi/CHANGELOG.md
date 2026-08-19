@@ -1,18 +1,32 @@
 # Changelog
 
-All notable changes to this project are documented in this file.
+## About 0.31.0 and earlier
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-While the project is pre-1.0, breaking changes are released as minor version
-bumps and called out under a `Breaking` heading — an addition to the standard
-Keep a Changelog categories (Added/Changed/Deprecated/Removed/Fixed/Security).
+Every entry from `[0.31.0]` down was written by hand, under an `[Unreleased]`
+heading that an npm `version` lifecycle hook promoted on release. Those entries
+follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with a
+`Breaking` heading added for the pre-1.0 convention of shipping breaking changes
+as minor bumps.
 
-Entries from 0.31.0 down were written by hand under an `[Unreleased]` heading
-and promoted on release by an npm `version` lifecycle hook. That hook is gone:
-since this package moved into the `cipherstash/stack` monorepo, Changesets
-generates each entry from the changesets in a release, and appends it below in
-its own format. Write a changeset, not a section here.
+That hook is gone. Since this package moved into the `cipherstash/stack`
+monorepo, Changesets generates every entry above this heading from the
+changesets in a release, in its own format.
+
+<!--
+This section is deliberately BELOW the generated entries, and any prose added
+between `# Changelog` and the first release heading must carry its own `##`
+heading — otherwise it is absorbed into the newest release.
+
+`changeset version` splices each release in directly after the `# Changelog`
+line. Headingless prose there is not a preamble: it lands inside that release's
+section, beneath its heading, and reads as part of those notes. This section
+used to be there and shipped as thirteen lines of the 0.32.0 entry, ending with
+an instruction addressed to contributors — see PR #913. A heading is what stops
+that, because it terminates the preceding section.
+
+Since 0.32.0 this file is in the package's `files` list, so anything here also
+ships inside the npm tarball. Guidance for contributors belongs in AGENTS.md.
+-->
 
 ## [0.31.0] - 2026-07-27
 
