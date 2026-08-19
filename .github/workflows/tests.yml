@@ -263,14 +263,6 @@ jobs:
       - name: Lint — EQL resolves in-tree, not from a registry
         run: pnpm run lint:eql-pins
 
-      # TEMPORARY — delete with the script in the phase-4 cutover PR.
-      # The seven protect-ffi packages live here but still publish from
-      # cipherstash/protectjs-ffi. A changeset naming any of them bumps all
-      # seven through their fixed group and the next release tries a publish
-      # npm has not been repointed to trust.
-      - name: Lint — no protect-ffi changeset before the publishing cutover
-        run: pnpm run lint:ffi-changeset
-
       - name: Test — lint script self-tests
         run: pnpm run test:scripts
 
@@ -284,8 +276,27 @@ jobs:
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/stack/.env
 
       # Run TurboRepo tests
+      #
+      # STASH_TEST_DATABASE_URL points the CLI's live-Postgres suites
+      # (`packages/cli/src/**/__tests__/**.live.test.ts`) at this job's
+      # service container — without it they self-skip, and the only guard on
+      # the `stash eql verify` parser↔catalog spelling seam
+      # (`installer/__tests__/verify.live.test.ts`) would run in no CI
+      # workflow at all: a routine `@cipherstash/eql` bump could then make
+      # every `stash eql install` fail with phantom damage, on green CI.
+      # These suites need Postgres only, no CipherStash credentials; the
+      # verify suite installs EQL v3 into its own schemas, which coexists
+      # with the image's pre-installed EQL v2 that the stack tests use.
+      # They share that one database, so the CLI vitest config runs them
+      # serially (the `live` project sets `fileParallelism: false` —
+      # verify.live's bundle install opens with DROP SCHEMA … CASCADE, which
+      # races destructively under the other suites in parallel forks).
+      # (`supabase-push.live.test.ts` gates on different env vars and still
+      # skips here — it needs the Supabase CLI binary.)
       - name: Run tests
         run: pnpm run test
+        env:
+          STASH_TEST_DATABASE_URL: postgres://cipherstash:password@localhost:5432/cipherstash
 
       # CLI E2E tests drive the built `dist/bin/stash.js` through a real
       # pseudo-terminal via node-pty. Run via turbo so the `^build` + `build`
@@ -461,10 +472,16 @@ jobs:
       - name: Typecheck the generated WASM declarations
         run: pnpm --filter @cipherstash/protect-ffi run test:typecheck:wasm
 
-      # The Deno smoke test imports the locally-built dist/wasm-inline.js
-      # via a file URL in e2e/wasm/deno.json — it needs a fresh build.
-      - name: Build stack
-        run: pnpm exec turbo run build --filter @cipherstash/stack
+      # The Deno smoke tests import the locally-built dist/wasm-inline.js of
+      # BOTH packages via file URLs in e2e/wasm/deno.json — they need fresh
+      # builds. stack-supabase is here for `supabase-declared.test.ts`, which
+      # is the only place the edge entry is exercised on a real edge runtime
+      # rather than asserted about (#708).
+      - name: Build stack and the Supabase adapter
+        run: >
+          pnpm exec turbo run build
+          --filter @cipherstash/stack
+          --filter @cipherstash/stack-supabase
 
       - name: Run Deno WASM smoke test
         working-directory: e2e/wasm

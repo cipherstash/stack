@@ -4,13 +4,13 @@ import {
   Migration,
   MigrationCLI,
   primaryKey,
-} from '@prisma-next/postgres/migration'
+} from '@prisma/orm-postgres/migration'
 
 export default class M extends Migration {
   override describe() {
     return {
       from: null,
-      to: 'sha256:32984f82d1b089087df107ff4b86310b8640e04f67eb7f6ebf5601694338b8f2',
+      to: 'f1cd58a4c67d07d7c45d05b6d11a5629e063848d9597a17af2311542622cd8d7',
     }
   }
 

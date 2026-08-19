@@ -26,6 +26,10 @@ selects, with support for equality, range, and ordering.
 - Using identity-aware encryption (lock contexts) with Supabase
 - Building applications where sensitive columns need encryption at rest and in transit
 
+> **On a managed AI platform — Lovable, v0, Bolt, Replit — read `stash-managed-platforms` first.** Two things there are decided before anything on this page applies: server code runs on an edge runtime, so it needs `@cipherstash/stack/wasm-inline` (`@cipherstash/protect` is the deprecated predecessor and its native module will not load — that dead end has cost an agent a whole turn), and the database role is not `postgres`, which changes how EQL gets installed. `encryptedSupabase` can be constructed inside a Worker, but only from the `@cipherstash/stack-supabase/wasm-inline` entry and only with declared `schemas` — introspection is what needs a Postgres connection, and declaring your tables is what skips it.
+
+> **What survives PostgREST, in one line** (the full treatment is under [Query behaviour on encrypted columns](#query-behaviour-on-encrypted-columns), a long way down): `eq` / `neq` / `in` / `match()` and the range filters `gt` / `gte` / `lt` / `lte` **do** work on capable domains, and so does `order()` on OPE-backed ordering columns. Encrypted free-text `matches()` and encrypted-JSON `contains()` / `selectorEq()` / `selectorNe()` **do not** — they need `eql_v3.query_*` casts PostgREST cannot emit, and the wrapper fails fast rather than returning wrong rows. Agents guess wrong in both directions on this, so don't infer it; for the predicates that don't survive, use Drizzle, Prisma Next, or SQL in an RPC.
+
 ## Installation
 
 ```bash
@@ -88,6 +92,24 @@ supabase db push                 # remote/linked project
 > gone, and the next query fails with `type "eql_v3_encrypted" does not exist`.
 > `stash eql install --supabase` is for a **hosted** project you administer
 > without the Supabase CLI, where there is no migrations directory to write to.
+
+> **Connecting as a role that is not `postgres` (or a member of it)** — common
+> on managed AI platforms such as Lovable — is fine: the install proceeds and
+> is complete. Only the three owner-scoped `ALTER DEFAULT PRIVILEGES FOR ROLE
+> postgres` statements are skipped, and they are **optional**: they cover EQL
+> objects `postgres` might later create outside stash tooling, and every
+> `stash eql install`/`eql upgrade` re-grants all objects anyway. The CLI
+> prints them as "Optional SQL — requires postgres" for operators who want
+> them (Supabase SQL editor / migration tool); on platforms where nobody can
+> act as `postgres`, nothing is lost. Check ahead of time with `stash eql
+> preflight` (`--json` for agents), which reports membership of `postgres`
+> alongside the other role capabilities.
+
+> **TLS:** the CLI bundles the Supabase root CA, so `sslmode=verify-full`
+> against Supabase hosts (direct and pooler) verifies out of the box — no
+> certificate download, and never `NODE_TLS_REJECT_UNAUTHORIZED=0` (it is
+> process-wide and would also disable verification for CipherStash credential
+> traffic). A supplied `sslrootcert=<path>` or `PGSSLROOTCERT` still wins.
 
 The generated file carries three things, in order: the EQL v3 bundle, the role
 grants, and the `cipherstash.cs_migrations` tracking schema that `stash

@@ -1,31 +1,16 @@
 import 'dotenv/config'
 import cipherstash from '@cipherstash/stack-prisma/control'
-import postgresAdapter from '@prisma-next/adapter-postgres/control'
-import { defineConfig } from '@prisma-next/cli/config-types'
-import postgresDriver from '@prisma-next/driver-postgres/control'
-import sql from '@prisma-next/family-sql/control'
-import { prismaContract } from '@prisma-next/sql-contract-psl/provider'
-import postgres from '@prisma-next/target-postgres/control'
-import postgresPack from '@prisma-next/target-postgres/pack'
-import { postgresCreateNamespace } from '@prisma-next/target-postgres/types'
+import { defineConfig } from '@prisma/orm-postgres/config'
 
 const databaseUrl = process.env['DATABASE_URL']
 
 export default defineConfig({
-  family: sql,
-  target: postgres,
-  driver: postgresDriver,
-  adapter: postgresAdapter,
-  extensionPacks: [cipherstash],
-  contract: prismaContract('./prisma/schema.prisma', {
-    output: 'src/prisma/contract.json',
-    // Since 0.14 `prismaContract` takes the target PACK ref (carrying
-    // `defaultNamespaceId`), not the control descriptor.
-    target: postgresPack,
-    // Since 0.15 the SQL family no longer materialises a placeholder
-    // namespace, so the target's namespace factory is required.
-    createNamespace: postgresCreateNamespace,
-  }),
+  // Since 0.17 an application depends on exactly one database facade
+  // (`@prisma/orm-postgres`); its `defineConfig` wires the family,
+  // target, adapter, driver, and PSL provider internally.
+  contract: './prisma/schema.prisma',
+  output: 'src/prisma',
+  extensions: [cipherstash],
   migrations: {
     dir: 'migrations',
   },

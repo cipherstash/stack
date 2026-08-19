@@ -35,7 +35,7 @@
  * override is what stops that re-exposure path.
  */
 
-import { ifDefined } from '@prisma-next/utils/defined'
+import { ifDefined } from '@prisma/orm-framework/utils/defined'
 import { checkCipherstashAborted, raceCipherstashAbort } from './abort'
 import type { CipherstashSdk } from './sdk'
 

@@ -27,7 +27,7 @@ import {
   Migration,
   MigrationCLI,
   rawSql,
-} from '@prisma-next/target-postgres/migration'
+} from '@prisma/orm-target-postgres/target/migration'
 import { CIPHERSTASH_V3_INVARIANTS } from '../../src/extension-metadata/constants-v3'
 import {
   readVerifiedInstallSql,
@@ -41,8 +41,8 @@ export default class M extends Migration {
     // Invariant-only self-edge on the v3-only contract space's
     // empty-storage hash — the same `to` the baseline lands on.
     return {
-      from: 'sha256:efd408cf8924b4d1805bf5acced8898114aa03cd46b465720179c82a4431d51e',
-      to: 'sha256:efd408cf8924b4d1805bf5acced8898114aa03cd46b465720179c82a4431d51e',
+      from: '0c0734babd6eeb868fee1f281ca96963022475611560e9f170f465daa35f8599',
+      to: '0c0734babd6eeb868fee1f281ca96963022475611560e9f170f465daa35f8599',
     }
   }
 

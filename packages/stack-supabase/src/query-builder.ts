@@ -148,22 +148,29 @@ export class EncryptedQueryBuilderImpl<
   // Mutation methods
   // ---------------------------------------------------------------------------
 
+  /**
+   * Expand `*` to the known column list, or refuse.
+   *
+   * `allColumns` comes only from introspection, so it is absent whenever the
+   * client was built from declared schemas alone (#708). Refusing is the
+   * fail-closed answer: an unexpanded `*` reaches PostgREST without the
+   * `::jsonb` casts, and every encrypted column comes back uncast.
+   */
+  private expandStarOrThrow(): string {
+    if (this.allColumns === null || this.allColumns.length === 0) {
+      throw new Error(
+        "encryptedSupabase does not support select('*'). Please list columns explicitly so that encrypted columns can be cast with ::jsonb. (A client built from declared `schemas` has no introspected column list to expand — either list the columns, or pass `databaseUrl` as well so the table can be introspected.)",
+      )
+    }
+    return this.columns.expandAllColumns(this.allColumns).join(', ')
+  }
+
   select(
     columns = '*',
     options?: { head?: boolean; count?: 'exact' | 'planned' | 'estimated' },
   ): this {
-    if (columns === '*') {
-      if (this.allColumns === null || this.allColumns.length === 0) {
-        throw new Error(
-          "encryptedSupabase does not support select('*'). Please list columns explicitly so that encrypted columns can be cast with ::jsonb.",
-        )
-      }
-      this.selectColumns = this.columns
-        .expandAllColumns(this.allColumns)
-        .join(', ')
-    } else {
-      this.selectColumns = columns
-    }
+    this.selectColumns =
+      columns === '*' ? this.expandStarOrThrow() : (columns as string)
     this.selectOptions = options
     return this
   }
@@ -693,11 +700,27 @@ export class EncryptedQueryBuilderImpl<
       }
     }
 
-    // Apply select
+    // Apply select.
+    //
+    // The second branch is a read awaited with no `.select()` call at all. It
+    // sends a raw `*`, and the rows come back untouched: `decryptResults`
+    // takes its `!hasSelect` passthrough, so nothing is cast and nothing is
+    // decrypted. That is long-standing behaviour, not a declared-mode
+    // property, and it is deliberately left alone here.
+    //
+    // An earlier revision of this PR routed it through `expandStarOrThrow()`
+    // to make the two spellings of "give me everything" agree. That was worse
+    // in three ways the review caught (#708): the expansion skips
+    // `addJsonbCastsV3`, so rows still would not decrypt; a declared rename
+    // (`created_at` -> `createdAt`) would send the PROPERTY name and earn a
+    // PostgREST 42703; and pinning the column list at construction breaks
+    // grant-restricted tables and silently drops columns a later migration
+    // added, both of which a raw `*` tolerates. Making this path decrypt
+    // properly means threading the select through `toDbSpace`, which is a
+    // change to the shared pipeline rather than to this branch.
     if (selectString !== null) {
       query = query.select(selectString, this.selectOptions)
     } else if (!this.mutation) {
-      // Default select without explicit columns - shouldn't happen but fallback
       query = query.select('*' as DbSelect, this.selectOptions)
     }
 

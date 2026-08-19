@@ -113,6 +113,7 @@ its query domain is `eql_v3.query_json` — not `query_json_search`.
 | `types.TextEq` | `eql_v3_text_eq` | `query_text_eq` |
 | `types.TextMatch` | `eql_v3_text_match` | `query_text_match` |
 | `types.TextOrd` | `eql_v3_text_ord` | `query_text_ord` |
+| `types.TextOrdOre` | `eql_v3_text_ord_ore` | `query_text_ord_ore` |
 | `types.TextSearch` | `eql_v3_text_search` | `query_text_search` |
 | `types.<N>Eq` | `eql_v3_<n>_eq` | `query_<n>_eq` |
 | `types.<N>Ord` | `eql_v3_<n>_ord` | `query_<n>_ord` |
@@ -123,6 +124,12 @@ its query domain is `eql_v3.query_json` — not `query_json_search`.
 `<N>` ranges over `Integer`, `Smallint`, `Bigint`, `Numeric`, `Real`,
 `Double`, `Date`, `Timestamp`. The storage-only domains carry no query terms
 by design — there is no query domain and nothing to search server-side.
+
+For the same mapping written out one factory per row, with the predicates and
+index each one supports, see the **capability matrix** in the
+`stash-encryption` skill (`### The types Namespace`). That table is the
+canonical type→predicate→domain→index lookup; this one is the SQL-side view of
+it, expanded only far enough to build a cast.
 
 ## The Predicate Matrix
 

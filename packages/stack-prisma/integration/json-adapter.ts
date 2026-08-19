@@ -8,8 +8,11 @@ import {
 import type {
   AnyExpression,
   SelectAst,
-} from '@prisma-next/sql-relational-core/ast'
-import { ColumnRef, OrderByItem } from '@prisma-next/sql-relational-core/ast'
+} from '@prisma/orm-family-sql/relational-core/ast'
+import {
+  ColumnRef,
+  OrderByItem,
+} from '@prisma/orm-family-sql/relational-core/ast'
 import postgres from 'postgres'
 import { EncryptedJson } from '../src/execution/envelope-json'
 import { toV3CodecId } from '../src/v3/catalog'

@@ -1,5 +1,37 @@
 # @cipherstash/e2e
 
+## 0.0.4
+
+### Patch Changes
+
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+  - stash@1.1.0
+  - @cipherstash/stack@1.1.0
+  - @cipherstash/wizard@1.1.0
+
 ## 0.0.3
 
 ### Patch Changes

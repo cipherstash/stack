@@ -1,5 +1,126 @@
 # @cipherstash/stack
 
+## 1.1.0
+
+### Minor Changes
+
+- a2b0b45: Add `EncryptionClient.getSchemas()` — the tables passed to
+  `Encryption({ schemas })`, returned by reference.
+
+  This is the domain-bearing view of your schema. `getEncryptConfig()` returns
+  what the FFI consumes: each column builds to `{ cast_as, indexes }`, and the
+  concrete EQL v3 domain name is dropped. That makes `cast_as: 'number'` with an
+  `ope` index ambiguous across `eql_v3_integer_ord`, `smallint_ord`, `real_ord`,
+  `double_ord` and `numeric_ord` — so tooling that has to reason about the
+  _declared_ domain (schema linting, drift-checking a live database's
+  `information_schema.columns.domain_name`) could not recover it from a client
+  alone.
+
+  `getSchemas()` closes that gap. Read a column's domain with
+  `column.getEqlType()`, its capabilities with `column.getQueryCapabilities()`,
+  and its DB name with `column.getName()`:
+
+  ```typescript
+  for (const table of client.getSchemas()) {
+    for (const column of Object.values(table.columnBuilders)) {
+      console.log(table.tableName, column.getName(), column.getEqlType());
+    }
+  }
+  ```
+
+  `stash eql validate` is the first consumer.
+
+- a2b0b45: **Reading this release.** These packages share one version line with
+  `@cipherstash/stack-prisma`, so all six move together:
+
+  - `stash`
+  - `@cipherstash/stack`
+  - `@cipherstash/stack-drizzle`
+  - `@cipherstash/stack-supabase`
+  - `@cipherstash/stack-prisma`
+  - `@cipherstash/wizard`
+
+  They are versioned together on purpose. `stash init` pins the versions of the
+  packages it installs and the CLI embeds that map at build time, so a package
+  shipping alone would leave the CLI recommending versions that no longer match
+  what is published, and warning about a skew it had itself created.
+
+  Two changes in this release can need action from some users. They are named
+  here so you do not have to read six changelogs to find them:
+
+  - **`@cipherstash/stack` — `clientKey` is hex-only.** A decoder fallback that
+    also accepted standard padded base64 is gone, and such a key is now rejected
+    at client construction with `invalid clientKey: expected a hex-encoded key`.
+    Hex is the only encoding ever documented, and the only one `stash env` or any
+    part of the JavaScript stack has ever produced — the base64 tolerance was an
+    accident of the underlying Rust decoder, which accepts base64 solely to read
+    its own profile store. A key pasted out of `~/.cipherstash/secretkey.json`
+    (which stores base64) stops working; re-encode it, or drop the explicit key
+    and let the client read the profile store directly, which is unaffected. The
+    full entry is "Adopt protect-ffi 0.31.0" in the **`@cipherstash/stack`**
+    changelog; it also narrows which `error.code` values DynamoDB operations
+    report.
+  - **`stash` — `stash eql validate` lost `--exclude-operator-family`,** and two
+    checks that used to exit 1 no longer do. A script passing that flag, or a CI
+    gate relying on those exit codes, needs updating. The full entry is under
+    `eql validate` in the **`stash`** changelog.
+
+  `@cipherstash/stack-prisma` also moves to Prisma Next 0.17 in this release,
+  which requires migration steps from its consumers — see its own changelog
+  entry.
+
+- a2b0b45: Add a `@cipherstash/stack/diagnostics` subpath, for tooling that needs to prove the protect-ffi native binding is installed.
+
+  It exports one function, `assertNativeBindingAvailable()`. Calling it forces the platform binary to load and throws the loader's own `MODULE_NOT_FOUND` — unwrapped, naming the missing `@cipherstash/protect-ffi-<platform>-<arch>` package — if it is absent. Importing the subpath does not force anything, so the laziness that makes the native load cost nothing for callers that never encrypt is preserved.
+
+  The subpath exists because there is no way to do this from outside: the package's loader is not in its `exports` map, and reading an export never reaches the `@neon-rs/load` proxy. Importing `@cipherstash/stack` itself is not a substitute either — the root entry re-exports the auth strategies, so evaluating it resolves `@cipherstash/auth`'s binding instead. This entry reaches protect-ffi and nothing else.
+
+  It probes by calling `isEncrypted`, which has been published since 0.28.0, rather than protect-ffi's own `assertNativeBindingAvailable` — that export arrived with the lazy native load and is not in any released version, so re-exporting it would build here and fail wherever it shipped (a link-time error under ESM, an `undefined` under CJS).
+
+  Available as both `import` and `require`.
+
+### Patch Changes
+
+- a2b0b45: Adopt protect-ffi 0.31.0.
+
+  **`clientKey` is hex, and a decoder tolerance that accepted other spellings is
+  gone.** Hex has always been the documented and only supported encoding for
+  `config.clientKey` / `CS_CLIENT_KEY` — it is what `stash env` emits and what
+  the docs and skills have always shown. The decoder underneath happened to fall
+  back to standard padded base64, which is the encoding the Rust
+  `stash-profile` crate uses for `~/.cipherstash/secretkey.json` on disk; that
+  fallback was never part of this package's contract, and nothing in the
+  JavaScript stack ever produced or accepted a base64 key. It is now rejected at
+  client construction with `invalid clientKey: expected a hex-encoded key`.
+
+  The message deliberately says nothing more, because the underlying decode error
+  names the offending character and its offset and would put part of a live key
+  into your logs. So if construction starts failing after this upgrade, the key
+  you supplied is not hex — re-encode it, or drop the explicit key and let the
+  native client read it from the profile store.
+
+  Reading the key from `~/.cipherstash/secretkey.json` is unaffected — that path
+  still uses base64, and only an explicitly supplied key is hex-only.
+
+  **DynamoDB errors no longer report foreign error codes as encryption codes.**
+  `handleError` accepted any string-valued `code` on a caught error and passed it
+  through as a `ProtectErrorCode`, so a Node or AWS SDK failure — `ECONNRESET`,
+  say — surfaced as though it were an encryption error code. Codes are now checked
+  against the set the encryption layer actually emits, and anything else becomes
+  `DYNAMODB_ENCRYPTION_ERROR`. If you branch on `error.code` for DynamoDB
+  operations, a branch that was matching transport errors will stop.
+
+  Also in this release, with no action needed: the WASM entry passes credentials
+  under the option shape 0.31 expects and no longer pre-normalises `cast_as`
+  (the native layer does it on both bindings now), and bulk operations no longer
+  forward their internal correlation id across the FFI boundary, which 0.31
+  rejects rather than ignores.
+
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+  - @cipherstash/protect-ffi@0.32.0
+
 ## 1.0.0
 
 ### Major Changes

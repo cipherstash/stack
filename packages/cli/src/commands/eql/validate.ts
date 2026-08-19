@@ -1,10 +1,11 @@
 import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
 import type { ColumnSchema, EncryptConfig } from '@cipherstash/stack/schema'
 import * as p from '@clack/prompts'
-import pg from 'pg'
 import { fetchPhysicalColumns } from '@/commands/encrypt/lib/db-readers.js'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadEncryptSchemas, loadStashConfig } from '@/config/index.js'
+import { createPgClient } from '@/db/client.js'
+import { ORE_OPCLASS_PRESENT_EXPR } from '@/installer/ore.js'
 
 // ---------------------------------------------------------------------------
 // The vocabulary
@@ -604,21 +605,11 @@ function identifiersIn(args: string): string[] {
 }
 
 /**
- * Whether the ORE btree operator class exists. Mirrors the EQL bundle's own
- * fallback test (`ore_fallback.sql`), with one deliberate difference:
- * `to_regtype` returns NULL where the bundle's `::regtype` cast raises, so this
- * degrades to `false` on a database with no EQL installed instead of throwing.
- * That is why the not-installed case is detected and reported separately.
+ * Whether the ORE btree operator class exists. The expression is shared with
+ * `eql verify` and `eql status` (`installer/ore.ts`) so the three commands
+ * cannot drift into disagreeing about the same catalogue fact.
  */
-const ORE_AVAILABLE_SQL = `
-  SELECT EXISTS (
-    SELECT 1
-    FROM pg_catalog.pg_opclass c
-    JOIN pg_catalog.pg_am am ON am.oid = c.opcmethod
-    WHERE am.amname = 'btree'
-      AND c.opcdefault
-      AND c.opcintype = to_regtype('eql_v3_internal.ore_block_256')
-  ) AS ore_available`
+const ORE_AVAILABLE_SQL = `SELECT ${ORE_OPCLASS_PRESENT_EXPR} AS ore_available`
 
 const EQL_INSTALLED_SQL = `
   SELECT EXISTS (
@@ -875,7 +866,7 @@ async function tryReadObservedState(
   }
 
   const tables = [...new Set(columns.map((column) => column.table))]
-  const client = new pg.Client({ connectionString: databaseUrl })
+  const client = createPgClient(databaseUrl)
 
   try {
     await client.connect()

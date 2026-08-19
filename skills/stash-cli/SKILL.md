@@ -1,6 +1,6 @@
 ---
 name: stash-cli
-description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql install/migration/repair/upgrade/status/validate`, `encrypt backfill/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, credential rules, and the staged EQL v3 rollout lifecycle.
+description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql preflight/install/verify/migration/repair/upgrade/status/validate`, `encrypt backfill/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, credential rules, and the staged EQL v3 rollout lifecycle.
 ---
 
 # CipherStash CLI (`stash`)
@@ -156,6 +156,16 @@ First hit wins:
 `stash.config.ts` is **not** a separate tier: the scaffolded config calls this same resolver, and the `--database-url` flag still wins. The one exception is a hand-edited config assigning a literal `databaseUrl` string — that bypasses the resolver entirely and beats both flag and env.
 
 The resolved URL is returned in memory only. It is never written to disk or into `process.env`.
+
+### TLS to the database
+
+Every CLI database connection honours `sslmode` and `sslrootcert` from the connection string, and the `PGSSLMODE` / `PGSSLROOTCERT` environment variables when the URL carries no TLS parameters (URL parameters win, libpq precedence — and unlike raw node-postgres, `PGSSLROOTCERT` is actually consumed):
+
+- `sslmode=verify-full` (and `require` / `verify-ca` / `prefer`, which the CLI treats identically — full verification, matching node-postgres's current behaviour) verifies the server certificate. CA resolution order: `sslrootcert=<path>` in the URL (libpq semantics — that file becomes the only trust anchor; `sslrootcert=system` selects the system store) → the `PGSSLROOTCERT` environment variable → for `*.supabase.co` / `*.supabase.com` hosts, the CLI's **bundled Supabase root CA** (appended to the system roots) → the system trust store.
+- Supabase therefore verifies out of the box — direct hosts and the pgBouncer pooler alike. No certificate download needed.
+- `sslmode=no-verify` is honoured but prints a one-line stderr warning: the connection is encrypted, the server is not authenticated. `sslmode=disable` turns TLS off.
+- **Never set `NODE_TLS_REJECT_UNAUTHORIZED=0`** — it disables TLS verification for every connection in the process, including the ones carrying CipherStash credentials. A certificate-verification failure from any CLI command names the host and the supported remedies (shaped centrally in the connection factory); follow those instead.
+- URLs using client certificates (`sslcert` / `sslkey`) or the raw `ssl` param are passed to node-postgres untouched.
 
 ## Telemetry
 
@@ -339,7 +349,9 @@ Flags below are the decision-relevant ones. Run `stash <command> --help` for the
 ### EQL
 
 ```bash
+stash eql preflight
 stash eql install
+stash eql verify
 stash eql migration --drizzle
 stash eql migration --supabase
 stash eql repair --drizzle
@@ -348,6 +360,19 @@ stash eql status
 ```
 
 > `stash db install`, `db upgrade`, and `db status` still work but print a deprecation warning and forward to `eql <sub>`. Use the `eql` spelling.
+
+#### `eql preflight`
+
+Read-only report of whether the connected role can install EQL, run before anything is attempted. It probes: `current_user`, superuser, **membership of `postgres`**, `CREATE` on the database and on `public`, `pgcrypto`, whether the role **can create an operator class**, and whether the `eql_v3` / `eql_v3_internal` schemas already exist. Each blocked row names the statement it blocks. Exits 1 when a gap would abort `eql install`; `--json` emits the structured result for agents (stdout is pure JSON).
+
+Membership of `postgres` is reported but never blocks: `eql install` handles a non-member role by skipping the owner-scoped `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` statements, which are **optional** — the install is complete without them (see `eql install` below). This matters on managed platforms whose database role is not `postgres` and not a member of it (e.g. Lovable's `sandbox_exec`).
+
+**The `ORE operator class` row never blocks either** (`canCreateOperatorClass` in `--json`; `creatable` / `not creatable` / `unknown`). It answers the one schema-design question you want settled *before* writing types: `not creatable` means `eql install` will skip the ORE operator class and install the bundle's loud-failure fallback in its place, so **declare ordered columns `types.*Ord`, not `types.*OrdOre`** — every write to an `_ord_ore` domain on such a database fails its `eql_ore_unavailable` CHECK. This is probed, not inferred from `superuser`: `CREATE OPERATOR CLASS` is superuser-gated in stock PostgreSQL, but AWS RDS and Aurora let their admin role create one while cloud-hosted Supabase does not — so a role with `rolsuper = f` is not evidence either way. The probe attempts the DDL inside a transaction it always rolls back, so preflight stays read-only; `unknown` means it could not ask (a read-only replica, say) and must not be read as either answer.
+
+| Flag | Description |
+|---|---|
+| `--json` | Machine-readable result instead of the table. Stdout is pure JSON even on failure: success is `{ status: 'ok', ... }`, blockers are `{ status: 'blocked', ... }` (exit 1), and failures — including a missing/malformed DATABASE_URL — are the shared `{ status: 'error', code, message }` envelope |
+| `--database-url <url>` | Probe that database (no config needed). A hand-set literal `databaseUrl` in stash.config.ts still wins, with a warning (stderr in `--json` mode) |
 
 #### `eql install`
 
@@ -362,9 +387,26 @@ Gets a project from zero to a direct EQL v3 install. It loads an existing `stash
 | `--supabase` | Supabase-compatible install; grants `anon`, `authenticated`, and `service_role` |
 | `--database-url <url>` | One-shot install (see below) |
 
+**Non-`postgres` roles.** The Supabase grants include three owner-scoped `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` statements that only a member of `postgres` can run. When the connecting role is not a member (checked up front), the install still succeeds and is **complete**: the bundle and every plain `GRANT` are applied, covering all existing objects. The skipped statements are printed under "Optional SQL — requires postgres" purely as information — they only cover EQL objects `postgres` might later create outside stash tooling, and every `stash eql install`/`eql upgrade` re-grants all objects anyway (the generated Supabase migration wraps them in a membership guard, so it is safe for any role). Do not treat them as a required follow-up, and never work around a grants failure by disabling anything — the install itself is no longer rolled back by a grants failure (the bundle commits in its own transaction; grants run after it), and a plain re-run of `eql install` re-applies the grants on an already-installed database.
+
 The removed `--eql-version`, `--latest`, `--drizzle`, `--migration`, `--direct`, `--migrations-dir`, and `--exclude-operator-family` options fail clearly instead of being ignored. A request for EQL v2 points dump-recovery users to the upstream EQL 2.3.1 SQL release. New installs are EQL v3 only; its pinned bundle self-adapts when a database role cannot create the optional operator family.
 
-**`--database-url` is a one-shot.** It installs against that database and leaves the project untouched — no config is loaded, and none is scaffolded, nor is an encryption client. This lets `npx --package=stash@1.0.0 stash eql install --database-url 'postgres://...'` run in a bare project with no CipherStash dependencies while pinning the CLI to this skill's release. It also means the flag always wins: loading a config could pick up a parent-directory `databaseUrl` literal and install against the wrong database.
+**`--database-url` is a one-shot.** It installs against that database and leaves the project untouched — no config is loaded, and none is scaffolded, nor is an encryption client. This lets `npx --package=stash@1.1.0 stash eql install --database-url 'postgres://...'` run in a bare project with no CipherStash dependencies while pinning the CLI to this skill's release. It also means the flag always wins: loading a config could pick up a parent-directory `databaseUrl` literal and install against the wrong database.
+
+**The install verifies itself.** `eql install` ends by running the same surface check as `eql verify` (below) — on the fresh-install path *and* on the already-installed early exit, so a plain re-run over a damaged database fails rather than printing "Nothing to do." It exits 1 if the surface is incomplete; if the check itself cannot run (connection dropped mid-verify), it warns and points at `stash eql verify` instead of failing the committed install. A version mismatch with the pinned bundle also warns rather than fails there — nothing was actually checked, and a no-op re-run over an older EQL must stay exit 0 for idempotent provisioning scripts. (`eql verify` itself stays strict and exits 1 on a mismatch.)
+
+#### `eql verify`
+
+Read-only check that the **installed EQL surface is complete**, independent of any application schema. It compares what the database actually has against everything the pinned bundle installs — every domain, function overload, operator, cast, and the ORE operator class — via catalog queries, and reports damage grouped per domain. This catches the failure `eql validate` cannot: a partial install where the domains exist but some comparison functions or operators do not, so `weight >= x` errors at query time long after "install succeeded".
+
+Expected absences read as info, not damage: on managed Postgres the bundle legitimately skips the ORE operator class (creating one requires superuser) and poisons the `_ord_ore` domains to fail loudly — `eql verify` reports that as the supported configuration it is. Exit 0 means exactly one thing: the surface was checked and found complete. Genuine damage, EQL not installed, and a version mismatch with the pinned bundle all exit 1 — on a mismatch the object-level diff is skipped (the pinned bundle is the wrong manifest to compare against) and the command suggests `eql upgrade` (or a one-shot `eql install --force --database-url ...` for a database without a `stash.config.ts` — `eql upgrade` needs one); "could not verify" never reads as "verified".
+
+Run it whenever query-time behaviour looks inconsistent with a "successful" install — e.g. an `operator does not exist` or `function ... does not exist` error naming an `eql_v3` object.
+
+| Flag | Description |
+|---|---|
+| `--json` | Machine-readable report. `status` is the discriminator: `complete` (the only exit-0 status), `incomplete`, `not-installed`, or `version-mismatch`; `findings[]` carries per-object damage with a `domain` attribution |
+| `--database-url <url>` | One-shot, like `eql install`'s: bypasses config loading entirely, so the database you name is the database that gets judged |
 
 #### `eql migration`
 
@@ -451,6 +493,10 @@ The install SQL is safe to re-run — columns and data survive — but it cascad
 #### `eql status`
 
 Whether EQL is installed and at which version, plus database permission status. It retains read-only EQL v2/config-table diagnostics for existing deployments.
+
+On a v3 install it also reports the **ORE operator class** state, so the ordering trade `eql install` named once is recoverable later without re-reading scrollback: either the class is present (`types.*OrdOre` usable), or it was skipped and every `_ord_ore` domain carries the loud-failure fallback — the supported managed-Postgres configuration, where ordered columns must be `types.*Ord`. Anything else is damage and points at `eql install --force`. Run `eql verify` for the full surface check.
+
+The ORE row is only reported when the installed EQL **is** the version this CLI pins. The `_ord_ore` domains the poison CHECKs are counted over come from the pinned bundle, so a database running a different EQL cannot be classified against it at all — `status` says the state was not compared and points at `eql upgrade` rather than inventing a damage verdict. Same rule as `eql verify`'s version mismatch: "could not compare" is never rendered as an answer.
 
 #### `eql validate` — validate the encryption schema
 
@@ -664,34 +710,56 @@ import {
 ```typescript
 const installer = new EQLInstaller({ databaseUrl: 'postgresql://...' })
 
-await installer.checkPermissions()                  // PermissionCheckResult
+await installer.preflight()                         // PreflightResult
+await installer.checkPermissions()                  // deprecated adapter over preflight()
 await installer.isInstalled()                       // boolean (v3)
 await installer.getInstalledVersion()               // string | 'unknown' | null
-await installer.install({ supabase: true })         // executes in a transaction
+await installer.install({ supabase: true })         // InstallResult
+await installer.applySupabaseGrants()               // InstallResult (grants only, idempotent)
 ```
 
 `install` installs EQL v3 only and accepts `supabase`. `isInstalled` and `getInstalledVersion` retain an optional `{ eqlVersion: 2 | 3 }` solely for read-only diagnostics of existing v2 databases.
 
 ```typescript
-type PermissionCheckResult = {
-  ok: boolean           // all required permissions present
-  missing: string[]     // what's absent
-  isSuperuser: boolean  // permission diagnostic; the v3 bundle self-adapts
+type PreflightResult = {
+  ok: boolean                       // no blocking gaps
+  missing: string[]                 // blocking gaps, each naming what it blocks
+  currentUser: string
+  isSuperuser: boolean
+  memberOfPostgres: boolean | null  // null: no postgres role exists; false never blocks (it only skips optional statements)
+  hasDatabaseCreate: boolean
+  hasPublicCreate: boolean          // false (blocking) when the public schema is missing entirely
+  pgcryptoInstalled: boolean
+  pgcryptoSchema: string | null     // blocks (even superusers) when outside extensions/public — the bundle aborts
+  eqlV3SchemaPresent: boolean
+  eqlV3InternalSchemaPresent: boolean
+  canDropEqlV3Schema: boolean | null          // null: schema absent; false blocks reinstall (DROP SCHEMA ... CASCADE)
+  canDropEqlV3InternalSchema: boolean | null
+}
+
+type InstallResult = {
+  // The skipped ALTER DEFAULT PRIVILEGES FOR ROLE postgres statements (with an
+  // explanatory header) when the role is not a member of postgres; null when
+  // every grant ran. Optional SQL — surface as information, never as a
+  // required step: stash re-grants every object on each install/upgrade.
+  deferredGrantsSql: string | null
 }
 ```
+
+The bundle runs in its own transaction; the Supabase grants run after its commit, so a grants failure no longer rolls back a working install.
 
 Required: `SUPERUSER`, **or** `CREATE` on the database *and* on the `public` schema. If `pgcrypto` is absent, also `SUPERUSER` or `CREATEDB`.
 
 ## Requirements
 
 - Node.js >= 22
-- PostgreSQL with sufficient permissions (see `checkPermissions()`)
+- PostgreSQL with sufficient permissions (check with `stash eql preflight`)
 - `stash.config.ts` with a valid `databaseUrl` — or run `stash init` / `stash eql install` to scaffold it
 - Optional peer dependency: `@cipherstash/stack` >= 0.6.0 (required for the commands that load your encryption client)
 
 ## Common issues
 
-**Permission errors during install.** The role needs `CREATE` on the database and the `public` schema, or `SUPERUSER`. Check the CLI output for exactly what's missing.
+**Permission errors during install.** The role needs `CREATE` on the database and the `public` schema, or `SUPERUSER`. Run `stash eql preflight` for a row-by-row report of exactly what's missing and which statement each gap blocks.
 
 **Config not found.** `stash.config.ts` must be in the project root or a parent, and must `export default defineConfig(...)`. Fastest fix: `stash init`. For a CLI-only setup, `stash eql install` scaffolds it too.
 

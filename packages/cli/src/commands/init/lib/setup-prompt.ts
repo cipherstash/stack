@@ -206,6 +206,8 @@ const SKILL_PURPOSES: Record<string, string> = {
     'hand-written Postgres SQL over `pg` / `postgres-js`: the encrypted predicate matrix, `eql_v3.query_*` operand casts, per-driver parameter binding',
   'stash-edge':
     'the `@cipherstash/stack/wasm-inline` entry for Deno / Supabase Edge Functions / Workers: imports, `CS_*` credentials, the credential-identity rule',
+  'stash-managed-platforms':
+    'managed AI app platforms (Lovable, v0, Bolt, Replit): the WASM entry, headless `auth login --json`, minting `CS_*` with `stash env`, installing EQL as a non-`postgres` role, and which predicates survive PostgREST',
   'stash-deployment':
     'taking a rollout to a live environment — the multi-deploy ladder and its gates, backfilling against a production database, `CS_*` credentials at build and run time, Prisma Postgres/Compute specifics',
   'stash-zerokms':

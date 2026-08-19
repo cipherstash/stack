@@ -21,10 +21,10 @@
  * drift while keeping the descriptor module light.
  */
 
-import type { Contract } from '@prisma-next/contract/types'
-import type { MigrationPlanOperation } from '@prisma-next/framework-components/control'
-import type { MigrationMetadata } from '@prisma-next/migration-tools/metadata'
-import type { SqlStorage } from '@prisma-next/sql-contract/types'
+import type { SqlStorage } from '@prisma/orm-family-sql/contract/types'
+import type { MigrationPlanOperation } from '@prisma/orm-framework/components/control'
+import type { Contract } from '@prisma/orm-framework/contract/types'
+import type { MigrationMetadata } from '@prisma/orm-toolchain/migration-tools/metadata'
 
 function fail(field: string, value: unknown): never {
   throw new Error(

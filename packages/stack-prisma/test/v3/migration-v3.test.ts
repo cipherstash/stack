@@ -31,7 +31,7 @@ import { readInstallSql, releaseManifest } from '@cipherstash/eql/sql'
 import {
   materialiseMigrationPackage,
   readMigrationPackage,
-} from '@prisma-next/migration-tools/io'
+} from '@prisma/orm-toolchain/migration-tools/io'
 import { describe, expect, it } from 'vitest'
 import v3Metadata from '../../migrations/20260601T0100_install_eql_v3_bundle/migration.json' with {
   type: 'json',
@@ -117,7 +117,7 @@ const PUBLISHED_MIGRATIONS = [
     // pinned release rather than a historical one, which is why the
     // lockstep test below has something to match.
     migrationHash:
-      'sha256:1ae732828e9a6fb3574ab8dbede16e99bf1173bd4e5cd7a4b522138e71bc5d05',
+      '9447442333b673ae16de04c899138479d59191764a7bb2c97c170d6b143effa4',
     installSqlSha256:
       '7ad9c9f884083979c1cf483ff4f68d2569257d6c6fab15d9e4586f4c93703cad',
   },
@@ -126,7 +126,7 @@ const PUBLISHED_MIGRATIONS = [
     metadata: v3Upgrade305Metadata,
     ops: v3Upgrade305Ops,
     migrationHash:
-      'sha256:7bafd9d6c5d244332ff0b0943604dbd026c8369e24d2f335b1365c5f78e49d38',
+      '4050dee89eee023fd846d6bfe93cffccdba0e5aae67af25c722b3c7027c9bf57',
     installSqlSha256:
       '7ad9c9f884083979c1cf483ff4f68d2569257d6c6fab15d9e4586f4c93703cad',
   },
@@ -135,7 +135,7 @@ const PUBLISHED_MIGRATIONS = [
     metadata: v3Upgrade304Metadata,
     ops: v3Upgrade304Ops,
     migrationHash:
-      'sha256:59e124d8a64d31a0f2b27ef9f5b3868f822ec12823aad71fee8e64b36f115bf4',
+      '94a2ce9c8e973b7a635d92571ff642429e6ebfb7a4600291ee626201e110e13e',
     installSqlSha256:
       '63104a81aac0aebd59fac3765cbe92c3364a7ecbb0bce99e53fbe518d30a0641',
   },
@@ -144,7 +144,7 @@ const PUBLISHED_MIGRATIONS = [
     metadata: v3UpgradeMetadata,
     ops: v3UpgradeOps,
     migrationHash:
-      'sha256:7bb960435f9cdb7d7c25e4ff70b02fa050a1b8e695541facc47dd87ec3cc634e',
+      '0c56fe6b641c5839c82be72317b2af165fb574b0dcdfc4aa6b50425e371a9d0f',
     installSqlSha256:
       '05860ae47b3760cbba9842b22ddf89cf3f03aa49c33b6386f736c271784094b1',
   },
@@ -233,7 +233,9 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     // fails here, so the frozen-history guard above can never silently miss a
     // migration.
     const onDisk = readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && e.name !== 'refs')
+      .filter(
+        (e) => e.isDirectory() && e.name !== 'refs' && e.name !== 'snapshots',
+      )
       .map((e) => e.name)
       .sort()
     expect(onDisk).toEqual(
@@ -284,6 +286,7 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
       await materialiseMigrationPackage(root, v3Baseline)
       const reloaded = await readMigrationPackage(
         join(root, v3Baseline.dirName),
+        { migrationsDir: root },
       )
       expect(reloaded.metadata).toEqual(v3Metadata)
       expect(reloaded.ops).toEqual(v3Ops)

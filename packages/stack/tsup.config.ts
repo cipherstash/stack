@@ -1,9 +1,9 @@
 import { defineConfig } from 'tsup'
 
-// Two configs run in parallel inside tsup. They share the same `dist/`
-// output dir, so neither uses `clean: true` — a parallel-run race could
-// otherwise wipe the other config's output. The pre-tsup `rimraf dist`
-// in `package.json`'s build script clears the dir once before either
+// Three configs run in parallel inside tsup. They share the same `dist/`
+// output dir, so none uses `clean: true` — a parallel-run race could
+// otherwise wipe another config's output. The pre-tsup `rimraf dist`
+// in `package.json`'s build script clears the dir once before any
 // starts.
 export default defineConfig([
   // Main entries — dual ESM + CJS bundles.
@@ -48,5 +48,26 @@ export default defineConfig([
     target: 'es2022',
     tsconfig: './tsconfig.json',
     noExternal: ['evlog', 'uuid', 'zod', '@byteslice/result'],
+  },
+  // Diagnostics entry — its own config rather than another `entry` in the
+  // main one, because what it must NOT reach is the whole point of it.
+  // `splitting` is on for ESM in the main config, and a shared chunk is
+  // exactly how `@cipherstash/auth` would arrive here: the probe would then
+  // fail on auth's binary while reporting the encryption engine, which is the
+  // bug this entry exists to fix. `splitting: false` makes that structural
+  // rather than a property of today's module graph.
+  //
+  // Nothing is bundled in (no `noExternal`): `@cipherstash/protect-ffi` has to
+  // stay a bare specifier so the load goes through the installed package's own
+  // loader, which is the thing under test.
+  {
+    entry: { diagnostics: 'src/diagnostics.ts' },
+    format: ['cjs', 'esm'],
+    splitting: false,
+    sourcemap: true,
+    dts: { entry: { diagnostics: 'src/diagnostics.ts' } },
+    clean: false,
+    target: 'es2022',
+    tsconfig: './tsconfig.json',
   },
 ])

@@ -46,7 +46,16 @@ const vendoredDir = join(
 
 function migrationDirNames(root: string): string[] {
   return readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name !== 'refs')
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        entry.name !== 'refs' &&
+        // The content-addressed contract store (0.17 layout) is not a
+        // migration package. It sits beside the package's migration dirs,
+        // but in a consumer repo it sits at the migrations ROOT (shared
+        // across spaces), so it is never part of the vendored space dir.
+        entry.name !== 'snapshots',
+    )
     .map((entry) => entry.name)
     .sort()
 }
@@ -95,8 +104,14 @@ describe('example vendored cipherstash space parity', () => {
       [...shippedHead.invariants].sort(),
     )
 
+    // Since the 0.17 snapshot-store layout, the vendored space carries no
+    // per-space contract.json — the contract the head ref names resolves
+    // through the consumer root's content-addressed store,
+    // `migrations/snapshots/<hash>/contract.json`.
     const shippedContract = readJson(join(packageRoot, 'src', 'contract.json'))
-    const vendoredContract = readJson(join(vendoredDir, 'contract.json'))
+    const vendoredContract = readJson(
+      join(vendoredDir, '..', 'snapshots', vendoredHead.hash, 'contract.json'),
+    )
     expect(vendoredContract).toEqual(shippedContract)
   })
 })

@@ -1,6 +1,6 @@
 # @cipherstash/stack-prisma example
 
-End-to-end demo of [`@cipherstash/stack-prisma`](../../packages/stack-prisma/README.md): searchable application-layer encryption for Postgres with [Prisma Next](https://www.npmjs.com/package/@prisma-next/cli), using [`@cipherstash/stack`](../../packages/stack/README.md) as the encryption SDK — on **EQL v3**, where every encrypted column is a concrete `public.eql_v3_*` Postgres domain and the constructor you pick *is* the capability set.
+End-to-end demo of [`@cipherstash/stack-prisma`](../../packages/stack-prisma/README.md): searchable application-layer encryption for Postgres with [Prisma Next](https://www.npmjs.com/package/prisma-next), using [`@cipherstash/stack`](../../packages/stack/README.md) as the encryption SDK — on **EQL v3**, where every encrypted column is a concrete `public.eql_v3_*` Postgres domain and the constructor you pick *is* the capability set.
 
 A single `User` model with one column per plaintext family, exercised end-to-end: insert, equality, free-text token search, range, between, in-array, encrypted-order-term sort, JSON containment, and `decryptAll`-amortised read.
 
@@ -21,7 +21,7 @@ A single `User` model with one column per plaintext family, exercised end-to-end
 | -------------------------- | --------------------------------------------------------------------------------------------- |
 | `docker-compose.yml`       | Local Postgres 16 on port 54338.                                                               |
 | `prisma/schema.prisma`     | Application schema (one `User` model exercising six cipherstash v3 domains).                  |
-| `prisma-next.config.ts`    | Wires `cipherstash` into `extensionPacks`.                                                    |
+| `prisma-next.config.ts`    | Wires `cipherstash` into `extensions`.                                                    |
 | `src/db.ts`                | One-call setup via `cipherstashFromStack({ contractJson })`.                                |
 | `src/index.ts`             | The demo flow.                                                                                |
 | `src/prisma/contract.*`    | Emitted by `pnpm emit`.                                                                       |

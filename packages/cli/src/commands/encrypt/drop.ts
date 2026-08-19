@@ -9,10 +9,10 @@ import {
   setManifestTargetPhase,
 } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
-import pg from 'pg'
 import { detectDrizzle } from '@/commands/db/detect.js'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
+import { createPgClient } from '@/db/client.js'
 import { scaffoldDrizzleMigration } from './drizzle-helper.js'
 import { explainUnresolved, resolveColumnLifecycle } from './lib/resolve-eql.js'
 
@@ -58,7 +58,7 @@ export async function dropCommand(options: DropCommandOptions) {
   p.intro(runnerCommand(detectPackageManager(), 'stash encrypt drop'))
 
   const config = await loadStashConfig()
-  const client = new pg.Client({ connectionString: config.databaseUrl })
+  const client = createPgClient(config.databaseUrl)
   let exitCode = 0
 
   try {

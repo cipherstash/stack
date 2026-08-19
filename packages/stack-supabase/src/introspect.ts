@@ -191,8 +191,9 @@ export async function loadPg(
     throw new Error(
       '[supabase v3]: encryptedSupabase introspects the database over a direct ' +
         "Postgres connection, but the optional peer dependency 'pg' is not installed. " +
-        'Install it (`npm install pg`). This also means encryptedSupabase cannot run ' +
-        'in a Worker or the browser, where a direct Postgres connection is unavailable.',
+        'Install it (`npm install pg`), or pass `schemas` to declare your tables — ' +
+        'that skips introspection entirely and needs no Postgres connection, which ' +
+        'is also how you run this wrapper where no such connection is available.',
       { cause: err },
     )
   }

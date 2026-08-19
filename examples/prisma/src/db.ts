@@ -14,7 +14,7 @@
 import 'dotenv/config'
 
 import { cipherstashFromStack } from '@cipherstash/stack-prisma/v3'
-import postgres from '@prisma-next/postgres/runtime'
+import postgres from '@prisma/orm-postgres/runtime'
 
 import type { Contract } from './prisma/contract.d'
 import contractJson from './prisma/contract.json' with { type: 'json' }

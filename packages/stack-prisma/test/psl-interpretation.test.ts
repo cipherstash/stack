@@ -13,11 +13,12 @@
  * `?` produces `nullable: true`; and passing options is rejected.
  */
 
-import type { Contract } from '@prisma-next/contract/types'
-import { buildSymbolTable } from '@prisma-next/psl-parser'
-import { parse } from '@prisma-next/psl-parser/syntax'
-import { interpretPslDocumentToSqlContract } from '@prisma-next/sql-contract-psl'
-import { postgresCreateNamespace } from '@prisma-next/target-postgres/types'
+import { interpretPslDocumentToSqlContract } from '@prisma/orm-family-sql/contract-psl'
+import type { AuthoringTypeNamespace } from '@prisma/orm-framework/components/authoring'
+import { collectScalarTypeConstructors } from '@prisma/orm-framework/components/authoring'
+import { buildSymbolTable } from '@prisma/orm-framework/psl-parser'
+import { parse } from '@prisma/orm-framework/psl-parser/syntax'
+import { postgresCreateNamespace } from '@prisma/orm-target-postgres/target/types'
 import { describe, expect, it } from 'vitest'
 import cipherstashControl from '../src/exports/control'
 import cipherstashPack from '../src/exports/pack'
@@ -32,11 +33,29 @@ const postgresTarget = {
   capabilities: {},
 }
 
-const postgresScalarTypeDescriptors = new Map([
-  ['String', { codecId: 'pg/text@1', nativeType: 'text' }],
-  ['Boolean', { codecId: 'pg/bool@1', nativeType: 'bool' }],
-  ['Int', { codecId: 'pg/int4@1', nativeType: 'int4' }],
-])
+// Since 0.17 scalar types are authored through the unified authoring
+// type namespace (zero-arg type constructors) — the retired
+// `scalarTypeDescriptors` map channel is derived from it via
+// `collectScalarTypeConstructors`.
+const postgresScalarAuthoringTypes = {
+  String: {
+    kind: 'typeConstructor',
+    output: { codecId: 'pg/text@1', nativeType: 'text' },
+  },
+  Boolean: {
+    kind: 'typeConstructor',
+    output: { codecId: 'pg/bool@1', nativeType: 'bool' },
+  },
+  Int: {
+    kind: 'typeConstructor',
+    output: { codecId: 'pg/int4@1', nativeType: 'int4' },
+  },
+} satisfies AuthoringTypeNamespace
+
+const authoringTypes = {
+  ...postgresScalarAuthoringTypes,
+  ...cipherstashPack.authoring.type,
+} satisfies AuthoringTypeNamespace
 
 // Since 0.15 the SQL PSL interpreter consumes a symbol table built from
 // the CST parser instead of the legacy `parsePslDocument` AST, and the
@@ -47,7 +66,6 @@ function interpret(schema: string) {
   const { table } = buildSymbolTable({
     document,
     sourceFile,
-    scalarTypes: [...postgresScalarTypeDescriptors.keys()],
     pslBlockDescriptors: {},
   })
   return interpretPslDocumentToSqlContract({
@@ -55,15 +73,14 @@ function interpret(schema: string) {
     sourceFile,
     sourceId: 'schema.prisma',
     target: postgresTarget,
-    scalarTypeDescriptors: postgresScalarTypeDescriptors,
-    composedExtensionPacks: [cipherstashControl.id],
+    scalarColumnDescriptors: collectScalarTypeConstructors(
+      postgresScalarAuthoringTypes,
+    ),
+    composedExtensions: [cipherstashControl.id],
     composedExtensionContracts: new Map([
-      [
-        cipherstashControl.id,
-        cipherstashControl.contractSpace!.contractJson as unknown as Contract,
-      ],
+      [cipherstashControl.id, cipherstashControl.contractSpace!.contractJson],
     ]),
-    authoringContributions: { type: cipherstashPack.authoring.type, field: {} },
+    authoringContributions: { type: authoringTypes, field: {} },
     createNamespace: postgresCreateNamespace,
     capabilities: { sql: { scalarList: true } },
   })
