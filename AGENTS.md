@@ -321,12 +321,16 @@ monorepo, which is where the silent failures are.
   published from another repository, and the gate **exits non-zero** — failing
   the `gate` job, which skips `release` entirely — if such a package's committed
   version is missing from npm, or if any published package carries a runtime
-  `workspace:` range that only that package could satisfy. It fires today on the
-  hand-applied 3.0.5 bump, which a changeset-side guard could not see, and it
-  blocks the Version Packages PR as well as the publish. `tests.yml` runs the
-  same script at PR time so the answer arrives a merge earlier. Delete the
-  `@cipherstash/eql` entry in the Phase-5 cutover — and note the FFI half of
-  that map is what turns `lint-no-ffi-changeset.mjs`'s unstated assumption
+  `workspace:` range that only that package could satisfy. Either condition
+  stops the Version Packages PR and the publish alike. A changeset-side guard
+  sees neither — which is why the hand-applied 3.0.5 bump needed this one.
+  **Whether the gate is blocking anything right now is a question for the
+  registry, not for this file: run `node scripts/release-gate.mjs` and read what
+  it says.** `tests.yml` runs the same script at PR time so the answer arrives a
+  merge earlier. Delete the `@cipherstash/eql` entry in the Phase-5 cutover —
+  `scripts/__tests__/frozen-publisher-docs.test.mjs` fails until this paragraph
+  goes with it — and note the FFI half of that map is what turns
+  `lint-no-ffi-changeset.mjs`'s unstated assumption
   ("all seven are already on npm at the workspace version") into a checked one.
   Note too that 3.0.5 did *not* come from `changeset version` —
   eleven unrelated changesets were pending, so the bump was entered by hand in
