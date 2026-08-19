@@ -61,6 +61,16 @@ on:
       # toolchain pins, and the PG* connection env.
       - 'packages/protect-ffi/package.json'
       - 'packages/protect-ffi/mise.toml'
+      # Out of this package, and a real compile input: the cdylib crate carries
+      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # EQL wire types are linked into `index.node` AND into the wasm32 build
+      # this suite's `wasm-round-trip` test loads. Both cache keys in
+      # `.github/actions/build-ffi-binding` hash these, so an edit misses the
+      # cache and rebuilds the binding — without these entries it would be
+      # rebuilt and no suite that loads it would start. Pinned by
+      # scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
+      - 'packages/eql/crates/**'
+      - 'packages/eql/Cargo.toml'
       - '.github/workflows/integration-protect-ffi.yml'
       - '.github/actions/build-ffi-binding/**'
       - '.github/actions/require-cs-secrets/**'
@@ -79,6 +89,16 @@ on:
       - 'packages/protect-ffi/tsconfig.wasm-errors.json'
       - 'packages/protect-ffi/package.json'
       - 'packages/protect-ffi/mise.toml'
+      # Out of this package, and a real compile input: the cdylib crate carries
+      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # EQL wire types are linked into `index.node` AND into the wasm32 build
+      # this suite's `wasm-round-trip` test loads. Both cache keys in
+      # `.github/actions/build-ffi-binding` hash these, so an edit misses the
+      # cache and rebuilds the binding — without these entries it would be
+      # rebuilt and no suite that loads it would start. Pinned by
+      # scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
+      - 'packages/eql/crates/**'
+      - 'packages/eql/Cargo.toml'
       - '.github/workflows/integration-protect-ffi.yml'
       - '.github/actions/build-ffi-binding/**'
       - '.github/actions/require-cs-secrets/**'

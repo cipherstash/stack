@@ -54,13 +54,41 @@ runs:
         # package.json, and mise.toml pins the toolchain that compiles it.
         # Edit either and the Rust hash is unchanged, so the cache hit skips
         # the build step below and the job proceeds on a stale index.node.
+        #
+        # The last two are NOT in this package. `crates/protect-ffi/Cargo.toml`
+        # carries `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`
+        # — an in-tree path dependency that compiles into `index.node` and into
+        # the wasm build below. A path dep has no registry checksum, so a
+        # source-only edit there moves NOTHING this key would otherwise hash:
+        # not `crates/**`, not either manifest, and not `Cargo.lock`, which
+        # records the crate by name and version and only moves when the version
+        # does. Every glob hashes identically, the restore hits, the build below
+        # is skipped, and every credentialed job runs a stale binding. (This is
+        # observed, not theoretical: the crate went 3.0.4 -> 4.0.0 -> 3.0.5
+        # across three commits and neither key here changed by a byte.)
+        #
+        # `crates/**` rather than the one crate, deliberately. `eql-bindings`
+        # has no path deps of its own TODAY, so the narrower glob would be exact
+        # — and would silently stop being exact the moment it gains one on a
+        # sibling in that workspace, which is the same hole one level down. The
+        # cost of the wider glob is a spurious miss when an unrelated EQL crate
+        # changes; the cost of the narrower one is a stale binary. Guarded by
+        # `scripts/__tests__/ffi-binding-action.test.mjs`, which discovers the
+        # path deps from the manifest rather than trusting this comment.
+        #
+        # The EQL workspace root manifest comes with it: cargo reads it for the
+        # crate's workspace context, so a `<key>.workspace = true` added to
+        # eql-bindings (three of its four siblings already inherit `[lints]`
+        # that way) would make it a compile input with no other trace.
         key: >-
           ffi-native-${{ runner.os }}-${{ runner.arch }}-${{
           hashFiles('packages/protect-ffi/crates/**',
           'packages/protect-ffi/Cargo.toml',
           'packages/protect-ffi/Cargo.lock',
           'packages/protect-ffi/package.json',
-          'packages/protect-ffi/mise.toml') }}
+          'packages/protect-ffi/mise.toml',
+          'packages/eql/crates/**',
+          'packages/eql/Cargo.toml') }}
 
     # Always, hit or miss: `lib/` is `tsc` over `src/`, which is seconds, and
     # it tracks a different input set than the cached binary.
@@ -136,11 +164,20 @@ runs:
         # under src/ are the eql-v3-types declarations, which that tsconfig
         # never reads. ffi-binding-action.test.mjs walks the tsconfig's imports
         # and fails if this stops being the complete input set.
+        #
+        # `packages/eql/**` is here for the reason spelled out on the native key
+        # above, and it is NOT redundant with it: wasm-pack compiles the same
+        # `eql-bindings` path dependency for wasm32 into
+        # `protect_ffi_inline.js`, which is the bundle
+        # `@cipherstash/stack/wasm-inline` imports. Two keys, two archives, the
+        # same missing input.
         key: >-
           ffi-wasm-${{ runner.os }}-${{
           hashFiles('packages/protect-ffi/crates/**',
           'packages/protect-ffi/Cargo.toml',
           'packages/protect-ffi/Cargo.lock',
+          'packages/eql/crates/**',
+          'packages/eql/Cargo.toml',
           'packages/protect-ffi/dist/wasm/*.d.ts',
           'packages/protect-ffi/src/errors.ts',
           'packages/protect-ffi/package.json',

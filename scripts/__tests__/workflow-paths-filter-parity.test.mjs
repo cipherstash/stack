@@ -117,6 +117,24 @@ const EXPECTED_ASYMMETRIES = new Map([
     'pull_request is the only trigger; a post-merge copy would report a release-blocking finding too late to act on',
   ],
   [
+    '.github/workflows/test-eql.yml',
+    // `pull_request` is deliberately UNFILTERED and `push: branches: [main]`
+    // carries the list, which is the same shape as tests-rust.yml with the two
+    // events swapped. Unfiltered on the PR side because this workflow's
+    // `ci-required` is the check branch protection is meant to reference, and a
+    // workflow skipped by a path filter leaves a required check stuck Pending;
+    // relevance is applied per-job via `if:` instead. Filtered on the push side
+    // because nothing waits on a push run, so skipping one costs nothing.
+    //
+    // The direction that would hurt — a `pull_request` filter narrower than the
+    // `push` one, so the PR introducing a change never runs the suite — is
+    // unreachable when `pull_request` has no filter at all. The push list is
+    // not unchecked: `eql-workflow-filters.test.mjs` compares it against the
+    // `relevant:` filter in the `changes` job, which is the second copy of the
+    // same list and the one this file cannot see.
+    'pull_request is deliberately unfiltered (per-job relevance instead), so PRs run a superset of what push runs; the push list is compared against the `changes` job filter by eql-workflow-filters.test.mjs',
+  ],
+  [
     '.github/workflows/bench-eql.yml',
     // The mirror image of lint-release.yml: `push: branches: [main]` with a
     // `paths:` list, and no `pull_request:` trigger at all. Deliberate upstream
