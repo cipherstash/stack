@@ -257,7 +257,7 @@ Index not being used:
 **The integrations emit the query operators for you — none applies index DDL on its own. Making sure these indexes exist is always your job.** This skill is the general model — recipes, engagement rules, verification. How to apply it in a specific integration lives in that integration's skill:
 
 - **Drizzle** — `encryptedIndexes(t)` from `@cipherstash/stack-drizzle` derives the recommended indexes for every encrypted column in the table, or declare individual expression indexes in the schema DSL. See `stash-drizzle` § Indexing Encrypted Columns.
-- **Prisma Next** — Prisma's schema language cannot express functional indexes; the DDL goes in a migration in the adapter's flow. See `stash-prisma`.
+- **Prisma Next** — since Prisma Next 0.17, `@@index(expression: "eql_v3.eq_term(email)", name: "users_email_eq", type: "btree")` declares a functional index directly in `schema.prisma`; the accompanying `ANALYZE` rides a raw-SQL migration operation. See `stash-prisma` § Indexing encrypted columns.
 - **Supabase** — a `supabase/migrations/` file; no superuser needed (see above). See `stash-supabase`.
 - **Raw SQL / plain PostgreSQL** — the recipes in this skill, in whatever migration tool owns the schema. Never ad-hoc in production. The predicates those indexes serve are in `stash-postgres`.
 
