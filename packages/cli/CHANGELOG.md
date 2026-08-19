@@ -1,4 +1,4 @@
-# @cipherstash/cli
+# stash
 
 ## 1.0.0
 

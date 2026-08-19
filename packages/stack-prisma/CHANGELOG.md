@@ -1,4 +1,4 @@
-# @cipherstash/prisma-next
+# @cipherstash/stack-prisma
 
 ## 1.0.0
 

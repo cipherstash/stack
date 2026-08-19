@@ -25,23 +25,23 @@ shipping alone would leave the CLI recommending versions that no longer match
 what is published, and warning about a skew it had itself created.
 
 **This does not mean every package in the release is drop-in.** The version
-number is shared; the changes are not. Two entries below need action from some
-users, and neither is filed under Major Changes — they are recorded at the level
-their own authors judged correct, and appear here only so you do not have to
-find them by reading the whole file:
+number is shared; the changes are not. Two changes elsewhere in this release
+need action from some users, and neither is filed under Major Changes — each is
+recorded at the level its own author judged correct. They are named here so you
+do not have to read six changelogs to find them:
 
 - **`@cipherstash/stack` — `clientKey` is hex-only.** A decoder fallback that
   also accepted standard padded base64 is gone, and such a key is now rejected
   at client construction with `invalid clientKey: expected a hex-encoded key`.
   Hex is what `stash env` emits and what the docs have always specified, so most
   callers are unaffected; a key pasted out of `~/.cipherstash/secretkey.json`
-  (which stores base64) is not. See "Adopt protect-ffi 0.31.0" under Patch
-  Changes. That entry also narrows which `error.code` values DynamoDB
-  operations report.
+  (which stores base64) is not. The full entry is "Adopt protect-ffi 0.31.0" in
+  the **`@cipherstash/stack`** changelog; it also narrows which `error.code`
+  values DynamoDB operations report.
 - **`stash` — `stash eql validate` lost `--exclude-operator-family`,** and two
   checks that used to exit 1 no longer do. A script passing that flag, or a CI
-  gate relying on those exit codes, needs updating. See the `eql validate` entry
-  under Minor Changes.
+  gate relying on those exit codes, needs updating. The full entry is under
+  `eql validate` in the **`stash`** changelog.
 
 If you use neither `@cipherstash/stack-prisma` nor either of those, upgrading
 1.x → 2.0.0 needs no code changes.
