@@ -1,5 +1,16 @@
 # @cipherstash/basic-example
 
+## 1.2.15
+
+### Patch Changes
+
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+- Updated dependencies [a2b0b45]
+  - @cipherstash/stack@1.1.0
+  - @cipherstash/stack-drizzle@1.1.0
+
 ## 1.2.14
 
 ### Patch Changes
