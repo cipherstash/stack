@@ -32,19 +32,34 @@ export function currentTarget(): string {
   return `${process.platform}-${process.arch}`
 }
 
+// napi-rs's generated loader, which is how `@cipherstash/auth` loads (neon is
+// only protect-ffi). It requires each candidate inside `try { … } catch (_) {}`
+// and then throws this — so the resolver's MODULE_NOT_FOUND never escapes, and
+// what does escape is a plain Error with NO `code` and no `requireStack`. It
+// names the platform package, which is the only thing left to key on.
+const NAPI_LOAD_FAILURE = /Failed to load native binding for /
+
 /**
  * True when `err` is a failure to load one of our prebuilt native addons (a
  * missing `@cipherstash/<pkg>-<platform>-<arch>` optional package), as opposed
  * to a missing top-level package or any other module error.
  */
 export function isNativeBinaryMissing(err: unknown): err is ModuleError {
-  if (!isModuleNotFound(err)) return false
-  const haystack = `${err.message}\n${(err.requireStack ?? []).join('\n')}`
-  // A platform-suffixed @cipherstash package, or a failure surfaced from the
-  // neon loader, both mean the optional native binary wasn't installed.
-  return (
-    PLATFORM_PKG.test(haystack) || /[\\/]@neon-rs[\\/]load[\\/]/.test(haystack)
-  )
+  if (isModuleNotFound(err)) {
+    const haystack = `${err.message}\n${(err.requireStack ?? []).join('\n')}`
+    // A platform-suffixed @cipherstash package, or a failure surfaced from the
+    // neon loader, both mean the optional native binary wasn't installed.
+    return (
+      PLATFORM_PKG.test(haystack) ||
+      /[\\/]@neon-rs[\\/]load[\\/]/.test(haystack)
+    )
+  }
+
+  if (!(err instanceof Error)) return false
+  // The code-less napi shape. Both halves are required: neither is narrow
+  // enough alone — `Failed to load native binding` pins the thrower, the
+  // platform package pins it to one of ours. No `requireStack` to consult.
+  return NAPI_LOAD_FAILURE.test(err.message) && PLATFORM_PKG.test(err.message)
 }
 
 function missingModuleName(err: ModuleError): string | undefined {

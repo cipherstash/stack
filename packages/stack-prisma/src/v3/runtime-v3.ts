@@ -26,7 +26,7 @@
  * `SqlRuntimeExtensionDescriptor` does not own a middleware slot.
  */
 
-import type { SqlRuntimeExtensionDescriptor } from '@prisma-next/sql-runtime'
+import type { SqlRuntimeExtensionDescriptor } from '@prisma/orm-family-sql/runtime'
 import type { CipherstashSdk } from '../execution/sdk'
 import { CIPHERSTASH_SPACE_ID } from '../extension-metadata/constants'
 import { CIPHERSTASH_V3_EXTENSION_VERSION } from '../extension-metadata/constants-v3'

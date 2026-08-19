@@ -1,8 +1,10 @@
 import * as p from '@clack/prompts'
-import pg from 'pg'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
+import { createPgClient } from '@/db/client.js'
 import { EQLInstaller } from '@/installer/index.js'
+import { describeOreState } from '@/installer/ore.js'
+import { readOreState } from '@/installer/verify.js'
 
 export async function statusCommand(options: { databaseUrl?: string } = {}) {
   const pm = detectPackageManager()
@@ -73,7 +75,7 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
   s.start('Checking database permissions...')
 
   try {
-    const permissions = await installer.checkPermissions()
+    const permissions = await installer.preflight()
     s.stop('Permissions checked.')
 
     if (permissions.ok) {
@@ -93,7 +95,53 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
     )
   }
 
-  // 3. Encrypt configuration.
+  // 3. The ORE half of the install.
+  //
+  // Reported here so the trade an operator was told about at install time is
+  // recoverable afterwards, without re-reading scrollback (#891). Only when
+  // v3 is installed: the state is a property of the v3 bundle's conditional
+  // half, and reads as 'fallback' on a database that has no EQL at all.
+  if (installedV3) {
+    s.start('Checking ORE operator class...')
+    const oreClient = createPgClient(config.databaseUrl)
+    try {
+      await oreClient.connect()
+      const ore = await readOreState(oreClient)
+      s.stop('ORE state checked.')
+      if (ore.comparable) {
+        const described = describeOreState(ore.state)
+        if (described.severity === 'damage') {
+          p.log.error(described.message)
+        } else {
+          p.log.info(described.message)
+        }
+      } else {
+        // Version skew is not damage, and must not be rendered as any ORE
+        // answer at all: the domain list the poison CHECKs are counted over is
+        // the PINNED bundle's, so a perfectly healthy fallback install of an
+        // older EQL classifies as incoherent and would send this operator to
+        // `install --force` over nothing. Say the true thing instead.
+        p.log.info(
+          `ORE operator class: not compared — EQL ${
+            ore.installedVersion ?? 'unknown'
+          } is installed and this CLI pins EQL ${ore.bundleVersion}, so the ORE state cannot be read against the pinned bundle. Run \`${runnerCommand(pm, 'stash eql upgrade')}\`, then check status again.`,
+        )
+      }
+    } catch (error) {
+      // Advisory, not a gate: a status run that could not read one row should
+      // still report everything else it read.
+      s.stop('ORE state check failed.')
+      p.log.warn(
+        `Could not determine the ORE operator class state: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    } finally {
+      await oreClient.end().catch(() => {})
+    }
+  }
+
+  // 4. Encrypt configuration.
   //
   // `public.eql_v2_configuration` is a v2 + CipherStash Proxy artifact: the v2
   // install creates it and Proxy reads it. EQL v3 has no configuration table —
@@ -110,7 +158,7 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
 
   s.start('Checking encrypt configuration...')
 
-  const client = new pg.Client({ connectionString: config.databaseUrl })
+  const client = createPgClient(config.databaseUrl)
 
   try {
     await client.connect()

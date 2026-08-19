@@ -20,11 +20,8 @@
  *     GA domain registry.
  */
 
-import postgresRuntimeAdapter from '@prisma-next/adapter-postgres/runtime'
-import type { PostgresContract } from '@prisma-next/adapter-postgres/types'
-import type { RuntimeTargetDescriptor } from '@prisma-next/framework-components/execution'
-import { validateSqlContractFully } from '@prisma-next/sql-contract/validators'
-import type { SqlOperationDescriptor } from '@prisma-next/sql-operations'
+import { validateSqlContractFully } from '@prisma/orm-family-sql/contract/validators'
+import type { SqlOperationDescriptor } from '@prisma/orm-family-sql/operations'
 import {
   type AnyExpression,
   ColumnRef,
@@ -33,12 +30,15 @@ import {
   ProjectionItem,
   SelectAst,
   TableSource,
-} from '@prisma-next/sql-relational-core/ast'
+} from '@prisma/orm-family-sql/relational-core/ast'
 import {
   createExecutionContext,
   createSqlExecutionStack,
   type SqlRuntimeExtensionDescriptor,
-} from '@prisma-next/sql-runtime'
+} from '@prisma/orm-family-sql/runtime'
+import type { RuntimeTargetDescriptor } from '@prisma/orm-framework/components/execution'
+import postgresRuntimeAdapter from '@prisma/orm-target-postgres/adapter/runtime'
+import type { PostgresContract } from '@prisma/orm-target-postgres/adapter/types'
 import { vi } from 'vitest'
 import type { CipherstashSdk } from '../../src/execution/sdk'
 import {
@@ -95,13 +95,13 @@ function v3Column(codecId: string) {
 export const contractV3 = validateSqlContractFully<PostgresContract>({
   target: 'postgres',
   targetFamily: 'sql',
-  profileHash: 'sha256:cipherstash-operator-lowering-v3-test',
+  profileHash: 'cipherstash-operator-lowering-v3-test',
   roots: {},
   capabilities: {},
-  extensionPacks: {},
+  extensions: {},
   meta: {},
   storage: {
-    storageHash: 'sha256:cipherstash-operator-lowering-v3-test-storage',
+    storageHash: 'cipherstash-operator-lowering-v3-test-storage',
     namespaces: {
       __unbound__: {
         id: '__unbound__',
@@ -142,7 +142,7 @@ export const contractV3 = validateSqlContractFully<PostgresContract>({
 // `targetId` on the target during `create`. Same inline replica as the
 // v2 helper (no postgres-package test-export dependency). The empty
 // `codecs` contribution mirrors the real
-// `@prisma-next/target-postgres/runtime` descriptor (the target
+// `@prisma/orm-target-postgres/target/runtime` descriptor (the target
 // contributes no codecs; they ship from the adapter and extension
 // packs) and is required by `createExecutionContext`'s contributor
 // walk in `assembleV3ExecutionContext`.
@@ -194,7 +194,7 @@ export function makeV3Adapter(
     target: stubRuntimeTarget,
     adapter: postgresRuntimeAdapter,
     driver: undefined,
-    extensionPacks: [...extensionPacks],
+    extensions: [...extensionPacks],
   })
 }
 
@@ -215,7 +215,7 @@ export function assembleV3ExecutionContext(
     stack: createSqlExecutionStack({
       target: stubRuntimeTarget,
       adapter: postgresRuntimeAdapter,
-      extensionPacks: [...extensionPacks],
+      extensions: [...extensionPacks],
     }),
   })
 }

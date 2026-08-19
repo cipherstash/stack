@@ -448,23 +448,29 @@ import { EQLInstaller } from 'stash'
 
 const installer = new EQLInstaller({ databaseUrl: process.env.DATABASE_URL! })
 
-const permissions = await installer.checkPermissions()
-if (!permissions.ok) {
-  console.error('Missing permissions:', permissions.missing)
+const preflight = await installer.preflight()
+if (!preflight.ok) {
+  console.error('Blocking gaps:', preflight.missing)
   process.exit(1)
 }
 
 if (!(await installer.isInstalled())) {
-  await installer.install({ supabase: true })
+  const { deferredGrantsSql } = await installer.install({ supabase: true })
+  // Non-null when the connecting role is not a member of `postgres`: the
+  // optional owner-scoped default-privilege statements, skipped. The install
+  // is complete without them.
+  if (deferredGrantsSql) console.log(deferredGrantsSql)
 }
 ```
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `checkPermissions()` | `Promise<PermissionCheckResult>` | Check required database permissions |
+| `preflight()` | `Promise<PreflightResult>` | Read-only role-capability report (superuser, membership of `postgres`, CREATE privileges, pgcrypto placement, EQL schema presence/ownership) |
+| `checkPermissions()` | `Promise<PermissionCheckResult>` | **Deprecated** — thin adapter over `preflight()`; will be removed in the next major |
 | `isInstalled()` | `Promise<boolean>` | Check if the EQL v3 schemas exist |
 | `getInstalledVersion()` | `Promise<string \| null>` | Get the installed EQL version |
-| `install(options?)` | `Promise<void>` | Execute the EQL install SQL in a transaction |
+| `install(options?)` | `Promise<InstallResult>` | Install the EQL bundle (its own transaction), then the Supabase grants (outside it, so a grants failure keeps the install) |
+| `applySupabaseGrants()` | `Promise<InstallResult>` | Re-apply the Supabase role grants alone (idempotent) |
 
 Install options: `supabase`.
 

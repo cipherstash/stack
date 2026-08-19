@@ -37,6 +37,8 @@ Capability is fixed by the column's domain type, chosen at schema definition via
 
 The last row is deliberate, not a gap: a bare `types.Text` / `types.Integer` / `types.Boolean` column carries no query terms, so there is nothing to index and nothing to query server-side. If a column needs an index, it needs a term-carrying domain first.
 
+**Choosing the domain in the first place** is the `stash-encryption` skill's **capability matrix** (`### The types Namespace`) — all 40 factories, one row each, with the predicates and the index each supports. Use it to pick the type; use this page to index it.
+
 ## The Recipes
 
 Every recipe is a functional index over the extractor, followed by `ANALYZE` (see [Making a Query Engage the Index](#making-a-query-engage-the-index) for why `ANALYZE` is mandatory). Name indexes descriptively (`users_email_eq`, `events_at_ord`) — it makes `EXPLAIN` output and maintenance legible.
@@ -130,7 +132,7 @@ SELECT * FROM orders ORDER BY eql_v3.ord_term(data_encrypted -> '<selector>'::te
 
 The `_ord_ore` restriction, precisely: its btree ordering depends on a hand-written operator class created by the EQL installer, and `CREATE OPERATOR CLASS` is a superuser-gated command in stock PostgreSQL. Whether that blocks ORE is per-platform, not a blanket managed-Postgres rule: **AWS RDS and Aurora fully support it** (their master role can create operator classes), while **cloud-hosted Supabase is the one confirmed platform that refuses it**. Where the install role can't create the opclass, the installer detects this and **disables the `_ord_ore` domains** — using one raises `feature_not_supported` with a hint naming the alternatives.
 
-**The silent-failure mode to check for:** if an `_ord_ore` column somehow exists without the opclass, `CREATE INDEX … USING btree (eql_v3.ord_term_ore(col))` does **not** fail — PostgreSQL binds the generic `record_ops` instead. The index builds, occupies space, and never engages. Verify which opclass an ORE index actually bound:
+**The silent-failure mode to check for:** if an `_ord_ore` column somehow exists without the opclass, `CREATE INDEX … USING btree (eql_v3.ord_term_ore(col))` does **not** fail — PostgreSQL binds the generic `record_ops` instead. The index builds, occupies space, and never engages. Run `stash eql verify` first: it reads the ORE state directly and distinguishes the two healthy configurations (opclass present, or opclass skipped with every `_ord_ore` domain disabled) from the incoherent half-working state that makes this trap possible — and `stash eql install` runs the same check automatically. What `verify` does not tell you is which opclass an *existing index* bound at build time; for that, check the index itself:
 
 ```sql
 SELECT i.relname, oc.opcname
@@ -255,7 +257,7 @@ Index not being used:
 **The integrations emit the query operators for you — none applies index DDL on its own. Making sure these indexes exist is always your job.** This skill is the general model — recipes, engagement rules, verification. How to apply it in a specific integration lives in that integration's skill:
 
 - **Drizzle** — `encryptedIndexes(t)` from `@cipherstash/stack-drizzle` derives the recommended indexes for every encrypted column in the table, or declare individual expression indexes in the schema DSL. See `stash-drizzle` § Indexing Encrypted Columns.
-- **Prisma Next** — Prisma's schema language cannot express functional indexes; the DDL goes in a migration in the adapter's flow. See `stash-prisma`.
+- **Prisma Next** — since Prisma Next 0.17, `@@index(expression: "eql_v3.eq_term(email)", name: "users_email_eq", type: "btree")` declares a functional index directly in `schema.prisma`; the accompanying `ANALYZE` rides a raw-SQL migration operation. See `stash-prisma` § Indexing encrypted columns.
 - **Supabase** — a `supabase/migrations/` file; no superuser needed (see above). See `stash-supabase`.
 - **Raw SQL / plain PostgreSQL** — the recipes in this skill, in whatever migration tool owns the schema. Never ad-hoc in production. The predicates those indexes serve are in `stash-postgres`.
 
@@ -269,7 +271,7 @@ Index not being used:
 ## Reference
 
 - `stash-encryption` — the `types.*` domain catalog, wire-format operators and ordering, and the staged rollout lifecycle.
-- `stash-cli` — `stash eql install`, `stash eql validate` (its "No functional index over `eql_v3.…`" Info finding is resolved by this skill), and `stash encrypt backfill` / `drop`.
+- `stash-cli` — `stash eql install`, `stash eql verify` (is the installed operator/opclass surface complete and the ORE state coherent), `stash eql validate` (its "No functional index over `eql_v3.…`" Info finding is resolved by this skill), and `stash encrypt backfill` / `drop`.
 - `stash-drizzle`, `stash-supabase`, `stash-prisma` — per-integration query patterns; index DDL placement per the section above.
 - `stash-postgres` — the hand-written predicate forms these indexes serve (`pg` / `postgres-js`, no ORM).
 - `stash-edge` — the WASM entry, for apps whose queries run on Deno / Workers / Supabase Edge Functions.

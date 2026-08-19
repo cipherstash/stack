@@ -137,9 +137,11 @@ export function detectDrizzle(cwd: string): boolean {
 /**
  * Return true when the project uses Prisma Next.
  *
- * Detected via a `prisma-next.config.*` at the cwd (fast path) or
- * a `@prisma-next/cli` / `@cipherstash/stack-prisma` entry in
- * package.json. Either signal alone is enough.
+ * Detected via a `prisma-next.config.*` at the cwd (fast path) or a
+ * package.json dependency on the 0.17+ publish surface (the `prisma-next`
+ * bin shim or an `@prisma/orm-*` facade/platform package), the retired
+ * `@prisma-next/cli` scope (≤ 0.16), or `@cipherstash/stack-prisma`.
+ * Any signal alone is enough.
  */
 export function detectPrismaNext(cwd: string): boolean {
   const configCandidates = [
@@ -168,7 +170,12 @@ export function detectPrismaNext(cwd: string): boolean {
       ...pkg.peerDependencies,
       ...pkg.optionalDependencies,
     }
-    return '@prisma-next/cli' in deps || '@cipherstash/stack-prisma' in deps
+    return (
+      'prisma-next' in deps ||
+      '@prisma-next/cli' in deps ||
+      '@cipherstash/stack-prisma' in deps ||
+      Object.keys(deps).some((name) => name.startsWith('@prisma/orm-'))
+    )
   } catch {
     return false
   }

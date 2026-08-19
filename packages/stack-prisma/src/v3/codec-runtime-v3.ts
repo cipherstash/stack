@@ -23,16 +23,20 @@
  * returns one shared codec per domain, mirroring v2 / pgvector.
  */
 
-import type { JsonValue } from '@prisma-next/contract/types'
+import type {
+  ProjectionExpr,
+  SqlCodecCallContext,
+} from '@prisma/orm-family-sql/relational-core/ast'
+import type { RuntimeParameterizedCodecDescriptor } from '@prisma/orm-family-sql/runtime'
 import {
   type AnyCodecDescriptor,
   CodecImpl,
   type CodecInstanceContext,
   type CodecTrait,
-} from '@prisma-next/framework-components/codec'
-import { runtimeError } from '@prisma-next/framework-components/runtime'
-import type { SqlCodecCallContext } from '@prisma-next/sql-relational-core/ast'
-import type { RuntimeParameterizedCodecDescriptor } from '@prisma-next/sql-runtime'
+} from '@prisma/orm-framework/components/codec'
+import { runtimeError } from '@prisma/orm-framework/components/runtime'
+import type { JsonValue } from '@prisma/orm-framework/contract/types'
+import { postgresCodec } from '@prisma/orm-target-postgres/target/codec-descriptor'
 import { type as arktype } from 'arktype'
 import type { EncryptedEnvelopeBase } from '../execution/envelope-base'
 import { EncryptedBigInt } from '../execution/envelope-bigint'
@@ -369,9 +373,31 @@ export class CipherstashV3CellCodec<
 }
 
 /**
+ * Postgres target-descriptor options shared by every v3 descriptor
+ * (0.17's replacement for the deleted `meta.db.sql.postgres` channel).
+ *
+ * The JSON projection is the identity: a v3 column is a Postgres domain
+ * over `jsonb` whose stored value IS the serialised EQL payload
+ * document, so the target's native JSON conversion already yields the
+ * codec's canonical JSON form verbatim. (Decrypting inside the database
+ * is impossible by design — the payload only resolves to plaintext
+ * through the SDK — so the ciphertext document is the only honest
+ * projection.)
+ */
+export function v3PostgresCodecOptions(meta: V3DomainMeta): {
+  nativeType: () => string
+  jsonProjection: (expression: ProjectionExpr) => ProjectionExpr
+} {
+  return {
+    nativeType: () => meta.nativeType,
+    jsonProjection: (expression) => expression,
+  }
+}
+
+/**
  * Auxiliary descriptor for the `CodecImpl` base class — carries truthful
- * metadata (codecId, traits, targetTypes, meta, renderOutputType) for
- * readers that proxy through `codec.descriptor`, with a throwing
+ * metadata (codecId, traits, targetTypes, nativeType, renderOutputType)
+ * for readers that proxy through `codec.descriptor`, with a throwing
  * `factory` stub: production resolution goes through the parameterized
  * descriptors below, never `codec.descriptor.factory`. Same shape (and
  * circularity rationale) as v2's `makeAuxiliaryDescriptor` in
@@ -382,11 +408,10 @@ function makeV3AuxiliaryDescriptor(
   meta: V3DomainMeta,
   typeName: string,
 ): AnyCodecDescriptor {
-  return {
+  const generic: AnyCodecDescriptor = {
     codecId,
     traits: v3CodecTraits(meta),
     targetTypes: [meta.nativeType],
-    meta: { db: { sql: { postgres: { nativeType: meta.nativeType } } } },
     paramsSchema: cipherstashV3ParamsSchema,
     isParameterized: true,
     renderOutputType: () => typeName,
@@ -399,6 +424,7 @@ function makeV3AuxiliaryDescriptor(
       )
     },
   }
+  return postgresCodec(generic, v3PostgresCodecOptions(meta))
 }
 
 function makeV3Descriptor(
@@ -413,18 +439,19 @@ function makeV3Descriptor(
     typeName,
     fromInternalForCastAs(meta.castAs),
   )
-  return {
-    codecId,
-    traits: v3CodecTraits(meta),
-    targetTypes: [meta.nativeType],
-    meta: { db: { sql: { postgres: { nativeType: meta.nativeType } } } },
-    paramsSchema: cipherstashV3ParamsSchema,
-    isParameterized: true as const,
-    renderOutputType: (_params: CipherstashV3CodecParams) => typeName,
-    factory:
-      (_params: CipherstashV3CodecParams) => (_ctx: CodecInstanceContext) =>
-        codec,
-  }
+  const generic: RuntimeParameterizedCodecDescriptor<CipherstashV3CodecParams> =
+    {
+      codecId,
+      traits: v3CodecTraits(meta),
+      targetTypes: [meta.nativeType],
+      paramsSchema: cipherstashV3ParamsSchema,
+      isParameterized: true as const,
+      renderOutputType: (_params: CipherstashV3CodecParams) => typeName,
+      factory:
+        (_params: CipherstashV3CodecParams) => (_ctx: CodecInstanceContext) =>
+          codec,
+    }
+  return postgresCodec(generic, v3PostgresCodecOptions(meta))
 }
 
 /**

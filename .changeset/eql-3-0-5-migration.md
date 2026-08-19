@@ -22,8 +22,10 @@ Two artefacts carry the new bundle:
 
 **Action required.** The baseline's bytes — and so its `migrationHash` — have
 changed. If your project already has a `migrations/cipherstash/` directory
-generated against `@cipherstash/stack-prisma@1.0.0`, delete that directory and
-re-run `prisma-next migration plan` (or `migrate`); the seed phase regenerates
+generated against `@cipherstash/stack-prisma@1.0.0` or `@1.1.0`, delete that
+directory and re-run `prisma-next migration plan` (or `migrate`); the 1.1.0
+Prisma Next 0.17 upgrade re-anchored the same artefacts, so a space vendored
+against either release is stale here. The seed phase regenerates
 it byte-identical to the shipped artefacts. Your database keeps its markers, so
 already-applied invariants are not re-run — the only new work is the 3.0.5
 upgrade edge.

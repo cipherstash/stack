@@ -44,8 +44,8 @@ import {
   createCipherstashV3Sdk,
   deriveStackSchemasV3,
 } from '@cipherstash/stack-prisma/v3'
-import postgres from '@prisma-next/postgres/runtime'
-import { and } from '@prisma-next/sql-orm-client'
+import { and } from '@prisma/orm-postgres/orm-client'
+import postgres from '@prisma/orm-postgres/runtime'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Contract } from '../../src/prisma/contract.d'
 import contractJson from '../../src/prisma/contract.json' with { type: 'json' }

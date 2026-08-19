@@ -30,7 +30,7 @@ import { Encryption, type EncryptionClient } from '@cipherstash/stack/v3'
 import type {
   SqlMiddleware,
   SqlRuntimeExtensionDescriptor,
-} from '@prisma-next/sql-runtime'
+} from '@prisma/orm-family-sql/runtime'
 
 import { isCipherstashV3CodecId } from '../extension-metadata/constants-v3'
 import { bulkEncryptMiddlewareV3 } from '../v3/bulk-encrypt-v3'

@@ -5,6 +5,38 @@ export default defineConfig({
   test: {
     globals: true,
     exclude: ['**/node_modules/**', '**/dist/**', 'tests/e2e/**'],
+    // Two projects so ONLY the live suites are serialised. Four of them gate
+    // on STASH_TEST_DATABASE_URL and share one database and one
+    // eql_v3/eql_v3_internal pair — and verify.live's beforeAll installs the
+    // full bundle, which opens with `DROP SCHEMA … CASCADE`, destroying the
+    // schemas (and their ACLs/OIDs) under a concurrently running
+    // guarded-grants.live. Run in parallel forks they race; run serially each
+    // suite sees the database state its comments already assume. The unit
+    // project keeps default file parallelism — serialising all ~1300 tests
+    // for the sake of four files is the `packages/migrate` fix at the wrong
+    // scale.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'unit',
+          exclude: [
+            '**/node_modules/**',
+            '**/dist/**',
+            'tests/e2e/**',
+            '**/*.live.test.ts',
+          ],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'live',
+          include: ['src/**/*.live.test.ts'],
+          fileParallelism: false,
+        },
+      },
+    ],
   },
   resolve: {
     alias: {

@@ -38,7 +38,7 @@
  * end-to-end.
  */
 
-import type { CodecControlHooks } from '@prisma-next/family-sql/control'
+import type { CodecControlHooks } from '@prisma/orm-family-sql/family/control'
 import {
   CIPHERSTASH_V3_CODEC_IDS,
   type CipherstashV3CodecId,

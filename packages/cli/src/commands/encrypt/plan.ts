@@ -1,8 +1,8 @@
 import { latestByColumn, readManifest } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
-import pg from 'pg'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
+import { createPgClient } from '@/db/client.js'
 
 /**
  * CLI handler for `stash encrypt plan`. Reads the repo manifest and the
@@ -24,7 +24,7 @@ export async function planCommand() {
     return
   }
 
-  const client = new pg.Client({ connectionString: config.databaseUrl })
+  const client = createPgClient(config.databaseUrl)
   let exitCode = 0
   try {
     await client.connect()

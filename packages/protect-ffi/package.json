@@ -1,6 +1,6 @@
 {
   "name": "@cipherstash/protect-ffi",
-  "version": "0.31.0",
+  "version": "0.32.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/cipherstash/stack.git"
@@ -73,7 +73,8 @@
     "dist/wasm/protect_ffi_bg.wasm.d.ts",
     "dist/wasm/protect_ffi_inline.js",
     "dist/wasm/errors.js",
-    "dist/wasm/errors.d.ts"
+    "dist/wasm/errors.d.ts",
+    "CHANGELOG.md"
   ],
   "neon": {
     "type": "library",

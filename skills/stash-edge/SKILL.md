@@ -41,6 +41,23 @@ together.
 | Bun | `@cipherstash/stack/wasm-inline` | Works, and avoids native-module resolution differences |
 | Anywhere bundling server code | `@cipherstash/stack/wasm-inline` | Bundles cleanly; nothing to externalise |
 
+**The Supabase adapter has its own edge entry.** If you are using
+`@cipherstash/stack-supabase`, import
+`@cipherstash/stack-supabase/wasm-inline` (not the package root, which pulls
+the native engine) and **declare your `schemas`** — the adapter's default
+behaviour is to introspect the database for its column config, which needs a
+Postgres connection. Declaring skips it. See `stash-supabase` and
+`stash-managed-platforms`.
+
+**`@cipherstash/protect` is not one of the options.** It is the deprecated
+predecessor of `@cipherstash/stack`; its native `@cipherstash/protect-ffi`
+dependency will not load in any of the runtimes above. Reasoning from *that*
+package's dependency tree to "CipherStash cannot run on the edge" is a wrong
+conclusion drawn from the wrong package — it has already cost one agent a
+full turn on a hosted platform. The row you want is `wasm-inline`. (On a
+managed AI platform specifically — Lovable, v0, Bolt, Replit — see
+`stash-managed-platforms`.)
+
 **The WASM entry is ESM-only.** Its `exports` map has an `import` condition
 and no `require` — deliberately, since the runtimes it targets are ESM. A CJS
 `require('@cipherstash/stack/wasm-inline')` will not resolve. Node consumers
@@ -56,7 +73,7 @@ build step.
 ```ts
 import {
   Encryption, encryptedTable, types, isEncrypted,
-} from 'npm:@cipherstash/stack@1.0.0/wasm-inline'
+} from 'npm:@cipherstash/stack@1.1.0/wasm-inline'
 ```
 
 **Pin an exact version.** Deno caches by specifier, so an unpinned import
@@ -71,7 +88,7 @@ name everywhere:
 ```jsonc
 {
   "imports": {
-    "@cipherstash/stack/wasm-inline": "npm:@cipherstash/stack@1.0.0/wasm-inline"
+    "@cipherstash/stack/wasm-inline": "npm:@cipherstash/stack@1.1.0/wasm-inline"
   }
 }
 ```

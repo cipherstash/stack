@@ -37,7 +37,7 @@
 import {
   type AnyExpression,
   OperationExpr,
-} from '@prisma-next/sql-relational-core/ast'
+} from '@prisma/orm-family-sql/relational-core/ast'
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 import {

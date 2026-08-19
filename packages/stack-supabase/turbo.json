@@ -1,0 +1,22 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // `test` here depends on this package's OWN `build`, not just its
+    // dependencies' (`^build`, which the root task already carries).
+    //
+    // `__tests__/wasm-entry-edge-safety.test.ts` asserts on the EMITTED
+    // `dist/wasm-inline.js` — that the edge entry's bundle reaches no native
+    // engine and no Postgres driver. It skips when `dist/` is absent so a
+    // plain `pnpm test` stays green in a fresh clone, and that skip is exactly
+    // what makes this line load-bearing: without it `turbo run test` never
+    // builds this package, the gate reports 4 skipped, and a regression that
+    // put `@cipherstash/stack` back into the edge graph would ship green.
+    //
+    // Same fix, same reason, as `packages/stack/turbo.json` — added there in
+    // #799 for the adapter-kit process-free realm gate (#708 review, James).
+    "test": {
+      "dependsOn": ["^build", "build"]
+    }
+  }
+}

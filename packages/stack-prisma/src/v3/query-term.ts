@@ -17,7 +17,7 @@
  *
  * Extracted from `./operators-v3` so the middleware and SDK adapter can
  * consume the seam without importing the operator registry (and its
- * `@prisma-next/sql-operations` / expression machinery). The operator
+ * `@prisma/orm-family-sql/operations` / expression machinery). The operator
  * module re-exports everything here, so its public surface is unchanged.
  */
 
