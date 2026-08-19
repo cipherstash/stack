@@ -185,8 +185,9 @@ describe('Cargo.lock records this tree’s crates at their real versions', () =>
     expect(
       offenders,
       'A committed Cargo.lock disagrees with a crate manifest in this tree. Refresh it with ' +
-        '`cargo update --offline --package <crate>` in the workspace holding the lock — no network ' +
-        'needed, because the crate resolves from a path.',
+        '`cargo update --package <crate>` in the workspace holding the lock. Not `--offline`: ' +
+        '`cargo update -p` re-resolves the WHOLE graph, so every other package has to come from ' +
+        'the local registry cache, and it fails outright on a cold one.',
     ).toEqual([])
   })
 })

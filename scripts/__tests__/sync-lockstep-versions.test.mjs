@@ -6,6 +6,7 @@ import {
   refreshCargoLock,
 } from '../sync-lockstep-versions.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
+import { readWorkflow } from './lib/workflows.mjs'
 
 const CARGO = `[package]
 name = "eql-bindings"
@@ -63,6 +64,19 @@ serde_json = "1"
   })
 })
 
+/** One `refreshCargoLock` call, as `[command, args, options]`. */
+function captureRefresh() {
+  const calls = []
+  refreshCargoLock({
+    root: '/repo',
+    eqlRoot: '/repo/packages/eql',
+    workspace: 'packages/protect-ffi',
+    run: (...args) => calls.push(args),
+  })
+  expect(calls).toHaveLength(1)
+  return calls[0]
+}
+
 /**
  * The second thing the lockstep bump has to carry, and the one it did not.
  *
@@ -90,17 +104,8 @@ describe('lockstep Cargo.lock refresh', () => {
     expect(found).toContain('packages/protect-ffi')
   })
 
-  test('refreshes offline, through mise, against the named workspace', () => {
-    const calls = []
-    refreshCargoLock({
-      root: '/repo',
-      eqlRoot: '/repo/packages/eql',
-      workspace: 'packages/protect-ffi',
-      run: (...args) => calls.push(args),
-    })
-
-    expect(calls).toHaveLength(1)
-    const [command, args, options] = calls[0]
+  test('refreshes through mise, against the named workspace', () => {
+    const [command, args, options] = captureRefresh()
 
     // THROUGH MISE, not a bare `cargo`. release.yml installs mise with
     // `add_shims_to_path: false` — deliberately, so mise's own Node cannot
@@ -112,15 +117,69 @@ describe('lockstep Cargo.lock refresh', () => {
     expect(args.slice(0, 3)).toEqual(['exec', '--', 'cargo'])
     expect(options.cwd).toBe('/repo/packages/eql')
 
-    // OFFLINE. This runs inside `changeset version`, between the manifest
-    // rewrite and the commit; a registry fetch there is a network dependency
-    // on the release path buying nothing, because the crate resolves from a
-    // path. Verified byte-identical to the networked resolution.
-    expect(args).toContain('--offline')
     expect(args).toContain('--package')
     expect(args).toContain(LOCKED_CRATE)
     expect(args).toContain('--manifest-path')
     expect(args).toContain('/repo/packages/protect-ffi/Cargo.toml')
+  })
+
+  /**
+   * NOT `--offline`, and the reason is a property of the job this runs in.
+   *
+   * `--offline` reads as free here — `eql-bindings` resolves from a path, so
+   * why would refreshing it need a registry? Because `cargo update -p X` does
+   * not update X in isolation: it re-resolves the WHOLE graph and rewrites a
+   * complete lock, and in offline mode every other package has to come from
+   * the local registry cache. `packages/protect-ffi` has 167 of them.
+   *
+   * The release job has no such cache. `jdx/mise-action` runs there with
+   * `install: true, cache: false` — it installs toolchains and populates
+   * nothing under `~/.cargo/registry` — and
+   * `scripts/lint-no-workflow-caching.mjs` forbids any cache restore in a
+   * workflow that publishes. So the first call dies:
+   *
+   *   error: no matching package named `chrono` found
+   *   location searched: crates.io index
+   *
+   * — with `execFileSync` throwing, `pnpm run version` failing, and no Version
+   * Packages PR, AFTER `changeset version` has already rewritten every manifest
+   * and CHANGELOG in a job holding `contents: write`. That is the same
+   * half-applied-release failure the mise-install step above exists to prevent.
+   *
+   * The measurement that made `--offline` look safe was taken on a developer
+   * machine with a warm `~/.cargo`. Both resolutions agree — verified on the
+   * 3.0.4 -> 3.0.5 bump, byte-identical including the `windows-sys` edges cargo
+   * repaired along the way — so dropping the flag changes nothing except
+   * whether the step can run at all where it actually runs.
+   */
+  test('does not pass --offline, which cannot resolve on a cold registry', () => {
+    const [, args] = captureRefresh()
+    expect(args).not.toContain('--offline')
+  })
+
+  test('the release job offers no warm cargo registry to resolve against', () => {
+    // The other half of the pair above, asserted against CI rather than
+    // restated in a comment: if this ever stops being true — someone warms the
+    // registry deliberately — then `--offline` becomes available again, and
+    // the test that forbids it should be revisited rather than worked around.
+    const steps = readWorkflow('.github/workflows/release.yml').jobs.release
+      .steps
+
+    const mise = steps.find((s) =>
+      (s.uses ?? '').startsWith('jdx/mise-action@'),
+    )
+    expect(mise, 'release.yml no longer installs mise').toBeDefined()
+    expect(mise.with.cache).toBe(false)
+
+    expect(
+      steps.filter((s) => /\bactions\/cache\b/.test(s.uses ?? '')),
+      'a cache restore in the publishing workflow',
+    ).toEqual([])
+
+    expect(
+      steps.filter((s) => /cargo\s+(fetch|vendor)/.test(s.run ?? '')),
+      'a step that warms the cargo registry',
+    ).toEqual([])
   })
 
   test('fails loudly rather than leaving a lock stale', () => {
