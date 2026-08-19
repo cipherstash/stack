@@ -201,11 +201,48 @@ describe('declared-schemas mode', () => {
     expect(warn.mock.calls[0][0]).toMatch(/databaseUrl/)
   })
 
-  it('stays quiet when there is no ambient URL to ignore', async () => {
+  /**
+   * The regression the warning above actually exists for. A caller who was
+   * already passing `schemas` while `DATABASE_URL` supplied the connection got
+   * a construction-time throw when that variable went missing; now they get a
+   * working client with no drift check. Nothing at construction distinguishes
+   * that from a deliberate declared-mode client, so both are told — a warning
+   * gated on the ambient value being PRESENT would stay silent in exactly this
+   * case.
+   */
+  it('warns when no URL resolves at all, not just when one was ignored', async () => {
     const { logger } = await import('@cipherstash/stack/adapter-kit')
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const { encryptedSupabase } = await import('../src/index')
+    // No DATABASE_URL anywhere — `beforeEach` deleted it.
     await encryptedSupabase(fakeClient, { schemas: { users } })
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls[0][0]).toMatch(/NOT verified against the database/)
+    // ...and it must not claim an ambient URL was ignored when none existed.
+    expect(warn.mock.calls[0][0]).not.toMatch(/DATABASE_URL is set/)
+  })
+
+  it('stays silent on an explicit databaseUrl, which introspects anyway', async () => {
+    const { logger } = await import('@cipherstash/stack/adapter-kit')
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const { encryptedSupabase } = await import('../src/index')
+    introspectMock.mockResolvedValue({
+      tables: [
+        {
+          tableName: 'users',
+          columns: [
+            { columnName: 'email', domainName: 'eql_v3_text_search' },
+            { columnName: 'age', domainName: 'eql_v3_integer_ord' },
+          ],
+        },
+      ],
+      unmodelled: new Map(),
+      eqlVersion: '3.0.4',
+    })
+    await encryptedSupabase(fakeClient, {
+      databaseUrl: 'postgres://x',
+      schemas: { users },
+    })
     expect(warn).not.toHaveBeenCalled()
   })
 

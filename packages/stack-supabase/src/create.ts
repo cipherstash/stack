@@ -295,16 +295,27 @@ async function construct(
       '[supabase v3]: no database URL — pass options.databaseUrl or set the DATABASE_URL environment variable. Alternatively pass `schemas` to declare your tables, which skips introspection entirely and needs no Postgres connection.',
     )
   }
-  //    ...but say so, rather than changing mode in silence. A caller who was
-  //    already passing `schemas` and letting `DATABASE_URL` supply the
-  //    connection got a construction-time throw when that variable went
-  //    missing; without this warning they would now get declared mode instead,
-  //    and the drift check they had would be gone with nothing said. Warn only
-  //    when the ambient value actually exists and was deliberately not used —
-  //    a genuinely edge-only deployment has no `DATABASE_URL` and stays quiet.
-  if (declared && !options.databaseUrl && ambientDatabaseUrl) {
+  //    ...but say so, rather than changing mode in silence.
+  //
+  //    Two different callers land here and neither should land silently. One
+  //    passed `schemas` deliberately and wants no connection. The other was
+  //    already passing `schemas` while `DATABASE_URL` supplied the connection,
+  //    and has just deployed somewhere that variable is missing — before this
+  //    change that was a construction-time throw, and now it is a working
+  //    client with no drift check. Nothing distinguishes them at this point,
+  //    so both get told.
+  //
+  //    Gated on `introspector`, not on the ambient value: on the edge entry
+  //    declared mode is the ONLY mode, so the warning would be noise on every
+  //    cold start. On the native entry it is a choice between two modes, which
+  //    is exactly when saying which one you got is worth a line.
+  if (declared && !options.databaseUrl && introspector) {
     logger.warn(
-      '[supabase v3]: `schemas` were declared, so DATABASE_URL was ignored and no introspection ran — the declared tables are NOT verified against the database. Pass `databaseUrl` explicitly to keep that check.',
+      `[supabase v3]: no database URL, so \`schemas\` were taken as a complete declaration and no introspection ran — the declared tables are NOT verified against the database, and any encrypted column missing from the declaration is treated as plaintext.${
+        ambientDatabaseUrl
+          ? ' A DATABASE_URL is set but was deliberately ignored, because declaring your tables says this client needs no connection.'
+          : ''
+      } Pass \`databaseUrl\` explicitly to introspect and verify.`,
     )
   }
 

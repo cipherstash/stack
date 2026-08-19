@@ -82,6 +82,7 @@ export function adaptWasmEncryption(
     config?: unknown
   }) => Promise<WasmEncryptionClient>,
 ): EncryptionFactory {
+  // biome-ignore lint/plugin: the adapted object implements only the five methods the pipeline calls, deliberately (see the module comment) — it is not, and must not claim to be, a whole EncryptionClient.
   return (async (config: { schemas: readonly never[]; config?: unknown }) => {
     const client = await createWasmClient(config)
     const adapted = {
@@ -127,6 +128,5 @@ export function adaptWasmEncryption(
       // `bulkEncrypt` deliberately absent — see the module comment.
     }
     return adapted
-    // biome-ignore lint/plugin: the adapted object implements only the five methods the pipeline calls, deliberately (see the module comment) — it is not, and must not claim to be, a whole EncryptionClient.
   }) as unknown as EncryptionFactory
 }
