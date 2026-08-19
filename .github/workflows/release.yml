@@ -146,7 +146,12 @@ jobs:
             if npm view "${name}@${version}" version >/dev/null 2>&1; then
               echo "${name}@${version} already published — skipping"
             else
-              npm publish --access public --provenance "$tgz"
+              # "./" is load-bearing: npm classifies a bare `dir/file.tgz`
+              # argument as a GitHub `owner/repo` shorthand before it considers
+              # it a file, then dies in `git ls-remote` — which is exactly how
+              # the first 2.0.0 release attempt failed. A path-ish spec is only
+              # treated as a tarball when it starts with ./, ../, / or file:.
+              npm publish --access public --provenance "./$tgz"
             fi
             published+=("${name}@${version}")
           done
