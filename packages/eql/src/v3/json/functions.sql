@@ -349,6 +349,38 @@ AS $$
        @> eql_v3.to_ste_vec_query(b)::jsonb
 $$;
 
+--! @cond deprecated_compatibility
+--! @brief Deprecated compatibility alias for jsonb_document_contains(jsonb[], jsonb).
+--! @deprecated Use eql_v3.jsonb_document_contains(jsonb[], jsonb).
+--! @param a jsonb[] sv array to search within.
+--! @param b jsonb sv element to search for.
+--! @return boolean True if b's selector is present in any element of a.
+CREATE FUNCTION eql_v3.ste_vec_contains(a jsonb[], b jsonb)
+  RETURNS boolean
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+  SELECT eql_v3.jsonb_document_contains(a, b)
+$$;
+
+COMMENT ON FUNCTION eql_v3.ste_vec_contains(jsonb[], jsonb) IS
+  'DEPRECATED: use eql_v3.jsonb_document_contains(jsonb[], jsonb)';
+
+--! @brief Deprecated compatibility alias for jsonb_document_contains(json_search, json_search).
+--! @deprecated Use eql_v3.jsonb_document_contains(public.eql_v3_json_search, public.eql_v3_json_search).
+--! @param a public.eql_v3_json_search Container.
+--! @param b public.eql_v3_json_search Elements to find.
+--! @return boolean True if all elements of b are contained in a.
+CREATE FUNCTION eql_v3.ste_vec_contains(a public.eql_v3_json_search, b public.eql_v3_json_search)
+  RETURNS boolean
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+  SELECT eql_v3.jsonb_document_contains(a, b)
+$$;
+
+COMMENT ON FUNCTION eql_v3.ste_vec_contains(public.eql_v3_json_search, public.eql_v3_json_search) IS
+  'DEPRECATED: use eql_v3.jsonb_document_contains(json_search, json_search)';
+--! @endcond
+
 ------------------------------------------------------------------------------
 -- Path queries (text selector only)
 ------------------------------------------------------------------------------

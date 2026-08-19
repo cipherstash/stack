@@ -62,8 +62,19 @@ for f in "${DOC_FILES[@]}"; do
   fi
 done
 
+# Deprecated SQL compatibility aliases remain installed, but the explicitly
+# hidden block must never reach Doxygen — including its generated source browser.
+ste_vec_alias_count=$(grep -c '^CREATE FUNCTION eql_v3\.ste_vec_contains' src/v3/json/functions.sql || true)
+if [ "$ste_vec_alias_count" -ne 2 ]; then
+  echo "FAIL: expected both deprecated ste_vec_contains overloads in src/v3/json/functions.sql" >&2
+  status=1
+elif tasks/docs/doxygen-filter.sh src/v3/json/functions.sql | grep -q 'ste_vec_contains'; then
+  echo "FAIL: deprecated ste_vec_contains aliases leaked through the Doxygen input filter" >&2
+  status=1
+fi
+
 if [ "$status" -eq 0 ]; then
-  echo "OK: no user-facing doc references eql_v2 (${#DOC_FILES[@]} files scanned)."
+  echo "OK: user-facing docs contain neither eql_v2 nor the hidden ste_vec_contains alias (${#DOC_FILES[@]} files scanned)."
 else
   echo >&2
   echo "The eql_v2 surface was removed in 3.0.0; user-facing docs must teach only eql_v3." >&2

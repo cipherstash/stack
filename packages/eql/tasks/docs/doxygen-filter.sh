@@ -10,10 +10,13 @@ if [ "$#" -ne 1 ]; then
   exit 2
 fi
 
-# Prepares SQL for Doxygen's C++ parser. Three transforms:
+# Prepares SQL for Doxygen's C++ parser. Four transforms:
 #
-#  1. `--!` doc comments -> `//!` so Doxygen sees them.
-#  2. Strip dollar-quoted function bodies (`$$ ... $$`), leaving just the
+#  1. Omit blocks marked `@cond deprecated_compatibility`. These functions
+#     remain callable for backwards compatibility but must not appear in the
+#     generated function reference or source browser.
+#  2. `--!` doc comments -> `//!` so Doxygen sees them.
+#  3. Strip dollar-quoted function bodies (`$$ ... $$`), leaving just the
 #     declaration and its trailing clauses. Doxygen parses SQL heuristically as
 #     C++, and body SQL derails it: a `::type` cast reads as C++ scope
 #     resolution and drops the whole enclosing CREATE FUNCTION memberdef (this
@@ -23,7 +26,7 @@ fi
 #     documentation, so removing them is lossless for the generated reference
 #     and leaves Doxygen only clean `CREATE FUNCTION name(args) RETURNS ...`
 #     declarations to read. Only bare `$$` quoting is used in this codebase.
-#  3. Strip CREATE AGGREGATE definition bodies, for the same reason and with the
+#  4. Strip CREATE AGGREGATE definition bodies, for the same reason and with the
 #     same losslessness: `sfunc`/`stype`/`combinefunc`/`parallel` carry no
 #     documentation. The trailing `( ... )` is a SECOND parenthesised group
 #     after the signature, and C++ has no such form, so Doxygen misreads the
@@ -39,6 +42,17 @@ fi
 #     Reducing each to a single `CREATE AGGREGATE name(argtype);` declaration
 #     recovers the name in both cases and leaves a clean argument list.
 awk '
+  /^--![[:space:]]+@cond[[:space:]]+deprecated_compatibility[[:space:]]*$/ {
+    inhidden = 1
+    print ""
+    next
+  }
+  inhidden && /^--![[:space:]]+@endcond[[:space:]]*$/ {
+    inhidden = 0
+    print ""
+    next
+  }
+  inhidden { print ""; next }
   /^--!/ { print "//!" substr($0, 4); next }
   # Emit the signature up to its balanced closing paren, then skip the body.
   !inagg && /^[[:space:]]*CREATE[[:space:]]+AGGREGATE/ {

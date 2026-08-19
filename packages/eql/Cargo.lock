@@ -612,9 +612,9 @@ dependencies = [
 
 [[package]]
 name = "cipherstash-config"
-version = "0.42.0"
+version = "0.42.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56cde3aaa5e2916a40530932f142c37ad6202835a6d221ce6c46fc14bfec8fc5"
+checksum = "b94efb31c4b6cc951f2ed2c2a953393ba34136c37c5ddd022a8da732f174e532"
 dependencies = [
  "bitflags",
  "serde",
@@ -872,9 +872,9 @@ dependencies = [
 
 [[package]]
 name = "cts-common"
-version = "0.42.0"
+version = "0.42.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe2acdda527057d48061433ace5378d8452f10d6787f78e0e69b1cddacc57082"
+checksum = "576c82618990e693abe4dfbd06dada0bcb45884a4514405851eec6d82818f52c"
 dependencies = [
  "arrayvec",
  "base32",
@@ -2127,17 +2127,20 @@ dependencies = [
 
 [[package]]
 name = "jsonwebtoken"
-version = "9.3.1"
+version = "10.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a87cc7a48537badeae96744432de36f4be2b4a34a05a5ef32e9dd8a1c169dde"
+checksum = "eba32bfb4ffdeaca3e34431072faf01745c9b26d25504aa7a6cf5684334fc4fc"
 dependencies = [
+ "aws-lc-rs",
  "base64",
+ "getrandom 0.2.16",
  "js-sys",
  "pem",
- "ring",
  "serde",
  "serde_json",
+ "signature",
  "simple_asn1",
+ "zeroize",
 ]
 
 [[package]]
@@ -3855,9 +3858,9 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stack-auth"
-version = "0.42.0"
+version = "0.42.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d1c9c640571eba8fa5a705ccebe5c5e50aa27d4d51f4ec1614ffd1841b8a13a"
+checksum = "f1a9ac43060af7605899754daa3de2e26302c2ab4d9249a8bc16157bc53dad65"
 dependencies = [
  "aquamarine",
  "base64",
@@ -3883,9 +3886,9 @@ dependencies = [
 
 [[package]]
 name = "stack-profile"
-version = "0.42.0"
+version = "0.42.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "192a90bfa46efe194c2b8beae5523f6214714574c7e8a210c78021259f100e79"
+checksum = "90ce7ca95d8e688a35e86e0682293a2085d9b1f26e7ca5b489009c6ee0c6967a"
 dependencies = [
  "dirs",
  "gethostname",
@@ -5415,9 +5418,9 @@ dependencies = [
 
 [[package]]
 name = "zerokms-protocol"
-version = "0.12.26"
+version = "0.12.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16f731f2de99e66396928faef44b02b39288dc9a93f77a4a3e1dcdc33c1adad0"
+checksum = "29486723fdd2bdb0c234174dc242051a46ac0c82935ccaa39e9781dbf7bcc6d2"
 dependencies = [
  "base64",
  "cipherstash-config",
