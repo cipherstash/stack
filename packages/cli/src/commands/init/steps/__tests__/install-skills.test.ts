@@ -19,7 +19,7 @@ import {
 } from '../install-skills.js'
 
 /** An environment with nothing detected; tests switch on what they need. */
-function env(overrides: Partial<AgentEnvironment['cli' & 'project']> = {}) {
+function env(overrides: Partial<AgentEnvironment> = {}): AgentEnvironment {
   return {
     cli: { claudeCode: false, codex: false },
     project: {
@@ -29,9 +29,9 @@ function env(overrides: Partial<AgentEnvironment['cli' & 'project']> = {}) {
       codexDir: false,
       agentsMd: false,
     },
-    editor: 'unknown' as const,
+    editor: 'unknown',
     ...overrides,
-  } satisfies AgentEnvironment
+  }
 }
 
 function provider(selected: InitProvider['selected'] = []): InitProvider {

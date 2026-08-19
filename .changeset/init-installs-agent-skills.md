@@ -34,6 +34,11 @@ Also:
 - **The summary reports the outcome either way.** A run that installs nothing
   now says so, and prints the command that will install them, instead of a
   silent `installedSkills: []`.
+- **`--target` is validated properly on `init`, `plan` and `impl`.** A
+  trailing `--target` with no value, and `--target=`, were both treated as
+  "flag absent" — so the command silently did whatever it does with no flag at
+  all, rather than telling you the value was missing. All three commands share
+  one validator now.
 - **A later handoff no longer erases the record.** `stash plan --target
   agents-md` installs no skill directories of its own and used to overwrite
   `installedSkills` with an empty list, dropping skills that were on disk.

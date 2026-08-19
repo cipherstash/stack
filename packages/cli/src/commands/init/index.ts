@@ -2,7 +2,10 @@ import * as p from '@clack/prompts'
 import { CliExit } from '../../cli/exit.js'
 import { isInteractive } from '../../config/tty.js'
 import { messages } from '../../messages.js'
-import { HANDOFF_CHOICES, resolveTarget } from '../impl/steps/how-to-proceed.js'
+import {
+  HANDOFF_CHOICES,
+  resolveTargetFlag,
+} from '../impl/steps/how-to-proceed.js'
 import { planCommand } from '../plan/index.js'
 import { createBaseProvider } from './providers/base.js'
 import { createDrizzleProvider } from './providers/drizzle.js'
@@ -136,26 +139,12 @@ export async function initCommand(
 
   // `--target` on `init` selects the SKILLS DESTINATION and nothing else — it
   // does not perform a handoff the way `plan --target` / `impl --target` do.
-  // Validated against the same `HANDOFF_CHOICES` so the three commands never
-  // drift on what a target name means. Absent means "auto-detect".
-  //
-  // Presence is tested separately from the value, and both forms of "present
-  // but valueless" are rejected. `parseArgs` files a trailing `--target` under
-  // `flags` (no value followed it) and `--target=` under `values` as an empty
-  // string; a bare truthiness test on the value misses both, so init would
-  // silently fall back to auto-detection and could write skills somewhere the
-  // user did not choose. Same `flags[…] === true || Object.hasOwn(values, …)`
-  // idiom the retired-flag checks above use.
-  const targetProvided =
-    flags.target === true || Object.hasOwn(values, 'target')
-  const targetFlag = values.target
-  const target = resolveTarget(targetFlag)
-  if (targetProvided && !target) {
-    p.log.error(
-      targetFlag
-        ? `Unknown --target \`${targetFlag}\`. Valid values: ${HANDOFF_CHOICES.join(', ')}.`
-        : `\`--target\` needs a value. Valid values: ${HANDOFF_CHOICES.join(', ')}.`,
-    )
+  // Shares `resolveTargetFlag` with those two so the three never drift on what
+  // a target name means, or on which malformed forms are rejected.
+  // Absent means "auto-detect".
+  const { target, error: targetError } = resolveTargetFlag(flags, values)
+  if (targetError) {
+    p.log.error(targetError)
     throw new CliExit(1)
   }
 

@@ -6,6 +6,7 @@ import {
   defaultChoice,
   HANDOFF_CHOICES,
   resolveTarget,
+  resolveTargetFlag,
 } from '../steps/how-to-proceed.js'
 
 function makeAgents(claudeCode: boolean, codex: boolean): AgentEnvironment {
@@ -15,6 +16,7 @@ function makeAgents(claudeCode: boolean, codex: boolean): AgentEnvironment {
       claudeDir: false,
       claudeMd: false,
       claudeSkillsDir: false,
+      codexDir: false,
       agentsMd: false,
     },
     editor: 'unknown',
@@ -98,5 +100,66 @@ describe('howToProceed — resolveTarget', () => {
 
   it('returns null when the flag is absent', () => {
     expect(resolveTarget(undefined)).toBeNull()
+  })
+})
+
+/**
+ * `--target` is accepted by three commands, and the validation had been
+ * hand-copied into each — which is how `plan` and `impl` kept this bug after
+ * `init` was fixed. Testing the shared helper covers all three.
+ *
+ * The distinction that matters is "absent" versus "present but unusable".
+ * `parseArgs` files a trailing `--target` (nothing followed it) under `flags`
+ * as `true`, and `--target=` under `values` as an empty string. Testing the
+ * value for truthiness alone reads both as absent, so the command silently
+ * does whatever it does with no flag at all — for `init`, writing skills to an
+ * auto-detected directory the user had just declined by naming another.
+ */
+describe('howToProceed — resolveTargetFlag', () => {
+  it('passes a valid target through', () => {
+    expect(resolveTargetFlag({}, { target: 'codex' })).toEqual({
+      target: 'codex',
+      error: null,
+    })
+  })
+
+  it('treats an absent flag as neither a target nor an error', () => {
+    expect(resolveTargetFlag({}, {})).toEqual({ target: null, error: null })
+  })
+
+  it('rejects a trailing `--target`, which parseArgs files under flags', () => {
+    const { target, error } = resolveTargetFlag({ target: true }, {})
+    expect(target).toBeNull()
+    expect(error).toContain('needs a value')
+  })
+
+  it('rejects an empty `--target=`', () => {
+    const { target, error } = resolveTargetFlag({}, { target: '' })
+    expect(target).toBeNull()
+    expect(error).toContain('needs a value')
+  })
+
+  it('reports an unknown value differently from a missing one', () => {
+    const { target, error } = resolveTargetFlag({}, { target: 'emacs' })
+    expect(target).toBeNull()
+    expect(error).toContain('Unknown --target `emacs`')
+    expect(error).not.toContain('needs a value')
+  })
+
+  it.each([
+    ['a trailing flag', { target: true }, {}],
+    ['an empty value', {}, { target: '' }],
+    ['an unknown value', {}, { target: 'emacs' }],
+  ])('lists the valid values when rejecting %s', (_label, flags, values) => {
+    const { error } = resolveTargetFlag(flags, values)
+    for (const choice of HANDOFF_CHOICES) expect(error).toContain(choice)
+  })
+
+  // An unrelated boolean flag must not be mistaken for the target flag.
+  it('ignores other flags', () => {
+    expect(resolveTargetFlag({ yes: true }, {})).toEqual({
+      target: null,
+      error: null,
+    })
   })
 })

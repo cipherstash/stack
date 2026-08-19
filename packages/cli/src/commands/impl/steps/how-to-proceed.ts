@@ -41,6 +41,44 @@ export function resolveTarget(
 }
 
 /**
+ * Resolve a `--target` from raw parsed argv, distinguishing "absent" from
+ * "present but unusable".
+ *
+ * The distinction is the whole point, and it needs both halves of `parseArgs`
+ * to see. A trailing `--target` (nothing followed it) lands in `flags` as
+ * `true`; `--target=` lands in `values` as an empty string. Each command used
+ * to test `values.target` for truthiness alone, so both forms read as "flag
+ * absent" and fell through to whatever the no-flag path does — for `init`,
+ * writing skills to an auto-detected directory the user had just declined to
+ * accept by naming a different one.
+ *
+ * Returns the validated target, or an `error` message the caller prints
+ * before exiting. Exit MECHANICS stay with the caller: `init` unwinds through
+ * `CliExit` so telemetry flushes, while `plan` and `impl` call `process.exit`
+ * directly.
+ *
+ * Lives here beside {@link HANDOFF_CHOICES} and {@link resolveTarget} because
+ * three commands accept this flag and the validation had already been
+ * hand-copied into each — which is exactly how two of them kept the bug after
+ * the third was fixed.
+ */
+export function resolveTargetFlag(
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+): { target: HandoffChoice | null; error: string | null } {
+  const provided = flags.target === true || Object.hasOwn(values, 'target')
+  const raw = values.target
+  const target = resolveTarget(raw)
+  if (!provided || target) return { target, error: null }
+  return {
+    target: null,
+    error: raw
+      ? `Unknown --target \`${raw}\`. Valid values: ${HANDOFF_CHOICES.join(', ')}.`
+      : `\`--target\` needs a value. Valid values: ${HANDOFF_CHOICES.join(', ')}.`,
+  }
+}
+
+/**
  * Pick the default option in the menu.
  *
  * Detected CLIs win — Claude Code first, then Codex. Otherwise we default to
