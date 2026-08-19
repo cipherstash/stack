@@ -455,10 +455,16 @@ jobs:
       - name: Typecheck the generated WASM declarations
         run: pnpm --filter @cipherstash/protect-ffi run test:typecheck:wasm
 
-      # The Deno smoke test imports the locally-built dist/wasm-inline.js
-      # via a file URL in e2e/wasm/deno.json — it needs a fresh build.
-      - name: Build stack
-        run: pnpm exec turbo run build --filter @cipherstash/stack
+      # The Deno smoke tests import the locally-built dist/wasm-inline.js of
+      # BOTH packages via file URLs in e2e/wasm/deno.json — they need fresh
+      # builds. stack-supabase is here for `supabase-declared.test.ts`, which
+      # is the only place the edge entry is exercised on a real edge runtime
+      # rather than asserted about (#708).
+      - name: Build stack and the Supabase adapter
+        run: >
+          pnpm exec turbo run build
+          --filter @cipherstash/stack
+          --filter @cipherstash/stack-supabase
 
       - name: Run Deno WASM smoke test
         working-directory: e2e/wasm

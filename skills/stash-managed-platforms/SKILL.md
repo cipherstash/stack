@@ -1,6 +1,6 @@
 ---
 name: stash-managed-platforms
-description: Implement CipherStash encryption on a managed AI app platform — Lovable, v0, Bolt, Replit, and anything else with no developer-controlled shell, an edge/Workers runtime, a database role that is not `postgres`, and schema changes only through the platform's own migration tool. Covers the one fact that decides whether the product works there at all (use `@cipherstash/stack` with the `wasm-inline` entry — `@cipherstash/protect` is the deprecated predecessor and its native module will not load), running `stash auth login --json` headlessly in an ephemeral sandbox, minting deployment credentials with `stash env`, installing EQL as a role that is not `postgres`, which query predicates survive PostgREST, and why `encryptedSupabase` cannot be constructed inside a Worker. Use when the project is hosted on one of these platforms, when there is no terminal you control, when a native module fails to load in the deployed runtime, or when you are about to conclude CipherStash cannot be used here.
+description: Implement CipherStash encryption on a managed AI app platform — Lovable, v0, Bolt, Replit, and anything else with no developer-controlled shell, an edge/Workers runtime, a database role that is not `postgres`, and schema changes only through the platform's own migration tool. Covers the one fact that decides whether the product works there at all (use `@cipherstash/stack` with the `wasm-inline` entry — `@cipherstash/protect` is the deprecated predecessor and its native module will not load), running `stash auth login --json` headlessly in an ephemeral sandbox, minting deployment credentials with `stash env`, installing EQL as a role that is not `postgres`, which query predicates survive PostgREST, and how to construct `encryptedSupabase` inside a Worker by declaring your schemas. Use when the project is hosted on one of these platforms, when there is no terminal you control, when a native module fails to load in the deployed runtime, or when you are about to conclude CipherStash cannot be used here.
 ---
 
 # CipherStash on Managed AI App Platforms
@@ -103,14 +103,45 @@ The wrapper fails fast on the unsupported ones rather than silently returning wr
 
 When you need free-text or encrypted-JSON predicates, the query has to go through something that can emit a cast: Drizzle, Prisma Next, or hand-written SQL in an RPC (`stash-postgres` has the raw forms). `stash-supabase` is canonical for the adapter's full behaviour, including the security note about filter operands travelling in GET query strings.
 
-## `encryptedSupabase` cannot be constructed in a Worker
+## `encryptedSupabase` in a Worker: declare your schemas
 
-`encryptedSupabase` introspects the database to build its schema, so it needs a **Postgres connection** — which a Worker or an Edge Function does not have (cipherstash/stack#708). Constructing it there fails; this is a property of the wrapper, not a configuration mistake to debug.
+The rule: **declare your schemas and it runs anywhere; omit them and we discover them for you, which needs a database connection and is therefore Node-only.**
 
-Two supported shapes:
+By default `encryptedSupabase` derives every column's encryption config by introspecting the database, which needs a **Postgres connection** — unavailable in a Worker or an Edge Function. Passing `schemas` skips introspection entirely, so there is nothing left to connect to:
 
-- **Construct it server-side** where a Postgres connection exists, and keep the Worker to code paths that do not need it.
-- **In the edge runtime, use `@cipherstash/stack/wasm-inline` directly**: encrypt and decrypt with the client, and send the resulting EQL payloads through the Supabase JS client or raw SQL yourself. `stash-edge` covers the client surface and `stash-postgres` the SQL forms.
+```typescript
+import { encryptedSupabase } from '@cipherstash/stack-supabase/wasm-inline'
+import { encryptedTable, types } from '@cipherstash/stack/wasm-inline'
+
+const users = encryptedTable('users', {
+  email: types.TextSearch('email'),
+  age: types.IntegerOrd('age'),
+})
+
+const supabase = await encryptedSupabase(supabaseClient, {
+  schemas: { users },          // no databaseUrl — nothing introspects
+  config: { workspaceCrn, accessKey, clientId, clientKey },
+})
+```
+
+**Two things must both be right**, and each fails independently:
+
+1. **The entry.** Import from `@cipherstash/stack-supabase/wasm-inline`, not the package root. The root statically imports the native engine, which loads on import whether or not you encrypt anything.
+2. **The schemas.** Without them the wrapper still wants a connection.
+
+What declared mode gives up, it gives up loudly rather than silently:
+
+- **`select('*')` and bare `select()` are refused.** Nothing enumerated the table's plaintext columns, and an unexpanded `*` reaches PostgREST without the `::jsonb` casts encrypted columns need. List columns explicitly.
+- **`from()` on an undeclared table throws.** There is no introspected table list to fall back on.
+- **The drift check is gone** — nothing compared your declaration against the real column domains, so a wrong domain surfaces as a `23514` CHECK violation on the first write instead of at construction. On Node you can have both: pass `databaseUrl` **as well as** `schemas`.
+
+⚠️ **The one tradeoff that is not loud — declare every encrypted column of every table you query.** Nothing introspects, so a column carrying an `eql_v3` domain in the database but missing from your `schemas` is treated as an ordinary plaintext column: a `select` naming it hands you the raw EQL payload as data, and a filter on it sends your **plaintext** value to PostgREST. There is no error, because nothing knows the column is encrypted. If you cannot guarantee the declaration is complete, pass `databaseUrl` so introspection fills the gaps.
+
+An ambient `DATABASE_URL` will not overrule your declaration — it is ignored when `schemas` are passed, with a warning that the declaration is unverified. Pass `databaseUrl` explicitly if you want introspection.
+
+Passing `databaseUrl` to the `wasm-inline` entry is refused outright — it carries no Postgres driver, and saying so beats ignoring the option.
+
+Prefer to keep encryption out of the adapter entirely? Use `@cipherstash/stack/wasm-inline` directly: encrypt and decrypt with the client and send EQL payloads through the Supabase JS client or raw SQL yourself. `stash-edge` covers the client surface, `stash-postgres` the SQL forms.
 
 ## Order of operations
 

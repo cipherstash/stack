@@ -42,6 +42,12 @@
 				"default": "./dist/index.cjs"
 			}
 		},
+		"./wasm-inline": {
+			"import": {
+				"types": "./dist/wasm-inline.d.ts",
+				"default": "./dist/wasm-inline.js"
+			}
+		},
 		"./package.json": "./package.json"
 	},
 	"scripts": {

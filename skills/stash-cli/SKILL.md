@@ -496,6 +496,8 @@ Whether EQL is installed and at which version, plus database permission status. 
 
 On a v3 install it also reports the **ORE operator class** state, so the ordering trade `eql install` named once is recoverable later without re-reading scrollback: either the class is present (`types.*OrdOre` usable), or it was skipped and every `_ord_ore` domain carries the loud-failure fallback — the supported managed-Postgres configuration, where ordered columns must be `types.*Ord`. Anything else is damage and points at `eql install --force`. Run `eql verify` for the full surface check.
 
+The ORE row is only reported when the installed EQL **is** the version this CLI pins. The `_ord_ore` domains the poison CHECKs are counted over come from the pinned bundle, so a database running a different EQL cannot be classified against it at all — `status` says the state was not compared and points at `eql upgrade` rather than inventing a damage verdict. Same rule as `eql verify`'s version mismatch: "could not compare" is never rendered as an answer.
+
 #### `eql validate` — validate the encryption schema
 
 ```bash

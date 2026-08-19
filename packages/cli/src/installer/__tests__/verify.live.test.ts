@@ -19,7 +19,12 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { EQLInstaller } from '../index.js'
-import { readOreState, verifyEqlSurface } from '../verify.js'
+import {
+  bundledExpectedSurface,
+  readInstalledSurface,
+  readOreState,
+  verifyEqlSurface,
+} from '../verify.js'
 
 const DATABASE_URL = process.env.STASH_TEST_DATABASE_URL
 const describeLive = DATABASE_URL ? describe : describe.skip
@@ -86,12 +91,46 @@ describeLive('verifyEqlSurface — live Postgres', () => {
     await client.connect()
     try {
       const ore = await readOreState(client)
+      // The database runs the pinned bundle, so the probe is comparable —
+      // it declines to answer only on a version skew.
+      expect(ore.comparable).toBe(true)
+      if (!ore.comparable) return
       expect(ore.state).toBe(report.ore?.state)
       expect(ore.opclassPresent).toBe(report.ore?.opclassPresent)
       expect(ore.poisonedDomains).toBe(report.ore?.poisonedDomains)
       expect(ore.expectedPoisoned).toBe(report.ore?.expectedPoisoned)
     } finally {
       await client.end().catch(() => undefined)
+    }
+  }, 60_000)
+
+  /**
+   * `CASTS_SQL` used to require BOTH endpoints in the EQL/public schemas,
+   * while the parser takes every `CREATE CAST` in the bundle — so the day a
+   * bundle casts an EQL type to or from a `pg_catalog` type (`jsonb`, `text`)
+   * that cast would enter the expected surface and be unreadable as installed,
+   * reporting "Cast missing" damage on every healthy database. Only a live
+   * catalogue read can prove the widened query sees one.
+   */
+  it('reads a cast with a pg_catalog endpoint as installed', async () => {
+    const url = DATABASE_URL ?? ''
+    await query(
+      'CREATE CAST (eql_v3_internal.ore_block_256 AS text) WITH INOUT',
+    )
+    const { default: pg } = await import('pg')
+    const client = new pg.Client({ connectionString: url })
+    await client.connect()
+    try {
+      const installed = await readInstalledSurface(
+        client,
+        bundledExpectedSurface(),
+      )
+      expect(
+        installed.presentCasts.has('eql_v3_internal.ore_block_256 AS text'),
+      ).toBe(true)
+    } finally {
+      await client.end().catch(() => undefined)
+      await query('DROP CAST (eql_v3_internal.ore_block_256 AS text)')
     }
   }, 60_000)
 

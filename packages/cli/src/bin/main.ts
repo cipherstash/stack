@@ -273,8 +273,7 @@ async function rejectMissingDatabaseUrlValue(
   flags: Record<string, boolean>,
 ): Promise<void> {
   if (flags['database-url'] !== true) return
-  const message =
-    '`--database-url` needs a value (e.g. --database-url postgres://...). Without one the command would silently resolve a different database from DATABASE_URL or stash.config.ts.'
+  const message = messages.cli.databaseUrlFlagNeedsValue
   if (flags.json) {
     const { emitJsonError } = await import('../commands/auth/events.js')
     emitJsonError('missing_flag_value', message)
