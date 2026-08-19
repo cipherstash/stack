@@ -1,8 +1,8 @@
 # Changelog
 
-## About the entries below 0.31.0
+## About 0.31.0 and earlier
 
-Everything from `[0.31.0]` down was written by hand, under an `[Unreleased]`
+Every entry from `[0.31.0]` down was written by hand, under an `[Unreleased]`
 heading that an npm `version` lifecycle hook promoted on release. Those entries
 follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with a
 `Breaking` heading added for the pre-1.0 convention of shipping breaking changes
@@ -13,16 +13,19 @@ monorepo, Changesets generates every entry above this heading from the
 changesets in a release, in its own format.
 
 <!--
-This section sits BELOW the generated entries on purpose, and nothing may be
-added between `# Changelog` and the first release heading.
+This section is deliberately BELOW the generated entries, and any prose added
+between `# Changelog` and the first release heading must carry its own `##`
+heading — otherwise it is absorbed into the newest release.
 
-`changeset version` splices each new release in directly after the `# Changelog`
-line. Prose placed there is not a preamble: it lands inside the newest release's
-section, beneath its heading, and publishes to npm as part of those release
-notes. This section used to be there, and shipped as thirteen lines of the
-0.32.0 entry — ending with an instruction addressed to contributors.
+`changeset version` splices each release in directly after the `# Changelog`
+line. Headingless prose there is not a preamble: it lands inside that release's
+section, beneath its heading, and reads as part of those notes. This section
+used to be there and shipped as thirteen lines of the 0.32.0 entry, ending with
+an instruction addressed to contributors — see PR #913. A heading is what stops
+that, because it terminates the preceding section.
 
-Guidance for contributors belongs in AGENTS.md, not here.
+Since 0.32.0 this file is in the package's `files` list, so anything here also
+ships inside the npm tarball. Guidance for contributors belongs in AGENTS.md.
 -->
 
 ## [0.31.0] - 2026-07-27
