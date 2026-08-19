@@ -4,6 +4,7 @@ import { resolveDatabaseUrl } from '@/config/database-url.js'
 import { findConfigFile, loadStashConfig } from '@/config/index.js'
 import { createPgClient } from '@/db/client.js'
 import { EQLInstaller } from '@/installer/index.js'
+import { describeOreState } from '@/installer/ore.js'
 import { type VerifyReport, verifyEqlSurface } from '@/installer/verify.js'
 import { messages } from '@/messages.js'
 import { detectPackageManager, runnerCommand } from '../init/utils.js'
@@ -265,11 +266,13 @@ export async function verifySurfaceOrExit(
     return
   }
   if (report.ok) {
-    s.stop(
-      report.ore?.state === 'fallback'
-        ? 'EQL surface verified (ORE operator class skipped — expected for this role; use the `_ord_ope` ordering domains).'
-        : 'EQL surface verified — install is complete.',
-    )
+    s.stop('EQL surface verified — install is complete.')
+    // Reported once, here, rather than left to surface as a failing predicate
+    // the first time someone casts a column (#891). `eql status` and
+    // `eql verify` say the same thing later, so the answer is recoverable.
+    if (report.ore?.state === 'fallback') {
+      p.log.info(describeOreState('fallback').message)
+    }
     return
   }
   s.stop('The installed EQL surface is incomplete.')

@@ -363,9 +363,11 @@ stash eql status
 
 #### `eql preflight`
 
-Read-only report of whether the connected role can install EQL, run before anything is attempted. It probes: `current_user`, superuser, **membership of `postgres`**, `CREATE` on the database and on `public`, `pgcrypto`, and whether the `eql_v3` / `eql_v3_internal` schemas already exist. Each blocked row names the statement it blocks. Exits 1 when a gap would abort `eql install`; `--json` emits the structured result for agents (stdout is pure JSON).
+Read-only report of whether the connected role can install EQL, run before anything is attempted. It probes: `current_user`, superuser, **membership of `postgres`**, `CREATE` on the database and on `public`, `pgcrypto`, whether the role **can create an operator class**, and whether the `eql_v3` / `eql_v3_internal` schemas already exist. Each blocked row names the statement it blocks. Exits 1 when a gap would abort `eql install`; `--json` emits the structured result for agents (stdout is pure JSON).
 
 Membership of `postgres` is reported but never blocks: `eql install` handles a non-member role by skipping the owner-scoped `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` statements, which are **optional** — the install is complete without them (see `eql install` below). This matters on managed platforms whose database role is not `postgres` and not a member of it (e.g. Lovable's `sandbox_exec`).
+
+**The `ORE operator class` row never blocks either** (`canCreateOperatorClass` in `--json`; `creatable` / `not creatable` / `unknown`). It answers the one schema-design question you want settled *before* writing types: `not creatable` means `eql install` will skip the ORE operator class and install the bundle's loud-failure fallback in its place, so **declare ordered columns `types.*Ord`, not `types.*OrdOre`** — every write to an `_ord_ore` domain on such a database fails its `eql_ore_unavailable` CHECK. This is probed, not inferred from `superuser`: `CREATE OPERATOR CLASS` is superuser-gated in stock PostgreSQL, but AWS RDS and Aurora let their admin role create one while cloud-hosted Supabase does not — so a role with `rolsuper = f` is not evidence either way. The probe attempts the DDL inside a transaction it always rolls back, so preflight stays read-only; `unknown` means it could not ask (a read-only replica, say) and must not be read as either answer.
 
 | Flag | Description |
 |---|---|
@@ -491,6 +493,8 @@ The install SQL is safe to re-run — columns and data survive — but it cascad
 #### `eql status`
 
 Whether EQL is installed and at which version, plus database permission status. It retains read-only EQL v2/config-table diagnostics for existing deployments.
+
+On a v3 install it also reports the **ORE operator class** state, so the ordering trade `eql install` named once is recoverable later without re-reading scrollback: either the class is present (`types.*OrdOre` usable), or it was skipped and every `_ord_ore` domain carries the loud-failure fallback — the supported managed-Postgres configuration, where ordered columns must be `types.*Ord`. Anything else is damage and points at `eql install --force`. Run `eql verify` for the full surface check.
 
 #### `eql validate` — validate the encryption schema
 

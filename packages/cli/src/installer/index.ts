@@ -82,6 +82,17 @@ export interface PreflightResult {
    */
   canDropEqlV3Schema: boolean | null
   canDropEqlV3InternalSchema: boolean | null
+  /**
+   * Whether this role can create the ORE btree operator class the `_ord_ore`
+   * domains need (#891). `null` when the probe could not answer.
+   *
+   * Never blocks: the bundle skips the class and installs its loud-failure
+   * fallback instead, which is a supported configuration. It is reported so
+   * the trade is known before a schema is written, not after a query fails.
+   * See {@link probeOperatorClassCreate} for why this is probed rather than
+   * inferred from `isSuperuser`.
+   */
+  canCreateOperatorClass: boolean | null
   missing: string[]
   ok: boolean
 }
@@ -146,6 +157,57 @@ const PREFLIGHT_SQL = `
 
 /** The schemas the pinned bundle accepts `pgcrypto` in (its search_path). */
 export const SUPPORTED_PGCRYPTO_SCHEMAS = ['extensions', 'public']
+
+/**
+ * Can this role create the ORE btree operator class? (#891)
+ *
+ * Asked of the server rather than inferred, because `rolsuper` is the wrong
+ * question. `CREATE OPERATOR CLASS` is superuser-gated in stock PostgreSQL,
+ * but managed platforms differ on whether their admin role clears that gate:
+ * AWS RDS and Aurora do (with `rolsuper = f`), cloud-hosted Supabase does not.
+ * Predicting from `rolsuper` would tell an RDS operator their ORE domains are
+ * unavailable when they work — exactly the blanket claim about "managed
+ * Postgres" this whole change exists to stop making.
+ *
+ * `CREATE OPERATOR FAMILY` shares the privilege gate with `CREATE OPERATOR
+ * CLASS` and needs no member operators, so it is the cheapest statement that
+ * tests it. The whole probe runs in a transaction that is always rolled back,
+ * so preflight stays observably read-only.
+ *
+ * Returns `null` when the attempt could not answer the question — a read-only
+ * replica (`25006`), a statement timeout, no `public` schema to create into.
+ * Callers must render that as unknown, never as either answer.
+ */
+async function probeOperatorClassCreate(
+  client: pg.ClientBase,
+): Promise<boolean | null> {
+  // A name no bundle uses, so a probe that somehow escaped its rollback is
+  // recognisable rather than mistaken for an EQL object.
+  const probeName = 'public.stash_preflight_opclass_probe'
+  try {
+    await client.query('BEGIN')
+  } catch {
+    return null
+  }
+  try {
+    await client.query(`CREATE OPERATOR FAMILY ${probeName} USING btree`)
+    return true
+  } catch (error) {
+    // 42501 insufficient_privilege is the gate itself — a real "no". Anything
+    // else (no CREATE on public, read-only transaction, timeout) is a probe
+    // that failed to ask the question.
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code)
+        : undefined
+    return code === '42501' ? false : null
+  } finally {
+    // Always: on the success path this is what keeps preflight read-only, and
+    // on the failure path it clears the aborted transaction. A rollback that
+    // itself fails leaves nothing behind — the connection is closed next.
+    await client.query('ROLLBACK').catch(() => {})
+  }
+}
 
 export class EQLInstaller {
   private readonly databaseUrl: string
@@ -222,6 +284,9 @@ export class EQLInstaller {
           'ownership of the existing EQL schemas (a reinstall begins with DROP SCHEMA eql_v3 / eql_v3_internal CASCADE, which needs the owner, a member of the owning role, or a superuser)',
         )
       }
+      // After the capability read, so a probe that somehow poisons the session
+      // cannot affect any of the answers above.
+      const canCreateOperatorClass = await probeOperatorClassCreate(client)
       return {
         currentUser: String(row.role_name ?? 'unknown'),
         isSuperuser,
@@ -234,7 +299,11 @@ export class EQLInstaller {
         eqlV3InternalSchemaPresent: row.eql_v3_internal_present === true,
         canDropEqlV3Schema,
         canDropEqlV3InternalSchema,
+        canCreateOperatorClass,
         missing,
+        // Deliberately not folded into `missing`: the bundle's ORE fallback
+        // means an install without the operator class is complete, not
+        // blocked.
         ok: missing.length === 0,
       }
     } catch (error) {

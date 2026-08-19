@@ -3,6 +3,12 @@ import type pg from 'pg'
 import { createPgClient, TlsVerificationError } from '@/db/client.js'
 import { EQL_V3_INTERNAL_SCHEMA_NAME, EQL_V3_SCHEMA_NAME } from './grants.js'
 import { SUPPORTED_PGCRYPTO_SCHEMAS } from './index.js'
+import {
+  classifyOreState,
+  describeOreState,
+  ORE_OPCLASS_PRESENT_EXPR,
+  type OreSurfaceState,
+} from './ore.js'
 
 /**
  * `stash eql verify` — assert that the installed EQL surface is complete and
@@ -56,16 +62,11 @@ export interface ExpectedSurface {
 }
 
 /**
- * How the ORE half of the install reads. Only the first two are healthy:
- * the bundle either created the operator class (superuser install) or
- * skipped it and poisoned every ORE domain so the gap fails loudly
- * (managed-Postgres install — a supported configuration, not damage).
+ * How the ORE half of the install reads. Defined in `./ore.js`, which owns the
+ * whole ORE model — the catalogue probe, the state machine, and the copy every
+ * command renders — and re-exported here because `VerifyReport` carries it.
  */
-export type OreSurfaceState =
-  | 'indexable'
-  | 'fallback'
-  | 'incoherent-unpoisoned'
-  | 'incoherent-poisoned'
+export type { OreSurfaceState }
 
 export interface SurfaceFinding {
   severity: 'damage' | 'warning' | 'expected'
@@ -385,14 +386,7 @@ const CASTS_SQL = `
  */
 const ORE_STATE_SQL = `
   SELECT
-    EXISTS (
-      SELECT 1
-      FROM pg_catalog.pg_opclass c
-      JOIN pg_catalog.pg_am am ON am.oid = c.opcmethod
-      WHERE am.amname = 'btree'
-        AND c.opcdefault
-        AND c.opcintype = to_regtype('${EQL_V3_INTERNAL_SCHEMA_NAME}.ore_block_256')
-    ) AS ore_opclass_present,
+    ${ORE_OPCLASS_PRESENT_EXPR} AS ore_opclass_present,
     (
       SELECT count(*)::int
       FROM pg_catalog.pg_constraint c
@@ -722,48 +716,22 @@ export function diffSurface(
   // The ORE conditional: exactly one of the two halves must be present, in
   // full. Anything else is a half-working state the bundle never produces.
   const expectedPoisoned = expected.oreDomains.length
-  let oreState: OreSurfaceState
-  if (installed.oreOpclassPresent) {
-    oreState =
-      installed.poisonedDomains === 0 ? 'indexable' : 'incoherent-poisoned'
-  } else {
-    oreState =
-      installed.poisonedDomains === expectedPoisoned
-        ? 'fallback'
-        : 'incoherent-unpoisoned'
-  }
-  switch (oreState) {
-    case 'indexable':
-      findings.push({
-        severity: 'expected',
-        kind: 'opclass',
-        message:
-          'ORE operator class present — ORE ordered indexes are available (superuser install).',
-      })
-      break
-    case 'fallback':
-      findings.push({
-        severity: 'expected',
-        kind: 'opclass',
-        message:
-          'ORE operator class absent, and every ORE domain carries the loud-failure fallback. This is the supported managed-Postgres configuration (creating the class requires superuser), not a failed install — use the `_ord_ope` ordering domains.',
-      })
-      break
-    case 'incoherent-poisoned':
-      findings.push({
-        severity: 'damage',
-        kind: 'opclass',
-        message: `The ORE operator class exists, but ${installed.poisonedDomains} domain${installed.poisonedDomains === 1 ? ' still carries' : 's still carry'} the \`eql_ore_unavailable\` poison CHECK — writes to those domains fail although ORE works. Reinstall with \`stash eql install --force\`.`,
-      })
-      break
-    case 'incoherent-unpoisoned':
-      findings.push({
-        severity: 'damage',
-        kind: 'opclass',
-        message: `The ORE operator class is absent, but only ${installed.poisonedDomains} of ${expectedPoisoned} ORE domains carry the loud-failure fallback — the rest would fail at index/ORDER BY time with opaque errors instead. Reinstall with \`stash eql install --force\`.`,
-      })
-      break
-  }
+  const oreState = classifyOreState({
+    opclassPresent: installed.oreOpclassPresent,
+    poisonedDomains: installed.poisonedDomains,
+    expectedPoisoned,
+  })
+  const oreDescription = describeOreState(oreState)
+  findings.push({
+    severity: oreDescription.severity === 'damage' ? 'damage' : 'expected',
+    kind: 'opclass',
+    // The counts only mean anything in the two incoherent states, where they
+    // say how far the half-application got.
+    message:
+      oreDescription.severity === 'damage'
+        ? `${oreDescription.message} (${installed.poisonedDomains} of ${expectedPoisoned} ORE domains carry the poison CHECK.)`
+        : oreDescription.message,
+  })
 
   const damaged = findings.some((finding) => finding.severity === 'damage')
   return {
@@ -838,4 +806,34 @@ export async function verifyEqlSurface(
   } finally {
     await client.end()
   }
+}
+
+/**
+ * Read just the ORE half of an install — the two catalogue values and the
+ * state they classify to (#891).
+ *
+ * `eql status` wants the ORE answer and nothing else. Routing it through
+ * {@link verifyEqlSurface} would work but would read the whole 3,000-operator
+ * surface to render one row, and would report a version mismatch as a reason
+ * to say nothing — whereas the ORE state is legible whatever bundle is
+ * installed, because both halves of the conditional are catalogue facts rather
+ * than a diff against the pinned manifest.
+ */
+export async function readOreState(client: pg.ClientBase): Promise<{
+  opclassPresent: boolean
+  poisonedDomains: number
+  expectedPoisoned: number
+  state: OreSurfaceState
+}> {
+  const expected = bundledExpectedSurface()
+  const result = await client.query<{
+    ore_opclass_present: boolean
+    poisoned_domains: number
+  }>(ORE_STATE_SQL, [expected.oreDomains])
+  const observed = {
+    opclassPresent: result.rows[0]?.ore_opclass_present === true,
+    poisonedDomains: result.rows[0]?.poisoned_domains ?? 0,
+    expectedPoisoned: expected.oreDomains.length,
+  }
+  return { ...observed, state: classifyOreState(observed) }
 }

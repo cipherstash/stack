@@ -19,7 +19,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { EQLInstaller } from '../index.js'
-import { verifyEqlSurface } from '../verify.js'
+import { readOreState, verifyEqlSurface } from '../verify.js'
 
 const DATABASE_URL = process.env.STASH_TEST_DATABASE_URL
 const describeLive = DATABASE_URL ? describe : describe.skip
@@ -70,6 +70,29 @@ describeLive('verifyEqlSurface — live Postgres', () => {
     )
     expect(report.counts?.domains.present).toBe(report.counts?.domains.expected)
     expect(report.counts?.casts.present).toBe(report.counts?.casts.expected)
+  }, 60_000)
+
+  /**
+   * `eql status` reads the ORE half through {@link readOreState} rather than
+   * the full surface diff (#891). Both must answer the same question the same
+   * way against the same database — a cheap read that disagreed with `verify`
+   * would be worse than no read at all.
+   */
+  it('reads the same ORE state through the standalone probe as through verify', async () => {
+    const url = DATABASE_URL ?? ''
+    const report = await verifyEqlSurface(url)
+    const { default: pg } = await import('pg')
+    const client = new pg.Client({ connectionString: url })
+    await client.connect()
+    try {
+      const ore = await readOreState(client)
+      expect(ore.state).toBe(report.ore?.state)
+      expect(ore.opclassPresent).toBe(report.ore?.opclassPresent)
+      expect(ore.poisonedDomains).toBe(report.ore?.poisonedDomains)
+      expect(ore.expectedPoisoned).toBe(report.ore?.expectedPoisoned)
+    } finally {
+      await client.end().catch(() => undefined)
+    }
   }, 60_000)
 
   it('names a dropped comparison operator, attributed to its domain', async () => {

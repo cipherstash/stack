@@ -3,6 +3,8 @@ import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
 import { createPgClient } from '@/db/client.js'
 import { EQLInstaller } from '@/installer/index.js'
+import { describeOreState } from '@/installer/ore.js'
+import { readOreState } from '@/installer/verify.js'
 
 export async function statusCommand(options: { databaseUrl?: string } = {}) {
   const pm = detectPackageManager()
@@ -93,7 +95,40 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
     )
   }
 
-  // 3. Encrypt configuration.
+  // 3. The ORE half of the install.
+  //
+  // Reported here so the trade an operator was told about at install time is
+  // recoverable afterwards, without re-reading scrollback (#891). Only when
+  // v3 is installed: the state is a property of the v3 bundle's conditional
+  // half, and reads as 'fallback' on a database that has no EQL at all.
+  if (installedV3) {
+    s.start('Checking ORE operator class...')
+    const oreClient = createPgClient(config.databaseUrl)
+    try {
+      await oreClient.connect()
+      const ore = await readOreState(oreClient)
+      s.stop('ORE state checked.')
+      const described = describeOreState(ore.state)
+      if (described.severity === 'damage') {
+        p.log.error(described.message)
+      } else {
+        p.log.info(described.message)
+      }
+    } catch (error) {
+      // Advisory, not a gate: a status run that could not read one row should
+      // still report everything else it read.
+      s.stop('ORE state check failed.')
+      p.log.warn(
+        `Could not determine the ORE operator class state: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    } finally {
+      await oreClient.end().catch(() => {})
+    }
+  }
+
+  // 4. Encrypt configuration.
   //
   // `public.eql_v2_configuration` is a v2 + CipherStash Proxy artifact: the v2
   // install creates it and Proxy reads it. EQL v3 has no configuration table —

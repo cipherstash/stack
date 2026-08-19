@@ -2,6 +2,7 @@ import * as p from '@clack/prompts'
 import { emitJsonError, emitJsonEvent } from '@/commands/auth/events.js'
 import { resolveDiagnosticDatabaseUrl } from '@/commands/db/resolve-diagnostic-url.js'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
+import { describeOreState } from '@/installer/ore.js'
 import type { SurfaceFinding, VerifyReport } from '@/installer/verify.js'
 import { verifyEqlSurface } from '@/installer/verify.js'
 
@@ -144,14 +145,7 @@ export function renderSurfaceCounts(report: VerifyReport): string {
         ]
       },
     ),
-    [
-      'ORE operator class',
-      ore.state === 'indexable'
-        ? 'present'
-        : ore.state === 'fallback'
-          ? 'skipped (expected on managed Postgres)'
-          : 'INCOHERENT',
-    ],
+    ['ORE operator class', describeOreState(ore.state).value],
   ]
   const labelWidth = Math.max(...rows.map(([label]) => label.length))
   return rows

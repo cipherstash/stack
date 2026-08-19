@@ -23,6 +23,13 @@
  *   types.TextSearch                   equality + order/range + free-text
  *   types.Json                         encrypted-JSONB containment + selectors
  *
+ * Order columns with the `*Ord` factories above, not `*OrdOre`. The ORE
+ * flavour needs a Postgres operator class that only a privileged role can
+ * create — where the install could not create it, the EQL bundle poisons every
+ * `_ord_ore` domain, and each write to one fails a CHECK. `*Ord` orders and
+ * indexes on any role. `stash eql status` reports which case this database
+ * is in.
+ *
  * --- Pattern reference (copy into your real schema, do NOT use as-is) ---
  *
  * Encrypted twin column for an existing populated column (path 3 — lifecycle):
