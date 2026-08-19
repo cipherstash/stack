@@ -37,6 +37,8 @@ Capability is fixed by the column's domain type, chosen at schema definition via
 
 The last row is deliberate, not a gap: a bare `types.Text` / `types.Integer` / `types.Boolean` column carries no query terms, so there is nothing to index and nothing to query server-side. If a column needs an index, it needs a term-carrying domain first.
 
+**Choosing the domain in the first place** is the `stash-encryption` skill's **capability matrix** (`### The types Namespace`) — all 40 factories, one row each, with the predicates and the index each supports. Use it to pick the type; use this page to index it.
+
 ## The Recipes
 
 Every recipe is a functional index over the extractor, followed by `ANALYZE` (see [Making a Query Engage the Index](#making-a-query-engage-the-index) for why `ANALYZE` is mandatory). Name indexes descriptively (`users_email_eq`, `events_at_ord`) — it makes `EXPLAIN` output and maintenance legible.

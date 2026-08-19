@@ -223,7 +223,74 @@ The returned table is also a column accessor (`users.email`). The JS property na
 
 ### The `types` Namespace
 
-Each factory in `types` maps 1:1 to a Postgres domain named `public.eql_v3_<name>`. The naming rule: strip the `eql_v3_` prefix and PascalCase each underscore-separated segment. So `types.TextSearch` builds a `public.eql_v3_text_search` column, `types.IntegerOrd` builds `public.eql_v3_integer_ord`, and `types.Timestamp` builds `public.eql_v3_timestamp`.
+Each factory in `types` maps 1:1 to a Postgres domain named `public.eql_v3_<name>`. The naming rule: strip the `eql_v3_` prefix and PascalCase each underscore-separated segment. So `types.TextSearch` builds a `public.eql_v3_text_search` column, `types.IntegerOrd` builds `public.eql_v3_integer_ord`, and `types.Timestamp` builds `public.eql_v3_timestamp`. **One exception:** `types.Json` builds `public.eql_v3_json_search`, not `eql_v3_json` (and its query-operand domain is `eql_v3.query_json`, not `query_json_search`).
+
+#### The capability matrix
+
+Picking the wrong factory is **silent at authoring time**. There is no type error and no runtime warning — the predicate you wanted simply will not run, and you find out when a query errors or returns nothing. Look your type up here before writing the column.
+
+| SDK factory | Postgres column domain | Predicates it supports | What to index | Managed Postgres |
+|---|---|---|---|---|
+| `types.Text(...)` | `public.eql_v3_text` | none — storage only | — | ✅ |
+| `types.TextEq(...)` | `public.eql_v3_text_eq` | `=` `<>` `IN` | `eq_term` (HMAC btree) | ✅ |
+| `types.TextMatch(...)` | `public.eql_v3_text_match` | `@@` free-text `matches` only | `match_term` (bloom GIN) | ✅ |
+| `types.TextOrd(...)` | `public.eql_v3_text_ord` | `=` `<>` `<` `<=` `>` `>=` `ORDER BY` | `eq_term` **+** `ord_term` (two indexes) | ✅ |
+| `types.TextOrdOre(...)` | `public.eql_v3_text_ord_ore` | as `TextOrd` | `eq_term` **+** `ord_term_ore` — ORE opclass, **privileged install only** | ⛔ unusable — see below |
+| `types.TextSearch(...)` | `public.eql_v3_text_search` | `=` `<>` `<` `<=` `>` `>=` `ORDER BY` **and** `@@` | `eq_term` + `ord_term` + `match_term` (three) | ✅ |
+| `types.Integer(...)` | `public.eql_v3_integer` | none — storage only | — | ✅ |
+| `types.IntegerEq(...)` | `public.eql_v3_integer_eq` | `=` `<>` `IN` | `eq_term` (HMAC btree) | ✅ |
+| `types.IntegerOrd(...)` | `public.eql_v3_integer_ord` | `=` `<>` `<` `<=` `>` `>=` `ORDER BY` | `ord_term` (OPE btree) — one index serves all | ✅ |
+| `types.IntegerOrdOre(...)` | `public.eql_v3_integer_ord_ore` | as `IntegerOrd` | `ord_term_ore` — ORE opclass, **privileged install only** | ⛔ unusable — see below |
+| `types.Smallint(...)` | `public.eql_v3_smallint` | none — storage only | — | ✅ |
+| `types.SmallintEq(...)` | `public.eql_v3_smallint_eq` | `=` `<>` `IN` | `eq_term` | ✅ |
+| `types.SmallintOrd(...)` | `public.eql_v3_smallint_ord` | `=` `<>` `<` `<=` `>` `>=` `ORDER BY` | `ord_term` | ✅ |
+| `types.SmallintOrdOre(...)` | `public.eql_v3_smallint_ord_ore` | as `SmallintOrd` | `ord_term_ore` — **privileged install only** | ⛔ unusable |
+| `types.Bigint(...)` | `public.eql_v3_bigint` | none — storage only | — | ✅ |
+| `types.BigintEq(...)` | `public.eql_v3_bigint_eq` | `=` `<>` `IN` | `eq_term` | ✅ |
+| `types.BigintOrd(...)` | `public.eql_v3_bigint_ord` | `=` `<>` `<` `<=` `>` `>=` `ORDER BY` | `ord_term` | ✅ |
+| `types.BigintOrdOre(...)` | `public.eql_v3_bigint_ord_ore` | as `BigintOrd` | `ord_term_ore` — **privileged install only** | ⛔ unusable |
+| `types.Numeric(...)` | `public.eql_v3_numeric` | none — storage only | — | ✅ |
+| `types.NumericEq(...)` | `public.eql_v3_numeric_eq` | `=` `<>` `IN` | `eq_term` | ✅ |
+| `types.NumericOrd(...)` | `public.eql_v3_numeric_ord` | `=` `<>` `<` `<=` `>` `>=` `ORDER BY` | `ord_term` | ✅ |
+| `types.NumericOrdOre(...)` | `public.eql_v3_numeric_ord_ore` | as `NumericOrd` | `ord_term_ore` — **privileged install only** | ⛔ unusable |
+| `types.Real(...)` | `public.eql_v3_real` | none — storage only | — | ✅ |
+| `types.RealEq(...)` | `public.eql_v3_real_eq` | `=` `<>` `IN` | `eq_term` | ✅ |
+| `types.RealOrd(...)` | `public.eql_v3_real_ord` | `=` `<>` `<` `<=` `>` `>=` `ORDER BY` | `ord_term` | ✅ |
+| `types.RealOrdOre(...)` | `public.eql_v3_real_ord_ore` | as `RealOrd` | `ord_term_ore` — **privileged install only** | ⛔ unusable |
+| `types.Double(...)` | `public.eql_v3_double` | **none — storage only** | — | ✅ |
+| `types.DoubleEq(...)` | `public.eql_v3_double_eq` | `=` `<>` `IN` | `eq_term` | ✅ |
+| `types.DoubleOrd(...)` | `public.eql_v3_double_ord` | `=` `<>` `<` `<=` `>` `>=` `ORDER BY` | `ord_term` | ✅ |
+| `types.DoubleOrdOre(...)` | `public.eql_v3_double_ord_ore` | as `DoubleOrd` | `ord_term_ore` — **privileged install only** | ⛔ unusable |
+| `types.Date(...)` | `public.eql_v3_date` | none — storage only | — | ✅ |
+| `types.DateEq(...)` | `public.eql_v3_date_eq` | `=` `<>` `IN` | `eq_term` | ✅ |
+| `types.DateOrd(...)` | `public.eql_v3_date_ord` | `=` `<>` `<` `<=` `>` `>=` `ORDER BY` | `ord_term` | ✅ |
+| `types.DateOrdOre(...)` | `public.eql_v3_date_ord_ore` | as `DateOrd` | `ord_term_ore` — **privileged install only** | ⛔ unusable |
+| `types.Timestamp(...)` | `public.eql_v3_timestamp` | none — storage only | — | ✅ |
+| `types.TimestampEq(...)` | `public.eql_v3_timestamp_eq` | `=` `<>` `IN` | `eq_term` | ✅ |
+| `types.TimestampOrd(...)` | `public.eql_v3_timestamp_ord` | `=` `<>` `<` `<=` `>` `>=` `ORDER BY` | `ord_term` | ✅ |
+| `types.TimestampOrdOre(...)` | `public.eql_v3_timestamp_ord_ore` | as `TimestampOrd` | `ord_term_ore` — **privileged install only** | ⛔ unusable |
+| `types.Boolean(...)` | `public.eql_v3_boolean` | none — storage only | — | ✅ |
+| `types.Json(...)` | `public.eql_v3_json_search` | `@>` containment + JSONPath selectors | `to_ste_vec_query` (GIN) | ✅ |
+
+That is the whole surface — 40 factories, no others. Three things the table is trying to make unmissable:
+
+1. **A bare factory name is storage-only.** `types.Double` encrypts and decrypts and answers *nothing*. If you want to compare it, you wanted `types.DoubleOrd`; if you want ORE blocks specifically, `types.DoubleOrdOre`. The same holds for every family.
+2. **On the numeric and temporal families, one ordering index serves everything.** Their ordering term is injective (distinct plaintexts give distinct terms), so `=` rides it — there is deliberately **no `eq_term` overload** for those domains, and adding an equality index to a `_ord` numeric column indexes a function that does not exist. Text ordering terms are *not* injective, which is why `text_ord` / `text_ord_ore` / `text_search` carry `eq_term` **as well**.
+3. **`Ord` and `OrdOre` are not interchangeable.** They mint different, non-cross-comparable terms (`eql_v3.ord_term` vs `eql_v3.ord_term_ore`), so you cannot switch one for the other without re-encrypting the column.
+
+`ORDER BY` needs the extractor form (`ORDER BY eql_v3.ord_term(col)`); the ORM integrations emit it for you. The `CREATE INDEX` statements behind the "What to index" column are in the `stash-indexing` skill, and the raw-SQL predicate forms with their `eql_v3.query_*` operand casts are in `stash-postgres`.
+
+#### Where these objects live
+
+Three schemas, and knowing which is which resolves most "function does not exist" errors:
+
+| Schema | Holds | Example |
+|---|---|---|
+| `public` | the **column storage domains** — what you declare a column as | `public.eql_v3_double_ord` |
+| `eql_v3` | the **query-operand domains** and the operator/extractor functions | `eql_v3.query_double_ord`, `eql_v3.ord_term` |
+| `eql_v3_internal` | the **index-term types** and their operators | `eql_v3_internal.ore_block_256` |
+
+So a single encrypted comparison touches all three: a `public` column, cast against an `eql_v3` query domain, comparing `eql_v3_internal` term types. That is also why the Supabase role grants cover `eql_v3` **and** `eql_v3_internal` — granting only the first leaves `anon` / `authenticated` / `service_role` unable to execute the internal term operators the public ones inline to. The `eql_v3` schemas are dropped and recreated by every install; `public` is not, which is why your column domains survive a reinstall.
 
 **Capability suffixes:**
 
@@ -237,7 +304,13 @@ Each factory in `types` maps 1:1 to a Postgres domain named `public.eql_v3_<name
 | `Search` (text only) | Equality + ordering/range + free-text | all three |
 | `Json` (no suffix) | Encrypted-JSONB containment + JSONPath selector queries | `'searchableJson'` |
 
-> **`Ord` vs `OrdOre`:** prefer `Ord`. The `OrdOre` domains are backed by an ORE operator class the installer creates with the superuser-gated `CREATE OPERATOR CLASS`. Platform support varies — AWS RDS and Aurora allow it; cloud-hosted Supabase does not (the one confirmed platform that refuses it), and there the install bundle skips the ORE opclass and disables the `_ord_ore` domains it cannot support. The two ordering flavours produce different, non-cross-comparable terms (`Ord`/`Search` extract via `eql_v3.ord_term`; `OrdOre` via `eql_v3.ord_term_ore`).
+> **`Ord` vs `OrdOre` — prefer `Ord`.** The `OrdOre` domains are backed by an ORE operator class the installer creates with `CREATE OPERATOR CLASS`, which is superuser-gated in stock PostgreSQL. Platform support varies and is **not** a blanket managed-Postgres rule: AWS RDS and Aurora allow it (their admin role clears the gate despite `rolsuper = f`); cloud-hosted Supabase is the one confirmed platform that refuses it.
+>
+> Where the install role cannot create the class, the bundle skips it **and adds an always-raising `eql_ore_unavailable` CHECK to every `_ord_ore` domain**, so every write to such a column fails loudly rather than producing an index that silently never engages. On those databases an `OrdOre` column is unusable, not merely unindexed — which is why the matrix marks it ⛔ rather than ⚠️.
+>
+> Don't guess which case you are in — ask: `stash eql preflight` predicts it before you install (the `ORE operator class` row), and `stash eql status` / `stash eql verify` report it afterwards. `Ord` is OPE-backed, binds PostgreSQL's native `bytea` btree operator class, and needs no privileges anywhere.
+>
+> The two flavours mint different, non-cross-comparable terms (`Ord`/`Search` extract via `eql_v3.ord_term`; `OrdOre` via `eql_v3.ord_term_ore`), so switching between them means re-encrypting the column.
 
 **Domain families and plaintext types:**
 
