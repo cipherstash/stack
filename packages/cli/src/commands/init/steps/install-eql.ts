@@ -162,7 +162,16 @@ async function generateEqlMigration(
   await scaffoldConfigAndClient(state)
 
   try {
-    await eqlMigrationCommand({ ...route.options, embedded: true })
+    // The URL init resolved at the start of the run. It lives only in
+    // `InitState` — `resolveDatabaseUrl` never writes to `process.env` — so
+    // the Drizzle route's `drizzle-kit` child would otherwise see nothing and
+    // abort on a config that reads `DATABASE_URL` (#924). Same reason the
+    // direct-install route below passes it to `installCommand`.
+    await eqlMigrationCommand({
+      ...route.options,
+      databaseUrl: state.databaseUrl,
+      embedded: true,
+    })
   } catch {
     p.log.error(route.failureHint)
     p.note(`Re-run with: ${route.retryCommand}`, 'You can retry manually')

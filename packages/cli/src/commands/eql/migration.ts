@@ -75,15 +75,50 @@ export function parseReportedMigrationPath(
   stdout: string | undefined,
 ): string | undefined {
   if (!stdout) return undefined
-  // Last match wins: one invocation writes one file, but a wrapper that echoes
+  // Scanned per line, taking everything between the arrow and the LAST `.sql`
+  // on it, because an output directory may contain spaces — a `\S+` pattern
+  // truncates such a path, fails the existence check, and drops us into the
+  // fallback scan of an unrelated directory.
+  //
+  // Last line wins: one invocation writes one file, but a wrapper that echoes
   // its own banner first should not shadow drizzle-kit's.
   let found: string | undefined
-  for (const match of stdout.matchAll(/➜\s*(\S+\.sql)/g)) {
-    const candidate = match[1]
+  for (const line of stdout.split(/\r?\n/)) {
+    const arrow = line.indexOf('➜')
+    if (arrow === -1) continue
+    const rest = line.slice(arrow + 1)
+    const end = rest.lastIndexOf('.sql')
+    if (end === -1) continue
+    const candidate = rest.slice(0, end + '.sql'.length).trim()
+    if (!candidate) continue
     const abs = isAbsolute(candidate) ? candidate : resolve(candidate)
     if (existsSync(abs)) found = abs
   }
   return found
+}
+
+/**
+ * Does drizzle-kit's output say `DATABASE_URL` is *absent*, as opposed to
+ * present and wrong?
+ *
+ * Only the absent case earns the "add it to your dotenv file" follow-up. A
+ * malformed URL, an unsupported scheme, or a refused connection all mention
+ * `DATABASE_URL` too, and answering those with "it is not set" replaces
+ * drizzle-kit's accurate diagnosis with remediation that contradicts it.
+ *
+ * Deliberately conservative: an unrecognised phrasing falls through to the
+ * generic follow-up, which is never wrong — drizzle-kit's own output is
+ * printed directly above either way. Note that bare `undefined` is NOT a
+ * trigger; `invalid connection string for DATABASE_URL: undefined scheme`
+ * is a malformed URL, not a missing one.
+ */
+export function looksLikeMissingDatabaseUrl(output: string): boolean {
+  return (
+    /DATABASE_URL\W{0,20}(?:is |was )?(?:not set|unset|not defined|is undefined|not provided|missing|empty|required)\b/i.test(
+      output,
+    ) ||
+    /\b(?:missing|unset|undefined|no)\b[^\n]{0,40}?DATABASE_URL/i.test(output)
+  )
 }
 
 function cleanupMigrationFile(filePath: string | undefined): void {
@@ -135,6 +170,19 @@ export interface EqlMigrationOptions {
    * so a re-run never collides.
    */
   force?: boolean
+  /**
+   * A database URL the caller already resolved, threaded into the spawned
+   * `drizzle-kit`'s environment so a `drizzle.config.ts` reading
+   * `process.env.DATABASE_URL` sees one.
+   *
+   * `resolveDatabaseUrl` deliberately never writes to `process.env`, so a URL
+   * that came from init's prompt (or its `--database-url` flag) lives only in
+   * `InitState.databaseUrl` — inheritance alone would leave the child with
+   * nothing and abort the scaffold, which is half of #924. There is no
+   * `--database-url` flag on this command; this is the programmatic seam init
+   * uses, matching the one it already passes to `installCommand`.
+   */
+  databaseUrl?: string
   /** Describe what would happen without writing anything. */
   dryRun?: boolean
   /**
@@ -465,10 +513,13 @@ async function generateDrizzleEqlMigration(
   // `process.env.DATABASE_URL` needs, and what the project's usual
   // `dotenv -e .env.local -- drizzle-kit …` npm-script wrapper would have
   // supplied had we gone through it. On top of that we thread down a URL only
-  // this CLI can find (a running local Supabase), so the config sees one in
-  // that case too (#924).
+  // this CLI can find: one the caller already resolved (init's prompt, which
+  // lands in `InitState.databaseUrl` and nowhere else — `resolveDatabaseUrl`
+  // never writes to `process.env`), or a running local Supabase. Either way
+  // the config sees one where inheritance alone would leave it empty (#924).
   s.start('Generating custom Drizzle migration...')
-  const databaseUrl = tryResolveDatabaseUrl({ supabase: options.supabase })
+  const databaseUrl =
+    options.databaseUrl ?? tryResolveDatabaseUrl({ supabase: options.supabase })
   const result = spawnSync(command, drizzleArgs, {
     stdio: 'pipe',
     encoding: 'utf-8',
@@ -492,7 +543,7 @@ async function generateDrizzleEqlMigration(
         `drizzle-kit exited with status ${result.status ?? 'unknown'}.`,
     )
     p.log.info(
-      /DATABASE_URL/.test(output)
+      looksLikeMissingDatabaseUrl(output)
         ? messages.eql.migrationDrizzleKitNoDatabaseUrl(detectDotenvFile())
         : messages.eql.migrationDrizzleKitFailed(
             `${execCommand(pm)} drizzle-kit generate --custom --name=${migrationName}`,

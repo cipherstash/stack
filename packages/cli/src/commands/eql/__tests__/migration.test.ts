@@ -1352,6 +1352,77 @@ describe('eqlMigrationCommand — Drizzle', () => {
     )
   })
 
+  /**
+   * Review finding, #924 follow-up. `resolveDatabaseUrl` never writes to
+   * `process.env`, so a URL init got from its own prompt or `--database-url`
+   * lives in `InitState.databaseUrl` and nowhere the child could see it. The
+   * option is the seam init passes it through — without it the embedded
+   * Drizzle route still aborts on a config that reads `DATABASE_URL`.
+   */
+  it("prefers a caller-supplied databaseUrl over the resolver's", async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    resolveUrlMock.mockReturnValue('postgres://resolver@localhost:5432/db')
+    spawnMock.mockImplementation(() => {
+      writeFileSync(join(out, '0000_install-eql.sql'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+
+    await eqlMigrationCommand({
+      drizzle: true,
+      out,
+      databaseUrl: 'postgres://from-init@localhost:5432/db',
+    })
+
+    const [, , opts] = spawnMock.mock.calls[0]
+    expect(opts.env.DATABASE_URL).toBe('postgres://from-init@localhost:5432/db')
+  })
+
+  /**
+   * Review finding. `\S+` truncated a reported path at the first space, so a
+   * project whose drizzle.config.ts writes into a directory with a space in it
+   * failed the existence check and fell through to scanning an unrelated
+   * `--out` — an abort, or worse, an older same-named migration.
+   */
+  it('reads a reported path that contains spaces', async () => {
+    const configured = join(tmp, 'My Project', 'db migrations')
+    mkdirSync(configured, { recursive: true })
+    const written = join(configured, '0000_install-eql.sql')
+    spawnMock.mockImplementation(() => {
+      writeFileSync(written, '')
+      return {
+        status: 0,
+        stdout: `[✓] Your SQL migration file ➜ ${written} 🚀`,
+        stderr: '',
+      }
+    })
+
+    await eqlMigrationCommand({ drizzle: true, out: join(tmp, 'drizzle') })
+
+    expect(readFileSync(written, 'utf-8')).toContain('EQL v3 schema creation')
+  })
+
+  /**
+   * Review finding. Every failure naming DATABASE_URL used to be reported as
+   * "it is not set", which contradicts drizzle-kit whenever the variable is
+   * present and merely wrong. The generic follow-up is never wrong, so an
+   * unrecognised phrasing has to fall through to it.
+   */
+  it.each([
+    ['Error: DATABASE_URL is not set', true],
+    ['Missing environment variable: DATABASE_URL', true],
+    ['DATABASE_URL is required', true],
+    ['invalid connection string for DATABASE_URL: undefined scheme', false],
+    ['DATABASE_URL: password authentication failed for user "app"', false],
+  ])('classifies %j as missing-URL=%s', async (stderr, missing) => {
+    spawnMock.mockReturnValue({ status: 1, stdout: '', stderr })
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out: join(tmp, 'drizzle') }),
+    ).rejects.toBeInstanceOf(CliExit)
+    const info = String(vi.mocked(clack.log.info).mock.calls.at(-1)?.[0])
+    expect(info.includes('could not read DATABASE_URL')).toBe(missing)
+  })
+
   it('aborts (exit 1) when drizzle-kit exits non-zero', async () => {
     spawnMock.mockReturnValue({ status: 1, stdout: '', stderr: 'boom' })
     await expect(
