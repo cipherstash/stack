@@ -62,7 +62,7 @@ updates:
         update-types:
           - version-update:semver-major
 
-  # ── Cargo (packages/protect-ffi — the only Rust in the repo) ────
+  # ── Cargo (packages/protect-ffi — one of two Rust workspaces) ───
   # Absorbing protect-ffi brought a 494-crate Cargo.lock in-tree. osv-scanner
   # already sees it — `--recursive ./` walks the tree and extracts every
   # lockfile it recognises — so known advisories were visible from day one, but
