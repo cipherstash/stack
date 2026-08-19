@@ -221,8 +221,18 @@ fields list or an `expression`; an expression index **requires `name` or
 argument requires `type`. The expression string is the entire element list
 between the parens of `CREATE INDEX`, inserted verbatim — which is why the
 Json recipe carries its own parens and the `jsonb_path_ops` opclass. TS-authored
-contracts have the same surface: `index({ expression, name, type })` alongside
-the column factories.
+contracts have the same surface: `index({ expression, name })` alongside the
+column factories — and there, passing `type` makes `options` required (use
+`options: {}` when you have none).
+
+`name:` is a logical name, not the physical one: the index is created as
+`<name>_<8-hex content hash>` (`users_email_eq` lands as e.g.
+`users_email_eq_1a2b3c4d`), so when verifying with `EXPLAIN` or querying
+`pg_indexes`, match on the prefix rather than the exact string. `map:` pins
+the exact physical name instead — but the planner emits a drift warning
+whenever `map:` is combined with an expression body, so prefer `name:` and
+prefix-matching unless you must adopt an index that already exists under a
+bare name.
 
 `ANALYZE` is still part of the recipe — an expression index has no statistics
 until it runs, and PSL cannot express it — so it rides a raw-SQL operation
@@ -244,8 +254,15 @@ rawSql({
 })
 ```
 
-(`rawSql` also remains the fallback for index DDL itself if you need something
-PSL doesn't carry — `CREATE INDEX CONCURRENTLY`, for instance.)
+`rawSql` also remains the fallback for index DDL PSL doesn't carry — with one
+hard exception: **`CREATE INDEX CONCURRENTLY` cannot run through the migration
+flow at all.** The runner wraps every apply in a single transaction, and
+Postgres rejects `CONCURRENTLY` inside a transaction block (error `25001`), so
+a `rawSql` operation carrying it fails deterministically. This rarely matters
+here: under the rollout timing in `stash-indexing`, these indexes are built
+while the encrypted column is new or freshly backfilled, where a plain
+`CREATE INDEX` is correct. If a table is genuinely too hot for that, the
+concurrent build has to happen outside the migration runner.
 
 Everything above works as a non-superuser role (Supabase included); only the
 ORE-flavour (`_ord_ore`) ordering opclass is superuser-gated. For the full
