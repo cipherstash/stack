@@ -1,6 +1,6 @@
 ---
 name: stash-prisma
-description: Integrate CipherStash searchable field-level encryption with Prisma Next using @cipherstash/stack-prisma (EQL v3). Covers the full 31-constructor catalog of domain-named encrypted column types in schema.prisma (per plaintext type × capability tier — Text/TextEq/TextOrd/TextMatch/TextSearch, Integer/Smallint/BigInt/Numeric/Real/Double × Eq/Ord, Date/Timestamp × Eq/Ord, Boolean, Json), the one-call cipherstashFromStack wiring, the runtime value envelopes (EncryptedString/Number/BigInt/Date/Boolean/Json) and decryptAll, the eql* query operators (eqlEq, eqlMatch, eqlGt, eqlBetween, eqlIn, eqlJsonContains, eqlAsc/eqlDesc, eqlJsonPathAsc/eqlJsonPathDesc), EQL bundle installation via prisma-next migrate, and authentication. Use when adding encryption to a Prisma Next project, choosing a column type, or querying encrypted columns.
+description: Integrate CipherStash searchable field-level encryption with Prisma Next using @cipherstash/stack-prisma (EQL v3). Covers the full 31-constructor catalog of domain-named encrypted column types in schema.prisma (per plaintext type × capability tier — Text/TextEq/TextOrd/TextMatch/TextSearch, Integer/Smallint/BigInt/Numeric/Real/Double × Eq/Ord, Date/Timestamp × Eq/Ord, Boolean, Json), the one-call cipherstashFromStack wiring, the runtime value envelopes (EncryptedString/Number/BigInt/Date/Boolean/Json) and decryptAll, the eql* query operators (eqlEq, eqlMatch, eqlGt, eqlBetween, eqlIn, eqlJsonContains, eqlAsc/eqlDesc, eqlJsonPathAsc/eqlJsonPathDesc), EQL bundle installation via prisma-next migrate, and authentication. Use when adding encryption to a Prisma Next project, upgrading @cipherstash/stack-prisma, choosing a column type, or querying encrypted columns.
 ---
 
 # CipherStash Stack — Prisma Next Integration
@@ -168,6 +168,41 @@ migrate` owns EQL installation, and `stash init --prisma` skips the
 standalone installer for exactly this reason. The CLI enforces this: `stash eql
 install` detects a Prisma Next project and refuses (pointing you at `prisma-next
 migrate`) unless you pass `--force`.
+
+### After upgrading `@cipherstash/stack-prisma`, re-plan before anything else
+
+Only `prisma-next migration plan` copies migration packages into your repo, and
+the seed phase never rewrites a directory that already exists. A
+`migrations/cipherstash/` generated against an older version therefore keeps that
+version's EQL bundle forever — it is old, not corrupt, so it passes every
+integrity check and nothing reports a problem.
+
+**After upgrading the package, delete the vendored directory and regenerate it:**
+
+```bash
+rm -rf migrations/cipherstash
+npx prisma-next migration plan
+```
+
+The database is untouched by this: markers are keyed by invariant, so
+already-applied invariants do not re-run and the only new work is the upgrade
+edge.
+
+Skipping it is not always fatal, which is what makes it easy to miss. 1.0.0
+shipped the baseline at **eql-3.0.4**; later versions bake **eql-3.0.5** into the
+same baseline directory (`20260601T0100_install_eql_v3_bundle`), so its bytes and
+its `migrationHash` changed:
+
+| You run | With a stale `migrations/cipherstash/` |
+| --- | --- |
+| `prisma-next migration plan` | Succeeds, silently keeping the stale baseline — no hash mismatch, because it is intact, just old. |
+| `prisma-next migrate` (existing database) | Correct: applies the 3.0.5 upgrade edge only. |
+| `prisma-next migrate` (fresh database) | Correct end state, but installs eql-3.0.4 and then immediately re-installs eql-3.0.5 over it. |
+| `prisma-next db init` (fresh database) | **Fails**: `Operation cipherstash.upgrade-eql-v3-bundle-3.0.5 has class "data" which is not allowed by policy.` `db init` is additive-only and the stale baseline does not carry the 3.0.5 invariant, so the planner has to reach for the data-classed upgrade edge. The message does not say any of that — the remedy is the `rm -rf` above. |
+
+Upgrading and then running `migrate` or `db init` **without** planning first
+leaves the newer bundle off disk entirely, so it is silently skipped and the
+database stays on the older one.
 
 ## Encrypting data that already exists (`stash encrypt`)
 
@@ -373,4 +408,8 @@ Run Prisma Next apps on a Node runtime where the native module loads.
   `DoubleOrd` column ↔ `EncryptedNumber.from(...)` value.
 - **Regenerate the contract** (`prisma-next contract emit`) after changing a
   column's encrypted type, so `cipherstashFromStack` and the migrations agree.
+- **Re-plan after upgrading `@cipherstash/stack-prisma`** — `rm -rf
+  migrations/cipherstash && npx prisma-next migration plan`. Only `migration
+  plan` vendors new migration packages; skip it and a fresh `db init` fails with
+  `... has class "data" which is not allowed by policy.`
 - **Never log or read `~/.cipherstash`** or `.env*` credential files (see `stash-cli`).

@@ -512,17 +512,45 @@ describe('fresh database: both install paths must converge on eql-3.0.5', () => 
     expect(message).not.toContain('migration plan')
 
     // Since the message cannot be improved from inside this package, the
-    // README — which ships in the npm tarball — has to carry the bridge
-    // from that exact string to the remedy. Pinned so the two cannot
-    // drift apart: a user's only route from the error to the fix is
-    // pasting it into a search.
-    const readme = await readFile(
-      join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'README.md'),
-      'utf8',
+    // SHIPPED DOCS have to carry the bridge from that exact string to the
+    // remedy. Pinned so they cannot drift apart: a user's only route from the
+    // error to the fix is pasting it into a search.
+    //
+    // BOTH of them, and the skill is the one that was missed. The README ships
+    // in the npm tarball and is read by a human who hit the error. `skills/`
+    // ships inside the `stash` tarball and `installSkills()` copies it into the
+    // user's `.claude/skills/` — so it is what an AGENT reads, and an agent
+    // driving `db init` in a repo upgraded from 1.0.0 hits this refusal with no
+    // route out of it. Nothing type-checks either file; this assertion is the
+    // only thing holding the pair to the planner's real message.
+    // `test/v3` -> `test` -> `packages/stack-prisma` -> `packages` -> root.
+    const repoRoot = join(
+      dirname(fileURLToPath(import.meta.url)),
+      '..',
+      '..',
+      '..',
+      '..',
     )
-    expect(readme).toContain(message)
-    expect(readme).toContain('rm -rf migrations/cipherstash')
-    expect(readme).toContain('prisma-next migration plan')
+    const shipped = {
+      'packages/stack-prisma/README.md': await readFile(
+        join(repoRoot, 'packages/stack-prisma/README.md'),
+        'utf8',
+      ),
+      'skills/stash-prisma/SKILL.md': await readFile(
+        join(repoRoot, 'skills/stash-prisma/SKILL.md'),
+        'utf8',
+      ),
+    }
+    for (const [file, body] of Object.entries(shipped)) {
+      expect(body, `${file} does not name the refusal`).toContain(message)
+      expect(body, `${file} does not carry the remedy`).toContain(
+        'rm -rf migrations/cipherstash',
+      )
+      expect(
+        body,
+        `${file} does not name the command that vendors it`,
+      ).toContain('prisma-next migration plan')
+    }
   })
 
   it('the same fresh `db init` succeeds once the instruction is followed', async () => {
