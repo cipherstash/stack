@@ -73,7 +73,7 @@ build step.
 ```ts
 import {
   Encryption, encryptedTable, types, isEncrypted,
-} from 'npm:@cipherstash/stack@1.0.0/wasm-inline'
+} from 'npm:@cipherstash/stack@2.0.0/wasm-inline'
 ```
 
 **Pin an exact version.** Deno caches by specifier, so an unpinned import
@@ -88,7 +88,7 @@ name everywhere:
 ```jsonc
 {
   "imports": {
-    "@cipherstash/stack/wasm-inline": "npm:@cipherstash/stack@1.0.0/wasm-inline"
+    "@cipherstash/stack/wasm-inline": "npm:@cipherstash/stack@2.0.0/wasm-inline"
   }
 }
 ```
