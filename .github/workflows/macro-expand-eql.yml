@@ -80,13 +80,31 @@ jobs:
       # an unpinned version could drift the snapshot even with a frozen macro +
       # nightly. The snapshot then only moves when the macro moves.
       - name: Install pinned nightly toolchain
+        # `set -eu`, deliberately WITHOUT `pipefail`: the workflow-wide
+        # `shell: bash {0}` drops GitHub's implicit `-eo pipefail`, so errexit
+        # has to be asked for (see
+        # `scripts/__tests__/workflow-run-fail-fast.test.mjs`) — but `head -1`
+        # closes the pipe as soon as it has its line, so under `pipefail` a
+        # grep that still had output to write reports 141 and fails the step on
+        # a successful match. Same SIGPIPE hazard as
+        # `scripts/__tests__/workflow-grep-q-pipelines.test.mjs`. The `test -n`
+        # below already covers the case this pipeline can genuinely fail in.
         run: |
+          set -eu
           NIGHTLY=$(grep -oE 'nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}' mise.toml | head -1)
           test -n "$NIGHTLY" || { echo "could not find pinned nightly in mise.toml"; exit 1; }
           rustup toolchain install "$NIGHTLY" --profile minimal --component rustfmt
 
       - name: Regenerate and verify the matrix expansion snapshots
+        # `set -euo pipefail` is load-bearing here, more than anywhere else in
+        # this file. Without it the workflow-wide `shell: bash {0}` discards the
+        # regeneration's exit code and the `git diff` below decides the step —
+        # so when `test:matrix:expand` BREAKS, the snapshots are untouched, the
+        # diff is clean, and this job reports success having verified that a
+        # build which never ran produced no drift. Enforced by
+        # `scripts/__tests__/workflow-run-fail-fast.test.mjs`.
         run: |
+          set -euo pipefail
           mise run test:matrix:expand
           git diff --exit-code -- \
             tests/sqlx/snapshots/integer_expanded.rs \

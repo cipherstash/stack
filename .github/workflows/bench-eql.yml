@@ -17,17 +17,39 @@ on:
     branches:
       - main
     # Repo-root relative, so every entry gained the subtree prefix. Unprefixed,
-    # `src/**/*.sql` and `tests/sqlx/**/*` match nothing under this repository's
-    # root and the bench would simply stop running on pushes — silently, since
-    # a workflow that never triggers reports nothing at all.
+    # `src/**` and `tests/**` match nothing under this repository's root and the
+    # bench would simply stop running on pushes — silently, since a workflow
+    # that never triggers reports nothing at all.
+    #
+    # IDENTICAL to `test-eql.yml`'s list, modulo each file naming itself, and
+    # held that way by `scripts/__tests__/eql-workflow-filters.test.mjs`. The
+    # bench is a strict subset of that suite's inputs, so a bespoke narrower
+    # list here is possible and was what the port carried — and it had drifted
+    # three ways, each of them a change that alters what the bench measures
+    # while never starting it:
+    #
+    #   * `src/**/*.sql` missed `src/v3/version.template`, which `tasks/build.sh`
+    #     names in its own `#MISE sources` and `sed`s into `version.sql`.
+    #   * `tests/sqlx/**/*` missed `tests/docker-compose.yml` — the file
+    #     `postgres:up` actually runs, one level above the glob.
+    #   * `mise.toml` was absent entirely, and it defines every `mise run` task
+    #     below plus the toolchain that compiles them.
+    #
+    # Two lists that answer the same question are worth more kept equal than
+    # kept minimal: the cost of over-triggering is one nightly-budget bench run,
+    # and the cost of under-triggering is a regression that lands and is
+    # attributed to whatever merges next.
     paths:
       - ".github/workflows/bench-eql.yml"
-      - "packages/eql/src/**/*.sql"
-      - "packages/eql/tests/sqlx/**/*"
-      - "packages/eql/tasks/**/*"
+      - ".github/actions/require-cs-secrets/**"
+      - "packages/eql/src/**"
+      - "packages/eql/tests/**"
+      - "packages/eql/tasks/**"
       - "packages/eql/crates/**"
+      - "packages/eql/packages/**"
       - "packages/eql/Cargo.toml"
       - "packages/eql/Cargo.lock"
+      - "packages/eql/mise.toml"
 
   schedule:
     # 02:00 UTC daily
@@ -113,7 +135,17 @@ jobs:
           CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
           CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
           CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
+        # `set -euo pipefail` because the workflow-wide `shell: bash {0}` drops
+        # GitHub's implicit `-eo pipefail`: without it a failing `rustup
+        # component add` is discarded and only `test:bench` decides the step,
+        # which then fails several minutes later for a reason that reads as a
+        # bench regression. Enforced by
+        # `scripts/__tests__/workflow-run-fail-fast.test.mjs`.
+        #
+        # Assignment on its own rather than `export x=$(…)`: errexit ignores
+        # the substitution's status when the line starts with a command word.
         run: |
-          export active_rust_toolchain=$(rustup show active-toolchain | cut -d' ' -f1)
-          rustup component add --toolchain ${active_rust_toolchain} rustfmt clippy
+          set -euo pipefail
+          active_rust_toolchain=$(rustup show active-toolchain | cut -d' ' -f1)
+          rustup component add --toolchain "${active_rust_toolchain}" rustfmt clippy
           mise run --output prefix test:bench --postgres ${POSTGRES_VERSION}

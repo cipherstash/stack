@@ -86,6 +86,16 @@ on:
       # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
       - 'packages/protect-ffi/tsconfig.wasm-errors.json'
       - 'packages/protect-ffi/scripts/inline-wasm.mjs'
+      # Out of that package, and compiled into the same two artifacts: the
+      # cdylib crate carries
+      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # EQL wire types are linked into `index.node` and into
+      # `protect_ffi_inline.js`. Both cache keys in
+      # `.github/actions/build-ffi-binding` hash them, so an edit here misses
+      # that cache and rebuilds the bundle the `integration/wasm/**` suites
+      # load. Same argument as the two entries above, same guard.
+      - 'packages/eql/crates/**'
+      - 'packages/eql/Cargo.toml'
   pull_request:
     branches: ['**']
     # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
@@ -160,6 +170,16 @@ on:
       # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
       - 'packages/protect-ffi/tsconfig.wasm-errors.json'
       - 'packages/protect-ffi/scripts/inline-wasm.mjs'
+      # Out of that package, and compiled into the same two artifacts: the
+      # cdylib crate carries
+      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # EQL wire types are linked into `index.node` and into
+      # `protect_ffi_inline.js`. Both cache keys in
+      # `.github/actions/build-ffi-binding` hash them, so an edit here misses
+      # that cache and rebuilds the bundle the `integration/wasm/**` suites
+      # load. Same argument as the two entries above, same guard.
+      - 'packages/eql/crates/**'
+      - 'packages/eql/Cargo.toml'
 
 jobs:
   integration:
