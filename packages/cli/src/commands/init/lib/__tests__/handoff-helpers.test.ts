@@ -9,7 +9,11 @@ vi.mock('@clack/prompts', () => ({
 }))
 
 import { writeArtifacts } from '../handoff-helpers.js'
-import { CONTEXT_REL_PATH, type ContextFile } from '../write-context.js'
+import {
+  CONTEXT_REL_PATH,
+  type ContextFile,
+  SETUP_PROMPT_REL_PATH,
+} from '../write-context.js'
 
 let cwd: string
 
@@ -24,6 +28,10 @@ afterEach(() => {
 
 function readContext(): ContextFile {
   return JSON.parse(readFileSync(join(cwd, CONTEXT_REL_PATH), 'utf-8'))
+}
+
+function readPrompt(): string {
+  return readFileSync(join(cwd, SETUP_PROMPT_REL_PATH), 'utf-8')
 }
 
 describe('mergeSkillsDelivery', () => {
@@ -84,6 +92,43 @@ describe('writeArtifacts', () => {
     const ctx = readContext()
     expect(ctx.installedSkills).toEqual(['stash-encryption', 'stash-cli'])
     expect(ctx.inlinedSkills).toEqual(['stash-supabase'])
+  })
+
+  /**
+   * The context file and the setup prompt answer different questions, so they
+   * take different views of the same delivery.
+   *
+   * Here `stash init` installed skills into `.claude/skills/`, and a later
+   * Codex handoff failed to write `.codex/skills/` and could not fall back to
+   * inlining either. The project genuinely has those skills — `context.json`
+   * should keep saying so. But the prompt is launching Codex, and
+   * `rulesLocation` derives its directory from the handoff choice: rendering
+   * it from the merged view let the earlier `.claude/skills/` install satisfy
+   * the "installed" test and point Codex at a directory that was never
+   * written.
+   */
+  it('does not let an earlier install vouch for this handoff’s directory', () => {
+    writeArtifacts(
+      cwd,
+      {
+        integration: 'supabase',
+        skills: {
+          installed: ['stash-encryption', 'stash-cli'],
+          inlined: [],
+          failed: [],
+        },
+      },
+      'codex',
+      { installed: [], inlined: [], failed: ['stash-encryption', 'stash-cli'] },
+    )
+
+    // The project still has them — from the earlier hop.
+    expect(readContext().installedSkills).toEqual([
+      'stash-encryption',
+      'stash-cli',
+    ])
+    // But the prompt must not send Codex to `.codex/skills/`.
+    expect(readPrompt()).not.toContain('.codex/skills/')
   })
 
   it('records this hop when there is nothing to merge with', () => {

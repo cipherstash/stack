@@ -536,4 +536,34 @@ describe('initCommand — skills summary and --target', () => {
     )
     expect(skillsRun).not.toHaveBeenCalled()
   })
+
+  /**
+   * `parseArgs` files a trailing `--target` (nothing followed it) under
+   * `flags` and `--target=` under `values` as an empty string. A bare
+   * truthiness test on the value treats both as "flag absent", so init would
+   * fall through to auto-detection and could write skills to a directory the
+   * user never chose — silently, having been asked for something specific.
+   */
+  it('rejects a valueless `--target`', async () => {
+    await expect(initCommand({ target: true }, {})).rejects.toBeInstanceOf(
+      CliExit,
+    )
+    expect(skillsRun).not.toHaveBeenCalled()
+  })
+
+  it('rejects an empty `--target=`', async () => {
+    await expect(initCommand({}, { target: '' })).rejects.toBeInstanceOf(
+      CliExit,
+    )
+    expect(skillsRun).not.toHaveBeenCalled()
+  })
+
+  it('names the problem when the value is missing rather than unknown', async () => {
+    await expect(initCommand({ target: true }, {})).rejects.toBeInstanceOf(
+      CliExit,
+    )
+    const message = vi.mocked(p.log.error).mock.calls.map(String).join('\n')
+    expect(message).toContain('needs a value')
+    expect(message).not.toContain('Unknown')
+  })
 })

@@ -80,15 +80,27 @@ export function writeAgentsMd(cwd: string, managed: string): boolean {
  *
  * `skills` records where THIS handoff put them (installed as directories,
  * inlined into AGENTS.md, or failed) so the generated prompt never mislabels
- * an unwritable destination as a stripped build. It is MERGED with whatever
- * `state.skills` already carries rather than replacing it: `stash init`
- * installs skills up front now, and a handoff that installs none of its own
- * — `agents-md`, `lovable` — used to overwrite `installedSkills` with `[]`
- * and erase them from the record (#923, one command later).
+ * an unwritable destination as a stripped build.
  *
- * The setup prompt is rendered from the merged view for the same reason: it
- * tells the agent where the rules are, and "nowhere" is wrong when init put
- * them in `.claude/skills/`.
+ * The two outputs deliberately take DIFFERENT views of it:
+ *
+ *   - `context.json` gets the MERGE of `state.skills` and this handoff.
+ *     `stash init` installs skills up front now, and a handoff that installs
+ *     none of its own — `agents-md`, `lovable` — used to overwrite
+ *     `installedSkills` with `[]` and erase from the record skills that are
+ *     sitting on disk (#923, one command later). The field is a flat list
+ *     with no destination attached, so a union across hops is the honest
+ *     reading of "which skills does this project have".
+ *
+ *   - The setup prompt gets THIS handoff's delivery only. It answers a
+ *     different question — where should the agent I am launching right now
+ *     go to read the rules — and that answer is per-destination.
+ *     `rulesLocation` derives the directory from the handoff choice, so
+ *     feeding it the merged view lets skills installed under `.claude/skills`
+ *     by an earlier `stash init` satisfy the "installed" test for a Codex
+ *     handoff whose own copy into `.codex/skills` failed. The prompt would
+ *     then send Codex to a directory that was never written, and the merge's
+ *     failure-filtering would have hidden the failure that caused it.
  */
 export function writeArtifacts(
   cwd: string,
@@ -102,7 +114,9 @@ export function writeArtifacts(
   writeContextFile(resolve(cwd, CONTEXT_REL_PATH), ctx)
   p.log.success(`Wrote ${CONTEXT_REL_PATH}`)
 
-  const promptCtx = buildSetupPromptContext(state, handoff, merged)
+  // `skills`, not `merged` — see the note above. The prompt is about this
+  // handoff's destination; the context file is about the project.
+  const promptCtx = buildSetupPromptContext(state, handoff, skills)
   if (promptCtx) {
     writeSetupPrompt(resolve(cwd, SETUP_PROMPT_REL_PATH), promptCtx)
     p.log.success(`Wrote ${SETUP_PROMPT_REL_PATH}`)

@@ -138,11 +138,23 @@ export async function initCommand(
   // does not perform a handoff the way `plan --target` / `impl --target` do.
   // Validated against the same `HANDOFF_CHOICES` so the three commands never
   // drift on what a target name means. Absent means "auto-detect".
+  //
+  // Presence is tested separately from the value, and both forms of "present
+  // but valueless" are rejected. `parseArgs` files a trailing `--target` under
+  // `flags` (no value followed it) and `--target=` under `values` as an empty
+  // string; a bare truthiness test on the value misses both, so init would
+  // silently fall back to auto-detection and could write skills somewhere the
+  // user did not choose. Same `flags[…] === true || Object.hasOwn(values, …)`
+  // idiom the retired-flag checks above use.
+  const targetProvided =
+    flags.target === true || Object.hasOwn(values, 'target')
   const targetFlag = values.target
   const target = resolveTarget(targetFlag)
-  if (targetFlag && !target) {
+  if (targetProvided && !target) {
     p.log.error(
-      `Unknown --target \`${targetFlag}\`. Valid values: ${HANDOFF_CHOICES.join(', ')}.`,
+      targetFlag
+        ? `Unknown --target \`${targetFlag}\`. Valid values: ${HANDOFF_CHOICES.join(', ')}.`
+        : `\`--target\` needs a value. Valid values: ${HANDOFF_CHOICES.join(', ')}.`,
     )
     throw new CliExit(1)
   }
