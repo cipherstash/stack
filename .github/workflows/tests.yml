@@ -259,8 +259,27 @@ jobs:
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/stack/.env
 
       # Run TurboRepo tests
+      #
+      # STASH_TEST_DATABASE_URL points the CLI's live-Postgres suites
+      # (`packages/cli/src/**/__tests__/**.live.test.ts`) at this job's
+      # service container — without it they self-skip, and the only guard on
+      # the `stash eql verify` parser↔catalog spelling seam
+      # (`installer/__tests__/verify.live.test.ts`) would run in no CI
+      # workflow at all: a routine `@cipherstash/eql` bump could then make
+      # every `stash eql install` fail with phantom damage, on green CI.
+      # These suites need Postgres only, no CipherStash credentials; the
+      # verify suite installs EQL v3 into its own schemas, which coexists
+      # with the image's pre-installed EQL v2 that the stack tests use.
+      # They share that one database, so the CLI vitest config runs them
+      # serially (the `live` project sets `fileParallelism: false` —
+      # verify.live's bundle install opens with DROP SCHEMA … CASCADE, which
+      # races destructively under the other suites in parallel forks).
+      # (`supabase-push.live.test.ts` gates on different env vars and still
+      # skips here — it needs the Supabase CLI binary.)
       - name: Run tests
         run: pnpm run test
+        env:
+          STASH_TEST_DATABASE_URL: postgres://cipherstash:password@localhost:5432/cipherstash
 
       # CLI E2E tests drive the built `dist/bin/stash.js` through a real
       # pseudo-terminal via node-pty. Run via turbo so the `^build` + `build`

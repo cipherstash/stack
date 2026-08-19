@@ -111,6 +111,7 @@ Commands:
 
   eql preflight        Report whether this database role can install EQL, before trying
   eql install          Scaffold stash.config.ts (if missing) and install EQL extensions
+  eql verify           Check the installed EQL surface is complete (catches partial installs)
   eql migration        Generate an EQL v3 install migration (Drizzle, or supabase/migrations/)
   eql repair           Repair migrations with an un-runnable ALTER COLUMN to an encrypted type
   eql upgrade          Upgrade EQL extensions to the latest version
@@ -257,6 +258,32 @@ function rejectRetiredEqlFlags(
   }
 }
 
+/**
+ * `parseArgs` booleanises a `--database-url` whose value is missing (next
+ * token starts with `-`, or the flag is last), so a typo'd `--database-url
+ * --force` would silently fall back to env/config resolution — and the
+ * command would act on a different database than the user targeted, without
+ * ever naming it. Harmless for the read-only diagnostics, catastrophic for
+ * `eql install --force` (DROP SCHEMA … CASCADE, no confirmation). A valueless
+ * `--database-url` is always a typo, so `dispatch()` rejects it for EVERY
+ * command rather than per-case, keeping stdout parseable in `--json` mode
+ * (same pattern as `stash env`'s `nameMissingValue`).
+ */
+async function rejectMissingDatabaseUrlValue(
+  flags: Record<string, boolean>,
+): Promise<void> {
+  if (flags['database-url'] !== true) return
+  const message =
+    '`--database-url` needs a value (e.g. --database-url postgres://...). Without one the command would silently resolve a different database from DATABASE_URL or stash.config.ts.'
+  if (flags.json) {
+    const { emitJsonError } = await import('../commands/auth/events.js')
+    emitJsonError('missing_flag_value', message)
+  } else {
+    p.log.error(message)
+  }
+  throw new CliExit(1)
+}
+
 async function runEqlCommand(
   sub: string | undefined,
   flags: Record<string, boolean>,
@@ -272,6 +299,14 @@ async function runEqlCommand(
     case 'install':
       await runInstall(flags, values)
       break
+    case 'verify': {
+      const { verifyCommand } = await import('../commands/eql/verify.js')
+      await verifyCommand({
+        databaseUrl: values['database-url'],
+        json: flags.json,
+      })
+      break
+    }
     case 'migration': {
       const { eqlMigrationCommand } = await import(
         '../commands/eql/migration.js'
@@ -544,6 +579,7 @@ async function dispatch(
   flags: Record<string, boolean>,
   values: Record<string, string>,
 ) {
+  await rejectMissingDatabaseUrlValue(flags)
   switch (command) {
     case 'init':
       await initCommand(flags, values)

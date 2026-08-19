@@ -4,6 +4,7 @@ import { resolveDatabaseUrl } from '@/config/database-url.js'
 import { findConfigFile, loadStashConfig } from '@/config/index.js'
 import { createPgClient } from '@/db/client.js'
 import { EQLInstaller } from '@/installer/index.js'
+import { type VerifyReport, verifyEqlSurface } from '@/installer/verify.js'
 import { messages } from '@/messages.js'
 import { detectPackageManager, runnerCommand } from '../init/utils.js'
 import { ensureEncryptionClient } from './client-scaffold.js'
@@ -174,6 +175,15 @@ export async function installCommand(
         s.stop('Supabase role grants applied.')
         reportSupabaseGrantsOutcome(grantsResult)
       }
+      // isInstalled() is a schemas-exist presence test, so this path is
+      // exactly where a partial install would otherwise slip through: install
+      // commits, verify fails, and the natural retry — a plain re-run without
+      // --force — used to print "Nothing to do." and exit 0 on the very
+      // database it just called damaged. Verify here too.
+      await verifySurfaceOrExit(databaseUrl, s, {
+        remedy:
+          'The existing install is incomplete — queries against the missing objects will fail. Re-run with `stash eql install --force` to reinstall the bundle.',
+      })
       p.log.info('Use --force to re-run the install script.')
       p.outro('Nothing to do.')
       return 'already-installed'
@@ -184,6 +194,15 @@ export async function installCommand(
   const installResult = await installer.install({ supabase })
   s.stop('EQL extensions installed.')
   if (supabase) reportSupabaseGrantsOutcome(installResult)
+
+  // #890: an install can commit and still be incomplete at query time (the
+  // bundle's own conditional paths, platform quirks, concurrent DDL). Verify
+  // the surface against the pinned bundle before declaring success — the
+  // check is a handful of read-only catalog queries.
+  await verifySurfaceOrExit(databaseUrl, s, {
+    remedy:
+      'Queries against the missing objects will fail. Re-run `stash eql install --force`, and if this persists, please report it: https://github.com/cipherstash/stack/issues',
+  })
 
   s.start('Installing cs_migrations tracking schema...')
   const migrationsDb = createPgClient(databaseUrl)
@@ -205,6 +224,60 @@ export async function installCommand(
   printNextSteps()
   p.outro('Done!')
   return 'installed'
+}
+
+/**
+ * The #890 surface check, shared by the fresh-install tail and the
+ * already-installed path. Exits 1 on damage; a verification ERROR (the
+ * database dropped the connection, a timeout) is a warning, not a failure —
+ * the install itself is committed, and `stash eql verify` can re-check later.
+ *
+ * Exported for the unit suite only — the command surface is `installCommand`.
+ */
+export async function verifySurfaceOrExit(
+  databaseUrl: string,
+  s: ReturnType<typeof p.spinner>,
+  options: { remedy: string },
+): Promise<void> {
+  s.start('Verifying the installed EQL surface...')
+  let report: VerifyReport
+  try {
+    report = await verifyEqlSurface(databaseUrl)
+  } catch (err) {
+    s.stop('Could not verify the installed EQL surface.')
+    p.log.warn(
+      `${err instanceof Error ? err.message : String(err)} — run \`stash eql verify\` to check the install later.`,
+    )
+    return
+  }
+  if (report.status === 'version-mismatch') {
+    // `ok: false`, but NOT damage: the pinned bundle is the wrong manifest to
+    // diff against, so nothing was actually checked. `stash eql verify` stays
+    // strict about that (exit 1 — could-not-verify must never gate as
+    // verified), but a no-op `eql install` re-run over an older EQL was exit 0
+    // before verification existed, and idempotent provisioning scripts depend
+    // on that. Warn with the skew and the remedy, and carry on.
+    s.stop(
+      'Installed EQL version differs from the pinned bundle — surface not verified.',
+    )
+    const mismatch = report.findings[0]?.message
+    if (mismatch) p.log.warn(mismatch)
+    return
+  }
+  if (report.ok) {
+    s.stop(
+      report.ore?.state === 'fallback'
+        ? 'EQL surface verified (ORE operator class skipped — expected for this role; use the `_ord_ope` ordering domains).'
+        : 'EQL surface verified — install is complete.',
+    )
+    return
+  }
+  s.stop('The installed EQL surface is incomplete.')
+  const { reportVerifyFindings } = await import('../eql/verify.js')
+  reportVerifyFindings(report)
+  p.log.error(options.remedy)
+  p.outro('Installation incomplete.')
+  process.exit(1)
 }
 
 export function prismaNextInstallGuard(
