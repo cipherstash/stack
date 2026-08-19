@@ -254,3 +254,37 @@ export async function resolveDatabaseUrl(
   }
   process.exit(1)
 }
+
+/**
+ * Best-effort sibling of {@link resolveDatabaseUrl}: same source order, minus
+ * the two tiers that take over the terminal. It never prompts, never prints,
+ * and never exits — it returns `undefined` when nothing is configured.
+ *
+ * That is what makes it usable for *decorating a child process's environment*
+ * rather than for connecting ourselves. `eql migration --drizzle` spawns the
+ * project's `drizzle-kit`, whose `drizzle.config.ts` typically reads
+ * `process.env.DATABASE_URL` (and often throws when it is missing). We inherit
+ * the parent env, so a `.env.local` value is already there — `bin/main.ts`
+ * loads the dotenv files at startup. What is NOT there is a URL that only this
+ * CLI knows how to find: `supabase status --output env` on a local Supabase
+ * project, or a `--database-url` flag threaded through the resolver context.
+ * Passing that down turns a hard abort into a working scaffold, and a failure
+ * to find one is not an error here — drizzle-kit may not need a URL at all.
+ */
+export function tryResolveDatabaseUrl(
+  opts: ResolveDatabaseUrlOptions = {},
+): string | undefined {
+  const ctx: ResolveDatabaseUrlOptions = { ...als.getStore(), ...opts }
+  const cwd = ctx.cwd ?? process.cwd()
+
+  const flag = ctx.databaseUrlFlag?.trim()
+  if (flag && isUrlParseable(flag)) return flag
+
+  const fromEnv = process.env.DATABASE_URL?.trim()
+  if (fromEnv) return fromEnv
+
+  if (ctx.supabase || detectSupabaseProject(cwd).hasConfigToml) {
+    return trySupabaseStatus()
+  }
+  return undefined
+}

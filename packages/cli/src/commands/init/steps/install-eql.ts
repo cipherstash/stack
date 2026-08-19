@@ -128,7 +128,10 @@ function resolveMigrationRoute(
       options: { drizzle: true, supabase: supabase || undefined },
       retryCommand: 'stash eql migration --drizzle',
       failureHint:
-        'Could not generate the EQL migration — check that drizzle-kit is installed and configured.',
+        // Not "check that drizzle-kit is installed" (#924): that was almost
+        // never the cause, and drizzle-kit's own output — now printed above
+        // this line, from both streams — says what actually went wrong.
+        'Could not generate the EQL migration. drizzle-kit reported the failure above; the usual cause is a drizzle.config.ts that cannot read DATABASE_URL.',
     }
   }
   if (supabase && hasLocalSupabaseScaffolding()) {

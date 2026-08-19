@@ -117,6 +117,44 @@ export const messages = {
     migrationBadName:
       'Migration name must contain only letters, numbers, dashes, and underscores.',
     /**
+     * Generic follow-up when the spawned `drizzle-kit generate` exits non-zero
+     * and we cannot name a more specific cause.
+     *
+     * Deliberately no longer says "make sure drizzle-kit is installed and
+     * configured": that was the one thing almost never wrong, and it sent
+     * people looking in the wrong place (#924). drizzle-kit prints its own
+     * failures — including the argument validation ones — to STDOUT, not
+     * stderr, so the caller must surface both streams for this hint to be the
+     * fallback rather than the whole message.
+     */
+    migrationDrizzleKitFailed: (versionCmd: string) =>
+      `drizzle-kit's own output is above. Reproduce it directly with \`${versionCmd}\` to see the failure without stash in the way.`,
+    /**
+     * drizzle-kit ran, read `drizzle.config.ts`, and the config itself blew up
+     * on a missing `DATABASE_URL`.
+     *
+     * The dominant Drizzle layout keeps the URL in `.env.local` and wraps
+     * drizzle-kit in `dotenv -e .env.local -- drizzle-kit …`; invoked by us
+     * that wrapper never runs. We load the dotenv files at startup and thread a
+     * resolved URL into the child env, so reaching this message means neither
+     * found one — say where to put it rather than blaming the install.
+     */
+    migrationDrizzleKitNoDatabaseUrl: (dotenvFile: string) =>
+      `Your drizzle.config.ts could not read DATABASE_URL. stash loads ${dotenvFile} and passes the URL it resolves down to drizzle-kit, so it is not set in either — export DATABASE_URL, or add it to ${dotenvFile}, and re-run.`,
+    /**
+     * drizzle-kit wrote somewhere other than the `--out` we were given.
+     *
+     * We no longer pass `--out` down (drizzle-kit treats ANY of
+     * schema/out/dialect on the command line as "ignore the config file
+     * entirely", then rejects the run for the two we cannot supply — see
+     * `generateDrizzleEqlMigration`), so `drizzle.config.ts` decides the
+     * directory and `--out` is only where we look. When the two disagree, the
+     * config wins and the user needs to know which one their file landed in —
+     * silently using the real one would leave `--out` looking honoured.
+     */
+    migrationDrizzleOutOverridden: (configured: string, requested: string) =>
+      `drizzle-kit wrote into ${configured}, not the --out you passed (${requested}) — the \`out\` in your drizzle.config.ts decides where migrations go, and stash follows it so the journal stays consistent. Change it there if you want them elsewhere.`,
+    /**
      * `--name` with `--supabase`. The Supabase filename is fixed because
      * duplicate detection matches on the `_cipherstash_eql.sql` suffix, so the
      * flag cannot be honoured — warn rather than rename nothing silently.

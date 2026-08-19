@@ -422,11 +422,11 @@ stash eql migration --supabase             # supabase/migrations/<timestamp>_cip
 
 | Flag | Description |
 |---|---|
-| `--drizzle` | Emit a Drizzle custom migration (via `drizzle-kit generate --custom`, then inject the SQL). Requires `drizzle-kit`. |
+| `--drizzle` | Emit a Drizzle custom migration (via `drizzle-kit generate --custom`, then inject the SQL). Requires `drizzle-kit`, and a `drizzle.config.ts` that can read `DATABASE_URL` — stash loads your `.env`/`.env.local` and passes the URL it resolves down to the child, so the usual `dotenv -e .env.local -- drizzle-kit …` wrapper is not needed. |
 | `--prisma` | **Not needed** — Prisma Next installs the EQL bundle through its own migration framework (the extension pack's `migrations/cipherstash/` contract space; run `prisma-next migrate`). The flag exists only to say so and point you there. |
 | `--supabase` | Alone: write the install into `supabase/migrations/`, so it survives `supabase db reset`. With `--drizzle`: append the Supabase role grants (`eql_v3` + `eql_v3_internal` → `anon`, `authenticated`, `service_role`) instead. Harmless when you connect directly as `postgres`; needed when the same tables are reached via PostgREST/RLS. |
 | `--name <name>` | Migration name (Drizzle). Default `install-eql`. Letters, numbers, `-`, and `_` only — anything else is rejected. |
-| `--out <path>` | Where the migration is written. Drizzle: default `drizzle`, passed straight to `drizzle-kit --out`, so set it to match your `drizzle.config.ts` if that writes elsewhere. Supabase: leave it alone — see below. |
+| `--out <path>` | Where the migration is written. Drizzle: your `drizzle.config.ts` `out` decides that — stash follows the path drizzle-kit reports and warns if it differs from this flag. `--out` is only the fallback directory to search (default `drizzle`) when drizzle-kit reports no path. Supabase: leave it alone — see below. |
 | `--force` | Regenerate the Supabase install migration in place when one already exists (keeping its version, so an applied ledger stays consistent). Without it, a second run exits 1. Re-applying the replaced file takes a specific recipe — see "Re-applying after `--force`" below. Not needed for `--drizzle` — drizzle-kit numbers each generated migration. |
 | `--dry-run` | Show what would happen without writing anything. |
 
