@@ -97,6 +97,12 @@ overrides:
   # authority delimiter, fix >=3.1.4) and GHSA-7p8r-x3mc-p8w7 / CVE-2026-18446
   # (fix >=3.1.5). Pinned to the matured 3.1.5 (published 2026-07-31).
   'fast-uri@<3.1.5': '3.1.5'
+  # GHSA-f88m-g3jw-g9cj — sharp's vendored libvips carries multiple High
+  # libvips CVEs (CVE-2026-33327, CVE-2026-33328, CVE-2026-35590,
+  # CVE-2026-35591), fixed >=0.35.0. Pulled in as an optional dependency of
+  # next (image optimization), not a direct dependency. Pinned to the matured
+  # 0.35.0 (published 2026-06-10).
+  'sharp@<0.35.0': '0.35.0'
 
 # Supply-chain hardening — see skills/stash-supply-chain-security/
 # 7 days in minutes; mirrors the Dependabot cooldown so manual + automated
