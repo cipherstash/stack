@@ -26,6 +26,10 @@ selects, with support for equality, range, and ordering.
 - Using identity-aware encryption (lock contexts) with Supabase
 - Building applications where sensitive columns need encryption at rest and in transit
 
+> **On a managed AI platform — Lovable, v0, Bolt, Replit — read `stash-managed-platforms` first.** Two things there are decided before anything on this page applies: server code runs on an edge runtime, so it needs `@cipherstash/stack/wasm-inline` (`@cipherstash/protect` is the deprecated predecessor and its native module will not load — that dead end has cost an agent a whole turn), and the database role is not `postgres`, which changes how EQL gets installed. `encryptedSupabase` also cannot be constructed inside a Worker: it introspects the database and so needs a Postgres connection.
+
+> **What survives PostgREST, in one line** (the full treatment is under [Query behaviour on encrypted columns](#query-behaviour-on-encrypted-columns), a long way down): `eq` / `neq` / `in` / `match()` and the range filters `gt` / `gte` / `lt` / `lte` **do** work on capable domains, and so does `order()` on OPE-backed ordering columns. Encrypted free-text `matches()` and encrypted-JSON `contains()` / `selectorEq()` / `selectorNe()` **do not** — they need `eql_v3.query_*` casts PostgREST cannot emit, and the wrapper fails fast rather than returning wrong rows. Agents guess wrong in both directions on this, so don't infer it; for the predicates that don't survive, use Drizzle, Prisma Next, or SQL in an RPC.
+
 ## Installation
 
 ```bash

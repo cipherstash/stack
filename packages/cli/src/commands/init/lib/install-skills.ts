@@ -23,13 +23,17 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
   // Supabase gets the raw-SQL and edge skills on top of its own: Edge
   // Functions are the flagship use of the WASM entry, and Supabase projects
   // write hand-written SQL in migrations and RPC even when the app itself
-  // goes through PostgREST (#754).
+  // goes through PostgREST (#754). `stash-managed-platforms` rides with them
+  // because the hosted AI builders are overwhelmingly Supabase-backed, and
+  // the failure it prevents — concluding the product cannot run here at all —
+  // happens before an agent knows enough to go looking for it (#893).
   supabase: [
     'stash-encryption',
     'stash-supabase',
     'stash-indexing',
     'stash-postgres',
     'stash-edge',
+    'stash-managed-platforms',
     'stash-deployment',
     'stash-zerokms',
     'stash-auth',
@@ -47,11 +51,14 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
   // The no-ORM path: `stash-postgres` (binding + predicate forms) and `stash-edge`
   // (WASM entry, CS_* credentials) are the two skills this integration has no
   // other source for — everything else assumes an ORM emits the operands.
+  // `stash-managed-platforms` joins them: v0, Bolt and Replit reach a plain
+  // Postgres this way, and hit the same four constraints (#893).
   postgresql: [
     'stash-encryption',
     'stash-indexing',
     'stash-postgres',
     'stash-edge',
+    'stash-managed-platforms',
     'stash-deployment',
     'stash-zerokms',
     'stash-auth',
