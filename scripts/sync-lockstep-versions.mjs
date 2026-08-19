@@ -117,11 +117,22 @@ export function cargoLockWorkspaces(root) {
  * `eql-codegen` for the SQL build a few lines below, so there is one Rust here
  * rather than two.
  *
- * `--offline` because the crate resolves from a path and needs no registry.
- * Confirmed byte-identical to the networked resolution on the 3.0.4 -> 3.0.5
- * bump, including the four unrelated `windows-sys` edges cargo repaired along
- * the way. A release-time step should not acquire a network dependency it has
- * no use for.
+ * NOT `--offline`, however tempting it looks. `eql-bindings` resolves from a
+ * path, so the flag reads as free — but `cargo update -p X` does not update X
+ * in isolation. It re-resolves the whole graph and rewrites a complete lock,
+ * and offline that means every OTHER package has to be served from the local
+ * registry cache; `packages/protect-ffi` has 167 of them. The release job has
+ * no such cache — `jdx/mise-action` runs there with `cache: false`, installing
+ * toolchains and populating nothing under `~/.cargo/registry`, and
+ * `scripts/lint-no-workflow-caching.mjs` forbids a cache restore anywhere an
+ * artifact is published. So `--offline` died on the first call with
+ * `error: no matching package named \`chrono\` found`, taking `pnpm run version`
+ * with it AFTER `changeset version` had rewritten every manifest and CHANGELOG.
+ *
+ * The two resolutions agree where both can run — verified byte-identical on the
+ * 3.0.4 -> 3.0.5 bump, `windows-sys` edges included — so this is a change of
+ * where the step works, not of what it produces. Asserted, with the CI
+ * precondition it depends on, in scripts/__tests__/sync-lockstep-versions.test.mjs.
  *
  * `--manifest-path` rather than a second `cwd`, so every cargo invocation in
  * this script runs from the one directory whose mise config is trusted.
@@ -142,7 +153,6 @@ export function refreshCargoLock({
       '--',
       'cargo',
       'update',
-      '--offline',
       '--package',
       LOCKED_CRATE,
       '--manifest-path',
@@ -173,9 +183,9 @@ function main() {
     bumpCargoPackageVersion(readFileSync(cargoPath, 'utf8'), version),
   )
 
-  // Before the SQL build, not after: this is cheap and offline, so a cargo that
-  // cannot run should stop the release in seconds rather than after a full
-  // eql-codegen compile.
+  // Before the SQL build, not after: this is cheap, so a cargo that cannot run
+  // should stop the release in seconds rather than after a full eql-codegen
+  // compile.
   const workspaces = cargoLockWorkspaces(stackRoot)
   if (workspaces.length === 0) {
     throw new Error(
