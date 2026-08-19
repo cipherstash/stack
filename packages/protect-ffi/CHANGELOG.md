@@ -1,39 +1,5 @@
 # Changelog
 
-## 0.32.0
-
-### Minor Changes
-
-- e77bfce: The native binding now loads lazily. Importing the package no longer resolves the platform binary: the CJS entry pulls in `./load.cjs` with `import native = require(...)`, which emits a plain `require` and leaves the `@neon-rs/load` proxy untouched, where the previous `import * as native from` compiled to an `__importStar` that enumerated the module and forced resolution at module-evaluation time. `require('@cipherstash/protect-ffi')` therefore succeeds with no binding installed, and the same `MODULE_NOT_FOUND` — identical `code` and `message` — is raised on first use instead of at import.
-
-  Adds `assertNativeBindingAvailable()`: a diagnostic entry point that resolves the platform binary and throws the loader's error unwrapped if it is missing, without constructing a client, reading credentials or touching the network. It exists because laziness removed the implicit probe that importing the package used to be, and there is no consumer-side replacement — `lib/load.cjs` is not an exported path (`ERR_PACKAGE_PATH_NOT_EXPORTED`), reading one of this module's own exports never reaches the proxy, and forcing it through a real wrapper means picking one whose argument validation does not reject first.
-
-### Patch Changes
-
-- e77bfce: Point the published metadata at `cipherstash/stack`, the repository these
-  packages are now built and published from. The wrapper's `repository.url`,
-  `bugs.url` and `homepage`, and each platform package's `repository.url`, all
-  named `cipherstash/protectjs-ffi`; each platform package's
-  `repository.directory` also named `platforms/<platform>`, which resolves from
-  the root of the repository named above and so addressed nothing here.
-
-  npm requires `repository.url` to match the publishing repository exactly for a
-  trusted publish, and rejects a mismatch rather than warning about it. A stale
-  `repository.directory` fails more quietly: the publish succeeds and the source
-  link on the package page 404s.
-
-  The one repository URL that reaches an end user at runtime moves too — the Rust
-  core's `InvariantViolation` error asks the reader to file an issue, and the
-  repository it pointed at is archived at the end of the publishing cutover.
-
-- ba3830f: Ship `CHANGELOG.md` inside the published tarball. It was missing from `files`,
-  so the release notes for these packages were readable on GitHub and on the npm
-  web page but not in the package you actually install — which is the copy you
-  have when something breaks offline, or when the repository has moved.
-
-  `@cipherstash/stack-drizzle` and `@cipherstash/stack-supabase` gain it in the
-  same release, as do the six `@cipherstash/protect-ffi-<platform>` packages.
-
 ## About 0.31.0 and earlier
 
 Every entry from `[0.31.0]` down was written by hand, under an `[Unreleased]`
@@ -73,13 +39,13 @@ ships inside the npm tarball. Guidance for contributors belongs in AGENTS.md.
 
   ```js
   // before
-  await newClient({ encryptConfig, strategy, clientId, clientKey, keyset });
+  await newClient({ encryptConfig, strategy, clientId, clientKey, keyset })
   // after
   await newClient({
     encryptConfig,
     authStrategy,
     clientOpts: { clientId, clientKey, keyset },
-  });
+  })
   ```
 
   **Move `keyset` with the rest.** Unknown option keys are still dropped
@@ -100,7 +66,7 @@ ships inside the npm tarball. Guidance for contributors belongs in AGENTS.md.
   encoding `~/.cipherstash/secretkey.json` uses on disk — so a base64 value
   passed as `clientKey`, or set in `CS_CLIENT_KEY` (which the Neon entry
   forwards as `clientKey`), used to work. It is now rejected with `invalid
-clientKey: expected a hex-encoded key`. Re-encode as hex, or read the key
+  clientKey: expected a hex-encoded key`. Re-encode as hex, or read the key
   from the profile store instead of pasting it.
 
   The decode error deliberately says nothing more: `hex`'s own message names
@@ -122,7 +88,7 @@ clientKey: expected a hex-encoded key`. Re-encode as hex, or read the key
 
 - **A key an options object doesn't declare is now an error, not a silent
   drop.** Every options struct rejects unrecognised fields, naming the
-  offender — `` unknown field `clientId`  `` — instead of discarding them on the
+  offender — ``unknown field `clientId` `` — instead of discarding them on the
   way in. A misspelling, a stale key, or a value in the wrong place fails
   loudly. ([#144])
 
@@ -155,49 +121,41 @@ clientKey: expected a hex-encoded key`. Re-encode as hex, or read the key
     its inherited fields, and a field defined through
     `Object.defineProperty({enumerable: false})` is dropped. Neon has always
     been `JSON.stringify`, which is own-enumerable too.
-  - **A misspelled _required_ field now reports it as missing, not unknown.**
-    `encrypt(client, {plaintext, column, tabel: 'users'})` says `` missing
-field `table`  `` and never names `tabel`; it used to say both. Serde's
+  - **A misspelled *required* field now reports it as missing, not unknown.**
+    `encrypt(client, {plaintext, column, tabel: 'users'})` says ``missing
+    field `table` `` and never names `tabel`; it used to say both. Serde's
     flatten path buffers the map and reports at its closing brace, which also
     drops the `expected one of ...` list from every rejection. Neon-only —
     the wasm path had no error to lose.
 
   Three differences between the boundaries remain, all of them about how
-  strictly a _mistake_ is reported. Correct input behaves identically on both.
+  strictly a *mistake* is reported. Correct input behaves identically on both.
 
   - A key whose value is `undefined` (`{...opts, typo: undefined}`) is
     rejected on wasm and accepted on Neon, where `JSON.stringify` drops it
     before serde runs.
   - A key whose value is a **function or a symbol** is reported on wasm — as a
-    _type_ error, naming the wrong problem — and dropped in silence on Neon,
+    *type* error, naming the wrong problem — and dropped in silence on Neon,
     where `JSON.stringify` omits it.
   - A key holding a **circular value or a `bigint`** throws in
     `JSON.stringify` on Neon before serde can see it. `newClient` names the
     key itself rather than let a bare `TypeError: Converting circular
-structure to JSON` out; the other entries do not.
+    structure to JSON` out; the other entries do not.
 
 - **`ProtectError` and `normalizeError` are gone. Both entries throw an
   ordinary `Error` with a `code` property.** ([#146])
 
   ```ts
   // before — Node entry only, and only for errors the message table matched
-  if (err instanceof ProtectError && err.code === "INVALID_JSON_PATH") {
-  }
+  if (err instanceof ProtectError && err.code === 'INVALID_JSON_PATH') { }
 
   // after — both entries, nothing to import
-  if (
-    err instanceof Error &&
-    "code" in err &&
-    err.code === "INVALID_JSON_PATH"
-  ) {
-  }
+  if (err instanceof Error && 'code' in err && err.code === 'INVALID_JSON_PATH') { }
 
   // after, when you want the code as a typed value
-  import { isProtectErrorCode } from "@cipherstash/protect-ffi";
-  const { code } = err as { code?: unknown };
-  if (isProtectErrorCode(code)) {
-    /* code narrows to ProtectErrorCode */
-  }
+  import { isProtectErrorCode } from '@cipherstash/protect-ffi'
+  const { code } = err as { code?: unknown }
+  if (isProtectErrorCode(code)) { /* code narrows to ProtectErrorCode */ }
   ```
 
   Every export used to run through a try/catch that re-threw the failure as a
@@ -226,7 +184,7 @@ structure to JSON` out; the other entries do not.
 - **The wasm build declares the real option types**, emitted by wasm-bindgen
   from `typescript_type` / `typescript_custom_section` attributes on the Rust.
   Previously it typed every export as `(client: WasmClient, opts: any):
-Promise<any>`, so the
+  Promise<any>`, so the
   `./wasm` and `./wasm-inline` entries checked nothing and exported no option
   or payload types at all — while the Neon entry declared fourteen. Both
   entries now name the same types.
@@ -262,19 +220,19 @@ Promise<any>`, so the
   ([#146])
 
   Branching on a code needs neither — `err instanceof Error && 'code' in err &&
-err.code === 'MISSING_INDEX'` compiles under `strict` on its own.
-  `isProtectErrorCode` earns its place when you want the code as a _typed_
+  err.code === 'MISSING_INDEX'` compiles under `strict` on its own.
+  `isProtectErrorCode` earns its place when you want the code as a *typed*
   value, since it narrows `unknown` to `ProtectErrorCode`:
 
   ```ts
   import {
     isProtectErrorCode,
     type ProtectErrorCode,
-  } from "@cipherstash/protect-ffi";
+  } from '@cipherstash/protect-ffi'
 
   function errorCode(err: unknown): ProtectErrorCode | undefined {
-    const { code } = err as { code?: unknown };
-    return isProtectErrorCode(code) ? code : undefined;
+    const { code } = err as { code?: unknown }
+    return isProtectErrorCode(code) ? code : undefined
   }
   ```
 
@@ -292,7 +250,7 @@ err.code === 'MISSING_INDEX'` compiles under `strict` on its own.
 ### Changed
 
 - **`encryptConfig` normalisation moved into Rust.** `cast_as: 'string' |
-'number' | 'bigint'` → `'text' | 'float' | 'big_int'`, and the `ste_vec`
+  'number' | 'bigint'` → `'text' | 'float' | 'big_int'`, and the `ste_vec`
   `array_index_mode` default of `'none'`, now happen at the deserialization
   boundary rather than in the Neon entry's JS wrapper.
 
@@ -312,7 +270,7 @@ err.code === 'MISSING_INDEX'` compiles under `strict` on its own.
   JavaScript and has always worked on the Neon entry, whose extractor is
   `JSON.stringify`-based; on wasm those keys survive as `null` and every
   non-optional field rejected them (`invalid type: null, expected string or
-map`). One config now works on both.
+  map`). One config now works on both.
 
 - **`newClient`'s `strategy` option is now `authStrategy`**, matching
   `@cipherstash/stack`'s `config.authStrategy` so one concept has one name
@@ -333,8 +291,8 @@ map`). One config now works on both.
   not this repo —
 
   ```ts
-  if (message.includes("requires plaintext_type: json"))
-    return "STE_VEC_REQUIRES_JSON_CAST_AS";
+  if (message.includes('requires plaintext_type: json'))
+    return 'STE_VEC_REQUIRES_JSON_CAST_AS'
   ```
 
   — so an upstream reword would have silently downgraded a caller's error to
@@ -551,7 +509,7 @@ map`). One config now works on both.
 
 - Support for `@cipherstash/auth` `0.41`'s `@byteslice/result` `Result`-shaped
   `getToken()` — `{ data: { token, … } }` on success, `{ failure: { type,
-error, … } }` on error — on both the Node (Neon) and WASM auth paths. The
+  error, … } }` on error — on both the Node (Neon) and WASM auth paths. The
   bare `{ token }` shape (the documented `getToken(): Promise<{ token }>`
   contract, used by `@cipherstash/auth` `<= 0.40` and custom strategies) is
   still accepted, so this is backward compatible. A `failure` result is
