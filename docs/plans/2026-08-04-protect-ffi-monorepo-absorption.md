@@ -43,15 +43,19 @@
 
 **Working-tree state is not part of this plan's guarantees.** An earlier revision claimed "working tree clean"; that was true when written and false shortly after. A prior rewrite of this document was lost by being left uncommitted across a branch switch — **commit plan edits in the session that makes them.**
 
-**Phase 3 is built; phases 4 and 5 remain.** Phase 4 contains the only
-irreversible steps and requires seven manual npmjs.com changes. Phase 5 is
-blocked until phase 4 publishes.
+**Phases 3 and 5 are built; phase 4 is in flight.** Phase 5 (`stash doctor`)
+landed ahead of phase 4 rather than behind it — see #883; the "blocked until
+phase 4 publishes" sequencing an earlier revision asserted did not hold, because
+the diagnostics subpath probes the binding in the workspace and needs no
+release.
 
-The pipeline is inert until a version is unpublished, and
-`scripts/lint-no-ffi-changeset.mjs` is what keeps that from happening early: an
-FFI changeset stays parked as `.changeset/<name>.md.deferred` until the cutover
-PR renames it. Two are waiting — `protect-ffi-lazy-load.md.deferred` and
-`protect-ffi-repository-url.md.deferred`.
+Phase 4 contains the only irreversible steps. Its guard —
+`scripts/lint-no-ffi-changeset.mjs`, which held FFI changesets parked as
+`.changeset/<name>.md.deferred` — is **deleted** as of the cutover PR, and the
+two files it was holding (`protect-ffi-lazy-load`, `protect-ffi-repository-url`)
+are renamed back and live. What remains is the release itself: pre-flight
+against the versioned ref, merge Version Packages, verify, archive the old
+repository.
 
 ### Phase 3 progress
 
@@ -149,7 +153,7 @@ error The package "@cipherstash/stack" depends on the skipped package
       Please add "@cipherstash/stack" to the `ignore` option.
 ```
 
-An ignored package's dependents must also be ignored, cascading through the Stack fixed group to a total release freeze — the alternative this plan rejected. Replaced by `scripts/lint-no-ffi-changeset.mjs`. All seven packages are already on npm at `0.31.0`, and `changeset publish` only publishes versions absent from the registry, so a release is *already* a no-op for them. Full analysis: `.work/2026-08-04-protect-ffi-changesets-ignore-analysis.md`.
+An ignored package's dependents must also be ignored, cascading through the Stack fixed group to a total release freeze — the alternative this plan rejected. Replaced for the duration of the cutover window by `scripts/lint-no-ffi-changeset.mjs`, deleted in Phase 4. All seven packages were already on npm at `0.31.0`, and `changeset publish` only publishes versions absent from the registry, so a release was *already* a no-op for them. Full analysis: `.work/2026-08-04-protect-ffi-changesets-ignore-analysis.md`.
 
 ### `optionalDependencies` were never tracked
 
@@ -1861,26 +1865,43 @@ git commit -m "ci: run the Rust checks from a root path-filtered workflow"
 
 The only irreversible steps.
 
-- [ ] Merge a cutover PR that deletes `scripts/lint-no-ffi-changeset.mjs`, its self-test, its fixtures, the `lint:ffi-changeset` script and the `tests.yml` step; **and** activates the deferred `@cipherstash/protect-ffi` **minor** changeset for the laziness change and `assertNativeBindingAvailable()` — it is already written and parked, so this half is a rename, not composition:
+- [x] Merge a cutover PR that deletes `scripts/lint-no-ffi-changeset.mjs`, its self-test, its fixtures, the `lint:ffi-changeset` script and the `tests.yml` step; **and** activates the deferred `@cipherstash/protect-ffi` **minor** changeset for the laziness change and `assertNativeBindingAvailable()` — it is already written and parked, so this half is a rename, not composition:
 
   ```bash
   for f in .changeset/*.md.deferred; do git mv "$f" "${f%.deferred}"; done
   ```
 
   Both halves in one PR — the guard exists to stop that changeset landing early. The `.md.deferred` extension is what makes parking safe: `@changesets/read` and the guard both select on `.endsWith('.md')`, so the file is inert to `changeset version`/`publish` until renamed. Check for more than one parked file — any protect-ffi change landing during the window parks its changeset the same way.
-- [ ] Let the Version Packages job create the release PR. Verify it bumps all seven FFI packages to `0.32.0`, rewrites the wrapper's six `optionalDependencies`, and patch-bumps the six Stack packages (expected — see "Release lines are coupled by pinning").
+
+  Done in the PR that ticks this box. Two parked files were renamed, not one: `protect-ffi-lazy-load.md` (minor) and `protect-ffi-repository-url.md` (patch).
+
+  Six fixtures under `scripts/__tests__/fixtures/lint-no-ffi-changeset/` were deleted with the self-test. An earlier revision of this line claimed there were none, on the strength of a check against `scripts/fixtures/` — the wrong directory. The self-test used a tmpdir for two cases only (CRLF, and the parked-file case); the rest loaded these on-disk fixtures through ``resolve(…, `../fixtures/lint-no-ffi-changeset/${name}`)``. Deleting the test without them leaves six files no referent points at, and `pnpm run test:scripts` stays green either way — which is exactly why it needed checking rather than inferring.
+
+  **A third changeset is parked on the branch of #905** (the `jsonwebtoken` CVE bump); once this lands, nothing reads or warns about that extension, so #905 must rename its own file before merging or the fix ships with an empty changelog.
+- [ ] Let the Version Packages job create the release PR. Verify it bumps all seven FFI packages to `0.32.0` and rewrites the wrapper's six `optionalDependencies`.
+
+  **Do not expect a Stack patch.** This criterion originally read "patch-bumps the six Stack packages", which follows from the pinning analysis and is the right prediction for an FFI bump in isolation. It is not what will happen: `.changeset/prisma-next-0-17.md` carries `'@cipherstash/stack-prisma': major`, which propagates through the Stack fixed group, so `changeset status` reports all six Stack packages at **major** — and does so on `origin/main` too, with no FFI changeset in play. The Stack major is unrelated to this phase and must not be read as evidence the FFI bump misbehaved.
 - [ ] Run `ffi-preflight.yml` against that **versioned release-PR ref**.
-- [ ] **Repoint npm trusted publishing for all seven packages**: `cipherstash/protectjs-ffi` → `cipherstash/stack`, workflow `release.yml`. For each publisher, **explicitly select `npm publish` under "Allowed actions"** — npm made that field required for configurations created after 2026-05-20, and these are new configurations. Confirm `repository.url` already reads `cipherstash/stack` (Task 2) or the publish is rejected. Only after the versioned pre-flight is green.
+- [x] **Repoint npm trusted publishing for all seven packages**: `cipherstash/protectjs-ffi` → `cipherstash/stack`, workflow `release.yml`. For each publisher, **explicitly select `npm publish` under "Allowed actions"** — npm made that field required for configurations created after 2026-05-20, and these are new configurations. Confirm `repository.url` already reads `cipherstash/stack` (Task 2) or the publish is rejected. Only after the versioned pre-flight is green.
+
+  Done ahead of the pre-flight rather than after it, which inverts the "only after the versioned pre-flight is green" sequencing above. That ordering was about not repointing until the pipeline was known good; the pipeline is built and its jobs have run, so the residual risk is a misconfigured publisher rather than a broken workflow.
+
+  **The Allowed-actions setting is not verified.** npm accepts a publisher scoped to `npm stage publish` only — a configuration that reads as enabled in the UI and fails every `npm publish`. Check all seven before the release, six platform packages included, since `publish-ffi` publishes those first and a stage-only setting on one of six fails a release halfway through:
+
+  ```bash
+  npm trust list @cipherstash/protect-ffi --json
+  # …and the six @cipherstash/protect-ffi-<platform> packages
+  ```
 - [ ] Merge the Version Packages PR. The gate returns `ffi=true js=true`; artifacts build, six platform packages then the wrapper publish, tags and the GitHub release are created, and `changeset publish` skips the seven and publishes the JS packages.
 - [ ] Verify npm provenance on all seven, the seven git tags, the `protect-ffi-v0.32.0` release, and the Stack tags from changesets. Smoke-test a fresh install.
 - [ ] Archive `cipherstash/protectjs-ffi`.
 
 ## Phase 5 — wire `stash doctor`
 
-- [ ] Add a `@cipherstash/stack/diagnostics` subpath (both `import` and `require`). It must import protect-ffi **without** importing `@cipherstash/auth`, be pure, and let the loader error propagate unwrapped.
-- [ ] Rework `packages/cli/src/commands/doctor/index.ts` to probe it, keeping the separate `@cipherstash/auth` probe. This fixes a pre-existing bug: `dist/index.js` statically imports `@cipherstash/auth`, which is eager on two counts (top-level `require`, plus `module.exports = { ...native }` — a spread forces any loader), so today's stack probe silently duplicates the auth probe while rendering two green rows.
-- [ ] Add the missing-binary e2e fixture.
-- [ ] Add changesets for the new Stack subpath and the CLI diagnostic behaviour.
+- [x] Add a `@cipherstash/stack/diagnostics` subpath (both `import` and `require`). It must import protect-ffi **without** importing `@cipherstash/auth`, be pure, and let the loader error propagate unwrapped.
+- [x] Rework `packages/cli/src/commands/doctor/index.ts` to probe it, keeping the separate `@cipherstash/auth` probe. This fixes a pre-existing bug: `dist/index.js` statically imports `@cipherstash/auth`, which is eager on two counts (top-level `require`, plus `module.exports = { ...native }` — a spread forces any loader), so today's stack probe silently duplicates the auth probe while rendering two green rows.
+- [x] Add the missing-binary e2e fixture.
+- [x] Add changesets for the new Stack subpath and the CLI diagnostic behaviour.
 
 ---
 
