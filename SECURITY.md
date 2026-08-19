@@ -19,6 +19,18 @@ This repository is the CipherStash Stack monorepo for JavaScript/TypeScript. It 
 | `@cipherstash/wizard` | AI-powered encryption setup |
 | `@cipherstash/protect-ffi` | Native FFI bindings to the CipherStash Client SDK — the Rust core `@cipherstash/stack` encrypts and decrypts through |
 | `@cipherstash/protect-ffi-darwin-arm64`<br>`@cipherstash/protect-ffi-darwin-x64`<br>`@cipherstash/protect-ffi-linux-arm64-gnu`<br>`@cipherstash/protect-ffi-linux-x64-gnu`<br>`@cipherstash/protect-ffi-linux-x64-musl`<br>`@cipherstash/protect-ffi-win32-x64-msvc` | Prebuilt per-platform binaries for `@cipherstash/protect-ffi`. Installed as optional dependencies; one is selected at load time for the host platform |
+| `@cipherstash/eql` | Encrypt Query Language — the PostgreSQL SQL bundle (`eql_v3` schema: domains, operators, index-term extractors) that stores and queries encrypted payloads, plus its generated TypeScript types. Applied by `stash eql install` and by the Prisma Next adapter's migrations. Released in lockstep with the `eql-bindings` Rust crate, which emits the payloads this SQL reads |
+
+This repository also carries the source of the **`eql-bindings`** Rust crate
+(`packages/eql/crates/eql-bindings`), published to crates.io and released in
+lockstep with `@cipherstash/eql`. It is in scope for security reports on the
+same terms as the npm packages above.
+
+> **Note on publishing.** `@cipherstash/eql`, `eql-bindings`, and the seven
+> `@cipherstash/protect-ffi*` packages have been absorbed into this repository
+> but are still *published* from `cipherstash/encrypt-query-language` and
+> `cipherstash/protectjs-ffi` respectively, pending an npm trusted-publishing
+> cutover. Their source, issues, and security reports belong here.
 
 **Security fixes are released for the latest release line of each package.** Security reports are welcome for any version, but fixes land in the latest release — if you are running an older major version, plan to upgrade to receive them.
 
