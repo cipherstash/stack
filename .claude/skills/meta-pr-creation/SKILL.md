@@ -74,8 +74,10 @@ Reference wording traps (same as issues):
 
 ## Mechanics
 
-- `gh pr create --title '…' --body '…'` (title follows the commit-subject
-  convention).
+- **Always open as a draft**: `gh pr create --draft --title '…' --body '…'`
+  (title follows the commit-subject convention). Mark it ready for review only
+  when the user says so — either ask, or rely on an explicit "open it ready" /
+  "mark it ready" from them. `gh pr ready <number>` flips it.
 - Force-pushing a branch with an open PR is fine (rebases, re-signs) — but
   say so in a PR comment when the rewrite changes more than commit hashes.
 - Don't merge, close, or mark ready-for-review without being asked.
