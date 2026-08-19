@@ -21,6 +21,15 @@ export const messages = {
      */
     usagePrefix: 'Usage: ',
     unknownCommand: 'Unknown command',
+    /**
+     * Shown when `--database-url` is passed with no value (arg parsing turns a
+     * valueless flag into a boolean). Global rather than per-command, and
+     * stated here rather than at the call site so the pty e2e asserting on it
+     * reads the same constant production does — the sibling
+     * `auth.regionFlagNeedsValue` sets that pattern.
+     */
+    databaseUrlFlagNeedsValue:
+      '`--database-url` needs a value (e.g. --database-url postgres://...). Without one the command would silently resolve a different database from DATABASE_URL or stash.config.ts.',
   },
   doctor: {
     title: 'stash doctor',

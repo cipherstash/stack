@@ -14,6 +14,7 @@ import { eqlRequiresQueryDomains, introspect } from './introspect'
  * `@cipherstash/stack-supabase/wasm-inline` instead on those runtimes (#708).
  */
 export const encryptedSupabase = makeEncryptedSupabase(
+  // biome-ignore lint/plugin: `EncryptionFactory` names only the shape `construct` uses; the native factory's real signature is a generic tuple overload that cannot be expressed as a plain function type without re-declaring it here.
   Encryption as unknown as EncryptionFactory,
   { introspect, eqlRequiresQueryDomains },
 )

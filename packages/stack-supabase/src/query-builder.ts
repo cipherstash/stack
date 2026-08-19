@@ -702,20 +702,26 @@ export class EncryptedQueryBuilderImpl<
 
     // Apply select.
     //
-    // A read awaited without any `.select()` call lands in the second branch.
-    // It used to send a raw `*`, which is exactly what `select('*')` refuses
-    // one method above — an unexpanded star cannot carry the `::jsonb` casts,
-    // so every encrypted column came back as an uncast value. Route it through
-    // the same expansion so the two spellings of "give me everything" behave
-    // identically, and fail the same way when no column list exists to expand
-    // (declared mode, #708).
+    // The second branch is a read awaited with no `.select()` call at all. It
+    // sends a raw `*`, and the rows come back untouched: `decryptResults`
+    // takes its `!hasSelect` passthrough, so nothing is cast and nothing is
+    // decrypted. That is long-standing behaviour, not a declared-mode
+    // property, and it is deliberately left alone here.
+    //
+    // An earlier revision of this PR routed it through `expandStarOrThrow()`
+    // to make the two spellings of "give me everything" agree. That was worse
+    // in three ways the review caught (#708): the expansion skips
+    // `addJsonbCastsV3`, so rows still would not decrypt; a declared rename
+    // (`created_at` -> `createdAt`) would send the PROPERTY name and earn a
+    // PostgREST 42703; and pinning the column list at construction breaks
+    // grant-restricted tables and silently drops columns a later migration
+    // added, both of which a raw `*` tolerates. Making this path decrypt
+    // properly means threading the select through `toDbSpace`, which is a
+    // change to the shared pipeline rather than to this branch.
     if (selectString !== null) {
       query = query.select(selectString, this.selectOptions)
     } else if (!this.mutation) {
-      query = query.select(
-        this.expandStarOrThrow() as DbSelect,
-        this.selectOptions,
-      )
+      query = query.select('*' as DbSelect, this.selectOptions)
     }
 
     // Apply resolved filters

@@ -1,4 +1,4 @@
-import { hasBuildColumnKeyMap } from '@cipherstash/stack/adapter-kit'
+import { hasBuildColumnKeyMap, logger } from '@cipherstash/stack/adapter-kit'
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
 import type { IntrospectionData, UnmodelledColumn } from './introspect'
@@ -278,11 +278,33 @@ async function construct(
   //    `undefined`, so the unguarded read would throw during construction
   //    before any of the logic below ran (same defect class as the adapter-kit
   //    logger, #799).
+  //    The ambient `DATABASE_URL` fallback applies ONLY when nothing was
+  //    declared. Two failures come from letting it apply in declared mode
+  //    (#708 review): on the edge entry, a project secret named DATABASE_URL —
+  //    which Deno exposes through `process.env` — makes construction throw
+  //    "drop databaseUrl" about an option the caller never passed; and on Node
+  //    it would introspect and drift-verify a database the caller never named.
+  //    Declaring your tables is an explicit statement that this client does not
+  //    need a connection, so an environment variable must not overrule it.
   const declared = options.schemas
-  const databaseUrl = options.databaseUrl ?? readDatabaseUrlFromEnv()
+  const ambientDatabaseUrl = readDatabaseUrlFromEnv()
+  const databaseUrl =
+    options.databaseUrl ?? (declared ? undefined : ambientDatabaseUrl)
   if (!databaseUrl && !declared) {
     throw new Error(
       '[supabase v3]: no database URL — pass options.databaseUrl or set the DATABASE_URL environment variable. Alternatively pass `schemas` to declare your tables, which skips introspection entirely and needs no Postgres connection.',
+    )
+  }
+  //    ...but say so, rather than changing mode in silence. A caller who was
+  //    already passing `schemas` and letting `DATABASE_URL` supply the
+  //    connection got a construction-time throw when that variable went
+  //    missing; without this warning they would now get declared mode instead,
+  //    and the drift check they had would be gone with nothing said. Warn only
+  //    when the ambient value actually exists and was deliberately not used —
+  //    a genuinely edge-only deployment has no `DATABASE_URL` and stays quiet.
+  if (declared && !options.databaseUrl && ambientDatabaseUrl) {
+    logger.warn(
+      '[supabase v3]: `schemas` were declared, so DATABASE_URL was ignored and no introspection ran — the declared tables are NOT verified against the database. Pass `databaseUrl` explicitly to keep that check.',
     )
   }
 

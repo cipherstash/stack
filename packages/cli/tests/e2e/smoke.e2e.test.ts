@@ -204,7 +204,9 @@ describe('stash CLI — non-interactive smoke', () => {
     const r = render(['eql', 'install', '--database-url', '--force'])
     const { exitCode } = await r.exit
     expect(exitCode).toBe(1)
-    expect(unwrapped(r.output)).toContain('`--database-url` needs a value')
+    expect(unwrapped(r.output)).toContain(
+      messages.cli.databaseUrlFlagNeedsValue,
+    )
     // The install command itself never started (no permission-check spinner,
     // no clack intro banner).
     expect(r.output).not.toContain('Checking database permissions')

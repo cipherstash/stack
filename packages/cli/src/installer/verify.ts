@@ -178,32 +178,118 @@ function canonicalType(raw: string): string {
 }
 
 /**
+ * The multi-word SQL type names, canonically spelled. {@link argType} drops
+ * the first token of a multi-token entry to skip the argument's NAME, which is
+ * right for `a double precision` and wrong for an UNNAMED `double precision`,
+ * where the first token is half the type (it would parse as `precision` and
+ * report a phantom missing overload for the whole signature). The bundle names
+ * every argument today; this set is what keeps that from being load-bearing.
+ */
+const MULTI_WORD_TYPES = new Set([
+  'double precision',
+  'character varying',
+  'bit varying',
+  'timestamp with time zone',
+  'timestamp without time zone',
+  'time with time zone',
+  'time without time zone',
+])
+
+/**
  * Reduce one routine argument to its type: the bundle names every argument
  * (`a public.eql_v3_bigint`, `val jsonb`) and uses no DEFAULTs or arg modes,
  * so dropping the first token of a multi-token entry leaves the type —
  * including multi-word types, which keep their remaining tokens. A
- * single-token entry (aggregate signatures are types-only) is already a type.
+ * single-token entry (aggregate signatures are types-only) is already a type,
+ * as is an unnamed multi-word one ({@link MULTI_WORD_TYPES}).
  */
 function argType(entry: string): string {
+  const whole = canonicalType(entry.trim().replace(/\s+/g, ' '))
+  if (MULTI_WORD_TYPES.has(whole.replace(/\[\]$/, ''))) return whole
   const tokens = entry.trim().split(/\s+/)
   return canonicalType((tokens.length > 1 ? tokens.slice(1) : tokens).join(' '))
+}
+
+/**
+ * Statement kinds a `CREATE` can carry that this parser deliberately does not
+ * model, each with the reason it is safe to leave out of the expected surface.
+ * Anything else the handlers do not consume is a parse-time error — see
+ * {@link assertEveryStatementModelled}.
+ */
+const UNMODELLED_STATEMENT_KINDS = new Map<string, string>([
+  [
+    'SCHEMA',
+    'the two EQL schemas are fixed names checked directly against pg_namespace, not derived from the parse',
+  ],
+  [
+    'EXTENSION',
+    'the only extension EQL needs is pgcrypto, which the differ checks by name AND by schema — a stricter check than presence in the parse',
+  ],
+  [
+    'INDEX',
+    'an index is a performance artifact, not part of the callable surface: a missing one costs a query plan, it does not make a predicate fail',
+  ],
+])
+
+/**
+ * Fail loudly on any bundle statement the handlers below did not consume.
+ *
+ * Every regex in this parser fails OPEN: a statement whose spelling it does
+ * not match simply never enters the expected surface, so `stash eql verify`
+ * reports "complete" on an install missing that object — the exact silent
+ * partial install the command exists to catch. A future bundle's
+ * `CREATE PROCEDURE`, an indented `CREATE TYPE`, or a `CREATE OPERATOR` the
+ * pattern cannot span would all narrow the check in silence.
+ *
+ * So: scan the same stripped SQL for statement-leading `CREATE`s and require
+ * every one to be either consumed by a handler or named in
+ * {@link UNMODELLED_STATEMENT_KINDS}. Consumption is tracked by byte offset,
+ * which works across the raw/stripped split because {@link stripDollarQuoted}
+ * replaces characters one-for-one and so preserves every offset. A bundle bump
+ * that outgrows the parser now breaks this package's own test suite instead of
+ * quietly shrinking what `verify` verifies.
+ */
+function assertEveryStatementModelled(
+  stripped: string,
+  consumed: Set<number>,
+): void {
+  for (const match of stripped.matchAll(
+    /^[ \t]*(CREATE)\s+(?:OR\s+REPLACE\s+)?([A-Za-z]+)/gim,
+  )) {
+    const offset = match.index + match[0].indexOf(match[1])
+    if (consumed.has(offset)) continue
+    const kind = match[2].toUpperCase()
+    if (UNMODELLED_STATEMENT_KINDS.has(kind)) continue
+    const line = stripped.slice(0, offset).split('\n').length
+    const statement = stripped.slice(offset).split('\n')[0].trim()
+    throw new Error(
+      `The EQL install SQL contains a statement the expected-surface parser does not model, at line ${line}: \`${statement}\`. Objects it creates would never be checked, so \`stash eql verify\` would report a partial install as complete. Teach \`parseExpectedSurface\` to read this form, or — if it creates nothing the verifier should check — add \`${kind}\` to \`UNMODELLED_STATEMENT_KINDS\` with the reason.`,
+    )
+  }
 }
 
 /** Parse the pinned install SQL into the surface it creates unconditionally. */
 export function parseExpectedSurface(sql: string): ExpectedSurface {
   const stripped = stripDollarQuoted(sql)
+  // Offsets of the statements the handlers below understood, for
+  // {@link assertEveryStatementModelled}.
+  const consumed = new Set<number>()
 
   // Domains are created inside `IF NOT EXISTS ... CREATE DOMAIN` DO blocks,
   // so they are read from the RAW text (any indentation) and deduped. They
   // are unconditional in effect — the guard only makes reinstalls idempotent.
   const domains = new Set<string>()
-  for (const match of sql.matchAll(/^\s*CREATE DOMAIN\s+([\w.]+)\s+AS/gim)) {
-    domains.add(match[1].toLowerCase())
+  for (const match of sql.matchAll(
+    /^([ \t]*)CREATE DOMAIN\s+([\w.]+)\s+AS/gim,
+  )) {
+    domains.add(match[2].toLowerCase())
+    consumed.add(match.index + match[1].length)
   }
 
   const types = new Set<string>()
   for (const match of stripped.matchAll(/^CREATE TYPE\s+([\w.]+)\s+AS/gim)) {
     types.add(match[1].toLowerCase())
+    consumed.add(match.index)
   }
 
   // Functions and aggregates: DISTINCT type-only signatures per name (the
@@ -214,6 +300,7 @@ export function parseExpectedSurface(sql: string): ExpectedSurface {
   const routinePattern =
     /^CREATE (?:OR REPLACE )?(?:FUNCTION|AGGREGATE)\s+((?:[\w]+\.)?(?:"[^"]+"|[\w]+))\s*\(([^)]*)\)/gim
   for (const match of stripped.matchAll(routinePattern)) {
+    consumed.add(match.index)
     const name = unquoteName(match[1])
     const args = match[2].trim()
     const signature = args === '' ? '' : args.split(',').map(argType).join(', ')
@@ -236,6 +323,7 @@ export function parseExpectedSurface(sql: string): ExpectedSurface {
   const operators = new Set<string>()
   const operatorPattern = /^CREATE OPERATOR\s+([^\s(]+)\s*\(([\s\S]*?)\);/gim
   for (const match of stripped.matchAll(operatorPattern)) {
+    consumed.add(match.index)
     const name = match[1].toLowerCase().replace(/^public\./, '')
     const left = /LEFTARG\s*=\s*([\w.[\]]+)/i.exec(match[2])?.[1] ?? 'none'
     const right = /RIGHTARG\s*=\s*([\w.[\]]+)/i.exec(match[2])?.[1] ?? 'none'
@@ -246,8 +334,11 @@ export function parseExpectedSurface(sql: string): ExpectedSurface {
   for (const match of stripped.matchAll(
     /^CREATE CAST\s*\(\s*([\w.[\]]+)\s+AS\s+([\w.[\]]+)\s*\)/gim,
   )) {
+    consumed.add(match.index)
     casts.add(`${canonicalType(match[1])} AS ${canonicalType(match[2])}`)
   }
+
+  assertEveryStatementModelled(stripped, consumed)
 
   const sortedDomains = [...domains].sort()
   return {
@@ -264,14 +355,20 @@ export function parseExpectedSurface(sql: string): ExpectedSurface {
 
 /** The expected surface of the pinned bundle this CLI installs. */
 export function bundledExpectedSurface(): ExpectedSurface {
+  let sql: string
   try {
-    return parseExpectedSurface(readInstallSql())
+    sql = readInstallSql()
   } catch (error) {
     throw new Error(
       'Failed to read the EQL v3 install SQL from `@cipherstash/eql`. Reinstall dependencies (the package ships the bundle in `dist/sql/`).',
       { cause: error },
     )
   }
+  // Deliberately outside the try: a parse failure is a bundle the parser has
+  // outgrown ({@link assertEveryStatementModelled}), and its message names the
+  // statement. Wrapping it in "reinstall dependencies" would send whoever hits
+  // it to the one remedy that cannot help.
+  return parseExpectedSurface(sql)
 }
 
 // ---------------------------------------------------------------------------
@@ -361,6 +458,18 @@ const OPERATORS_SQL = `
      OR rt.typname LIKE 'eql\\_v3\\_%'
 `
 
+/**
+ * Every cast with an EQL endpoint — OR-matched on either side, exactly as
+ * {@link OPERATORS_SQL} matches operands. An AND over both endpoints would be
+ * unreadable for a cast to or from a `pg_catalog` type (`jsonb`, `text`):
+ * {@link parseExpectedSurface} takes every `CREATE CAST` in the bundle, so
+ * such a cast would enter the expected set and never be found installed —
+ * phantom "Cast missing" damage on every database, forever. The EQL half is
+ * matched by schema and by the `eql_v3_` typname prefix, since the public
+ * domains live in whatever schema the install-time search_path put them in.
+ * Extra casts (a user's own) are harmless — the differ only looks for
+ * absences.
+ */
 const CASTS_SQL = `
   SELECT pg_catalog.format_type(c.castsource, NULL) AS source,
          pg_catalog.format_type(c.casttarget, NULL) AS target
@@ -369,8 +478,10 @@ const CASTS_SQL = `
   JOIN pg_catalog.pg_namespace sn ON sn.oid = st.typnamespace
   JOIN pg_catalog.pg_type tt ON tt.oid = c.casttarget
   JOIN pg_catalog.pg_namespace tn ON tn.oid = tt.typnamespace
-  WHERE sn.nspname IN ('public', '${EQL_V3_SCHEMA_NAME}', '${EQL_V3_INTERNAL_SCHEMA_NAME}')
-    AND tn.nspname IN ('public', '${EQL_V3_SCHEMA_NAME}', '${EQL_V3_INTERNAL_SCHEMA_NAME}')
+  WHERE sn.nspname IN ('${EQL_V3_SCHEMA_NAME}', '${EQL_V3_INTERNAL_SCHEMA_NAME}')
+     OR tn.nspname IN ('${EQL_V3_SCHEMA_NAME}', '${EQL_V3_INTERNAL_SCHEMA_NAME}')
+     OR st.typname LIKE 'eql\\_v3\\_%'
+     OR tt.typname LIKE 'eql\\_v3\\_%'
 `
 
 /**
@@ -397,7 +508,45 @@ const ORE_STATE_SQL = `
     ) AS poisoned_domains
 `
 
-async function readInstalledSurface(
+/**
+ * `eql_v3.version()`, or `null` when that function is genuinely absent.
+ *
+ * Only a real "undefined function" (42883) reads as "version missing" — the
+ * differ reports that as damage, because the bundle always installs it.
+ * Anything else — EXECUTE denied, statement_timeout — is a failure to READ the
+ * version rather than evidence about the install; returning `null` for those
+ * would produce a full phantom object diff against a healthy database, so they
+ * are rethrown. Callers must have established that the `eql_v3` schema exists.
+ */
+async function readInstalledEqlVersion(
+  client: pg.ClientBase,
+): Promise<string | null> {
+  try {
+    const version = await client.query<{ version: string }>(
+      `SELECT ${EQL_V3_SCHEMA_NAME}.version() AS version`,
+    )
+    return version.rows[0]?.version ?? null
+  } catch (error) {
+    const code =
+      error !== null && typeof error === 'object' && 'code' in error
+        ? (error as { code?: string }).code
+        : undefined
+    if (code === '42883') return null
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `Could not read ${EQL_V3_SCHEMA_NAME}.version(): ${detail}`,
+      {
+        cause: error,
+      },
+    )
+  }
+}
+
+/**
+ * Read what the database actually has. Exported for the live suite, which is
+ * the only thing that can prove the catalogue spellings meet the bundle's.
+ */
+export async function readInstalledSurface(
   client: pg.ClientBase,
   expected: ExpectedSurface,
 ): Promise<InstalledSurface> {
@@ -448,32 +597,9 @@ async function readInstalledSurface(
   await client.query('COMMIT')
 
   const eqlV3SchemaPresent = schemas.rows[0]?.eql_v3_present === true
-  let installedVersion: string | null = null
-  if (eqlV3SchemaPresent) {
-    try {
-      const version = await client.query<{ version: string }>(
-        `SELECT ${EQL_V3_SCHEMA_NAME}.version() AS version`,
-      )
-      installedVersion = version.rows[0]?.version ?? null
-    } catch (error) {
-      // Only a genuinely absent function reads as "version missing" (the
-      // differ reports that as damage — the bundle always installs it).
-      // Anything else — EXECUTE denied, statement_timeout — is a failure to
-      // verify, not evidence of damage; letting it fall through here would
-      // produce a full phantom object diff against a healthy install.
-      const code =
-        error !== null && typeof error === 'object' && 'code' in error
-          ? (error as { code?: string }).code
-          : undefined
-      if (code !== '42883') {
-        const detail = error instanceof Error ? error.message : String(error)
-        throw new Error(
-          `Could not read ${EQL_V3_SCHEMA_NAME}.version(): ${detail}`,
-          { cause: error },
-        )
-      }
-    }
-  }
+  const installedVersion = eqlV3SchemaPresent
+    ? await readInstalledEqlVersion(client)
+    : null
 
   const functionSignatures = new Map<string, Set<string>>()
   for (const row of functions.rows) {
@@ -809,23 +935,56 @@ export async function verifyEqlSurface(
 }
 
 /**
+ * The ORE half of an install as {@link readOreState} could read it.
+ *
+ * `comparable: false` means the installed EQL is not the pinned one, so there
+ * is no honest ORE answer to give — not that anything is wrong. Callers must
+ * render it as "could not compare", never as damage.
+ */
+export type OreStateReading =
+  | {
+      comparable: true
+      opclassPresent: boolean
+      poisonedDomains: number
+      expectedPoisoned: number
+      state: OreSurfaceState
+    }
+  | {
+      comparable: false
+      bundleVersion: string
+      installedVersion: string | null
+    }
+
+/**
  * Read just the ORE half of an install — the two catalogue values and the
  * state they classify to (#891).
  *
  * `eql status` wants the ORE answer and nothing else. Routing it through
  * {@link verifyEqlSurface} would work but would read the whole 3,000-operator
- * surface to render one row, and would report a version mismatch as a reason
- * to say nothing — whereas the ORE state is legible whatever bundle is
- * installed, because both halves of the conditional are catalogue facts rather
- * than a diff against the pinned manifest.
+ * surface to render one row.
+ *
+ * It still needs {@link diffSurface}'s version gate, though, because the ORE
+ * state is NOT a pure catalogue fact: `expectedPoisoned` is the pinned
+ * bundle's ORE-domain count, and {@link ORE_STATE_SQL} counts poisoned domains
+ * only among that same pinned list. So a healthy fallback install of a
+ * DIFFERENT EQL — the ordinary "CLI upgraded, database not yet" case — poisons
+ * ITS domains, of which the pinned list sees only some, and
+ * {@link classifyOreState} reads the shortfall as `incoherent-unpoisoned`
+ * damage. Reporting a version skew as `comparable: false` is what stops
+ * `eql status` telling that operator to reinstall `--force` over nothing.
  */
-export async function readOreState(client: pg.ClientBase): Promise<{
-  opclassPresent: boolean
-  poisonedDomains: number
-  expectedPoisoned: number
-  state: OreSurfaceState
-}> {
+export async function readOreState(
+  client: pg.ClientBase,
+): Promise<OreStateReading> {
   const expected = bundledExpectedSurface()
+  const installedVersion = await readInstalledEqlVersion(client)
+  if (installedVersion !== expected.eqlVersion) {
+    return {
+      comparable: false,
+      bundleVersion: expected.eqlVersion,
+      installedVersion,
+    }
+  }
   const result = await client.query<{
     ore_opclass_present: boolean
     poisoned_domains: number
@@ -835,5 +994,5 @@ export async function readOreState(client: pg.ClientBase): Promise<{
     poisonedDomains: result.rows[0]?.poisoned_domains ?? 0,
     expectedPoisoned: expected.oreDomains.length,
   }
-  return { ...observed, state: classifyOreState(observed) }
+  return { comparable: true, ...observed, state: classifyOreState(observed) }
 }

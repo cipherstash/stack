@@ -135,6 +135,10 @@ What declared mode gives up, it gives up loudly rather than silently:
 - **`from()` on an undeclared table throws.** There is no introspected table list to fall back on.
 - **The drift check is gone** — nothing compared your declaration against the real column domains, so a wrong domain surfaces as a `23514` CHECK violation on the first write instead of at construction. On Node you can have both: pass `databaseUrl` **as well as** `schemas`.
 
+⚠️ **The one tradeoff that is not loud — declare every encrypted column of every table you query.** Nothing introspects, so a column carrying an `eql_v3` domain in the database but missing from your `schemas` is treated as an ordinary plaintext column: a `select` naming it hands you the raw EQL payload as data, and a filter on it sends your **plaintext** value to PostgREST. There is no error, because nothing knows the column is encrypted. If you cannot guarantee the declaration is complete, pass `databaseUrl` so introspection fills the gaps.
+
+An ambient `DATABASE_URL` will not overrule your declaration — it is ignored when `schemas` are passed, with a warning that the declaration is unverified. Pass `databaseUrl` explicitly if you want introspection.
+
 Passing `databaseUrl` to the `wasm-inline` entry is refused outright — it carries no Postgres driver, and saying so beats ignoring the option.
 
 Prefer to keep encryption out of the adapter entirely? Use `@cipherstash/stack/wasm-inline` directly: encrypt and decrypt with the client and send EQL payloads through the Supabase JS client or raw SQL yourself. `stash-edge` covers the client surface, `stash-postgres` the SQL forms.

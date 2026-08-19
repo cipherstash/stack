@@ -152,7 +152,14 @@ export async function decryptResults<T extends object, TData = T[]>(
 
     // Single result — decrypt one model
     const decrypted = await withOpContext(
-      ctx.encryptionClient.decryptModel(result.data as Record<string, unknown>),
+      // The table is passed for the WASM engine, which resolves date fields
+      // from a per-table map and throws without it. The native client derives
+      // the table from the payloads and ignores the extra argument, so one
+      // call shape serves both entries (#708).
+      ctx.encryptionClient.decryptModel(
+        result.data as Record<string, unknown>,
+        ctx.table,
+      ),
       ctx,
     )
     if (decrypted.failure) {
@@ -193,7 +200,8 @@ export async function decryptResults<T extends object, TData = T[]>(
   }
 
   const decrypted = await withOpContext(
-    ctx.encryptionClient.bulkDecryptModels(dataArray),
+    // Table passed for the same reason as the single-row path above.
+    ctx.encryptionClient.bulkDecryptModels(dataArray, ctx.table),
     ctx,
   )
   if (decrypted.failure) {

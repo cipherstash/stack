@@ -171,6 +171,44 @@ describe('declared-schemas mode', () => {
     ).toThrow(/EQL 3\.0\.2\+/)
   })
 
+  /**
+   * A stray ambient `DATABASE_URL` must not overrule an explicit declaration
+   * (#708 review). On the edge entry it made construction throw "drop
+   * databaseUrl" about an option the caller never passed; on Node it would
+   * introspect and drift-verify a database the caller never named.
+   */
+  it('ignores an ambient DATABASE_URL when schemas are declared', async () => {
+    process.env.DATABASE_URL = 'postgres://ambient'
+    const { encryptedSupabase } = await import('../src/index')
+    await encryptedSupabase(fakeClient, { schemas: { users } })
+    expect(introspectMock).not.toHaveBeenCalled()
+  })
+
+  /**
+   * ...but does not change mode in silence. A caller who passed `schemas` and
+   * let `DATABASE_URL` supply the connection used to get a construction-time
+   * throw when that variable went missing; without this warning they would now
+   * get declared mode instead, and lose the drift check with nothing said.
+   */
+  it('warns that the declaration is unverified when DATABASE_URL was ignored', async () => {
+    process.env.DATABASE_URL = 'postgres://ambient'
+    const { logger } = await import('@cipherstash/stack/adapter-kit')
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const { encryptedSupabase } = await import('../src/index')
+    await encryptedSupabase(fakeClient, { schemas: { users } })
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls[0][0]).toMatch(/NOT verified against the database/)
+    expect(warn.mock.calls[0][0]).toMatch(/databaseUrl/)
+  })
+
+  it('stays quiet when there is no ambient URL to ignore', async () => {
+    const { logger } = await import('@cipherstash/stack/adapter-kit')
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const { encryptedSupabase } = await import('../src/index')
+    await encryptedSupabase(fakeClient, { schemas: { users } })
+    expect(warn).not.toHaveBeenCalled()
+  })
+
   it('diagnoses schemas that declare no encrypted columns', async () => {
     const { encryptedSupabase } = await import('../src/index')
     const empty = encryptedTable('empty', {})

@@ -32,7 +32,11 @@ import {
   assertExists,
   assertThrows,
 } from 'jsr:@std/assert@^1.0.0'
-import { encryptedTable, types } from '@cipherstash/stack/wasm-inline'
+import {
+  Encryption,
+  encryptedTable,
+  types,
+} from '@cipherstash/stack/wasm-inline'
 import { encryptedSupabase } from '@cipherstash/stack-supabase/wasm-inline'
 
 const REQUIRED_ENV = [
@@ -61,20 +65,78 @@ function requireEnv(): Record<(typeof REQUIRED_ENV)[number], string> {
   return values
 }
 
+type RecordedCall = { method: string; args: unknown[] }
+
 /**
- * A Supabase client stand-in. The point of this test is CONSTRUCTION and
- * operand encryption, neither of which sends a request — so a real Supabase
- * project would add a network dependency without adding evidence. Anything
- * that did reach the network would fail loudly on the missing methods.
+ * A recording Supabase client stand-in.
+ *
+ * The evidence this file exists for is what the ADAPTER does — encrypt an
+ * operand through WASM, emit it on the wire, decrypt the rows back — none of
+ * which needs a live Supabase project. A real project would add a network
+ * dependency and a second set of credentials without adding evidence, and
+ * would hide the operand behind a round trip instead of handing it to us.
+ *
+ * So: record every builder call, and resolve to whatever rows the test wants
+ * to hand back for decryption.
  */
-function fakeSupabaseClient() {
-  return {
-    from() {
-      throw new Error(
-        'the fake Supabase client was queried — this test should not reach the network',
-      )
-    },
+function recordingSupabaseClient(resultData: unknown = []) {
+  const calls: RecordedCall[] = []
+  // biome-ignore lint/suspicious/noExplicitAny: test double standing in for the supabase query builder, whose chainable surface is ~25 methods
+  // deno-lint-ignore no-explicit-any
+  const qb: any = {}
+  for (const method of [
+    'select',
+    'insert',
+    'update',
+    'upsert',
+    'delete',
+    'eq',
+    'neq',
+    'gt',
+    'gte',
+    'lt',
+    'lte',
+    'in',
+    'is',
+    'or',
+    'match',
+    'order',
+    'limit',
+    'range',
+    'single',
+    'maybeSingle',
+    'filter',
+    'not',
+    'throwOnError',
+    'abortSignal',
+  ]) {
+    qb[method] = (...args: unknown[]) => {
+      calls.push({ method, args })
+      return qb
+    }
   }
+  qb.then = (
+    onfulfilled?: ((value: unknown) => unknown) | null,
+    onrejected?: ((reason: unknown) => unknown) | null,
+  ) =>
+    Promise.resolve({
+      data: resultData,
+      error: null,
+      count: null,
+      status: 200,
+      statusText: 'OK',
+    }).then(onfulfilled, onrejected)
+
+  return {
+    client: { from: (_table: string) => qb },
+    calls,
+    callsFor: (method: string) => calls.filter((c) => c.method === method),
+  }
+}
+
+/** The unused stand-in for tests that never reach a query. */
+function fakeSupabaseClient() {
+  return recordingSupabaseClient().client
 }
 
 Deno.test({
@@ -158,6 +220,102 @@ Deno.test({
         ),
       Error,
       'not in the `schemas` you declared',
+    )
+  },
+})
+
+/**
+ * The assertion the file header's point 3 promises, and the one that actually
+ * exercises the WASM engine through the adapter (#708 review, finding 6).
+ *
+ * Construction proves the module graph loads. It does NOT prove the adapter
+ * reconciled the two engines' protocols — the WASM client returns plain
+ * Results rather than chainable operations, and its `decryptModel` REQUIRES
+ * the table the native one derives from the payloads. Both differences are
+ * silent until a query runs, so a query has to run here or the regression
+ * lands in a customer's Edge Function.
+ */
+Deno.test({
+  name: 'stack-supabase/wasm-inline: encrypts a filter operand and decrypts rows, through WASM',
+  permissions: {
+    env: true,
+    net: true,
+    read: true,
+    sys: true,
+    ffi: false,
+  },
+  async fn() {
+    const env = requireEnv()
+
+    const users = encryptedTable('users', {
+      email: types.TextSearch('email'),
+    })
+
+    const config = {
+      workspaceCrn: env.CS_WORKSPACE_CRN,
+      accessKey: env.CS_CLIENT_ACCESS_KEY,
+      clientId: env.CS_CLIENT_ID,
+      clientKey: env.CS_CLIENT_KEY,
+    }
+
+    // Encrypt a value up front so the row handed back to the decrypt path is a
+    // real EQL payload rather than a fixture — a fake would prove nothing
+    // about the adapter's decrypt half.
+    const engine = await Encryption({ schemas: [users], config })
+    const plaintext = `wasm-supabase-${crypto.randomUUID()}@example.com`
+    const encrypted = await engine.encrypt(plaintext, {
+      column: users.email,
+      table: users,
+    })
+    if (encrypted.failure) {
+      throw new Error(`setup encrypt failed: ${encrypted.failure.message}`)
+    }
+
+    const { client, callsFor } = recordingSupabaseClient([
+      { email: encrypted.data },
+    ])
+
+    const supabase = await encryptedSupabase(client as never, {
+      schemas: { users },
+      config,
+    })
+
+    // ENCRYPT half: the filter operand must reach the wire encrypted. If the
+    // adapter's `encrypt` were wrong, this throws rather than silently sending
+    // plaintext — but assert on the operand anyway, because "did not throw" is
+    // not the same as "did not leak".
+    const rows = await (
+      supabase as unknown as {
+        from: (t: string) => {
+          select: (c: string) => {
+            eq: (c: string, v: string) => PromiseLike<{ data: unknown }>
+          }
+        }
+      }
+    )
+      .from('users')
+      .select('email')
+      .eq('email', plaintext)
+
+    const eqCalls = callsFor('eq')
+    assertEquals(eqCalls.length, 1, 'expected exactly one eq() on the wire')
+    const operand = eqCalls[0].args[1]
+    assertEquals(
+      typeof operand === 'string' && operand.includes(plaintext),
+      false,
+      'the filter operand reached PostgREST as plaintext',
+    )
+    assertExists(operand, 'no filter operand was emitted')
+
+    // DECRYPT half: the row came back as a real EQL payload, and the adapter
+    // had to supply the table the WASM client requires. Without that this
+    // throws — which is the whole point of the adapter.
+    const data = (rows as { data: Array<{ email: unknown }> }).data
+    assertEquals(data.length, 1, 'expected one decrypted row')
+    assertEquals(
+      data[0].email,
+      plaintext,
+      'the row did not decrypt back to the original plaintext',
     )
   },
 })

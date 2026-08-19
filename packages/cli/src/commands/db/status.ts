@@ -108,11 +108,24 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
       await oreClient.connect()
       const ore = await readOreState(oreClient)
       s.stop('ORE state checked.')
-      const described = describeOreState(ore.state)
-      if (described.severity === 'damage') {
-        p.log.error(described.message)
+      if (ore.comparable) {
+        const described = describeOreState(ore.state)
+        if (described.severity === 'damage') {
+          p.log.error(described.message)
+        } else {
+          p.log.info(described.message)
+        }
       } else {
-        p.log.info(described.message)
+        // Version skew is not damage, and must not be rendered as any ORE
+        // answer at all: the domain list the poison CHECKs are counted over is
+        // the PINNED bundle's, so a perfectly healthy fallback install of an
+        // older EQL classifies as incoherent and would send this operator to
+        // `install --force` over nothing. Say the true thing instead.
+        p.log.info(
+          `ORE operator class: not compared — EQL ${
+            ore.installedVersion ?? 'unknown'
+          } is installed and this CLI pins EQL ${ore.bundleVersion}, so the ORE state cannot be read against the pinned bundle. Run \`${runnerCommand(pm, 'stash eql upgrade')}\`, then check status again.`,
+        )
       }
     } catch (error) {
       // Advisory, not a gate: a status run that could not read one row should
