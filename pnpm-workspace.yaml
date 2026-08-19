@@ -85,12 +85,14 @@ overrides:
   # kept exact because a past js-yaml upgrade broke changesets — bump this
   # deliberately and re-verify `changeset status`/`version` when you do.
   'js-yaml@>=4.0.0 <5': '4.2.0'
-  # Not a Dependabot alert — cooldown-regression guard. Re-resolving the
-  # lockfile let minimumReleaseAge demote ajv's fast-uri to 3.1.2, un-fixing
-  # GHSA-4c8g-83qw-93j6 / CVE-2026-13676 (host confusion via failed IDN
-  # canonicalization). Pin the patched release (published 2026-06-29, matures
-  # 2026-07-06); safe to relax to ^3.1.3 after that date.
-  'fast-uri@<3.1.3': '3.1.3'
+  # Started as a cooldown-regression guard (re-resolving the lockfile let
+  # minimumReleaseAge demote ajv's fast-uri to 3.1.2, un-fixing
+  # GHSA-4c8g-83qw-93j6 / CVE-2026-13676 host confusion). Since bumped past
+  # two further High advisories on the same transitive dep:
+  # GHSA-v2hh-gcrm-f6hx / CVE-2026-16221 (host confusion via literal backslash
+  # authority delimiter, fix >=3.1.4) and GHSA-7p8r-x3mc-p8w7 / CVE-2026-18446
+  # (fix >=3.1.5). Pinned to the matured 3.1.5 (published 2026-07-31).
+  'fast-uri@<3.1.5': '3.1.5'
 
 # Supply-chain hardening — see skills/stash-supply-chain-security/
 # 7 days in minutes; mirrors the Dependabot cooldown so manual + automated
