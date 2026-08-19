@@ -158,13 +158,16 @@ Deno.test({
       'Deno global missing (test framework misconfigured)',
     )
 
-    // Deliberately NOT set. Declared mode must not reach for it, and on this
-    // runtime there is no Postgres to reach even if it did.
-    assertEquals(
-      Deno.env.get('DATABASE_URL'),
-      undefined,
-      'DATABASE_URL must be unset — this test proves construction without one',
-    )
+    // SET, deliberately. An earlier version of this test asserted the
+    // variable was UNSET, which pinned the environment rather than the
+    // behaviour — and routed around the very coupling that mattered: the edge
+    // entry used to resolve the ambient value despite having no way to use it,
+    // so a caller who declared `schemas` and passed no `databaseUrl` failed to
+    // construct the moment something else set `DATABASE_URL`. Deno exposes
+    // `process.env`, and `DATABASE_URL` is exactly the variable a Supabase
+    // project has lying around, so this is the ordinary case rather than an
+    // exotic one (#708 review, James).
+    Deno.env.set('DATABASE_URL', 'postgres://ambient-should-be-ignored/db')
 
     const users = encryptedTable('users', {
       email: types.TextSearch('email'),
@@ -221,6 +224,8 @@ Deno.test({
       Error,
       'not in the `schemas` you declared',
     )
+
+    Deno.env.delete('DATABASE_URL')
   },
 })
 

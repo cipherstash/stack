@@ -1,5 +1,6 @@
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { makeEncryptedSupabase } from '../src/create'
 import type { SupabaseClientLike } from '../src/types'
 
 /**
@@ -252,6 +253,76 @@ describe('declared-schemas mode', () => {
     await expect(
       encryptedSupabase(fakeClient, { schemas: { empty } }),
     ).rejects.toThrow(/no encrypted columns/)
+  })
+})
+
+/**
+ * The edge entry, with an ambient `DATABASE_URL` present.
+ *
+ * These deliberately do NOT delete the variable. The rest of this file — and
+ * the Deno e2e — pinned the ENVIRONMENT to keep declared mode working, which
+ * routed around the coupling instead of testing it: a build that cannot
+ * introspect was still resolving the ambient value, and the refusal keyed on
+ * the resolved value rather than on what the caller passed. So a caller who
+ * did exactly what the docs say (declare `schemas`, pass no `databaseUrl`)
+ * failed to construct the moment something else set `DATABASE_URL` — which is
+ * ordinary on any runtime exposing `process.env`, and is precisely the
+ * variable a Supabase project has lying around (#708 review, James).
+ *
+ * The guarantee is "declared mode ignores an ambient URL on a build that
+ * cannot use one", not "declared mode works when the environment is clean".
+ */
+describe('the edge entry with an ambient DATABASE_URL', () => {
+  const edgeClient = () =>
+    makeEncryptedSupabase(
+      (async () => ({})) as never,
+      // No introspector — exactly how `wasm-inline.ts` binds it.
+      null,
+    )
+
+  it('constructs from declared schemas even when DATABASE_URL is set', async () => {
+    process.env.DATABASE_URL = 'postgres://ambient'
+    await expect(
+      edgeClient()(fakeClient, { schemas: { users } }),
+    ).resolves.toBeDefined()
+  })
+
+  /**
+   * The refusal must key on the option the caller wrote. Firing on a resolved
+   * ambient value produced an unactionable error: it told them to drop
+   * `databaseUrl` and to declare `schemas` when they had already done both.
+   */
+  it('still refuses a databaseUrl the caller actually passed', async () => {
+    process.env.DATABASE_URL = 'postgres://ambient'
+    await expect(
+      edgeClient()(fakeClient, {
+        databaseUrl: 'postgres://explicit',
+        schemas: { users },
+      }),
+    ).rejects.toThrow(/cannot introspect/)
+  })
+
+  /**
+   * With nothing declared the edge entry has no way to discover columns, and
+   * the error must not send the caller to an environment variable this build
+   * cannot read.
+   */
+  it('names the real fix when nothing is declared, not DATABASE_URL', async () => {
+    process.env.DATABASE_URL = 'postgres://ambient'
+    await expect(edgeClient()(fakeClient, {})).rejects.toThrow(
+      /cannot introspect, so it has no way to discover/,
+    )
+    await expect(edgeClient()(fakeClient, {})).rejects.not.toThrow(
+      /set the DATABASE_URL environment variable/,
+    )
+  })
+
+  it('does not warn about an ambient URL it never consulted', async () => {
+    process.env.DATABASE_URL = 'postgres://ambient'
+    const { logger } = await import('@cipherstash/stack/adapter-kit')
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    await edgeClient()(fakeClient, { schemas: { users } })
+    expect(warn).not.toHaveBeenCalled()
   })
 })
 

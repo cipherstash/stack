@@ -278,21 +278,39 @@ async function construct(
   //    `undefined`, so the unguarded read would throw during construction
   //    before any of the logic below ran (same defect class as the adapter-kit
   //    logger, #799).
-  //    The ambient `DATABASE_URL` fallback applies ONLY when nothing was
-  //    declared. Two failures come from letting it apply in declared mode
-  //    (#708 review): on the edge entry, a project secret named DATABASE_URL —
-  //    which Deno exposes through `process.env` — makes construction throw
-  //    "drop databaseUrl" about an option the caller never passed; and on Node
-  //    it would introspect and drift-verify a database the caller never named.
-  //    Declaring your tables is an explicit statement that this client does not
-  //    need a connection, so an environment variable must not overrule it.
+  //    The ambient `DATABASE_URL` is consulted ONLY by a build that could act
+  //    on it, and ONLY when nothing was declared. Three failures come from a
+  //    wider reading of it (#708 review):
+  //
+  //    - On the edge entry there is no introspector at all, so an ambient
+  //      value can never be used — but resolving it anyway made the guard
+  //      below fire, and a caller who declared `schemas` and passed no
+  //      `databaseUrl` got a hard construction failure telling them to "drop
+  //      databaseUrl". Nothing they could change in code fixed it; they had to
+  //      unset an environment variable they may not control. `DATABASE_URL` is
+  //      exactly the variable a Supabase project has lying around, and every
+  //      runtime that exposes `process.env` reaches this — Node, Deno 2,
+  //      Workers under `nodejs_compat`.
+  //    - On the native entry in declared mode it would introspect and
+  //      drift-verify a database the caller never named. Declaring your tables
+  //      is an explicit statement that this client needs no connection, so an
+  //      environment variable must not overrule it.
+  //
+  //    Hence: the ambient read is gated on `introspector`, and the refusal
+  //    below keys on what the CALLER PASSED (`options.databaseUrl`) rather
+  //    than on the resolved value, so it can only ever fire for an option
+  //    someone actually wrote.
   const declared = options.schemas
-  const ambientDatabaseUrl = readDatabaseUrlFromEnv()
+  const ambientDatabaseUrl = introspector ? readDatabaseUrlFromEnv() : undefined
   const databaseUrl =
     options.databaseUrl ?? (declared ? undefined : ambientDatabaseUrl)
   if (!databaseUrl && !declared) {
+    // Two different builds reach this, and telling an edge caller to set
+    // `DATABASE_URL` would send them to a variable this build cannot read.
     throw new Error(
-      '[supabase v3]: no database URL — pass options.databaseUrl or set the DATABASE_URL environment variable. Alternatively pass `schemas` to declare your tables, which skips introspection entirely and needs no Postgres connection.',
+      introspector
+        ? '[supabase v3]: no database URL — pass options.databaseUrl or set the DATABASE_URL environment variable. Alternatively pass `schemas` to declare your tables, which skips introspection entirely and needs no Postgres connection.'
+        : '[supabase v3]: no `schemas` — the edge entry (`@cipherstash/stack-supabase/wasm-inline`) cannot introspect, so it has no way to discover your encrypted columns. Declare your tables with `schemas`, or import the default entry on Node to introspect from a `databaseUrl`.',
     )
   }
   //    ...but say so, rather than changing mode in silence.
@@ -338,7 +356,7 @@ async function construct(
   //
   //    An entry with no introspector cannot honour a database URL at all, so
   //    say that rather than ignoring the option the caller passed.
-  if (databaseUrl && !introspector) {
+  if (options.databaseUrl && !introspector) {
     throw new Error(
       '[supabase v3]: this build of encryptedSupabase cannot introspect — it is the edge entry (`@cipherstash/stack-supabase/wasm-inline`), which carries no Postgres driver. Declare your tables with `schemas` and drop `databaseUrl`, or import the default entry on Node.',
     )
@@ -349,10 +367,12 @@ async function construct(
       : null
   const unmodelled =
     introspection?.unmodelled ?? new Map<string, UnmodelledColumn[]>()
-  const queryDomainsRequired =
-    introspection && introspector
-      ? introspector.eqlRequiresQueryDomains(introspection.eqlVersion)
-      : true
+  const queryDomainsRequired = introspection
+    ? // Non-null only on the branch above, which required `introspector`.
+      (introspector as Introspector).eqlRequiresQueryDomains(
+        introspection.eqlVersion,
+      )
+    : true
 
   // 4. Synthesize; if declared, guard record keys, verify, then merge.
   //    A DECLARED table is one the caller named, so it is validated eagerly,
