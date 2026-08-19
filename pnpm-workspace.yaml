@@ -67,6 +67,13 @@ overrides:
   # are breaking). Exercised builds pass; retire by bumping tsup once a release
   # declares ^0.28.
   'esbuild@>=0.27.3 <0.28.1': '^0.28.1'
+  # GHSA-3jxr-9vmj-r5cp / CVE-2026-13149 (exponential-time expand(), fix
+  # >=5.0.7), GHSA-mh99-v99m-4gvg / CVE-2026-14257 (unbounded expansion length
+  # OOM, fix >=5.0.8), GHSA-rgw5-rvv9-x895 / CVE-2026-69152 (fix >=5.0.9) — all
+  # three land on the same transitive dep (rimraf>glob>minimatch>brace-expansion).
+  # Pinned to the matured 5.0.9 (published 2026-07-30) to close all three at
+  # once rather than leaving two open after only clearing the first.
+  'brace-expansion@<5.0.9': '5.0.9'
   # #153 GHSA-h67p-54hq-rp68 / CVE-2026-53550 — js-yaml merge-key DoS, 3.x line.
   # Exact pin: 3.15.0 is the only patched 3.x release. Installed with the
   # one-off `--config.minimum-release-age=0` bypass (published 2026-06-26,
