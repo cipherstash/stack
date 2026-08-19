@@ -14,12 +14,13 @@ are what a PostgREST caller invokes, so PostgREST callers on the documented
 surface are **not** affected. The renamed function is the typed implementation
 those operators dispatch into.
 
-**What does break is hand-written SQL naming the old function** — an
-application query, a view, an RLS policy, or a per-function
-`GRANT EXECUTE ON FUNCTION eql_v3.ste_vec_contains(…)`. After the upgrade
-those fail loudly (`function eql_v3.ste_vec_contains(…) does not exist`)
-rather than silently, but they fail. Grep your migrations, views and policies
-for `ste_vec_contains`.
+**And the old name still works.** eql-3.0.5 ships `eql_v3.ste_vec_contains` as
+a deprecated delegating alias for both overloads, so hand-written SQL naming it
+— an application query, a view, an RLS policy, or a per-function
+`GRANT EXECUTE ON FUNCTION eql_v3.ste_vec_contains(…)` — keeps resolving. The
+typed overload stays inlinable, so a function-form query through the alias
+still matches the same functional GIN index. Migrate to
+`jsonb_document_contains` when convenient; nothing forces it at upgrade time.
 
 **Separately — and true of every EQL upgrade, not just this one:** the install
 bundle opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, so applying it
@@ -27,8 +28,9 @@ destroys every grant on every object in `eql_v3` / `eql_v3_internal`, along
 with anything that depended on them (this is the same mechanism that drops
 functional indexes on encrypted columns). **Re-run your grant script after
 upgrading.** The schema-wide form EQL documents —
-`GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA eql_v3 TO app_role` — picks the new
-name up on its own; a hand-written per-function grant has to be edited first.
+`GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA eql_v3 TO app_role` — picks up both
+the new name and the alias on its own. **With the rename made non-breaking by
+the alias, this is the only part of the upgrade that needs action.**
 
 Two artefacts carry the new bundle:
 

@@ -117,18 +117,18 @@ const PUBLISHED_MIGRATIONS = [
     // pinned release rather than a historical one, which is why the
     // lockstep test below has something to match.
     migrationHash:
-      'sha256:1ae732828e9a6fb3574ab8dbede16e99bf1173bd4e5cd7a4b522138e71bc5d05',
+      'sha256:23c98b0368d22794507a4ef7b02ed4cb04249f36bfcb0b20488005aa62488313',
     installSqlSha256:
-      '7ad9c9f884083979c1cf483ff4f68d2569257d6c6fab15d9e4586f4c93703cad',
+      'accde0030b8f356af616175640635f67661d51aa900624b7fb0fb059e8115048',
   },
   {
     dirName: CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
     metadata: v3Upgrade305Metadata,
     ops: v3Upgrade305Ops,
     migrationHash:
-      'sha256:7bafd9d6c5d244332ff0b0943604dbd026c8369e24d2f335b1365c5f78e49d38',
+      'sha256:3b2b838bee634f2de4a5e88f1625a45d47c327e3021b0e2ccba36c09a9666178',
     installSqlSha256:
-      '7ad9c9f884083979c1cf483ff4f68d2569257d6c6fab15d9e4586f4c93703cad',
+      'accde0030b8f356af616175640635f67661d51aa900624b7fb0fb059e8115048',
   },
   {
     dirName: CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME,
@@ -418,14 +418,42 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     expect(runtimeUpgrade.ops).toEqual(v3Upgrade305Ops)
   })
 
-  it('the 3.0.5 upgrade edge carries the renamed jsonb_document_contains', () => {
+  it('the 3.0.5 upgrade edge carries the rename AND the deprecated aliases', () => {
     // The behavioural content of this release: `eql_v3.ste_vec_contains`
-    // became `eql_v3.jsonb_document_contains`. Assert against the baked
-    // bytes, so an upgrade edge that ships a bundle without the rename
-    // (the skew this whole lockstep scheme exists to catch) fails here.
+    // became `eql_v3.jsonb_document_contains`, and the old name was KEPT as
+    // a deprecated delegating alias. Assert against the baked bytes, so an
+    // upgrade edge shipping a bundle without the rename — the skew this
+    // whole lockstep scheme exists to catch — fails here.
+    //
+    // This asserted `not.toContain('ste_vec_contains')` until upstream
+    // 142f41d8 restored both overloads as aliases, which is what makes 3.0.5
+    // a genuinely non-breaking patch: the operators never moved, the
+    // PostgREST-facing `jsonb_contains`/`jsonb_contained_by` never moved, and
+    // now direct callers of the old name keep working too. Asserting absence
+    // would now fail against the published bundle — so assert the SHAPE
+    // instead: exactly two alias definitions, both delegating to the new
+    // name, and no remaining call site that still routes through the old one.
     const sql = firstExecuteSql(v3Upgrade305Ops)
     expect(sql).toContain('eql_v3.jsonb_document_contains')
-    expect(sql).not.toContain('ste_vec_contains')
+
+    const aliasDefs = sql.match(/CREATE FUNCTION eql_v3\.ste_vec_contains\(/g)
+    expect(aliasDefs).toHaveLength(2)
+
+    // Delegation, not a second copy of the implementation: every alias body
+    // is a one-line SELECT through the new name. A duplicated body would
+    // drift from the real implementation with nothing to catch it.
+    for (const body of sql.matchAll(
+      /CREATE FUNCTION eql_v3\.ste_vec_contains\([^)]*\)[\s\S]*?\$\$([\s\S]*?)\$\$/g,
+    )) {
+      expect(body[1]).toContain('eql_v3.jsonb_document_contains')
+    }
+
+    // Both are marked deprecated in the database itself, not only in the
+    // generated docs — `COMMENT ON FUNCTION` is what a DBA inspecting the
+    // schema actually sees.
+    expect(
+      sql.match(/COMMENT ON FUNCTION eql_v3\.ste_vec_contains\(/g),
+    ).toHaveLength(2)
   })
 
   it('pins the head ref at the unchanged hash with all invariants', () => {
