@@ -271,6 +271,30 @@ jobs:
       - name: Lint — no protect-ffi changeset before the publishing cutover
         run: pnpm run lint:ffi-changeset
 
+      # THE SAME GATE release.yml RUNS, one merge earlier.
+      #
+      # `changeset publish` publishes every public workspace package whose
+      # version is absent from npm — with no dependency ordering, and a failed
+      # publish returns a result rather than throwing, so it does not stop the
+      # siblings that depend on it. A merge can therefore ARM a release that
+      # cannot succeed: `@cipherstash/eql` was hand-bumped to 3.0.5 while npm's
+      # newest is 3.0.4 and its trusted publisher still names
+      # cipherstash/encrypt-query-language, and `packages/cli` and
+      # `packages/stack-prisma` carry it in RUNTIME dependencies, so both would
+      # pack `^3.0.5` — a range no published version satisfies.
+      #
+      # The gate in release.yml blocks the publish, which is the load-bearing
+      # half. This step is the half that says so BEFORE the merge rather than
+      # after it, which is the difference between a red pull request and a red
+      # main. Same script, same verdict, no second copy to drift.
+      #
+      # It talks to the registry, in a job that already installs the whole
+      # workspace from it — so this adds a class of dependency the job does not
+      # already have, only a few more requests. A lookup that fails for any
+      # reason other than a 404 throws rather than being read as "published".
+      - name: Lint — this tree can be published, and installed
+        run: pnpm run release:gate
+
       - name: Test — lint script self-tests
         run: pnpm run test:scripts
 
