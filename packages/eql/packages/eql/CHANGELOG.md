@@ -8,8 +8,21 @@
   consolidates the last `ste_vec_*`-named public object into the `jsonb_*` family,
   matching the earlier renames of the SteVec entry/query surface (`jsonb_entry`,
   `jsonb_query`). The function backs the `json` `@>` / `<@` containment operators;
-  its behaviour is unchanged. Callers that invoke the function by name (Supabase /
-  PostgREST, which call functions rather than operators) must update the name.
+  its behaviour is unchanged.
+
+  **Who is affected is narrower than a rename usually implies.** The operators are
+  untouched, and so are the two function-form entry points a PostgREST deployment
+  actually calls — `eql_v3.jsonb_contains(jsonb, jsonb)` and
+  `eql_v3.jsonb_contained_by(jsonb, jsonb)` are byte-identical to 3.0.4. What
+  breaks is hand-written SQL that names `ste_vec_contains` directly: queries,
+  views, RLS policies, and per-function `GRANT`s. The schema-wide grant scripts in
+  `docs/reference/permissions.md` pick the new name up on their next run, and a
+  stale per-function grant fails loudly (`function … does not exist`) rather than
+  silently granting nothing. See [U-001](../../docs/upgrading/v3.0.5.md#u-001-the-containment-implementation-is-renamed),
+  and [U-002](../../docs/upgrading/v3.0.5.md#u-002-grants-and-dependent-objects-do-not-survive-an-install)
+  for the larger fact underneath it — the installer opens with
+  `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, so *every* EQL install drops grants,
+  functional indexes and dependent views, not just this one.
 
   Released as a **patch**, matching 3.0.1, which shipped the fuzzy-match operator
   change (`@>` / `<@` → `@@`) at the same level. The parked changeset proposed
