@@ -6,7 +6,7 @@ import {
   readManifest,
 } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
-import pg from 'pg'
+import { createPgClient } from '@/db/client.js'
 import {
   fetchActiveEqlConfig,
   fetchPhysicalColumns,
@@ -114,8 +114,7 @@ export async function gatherObservations(
     }
   }
 
-  const client = new pg.Client({
-    connectionString: databaseUrl,
+  const client = createPgClient(databaseUrl, {
     connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
   })
   const tables = Array.from(new Set(targetColumns.map((c) => c.table)))

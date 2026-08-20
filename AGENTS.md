@@ -72,13 +72,13 @@ If these variables are missing, tests that require live encryption will fail or 
 ## Repository Layout
 
 - `packages/stack`: Main package (`@cipherstash/stack`) containing the encryption client and all integrations
-  - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/identity`, `@cipherstash/stack/schema`, `@cipherstash/stack/eql/v3`, `@cipherstash/stack/v3`, `@cipherstash/stack/types`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/encryption`, `@cipherstash/stack/errors`, `@cipherstash/stack/adapter-kit`, `@cipherstash/stack/wasm-inline` (the Drizzle and Supabase integrations moved to their own packages — see below)
+  - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/identity`, `@cipherstash/stack/schema`, `@cipherstash/stack/eql/v3`, `@cipherstash/stack/v3`, `@cipherstash/stack/types`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/encryption`, `@cipherstash/stack/errors`, `@cipherstash/stack/adapter-kit`, `@cipherstash/stack/wasm-inline`, `@cipherstash/stack/diagnostics` (the Drizzle and Supabase integrations moved to their own packages — see below)
 - `packages/cli`: The `stash` CLI — auth, init, encryption schema, and database setup (`stash eql install`). Has its own `AGENTS.md`.
 - `packages/wizard`: AI-powered encryption setup (`@cipherstash/wizard`)
 - `packages/migrate`: Plaintext-to-encrypted column migration (`@cipherstash/migrate`) — resumable backfill, per-column state
 - `packages/stack-prisma`: Prisma Next integration (`@cipherstash/stack-prisma`) — searchable field-level encryption for Postgres. **EQL v3 only**: per-domain constructors (`cipherstash.TextSearch()` / `text()` / `bigIntOrd()` / …) and `cipherstashFromStack` (the `./v3` and `./stack` entries). The EQL v2 surface was removed — the adapter's baseline migration installs the EQL v3 bundle only (works on Supabase as a non-superuser)
 - `packages/stack-drizzle`: Drizzle ORM integration (`@cipherstash/stack-drizzle`), depends on `@cipherstash/stack` — **EQL v3 only**, on the package root (the v2 surface was removed and the old `./v3` subpath collapsed into `.`). Split out of `@cipherstash/stack`.
-- `packages/stack-supabase`: Supabase integration (`@cipherstash/stack-supabase`), depends on `@cipherstash/stack` — **EQL v3 only**: `encryptedSupabase` is the v3 factory (`encryptedSupabaseV3` remains as a `@deprecated` alias). Split out of `@cipherstash/stack`.
+- `packages/stack-supabase`: Supabase integration (`@cipherstash/stack-supabase`), depends on `@cipherstash/stack` — **EQL v3 only**: `encryptedSupabase` is the v3 factory (`encryptedSupabaseV3` remains as a `@deprecated` alias). Split out of `@cipherstash/stack`. Two entries: the package root (native engine, Node) and `./wasm-inline` (WASM engine, edge — ESM-only, and declared-`schemas` only since it carries no Postgres driver).
 - `packages/nextjs`: Next.js helpers and Clerk integration (`./clerk` export)
 - `packages/utils`: Shared config (`utils/config`) and logger (`utils/logger`)
 - `packages/bench`: Performance / index-engagement benchmarks (private, not published)
@@ -87,7 +87,7 @@ If these variables are missing, tests that require live encryption will fail or 
 - `e2e/*`: Cross-package end-to-end tests (package managers, supply chain, Prisma example README)
 - `examples/*`: Working apps (basic, prisma, supabase-worker)
 - `docs/plans/*`: Internal design plans. User-facing documentation lives at https://cipherstash.com/docs (not in this repo).
-- `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-indexing`, `stash-deployment`, `stash-zerokms`, `stash-auth`, `stash-postgres`, `stash-edge`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-prisma`, `stash-supply-chain-security`)
+- `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-indexing`, `stash-deployment`, `stash-zerokms`, `stash-auth`, `stash-postgres`, `stash-edge`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-prisma`, `stash-managed-platforms`, `stash-supply-chain-security`)
 
 ## Working on protect-ffi
 
@@ -136,11 +136,22 @@ stays optional for everyone else.
   Rust. Everything else under `dist/` stays ignored. The re-inclusion chain
   spans the root `.gitignore`, the package's own, and a `.gitignore` wasm-pack
   generates — see the comments in each.
-- **Publishing has moved here.** npm trusted publishing for all seven packages
-  is repointed at this repo, bound to `release.yml`, so write changesets for
-  them normally. Nothing has actually published from here yet — the first FFI
-  release is still ahead, and until it lands treat the path as configured rather
-  than proven. The remaining steps and what is still unverified live in
+- **Publishing has moved here, and the path is proven.** npm trusted publishing
+  for all seven packages is repointed at this repo, bound to `release.yml`, so
+  write changesets for them normally. `@cipherstash/protect-ffi@0.32.0` was
+  published from here: its SLSA provenance names
+  `https://github.com/cipherstash/stack` and `.github/workflows/release.yml`,
+  which is the only evidence that settles it —
+
+  ```
+  curl -s https://registry.npmjs.org/-/npm/v1/attestations/@cipherstash%2fprotect-ffi@0.32.0
+  ```
+
+  This paragraph said the opposite until 2026-08-20. It was written while
+  0.31.0 was newest and true then; 0.32.0 landed and nothing brought the
+  sentence with it, so "treat the path as configured rather than proven"
+  outlived the release that proved it. Check the registry before repeating a
+  claim about what has or has not shipped. The remaining steps live in
   `docs/plans/2026-08-04-protect-ffi-monorepo-absorption.md`, Phase 4.
 - **A `.md.deferred` changeset is now a CI failure, having briefly been inert.**
   The parking convention and the `lint-no-ffi-changeset` guard that enforced it
@@ -386,6 +397,7 @@ nothing type-checks them, and the damage lands in a customer's repo, not ours.
 | Drizzle / Supabase / Prisma Next / DynamoDB integrations | `skills/stash-drizzle`, `skills/stash-supabase`, `skills/stash-prisma`, `skills/stash-dynamodb` |
 | The rollout/cutover lifecycle (`packages/migrate`, `stash encrypt *`) | `skills/stash-encryption` and `skills/stash-cli` |
 | The deploy sequencing / deploy-gate story, `stash env`, or platform-specific deployment guidance | `skills/stash-deployment` |
+| The managed AI platform path (Lovable, v0, Bolt, Replit) — headless auth, non-`postgres` roles, PostgREST limits | `skills/stash-managed-platforms` |
 | The `@cipherstash/eql` pin, `eql install`/`eql migration` behaviour, or index-related SQL guidance | `skills/stash-indexing` |
 | The EQL operator/domain surface (`eql_v3.query_*` casts, predicate forms) | `skills/stash-postgres` |
 | The keyset/client model (`config.keyset`, grants, the ZeroKMS access story) | `skills/stash-zerokms` — the canonical source; other skills should point here rather than restate it |

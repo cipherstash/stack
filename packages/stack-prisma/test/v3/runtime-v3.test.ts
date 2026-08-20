@@ -39,7 +39,7 @@ describe('createCipherstashV3RuntimeDescriptor — descriptor shape', () => {
     const descriptor = createCipherstashV3RuntimeDescriptor({ sdk: emptySdk() })
     expect(descriptor.kind).toBe('extension')
     // The id must be the PACK id ('cipherstash'): the runtime matches
-    // the contract's declared extensionPacks against runtime descriptor
+    // the contract's declared extensions against runtime descriptor
     // ids, and both generations' contracts are emitted by the one
     // cipherstash control descriptor. The VERSION carries v3's own
     // identity. (CIPHERSTASH_V3_SPACE_ID remains v3's logical space

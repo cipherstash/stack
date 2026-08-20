@@ -4,9 +4,9 @@ import {
   readManifest,
 } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
-import pg from 'pg'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
+import { createPgClient } from '@/db/client.js'
 import {
   type EqlColumnInfo,
   fetchActiveEqlConfig,
@@ -41,7 +41,7 @@ export async function statusCommand() {
 
   const config = await loadStashConfig()
   const manifest = await readManifest(process.cwd())
-  const client = new pg.Client({ connectionString: config.databaseUrl })
+  const client = createPgClient(config.databaseUrl)
   let exitCode = 0
 
   try {

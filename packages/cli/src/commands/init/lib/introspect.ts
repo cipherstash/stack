@@ -1,5 +1,5 @@
 import * as p from '@clack/prompts'
-import pg from 'pg'
+import { createPgClient } from '@/db/client.js'
 import type { ColumnDef, DataType, SchemaDef, V3Domain } from '../types.js'
 
 export interface DbColumn {
@@ -81,8 +81,7 @@ export async function introspectDatabase(
   // this, an unreachable / firewalled database silently hangs the spinner
   // until the user kills the process. 10 s is generous for healthy hosts
   // and short enough to surface a real failure quickly.
-  const client = new pg.Client({
-    connectionString: databaseUrl,
+  const client = createPgClient(databaseUrl, {
     connectionTimeoutMillis: 10_000,
   })
   try {

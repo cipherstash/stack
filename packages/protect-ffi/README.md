@@ -386,6 +386,13 @@ normally. The guard that blocked one (`scripts/lint-no-ffi-changeset.mjs`) and
 the `.changeset/<name>.md.deferred` convention that parked it until the cutover
 are both gone.
 
+**And the path is proven, not merely configured** — `0.32.0` was published from
+this repository. Its SLSA provenance on npm names
+`https://github.com/cipherstash/stack` and `.github/workflows/release.yml`,
+which is the only evidence that settles the question: an earlier revision of
+this paragraph said no FFI release had run from here, written while 0.31.0 was
+the newest and never revisited when 0.32.0 landed.
+
 If you find a file still carrying that extension, it was written during the
 embargo and is now inert rather than parked: `@changesets/read` selects on
 `.endsWith('.md')`, so the change it describes would release with an empty

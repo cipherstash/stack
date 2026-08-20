@@ -1,13 +1,13 @@
 /**
  * SDK-free codec used in pack-meta (`cipherstashPackMeta.types.codecTypes
- * .codecInstances`). Pack-meta consumers only read codec *metadata*
+ * .codecDescriptors`). Pack-meta consumers only read codec *metadata*
  * (`typeId`, `targetTypes`, `traits`, `renderOutputType`) at contract
  * emit time — they never call `encode`/`decode`.
  *
  * The SDK-bound runtime codec for actual `encode`/`decode` lives in
  * `../v3/codec-runtime-v3`; it is resolved through the runtime
- * descriptor's `codecDescriptors` at runtime instead of through
- * pack-meta's `codecInstances`.
+ * descriptor's SDK-bound `codecDescriptors` at runtime instead of
+ * through the pack-meta set here.
  *
  * Keeping the SDK-free metadata in its own module — and *not* importing
  * the runtime envelope classes — preserves the control vs runtime
@@ -22,12 +22,17 @@
  * surfaces immediately instead of silently no-op'ing.
  */
 
-import type { JsonValue } from '@prisma-next/contract/types'
 import {
   type AnyCodecDescriptor,
   CodecImpl,
   type CodecTrait,
-} from '@prisma-next/framework-components/codec'
+} from '@prisma/orm-framework/components/codec'
+import type { JsonValue } from '@prisma/orm-framework/contract/types'
+import {
+  type AnyPostgresCodecDescriptor,
+  definePostgresCodecs,
+  postgresCodec,
+} from '@prisma/orm-target-postgres/target/codec-descriptor'
 import {
   envelopeTypeNameForCastAs,
   V3_DOMAIN_META_BY_CODEC_ID,
@@ -90,14 +95,13 @@ function makeV3MetadataDescriptor(
   codecId: string,
   meta: V3DomainMeta,
   typeName: string,
-): AnyCodecDescriptor {
-  return {
+): AnyPostgresCodecDescriptor {
+  const generic: AnyCodecDescriptor = {
     codecId,
     // Type-level adapter into the framework's closed `CodecTrait` union —
     // same rationale as `v3CodecTraits` in `../v3/codec-runtime-v3.ts`.
     traits: v3TraitsForCapabilities(meta.capabilities) as readonly CodecTrait[],
     targetTypes: [meta.nativeType],
-    meta: { db: { sql: { postgres: { nativeType: meta.nativeType } } } },
     paramsSchema: {
       '~standard': {
         version: 1,
@@ -107,23 +111,37 @@ function makeV3MetadataDescriptor(
     },
     isParameterized: true,
     renderOutputType: () => typeName,
-    factory: () => () => {
-      throw new Error(
-        'cipherstash codec: metadata descriptor factory is not callable',
-      )
-    },
+    // Representative materialization: 0.17 emitters resolve a Codec
+    // instance through the descriptor for codec-dispatched type
+    // rendering, so the factory returns the SDK-free metadata codec
+    // (whose `encode`/`decode` still throw with a runtime-descriptor
+    // hint) instead of throwing at materialization time.
+    factory: () => () => new CipherstashCodecMetadata(descriptor, typeName),
   }
+  const descriptor: AnyPostgresCodecDescriptor = postgresCodec(generic, {
+    // Same identity JSON projection as the runtime descriptors — a v3
+    // column is a domain over `jsonb`, so the stored EQL payload
+    // document already is its canonical JSON form (see
+    // `v3PostgresCodecOptions` in `../v3/codec-runtime-v3.ts`).
+    nativeType: () => meta.nativeType,
+    jsonProjection: (expression) => expression,
+  })
+  return descriptor
 }
 
-/** All 40 v3 metadata codecs, in catalog order. */
-export const cipherstashV3CodecMetadataInstances: readonly CipherstashCodecMetadata[] =
-  [...V3_DOMAIN_META_BY_CODEC_ID.entries()].map(([codecId, meta]) => {
-    const typeName = envelopeTypeNameForCastAs(meta.castAs)
-    return new CipherstashCodecMetadata(
-      makeV3MetadataDescriptor(codecId, meta, typeName),
-      typeName,
-    )
-  })
+/** All 40 v3 SDK-free target descriptors, in catalog order — the
+ * pack-meta `types.codecTypes.codecDescriptors` set (0.17's replacement
+ * for the deleted `codecInstances` slot). */
+export const cipherstashV3CodecDescriptors: readonly AnyPostgresCodecDescriptor[] =
+  definePostgresCodecs(
+    [...V3_DOMAIN_META_BY_CODEC_ID.entries()].map(([codecId, meta]) =>
+      makeV3MetadataDescriptor(
+        codecId,
+        meta,
+        envelopeTypeNameForCastAs(meta.castAs),
+      ),
+    ),
+  )
 
 /** Pack-meta `types.storage` rows for the v3 codecs — one per domain,
  * each targeting its own concrete `public.eql_v3_*` native type. */

@@ -83,6 +83,13 @@ overrides:
   # are breaking). Exercised builds pass; retire by bumping tsup once a release
   # declares ^0.28.
   'esbuild@>=0.27.3 <0.28.1': '^0.28.1'
+  # GHSA-3jxr-9vmj-r5cp / CVE-2026-13149 (exponential-time expand(), fix
+  # >=5.0.7), GHSA-mh99-v99m-4gvg / CVE-2026-14257 (unbounded expansion length
+  # OOM, fix >=5.0.8), GHSA-rgw5-rvv9-x895 / CVE-2026-69152 (fix >=5.0.9) — all
+  # three land on the same transitive dep (rimraf>glob>minimatch>brace-expansion).
+  # Pinned to the matured 5.0.9 (published 2026-07-30) to close all three at
+  # once rather than leaving two open after only clearing the first.
+  'brace-expansion@<5.0.9': '5.0.9'
   # #153 GHSA-h67p-54hq-rp68 / CVE-2026-53550 — js-yaml merge-key DoS, 3.x line.
   # #189 GHSA-5p4m-2wfm-xmqj / CVE-2026-59870 (HIGH) — quadratic-CPU DoS in
   # `!!omap` duplicate-key detection; patched in 3.15.1.
@@ -123,6 +130,12 @@ overrides:
   # needs 3.1.5, so the exact pin was enforcing a vulnerable version — the same
   # shape as the js-yaml 4.x entry above. Reached through ajv.
   'fast-uri@<3.1.5': '3.1.5'
+  # GHSA-f88m-g3jw-g9cj — sharp's vendored libvips carries multiple High
+  # libvips CVEs (CVE-2026-33327, CVE-2026-33328, CVE-2026-35590,
+  # CVE-2026-35591), fixed >=0.35.0. Pulled in as an optional dependency of
+  # next (image optimization), not a direct dependency. Pinned to the matured
+  # 0.35.0 (published 2026-06-10).
+  'sharp@<0.35.0': '0.35.0'
 
 # Supply-chain hardening — see skills/stash-supply-chain-security/
 # 7 days in minutes; mirrors the Dependabot cooldown so manual + automated
@@ -133,7 +146,11 @@ blockExoticSubdeps: true
 # Excluded from the 7-day cooldown: first-party packages we publish or
 # integrate against directly. These ship on their own release cadence and
 # are not exotic deps.
-#   - @prisma-next/*       first-party Prisma packages the integration is built against
+#   - @prisma/orm-*, prisma-next  first-party Prisma packages the integration is
+#                                 built against (the 0.17 publish surface; the
+#                                 retired @prisma-next/* scope is kept for
+#                                 historical installs while anything still pins
+#                                 0.16)
 #   - @cipherstash/auth*         CipherStash-published auth strategies (NAPI +
 #                                 WASM-inline variant); also tracked in lockstep
 #                                 with protect-ffi for the WASM path.
@@ -146,5 +163,7 @@ blockExoticSubdeps: true
 # minimumReleaseAge is a pnpm setting that never applied to it.
 minimumReleaseAgeExclude:
   - '@prisma-next/*'
+  - '@prisma/orm-*'
+  - 'prisma-next'
   - '@cipherstash/auth'
   - '@cipherstash/auth-*'

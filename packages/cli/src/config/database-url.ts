@@ -24,6 +24,7 @@ import { execSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import * as p from '@clack/prompts'
+import { emitJsonError } from '../commands/auth/events.js'
 import { detectSupabaseProject } from '../commands/db/detect.js'
 import { detectPackageManager, runnerCommand } from '../commands/init/utils.js'
 import { messages } from '../messages.js'
@@ -36,6 +37,21 @@ export interface ResolveDatabaseUrlOptions {
   supabase?: boolean
   /** Override cwd for project detection (mainly for tests). */
   cwd?: string
+  /**
+   * Suppress the informational chrome and skip the interactive-prompt tier.
+   * For `--json` commands: their stdout is a machine-readable contract, so
+   * neither a "Using DATABASE_URL from …" line nor a prompt may appear on it.
+   * Error paths still print (and exit 1) — a failure should stay diagnosable.
+   */
+  quiet?: boolean
+  /**
+   * Surface resolution failures as the shared `{ status: 'error', code,
+   * message }` NDJSON envelope instead of clack chrome, keeping a `--json`
+   * command's stdout parseable on its most likely first-run failure (no
+   * DATABASE_URL configured). Exit code stays 1. Implies nothing about
+   * `quiet` — pass both for a JSON command.
+   */
+  jsonErrors?: boolean
 }
 
 // The CLI ships as two tsup bundles (`dist/index.js` for the library and
@@ -185,10 +201,14 @@ export async function resolveDatabaseUrl(
   if (ctx.databaseUrlFlag !== undefined) {
     const trimmed = ctx.databaseUrlFlag.trim()
     if (!trimmed || !isUrlParseable(trimmed)) {
-      p.log.error(messages.db.urlFlagMalformed)
+      if (ctx.jsonErrors) {
+        emitJsonError('database_url_invalid', messages.db.urlFlagMalformed)
+      } else {
+        p.log.error(messages.db.urlFlagMalformed)
+      }
       process.exit(1)
     }
-    p.log.info(messages.db.urlResolvedFromFlag)
+    if (!ctx.quiet) p.log.info(messages.db.urlResolvedFromFlag)
     return trimmed
   }
 
@@ -203,7 +223,7 @@ export async function resolveDatabaseUrl(
   if (ctx.supabase || supabaseProject.hasConfigToml) {
     const fromSupabase = trySupabaseStatus()
     if (fromSupabase) {
-      p.log.info(messages.db.urlResolvedFromSupabase)
+      if (!ctx.quiet) p.log.info(messages.db.urlResolvedFromSupabase)
       return fromSupabase
     }
   }
@@ -213,7 +233,7 @@ export async function resolveDatabaseUrl(
   // CI-truthy spellings (`true`, `1`, case-insensitive) since not every CI
   // provider sets `CI=true` exactly.
   const isCi = isCiEnv()
-  if (isInteractive()) {
+  if (!ctx.quiet && isInteractive()) {
     const fromPrompt = await promptForUrl(cwd)
     if (fromPrompt) {
       p.log.info(messages.db.urlResolvedFromPrompt)
@@ -224,8 +244,13 @@ export async function resolveDatabaseUrl(
   }
 
   // 5. Hard fail.
-  p.log.error(
-    isCi ? messages.db.urlMissingCi : messages.db.urlMissingInteractive,
-  )
+  const missingMessage = isCi
+    ? messages.db.urlMissingCi
+    : messages.db.urlMissingInteractive
+  if (ctx.jsonErrors) {
+    emitJsonError('database_url_missing', missingMessage)
+  } else {
+    p.log.error(missingMessage)
+  }
   process.exit(1)
 }

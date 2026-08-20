@@ -41,9 +41,9 @@
 import type {
   ParamRefHandle,
   SqlParamRefMutator,
-} from '@prisma-next/sql-relational-core/middleware'
-import type { SqlMiddleware } from '@prisma-next/sql-runtime'
-import { ifDefined } from '@prisma-next/utils/defined'
+} from '@prisma/orm-family-sql/relational-core/middleware'
+import type { SqlMiddleware } from '@prisma/orm-family-sql/runtime'
+import { ifDefined } from '@prisma/orm-framework/utils/defined'
 import {
   checkCipherstashAborted,
   raceCipherstashAbort,

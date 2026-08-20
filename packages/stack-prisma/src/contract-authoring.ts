@@ -38,7 +38,7 @@ import type { QueryCapabilities } from '@cipherstash/stack/eql/v3'
 import type {
   AuthoringTypeConstructorDescriptor,
   AuthoringTypeNamespace,
-} from '@prisma-next/framework-components/authoring'
+} from '@prisma/orm-framework/components/authoring'
 import { EXPOSED_DOMAIN_ENTRIES, type V3DomainMeta } from './v3/catalog'
 
 // The stem of a bare domain maps to a JS-friendly display label; the suffix

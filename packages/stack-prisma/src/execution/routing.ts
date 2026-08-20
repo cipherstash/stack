@@ -21,7 +21,7 @@ import type {
   InsertAst,
   InsertValue,
   UpdateAst,
-} from '@prisma-next/sql-relational-core/ast'
+} from '@prisma/orm-family-sql/relational-core/ast'
 import { EncryptedEnvelopeBase, setHandleRoutingKey } from './envelope-base'
 import type { CipherstashRoutingKey } from './sdk'
 

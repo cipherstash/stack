@@ -1,5 +1,5 @@
 import type { MigrationPhase } from '@cipherstash/migrate'
-import pg from 'pg'
+import { createPgClient } from '@/db/client.js'
 import { latestByColumnSafe } from '../../encrypt/lib/db-readers.js'
 
 /** Conservative connect timeout for rollout-state lookups: the CLI
@@ -65,8 +65,7 @@ export async function detectColumnStates(
 ): Promise<ColumnState[] | null> {
   if (columns.length === 0) return []
 
-  const client = new pg.Client({
-    connectionString: databaseUrl,
+  const client = createPgClient(databaseUrl, {
     connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
   })
   try {

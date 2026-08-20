@@ -1,12 +1,16 @@
 /**
  * What happens to a consumer who IGNORES the 3.0.5 changeset's "Action
  * required" note — i.e. keeps a `migrations/cipherstash/` directory
- * generated against `@cipherstash/stack-prisma@1.0.0` and upgrades the
- * package underneath it.
+ * generated against `@cipherstash/stack-prisma@1.0.0` or `@1.1.0` and
+ * upgrades the package underneath it.
  *
  * The 3.0.5 release re-emitted the published baseline
  * (`20260601T0100_install_eql_v3_bundle`): its bytes, and so its
- * `migrationHash`, changed from `sha256:fc495f7f…` to `sha256:23c98b03…`.
+ * `migrationHash`, moved to `bad30c9b…`. Two vendored generations precede
+ * it and they behave DIFFERENTLY, which is why both are pinned below:
+ * 1.1.0 (Prisma Next 0.17) is stale-but-intact and passes silently, while
+ * 1.0.0's `sha256:`-prefixed hashes no longer verify under 0.17's hash
+ * function at all — that space is REPORTED, as a `hashMismatch`.
  * These artefacts are content-addressed and normally append-only, so a
  * re-emit is the one case the machinery was never designed for. The
  * changeset tells consumers to delete the vendored directory and re-run
@@ -30,29 +34,29 @@
  *
  * The suite is offline and deterministic — the fixture is reconstructed
  * from artefacts already in this repo and proved byte-equivalent to the
- * published 1.0.0 baseline by its content hash (see
- * `STALE_1_0_0_BASELINE_HASH`). It therefore runs in the normal
+ * published pre-3.0.5 baseline by its content hash (see
+ * `STALE_PRE_305_BASELINE_HASH`). It therefore runs in the normal
  * `pnpm --filter @cipherstash/stack-prisma test` suite with no env guard
  * and no skip.
  */
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { MigrationPlanOperation } from '@prisma-next/framework-components/control'
-import { computeMigrationHash } from '@prisma-next/migration-tools/hash'
+import type { MigrationPlanOperation } from '@prisma/orm-framework/components/control'
+import { computeMigrationHash } from '@prisma/orm-toolchain/migration-tools/hash'
 import {
   materialiseExtensionMigrationPackageIfMissing,
   readMigrationsDir,
   writeMigrationPackage,
-} from '@prisma-next/migration-tools/io'
-import type { MigrationMetadata } from '@prisma-next/migration-tools/metadata'
-import type { MigrationOps } from '@prisma-next/migration-tools/package'
+} from '@prisma/orm-toolchain/migration-tools/io'
+import type { MigrationMetadata } from '@prisma/orm-toolchain/migration-tools/metadata'
+import type { MigrationOps } from '@prisma/orm-toolchain/migration-tools/package'
 import {
   computeExtensionSpaceApplyPath,
-  emitContractSpaceArtefacts,
+  emitContractSpaceArtifacts,
   spaceMigrationDirectory,
-} from '@prisma-next/migration-tools/spaces'
+} from '@prisma/orm-toolchain/migration-tools/spaces'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import v3BaselineMetadata from '../../migrations/20260601T0100_install_eql_v3_bundle/migration.json' with {
   type: 'json',
@@ -69,17 +73,33 @@ import {
 } from '../../src/extension-metadata/constants-v3'
 
 /**
- * The `migrationHash` `@cipherstash/stack-prisma@1.0.0` published for
- * `20260601T0100_install_eql_v3_bundle`, before the 3.0.5 re-emit. It is
- * what a consumer's vendored copy still carries. Recorded here as the
- * fixture's acceptance criterion, not as live history: the frozen set of
+ * The `migrationHash` a vendored pre-3.0.5 `20260601T0100_install_eql_v3_bundle`
+ * carries under the CURRENT (Prisma Next 0.17) hash function. Recorded here as
+ * the fixture's acceptance criterion, not as live history: the frozen set of
  * CURRENT hashes lives in `migration-v3.test.ts`.
+ *
+ * Read off the published tarball, not computed here — `@cipherstash/stack-prisma@1.1.0`
+ * ships exactly this value for that directory. 1.0.0 shipped the SAME BYTES under
+ * the pre-0.17 hash (see `STALE_1_0_0_BASELINE_HASH_PRE_017`), so one fixture
+ * covers both vendored generations and only the stored digest differs.
  */
-const STALE_1_0_0_BASELINE_HASH =
+const STALE_PRE_305_BASELINE_HASH =
+  '1030654387540db7a053449e478d4b198d8666b360cca9f9c265eddb83b2dd74'
+
+/**
+ * What `@cipherstash/stack-prisma@1.0.0` stored for the same directory, under
+ * the pre-0.17 `sha256:`-prefixed hash.
+ *
+ * It is NOT interchangeable with the constant above, and that is the point of
+ * the 1.0.0 case below: 0.17 recomputes a bare digest over these bytes, which
+ * cannot equal a prefixed stored value, so a 1.0.0-vendored space is caught by
+ * `readMigrationsDir` rather than silently accepted. The 1.1.0 one is not.
+ */
+const STALE_1_0_0_BASELINE_HASH_PRE_017 =
   'sha256:fc495f7f59e6d18ae8e3df594a38898263ca91f8f5fb5f625bff20d04a0d7223'
 
-/** The three invariants a 1.0.0 install recorded on the marker row. */
-const INVARIANTS_1_0_0 = [
+/** The three invariants a pre-3.0.5 install recorded on the marker row. */
+const INVARIANTS_PRE_305 = [
   CIPHERSTASH_V3_INVARIANTS.installBundle,
   CIPHERSTASH_V3_INVARIANTS.upgradeBundle302,
   CIPHERSTASH_V3_INVARIANTS.upgradeBundle304,
@@ -103,7 +123,7 @@ function opsRefusedByDbInitPolicy(
  * The SQL target's op shape. `MigrationPlanOperation` (the framework's
  * base type) carries only `id` / `label` / `operationClass` /
  * `invariantId`; the `execute` / `postcheck` step lists are added by
- * `@prisma-next/target-postgres` and are what this suite reads. Declared
+ * `@prisma/orm-target-postgres` and are what this suite reads. Declared
  * locally so the single widening cast lives in `asSqlOps` below rather
  * than at every use site.
  */
@@ -135,19 +155,19 @@ function descriptorPackage(dirName: string) {
 }
 
 /**
- * Rebuild the 1.0.0 baseline package from artefacts still in this repo.
+ * Rebuild the pre-3.0.5 baseline package from artefacts still in this repo.
  *
- * Every byte is recoverable without a fixture blob: the 1.0.0 baseline's
+ * Every byte is recoverable without a fixture blob: that baseline's
  * install SQL is the same eql-3.0.4 bundle the `20260728T0000` upgrade
  * edge bakes (both pin `installSqlSha256` `63104a81…` — see
  * `migration-v3.test.ts`), and the surrounding op shape differs from
  * today's baseline only in the release string and the missing 3.0.5
  * carrier op. The reconstruction is *proved* faithful by hashing it: the
- * `migrationHash` test below demands `sha256:fc495f7f…`, the value 1.0.0
+ * `migrationHash` test below demands `1030654387…`, the value 1.1.0
  * published. Content addressing makes that an exact-bytes assertion, so
  * this fixture cannot silently drift into "some old-looking baseline".
  */
-function buildStale100Baseline(): {
+function buildStalePre305Baseline(): {
   readonly metadata: MigrationMetadata
   readonly ops: readonly SqlMigrationOp[]
 } {
@@ -189,8 +209,8 @@ function buildStale100Baseline(): {
 
   const metadata: MigrationMetadata = {
     ...descriptorPackage(CIPHERSTASH_V3_BASELINE_MIGRATION_NAME).metadata,
-    providedInvariants: [...INVARIANTS_1_0_0],
-    migrationHash: STALE_1_0_0_BASELINE_HASH,
+    providedInvariants: [...INVARIANTS_PRE_305],
+    migrationHash: STALE_PRE_305_BASELINE_HASH,
   }
 
   return { metadata, ops }
@@ -203,14 +223,14 @@ function buildStale100Baseline(): {
  * the 3.0.5 release, so the shipped bytes ARE the 1.0.0 bytes), and a
  * head ref demanding only the three 1.0.0 invariants.
  */
-async function vendorStale100Space(migrationsDir: string): Promise<void> {
+async function vendorStalePre305Space(migrationsDir: string): Promise<void> {
   const spaceDir = spaceMigrationDirectory(migrationsDir, CIPHERSTASH_SPACE_ID)
-  const stale = buildStale100Baseline()
+  const stale = buildStalePre305Baseline()
 
-  await emitContractSpaceArtefacts(migrationsDir, CIPHERSTASH_SPACE_ID, {
+  await emitContractSpaceArtifacts(migrationsDir, CIPHERSTASH_SPACE_ID, {
     contract: descriptorSpace().contractJson,
     contractDts: 'export {};\n',
-    headRef: { hash: headRef.hash, invariants: [...INVARIANTS_1_0_0] },
+    headRef: { hash: headRef.hash, invariants: [...INVARIANTS_PRE_305] },
   })
 
   await writeMigrationPackage(
@@ -231,7 +251,7 @@ async function vendorStale100Space(migrationsDir: string): Promise<void> {
 
 /**
  * The CLI's phase-1 seed, reproduced from its two public primitives —
- * `runContractSpaceSeedPhase` itself is not on `@prisma-next/cli`'s
+ * `runContractSpaceSeedPhase` itself is not on `@prisma/orm-toolchain/cli`'s
  * exports map, and `materialiseExtensionMigrationPackageIfMissing`
  * documents this exact mirroring for extension-package tests. Order and
  * semantics match `contract-space-seed-phase.ts`: re-emit the framework-
@@ -240,7 +260,7 @@ async function vendorStale100Space(migrationsDir: string): Promise<void> {
  */
 async function runSeedPhase(migrationsDir: string): Promise<readonly string[]> {
   const space = descriptorSpace()
-  await emitContractSpaceArtefacts(migrationsDir, CIPHERSTASH_SPACE_ID, {
+  await emitContractSpaceArtifacts(migrationsDir, CIPHERSTASH_SPACE_ID, {
     contract: space.contractJson,
     contractDts: 'export {};\n',
     headRef: space.headRef,
@@ -293,21 +313,23 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 
-describe('stale vendored migrations/cipherstash/ (generated against 1.0.0)', () => {
-  it('the fixture IS the published 1.0.0 baseline — proved by its content hash', () => {
-    // Content addressing turns this into an exact-bytes claim: only the
-    // 1.0.0 artefact hashes to fc495f7f…. If this fails, the fixture is
+describe('stale vendored migrations/cipherstash/ (generated against 1.0.0 or 1.1.0)', () => {
+  it('the fixture IS the published pre-3.0.5 baseline — proved by its content hash', () => {
+    // Content addressing turns this into an exact-bytes claim: only that
+    // artefact hashes to 1030654387…. If this fails, the fixture is
     // no longer the thing consumers have on disk and every assertion
     // below is about a straw man.
-    const stale = buildStale100Baseline()
+    const stale = buildStalePre305Baseline()
     const { migrationHash: _stored, ...envelope } = stale.metadata
     expect(computeMigrationHash(envelope, stale.ops)).toBe(
-      STALE_1_0_0_BASELINE_HASH,
+      STALE_PRE_305_BASELINE_HASH,
     )
     // …and it is genuinely NOT what the package ships today.
-    expect(v3BaselineMetadata.migrationHash).not.toBe(STALE_1_0_0_BASELINE_HASH)
+    expect(v3BaselineMetadata.migrationHash).not.toBe(
+      STALE_PRE_305_BASELINE_HASH,
+    )
     expect(v3BaselineMetadata.migrationHash).toBe(
-      'sha256:23c98b0368d22794507a4ef7b02ed4cb04249f36bfcb0b20488005aa62488313',
+      'bad30c9b3d2ad383d853cda0209eb14a031f2d107ba9cbdfb26b95d58e9aff37',
     )
     // The stale bundle is 3.0.4: the old name only. Asserted on the STALE
     // side alone, deliberately — the shipped 3.0.5 bundle carries BOTH names
@@ -327,7 +349,7 @@ describe('stale vendored migrations/cipherstash/ (generated against 1.0.0)', () 
     // never compares it to the descriptor. The upgrade is therefore
     // silent: no hash mismatch, no warning, no mention of the stale
     // directory anywhere in the pipeline.
-    await vendorStale100Space(migrationsDir)
+    await vendorStalePre305Space(migrationsDir)
     const newlyWritten = await runSeedPhase(migrationsDir)
 
     // Only the 3.0.5 directory is new; the re-emitted baseline is NOT
@@ -348,11 +370,13 @@ describe('stale vendored migrations/cipherstash/ (generated against 1.0.0)', () 
         'utf8',
       ),
     ) as { migrationHash: string; providedInvariants: string[] }
-    expect(onDiskBaseline.migrationHash).toBe(STALE_1_0_0_BASELINE_HASH)
-    expect(onDiskBaseline.providedInvariants).toEqual([...INVARIANTS_1_0_0])
+    expect(onDiskBaseline.migrationHash).toBe(STALE_PRE_305_BASELINE_HASH)
+    expect(onDiskBaseline.providedInvariants).toEqual([...INVARIANTS_PRE_305])
 
     // The integrity checker's own load-time verdict: clean.
-    const { packages, problems } = await readMigrationsDir(spaceDir)
+    const { packages, problems } = await readMigrationsDir(spaceDir, {
+      migrationsDir: spaceDir,
+    })
     expect(problems).toEqual([])
     expect(packages).toHaveLength(4)
 
@@ -369,18 +393,69 @@ describe('stale vendored migrations/cipherstash/ (generated against 1.0.0)', () 
     )
   })
 
+  it('a 1.0.0-era space is NOT silent — its `sha256:` hashes fail to verify under 0.17', async () => {
+    // The counterpart to the headline, and the reason this suite pins TWO
+    // vendored generations. 1.0.0 and 1.1.0 vendored the same baseline BYTES;
+    // only the stored digest differs, because Prisma Next 0.17 changed the
+    // hash format from `sha256:<hex>` to bare `<hex>`. 0.17 recomputes a bare
+    // digest over those bytes, which can never equal a prefixed stored value,
+    // so the mismatch is structural rather than content-driven.
+    //
+    // That makes a 1.0.0-era space the BETTER case: it is reported. The one
+    // that slips through is 1.1.0's, above. Pinned so nobody "fixes" the
+    // headline by assuming every stale space is caught.
+    await vendorStalePre305Space(migrationsDir)
+    const spaceDir = spaceMigrationDirectory(
+      migrationsDir,
+      CIPHERSTASH_SPACE_ID,
+    )
+    const baselineManifest = join(
+      spaceDir,
+      CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
+      'migration.json',
+    )
+    // Rewind just the stored digest to what 1.0.0 shipped, leaving every
+    // other byte alone — exactly the on-disk state of a space vendored then
+    // and never regenerated.
+    const asShipped = JSON.parse(await readFile(baselineManifest, 'utf8')) as {
+      migrationHash: string
+    }
+    expect(asShipped.migrationHash).toBe(STALE_PRE_305_BASELINE_HASH)
+    await writeFile(
+      baselineManifest,
+      JSON.stringify(
+        { ...asShipped, migrationHash: STALE_1_0_0_BASELINE_HASH_PRE_017 },
+        null,
+        2,
+      ),
+      'utf8',
+    )
+
+    const { problems } = await readMigrationsDir(spaceDir, {
+      migrationsDir: spaceDir,
+    })
+    expect(problems).toEqual([
+      {
+        kind: 'hashMismatch',
+        dirName: CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
+        stored: STALE_1_0_0_BASELINE_HASH_PRE_017,
+        computed: STALE_PRE_305_BASELINE_HASH,
+      },
+    ])
+  })
+
   it('an existing 1.0.0 database still upgrades correctly — only the 3.0.5 edge runs', async () => {
     // The changeset's claim: "Your database keeps its markers, so
     // already-applied invariants are not re-run — the only new work is
     // the 3.0.5 upgrade edge." Verified here for the consumer who did
     // NOT delete the directory, which is the strictly harder case.
-    await vendorStale100Space(migrationsDir)
+    await vendorStalePre305Space(migrationsDir)
     await runSeedPhase(migrationsDir)
 
     const outcome = requireOk(
       await applyPath(migrationsDir, {
         hash: headRef.hash,
-        invariants: [...INVARIANTS_1_0_0],
+        invariants: [...INVARIANTS_PRE_305],
       }),
     )
     expect(outcome.walkedMigrationDirs).toEqual([
@@ -408,7 +483,7 @@ describe('stale vendored migrations/cipherstash/ (generated against 1.0.0)', () 
     const outcome = requireOk(
       await applyPath(migrationsDir, {
         hash: headRef.hash,
-        invariants: [...INVARIANTS_1_0_0],
+        invariants: [...INVARIANTS_PRE_305],
       }),
     )
     expect(outcome.walkedMigrationDirs).toEqual([
@@ -453,7 +528,7 @@ describe('fresh database: both install paths must converge on eql-3.0.5', () => 
     // the upgrade edge immediately re-installs eql-3.0.5 over it (the
     // bundle SQL is re-install-safe, which is what makes this survivable
     // rather than broken).
-    await vendorStale100Space(migrationsDir)
+    await vendorStalePre305Space(migrationsDir)
     await runSeedPhase(migrationsDir)
 
     const outcome = requireOk(
@@ -485,11 +560,11 @@ describe('fresh database: both install paths must converge on eql-3.0.5', () => 
     // consumer sees is UNRELATED to the cause: nothing in it mentions the
     // vendored directory, the baseline re-emit, or the remedy. There is
     // no in-package lever to improve it — the text is produced by
-    // `@prisma-next/target-postgres`'s `enforcePolicyCompatibility`, and
+    // `@prisma/orm-target-postgres`'s `enforcePolicyCompatibility`, and
     // the operation id it interpolates is frozen inside a published,
     // content-addressed artefact. If this test starts failing because a
     // framework upgrade made the refusal self-describing, delete it.
-    await vendorStale100Space(migrationsDir)
+    await vendorStalePre305Space(migrationsDir)
     await runSeedPhase(migrationsDir)
 
     const outcome = requireOk(
@@ -557,7 +632,7 @@ describe('fresh database: both install paths must converge on eql-3.0.5', () => 
     // Deleting the directory and re-running the seed phase is the whole
     // remedy: the regenerated genesis edge carries all four invariants as
     // additive ops, so nothing outside the policy is ever planned.
-    await vendorStale100Space(migrationsDir)
+    await vendorStalePre305Space(migrationsDir)
     await rm(spaceMigrationDirectory(migrationsDir, CIPHERSTASH_SPACE_ID), {
       recursive: true,
       force: true,
@@ -578,7 +653,7 @@ describe('fresh database: both install paths must converge on eql-3.0.5', () => 
 /**
  * The seed phase runs from ONE command. `runContractSpaceSeedPhase` is
  * called only by `prisma-next migration plan`
- * (`@prisma-next/cli/src/commands/migration-plan.ts`); `migrate`,
+ * (`@prisma/orm-toolchain/cli/commands/migration-plan`); `migrate`,
  * `db init` and `db update` plan straight from whatever is on disk. So a
  * consumer who upgrades the package and runs `migrate` — without a
  * `migration plan` first — never materialises the 3.0.5 directory and
@@ -592,13 +667,13 @@ describe('fresh database: both install paths must converge on eql-3.0.5', () => 
  */
 describe('no seed phase run: the 3.0.5 upgrade is silently invisible', () => {
   it('`migrate` against an existing 1.0.0 database is a no-op — 3.0.5 never applies', async () => {
-    await vendorStale100Space(migrationsDir)
+    await vendorStalePre305Space(migrationsDir)
     // deliberately NO runSeedPhase — the user ran `migrate`, not `plan`
 
     const outcome = requireOk(
       await applyPath(migrationsDir, {
         hash: headRef.hash,
-        invariants: [...INVARIANTS_1_0_0],
+        invariants: [...INVARIANTS_PRE_305],
       }),
     )
     // No error, no warning, no work: the on-disk head ref still demands
@@ -611,7 +686,7 @@ describe('no seed phase run: the 3.0.5 upgrade is silently invisible', () => {
   })
 
   it('`db init` against a fresh database silently installs eql-3.0.4', async () => {
-    await vendorStale100Space(migrationsDir)
+    await vendorStalePre305Space(migrationsDir)
     // deliberately NO runSeedPhase
 
     const outcome = requireOk(
@@ -624,7 +699,7 @@ describe('no seed phase run: the 3.0.5 upgrade is silently invisible', () => {
     // recording three invariants rather than four.
     expect(ops[0]?.execute[0]?.sql).toContain('ste_vec_contains')
     expect(ops[0]?.execute[0]?.sql).not.toContain('jsonb_document_contains')
-    expect(outcome.providedInvariants).toEqual([...INVARIANTS_1_0_0].sort())
+    expect(outcome.providedInvariants).toEqual([...INVARIANTS_PRE_305].sort())
   })
 })
 

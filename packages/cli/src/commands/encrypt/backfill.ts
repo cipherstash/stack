@@ -17,6 +17,7 @@ import * as p from '@clack/prompts'
 import pg from 'pg'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
+import { buildPgClientConfig, explainTlsError } from '@/db/client.js'
 import { loadEncryptionContext, requireTable } from './context.js'
 
 /**
@@ -115,8 +116,11 @@ export async function backfillCommand(options: BackfillCommandOptions) {
   const ctx = await loadEncryptionContext()
   const tableSchema = requireTable(ctx, options.table)
 
+  // Through the TLS-aware config builder like every other connection —
+  // pg.PoolConfig extends pg.ClientConfig, so the pool inherits the same
+  // sslmode/sslrootcert handling and the bundled Supabase CA.
   const pool = new pg.Pool({
-    connectionString: stashConfig.databaseUrl,
+    ...buildPgClientConfig(stashConfig.databaseUrl),
     max: 2,
   })
 
@@ -131,7 +135,17 @@ export async function backfillCommand(options: BackfillCommandOptions) {
   try {
     process.on('SIGINT', onSignal)
     process.on('SIGTERM', onSignal)
-    db = await pool.connect()
+    try {
+      db = await pool.connect()
+    } catch (error) {
+      // A certificate-verification failure is an author-shaped, row-data-free
+      // diagnostic — route it through BackfillConfigError so it prints
+      // verbatim (the generic handler below deliberately suppresses message
+      // text, which would bury the remedy).
+      const tlsExplanation = explainTlsError(error, stashConfig.databaseUrl)
+      if (tlsExplanation) throw new BackfillConfigError(tlsExplanation)
+      throw error
+    }
 
     // `stash eql install` normally creates `cipherstash.cs_migrations`, but
     // not every integration runs it — Prisma Next installs EQL through its

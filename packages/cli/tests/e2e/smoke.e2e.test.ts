@@ -22,7 +22,9 @@ describe('stash CLI — non-interactive smoke', () => {
     // Command-list items — these are the literal command names users type, not
     // copy strings, so they stay inline.
     expect(r.output).toContain('init')
+    expect(r.output).toContain('eql preflight')
     expect(r.output).toContain('eql install')
+    expect(r.output).toContain('eql verify')
     expect(r.output).toContain('eql migration')
     expect(r.output).toContain('eql repair')
     expect(r.output).toContain('eql upgrade')
@@ -191,6 +193,23 @@ describe('stash CLI — non-interactive smoke', () => {
     // (#613) — that misdirection was half the reported bug.
     expect(unwrapped(r.output)).toContain('`--supabase` writes into')
     expect(unwrapped(r.output)).toContain('`--drizzle` emits a Drizzle')
+  })
+
+  // parseArgs booleanises a `--database-url` with no value (next token is a
+  // flag), which used to silently fall back to DATABASE_URL/config — with
+  // `--force` that meant DROP SCHEMA … CASCADE against a database the command
+  // never named. dispatch() now rejects it for every command, before any I/O,
+  // so this needs no database to observe.
+  it('a valueless --database-url exits 1 before any command runs', async () => {
+    const r = render(['eql', 'install', '--database-url', '--force'])
+    const { exitCode } = await r.exit
+    expect(exitCode).toBe(1)
+    expect(unwrapped(r.output)).toContain(
+      messages.cli.databaseUrlFlagNeedsValue,
+    )
+    // The install command itself never started (no permission-check spinner,
+    // no clack intro banner).
+    expect(r.output).not.toContain('Checking database permissions')
   })
 
   it('db migrate is a stub that exits 0 with a "not yet implemented" warning', async () => {

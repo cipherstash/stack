@@ -21,14 +21,16 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
     'stash-auth',
     'stash-cli',
   ],
-  // `stash-postgres` / `stash-edge` mirror the CLI's SKILL_MAP — see the comments
-  // there for why Supabase and the generic (no-ORM) path get them (#754).
+  // `stash-postgres` / `stash-edge` / `stash-managed-platforms` mirror the CLI's
+  // SKILL_MAP — see the comments there for why Supabase and the generic
+  // (no-ORM) path get them (#754, #893).
   supabase: [
     'stash-encryption',
     'stash-supabase',
     'stash-indexing',
     'stash-postgres',
     'stash-edge',
+    'stash-managed-platforms',
     'stash-deployment',
     'stash-zerokms',
     'stash-auth',
@@ -48,6 +50,7 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
     'stash-indexing',
     'stash-postgres',
     'stash-edge',
+    'stash-managed-platforms',
     'stash-deployment',
     'stash-zerokms',
     'stash-auth',
