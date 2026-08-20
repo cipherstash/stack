@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import {
@@ -15,8 +15,10 @@ import {
   FROZEN_ARTEFACT_DIGESTS,
   FROZEN_PUBLISHERS,
   frozenBytesSkew,
+  inTreeArtefactDigest,
   packedRange,
   publishBlockers,
+  publishedArtefactDigest,
   reportBlockers,
   satisfies,
   unpublished,
@@ -721,12 +723,28 @@ describe('the gate actually blocks the publish', () => {
  * `npmVersions` shells out to it. That also keeps this offline and
  * deterministic: the real registry would make the assertion below depend on
  * whether Phase 5 has happened yet.
+ *
+ * THE SHIM ANSWERS `pack` AS WELL AS `view`, and that is not tidying. It used
+ * to answer `view` only, so `publishedArtefactDigest`'s `npm pack` got a
+ * synthetic `E404`, returned `null`, and CHECK C compared nothing on every run
+ * of this suite — the gate's only registry-versus-tree check, exercised
+ * end-to-end by nothing. Now the shim builds a real tarball with the published
+ * layout, so `main()` runs the extraction and the comparison for real.
  */
 describe('the gate exits non-zero when a blocker is found', () => {
   const manifests = workspaceManifests()
 
-  /** A PATH entry whose `npm view <name> versions --json` answers from `map`. */
-  const fakeRegistry = (map) => {
+  /** The digest the tree currently claims for the frozen package's install SQL. */
+  const IN_TREE_DIGEST = inTreeArtefactDigest(
+    EQL,
+    FROZEN_ARTEFACT_DIGESTS.get(EQL),
+  )
+
+  /**
+   * A PATH entry whose `npm view <name> versions --json` answers from `map`,
+   * and whose `npm pack <spec>` produces a tarball carrying `packDigest`.
+   */
+  const fakeRegistry = (map, packDigest) => {
     const dir = mkdtempSync(join(tmpdir(), 'release-gate-'))
     const versions = join(dir, 'versions.json')
     writeFileSync(versions, JSON.stringify(map))
@@ -734,13 +752,33 @@ describe('the gate exits non-zero when a blocker is found', () => {
     writeFileSync(
       shim,
       '#!/usr/bin/env node\n' +
-        "const map = JSON.parse(require('node:fs').readFileSync(process.env.FAKE_NPM_VERSIONS, 'utf8'))\n" +
+        "const fs = require('node:fs'), path = require('node:path')\n" +
+        "const map = JSON.parse(fs.readFileSync(process.env.FAKE_NPM_VERSIONS, 'utf8'))\n" +
+        "if (process.argv[2] === 'pack') {\n" +
+        // `name@version`, split on the LAST `@` so the scope survives.
+        '  const spec = process.argv[3]\n' +
+        "  const at = spec.lastIndexOf('@')\n" +
+        '  const [name, version] = [spec.slice(0, at), spec.slice(at + 1)]\n' +
+        '  if (!(map[name] ?? []).includes(version)) {\n' +
+        "    process.stderr.write('npm error code ETARGET\\n'); process.exit(1)\n" +
+        '  }\n' +
+        "  const dest = process.argv[process.argv.indexOf('--pack-destination') + 1]\n" +
+        "  const stage = path.join(dest, 'stage', 'package', 'dist', 'sql')\n" +
+        '  fs.mkdirSync(stage, { recursive: true })\n' +
+        "  fs.writeFileSync(path.join(stage, 'release-manifest.json'), JSON.stringify({\n" +
+        '    eqlVersion: version, schemaVersion: 3,\n' +
+        '    installSqlSha256: process.env.FAKE_NPM_PACK_DIGEST,\n' +
+        "    uninstallSqlSha256: 'unused',\n" +
+        '  }))\n' +
+        "  require('node:child_process').execFileSync('tar', ['-czf', path.join(dest, 'f.tgz'), '-C', path.join(dest, 'stage'), '.'])\n" +
+        "  process.stdout.write('f.tgz\\n'); process.exit(0)\n" +
+        '}\n' +
         'const found = map[process.argv[3]]\n' +
         "if (!found) { process.stderr.write('npm error code E404\\n'); process.exit(1) }\n" +
         'process.stdout.write(JSON.stringify(found))\n',
     )
     chmodSync(shim, 0o755)
-    return { dir, versions }
+    return { dir, versions, packDigest }
   }
 
   /** Every workspace package published at exactly its committed version. */
@@ -748,8 +786,8 @@ describe('the gate exits non-zero when a blocker is found', () => {
     manifests.map(({ name, version }) => [name, [version]]),
   )
 
-  const runGate = (map) => {
-    const { dir, versions } = fakeRegistry(map)
+  const runGate = (map, packDigest = IN_TREE_DIGEST) => {
+    const { dir, versions } = fakeRegistry(map, packDigest)
     const result = spawnSync(process.execPath, ['scripts/release-gate.mjs'], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
@@ -757,6 +795,7 @@ describe('the gate exits non-zero when a blocker is found', () => {
         ...process.env,
         PATH: `${dir}:${process.env.PATH}`,
         FAKE_NPM_VERSIONS: versions,
+        FAKE_NPM_PACK_DIGEST: packDigest,
         // The real one would be written for the whole vitest run.
         GITHUB_OUTPUT: join(dir, 'github-output.txt'),
       },
@@ -787,10 +826,43 @@ describe('the gate exits non-zero when a blocker is found', () => {
 
   it('exits 0 once the frozen package is published', () => {
     // The other half of the mutation check: this must not be a gate that always
-    // fails. Publish 3.0.5 and the same tree passes untouched.
+    // fails. Publish 3.0.5 and the same tree passes untouched — and now the
+    // tarball this run downloads carries the tree's own digest, so CHECK C is
+    // genuinely compared rather than skipped for want of a tarball.
     const result = runGate({ ...allPublished, [EQL]: ['3.0.4', '3.0.5'] })
     expect(result.stderr).toBe('')
     expect(result.status).toBe(0)
+  })
+
+  it('blocks the release when npm’s bytes are not the tree’s bytes', () => {
+    // CHECK C, end to end, through `main()`. The registry carries 3.0.5 — so
+    // `publishBlockers` finds nothing — and the tarball for it hashes something
+    // else, which is exactly the #885 defect: `packages/eql` at 3.0.5 with an
+    // install bundle npm's 3.0.5 does not contain. `stash eql install` reads
+    // that SQL verbatim, with no digest check of its own.
+    const result = runGate(
+      { ...allPublished, [EQL]: ['3.0.4', '3.0.5'] },
+      '7ad9c9f8beefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef',
+    )
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('is NOT the 3.0.5 that is on npm')
+    expect(result.stderr).toContain(IN_TREE_DIGEST)
+    expect(result.stderr).toContain('7ad9c9f8beef')
+    // Publishing cannot clear this one, and saying so is the whole point of
+    // the separate remedy branch.
+    expect(result.stderr).not.toMatch(/Publish the frozen package\./)
+  })
+
+  it('does not crash on a frozen version npm has never carried', () => {
+    // The ETARGET path, through the process. Before the fix this was an
+    // uncaught throw with an EMPTY reason (`npm pack …@3.0.5 failed:`), raised
+    // while building the blocker array — so `reportBlockers` never ran and the
+    // operator got a stack trace instead of the frozen-publisher remedy that
+    // was already computed. Still exit 1; now for a legible reason.
+    const result = runGate({ ...allPublished, [EQL]: ['3.0.4'] })
+    expect(result.status).toBe(1)
+    expect(result.stderr).not.toMatch(/npm pack .* failed:\s*$/m)
+    expect(result.stderr).toContain('Phase 5')
   })
 })
 
@@ -902,6 +974,258 @@ describe('frozenBytesSkew', () => {
     expect([...FROZEN_ARTEFACT_DIGESTS.keys()].sort()).toEqual(
       [...FROZEN_PUBLISHERS.keys()].sort(),
     )
+  })
+})
+
+/**
+ * CHECK C's actual implementation, which no test was reaching.
+ *
+ * Every `frozenBytesSkew` test above INJECTS both digests, and the end-to-end
+ * process test shims `npm` with a script that answers `npm view` and nothing
+ * else — so `npm pack` hit that shim, got a synthetic `E404`, and
+ * `publishedArtefactDigest` returned `null`, which `frozenBytesSkew` reads as
+ * "nothing to compare". The `npm pack` + `tar` path, the one that actually
+ * decides whether a release is blocked, executed in no test at all.
+ *
+ * What that concealed, found the moment the path was driven for real:
+ *
+ *   * `--silent` sets npm's loglevel to silent, so a FAILED `npm pack` wrote
+ *     nothing to stderr. The `text.includes('E404')` classification therefore
+ *     never matched, and the documented `null` return was unreachable;
+ *   * npm answers a missing VERSION of an existing package with `ETARGET`
+ *     (`No matching version found for …`), not `E404` — which is what
+ *     `@cipherstash/eql@<next>` will be on every release before upstream
+ *     publishes it. `E404` alone is the wrong code for the one case this
+ *     function documents.
+ *
+ * Together those turned "npm does not carry that version" into an uncaught
+ * throw with an EMPTY reason — `npm pack @cipherstash/eql@3.0.6 failed:` and a
+ * stack trace — thrown while building the blocker array, so `reportBlockers`
+ * never ran and the actionable `frozen-publisher` message was never printed.
+ * Fail-closed, and unreadable.
+ *
+ * These drive the real function against a shimmed `npm` that produces a REAL
+ * tarball, so `tar` genuinely extracts and the JSON is genuinely parsed.
+ */
+describe('publishedArtefactDigest, against a real tarball', () => {
+  const ARTEFACT = {
+    label: 'install SQL',
+    inTree: 'packages/eql/packages/eql/sql/release-manifest.json',
+    published: 'package/dist/sql/release-manifest.json',
+    field: 'installSqlSha256',
+  }
+
+  /**
+   * A PATH entry whose `npm pack` behaves like `behaviour` says.
+   *
+   * `tar` is deliberately NOT shimmed: the point is to run the real one over a
+   * real gzipped tarball, so a change to the published layout fails here rather
+   * than at release time.
+   */
+  const fakeNpm = (behaviour) => {
+    const dir = mkdtempSync(join(tmpdir(), 'release-gate-pack-'))
+    const marker = join(dir, 'invoked.txt')
+    const script = join(dir, 'behaviour.js')
+    writeFileSync(script, behaviour)
+    const shim = join(dir, 'npm')
+    writeFileSync(
+      shim,
+      '#!/usr/bin/env node\n' +
+        "require('node:fs').appendFileSync(process.env.PACK_MARKER, process.argv.slice(2).join(' ') + '\\n')\n" +
+        'require(process.env.PACK_BEHAVIOUR)(process.argv.slice(2))\n',
+    )
+    chmodSync(shim, 0o755)
+    return { dir, marker, script }
+  }
+
+  /**
+   * Build `<name>-<version>.tgz` whose contents are `files` (tarball-relative
+   * paths), and answer `npm pack` with it.
+   */
+  const packing = (files) => `
+const { execFileSync } = require('node:child_process')
+const { mkdirSync, writeFileSync } = require('node:fs')
+const { dirname, join } = require('node:path')
+module.exports = (argv) => {
+  const dest = argv[argv.indexOf('--pack-destination') + 1]
+  const stage = join(dest, 'stage')
+  for (const [path, body] of Object.entries(${JSON.stringify(files)})) {
+    mkdirSync(dirname(join(stage, path)), { recursive: true })
+    writeFileSync(join(stage, path), body)
+  }
+  execFileSync('tar', ['-czf', join(dest, 'fixture.tgz'), '-C', stage, '.'])
+  process.stdout.write('fixture.tgz\\n')
+}
+`
+
+  /**
+   * Run `publishedArtefactDigest` with `npm` shimmed onto PATH, and report
+   * both what it returned and the argv the shim was actually handed.
+   *
+   * PATH is mutated in-process rather than the executor being injected: the
+   * production code resolves `npm` through `execFileSync`, and injecting a
+   * runner would prove a different function. `scripts/vitest.config.mjs` sets
+   * `fileParallelism: false`, so no sibling suite observes the window.
+   */
+  const withShim = (behaviour, fn) => {
+    const { dir, marker, script } = fakeNpm(behaviour)
+    const path = process.env.PATH
+    process.env.PATH = `${dir}:${path}`
+    process.env.PACK_MARKER = marker
+    process.env.PACK_BEHAVIOUR = script
+    try {
+      return { value: fn(), argv: readFileSync(marker, 'utf8') }
+    } finally {
+      process.env.PATH = path
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  const MANIFEST = JSON.stringify({
+    eqlVersion: '3.0.5',
+    schemaVersion: 3,
+    installSqlSha256: 'accde0030',
+    uninstallSqlSha256: 'b1b5131b',
+  })
+
+  it('reads the digest out of the published tarball', () => {
+    // The whole path, for real: `npm pack` produces a gzipped tarball, `tar`
+    // extracts the one manifest path out of it, and the field is parsed.
+    const { value, argv } = withShim(
+      packing({
+        'package/package.json': '{"name":"@cipherstash/eql"}',
+        'package/dist/sql/release-manifest.json': MANIFEST,
+      }),
+      () => publishedArtefactDigest('@cipherstash/eql', '3.0.5', ARTEFACT),
+    )
+    expect(value).toBe('accde0030')
+    // The floor. A shim that is never reached would let a hardcoded return
+    // value pass this — and PATH resolution inside `execFileSync` is exactly
+    // the kind of thing that silently stops working.
+    expect(argv).toMatch(/pack @cipherstash\/eql@3\.0\.5/)
+  })
+
+  it('names the missing path when the tarball layout has changed', () => {
+    // A published layout that moves `sql/` makes `tar` exit non-zero. It
+    // already failed closed — the `tar` call is outside the E404 catch — but
+    // the thrown message was `Command failed: tar -xzf …` with tar's own
+    // stderr piped away, which is a release blocked by a puzzle.
+    expect(() =>
+      withShim(
+        packing({
+          'package/package.json': '{"name":"@cipherstash/eql"}',
+          'package/sql/release-manifest.json': MANIFEST,
+        }),
+        () => publishedArtefactDigest('@cipherstash/eql', '3.0.5', ARTEFACT),
+      ),
+    ).toThrow(
+      /could not extract `package\/dist\/sql\/release-manifest\.json`[\s\S]*layout has changed/,
+    )
+  })
+
+  it('throws rather than returning undefined when the field is gone', () => {
+    // `frozenBytesSkew` treats `undefined` as "nothing to compare" and moves
+    // on, so a manifest that stopped carrying `installSqlSha256` would disarm
+    // CHECK C while every test above stayed green. Stale configuration must
+    // not read as a verdict — the rule the sibling EQL-pin linter exits 2 on.
+    expect(() =>
+      withShim(
+        packing({
+          'package/dist/sql/release-manifest.json': JSON.stringify({
+            eqlVersion: '3.0.5',
+          }),
+        }),
+        () => publishedArtefactDigest('@cipherstash/eql', '3.0.5', ARTEFACT),
+      ),
+    ).toThrow(/installSqlSha256/)
+  })
+
+  /** An `npm pack` that fails with `code` on stderr, the way npm does. */
+  const failing = (code) => `
+module.exports = () => {
+  process.stderr.write('npm error code ${code}\\n')
+  process.stderr.write('npm error ${code} No matching version found.\\n')
+  process.exit(1)
+}
+`
+
+  it('returns null for a version npm does not carry', () => {
+    // ETARGET, not E404 — npm's answer when the PACKAGE exists and the version
+    // does not, which is every EQL bump before upstream publishes it. Verified
+    // against the real registry: `npm pack @cipherstash/eql@9.9.9` prints
+    // `npm error code ETARGET`.
+    expect(
+      withShim(failing('ETARGET'), () =>
+        publishedArtefactDigest('@cipherstash/eql', '9.9.9', ARTEFACT),
+      ).value,
+    ).toBeNull()
+  })
+
+  it('returns null for a package npm has never carried', () => {
+    expect(
+      withShim(failing('E404'), () =>
+        publishedArtefactDigest('@cipherstash/nope', '1.0.0', ARTEFACT),
+      ).value,
+    ).toBeNull()
+  })
+
+  it('throws on any other failure rather than reading it as "nothing to compare"', () => {
+    // The load-bearing direction, same as every other lookup in this script. A
+    // network or auth failure swallowed here disarms CHECK C for that run.
+    expect(() =>
+      withShim(failing('ETIMEDOUT'), () =>
+        publishedArtefactDigest('@cipherstash/eql', '3.0.5', ARTEFACT),
+      ),
+    ).toThrow(/ETIMEDOUT/)
+  })
+
+  it('does not pass --silent, which suppresses the code it classifies on', () => {
+    // The defect, stated over the argv the shim recorded. `--silent` sets npm's
+    // loglevel to silent: the pack still fails, but with EMPTY stderr, so the
+    // classification below it can never match and the documented `null` return
+    // is unreachable. Verified by hand against the real npm before the fix.
+    const { argv } = withShim(
+      packing({ 'package/dist/sql/release-manifest.json': MANIFEST }),
+      () => publishedArtefactDigest('@cipherstash/eql', '3.0.5', ARTEFACT),
+    )
+    expect(argv).not.toContain('--silent')
+  })
+})
+
+describe('inTreeArtefactDigest, over the real committed manifest', () => {
+  it('reads the digest the tree claims for the frozen package', () => {
+    // Driven through the REAL map and the REAL file: this is the side of the
+    // comparison that lives in this repository, so a path that stops resolving
+    // is a check that stops checking.
+    const artefact = FROZEN_ARTEFACT_DIGESTS.get('@cipherstash/eql')
+    expect(artefact).toBeDefined()
+    expect(inTreeArtefactDigest('@cipherstash/eql', artefact)).toMatch(
+      /^[0-9a-f]{64}$/,
+    )
+  })
+
+  it('throws when the declared field is not in the manifest', () => {
+    // The same stale-configuration rule as the published side. `frozenBytesSkew`
+    // compares `local !== published`, so an `undefined` local against a real
+    // published digest would report a skew with `local: undefined` — a blocked
+    // release describing the wrong defect.
+    //
+    // The fixture lives outside the repo and is addressed by a relative path,
+    // because `inTreeArtefactDigest` resolves against REPO_ROOT and four other
+    // agents are working in this tree.
+    const dir = mkdtempSync(join(tmpdir(), 'release-gate-intree-'))
+    try {
+      const file = join(dir, 'release-manifest.json')
+      writeFileSync(file, JSON.stringify({ eqlVersion: '3.0.5' }))
+      expect(() =>
+        inTreeArtefactDigest('@cipherstash/eql', {
+          inTree: relative(REPO_ROOT, file),
+          field: 'installSqlSha256',
+        }),
+      ).toThrow(/installSqlSha256/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 

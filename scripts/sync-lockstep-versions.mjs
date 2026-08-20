@@ -14,7 +14,8 @@
 //   3. re-resolves that crate in every Cargo.lock that records it from a path,
 //   4. runs `mise run release:prepare_bindings_assets --version V`, which builds
 //      the exact-version SQL and writes it (+ release manifests) into both the
-//      crate and the npm package.
+//      crate and the npm package — UNLESS the tree already carries those assets
+//      at V, in which case step 4 is skipped. See `eqlLockstepSkew` for why.
 //
 // Step 3 is not decoration. Step 2 moves a version that `packages/protect-ffi`'s
 // SEPARATE cargo workspace has pinned in its own lock, and nothing else updates
@@ -25,7 +26,8 @@
 // fails a PR that carries the drift; step 3 is what stops producing it.
 
 import { execFileSync } from 'node:child_process'
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
@@ -162,6 +164,336 @@ export function refreshCargoLock({
   )
 }
 
+/**
+ * The EQL subtree, repo-relative.
+ *
+ * The subtree root deliberately carries no `package.json`, so the npm package
+ * is two levels down at `packages/eql/packages/eql` — see AGENTS.md, "Working
+ * on EQL". Every path below is relative to THIS directory, matching how
+ * `packages/eql/mise.toml`'s tasks address their own inputs.
+ */
+export const EQL_SUBTREE = 'packages/eql'
+
+/** Subtree-relative path of the npm package `sync-lockstep-versions` reads V from. */
+export const EQL_PACKAGE_JSON = 'packages/eql/package.json'
+
+/** Subtree-relative path of the crate `bumpCargoPackageVersion` rewrites. */
+export const EQL_CRATE_MANIFEST = 'crates/eql-bindings/Cargo.toml'
+
+/**
+ * Subtree-relative path of the TypeScript mirror of the release manifest.
+ *
+ * `prepare-bindings-assets.sh` writes it as a fourth copy of the same four
+ * fields, and `@cipherstash/eql`'s `readVerifiedInstallSql()` checks the bundle
+ * against it at runtime. `sync-generated.mjs --check` cannot see drift here:
+ * its `renderReleaseManifest()` returns the file's existing contents verbatim
+ * when the file exists, so the generated-output gate reproduces whatever is
+ * there and passes.
+ */
+export const EQL_TS_MANIFEST = 'packages/eql/src/generated/release-manifest.ts'
+
+/** The two SQL files a release manifest hashes, and the field each is hashed into. */
+const HASHED_SQL = [
+  ['cipherstash-encrypt.sql', 'installSqlSha256'],
+  ['cipherstash-encrypt-uninstall.sql', 'uninstallSqlSha256'],
+]
+
+/** V, from the npm package that owns it. Throws rather than returning nothing. */
+export function readEqlVersion(eqlRoot) {
+  const path = join(eqlRoot, EQL_PACKAGE_JSON)
+  const version = JSON.parse(readFileSync(path, 'utf8')).version
+  if (typeof version !== 'string' || version.length === 0) {
+    throw new Error(`could not read a version from ${path}`)
+  }
+  return version
+}
+
+/**
+ * Every `release-manifest.json` under the subtree, subtree-relative.
+ *
+ * DISCOVERED rather than listed, for `cargo_lock_workspaces`' reason: a copy
+ * added by a future subtree pull is checked the day it lands. `SKIP_DIRS`
+ * carries the load here — `dist/` holds tsup's copy of these same files and
+ * `target/` holds cargo's, and neither is a committed artefact. `release/` is
+ * excluded by construction rather than by name: it is the build intermediate
+ * `tasks/build.sh` writes, it holds only the SQL, and every SQL path below is
+ * derived as a manifest's SIBLING. A warm worktree's `release/` is routinely
+ * weeks stale, so a scan that reached it would fail on a developer's machine
+ * and pass in CI.
+ */
+export function eqlReleaseManifests(eqlRoot) {
+  const found = []
+  const walk = (abs) => {
+    for (const entry of readdirSync(abs, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (!SKIP_DIRS.has(entry.name)) walk(join(abs, entry.name))
+      } else if (entry.name === 'release-manifest.json') {
+        found.push(
+          relative(eqlRoot, join(abs, entry.name)).split(sep).join('/'),
+        )
+      }
+    }
+  }
+  walk(eqlRoot)
+  return found.sort()
+}
+
+/**
+ * The release identity stamped INSIDE the install bundle, or `null`.
+ *
+ * `prepare-bindings-assets.sh` reads the same line with the same anchor before
+ * it will write a manifest over the file. This is the property that survives
+ * into the tree: the manifest is regenerated with the SQL and goes on agreeing
+ * with it, so the stamp is the only field that still records which build
+ * produced these bytes.
+ */
+export function sqlVersionStamp(sql) {
+  const match = /^COMMENT ON SCHEMA eql_v3 IS '(.*)';$/m.exec(sql)
+  return match ? match[1] : null
+}
+
+/** The four fields of `release-manifest.ts`, read without a TypeScript parser. */
+function parseTsManifest(source) {
+  const field = (name) =>
+    new RegExp(`^\\s*${name}: '([^']*)',$`, 'm').exec(source)?.[1] ?? null
+  return {
+    eqlVersion: field('eqlVersion'),
+    installSqlSha256: field('installSqlSha256'),
+    uninstallSqlSha256: field('uninstallSqlSha256'),
+  }
+}
+
+/**
+ * Every way the EQL lockstep artefacts can disagree with the version the npm
+ * package declares — as `{ checked, skew }`, both subtree-relative.
+ *
+ * ## Why this exists at all
+ *
+ * One version V ships as five artefacts, and until this function the SQL half
+ * of that had no in-tree check. The Cargo half has one
+ * (`cargo-lock-freshness.test.mjs`, chaining `Cargo.lock` -> `Cargo.toml`); the
+ * SQL half was covered only by `release-gate.mjs`'s `FROZEN_ARTEFACT_DIGESTS`,
+ * which compares against NPM rather than against this tree's own declared
+ * version, and which the Phase-5 cutover deletes along with `FROZEN_PUBLISHERS`.
+ * Nothing here is keyed to that map: this is a property of a lockstep release,
+ * not of who publishes it, so it survives the cutover.
+ *
+ * ## The three disagreements, and why all three are needed
+ *
+ *   1. a manifest's `eqlVersion` is not V;
+ *   2. a manifest's digest is not the sha256 of the file beside it;
+ *   3. the install bundle's own `COMMENT ON SCHEMA eql_v3 IS '…'` stamp is not V.
+ *
+ * (2) is what the generator already guarantees, and it is satisfied by any
+ * self-consistent pair — stale included. (1) is satisfied by a hand-edited
+ * manifest. (3) is the one that actually happens: `mise run build --version X`
+ * does NOT treat `--version` as a cache-key input (it is absent from
+ * `tasks/build.sh`'s `#MISE sources`), so on unchanged SQL and Rust it is a
+ * cache HIT that re-serves whatever version the previous build stamped, and
+ * everything downstream copies those bytes verbatim under a manifest asserting
+ * X. Every digest verifies. Only the stamp disagrees, and it is invisible to
+ * both other checks.
+ *
+ * ## Why the crate manifest is in here too
+ *
+ * `cargo-lock-freshness.test.mjs` chains `Cargo.lock` -> `Cargo.toml` and stops
+ * there. Nothing chained `Cargo.toml` -> `package.json`, so a bump interrupted
+ * between steps 1 and 2 of this script leaves the crate a release behind with
+ * every lock agreeing with it — internally consistent, and wrong.
+ *
+ * An empty scan THROWS. "No manifests found" and "every manifest agrees" are
+ * the same value otherwise, and it is the reading that lets `main()` skip the
+ * asset build below.
+ */
+export function eqlLockstepSkew({ eqlRoot, version }) {
+  const checked = []
+  const skew = []
+  const manifests = eqlReleaseManifests(eqlRoot)
+  if (manifests.length === 0) {
+    throw new Error(
+      `no release-manifest.json under ${eqlRoot} — the scan that finds the EQL lockstep ` +
+        'artefacts has stopped matching, so "everything agrees" would be a report about ' +
+        'nothing.',
+    )
+  }
+
+  for (const manifestPath of manifests) {
+    checked.push(manifestPath)
+    const manifest = JSON.parse(
+      readFileSync(join(eqlRoot, manifestPath), 'utf8'),
+    )
+    if (manifest.eqlVersion !== version) {
+      skew.push(
+        `${manifestPath}: eqlVersion '${manifest.eqlVersion}', but ${EQL_PACKAGE_JSON} declares '${version}'`,
+      )
+    }
+
+    const dir = dirname(manifestPath)
+    for (const [file, field] of HASHED_SQL) {
+      const sqlPath = `${dir}/${file}`
+      checked.push(sqlPath)
+      const abs = join(eqlRoot, sqlPath)
+      if (!existsSync(abs)) {
+        skew.push(
+          `${sqlPath}: missing, but ${manifestPath} hashes it as ${field}`,
+        )
+        continue
+      }
+      const bytes = readFileSync(abs)
+      const digest = createHash('sha256').update(bytes).digest('hex')
+      if (digest !== manifest[field]) {
+        skew.push(
+          `${sqlPath}: sha256 ${digest}, but ${manifestPath} records ${field} ${manifest[field]}`,
+        )
+      }
+      // Only the install bundle carries a stamp; the uninstaller is four
+      // statements with no version in it.
+      if (field !== 'installSqlSha256') continue
+      const stamped = sqlVersionStamp(bytes.toString('utf8'))
+      if (stamped !== version) {
+        skew.push(
+          `${sqlPath}: stamped '${stamped}', but ${EQL_PACKAGE_JSON} declares '${version}'. ` +
+            'This is the `mise run build` cache hit: the bundle is a previous release, ' +
+            'the digests over it verify, and only the stamp says so.',
+        )
+      }
+    }
+  }
+
+  // The TypeScript mirror, compared against the npm package's own manifest —
+  // the one it is a copy of, and the one tsup ships beside it.
+  checked.push(EQL_TS_MANIFEST)
+  const tsAbs = join(eqlRoot, EQL_TS_MANIFEST)
+  if (!existsSync(tsAbs)) {
+    skew.push(`${EQL_TS_MANIFEST}: missing`)
+  } else {
+    const ts = parseTsManifest(readFileSync(tsAbs, 'utf8'))
+    const jsonPath = 'packages/eql/sql/release-manifest.json'
+    const json = existsSync(join(eqlRoot, jsonPath))
+      ? JSON.parse(readFileSync(join(eqlRoot, jsonPath), 'utf8'))
+      : {}
+    if (ts.eqlVersion !== version) {
+      skew.push(
+        `${EQL_TS_MANIFEST}: eqlVersion '${ts.eqlVersion}', but ${EQL_PACKAGE_JSON} declares '${version}'`,
+      )
+    }
+    for (const [, field] of HASHED_SQL) {
+      if (ts[field] !== json[field]) {
+        skew.push(
+          `${EQL_TS_MANIFEST}: ${field} '${ts[field]}', but ${jsonPath} records '${json[field]}'`,
+        )
+      }
+    }
+  }
+
+  // The crate manifest. Read with the same `[package]`-anchored match
+  // `bumpCargoPackageVersion` writes through, so the two cannot disagree about
+  // which line they mean.
+  checked.push(EQL_CRATE_MANIFEST)
+  const crateAbs = join(eqlRoot, EQL_CRATE_MANIFEST)
+  if (!existsSync(crateAbs)) {
+    skew.push(`${EQL_CRATE_MANIFEST}: missing`)
+  } else {
+    const section = readFileSync(crateAbs, 'utf8').match(
+      /^\[package\]\n(?:(?!^\[).*\n)*/m,
+    )
+    const crateVersion = section
+      ? (/^version = "([^"]*)"$/m.exec(section[0])?.[1] ?? null)
+      : null
+    if (crateVersion !== version) {
+      skew.push(
+        `${EQL_CRATE_MANIFEST}: [package] version '${crateVersion}', but ${EQL_PACKAGE_JSON} declares '${version}'`,
+      )
+    }
+  }
+
+  return { checked, skew }
+}
+
+/**
+ * Step 4: put the SQL bundle and its manifests in the tree at `version` — by
+ * rebuilding them, or by leaving alone the ones already there.
+ *
+ * ## Why "leave alone" is a case at all
+ *
+ * `prepare-bindings-assets.sh` rebuilds and OVERWRITES all four release
+ * manifests plus both copies of the SQL every time it runs, and this script
+ * runs on EVERY release, not just the ones that bump `@cipherstash/eql`. On a
+ * release where the version is unchanged, that rewrite has no upside and one
+ * specific downside: if the generated bytes differ from the committed ones for
+ * any reason — and `packages/eql/mise.toml` pins `rust = { version = "latest" }`,
+ * so the toolchain is not the same one from month to month — the Version
+ * Packages commit carries a new digest under an unchanged version number.
+ *
+ * For `@cipherstash/eql` that is not a cosmetic diff. It is a FROZEN publisher:
+ * the version cannot be released from here, so the tree is not proposing those
+ * bytes, it is asserting they are already on npm under that number. The next
+ * `release-gate.mjs` run compares the two and fires `frozen-bytes-skew`, which
+ * exits non-zero, fails the `gate` job, and skips `release` entirely — the
+ * whole release, for every package, blocked by a regenerated artefact for a
+ * version nobody was releasing. Fail-closed, so not a correctness hole; a
+ * release-stopper that arrives AFTER `changeset version` has rewritten every
+ * manifest and CHANGELOG in the tree, which is the worst moment available.
+ *
+ * ## Why skipping is not "leaving it stale"
+ *
+ * The skip is conditional on `eqlLockstepSkew` finding NOTHING: every manifest
+ * at `version`, every digest equal to the sha256 of the file beside it, and the
+ * install bundle's own in-SQL stamp at `version` too. A bump moves
+ * `package.json` before this runs, so a real version change always disagrees
+ * and always rebuilds. What the skip declines is the no-op — and for the one
+ * case where in-tree SQL *source* changed without a version bump, declining is
+ * the correct answer rather than a missed one: regenerating there would
+ * republish different bytes under a released number, which is precisely what
+ * the gate refuses. That change needs a changeset, and the changeset is what
+ * brings the rebuild back.
+ *
+ * `run` and `log` are injected for the unit tests: what matters is whether the
+ * build was invoked and with what argv, and asserting that must not require a
+ * Rust toolchain on the machine running `test:scripts`.
+ */
+export function prepareBindingAssets({
+  eqlRoot,
+  version,
+  run = execFileSync,
+  log = console.log,
+}) {
+  const { skew } = eqlLockstepSkew({ eqlRoot, version })
+  if (skew.length === 0) {
+    log(
+      `EQL binding assets are already prepared for ${version} — skipping ` +
+        '`mise run release:prepare_bindings_assets`. Rebuilding an unchanged version ' +
+        'can only introduce a digest the registry does not carry.',
+    )
+    return { action: 'skipped', skew }
+  }
+
+  for (const reason of skew) log(`  rebuilding: ${reason}`)
+  run(
+    'mise',
+    ['run', 'release:prepare_bindings_assets', '--version', version],
+    {
+      cwd: eqlRoot,
+      stdio: 'inherit',
+    },
+  )
+
+  // The generator's own `--force` + stamp check covers the build; this covers
+  // the COPY. Four manifests and four SQL files are written by six lines of
+  // shell, and a partial run leaves a tree that verifies in some directories
+  // and not others. Checking after is what turns that into a failed release
+  // rather than a committed one.
+  const after = eqlLockstepSkew({ eqlRoot, version })
+  if (after.skew.length > 0) {
+    throw new Error(
+      `\`mise run release:prepare_bindings_assets --version ${version}\` ran, and the EQL ` +
+        'lockstep artefacts still disagree:\n' +
+        after.skew.map((line) => `  ${line}`).join('\n'),
+    )
+  }
+  return { action: 'rebuilt', skew }
+}
+
 function main() {
   // This script lives at the monorepo root (`scripts/`) because Changesets only
   // runs the ROOT `version` script — but every path it touches is inside the EQL
@@ -171,11 +503,7 @@ function main() {
   const stackRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
   const eqlRoot = join(stackRoot, 'packages/eql')
 
-  const pkgPath = join(eqlRoot, 'packages/eql/package.json')
-  const version = JSON.parse(readFileSync(pkgPath, 'utf8')).version
-  if (typeof version !== 'string' || version.length === 0) {
-    throw new Error(`could not read a version from ${pkgPath}`)
-  }
+  const version = readEqlVersion(eqlRoot)
 
   const cargoPath = join(eqlRoot, 'crates/eql-bindings/Cargo.toml')
   writeFileSync(
@@ -198,19 +526,14 @@ function main() {
     refreshCargoLock({ root: stackRoot, eqlRoot, workspace })
   }
 
-  // Build the exact-version SQL and copy it (+ manifests) into both packages.
-  execFileSync(
-    'mise',
-    ['run', 'release:prepare_bindings_assets', '--version', version],
-    {
-      cwd: eqlRoot,
-      stdio: 'inherit',
-    },
-  )
+  // Build the exact-version SQL and copy it (+ manifests) into both packages —
+  // unless the tree already carries them at this version.
+  const assets = prepareBindingAssets({ eqlRoot, version })
 
   console.log(
     `synced EQL lockstep version ${version} to Cargo.toml, ` +
-      `${workspaces.length} Cargo.lock (${workspaces.join(', ')}) + bundled SQL assets`,
+      `${workspaces.length} Cargo.lock (${workspaces.join(', ')}) + bundled SQL assets ` +
+      `(${assets.action})`,
   )
 }
 

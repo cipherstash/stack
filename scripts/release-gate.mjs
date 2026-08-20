@@ -625,11 +625,37 @@ export function npmVersions(name) {
   }
 }
 
+/**
+ * One digest field out of a parsed release manifest.
+ *
+ * A MISSING FIELD THROWS. `frozenBytesSkew` compares `local !== published`, so
+ * an `undefined` on either side is not a neutral value: on the published side
+ * it is read as "nothing to compare" and CHECK C silently stops checking; on
+ * the in-tree side it produces a blocker reporting `local: undefined`, which is
+ * a stopped release describing the wrong defect. Both are the shape this file
+ * refuses everywhere else — a configuration that has gone stale must not read
+ * as a verdict.
+ */
+function digestField(manifest, artefact, source) {
+  const value = manifest[artefact.field]
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(
+      `${source} carries no \`${artefact.field}\`. FROZEN_ARTEFACT_DIGESTS names a field ` +
+        'the release manifest no longer has, so there is nothing to compare — fix the ' +
+        'declaration rather than leaving the check disarmed.',
+    )
+  }
+  return value
+}
+
 /** The digest an artefact's IN-TREE release manifest claims for itself. */
 export function inTreeArtefactDigest(_name, artefact) {
-  return JSON.parse(readFileSync(join(REPO_ROOT, artefact.inTree), 'utf8'))[
-    artefact.field
-  ]
+  const path = join(REPO_ROOT, artefact.inTree)
+  return digestField(
+    JSON.parse(readFileSync(path, 'utf8')),
+    artefact,
+    artefact.inTree,
+  )
 }
 
 /**
@@ -645,6 +671,24 @@ export function inTreeArtefactDigest(_name, artefact) {
  * gzip+tar parser would be real parsing code inside a script whose whole job is
  * to be trusted. Extraction is scoped to the ONE manifest path, so a tarball
  * cannot write anywhere else in the temporary directory.
+ *
+ * ## Two things here are the way they are because a test finally ran this
+ *
+ * NO `--silent`. It sets npm's loglevel to silent, which suppresses the error
+ * output on a FAILED pack as well as the notices on a successful one — so
+ * `text` was empty, the classification below could never match, and the `null`
+ * documented above was unreachable. Without the flag, stdout is still exactly
+ * the tarball filename; only stderr gains npm's pack summary, which is piped
+ * and discarded.
+ *
+ * `ETARGET` AS WELL AS `E404`. npm answers a missing PACKAGE with `E404` and a
+ * missing VERSION of an existing package with `ETARGET` — and the second is the
+ * case this function documents: `@cipherstash/eql@<next>` on every release
+ * before upstream publishes it. Classifying on `E404` alone turned that into an
+ * uncaught throw with an empty reason, raised while building the blocker array,
+ * so `reportBlockers` never ran and the actionable `frozen-publisher` message
+ * was never printed. Both codes are registry ANSWERS, not transport failures;
+ * anything else still throws.
  */
 export function publishedArtefactDigest(name, version, artefact) {
   const spec = `${name}@${version}`
@@ -652,30 +696,49 @@ export function publishedArtefactDigest(name, version, artefact) {
   try {
     let packed
     try {
-      packed = execFileSync(
-        'npm',
-        ['pack', spec, '--pack-destination', dir, '--silent'],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-      )
+      packed = execFileSync('npm', ['pack', spec, '--pack-destination', dir], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
         .trim()
         .split('\n')
         .pop()
     } catch (err) {
       const text = `${err.stdout ?? ''}${err.stderr ?? ''}`
-      if (text.includes('E404')) return null
+      if (/\b(E404|ETARGET)\b/.test(text)) return null
       throw new Error(`npm pack ${spec} failed: ${text.trim() || err.message}`)
     }
+    if (!packed) {
+      throw new Error(
+        `npm pack ${spec} printed no tarball name. Nothing was downloaded, so there is ` +
+          'nothing to compare — and an empty answer here would disarm the bytes check.',
+      )
+    }
 
-    execFileSync(
-      'tar',
-      ['-xzf', join(dir, packed), '-C', dir, artefact.published],
-      {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
+    try {
+      execFileSync(
+        'tar',
+        ['-xzf', join(dir, packed), '-C', dir, artefact.published],
+        { stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+    } catch (err) {
+      // Already fail-closed — this call sits outside the E404 catch above — but
+      // the message was `Command failed: tar -xzf …` with tar's own stderr
+      // piped away, which stops a release with a puzzle. The likely cause is
+      // the one worth naming: the published layout moved.
+      const text = `${err.stdout ?? ''}${err.stderr ?? ''}`
+      throw new Error(
+        `${spec}: could not extract \`${artefact.published}\` from the published tarball. ` +
+          'The package layout has changed — update the `published` path in ' +
+          `FROZEN_ARTEFACT_DIGESTS.\n${text.trim() || err.message}`,
+      )
+    }
+
+    return digestField(
+      JSON.parse(readFileSync(join(dir, artefact.published), 'utf8')),
+      artefact,
+      `${spec} :: ${artefact.published}`,
     )
-    return JSON.parse(readFileSync(join(dir, artefact.published), 'utf8'))[
-      artefact.field
-    ]
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

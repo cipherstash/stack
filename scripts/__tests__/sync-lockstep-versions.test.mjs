@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   copyFileSync,
+  cpSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -15,6 +17,8 @@ import {
   bumpCargoPackageVersion,
   cargoLockWorkspaces,
   LOCKED_CRATE,
+  prepareBindingAssets,
+  readEqlVersion,
   refreshCargoLock,
 } from '../sync-lockstep-versions.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
@@ -208,6 +212,182 @@ describe('lockstep Cargo.lock refresh', () => {
         },
       }),
     ).toThrow(/ENOENT/)
+  })
+})
+
+/**
+ * Step 4, and the release-stopper it used to arm.
+ *
+ * `prepare-bindings-assets.sh` re-hashes freshly built SQL and OVERWRITES all
+ * four release manifests plus both copies of the bundle — every time it runs,
+ * and it runs on EVERY release, not only the ones that bump `@cipherstash/eql`.
+ * `packages/eql/mise.toml` pins `rust = { version = "latest" }`, so the
+ * toolchain that compiles `eql-codegen` is not the same one from month to
+ * month, and nothing anywhere asserts that regenerating from in-tree source
+ * reproduces npm's published bytes.
+ *
+ * Put those together on a release that does not touch EQL: the Version Packages
+ * commit picks up a new digest under an UNCHANGED version, the next
+ * `release-gate.mjs` run fires `frozen-bytes-skew`, the `gate` job exits
+ * non-zero, and `release` is skipped — the entire release, for every package,
+ * blocked by an artefact nobody was releasing. It fails closed, so it is not a
+ * correctness hole; it is a release-stopper that lands AFTER `changeset
+ * version` has rewritten every manifest and CHANGELOG in the tree.
+ *
+ * The fix is to not run the generator when there is nothing for it to do. The
+ * skip is conditional on the full lockstep predicate — versions, digests, and
+ * the in-SQL stamp — so a real bump always rebuilds, and only the no-op is
+ * declined.
+ */
+describe('step 4 rebuilds the SQL assets only when they need it', () => {
+  const sha = (text) => createHash('sha256').update(text).digest('hex')
+
+  /** A minimal EQL subtree carrying consistent assets at `version`. */
+  const subtree = (version) => {
+    const root = mkdtempSync(join(tmpdir(), 'prepare-assets-'))
+    const install = `SELECT 1;\nCOMMENT ON SCHEMA eql_v3 IS '${version}';\n`
+    const uninstall = 'DROP SCHEMA eql_v3 CASCADE;\n'
+    const manifest = {
+      eqlVersion: version,
+      schemaVersion: 3,
+      installSqlSha256: sha(install),
+      uninstallSqlSha256: sha(uninstall),
+    }
+    for (const dir of ['packages/eql/sql', 'crates/eql-bindings/sql']) {
+      mkdirSync(join(root, dir), { recursive: true })
+      writeFileSync(join(root, dir, 'cipherstash-encrypt.sql'), install)
+      writeFileSync(
+        join(root, dir, 'cipherstash-encrypt-uninstall.sql'),
+        uninstall,
+      )
+      writeFileSync(
+        join(root, dir, 'release-manifest.json'),
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      )
+    }
+    mkdirSync(join(root, 'packages/eql/src/generated'), { recursive: true })
+    writeFileSync(
+      join(root, 'packages/eql/src/generated/release-manifest.ts'),
+      `export const releaseManifest = {\n  eqlVersion: '${version}',\n  schemaVersion: 3,\n` +
+        `  installSqlSha256: '${manifest.installSqlSha256}',\n` +
+        `  uninstallSqlSha256: '${manifest.uninstallSqlSha256}',\n} as const\n`,
+    )
+    writeFileSync(
+      join(root, 'packages/eql/package.json'),
+      `${JSON.stringify({ name: '@cipherstash/eql', version }, null, 2)}\n`,
+    )
+    mkdirSync(join(root, 'crates/eql-bindings'), { recursive: true })
+    writeFileSync(
+      join(root, 'crates/eql-bindings/Cargo.toml'),
+      `[package]\nname = "eql-bindings"\nversion = "${version}"\n`,
+    )
+    return root
+  }
+
+  /** `prepareBindingAssets` over a scratch subtree, with the generator stubbed. */
+  const prepare = (root, version, run) => {
+    const calls = []
+    const result = prepareBindingAssets({
+      eqlRoot: root,
+      version,
+      run: (...args) => {
+        calls.push(args)
+        run?.(...args)
+      },
+      log: () => {},
+    })
+    return { ...result, calls }
+  }
+
+  test('skips the generator when the assets already match the version', () => {
+    // THE RELEASE-STOPPER, closed. Nothing to regenerate means nothing to
+    // regenerate DIFFERENTLY, so an unpinned toolchain cannot put a new digest
+    // into a Version Packages commit for a version that is already on npm.
+    const root = subtree('3.0.5')
+    try {
+      const { action, calls } = prepare(root, '3.0.5')
+      expect(action).toBe('skipped')
+      expect(
+        calls,
+        'the generator ran on a no-op release: it rewrites four release manifests and ' +
+          'both copies of the SQL bundle, so any codegen drift lands under an unchanged ' +
+          'version and `release-gate.mjs` blocks the next release with frozen-bytes-skew.',
+      ).toEqual([])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('runs the generator when the version has moved', () => {
+    // The other half. A real bump moves package.json before this runs, so
+    // every manifest disagrees and the rebuild is unconditional — the skip
+    // must not be reachable by simply bumping.
+    const root = subtree('3.0.5')
+    try {
+      // The generator's effect, stubbed: rewrite the subtree at the new version.
+      const regenerate = () => {
+        const fresh = subtree('3.0.6')
+        for (const rel of [
+          'packages/eql/sql',
+          'crates/eql-bindings/sql',
+          'packages/eql/src/generated',
+          'crates/eql-bindings',
+        ]) {
+          cpSync(join(fresh, rel), join(root, rel), { recursive: true })
+        }
+        rmSync(fresh, { recursive: true, force: true })
+      }
+      const { action, calls } = prepare(root, '3.0.6', regenerate)
+      expect(action).toBe('rebuilt')
+      expect(calls).toHaveLength(1)
+      const [command, args, options] = calls[0]
+      expect(command).toBe('mise')
+      expect(args).toEqual([
+        'run',
+        'release:prepare_bindings_assets',
+        '--version',
+        '3.0.6',
+      ])
+      // From the SUBTREE root: mise reads config from the current directory and
+      // its parents, and `packages/eql/mise.toml` is where this task is defined.
+      expect(options.cwd).toBe(root)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('fails loudly when the generator ran and the tree still disagrees', () => {
+    // The generator's own `--force` and stamp check cover the BUILD. They say
+    // nothing about the six lines of shell that copy four manifests and four
+    // SQL files into two directories, and a partial run leaves a tree that
+    // verifies in one directory and not the other. Silence there is a committed
+    // Version Packages PR carrying the skew.
+    const root = subtree('3.0.5')
+    try {
+      expect(() => prepare(root, '3.0.6', () => {})).toThrow(/still disagree/i)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('refuses to decide over a subtree it could not scan', () => {
+    // The vacuity floor, and it is the dangerous direction: an empty scan
+    // reports no disagreements, which reads as "already prepared" and skips the
+    // asset build entirely. `eqlLockstepSkew` throws instead.
+    const root = mkdtempSync(join(tmpdir(), 'prepare-assets-empty-'))
+    try {
+      expect(() => prepare(root, '3.0.5')).toThrow(/release-manifest\.json/)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('reads the real subtree without throwing', () => {
+    // The predicate runs against this repo on every release. A scan that cannot
+    // read the committed tree would surface as a failed `pnpm run version`
+    // after `changeset version` had already rewritten everything.
+    const eqlRoot = join(REPO_ROOT, 'packages/eql')
+    expect(readEqlVersion(eqlRoot)).toMatch(/^\d+\.\d+\.\d+/)
   })
 })
 
