@@ -23,7 +23,7 @@ import { detectPackageManager, runnerCommand } from '../init/utils.js'
 import {
   HANDOFF_CHOICES,
   howToProceedStep,
-  resolveTarget,
+  resolveTargetFlag,
 } from './steps/how-to-proceed.js'
 
 function buildStateFromContext(
@@ -35,6 +35,15 @@ function buildStateFromContext(
     clientFilePath: ctx.encryptionClientPath,
     schemas: ctx.schemas,
     envKeys: ctx.envKeys,
+    // Carry the skills already on disk so the handoff's `writeArtifacts`
+    // merges into them instead of overwriting the record with just its own
+    // delivery — an `agents-md` handoff installs no directories, and used to
+    // reset `installedSkills` to `[]` on a project that had them (#923).
+    skills: {
+      installed: ctx.installedSkills ?? [],
+      inlined: ctx.inlinedSkills ?? [],
+      failed: [],
+    },
     stackInstalled: true,
     cliInstalled: true,
     eqlInstalled: true,
@@ -152,12 +161,9 @@ export async function implCommand(
 
   // Validate `--target` before printing the intro so the error sits at
   // the top of the output instead of after a half-rendered prompt frame.
-  const targetFlag = values.target
-  const target = resolveTarget(targetFlag)
-  if (targetFlag && !target) {
-    p.log.error(
-      `Unknown --target \`${targetFlag}\`. Valid values: ${HANDOFF_CHOICES.join(', ')}.`,
-    )
+  const { target, error: targetError } = resolveTargetFlag(flags, values)
+  if (targetError) {
+    p.log.error(targetError)
     process.exit(1)
   }
 

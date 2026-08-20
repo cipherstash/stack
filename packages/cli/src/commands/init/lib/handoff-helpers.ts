@@ -2,19 +2,19 @@ import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as p from '@clack/prompts'
-import type { HandoffChoice, InitState } from '../types.js'
+import type { HandoffChoice, InitState, SkillsDelivery } from '../types.js'
+import { mergeSkillsDelivery } from '../types.js'
 import { upsertManagedBlock } from './sentinel-upsert.js'
 import {
   buildContextFile,
   buildSetupPromptContext,
   CONTEXT_REL_PATH,
   SETUP_PROMPT_REL_PATH,
-  type SkillsDelivery,
   writeContextFile,
   writeSetupPrompt,
 } from './write-context.js'
 
-export type { SkillsDelivery } from './write-context.js'
+export type { SkillsDelivery } from '../types.js'
 
 export const AGENTS_MD_REL_PATH = 'AGENTS.md'
 
@@ -78,9 +78,29 @@ export function writeAgentsMd(cwd: string, managed: string): boolean {
  * paths, which all need the same artifacts with handoff-specific values
  * threaded into the setup prompt.
  *
- * `skills` records where the skills actually ended up (installed as
- * directories, inlined into AGENTS.md, or failed) so the generated prompt
- * never mislabels an unwritable destination as a stripped build.
+ * `skills` records where THIS handoff put them (installed as directories,
+ * inlined into AGENTS.md, or failed) so the generated prompt never mislabels
+ * an unwritable destination as a stripped build.
+ *
+ * The two outputs deliberately take DIFFERENT views of it:
+ *
+ *   - `context.json` gets the MERGE of `state.skills` and this handoff.
+ *     `stash init` installs skills up front now, and a handoff that installs
+ *     none of its own — `agents-md`, `lovable` — used to overwrite
+ *     `installedSkills` with `[]` and erase from the record skills that are
+ *     sitting on disk (#923, one command later). The field is a flat list
+ *     with no destination attached, so a union across hops is the honest
+ *     reading of "which skills does this project have".
+ *
+ *   - The setup prompt gets THIS handoff's delivery only. It answers a
+ *     different question — where should the agent I am launching right now
+ *     go to read the rules — and that answer is per-destination.
+ *     `rulesLocation` derives the directory from the handoff choice, so
+ *     feeding it the merged view lets skills installed under `.claude/skills`
+ *     by an earlier `stash init` satisfy the "installed" test for a Codex
+ *     handoff whose own copy into `.codex/skills` failed. The prompt would
+ *     then send Codex to a directory that was never written, and the merge's
+ *     failure-filtering would have hidden the failure that caused it.
  */
 export function writeArtifacts(
   cwd: string,
@@ -88,13 +108,14 @@ export function writeArtifacts(
   handoff: HandoffChoice,
   skills: SkillsDelivery,
 ): void {
-  const ctx = buildContextFile(state)
+  const merged = mergeSkillsDelivery(state.skills, skills)
+  const ctx = buildContextFile({ ...state, skills: merged })
   ctx.envKeys = state.envKeys ?? []
-  ctx.installedSkills = skills.installed
-  ctx.inlinedSkills = skills.inlined
   writeContextFile(resolve(cwd, CONTEXT_REL_PATH), ctx)
   p.log.success(`Wrote ${CONTEXT_REL_PATH}`)
 
+  // `skills`, not `merged` — see the note above. The prompt is about this
+  // handoff's destination; the context file is about the project.
   const promptCtx = buildSetupPromptContext(state, handoff, skills)
   if (promptCtx) {
     writeSetupPrompt(resolve(cwd, SETUP_PROMPT_REL_PATH), promptCtx)

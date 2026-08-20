@@ -38,13 +38,13 @@ npx stash init --prisma     # Prisma Next
 npx stash init --drizzle --supabase   # Drizzle on Supabase (the flags combine)
 ```
 
-`stash init` installs the CLI as a project dev dependency, so subsequent commands can drop the `npx`. The CLI is package-manager aware — before init, use whichever one-shot runner your project uses (`npx`, `pnpm dlx`, `bunx`, `yarn dlx`). Installs are **pinned to the exact `@cipherstash/*` versions this CLI release shipped with** (never bare dist-tags, which can lag behind a release), and init flags any already-installed `@cipherstash/*` package whose resolved version differs from the release's. The fix depends on direction, and init says which applies: an **older** install should be aligned to the release (init offers the exact command); a **newer** install must NOT be downgraded — update the `stash` CLI to the matching release instead (init prints that command too). **Non-interactively, an older ("behind") skew is fatal** — init refuses with a non-zero exit and the align command rather than scaffolding against mismatched packages and reporting a false success. Interactively it offers to align. Likewise, if the EQL extension isn't installed at the end, init reports **"Setup incomplete"** and exits non-zero — it never claims a setup is complete when encryption would fail at query time. Integrations that install EQL through a migration are the exception and exit 0: **Prisma Next** installs it via the top-level `prisma-next migrate`, and the **Drizzle** and **local Supabase** flows (a Supabase project with a local `supabase/` directory — a hosted one with no CLI scaffolding installs directly) *generate* an EQL migration, which init reports honestly as "EQL migration generated — apply it with `drizzle-kit migrate`" (Supabase: `supabase db reset` locally, `supabase db push` remotely) rather than claiming the extension is already installed. Re-running init over a project whose install migration is already on disk reports "EQL migration **already present**" — same apply step, same zero exit, no claim that this run generated anything.
+`stash init` installs the CLI as a project dev dependency, so subsequent commands can drop the `npx`. The CLI is package-manager aware — before init, use whichever one-shot runner your project uses (`npx`, `pnpm dlx`, `bunx`, `yarn dlx`). Installs are **pinned to the exact `@cipherstash/*` versions this CLI release shipped with** (never bare dist-tags, which can lag behind a release), and init flags any already-installed `@cipherstash/*` package whose resolved version differs from the release's. The fix depends on direction, and init says which applies: an **older** install should be aligned to the release (init offers the exact command); a **newer** install must NOT be downgraded — update the `stash` CLI to the matching release instead (init prints that command too). **Non-interactively, an older ("behind") skew is fatal** — init refuses with a non-zero exit and the align command rather than scaffolding against mismatched packages and reporting a false success. Interactively it offers to align. **Init installs the agent skills first, before anything else.** The per-integration set — the `stash-*` skills bundled in the `stash` tarball, chosen by integration — is copied into `.claude/skills/` when Claude Code is detected — the `claude` binary on `PATH`, or a `.claude/` directory in the project — and into `.codex/skills/` for Codex, both when both are detected. `--target claude-code|codex` names the destination explicitly and skips detection. Skills install ahead of authentication deliberately: it is the only step needing neither network nor credentials, so the guidance survives a run that later fails at auth, at the database URL, or at EQL — which is when it is needed most. The summary reports the outcome either way, and `.cipherstash/context.json` records the names under `installedSkills`. When no agent is detected nothing is written and the summary says so, with the command that will install them. Likewise, if the EQL extension isn't installed at the end, init reports **"Setup incomplete"** and exits non-zero — it never claims a setup is complete when encryption would fail at query time. Integrations that install EQL through a migration are the exception and exit 0: **Prisma Next** installs it via the top-level `prisma-next migrate`, and the **Drizzle** and **local Supabase** flows (a Supabase project with a local `supabase/` directory — a hosted one with no CLI scaffolding installs directly) *generate* an EQL migration, which init reports honestly as "EQL migration generated — apply it with `drizzle-kit migrate`" (Supabase: `supabase db reset` locally, `supabase db push` remotely) rather than claiming the extension is already installed. Re-running init over a project whose install migration is already on disk reports "EQL migration **already present**" — same apply step, same zero exit, no claim that this run generated anything.
 
 **If you are an agent, do this first:**
 
 1. **`npx stash manifest --json`** — the structured, version-stamped command surface. Read it before running anything else.
 2. **`npx stash auth login --json --region <slug>`** — only if not already authenticated. Surface the URL to the human (see [Authentication](#authentication)). Do this *before* `init`.
-3. **`npx stash init`** — now finds the token and proceeds without prompting.
+3. **`npx stash init`** — now finds the token and proceeds without prompting. It installs the per-integration skills into `.claude/skills/` or `.codex/skills/` as its **first** step, before authenticating, so read them from there once init has run — pass `--target` if you want to name the destination yourself. If the summary says `No agent skills installed`, no agent was detected: run `stash plan --target <name>` to install them.
 4. **`stash plan` → `stash impl` → `stash status`** — pass `--target` when non-interactive.
 
 ### Ask the CLI, don't trust this file
@@ -132,10 +132,13 @@ There is **no global `--non-interactive` or `--json` flag** (and no global `--ye
 | Region (`auth login`, `init`) | `--region <slug>` or `STASH_REGION` |
 | Database URL (all `db` / `eql` / `schema` commands) | `--database-url <url>` or `DATABASE_URL` |
 | Agent target (`plan`, `impl`) | `--target <claude-code\|codex\|agents-md\|lovable\|wizard>` |
+| Skills destination (`init`) | `--target <claude-code\|codex>` — selects the destination only; `init` performs no handoff |
 | Dual-write confirmation (`encrypt backfill`) | `--confirm-dual-writes-deployed` |
 | Machine-readable output | `--json` on `status`, `manifest`, `auth login`, `auth regions` |
 
 When a required value is missing in a non-TTY context, the command exits non-zero with an actionable message naming the flag and env var — it never hangs.
+
+**`init --target` is not the same flag as `plan --target` / `impl --target`.** On `plan` and `impl`, `--target` selects the agent to hand off to. On `init` it selects only where the bundled skills are copied — `claude-code` → `.claude/skills/`, `codex` → `.codex/skills/` — and skips agent detection; `init` never performs a handoff. `agents-md`, `lovable` and `wizard` are accepted but install no skill directories, because those handoffs inline the skill bodies into `AGENTS.md` instead. The flag is optional everywhere: without it, `init` detects the agent itself.
 
 **`plan` and `impl` need `--target` in a non-TTY.** Their agent-target picker reads from `/dev/tty`. Without `--target` they print a "no agent selected" hint and exit 0 *without performing the handoff*. `init` and `status` adapt automatically and are safe anywhere.
 
@@ -229,23 +232,25 @@ Four explicit save-points. Each runs standalone; chain prompts make first-time s
 
 ### `init` — scaffold
 
-Six mechanical steps, no agent handoff. It prompts only when it can't pick a sensible default.
+Seven mechanical steps, no agent handoff. It prompts only when it can't pick a sensible default.
 
-1. **Authenticate** — silent when a valid token exists.
-2. **Resolve database** — per the resolution order above; verifies the connection.
-3. **Build schema** — auto-detects Drizzle, Supabase, and Prisma Next and writes the placeholder encryption client. **Prisma Next is the exception:** it derives schemas from `contract.json`, so no encryption-client file is written and none is needed.
-4. **Install dependencies** — one combined prompt for `@cipherstash/stack` and `stash`.
-5. **Install EQL** — always EQL v3, migration-first wherever there is a migration history to land in. Drizzle generates `eql migration --drizzle`; a Supabase project with a local `supabase/` directory generates `eql migration --supabase`; Prisma Next installs through `prisma-next migrate`; everything else (including a hosted Supabase project with no CLI scaffolding) installs directly. The migration routes leave EQL **generated, not applied** — the summary says so, and you run the migrate step yourself.
-6. **Gather context** — detects available coding agents and writes `.cipherstash/context.json`.
+1. **Install agent skills** — copies the per-integration `stash-*` skills into `.claude/skills/` and/or `.codex/skills/`, per detection or `--target`. First deliberately: it needs no network and no credentials, so the guidance survives a failure in any step below.
+2. **Authenticate** — silent when a valid token exists.
+3. **Resolve database** — per the resolution order above; verifies the connection.
+4. **Build schema** — auto-detects Drizzle, Supabase, and Prisma Next, writes the placeholder encryption client, and writes `.cipherstash/context.json`. **Prisma Next is the exception:** it derives schemas from `contract.json`, so no encryption-client file is written and none is needed.
+5. **Install dependencies** — one combined prompt for `@cipherstash/stack` and `stash`.
+6. **Install EQL** — always EQL v3, migration-first wherever there is a migration history to land in. Drizzle generates `eql migration --drizzle`; a Supabase project with a local `supabase/` directory generates `eql migration --supabase`; Prisma Next installs through `prisma-next migrate`; everything else (including a hosted Supabase project with no CLI scaffolding) installs directly. The migration routes leave EQL **generated, not applied** — the summary says so, and you run the migrate step yourself.
+7. **Gather context** — summarises what was detected.
 
-Flags: `--supabase`, `--drizzle`, `--prisma`, `--region <slug>`.
+Flags: `--supabase`, `--drizzle`, `--prisma`, `--region <slug>`, `--target <claude-code|codex>`.
 
 **The integration flags combine.** `stash init --drizzle --supabase` is a Drizzle project on Supabase: the EQL migration goes into your Drizzle migrations folder (drizzle-kit owns the history there) with the Supabase role grants appended, both adapter packages are installed, and the database-URL resolver may use `supabase status` to find a local stack. `--prisma` combined with another flag still takes the Prisma Next route. Combined flags are recorded together as the referrer (`drizzle-supabase`), exactly as `stash auth login --drizzle --supabase` does. This is `init` only — `eql migration` takes exactly one target (see below).
 
 | Generated file | Purpose |
 |---|---|
 | `./src/encryption/index.ts` | Placeholder encryption client — declare encrypted columns here, or let `plan`/`impl` do it. **Not written for Prisma Next** (`--prisma`), which derives schemas from `contract.json` |
-| `.cipherstash/context.json` | Detected facts: integration, package manager, schemas, env key names, and agents. CLI-owned; never hand-edit |
+| `.cipherstash/context.json` | Detected facts: integration, package manager, schemas, env key names, and the skills installed (`installedSkills`). CLI-owned; never hand-edit |
+| `.claude/skills/` or `.codex/skills/` | The per-integration `stash-*` skills, when an agent is detected or `--target` names one |
 | `stash.config.ts` | Scaffolded if missing |
 
 ### `plan` — draft for review
