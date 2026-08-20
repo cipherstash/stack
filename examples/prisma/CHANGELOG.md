@@ -1,5 +1,12 @@
 # @cipherstash/prisma-next-example
 
+## 0.1.2
+
+### Patch Changes
+
+- @cipherstash/stack@1.1.1
+- @cipherstash/stack-prisma@1.1.1
+
 ## 0.1.1
 
 ### Patch Changes
