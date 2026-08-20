@@ -87,6 +87,45 @@ On a Supabase-backed platform this is the **only durable** option: `supabase db 
 
 Then commit the migration through the platform's Git sync and let its own migrate step apply it.
 
+### When the platform caps command time
+
+Some platforms kill any command after a fixed ceiling (Lovable: 600 seconds). The EQL v3 bundle
+is ~2.6 MB / ~6,300 SQL statements, and `psql -f` sends **one statement per protocol round trip** —
+over a pooled connection that is tens of milliseconds each, which blows past the ceiling and kills
+the install **partway**, leaving schemas and domains created but functions and operators missing.
+Retrying the same command hits the same wall.
+
+- Prefer `stash eql install` or the generated migration over replaying the raw bundle with
+  `psql -f`.
+- If you must apply raw SQL under a ceiling, split the bundle at top-level statement boundaries
+  (dollar-quote aware) into chunks of well under 128 KB and apply **each chunk as a single
+  command** (`psql -c "<chunk>"`) — one round trip per chunk instead of per statement. ~27 chunks
+  applies in seconds.
+- Cleaning up a half-install may fail with ownership errors: the broken objects are owned by the
+  platform's app role, not `postgres`. Grant the app role to the cleaning role (e.g.
+  `GRANT sandbox_exec TO postgres` on Lovable) before dropping and re-applying.
+
+### Grant the Data API roles after installing
+
+The EQL install grants nothing to Supabase's PostgREST roles. Every function-form call from the
+Data API — including a `SECURITY INVOKER` RPC that wraps EQL predicates — fails with a permission
+error until you run, as part of the same migration:
+
+```sql
+GRANT USAGE ON SCHEMA eql_v3 TO authenticated, anon, service_role;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA eql_v3 TO authenticated, anon, service_role;
+```
+
+## Fresh releases are blocked by install cooldowns
+
+Managed platforms and modern runtimes ship supply-chain guards that refuse packages published
+within the last ~24 hours: Lovable sets `minimumReleaseAge` in `bunfig.toml`, Deno ≥ 2.9 has
+`--minimum-dependency-age`. Installing a CipherStash release on its publish day fails with a
+"version too new" style refusal, not a helpful message. Add the packages to the platform's exclude
+list (`minimumReleaseAgeExcludes` in `bunfig.toml`: `@cipherstash/stack`, `@cipherstash/eql`,
+`@cipherstash/protect-ffi`) — and say in your report that you relaxed a supply-chain guard to do
+it. If you can wait a day, wait instead.
+
 ## What survives PostgREST
 
 If the app talks to the database through Supabase's Data API rather than a Postgres connection, the predicate surface is narrower than the type surface. Agents guess wrong in **both** directions on this, so take it from the table:
@@ -149,7 +188,11 @@ Prefer to keep encryption out of the adapter entirely? Use `@cipherstash/stack/w
 2. `stash eql preflight --json` — report the role's capability before changing anything.
 3. `stash eql migration --supabase` (or `--drizzle`), committed through the platform's Git sync — not a direct `eql install`, if the platform replays a migrations directory.
 4. `stash init`, then `stash plan` / `stash impl --target <target>` to scaffold and hand off. On Lovable, `--target lovable` writes an `AGENTS.md` whose next-steps are platform-specific.
-5. `stash env --name <env> --write` — put the four `CS_*` values into the platform's backend secrets.
+5. `stash env --name <env> --write` — put the four `CS_*` values into the platform's backend
+   secrets. **On Lovable there is no API for project secrets** (the MCP server has no secrets tool
+   either): mint the values with `stash env`, then ask the human to paste them into Project
+   Settings → Secrets — or trigger the platform's own secret-request prompt if your context has
+   one. Never print the values into chat, logs, or files while doing so.
 6. Write the schema with `types.*Ord`, not `*OrdOre`, unless preflight said the operator class is creatable.
 7. `stash eql verify` — confirm the installed surface is complete before shipping.
 
