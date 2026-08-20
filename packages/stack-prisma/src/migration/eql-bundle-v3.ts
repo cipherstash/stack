@@ -96,7 +96,10 @@ export function assertInstallSqlDigest(sql: string): string {
  * never be emitted from bytes the pinned release does not attest to.
  *
  * Turns a missing/broken package into an actionable error instead of a raw
- * `readFileSync` failure. Mirrors the CLI's `readV3InstallSql`.
+ * `readFileSync` failure. The CLI does the same check on its own install
+ * path — see `assertBundledEqlSqlDigest` in
+ * `packages/cli/src/installer/bundle-digest.ts`. (This comment named a
+ * `readV3InstallSql` that never existed, back when the CLI verified nothing.)
  */
 export function readVerifiedInstallSql(): string {
   let sql: string
