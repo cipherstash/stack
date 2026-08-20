@@ -81,8 +81,9 @@ on:
       # emits `dist/wasm/protect_ffi_inline.js` — the bundle the
       # `integration/wasm/**` suites selected below actually load. Both files
       # are in the WASM cache key of `.github/actions/build-ffi-binding`, so an
-      # edit to either misses that cache and REBUILDS the bundle; without these
-      # two entries it gets rebuilt and the only suite that loads it never runs.
+      # edit to either misses that cache and REBUILDS the bundle. Without these
+      # two entries the workflow does not trigger at all, so neither the rebuild
+      # nor the only suite that loads it ever runs.
       # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
       - 'packages/protect-ffi/tsconfig.wasm-errors.json'
       - 'packages/protect-ffi/scripts/inline-wasm.mjs'
@@ -165,8 +166,9 @@ on:
       # emits `dist/wasm/protect_ffi_inline.js` — the bundle the
       # `integration/wasm/**` suites selected below actually load. Both files
       # are in the WASM cache key of `.github/actions/build-ffi-binding`, so an
-      # edit to either misses that cache and REBUILDS the bundle; without these
-      # two entries it gets rebuilt and the only suite that loads it never runs.
+      # edit to either misses that cache and REBUILDS the bundle. Without these
+      # two entries the workflow does not trigger at all, so neither the rebuild
+      # nor the only suite that loads it ever runs.
       # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
       - 'packages/protect-ffi/tsconfig.wasm-errors.json'
       - 'packages/protect-ffi/scripts/inline-wasm.mjs'

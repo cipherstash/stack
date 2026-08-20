@@ -57,7 +57,46 @@ const LIVE_VERDICT_CLAIMS = [
   /\bcatches the hand-applied 3\.0\.5 bump\b/,
 ]
 
-const read = (file) => readFileSync(join(REPO_ROOT, file), 'utf8')
+/**
+ * A checked-in claim about what the registry holds RIGHT NOW.
+ *
+ * Same failure as the verdicts above, one step upstream: the gate's answer is
+ * derived from the registry head, so a sentence naming that head is a verdict
+ * in disguise. `npm's newest is 3.0.4` was written into the CI step that runs
+ * the gate and into this suite's own preamble, and both were false eleven days
+ * later — 3.0.5 published, the gate green, the comments still explaining why it
+ * was red.
+ */
+const REGISTRY_HEAD_CLAIMS = [/\bnpm['’]s newest is\b/]
+
+/**
+ * The files that TELL SOMEONE WHAT TO DO about the gate: the gate itself, the
+ * CI step that runs it, and the suite that documents it.
+ *
+ * `docs/plans/*` is deliberately outside this list. A plan is a dated record of
+ * an investigation, and rewriting its findings every time the registry moves
+ * would destroy the record rather than correct it — which is why the plan is
+ * held to `LIVE_VERDICT_CLAIMS` (instructions to an agent) and not to this.
+ */
+const OPERATIONAL = [
+  'scripts/release-gate.mjs',
+  'scripts/__tests__/release-gate.test.mjs',
+  '.github/workflows/tests.yml',
+]
+
+/**
+ * The file as one line, with comment markers gone.
+ *
+ * Without this the guard is defeated by a line break. The claim it was written
+ * for is wrapped across two YAML comment lines — `while npm's` / `# newest is
+ * 3.0.4` — so a pattern spanning those three words matched nothing, and the
+ * check reported clean over the exact sentence that motivated it. Prose in this
+ * repo is hard-wrapped everywhere, so any multi-word pattern needs this.
+ */
+const flatten = (body) =>
+  body.replace(/^\s*(#|\*|\/\/)\s?/gm, ' ').replace(/\s+/g, ' ')
+
+const read = (file) => flatten(readFileSync(join(REPO_ROOT, file), 'utf8'))
 
 describe('frozen-publisher docs track the map', () => {
   it('still has a frozen entry to document', () => {
@@ -88,6 +127,18 @@ describe('frozen-publisher docs track the map', () => {
       `${file} states what release-gate currently does. That is decided by the ` +
         'registry at run time — describe the condition and point at ' +
         '`node scripts/release-gate.mjs` instead.',
+    ).toEqual([])
+  })
+
+  it.each(OPERATIONAL)('%s asserts no live registry state', (file) => {
+    const body = read(file)
+    expect(
+      [...LIVE_VERDICT_CLAIMS, ...REGISTRY_HEAD_CLAIMS]
+        .filter((claim) => claim.test(body))
+        .map(String),
+      `${file} names what the registry currently holds. Write it in the past ` +
+        'tense, or as the condition rather than the answer — the answer comes ' +
+        'from `node scripts/release-gate.mjs`.',
     ).toEqual([])
   })
 })

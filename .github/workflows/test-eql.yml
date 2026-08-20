@@ -663,6 +663,23 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
+      # This job looks Rust-free and is not. `test:splinter` is a bash script
+      # that pipes SQL through psql, but the build step below runs `mise run
+      # build`, and `tasks/build.sh` shells out to `cargo run -q -p eql-codegen`
+      # twice — so without this restore the job cold-compiles that crate and its
+      # dependency tree on every run, beside nine sibling jobs that restore a
+      # warm `target/` for the same workspace. The only symptom is a slower run.
+      #
+      # `save-if: false` for the reason `build-archive` records: it is the sole
+      # designated saver of this shared key. Both halves are asserted by
+      # scripts/__tests__/eql-suite-ci.test.mjs, which finds the cargo by
+      # closing over the mise task graph rather than grepping this file — the
+      # string `cargo` appears nowhere in it.
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+          shared-key: sqlx-tests
+          save-if: false
       - name: Setup database
         run: |
           mise run postgres:up postgres-${POSTGRES_VERSION} --extra-args "--detach --wait"

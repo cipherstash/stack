@@ -12,8 +12,10 @@ import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import {
   classify,
+  FROZEN_PUBLISHERS,
   packedRange,
   publishBlockers,
+  reportBlockers,
   satisfies,
   unpublished,
   workspaceManifests,
@@ -199,13 +201,23 @@ describe('classify', () => {
  * therefore does not abort the release; it just does not arrive, and everything
  * that depends on it ships pointing at a version nobody can install.
  *
- * That is not hypothetical here. `@cipherstash/eql` was hand-bumped to 3.0.5 in
- * the workspace while npm's newest is 3.0.4 and its trusted publisher still
- * names `cipherstash/encrypt-query-language` — so its publish from this
- * repository is rejected, while `packages/cli` and `packages/stack-prisma`
- * carry `"@cipherstash/eql": "workspace:^"` in their RUNTIME dependencies,
- * which pnpm rewrites to `^3.0.5` at pack time. A range no published version
- * satisfies, in a tarball that publishes fine.
+ * That is not hypothetical here. `@cipherstash/eql` is published from
+ * `cipherstash/encrypt-query-language`, so a version bumped in this workspace
+ * cannot be published from this repository — while `packages/cli` and
+ * `packages/stack-prisma` carry `"@cipherstash/eql": "workspace:*"` in their
+ * RUNTIME dependencies, which pnpm rewrites to that exact version at pack time.
+ * The hand-applied 3.0.5 bump put both of them a release ahead of the registry:
+ * a range no published version satisfied, in a tarball that publishes fine.
+ * Upstream released 3.0.5 afterwards and the gate went quiet on its own, which
+ * is the property worth having — and the reason every fixture below carries its
+ * own registry rather than asking the real one.
+ *
+ * Those two were `workspace:^` until the exact pin landed, and the change does
+ * not weaken this check — it sharpens it. `^3.0.5` would have floated onto any
+ * future 3.0.x published from the OTHER repository, which is the emit/store
+ * skew the absorption exists to close;
+ * `scripts/__tests__/frozen-publisher-runtime-pins.test.mjs` is what holds the
+ * exact form. Here the only difference is the range string this gate reports.
  */
 
 const EQL = '@cipherstash/eql'
@@ -294,10 +306,11 @@ describe('publishBlockers', () => {
   })
 
   it('lets a frozen package through once its committed version IS on npm', () => {
-    // The state the seven protect-ffi packages are in, and the unstated
-    // assumption `scripts/lint-no-ffi-changeset.mjs` rests on: at the published
-    // version, `changeset publish` skips them and the frozen publisher never
-    // matters. This is that assumption, checked.
+    // The state a frozen package spends most of its life in, and the one the
+    // retired `lint-no-ffi-changeset` guard rested on without saying so: while
+    // the committed version is already on npm, `changeset publish` skips the
+    // package entirely and the frozen publisher never matters. This is that
+    // assumption, checked rather than assumed.
     expect(
       publishBlockers({
         manifests: [
@@ -386,6 +399,43 @@ describe('publishBlockers', () => {
         },
       ],
       lookup: empty,
+      frozen: new Map(),
+    })
+    expect(blockers.map((b) => b.kind)).toEqual(['private-dependency'])
+  })
+
+  it('blocks a private dependency even when its NAME resolves on npm', () => {
+    // THE ORDERING. The registry-satisfaction check ran first and `continue`d,
+    // so a private package whose name happens to resolve at a satisfying
+    // version never reached the `private` test at all — and privacy is a
+    // property of THIS tree, which no registry answer can revise. The doc
+    // comment already said so ("a blocker either way, since no publish will
+    // ever fix it"); the code disagreed.
+    //
+    // Reached the ordinary way: a package that was published, then marked
+    // private. npm keeps every version it ever accepted, so the lookup goes on
+    // answering long after the package stopped being publishable, and the
+    // versions it answers with are unreachable from a workspace that no longer
+    // packs it.
+    const blockers = publishBlockers({
+      manifests: [
+        {
+          name: 'test-kit',
+          version: '2.3.4',
+          private: true,
+          workspaceDeps: [],
+        },
+        {
+          name: 'stack',
+          version: '1.0.0',
+          private: false,
+          workspaceDeps: [
+            { table: 'dependencies', name: 'test-kit', spec: 'workspace:*' },
+          ],
+        },
+      ],
+      // `workspace:*` packs as the exact `2.3.4`, which this registry satisfies.
+      lookup: (name) => (name === 'test-kit' ? ['0.0.1', '2.3.4'] : ['1.0.0']),
       frozen: new Map(),
     })
     expect(blockers.map((b) => b.kind)).toEqual(['private-dependency'])
@@ -488,13 +538,108 @@ describe('publishBlockers', () => {
   })
 })
 
+/**
+ * WHICH PACKAGES ARE STILL FROZEN — and, far more to the point, which are not.
+ *
+ * An entry that outlives its cutover does not fail loudly, it fails LATE. While
+ * the package sits at a version already on npm the frozen check keeps passing,
+ * so nothing notices; the FIRST bump after the publisher moves is then blocked
+ * by a map that was describing the world as it used to be. The seven
+ * protect-ffi entries reached exactly that state — written while the packages
+ * published from `cipherstash/protectjs-ffi`, and left behind by the cutover
+ * that repointed npm trusted publishing at this repository.
+ *
+ * So the map gets a test that names what is NOT in it. `FROZEN_PUBLISHERS.size
+ * > 0` (asserted in `frozen-publisher-docs.test.mjs`) catches the map emptying
+ * early; this catches it emptying late.
+ */
+describe('FROZEN_PUBLISHERS', () => {
+  it('does not freeze the protect-ffi packages, whose publisher has moved here', () => {
+    expect(
+      [...FROZEN_PUBLISHERS.keys()].filter((name) => name.startsWith(FFI)),
+      'npm trusted publishing for all seven protect-ffi packages is bound to ' +
+        'this repository and `release.yml`. A frozen entry here blocks the ' +
+        'first release that bumps one of them.',
+    ).toEqual([])
+  })
+
+  it('does not block the first FFI release published from this repository', () => {
+    // Driven through the REAL map, not a fixture: the defect is in the map's
+    // contents, so a fixture would prove the mechanism and miss it entirely.
+    // Every FFI version on the registry was published from the old repository,
+    // so the first bump made here is by definition absent from npm — which is
+    // what a release IS, and must not be read as a blocker.
+    const blockers = publishBlockers({
+      manifests: [
+        { name: FFI, version: '0.32.0', private: false, workspaceDeps: [] },
+        {
+          name: PLATFORM,
+          version: '0.32.0',
+          private: false,
+          workspaceDeps: [],
+        },
+        { name: EQL, version: '3.0.6', private: false, workspaceDeps: [] },
+      ],
+      lookup: (name) => (name === EQL ? ['3.0.5'] : ['0.31.0']),
+    })
+    expect(blockers.map((blocker) => blocker.package)).toEqual([EQL])
+  })
+})
+
+/**
+ * THE MESSAGE IS THE ENTIRE PRODUCT OF A FAILING GATE, so the way out has to
+ * describe the findings in front of the reader rather than the ones in front of
+ * whoever wrote it. The text named `3.0.5` outright — correct on the day, stale
+ * by the next release, and LATENT either way, because `reportBlockers` runs
+ * only when there is something to block. A wrong instruction that prints once a
+ * quarter is a wrong instruction nobody is watching.
+ */
+describe('reportBlockers', () => {
+  /** The "two ways past this" tail — the part that tells you what to do. */
+  const remedy = (message) =>
+    message.slice(message.indexOf('There are exactly two ways past this'))
+
+  it('takes the version to publish from the findings', () => {
+    const message = reportBlockers([
+      {
+        kind: 'frozen-publisher',
+        package: EQL,
+        version: '4.1.0',
+        reason: 'publisher not repointed yet',
+      },
+    ])
+    expect(remedy(message)).toContain(`${EQL}@4.1.0`)
+    expect(
+      remedy(message),
+      'the way out must name the version actually blocked, not one written into ' +
+        'the message when it was drafted.',
+    ).not.toMatch(/3\.0\.5/)
+  })
+
+  it('names no version at all when no frozen package is among the findings', () => {
+    // A private dependency is not fixed by publishing anything, so a sentence
+    // telling the reader to publish some version is worse than silence.
+    const message = reportBlockers([
+      {
+        kind: 'private-dependency',
+        package: 'stash',
+        dependency: 'test-kit',
+        table: 'dependencies',
+        range: '0.0.1',
+      },
+    ])
+    expect(remedy(message)).not.toMatch(/\d+\.\d+\.\d+/)
+  })
+})
+
 describe('the gate over this repo’s real manifests', () => {
   // A SYNTHETIC REGISTRY over the REAL tree: every workspace package is
   // published at exactly the version the tree carries, EXCEPT `@cipherstash/eql`
-  // — stuck at 3.0.4, which is npm's actual state. So the only thing this can
-  // report is the consequence of the hand-applied 3.0.5 bump, and it reports it
-  // from the manifests themselves rather than from a fixture that could drift
-  // away from them.
+  // — held one release behind, the state npm was in while the hand-applied
+  // 3.0.5 bump sat unpublished. So the only thing this can report is the
+  // consequence of that bump, and it reports it from the manifests themselves
+  // rather than from a fixture that could drift away from them. Synthetic on
+  // purpose: these assertions must not move when the registry does.
   const manifests = workspaceManifests()
   const lookup = (name) => {
     if (name === EQL) return ['3.0.3', '3.0.4']
@@ -513,8 +658,8 @@ describe('the gate over this repo’s real manifests', () => {
 
   it('names every published package that would ship the unsatisfiable range', () => {
     // THE REGRESSION. `packages/cli` (`stash`) and `packages/stack-prisma` both
-    // carry `"@cipherstash/eql": "workspace:^"` under `dependencies`, so both
-    // pack `^3.0.5`. `packages/stack` carries the same line under
+    // carry `"@cipherstash/eql": "workspace:*"` under `dependencies`, so both
+    // pack the exact `3.0.5`. `packages/stack` carries the same line under
     // `devDependencies` and must NOT appear.
     expect(
       blockers
@@ -522,8 +667,8 @@ describe('the gate over this repo’s real manifests', () => {
         .map((b) => `${b.package} -> ${b.dependency}@${b.range}`)
         .sort(),
     ).toEqual([
-      `@cipherstash/stack-prisma -> ${EQL}@^3.0.5`,
-      `stash -> ${EQL}@^3.0.5`,
+      `@cipherstash/stack-prisma -> ${EQL}@3.0.5`,
+      `stash -> ${EQL}@3.0.5`,
     ])
   })
 
@@ -619,8 +764,9 @@ describe('the gate exits non-zero when a blocker is found', () => {
   }
 
   it('fails the job, and says how to clear it', () => {
-    // TODAY'S TREE against TODAY'S REGISTRY: @cipherstash/eql pinned to 3.0.4,
-    // everything else current. Exit 1 is what skips the `release` job.
+    // THE REAL TREE against a registry held one release behind it:
+    // @cipherstash/eql pinned to 3.0.4, everything else at its committed
+    // version. Exit 1 is what skips the `release` job.
     const result = runGate({ ...allPublished, [EQL]: ['3.0.3', '3.0.4'] })
     expect(result.status).toBe(1)
     expect(result.stderr).toContain('cannot be installed')

@@ -114,6 +114,15 @@ jobs:
         with:
           workspaces: packages/eql
           shared-key: sqlx-tests
+          # `build-archive` in test-eql.yml is the sole SAVER of this shared
+          # key — it compiles the full heavy dependency tree, so its `target/`
+          # is the one worth keeping. Every other consumer restores only, or a
+          # fast-finishing light job wins the save race and overwrites the entry
+          # with a deps-less `target/`. This job is the worst possible winner of
+          # that race: it is bench-gated and nightly, so a stale entry it saved
+          # would go unnoticed until someone wondered why the PR matrix got
+          # slow. Asserted by scripts/__tests__/eql-suite-ci.test.mjs.
+          save-if: false
 
       - name: Setup database
         run: |

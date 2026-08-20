@@ -47,7 +47,7 @@
 	},
 	"dependencies": {
 		"@cipherstash/auth": "catalog:repo",
-		"@cipherstash/eql": "workspace:^",
+		"@cipherstash/eql": "workspace:*",
 		"@cipherstash/migrate": "workspace:*",
 		"@clack/prompts": "1.7.0",
 		"dotenv": "17.4.2",

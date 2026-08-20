@@ -782,3 +782,56 @@ describe('something actually runs it', () => {
     ).not.toEqual([])
   })
 })
+
+/**
+ * The remediation this linter prints is the only instruction most readers will
+ * follow, so it has to name a specifier that is actually correct for the
+ * declaration it is scolding.
+ *
+ * `workspace:^` and `workspace:*` both satisfy this linter — it only asks that
+ * the specifier resolve in-tree. But they pack DIFFERENTLY into a published
+ * tarball: pnpm rewrites `workspace:^` to a caret RANGE and `workspace:*` to
+ * the dependency's EXACT version. For a RUNTIME dependency on a package this
+ * repo does not yet publish, a range is the whole problem back again — a
+ * customer's install resolves any later version published from the other
+ * repository, while the Rust that emits payloads stays pinned in-tree. That is
+ * the emit/store skew both halves of this guard exist to prevent, arriving
+ * through the packed tarball rather than through the manifest.
+ *
+ * So the remediation must recommend the exact-packing form. This test is here
+ * because the text said `workspace:^` for exactly as long as the tree did, and
+ * fixing the tree without fixing the advice leaves the linter teaching the
+ * mistake it just caught.
+ */
+describe('the remediation names a specifier that packs exact', () => {
+  const remediation = () =>
+    report({
+      offenders: [
+        {
+          file: 'packages/cli/package.json',
+          table: 'dependencies',
+          dependency: '@cipherstash/eql',
+          spec: '3.0.5',
+        },
+      ],
+      ids: ['packages/cli/package.json [dependencies] @cipherstash/eql'],
+      exempted: [],
+      missingSources: [],
+      missingExpected: [],
+      missingDeclarers: [],
+      staleExemptions: [],
+      unreasonedExemptions: [],
+    }).err ?? ''
+
+  it('tells the reader to write `workspace:*`', () => {
+    expect(remediation()).toContain('"@cipherstash/eql": "workspace:*"')
+  })
+
+  it('does not hand back the range-packing form as the fix', () => {
+    const npmAdvice = remediation()
+      .split('\n')
+      .filter((line) => line.includes('@cipherstash/eql'))
+      .join('\n')
+    expect(npmAdvice).not.toContain('workspace:^')
+  })
+})

@@ -94,9 +94,10 @@ const DEPENDENCY_TABLES = [
  * `package.json` — but nothing installing the package ever resolves it, so an
  * unsatisfiable one breaks nobody. That asymmetry is live in this tree:
  * `packages/stack` declares `"@cipherstash/eql": "workspace:^"` under
- * devDependencies and is not a finding, while `packages/cli` and
- * `packages/stack-prisma` declare the identical line under `dependencies` and
- * are.
+ * devDependencies and is not a finding — a caret there is harmless, which is
+ * why it is still written that way, while `packages/cli` and
+ * `packages/stack-prisma` carry the same dependency under `dependencies` and
+ * pin it with `workspace:*` so the packed range is exact.
  */
 const INSTALLED_TABLES = new Set([
   'dependencies',
@@ -118,35 +119,26 @@ const INSTALLED_TABLES = new Set([
  * whether it is still true, in the shape of `EXEMPT_DECLARATIONS` in
  * `scripts/lint-no-eql-registry-pins.mjs`.
  *
- * Each entry is DELETED by the cutover that repoints its publisher — the same
- * PR that deletes `scripts/lint-no-ffi-changeset.mjs` for the seven FFI ones
- * (phase 4), and the Phase-5 release cutover for EQL. Leaving one behind is not
- * silent: the package keeps releasing at a version already on npm, so the
- * frozen check keeps passing, and the FIRST bump after the cutover blocks a
- * release that would have worked. Loud, and at the moment someone is looking.
+ * Each entry is DELETED by the cutover that repoints its publisher — for
+ * `@cipherstash/eql` that is the Phase-5 release cutover.
+ *
+ * DELETE IT IN THAT PR, not afterwards. An entry left behind does not fail on
+ * the day it goes wrong, it fails on the next release: while the package sits
+ * at a version already on npm the frozen check keeps passing, so nothing
+ * notices, and the FIRST bump after the cutover blocks a release that would
+ * have worked. The seven protect-ffi packages spent a cutover in exactly that
+ * state — their trusted publishing moved to this repository and their entries
+ * stayed here, arming this gate against the very release the move enabled.
+ * `release-gate.test.mjs` now asserts their absence, so the map has a test for
+ * what is NOT in it as well as what is.
  */
 export const FROZEN_PUBLISHERS = new Map([
   [
     '@cipherstash/eql',
     'Still published from cipherstash/encrypt-query-language — the npm provenance on ' +
-      '3.0.4 names that repository and `release.yml` here carries no NPM_TOKEN. Repointing ' +
+      '3.0.5 names that repository and `release.yml` here carries no NPM_TOKEN. Repointing ' +
       'is Phase 5 of docs/plans/2026-08-13-eql-monorepo-absorption.md.',
   ],
-  ...[
-    '@cipherstash/protect-ffi',
-    '@cipherstash/protect-ffi-darwin-x64',
-    '@cipherstash/protect-ffi-darwin-arm64',
-    '@cipherstash/protect-ffi-win32-x64-msvc',
-    '@cipherstash/protect-ffi-linux-x64-gnu',
-    '@cipherstash/protect-ffi-linux-arm64-gnu',
-    '@cipherstash/protect-ffi-linux-x64-musl',
-  ].map((name) => [
-    name,
-    'Still published from cipherstash/protectjs-ffi until npm trusted publishing is ' +
-      'repointed (the phase-4 cutover). `scripts/lint-no-ffi-changeset.mjs` keeps all seven ' +
-      'at their published version so `changeset publish` skips them; this is that ' +
-      'assumption checked rather than assumed, which is what the EQL bump showed it needed.',
-  ]),
 ])
 
 /**
@@ -377,13 +369,18 @@ export function publishBlockers({
         blockers.push({ ...finding, kind: 'unsatisfiable-range' })
         continue
       }
+      // BEFORE the registry, not after. Privacy is a fact about this tree and
+      // no registry answer revises it: the dependency will not be packed by
+      // this release or any later one. A package that was published and then
+      // marked private keeps every version npm ever accepted, so the lookup
+      // goes on answering — and read first, that answer disarms the check.
+      if (target.private) {
+        blockers.push({ ...finding, kind: 'private-dependency' })
+        continue
+      }
       if (
         versionsOf(dep.name).some((candidate) => satisfies(candidate, range))
       ) {
-        continue
-      }
-      if (target.private) {
-        blockers.push({ ...finding, kind: 'private-dependency' })
         continue
       }
       if (frozen.has(dep.name)) {
@@ -554,6 +551,32 @@ export function reportBlockers(blockers) {
     }
   })
 
+  // The version to publish is READ OFF THE FINDINGS, never written down here.
+  // The text used to name 3.0.5 outright: true when drafted, false one release
+  // later, and latent in between because this function runs only when
+  // something is blocked — so the wrong instruction would print for the first
+  // time to whoever was already stuck.
+  const publisher = blockers.find((b) => b.kind === 'frozen-publisher')
+  const dependency = blockers.find((b) => b.kind === 'frozen-dependency')
+  const target = publisher
+    ? `${publisher.package}@${publisher.version}`
+    : dependency
+      ? `${dependency.dependency}@${dependency.range}`
+      : null
+
+  // No frozen finding means publishing nothing fixes this — a private or
+  // unsatisfiable dependency is a manifest to change, not a release to make —
+  // so the first way out names no version rather than an irrelevant one.
+  const publishStep = target
+    ? '  1. Publish the frozen package. For @cipherstash/eql that is the Phase 5\n' +
+      '     cutover in docs/plans/2026-08-13-eql-monorepo-absorption.md: repoint\n' +
+      '     npm trusted publishing to cipherstash/stack and release the version\n' +
+      `     above — ${target}.\n` +
+      '     Every finding then clears on its own, with no further change here.\n'
+    : '  1. Publish the frozen package. Nothing above is frozen, so this way out\n' +
+      '     is not available: the findings are manifests to fix, not a release to\n' +
+      '     make.\n'
+
   return (
     '\nThis release would publish packages that cannot be installed:\n\n' +
     `${lines.join('\n')}\n\n` +
@@ -564,10 +587,7 @@ export function reportBlockers(blockers) {
     'on it. The tarballs would go out and the failure would surface in a\n' +
     "consumer's `npm install`.\n\n" +
     'There are exactly two ways past this, and neither is editing this gate:\n\n' +
-    '  1. Publish the frozen package. For @cipherstash/eql that is the Phase 5\n' +
-    '     cutover in docs/plans/2026-08-13-eql-monorepo-absorption.md: repoint\n' +
-    '     npm trusted publishing to cipherstash/stack, release 3.0.5, and every\n' +
-    '     finding above clears on its own with no further change here.\n' +
+    publishStep +
     '  2. Do not release. Reverting the workspace version to the one already on\n' +
     '     npm also clears it, at the cost of the bump.\n\n' +
     'Weakening the check is not a third option — the ranges above are what ends\n' +

@@ -68,8 +68,22 @@ jobs:
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          workspaces: packages/eql/tests/sqlx
+          # The workspace ROOT, not the `tests/sqlx` member this job expands.
+          # `workspaces:` tells rust-cache where to find the `Cargo.lock` it
+          # hashes into the key and the `target/` it archives, and both are at
+          # `packages/eql` — `tests/sqlx` is a `members` entry with neither. So
+          # the ported value hashed no lockfile and saved an empty directory,
+          # while reporting success; the only symptom was a slower nightly.
+          # Every sibling step in test-eql.yml and bench-eql.yml names the root.
+          workspaces: packages/eql
           shared-key: sqlx-tests
+          # `build-archive` in test-eql.yml is the sole SAVER of this shared
+          # key — it compiles the full heavy dependency tree, so its `target/`
+          # is the one worth keeping. Every other consumer restores only, or a
+          # fast-finishing light job wins the save race and overwrites the entry
+          # with a deps-less `target/`. Asserted by
+          # scripts/__tests__/eql-suite-ci.test.mjs.
+          save-if: false
 
       # Derive the pinned nightly date from mise.toml (single source of truth —
       # the `cargo +nightly-...` invocation in the `test:matrix:expand` task) so

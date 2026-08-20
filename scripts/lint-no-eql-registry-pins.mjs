@@ -30,7 +30,8 @@
  *
  * npm: the specifier starts with `workspace:`. Nothing else — `link:` and
  * `file:` would resolve in-tree too, but they bypass the version range that
- * `workspace:^` exists to express, and no manifest here uses them. `catalog:`
+ * the workspace protocol exists to express, and no manifest here uses them.
+ * `catalog:`
  * is NOT given Cargo's `workspace = true` treatment: a catalog entry holds a
  * version range, so the deferral has no in-tree answer to defer to. Both ends
  * are flagged — the manifest that says `catalog:` and the catalog entry itself.
@@ -41,8 +42,8 @@
  * one is not a package manifest and no manifest scan would reach it, which is
  * exactly why it matters: pnpm 10 reads `overrides` and `catalogs` from there,
  * so an entry in that file moves what actually installs while every
- * `workspace:^` in the tree still reads correct. The file says so itself, in a
- * comment above its own `overrides:` block.
+ * `workspace:` specifier in the tree still reads correct. The file says so
+ * itself, in a comment above its own `overrides:` block.
  *
  * Three shapes get read that a name-keyed scan walks straight past, and all
  * three install `@cipherstash/eql` from the registry:
@@ -413,7 +414,7 @@ function collectNpmEntries(file, table, entries, found) {
  *
  * `resolutions` and the two `overrides` spellings are read alongside the four
  * dependency tables. An override is the quietest way to reintroduce the skew:
- * it moves what actually gets installed while every `workspace:^` in the tree
+ * it moves what actually gets installed while every `workspace:` specifier
  * still reads correct.
  *
  * A manifest that does not parse contributes nothing rather than throwing —
@@ -620,7 +621,7 @@ export function report(result) {
         'what a clean tree looks like, so this cannot be reported as a pass.\n' +
         `pnpm reads \`overrides\` and \`catalogs\` from ${WORKSPACE_FILE}, which\n` +
         'is the one place a workspace-wide pin can be written while every\n' +
-        '`workspace:^` in the tree still reads correct.\n',
+        '`workspace:` specifier in the tree still reads correct.\n',
     }
   }
 
@@ -691,11 +692,19 @@ export function report(result) {
       'silently — it compiles, it passes CI, and it fails in a database.\n\n' +
       'Resolve it in-tree instead:\n\n' +
       `    ${CARGO_DEPENDENCY} = { path = "../../../eql/crates/eql-bindings" }\n` +
-      `    "${NPM_DEPENDENCY}": "workspace:^"\n\n` +
+      `    "${NPM_DEPENDENCY}": "workspace:*"\n\n` +
+      '`workspace:*` and not `workspace:^`: both resolve in-tree and both\n' +
+      'satisfy this linter, but pnpm packs them differently into a published\n' +
+      "tarball — `*` becomes the dependency's EXACT version, `^` becomes a\n" +
+      'caret RANGE. For a RUNTIME dependency on a package this repo does not\n' +
+      'yet publish, that range is the skew back again: a customer resolves\n' +
+      'whatever later version the other repository publishes, while the Rust\n' +
+      'that emits payloads stays pinned here. `workspace:^` is fine for a\n' +
+      'devDependency, which no consumer installs.\n\n' +
       `If the offender is in ${WORKSPACE_FILE} or in an \`overrides\` block, the\n` +
       'fix is to delete it: an override exists to move what installs, and there\n' +
-      'is nothing in-tree for it to move to that `workspace:^` does not already\n' +
-      'say.\n\n' +
+      'is nothing in-tree for it to move to that the workspace protocol does\n' +
+      'not already say.\n\n' +
       'If the manifest genuinely cannot take an in-tree specifier, add it to\n' +
       'EXEMPT_DECLARATIONS in this script WITH the reason. There is one such\n' +
       'case today and it is written up there.\n',

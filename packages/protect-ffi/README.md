@@ -379,18 +379,19 @@ packages. The changeset body becomes the `CHANGELOG.md` entry — Changesets own
 that file now, so the `[Unreleased]` heading and the `version` npm lifecycle
 hook that used to promote it are gone.
 
-**During the publishing cutover, a protect-ffi changeset is blocked.** All seven
-packages are already on npm at the version this workspace carries, and npm
-trusted publishing still names `cipherstash/protectjs-ffi` as the publisher. A
-changeset naming any of them would bump all seven and send a publish npm rejects
-or misattributes, so `scripts/lint-no-ffi-changeset.mjs` fails CI on one. Change
-this package freely — only the changeset waits.
+**The publishing cutover is done, and with it the changeset embargo.** npm
+trusted publishing for all seven packages now names `cipherstash/stack`, bound
+to `release.yml`, so a changeset naming `@cipherstash/protect-ffi` releases
+normally. The guard that blocked one (`scripts/lint-no-ffi-changeset.mjs`) and
+the `.changeset/<name>.md.deferred` convention that parked it until the cutover
+are both gone.
 
-Write it anyway, and park it as `.changeset/<name>.md.deferred`. Changesets
-selects changesets by `.endsWith('.md')`, so that extension is invisible to
-`changeset version` and `changeset publish` (and to the guard), and the cutover
-PR that repoints trusted publishing renames it back rather than reconstructing
-it from the git log.
+If you find a file still carrying that extension, it was written during the
+embargo and is now inert rather than parked: `@changesets/read` selects on
+`.endsWith('.md')`, so the change it describes would release with an empty
+changelog entry and nothing in `changeset version` or `changeset publish` would
+say so. Rename it back with `git mv`, or delete it if the change never shipped.
+`scripts/__tests__/no-parked-changesets.test.mjs` fails CI on one either way.
 
 The previous repository's GitHub Actions workflows were deposited under
 `.github/` in this directory by the subtree import and kept as the reference for
