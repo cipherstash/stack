@@ -115,9 +115,25 @@ stays optional for everyone else.
   every job that receives a `CS_*` credential must build the binding, and the
   `require-cs-secrets` pre-flight must come first. Both scan the workflow
   directory rather than a list, so a new job is covered the day it lands.
-- **Rust checks live behind `test:cargo`** (`cargo test` + `cargo fmt --check`)
-  and `mise run lint:rust` (clippy, host and wasm32). `build:native` carries
-  `cargo build --release`.
+- **Rust checks live behind `test:cargo`** (`cargo test --locked` + `cargo fmt
+  --check`) and `mise run lint:rust` (clippy, host and wasm32). `build:native`
+  carries `cargo build --release`.
+  **`--locked` is on the CHECK and deliberately not on the builds.** Nothing in
+  this repo passed it at all until the #915 follow-up, and the bill came due
+  through `sync-lockstep-versions.mjs`: it rewrites `eql-bindings`'s crate
+  version on every lockstep bump, `packages/protect-ffi` depends on that crate
+  by path, so its `Cargo.lock` records the version — and nothing updated it.
+  After the 3.0.5 bump `cargo metadata --locked` exited 101 while every cargo
+  command in CI regenerated the lock in memory, built against the regenerated
+  one and threw it away with the runner. Nothing went red. `build:native` is a
+  documented local command, and a contributor who has just edited `Cargo.toml`
+  regenerates the lock on their next build, legitimately — `--locked` there is
+  a failure at the end of a compile. The check answers the same question on the
+  same commit without standing in front of a build.
+  `src/lintWiring.test.ts` holds this: every cargo script reachable from
+  `test:cargo` must carry `--locked` or be exempted with a reason, and the one
+  exemption (`cargo fmt`, an external subcommand that resolves nothing and
+  forwards the flag to rustfmt) expires if it ever stops applying.
 - **`src/lintWiring.test.ts` enforces the split**: no `test:*` script may be
   unreachable from both entry points, nothing cargo may be reachable from
   `test`, and every cargo check must be reachable from `test:cargo`. A check
@@ -290,6 +306,35 @@ monorepo, which is where the silent failures are.
   exempted with a written reason. It is the guard against the failure this
   absorption keeps rediscovering: a check that arrives as a file and executes on
   no event reads exactly like a check that passes.
+  That scan now follows a task's `tasks/*.sh` delegations **transitively**
+  (cycle-guarded, and it throws rather than truncating past
+  `MAX_SCRIPT_DEPTH`), and it reads the `run:` bodies of composite actions a
+  workflow reaches through `uses: ./…`. Both used to stop at one hop, and both
+  failure directions were live: a cargo helper reached only at depth 2 dropped
+  out of `CARGO_TASKS` entirely — no orphan reported, no exemption demanded,
+  and the job running it stopped counting as a Rust job for the cache check —
+  while a mise task invoked from a composite action read as run by nobody,
+  whose natural repair is an exemption claiming CI does not run it.
+- **The EQL path filters are three copies of one list, and the list is derived
+  now, not remembered.** `test-eql.yml` writes it twice (an `on: push: paths:`
+  filter deciding whether the workflow starts at all, and a
+  `dorny/paths-filter` `relevant:` block gating the heavy jobs inside a pull
+  request); `bench-eql.yml` writes a third copy. GitHub has no YAML anchors, so
+  nothing but `scripts/__tests__/eql-workflow-filters.test.mjs` keeps them
+  together. That file now also walks each `mise run` in both workflows out to
+  the task it names — through `[tasks."…"]` tables, file tasks under `tasks/`,
+  `depends`, and nested `mise run` calls — and fails if the `push` filter does
+  not select a path those task bodies name. That is what found
+  `packages/eql/docs/**`, `packages/eql/docker/**`, `packages/eql/README.md`
+  and `packages/eql/SUPABASE.md` missing from all three copies while
+  `docs-static`'s `mise run test:docs_v3_grep` scanned every one of them: a
+  push to main touching only documentation started no EQL workflow at all.
+  **`pull_request` was never affected** — it applies no `paths:` filter, and
+  `docs-static` and `doc-anchors` are deliberately not relevance-gated. The
+  derivation reads paths that are WRITTEN DOWN; it cannot see `postgres:up`
+  picking up `tests/docker-compose.yml` from its working directory, or the glob
+  pathspec in `tasks/test/doc-anchors.sh` (`git ls-files '*.md'`, i.e. every
+  tracked markdown file in the subtree). Those are still read by hand.
 - **One version, five artefacts.** `@cipherstash/eql` (npm), the `eql-bindings`
   crate, the SQL bundle, the docs and the `postgres-eql` image all ship at a
   single version V. The npm package's `version` is the source of truth
@@ -306,6 +351,49 @@ monorepo, which is where the silent failures are.
   SQL before writing a manifest over it — read its comment before touching that
   path. Without both, the bundle ships stamped one version under a manifest,
   crate and npm package claiming another, and every digest still verifies.
+  `scripts/__tests__/eql-sql-asset-freshness.test.mjs` is what holds the
+  result. It compares the npm package's `version` against every
+  `release-manifest.json` under the subtree, against
+  `src/generated/release-manifest.ts`, against the `eql-bindings` crate
+  manifest, and — the one the cache hit actually breaks — against the `COMMENT
+  ON SCHEMA eql_v3 IS '…'` stamp inside the install bundle itself. All of those
+  are needed: the digests are recomputed over whatever bytes were served, so a
+  stale bundle verifies perfectly; only the stamp records which build produced
+  it. The predicate lives in `scripts/sync-lockstep-versions.mjs`
+  (`eqlLockstepSkew`) because the release hook needs the same answer, and a
+  PR-time guard that could disagree with the release-time decision is two
+  guards. **It is deliberately not keyed to `FROZEN_PUBLISHERS`.** The gate's
+  `FROZEN_ARTEFACT_DIGESTS` check compares the tree against *npm* and is
+  deleted at the Phase-5 cutover; this compares the tree against *itself*,
+  which is a property of a lockstep release rather than of who publishes it, so
+  it survives.
+- **The version hook no longer rewrites the SQL assets on a release that does
+  not bump EQL.** `scripts/sync-lockstep-versions.mjs` runs on *every* release,
+  and its step 4 (`mise run release:prepare_bindings_assets`) re-hashed freshly
+  built SQL and overwrote all four release manifests plus both copies of the
+  bundle — unconditionally, including when the version had not moved.
+  `packages/eql/mise.toml` pins `rust = { version = "latest" }`, so the
+  toolchain compiling `eql-codegen` is not the same one month to month, and
+  nothing anywhere proves that regenerating from in-tree source reproduces
+  npm's published bytes. Put those together and a release that never touched
+  EQL can pick up a new digest under an unchanged version, at which point the
+  next `release-gate.mjs` run fires `frozen-bytes-skew`, the `gate` job exits
+  non-zero and `release` is skipped — the whole release blocked by an artefact
+  nobody was releasing, *after* `changeset version` has already rewritten every
+  manifest and CHANGELOG in the tree.
+  Step 4 now runs only when `eqlLockstepSkew` finds a disagreement, and
+  re-checks afterwards that the copy actually landed in both directories. A
+  real bump always disagrees (`package.json` moves first), so the skip is not
+  reachable by bumping. What it declines is the no-op — and for in-tree SQL
+  *source* changed without a changeset, declining is the correct answer rather
+  than a missed one: regenerating there republishes different bytes under a
+  released number, which is precisely what the gate refuses. The changeset is
+  what brings the rebuild back.
+  **Pinning `rust` in `packages/eql/mise.toml` was considered and rejected**:
+  it is a one-line divergence in the ~900-line file upstream edits most, it
+  changes what the whole EQL CI surface compiles against, and with the skip in
+  place the release-stopper is closed without it. If wanted, the pin belongs
+  upstream and arrives by subtree pull.
 - **`eql-bindings` resolves by path from `packages/protect-ffi`, never from
   crates.io**, and `scripts/lint-no-eql-registry-pins.mjs` (`pnpm run
   lint:eql-pins`) is what keeps it that way. The two halves of EQL are the Rust
@@ -321,6 +409,22 @@ monorepo, which is where the silent failures are.
   (`packages/protect-ffi/integration-tests`, which installs with `npm ci` and
   cannot take a `workspace:` specifier); adding another means writing the reason
   down.
+  It also reads the Cargo redirect tables — `[patch.*]` (including
+  `[patch."https://…"]` and the dotted `[patch.crates-io.eql-bindings]` form)
+  and `[replace]` — plus **`.cargo/config.toml`**, because cargo honours a
+  `[patch]` written there and a walk keyed on manifest filenames never opens
+  it. That is the `pnpm-workspace.yaml` failure one ecosystem along: the
+  quietest place to re-point a dependency is the file the linter was not
+  reading. Still not read: `[source.*] replace-with`, which redirects the whole
+  registry rather than naming a crate, so there is no `eql-bindings`
+  declaration to classify — closing it is a different check (does this tree
+  redirect crates.io at all), not an extension of this one.
+  **`packages/eql`'s own cargo tasks still pass no `--locked`.** `mise run
+  test:crates`, `codegen:parity` and the SQLx archive/partition tasks all shell
+  to a plain `cargo …`. `cargo tree --locked` exits 0 there today, so the flag
+  would pass if added — and this is the workspace whose `Cargo.lock` the
+  lockstep bump actually moves. Left open only because it means editing the
+  subtree's `mise.toml`.
 - **Two SQLx test constants are keyed to this repo's CI workspace.** SteVec
   selectors are MACs over (column context, JSONPath) under a *workspace keyset*,
   so `SELECTOR` in `tests/sqlx/src/fixtures/v3_doc_integer.rs` and `SEL_HELLO_OP`
@@ -338,7 +442,7 @@ monorepo, which is where the silent failures are.
   them before using any of them.
 - **Publishing has not moved yet.** npm trusted publishing for `@cipherstash/eql`
   still names `cipherstash/encrypt-query-language` — the SLSA provenance on
-  `@cipherstash/eql@3.0.4` records that repository and
+  `@cipherstash/eql@3.0.5` records that repository and
   `.github/workflows/release.yml` — and the package's own `repository` / `bugs`
   fields still point there, as do the `eql-bindings` crate's. Repointing all of
   it is the Phase-5 cutover, together with the nine parked workflows above.
@@ -365,12 +469,29 @@ monorepo, which is where the silent failures are.
   with it; only the registry disagrees. This branch shipped exactly that — a
   `3.0.5` subtree whose install bundle hashed `7ad9c9f8…` against npm's
   `accde0030…`, because upstream restored the deprecated `ste_vec_contains`
-  aliases in the real release — and `stash eql install` reads that SQL verbatim
-  with no digest check, so a customer database would have carried functions the
-  version it reports does not define. The check `npm pack`s the frozen package
+  aliases in the real release — and `stash eql install` would have executed that
+  SQL against a customer database, which would then have carried functions the
+  version it reports does not define. (The CLI now refuses a bundle whose bytes
+  do not hash to its own release manifest — see
+  `packages/cli/src/installer/bundle-digest.ts`. That catches a corrupt or
+  tampered `node_modules`, **not** this: a frozen-package skew regenerates the
+  manifest alongside the SQL, so the two agree locally and only the registry
+  disagrees. The release gate is still the only thing that notices.) The check
+  `npm pack`s the frozen package
   and compares the two release manifests; `FROZEN_ARTEFACT_DIGESTS` says which
   artefact, keyed identically to `FROZEN_PUBLISHERS` and deleted with it at the
   cutover.
+  **That `npm pack` + `tar` extraction was itself executed by no test until the
+  #915 follow-up** — every `frozenBytesSkew` unit test injected both digests,
+  and the end-to-end process test shimmed `npm` with a script answering `npm
+  view` only, so `npm pack` got a synthetic `E404` and the comparison was
+  skipped on every run. Driving it for real found two defects in it: `--silent`
+  suppressed the very error text the function classified on, and npm answers a
+  missing *version* of an existing package with `ETARGET`, not `E404` — so
+  `@cipherstash/eql@<next>`, the exact case the function documents, became an
+  uncaught throw with an empty reason, raised while building the blocker array,
+  which meant `reportBlockers` never printed the actionable `frozen-publisher`
+  remedy it had already computed.
   **Whether the gate is blocking anything right now is a question for the
   registry, not for this file: run `node scripts/release-gate.mjs` and read what
   it says.** `tests.yml` runs the same script at PR time so the answer arrives a
@@ -382,6 +503,13 @@ monorepo, which is where the silent failures are.
   `scripts/__tests__/frozen-publisher-docs.test.mjs` fails until this paragraph
   goes with it, and `release-gate.test.mjs` now asserts the map carries no FFI
   name, so that particular mistake cannot be made twice.
+  **`SECURITY.md`'s "Note on publishing" is the third document that guard
+  holds**, added after it was found still naming the seven
+  `@cipherstash/protect-ffi*` packages as published from `protectjs-ffi` — a
+  sentence the FFI cutover made false and nothing checked, in the one file that
+  tells a reporter which pipeline built the artefact they are reporting on. The
+  guard now fails on a doc that freezes a package the map does not, so the same
+  drift cannot outlive the next cutover either.
   Note too that 3.0.5 did *not* come from `changeset version` —
   eleven unrelated changesets were pending, so the bump was entered by hand in
   `packages/eql/packages/eql/CHANGELOG.md` and the parked
