@@ -1,5 +1,12 @@
 # @cipherstash/basic-example
 
+## 1.2.16
+
+### Patch Changes
+
+- @cipherstash/stack@1.1.1
+- @cipherstash/stack-drizzle@1.1.1
+
 ## 1.2.15
 
 ### Patch Changes
