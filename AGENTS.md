@@ -347,10 +347,30 @@ monorepo, which is where the silent failures are.
   the stronger of the two. Its `FROZEN_PUBLISHERS` map lists every package that lives here but is
   published from another repository, and the gate **exits non-zero** — failing
   the `gate` job, which skips `release` entirely — if such a package's committed
-  version is missing from npm, or if any published package carries a runtime
-  `workspace:` range that only that package could satisfy. Either condition
-  stops the Version Packages PR and the publish alike. A changeset-side guard
-  sees neither — which is why the hand-applied 3.0.5 bump needed this one.
+  version is missing from npm, if any published package carries a runtime
+  `workspace:` range that only that package could satisfy, or — the third
+  check, added after a review caught it by hand — if a frozen package's
+  in-tree artefact is **not the bytes published under the version the tree
+  claims**. Any one stops the Version Packages PR and the publish alike. A
+  changeset-side guard sees none of them — which is why the hand-applied 3.0.5
+  bump needed this one.
+
+  **That third check is the one worth understanding before you touch
+  `packages/eql`.** For a package this repo publishes, in-tree bytes differing
+  from npm is an unreleased change — every pull request. For a frozen one it is
+  a contradiction: the version cannot be released from here, so the tree is not
+  proposing those bytes, it is *asserting they are already on npm under that
+  number*. Nothing local can notice when that stops being true, because
+  `sql/release-manifest.json` is regenerated with the SQL and goes on agreeing
+  with it; only the registry disagrees. This branch shipped exactly that — a
+  `3.0.5` subtree whose install bundle hashed `7ad9c9f8…` against npm's
+  `accde0030…`, because upstream restored the deprecated `ste_vec_contains`
+  aliases in the real release — and `stash eql install` reads that SQL verbatim
+  with no digest check, so a customer database would have carried functions the
+  version it reports does not define. The check `npm pack`s the frozen package
+  and compares the two release manifests; `FROZEN_ARTEFACT_DIGESTS` says which
+  artefact, keyed identically to `FROZEN_PUBLISHERS` and deleted with it at the
+  cutover.
   **Whether the gate is blocking anything right now is a question for the
   registry, not for this file: run `node scripts/release-gate.mjs` and read what
   it says.** `tests.yml` runs the same script at PR time so the answer arrives a
