@@ -261,7 +261,7 @@ For those, see [below](#integration-tests).
 
 #### `pnpm run test:cargo`
 
-The Rust half of the test suite: `cargo test` plus `cargo fmt --check`. Run by a path-filtered root workflow, not by `pnpm test`.
+The Rust half of the test suite: `cargo test --locked` plus `cargo fmt --check`. Run by a path-filtered root workflow, not by `pnpm test`. `--locked` fails rather than silently regenerating a stale `Cargo.lock` — the build scripts do not pass it, so a local build that legitimately updates the lock still works.
 
 #### `pnpm run test:typecheck:wasm`
 

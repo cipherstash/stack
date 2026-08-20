@@ -240,6 +240,127 @@ describe('cargo: what counts as in-tree', () => {
   })
 })
 
+describe('cargo: the tables that redirect a dependency without declaring one', () => {
+  /**
+   * `[patch]` and `[replace]` are not dependency tables — they are the tables
+   * that say where a dependency RESOLVES FROM, which is precisely the thing
+   * this linter is about. A manifest can keep `eql-bindings = { path = … }`
+   * word for word and still build against crates.io, or against a git
+   * checkout, by adding four lines somewhere else in the same file.
+   *
+   * They are the Cargo-side twin of `overrides` on the npm side, and that side
+   * has been read since the first version of this script for the same reason:
+   * an override moves what actually gets built while every specifier in the
+   * tree still reads correct.
+   *
+   * A patch carrying a `path` is benign — it redirects in-tree, which is where
+   * the dependency already points. A patch carrying `git` or a version is the
+   * skew, so the existing classifier applies unchanged.
+   */
+  it('reads `[patch.crates-io]`', () => {
+    expect(
+      cargoForms(
+        '[patch.crates-io]\neql-bindings = { git = "https://github.com/cipherstash/encrypt-query-language" }\n',
+      ),
+    ).toEqual(['git'])
+  })
+
+  it('accepts a patch that redirects in-tree', () => {
+    // The legitimate use, and the reason this is classified rather than banned
+    // outright: a path patch points at the same tree the dependency already
+    // resolves from.
+    expect(
+      cargoForms(
+        '[patch.crates-io]\neql-bindings = { path = "../../eql/crates/eql-bindings" }\n',
+      ),
+    ).toEqual(['path'])
+  })
+
+  it('reads a patch keyed by a source URL, not only by `crates-io`', () => {
+    // `[patch.<source>]` takes any source cargo knows: the registry by name,
+    // or a git source by its URL. Matching the literal string `crates-io`
+    // would read the first and walk past the second.
+    expect(
+      cargoForms(
+        '[patch."https://github.com/cipherstash/encrypt-query-language"]\neql-bindings = { version = "3.0.4" }\n',
+      ),
+    ).toEqual(['version'])
+  })
+
+  it('reads the dotted `[patch.crates-io.eql-bindings]` table form', () => {
+    // Same spelling trap as `[dependencies.eql-bindings]`: the crate name is in
+    // the HEADER and the line carrying the source does not mention it.
+    expect(
+      cargoForms(
+        '[patch.crates-io.eql-bindings]\ngit = "https://github.com/cipherstash/encrypt-query-language"\n',
+      ),
+    ).toEqual(['git'])
+  })
+
+  it('reads `[replace]`, whose key carries a version', () => {
+    // Deprecated in favour of `[patch]`, and still honoured by cargo. Its keys
+    // are `"<name>:<version>"`, so the bare-name match used everywhere else in
+    // this file does not fire.
+    expect(
+      cargoForms(
+        '[replace]\n"eql-bindings:3.0.4" = { git = "https://github.com/cipherstash/encrypt-query-language" }\n',
+      ),
+    ).toEqual(['git'])
+    expect(
+      cargoForms('[replace]\n"eql-bindings:3.0.4" = { path = "../eql" }\n'),
+    ).toEqual(['path'])
+  })
+
+  it('does not mistake a patch for some other crate', () => {
+    // The cry-wolf direction. A workspace patching an unrelated crate must not
+    // trip this.
+    expect(
+      cargoForms('[patch.crates-io]\nserde = { path = "../serde" }\n'),
+    ).toEqual([])
+  })
+
+  it('flags a patch end to end', () => {
+    const root = tree({
+      'crates/a/Cargo.toml':
+        '[dependencies]\neql-bindings = { path = "../../eql" }\n' +
+        '[patch.crates-io]\neql-bindings = { git = "https://github.com/cipherstash/encrypt-query-language" }\n',
+    })
+    // The manifest's own dependency line is correct and stays correct. Only
+    // the patch is the offender, which is the whole point of reading it.
+    const { offenders } = lint({ root, expected: [], exemptions: new Map() })
+    expect(offenders.map((o) => o.form)).toEqual(['git'])
+    expect(run(root).exitCode).toBe(1)
+  })
+
+  it('reads a patch in `.cargo/config.toml`, which is not a manifest at all', () => {
+    // Cargo reads `[patch]` from its CONFIG as well as from a manifest, and a
+    // config is not a `Cargo.toml` — so a scan keyed on manifest filenames
+    // never opens the file. Same class as `pnpm-workspace.yaml` on the npm
+    // side: the one place a tree-wide redirect can be written while every
+    // manifest in the tree still reads correct.
+    //
+    // Not floored in EXPECTED_SOURCES: no such file exists in this repo today,
+    // and a floor on a file that does not exist fails on every run.
+    const root = tree({
+      '.cargo/config.toml':
+        '[patch.crates-io]\neql-bindings = { version = "3.0.2" }\n',
+    })
+    expect(manifestFiles(root)).toContain('.cargo/config.toml')
+    expect(run(root).exitCode).toBe(1)
+  })
+
+  it('leaves a `config.toml` that is not cargo config alone', () => {
+    // The name is common. Only `.cargo/config.toml` is cargo configuration;
+    // anything else called `config.toml` belongs to some other tool, and
+    // reading it turns this linter into a scanner of arbitrary TOML.
+    const root = tree({
+      'somewhere/config.toml':
+        '[patch.crates-io]\neql-bindings = { version = "3.0.2" }\n',
+    })
+    expect(manifestFiles(root)).toEqual([])
+  })
+})
+
 describe('npm: what counts as in-tree', () => {
   const pkg = (json) => npmDeclarations('package.json', JSON.stringify(json))
 
@@ -336,6 +457,26 @@ describe('npm: the spellings a name-keyed scan walks past', () => {
     expect(
       pkg({ resolutions: { '**/@cipherstash/eql': '3.0.4' } })[0],
     ).toMatchObject({ table: 'resolutions', inTree: false })
+  })
+
+  it('reads a selector key whose range itself contains an `@`', () => {
+    // pnpm's own override keys never need a second `@` — its ranges are
+    // semver, and its `parent>child` selector puts the second name after a
+    // `>`, which this key matcher already handles. yarn's `resolutions`
+    // descriptors do: `"<name>@npm:<other-name>@<range>"` is how yarn spells a
+    // resolution that also aliases, and both names may be scoped.
+    //
+    // The suffix was `(@[^@]*)?$`, which stops at the first `@` and therefore
+    // matched nothing here. Widening it to `(@.*)?$` cannot cry wolf: the
+    // boundary that keeps `@cipherstash/eql-extras` out is the `@` itself, and
+    // `-extras` is not one — the test below still holds.
+    expect(
+      pkg({
+        resolutions: {
+          '@cipherstash/eql@npm:@cipherstash/eql-fork@1.0.0': '1.0.0',
+        },
+      }),
+    ).toHaveLength(1)
   })
 
   it('does not flag a neighbouring package whose name starts the same', () => {

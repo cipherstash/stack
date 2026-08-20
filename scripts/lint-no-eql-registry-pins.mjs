@@ -76,7 +76,7 @@
  *   thing to go and fix, and must never be mistaken for a pass.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { basename, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import yaml from 'js-yaml'
@@ -176,6 +176,33 @@ export const EXEMPT_DECLARATIONS = new Map([
 const SCANNED_FILES = new Set(['Cargo.toml', 'package.json', WORKSPACE_FILE])
 
 /**
+ * Cargo's own config, which is not a manifest and carries `[patch]` anyway.
+ *
+ * The npm-side twin of this is `pnpm-workspace.yaml`, and it is here for the
+ * same reason: a `[patch.crates-io]` block written in a config redirects the
+ * whole tree while every `Cargo.toml` in it still reads correct. `config` with
+ * no extension is cargo's older spelling and is still honoured.
+ *
+ * Matched on the DIRECTORY as well as the name — `config.toml` is a common
+ * filename, and reading every one of them would turn this into a scanner of
+ * arbitrary TOML. Deliberately NOT in `EXPECTED_SOURCES`: no such file exists
+ * in this repo, and a floor on a file that does not exist fails on every run.
+ *
+ * What this does not read is a SOURCE replacement (`[source.crates-io]
+ * replace-with = …`). That redirects every crate rather than naming one, so
+ * there is no `eql-bindings` declaration to classify — it is a whole-registry
+ * decision, and one this repo would notice in other ways.
+ */
+const CARGO_CONFIG_DIR = '.cargo'
+const CARGO_CONFIG_FILES = new Set(['config.toml', 'config'])
+
+/** Whether a repo-relative path is a file the Cargo readers understand. */
+const isCargoSource = (rel) =>
+  basename(rel) === 'Cargo.toml' ||
+  (CARGO_CONFIG_FILES.has(basename(rel)) &&
+    basename(dirname(rel)) === CARGO_CONFIG_DIR)
+
+/**
  * Every `Cargo.toml`, `package.json` and `pnpm-workspace.yaml` under `root`,
  * repo-relative.
  *
@@ -190,7 +217,11 @@ export function manifestFiles(root) {
       if (entry.isDirectory()) {
         if (SKIP_DIRS.has(entry.name)) continue
         walk(join(abs, entry.name))
-      } else if (SCANNED_FILES.has(entry.name)) {
+      } else if (
+        SCANNED_FILES.has(entry.name) ||
+        (CARGO_CONFIG_FILES.has(entry.name) &&
+          basename(abs) === CARGO_CONFIG_DIR)
+      ) {
         found.push(join(abs, entry.name))
       }
     }
@@ -233,6 +264,30 @@ const DEPENDENCY_TABLE =
   /(^|\.)(dependencies|dev-dependencies|build-dependencies)$/
 
 /**
+ * The tables that redirect where a dependency RESOLVES FROM without declaring
+ * one: `[patch.<source>]` and the deprecated-but-honoured `[replace]`.
+ *
+ * These are the Cargo-side twin of npm's `overrides`, and they are read for the
+ * reason that side has always been read — a redirect moves what actually gets
+ * built while every specifier in the tree still reads correct. A manifest can
+ * keep `eql-bindings = { path = … }` word for word and build against crates.io
+ * by adding four lines further down the same file.
+ *
+ * `<source>` is a registry name (`crates-io`) or a quoted git URL, so the
+ * segment after `patch` is not enumerated. `^` anchors both so a table like
+ * `[workspace.metadata.replace]` is not mistaken for one.
+ *
+ * Classification is unchanged: a patch carrying `path` redirects in-tree, which
+ * is where the dependency already points, and is fine. `git` or a version is
+ * the skew.
+ */
+const REDIRECT_TABLE = /^(patch(\.|$)|replace$)/
+
+/** Whether a TOML table holds entries keyed by crate name. */
+const isEntryTable = (path) =>
+  DEPENDENCY_TABLE.test(path) || REDIRECT_TABLE.test(path)
+
+/**
  * Classify a dependency spec: `path` and `workspace` are in-tree, everything
  * else is a registry pin.
  *
@@ -269,34 +324,40 @@ function uncommented(line) {
 export function cargoDeclarations(file, source) {
   const found = []
   for (const { path, body } of tomlTables(source)) {
-    if (DEPENDENCY_TABLE.test(path)) {
-      for (const line of body.split('\n')) {
-        const bare = uncommented(line)
-        const match = new RegExp(
-          `^\\s*(?:["']?)${CARGO_DEPENDENCY}(?:["']?)\\s*=\\s*(.+)$`,
-        ).exec(bare)
-        if (!match) continue
-        found.push({
-          file,
-          dependency: CARGO_DEPENDENCY,
-          spec: match[1].trim(),
-          ...classifySpec(match[1]),
-        })
-      }
+    // `[<entry table>.eql-bindings]` — the table IS the spec. Checked FIRST,
+    // because `[patch.crates-io.eql-bindings]` is also matched by
+    // `REDIRECT_TABLE`, and the line scan below would find no `eql-bindings =`
+    // line in it and report the whole table clean.
+    const dotted = new RegExp(
+      `^(.+)\\.(?:["']?)${CARGO_DEPENDENCY}(?:["']?)$`,
+    ).exec(path)
+    if (dotted && isEntryTable(dotted[1])) {
+      const spec = body.split('\n').slice(1).map(uncommented).join('\n')
+      found.push({
+        file,
+        dependency: CARGO_DEPENDENCY,
+        spec: spec.trim().replace(/\s+/g, ' '),
+        ...classifySpec(spec),
+      })
       continue
     }
-    // `[<something>.dependencies.eql-bindings]` — the table IS the spec.
-    const dotted = new RegExp(
-      `(^|\\.)(?:dependencies|dev-dependencies|build-dependencies)\\.(?:["']?)${CARGO_DEPENDENCY}(?:["']?)$`,
-    )
-    if (!dotted.test(path)) continue
-    const spec = body.split('\n').slice(1).map(uncommented).join('\n')
-    found.push({
-      file,
-      dependency: CARGO_DEPENDENCY,
-      spec: spec.trim().replace(/\s+/g, ' '),
-      ...classifySpec(spec),
-    })
+    if (!isEntryTable(path)) continue
+    for (const line of body.split('\n')) {
+      const bare = uncommented(line)
+      // The optional `:<version>` suffix is `[replace]`'s key spelling —
+      // `"eql-bindings:3.0.4" = { … }`. It appears only inside quotes, since a
+      // TOML bare key cannot contain a colon.
+      const match = new RegExp(
+        `^\\s*(?:["']?)${CARGO_DEPENDENCY}(?::[^"'\\s=]*)?(?:["']?)\\s*=\\s*(.+)$`,
+      ).exec(bare)
+      if (!match) continue
+      found.push({
+        file,
+        dependency: CARGO_DEPENDENCY,
+        spec: match[1].trim(),
+        ...classifySpec(match[1]),
+      })
+    }
   }
   return found
 }
@@ -316,14 +377,20 @@ const escapeForRegExp = (literal) =>
  *                                 glob in front of it, a resolutions glob
  *
  * So: the name, at the end of the key, preceded by nothing or by a `/` or `>`
- * boundary, optionally followed by one `@<range>`. The boundary is what keeps
+ * boundary, optionally followed by an `@<range>`. The boundary is what keeps
  * `@cipherstash/eql-extras` from matching — a prefix match here would make the
  * linter cry wolf, and the fix for a linter that cries wolf is always to
  * weaken it.
+ *
+ * The range is `.*` and not `[^@]*`. pnpm's own keys never need a second `@` —
+ * its ranges are semver and its `parent>child` selector puts the second name
+ * after a `>` — but a yarn `resolutions` descriptor may alias in the KEY
+ * (`"<name>@npm:<other-name>@<range>"`), and both names may be scoped. The
+ * widening cannot cry wolf, because the boundary that separates
+ * `@cipherstash/eql` from `@cipherstash/eql-extras` is the `@` that has to
+ * follow the name, not what comes after it.
  */
-const NPM_KEY = new RegExp(
-  `(^|[>/])${escapeForRegExp(NPM_DEPENDENCY)}(@[^@]*)?$`,
-)
+const NPM_KEY = new RegExp(`(^|[>/])${escapeForRegExp(NPM_DEPENDENCY)}(@.*)?$`)
 
 /**
  * Whether an entry VALUE aliases the npm package — `"eql-legacy":
@@ -518,7 +585,7 @@ export function scanTree(root) {
   const sources = []
   for (const rel of manifestFiles(root)) {
     const source = readFileSync(join(root, rel), 'utf8')
-    if (rel.endsWith('Cargo.toml')) {
+    if (isCargoSource(rel)) {
       declarations.push(...cargoDeclarations(rel, source))
     } else if (basename(rel) === WORKSPACE_FILE) {
       const config = parseWorkspace(source)

@@ -85,11 +85,89 @@ function executablePart(body) {
   return jobsAt === -1 ? '' : body.slice(jobsAt).replace(/^[ \t]*#.*$/gm, '')
 }
 
-/** Every workflow GitHub actually executes, read from the repository root. */
-const rootWorkflows = workflowFiles().map((relPath) => ({
-  relPath,
-  body: executablePart(readFileSync(join(REPO_ROOT, relPath), 'utf8')),
-}))
+/** The two spellings GitHub accepts for a composite action's manifest. */
+const ACTION_MANIFESTS = ['action.yml', 'action.yaml']
+
+/** One local composite action's manifest, or `null` if there is no such action. */
+function readActionManifest(uses) {
+  const dir = uses.slice('./'.length)
+  const rel = ACTION_MANIFESTS.map((name) => `${dir}/${name}`).find((path) =>
+    existsSync(join(REPO_ROOT, path)),
+  )
+  return rel === undefined ? null : readWorkflow(rel)
+}
+
+/**
+ * The `run:` bodies a local composite action contributes, transitively.
+ *
+ * A step's `uses: ./…` is a real command position: whatever that action runs,
+ * the job runs. Nothing in `.github/actions/` says `mise run` today — so this
+ * changes no answer in this tree, and that is exactly when it is worth adding,
+ * because the day one does the guard goes wrong in two directions at once.
+ *
+ * The loud one is `orphanCargoTasks`: a task that IS run reads as unreached, and
+ * the tempting repair is an entry in `CI_EXEMPT_CARGO_TASKS` — which turns a
+ * false report into a permanent, plausible-sounding claim that CI does not run
+ * it. The QUIET one is the uncached-job check at the bottom of this file, which
+ * reads `run:` bodies only: a job whose cargo arrives through an action reads as
+ * carrying no Rust at all, so its missing `Swatinem/rust-cache` step is never
+ * reported and the only symptom is a slower run.
+ *
+ * `read` is a parameter for the same reason `scriptBodies` takes one — the
+ * fixture below plants an action that runs a mise task without editing
+ * `.github/`.
+ */
+const ACTION_BODIES = new Map()
+function actionRunBodies(
+  uses,
+  read = readActionManifest,
+  cache = ACTION_BODIES,
+) {
+  if (!uses.startsWith('./')) return ''
+  const cached = cache.get(uses)
+  if (cached !== undefined) return cached
+  // Seeded before the recursion, so an action that reaches itself contributes
+  // nothing the second time rather than recursing forever.
+  cache.set(uses, '')
+  const manifest = read(uses)
+  const steps = Array.isArray(manifest?.runs?.steps) ? manifest.runs.steps : []
+  const body = steps
+    .map(
+      (step) =>
+        `${step?.run ?? ''}\n${actionRunBodies(String(step?.uses ?? ''), read, cache)}`,
+    )
+    .join('\n')
+  cache.set(uses, body)
+  return body
+}
+
+/** Every step of a parsed workflow, across all its jobs. */
+const workflowSteps = (wf) =>
+  Object.values(wf?.jobs ?? {}).flatMap((job) =>
+    Array.isArray(job?.steps) ? job.steps : [],
+  )
+
+/**
+ * Every workflow GitHub actually executes, read from the repository root — with
+ * the `run:` bodies of the composite actions it `uses:` appended.
+ *
+ * Job-level `uses: ./.github/workflows/…` is deliberately not followed: a called
+ * reusable workflow is itself a file in this directory, so its tasks are already
+ * counted once. Following it would count them twice, which changes no answer but
+ * makes the mutation test below report a workflow as its own sole caller.
+ */
+const rootWorkflows = workflowFiles().map((relPath) => {
+  const actions = workflowSteps(readWorkflow(relPath))
+    .map((step) => String(step?.uses ?? ''))
+    .map((uses) => actionRunBodies(uses))
+  return {
+    relPath,
+    body: [
+      executablePart(readFileSync(join(REPO_ROOT, relPath), 'utf8')),
+      ...actions,
+    ].join('\n'),
+  }
+})
 
 describe('a root workflow runs the EQL SQLx suite', () => {
   it('finds workflows at the repository root at all', () => {
@@ -431,14 +509,18 @@ function stripCommentLines(text) {
 }
 
 /**
- * The scripts a task delegates to, inlined.
+ * How many hops of script→script delegation to follow before giving up.
  *
- * Most of EQL's heavier tasks are one line — `run = "bash tasks/test/foo.sh"` —
- * and every cargo invocation lives in the script. Reading only the block would
- * therefore see cargo in nine tasks and miss `test:sqlx:archive`,
- * `test:sqlx:partition`, `codegen:parity` and the rest, which is the whole
- * class of task most worth checking. One hop is enough: no script here invokes
- * another via a second `tasks/` path.
+ * Each script is read at most once, so this is not a bound on how many scripts
+ * a task may reach — it is a bound on how long a single CHAIN may be, and
+ * hitting it means something pathological rather than something new. It throws
+ * rather than truncating, because a scan that quietly stops walking is the same
+ * false green as the one-hop version this replaced, only further away.
+ */
+const MAX_SCRIPT_DEPTH = 10
+
+/**
+ * The `tasks/…​.sh` paths one body delegates to.
  *
  * Comment lines are stripped first, and that is not cosmetic. `tasks/build.sh`
  * lists eight sibling scripts in a `#MISE sources=[…]` header (cache-
@@ -446,16 +528,79 @@ function stripCommentLines(text) {
  * mentions `tasks/build.sh` in prose. Inlining those makes a task look like it
  * shells to cargo when it does not — `release:prepare-bindings-assets` was
  * reported as an unreached cargo check on the strength of one comment.
+ */
+function scriptPaths(text) {
+  return [
+    ...new Set(
+      [...stripCommentLines(text).matchAll(/\btasks\/[\w./-]+\.sh\b/g)].map(
+        (m) => m[0],
+      ),
+    ),
+  ]
+}
+
+/**
+ * One script's text, by its `tasks/…` path inside the subtree.
  *
  * A path that does not resolve contributes nothing rather than throwing — a
  * task naming a script that does not exist is a different defect, and mise
  * fails loudly on it.
  */
-function scriptBodies(text) {
-  return [...stripCommentLines(text).matchAll(/\btasks\/[\w./-]+\.sh\b/g)]
-    .map((m) => join(REPO_ROOT, EQL_PACKAGE, m[0]))
-    .map((abs) => (existsSync(abs) ? readFileSync(abs, 'utf8') : ''))
-    .join('\n')
+const readScript = (rel) => {
+  const abs = join(REPO_ROOT, EQL_PACKAGE, rel)
+  return existsSync(abs) ? readFileSync(abs, 'utf8') : ''
+}
+
+/**
+ * The scripts a task delegates to, inlined — transitively.
+ *
+ * Most of EQL's heavier tasks are one line — `run = "bash tasks/test/foo.sh"` —
+ * and every cargo invocation lives in the script. Reading only the block would
+ * therefore see cargo in nine tasks and miss `test:sqlx:archive`,
+ * `test:sqlx:partition`, `codegen:parity` and the rest, which is the whole
+ * class of task most worth checking.
+ *
+ * This followed ONE hop until it was made transitive, on the grounds that "no
+ * script here invokes another via a second `tasks/` path". That was a fact
+ * about the tree and not a property of the scan, and it was already false:
+ * `tasks/build.sh` sources `tasks/build/ordering.sh` and shells to two
+ * `tasks/test/verify_*.sh`. It held for the CARGO scripts by accident — the
+ * three non-executable helpers containing cargo are all named directly from a
+ * mise.toml task body.
+ *
+ * The accident is not worth standing on, because of which way it fails. A cargo
+ * helper reached only at depth 2 drops out of `CARGO_TASKS`: no orphan is
+ * reported, no exemption is demanded, and the job that runs it stops counting
+ * as a Rust job for the cache check at the bottom of this file. Every assertion
+ * here stays green while covering less — which is the failure this whole file
+ * is about, arriving through the scan instead of through a workflow.
+ *
+ * `read` is a parameter so the tests can drive a synthetic chain: the mutation
+ * is injected, not performed, the same way `reachableFrom` takes a workflow
+ * list rather than reading the directory.
+ */
+function scriptBodies(text, read = readScript) {
+  const seen = new Set()
+  const bodies = []
+  let frontier = scriptPaths(text)
+  let depth = 0
+  while (frontier.length > 0) {
+    if (++depth > MAX_SCRIPT_DEPTH) {
+      throw new Error(
+        `A \`tasks/\` delegation chain runs deeper than ${MAX_SCRIPT_DEPTH} hops; still to read: ${frontier.join(', ')}. Either the chain is real and MAX_SCRIPT_DEPTH should go up, or something is generating script paths. Truncating here would drop whatever is at the end of it out of CARGO_TASKS silently, which is the one thing this scan must not do.`,
+      )
+    }
+    const next = []
+    for (const rel of frontier) {
+      if (seen.has(rel)) continue
+      seen.add(rel)
+      const body = read(rel)
+      bodies.push(body)
+      next.push(...scriptPaths(body))
+    }
+    frontier = next
+  }
+  return bodies.join('\n')
 }
 
 /**
@@ -824,6 +969,208 @@ describe('the scan sees every task mise sees', () => {
   })
 })
 
+describe('a composite action is a place a workflow runs commands', () => {
+  /**
+   * `uses: ./…` is the second command position in a workflow, and until this
+   * block the scan read only the first. See `actionRunBodies` for which way each
+   * half fails; the short version is that the orphan report goes loud-and-wrong
+   * while the uncached-job report goes quiet.
+   *
+   * Both halves are fixture-driven, because the fact this closes is a fact
+   * about the FUTURE: `grep -rn "mise run" .github/actions/` is empty today, so
+   * a test against the real tree could only assert that nothing is there — and
+   * a guard that asserts the current answer is the thing it is supposed to
+   * replace.
+   */
+  const action = (manifests) => (uses) => manifests[uses] ?? null
+
+  it('reads the run bodies of an action a workflow uses', () => {
+    const read = action({
+      './.github/actions/setup-eql': {
+        runs: { steps: [{ run: 'mise run test:bench --postgres 17\n' }] },
+      },
+    })
+    const body = actionRunBodies('./.github/actions/setup-eql', read, new Map())
+    expect(invokes(body, 'test:bench')).toBe(true)
+  })
+
+  it('follows an action that uses another action', () => {
+    const read = action({
+      './.github/actions/outer': {
+        runs: { steps: [{ uses: './.github/actions/inner' }] },
+      },
+      './.github/actions/inner': {
+        runs: { steps: [{ run: 'mise run test:crates\n' }] },
+      },
+    })
+    const body = actionRunBodies('./.github/actions/outer', read, new Map())
+    expect(invokes(body, 'test:crates')).toBe(true)
+  })
+
+  it('terminates on an action that reaches itself', () => {
+    const read = action({
+      './.github/actions/a': {
+        runs: {
+          steps: [{ uses: './.github/actions/a' }, { run: 'mise run build\n' }],
+        },
+      },
+    })
+    expect(
+      invokes(actionRunBodies('./.github/actions/a', read, new Map()), 'build'),
+    ).toBe(true)
+  })
+
+  it('ignores a published action, whose source is not in this repo', () => {
+    // `actions/checkout@v5` is not a path. Treating it as one would read
+    // `actions/checkout/action.yml` out of the repository root, which either
+    // does not exist or — worse — is some unrelated file.
+    expect(
+      actionRunBodies(
+        'actions/checkout@v5',
+        () => {
+          throw new Error('should not be read')
+        },
+        new Map(),
+      ),
+    ).toBe('')
+  })
+
+  it('reads the real actions, so the wiring is not fixture-only', () => {
+    // Non-vacuity against the tree. The fixtures above would all pass for an
+    // `actionRunBodies` that no workflow body is ever composed from, so this
+    // asserts the DEFAULT reader resolves a real action that a real workflow
+    // uses, and that its text reaches the workflow bodies `reachableFrom` walks.
+    const uses = [
+      ...new Set(
+        workflowFiles()
+          .flatMap((relPath) => workflowSteps(readWorkflow(relPath)))
+          .map((step) => String(step?.uses ?? ''))
+          .filter((u) => u.startsWith('./.github/actions/')),
+      ),
+    ]
+    expect(
+      uses,
+      'No root workflow uses a local composite action. Either the actions moved or this discovery broke; as it stands the action half of the scan reads nothing.',
+    ).not.toEqual([])
+
+    const resolved = uses.filter((u) => actionRunBodies(u).trim() !== '')
+    expect(
+      resolved,
+      `These local actions resolved to no \`run:\` text at all: ${uses.filter((u) => !resolved.includes(u)).join(', ')}. An action of only \`uses:\` steps is legitimate; every one of them being empty means the manifest is not being found.`,
+    ).not.toEqual([])
+
+    const carrier = rootWorkflows.find(({ relPath }) =>
+      workflowSteps(readWorkflow(relPath)).some(
+        (step) => String(step?.uses ?? '') === resolved[0],
+      ),
+    )
+    expect(
+      carrier?.body,
+      `The body composed for the workflow using \`${resolved[0]}\` does not carry that action's \`run:\` text, so the composition is not reaching \`reachableFrom\`.`,
+    ).toContain(actionRunBodies(resolved[0]).trim())
+  })
+})
+
+describe('the script inlining follows a whole delegation chain', () => {
+  /**
+   * `scriptBodies` used to inline exactly ONE hop, and the comment above it
+   * justified that with a fact about the tree rather than a property of the
+   * scan: "no script here invokes another via a second `tasks/` path". That was
+   * never quite true — `tasks/build.sh` sources `tasks/build/ordering.sh` and
+   * shells to two `tasks/test/verify_*.sh` — and it was true of the cargo
+   * scripts only by accident. The three non-executable helpers that DO contain
+   * cargo (`sqlx-archive.sh`, `sqlx-partition.sh`, `stub-fixtures.sh`) all
+   * happen to be named directly from a mise.toml task body.
+   *
+   * Accident is the wrong footing, because of which way this one fails. A
+   * cargo helper reached only at depth 2 drops out of `CARGO_TASKS` — so no
+   * orphan is reported, no exemption is demanded, and the job that runs it also
+   * stops counting as a Rust job for the cache check below. Every assertion in
+   * this file stays green while covering less. That is the exact shape the file
+   * exists to prevent, and it would arrive with a one-line refactor: moving a
+   * `cargo` line out of `sqlx-archive.sh` into a helper beside it.
+   *
+   * Driven through an injected reader rather than against the real tree, for
+   * the same reason `reachableFrom` takes a workflow list: the mutation is
+   * injected, not performed. The floor below keeps the real tree honest.
+   */
+  const fixture = (scripts) => (rel) => scripts[rel] ?? ''
+
+  it('inlines a script the first one delegates to', () => {
+    const read = fixture({
+      'tasks/outer.sh': 'bash tasks/inner.sh\n',
+      'tasks/inner.sh': 'cargo run -p eql-codegen dump-catalog\n',
+    })
+    const body = scriptBodies('run = "bash tasks/outer.sh"', read)
+    expect(body).toContain('bash tasks/inner.sh')
+    expect(
+      body,
+      'A cargo invocation two scripts down is a cargo invocation. Inlining one hop drops it out of CARGO_TASKS with nothing to show for it.',
+    ).toContain('cargo run -p eql-codegen')
+  })
+
+  it('inlines a `source`d helper, not only a `bash`-invoked one', () => {
+    // The real shape: `tasks/build.sh` opens `source tasks/build/ordering.sh`,
+    // and mise.toml sources `tasks/test/stub-fixtures.sh` in six task bodies.
+    const read = fixture({
+      'tasks/build.sh': 'source tasks/build/ordering.sh\n',
+      'tasks/build/ordering.sh': 'cargo metadata\n',
+    })
+    expect(scriptBodies('bash tasks/build.sh', read)).toContain(
+      'cargo metadata',
+    )
+  })
+
+  it('still ignores a path named only in a comment', () => {
+    // The property the one-hop version had and must not lose. `tasks/build.sh`
+    // lists eight siblings in a `#MISE sources=[…]` header — cache-invalidation
+    // inputs, not delegations — and `release:prepare-bindings-assets` was
+    // reported as an unreached cargo check on the strength of one such mention.
+    const read = fixture({
+      'tasks/outer.sh': '# see tasks/inner.sh for why\necho done\n',
+      'tasks/inner.sh': 'cargo build\n',
+    })
+    expect(scriptBodies('bash tasks/outer.sh', read)).not.toContain('cargo')
+  })
+
+  it('terminates on a cycle instead of recursing forever', () => {
+    const read = fixture({
+      'tasks/a.sh': 'bash tasks/b.sh\n',
+      'tasks/b.sh': 'bash tasks/a.sh\ncargo test\n',
+    })
+    expect(scriptBodies('bash tasks/a.sh', read)).toContain('cargo test')
+  })
+
+  it('fails loudly rather than truncating a chain it will not follow', () => {
+    // The half that matters. A cap that silently stops walking is the same
+    // false green as the one-hop version, just further away — so the cap
+    // throws, and the message says which chain hit it.
+    const links = Object.fromEntries(
+      Array.from({ length: MAX_SCRIPT_DEPTH + 5 }, (_, i) => [
+        `tasks/s${i}.sh`,
+        `bash tasks/s${i + 1}.sh\n`,
+      ]),
+    )
+    expect(() => scriptBodies('bash tasks/s0.sh', fixture(links))).toThrow(
+      /delegation chain/,
+    )
+  })
+
+  it('follows a real chain in the tree it guards', () => {
+    // Non-vacuity, against the real files: the fixtures above would all pass
+    // for a `scriptBodies` that was transitive over a reader nobody uses. This
+    // asserts the DEFAULT reader reaches depth 2 — `tasks/build.sh` sources
+    // `tasks/build/ordering.sh`, which no task names and which defines the
+    // helpers `build.sh` calls.
+    const build = scriptBodies('bash tasks/build.sh')
+    expect(build).toContain('source tasks/build/ordering.sh')
+    expect(
+      build,
+      'The default reader is no longer following `tasks/build.sh` into `tasks/build/ordering.sh`, so every fixture above is testing a code path the real scan does not take.',
+    ).toContain('strip_require_lines()')
+  })
+})
+
 describe('every cargo check EQL owns is reached by a root workflow', () => {
   const reachable = reachableFrom(TASKS, rootWorkflows)
 
@@ -1113,18 +1460,27 @@ function reachesCargo(name, seen = new Set()) {
  * Every job in a root workflow, with the cargo-reaching mise tasks its steps
  * invoke and whether it restores the Rust cache.
  *
- * `run:` bodies only. A `uses:` step cannot invoke a mise task, and reading the
- * whole job as text would let a task named in a step's `name:` or in a comment
- * count as an invocation — the false-reachability failure `invokes` exists to
- * avoid, imported here rather than repeated.
+ * `run:` bodies only — the step's own, plus those of any composite action it
+ * `uses: ./…`, which are `run:` bodies one file along. Reading the whole job as
+ * text would instead let a task named in a step's `name:` or in a comment count
+ * as an invocation — the false-reachability failure `invokes` exists to avoid,
+ * imported here rather than repeated.
+ *
+ * The action half is the quiet one. A job that reaches cargo only through an
+ * action carries no matching text at all, so it drops out of this set entirely
+ * and its missing rust-cache step is never reported — see `actionRunBodies`.
  */
 const RUST_JOBS = workflowFiles().flatMap((relPath) => {
   const wf = readWorkflow(relPath)
   return Object.entries(wf?.jobs ?? {}).flatMap(([jobName, job]) => {
     const steps = Array.isArray(job?.steps) ? job.steps : []
+    const bodies = steps.map(
+      (step) =>
+        `${step?.run ?? ''}\n${actionRunBodies(String(step?.uses ?? ''))}`,
+    )
     const compiling = [...TASKS.keys()]
       .filter((name) => reachesCargo(name))
-      .filter((name) => steps.some((step) => invokes(step?.run ?? '', name)))
+      .filter((name) => bodies.some((body) => invokes(body, name)))
       .sort()
     if (compiling.length === 0) return []
     return [

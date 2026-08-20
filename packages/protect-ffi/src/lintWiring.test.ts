@@ -533,6 +533,68 @@ describe('lint and format wiring', () => {
     expect(unreachable).toEqual([])
   })
 
+  it('passes `--locked` from the cargo entry point', () => {
+    // Nothing in this repo passed `--locked` at all, and the cost of that was
+    // paid in silence. `scripts/sync-lockstep-versions.mjs` rewrites
+    // `eql-bindings`'s version on every lockstep bump; this package depends on
+    // that crate BY PATH, so its `Cargo.lock` records the version and nothing
+    // was updating it. After the 3.0.5 bump the lock said 3.0.4 and `cargo
+    // metadata --locked` exited 101 — while every cargo command in CI happily
+    // regenerated the lock in memory, built against the regenerated one, and
+    // threw it away with the runner. The committed file drifted further on each
+    // bump and nothing went red.
+    //
+    // `scripts/__tests__/cargo-lock-freshness.test.mjs` covers the part of that
+    // reachable without a Rust toolchain — a repo-owned crate recorded at the
+    // wrong version — and its header says so, along with what it cannot see: a
+    // lock stale because a crate gained a NEW dependency. It names this script
+    // as where the remainder belongs, and this is that.
+    //
+    // Scoped to `test:cargo`, the Rust CHECK entry point, and deliberately not
+    // to the build scripts. `cargo-build` is also `debug`, and `build:native`
+    // is a documented local command (README.md, packages/cli/AGENTS.md) — a
+    // contributor who has just edited `Cargo.toml` regenerates the lock on
+    // their next build, legitimately, and `--locked` would turn that into a
+    // failure at the end of a compile. The check runs on the same commit and
+    // answers the same question without standing in the way of a build.
+    const LOCKED_EXEMPT: Record<string, string> = {
+      'test:format:rust':
+        '`cargo fmt` is an external subcommand: it resolves no dependency ' +
+        'graph, and cargo forwards the flag through to rustfmt, which rejects ' +
+        'it as unknown.',
+    }
+
+    const cargoChecks = [...reachableFrom('test:cargo')].filter((name) =>
+      scripts[name]?.includes('cargo'),
+    )
+    // Non-vacuity. An empty or one-element set satisfies the assertion below
+    // having checked nothing, which is the state this whole file exists for.
+    expect(
+      cargoChecks.length,
+      'No cargo script is reachable from `test:cargo`, so the `--locked` check below reads nothing.',
+    ).toBeGreaterThan(1)
+
+    const unlocked = cargoChecks.filter(
+      (name) =>
+        !scripts[name]?.includes('--locked') && !(name in LOCKED_EXEMPT),
+    )
+    expect(
+      unlocked,
+      `These cargo checks resolve a dependency graph without \`--locked\`, so a stale \`Cargo.lock\` is regenerated in memory and the run passes against dependencies the committed lock does not describe: ${unlocked.join(', ')}`,
+    ).toEqual([])
+
+    // The exemption list, both directions — the same rule every other list in
+    // this repo is held to. An entry for a script that has gone, or that now
+    // carries the flag, is a standing permission nobody decided to grant.
+    const stale = Object.keys(LOCKED_EXEMPT).filter(
+      (name) =>
+        scripts[name] === undefined ||
+        !scripts[name].includes('cargo') ||
+        scripts[name].includes('--locked'),
+    )
+    expect(stale).toEqual([])
+  })
+
   it('forwards script arguments without the npm `--` separator', () => {
     // npm strips the `--` in `npm run x -- --release`; pnpm forwards it
     // verbatim. Since the cargo scripts end in `> cargo.log`, the appended
