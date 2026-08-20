@@ -23,14 +23,32 @@ still matches the same functional GIN index. Migrate to
 `jsonb_document_contains` when convenient; nothing forces it at upgrade time.
 
 **Separately — and true of every EQL upgrade, not just this one:** the install
-bundle opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, so applying it
-destroys every grant on every object in `eql_v3` / `eql_v3_internal`, along
-with anything that depended on them (this is the same mechanism that drops
-functional indexes on encrypted columns). **Re-run your grant script after
-upgrading.** The schema-wide form EQL documents —
-`GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA eql_v3 TO app_role` — picks up both
-the new name and the alias on its own. **With the rename made non-breaking by
-the alias, this is the only part of the upgrade that needs action.**
+bundle opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, so applying it drops
+every object in `eql_v3` / `eql_v3_internal` and everything that depended on
+them. **Encrypted data and column types are not affected** — the storage
+domains are `public.eql_v3_*`, deliberately outside both dropped schemas, and
+their CHECK functions are re-created rather than dropped. What does not survive
+is everything else pointing into the schema, which is two actions, neither of
+them to do with the rename:
+
+1. **Re-run your grant script.** Every grant on every `eql_v3` /
+   `eql_v3_internal` object is gone. The schema-wide form EQL documents —
+   `GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA eql_v3 TO app_role` — picks up
+   both the new name and the alias on its own.
+2. **Recreate your functional indexes, then `ANALYZE`.** Indexes over
+   `eql_v3.eq_term(…)` / `ord_term` / `match_term` / `to_ste_vec_query(…)`
+   depend on the dropped schema and go with it. Nothing errors afterwards:
+   encrypted predicates keep working and silently fall back to sequential
+   scans. A migration runner will not redo an already-applied migration, so
+   this has to be a *new* one. The `stash-indexing` skill documents the
+   mechanism ("These indexes do not survive an EQL reinstall or upgrade") and
+   the `EXPLAIN` check that confirms recovery; capturing and restoring them
+   automatically is tracked in
+   [cipherstash/stack#918](https://github.com/cipherstash/stack/issues/918).
+
+Any RLS policy, view, or constraint that calls an `eql_v3` function is dropped
+by the same CASCADE and needs recreating too. **The rename itself needs no
+action — the alias makes it non-breaking.**
 
 Two artefacts carry the new bundle:
 

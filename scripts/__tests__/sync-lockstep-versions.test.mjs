@@ -1,4 +1,16 @@
-import { describe, expect, test } from 'vitest'
+import { spawnSync } from 'node:child_process'
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { afterAll, describe, expect, test } from 'vitest'
 import {
   bumpCargoPackageVersion,
   cargoLockWorkspaces,
@@ -197,4 +209,140 @@ describe('lockstep Cargo.lock refresh', () => {
       }),
     ).toThrow(/ENOENT/)
   })
+})
+
+/**
+ * The guard that decides whether any of the above runs at all.
+ *
+ * `main()` is invoked behind an "am I the entry point?" check. Written as
+ * ``import.meta.url === `file://${process.argv[1]}` `` that check compares a
+ * percent-encoded URL against a raw path, so a checkout directory containing a
+ * space makes it false and the whole script becomes a silent exit 0.
+ *
+ * That is worse than a crash because of how it is called. `package.json`'s
+ * `version` script is `changeset version && node
+ * scripts/sync-lockstep-versions.mjs`: exit 0 means `&&` reports success, so
+ * `changeset version` bumps the npm package while the crate bump, the
+ * `Cargo.lock` refresh and the SQL regeneration are all skipped — the exact
+ * lockstep skew this script exists to prevent, committed as a Version Packages
+ * PR. CI cannot see it (`/home/runner/work/stack/stack` has no space); a local
+ * `pnpm run version` from a spaced path can.
+ *
+ * So this executes the REAL script against a throwaway tree, twice, at two
+ * paths differing only by a space. Asserting the source text would not have
+ * caught the original: it read as a perfectly ordinary main-guard.
+ */
+describe('lockstep main-guard', () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'sync-lockstep-')))
+  afterAll(() => rmSync(base, { recursive: true, force: true }))
+
+  // `realpathSync` above is load-bearing, and not about spaces. macOS's
+  // `os.tmpdir()` is `/var/folders/...`, a symlink to `/private/var/...`; Node
+  // realpaths the main module's `import.meta.url` but not `process.argv[1]`, so
+  // an unresolved fixture path makes BOTH guard forms false and the test fails
+  // for a reason that has nothing to do with the bug under test.
+
+  /**
+   * Build a minimal monorepo skeleton at `<base>/<dirName>`, run the real
+   * script from it, and report what happened.
+   *
+   * Only the first two steps of `main()` can complete here: there is no
+   * `Cargo.lock` in the fixture, so step 3's discovery finds nothing and throws
+   * before `mise` is ever spawned. That is the point — the crate manifest is
+   * rewritten first, so the fixture proves `main()` ran without needing a Rust
+   * toolchain, and the loud failure proves it did not quietly stop either.
+   */
+  function runFrom(dirName) {
+    const root = join(base, dirName)
+    const cargoPath = join(root, 'packages/eql/crates/eql-bindings/Cargo.toml')
+    const pkgPath = join(root, 'packages/eql/packages/eql/package.json')
+
+    mkdirSync(join(root, 'scripts'), { recursive: true })
+    mkdirSync(dirname(cargoPath), { recursive: true })
+    mkdirSync(dirname(pkgPath), { recursive: true })
+
+    const script = join(root, 'scripts/sync-lockstep-versions.mjs')
+    copyFileSync(join(REPO_ROOT, 'scripts/sync-lockstep-versions.mjs'), script)
+    writeFileSync(
+      pkgPath,
+      `${JSON.stringify({ name: '@cipherstash/eql', version: '9.9.9' }, null, 2)}\n`,
+    )
+    writeFileSync(
+      cargoPath,
+      '[package]\nname = "eql-bindings"\nversion = "0.0.0-fixture"\n',
+    )
+
+    const run = spawnSync(process.execPath, [script], {
+      cwd: root,
+      encoding: 'utf8',
+    })
+    return { ...run, cargo: readFileSync(cargoPath, 'utf8') }
+  }
+
+  test('fires from a checkout path containing a space', () => {
+    const { status, cargo, stderr } = runFrom('dir with space')
+
+    // Did `main()` run at all? Step 2 is the first observable effect.
+    expect(
+      cargo,
+      'the crate manifest was never rewritten: `main()` did not run',
+    ).toContain('version = "9.9.9"')
+
+    // And it must not have exited 0 — `&&` in the `version` script reads a
+    // zero exit as "the lockstep bump is complete".
+    expect(status, `script exited 0 silently; stderr: ${stderr}`).not.toBe(0)
+    expect(stderr).toMatch(/no Cargo\.lock/)
+  })
+
+  test('behaves identically where the path has no space', () => {
+    // The control. Without it, a fixture broken for some unrelated reason
+    // would look like the bug — and, after the fix, like the fix working.
+    const { status, cargo, stderr } = runFrom('dir-without-space')
+    expect(cargo).toContain('version = "9.9.9"')
+    expect(status).not.toBe(0)
+    expect(stderr).toMatch(/no Cargo\.lock/)
+  })
+})
+
+/**
+ * The invariant the whole script exists to maintain, asserted against the
+ * committed tree.
+ *
+ * `scripts/__tests__/cargo-lock-freshness.test.mjs` compares each `Cargo.lock`
+ * entry against that crate's own `Cargo.toml`, which catches a PARTIALLY
+ * applied bump — but on a TOTAL no-op (the main-guard above never firing) lock
+ * and manifest both stay at the old version, agree with each other, and the
+ * suite passes. `release-version-hook.test.mjs` asserts the workflow routes
+ * through `pnpm run version`, not that anything happened when it did.
+ *
+ * Nothing asserted the one equality that a silent no-op cannot satisfy: the npm
+ * package's version IS the crate's version. One version, five artefacts.
+ */
+test('the npm package and the crate ship at the same version', () => {
+  const pkg = JSON.parse(
+    readFileSync(
+      join(REPO_ROOT, 'packages/eql/packages/eql/package.json'),
+      'utf8',
+    ),
+  )
+  const cargo = readFileSync(
+    join(REPO_ROOT, 'packages/eql/crates/eql-bindings/Cargo.toml'),
+    'utf8',
+  )
+  const crateVersion = cargo
+    .match(/^\[package\]\n(?:(?!^\[).*\n)*/m)?.[0]
+    .match(/^version = "([^"]*)"$/m)?.[1]
+
+  expect(
+    crateVersion,
+    'no [package] version in the eql-bindings manifest',
+  ).toBeDefined()
+  expect(
+    crateVersion,
+    `@cipherstash/eql is at ${pkg.version} but eql-bindings is at ` +
+      `${crateVersion}. Either \`pnpm run version\` did not run its second ` +
+      'half, or a version was hand-edited in one place only — the SQL bundle, ' +
+      'the crate, the npm package, the docs and the postgres-eql image all ' +
+      'ship at one version.',
+  ).toBe(pkg.version)
 })

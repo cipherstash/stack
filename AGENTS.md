@@ -136,30 +136,46 @@ stays optional for everyone else.
   Rust. Everything else under `dist/` stays ignored. The re-inclusion chain
   spans the root `.gitignore`, the package's own, and a `.gitignore` wasm-pack
   generates — see the comments in each.
-- **Publishing has not moved yet.** All seven packages are still published from
-  `cipherstash/protectjs-ffi` until npm trusted publishing is repointed, so a
-  changeset naming any of them fails CI (`scripts/lint-no-ffi-changeset.mjs`).
-  Change the package freely — but write the changeset and park it as
-  `.changeset/<name>.md.deferred`, don't skip it. Changesets and the guard both
-  select on `.endsWith('.md')`, so that extension is inert to
-  `changeset version`; the cutover PR renames **every** one of them back
-  (`for f in .changeset/*.md.deferred; do git mv "$f" "${f%.deferred}"; done`).
-  Check what is parked rather than assuming a single file — `ls
-  .changeset/*.md.deferred`. Two are waiting today: the lazy native load, and
-  the manifest repoint to `cipherstash/stack`.
-- **The pipeline that will publish them is built and inert.** `release.yml`
-  asks `scripts/release-gate.mjs` which committed versions are missing from npm;
-  if any FFI one is, `_build-ffi-artifacts.yml` compiles the six platforms with
-  an explicit `CARGO_BUILD_TARGET` each, packs all seven tarballs, and
+- **Publishing has moved here.** npm trusted publishing for all seven packages
+  is repointed at this repo, bound to `release.yml`, so write changesets for
+  them normally. Nothing has actually published from here yet — the first FFI
+  release is still ahead, and until it lands treat the path as configured rather
+  than proven. The remaining steps and what is still unverified live in
+  `docs/plans/2026-08-04-protect-ffi-monorepo-absorption.md`, Phase 4.
+- **A `.md.deferred` changeset is now a CI failure, having briefly been inert.**
+  The parking convention and the `lint-no-ffi-changeset` guard that enforced it
+  are both gone — `e77bfcec` retired the guard and renamed the two files parked
+  at the time in one commit, and they released in
+  `@cipherstash/protect-ffi@0.32.0`. A file still carrying that suffix is
+  invisible to `@changesets/read`, so whatever it describes would ship with an
+  empty changelog entry and nothing in `changeset version` or `changeset
+  publish` would say so.
+  **Before renaming one back, check whether it has already released** — a
+  long-lived branch cut before the cutover still carries both files, and
+  reactivating them there republishes a shipped entry and re-bumps the package
+  for a change two versions old. Delete in that case; `git mv` back to `.md`
+  only if it is genuinely unreleased.
+  `scripts/__tests__/no-parked-changesets.test.mjs` fails on a parked file
+  either way, and also fails if the retired guard is reinstated alongside it —
+  the two rules contradict each other, and a half-retired convention is what
+  produces a parked file in the first place.
+- **The pipeline that publishes them.** `release.yml` asks
+  `scripts/release-gate.mjs` which committed versions are missing from npm; if
+  any FFI one is, `_build-ffi-artifacts.yml` compiles the six platforms with an
+  explicit `CARGO_BUILD_TARGET` each, packs all seven tarballs, and
   `publish-ffi` publishes the six platform packages **before** the wrapper and
   tags all seven — because `changeset publish` packs from the workspace, where
   `index.node` does not exist, and tags only what it published itself. Nothing
-  fires until a version is unpublished, which the changeset guard above
-  prevents. `ffi-preflight.yml` is the dry run (`changeset publish` has no
-  `--dry-run`); dispatch it against the Version Packages branch before the
-  cutover. The seven manifests already name `cipherstash/stack`, which npm
-  requires of the publishing repository — so a publish attempted from the old
-  repository would now be rejected, and nothing publishes from there.
+  fires unless a committed version is absent from the registry, so a push that
+  bumps nothing is a no-op for all seven. `ffi-preflight.yml` is the dry run
+  (`changeset publish` has no `--dry-run`); dispatch it against the Version
+  Packages branch before merging a release that moves an FFI version.
+- **Trusted publishing binds to (repository, workflow filename).** Keep
+  `release.yml` as the single npm entry point; a rename silently invalidates all
+  seven publisher configurations. Each one must also list `npm publish` under
+  **Allowed actions** — npm made that field required for configurations created
+  after 2026-05-20, and a stage-only setting reads as configured while failing
+  every `npm publish`. Check with `npm trust list <pkg>`.
 
 ### The `integration-tests/` suite
 
@@ -315,9 +331,9 @@ monorepo, which is where the silent failures are.
   `.github/workflows/release.yml` — and the package's own `repository` / `bugs`
   fields still point there, as do the `eql-bindings` crate's. Repointing all of
   it is the Phase-5 cutover, together with the nine parked workflows above.
-  This is protect-ffi's situation with one difference: the guard is not a
-  changeset lint but `scripts/release-gate.mjs`, and it is the stronger of the
-  two. Its `FROZEN_PUBLISHERS` map lists every package that lives here but is
+  This was protect-ffi's situation until its own cutover, with one difference:
+  the guard is not a changeset lint but `scripts/release-gate.mjs`, and it is
+  the stronger of the two. Its `FROZEN_PUBLISHERS` map lists every package that lives here but is
   published from another repository, and the gate **exits non-zero** — failing
   the `gate` job, which skips `release` entirely — if such a package's committed
   version is missing from npm, or if any published package carries a runtime
@@ -327,11 +343,14 @@ monorepo, which is where the silent failures are.
   **Whether the gate is blocking anything right now is a question for the
   registry, not for this file: run `node scripts/release-gate.mjs` and read what
   it says.** `tests.yml` runs the same script at PR time so the answer arrives a
-  merge earlier. Delete the `@cipherstash/eql` entry in the Phase-5 cutover —
+  merge earlier. `@cipherstash/eql` is the map's ONLY entry: the seven
+  protect-ffi packages were listed there too, and the cutover that repointed
+  their publisher at this repo did not take them out — which left the gate
+  armed against the first release that cutover had just enabled. Delete the
+  `@cipherstash/eql` entry in the Phase-5 cutover —
   `scripts/__tests__/frozen-publisher-docs.test.mjs` fails until this paragraph
-  goes with it — and note the FFI half of that map is what turns
-  `lint-no-ffi-changeset.mjs`'s unstated assumption
-  ("all seven are already on npm at the workspace version") into a checked one.
+  goes with it, and `release-gate.test.mjs` now asserts the map carries no FFI
+  name, so that particular mistake cannot be made twice.
   Note too that 3.0.5 did *not* come from `changeset version` —
   eleven unrelated changesets were pending, so the bump was entered by hand in
   `packages/eql/packages/eql/CHANGELOG.md` and the parked

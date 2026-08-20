@@ -35,7 +35,7 @@
  * `pnpm --filter @cipherstash/stack-prisma test` suite with no env guard
  * and no skip.
  */
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -625,5 +625,164 @@ describe('no seed phase run: the 3.0.5 upgrade is silently invisible', () => {
     expect(ops[0]?.execute[0]?.sql).toContain('ste_vec_contains')
     expect(ops[0]?.execute[0]?.sql).not.toContain('jsonb_document_contains')
     expect(outcome.providedInvariants).toEqual([...INVARIANTS_1_0_0].sort())
+  })
+})
+
+/**
+ * SHIPPED PROSE, pinned the same way the `db init` refusal above is pinned.
+ *
+ * `skills/` is copied into the `stash` npm tarball by `packages/cli`'s build,
+ * and `installSkills()` copies it from there into a customer's
+ * `.claude/skills/` — so a wrong sentence in one is wrong guidance in someone
+ * else's codebase. Nothing type-checks these files and no linter reads them;
+ * the claims below were each verified false against this repo in review, and
+ * this block is the only thing stopping them coming back.
+ *
+ * It lives in `@cipherstash/stack-prisma` for the same reason the assertion
+ * above does: this package's suite is offline, deterministic, and already
+ * reaches the repo root to hold shipped docs to a fact.
+ */
+describe('shipped skills: claims verified false, which must not come back', () => {
+  // `test/v3` -> `test` -> `packages/stack-prisma` -> `packages` -> root.
+  const repoRoot = join(
+    dirname(fileURLToPath(import.meta.url)),
+    '..',
+    '..',
+    '..',
+    '..',
+  )
+  const skillsDir = join(repoRoot, 'skills')
+
+  /** Every shipped `SKILL.md`, keyed by repo-relative path, whitespace
+   * normalised — these files are hard-wrapped, so a claim spans lines. */
+  const readShippedSkills = async (): Promise<Record<string, string>> => {
+    const dirs = (await readdir(skillsDir, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort()
+    const bodies = await Promise.all(
+      dirs.map(async (name) =>
+        (await readFile(join(skillsDir, name, 'SKILL.md'), 'utf8')).replace(
+          /\s+/g,
+          ' ',
+        ),
+      ),
+    )
+    return Object.fromEntries(
+      dirs.map((name, i) => [`skills/${name}/SKILL.md`, bodies[i] as string]),
+    )
+  }
+
+  it('no skill claims the CLI pins an exact `@cipherstash/eql` version', async () => {
+    // `packages/cli` depends on the workspace package, so what it packs is
+    // whatever specifier the release resolves — and the guarantee customers
+    // actually have is narrower than "pinned": one `stash` RELEASE carries one
+    // resolved bundle, but a DATABASE is on whatever bundle was last applied
+    // to it, and the Prisma Next adapter installs and upgrades the bundle
+    // through its own migrations without the CLI at all (this package's
+    // `migrations/` carries three upgrade edges precisely because databases
+    // sit on different bundles).
+    //
+    // Deliberately NOT forbidden: "the pinned bundle" / "pinned EQL v3 SQL"
+    // in `stash-cli`, which describe the single resolved bundle a given CLI
+    // build ships — true regardless of the specifier form.
+    for (const [file, body] of Object.entries(await readShippedSkills())) {
+      // Sentence-scoped, so that unrelated (and correct) advice to pin an
+      // exact version — `stash-edge` on Deno specifiers, `stash-supply-chain-
+      // security` on the FFI wrapper's optionalDependencies — does not trip it.
+      const pinsTheBundle = body
+        .split(/(?<=\.)\s+/)
+        .filter(
+          (sentence) =>
+            /\bpins?\b/i.test(sentence) &&
+            /exact version/i.test(sentence) &&
+            /@cipherstash\/eql|\bEQL\b|\bbundle\b/i.test(sentence),
+        )
+      expect(pinsTheBundle, `${file} pins an exact EQL version`).toEqual([])
+      expect(
+        /only ever on one bundle/i.test(body),
+        `${file} claims a database is only ever on one bundle`,
+      ).toBe(false)
+    }
+  })
+
+  it('no skill sends the reader to an "EQL skill" that ships from nowhere', async () => {
+    // The claim was that an EQL skill "ships from encrypt-query-language
+    // alongside the bundle it documents". No such artifact exists in either
+    // repository: the published package's file allowlist is dist + README,
+    // and this repo's `skills/` has no EQL entry. Both preconditions are
+    // asserted here so that publishing a real EQL skill fails this test
+    // rather than silently leaving the pointer wrong.
+    const eqlManifest = JSON.parse(
+      await readFile(
+        join(repoRoot, 'packages/eql/packages/eql/package.json'),
+        'utf8',
+      ),
+    ) as { files: string[] }
+    expect(eqlManifest.files).toEqual(['dist', 'README.md'])
+    const skillDirs = await readdir(skillsDir)
+    expect(skillDirs.filter((name) => /eql/i.test(name))).toEqual([])
+
+    for (const [file, body] of Object.entries(await readShippedSkills())) {
+      expect(
+        /\bthe EQL skill\b/i.test(body),
+        `${file} cites an EQL skill`,
+      ).toBe(false)
+    }
+  })
+
+  it('`stash-postgres` names `encrypt-query-language` only for publishing', async () => {
+    // SECURITY.md: the absorbed packages "are still *published* from
+    // cipherstash/encrypt-query-language ... Their source, issues, and
+    // security reports belong here." So publishing is the ONE thing that
+    // repository still owns, and a sentence naming it for anything else —
+    // where EQL is developed, where the operator set lives, where operator
+    // bugs get filed — sends the reader to the wrong place.
+    //
+    // Scoped to this skill: it is the one the finding was verified against.
+    // `stash-encryption`'s two mentions (an upstream issue link and the EQL
+    // 2.3.1 SQL release) are both defensible and are not this test's business.
+    const body = await readFile(
+      join(repoRoot, 'skills/stash-postgres/SKILL.md'),
+      'utf8',
+    )
+    const sentences = body
+      .replace(/\s+/g, ' ')
+      .split(/(?<=\.)\s+/)
+      .filter((sentence) => sentence.includes('encrypt-query-language'))
+    expect(sentences.length).toBeGreaterThan(0)
+    for (const sentence of sentences) {
+      expect(
+        /publish|ships? as|shipped as|release/i.test(sentence),
+        `non-publishing mention of encrypt-query-language: ${sentence}`,
+      ).toBe(true)
+    }
+    // …and the reader is told where the source actually is.
+    expect(body).toContain('packages/eql/')
+    expect(body).toContain('cipherstash/stack')
+  })
+
+  it('`stash-prisma` warns about the index cascade where it hands out the recipe', async () => {
+    // The mechanism is documented correctly in `stash-indexing`, but the
+    // Prisma reader gets the `rawSql` index recipe here and never goes there.
+    // The recipe and the warning have to be in the SAME section.
+    const body = await readFile(
+      join(repoRoot, 'skills/stash-prisma/SKILL.md'),
+      'utf8',
+    )
+    const section = body
+      .split('\n## ')
+      .find((part) => part.startsWith('Indexing encrypted columns'))
+    expect(section, 'no "Indexing encrypted columns" section').toBeDefined()
+    const indexing = (section as string).replace(/\s+/g, ' ')
+    expect(indexing).toContain('CREATE INDEX')
+    expect(
+      indexing,
+      'the recipe does not say an EQL upgrade drops these indexes',
+    ).toContain('DROP SCHEMA IF EXISTS eql_v3 CASCADE')
+    expect(
+      indexing,
+      'the recipe does not point at the canonical source',
+    ).toContain('stash-indexing')
   })
 })

@@ -180,20 +180,134 @@ describe('the relevance filter still selects the imported tree', () => {
       `These \`paths:\` entries in ${EQL_WORKFLOW} are not under \`${EQL_PREFIX}\`, are not the workflow itself, and are not a composite action it \`uses:\`. dorny/paths-filter matches repo-root-relative paths, so after the subtree import an unprefixed glob matches the WRONG tree — \`src/**\` selects \`packages/stack/src/**\` and never \`packages/eql/src/**\`. The heavy jobs then skip on real EQL changes, report \`skipped\`, and \`ci-required\` treats skipped as pass.\n${offenders.map((p) => `  ${p}`).join('\n')}`,
     ).toEqual([])
   })
+})
 
-  it('points the Rust cache at the nested Cargo workspace', () => {
+// ---------------------------------------------------------------------------
+// The shared Rust cache
+// ---------------------------------------------------------------------------
+
+/**
+ * Two invariants about `Swatinem/rust-cache`, across EVERY root workflow.
+ *
+ * Both of them used to be checked against `test-eql.yml` alone — the first by
+ * an assertion that read `readWorkflow(EQL_WORKFLOW)`, the second by a comment
+ * in that file and nothing else. Ten of the twelve rust-cache steps live there,
+ * so the coverage looked total; the two that do not (`macro-expand-eql.yml`,
+ * `bench-eql.yml`) were outside the scan, and both had drifted. The scan is now
+ * the workflow directory, for the reason every other scan in this file is.
+ *
+ * Neither failure has a symptom. A cache that restores nothing still reports
+ * success, and the only trace is a run that takes longer than it should — which
+ * on a nightly bench nobody watches is no trace at all.
+ */
+
+/** The nested Cargo workspace, and the key its jobs share. */
+const CARGO_WORKSPACE = 'packages/eql'
+const SHARED_KEY = 'sqlx-tests'
+
+/**
+ * The one job allowed to SAVE the shared key: it compiles the full heavy
+ * dependency tree, so its `target/` is the one worth keeping. Recorded in a
+ * comment on the step itself; asserted here.
+ */
+const SHARED_KEY_SAVER = { relPath: EQL_WORKFLOW, jobName: 'build-archive' }
+
+/** Every `Swatinem/rust-cache` step GitHub can actually execute. */
+const RUST_CACHE_STEPS = workflowFiles().flatMap((relPath) => {
+  const wf = readWorkflow(relPath)
+  return Object.entries(wf?.jobs ?? {}).flatMap(([jobName, job]) =>
+    (Array.isArray(job?.steps) ? job.steps : [])
+      .filter((step) => (step?.uses ?? '').startsWith('Swatinem/rust-cache@'))
+      .map((step) => ({ relPath, jobName, step })),
+  )
+})
+
+const stepLabel = ({ relPath, jobName }, detail) =>
+  `${relPath} (${jobName}): ${detail}`
+
+describe('the shared Rust cache is pointed and saved correctly', () => {
+  it('finds the rust-cache steps, in every workflow that has them', () => {
+    // Guards the guard, in both directions the scan can go wrong: no steps at
+    // all (every assertion below passes having read nothing), or steps found in
+    // fewer workflows than really carry them — which is exactly the state the
+    // previous, test-eql-only version of this check was in.
+    expect(
+      RUST_CACHE_STEPS.length,
+      'No `Swatinem/rust-cache` step was found in any root workflow. Either the action was replaced (retarget this scan) or the caching was dropped; as it stands the two invariants below are vacuous.',
+    ).toBeGreaterThan(0)
+
+    const found = [...new Set(RUST_CACHE_STEPS.map((s) => s.relPath))].sort()
+    const missing = [
+      EQL_WORKFLOW,
+      `${WORKFLOW_DIR}/bench-eql.yml`,
+      `${WORKFLOW_DIR}/macro-expand-eql.yml`,
+    ].filter((relPath) => !found.includes(relPath))
+    expect(
+      missing,
+      `These workflows carried a \`Swatinem/rust-cache\` step and the scan no longer sees one. Held as a minimum — a new workflow that caches Rust must not fail this; one LEAVING the list means either the step went away or the discovery broke.\nFound in:\n${found.map((relPath) => `  ${relPath}`).join('\n')}`,
+    ).toEqual([])
+  })
+
+  it('points every rust-cache step at the nested Cargo workspace', () => {
     // Silent when wrong, which is why it is asserted rather than left to
-    // review: `workspaces: .` resolves to the monorepo root, where there is no
-    // Cargo.lock for this workspace, so every job restores and saves nothing
-    // while reporting success. The shared `sqlx-tests` key would then buy the
-    // matrix exactly zero, and the only symptom is a slower run.
-    const wrong = Object.entries(wf?.jobs ?? {}).flatMap(([jobName, job]) =>
-      (job?.steps ?? [])
-        .filter((step) => (step?.uses ?? '').startsWith('Swatinem/rust-cache@'))
-        .filter((step) => step?.with?.workspaces !== 'packages/eql')
-        .map((step) => `${jobName}: workspaces: ${step?.with?.workspaces}`),
+    // review. `workspaces:` names a workspace ROOT: rust-cache hashes the
+    // `Cargo.lock` it finds there and caches the `target/` it writes there.
+    // `packages/eql/tests/sqlx` is a MEMBER of that workspace — the only
+    // Cargo.lock is `packages/eql/Cargo.lock` and cargo writes to
+    // `packages/eql/target` — so a step naming it hashes no lockfile and
+    // archives an empty directory, while reporting success. Same for the
+    // monorepo root, where there is no Cargo.lock for this workspace at all.
+    const wrong = RUST_CACHE_STEPS.filter(
+      ({ step }) => step?.with?.workspaces !== CARGO_WORKSPACE,
+    ).map((entry) =>
+      stepLabel(entry, `workspaces: ${entry.step?.with?.workspaces}`),
     )
-    expect(wrong).toEqual([])
+    expect(
+      wrong,
+      `These \`Swatinem/rust-cache\` steps do not name \`${CARGO_WORKSPACE}\`, the root of the nested Cargo workspace. A step pointed at a workspace MEMBER (or at the monorepo root) restores and saves nothing and still reports success — the shared \`${SHARED_KEY}\` key then buys those jobs exactly zero, and the only symptom is a slower run.\n${wrong.map((line) => `  ${line}`).join('\n')}`,
+    ).toEqual([])
+  })
+
+  it('lets only the archive job save the shared key', () => {
+    // The other half of the same key. `build-archive` compiles the full heavy
+    // dependency tree and owns the save; every other consumer must set
+    // `save-if: false`, or a fast-finishing light job wins the save race and
+    // overwrites the entry with a deps-less `target/`. Every job then restores
+    // that, recompiles the world, and reports success — again with no symptom
+    // beyond duration.
+    const savers = RUST_CACHE_STEPS.filter(
+      ({ step }) => step?.with?.['shared-key'] === SHARED_KEY,
+    )
+
+    // The saver has to exist, or "everything else sets save-if: false" is
+    // satisfied by a cache nobody ever writes.
+    const designated = savers.filter(
+      ({ relPath, jobName }) =>
+        relPath === SHARED_KEY_SAVER.relPath &&
+        jobName === SHARED_KEY_SAVER.jobName,
+    )
+    expect(
+      designated.map((entry) => stepLabel(entry, 'the designated saver')),
+      `\`${SHARED_KEY_SAVER.jobName}\` in ${SHARED_KEY_SAVER.relPath} is the only job meant to SAVE the shared \`${SHARED_KEY}\` cache, and it no longer declares a rust-cache step with that key. With no saver the key is never written and every consumer below compiles from scratch.`,
+    ).toHaveLength(1)
+    expect(
+      designated[0]?.step?.with?.['save-if'],
+      `The designated saver (\`${SHARED_KEY_SAVER.jobName}\` in ${SHARED_KEY_SAVER.relPath}) sets \`save-if: false\`, so nothing writes the shared \`${SHARED_KEY}\` cache at all.`,
+    ).not.toBe(false)
+
+    const unguarded = savers
+      .filter((entry) => !designated.includes(entry))
+      .filter(({ step }) => step?.with?.['save-if'] !== false)
+      .map((entry) =>
+        stepLabel(
+          entry,
+          `shared-key: ${SHARED_KEY} with no \`save-if: false\``,
+        ),
+      )
+    expect(
+      unguarded,
+      `These jobs share the \`${SHARED_KEY}\` rust-cache key without \`save-if: false\`, so each of them may SAVE it. Only \`${SHARED_KEY_SAVER.jobName}\` in ${SHARED_KEY_SAVER.relPath} should — it is the job that compiles the full dependency tree. Any other job winning the save race overwrites the shared entry with a deps-less \`target/\`, and the whole matrix silently recompiles from scratch on the next run.\n${unguarded.map((line) => `  ${line}`).join('\n')}`,
+    ).toEqual([])
   })
 })
 
@@ -946,5 +1060,111 @@ describe('the imported workflow directory is on its way out', () => {
         'When this list empties, delete the directory and replace this check with ' +
         '`expect(existsSync(...)).toBe(false)`.',
     ).toEqual(UNPORTED_DEPOSIT)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Every job that compiles Rust restores the shared cache
+// ---------------------------------------------------------------------------
+
+/**
+ * A third rust-cache invariant, and the one the two above cannot see.
+ *
+ * They ask whether the rust-cache steps that EXIST are pointed at the right
+ * workspace and guarded against overwriting the shared key. Neither asks the
+ * prior question: whether a job that compiles Rust has such a step at all. A
+ * job with none is not misconfigured — it is uncached, which is invisible in
+ * exactly the same way a cache that restores nothing is. The run reports
+ * success and simply takes longer, and "longer" on a job that already spends
+ * minutes in Postgres is not a number anyone reads off the summary page.
+ *
+ * `splinter` in test-eql.yml was in that state. It looks Rust-free — its own
+ * task, `test:splinter`, is a bash script that pipes SQL through psql, and its
+ * step names say "Setup database", "Build and install EQL", "Run splinter". The
+ * cargo is one level down: the build step runs `mise run clean && mise run
+ * --force build`, and `tasks/build.sh` shells out to `cargo run -q -p
+ * eql-codegen` twice. So every run of that job cold-compiled the codegen crate
+ * and its dependency tree, next to nine sibling jobs restoring a warm `target/`
+ * for the same workspace.
+ *
+ * That is why this closes over the task graph rather than grepping the job for
+ * `cargo`. The string never appears in the workflow; the reachability does.
+ */
+
+/** Whether a task shells out to cargo, itself or through anything it calls. */
+const cargoReach = new Map()
+function reachesCargo(name, seen = new Set()) {
+  if (cargoReach.has(name)) return cargoReach.get(name)
+  if (seen.has(name)) return false
+  seen.add(name)
+  const task = TASKS.get(name)
+  const result =
+    task !== undefined &&
+    (CARGO_TASKS.includes(name) ||
+      [...task.calls].some((next) => reachesCargo(next, seen)))
+  // Only memoise a result computed without hitting the cycle guard: a `false`
+  // returned because `seen` was already primed is about this walk, not about
+  // the task.
+  if (seen.size === 1 || result) cargoReach.set(name, result)
+  return result
+}
+
+/**
+ * Every job in a root workflow, with the cargo-reaching mise tasks its steps
+ * invoke and whether it restores the Rust cache.
+ *
+ * `run:` bodies only. A `uses:` step cannot invoke a mise task, and reading the
+ * whole job as text would let a task named in a step's `name:` or in a comment
+ * count as an invocation — the false-reachability failure `invokes` exists to
+ * avoid, imported here rather than repeated.
+ */
+const RUST_JOBS = workflowFiles().flatMap((relPath) => {
+  const wf = readWorkflow(relPath)
+  return Object.entries(wf?.jobs ?? {}).flatMap(([jobName, job]) => {
+    const steps = Array.isArray(job?.steps) ? job.steps : []
+    const compiling = [...TASKS.keys()]
+      .filter((name) => reachesCargo(name))
+      .filter((name) => steps.some((step) => invokes(step?.run ?? '', name)))
+      .sort()
+    if (compiling.length === 0) return []
+    return [
+      {
+        relPath,
+        jobName,
+        compiling,
+        cached: steps.some((step) =>
+          (step?.uses ?? '').startsWith('Swatinem/rust-cache@'),
+        ),
+      },
+    ]
+  })
+})
+
+describe('every job that compiles Rust restores the shared cache', () => {
+  it('finds the jobs it means to check', () => {
+    // Guards the guard twice over: an empty set passes the assertion below
+    // having read nothing, and a set that found no CACHED jobs would mean the
+    // step detection is broken rather than that nothing caches.
+    expect(
+      RUST_JOBS.length,
+      'No root-workflow job was found invoking a mise task that reaches cargo. Either the task graph stopped resolving or `invokes` stopped matching; as it stands the assertion below is vacuous.',
+    ).toBeGreaterThan(0)
+
+    expect(
+      RUST_JOBS.filter(({ cached }) => cached).length,
+      'Jobs were found compiling Rust, but none of them carries a rust-cache step — so the detection below can only ever report every job as uncached.',
+    ).toBeGreaterThan(0)
+  })
+
+  it('leaves no cargo-compiling job uncached', () => {
+    const uncached = RUST_JOBS.filter(({ cached }) => !cached).map(
+      ({ relPath, jobName, compiling }) =>
+        `${relPath} (${jobName}): runs ${compiling.join(', ')}`,
+    )
+
+    expect(
+      uncached,
+      `These jobs invoke a mise task that shells out to cargo, and carry no \`Swatinem/rust-cache\` step. Each one compiles the EQL workspace from scratch on every run while its siblings restore a warm \`target/\` for the same crates.\n\nAdd the restore the other jobs use — \`workspaces: ${CARGO_WORKSPACE}\`, \`shared-key: ${SHARED_KEY}\`, and \`save-if: false\` unless this is meant to become the designated saver:\n${uncached.map((line) => `  ${line}`).join('\n')}`,
+    ).toEqual([])
   })
 })

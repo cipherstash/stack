@@ -287,6 +287,16 @@ rawSql({
 })
 ```
 
+**An EQL upgrade drops every index above, and `prisma-next migrate` will not
+put them back.** Installing a new bundle begins with `DROP SCHEMA IF EXISTS
+eql_v3 CASCADE`, which cascade-drops every functional index over an `eql_v3.*`
+extractor. Encrypted columns and their data survive and queries keep working —
+they just silently sequential-scan again. The operation above has already been
+applied and is never replayed, so recovery is a **new** migration with a new
+op `id`, re-issuing the `CREATE INDEX` statements and its own `ANALYZE`. See
+`stash-indexing` § "When to Create Indexes During an Encryption Rollout" for
+the mechanism and the `EXPLAIN` check that confirms the indexes are back.
+
 ## Writing and reading encrypted values
 
 At the value boundary you wrap plaintext in a **runtime envelope** (primitive-named,

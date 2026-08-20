@@ -47,6 +47,16 @@
  * databases keep their markers, so already-applied invariants are not
  * re-run.
  *
+ * Neither re-emit moved `createdAt`, and neither should have. It reads like
+ * provenance — new bytes under a July timestamp looks like an oversight, and
+ * has been raised as one — but it is the PRIMARY TIE-BREAK KEY in the
+ * migrator's neighbour ordering (`createdAt → to → migrationHash`, see
+ * `findPath` / `findPathWithInvariants`). Re-emitting the same logical
+ * migration must not shift its position in the graph, so the field stays put
+ * and the re-emit record above is where the provenance actually lives. Pinned
+ * explicitly in `test/v3/migration-v3.test.ts` so a future re-emit cannot move
+ * it under cover of a re-pinned digest.
+ *
  * The append-only rule is the default and holds for every release after
  * this one. Re-emitting again is a decision to be argued on adoption
  * numbers, not a routine step of an EQL bump: once this package has real

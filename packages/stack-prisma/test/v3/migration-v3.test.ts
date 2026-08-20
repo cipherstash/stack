@@ -93,12 +93,30 @@ function descriptorMigration(dirName: string) {
   return migration
 }
 
-// The published migration set, with the two content-addressed facts this
-// suite freezes for each: the full artefact identity (`migrationHash`) and
-// the sha256 of the EQL install SQL baked into its `ops.json`. Both are
-// FROZEN literals tied to each migration's own release — a future EQL bump
-// ADDS an entry and never edits an existing one. See the 'every published
+// The published migration set, with the three content-addressed facts this
+// suite freezes for each: the full artefact identity (`migrationHash`), the
+// sha256 of the EQL install SQL baked into its `ops.json`, and `createdAt`.
+// All are FROZEN literals tied to each migration's own release — a future EQL
+// bump ADDS an entry and never edits an existing one. See the 'every published
 // migration is frozen' and 'lockstep' tests below for the rules.
+//
+// WHY `createdAt` IS PINNED SEPARATELY, given `migrationHash` already covers
+// it. `computeMigrationHash` hashes the whole metadata object minus the hash
+// field, so a moved `createdAt` does change `migrationHash` — but it surfaces
+// as "this digest moved", which on a deliberate re-emit is the expected
+// message. The reviewer re-pins the digest and the moved field rides along
+// unmentioned.
+//
+// It must not ride along, because `createdAt` is not provenance. It is the
+// PRIMARY TIE-BREAK KEY for neighbour ordering in the migrator's path search
+// (`createdAt → to → migrationHash`, see `findPath` /
+// `findPathWithInvariants`), so moving it can change which path a database
+// walks when more than one is available. The baseline has been re-emitted
+// twice with new bytes and kept its original `createdAt` both times, which is
+// correct and deliberate: re-emitting the same logical migration must not
+// shift its position in the graph. A review has already asked for it to be
+// moved forward to "match the new bytes" — that is the change this pin exists
+// to make someone argue for rather than make by accident.
 const PUBLISHED_MIGRATIONS = [
   {
     dirName: CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
@@ -116,6 +134,7 @@ const PUBLISHED_MIGRATIONS = [
     // The baseline is the ONE migration whose baked digest tracks the
     // pinned release rather than a historical one, which is why the
     // lockstep test below has something to match.
+    createdAt: '2026-07-14T20:10:24.325Z',
     migrationHash:
       'sha256:23c98b0368d22794507a4ef7b02ed4cb04249f36bfcb0b20488005aa62488313',
     installSqlSha256:
@@ -125,6 +144,7 @@ const PUBLISHED_MIGRATIONS = [
     dirName: CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
     metadata: v3Upgrade305Metadata,
     ops: v3Upgrade305Ops,
+    createdAt: '2026-08-14T00:45:14.365Z',
     migrationHash:
       'sha256:3b2b838bee634f2de4a5e88f1625a45d47c327e3021b0e2ccba36c09a9666178',
     installSqlSha256:
@@ -134,6 +154,7 @@ const PUBLISHED_MIGRATIONS = [
     dirName: CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME,
     metadata: v3Upgrade304Metadata,
     ops: v3Upgrade304Ops,
+    createdAt: '2026-07-28T10:44:32.390Z',
     migrationHash:
       'sha256:59e124d8a64d31a0f2b27ef9f5b3868f822ec12823aad71fee8e64b36f115bf4',
     installSqlSha256:
@@ -143,6 +164,7 @@ const PUBLISHED_MIGRATIONS = [
     dirName: CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
     metadata: v3UpgradeMetadata,
     ops: v3UpgradeOps,
+    createdAt: '2026-07-20T11:40:17.876Z',
     migrationHash:
       'sha256:7bb960435f9cdb7d7c25e4ff70b02fa050a1b8e695541facc47dd87ec3cc634e',
     installSqlSha256:
@@ -224,6 +246,19 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
         m.installSqlSha256,
       )
       expect(sql).toContain('EQL v3 schema creation')
+
+      // Asserted after the digest, and separately from it, so the failure
+      // reads as "a path-selection key moved" rather than as one more digest
+      // to re-pin. `createdAt` is the primary tie-break in the migrator's
+      // neighbour ordering (`createdAt → to → migrationHash`), NOT a record of
+      // when these bytes were written — the baseline has been re-emitted twice
+      // and correctly kept its original value both times. See the note on
+      // PUBLISHED_MIGRATIONS for why moving it is a decision to argue, not a
+      // tidy-up to wave through.
+      expect(
+        m.metadata.createdAt,
+        `${m.dirName} createdAt — this is the migrator's path-ordering key, not provenance. A re-emit keeps it; only a genuinely NEW migration gets a new one.`,
+      ).toBe(m.createdAt)
     }
   })
 
@@ -250,10 +285,13 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     expect(PUBLISHED_MIGRATIONS.map((m) => m.installSqlSha256)).toContain(
       releaseManifest.installSqlSha256,
     )
-    // @cipherstash/eql resolves in-tree (`workspace:^` → packages/eql), and
+    // @cipherstash/eql resolves in-tree (`workspace:*` → packages/eql), and
     // @cipherstash/stack encodes the v3 domain types against the same
-    // release. Bump this marker together with the dependency and the new
-    // migration.
+    // release. The `*` is load-bearing in the PACKED tarball, not here: pnpm
+    // rewrites it to the exact version, so a consumer installs 3.0.5 and not
+    // any later 3.0.x published from cipherstash/encrypt-query-language while
+    // these baked migrations stay frozen. Bump this marker together with the
+    // dependency and the new migration.
     expect(releaseManifest.eqlVersion).toBe('3.0.5')
   })
 
