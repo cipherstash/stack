@@ -18,6 +18,7 @@ Four additions, each from a verified failure in the 2026-08-19 skilltester run
 - **Install cooldowns.** Lovable's `bunfig.toml` `minimumReleaseAge` and Deno's
   `--minimum-dependency-age` both refuse a same-day CipherStash release; the skill names the
   exclude-list workaround and says to disclose it.
-- **Lovable secrets.** There is no API (and no Lovable MCP tool) for setting project secrets; the
-  order-of-operations step now says to mint with `stash env` and hand the values to the human for
-  Project Settings → Secrets, without printing them.
+- **Lovable secrets.** Who sets them depends on where the agent runs: Lovable's in-product agent
+  can store project secrets itself, while the external Lovable MCP surface has no secrets tool —
+  there the values are handed to the human (they run `stash env` themselves, or copy from the
+  agent-written 0600 file and delete it), never through chat or logs.
