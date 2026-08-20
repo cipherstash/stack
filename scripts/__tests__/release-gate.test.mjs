@@ -12,7 +12,9 @@ import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import {
   classify,
+  FROZEN_ARTEFACT_DIGESTS,
   FROZEN_PUBLISHERS,
+  frozenBytesSkew,
   packedRange,
   publishBlockers,
   reportBlockers,
@@ -789,5 +791,139 @@ describe('the gate exits non-zero when a blocker is found', () => {
     const result = runGate({ ...allPublished, [EQL]: ['3.0.4', '3.0.5'] })
     expect(result.stderr).toBe('')
     expect(result.status).toBe(0)
+  })
+})
+
+describe('frozenBytesSkew', () => {
+  /**
+   * THE FAILURE THIS EXISTS FOR, and it is not hypothetical — it is what the
+   * #885 review found by hand on a branch nothing in CI would have stopped.
+   *
+   * A frozen package cannot be published from this repository, so its in-tree
+   * bytes are not a candidate for release: they are a CLAIM about a version
+   * that already exists elsewhere. Break the claim and every consumer of the
+   * workspace build runs an artefact no release corresponds to, while every
+   * digest in the tree still verifies — the manifest is regenerated alongside
+   * the SQL, so it agrees with whatever was generated. Only the registry
+   * disagrees, and nothing was asking it.
+   *
+   * Concretely: `packages/eql` sat at `3.0.5` with an install bundle whose
+   * sha256 was `7ad9c9f8…`, while `@cipherstash/eql@3.0.5` on npm was
+   * `accde0030…` (upstream had restored the deprecated `ste_vec_contains`
+   * aliases). `stash eql install` reads that SQL verbatim, so a customer
+   * database would carry functions that the version it reports does not
+   * define.
+   */
+  const EQL_305 = { name: EQL, version: '3.0.5', private: false }
+
+  it('is silent when the in-tree artefact matches the published one', () => {
+    expect(
+      frozenBytesSkew({
+        manifests: [EQL_305],
+        frozen: new Map([[EQL, 'publisher not repointed yet']]),
+        artefacts: new Map([[EQL, { label: 'install SQL' }]]),
+        inTreeDigest: () => 'accde0030',
+        publishedDigest: () => 'accde0030',
+      }),
+    ).toEqual([])
+  })
+
+  it('blocks when the in-tree artefact differs from the published one', () => {
+    const blockers = frozenBytesSkew({
+      manifests: [EQL_305],
+      frozen: new Map([[EQL, 'publisher not repointed yet']]),
+      artefacts: new Map([[EQL, { label: 'install SQL' }]]),
+      inTreeDigest: () => '7ad9c9f8',
+      publishedDigest: () => 'accde0030',
+    })
+    expect(blockers).toEqual([
+      {
+        kind: 'frozen-bytes-skew',
+        package: EQL,
+        version: '3.0.5',
+        label: 'install SQL',
+        local: '7ad9c9f8',
+        published: 'accde0030',
+      },
+    ])
+  })
+
+  it('says nothing about a package this repository CAN publish', () => {
+    // A non-frozen package's in-tree bytes are the release. Differing from
+    // what is on npm is the normal state of an unreleased change, not a
+    // finding — and treating it as one would block every ordinary PR.
+    expect(
+      frozenBytesSkew({
+        manifests: [{ name: FFI, version: '0.33.0', private: false }],
+        frozen: new Map([[EQL, 'publisher not repointed yet']]),
+        artefacts: new Map([[EQL, { label: 'install SQL' }]]),
+        inTreeDigest: () => 'aaaa',
+        publishedDigest: () => 'bbbb',
+      }),
+    ).toEqual([])
+  })
+
+  it('defers to the frozen-publisher blocker when the version is absent from npm', () => {
+    // `publishedDigest` returns null for a version npm does not carry. There
+    // is nothing to compare against, and `publishBlockers` already reports
+    // that exact case as `frozen-publisher` — two blockers for one fact would
+    // make the remediation ambiguous.
+    expect(
+      frozenBytesSkew({
+        manifests: [{ ...EQL_305, version: '3.0.6' }],
+        frozen: new Map([[EQL, 'publisher not repointed yet']]),
+        artefacts: new Map([[EQL, { label: 'install SQL' }]]),
+        inTreeDigest: () => '7ad9c9f8',
+        publishedDigest: () => null,
+      }),
+    ).toEqual([])
+  })
+
+  it('throws when a frozen publisher has no artefact declared', () => {
+    // The stale-configuration case, loud rather than silent. A frozen package
+    // with nothing to compare passes this check by having no check — the same
+    // shape as an exemption excusing nothing, which the sibling EQL-pin linter
+    // exits 2 on.
+    expect(() =>
+      frozenBytesSkew({
+        manifests: [EQL_305],
+        frozen: new Map([[EQL, 'publisher not repointed yet']]),
+        artefacts: new Map(),
+        inTreeDigest: () => 'x',
+        publishedDigest: () => 'x',
+      }),
+    ).toThrow(/artefact/i)
+  })
+
+  it('every frozen publisher in the real map declares an artefact', () => {
+    // The two maps are edited in different PRs by different people. Keyed
+    // equality is what stops a frozen publisher arriving with no bytes check
+    // and reading like one that passed.
+    expect([...FROZEN_ARTEFACT_DIGESTS.keys()].sort()).toEqual(
+      [...FROZEN_PUBLISHERS.keys()].sort(),
+    )
+  })
+})
+
+describe('reportBlockers, for a bytes skew', () => {
+  it('names both digests and does not offer "publish it" as a way out', () => {
+    // Publishing cannot fix this one — the version is already on npm, and it
+    // is not this repository's to republish. The only resolutions are to make
+    // the tree match or to bump, so the message must not repeat the
+    // frozen-publisher remedy.
+    const text = reportBlockers([
+      {
+        kind: 'frozen-bytes-skew',
+        package: EQL,
+        version: '3.0.5',
+        label: 'install SQL',
+        local: '7ad9c9f8',
+        published: 'accde0030',
+      },
+    ])
+    expect(text).toContain('7ad9c9f8')
+    expect(text).toContain('accde0030')
+    expect(text).toContain('install SQL')
+    expect(text).not.toMatch(/Publish the frozen package\./)
   })
 })

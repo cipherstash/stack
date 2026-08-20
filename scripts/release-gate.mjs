@@ -35,7 +35,14 @@
  * pointing at a version nobody can install.
  */
 import { execFileSync } from 'node:child_process'
-import { appendFileSync, globSync, readFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  globSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
@@ -138,6 +145,54 @@ export const FROZEN_PUBLISHERS = new Map([
     'Still published from cipherstash/encrypt-query-language — the npm provenance on ' +
       '3.0.5 names that repository and `release.yml` here carries no NPM_TOKEN. Repointing ' +
       'is Phase 5 of docs/plans/2026-08-13-eql-monorepo-absorption.md.',
+  ],
+])
+
+/**
+ * For each frozen package, the artefact whose bytes must equal the published
+ * ones — and where to read it from, in the tree and inside the tarball.
+ *
+ * WHY A FROZEN PACKAGE NEEDS THIS AND AN ORDINARY ONE DOES NOT. For a package
+ * this repo publishes, in-tree bytes differing from npm is just an unreleased
+ * change — the normal state of every pull request. For a frozen one it is a
+ * CONTRADICTION: the version cannot be released from here, so the tree is not
+ * proposing those bytes, it is asserting they are already on npm under that
+ * number. Nothing in the tree can notice when that stops being true, because
+ * the digest manifest is regenerated with the artefact and goes on agreeing
+ * with it. Only the registry disagrees.
+ *
+ * `@cipherstash/eql` is the case that proves it. The subtree sat at `3.0.5`
+ * with an install bundle hashing `7ad9c9f8…` while npm's `3.0.5` was
+ * `accde0030…` — upstream had restored the deprecated `ste_vec_contains`
+ * aliases in the actual release. `packages/cli`'s installer reads that SQL
+ * verbatim (`readInstallSql`, no digest check), so `stash eql install` would
+ * have put functions into a customer database that the version it reports does
+ * not define. It was caught by a human reading the diff.
+ *
+ * The digest is read from each side's release manifest rather than hashed
+ * here: the manifest is the artefact's own statement about itself, so a
+ * mismatch between the two manifests is exactly the claim being checked, and
+ * the check costs one small JSON parse per side instead of streaming a 2.6 MB
+ * bundle out of a tarball.
+ *
+ * Keyed identically to `FROZEN_PUBLISHERS` — `release-gate.test.mjs` asserts
+ * that by equality, so a frozen publisher added without an artefact fails
+ * rather than silently getting no bytes check. Both entries are DELETED
+ * together by the cutover that repoints the publisher.
+ */
+export const FROZEN_ARTEFACT_DIGESTS = new Map([
+  [
+    '@cipherstash/eql',
+    {
+      label: 'install SQL (sql/release-manifest.json :: installSqlSha256)',
+      // Repo-relative. The subtree root carries no package.json, so the npm
+      // package is two levels down — see AGENTS.md, "Working on EQL".
+      inTree: 'packages/eql/packages/eql/sql/release-manifest.json',
+      // Inside the tarball, under its `package/` prefix. `sql/` is a build
+      // output there, published as `dist/sql/`.
+      published: 'package/dist/sql/release-manifest.json',
+      field: 'installSqlSha256',
+    },
   ],
 ])
 
@@ -397,6 +452,64 @@ export function publishBlockers({
 }
 
 /**
+ * CHECK C — a frozen package whose in-tree artefact is not the one published
+ * under the version the tree claims.
+ *
+ * See `FROZEN_ARTEFACT_DIGESTS` for why this only applies to frozen packages
+ * and what it caught. Three deliberate silences:
+ *
+ *   * a package this repo CAN publish — differing bytes are an unreleased
+ *     change, which is every pull request;
+ *   * a version npm does not carry (`publishedDigest` returns `null`) — there
+ *     is nothing to compare, and `publishBlockers` already reports that as
+ *     `frozen-publisher`. Two blockers for one fact make the remediation
+ *     ambiguous;
+ *   * a private manifest, which is never packed at all.
+ *
+ * A frozen publisher with no artefact declared THROWS rather than passing.
+ * That case is indistinguishable from a clean check by its result, and it is
+ * the shape the sibling `lint-no-eql-registry-pins.mjs` exits 2 on: a
+ * configuration that has gone stale must not read as a verdict.
+ */
+export function frozenBytesSkew({
+  manifests,
+  frozen = FROZEN_PUBLISHERS,
+  artefacts = FROZEN_ARTEFACT_DIGESTS,
+  inTreeDigest,
+  publishedDigest,
+}) {
+  const blockers = []
+  for (const { name, version, private: isPrivate } of manifests) {
+    if (isPrivate || !frozen.has(name)) continue
+
+    const artefact = artefacts.get(name)
+    if (!artefact) {
+      throw new Error(
+        `${name} is a frozen publisher with no artefact declared in ` +
+          'FROZEN_ARTEFACT_DIGESTS. Declare what must match the published ' +
+          'bytes, or remove it from FROZEN_PUBLISHERS in the same commit.',
+      )
+    }
+
+    const published = publishedDigest(name, version, artefact)
+    if (published === null || published === undefined) continue
+
+    const local = inTreeDigest(name, artefact)
+    if (local !== published) {
+      blockers.push({
+        kind: 'frozen-bytes-skew',
+        package: name,
+        version,
+        label: artefact.label,
+        local,
+        published,
+      })
+    }
+  }
+  return blockers
+}
+
+/**
  * The `packages:` globs from `pnpm-workspace.yaml`, parsed without a YAML
  * library.
  *
@@ -512,6 +625,62 @@ export function npmVersions(name) {
   }
 }
 
+/** The digest an artefact's IN-TREE release manifest claims for itself. */
+export function inTreeArtefactDigest(_name, artefact) {
+  return JSON.parse(readFileSync(join(REPO_ROOT, artefact.inTree), 'utf8'))[
+    artefact.field
+  ]
+}
+
+/**
+ * The same digest, read out of the PUBLISHED tarball for `version`.
+ *
+ * `null` when npm does not carry that version — `frozenBytesSkew` reads that
+ * as "nothing to compare" and `publishBlockers` reports it as
+ * `frozen-publisher` instead.
+ *
+ * `npm pack` + `tar`, not a tarball reader written here. Both are on every
+ * runner image and `npm` is already this script's one external command, so
+ * this adds no class of dependency the gate did not have — while a hand-rolled
+ * gzip+tar parser would be real parsing code inside a script whose whole job is
+ * to be trusted. Extraction is scoped to the ONE manifest path, so a tarball
+ * cannot write anywhere else in the temporary directory.
+ */
+export function publishedArtefactDigest(name, version, artefact) {
+  const spec = `${name}@${version}`
+  const dir = mkdtempSync(join(tmpdir(), 'release-gate-'))
+  try {
+    let packed
+    try {
+      packed = execFileSync(
+        'npm',
+        ['pack', spec, '--pack-destination', dir, '--silent'],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+        .trim()
+        .split('\n')
+        .pop()
+    } catch (err) {
+      const text = `${err.stdout ?? ''}${err.stderr ?? ''}`
+      if (text.includes('E404')) return null
+      throw new Error(`npm pack ${spec} failed: ${text.trim() || err.message}`)
+    }
+
+    execFileSync(
+      'tar',
+      ['-xzf', join(dir, packed), '-C', dir, artefact.published],
+      {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    )
+    return JSON.parse(readFileSync(join(dir, artefact.published), 'utf8'))[
+      artefact.field
+    ]
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 /**
  * A blocker list, turned into the text that explains it.
  *
@@ -532,6 +701,18 @@ export function reportBlockers(blockers) {
           `  ${blocker.package} depends on ${blocker.dependency}@${blocker.range} ` +
           `[${blocker.table}], which no published version satisfies.\n` +
           `      ${blocker.reason}`
+        )
+      case 'frozen-bytes-skew':
+        return (
+          `  ${blocker.package}@${blocker.version} in this tree is NOT the ` +
+          `${blocker.version} that is on npm.\n` +
+          `      ${blocker.label}\n` +
+          `        here: ${blocker.local}\n` +
+          `         npm: ${blocker.published}\n` +
+          '      This version cannot be republished from this repository, so ' +
+          'the tree is\n      asserting bytes that are not there. Either make ' +
+          'the tree match the\n      release, or bump to a version that does ' +
+          'not exist yet and let the\n      owning repository publish it.'
         )
       case 'private-dependency':
         return (
@@ -564,18 +745,31 @@ export function reportBlockers(blockers) {
       ? `${dependency.dependency}@${dependency.range}`
       : null
 
+  // A BYTES SKEW IS NOT A MISSING RELEASE, and reading it as one sends the
+  // operator to publish a version that is already there. The version exists on
+  // npm — that is how the skew was detected — so the tree is what has to move.
+  // Checked before `target`, because a run can carry both kinds and this is the
+  // one whose obvious-looking remedy is wrong.
+  const skew = blockers.find((b) => b.kind === 'frozen-bytes-skew')
+
   // No frozen finding means publishing nothing fixes this — a private or
   // unsatisfiable dependency is a manifest to change, not a release to make —
   // so the first way out names no version rather than an irrelevant one.
-  const publishStep = target
-    ? '  1. Publish the frozen package. For @cipherstash/eql that is the Phase 5\n' +
-      '     cutover in docs/plans/2026-08-13-eql-monorepo-absorption.md: repoint\n' +
-      '     npm trusted publishing to cipherstash/stack and release the version\n' +
-      `     above — ${target}.\n` +
-      '     Every finding then clears on its own, with no further change here.\n'
-    : '  1. Publish the frozen package. Nothing above is frozen, so this way out\n' +
-      '     is not available: the findings are manifests to fix, not a release to\n' +
-      '     make.\n'
+  const publishStep = skew
+    ? '  1. Make the tree match the release. `git diff` the artefact above\n' +
+      `     against the published ${skew.package}@${skew.version} (\`npm pack\`\n` +
+      '     it) and take the published bytes: that version is on npm already,\n' +
+      '     so publishing is not available and republishing it is not this\n' +
+      "     repository's to do.\n"
+    : target
+      ? '  1. Publish the frozen package. For @cipherstash/eql that is the Phase 5\n' +
+        '     cutover in docs/plans/2026-08-13-eql-monorepo-absorption.md: repoint\n' +
+        '     npm trusted publishing to cipherstash/stack and release the version\n' +
+        `     above — ${target}.\n` +
+        '     Every finding then clears on its own, with no further change here.\n'
+      : '  1. Publish the frozen package. Nothing above is frozen, so this way out\n' +
+        '     is not available: the findings are manifests to fix, not a release to\n' +
+        '     make.\n'
 
   return (
     '\nThis release would publish packages that cannot be installed:\n\n' +
@@ -630,7 +824,18 @@ function main() {
   // `needs.gate.result == 'success'`, so a non-zero exit here skips the job
   // that runs `changeset publish` (and, through the same `needs`, the FFI
   // matrix). Asserted by scripts/__tests__/release-gate.test.mjs.
-  const blockers = publishBlockers({ manifests, lookup })
+  //
+  // CHECK C runs alongside them and is deliberately LAST: it is the only one
+  // that downloads anything, and there is no point paying for a tarball on a
+  // run that is already refusing for a reason a tarball cannot change.
+  const blockers = [
+    ...publishBlockers({ manifests, lookup }),
+    ...frozenBytesSkew({
+      manifests,
+      inTreeDigest: inTreeArtefactDigest,
+      publishedDigest: publishedArtefactDigest,
+    }),
+  ]
   if (blockers.length > 0) {
     console.error(reportBlockers(blockers))
     process.exit(1)
