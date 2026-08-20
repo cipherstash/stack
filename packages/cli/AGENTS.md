@@ -7,7 +7,7 @@ This package has **two** Vitest configs (plus a self-skipping live-Postgres mode
 | Command | Config | Scope | Needs build? |
 | --- | --- | --- | --- |
 | `pnpm --filter stash test` | `vitest.config.ts` | Unit tests under `src/__tests__/**` and `src/**/__tests__/**` | **Partly** — needs `@cipherstash/stack` built (see below). Turbo's `^build` supplies it in CI. |
-| `pnpm --filter stash test:e2e` | `vitest.integration.config.ts` | E2E tests under `tests/e2e/**.e2e.test.ts` driving the built `dist/bin/stash.js` through a real pty (`node-pty`) | **Yes** — run `pnpm --filter stash build` first, or use the turbo `test:e2e` task which depends on `build`. |
+| `pnpm --filter stash test:e2e` | `vitest.integration.config.ts` | E2E tests under `tests/e2e/**.e2e.test.ts` driving the built `dist/bin/stash.js` through a real pty (`node-pty`) | **Yes** — run `pnpm --filter stash build` first, or use the turbo `test:e2e` task which depends on `build`. One test also needs protect-ffi's native binding, which no `build` produces (see below). |
 
 The unit config explicitly excludes `tests/e2e/**` so the default `pnpm test`
 stays fast.
@@ -86,6 +86,29 @@ exercise the same code paths.
 - **Build before E2E.** `dist/bin/stash.js` is the artifact under test. The
   turbo `test:e2e` task already depends on `build`, but if you invoke the
   script directly you must build first.
+- **`doctor.e2e.test.ts` also needs protect-ffi's native binding, and no
+  `build` produces one.** `stash doctor` probes the encryption engine by
+  *calling* through `@cipherstash/stack/diagnostics` — importing it proves
+  nothing, since the neon load is lazy. `@cipherstash/stack` is a devDependency
+  of this package, so in the workspace the probe always resolves it and never
+  takes the "not installed, that's fine" arm; and the workspace-linked
+  `@cipherstash/protect-ffi-<platform>` carries no `index.node` until cargo has
+  run (protect-ffi's `build` is `tsc`, deliberately cargo-free — see the root
+  `AGENTS.md`). Without a binding the healthy-install test fails on a red
+  encryption row and exit 1, and `doctor` offers the recovery it has for an npm
+  user — reinstall `node_modules` — which does not fix this. **That is a
+  missing binding, not a broken checkout.** Build one (needs a Rust toolchain),
+  from `packages/protect-ffi`:
+
+  ```bash
+  mise run build:debug   # or: pnpm --filter @cipherstash/protect-ffi build:native
+  ```
+
+  CI never hits this: the `run-tests` job in `tests.yml` runs
+  `.github/actions/build-ffi-binding` long before the CLI E2E step, and that
+  action caches on a hash of the Rust inputs, so a JS-only PR pays a restore.
+  Only the healthy-path test needs a real binding: `doctor-missing-binary`
+  stages the absence itself, in the spawned CLI, and passes either way.
 - **macOS spawn-helper exec bit.** pnpm strips the executable bit when
   unpacking node-pty's prebuilds. The helper auto-fixes this at module load
   via `ensureSpawnHelperExecutable`. If you see `posix_spawnp failed` after

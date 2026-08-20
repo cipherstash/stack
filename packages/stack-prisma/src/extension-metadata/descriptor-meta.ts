@@ -3,26 +3,26 @@
  *
  * Mirrors `packages/3-extensions/pgvector/src/extension-metadata/descriptor-meta.ts` —
  * the metadata block that gets serialized into `contract.json`'s
- * `extensionPacks.cipherstash` slot at emit time.
+ * `extensions.cipherstash` slot at emit time.
  *
- * SDK-free: the runtime descriptor layers SDK-bound codec instances on
- * top at execution time. The `codecInstances` slot here uses the
- * metadata-only codec from `./codec-metadata` because pack-meta
- * consumers only read codec metadata (typeId, targetTypes, traits,
- * renderOutputType); runtime encode/decode always go through the
- * SDK-bound v3 codecs produced by `createV3CodecDescriptors` (see
- * `../v3/codec-runtime-v3`).
+ * SDK-free: the runtime descriptor layers SDK-bound codec descriptors
+ * on top at execution time. The `codecDescriptors` slot here uses the
+ * metadata-only target descriptors from `./codec-metadata` because
+ * pack-meta consumers only read codec metadata (typeId, targetTypes,
+ * traits, renderOutputType, nativeType, JSON projection); runtime
+ * encode/decode always go through the SDK-bound v3 codecs produced by
+ * `createV3CodecDescriptors` (see `../v3/codec-runtime-v3`).
  *
  * The control descriptor in `../exports/control.ts` spreads this pack
  * meta so the framework's contract emitter sees `authoring`,
- * `types.codecTypes.codecInstances`, and `types.storage` alongside
+ * `types.codecTypes.codecDescriptors`, and `types.storage` alongside
  * the contract-space and codec-lifecycle-hooks blocks already wired
  * by the codec lifecycle hook block.
  */
 
 import { cipherstashAuthoringTypes } from '../contract-authoring'
 import {
-  cipherstashV3CodecMetadataInstances,
+  cipherstashV3CodecDescriptors,
   cipherstashV3StorageRows,
 } from './codec-metadata'
 import {
@@ -43,12 +43,12 @@ export const cipherstashPackMeta = {
   },
   types: {
     codecTypes: {
-      codecInstances: [
+      codecDescriptors: [
         // EQL v3 — all 40 catalog domains, derived (see codec-metadata.ts).
-        ...cipherstashV3CodecMetadataInstances,
+        ...cipherstashV3CodecDescriptors,
       ],
       // Drives the contract emitter to add
-      //   `import type { CodecTypes as CipherstashTypes } from '@prisma-next/extension-cipherstash/codec-types'`
+      //   `import type { CodecTypes as CipherstashTypes } from '@cipherstash/stack-prisma/codec-types'`
       // and to intersect `CipherstashTypes` into the generated
       // `CodecTypes` type alias. Without this slot the codec-id-keyed
       // type lookups (`CodecTypes['cipherstash/eql-v3/eql_v3_text@1']`)
@@ -56,7 +56,7 @@ export const cipherstashPackMeta = {
       // trait-dispatched operators (`eqlGt`, …) never surface on real
       // model accessors. Mirrors pgvector's `import:` slot.
       import: {
-        package: '@prisma-next/extension-cipherstash/codec-types',
+        package: '@cipherstash/stack-prisma/codec-types',
         named: 'CodecTypes',
         alias: 'CipherstashTypes',
       },
@@ -68,27 +68,27 @@ export const cipherstashPackMeta = {
       // declaration.
       typeImports: [
         {
-          package: '@prisma-next/extension-cipherstash/runtime',
+          package: '@cipherstash/stack-prisma/runtime',
           named: 'EncryptedString',
           alias: 'EncryptedString',
         },
         {
-          package: '@prisma-next/extension-cipherstash/runtime',
+          package: '@cipherstash/stack-prisma/runtime',
           named: 'EncryptedBigInt',
           alias: 'EncryptedBigInt',
         },
         {
-          package: '@prisma-next/extension-cipherstash/runtime',
+          package: '@cipherstash/stack-prisma/runtime',
           named: 'EncryptedDate',
           alias: 'EncryptedDate',
         },
         {
-          package: '@prisma-next/extension-cipherstash/runtime',
+          package: '@cipherstash/stack-prisma/runtime',
           named: 'EncryptedBoolean',
           alias: 'EncryptedBoolean',
         },
         {
-          package: '@prisma-next/extension-cipherstash/runtime',
+          package: '@cipherstash/stack-prisma/runtime',
           named: 'EncryptedJson',
           alias: 'EncryptedJson',
         },
@@ -96,7 +96,7 @@ export const cipherstashPackMeta = {
         // `EncryptedNumber`; the other v3 domains reuse the
         // version-neutral envelope classes already imported above).
         {
-          package: '@prisma-next/extension-cipherstash/runtime',
+          package: '@cipherstash/stack-prisma/runtime',
           named: 'EncryptedNumber',
           alias: 'EncryptedNumber',
         },
@@ -104,7 +104,7 @@ export const cipherstashPackMeta = {
     },
     queryOperationTypes: {
       import: {
-        package: '@prisma-next/extension-cipherstash/operation-types',
+        package: '@cipherstash/stack-prisma/operation-types',
         named: 'QueryOperationTypes',
         alias: 'CipherstashQueryOperationTypes',
       },

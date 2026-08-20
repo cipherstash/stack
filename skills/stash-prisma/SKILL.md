@@ -100,35 +100,32 @@ sort needs the matching `*Eq` / `*Ord` / text-search domain.
 
 ### 2. Register the extension pack in `prisma-next.config.ts`
 
+Since Prisma Next 0.17 an application depends on exactly one database facade
+(`@prisma/orm-postgres`; the retired `@prisma-next/*` scope no longer
+publishes), and the facade's `defineConfig` wires the family, target, adapter,
+driver, and PSL provider internally:
+
 ```typescript
 import cipherstash from '@cipherstash/stack-prisma/control'
-import { defineConfig } from '@prisma-next/cli/config-types'
-import { prismaContract } from '@prisma-next/sql-contract-psl/provider'
-import postgresPack from '@prisma-next/target-postgres/pack'
-import { postgresCreateNamespace } from '@prisma-next/target-postgres/types'
-// ... family, target, driver, adapter
+import { defineConfig } from '@prisma/orm-postgres/config'
 
 export default defineConfig({
-  // ... your existing config
-  extensionPacks: [cipherstash],
-  contract: prismaContract('./prisma/schema.prisma', {
-    output: 'src/prisma/contract.json',
-    target: postgresPack,
-    createNamespace: postgresCreateNamespace,
-  }),
+  contract: './prisma/schema.prisma',
+  output: 'src/prisma',
+  extensions: [cipherstash],
+  db: { connection: process.env['DATABASE_URL']! },
 })
 ```
 
-`createNamespace` is **required** since Prisma Next 0.15 — the SQL family no
-longer materialises a placeholder namespace. Omitting it fails at runtime with
-`createNamespace is not a function` when you run `prisma-next contract emit`.
+The config key is `extensions` (0.17 renamed `extensionPacks`; the old key
+fails loudly).
 
 ### 3. Wire the runtime with `cipherstashFromStack` in `src/db.ts`
 
 ```typescript
 import 'dotenv/config'
 import { cipherstashFromStack } from '@cipherstash/stack-prisma/v3'
-import postgres from '@prisma-next/postgres/runtime'
+import postgres from '@prisma/orm-postgres/runtime'
 import type { Contract } from './prisma/contract.d'
 import contractJson from './prisma/contract.json' with { type: 'json' }
 
@@ -229,35 +226,80 @@ Two things are Prisma-Next-specific:
 
 The adapter emits the encrypted query operators, but **no index DDL** — without
 functional indexes over the `eql_v3.*` extractors, every encrypted predicate
-sequential-scans. Two facts shape where the DDL goes:
-
-- **`schema.prisma` cannot express functional indexes** (`@@index` takes
-  fields, not expressions), so the schema file is not an option.
-- Prisma Next migrations execute **raw SQL operations**, so an index migration
-  is just an operation whose statements are the `CREATE INDEX` recipes —
-  authored in the same migration history that installs the EQL bundle, applied
-  by the same `prisma-next migrate`. Never run index DDL out-of-band.
+sequential-scans. Since Prisma Next 0.17, `@@index` takes an `expression`
+argument, so the indexes are declared in `schema.prisma` next to the columns
+they serve and ride the same `prisma-next migration plan` / `prisma-next
+migrate` flow as everything else. Never run index DDL out-of-band.
 
 One index per capability the column's domain carries:
 
-```sql
--- cipherstash.TextEq / TextSearch: equality
-CREATE INDEX users_email_eq ON users USING btree (eql_v3.eq_term(email));
--- cipherstash.*Ord / TextSearch: ordering + range (on numeric/date/timestamp
--- _ord domains this one index serves = too; TextOrd needs the eq_term index
--- above as well)
-CREATE INDEX users_created_at_ord ON users USING btree (eql_v3.ord_term(created_at));
--- cipherstash.TextMatch / TextSearch: free-text match
-CREATE INDEX users_bio_match ON users USING gin (eql_v3.match_term(bio));
--- cipherstash.Json: containment
-CREATE INDEX users_profile_json
-  ON users USING gin ((eql_v3.to_ste_vec_query(profile)::jsonb) jsonb_path_ops);
+```prisma
+model User {
+  // ... fields, including the encrypted columns ...
 
-ANALYZE users;
+  // cipherstash.TextEq / TextSearch: equality
+  @@index(expression: "eql_v3.eq_term(email)", name: "users_email_eq", type: "btree")
+  // cipherstash.*Ord / TextSearch: ordering + range (on numeric/date/timestamp
+  // _ord domains this one index serves = too; TextOrd needs the eq_term index
+  // above as well)
+  @@index(expression: "eql_v3.ord_term(created_at)", name: "users_created_at_ord", type: "btree")
+  // cipherstash.TextMatch / TextSearch: free-text match
+  @@index(expression: "eql_v3.match_term(bio)", name: "users_bio_match", type: "gin")
+  // cipherstash.Json: containment
+  @@index(expression: "(eql_v3.to_ste_vec_query(profile)::jsonb) jsonb_path_ops", name: "users_profile_json", type: "gin")
+}
 ```
 
-The `ANALYZE` is part of the recipe — an expression index has no statistics
-until it runs. Works as a non-superuser role (Supabase included); only the
+Three rules the interpreter enforces: an `@@index` takes exactly one of a
+fields list or an `expression`; an expression index **requires `name` or
+`map`** (no default name can be derived from an expression); and an `options`
+argument requires `type`. The expression string is the entire element list
+between the parens of `CREATE INDEX`, inserted verbatim — which is why the
+Json recipe carries its own parens and the `jsonb_path_ops` opclass. TS-authored
+contracts have the same surface: `index({ expression, name })` alongside the
+column factories — and there, passing `type` makes `options` required (use
+`options: {}` when you have none).
+
+`name:` is a logical name, not the physical one: the index is created as
+`<name>_<8-hex content hash>` (`users_email_eq` lands as e.g.
+`users_email_eq_1a2b3c4d`), so when verifying with `EXPLAIN` or querying
+`pg_indexes`, match on the prefix rather than the exact string. `map:` pins
+the exact physical name instead — but the planner emits a drift warning
+whenever `map:` is combined with an expression body, so prefer `name:` and
+prefix-matching unless you must adopt an index that already exists under a
+bare name.
+
+`ANALYZE` is still part of the recipe — an expression index has no statistics
+until it runs, and PSL cannot express it — so it rides a raw-SQL operation
+(`rawSql` from `@prisma/orm-postgres/migration`) in the migration that
+introduces the indexes:
+
+```typescript
+rawSql({
+  id: 'analyze.users',
+  label: 'Refresh statistics for the new expression indexes',
+  operationClass: 'additive',
+  target: {
+    id: 'postgres',
+    details: { schema: 'public', objectType: 'table', name: 'users' },
+  },
+  precheck: [],
+  execute: [{ description: 'refresh statistics', sql: 'ANALYZE "public"."users"' }],
+  postcheck: [],
+})
+```
+
+`rawSql` also remains the fallback for index DDL PSL doesn't carry — with one
+hard exception: **`CREATE INDEX CONCURRENTLY` cannot run through the migration
+flow at all.** The runner wraps every apply in a single transaction, and
+Postgres rejects `CONCURRENTLY` inside a transaction block (error `25001`), so
+a `rawSql` operation carrying it fails deterministically. This rarely matters
+here: under the rollout timing in `stash-indexing`, these indexes are built
+while the encrypted column is new or freshly backfilled, where a plain
+`CREATE INDEX` is correct. If a table is genuinely too hot for that, the
+concurrent build has to happen outside the migration runner.
+
+Everything above works as a non-superuser role (Supabase included); only the
 ORE-flavour (`_ord_ore`) ordering opclass is superuser-gated. For the full
 model — which domains take which index, engagement rules, `EXPLAIN`
 verification, rollout timing — see the `stash-indexing` skill. For encrypted
@@ -265,37 +307,22 @@ predicates written as raw SQL rather than through the `cipherstash:*`
 operators — operand casts to `eql_v3.query_*`, per-driver parameter binding —
 see the `stash-postgres` skill.
 
-In a migration, the recipes ride a raw-SQL operation (`rawSql` from
-`@prisma-next/postgres/migration`) in the migration's `operations`:
-
-```typescript
-rawSql({
-  id: 'index.users.encrypted',
-  label: 'Index encrypted columns on users',
-  operationClass: 'additive',
-  target: {
-    id: 'postgres',
-    details: { schema: 'public', objectType: 'index', name: 'users_email_eq', table: 'users' },
-  },
-  precheck: [],
-  execute: [
-    { description: 'equality index',
-      sql: 'CREATE INDEX IF NOT EXISTS users_email_eq ON "public"."users" USING btree (eql_v3.eq_term(email))' },
-    { description: 'refresh statistics', sql: 'ANALYZE "public"."users"' },
-  ],
-  postcheck: [],
-})
-```
-
 **An EQL upgrade drops every index above, and `prisma-next migrate` will not
 put them back.** Installing a new bundle begins with `DROP SCHEMA IF EXISTS
 eql_v3 CASCADE`, which cascade-drops every functional index over an `eql_v3.*`
-extractor. Encrypted columns and their data survive and queries keep working —
-they just silently sequential-scan again. The operation above has already been
-applied and is never replayed, so recovery is a **new** migration with a new
-op `id`, re-issuing the `CREATE INDEX` statements and its own `ANALYZE`. See
+extractor — the PSL expression indexes and any `rawSql` index DDL alike.
+Encrypted columns and their data survive and queries keep working — they just
+silently sequential-scan again, so nothing errors and nothing warns.
+
+Recovery is a **new** migration, because an applied one is never replayed: a
+PSL expression index has to change its `name:` (the physical name carries a
+content hash of the expression, so re-declaring the same index under the same
+logical name plans no work), and a `rawSql` recovery operation needs a new op
+`id` re-issuing the `CREATE INDEX` statements with its own `ANALYZE`. See
 `stash-indexing` § "When to Create Indexes During an Encryption Rollout" for
 the mechanism and the `EXPLAIN` check that confirms the indexes are back.
+Capturing and restoring them automatically is tracked in
+[cipherstash/stack#918](https://github.com/cipherstash/stack/issues/918).
 
 ## Writing and reading encrypted values
 
@@ -406,7 +433,7 @@ Run Prisma Next apps on a Node runtime where the native module loads.
 | Subpath | Purpose |
 |---|---|
 | `@cipherstash/stack-prisma/v3` | The v3 surface: `cipherstashFromStack`, the SDK adapter, envelopes/middleware |
-| `@cipherstash/stack-prisma/control` | The extension pack for `extensionPacks: [...]` |
+| `@cipherstash/stack-prisma/control` | The extension pack for `extensions: [...]` |
 | `@cipherstash/stack-prisma/runtime` | Envelope classes, `decryptAll`, `eql*` operators, `EncryptedString.from()`… |
 | `@cipherstash/stack-prisma/stack` | One-call setup against `@cipherstash/stack`: `cipherstashFromStack` |
 | `@cipherstash/stack-prisma/column-types` | camelCase factories (`textSearch`, `bigIntOrd`, …) for **TS-authored** contracts — emits byte-identical `contract.json` to the PSL constructors |

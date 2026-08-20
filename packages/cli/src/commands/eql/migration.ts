@@ -22,7 +22,10 @@ import {
   execArgv,
   execCommand,
 } from '@/commands/init/utils.js'
-import { loadBundledEqlSql, supabaseGrantsFor } from '@/installer/index.js'
+import {
+  loadBundledEqlSql,
+  SUPABASE_MIGRATION_GRANTS_SQL_V3,
+} from '@/installer/index.js'
 import { messages } from '@/messages.js'
 
 const DEFAULT_MIGRATION_NAME = 'install-eql'
@@ -117,9 +120,15 @@ export interface EqlMigrationOptions {
  * One source of truth: the SQL is the CLI's bundled v3 install script
  * (`loadBundledEqlSql()`) — the same bundle `stash eql install`
  * applies directly. On `--supabase` the v3 role grants are appended
- * (`supabaseGrantsFor()` → USAGE/EXECUTE on `eql_v3` + `eql_v3_internal` for
- * `anon`/`authenticated`/`service_role`), matching `stash eql install --supabase`.
- * Apps that connect directly as `postgres` don't need the grants, but they're
+ * (`SUPABASE_MIGRATION_GRANTS_SQL_V3` → USAGE/EXECUTE on `eql_v3` +
+ * `eql_v3_internal` for `anon`/`authenticated`/`service_role`), matching
+ * `stash eql install --supabase`. The owner-scoped `ALTER DEFAULT PRIVILEGES
+ * FOR ROLE postgres` statements ship inside a membership guard: a migration
+ * runs as whatever role the project's runner uses, and on platforms where
+ * that role is not a member of `postgres` (Lovable's `sandbox_exec`) the
+ * unguarded form would abort the migration and roll back the whole file —
+ * the exact failure `stash eql install` avoids by skipping them. Apps that
+ * connect directly as `postgres` don't need the grants, but they're
  * idempotent and harmless, and required when the same tables are reached via
  * PostgREST/RLS.
  *
@@ -131,7 +140,7 @@ export interface EqlMigrationOptions {
 export function buildEqlV3MigrationSql(opts: { supabase: boolean }): string {
   const eqlSql = loadBundledEqlSql()
   const grants = opts.supabase
-    ? `\n\n-- Supabase role grants: let anon/authenticated/service_role use the\n-- eql_v3 + eql_v3_internal schemas (required when tables are reached via\n-- PostgREST/RLS; harmless otherwise).\n${supabaseGrantsFor().trim()}`
+    ? `\n\n-- Supabase role grants: let anon/authenticated/service_role use the\n-- eql_v3 + eql_v3_internal schemas (required when tables are reached via\n-- PostgREST/RLS; harmless otherwise).\n${SUPABASE_MIGRATION_GRANTS_SQL_V3.trim()}`
     : ''
   return `${eqlSql.trim()}${grants}\n\n-- CipherStash encryption-migration tracking schema.\n-- Tracks per-column phase + backfill progress for \`stash encrypt\`.\n${MIGRATIONS_SCHEMA_SQL.trim()}\n`
 }

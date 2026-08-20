@@ -1,6 +1,6 @@
 {
 	"name": "@cipherstash/stack-supabase",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"description": "CipherStash Stack Supabase integration: transparent, searchable field-level encryption for Supabase.",
 	"keywords": [
 		"encrypted",
@@ -29,7 +29,8 @@
 	"sideEffects": false,
 	"files": [
 		"dist",
-		"README.md"
+		"README.md",
+		"CHANGELOG.md"
 	],
 	"exports": {
 		".": {
@@ -40,6 +41,12 @@
 			"require": {
 				"types": "./dist/index.d.cts",
 				"default": "./dist/index.cjs"
+			}
+		},
+		"./wasm-inline": {
+			"import": {
+				"types": "./dist/wasm-inline.d.ts",
+				"default": "./dist/wasm-inline.js"
 			}
 		},
 		"./package.json": "./package.json"

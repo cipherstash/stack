@@ -301,6 +301,32 @@ export const registry: CommandGroup[] = [
     title: 'EQL',
     commands: [
       {
+        name: 'eql preflight',
+        summary:
+          'Report whether this database role can install EQL, before trying',
+        long: [
+          'Read-only: probes the connected role — superuser, membership of',
+          '`postgres`, CREATE on the database and on `public`, pgcrypto, and',
+          'whether the EQL v3 schemas already exist — and names the statement',
+          'each gap blocks. Exits 1 when a gap would abort `eql install`.',
+          '',
+          'Membership of `postgres` is reported but never blocks: on managed',
+          'platforms whose role is not a member (e.g. Lovable), `eql install`',
+          'skips the optional owner-scoped ALTER DEFAULT PRIVILEGES statements',
+          '— the install is complete without them, since stash re-grants every',
+          'object on each install/upgrade.',
+        ].join('\n'),
+        examples: ['eql preflight', 'eql preflight --json'],
+        flags: [
+          {
+            name: '--json',
+            description:
+              'Emit the machine-readable preflight result instead of the table.',
+          },
+          DATABASE_URL_FLAG,
+        ],
+      },
+      {
         name: 'eql install',
         summary:
           'Scaffold stash.config.ts (if missing) and install EQL extensions',
@@ -316,6 +342,53 @@ export const registry: CommandGroup[] = [
               'Use Supabase-compatible mode (auto-detected from DATABASE_URL).',
           },
           DATABASE_URL_FLAG,
+        ],
+      },
+      {
+        name: 'eql verify',
+        summary:
+          'Check the installed EQL surface is complete, not just present',
+        long: [
+          'Compare what the database actually has against everything the pinned',
+          'EQL v3 bundle installs — every domain, function overload, operator,',
+          'cast, and the ORE operator class — via read-only catalog queries. A',
+          'partial install (domains present, some comparison functions or',
+          'operators absent) reports success at install time and fails at query',
+          'time on a specific predicate; this is the check that catches it.',
+          '',
+          'Expected absences read as such: on managed Postgres the bundle',
+          'legitimately skips the ORE operator class (creating it requires',
+          'superuser) and poisons the `_ord_ore` domains to fail loudly — that',
+          'is a supported configuration, reported as info.',
+          '',
+          'Exit 0 means exactly one thing: the surface was checked and found',
+          'complete. Damage, EQL not installed, and a version mismatch with',
+          'the pinned bundle all exit 1 — on a mismatch the object-level diff',
+          'is skipped (the pinned bundle is the wrong manifest to compare',
+          'against) and the command suggests `eql upgrade` (or a one-shot',
+          '`eql install --force --database-url ...` where no stash.config.ts',
+          'exists — `eql upgrade` requires one).',
+          '',
+          'Runs automatically at the end of `stash eql install`, on the',
+          'fresh-install path and the already-installed early exit alike.',
+          'There, only damage fails the install — a version mismatch warns',
+          'and continues, keeping a no-op re-run over an older EQL exit 0',
+          'for idempotent provisioning scripts.',
+        ].join('\n'),
+        examples: ['eql verify', 'eql verify --json'],
+        flags: [
+          {
+            name: '--json',
+            description:
+              'Emit the machine-readable verification report instead of the table.',
+          },
+          {
+            name: '--database-url',
+            value: '<url>',
+            description:
+              "One-shot, like `eql install`'s: bypasses config loading entirely, so the database you name is the database that gets judged. Also settable via DATABASE_URL.",
+            env: 'DATABASE_URL',
+          },
         ],
       },
       {

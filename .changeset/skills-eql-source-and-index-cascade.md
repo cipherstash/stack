@@ -26,7 +26,12 @@ one resolved bundle, and the database is the authority on which bundle it has.
 **`skills/stash-prisma` hands out the functional-index recipe without saying an
 EQL upgrade destroys it.** Installing a bundle begins with `DROP SCHEMA IF
 EXISTS eql_v3 CASCADE`, which cascade-drops every index over an `eql_v3.*`
-extractor; queries keep working and silently sequential-scan. Because the index
-operation has already been applied and is never replayed, recovery is a new
-migration with a new op `id` — said where the recipe is given, pointing at
-`stash-indexing` for the mechanism.
+extractor — the PSL expression indexes Prisma Next 0.17 introduced and any
+`rawSql` index DDL alike; queries keep working and silently sequential-scan.
+Because an applied migration is never replayed, recovery is a NEW one: a PSL
+expression index has to change its `name:` (the physical name carries a content
+hash of the expression, so re-declaring the same one plans no work), and a
+`rawSql` recovery op needs a new `id`. Said where the recipe is given, pointing
+at `stash-indexing` for the mechanism and at
+[cipherstash/stack#918](https://github.com/cipherstash/stack/issues/918) for
+capturing and restoring them automatically.

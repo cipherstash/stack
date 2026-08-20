@@ -1,5 +1,6 @@
 export { authCommand } from './auth/index.js'
 export { installCommand } from './db/install.js'
+export { preflightCommand } from './db/preflight.js'
 export { statusCommand as dbStatusCommand } from './db/status.js'
 export { testConnectionCommand } from './db/test-connection.js'
 export { upgradeCommand } from './db/upgrade.js'

@@ -23,8 +23,7 @@
  * operator-lowering suites, now pointed at a real database.
  */
 
-import type { PostgresContract } from '@prisma-next/adapter-postgres/types'
-import { validateSqlContractFully } from '@prisma-next/sql-contract/validators'
+import { validateSqlContractFully } from '@prisma/orm-family-sql/contract/validators'
 import {
   type AnyExpression,
   ColumnRef,
@@ -34,9 +33,10 @@ import {
   ProjectionItem,
   SelectAst,
   TableSource,
-} from '@prisma-next/sql-relational-core/ast'
-import type { SqlExecutionPlan } from '@prisma-next/sql-relational-core/plan'
-import type { SqlMiddleware } from '@prisma-next/sql-runtime'
+} from '@prisma/orm-family-sql/relational-core/ast'
+import type { SqlExecutionPlan } from '@prisma/orm-family-sql/relational-core/plan'
+import type { SqlMiddleware } from '@prisma/orm-family-sql/runtime'
+import type { PostgresContract } from '@prisma/orm-target-postgres/adapter/types'
 import postgres from 'postgres'
 import type { EncryptedEnvelopeBase } from '../../../src/execution/envelope-base'
 import type { CipherstashSdk } from '../../../src/execution/sdk'
@@ -118,13 +118,13 @@ export function liveV3Contract(
   return validateSqlContractFully<PostgresContract>({
     target: 'postgres',
     targetFamily: 'sql',
-    profileHash: `sha256:cipherstash-live-${tableName}`,
+    profileHash: `cipherstash-live-${tableName}`,
     roots: {},
     capabilities: {},
-    extensionPacks: {},
+    extensions: {},
     meta: {},
     storage: {
-      storageHash: `sha256:cipherstash-live-${tableName}-storage`,
+      storageHash: `cipherstash-live-${tableName}-storage`,
       namespaces: {
         __unbound__: {
           id: '__unbound__',

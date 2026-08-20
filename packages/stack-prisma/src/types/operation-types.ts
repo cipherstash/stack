@@ -23,7 +23,7 @@
  * suitable for a WHERE clause.
  */
 
-import type { Expression } from '@prisma-next/sql-relational-core/expression'
+import type { Expression } from '@prisma/orm-family-sql/relational-core/expression'
 
 type CodecTypesBase = Record<
   string,
