@@ -73,6 +73,18 @@ on:
     # Identical to the `relevant:` filter in the `changes` job below. GitHub
     # Actions has no YAML anchors, so the list is written twice; the guard named
     # above fails a one-sided edit.
+    #
+    # The last four entries are the documentation surface, and they are here
+    # because a job in THIS file reads them: `docs-static` runs
+    # `mise run test:docs_v3_grep`, which scans `README.md`, `SUPABASE.md`,
+    # `docker/README.md` and every tracked `docs/` markdown for the eql_v2
+    # surface removed in 3.0.0. All four were missing from all three copies of
+    # this list, so a push to main touching only docs started no run of this
+    # workflow at all — `pull_request` was unaffected, because it applies no
+    # `paths:` filter and `docs-static` is deliberately not relevance-gated.
+    # Derived rather than remembered now: the second half of
+    # `scripts/__tests__/eql-workflow-filters.test.mjs` walks each `mise run`
+    # out to the paths the task names and fails on any this list does not select.
     paths:
       - ".github/workflows/test-eql.yml"
       - ".github/actions/require-cs-secrets/**"
@@ -84,6 +96,10 @@ on:
       - "packages/eql/Cargo.toml"
       - "packages/eql/Cargo.lock"
       - "packages/eql/mise.toml"
+      - "packages/eql/docs/**"
+      - "packages/eql/docker/**"
+      - "packages/eql/README.md"
+      - "packages/eql/SUPABASE.md"
   schedule:
     - cron: "0 4 * * *"      # 04:00 UTC daily; full matrix, off the merge path
   merge_group: {}            # inert today (no queue); kept so enabling one works
@@ -154,6 +170,13 @@ jobs:
           # `packages/eql/sql/**` sat in this list from the port: there is no
           # such directory, so it narrowed the filter by exactly nothing while
           # reading as coverage).
+          #
+          # The four documentation entries are inputs to `docs-static` and
+          # `doc-anchors`, neither of which is relevance-gated, so this copy
+          # does not strictly need them. It carries them because the three
+          # copies are held EQUAL — see the note above the `push` list, and the
+          # reasoning on `bench-eql.yml`'s own filter for why equal beats
+          # minimal.
           filters: |
             relevant:
               - ".github/workflows/test-eql.yml"
@@ -166,6 +189,10 @@ jobs:
               - "packages/eql/Cargo.toml"
               - "packages/eql/Cargo.lock"
               - "packages/eql/mise.toml"
+              - "packages/eql/docs/**"
+              - "packages/eql/docker/**"
+              - "packages/eql/README.md"
+              - "packages/eql/SUPABASE.md"
 
       # Explicit default (not `|| 'true'`, which trips GitHub's inconsistent
       # treatment of the string 'false'). push/schedule/merge_group/dispatch

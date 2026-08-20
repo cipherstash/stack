@@ -103,15 +103,52 @@ const RUN_SCRIPT =
 /** `node path/to/file.mjs`, with any `node` flags in between. */
 const NODE_SCRIPT = /\bnode\s+(?:--?[^\s]+\s+)*([\w./-]+\.[cm]?js)\b/g
 
+/** The `node:child_process` functions that start a process. */
+const SPAWN_FUNCTIONS = [
+  'execSync',
+  'exec',
+  'execFileSync',
+  'execFile',
+  'spawnSync',
+  'spawn',
+]
+
 /**
- * The first argument of a `node:child_process` spawn, as a literal.
+ * A local name bound to one of those by a DEFAULT PARAMETER —
+ * `function f({ run = execFileSync })` — after which `run('mise', …)` spawns
+ * mise exactly as much as the direct call did.
+ *
+ * This shape is used for injecting a fake spawner in unit tests, and
+ * `scripts/sync-lockstep-versions.mjs` adopted it for precisely that reason
+ * ("what matters is the argv, and asserting it must not require a Rust
+ * toolchain"). The refactor is behaviour-preserving — the workflow passes no
+ * override, so the default runs — but it moved the only `mise` spawn in the
+ * release chain behind an identifier, and a scanner that matched the
+ * `execFileSync(` spelling alone went from finding it to finding nothing. The
+ * pin in the first test below is what reported that, which is the argument for
+ * the pin.
+ */
+const INJECTED_SPAWNER = new RegExp(
+  `\\b([A-Za-z_$][\\w$]*)\\s*=\\s*(?:${SPAWN_FUNCTIONS.join('|')})\\b`,
+  'g',
+)
+
+/**
+ * The first argument of every spawn in a source file, as a literal.
  *
  * Both shapes matter and they read differently: `execFileSync('mise', [...])`
  * names the binary alone, while `execSync('mise run build')` is a whole shell
- * line. `commandLaunchesMise` below accepts either.
+ * line. `invokesMise` below accepts either.
  */
-const CHILD_PROCESS_SPAWN =
-  /\b(?:execSync|exec|execFileSync|execFile|spawnSync|spawn)\s*\(\s*(['"`])([^'"`]*)\1/g
+function spawnedLiterals(source) {
+  const names = new Set(SPAWN_FUNCTIONS)
+  for (const [, alias] of source.matchAll(INJECTED_SPAWNER)) names.add(alias)
+  const spawn = new RegExp(
+    `\\b(?:${[...names].join('|')})\\s*\\(\\s*(['"\`])([^'"\`]*)\\1`,
+    'g',
+  )
+  return [...source.matchAll(spawn)].map(([, , literal]) => literal)
+}
 
 /** Does this shell line invoke `mise` as a command? */
 const invokesMise = (command) => /(?:^|[\s;&|(])mise(?:\s|$)/.test(command)
@@ -144,7 +181,7 @@ function fileReachesMise(relative, seen) {
   seen.add(file)
 
   const source = readFileSync(file, 'utf8')
-  for (const [, , launched] of source.matchAll(CHILD_PROCESS_SPAWN)) {
+  for (const launched of spawnedLiterals(source)) {
     if (launched === 'mise' || invokesMise(launched)) return true
   }
   // A script that runs another script. Same walk, one level down.
@@ -231,5 +268,142 @@ describe('a job that reaches mise installs mise', () => {
         `${id}: needs at ${needsAt}, installs at ${setupAt}`,
     )
     expect(offenders).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The INPUTS on that step, not just its presence.
+//
+// Everything above answers "is there a mise setup step, and is it early
+// enough?". `release.yml`'s step carries five inputs and three of them are
+// load-bearing in a way the value alone does not show — each one is a default
+// that had to be overridden, so the failure mode is a copy-paste from
+// `test-eql.yml` (where the defaults are correct) or a tidy-up that deletes an
+// input for looking redundant. The comment block above the step explains all
+// three at length; comments do not fail.
+//
+// `cache: false` is the fourth and is NOT asserted here — `pnpm run
+// lint:workflow-cache` (scripts/lint-no-workflow-caching.mjs) already forbids a
+// cache restore in any job that publishes, which is the stronger form of the
+// same rule.
+
+/** Where mise looks for config, relative to `working_directory`. */
+const MISE_CONFIG_NAMES = [
+  'mise.toml',
+  '.mise.toml',
+  'mise/config.toml',
+  '.mise/config.toml',
+  '.config/mise.toml',
+]
+
+/** Action inputs arrive as strings; YAML gives us booleans. Compare as text. */
+const inputIs = (value, expected) => String(value) === expected
+
+/** Every `jdx/mise-action` step in the workflow directory, with its job. */
+const MISE_STEPS = workflowFiles().flatMap((file) => {
+  const doc = readWorkflow(file)
+  return Object.entries(doc?.jobs ?? {}).flatMap(([name, job]) =>
+    (Array.isArray(job?.steps) ? job.steps : [])
+      .filter(isMiseSetup)
+      .map((step) => ({
+        id: `${file} / ${name}`,
+        inputs: step?.with ?? {},
+        permissions: job?.permissions ?? {},
+      })),
+  )
+})
+
+/**
+ * Jobs that publish to npm through OIDC trusted publishing.
+ *
+ * `id-token: write` is the marker because it is the thing OIDC cannot work
+ * without — a publish job that loses it stops publishing, loudly, rather than
+ * quietly ceasing to be covered by the checks below.
+ */
+const OIDC_MISE_STEPS = MISE_STEPS.filter(({ permissions }) =>
+  inputIs(permissions?.['id-token'], 'write'),
+)
+
+describe('the mise setup step carries the inputs it depends on', () => {
+  it('finds mise setup steps', () => {
+    // The floor, again. Every check below iterates a discovered set.
+    expect(MISE_STEPS.length).toBeGreaterThan(0)
+  })
+
+  it('points every mise setup step at a directory that has a mise config', () => {
+    // THE TRUST ERROR. mise reads config from the current directory and its
+    // PARENTS, and this repo has NO mise config at its root — the two that
+    // exist are `packages/eql/mise.toml` and `packages/protect-ffi/mise.toml`.
+    // So an action running at the default working directory finds nothing to
+    // install and leaves the config untrusted, and the first `mise run` fails
+    // with "Config files … are not trusted", which reads as a broken toolchain
+    // rather than a wrong directory. In `release.yml` that file is also where
+    // the Rust toolchain comes from (`[tools] rust`), so the same input is what
+    // makes the step a cargo setup; there is deliberately no second one.
+    const offenders = MISE_STEPS.filter(({ inputs }) => {
+      const dir = inputs?.working_directory
+      if (typeof dir !== 'string' || dir.trim() === '') return true
+      return !MISE_CONFIG_NAMES.some((name) =>
+        existsSync(join(REPO_ROOT, dir, name)),
+      )
+    }).map(
+      ({ id, inputs }) =>
+        `${id}: working_directory=${inputs?.working_directory ?? '(unset)'}`,
+    )
+
+    expect(
+      offenders,
+      'These `jdx/mise-action` steps do not name a directory containing a mise config. There is no mise config at the repo root, so mise installs nothing and marks the config untrusted — the first `mise run` then fails with a TRUST error that looks like a toolchain problem.',
+    ).toEqual([])
+  })
+
+  it('finds a publishing job that installs mise', () => {
+    // Anti-vacuity for the two checks below: they are scoped to jobs holding
+    // `id-token: write`, and if that set empties they pass having checked
+    // nothing. `release.yml`'s `release` job is the member today.
+    expect(
+      OIDC_MISE_STEPS.map(({ id }) => id),
+      'No job holds `id-token: write` and installs mise, so the npm-version and env checks below cover nothing. If the publish job stopped installing mise, delete those checks; if it moved, this is the reminder to re-scope them.',
+    ).not.toEqual([])
+  })
+
+  it('keeps mise shims off PATH in a publishing job', () => {
+    // `add_shims_to_path` DEFAULTS TO TRUE, and the shim directory is PREPENDED
+    // to PATH for every later step. `packages/eql/mise.toml` pins
+    // `node = "22"`, so with the default, mise's Node shadows the one
+    // `actions/setup-node` installed — and `changeset publish` shells out to
+    // that Node's bundled npm 10.x instead of the `npm@^11.5.1` the job
+    // installed. OIDC trusted publishing requires >= 11.5.1 and returns E404
+    // below it, so the release fails at the publish call, after
+    // `changeset version` has already rewritten every manifest.
+    // `mise run` resolves its own toolchain internally and does not need shims.
+    const offenders = OIDC_MISE_STEPS.filter(
+      ({ inputs }) => !inputIs(inputs?.add_shims_to_path, 'false'),
+    ).map(
+      ({ id, inputs }) =>
+        `${id}: add_shims_to_path=${inputs?.add_shims_to_path ?? '(default true)'}`,
+    )
+
+    expect(
+      offenders,
+      "A job that publishes to npm over OIDC installs mise with its shims on PATH. mise prepends them, so its pinned `node` shadows `actions/setup-node`, `changeset publish` gets that Node's npm 10.x, and OIDC trusted publishing fails with E404 (it needs npm >= 11.5.1). Set `add_shims_to_path: false` — a copy-paste of the `test-eql.yml` step will not carry it, because there the default is harmless.",
+    ).toEqual([])
+  })
+
+  it('keeps the mise config’s env out of a publishing job', () => {
+    // `env` DEFAULTS TO TRUE, which exports the config's `[env]` block into
+    // GITHUB_ENV for every subsequent step. `packages/eql/mise.toml` sets
+    // `DATABASE_URL`, `POSTGRES_PASSWORD`, `PGPORT` and friends, all pointed at
+    // a Postgres this job does not run — injected into the one job that holds
+    // the npm publishing credential, and into whatever `pnpm run release`
+    // spawns from there.
+    const offenders = OIDC_MISE_STEPS.filter(
+      ({ inputs }) => !inputIs(inputs?.env, 'false'),
+    ).map(({ id, inputs }) => `${id}: env=${inputs?.env ?? '(default true)'}`)
+
+    expect(
+      offenders,
+      "A job that publishes to npm over OIDC lets `jdx/mise-action` export the mise config's `[env]` block into GITHUB_ENV. `packages/eql/mise.toml` points DATABASE_URL and the POSTGRES_* variables at a database that does not exist in this job. Set `env: false`.",
+    ).toEqual([])
   })
 })

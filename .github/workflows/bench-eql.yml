@@ -39,6 +39,16 @@ on:
     # kept minimal: the cost of over-triggering is one nightly-budget bench run,
     # and the cost of under-triggering is a regression that lands and is
     # attributed to whatever merges next.
+    #
+    # The last four entries are the one place that reasoning is doing visible
+    # work. The bench runs `postgres:up` and `test:bench` and reads no
+    # documentation at all — they are inputs to `test-eql.yml`'s `docs-static`
+    # job, not to anything here, and the derivation in
+    # `scripts/__tests__/eql-workflow-filters.test.mjs` correctly derives none
+    # of them for this file. They are listed because the three copies are held
+    # equal, which is the whole point of the paragraph above: the cost is a
+    # bench run on a docs push, and the alternative is a bespoke narrower list
+    # of exactly the kind that had already drifted three ways.
     paths:
       - ".github/workflows/bench-eql.yml"
       - ".github/actions/require-cs-secrets/**"
@@ -50,6 +60,10 @@ on:
       - "packages/eql/Cargo.toml"
       - "packages/eql/Cargo.lock"
       - "packages/eql/mise.toml"
+      - "packages/eql/docs/**"
+      - "packages/eql/docker/**"
+      - "packages/eql/README.md"
+      - "packages/eql/SUPABASE.md"
 
   schedule:
     # 02:00 UTC daily
