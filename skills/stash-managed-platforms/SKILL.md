@@ -189,10 +189,11 @@ Prefer to keep encryption out of the adapter entirely? Use `@cipherstash/stack/w
 3. `stash eql migration --supabase` (or `--drizzle`), committed through the platform's Git sync — not a direct `eql install`, if the platform replays a migrations directory.
 4. `stash init`, then `stash plan` / `stash impl --target <target>` to scaffold and hand off. On Lovable, `--target lovable` writes an `AGENTS.md` whose next-steps are platform-specific.
 5. `stash env --name <env> --write` — put the four `CS_*` values into the platform's backend
-   secrets. **On Lovable there is no API for project secrets** (the MCP server has no secrets tool
-   either): mint the values with `stash env`, then ask the human to paste them into Project
-   Settings → Secrets — or trigger the platform's own secret-request prompt if your context has
-   one. Never print the values into chat, logs, or files while doing so.
+   secrets. **On Lovable, who sets them depends on where you are running:** the in-product agent
+   can set project secrets itself, so mint with `stash env` and store them directly. Driving
+   Lovable from outside — over the Lovable MCP server, which has no secrets tool — there is no
+   programmatic path: ask the human to paste the values into Project Settings → Secrets. Never
+   print the values into chat, logs, or files either way.
 6. Write the schema with `types.*Ord`, not `*OrdOre`, unless preflight said the operator class is creatable.
 7. `stash eql verify` — confirm the installed surface is complete before shipping.
 
