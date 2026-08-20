@@ -62,8 +62,37 @@ for f in "${DOC_FILES[@]}"; do
   fi
 done
 
+# Deprecated SQL compatibility aliases remain installed, but the explicitly
+# hidden block must never reach Doxygen — including its generated source browser.
+ste_vec_alias_count=$(grep -c '^CREATE FUNCTION eql_v3\.ste_vec_contains' src/v3/json/functions.sql || true)
+if [ "$ste_vec_alias_count" -ne 2 ]; then
+  echo "FAIL: expected both deprecated ste_vec_contains overloads in src/v3/json/functions.sql" >&2
+  status=1
+else
+  # CAPTURE, THEN MATCH — never `doxygen-filter.sh ... | grep -q ...`. `grep -q`
+  # exits at the first match and closes the pipe; the filter's awk then takes
+  # SIGPIPE and exits 141, and `set -o pipefail` makes that the pipeline's
+  # status. So the LEAK path — the one this guard exists for — scored as "no
+  # match" and the FAIL branch never ran, while the clean path (grep reads to
+  # EOF, exits 1) reported correctly. A check that can only ever say OK.
+  #
+  # Measured at 141 against the real filter output on macOS. Linux's larger
+  # pipe buffer absorbed the ~16 KB and hid it, so this was a platform split
+  # rather than an obvious bug. Guarded repo-wide by
+  # scripts/__tests__/workflow-grep-q-pipelines.test.mjs.
+  #
+  # A separate assignment also means `set -e` aborts if the filter itself
+  # fails, instead of the old pipeline quietly scoring a crashed filter as a
+  # pass.
+  filtered_sql=$(tasks/docs/doxygen-filter.sh src/v3/json/functions.sql)
+  if grep -q 'ste_vec_contains' <<< "$filtered_sql"; then
+    echo "FAIL: deprecated ste_vec_contains aliases leaked through the Doxygen input filter" >&2
+    status=1
+  fi
+fi
+
 if [ "$status" -eq 0 ]; then
-  echo "OK: no user-facing doc references eql_v2 (${#DOC_FILES[@]} files scanned)."
+  echo "OK: user-facing docs contain neither eql_v2 nor the hidden ste_vec_contains alias (${#DOC_FILES[@]} files scanned)."
 else
   echo >&2
   echo "The eql_v2 surface was removed in 3.0.0; user-facing docs must teach only eql_v3." >&2

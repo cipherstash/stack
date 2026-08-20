@@ -9,10 +9,12 @@ import {
   declarationId,
   EXEMPT_DECLARATIONS,
   EXPECTED_DECLARERS,
+  EXPECTED_SOURCES,
   lint,
   manifestFiles,
   npmDeclarations,
   report,
+  workspaceDeclarations,
 } from '../lint-no-eql-registry-pins.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
@@ -284,6 +286,325 @@ describe('npm: what counts as in-tree', () => {
   })
 })
 
+describe('npm: the spellings a name-keyed scan walks past', () => {
+  const pkg = (json) => npmDeclarations('package.json', JSON.stringify(json))
+
+  it('reads a NESTED npm override', () => {
+    // npm's overrides are a tree, not a flat map: this pins EQL only under
+    // `some-pkg`, and a scan that reads `overrides['@cipherstash/eql']` sees an
+    // empty result and reports the tree clean.
+    const found = pkg({
+      overrides: { 'some-pkg': { '@cipherstash/eql': '3.0.4' } },
+    })
+    expect(found).toHaveLength(1)
+    expect(found[0]).toMatchObject({
+      table: 'overrides.some-pkg',
+      spec: '3.0.4',
+      inTree: false,
+    })
+  })
+
+  it('reads an override nested more than one level deep', () => {
+    expect(
+      pkg({
+        overrides: { a: { b: { '@cipherstash/eql': '3.0.4' } } },
+      })[0],
+    ).toMatchObject({ table: 'overrides.a.b', inTree: false })
+  })
+
+  it("reads npm's `.` self-target spelling", () => {
+    // `{"@cipherstash/eql": {".": "3.0.4"}}` pins the package itself and scopes
+    // further overrides beneath it. The version is on the CHILD key.
+    expect(
+      pkg({ overrides: { '@cipherstash/eql': { '.': '3.0.4' } } })[0],
+    ).toMatchObject({ spec: '3.0.4', inTree: false })
+  })
+
+  it("reads pnpm's `parent>child` override selector", () => {
+    expect(
+      pkg({ pnpm: { overrides: { 'some-pkg>@cipherstash/eql': '3.0.4' } } })[0],
+    ).toMatchObject({ table: 'pnpm.overrides', inTree: false })
+  })
+
+  it('reads an override key carrying a version selector', () => {
+    expect(
+      pkg({ pnpm: { overrides: { '@cipherstash/eql@<3.0.5': '3.0.4' } } })[0],
+    ).toMatchObject({ inTree: false })
+  })
+
+  it("reads yarn's `**/` resolutions glob", () => {
+    expect(
+      pkg({ resolutions: { '**/@cipherstash/eql': '3.0.4' } })[0],
+    ).toMatchObject({ table: 'resolutions', inTree: false })
+  })
+
+  it('does not flag a neighbouring package whose name starts the same', () => {
+    // `@cipherstash/eql-extras` is not `@cipherstash/eql`. A prefix match here
+    // makes the linter cry wolf, and the fix for a linter that cries wolf is
+    // always to weaken it.
+    expect(
+      pkg({ dependencies: { '@cipherstash/eql-extras': '1.0.0' } }),
+    ).toEqual([])
+    expect(
+      pkg({ overrides: { other: { '@cipherstash/eqlx': '3.0.4' } } }),
+    ).toEqual([])
+  })
+
+  it('reads a RENAMED dependency whose value aliases the package', () => {
+    // The name is on the right-hand side. Keying the scan on the dependency
+    // name misses this entirely — it installs @cipherstash/eql@3.0.4 from the
+    // registry under another name.
+    const found = pkg({
+      dependencies: { 'eql-legacy': 'npm:@cipherstash/eql@3.0.4' },
+    })
+    expect(found).toHaveLength(1)
+    expect(found[0]).toMatchObject({
+      key: 'eql-legacy',
+      form: 'alias',
+      inTree: false,
+    })
+  })
+
+  it('accepts the in-tree spelling of an alias', () => {
+    // `workspace:<name>@<range>` is how an aliased dep names a workspace
+    // package. It resolves in-tree, so it is not an offender.
+    expect(
+      pkg({
+        dependencies: { 'eql-legacy': 'workspace:@cipherstash/eql@^' },
+      })[0],
+    ).toMatchObject({ inTree: true, form: 'workspace' })
+  })
+
+  it('ignores an alias pointing at some other package', () => {
+    expect(pkg({ dependencies: { x: 'npm:lodash@4' } })).toEqual([])
+  })
+
+  it('reads an alias hidden in an override', () => {
+    expect(
+      pkg({ overrides: { 'eql-legacy': 'npm:@cipherstash/eql@3.0.4' } })[0],
+    ).toMatchObject({ form: 'alias', inTree: false })
+  })
+
+  it('names the declaration by the package, not by the key it was found under', () => {
+    // `EXPECTED_DECLARERS` and `EXEMPT_DECLARATIONS` are keyed `<file> ::
+    // <dependency>`. If an alias were filed under its alias name, an exemption
+    // could never be written for it and the two lists would drift apart from
+    // the scan.
+    expect(
+      declarationId(
+        pkg({
+          dependencies: { 'eql-legacy': 'npm:@cipherstash/eql@3.0.4' },
+        })[0],
+      ),
+    ).toBe('package.json :: @cipherstash/eql')
+  })
+
+  it('reports the offending KEY, so the reader can find the line', () => {
+    const { code, err } = report({
+      ids: ['x :: y'],
+      declarations: [],
+      exempted: [],
+      staleExemptions: [],
+      unreasonedExemptions: [],
+      missingExpected: [],
+      missingSources: [],
+      offenders: [
+        {
+          file: 'package.json',
+          dependency: '@cipherstash/eql',
+          key: 'eql-legacy',
+          table: 'dependencies',
+          spec: 'npm:@cipherstash/eql@3.0.4',
+        },
+      ],
+    })
+    expect(code).toBe(1)
+    expect(err).toContain('eql-legacy')
+  })
+
+  it('flags a nested override end to end', () => {
+    const root = tree({
+      'package.json': '{"overrides":{"some-pkg":{"@cipherstash/eql":"3.0.4"}}}',
+    })
+    expect(run(root).exitCode).toBe(1)
+  })
+})
+
+describe('pnpm-workspace.yaml: the file no manifest scan opens', () => {
+  const declarations = (yaml) =>
+    workspaceDeclarations('pnpm-workspace.yaml', yaml)
+
+  it('is collected by the walk', () => {
+    // The hole this whole block is about: pnpm 10 reads `overrides` from here,
+    // and the scan only ever opened `Cargo.toml` and `package.json`.
+    const root = tree({ 'pnpm-workspace.yaml': 'packages:\n  - packages/*\n' })
+    expect(manifestFiles(root)).toContain('pnpm-workspace.yaml')
+  })
+
+  it('reads a top-level `overrides:` entry', () => {
+    expect(
+      declarations("overrides:\n  '@cipherstash/eql': 3.0.4\n")[0],
+    ).toMatchObject({
+      file: 'pnpm-workspace.yaml',
+      dependency: '@cipherstash/eql',
+      table: 'overrides',
+      spec: '3.0.4',
+      inTree: false,
+    })
+  })
+
+  it('reads an override written as a version selector', () => {
+    // The shape every other override in this repo's file is written in.
+    expect(
+      declarations("overrides:\n  '@cipherstash/eql@<3.0.5': 3.0.4\n"),
+    ).toHaveLength(1)
+  })
+
+  it('reads a `parent>child` override', () => {
+    expect(
+      declarations("overrides:\n  'stash>@cipherstash/eql': 3.0.4\n"),
+    ).toHaveLength(1)
+  })
+
+  it('accepts a `workspace:` override', () => {
+    expect(
+      declarations("overrides:\n  '@cipherstash/eql': workspace:^\n")[0],
+    ).toMatchObject({ inTree: true })
+  })
+
+  it('reads a named catalog entry', () => {
+    // A catalog is the other way to move what installs: every manifest keeps
+    // saying `catalog:repo` while the version behind it changes here.
+    expect(
+      declarations("catalogs:\n  repo:\n    '@cipherstash/eql': 3.0.4\n")[0],
+    ).toMatchObject({ table: 'catalogs.repo', spec: '3.0.4', inTree: false })
+  })
+
+  it('reads the default catalog', () => {
+    expect(
+      declarations("catalog:\n  '@cipherstash/eql': 3.0.4\n")[0],
+    ).toMatchObject({ table: 'catalog', inTree: false })
+  })
+
+  it('leaves the rest of the file alone', () => {
+    // The real file carries a dozen security overrides and two catalogs. A
+    // reader that flagged any of them would be turned off within the week.
+    expect(
+      declarations(
+        [
+          'packages:',
+          '  - packages/*',
+          'catalogs:',
+          '  repo:',
+          '    typescript: 5.9.3',
+          'overrides:',
+          "  'next@<15.5.18': '~15.5.18'",
+          "  'lodash@<4.18.0': '^4.18.0'",
+          'minimumReleaseAge: 10080',
+        ].join('\n'),
+      ),
+    ).toEqual([])
+  })
+
+  it('flags a workspace-level override end to end', () => {
+    // The mutation check, as a test: plant the pin the linter could not see
+    // and confirm it now exits 1.
+    const root = tree({
+      'pnpm-workspace.yaml':
+        "packages:\n  - packages/*\noverrides:\n  '@cipherstash/eql': 3.0.4\n",
+      'packages/a/package.json':
+        '{"dependencies":{"@cipherstash/eql":"workspace:^"}}',
+    })
+    expect(run(root).exitCode).toBe(1)
+    expect(run(root).output).toContain('pnpm-workspace.yaml')
+  })
+
+  it('flags a catalog entry end to end', () => {
+    const root = tree({
+      'pnpm-workspace.yaml':
+        "packages:\n  - packages/*\ncatalogs:\n  repo:\n    '@cipherstash/eql': 3.0.4\n",
+    })
+    expect(run(root).exitCode).toBe(1)
+  })
+
+  it('treats `catalog:` in a manifest as a registry pin, not as a deferral', () => {
+    // Cargo's `workspace = true` is accepted because the workspace root's entry
+    // is scanned as a declaration in its own right. `catalog:` is NOT given the
+    // same treatment: a catalog holds version ranges, so the deferral has no
+    // in-tree answer to defer to. Flagging both ends is deliberate.
+    expect(
+      npmDeclarations(
+        'package.json',
+        '{"dependencies":{"@cipherstash/eql":"catalog:repo"}}',
+      )[0],
+    ).toMatchObject({ inTree: false, form: 'catalog' })
+  })
+})
+
+describe('the new source has a floor of its own', () => {
+  it('is satisfied by the real tree', () => {
+    expect(lint().missingSources).toEqual([])
+    // And the floor needs a floor, for the same reason EXPECTED_DECLARERS does:
+    // an emptied list satisfies "nothing missing" trivially.
+    expect(EXPECTED_SOURCES).toContain('pnpm-workspace.yaml')
+  })
+
+  it('notices a source that is not there at all', () => {
+    const root = tree({ 'packages/a/package.json': '{"dependencies":{}}' })
+    expect(
+      lint({ root, expected: [], exemptions: new Map() }).missingSources,
+    ).toEqual(['pnpm-workspace.yaml'])
+  })
+
+  it('notices a source that did not parse, rather than reading it as clean', () => {
+    // The failure mode this floor exists for. A YAML file that js-yaml refuses
+    // contributes no declarations — which is indistinguishable from a file with
+    // no overrides in it, and one of those two is a linter that stopped working.
+    const root = tree({
+      'pnpm-workspace.yaml': 'packages:\n  - a\n   bad indent: [\n',
+    })
+    expect(
+      lint({ root, expected: [], exemptions: new Map() }).missingSources,
+    ).toEqual(['pnpm-workspace.yaml'])
+  })
+
+  it('notices a source emptied out', () => {
+    const root = tree({ 'pnpm-workspace.yaml': '\n# nothing here\n' })
+    expect(
+      lint({ root, expected: [], exemptions: new Map() }).missingSources,
+    ).toEqual(['pnpm-workspace.yaml'])
+  })
+
+  it('exits 2 — not 0 — when a source could not be read', () => {
+    const { code, err } = report({
+      ids: [],
+      declarations: [],
+      offenders: [],
+      exempted: [],
+      staleExemptions: [],
+      unreasonedExemptions: [],
+      missingExpected: [],
+      missingSources: ['pnpm-workspace.yaml'],
+    })
+    expect(code).toBe(2)
+    expect(err).toContain('pnpm-workspace.yaml')
+  })
+
+  it('reports an unreadable source ahead of any offender it found', () => {
+    const { code } = report({
+      ids: ['x :: y'],
+      declarations: [],
+      offenders: [{ file: 'a', dependency: 'b', spec: '"1.0"' }],
+      exempted: [],
+      staleExemptions: [],
+      unreasonedExemptions: [],
+      missingExpected: [],
+      missingSources: ['pnpm-workspace.yaml'],
+    })
+    expect(code).toBe(2)
+  })
+})
+
 describe('the scan reports what it finds', () => {
   it('flags a registry pin anywhere in a tree', () => {
     const root = tree({
@@ -334,6 +655,7 @@ describe('the linter fails when its own configuration goes stale', () => {
     staleExemptions: [],
     unreasonedExemptions: [],
     missingExpected: [],
+    missingSources: [],
   }
 
   it('exits 2 — not 1 — when an expected declarer disappears', () => {
@@ -458,5 +780,58 @@ describe('something actually runs it', () => {
       invoking,
       `No root workflow runs \`pnpm run ${SCRIPT_ENTRY}\`. The linter exists, is tested, and guards nothing.`,
     ).not.toEqual([])
+  })
+})
+
+/**
+ * The remediation this linter prints is the only instruction most readers will
+ * follow, so it has to name a specifier that is actually correct for the
+ * declaration it is scolding.
+ *
+ * `workspace:^` and `workspace:*` both satisfy this linter — it only asks that
+ * the specifier resolve in-tree. But they pack DIFFERENTLY into a published
+ * tarball: pnpm rewrites `workspace:^` to a caret RANGE and `workspace:*` to
+ * the dependency's EXACT version. For a RUNTIME dependency on a package this
+ * repo does not yet publish, a range is the whole problem back again — a
+ * customer's install resolves any later version published from the other
+ * repository, while the Rust that emits payloads stays pinned in-tree. That is
+ * the emit/store skew both halves of this guard exist to prevent, arriving
+ * through the packed tarball rather than through the manifest.
+ *
+ * So the remediation must recommend the exact-packing form. This test is here
+ * because the text said `workspace:^` for exactly as long as the tree did, and
+ * fixing the tree without fixing the advice leaves the linter teaching the
+ * mistake it just caught.
+ */
+describe('the remediation names a specifier that packs exact', () => {
+  const remediation = () =>
+    report({
+      offenders: [
+        {
+          file: 'packages/cli/package.json',
+          table: 'dependencies',
+          dependency: '@cipherstash/eql',
+          spec: '3.0.5',
+        },
+      ],
+      ids: ['packages/cli/package.json [dependencies] @cipherstash/eql'],
+      exempted: [],
+      missingSources: [],
+      missingExpected: [],
+      missingDeclarers: [],
+      staleExemptions: [],
+      unreasonedExemptions: [],
+    }).err ?? ''
+
+  it('tells the reader to write `workspace:*`', () => {
+    expect(remediation()).toContain('"@cipherstash/eql": "workspace:*"')
+  })
+
+  it('does not hand back the range-packing form as the fix', () => {
+    const npmAdvice = remediation()
+      .split('\n')
+      .filter((line) => line.includes('@cipherstash/eql'))
+      .join('\n')
+    expect(npmAdvice).not.toContain('workspace:^')
   })
 })

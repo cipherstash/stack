@@ -30,19 +30,63 @@ name: "Test EQL"
 # — it yields the empty string, and the suite would fail at client construction
 # in every shard instead of saying what was missing.
 #
-# NB: NO path filter at on: level. A workflow skipped by a path/branch filter
+# NB: NO path filter on `pull_request`. A workflow skipped by a path filter
 # leaves its required checks stuck Pending and blocks merge. Relevance is
-# computed by the `changes` job and applied per-job via `if:` instead.
+# computed by the `changes` job and applied per-job via `if:` instead. `push`
+# carries one because nothing waits on a push run, so a skipped one costs
+# nothing — and the two lists are kept identical by
+# `scripts/__tests__/eql-workflow-filters.test.mjs`.
 #
-# NB: NO `push:` trigger, and that is not the same as "runs rarely". This runs
-# on `pull_request` — every PR, unfiltered, with relevance applied per job — and
-# on `merge_group`. Under a required merge queue, push-to-main validation is
-# redundant: the queue already validated the exact merge commit, and branch
-# protection blocks direct pushes. (Resolves the design's ambiguous "light jobs
-# only on push:main" sanity net by dropping the trigger entirely.)
+# WHY `push` AND `schedule` EXIST. The port arrived with `merge_group` as the
+# ONLY route to the full PG 14-17 matrix, and with no `push:` at all,
+# justified by "under a required merge queue, push-to-main validation is
+# redundant". Every clause of that premise is false in this repository, checked
+# against the live API: there is no merge queue on `main`
+# (`mergeQueue(branch:"main")` -> null), `main` is not protected
+# (`branches/main/protection` -> 404), and the active ruleset carries no
+# `required_status_checks` rule, so `ci-required` is required by nothing.
+# `merge_group` is an event this repo never emits — so PG 14, 15 and 16 were
+# tested NEVER, and nothing EQL-related ran after a merge. Both failures are
+# invisible, because an event that is never delivered produces no runs to
+# notice the absence of. Pinned by
+# `scripts/__tests__/eql-matrix-triggers.test.mjs`, which refuses to count
+# `merge_group` or `workflow_dispatch` as reachable.
+#
+# WHY THIS SHAPE, and not "full matrix on every push". The expensive axis is
+# the fan-out, not the trigger: PG 14-17 x 2 shards is roughly double the
+# runner-minutes of the PR lane. So the cost is bounded by the FILTER rather
+# than by running a smaller matrix — a `push` run only starts when the merge
+# actually touched EQL, which is a small fraction of merges to `main`, and when
+# it does start the extra PG versions are the entire reason to run it at all.
+# Attributing a PG14 break to the merge that caused it is worth much more than
+# finding it detached at 04:00 the next morning. `schedule` then backstops the
+# case the filter cannot see (a dependency or toolchain moving underneath a
+# tree nobody touched), and both use the same full matrix.
+#
+# `pull_request` keeps the fast lane — PG17 x 4 shards, every PR, unfiltered,
+# with relevance applied per job — because latency is what matters there and
+# PG17 catches all but version-specific breakage.
 on:
   pull_request: {}
-  merge_group: {}            # required pre-merge gate; runs the full matrix
+  push:
+    branches: [main]
+    # Identical to the `relevant:` filter in the `changes` job below. GitHub
+    # Actions has no YAML anchors, so the list is written twice; the guard named
+    # above fails a one-sided edit.
+    paths:
+      - ".github/workflows/test-eql.yml"
+      - ".github/actions/require-cs-secrets/**"
+      - "packages/eql/src/**"
+      - "packages/eql/tests/**"
+      - "packages/eql/tasks/**"
+      - "packages/eql/crates/**"
+      - "packages/eql/packages/**"
+      - "packages/eql/Cargo.toml"
+      - "packages/eql/Cargo.lock"
+      - "packages/eql/mise.toml"
+  schedule:
+    - cron: "0 4 * * *"      # 04:00 UTC daily; full matrix, off the merge path
+  merge_group: {}            # inert today (no queue); kept so enabling one works
   workflow_dispatch: {}      # manual runs use the PR shape (PG17 x 4 shards)
 
 env:
@@ -88,7 +132,10 @@ jobs:
           persist-credentials: false
 
       # Diff ONLY on pull_request, where a base ref is well-defined. On
-      # merge_group/workflow_dispatch the base ref is absent and the filter errors/empties.
+      # push/schedule/merge_group/workflow_dispatch there is no base ref to
+      # diff against and the filter errors or empties — so those events take the
+      # hardcoded default in the step below instead. `push` does not need it:
+      # its `on:`-level `paths:` has already decided whether the run happens.
       - id: f
         if: github.event_name == 'pull_request'
         uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
@@ -99,32 +146,53 @@ jobs:
           # `packages/stack/src/**` and friends instead — firing the whole
           # matrix on changes that cannot affect EQL, and (worse) NOT firing on
           # EQL's own `src/`, since nothing at the repo root is called that.
+          #
+          # Identical to the `push` `paths:` list at the top of this file — the
+          # same question asked of two mechanisms GitHub gives no way to share.
+          # `scripts/__tests__/eql-workflow-filters.test.mjs` compares them, and
+          # also fails any entry here that matches no tracked file (a dead
+          # `packages/eql/sql/**` sat in this list from the port: there is no
+          # such directory, so it narrowed the filter by exactly nothing while
+          # reading as coverage).
           filters: |
             relevant:
               - ".github/workflows/test-eql.yml"
+              - ".github/actions/require-cs-secrets/**"
               - "packages/eql/src/**"
-              - "packages/eql/sql/**"
               - "packages/eql/tests/**"
               - "packages/eql/tasks/**"
               - "packages/eql/crates/**"
+              - "packages/eql/packages/**"
               - "packages/eql/Cargo.toml"
               - "packages/eql/Cargo.lock"
               - "packages/eql/mise.toml"
 
       # Explicit default (not `|| 'true'`, which trips GitHub's inconsistent
-      # treatment of the string 'false'). merge_group/workflow_dispatch never
-      # read this value — their downstream `if:` branch ignores `relevant` — but
-      # default true is the safe value regardless.
+      # treatment of the string 'false'). push/schedule/merge_group/dispatch
+      # never run the filter above — it needs a base ref that only a pull
+      # request has — so they take the default, and `push` is already narrowed
+      # by its own `on:`-level `paths:`.
+      #
+      # The event arrives through `env:`, not through a `${{ }}` interpolated
+      # into the body. That is what lets
+      # `scripts/__tests__/eql-matrix-triggers.test.mjs` EXECUTE this script
+      # once per event and read back what it wrote, rather than reimplementing
+      # the branch and agreeing with a rewritten one by luck.
       - id: r
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          FILTER_RELEVANT: ${{ steps.f.outputs.relevant }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "relevant=${{ steps.f.outputs.relevant }}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            echo "relevant=$FILTER_RELEVANT" >> "$GITHUB_OUTPUT"
           else
             echo "relevant=true" >> "$GITHUB_OUTPUT"
           fi
 
   # Pure bash; no checkout/toolchain. Derives the PG-version + shard fan-out
-  # from the event: PR -> PG17 x 4 shards; merge queue -> PG 14-17 x 2 shards.
+  # from the event: PR and manual dispatch -> PG17 x 4 shards (latency lane);
+  # everything else -> PG 14-17 x 2 shards (coverage lane).
   setup:
     name: "Compute matrix"
     runs-on: blacksmith-16vcpu-ubuntu-2204
@@ -141,33 +209,61 @@ jobs:
       shard-total: ${{ steps.cfg.outputs.shard_total }}
       shards: ${{ steps.cfg.outputs.shards }}
     steps:
+      # Written as an exclusion, and that direction is the point: the FULL
+      # matrix is the default, so a trigger added later lands in the coverage
+      # lane rather than in the fast one. The version of this that enumerated
+      # `merge_group` as the only full-matrix event is why PG 14-16 went
+      # untested for the life of the port — an allowlist fails shut on the case
+      # nobody enumerated, and here "shut" meant three Postgres versions.
+      #
+      # The event arrives through `env:` rather than an interpolated `${{ }}`
+      # so `scripts/__tests__/eql-matrix-triggers.test.mjs` can run this script
+      # against each event and read the real fan-out back out of
+      # `$GITHUB_OUTPUT`.
       - id: cfg
+        env:
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [ "${{ github.event_name }}" = "merge_group" ]; then
-            echo 'pg=[14,15,16,17]' >> "$GITHUB_OUTPUT"
-            echo 'shard_total=2'    >> "$GITHUB_OUTPUT"
-            echo 'shards=[1,2]'     >> "$GITHUB_OUTPUT"
-          else
-            echo 'pg=[17]'          >> "$GITHUB_OUTPUT"
-            echo 'shard_total=4'    >> "$GITHUB_OUTPUT"
-            echo 'shards=[1,2,3,4]' >> "$GITHUB_OUTPUT"
-          fi
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request|workflow_dispatch)
+              # Latency lane: PG17 only, split four ways.
+              echo 'pg=[17]'          >> "$GITHUB_OUTPUT"
+              echo 'shard_total=4'    >> "$GITHUB_OUTPUT"
+              echo 'shards=[1,2,3,4]' >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              # Coverage lane: every version tests/docker-compose.yml ships a
+              # container for. Kept in step by the guard named above.
+              echo 'pg=[14,15,16,17]' >> "$GITHUB_OUTPUT"
+              echo 'shard_total=2'    >> "$GITHUB_OUTPUT"
+              echo 'shards=[1,2]'     >> "$GITHUB_OUTPUT"
+              ;;
+          esac
 
-  # Compile the test binaries ONCE. Runs in the queue and on workflow_dispatch
-  # always, and on PRs only when relevant files changed (docs-only PRs never pay
-  # the ~4-min compile).
+  # Compile the test binaries ONCE. Runs on every non-PR event, and on PRs only
+  # when relevant files changed (docs-only PRs never pay the ~4-min compile).
   build-archive:
     name: "Build test archive"
     needs: [changes]
     # This repo is PUBLIC and accepts fork PRs (the approval policy only gates
     # first-time contributors). build-archive is the sole holder of the CS_*
     # credentials below, so it must never run on a fork PR. The trailing clause
-    # restricts it to push / workflow_dispatch / same-repo branch PRs; the
-    # downstream test/validate shards `needs:` it, so they skip on fork PRs too.
+    # is the only thing that skips it: a fork pull request. Every other event —
+    # push, schedule, merge_group, dispatch, and a same-repo branch PR — runs;
+    # the downstream test/validate shards `needs:` it, so they skip on fork PRs
+    # too.
+    #
+    # Both clauses are written as exclusions rather than as a list of admitted
+    # events. An allowlist fails SHUT on the event nobody enumerated, and the
+    # `push`/`schedule` triggers added above would have skipped every job in
+    # this file while the run still reported success. Pinned by
+    # `scripts/__tests__/eql-matrix-triggers.test.mjs`; the fork clause itself
+    # is compared verbatim across all eight copies in the repo by
+    # `scripts/__tests__/workflow-dispatch-job-conditions.test.mjs`.
     if: >-
-      (github.event_name == 'merge_group'
-       || github.event_name == 'workflow_dispatch'
-       || (github.event_name == 'pull_request' && needs.changes.outputs.relevant == 'true'))
+      (github.event_name != 'pull_request'
+       || needs.changes.outputs.relevant == 'true')
       && (github.event_name != 'pull_request'
           || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: blacksmith-16vcpu-ubuntu-2204
@@ -248,10 +344,10 @@ jobs:
   test:
     name: "Shard PG${{ matrix.postgres-version }} ${{ matrix.shard }}/${{ needs.setup.outputs.shard-total }}"
     needs: [changes, setup, build-archive]
+    # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
-      github.event_name == 'merge_group'
-      || github.event_name == 'workflow_dispatch'
-      || (github.event_name == 'pull_request' && needs.changes.outputs.relevant == 'true')
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     strategy:
       fail-fast: false
@@ -308,10 +404,10 @@ jobs:
   validate:
     name: "Validate (Postgres ${{ matrix.postgres-version }})"
     needs: [changes, setup]
+    # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
-      github.event_name == 'merge_group'
-      || github.event_name == 'workflow_dispatch'
-      || (github.event_name == 'pull_request' && needs.changes.outputs.relevant == 'true')
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     strategy:
       fail-fast: false
@@ -350,17 +446,25 @@ jobs:
           mise run docs:validate:documented-sql
 
       - name: Clean-DB v3 install smoke (Postgres ${{ matrix.postgres-version }})
+        # `set -euo pipefail` for the reason spelled out on `matrix-coverage`'s
+        # inventory step and enforced by
+        # `scripts/__tests__/workflow-run-fail-fast.test.mjs`: the workflow-wide
+        # `shell: bash {0}` drops GitHub's implicit `-eo pipefail`, so without
+        # it a failing BUILD on the first line is discarded and the smoke test
+        # on the second decides the step — i.e. the install smoke would pass by
+        # installing the previous build.
         run: |
+          set -euo pipefail
           mise run clean && mise run build
           mise run test:clean_install_v3
 
   schema:
     name: "JSON Schema validation"
     needs: [changes]
+    # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
-      github.event_name == 'merge_group'
-      || github.event_name == 'workflow_dispatch'
-      || (github.event_name == 'pull_request' && needs.changes.outputs.relevant == 'true')
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -384,10 +488,10 @@ jobs:
   rust-crates:
     name: "Rust workspace crates"
     needs: [changes]
+    # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
-      github.event_name == 'merge_group'
-      || github.event_name == 'workflow_dispatch'
-      || (github.event_name == 'pull_request' && needs.changes.outputs.relevant == 'true')
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -409,8 +513,13 @@ jobs:
       # standalone `test:lint` step that the removed per-version test job ran.
       - name: Compile, lint and test the Rust workspace crates
         run: |
-          export active_rust_toolchain=$(rustup show active-toolchain | cut -d' ' -f1)
-          rustup component add --toolchain ${active_rust_toolchain} rustfmt clippy
+          set -euo pipefail
+          # Assignment on its own, not `export x=$(…)`: errexit ignores the
+          # substitution's status when the line starts with a command word, so
+          # the `export` form would swallow a failing `rustup show` even under
+          # `set -e`.
+          active_rust_toolchain=$(rustup show active-toolchain | cut -d' ' -f1)
+          rustup component add --toolchain "${active_rust_toolchain}" rustfmt clippy
           mise run test:crates
 
       # Freshness gate for the eql-types codegen output: regenerate the
@@ -433,10 +542,10 @@ jobs:
   codegen:
     name: "Encrypted-domain codegen"
     needs: [changes]
+    # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
-      github.event_name == 'merge_group'
-      || github.event_name == 'workflow_dispatch'
-      || (github.event_name == 'pull_request' && needs.changes.outputs.relevant == 'true')
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -463,10 +572,10 @@ jobs:
   self-contained-v3:
     name: "eql_v3 self-containment"
     needs: [changes]
+    # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
-      github.event_name == 'merge_group'
-      || github.event_name == 'workflow_dispatch'
-      || (github.event_name == 'pull_request' && needs.changes.outputs.relevant == 'true')
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -497,10 +606,10 @@ jobs:
   matrix-coverage:
     name: "Matrix coverage inventory"
     needs: [changes]
+    # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
-      github.event_name == 'merge_group'
-      || github.event_name == 'workflow_dispatch'
-      || (github.event_name == 'pull_request' && needs.changes.outputs.relevant == 'true')
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -537,10 +646,10 @@ jobs:
   splinter:
     name: "Supabase splinter"
     needs: [changes]
+    # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
-      github.event_name == 'merge_group'
-      || github.event_name == 'workflow_dispatch'
-      || (github.event_name == 'pull_request' && needs.changes.outputs.relevant == 'true')
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     env:
       POSTGRES_VERSION: "17"
@@ -554,16 +663,40 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
+      # This job looks Rust-free and is not. `test:splinter` is a bash script
+      # that pipes SQL through psql, but the build step below runs `mise run
+      # build`, and `tasks/build.sh` shells out to `cargo run -q -p eql-codegen`
+      # twice — so without this restore the job cold-compiles that crate and its
+      # dependency tree on every run, beside nine sibling jobs that restore a
+      # warm `target/` for the same workspace. The only symptom is a slower run.
+      #
+      # `save-if: false` for the reason `build-archive` records: it is the sole
+      # designated saver of this shared key. Both halves are asserted by
+      # scripts/__tests__/eql-suite-ci.test.mjs, which finds the cargo by
+      # closing over the mise task graph rather than grepping this file — the
+      # string `cargo` appears nowhere in it.
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+          shared-key: sqlx-tests
+          save-if: false
       - name: Setup database
         run: |
           mise run postgres:up postgres-${POSTGRES_VERSION} --extra-args "--detach --wait"
       - name: Build and install EQL
         run: |
+          set -euo pipefail
           mise run clean && mise run --output prefix --force build
-          cat release/cipherstash-encrypt.sql \
-            | docker exec -i postgres-${POSTGRES_VERSION} \
-                psql -v ON_ERROR_STOP=1 \
-                  postgresql://cipherstash:password@localhost/cipherstash -f-
+          # Redirected, not piped. `psql -v ON_ERROR_STOP=1` exits at the first
+          # SQL error, which under `pipefail` leaves a `cat` writing into a
+          # closed pipe and reports the step as 141 — the SIGPIPE hazard
+          # `scripts/__tests__/workflow-grep-q-pipelines.test.mjs` documents.
+          # The redirect is the same bytes with no writer to signal, so the
+          # step reports psql's own status and says which statement failed.
+          docker exec -i postgres-${POSTGRES_VERSION} \
+            psql -v ON_ERROR_STOP=1 \
+              postgresql://cipherstash:password@localhost/cipherstash -f- \
+            < release/cipherstash-encrypt.sql
       - name: Run splinter
         run: |
           mise run --output prefix test:splinter --postgres ${POSTGRES_VERSION}
@@ -672,10 +805,11 @@ jobs:
   e2e:
     name: "e2e property suite (fresh encryption)"
     needs: [changes, setup]
+    # Exclusion, not an allowlist — see the note on `build-archive`, which
+    # carries the same two clauses for the same two reasons.
     if: >-
-      (github.event_name == 'merge_group'
-       || github.event_name == 'workflow_dispatch'
-       || (github.event_name == 'pull_request' && needs.changes.outputs.relevant == 'true'))
+      (github.event_name != 'pull_request'
+       || needs.changes.outputs.relevant == 'true')
       && (github.event_name != 'pull_request'
           || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: blacksmith-16vcpu-ubuntu-2204
@@ -739,6 +873,7 @@ jobs:
     steps:
       - name: Assert all required jobs passed or were skipped
         run: |
+          set -euo pipefail
           results='${{ join(needs.*.result, ' ') }}'
           echo "needed results: $results"
           for r in $results; do

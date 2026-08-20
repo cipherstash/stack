@@ -263,6 +263,35 @@ jobs:
       - name: Lint — EQL resolves in-tree, not from a registry
         run: pnpm run lint:eql-pins
 
+      # THE SAME GATE release.yml RUNS, one merge earlier.
+      #
+      # `changeset publish` publishes every public workspace package whose
+      # version is absent from npm — with no dependency ordering, and a failed
+      # publish returns a result rather than throwing, so it does not stop the
+      # siblings that depend on it. A merge can therefore ARM a release that
+      # cannot succeed, and this repository has done it. `@cipherstash/eql` is
+      # published from cipherstash/encrypt-query-language, so a version bumped
+      # in this workspace cannot be published from here — while `packages/cli`
+      # and `packages/stack-prisma` carry it in RUNTIME dependencies, so pnpm
+      # packs whatever version this tree holds into both tarballs. Bump it past
+      # what the registry carries and both ship a range no published version
+      # satisfies, in tarballs that publish fine. That is what the hand-applied
+      # 3.0.5 bump did; upstream has since released 3.0.5 and it cleared on its
+      # own. The CONDITION is what this step is for — the verdict is whatever it
+      # prints on the day.
+      #
+      # The gate in release.yml blocks the publish, which is the load-bearing
+      # half. This step is the half that says so BEFORE the merge rather than
+      # after it, which is the difference between a red pull request and a red
+      # main. Same script, same verdict, no second copy to drift.
+      #
+      # It talks to the registry, in a job that already installs the whole
+      # workspace from it — so this adds a class of dependency the job does not
+      # already have, only a few more requests. A lookup that fails for any
+      # reason other than a 404 throws rather than being read as "published".
+      - name: Lint — this tree can be published, and installed
+        run: pnpm run release:gate
+
       - name: Test — lint script self-tests
         run: pnpm run test:scripts
 

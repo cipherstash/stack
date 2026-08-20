@@ -559,8 +559,9 @@ describe('the fork-PR guard keeps its meaning', () => {
       // Every context, then narrowed to the ones this workflow can actually be
       // in. A workflow with no `push:` trigger is never evaluated on a push, so
       // requiring `push: true` there would be asserting about a run that cannot
-      // happen — and `test-eql.yml` deliberately has no `push:` (its merge queue
-      // already validated the exact merge commit).
+      // happen. (`test-eql.yml` carried no `push:` when this was written,
+      // justified by a merge queue that does not exist in this repository; it
+      // has one now, and this narrowing simply picks the trigger up.)
       //
       // `workflow_dispatch` is the exception and stays unconditional: this file
       // exists because a job silently skipped on a dispatch that WAS declared,

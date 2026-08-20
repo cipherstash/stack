@@ -104,3 +104,69 @@ describe('the root `version` script chains the propagation', () => {
     ).toBeLessThan(script.indexOf(VERSION_SCRIPT))
   })
 })
+
+/**
+ * The same hook, reached the way a human reaches it.
+ *
+ * `release.yml` is not the only caller. `AGENTS.md` documents the release flow
+ * as `pnpm changeset:version`, and that alias was a bare `changeset version` —
+ * so a maintainer following this repo's own documentation reproduced exactly
+ * the skew the hook exists to prevent: npm bumped, the crate and the bundled
+ * SQL left behind. The workflow test above passes throughout, because the
+ * workflow is not what ran.
+ *
+ * The rule is stated over the SCRIPTS rather than over the one name, so a
+ * second convenience alias added later is held to it without anyone
+ * remembering this file exists. Two changeset commands are wrapped by this
+ * repo, and both wrappers are load-bearing:
+ *
+ *   * `changeset version` must chain `sync-lockstep-versions.mjs`, or the
+ *     lockstep bump reaches npm and nothing else.
+ *   * `changeset publish` must build first, or it packs whatever `dist/` the
+ *     working tree happens to hold — which for a clean clone is nothing.
+ *
+ * A script that wraps neither (`pnpm run version`, `pnpm run release`) is not
+ * matched and needs no exemption: it does not contain the bare command.
+ */
+describe('no root script invokes a bare changesets command', () => {
+  const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8'))
+  const scripts = Object.entries(pkg.scripts ?? {})
+
+  /** Scripts whose body runs `changeset <command>`, other than via `pnpm run`. */
+  const invoking = (command) =>
+    scripts.filter(([, body]) =>
+      new RegExp(`(^|[\\s;&|(])changeset\\s+${command}\\b`).test(body),
+    )
+
+  it('finds the wrappers it is checking', () => {
+    // The floor. Both rules below are "for every script that runs X…", and a
+    // repo where nothing matches passes them having checked nothing — which is
+    // also what a rename of the changesets CLI would produce.
+    expect(invoking('version').length).toBeGreaterThan(0)
+    expect(invoking('publish').length).toBeGreaterThan(0)
+  })
+
+  it('chains the lockstep sync onto every `changeset version`', () => {
+    const offenders = invoking('version')
+      .filter(([, body]) => !body.includes(VERSION_SCRIPT))
+      .map(([name, body]) => `${name}: ${body}`)
+    expect(
+      offenders,
+      `A root script runs \`changeset version\` without ${VERSION_SCRIPT}. It bumps the npm ` +
+        'package and leaves packages/eql/crates/eql-bindings/Cargo.toml, every Cargo.lock that ' +
+        'records it, and the bundled SQL at the previous version. Route the alias through ' +
+        '`pnpm run version` instead of calling the changesets CLI directly.',
+    ).toEqual([])
+  })
+
+  it('builds before every `changeset publish`', () => {
+    const offenders = invoking('publish')
+      .filter(([, body]) => !/\brun build\b/.test(body))
+      .map(([name, body]) => `${name}: ${body}`)
+    expect(
+      offenders,
+      'A root script runs `changeset publish` without building first, so it packs whatever ' +
+        '`dist/` the working tree happens to hold. Route the alias through `pnpm run release`.',
+    ).toEqual([])
+  })
+})

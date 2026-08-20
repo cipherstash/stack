@@ -278,6 +278,67 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # REQUIRED BY `version:` BELOW, and nothing in this file says so without
+      # this comment — which is why there is also a test. `pnpm run version` is
+      # `changeset version && node scripts/sync-lockstep-versions.mjs`, and that
+      # script ends in `execFileSync('mise', ['run',
+      # 'release:prepare_bindings_assets', …])`, which reaches
+      # `packages/eql/tasks/build.sh` and two `cargo run -p eql-codegen` calls.
+      # mise is NOT preinstalled on GitHub's ubuntu images, so without this step
+      # the hook dies with ENOENT — AFTER `changeset version` has already
+      # rewritten every manifest and changelog, in a job holding
+      # `contents: write`. Asserted by
+      # scripts/__tests__/workflow-mise-setup.test.mjs.
+      #
+      # It only fires on the branch where `.changeset/` is non-empty (the
+      # Version Packages branch), which is why a publish rehearsal never
+      # exercised it.
+      #
+      # `working_directory: packages/eql` for the reason test-eql.yml records at
+      # length: mise reads config from the current directory and its PARENTS, so
+      # an action running at the repo root never sees `packages/eql/mise.toml`.
+      # It would install nothing and leave the config untrusted, and the first
+      # `mise run` fails with "Config files … are not trusted" — which reads as
+      # a toolchain problem rather than a path one. That file is also where the
+      # Rust toolchain comes from (`[tools] rust`), so this step is the cargo
+      # setup as well; there is deliberately no second one.
+      #
+      # `cache: false` IS NOT THE DEFAULT — jdx/mise-action caches by default,
+      # and scripts/lint-no-workflow-caching.mjs forbids a GitHub Actions cache
+      # restore anywhere an artifact gets published. A poisoned entry here would
+      # execute in the job that holds the npm publishing credential.
+      #
+      # `add_shims_to_path: false` IS LOAD-BEARING, and it is the input a
+      # copy-paste from test-eql.yml would not carry. `packages/eql/mise.toml`
+      # pins `node = "22"` under `[tools]`, and mise's shim directory is
+      # PREPENDED to PATH for every later step — so with the default `true`,
+      # mise's own Node would shadow the one `actions/setup-node` installed, and
+      # `changeset publish` would shell out to that Node's bundled npm 10.x
+      # instead of the `npm@^11.5.1` installed above. OIDC trusted publishing
+      # requires >= 11.5.1 and fails with E404 below it, which is the exact
+      # failure the two comments above this step exist to prevent. `mise run`
+      # resolves its own toolchain internally, so nothing here needs the shims.
+      #
+      # `env: false` for a smaller version of the same argument: the default
+      # exports that file's `[env]` block — `DATABASE_URL`, `POSTGRES_PASSWORD`
+      # and friends, all pointed at a Postgres this job does not have — into
+      # GITHUB_ENV for every subsequent step.
+      #
+      # SHA-pinned, matching .github/actions/build-ffi-binding/action.yml:
+      # mise-action executes third-party code in the job that publishes, so a
+      # mutable `@v4` would let that code change with no commit here. The pin is
+      # the same v4 commit test-eql.yml uses. Dependabot moves the pin and the
+      # trailing comment together (.github/dependabot.yml covers github-actions).
+      - name: Install mise (the lockstep version hook shells out to it)
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: false
+          working_directory: packages/eql
+          add_shims_to_path: false
+          env: false
+
       - name: Publish to npm
         id: changesets
         uses: changesets/action@v1.9.0

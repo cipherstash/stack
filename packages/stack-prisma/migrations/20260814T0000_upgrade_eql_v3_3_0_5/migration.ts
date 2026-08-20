@@ -4,8 +4,9 @@
  *
  * 3.0.5 renames `eql_v3.ste_vec_contains` to `eql_v3.jsonb_document_contains`,
  * consolidating the last `ste_vec_*`-named public object into the `jsonb_*`
- * family. The operators are unchanged; only callers that invoke the function
- * by name (Supabase / PostgREST) are affected.
+ * family. Nothing breaks: the operators are unchanged, the PostgREST-facing
+ * `jsonb_contains` / `jsonb_contained_by` are unchanged, and the old name ships
+ * on as a deprecated delegating alias for both overloads.
  *
  * This is a separate invariant-only edge from the v3 baseline. A database
  * that already recorded the baseline (and/or 3.0.2 / 3.0.4) invariant must
@@ -76,9 +77,10 @@ export default class M extends Migration {
             sql: "SELECT to_regtype('eql_v3.query_json') IS NOT NULL",
           },
           {
-            // The rename this release carries: the old `ste_vec_contains`
-            // name is gone, so assert the new one is what the reinstall
-            // left behind.
+            // The rename this release carries. Asserts the NEW name exists,
+            // which is what distinguishes a 3.0.5 bundle from a 3.0.4 one —
+            // deliberately not "the old name is absent", since 3.0.5 keeps it
+            // as a deprecated alias and both names are present after this.
             description:
               'verify the renamed eql_v3.jsonb_document_contains function exists',
             sql: "SELECT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'eql_v3' AND p.proname = 'jsonb_document_contains')",

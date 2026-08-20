@@ -66,8 +66,16 @@ overrides:
   # #133 GHSA-qjx8-664m-686j — js-cookie attribute injection
   'js-cookie@<3.0.7': '^3.0.7'
   # #102 GHSA-qx2v-qp2m-jg93 — postcss XSS via unescaped </style>
-  # CVE-2026-69153 — bumped floor to 8.5.23, the next patched release.
-  'postcss@<8.5.23': '^8.5.23'
+  # #167 GHSA-r28c-9q8g-f849 / CVE-2026-73646 (HIGH) — path traversal reading
+  # arbitrary .map files via attacker-controlled sourceMappingURL when `from`
+  # is unset. #176 GHSA-fxqj-rqcc-2cmp / CVE-2026-69153 is its incomplete-fix
+  # follow-up (patched 8.5.23).
+  #
+  # THE SELECTOR IS THE LESSON. `postcss@<8.5.10` stopped matching once the tree
+  # resolved 8.5.14, so the override went inert and a vulnerable version
+  # installed with the entry still sitting here looking like a fix. Keep the
+  # ceiling AHEAD of the patched floor, not at it.
+  'postcss@<8.5.26': '^8.5.26'
   # #145 GHSA-fx2h-pf6j-xcff, #146 GHSA-v6wh-96g9-6wx3 — vite dev server (Windows)
   'vite@>=7.0.0 <7.3.5': '~7.3.5'
   # #142 GHSA-g7r4-m6w7-qqqr — esbuild dev server. 0.28.1 is the FIRST patched
@@ -83,27 +91,44 @@ overrides:
   # once rather than leaving two open after only clearing the first.
   'brace-expansion@<5.0.9': '5.0.9'
   # #153 GHSA-h67p-54hq-rp68 / CVE-2026-53550 — js-yaml merge-key DoS, 3.x line.
-  # Originally pinned to 3.15.0 (the only patched 3.x release at the time,
-  # installed with the one-off `--config.minimum-release-age=0` bypass per
-  # SKILL.md). Superseded by GHSA-5p4m-2wfm-xmqj, a further quadratic
-  # merge-key advisory with fix floor >=3.15.1 — pinned to the matured 3.15.1
-  # (published 2026-07-31).
+  # #189 GHSA-5p4m-2wfm-xmqj / CVE-2026-59870 (HIGH) — quadratic-CPU DoS in
+  # `!!omap` duplicate-key detection; patched in 3.15.1.
+  #
+  # The previous `<3.15.0` selector had been overtaken by its own fix: the tree
+  # resolved exactly 3.15.0, so nothing matched and nothing lifted it to 3.15.1.
+  # Reached only through `read-yaml-file`.
   'js-yaml@<3.15.1': '3.15.1'
   # #152 GHSA-h67p-54hq-rp68 / CVE-2026-53550 — js-yaml merge-key DoS, 4.x line.
-  # Originally pinned to the matured 4.2.0. Superseded by GHSA-5p4m-2wfm-xmqj,
-  # the same further advisory as the 3.x line above, with fix floor >=4.3.1 —
-  # pinned to the matured 4.3.1 (published 2026-07-31), which also matches the
-  # root `js-yaml` devDependency range (^4.3.1) this override was masking.
-  # Kept exact because a past js-yaml upgrade broke changesets — bump this
-  # deliberately and re-verify `changeset status`/`version` when you do.
+  # #155 GHSA-52cp-r559-cp3m / CVE-2026-59869 (HIGH, patched 4.3.0) and
+  # #188 GHSA-5p4m-2wfm-xmqj / CVE-2026-59870 (HIGH, patched 4.3.1).
+  #
+  # THIS ENTRY WAS ENFORCING THE VULNERABILITY. Unlike the two overtaken
+  # selectors above, `>=4.0.0 <5` kept matching — so an exact pin written to FIX
+  # an advisory was holding the tree at 4.2.0 and blocking 4.3.1. An exact pin
+  # inside a still-matching range is the worst of the three shapes: it cannot
+  # self-heal and it cannot be fixed by Dependabot.
+  #
+  # The "a past js-yaml upgrade broke changesets" caution is DISCHARGED for this
+  # bump, checked rather than assumed: @changesets/parse declares
+  # `js-yaml: ^4.1.1`, which 4.3.1 satisfies; 4.2.0 and 4.3.1 have identical
+  # `dependencies` (argparse ^2.0.1) and `exports`, no `engines`, no `main`;
+  # 4.3.0/4.3.1 are security backports only (a `maxTotalMergeKeys` loader option
+  # and the `!!omap` fix), with no API removal on the 4.x line. The breaking
+  # churn — grouped constant exports, `MERGE_KEY` removal, mandatory `identify`
+  # — is all on 5.x, which the `<5` ceiling already excludes. Verified after the
+  # bump with `changeset status` and a `changeset version` dry run.
+  #
+  # Kept exact so a future 4.x regression cannot arrive silently; the ceiling
+  # stays `<5`. Consumers: @changesets/parse and json-schema-to-typescript.
   'js-yaml@>=4.0.0 <5': '4.3.1'
-  # Started as a cooldown-regression guard (re-resolving the lockfile let
-  # minimumReleaseAge demote ajv's fast-uri to 3.1.2, un-fixing
-  # GHSA-4c8g-83qw-93j6 / CVE-2026-13676 host confusion). Since bumped past
-  # two further High advisories on the same transitive dep:
-  # GHSA-v2hh-gcrm-f6hx / CVE-2026-16221 (host confusion via literal backslash
-  # authority delimiter, fix >=3.1.4) and GHSA-7p8r-x3mc-p8w7 / CVE-2026-18446
-  # (fix >=3.1.5). Pinned to the matured 3.1.5 (published 2026-07-31).
+  # Cooldown-regression guard AND two live advisories. Re-resolving the lockfile
+  # let minimumReleaseAge demote ajv's fast-uri to 3.1.2, un-fixing
+  # GHSA-4c8g-83qw-93j6 / CVE-2026-13676 (host confusion via failed IDN
+  # canonicalization) — hence a pin rather than a floor.
+  #
+  # But 3.1.3 was itself overtaken: #158 (HIGH) needs 3.1.4 and #175 (HIGH)
+  # needs 3.1.5, so the exact pin was enforcing a vulnerable version — the same
+  # shape as the js-yaml 4.x entry above. Reached through ajv.
   'fast-uri@<3.1.5': '3.1.5'
   # GHSA-f88m-g3jw-g9cj — sharp's vendored libvips carries multiple High
   # libvips CVEs (CVE-2026-33327, CVE-2026-33328, CVE-2026-35590,

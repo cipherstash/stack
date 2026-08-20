@@ -167,41 +167,45 @@ functions. `col = term` and `eql_v3.eq(col, term)` are equivalent.
 Nothing in the matrix above is authored by the client library. The domains,
 operators, CHECKs, and extractor functions all come from the **EQL SQL
 bundle** that `stash eql install` applies — published as the `@cipherstash/eql`
-package and developed at
-[`cipherstash/encrypt-query-language`](https://github.com/cipherstash/encrypt-query-language).
-The CLI pins an exact version, so a database is only ever on one bundle.
+package, whose source lives in
+[`cipherstash/stack`](https://github.com/cipherstash/stack) under
+`packages/eql/`.
+
+A given `stash` release carries one resolved bundle, so the same CLI version
+always installs the same SQL. A *database*, though, is on whatever bundle was
+last applied to it, and different databases drift apart until each is upgraded
+— and the Prisma Next adapter never goes through the CLI at all, installing
+and upgrading the bundle pinned by `@cipherstash/stack-prisma` through its own
+migrations. Ask the database (3 below) rather than the client.
 
 That makes every table in this skill a snapshot of a *versioned* surface.
 **Go to EQL for the precise current types rather than trusting these tables
 alone** — in this order:
 
-1. **The EQL skill**, when it is installed. It ships from
-   `encrypt-query-language` alongside the bundle it documents, so it tracks the
-   version you actually have, and it is authoritative for domain names, query
-   domains, operators, and payload shapes.
-2. **The generated TypeScript types** in `@cipherstash/eql`. Every per-domain
+1. **The generated TypeScript types** in `@cipherstash/eql`. Every per-domain
    type's doc comment names its domain and that domain's operators — the
    `TextEqQuery` type, for instance, is documented as the
    `eql_v3.query_text_eq` equality query operand admitting `=` and `<>`. They
    are generated from the same Rust `eql-bindings` commit as the SQL bundle,
    so the two cannot disagree.
-3. **The install SQL**, shipped at
+2. **The install SQL**, shipped at
    `@cipherstash/eql/dist/sql/cipherstash-encrypt.sql` (under `node_modules`,
    wherever your package manager resolves it). Its `CREATE OPERATOR`
    statements are the last word on which overloads exist — each names its
    `LEFTARG`, `RIGHTARG`, and implementing `FUNCTION`.
-4. **The database itself**, which is the runtime truth and the right check
+3. **The database itself**, which is the runtime truth and the right check
    when a query is failing right now:
 
    ```sql
    SELECT eql_v3.version();   -- which bundle is actually installed
    ```
 
-The `stash` CLI depends on `@cipherstash/eql`, so 2 and 3 are available in any
+The `stash` CLI depends on `@cipherstash/eql`, so 1 and 2 are available in any
 project that has the CLI installed, with no database connection required.
 
-If an operator is absent from all of these, that is an upstream question, not
-a client-library one — the operator set lives in `encrypt-query-language`.
+If an operator is absent from all of these, that is an EQL question, not a
+client-library one — the operator set is defined by the SQL bundle in
+`packages/eql/`.
 
 ## Binding Parameters: The Driver Rules
 
@@ -475,15 +479,17 @@ SELECT column_name, domain_schema, domain_name
 
 Upstream:
 
-- **The EQL skill**, shipped from
-  [`cipherstash/encrypt-query-language`](https://github.com/cipherstash/encrypt-query-language)
-  — the authority for the current domain, operator, and payload-shape surface.
-  Consult it in preference to the tables here whenever it is installed; those
-  tables are a snapshot, it tracks the bundle.
-- [`cipherstash/encrypt-query-language`](https://github.com/cipherstash/encrypt-query-language)
+- [`cipherstash/stack`](https://github.com/cipherstash/stack), `packages/eql/`
   — EQL itself: the definition of every domain, operator, CHECK, and extractor
-  named in this skill, shipped as `@cipherstash/eql`. Operator gaps and
-  domain-level bugs belong there, not against the client library.
+  named in this skill. Operator gaps and domain-level bugs are EQL issues
+  rather than client-library ones, and they are filed here, against
+  `cipherstash/stack`. The tables in this skill are a snapshot; the generated
+  types and install SQL in `@cipherstash/eql` (see [Where this surface is
+  defined](#where-this-surface-is-defined)) track the bundle you actually have.
+- [`cipherstash/encrypt-query-language`](https://github.com/cipherstash/encrypt-query-language)
+  — the repository EQL is still *published* from, shipped as
+  `@cipherstash/eql`, pending a trusted-publishing cutover. Source and issues
+  moved to `cipherstash/stack`; nothing else here points at this repository.
 - [`cipherstash/proxy`](https://github.com/cipherstash/proxy) — CipherStash
   Proxy, the alternative to this entire skill: plaintext SQL, encryption on
   the wire.

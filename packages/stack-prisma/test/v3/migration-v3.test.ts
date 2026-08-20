@@ -93,12 +93,30 @@ function descriptorMigration(dirName: string) {
   return migration
 }
 
-// The published migration set, with the two content-addressed facts this
-// suite freezes for each: the full artefact identity (`migrationHash`) and
-// the sha256 of the EQL install SQL baked into its `ops.json`. Both are
-// FROZEN literals tied to each migration's own release — a future EQL bump
-// ADDS an entry and never edits an existing one. See the 'every published
+// The published migration set, with the three content-addressed facts this
+// suite freezes for each: the full artefact identity (`migrationHash`), the
+// sha256 of the EQL install SQL baked into its `ops.json`, and `createdAt`.
+// All are FROZEN literals tied to each migration's own release — a future EQL
+// bump ADDS an entry and never edits an existing one. See the 'every published
 // migration is frozen' and 'lockstep' tests below for the rules.
+//
+// WHY `createdAt` IS PINNED SEPARATELY, given `migrationHash` already covers
+// it. `computeMigrationHash` hashes the whole metadata object minus the hash
+// field, so a moved `createdAt` does change `migrationHash` — but it surfaces
+// as "this digest moved", which on a deliberate re-emit is the expected
+// message. The reviewer re-pins the digest and the moved field rides along
+// unmentioned.
+//
+// It must not ride along, because `createdAt` is not provenance. It is the
+// PRIMARY TIE-BREAK KEY for neighbour ordering in the migrator's path search
+// (`createdAt → to → migrationHash`, see `findPath` /
+// `findPathWithInvariants`), so moving it can change which path a database
+// walks when more than one is available. The baseline has been re-emitted
+// twice with new bytes and kept its original `createdAt` both times, which is
+// correct and deliberate: re-emitting the same logical migration must not
+// shift its position in the graph. A review has already asked for it to be
+// moved forward to "match the new bytes" — that is the change this pin exists
+// to make someone argue for rather than make by accident.
 const PUBLISHED_MIGRATIONS = [
   {
     dirName: CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
@@ -116,24 +134,27 @@ const PUBLISHED_MIGRATIONS = [
     // The baseline is the ONE migration whose baked digest tracks the
     // pinned release rather than a historical one, which is why the
     // lockstep test below has something to match.
+    createdAt: '2026-07-14T20:10:24.325Z',
     migrationHash:
-      '9447442333b673ae16de04c899138479d59191764a7bb2c97c170d6b143effa4',
+      'bad30c9b3d2ad383d853cda0209eb14a031f2d107ba9cbdfb26b95d58e9aff37',
     installSqlSha256:
-      '7ad9c9f884083979c1cf483ff4f68d2569257d6c6fab15d9e4586f4c93703cad',
+      'accde0030b8f356af616175640635f67661d51aa900624b7fb0fb059e8115048',
   },
   {
     dirName: CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
     metadata: v3Upgrade305Metadata,
     ops: v3Upgrade305Ops,
+    createdAt: '2026-08-14T00:45:14.365Z',
     migrationHash:
-      '4050dee89eee023fd846d6bfe93cffccdba0e5aae67af25c722b3c7027c9bf57',
+      '8c47bd1d54ef49028c230466d9145d1d74bdaef12981a81230e3c10a266d4e93',
     installSqlSha256:
-      '7ad9c9f884083979c1cf483ff4f68d2569257d6c6fab15d9e4586f4c93703cad',
+      'accde0030b8f356af616175640635f67661d51aa900624b7fb0fb059e8115048',
   },
   {
     dirName: CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME,
     metadata: v3Upgrade304Metadata,
     ops: v3Upgrade304Ops,
+    createdAt: '2026-07-28T10:44:32.390Z',
     migrationHash:
       '94a2ce9c8e973b7a635d92571ff642429e6ebfb7a4600291ee626201e110e13e',
     installSqlSha256:
@@ -143,6 +164,7 @@ const PUBLISHED_MIGRATIONS = [
     dirName: CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
     metadata: v3UpgradeMetadata,
     ops: v3UpgradeOps,
+    createdAt: '2026-07-20T11:40:17.876Z',
     migrationHash:
       '0c56fe6b641c5839c82be72317b2af165fb574b0dcdfc4aa6b50425e371a9d0f',
     installSqlSha256:
@@ -224,6 +246,19 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
         m.installSqlSha256,
       )
       expect(sql).toContain('EQL v3 schema creation')
+
+      // Asserted after the digest, and separately from it, so the failure
+      // reads as "a path-selection key moved" rather than as one more digest
+      // to re-pin. `createdAt` is the primary tie-break in the migrator's
+      // neighbour ordering (`createdAt → to → migrationHash`), NOT a record of
+      // when these bytes were written — the baseline has been re-emitted twice
+      // and correctly kept its original value both times. See the note on
+      // PUBLISHED_MIGRATIONS for why moving it is a decision to argue, not a
+      // tidy-up to wave through.
+      expect(
+        m.metadata.createdAt,
+        `${m.dirName} createdAt — this is the migrator's path-ordering key, not provenance. A re-emit keeps it; only a genuinely NEW migration gets a new one.`,
+      ).toBe(m.createdAt)
     }
   })
 
@@ -252,10 +287,13 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     expect(PUBLISHED_MIGRATIONS.map((m) => m.installSqlSha256)).toContain(
       releaseManifest.installSqlSha256,
     )
-    // @cipherstash/eql resolves in-tree (`workspace:^` → packages/eql), and
+    // @cipherstash/eql resolves in-tree (`workspace:*` → packages/eql), and
     // @cipherstash/stack encodes the v3 domain types against the same
-    // release. Bump this marker together with the dependency and the new
-    // migration.
+    // release. The `*` is load-bearing in the PACKED tarball, not here: pnpm
+    // rewrites it to the exact version, so a consumer installs 3.0.5 and not
+    // any later 3.0.x published from cipherstash/encrypt-query-language while
+    // these baked migrations stay frozen. Bump this marker together with the
+    // dependency and the new migration.
     expect(releaseManifest.eqlVersion).toBe('3.0.5')
   })
 
@@ -421,14 +459,42 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     expect(runtimeUpgrade.ops).toEqual(v3Upgrade305Ops)
   })
 
-  it('the 3.0.5 upgrade edge carries the renamed jsonb_document_contains', () => {
+  it('the 3.0.5 upgrade edge carries the rename AND the deprecated aliases', () => {
     // The behavioural content of this release: `eql_v3.ste_vec_contains`
-    // became `eql_v3.jsonb_document_contains`. Assert against the baked
-    // bytes, so an upgrade edge that ships a bundle without the rename
-    // (the skew this whole lockstep scheme exists to catch) fails here.
+    // became `eql_v3.jsonb_document_contains`, and the old name was KEPT as
+    // a deprecated delegating alias. Assert against the baked bytes, so an
+    // upgrade edge shipping a bundle without the rename — the skew this
+    // whole lockstep scheme exists to catch — fails here.
+    //
+    // This asserted `not.toContain('ste_vec_contains')` until upstream
+    // 142f41d8 restored both overloads as aliases, which is what makes 3.0.5
+    // a genuinely non-breaking patch: the operators never moved, the
+    // PostgREST-facing `jsonb_contains`/`jsonb_contained_by` never moved, and
+    // now direct callers of the old name keep working too. Asserting absence
+    // would now fail against the published bundle — so assert the SHAPE
+    // instead: exactly two alias definitions, both delegating to the new
+    // name, and no remaining call site that still routes through the old one.
     const sql = firstExecuteSql(v3Upgrade305Ops)
     expect(sql).toContain('eql_v3.jsonb_document_contains')
-    expect(sql).not.toContain('ste_vec_contains')
+
+    const aliasDefs = sql.match(/CREATE FUNCTION eql_v3\.ste_vec_contains\(/g)
+    expect(aliasDefs).toHaveLength(2)
+
+    // Delegation, not a second copy of the implementation: every alias body
+    // is a one-line SELECT through the new name. A duplicated body would
+    // drift from the real implementation with nothing to catch it.
+    for (const body of sql.matchAll(
+      /CREATE FUNCTION eql_v3\.ste_vec_contains\([^)]*\)[\s\S]*?\$\$([\s\S]*?)\$\$/g,
+    )) {
+      expect(body[1]).toContain('eql_v3.jsonb_document_contains')
+    }
+
+    // Both are marked deprecated in the database itself, not only in the
+    // generated docs — `COMMENT ON FUNCTION` is what a DBA inspecting the
+    // schema actually sees.
+    expect(
+      sql.match(/COMMENT ON FUNCTION eql_v3\.ste_vec_contains\(/g),
+    ).toHaveLength(2)
   })
 
   it('pins the head ref at the unchanged hash with all invariants', () => {

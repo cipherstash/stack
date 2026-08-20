@@ -21,6 +21,24 @@ on:
       - 'packages/protect-ffi/Cargo.lock'
       - 'packages/protect-ffi/mise.toml'
       - 'packages/protect-ffi/package.json'
+      # Out of that package, and compiled by every check below all the same:
+      # `crates/protect-ffi/Cargo.toml` carries
+      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so
+      # `cargo test`, `cargo fmt --check` and both clippy passes build that
+      # tree. A change there can break this job in a PR touching no file under
+      # packages/protect-ffi at all. The workspace root manifest comes with it:
+      # cargo reads it for the crate's workspace context, so a
+      # `<key>.workspace = true` added to eql-bindings becomes a compile input
+      # with no other trace. Same two entries as the native cache key in
+      # `.github/actions/build-ffi-binding`, which is where the list is derived
+      # from — pinned by
+      # scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
+      #
+      # This is the only copy: `push:` below is `branches: [main]` with no
+      # `paths:`, so main runs a superset of what PRs run (recorded as a
+      # deliberate asymmetry in workflow-paths-filter-parity.test.mjs).
+      - 'packages/eql/crates/**'
+      - 'packages/eql/Cargo.toml'
       - '.github/workflows/tests-rust.yml'
   push:
     branches: [main]

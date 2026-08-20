@@ -602,6 +602,36 @@ async fn v3_jsonb_raw_helpers_contains_and_contained_by(pool: PgPool) -> anyhow:
     Ok(())
 }
 
+/// Both deprecated `ste_vec_contains` overloads remain callable over a real
+/// CipherStash-generated SteVec payload and agree with their replacement.
+#[sqlx::test(fixtures(path = "../fixtures", scripts("v3_ste_vec")))]
+async fn v3_jsonb_legacy_ste_vec_contains_aliases(pool: PgPool) -> anyhow::Result<()> {
+    let (legacy_raw, current_raw, legacy_typed, current_typed): (bool, bool, bool, bool) =
+        sqlx::query_as(
+            "SELECT \
+               eql_v3.ste_vec_contains(\
+                 eql_v3.ste_vec(payload::jsonb), \
+                 (eql_v3.ste_vec(payload::jsonb))[1]), \
+               eql_v3.jsonb_document_contains(\
+                 eql_v3.ste_vec(payload::jsonb), \
+                 (eql_v3.ste_vec(payload::jsonb))[1]), \
+               eql_v3.ste_vec_contains(payload, payload), \
+               eql_v3.jsonb_document_contains(payload, payload) \
+             FROM fixtures.v3_ste_vec \
+             ORDER BY id \
+             LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await?;
+
+    assert!(legacy_raw, "legacy raw alias must find a real sv entry");
+    assert_eq!(legacy_raw, current_raw);
+    assert!(legacy_typed, "legacy typed alias must contain itself");
+    assert_eq!(legacy_typed, current_typed);
+
+    Ok(())
+}
+
 /// `eql_v3.ord_term(jsonb_entry)` has no `has_*` companion: absence of an
 /// `op` term is signalled by the extractor returning SQL NULL (which a
 /// functional btree index stores and comparisons skip). Dedicated

@@ -30,7 +30,29 @@
  *
  * npm: the specifier starts with `workspace:`. Nothing else — `link:` and
  * `file:` would resolve in-tree too, but they bypass the version range that
- * `workspace:^` exists to express, and no manifest here uses them.
+ * the workspace protocol exists to express, and no manifest here uses them.
+ * `catalog:`
+ * is NOT given Cargo's `workspace = true` treatment: a catalog entry holds a
+ * version range, so the deferral has no in-tree answer to defer to. Both ends
+ * are flagged — the manifest that says `catalog:` and the catalog entry itself.
+ *
+ * ## What gets read
+ *
+ * Every `Cargo.toml` and `package.json`, and `pnpm-workspace.yaml`. The last
+ * one is not a package manifest and no manifest scan would reach it, which is
+ * exactly why it matters: pnpm 10 reads `overrides` and `catalogs` from there,
+ * so an entry in that file moves what actually installs while every
+ * `workspace:` specifier in the tree still reads correct. The file says so
+ * itself, in a comment above its own `overrides:` block.
+ *
+ * Three shapes get read that a name-keyed scan walks straight past, and all
+ * three install `@cipherstash/eql` from the registry:
+ *
+ *   - a NESTED npm override — `{"overrides": {"pkg": {"@cipherstash/eql": …}}}`
+ *   - a SELECTOR key — `@cipherstash/eql@<3.0.5`, `pkg>@cipherstash/eql`, or
+ *     a yarn `resolutions` key carrying a glob prefix
+ *   - an ALIAS, where the package name is on the right-hand side —
+ *     `{"eql-legacy": "npm:@cipherstash/eql@3.0.4"}`
  *
  * ## Exemptions
  *
@@ -48,21 +70,31 @@
  *
  * - `0` — every declaration is in-tree or explicitly exempt.
  * - `1` — it ran and found a registry pin. Fix the manifest.
- * - `2` — it could not do its job: the scan matched less than it must, or an
- *   exemption is excusing nothing. Both mean the linter's own configuration is
- *   wrong, which is a different thing to go and fix, and must never be mistaken
- *   for a pass.
+ * - `2` — it could not do its job: a source it depends on would not read, the
+ *   scan matched less than it must, or an exemption is excusing nothing. All
+ *   three mean the linter's own configuration is wrong, which is a different
+ *   thing to go and fix, and must never be mistaken for a pass.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, relative, resolve, sep } from 'node:path'
+import { basename, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+import yaml from 'js-yaml'
 
 const REPO_ROOT = resolve(import.meta.dirname, '..')
 
 /** The Cargo crate and the npm package, and the manifest each lives in. */
 const CARGO_DEPENDENCY = 'eql-bindings'
 const NPM_DEPENDENCY = '@cipherstash/eql'
+
+/**
+ * The one file pnpm resolves dependencies from that is not a package manifest.
+ *
+ * Only the repo root's copy is read by pnpm, but the walk collects every one it
+ * finds: a nested copy is inert to pnpm and therefore the perfect place to
+ * stage a pin, and reading it costs nothing.
+ */
+const WORKSPACE_FILE = 'pnpm-workspace.yaml'
 
 /**
  * Directories the walk does not descend into.
@@ -105,6 +137,22 @@ export const EXPECTED_DECLARERS = [
 ]
 
 /**
+ * Non-manifest sources the scan must have read AND understood, as the floor on
+ * those sources — the same idea as `EXPECTED_DECLARERS`, for a file that
+ * declares nothing today.
+ *
+ * `EXPECTED_DECLARERS` cannot cover `pnpm-workspace.yaml`, because a clean tree
+ * has no EQL entry in it: "found no declarations there" is the correct answer
+ * and is also what a renamed file, a `SKIP_DIRS` entry that swallowed it, or a
+ * YAML parse failure produce. Those are indistinguishable by their result, so
+ * this list checks the antecedent instead: the file was opened and it parsed.
+ *
+ * Held as a minimum, checked with exit 2, for the reason in the header: a scan
+ * that lost a source has not passed.
+ */
+export const EXPECTED_SOURCES = [WORKSPACE_FILE]
+
+/**
  * Declarations allowed to name a registry version, each with the reason.
  *
  * Keep this at one entry if at all possible. Every entry is a place the two
@@ -124,7 +172,17 @@ export const EXEMPT_DECLARATIONS = new Map([
   ],
 ])
 
-/** Every `Cargo.toml` and `package.json` under `root`, repo-relative. */
+/** Files this scan reads, by name. */
+const SCANNED_FILES = new Set(['Cargo.toml', 'package.json', WORKSPACE_FILE])
+
+/**
+ * Every `Cargo.toml`, `package.json` and `pnpm-workspace.yaml` under `root`,
+ * repo-relative.
+ *
+ * The workspace file is here because pnpm reads dependency resolution from it —
+ * see the header. It is not a package manifest, and a scan built around package
+ * manifests is exactly what would leave it out.
+ */
 export function manifestFiles(root) {
   const found = []
   const walk = (abs) => {
@@ -132,7 +190,7 @@ export function manifestFiles(root) {
       if (entry.isDirectory()) {
         if (SKIP_DIRS.has(entry.name)) continue
         walk(join(abs, entry.name))
-      } else if (entry.name === 'Cargo.toml' || entry.name === 'package.json') {
+      } else if (SCANNED_FILES.has(entry.name)) {
         found.push(join(abs, entry.name))
       }
     }
@@ -243,18 +301,127 @@ export function cargoDeclarations(file, source) {
   return found
 }
 
+const escapeForRegExp = (literal) =>
+  literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * Whether an entry KEY names the npm package.
+ *
+ * Not an equality test, because none of the four ways to write the key is a
+ * bare package name:
+ *
+ *     @cipherstash/eql@<3.0.5     a version selector (npm and pnpm)
+ *     some-pkg>@cipherstash/eql   pnpm's scoped override
+ *     a/b/@cipherstash/eql        a resolutions path — and, with yarn's `**`
+ *                                 glob in front of it, a resolutions glob
+ *
+ * So: the name, at the end of the key, preceded by nothing or by a `/` or `>`
+ * boundary, optionally followed by one `@<range>`. The boundary is what keeps
+ * `@cipherstash/eql-extras` from matching — a prefix match here would make the
+ * linter cry wolf, and the fix for a linter that cries wolf is always to
+ * weaken it.
+ */
+const NPM_KEY = new RegExp(
+  `(^|[>/])${escapeForRegExp(NPM_DEPENDENCY)}(@[^@]*)?$`,
+)
+
+/**
+ * Whether an entry VALUE aliases the npm package — `"eql-legacy":
+ * "npm:@cipherstash/eql@3.0.4"`.
+ *
+ * The package name is on the RIGHT-hand side here, so a scan that looks only at
+ * keys never sees it: the manifest declares no dependency called
+ * `@cipherstash/eql` and installs one anyway.
+ */
+const NPM_ALIAS = new RegExp(
+  `^(?:npm|workspace|jsr):${escapeForRegExp(NPM_DEPENDENCY)}(?:@|$)`,
+)
+
+/**
+ * Classify an npm specifier. Only `workspace:` is in-tree — see the header.
+ *
+ * `catalog:` is called out separately from a plain version because the fix is
+ * different: the pin it defers to lives in `pnpm-workspace.yaml`, not in the
+ * manifest the reader is looking at.
+ */
+function classifyNpmSpec(spec) {
+  if (spec.startsWith('workspace:')) return { inTree: true, form: 'workspace' }
+  if (spec.startsWith('npm:')) return { inTree: false, form: 'alias' }
+  if (spec.startsWith('catalog:')) return { inTree: false, form: 'catalog' }
+  return { inTree: false, form: 'version' }
+}
+
+/**
+ * Walk one dependency/override/catalog table, recursively, collecting every
+ * entry that names the npm package by either side.
+ *
+ * Recursion is for npm's nested overrides, which are a TREE and not a flat map:
+ *
+ *     { "overrides": { "some-pkg": { "@cipherstash/eql": "3.0.4" } } }
+ *
+ * Reading only the top level of `overrides` finds nothing there and reports the
+ * tree clean, while the install resolves 3.0.4 from the registry.
+ *
+ * YAML scalars are coerced: `'@cipherstash/eql': 3.0` parses as the NUMBER 3
+ * under YAML 1.1, and dropping non-strings would drop exactly that pin.
+ */
+function collectNpmEntries(file, table, entries, found) {
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) return
+  for (const [key, value] of Object.entries(entries)) {
+    const named = NPM_KEY.test(key)
+    const scalar =
+      typeof value === 'string' ||
+      typeof value === 'number' ||
+      typeof value === 'boolean'
+        ? String(value)
+        : null
+
+    if (scalar !== null) {
+      if (named || NPM_ALIAS.test(scalar)) {
+        found.push({
+          file,
+          // Always the package, never the key it was found under: both
+          // hand-maintained lists are keyed `<file> :: <dependency>`, so an
+          // alias filed under its alias name could never be exempted.
+          dependency: NPM_DEPENDENCY,
+          table,
+          key,
+          spec: scalar,
+          ...classifyNpmSpec(scalar),
+        })
+      }
+      continue
+    }
+    if (!value || typeof value !== 'object') continue
+    // npm's nested form: `.` pins the package the key names, and the sibling
+    // keys are overrides scoped beneath it.
+    if (named && typeof value['.'] === 'string') {
+      found.push({
+        file,
+        dependency: NPM_DEPENDENCY,
+        table,
+        key,
+        spec: value['.'],
+        ...classifyNpmSpec(value['.']),
+      })
+    }
+    collectNpmEntries(file, `${table}.${key}`, value, found)
+  }
+}
+
 /**
  * Every declaration of `NPM_DEPENDENCY` in one `package.json`.
  *
  * `resolutions` and the two `overrides` spellings are read alongside the four
  * dependency tables. An override is the quietest way to reintroduce the skew:
- * it moves what actually gets installed while every `workspace:^` in the tree
+ * it moves what actually gets installed while every `workspace:` specifier
  * still reads correct.
  *
  * A manifest that does not parse contributes nothing rather than throwing —
  * `package.json` syntax is checked by every other tool in the repo, and a
  * linter that dies on someone else's broken file reports its own crash instead
- * of the thing it was asked about.
+ * of the thing it was asked about. The manifests that matter are floored by
+ * `EXPECTED_DECLARERS`, so one of them going unreadable is exit 2 anyway.
  */
 export function npmDeclarations(file, source) {
   let manifest
@@ -263,6 +430,7 @@ export function npmDeclarations(file, source) {
   } catch {
     return []
   }
+  if (!manifest || typeof manifest !== 'object') return []
   const tables = [
     ['dependencies', manifest.dependencies],
     ['devDependencies', manifest.devDependencies],
@@ -274,32 +442,94 @@ export function npmDeclarations(file, source) {
   ]
   const found = []
   for (const [table, entries] of tables) {
-    const spec = entries?.[NPM_DEPENDENCY]
-    if (typeof spec !== 'string') continue
-    found.push({
-      file,
-      dependency: NPM_DEPENDENCY,
-      table,
-      spec,
-      inTree: spec.startsWith('workspace:'),
-      form: spec.startsWith('workspace:') ? 'workspace' : 'version',
-    })
+    collectNpmEntries(file, table, entries, found)
   }
   return found
 }
 
-/** Every declaration of either dependency under `root`. */
-export function scanTree(root) {
+/**
+ * `pnpm-workspace.yaml` as an object, or `null` if it would not read.
+ *
+ * `null` is a first-class answer here rather than an empty result, because
+ * "parsed, and declares nothing" is the normal state of this file and must not
+ * be spelled the same way as "did not parse". `EXPECTED_SOURCES` turns the
+ * difference into exit 2.
+ *
+ * A YAML library is used, unlike `scripts/release-gate.mjs`, which hand-parses
+ * the same file with node builtins and says why in its header: that script runs
+ * in the publishing gate on every push to main, where an import obliges a cold
+ * full-workspace install. This one runs as an ordinary lint job that has
+ * already installed, and it has to read `overrides` keys and nested `catalogs`
+ * maps rather than one flat sequence of scalars.
+ */
+export function parseWorkspace(source) {
+  let config
+  try {
+    config = yaml.load(source)
+  } catch {
+    return null
+  }
+  return config && typeof config === 'object' && !Array.isArray(config)
+    ? config
+    : null
+}
+
+/**
+ * Every declaration of `NPM_DEPENDENCY` in a parsed `pnpm-workspace.yaml`.
+ *
+ * `overrides` is the one that matters — pnpm 10 reads it from here, and the
+ * file's own comment says a top-level npm-format `overrides` block in
+ * `package.json` is silently ignored, which makes this the ONLY place a
+ * workspace-wide pin can be written and take effect.
+ *
+ * `catalog` / `catalogs` are read for the same reason one level along: every
+ * manifest keeps saying `catalog:repo` while the version behind it moves.
+ */
+function workspaceConfigDeclarations(file, config) {
   const found = []
-  for (const rel of manifestFiles(root)) {
-    const source = readFileSync(join(root, rel), 'utf8')
-    found.push(
-      ...(rel.endsWith('Cargo.toml')
-        ? cargoDeclarations(rel, source)
-        : npmDeclarations(rel, source)),
-    )
+  collectNpmEntries(file, 'overrides', config.overrides, found)
+  collectNpmEntries(file, 'catalog', config.catalog, found)
+  const catalogs = config.catalogs
+  if (catalogs && typeof catalogs === 'object' && !Array.isArray(catalogs)) {
+    for (const [name, entries] of Object.entries(catalogs)) {
+      collectNpmEntries(file, `catalogs.${name}`, entries, found)
+    }
   }
   return found
+}
+
+/** `workspaceConfigDeclarations`, from source text. Empty if it would not parse. */
+export function workspaceDeclarations(file, source) {
+  const config = parseWorkspace(source)
+  return config ? workspaceConfigDeclarations(file, config) : []
+}
+
+/**
+ * Every declaration of either dependency under `root`, plus the files the scan
+ * successfully read AND understood.
+ *
+ * The second half is what `EXPECTED_SOURCES` is measured against. A
+ * `pnpm-workspace.yaml` that does not parse is deliberately left out of it: it
+ * contributes no declarations, which is indistinguishable from a file with no
+ * EQL entry in it, and one of those two is a linter that stopped working.
+ */
+export function scanTree(root) {
+  const declarations = []
+  const sources = []
+  for (const rel of manifestFiles(root)) {
+    const source = readFileSync(join(root, rel), 'utf8')
+    if (rel.endsWith('Cargo.toml')) {
+      declarations.push(...cargoDeclarations(rel, source))
+    } else if (basename(rel) === WORKSPACE_FILE) {
+      const config = parseWorkspace(source)
+      if (!config) continue
+      declarations.push(...workspaceConfigDeclarations(rel, config))
+    } else {
+      declarations.push(...npmDeclarations(rel, source))
+    }
+    sources.push(rel)
+  }
+  return { declarations, sources }
 }
 
 /** The id a declaration is named by, in both hand-maintained lists. */
@@ -315,8 +545,9 @@ export function lint({
   root = REPO_ROOT,
   exemptions = EXEMPT_DECLARATIONS,
   expected = EXPECTED_DECLARERS,
+  sources = EXPECTED_SOURCES,
 } = {}) {
-  const declarations = scanTree(root)
+  const { declarations, sources: read } = scanTree(root)
   const ids = declarations.map(declarationId)
   const registryPinned = declarations
     .filter((d) => !d.inTree)
@@ -352,6 +583,10 @@ export function lint({
       .filter(([, reason]) => !String(reason ?? '').trim())
       .map(([id]) => id),
     missingExpected: expected.filter((id) => !ids.includes(id)),
+    // The same idea one level down: not "an expected declaration is missing"
+    // but "a file this scan depends on was never successfully read". A source
+    // that declares nothing today cannot be floored any other way.
+    missingSources: sources.filter((rel) => !read.includes(rel)),
   }
 }
 
@@ -365,7 +600,7 @@ export function lint({
  * exercises the SAME mapping the CLI uses, without a harness that rewrites this
  * file's source in order to make a branch reachable.
  *
- * Ordering is deliberate: both exit-2 branches are checked before offenders.
+ * Ordering is deliberate: every exit-2 branch is checked before offenders.
  * A scan that lost its subject cannot be trusted to have found every offender
  * either, and reporting "3 registry pins" from a broken scan sends the reader
  * to fix the wrong thing.
@@ -374,6 +609,21 @@ export function report(result) {
   const sawIds = result.ids.length
     ? result.ids.map((id) => `  ${id}`).join('\n')
     : '  (nothing — the scan matched no manifest)'
+
+  if (result.missingSources.length > 0) {
+    return {
+      code: 2,
+      err:
+        'This linter could not read a file it resolves dependencies from:\n\n' +
+        result.missingSources.map((rel) => `  ${rel}`).join('\n') +
+        '\n\nEither the file is gone, or it did not parse. Both leave the scan\n' +
+        'with nothing to say about it — and "no EQL entry in there" is also\n' +
+        'what a clean tree looks like, so this cannot be reported as a pass.\n' +
+        `pnpm reads \`overrides\` and \`catalogs\` from ${WORKSPACE_FILE}, which\n` +
+        'is the one place a workspace-wide pin can be written while every\n' +
+        '`workspace:` specifier in the tree still reads correct.\n',
+    }
+  }
 
   if (result.missingExpected.length > 0) {
     return {
@@ -430,7 +680,9 @@ export function report(result) {
       result.offenders
         .map(
           (o) =>
-            `  ${o.file}${o.table ? ` [${o.table}]` : ''}\n      ${o.dependency} = ${o.spec}`,
+            // The KEY, not the dependency name: for an alias or a selector they
+            // differ, and the key is the string the reader has to go and find.
+            `  ${o.file}${o.table ? ` [${o.table}]` : ''}\n      ${o.key ?? o.dependency} = ${o.spec}`,
         )
         .join('\n') +
       `\n\n\`${CARGO_DEPENDENCY}\` (the Rust that EMITS EQL payloads) and\n` +
@@ -440,7 +692,19 @@ export function report(result) {
       'silently — it compiles, it passes CI, and it fails in a database.\n\n' +
       'Resolve it in-tree instead:\n\n' +
       `    ${CARGO_DEPENDENCY} = { path = "../../../eql/crates/eql-bindings" }\n` +
-      `    "${NPM_DEPENDENCY}": "workspace:^"\n\n` +
+      `    "${NPM_DEPENDENCY}": "workspace:*"\n\n` +
+      '`workspace:*` and not `workspace:^`: both resolve in-tree and both\n' +
+      'satisfy this linter, but pnpm packs them differently into a published\n' +
+      "tarball — `*` becomes the dependency's EXACT version, `^` becomes a\n" +
+      'caret RANGE. For a RUNTIME dependency on a package this repo does not\n' +
+      'yet publish, that range is the skew back again: a customer resolves\n' +
+      'whatever later version the other repository publishes, while the Rust\n' +
+      'that emits payloads stays pinned here. `workspace:^` is fine for a\n' +
+      'devDependency, which no consumer installs.\n\n' +
+      `If the offender is in ${WORKSPACE_FILE} or in an \`overrides\` block, the\n` +
+      'fix is to delete it: an override exists to move what installs, and there\n' +
+      'is nothing in-tree for it to move to that the workspace protocol does\n' +
+      'not already say.\n\n' +
       'If the manifest genuinely cannot take an in-tree specifier, add it to\n' +
       'EXEMPT_DECLARATIONS in this script WITH the reason. There is one such\n' +
       'case today and it is written up there.\n',
@@ -456,7 +720,7 @@ function main() {
     process.exit(2)
   }
 
-  // An argv override is a fixture run: the two hand-maintained lists describe
+  // An argv override is a fixture run: the three hand-maintained lists describe
   // THIS repo, so applying them to another tree would fail on every invocation
   // for a reason that has nothing to do with the tree being scanned.
   const scanningRepo = root === REPO_ROOT
@@ -465,6 +729,7 @@ function main() {
       root,
       expected: scanningRepo ? EXPECTED_DECLARERS : [],
       exemptions: scanningRepo ? EXEMPT_DECLARATIONS : new Map(),
+      sources: scanningRepo ? EXPECTED_SOURCES : [],
     }),
   )
   if (out) console.log(out)

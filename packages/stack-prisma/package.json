@@ -78,7 +78,7 @@
 		"clean": "rm -rf dist coverage .tmp-output"
 	},
 	"dependencies": {
-		"@cipherstash/eql": "workspace:^",
+		"@cipherstash/eql": "workspace:*",
 		"@cipherstash/stack": "workspace:*",
 		"@prisma/orm-family-sql": "0.17.0",
 		"@prisma/orm-framework": "0.17.0",
