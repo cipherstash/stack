@@ -130,6 +130,20 @@ export const messages = {
     migrationDrizzleKitFailed: (versionCmd: string) =>
       `drizzle-kit's own output is above. Reproduce it directly with \`${versionCmd}\` to see the failure without stash in the way.`,
     /**
+     * The runner never started — `spawnSync` set `error` (ENOENT and friends),
+     * so neither stream carries anything and no drizzle-kit output exists to
+     * point at.
+     *
+     * This is the one case where "check that it is installed" was the right
+     * advice all along, so it comes back here rather than being lost with the
+     * blanket version of it (#924). It names the runner too: `pnpm exec
+     * drizzle-kit` fails with ENOENT when *pnpm* is missing, not drizzle-kit —
+     * a missing drizzle-kit gets as far as running and exits non-zero with its
+     * own message, which the other arms report.
+     */
+    migrationDrizzleKitNotLaunched: (command: string, versionCmd: string) =>
+      `\`${command}\` could not be started, so drizzle-kit never ran and printed nothing. Check that ${command} and drizzle-kit are both installed and on PATH: \`${versionCmd}\`.`,
+    /**
      * drizzle-kit ran, read `drizzle.config.ts`, and the config itself blew up
      * on a missing `DATABASE_URL`.
      *

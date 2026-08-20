@@ -1414,6 +1414,10 @@ describe('eqlMigrationCommand — Drizzle', () => {
     ['DATABASE_URL is required', true],
     ['invalid connection string for DATABASE_URL: undefined scheme', false],
     ['DATABASE_URL: password authentication failed for user "app"', false],
+    // `no` reads as strongly as `missing` to a regex, and appears constantly in
+    // ordinary prose — a classifier that fires on it inverts the diagnosis.
+    ['No other issues found, DATABASE_URL looks valid', false],
+    ['No schema changes detected for DATABASE_URL', false],
   ])('classifies %j as missing-URL=%s', async (stderr, missing) => {
     spawnMock.mockReturnValue({ status: 1, stdout: '', stderr })
     await expect(
@@ -1450,11 +1454,36 @@ describe('eqlMigrationCommand — Drizzle', () => {
       eqlMigrationCommand({ drizzle: true, out: join(tmp, 'drizzle') }),
     ).rejects.toBeInstanceOf(CliExit)
     expect(clack.log.error).toHaveBeenCalledWith('spawnSync pnpm ENOENT')
-    expect(clack.log.info).toHaveBeenCalledWith(
-      expect.stringContaining(
-        'drizzle-kit generate --custom --name=install-eql',
-      ),
-    )
+    // The one case where "check that it is installed" is the right advice:
+    // nothing ran, so there is no drizzle-kit output to look at and nothing to
+    // reproduce. Pointing at either would send the user in a circle.
+    const info = String(vi.mocked(clack.log.info).mock.calls.at(-1)?.[0])
+    expect(info).toContain('could not be started')
+    expect(info).toContain('drizzle-kit --version')
+    expect(info).not.toContain('output is above')
+  })
+
+  /**
+   * A spawn failure that DID capture output is still a spawn failure: the
+   * runner never handed off to drizzle-kit, so the install guidance wins over
+   * both the reproduce-it line and the missing-URL classifier.
+   */
+  it('prefers the not-launched guidance over anything in the streams', async () => {
+    spawnMock.mockReturnValue({
+      status: null,
+      stdout: '',
+      stderr: 'DATABASE_URL is not set',
+      error: Object.assign(new Error('spawnSync pnpm ENOENT'), {
+        code: 'ENOENT',
+      }),
+    })
+
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out: join(tmp, 'drizzle') }),
+    ).rejects.toBeInstanceOf(CliExit)
+    const info = String(vi.mocked(clack.log.info).mock.calls.at(-1)?.[0])
+    expect(info).toContain('could not be started')
+    expect(info).not.toContain('could not read DATABASE_URL')
   })
 
   it('falls back to the exit status when there is no stderr or spawn error', async () => {

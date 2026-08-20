@@ -107,17 +107,23 @@ export function parseReportedMigrationPath(
  * drizzle-kit's accurate diagnosis with remediation that contradicts it.
  *
  * Deliberately conservative: an unrecognised phrasing falls through to the
- * generic follow-up, which is never wrong — drizzle-kit's own output is
- * printed directly above either way. Note that bare `undefined` is NOT a
- * trigger; `invalid connection string for DATABASE_URL: undefined scheme`
- * is a malformed URL, not a missing one.
+ * generic follow-up, which stays safe because drizzle-kit's own output is
+ * printed directly above either way. Two things that are NOT triggers:
+ *
+ * - bare `undefined` AFTER the variable name — `invalid connection string for
+ *   DATABASE_URL: undefined scheme` is a malformed URL, not a missing one;
+ * - the word `no`, which reads as strongly as `missing` to a regex but is far
+ *   more common in ordinary prose (`No other issues found, DATABASE_URL looks
+ *   valid`). Only unambiguous absence phrasings belong in that alternation.
  */
 export function looksLikeMissingDatabaseUrl(output: string): boolean {
   return (
     /DATABASE_URL\W{0,20}(?:is |was )?(?:not set|unset|not defined|is undefined|not provided|missing|empty|required)\b/i.test(
       output,
     ) ||
-    /\b(?:missing|unset|undefined|no)\b[^\n]{0,40}?DATABASE_URL/i.test(output)
+    /\b(?:missing|unset|undefined|not set|not defined)\b[^\n]{0,40}?DATABASE_URL/i.test(
+      output,
+    )
   )
 }
 
@@ -542,12 +548,22 @@ async function generateDrizzleEqlMigration(
         result.error?.message ||
         `drizzle-kit exited with status ${result.status ?? 'unknown'}.`,
     )
+    // Three follow-ups, narrowest first. `result.error` means the runner never
+    // started, so there IS no drizzle-kit output — telling the user to look
+    // above at output that does not exist, or to reproduce a command that
+    // cannot run, sends them in a circle. That case keeps the install advice
+    // the other two arms deliberately dropped.
     p.log.info(
-      looksLikeMissingDatabaseUrl(output)
-        ? messages.eql.migrationDrizzleKitNoDatabaseUrl(detectDotenvFile())
-        : messages.eql.migrationDrizzleKitFailed(
-            `${execCommand(pm)} drizzle-kit generate --custom --name=${migrationName}`,
-          ),
+      result.error
+        ? messages.eql.migrationDrizzleKitNotLaunched(
+            command,
+            `${execCommand(pm)} drizzle-kit --version`,
+          )
+        : looksLikeMissingDatabaseUrl(output)
+          ? messages.eql.migrationDrizzleKitNoDatabaseUrl(detectDotenvFile())
+          : messages.eql.migrationDrizzleKitFailed(
+              `${execCommand(pm)} drizzle-kit generate --custom --name=${migrationName}`,
+            ),
     )
     if (!embedded) p.outro('Migration aborted.')
     throw new CliExit(1)
