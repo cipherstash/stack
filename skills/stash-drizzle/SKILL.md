@@ -61,6 +61,8 @@ stash eql migration --drizzle --supabase   # also grants eql_v3 to anon/authenti
 
 The generated migration also installs the `cs_migrations` tracking schema, so a single `drizzle-kit migrate` covers everything `stash encrypt …` needs — no out-of-band `stash eql install`. EQL v3 ships one SQL bundle for every target including Supabase; `--supabase` only adds the PostgREST/RLS role grants (harmless when you connect directly as `postgres`). Requires `drizzle-kit` installed and configured.
 
+Your `drizzle.config.ts` decides the output directory: stash runs `drizzle-kit generate --custom` with no `--out` (drizzle-kit reads its config file *or* command-line options, never both — passing `--out` makes it demand `--schema` and `--dialect` too and abort), then follows the path drizzle-kit prints. `--out` is only the fallback directory to search. If your config reads `DATABASE_URL` — the usual `dotenv -e .env.local -- drizzle-kit …` shape — you do not need that wrapper here: stash loads `.env`/`.env.local` itself and passes the URL it resolves into the child process.
+
 **Changing an existing plaintext column to an encrypted one.** `drizzle-kit generate` emits an in-place `ALTER TABLE … ALTER COLUMN … SET DATA TYPE eql_v3_<name>`, which Postgres rejects — there is no cast from `text`/`numeric` to an EQL domain. (On drizzle-kit 0.31.0 and later the emitted type is also mangled to `"undefined"."eql_v3_<name>"`, since a `customType` has no `typeSchema`.) Repair it with:
 
 ```bash

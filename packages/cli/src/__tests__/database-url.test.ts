@@ -29,9 +29,8 @@ vi.mock('@clack/prompts', () => ({
   note: clack.note,
 }))
 
-const { resolveDatabaseUrl, withResolverContext } = await import(
-  '../config/database-url.js'
-)
+const { resolveDatabaseUrl, tryResolveDatabaseUrl, withResolverContext } =
+  await import('../config/database-url.js')
 
 const VALID_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
 
@@ -315,5 +314,67 @@ describe('withResolverContext — concurrent isolation', () => {
 
     expect(a).toBe(URL_A)
     expect(b).toBe(URL_B)
+  })
+})
+
+/**
+ * The non-blocking variant, used to decorate a spawned `drizzle-kit`'s
+ * environment (#924). Same sources as {@link resolveDatabaseUrl} minus the
+ * prompt and the hard exit — a missing URL is an ordinary answer here, because
+ * the child may not need one.
+ */
+describe('tryResolveDatabaseUrl', () => {
+  it('prefers the flag from the resolver context', async () => {
+    process.env.DATABASE_URL = 'postgresql://env@localhost:5432/env'
+    const result = await withResolverContext(
+      { databaseUrlFlag: VALID_URL },
+      async () => tryResolveDatabaseUrl(),
+    )
+    expect(result).toBe(VALID_URL)
+  })
+
+  it('falls back to process.env — the dotenv files bin/main.ts loaded', () => {
+    process.env.DATABASE_URL = VALID_URL
+    expect(tryResolveDatabaseUrl()).toBe(VALID_URL)
+  })
+
+  it('reaches supabase status when the project has a config.toml', () => {
+    detect.detectSupabaseProject.mockReturnValue({
+      hasMigrationsDir: true,
+      hasConfigToml: true,
+      migrationsDir: path.join(tmpDir, 'supabase/migrations'),
+    })
+    supabase.execSync.mockReturnValue(`DB_URL="${VALID_URL}"\n`)
+    expect(tryResolveDatabaseUrl({ cwd: tmpDir })).toBe(VALID_URL)
+  })
+
+  it('returns undefined instead of prompting or exiting', () => {
+    Object.defineProperty(process.stdin, 'isTTY', {
+      value: true,
+      configurable: true,
+    })
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit called')
+    }) as never)
+
+    expect(tryResolveDatabaseUrl({ cwd: tmpDir })).toBeUndefined()
+    expect(clack.text).not.toHaveBeenCalled()
+    expect(exit).not.toHaveBeenCalled()
+  })
+
+  it('ignores a malformed flag rather than exiting on it', async () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit called')
+    }) as never)
+    process.env.DATABASE_URL = VALID_URL
+
+    const result = await withResolverContext(
+      { databaseUrlFlag: 'not a url' },
+      async () => tryResolveDatabaseUrl(),
+    )
+    // resolveDatabaseUrl exits here; this one is advisory, so it moves on to
+    // the next source and the caller's own resolution reports the bad flag.
+    expect(result).toBe(VALID_URL)
+    expect(exit).not.toHaveBeenCalled()
   })
 })

@@ -446,7 +446,7 @@ export const registry: CommandGroup[] = [
             name: '--out',
             value: '<path>',
             description:
-              'Where the migration is written. Drizzle: passed to `drizzle-kit generate --out`, defaults to `drizzle` — set it to match your drizzle.config.ts. Supabase: leave it alone. The Supabase CLI replays `supabase/migrations` and has no setting to move it, so pointing elsewhere means `supabase db reset` / `db push` never apply the install; the command warns when you do.',
+              'Where the migration is written. Drizzle: your drizzle.config.ts `out` decides that, and stash follows the path drizzle-kit reports — this is only the fallback directory to look in (defaults to `drizzle`) if it reports none. Supabase: leave it alone. The Supabase CLI replays `supabase/migrations` and has no setting to move it, so pointing elsewhere means `supabase db reset` / `db push` never apply the install; the command warns when you do.',
           },
           {
             name: '--force',

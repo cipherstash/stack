@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, unlinkSync, writeFileSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { MIGRATIONS_SCHEMA_SQL } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
 import { CliExit } from '@/cli/exit.js'
@@ -22,6 +22,10 @@ import {
   execArgv,
   execCommand,
 } from '@/commands/init/utils.js'
+import {
+  detectDotenvFile,
+  tryResolveDatabaseUrl,
+} from '@/config/database-url.js'
 import {
   loadBundledEqlSql,
   SUPABASE_MIGRATION_GRANTS_SQL_V3,
@@ -51,6 +55,76 @@ export async function findGeneratedMigration(
     )
   }
   return join(outDir, matchingFiles[matchingFiles.length - 1])
+}
+
+/**
+ * Pull the migration path out of drizzle-kit's own success line:
+ *
+ *     [✓] Your SQL migration file ➜ drizzle/0000_install-eql.sql 🚀
+ *
+ * Since we no longer pass `--out` (drizzle-kit rejects the run when we do —
+ * see `generateDrizzleEqlMigration`), `drizzle.config.ts` owns the output
+ * directory and this line is how we learn it. The path is printed relative to
+ * the cwd drizzle-kit ran in, which is ours.
+ *
+ * Returns `undefined` unless the file is actually there, so an unrecognised
+ * banner or a moved file falls through to the directory scan rather than
+ * pointing the SQL write at a path that does not exist.
+ */
+export function parseReportedMigrationPath(
+  stdout: string | undefined,
+): string | undefined {
+  if (!stdout) return undefined
+  // Scanned per line, taking everything between the arrow and the LAST `.sql`
+  // on it, because an output directory may contain spaces — a `\S+` pattern
+  // truncates such a path, fails the existence check, and drops us into the
+  // fallback scan of an unrelated directory.
+  //
+  // Last line wins: one invocation writes one file, but a wrapper that echoes
+  // its own banner first should not shadow drizzle-kit's.
+  let found: string | undefined
+  for (const line of stdout.split(/\r?\n/)) {
+    const arrow = line.indexOf('➜')
+    if (arrow === -1) continue
+    const rest = line.slice(arrow + 1)
+    const end = rest.lastIndexOf('.sql')
+    if (end === -1) continue
+    const candidate = rest.slice(0, end + '.sql'.length).trim()
+    if (!candidate) continue
+    const abs = isAbsolute(candidate) ? candidate : resolve(candidate)
+    if (existsSync(abs)) found = abs
+  }
+  return found
+}
+
+/**
+ * Does drizzle-kit's output say `DATABASE_URL` is *absent*, as opposed to
+ * present and wrong?
+ *
+ * Only the absent case earns the "add it to your dotenv file" follow-up. A
+ * malformed URL, an unsupported scheme, or a refused connection all mention
+ * `DATABASE_URL` too, and answering those with "it is not set" replaces
+ * drizzle-kit's accurate diagnosis with remediation that contradicts it.
+ *
+ * Deliberately conservative: an unrecognised phrasing falls through to the
+ * generic follow-up, which stays safe because drizzle-kit's own output is
+ * printed directly above either way. Two things that are NOT triggers:
+ *
+ * - bare `undefined` AFTER the variable name — `invalid connection string for
+ *   DATABASE_URL: undefined scheme` is a malformed URL, not a missing one;
+ * - the word `no`, which reads as strongly as `missing` to a regex but is far
+ *   more common in ordinary prose (`No other issues found, DATABASE_URL looks
+ *   valid`). Only unambiguous absence phrasings belong in that alternation.
+ */
+export function looksLikeMissingDatabaseUrl(output: string): boolean {
+  return (
+    /DATABASE_URL\W{0,20}(?:is |was )?(?:not set|unset|not defined|is undefined|not provided|missing|empty|required)\b/i.test(
+      output,
+    ) ||
+    /\b(?:missing|unset|undefined|not set|not defined)\b[^\n]{0,40}?DATABASE_URL/i.test(
+      output,
+    )
+  )
 }
 
 function cleanupMigrationFile(filePath: string | undefined): void {
@@ -102,6 +176,19 @@ export interface EqlMigrationOptions {
    * so a re-run never collides.
    */
   force?: boolean
+  /**
+   * A database URL the caller already resolved, threaded into the spawned
+   * `drizzle-kit`'s environment so a `drizzle.config.ts` reading
+   * `process.env.DATABASE_URL` sees one.
+   *
+   * `resolveDatabaseUrl` deliberately never writes to `process.env`, so a URL
+   * that came from init's prompt (or its `--database-url` flag) lives only in
+   * `InitState.databaseUrl` — inheritance alone would leave the child with
+   * nothing and abort the scaffold, which is half of #924. There is no
+   * `--database-url` flag on this command; this is the programmatic seam init
+   * uses, matching the one it already passes to `installCommand`.
+   */
+  databaseUrl?: string
   /** Describe what would happen without writing anything. */
   dryRun?: boolean
   /**
@@ -370,10 +457,25 @@ async function generateDrizzleEqlMigration(
   // download-and-run form — it must resolve this project's drizzle.config.ts and
   // schema. Invoke via spawnSync with an argv array (no shell), so a `--name`
   // carrying spaces or shell metacharacters is one inert token, never word-split
-  // or executed. `--out` is always passed so drizzle-kit WRITES where we then
-  // LOOK — otherwise a project whose drizzle.config.ts points elsewhere would
-  // have drizzle-kit write there while we search `drizzle/` and fail in step 2.
-  // It defaults to `drizzle/`; override with `--out` to match your config.
+  // or executed.
+  //
+  // `--out` is deliberately NOT passed (#924). drizzle-kit's `generate` has two
+  // mutually exclusive configuration modes, and passing ANY of --schema/--out/
+  // --dialect switches it out of config-file mode into CLI mode — where it then
+  // demands all three and aborts:
+  //
+  //     Error  Please provide required params:
+  //         [x] schema: undefined
+  //         [x] dialect: undefined
+  //         [✓] out: '/abs/path/drizzle'
+  //
+  // We know neither the schema glob nor the dialect, and `--config` cannot be
+  // combined with CLI options either ("You can't use both --config and other
+  // cli options for generate command"). Verified against drizzle-kit 0.28.5,
+  // 0.30.6 and 0.31.4 — this was never version-specific, so every project with
+  // a drizzle.config.ts hit it. So drizzle.config.ts decides the output
+  // directory; step 2 reads back the path drizzle-kit reports, and `--out` is
+  // only the fallback place to look.
   const { command, prefixArgs } = execArgv(pm)
   const drizzleArgs = [
     ...prefixArgs,
@@ -381,7 +483,6 @@ async function generateDrizzleEqlMigration(
     'generate',
     '--custom',
     `--name=${migrationName}`,
-    `--out=${outDir}`,
   ]
   const displayCmd = `${execCommand(pm)} ${drizzleArgs.slice(prefixArgs.length).join(' ')}`
 
@@ -401,7 +502,7 @@ async function generateDrizzleEqlMigration(
 
   if (options.dryRun) {
     p.note(
-      `Would run: ${displayCmd}\nWould write the EQL v3 install SQL${options.supabase ? ' (with Supabase grants)' : ''} into the generated migration in ${outDir}`,
+      `Would run: ${displayCmd}\nWould write the EQL v3 install SQL${options.supabase ? ' (with Supabase grants)' : ''} into the migration drizzle-kit generates (your drizzle.config.ts \`out\` decides the directory; ${outDir} is the fallback if drizzle-kit does not report the path)`,
       'Dry Run',
     )
     if (!embedded) p.outro('Dry run complete.')
@@ -412,42 +513,97 @@ async function generateDrizzleEqlMigration(
 
   // Step 1 — scaffold an empty custom migration (drizzle-kit owns the journal
   // + sequence numbering; hand-rolling that is fragile).
+  //
+  // The child inherits our env, which already carries the dotenv files
+  // `bin/main.ts` loads at startup — that is what a `drizzle.config.ts` reading
+  // `process.env.DATABASE_URL` needs, and what the project's usual
+  // `dotenv -e .env.local -- drizzle-kit …` npm-script wrapper would have
+  // supplied had we gone through it. On top of that we thread down a URL only
+  // this CLI can find: one the caller already resolved (init's prompt, which
+  // lands in `InitState.databaseUrl` and nowhere else — `resolveDatabaseUrl`
+  // never writes to `process.env`), or a running local Supabase. Either way
+  // the config sees one where inheritance alone would leave it empty (#924).
   s.start('Generating custom Drizzle migration...')
+  const databaseUrl =
+    options.databaseUrl ?? tryResolveDatabaseUrl({ supabase: options.supabase })
   const result = spawnSync(command, drizzleArgs, {
     stdio: 'pipe',
     encoding: 'utf-8',
+    env: databaseUrl
+      ? { ...process.env, DATABASE_URL: databaseUrl }
+      : process.env,
   })
   if (result.status !== 0) {
     s.stop('Failed to generate migration.')
-    const stderr = result.stderr?.trim()
+    // drizzle-kit writes its argument-validation and config errors to STDOUT
+    // and its thrown-config errors to stderr, so reporting one stream alone
+    // loses the whole message half the time — which is how #924 stayed
+    // invisible behind "make sure drizzle-kit is installed".
+    const output = [result.stdout, result.stderr]
+      .map((stream) => stream?.trim())
+      .filter((stream): stream is string => Boolean(stream))
+      .join('\n')
     p.log.error(
-      stderr ||
+      output ||
         result.error?.message ||
         `drizzle-kit exited with status ${result.status ?? 'unknown'}.`,
     )
+    // Three follow-ups, narrowest first. `result.error` means the runner never
+    // started, so there IS no drizzle-kit output — telling the user to look
+    // above at output that does not exist, or to reproduce a command that
+    // cannot run, sends them in a circle. That case keeps the install advice
+    // the other two arms deliberately dropped.
     p.log.info(
-      `Make sure drizzle-kit is installed and configured: ${execCommand(pm)} drizzle-kit --version`,
+      result.error
+        ? messages.eql.migrationDrizzleKitNotLaunched(
+            command,
+            `${execCommand(pm)} drizzle-kit --version`,
+          )
+        : looksLikeMissingDatabaseUrl(output)
+          ? messages.eql.migrationDrizzleKitNoDatabaseUrl(detectDotenvFile())
+          : messages.eql.migrationDrizzleKitFailed(
+              `${execCommand(pm)} drizzle-kit generate --custom --name=${migrationName}`,
+            ),
     )
     if (!embedded) p.outro('Migration aborted.')
     throw new CliExit(1)
   }
   s.stop('Custom Drizzle migration generated.')
 
-  // Step 2 — locate the file drizzle-kit just wrote.
+  // Step 2 — locate the file drizzle-kit just wrote. It prints the path itself
+  // ("[✓] Your SQL migration file ➜ drizzle/0000_install-eql.sql 🚀"), which is
+  // the only authority on where its config sent the file now that we no longer
+  // pass `--out` (see step 1's note). Falling back to a scan of `outDir` keeps
+  // the old behaviour when that line is absent or points at something that
+  // vanished — a drizzle-kit whose banner we do not recognise still works.
   let migrationPath: string
   s.start('Locating generated migration file...')
-  try {
-    migrationPath = await findGeneratedMigration(outDir, migrationName)
+  const reported = parseReportedMigrationPath(result.stdout)
+  if (reported) {
+    migrationPath = reported
     s.stop(`Found migration: ${migrationPath}`)
-  } catch (error) {
-    s.stop('Failed to locate migration file.')
-    p.log.error(error instanceof Error ? error.message : String(error))
-    p.log.info(
-      `If your drizzle.config.ts writes elsewhere, pass --out <dir> so it matches.`,
-    )
-    if (!embedded) p.outro('Migration aborted.')
-    throw new CliExit(1)
+    const writtenDir = dirname(migrationPath)
+    if (options.out !== undefined && writtenDir !== outDir) {
+      p.log.warn(messages.eql.migrationDrizzleOutOverridden(writtenDir, outDir))
+    }
+  } else {
+    try {
+      migrationPath = await findGeneratedMigration(outDir, migrationName)
+      s.stop(`Found migration: ${migrationPath}`)
+    } catch (error) {
+      s.stop('Failed to locate migration file.')
+      p.log.error(error instanceof Error ? error.message : String(error))
+      p.log.info(
+        `If your drizzle.config.ts writes elsewhere, pass --out <dir> so it matches.`,
+      )
+      if (!embedded) p.outro('Migration aborted.')
+      throw new CliExit(1)
+    }
   }
+  // Everything downstream (the SQL write, the ALTER COLUMN sweep, the closing
+  // note) works on the directory the file actually landed in, not the one we
+  // guessed.
+  const migrationDir = dirname(migrationPath)
 
   // Step 3 — write the EQL v3 install SQL into it.
   s.start('Writing EQL v3 install SQL into migration file...')
@@ -472,17 +628,17 @@ async function generateDrizzleEqlMigration(
   let sweepIncomplete = false
   try {
     sweepIncomplete = reportSweepResult(
-      await rewriteEncryptedAlterColumns(outDir, { skip: migrationPath }),
+      await rewriteEncryptedAlterColumns(migrationDir, { skip: migrationPath }),
     )
   } catch (error) {
     // Advisory: the install migration itself is already written and valid.
     sweepIncomplete = true
-    reportSweepFailure(outDir, error)
+    reportSweepFailure(migrationDir, error)
   }
 
   if (sweepIncomplete) {
     p.log.error(
-      `The ALTER COLUMN sweep found unsafe or unverified SQL. The generated migration remains at ${migrationPath}, but review the sibling migrations in ${outDir} and use the staged stash encrypt flow before running drizzle-kit migrate.`,
+      `The ALTER COLUMN sweep found unsafe or unverified SQL. The generated migration remains at ${migrationPath}, but review the sibling migrations in ${migrationDir} and use the staged stash encrypt flow before running drizzle-kit migrate.`,
     )
     if (!embedded) p.outro('Migration aborted.')
     throw new CliExit(1)

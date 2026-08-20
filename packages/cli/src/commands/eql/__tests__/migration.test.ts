@@ -41,6 +41,15 @@ vi.mock('@clack/prompts', () => ({
   outro: clack.outro,
 }))
 
+// The DATABASE_URL resolver reaches for `supabase status` on a Supabase
+// project, which is a real subprocess — stub it so the env-threading tests can
+// pin what the command passes down without one.
+const resolveUrlMock = vi.hoisted(() => vi.fn())
+vi.mock('../../../config/database-url.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../config/database-url.js')>()),
+  tryResolveDatabaseUrl: resolveUrlMock,
+}))
+
 // Stub the drizzle-kit scaffold — only the child process is faked.
 const spawnMock = vi.hoisted(() => vi.fn())
 vi.mock('node:child_process', () => ({ spawnSync: spawnMock }))
@@ -107,6 +116,7 @@ vi.mock('../../db/install.js', async (importOriginal) => {
 beforeEach(() => {
   fsWrite.spy.mockImplementation(fsWrite.real)
   rewriteMock.spy.mockImplementation(rewriteMock.real)
+  resolveUrlMock.mockReturnValue(undefined)
 })
 afterEach(() => {
   vi.clearAllMocks()
@@ -828,26 +838,25 @@ describe('eqlMigrationCommand — Drizzle', () => {
     )
   })
 
-  it('includes --out in the dry-run preview', async () => {
+  // #924: `--out` must NEVER reach drizzle-kit's argv, in the preview or the
+  // real run. drizzle-kit treats any of --schema/--out/--dialect as "ignore the
+  // config file" and then aborts on the two we cannot supply, so passing it
+  // broke the command for every project with a drizzle.config.ts. The dry run
+  // is where a user checks what we will run, so it has to show the truth.
+  it('names --out as the lookup directory, never as a drizzle-kit flag', async () => {
     const out = join(tmp, 'custom-out')
     await eqlMigrationCommand({ drizzle: true, dryRun: true, out })
     expect(spawnMock).not.toHaveBeenCalled()
-    expect(clack.note).toHaveBeenCalledWith(
-      expect.stringContaining(`--out=${out}`),
-      'Dry Run',
-    )
+    const [note] = vi.mocked(clack.note).mock.calls.at(-1) ?? []
+    expect(String(note)).not.toContain('--out=')
+    expect(String(note)).toContain(out)
   })
 
-  // Widest blast radius of the flag handling: because `--out` is ALWAYS
-  // appended to drizzle-kit's argv, a flag-less invocation silently overrides
-  // the project's drizzle.config.ts `out` with `<cwd>/drizzle`. The dry-run
-  // preview reaches that arm without spawning or touching the filesystem.
-  it('defaults --out to an absolute drizzle/ when the flag is omitted', async () => {
+  it('falls back to an absolute drizzle/ when the --out flag is omitted', async () => {
     await eqlMigrationCommand({ drizzle: true, dryRun: true })
-    expect(clack.note).toHaveBeenCalledWith(
-      expect.stringContaining(`--out=${resolve('drizzle')}`),
-      'Dry Run',
-    )
+    const [note] = vi.mocked(clack.note).mock.calls.at(-1) ?? []
+    expect(String(note)).not.toContain('--out=')
+    expect(String(note)).toContain(resolve('drizzle'))
   })
 
   it('dry run says the grants would be included under --supabase', async () => {
@@ -878,11 +887,12 @@ describe('eqlMigrationCommand — Drizzle', () => {
     const [command, argv] = spawnMock.mock.calls[0]
     // The whole argv, exactly — not `toContain` checks, which would still pass
     // if the runner prefix (`exec`) were dropped and drizzle-kit ran under the
-    // wrong resolver. Three things at once: name and out are discrete inert
-    // tokens in an array, never interpolated into a shell string; `--out` is
-    // actually passed, so drizzle-kit writes where step 2 then looks; and the
-    // project-local `exec` form (not `dlx`) is asserted, so a regression back to
-    // download-and-run — which resolves a different drizzle.config.ts — fails.
+    // wrong resolver. Three things at once: `--name` is a discrete inert token
+    // in an array, never interpolated into a shell string; `--out` is absent
+    // (#924 — it puts drizzle-kit into CLI-config mode, which then aborts for
+    // want of --schema/--dialect); and the project-local `exec` form (not
+    // `dlx`) is asserted, so a regression back to download-and-run — which
+    // resolves a different drizzle.config.ts — fails.
     expect(command).toBe('pnpm')
     expect(argv).toEqual([
       'exec',
@@ -890,7 +900,6 @@ describe('eqlMigrationCommand — Drizzle', () => {
       'generate',
       '--custom',
       '--name=add-eql',
-      `--out=${out}`,
     ])
 
     const written = readFileSync(join(out, '0000_add-eql.sql'), 'utf-8')
@@ -1207,6 +1216,217 @@ describe('eqlMigrationCommand — Drizzle', () => {
     expect(warnings).toContain('column already exists')
   })
 
+  /**
+   * #924, the half that made the real failure invisible. drizzle-kit writes its
+   * argument-validation and config-resolution errors to STDOUT, not stderr —
+   * verified against 0.28.5, 0.30.6 and 0.31.4 — so a reporter that only read
+   * `result.stderr` printed nothing but a generic hint and sent users looking
+   * at their drizzle-kit install, which was never the problem.
+   */
+  it("surfaces drizzle-kit's stdout, which is where it prints its errors", async () => {
+    spawnMock.mockReturnValue({
+      status: 1,
+      stdout:
+        'Error  Please provide required params:\n    [x] dialect: undefined',
+      stderr: '',
+    })
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out: join(tmp, 'drizzle') }),
+    ).rejects.toBeInstanceOf(CliExit)
+    expect(clack.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('Please provide required params'),
+    )
+  })
+
+  it('joins both streams so neither half of the failure is dropped', async () => {
+    spawnMock.mockReturnValue({
+      status: 1,
+      stdout: "Reading config file 'drizzle.config.ts'",
+      stderr: 'Error: DATABASE_URL is not set',
+    })
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out: join(tmp, 'drizzle') }),
+    ).rejects.toBeInstanceOf(CliExit)
+    const reported = String(vi.mocked(clack.log.error).mock.calls.at(-1)?.[0])
+    expect(reported).toContain("Reading config file 'drizzle.config.ts'")
+    expect(reported).toContain('DATABASE_URL is not set')
+    // A config that throws on a missing URL is the dominant .env.local shape,
+    // so the follow-up names that rather than the generic reproduce-it line.
+    expect(clack.log.info).toHaveBeenCalledWith(
+      expect.stringContaining('could not read DATABASE_URL'),
+    )
+  })
+
+  /**
+   * The project's own npm script is usually `dotenv -e .env.local --
+   * drizzle-kit …`; invoked by us that wrapper never runs, so the config sees
+   * `process.env.DATABASE_URL` and finds nothing. We pass the URL we resolved
+   * down explicitly.
+   */
+  it('threads the resolved DATABASE_URL into the drizzle-kit child env', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    // Nothing in the parent env: the URL comes from a source only this CLI
+    // knows about (a running local Supabase), so inheritance alone would leave
+    // the config with `undefined` — the #924 abort.
+    const previous = process.env.DATABASE_URL
+    delete process.env.DATABASE_URL
+    resolveUrlMock.mockReturnValue(
+      'postgres://postgres@127.0.0.1:54322/postgres',
+    )
+    try {
+      spawnMock.mockImplementation(() => {
+        writeFileSync(join(out, '0000_install-eql.sql'), '')
+        return { status: 0, stdout: '', stderr: '' }
+      })
+      await eqlMigrationCommand({ drizzle: true, out })
+      const [, , opts] = spawnMock.mock.calls[0]
+      expect(opts.env.DATABASE_URL).toBe(
+        'postgres://postgres@127.0.0.1:54322/postgres',
+      )
+      // The rest of the environment still has to reach drizzle-kit — PATH above
+      // all, or the runner cannot even find it.
+      expect(opts.env.PATH).toBe(process.env.PATH)
+    } finally {
+      if (previous !== undefined) process.env.DATABASE_URL = previous
+    }
+  })
+
+  it('leaves the child env alone when no URL can be resolved', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    resolveUrlMock.mockReturnValue(undefined)
+    spawnMock.mockImplementation(() => {
+      writeFileSync(join(out, '0000_install-eql.sql'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+    await eqlMigrationCommand({ drizzle: true, out })
+    const [, , opts] = spawnMock.mock.calls[0]
+    expect(opts.env).toBe(process.env)
+  })
+
+  /**
+   * With `--out` gone from the argv, `drizzle.config.ts` decides the output
+   * directory — so the path drizzle-kit reports is the only authority on where
+   * the file went. Using it (rather than scanning our guess) is what keeps the
+   * command working for a project whose config writes somewhere else.
+   */
+  it('follows the path drizzle-kit reports, even outside --out', async () => {
+    const configured = join(tmp, 'db', 'migrations')
+    mkdirSync(configured, { recursive: true })
+    const requested = join(tmp, 'drizzle')
+    const written = join(configured, '0000_install-eql.sql')
+    spawnMock.mockImplementation(() => {
+      writeFileSync(written, '')
+      return {
+        status: 0,
+        stdout: `[✓] Your SQL migration file ➜ ${written} 🚀`,
+        stderr: '',
+      }
+    })
+
+    await eqlMigrationCommand({ drizzle: true, out: requested })
+
+    expect(readFileSync(written, 'utf-8')).toContain('EQL v3 schema creation')
+    // `--out` looking honoured while the file lands elsewhere is exactly the
+    // silent divergence the old always-pass-`--out` code was trying to avoid.
+    const warnings = clack.log.warn.mock.calls
+      .map((c) => String(c[0]))
+      .join('\n')
+    expect(warnings).toContain(configured)
+    expect(warnings).toContain(requested)
+  })
+
+  it('falls back to scanning --out when drizzle-kit reports no path', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    spawnMock.mockImplementation(() => {
+      writeFileSync(join(out, '0000_install-eql.sql'), '')
+      // An unrecognised banner: the scan is what keeps a future drizzle-kit
+      // (or a wrapper that swallows stdout) working.
+      return { status: 0, stdout: 'done', stderr: '' }
+    })
+    await eqlMigrationCommand({ drizzle: true, out })
+    expect(readFileSync(join(out, '0000_install-eql.sql'), 'utf-8')).toContain(
+      'EQL v3 schema creation',
+    )
+  })
+
+  /**
+   * Review finding, #924 follow-up. `resolveDatabaseUrl` never writes to
+   * `process.env`, so a URL init got from its own prompt or `--database-url`
+   * lives in `InitState.databaseUrl` and nowhere the child could see it. The
+   * option is the seam init passes it through — without it the embedded
+   * Drizzle route still aborts on a config that reads `DATABASE_URL`.
+   */
+  it("prefers a caller-supplied databaseUrl over the resolver's", async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    resolveUrlMock.mockReturnValue('postgres://resolver@localhost:5432/db')
+    spawnMock.mockImplementation(() => {
+      writeFileSync(join(out, '0000_install-eql.sql'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+
+    await eqlMigrationCommand({
+      drizzle: true,
+      out,
+      databaseUrl: 'postgres://from-init@localhost:5432/db',
+    })
+
+    const [, , opts] = spawnMock.mock.calls[0]
+    expect(opts.env.DATABASE_URL).toBe('postgres://from-init@localhost:5432/db')
+  })
+
+  /**
+   * Review finding. `\S+` truncated a reported path at the first space, so a
+   * project whose drizzle.config.ts writes into a directory with a space in it
+   * failed the existence check and fell through to scanning an unrelated
+   * `--out` — an abort, or worse, an older same-named migration.
+   */
+  it('reads a reported path that contains spaces', async () => {
+    const configured = join(tmp, 'My Project', 'db migrations')
+    mkdirSync(configured, { recursive: true })
+    const written = join(configured, '0000_install-eql.sql')
+    spawnMock.mockImplementation(() => {
+      writeFileSync(written, '')
+      return {
+        status: 0,
+        stdout: `[✓] Your SQL migration file ➜ ${written} 🚀`,
+        stderr: '',
+      }
+    })
+
+    await eqlMigrationCommand({ drizzle: true, out: join(tmp, 'drizzle') })
+
+    expect(readFileSync(written, 'utf-8')).toContain('EQL v3 schema creation')
+  })
+
+  /**
+   * Review finding. Every failure naming DATABASE_URL used to be reported as
+   * "it is not set", which contradicts drizzle-kit whenever the variable is
+   * present and merely wrong. The generic follow-up is never wrong, so an
+   * unrecognised phrasing has to fall through to it.
+   */
+  it.each([
+    ['Error: DATABASE_URL is not set', true],
+    ['Missing environment variable: DATABASE_URL', true],
+    ['DATABASE_URL is required', true],
+    ['invalid connection string for DATABASE_URL: undefined scheme', false],
+    ['DATABASE_URL: password authentication failed for user "app"', false],
+    // `no` reads as strongly as `missing` to a regex, and appears constantly in
+    // ordinary prose — a classifier that fires on it inverts the diagnosis.
+    ['No other issues found, DATABASE_URL looks valid', false],
+    ['No schema changes detected for DATABASE_URL', false],
+  ])('classifies %j as missing-URL=%s', async (stderr, missing) => {
+    spawnMock.mockReturnValue({ status: 1, stdout: '', stderr })
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out: join(tmp, 'drizzle') }),
+    ).rejects.toBeInstanceOf(CliExit)
+    const info = String(vi.mocked(clack.log.info).mock.calls.at(-1)?.[0])
+    expect(info.includes('could not read DATABASE_URL')).toBe(missing)
+  })
+
   it('aborts (exit 1) when drizzle-kit exits non-zero', async () => {
     spawnMock.mockReturnValue({ status: 1, stdout: '', stderr: 'boom' })
     await expect(
@@ -1216,11 +1436,11 @@ describe('eqlMigrationCommand — Drizzle', () => {
   })
 
   it('reports the spawn error when drizzle-kit cannot be launched', async () => {
-    // spawnSync's ENOENT shape: null status, no captured stderr, `error` set.
-    // `result.stderr?.trim()` is undefined, so the message falls through to the
+    // spawnSync's ENOENT shape: null status, neither stream captured, `error`
+    // set. Both streams trim to nothing, so the message falls through to the
     // second arm (`result.error?.message`) — the realistic "drizzle-kit isn't
-    // installed" case. If the `?.` on stderr were dropped, this shape would
-    // throw a TypeError instead of reporting.
+    // installed" case. If the `?.` on either stream were dropped, this shape
+    // would throw a TypeError instead of reporting.
     spawnMock.mockReturnValue({
       status: null,
       stdout: null,
@@ -1234,9 +1454,36 @@ describe('eqlMigrationCommand — Drizzle', () => {
       eqlMigrationCommand({ drizzle: true, out: join(tmp, 'drizzle') }),
     ).rejects.toBeInstanceOf(CliExit)
     expect(clack.log.error).toHaveBeenCalledWith('spawnSync pnpm ENOENT')
-    expect(clack.log.info).toHaveBeenCalledWith(
-      expect.stringContaining('Make sure drizzle-kit is installed'),
-    )
+    // The one case where "check that it is installed" is the right advice:
+    // nothing ran, so there is no drizzle-kit output to look at and nothing to
+    // reproduce. Pointing at either would send the user in a circle.
+    const info = String(vi.mocked(clack.log.info).mock.calls.at(-1)?.[0])
+    expect(info).toContain('could not be started')
+    expect(info).toContain('drizzle-kit --version')
+    expect(info).not.toContain('output is above')
+  })
+
+  /**
+   * A spawn failure that DID capture output is still a spawn failure: the
+   * runner never handed off to drizzle-kit, so the install guidance wins over
+   * both the reproduce-it line and the missing-URL classifier.
+   */
+  it('prefers the not-launched guidance over anything in the streams', async () => {
+    spawnMock.mockReturnValue({
+      status: null,
+      stdout: '',
+      stderr: 'DATABASE_URL is not set',
+      error: Object.assign(new Error('spawnSync pnpm ENOENT'), {
+        code: 'ENOENT',
+      }),
+    })
+
+    await expect(
+      eqlMigrationCommand({ drizzle: true, out: join(tmp, 'drizzle') }),
+    ).rejects.toBeInstanceOf(CliExit)
+    const info = String(vi.mocked(clack.log.info).mock.calls.at(-1)?.[0])
+    expect(info).toContain('could not be started')
+    expect(info).not.toContain('could not read DATABASE_URL')
   })
 
   it('falls back to the exit status when there is no stderr or spawn error', async () => {
