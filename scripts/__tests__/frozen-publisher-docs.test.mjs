@@ -27,6 +27,23 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * become wrong in the other direction — still instructing agents about a freeze
  * that no longer exists. Keyed on the map rather than on a date, so the cutover
  * PR cannot land the code change without the prose.
+ *
+ * THE THIRD DRIFT, and the reason `SECURITY.md` is now in the list. Its "Note
+ * on publishing" named the seven `@cipherstash/protect-ffi*` packages as still
+ * published from `cipherstash/protectjs-ffi` — written when that was true, and
+ * left behind by the cutover that repointed them at this repository. The npm
+ * provenance settles it and disagrees:
+ *
+ *   curl -s https://registry.npmjs.org/-/npm/v1/attestations/@cipherstash%2fprotect-ffi@0.32.0
+ *     → github.com/cipherstash/stack .github/workflows/release.yml
+ *   curl -s https://registry.npmjs.org/-/npm/v1/attestations/@cipherstash%2feql@3.0.5
+ *     → github.com/cipherstash/encrypt-query-language .github/workflows/release.yml
+ *
+ * That sentence had no guard of any kind: `SECURITY.md` was outside `DOCS`, so
+ * the same paragraph was also on course to survive Phase 5 with its remaining
+ * `@cipherstash/eql` half going wrong too. A stale freeze claim is not cosmetic
+ * in a security policy — it tells a reporter which repository's release
+ * pipeline produced the artefact they are reporting on.
  */
 
 const EQL = '@cipherstash/eql'
@@ -43,6 +60,15 @@ const DOCS = [
   {
     file: 'docs/plans/2026-08-13-eql-monorepo-absorption.md',
     instruction: /`@cipherstash\/eql` entry/,
+  },
+  {
+    file: 'SECURITY.md',
+    // Not a regex, and deliberately: this is `foreignPublishClaims` run over
+    // the file, so the SAME extractor that forbids a wrong name below is what
+    // requires the right one here. A regex rewrite that blinded the extractor
+    // would otherwise silently turn the prohibition into a no-op while this
+    // assertion went on passing against a pattern nothing else uses.
+    instruction: (body) => foreignPublishClaims(body).includes(EQL),
   },
 ]
 
@@ -92,11 +118,65 @@ const OPERATIONAL = [
  * 3.0.4` — so a pattern spanning those three words matched nothing, and the
  * check reported clean over the exact sentence that motivated it. Prose in this
  * repo is hard-wrapped everywhere, so any multi-word pattern needs this.
+ *
+ * `>` joined the marker class with `SECURITY.md`, whose publishing note is a
+ * markdown blockquote: every line of the claim being checked begins with one,
+ * so without it the flattened text carries a stray `> ` at each wrap point and
+ * the same line-break defeat returns in markdown clothing.
  */
 const flatten = (body) =>
-  body.replace(/^\s*(#|\*|\/\/)\s?/gm, ' ').replace(/\s+/g, ' ')
+  body.replace(/^\s*(#|\*|\/\/|>)\s?/gm, ' ').replace(/\s+/g, ' ')
 
 const read = (file) => flatten(readFileSync(join(REPO_ROOT, file), 'utf8'))
+
+/**
+ * The npm names a document asserts are published from SOMEWHERE ELSE.
+ *
+ * `FROZEN_PUBLISHERS` is the machine-readable spelling of exactly this claim,
+ * so a name in one and not the other is a contradiction inside the tree — and
+ * the direction that matters is the quiet one. A doc naming a package the repo
+ * DOES publish is not a typo; it is a cutover that moved the pipeline and left
+ * the prose behind, and nothing else in the repo can notice, because provenance
+ * lives on the registry and the sentence is just words.
+ *
+ * A claim is a sentence carrying BOTH a `published from` and a `cipherstash/…`
+ * repository that is not `cipherstash/stack`. Both halves are load-bearing:
+ * `absorbed from cipherstash/protectjs-ffi` names a foreign repo and is true
+ * (that is where the source came from), and `@cipherstash/protect-ffi@0.32.0
+ * was published from here` names the verb and is also true. Only the pair is
+ * the claim.
+ *
+ * Sentences are split on `.`, which a filename or a version number splits
+ * early. That is deliberate and safe in one direction only: a short fragment
+ * can lose a name the sentence also carried, so this can MISS a claim — it
+ * cannot invent one. The alternative, a fixed-width window, has the opposite
+ * bias.
+ *
+ * Only `@cipherstash/…` names are collected. `eql-bindings` ships from
+ * crates.io under release-plz and is genuinely still published upstream; the
+ * map is npm-only, so holding an unscoped crate name to it would fail on a
+ * true sentence.
+ */
+const FOREIGN_PUBLISH = {
+  verb: /publish(?:ed|es)\W{0,3}from\b/,
+  // `(?<!@)` keeps `@cipherstash/eql` — a package — from reading as a repo.
+  elsewhere: /(?<!@)\bcipherstash\/(?!stack\b)[a-z0-9-]+/,
+  npmName: /@cipherstash\/[a-z0-9-]+/g,
+}
+
+const foreignPublishClaims = (body) =>
+  body
+    .split('.')
+    .filter(
+      (sentence) =>
+        FOREIGN_PUBLISH.verb.test(sentence) &&
+        FOREIGN_PUBLISH.elsewhere.test(sentence),
+    )
+    .flatMap((sentence) => sentence.match(FOREIGN_PUBLISH.npmName) ?? [])
+
+/** `instruction` is a regex or a predicate over the flattened body. */
+const satisfies = (instruction, body) =>
+  typeof instruction === 'function' ? instruction(body) : instruction.test(body)
 
 describe('frozen-publisher docs track the map', () => {
   it('still has a frozen entry to document', () => {
@@ -111,13 +191,25 @@ describe('frozen-publisher docs track the map', () => {
     instruction,
   }) => {
     expect(
-      instruction.test(read(file)),
+      satisfies(instruction, read(file)),
       FROZEN_PUBLISHERS.has(EQL)
         ? `${file} no longer tells an agent about the ${EQL} freeze, but ` +
             'FROZEN_PUBLISHERS still carries it.'
         : `${EQL} has left FROZEN_PUBLISHERS (Phase-5 cutover), so ${file} ` +
             'must stop instructing agents about the freeze.',
     ).toBe(FROZEN_PUBLISHERS.has(EQL))
+  })
+
+  it.each(DOCS)('$file freezes only what the map freezes', ({ file }) => {
+    const claimed = [...new Set(foreignPublishClaims(read(file)))]
+    expect(
+      claimed.filter((name) => !FROZEN_PUBLISHERS.has(name)),
+      `${file} says these packages are published from another repository, but ` +
+        'FROZEN_PUBLISHERS does not carry them — so this repository publishes ' +
+        'them and the sentence is a cutover that left its prose behind. The ' +
+        'registry is the only thing that settles it: curl -s ' +
+        'https://registry.npmjs.org/-/npm/v1/attestations/<urlencoded-name>@<version>',
+    ).toEqual([])
   })
 
   it.each(DOCS)('$file asserts no live gate verdict', ({ file }) => {

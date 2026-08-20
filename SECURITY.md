@@ -26,11 +26,30 @@ This repository also carries the source of the **`eql-bindings`** Rust crate
 lockstep with `@cipherstash/eql`. It is in scope for security reports on the
 same terms as the npm packages above.
 
-> **Note on publishing.** `@cipherstash/eql`, `eql-bindings`, and the seven
-> `@cipherstash/protect-ffi*` packages have been absorbed into this repository
-> but are still *published* from `cipherstash/encrypt-query-language` and
-> `cipherstash/protectjs-ffi` respectively, pending an npm trusted-publishing
-> cutover. Their source, issues, and security reports belong here.
+> **Note on publishing.** `@cipherstash/eql` and the `eql-bindings` crate are
+> developed here but are still *published* from
+> `cipherstash/encrypt-query-language` — the npm package's `repository` /
+> `bugs` fields and the crate's `repository` / `homepage` all still name it, as
+> does npm trusted publishing, and repointing every one of them is Phase 5 of
+> `docs/plans/2026-08-13-eql-monorepo-absorption.md`. Everything else in the
+> table above — including all seven `@cipherstash/protect-ffi*` packages, whose
+> own cutover has completed — is published from this repository by
+> `.github/workflows/release.yml`. Source, issues, and security reports for all
+> of them belong here regardless.
+>
+> The provenance attestation on a release names the repository that built it,
+> and is the only thing that settles the paragraph above:
+> `curl -s https://registry.npmjs.org/-/npm/v1/attestations/@cipherstash%2fprotect-ffi@0.32.0`
+> returns `cipherstash/stack`; the same call against `@cipherstash%2feql@3.0.5`
+> returns `cipherstash/encrypt-query-language`. Check there before repeating
+> either claim: this note went on naming `cipherstash/protectjs-ffi` as the
+> protect-ffi publisher through `0.32.0` — the release that proved the cutover
+> and disproved the sentence.
+>
+> `scripts/__tests__/frozen-publisher-docs.test.mjs` now holds this paragraph to
+> `FROZEN_PUBLISHERS` in `scripts/release-gate.mjs`. It fails if the note names
+> a package the map does not freeze, and fails again on the Phase-5 cutover that
+> empties the map — so the next half of this note to go stale does so loudly.
 
 **Security fixes are released for the latest release line of each package.** Security reports are welcome for any version, but fixes land in the latest release — if you are running an older major version, plan to upgrade to receive them.
 
@@ -80,7 +99,7 @@ We will never take legal action against good-faith security researchers who foll
 The following are **in scope**:
 
 - The `cipherstash/stack` GitHub repository
-- All npm packages published from this repository (listed under Supported Packages above)
+- All npm packages listed under Supported Packages above — scope follows the source, not the release pipeline (see the note on publishing)
 - CipherStash Stack cryptographic implementations, configuration layers, and CLI tooling
 - Key-handling, authenticated encryption behaviour, JSON/JSONB field-level encryption flows
 - Documentation or code examples that could lead to insecure usage
