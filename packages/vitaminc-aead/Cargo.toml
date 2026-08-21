@@ -12,6 +12,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+vitaminc-aead-derive = { version = "0.2.0-pre.1", path = "../aead-derive" }
 vitaminc-protected = { version = "0.2.0-pre.1", path = "../protected" }
 vitaminc-random = { version = "0.2.0-pre.1", path = "../random" }
 

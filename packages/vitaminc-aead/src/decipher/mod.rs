@@ -244,7 +244,23 @@ pub trait SeqAccess<'c> {
 pub trait MapAccess<'c> {
     /// The error type returned by [`next_entry`](MapAccess::next_entry).
     type Error;
-    /// Returns the next decrypted `(key, value)` entry, or `None` when the map is exhausted.
+    /// Advance to the next entry and return its key, leaving the value
+    /// undecrypted until [`next_value`](MapAccess::next_value) is called.
+    ///
+    /// The split exists because a map's values are not necessarily
+    /// homogeneous: a struct decoder cannot name the type to decrypt into
+    /// until it has seen which field the key names. Reading key-first also
+    /// makes the decode order-independent, which matters because the *order*
+    /// of entries in a stored ciphertext is not authenticated.
+    ///
+    /// Returns `None` when the map is exhausted. Calling `next_key` twice
+    /// without an intervening `next_value` is a contract violation:
+    /// implementations must return an error rather than silently discarding
+    /// the skipped value, since a discarded value is an unverified one.
+    fn next_key(&mut self) -> Result<Option<String>, Self::Error>;
+
+    /// Decrypt the value belonging to the key most recently returned by
+    /// [`next_key`](MapAccess::next_key), consuming the pending entry.
     ///
     /// As with [`SeqAccess::next_element`], implementations **must authenticate each value
     /// against the map's associated data** — and additionally against the entry's own key.
@@ -253,5 +269,21 @@ pub trait MapAccess<'c> {
     /// the binding [`MapCipher::encrypt_value`](crate::MapCipher::encrypt_value) performs at
     /// encrypt time. An implementation that decrypts values against the bare map AAD leaves
     /// keys swappable in stored ciphertext (and will fail to decrypt conforming ciphertexts).
-    fn next_entry<T: Decrypt<'c> + 'c>(&mut self) -> Result<Option<(String, T)>, Self::Error>;
+    ///
+    /// Calling this without a pending key is a contract violation;
+    /// implementations must return an error.
+    fn next_value<T: Decrypt<'c> + 'c>(&mut self) -> Result<T, Self::Error>;
+
+    /// Returns the next decrypted `(key, value)` entry, or `None` when the map is exhausted.
+    ///
+    /// Convenience for [`next_key`](MapAccess::next_key) followed by
+    /// [`next_value`](MapAccess::next_value) — the right entry point for a
+    /// homogeneous map (e.g. `HashMap<String, T>`), where the value type is
+    /// known before the key is read.
+    fn next_entry<T: Decrypt<'c> + 'c>(&mut self) -> Result<Option<(String, T)>, Self::Error> {
+        match self.next_key()? {
+            Some(key) => self.next_value::<T>().map(|value| Some((key, value))),
+            None => Ok(None),
+        }
+    }
 }
