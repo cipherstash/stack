@@ -1044,7 +1044,7 @@ describe('publishedArtefactDigest, against a real tarball', () => {
    */
   const packing = (files) => `
 const { execFileSync } = require('node:child_process')
-const { mkdirSync, writeFileSync } = require('node:fs')
+const { mkdirSync, writeFileSync, readdirSync } = require('node:fs')
 const { dirname, join } = require('node:path')
 module.exports = (argv) => {
   const dest = argv[argv.indexOf('--pack-destination') + 1]
@@ -1053,7 +1053,13 @@ module.exports = (argv) => {
     mkdirSync(dirname(join(stage, path)), { recursive: true })
     writeFileSync(join(stage, path), body)
   }
-  execFileSync('tar', ['-czf', join(dest, 'fixture.tgz'), '-C', stage, '.'])
+  // Archive the staged entries by name, not \`.\` — GNU tar (the CI runner)
+  // writes \`.\`-relative members as \`./package/...\`, and its extraction
+  // match on an exact member path does not strip that prefix the way bsdtar
+  // does. \`npm pack\`'s real tarballs never carry it (it packs via its own
+  // tar library, not \`tar -C ... .\`), so this only bit the fixture, and only
+  // on Linux.
+  execFileSync('tar', ['-czf', join(dest, 'fixture.tgz'), '-C', stage, ...readdirSync(stage)])
   process.stdout.write('fixture.tgz\\n')
 }
 `
