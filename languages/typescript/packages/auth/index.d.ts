@@ -48,6 +48,8 @@ export type AuthFailure =
   | (FailureBase & { type: "INVALID_URL" })
   | (FailureBase & { type: "INVALID_REGION" })
   | (FailureBase & { type: "INVALID_TOKEN" })
+  | (FailureBase & { type: "USAGE_LIMIT_EXCEEDED" })
+  | (FailureBase & { type: "ORG_NOT_PROVISIONED" })
   | (FailureBase & { type: "SERVER_ERROR" })
   | (FailureBase & { type: "NOT_AUTHENTICATED" })
   | (FailureBase & { type: "MISSING_WORKSPACE_CRN" })

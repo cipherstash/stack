@@ -247,8 +247,28 @@ impl Token {
             .await?;
 
         if !resp.status().is_success() {
-            let err: RefreshErrorResponse = resp.json().await?;
-            tracing::debug!(error = %err.error, "token refresh failed");
+            let status = resp.status();
+
+            // Read the body once as text and offer it to the shared classifier
+            // before parsing. Two reasons this order matters: `resp.json()`
+            // would turn a bodyless or non-JSON 402 into a decode error rather
+            // than the usage limit it is, and routing every issuance path
+            // through one classifier is what stops `/oauth/token` — the path
+            // `DeviceSessionRefresher` delegates to — from disagreeing with
+            // `/api/authorize` about what the same response means.
+            let body = resp.text().await?;
+            tracing::debug!(%status, %body, "token refresh failed");
+
+            if let Some(err) = crate::error::classify_issuance_failure(status.as_u16(), &body) {
+                return Err(err);
+            }
+
+            let err: RefreshErrorResponse = serde_json::from_str(&body).map_err(|e| {
+                AuthError::Server(crate::error::ServerError(format!(
+                    "{status}: unparseable error body: {e}"
+                )))
+            })?;
+
             return Err(match err.error.as_str() {
                 "invalid_grant" => AuthError::InvalidGrant(crate::error::InvalidGrant),
                 "invalid_client" => AuthError::InvalidClient(crate::error::InvalidClient),
@@ -292,6 +312,11 @@ struct RefreshResponse {
     refresh_token: Option<SecretToken>,
 }
 
+/// The RFC 6749 error body, for failures the shared classifier declines.
+///
+/// `cs_code` is deliberately absent: `classify_issuance_failure` inspects it
+/// on the raw body before this type is ever constructed, so duplicating the
+/// field here would create a second place for the two to disagree.
 #[derive(serde::Deserialize)]
 struct RefreshErrorResponse {
     error: String,
@@ -489,6 +514,124 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, AuthError::AccessDenied(_)));
+    }
+
+    // ---- Usage-limit classification on the refresh path ----
+    //
+    // `/oauth/token` is the path `DeviceSessionRefresher` delegates to, so
+    // these cases cover CLI login and dashboard refresh as well. They must
+    // agree with `classify_issuance_failure`, which the other two issuance
+    // paths use — the whole point of a shared classifier is that the same
+    // server response cannot mean different things depending on which
+    // refresher the caller happened to use.
+
+    async fn refresh_against(status: reqwest::StatusCode, body: serde_json::Value) -> AuthError {
+        let mut mocks = MockSet::new();
+        mocks.mock(move |when, then| {
+            when.post().path("/oauth/token");
+            then.status(status).json(body.clone());
+        });
+        let server = start_server(mocks).await;
+        let refresh_token = SecretToken::new("test-refresh-token");
+        Token::refresh(&refresh_token, &server.url(""), "cli", None)
+            .await
+            .expect_err("a non-2xx refresh must fail")
+    }
+
+    #[tokio::test]
+    async fn refresh_402_with_cs_code_is_usage_limit() {
+        let err = refresh_against(
+            reqwest::StatusCode::PAYMENT_REQUIRED,
+            serde_json::json!({
+                "error": "access_denied",
+                "error_description": "Workspace has exceeded its usage limit",
+                "cs_code": "USAGE_LIMIT_EXCEEDED",
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            err.error_code(),
+            crate::error::codes::USAGE_LIMIT_EXCEEDED,
+            "cs_code must win over the registered access_denied code, or a usage \
+             limit reads as a permissions failure the user cannot act on",
+        );
+        assert!(
+            err.to_string().contains("exceeded its usage limit"),
+            "the server's description should survive verbatim, got {err}",
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_402_access_denied_without_cs_code_is_usage_limit() {
+        let err = refresh_against(
+            reqwest::StatusCode::PAYMENT_REQUIRED,
+            serde_json::json!({"error": "access_denied"}),
+        )
+        .await;
+
+        assert_eq!(
+            err.error_code(),
+            crate::error::codes::USAGE_LIMIT_EXCEEDED,
+            "a CTS deployment predating cs_code still means usage limit at 402",
+        );
+    }
+
+    /// Guards arm ORDER: `access_denied` only means "usage limit" at 402.
+    #[tokio::test]
+    async fn refresh_403_access_denied_is_still_access_denied() {
+        let err = refresh_against(
+            reqwest::StatusCode::FORBIDDEN,
+            serde_json::json!({"error": "access_denied"}),
+        )
+        .await;
+
+        assert!(
+            matches!(err, AuthError::AccessDenied(_)),
+            "a non-402 access_denied is a real authorization refusal, got {err:?}",
+        );
+    }
+
+    /// Regression: this path used to parse the body as JSON *before* looking at
+    /// the status, so a bodyless 402 surfaced as a reqwest decode error while
+    /// the other two issuance paths classified it as a usage limit. Same server
+    /// response, two different client errors.
+    #[tokio::test]
+    async fn refresh_402_with_empty_body_is_usage_limit() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/token");
+            then.status(reqwest::StatusCode::PAYMENT_REQUIRED);
+        });
+        let server = start_server(mocks).await;
+        let refresh_token = SecretToken::new("test-refresh-token");
+
+        let err = Token::refresh(&refresh_token, &server.url(""), "cli", None)
+            .await
+            .expect_err("a 402 must fail");
+
+        assert_eq!(
+            err.error_code(),
+            crate::error::codes::USAGE_LIMIT_EXCEEDED,
+            "must agree with classify_issuance_failure's bare-402 handling, got {err:?}",
+        );
+    }
+
+    /// A 402 whose `cs_code` we cannot read must not claim a usage limit —
+    /// mirrors `unreadable_cs_code_declines_to_classify` on the shared path.
+    #[tokio::test]
+    async fn refresh_402_with_unknown_cs_code_does_not_claim_usage_limit() {
+        let err = refresh_against(
+            reqwest::StatusCode::PAYMENT_REQUIRED,
+            serde_json::json!({"error": "access_denied", "cs_code": "SOMETHING_ELSE"}),
+        )
+        .await;
+
+        assert_ne!(
+            err.error_code(),
+            crate::error::codes::USAGE_LIMIT_EXCEEDED,
+            "an unrecognised cs_code must not inherit the usage-limit classification",
+        );
     }
 
     #[tokio::test]

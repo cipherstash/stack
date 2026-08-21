@@ -268,7 +268,11 @@ if (created.failure) {
 const strategy = created.data;
 ```
 
-Failure `type`s: `INVALID_ACCESS_KEY`, `ACCESS_DENIED`, `EXPIRED_TOKEN`, `INVALID_GRANT`, `INVALID_CLIENT`, `INVALID_REGION`, `INVALID_URL`, `INVALID_TOKEN`, `SERVER_ERROR`, `REQUEST_ERROR`, `NOT_AUTHENTICATED`, `MISSING_WORKSPACE_CRN`, `INVALID_CRN`, `WORKSPACE_MISMATCH`, `INVALID_WORKSPACE_ID`, `ALREADY_CONSUMED`, `INTERNAL_ERROR`, `STORE_ERROR`. Each `failure` also carries the live `error: Error` and optional `help`/`url`. Only a genuine internal panic still throws.
+Failure `type`s: `INVALID_ACCESS_KEY`, `ACCESS_DENIED`, `EXPIRED_TOKEN`, `INVALID_GRANT`, `INVALID_CLIENT`, `INVALID_REGION`, `INVALID_URL`, `INVALID_TOKEN`, `USAGE_LIMIT_EXCEEDED`, `ORG_NOT_PROVISIONED`, `SERVER_ERROR`, `REQUEST_ERROR`, `NOT_AUTHENTICATED`, `MISSING_WORKSPACE_CRN`, `INVALID_CRN`, `WORKSPACE_MISMATCH`, `INVALID_WORKSPACE_ID`, `ALREADY_CONSUMED`, `INTERNAL_ERROR`, `CUSTOM`, `STORE_ERROR`. Each `failure` also carries the live `error: Error` and optional `help`/`url`. Only a genuine internal panic still throws.
+
+`USAGE_LIMIT_EXCEEDED` means the organisation has exhausted its allowance for the current billing period. Retrying will not clear it — the plan has to be upgraded from the CipherStash dashboard first.
+
+`ORG_NOT_PROVISIONED` means the organisation is not set up for usage tracking at all. There is no plan to upgrade; contact CipherStash support.
 
 > **Migrating from the throw-based API (0.40.x and earlier):** replace
 > `try { const t = await s.getToken(); … } catch (err) { err.code }`

@@ -58,8 +58,74 @@ pub(crate) struct AutoRefresh<R, S = NoStore> {
     clock: SharedClock,
 }
 
+/// How long a cached refusal is replayed before the server is asked again.
+///
+/// The cache exists to stop an over-limit client re-issuing the same doomed
+/// request at its own request rate. It must not outlive its usefulness: the
+/// customer can upgrade their plan at any moment, and that is invisible to us
+/// until we ask. Sixty seconds turns a per-request storm into one call a
+/// minute while bounding how long an upgrade goes unnoticed.
+pub(crate) const DENIAL_TTL_SECS: u64 = 60;
+
 struct State {
     token: Option<Token>,
+    /// The last refusal that will not resolve by retrying, if any.
+    ///
+    /// Without this, a client whose org is over its usage limit re-issues the
+    /// same doomed request on every `get_token` call — at request rate, against
+    /// a decision that has already been made. Expires after
+    /// [`DENIAL_TTL_SECS`], and is cleared outright by any successful refresh.
+    denial: Option<StickyDenial>,
+    /// The error from the most recently completed refresh attempt, if it
+    /// failed. Cleared on every successful refresh.
+    ///
+    /// Unlike `denial`, this is not TTL'd, is not restricted to account-level
+    /// refusals, and is never consulted by `get_token`'s own retry path — it
+    /// exists solely so a caller parked in
+    /// [`wait_for_in_flight_refresh`](AutoRefresh::wait_for_in_flight_refresh)
+    /// sees the *same* outcome as whoever actually performed the refresh it
+    /// was waiting on, instead of a generic `Expired` that discards why the
+    /// wait ended in failure.
+    last_refresh_error: Option<(&'static str, String)>,
+}
+
+/// A non-retryable refusal, held in a form that can be handed to more than one
+/// caller.
+///
+/// [`AuthError`](crate::AuthError) is not `Clone` — it wraps foreign error
+/// types — so the denial is stored as the wire pair it round-trips through and
+/// rebuilt per call. `USAGE_LIMIT_EXCEEDED` round-trips exactly, message
+/// included; see [`AuthError::from_error_code`](crate::AuthError::from_error_code).
+struct StickyDenial {
+    code: &'static str,
+    message: String,
+    recorded_at: u64,
+}
+
+impl StickyDenial {
+    fn new(err: &crate::AuthError, now: u64) -> Self {
+        Self {
+            code: err.error_code(),
+            message: err.to_string(),
+            recorded_at: now,
+        }
+    }
+
+    /// Whether the refusal has outlived its window.
+    ///
+    /// A clock reading earlier than the moment of recording (NTP step, VM
+    /// snapshot restore, manual change) counts as stale. The elapsed time is
+    /// then unknowable, and the two ways of being wrong are not equal: asking
+    /// again costs one request, while pinning the entry locks the caller out
+    /// until the clock catches up — which for a large backwards step is
+    /// indistinguishable from forever.
+    fn is_stale(&self, now: u64) -> bool {
+        now < self.recorded_at || now - self.recorded_at >= DENIAL_TTL_SECS
+    }
+
+    fn to_error(&self) -> crate::AuthError {
+        crate::AuthError::from_error_code(self.code, &self.message, &serde_json::Map::new())
+    }
 }
 
 /// Ensures [`AutoRefresh::refresh_in_progress`] is cleared and waiters are
@@ -67,6 +133,17 @@ struct State {
 ///
 /// On the normal path (success or handled error), the guard is defused before
 /// drop so that the regular cleanup code runs instead.
+///
+/// Unlike the normal paths, `Drop` is synchronous and so notifies without
+/// taking the state lock. A caller that has read `refresh_in_progress` as
+/// `true` and is on its way into
+/// [`wait_for_in_flight_refresh`](AutoRefresh::wait_for_in_flight_refresh)
+/// holds that lock, which does not block this notification — so if the refresh
+/// future is cancelled in that window, the wake still lands on an empty list
+/// and that caller parks with nothing left to wake it. The `enable()` call in
+/// `wait_for_in_flight_refresh` does not close this narrower variant; doing so
+/// needs the notify moved under the state lock or a bounded wait, and is
+/// tracked separately.
 struct CancelGuard<'a> {
     in_progress: &'a AtomicBool,
     notify: &'a Notify,
@@ -89,6 +166,57 @@ impl CancelGuard<'_> {
 }
 
 impl State {
+    fn new(token: Option<Token>) -> Self {
+        Self {
+            token,
+            denial: None,
+            last_refresh_error: None,
+        }
+    }
+
+    /// Record the outcome of a failed refresh attempt. Every failure path
+    /// calls this exactly once, so the two things a failure needs to update
+    /// can't drift apart by a call site remembering one and not the other:
+    ///
+    /// - if `err` refuses the *account* rather than the credential, it
+    ///   becomes the sticky, TTL'd [`denial`](Self::fresh_denial) replayed to
+    ///   this refresher's own future `get_token` calls. A usage limit is
+    ///   different in kind from most non-retryable failures: the credential
+    ///   was never the problem, so re-presenting it cannot change the answer.
+    ///   See [`AuthError::is_account_refusal`] for why this is narrower than
+    ///   [`is_retryable`](crate::AuthError::is_retryable).
+    /// - `err` always becomes [`last_refresh_error`](Self::last_refresh_error),
+    ///   regardless of its class, for any caller parked in
+    ///   `wait_for_in_flight_refresh` to see the same answer this refresh
+    ///   attempt actually got.
+    fn record_refusal(&mut self, err: &crate::AuthError, now: u64) {
+        if err.is_account_refusal() {
+            self.denial = Some(StickyDenial::new(err, now));
+        }
+        self.last_refresh_error = Some((err.error_code(), err.to_string()));
+    }
+
+    /// The error from the most recently completed refresh attempt, if it
+    /// failed and no success has happened since.
+    fn last_refresh_error(&self) -> Option<crate::AuthError> {
+        self.last_refresh_error.as_ref().map(|(code, message)| {
+            crate::AuthError::from_error_code(code, message, &serde_json::Map::new())
+        })
+    }
+
+    /// The recorded refusal if it is still within its window, discarding it if
+    /// not so the next attempt goes back to the network.
+    fn fresh_denial(&mut self, now: u64) -> Option<crate::AuthError> {
+        match &self.denial {
+            Some(denial) if !denial.is_stale(now) => Some(denial.to_error()),
+            Some(_) => {
+                self.denial = None;
+                None
+            }
+            None => None,
+        }
+    }
+
     fn service_token(&self) -> Result<ServiceToken, AutoRefreshError> {
         let token = self.token.as_ref().ok_or(AutoRefreshError::NotFound)?;
         Ok(ServiceToken::new(token.access_token().clone()))
@@ -112,7 +240,7 @@ impl<R> AutoRefresh<R, NoStore> {
     pub(crate) fn with_token(refresher: R, token: Token) -> Self {
         Self {
             refresher,
-            state: Mutex::new(State { token: Some(token) }),
+            state: Mutex::new(State::new(Some(token))),
             store: NoStore,
             refresh_in_progress: AtomicBool::new(false),
             refresh_notify: Notify::new(),
@@ -126,7 +254,7 @@ impl<R> AutoRefresh<R, NoStore> {
     pub(crate) fn with_token_and_clock(refresher: R, token: Token, clock: SharedClock) -> Self {
         Self {
             refresher,
-            state: Mutex::new(State { token: Some(token) }),
+            state: Mutex::new(State::new(Some(token))),
             store: NoStore,
             refresh_in_progress: AtomicBool::new(false),
             refresh_notify: Notify::new(),
@@ -146,7 +274,7 @@ impl<R, S: TokenStore> AutoRefresh<R, S> {
     pub(crate) fn with_store(refresher: R, store: S) -> Self {
         Self {
             refresher,
-            state: Mutex::new(State { token: None }),
+            state: Mutex::new(State::new(None)),
             store,
             refresh_in_progress: AtomicBool::new(false),
             refresh_notify: Notify::new(),
@@ -161,6 +289,13 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
         let mut state = self.state.lock().await;
 
         if state.token.is_none() {
+            // A settled account-level refusal is checked before the store
+            // read: without this, every `get_token` call during the denial
+            // window turns the suppressed HTTP storm against CTS into an
+            // identical storm against the caller's own store backend instead.
+            if let Some(err) = state.fresh_denial(self.clock.now_unix_secs()) {
+                return Err(AutoRefreshError::Auth(err));
+            }
             // Drop the lock for the store read so a slow user-supplied backend
             // (cookie, KV, Redis) doesn't serialise concurrent `get_token`
             // callers. Re-acquire and double-check `state.token.is_none()` in
@@ -173,14 +308,17 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
             }
         }
 
+        // Read "now" once from the injected clock and use it for every expiry
+        // decision in this call — token expiry and refusal expiry alike — so
+        // the checks are mutually consistent and deterministic under test.
+        let now = self.clock.now_unix_secs();
+
         if state.token.is_none() {
+            if let Some(err) = state.fresh_denial(now) {
+                return Err(AutoRefreshError::Auth(err));
+            }
             return self.initial_auth(&mut state).await;
         }
-
-        // Read "now" once from the injected clock and use it for every expiry
-        // decision in this call, so the checks are mutually consistent and
-        // deterministic under test.
-        let now = self.clock.now_unix_secs();
 
         if !state.token.as_ref().is_some_and(|t| t.is_expired_at(now)) {
             return state.service_token();
@@ -188,6 +326,17 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
 
         if self.refresh_in_progress.load(Ordering::Acquire) {
             return self.wait_for_in_flight_refresh(state, now).await;
+        }
+
+        // A settled refusal stands until something outside this client changes.
+        // Checked before `try_credential`, which moves the credential out of
+        // the cached token and would need restoring on an early return.
+        if let Some(err) = state.fresh_denial(now) {
+            return if state.token.as_ref().is_some_and(|t| t.is_usable_at(now)) {
+                state.service_token()
+            } else {
+                Err(AutoRefreshError::Auth(err))
+            };
         }
 
         let Some(credential) = self.refresher.try_credential(state.token.as_mut()) else {
@@ -226,6 +375,7 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
             Err(err) => {
                 guard.defuse();
                 self.refresh_in_progress.store(false, Ordering::Release);
+                state.record_refusal(&err, self.clock.now_unix_secs());
                 Err(AutoRefreshError::Auth(err))
             }
         }
@@ -248,6 +398,9 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
     fn install_refreshed_token(&self, state: &mut State, new_token: Token) -> ServiceToken {
         let service_token = ServiceToken::new(new_token.access_token().clone());
         state.token = Some(new_token);
+        // A success proves whatever previously refused us has changed its mind.
+        state.denial = None;
+        state.last_refresh_error = None;
         self.refresh_in_progress.store(false, Ordering::Release);
         service_token
     }
@@ -269,14 +422,62 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
         }
         // Token crossed real expiry during in-flight refresh. Wait for the
         // refresh to complete rather than returning Expired.
-        let notified = self.refresh_notify.notified();
+        //
+        // `Notified` does not join the notify list until it is first polled,
+        // and `notify_waiters` stores no permit for futures that are not yet
+        // on it. Registering only at `.await` would leave a window after the
+        // lock drops in which the in-flight refresh can complete, notify an
+        // empty list, and leave this caller parked until some later refresh
+        // cycle notifies again — which for an idle client may be never.
+        // `enable()` joins the list while the state lock is still held, and
+        // `refresh_non_blocking` takes that same lock to record its outcome
+        // before it notifies, so the notification cannot land before we are
+        // listed. This does not cover `CancelGuard::drop`, which notifies
+        // without the lock — see the note on that impl.
+        let mut notified = std::pin::pin!(self.refresh_notify.notified());
+        // The `bool` reports whether a stored permit was consumed, which only
+        // `notify_one` produces; this `Notify` is only ever driven by
+        // `notify_waiters`, so there is nothing to act on.
+        let _ = notified.as_mut().enable();
         drop(state);
         notified.await;
         // Re-check after wake — refresh may have failed. Re-read the clock: an
         // arbitrary amount of time may have passed while awaiting the refresh.
         let now = self.clock.now_unix_secs();
-        let state = self.state.lock().await;
-        state.require_usable_token(now)
+        let mut state = self.state.lock().await;
+        match state.require_usable_token(now) {
+            Ok(token) => Ok(token),
+            // The refresh we waited on may have failed with a refusal that no
+            // retry clears. It is already recorded — `refresh_non_blocking`
+            // records before `notify_waiters` wakes us — so reporting
+            // `Expired` here would tell every caller *except* the one that
+            // issued the request that their token lapsed. That is the same
+            // misdiagnosis `refresh_blocking` stopped making, reached by a
+            // different route: it sends the caller round the refresh loop
+            // that just failed, for a condition only a plan upgrade or
+            // support can clear.
+            //
+            // A still-usable token still wins, matching the pre-refresh path
+            // in `get_token`: a settled refusal suppresses further requests,
+            // it does not invalidate a credential that still works.
+            Err(unusable) => match state.fresh_denial(now) {
+                Some(err) => Err(AutoRefreshError::Auth(err)),
+                // Not an account-level refusal (or none was recorded) — fall
+                // back to whatever the refresh actually returned, so this
+                // caller sees the same typed error the issuer would have
+                // (e.g. `invalid_grant`, a rotated/revoked refresh token)
+                // rather than a generic `Expired` that discards it. Skipped
+                // when the recorded error already *is* `TokenExpired` — that
+                // degrades to the same `AuthError` as `unusable` once
+                // unwrapped, so there's nothing more specific to surface.
+                None => match state.last_refresh_error() {
+                    Some(err) if !matches!(err, crate::AuthError::TokenExpired(_)) => {
+                        Err(AutoRefreshError::Auth(err))
+                    }
+                    _ => Err(unusable),
+                },
+            },
+        }
     }
 
     /// Token is expiring but still usable — drop the lock, refresh in the
@@ -327,6 +528,12 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
                     self.refresher.restore(token, credential);
                 }
                 self.refresh_in_progress.store(false, Ordering::Release);
+                // The cached token is still usable, so this call still
+                // succeeds — but record the refusal so the next call doesn't
+                // re-issue the same request (if it's account-level), and so a
+                // caller parked in `wait_for_in_flight_refresh` sees the same
+                // answer this refresh actually got (regardless of its class).
+                state.record_refusal(&err, self.clock.now_unix_secs());
                 guard.defuse();
             }
         }
@@ -368,7 +575,11 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
                     self.refresher.restore(token, credential);
                 }
                 self.refresh_in_progress.store(false, Ordering::Release);
-                Err(AutoRefreshError::Expired)
+                state.record_refusal(&err, self.clock.now_unix_secs());
+                // Propagate the refuser's own answer. Flattening to `Expired`
+                // here would tell a caller who is over their usage limit that
+                // their token expired, and send them round the same loop.
+                Err(AutoRefreshError::Auth(err))
             }
         }
     }
@@ -488,6 +699,98 @@ mod tests {
             assert!(
                 matches!(err, AutoRefreshError::NotFound),
                 "expected NotFound, got: {err:?}"
+            );
+        }
+    }
+
+    /// A settled account-level denial must short-circuit before the store is
+    /// consulted, not just before the network call to CTS. Otherwise every
+    /// `get_token` during the denial window turns the suppressed HTTP storm
+    /// against CTS into an identical storm against the caller's own store
+    /// backend (a cookie, a KV store, Redis) for the whole window instead.
+    mod given_a_fresh_sticky_denial_and_no_cached_token {
+        use super::*;
+        use crate::token_store::TokenStore;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        /// `TokenStore` that always misses, counting how many times `load` is
+        /// called.
+        struct CountingStore {
+            load_calls: Arc<AtomicUsize>,
+        }
+
+        impl TokenStore for CountingStore {
+            async fn load(&self) -> Option<Token> {
+                self.load_calls.fetch_add(1, Ordering::SeqCst);
+                None
+            }
+
+            async fn save(&self, _token: &Token) {}
+        }
+
+        /// `Refresher` that can authenticate from cold (no prior token) but
+        /// always has its refresh refused as over the usage limit.
+        struct AlwaysOverLimitRefresher;
+
+        impl Refresher for AlwaysOverLimitRefresher {
+            type Credential = ();
+
+            fn save(&self, _token: &Token) {}
+
+            fn try_credential(&self, _token: Option<&mut Token>) -> Option<Self::Credential> {
+                Some(())
+            }
+
+            fn restore(&self, _token: &mut Token, _credential: Self::Credential) {}
+
+            async fn refresh(
+                &self,
+                _credential: &Self::Credential,
+            ) -> Result<Token, crate::AuthError> {
+                Err(crate::AuthError::UsageLimitExceeded(
+                    crate::error::UsageLimitExceeded("over limit".to_string()),
+                ))
+            }
+        }
+
+        #[tokio::test]
+        async fn does_not_re_hit_the_store_while_the_denial_is_fresh() {
+            let load_calls = Arc::new(AtomicUsize::new(0));
+            let store = CountingStore {
+                load_calls: Arc::clone(&load_calls),
+            };
+            let strategy = AutoRefresh::with_store(AlwaysOverLimitRefresher, store);
+
+            let first = strategy.get_token().await;
+            assert!(
+                matches!(
+                    first,
+                    Err(AutoRefreshError::Auth(
+                        crate::AuthError::UsageLimitExceeded(_)
+                    ))
+                ),
+                "expected UsageLimitExceeded, got: {first:?}"
+            );
+            assert_eq!(
+                load_calls.load(Ordering::SeqCst),
+                1,
+                "the first call has no denial recorded yet, so it must still consult the store"
+            );
+
+            let second = strategy.get_token().await;
+            assert!(
+                matches!(
+                    second,
+                    Err(AutoRefreshError::Auth(
+                        crate::AuthError::UsageLimitExceeded(_)
+                    ))
+                ),
+                "expected UsageLimitExceeded, got: {second:?}"
+            );
+            assert_eq!(
+                load_calls.load(Ordering::SeqCst),
+                1,
+                "a fresh sticky denial must short-circuit before the store is consulted again"
             );
         }
     }
@@ -638,7 +941,7 @@ mod tests {
             }
 
             #[tokio::test]
-            async fn returns_expired_on_refresh_failure() {
+            async fn returns_the_servers_refusal_on_refresh_failure() {
                 let mut mocks = MockSet::new();
                 mocks.mock(|when, then| {
                     when.post().path("/oauth/token");
@@ -652,8 +955,12 @@ mod tests {
                 let err = strategy.get_token().await.unwrap_err();
 
                 assert!(
-                    matches!(err, AutoRefreshError::Expired),
-                    "expected Expired after failed refresh, got: {err:?}"
+                    matches!(
+                        err,
+                        AutoRefreshError::Auth(crate::AuthError::InvalidGrant(_))
+                    ),
+                    "the caller must see the grant was rejected, not a generic \
+                     Expired that invites the same doomed retry: {err:?}"
                 );
             }
 
@@ -669,11 +976,14 @@ mod tests {
                 let strategy =
                     auto_refresh_with_token(&dir, &server, make_token("old-token", 0, true));
 
-                // First call: refresh fails, returns Expired.
+                // First call: refresh fails and the rejection reaches the caller.
                 let err = strategy.get_token().await.unwrap_err();
                 assert!(
-                    matches!(err, AutoRefreshError::Expired),
-                    "expected Expired on first attempt, got: {err:?}"
+                    matches!(
+                        err,
+                        AutoRefreshError::Auth(crate::AuthError::InvalidGrant(_))
+                    ),
+                    "expected the grant rejection on first attempt, got: {err:?}"
                 );
 
                 // Verify the refresh token was restored so a retry is possible.
@@ -1264,7 +1574,7 @@ mod stress_tests {
         }
 
         #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-        async fn all_callers_receive_expired_on_failure() {
+        async fn all_callers_receive_an_error_on_failure() {
             let counting = CountingState::new();
             let state = DelayedRefreshState {
                 counting: counting.clone(),
@@ -1292,12 +1602,24 @@ mod stress_tests {
                 results
             };
 
+            // No caller may come away with a token. A fully-expired token
+            // takes the *blocking* refresh path, which holds the state lock
+            // across the whole HTTP call — so no other caller can ever be
+            // concurrently parked in `wait_for_in_flight_refresh` while it
+            // runs; every one of them queues on the lock itself and, on
+            // acquiring it, performs (and fails) its own refresh in turn. So
+            // every caller here sees the server's actual refusal directly,
+            // not a generic `Expired` — this is asserted precisely, not just
+            // "at least one caller does", so a change that lets some caller
+            // fall through to `Expired` is caught.
             for result in &results {
-                assert!(result.is_err(), "expected Expired error, got Ok");
-                let err = result.as_ref().unwrap_err();
                 assert!(
-                    matches!(err, AutoRefreshError::Expired),
-                    "expected Expired, got: {err:?}"
+                    matches!(
+                        result,
+                        Err(AutoRefreshError::Auth(crate::AuthError::InvalidGrant(_)))
+                    ),
+                    "every caller must receive the server's actual refusal, not a \
+                     generic Expired: {result:?}"
                 );
             }
 
@@ -1728,6 +2050,10 @@ mod expiry_crossing_regression {
         started: Arc<Notify>,
         gate: Arc<Notify>,
         calls: Arc<AtomicUsize>,
+        /// Built per call rather than stored, because `AuthError` is not
+        /// `Clone`. Lets one refresher drive both the generic-failure and the
+        /// account-refusal axes, which take different paths out of the wait.
+        error: fn() -> AuthError,
     }
 
     impl Refresher for FailingGatedRefresher {
@@ -1748,11 +2074,12 @@ mod expiry_crossing_regression {
             let started = Arc::clone(&self.started);
             let gate = Arc::clone(&self.gate);
             let calls = Arc::clone(&self.calls);
+            let error = self.error;
             async move {
                 calls.fetch_add(1, Ordering::SeqCst);
                 started.notify_one();
                 gate.notified().await;
-                Err(AuthError::TokenExpired(crate::error::TokenExpired))
+                Err(error())
             }
         }
     }
@@ -1776,6 +2103,7 @@ mod expiry_crossing_regression {
             started: Arc::clone(&started),
             gate: Arc::clone(&gate),
             calls: Arc::clone(&calls),
+            error: || AuthError::TokenExpired(crate::error::TokenExpired),
         };
 
         // Within the 90s leeway (triggers a refresh) but still usable now, so the
@@ -1837,6 +2165,97 @@ mod expiry_crossing_regression {
         );
     }
 
+    /// The taxonomy counterpart to
+    /// [`waiters_get_expired_when_in_flight_refresh_fails`]: when the in-flight
+    /// refresh fails with a refusal no retry can clear, every waiter must
+    /// receive *that* refusal rather than `Expired`.
+    ///
+    /// Only the caller that issued the request sees the server's answer
+    /// directly; a waiter can learn it solely from the recorded denial, which
+    /// `refresh_non_blocking` writes before `notify_waiters` wakes it. Without
+    /// that consultation the waiters get `Expired`, which `cipherstash-cli`
+    /// maps to `NoAuth` and turns into a login prompt — the one remedy
+    /// guaranteed not to clear a usage limit.
+    ///
+    /// The window is narrow but not exotic: it needs only a proactive refresh
+    /// that starts inside the expiry leeway and a token that crosses real
+    /// expiry before the request comes back.
+    #[tokio::test]
+    async fn waiters_get_the_refusal_when_the_in_flight_refresh_is_denied() {
+        let clock = TestClock::new(1_000_000);
+        let started = Arc::new(Notify::new());
+        let gate = Arc::new(Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let refresher = FailingGatedRefresher {
+            started: Arc::clone(&started),
+            gate: Arc::clone(&gate),
+            calls: Arc::clone(&calls),
+            error: || {
+                AuthError::UsageLimitExceeded(crate::error::UsageLimitExceeded(
+                    "Workspace has exceeded its usage limit".to_string(),
+                ))
+            },
+        };
+
+        // Inside the leeway (so a refresh starts) but still usable, so the
+        // first caller takes the non-blocking path.
+        let token = make_token("expiring-soon", clock.now() + 10);
+        let strategy = Arc::new(AutoRefresh::with_token_and_clock(
+            refresher,
+            token,
+            clock.shared(),
+        ));
+
+        let first = {
+            let s = Arc::clone(&strategy);
+            tokio::spawn(async move { s.get_token().await })
+        };
+        started.notified().await;
+
+        // Cross real expiry while the refresh is gated, so the waiters park in
+        // `wait_for_in_flight_refresh` instead of being served the cached token.
+        clock.advance(20);
+
+        let waiters: Vec<_> = (0..WAITERS)
+            .map(|_| {
+                let s = Arc::clone(&strategy);
+                tokio::spawn(async move { s.get_token().await })
+            })
+            .collect();
+        for _ in 0..32 {
+            tokio::task::yield_now().await;
+        }
+
+        gate.notify_one();
+
+        let first = first.await.unwrap();
+        assert_eq!(
+            first.unwrap().as_str(),
+            "expiring-soon",
+            "first caller keeps the old token it captured before the refusal"
+        );
+
+        for (i, waiter) in waiters.into_iter().enumerate() {
+            let result = waiter.await.unwrap();
+            assert!(
+                matches!(
+                    result,
+                    Err(AutoRefreshError::Auth(AuthError::UsageLimitExceeded(_)))
+                ),
+                "waiter {i} must receive the usage refusal, not a generic \
+                 expiry, got: {result:?}"
+            );
+        }
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the waiters must be served from the recorded denial, not by \
+             re-issuing the request the refusal exists to suppress"
+        );
+    }
+
     /// A [`Refresher`] whose `refresh` panics if it is ever called, so a test can
     /// assert that no refresh is triggered.
     struct NeverRefresher;
@@ -1861,6 +2280,87 @@ mod expiry_crossing_regression {
         ) -> impl Future<Output = Result<Token, AuthError>> + Send {
             async { panic!("refresh must not be called while the token reads as fresh") }
         }
+    }
+
+    /// The generalisation of `waiters_get_the_refusal_when_the_in_flight_refresh_is_denied`:
+    /// waiters must see the issuer's actual refusal even when it is *not* one
+    /// of the two account-level codes the sticky denial cache exists for.
+    /// `invalid_grant` is a settled, non-retryable answer (the refresh token
+    /// was rotated or revoked) — but because it isn't an account refusal,
+    /// `record_refusal` never caches it as a sticky `denial`, so a waiter
+    /// woken from `wait_for_in_flight_refresh` used to fall all the way
+    /// through to a generic `Expired`, hiding *why* the refresh failed from
+    /// every caller except the one that happened to perform it.
+    #[tokio::test]
+    async fn waiters_get_the_issuers_error_even_when_it_is_not_an_account_refusal() {
+        let clock = TestClock::new(1_000_000);
+        let started = Arc::new(Notify::new());
+        let gate = Arc::new(Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let refresher = FailingGatedRefresher {
+            started: Arc::clone(&started),
+            gate: Arc::clone(&gate),
+            calls: Arc::clone(&calls),
+            error: || AuthError::InvalidGrant(crate::error::InvalidGrant),
+        };
+
+        // Inside the leeway (so a refresh starts) but still usable, so the
+        // first caller takes the non-blocking path.
+        let token = make_token("expiring-soon", clock.now() + 10);
+        let strategy = Arc::new(AutoRefresh::with_token_and_clock(
+            refresher,
+            token,
+            clock.shared(),
+        ));
+
+        let first = {
+            let s = Arc::clone(&strategy);
+            tokio::spawn(async move { s.get_token().await })
+        };
+        started.notified().await;
+
+        // Cross real expiry while the refresh is gated, so the waiters park in
+        // `wait_for_in_flight_refresh` instead of being served the cached token.
+        clock.advance(20);
+
+        let waiters: Vec<_> = (0..WAITERS)
+            .map(|_| {
+                let s = Arc::clone(&strategy);
+                tokio::spawn(async move { s.get_token().await })
+            })
+            .collect();
+        for _ in 0..32 {
+            tokio::task::yield_now().await;
+        }
+
+        gate.notify_one();
+
+        let first = first.await.unwrap();
+        assert_eq!(
+            first.unwrap().as_str(),
+            "expiring-soon",
+            "first caller keeps the old token it captured before the refusal"
+        );
+
+        for (i, waiter) in waiters.into_iter().enumerate() {
+            let result = waiter.await.unwrap();
+            assert!(
+                matches!(
+                    result,
+                    Err(AutoRefreshError::Auth(AuthError::InvalidGrant(_)))
+                ),
+                "waiter {i} must receive the invalid_grant refusal — a settled, \
+                 non-retryable answer — not a generic Expired that hides why the \
+                 refresh actually failed, got: {result:?}"
+            );
+        }
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "exactly one refresh attempt for all callers combined"
+        );
     }
 
     /// A wall clock running *backwards* (NTP step, VM snapshot restore) must not

@@ -71,6 +71,8 @@ required-features = ["test-utils"]
 axum = "0.8"
 cts-common = { workspace = true }
 mocktail = "0.3.0"
+# Version matches the existing use in `vitur-server-core`.
+proptest = "1.7.0"
 temp-env = { workspace = true }
 tempfile = "3.21.0"
 tokio = { workspace = true, features = ["test-util"] }
