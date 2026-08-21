@@ -6,8 +6,8 @@ description = "Canonical wire types for EQL payloads — single source of truth 
 # crates.io metadata. `license` is REQUIRED by crates.io — publish fails without
 # it. The rest drive discoverability and the docs.rs / crates.io sidebar links.
 license = "MIT"
-repository = "https://github.com/cipherstash/encrypt-query-language"
-homepage = "https://github.com/cipherstash/encrypt-query-language"
+repository = "https://github.com/cipherstash/stack"
+homepage = "https://github.com/cipherstash/stack"
 readme = "README.md"
 keywords = ["encryption", "postgres", "eql", "cipherstash", "searchable"]
 categories = ["cryptography", "database"]
