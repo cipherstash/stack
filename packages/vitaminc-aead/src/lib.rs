@@ -6,6 +6,7 @@ mod ciphertext;
 mod container;
 mod context;
 mod decipher;
+mod decrypt;
 mod element;
 mod encrypt;
 #[cfg(feature = "hlist")]
@@ -25,7 +26,9 @@ pub use container::CipherText;
 #[doc(inline)]
 pub use context::ContextTag;
 #[doc(inline)]
-pub use decipher::{Decipher, DecipherVisitor, Decrypt, MapAccess, SeqAccess};
+pub use decipher::{Decipher, DecipherVisitor, MapAccess, SeqAccess};
+#[doc(inline)]
+pub use decrypt::Decrypt;
 #[doc(inline)]
 pub use element::Element;
 #[doc(inline)]

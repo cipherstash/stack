@@ -1,10 +1,17 @@
-pub mod impls;
+//! Cipher-backend traits for the decrypt direction — the mirror of
+//! [`cipher`](crate::cipher).
+//!
+//! [`Decipher`] drives decryption the way [`Cipher`](crate::Cipher) drives
+//! encryption, with [`DecipherVisitor`], [`SeqAccess`] and [`MapAccess`] as
+//! its sub-protocols. The plaintext-side trait a type implements to decode
+//! *itself* lives in [`decrypt`](crate::decrypt), mirroring how
+//! [`Encrypt`](crate::Encrypt) sits opposite [`Cipher`](crate::Cipher).
 
 use std::any::Any;
 
 use vitaminc_protected::Protected;
 
-use crate::{Aad, IntoAad, Unspecified};
+use crate::{decrypt::Decrypt, IntoAad, Unspecified};
 
 /// A trait for types that can decrypt data, driving a [`DecipherVisitor`] to produce values.
 ///
@@ -247,26 +254,4 @@ pub trait MapAccess<'c> {
     /// encrypt time. An implementation that decrypts values against the bare map AAD leaves
     /// keys swappable in stored ciphertext (and will fail to decrypt conforming ciphertexts).
     fn next_entry<T: Decrypt<'c> + 'c>(&mut self) -> Result<Option<(String, T)>, Self::Error>;
-}
-
-/// The counterpart to `Encrypt` — a type that knows how to decrypt itself using a `Decipher`.
-/// Analogous to serde's `Deserialize`.
-pub trait Decrypt<'c>: Sized + Send {
-    /// Decrypt `Self` from the given decipher with no associated data.
-    ///
-    /// Convenience wrapper around [`decrypt_with_aad`](Decrypt::decrypt_with_aad), mirroring
-    /// [`Encrypt::encrypt`](crate::Encrypt::encrypt).
-    fn decrypt<D: Decipher<'c>>(decipher: D) -> D::Ok<Self> {
-        Self::decrypt_with_aad(decipher, Aad::empty())
-    }
-
-    /// Decrypt `Self` from the given decipher, authenticating against `aad`.
-    ///
-    /// This is the method implementations provide; it mirrors
-    /// [`Encrypt::encrypt_with_aad`](crate::Encrypt::encrypt_with_aad). The `aad` must match
-    /// the associated data bound at encrypt time or decryption fails.
-    fn decrypt_with_aad<'a, D, A>(decipher: D, aad: A) -> D::Ok<Self>
-    where
-        D: Decipher<'c>,
-        A: IntoAad<'a>;
 }

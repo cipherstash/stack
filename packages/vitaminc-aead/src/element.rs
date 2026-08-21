@@ -54,12 +54,7 @@
 //! let ct = Element(row3).encrypt_with_aad(&cipher, Aad::from_slice(b"users"))?;
 //! ```
 
-use crate::{
-    cipher::Cipher,
-    decipher::{Decipher, Decrypt},
-    encrypt::Encrypt,
-    IntoAad,
-};
+use crate::{cipher::Cipher, decipher::Decipher, decrypt::Decrypt, encrypt::Encrypt, IntoAad};
 
 /// A value encrypted and decrypted as a sequence element, independent of the
 /// sequence — see the [module docs](self) for when and why.
