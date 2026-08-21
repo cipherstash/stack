@@ -14,7 +14,7 @@ use uuid::Uuid;
 use zerokms_protocol::UnverifiedContext;
 
 use crate::errors::Error;
-use crate::key::{DataKey, DataKeyWithTag};
+use crate::key::{DataKey, DataKeyWithTag, IndexKey};
 use crate::payload::{GenerateKeyPayload, RetrieveKeyPayload};
 
 /// The slice of ZeroKMS data-key functionality required to encrypt and decrypt:
@@ -73,6 +73,27 @@ pub trait DataKeySource {
     ) -> impl Future<Output = Result<Vec<DataKey>, Error>>;
 }
 
+/// The slice of ZeroKMS functionality required to *index* encrypted data:
+/// loading the deterministic per-keyset [`IndexKey`] used to generate index
+/// terms (Searchable Encrypted Metadata) with PRFs and similar constructions.
+///
+/// Split from [`DataKeySource`] because the two capabilities are consumed
+/// separately: record encryption needs data keys, term generation needs the
+/// index key. Production implementations provide both.
+pub trait IndexKeySource {
+    /// Load the index key for a keyset (the client's default keyset when
+    /// `keyset_id` is `None`). Returns the resolved keyset id alongside the
+    /// key, so callers pinning `None` learn which keyset they resolved to.
+    ///
+    /// The index key is deterministic per keyset: loading it twice yields the
+    /// same key, so terms generated at write time match terms generated at
+    /// query time.
+    fn load_index_key(
+        &self,
+        keyset_id: Option<Uuid>,
+    ) -> impl Future<Output = Result<(Uuid, IndexKey), Error>> + Send;
+}
+
 impl<C> DataKeySource for crate::StackKms<C>
 where
     C: stack_auth::AuthStrategyBounds,
@@ -96,6 +117,17 @@ where
         unverified_context: Option<&UnverifiedContext>,
     ) -> Result<Vec<DataKey>, Error> {
         crate::StackKms::retrieve_keys(self, payloads, keyset_id, unverified_context).await
+    }
+}
+
+impl<C> IndexKeySource for crate::StackKms<C>
+where
+    C: stack_auth::AuthStrategyBounds,
+    for<'a> &'a C: stack_auth::AuthStrategy,
+{
+    async fn load_index_key(&self, keyset_id: Option<Uuid>) -> Result<(Uuid, IndexKey), Error> {
+        let (keyset, index_key) = self.load_keyset(keyset_id.map(Into::into)).await?;
+        Ok((keyset.id, index_key))
     }
 }
 
@@ -153,6 +185,21 @@ mod fake {
             self.keys
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
+        }
+    }
+
+    impl IndexKeySource for FakeDataKeySource {
+        /// Deterministically derive an index key from the `keyset_id` alone —
+        /// like real ZeroKMS, the same keyset always yields the same index key,
+        /// and distinct keysets yield distinct keys. `None` resolves to the nil
+        /// UUID as the fake's "default keyset".
+        async fn load_index_key(&self, keyset_id: Option<Uuid>) -> Result<(Uuid, IndexKey), Error> {
+            let resolved = keyset_id.unwrap_or_else(Uuid::nil);
+            let mut hasher = Sha256::new();
+            hasher.update(b"stack-kms::FakeDataKeySource::index-key::v1");
+            hasher.update(resolved.as_bytes());
+            let key: Key = hasher.finalize().into();
+            Ok((resolved, IndexKey::from(key)))
         }
     }
 
@@ -245,6 +292,23 @@ mod tests {
             Err(other) => panic!("{what}: expected FailedRetrieval, got {other:?}"),
             Ok(_) => panic!("{what}: expected rejection, got a key"),
         }
+    }
+
+    #[tokio::test]
+    async fn fake_index_key_is_deterministic_per_keyset() {
+        let src = FakeDataKeySource::new();
+        let keyset_a = Uuid::from_u128(1);
+        let keyset_b = Uuid::from_u128(2);
+
+        let (id_a, key_a) = src.load_index_key(Some(keyset_a)).await.unwrap();
+        let (_, key_a_again) = src.load_index_key(Some(keyset_a)).await.unwrap();
+        let (_, key_b) = src.load_index_key(Some(keyset_b)).await.unwrap();
+        let (id_none, _) = src.load_index_key(None).await.unwrap();
+
+        assert_eq!(id_a, keyset_a);
+        assert_eq!(key_a.key(), key_a_again.key());
+        assert_ne!(key_a.key(), key_b.key());
+        assert_eq!(id_none, Uuid::nil());
     }
 
     #[tokio::test]

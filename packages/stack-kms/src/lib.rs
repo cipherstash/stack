@@ -4,11 +4,13 @@
 //!
 //! It is an extraction of the key-generation/retrieval slice of
 //! `cipherstash-client`'s `zerokms` module into a standalone crate. This first
-//! cut deliberately covers only the two operations:
+//! cut deliberately covers only:
 //!
 //! * [`StackKms::generate_keys`] — derive fresh data keys (with tags) from ZeroKMS
 //! * [`StackKms::retrieve_keys`] / [`StackKms::retrieve_keys_fallible`] — re-derive
 //!   data keys for previously encrypted records
+//! * [`StackKms::load_keyset`] — load a keyset and derive its deterministic
+//!   [`IndexKey`], used to generate index terms (Searchable Encrypted Metadata)
 //!
 //! Encryption/decryption, keyset and client management, and config save/load
 //! all remain in `cipherstash-client` for now.
@@ -93,15 +95,15 @@ pub use connection::{
 pub use endpoint::{InvalidEndpoint, ZeroKmsEndpoint};
 
 // Errors
-pub use errors::{Error, GenerateKeyError, RetrieveKeyError};
+pub use errors::{Error, GenerateKeyError, LoadKeysetError, RetrieveKeyError};
 
 // Key material
-pub use key::{ClientKey, DataKey, DataKeyWithTag, V1KeySet};
+pub use key::{ClientKey, DataKey, DataKeyWithTag, IndexKey, V1KeySet};
 
-// Data key source abstraction (production = `StackKms`; tests = `FakeDataKeySource`)
-pub use key_source::DataKeySource;
+// Key source abstractions (production = `StackKms`; tests = `FakeDataKeySource`)
 #[cfg(feature = "test-support")]
 pub use key_source::FakeDataKeySource;
+pub use key_source::{DataKeySource, IndexKeySource};
 
 // Key providers
 pub use key_provider::{
@@ -118,7 +120,9 @@ pub use payload::{GenerateKeyPayload, RetrieveKeyPayload};
 
 // Commonly needed re-exports from the protocol / crypto layers
 pub use recipher::key::{GenRandom, Iv};
-pub use zerokms_protocol::{Context, DecryptionPolicy, KeyId, UnverifiedContext, ViturKeyMaterial};
+pub use zerokms_protocol::{
+    Context, DecryptionPolicy, IdentifiedBy, KeyId, Keyset, UnverifiedContext, ViturKeyMaterial,
+};
 
 /// Process-wide environment guard for tests that set or clear env vars.
 ///

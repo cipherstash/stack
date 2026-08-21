@@ -128,6 +128,59 @@ impl Deref for DataKeyWithTag {
     }
 }
 
+/// Key used specifically for generating index terms (Searchable Encrypted
+/// Metadata) with PRFs and similar constructions.
+///
+/// Derived from the *keyset root* key material returned by ZeroKMS's
+/// `load-keyset` operation: unlike data keys, the same keyset always yields the
+/// same index key, so terms generated at write time match terms generated at
+/// query time.
+#[derive(Zeroize, ZeroizeOnDrop)]
+pub struct IndexKey(Key);
+opaque_debug::implement!(IndexKey);
+
+impl IndexKey {
+    /// Derive the index key for a specific [`ClientKey`] from the partial
+    /// keyset-root key material obtained from ZeroKMS.
+    pub fn from_key_material(key: &ClientKey, key_material: &ViturKeyMaterial) -> Self {
+        // We use all zeros for the IV for the keyset index key.
+        // This key is not used for encryption but for indexing using PRFs and
+        // similar constructions. Even then, because all other data keys are
+        // generated using random IVs, the likelihood of collision is negligible.
+        let iv = Iv::default();
+        let cipher = ProxyCipher::new(key.keyset.keyset());
+        // `rect` is reencrypted key material — the derived index key is a hash
+        // of it — so wipe the intermediate on drop rather than leave it on the
+        // heap (matches `DataKey::from_key_material`).
+        let rect = Zeroizing::new(cipher.reencrypt::<16>(&iv, key_material));
+
+        let mut hasher = blake3::Hasher::new();
+        // Fixed info string
+        hasher.update(b"ZEROKMS-INDEXKEY");
+        hasher.update(rect.as_slice());
+
+        let key: Key = {
+            let mut key = Key::default();
+            hasher.finalize_xof().fill(&mut key);
+            key
+        };
+
+        hasher.zeroize();
+
+        Self(key)
+    }
+
+    pub fn key(&self) -> &Key {
+        &self.0
+    }
+}
+
+impl From<Key> for IndexKey {
+    fn from(key: Key) -> Self {
+        Self(key)
+    }
+}
+
 #[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
 pub struct V1KeySet(pub(crate) KeySet);
 

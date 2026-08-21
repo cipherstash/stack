@@ -113,6 +113,28 @@ mod generate_key_error_from_vitur_request_error {
     }
 }
 
+#[derive(Diagnostic, Error, Debug)]
+pub enum LoadKeysetError {
+    #[error("Request not authorized")]
+    Unauthorized,
+    #[error("Request forbidden due to insufficient permissions")]
+    Forbidden,
+    // Same shape as `GenerateKeyError::RequestFailed`: Display carries only the
+    // static kind/message; the dynamic error stays behind `source()`.
+    #[error("Unexpected error ({}: {})", .0.kind, .0.message)]
+    RequestFailed(#[source] ViturRequestError),
+}
+
+impl From<ViturRequestError> for LoadKeysetError {
+    fn from(err: ViturRequestError) -> Self {
+        match err.kind {
+            ViturRequestErrorKind::Forbidden => Self::Forbidden,
+            ViturRequestErrorKind::Unauthorized => Self::Unauthorized,
+            _ => Self::RequestFailed(err),
+        }
+    }
+}
+
 /// Top-level error for high-level [`StackKms`](crate::StackKms) key operations.
 #[derive(Error, Debug, Diagnostic)]
 pub enum Error {
@@ -123,6 +145,10 @@ pub enum Error {
     #[error(transparent)]
     #[diagnostic(transparent)]
     RetrieveKey(#[from] RetrieveKeyError),
+
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    LoadKeyset(#[from] LoadKeysetError),
 
     #[error(transparent)]
     #[diagnostic(transparent)]
