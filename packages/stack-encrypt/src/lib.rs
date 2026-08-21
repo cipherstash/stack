@@ -123,6 +123,7 @@
 //! format).
 
 mod cipher;
+pub mod sem;
 
 pub use cipher::{
     BoxedPassthrough, Error, PendingStackCipherText, SealedValue, StackCipher, StackCipherText,
