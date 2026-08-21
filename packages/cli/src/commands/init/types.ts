@@ -74,6 +74,57 @@ export type HandoffChoice =
  */
 export type InitMode = 'plan' | 'implement'
 
+/**
+ * How the per-integration skills reached (or failed to reach) the project.
+ * Threaded into `context.json` and the setup prompt so both describe what
+ * actually happened, not what the handoff hoped for:
+ *
+ *   installed — copied into a skills directory (`.claude/skills`,
+ *               `.codex/skills`)
+ *   inlined   — bodies written into AGENTS.md under "## Skill references"
+ *               (the editor-agent handoff, and the Codex fallback for an
+ *               unwritable `.codex/` — #736)
+ *   failed    — bundled skills that ended up nowhere (destination
+ *               unwritable with no inline fallback, or AGENTS.md itself
+ *               unwritable)
+ *
+ * Lives here rather than in `lib/write-context.ts` (where it started) so
+ * `InitState` can carry one without a circular import.
+ */
+export interface SkillsDelivery {
+  installed: string[]
+  inlined: string[]
+  failed: string[]
+}
+
+/** Merge two deliveries, de-duplicating and keeping a stable order.
+ *
+ *  Exists because skills now reach a project in more than one hop: `stash
+ *  init` installs them first thing, and a later `stash plan` / `stash impl`
+ *  handoff installs or inlines its own set. `writeArtifacts` used to
+ *  OVERWRITE `context.json.installedSkills` with just the current hop's
+ *  result, so `stash plan --target agents-md` (which installs no
+ *  directories) reset the field to `[]` on a project that had them — the
+ *  same false-empty state #923 is about, reached one command later.
+ *
+ *  A name that failed in one hop and succeeded in another counts as
+ *  delivered: `failed` is filtered against the merged successes so the
+ *  record never reports a skill as both.
+ */
+export function mergeSkillsDelivery(
+  a: SkillsDelivery | undefined,
+  b: SkillsDelivery,
+): SkillsDelivery {
+  const dedupe = (xs: string[]) => [...new Set(xs)]
+  const installed = dedupe([...(a?.installed ?? []), ...b.installed])
+  const inlined = dedupe([...(a?.inlined ?? []), ...b.inlined])
+  const delivered = new Set([...installed, ...inlined])
+  const failed = dedupe([...(a?.failed ?? []), ...b.failed]).filter(
+    (name) => !delivered.has(name),
+  )
+  return { installed, inlined, failed }
+}
+
 export interface InitState {
   authenticated?: boolean
   /** Region passed via `--region` / `STASH_REGION`. Consumed by the
@@ -120,8 +171,19 @@ export interface InitState {
    *  values. Set by build-schema (so the baseline context.json has them);
    *  read by the handoff steps without re-scanning. */
   envKeys?: string[]
-  /** Available coding agents in the user's environment. Set by detect-agents. */
+  /** Available coding agents in the user's environment. Set by the
+   *  install-skills step (the first thing `stash init` runs) and reused by
+   *  gather-context rather than re-walking `PATH`. */
   agents?: AgentEnvironment
+  /** Where the per-integration skills ended up. Accumulated across every hop
+   *  that delivers them — the init step, then any later handoff — and read by
+   *  `buildContextFile` so `context.json` reports the union rather than the
+   *  most recent hop. */
+  skills?: SkillsDelivery
+  /** Validated `--target` from `stash init`. On `init` this selects the
+   *  skills destination ONLY; it does not perform a handoff the way
+   *  `plan --target` / `impl --target` do. Absent means "auto-detect". */
+  targetFlag?: HandoffChoice
   /** What the user picked at the "how to proceed" step. */
   handoff?: HandoffChoice
   /** True when the handoff step actually launched an agent process

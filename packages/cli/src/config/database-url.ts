@@ -144,6 +144,18 @@ function trySupabaseStatus(): string | undefined {
   return undefined
 }
 
+/**
+ * Is the Supabase tier in play — opted into with `--supabase`, or a project
+ * that clearly is one? Shared by both resolvers so the two cannot drift into
+ * disagreeing about when to shell out to `supabase status`.
+ */
+function shouldTrySupabase(
+  ctx: ResolveDatabaseUrlOptions,
+  cwd: string,
+): boolean {
+  return Boolean(ctx.supabase) || detectSupabaseProject(cwd).hasConfigToml
+}
+
 async function promptForUrl(cwd: string): Promise<string | undefined> {
   // Surface the alternative paths before prompting so users don't feel
   // like they're stuck in an interactive flow when a flag or env var
@@ -219,8 +231,7 @@ export async function resolveDatabaseUrl(
   }
 
   // 3. Supabase fallback — opted-in, or the project clearly is one.
-  const supabaseProject = detectSupabaseProject(cwd)
-  if (ctx.supabase || supabaseProject.hasConfigToml) {
+  if (shouldTrySupabase(ctx, cwd)) {
     const fromSupabase = trySupabaseStatus()
     if (fromSupabase) {
       if (!ctx.quiet) p.log.info(messages.db.urlResolvedFromSupabase)
@@ -253,4 +264,38 @@ export async function resolveDatabaseUrl(
     p.log.error(missingMessage)
   }
   process.exit(1)
+}
+
+/**
+ * Best-effort sibling of {@link resolveDatabaseUrl}: same source order, minus
+ * the two tiers that take over the terminal. It never prompts, never prints,
+ * and never exits — it returns `undefined` when nothing is configured.
+ *
+ * That is what makes it usable for *decorating a child process's environment*
+ * rather than for connecting ourselves. `eql migration --drizzle` spawns the
+ * project's `drizzle-kit`, whose `drizzle.config.ts` typically reads
+ * `process.env.DATABASE_URL` (and often throws when it is missing). We inherit
+ * the parent env, so a `.env.local` value is already there — `bin/main.ts`
+ * loads the dotenv files at startup. What is NOT there is a URL that only this
+ * CLI knows how to find: `supabase status --output env` on a local Supabase
+ * project, or a `--database-url` flag threaded through the resolver context.
+ * Passing that down turns a hard abort into a working scaffold, and a failure
+ * to find one is not an error here — drizzle-kit may not need a URL at all.
+ */
+export function tryResolveDatabaseUrl(
+  opts: ResolveDatabaseUrlOptions = {},
+): string | undefined {
+  const ctx: ResolveDatabaseUrlOptions = { ...als.getStore(), ...opts }
+  const cwd = ctx.cwd ?? process.cwd()
+
+  const flag = ctx.databaseUrlFlag?.trim()
+  if (flag && isUrlParseable(flag)) return flag
+
+  const fromEnv = process.env.DATABASE_URL?.trim()
+  if (fromEnv) return fromEnv
+
+  if (shouldTrySupabase(ctx, cwd)) {
+    return trySupabaseStatus()
+  }
+  return undefined
 }

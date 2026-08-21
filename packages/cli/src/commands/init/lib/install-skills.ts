@@ -66,8 +66,19 @@ export const SKILL_MAP: Record<Integration, readonly string[]> = {
   ],
 }
 
-/** The skills every integration gets — the safe fallback for an unmapped one. */
-const BASE_SKILLS: readonly string[] = [
+/**
+ * The skills every integration gets — the safe fallback for an unmapped one,
+ * and the set installed before the integration is known.
+ *
+ * `stash init` installs skills as its FIRST step, so the guidance survives a
+ * run that dies at auth / database / EQL — which is exactly when an agent
+ * needs `stash-cli` most. At that point the integration is only known when a
+ * provider flag or a cwd signal (drizzle config, prisma-next config) supplies
+ * it; a bare `stash init` against a Supabase-hosted URL cannot be classified
+ * until `resolve-database` has run. Those runs get this set, then a top-up in
+ * `build-schema` once `detectIntegration` has answered.
+ */
+export const BASE_SKILLS: readonly string[] = [
   'stash-encryption',
   'stash-indexing',
   'stash-deployment',
@@ -77,7 +88,10 @@ const BASE_SKILLS: readonly string[] = [
 ]
 
 /**
- * Skills for an integration, resilient to an unmapped one. `SKILL_MAP` is
+ * Skills for an integration, resilient to an unmapped one — and to not
+ * knowing the integration yet: `undefined` yields {@link BASE_SKILLS}, which
+ * is what the first-step install uses before `build-schema` has classified
+ * the project. `SKILL_MAP` is
  * typed `Record<Integration, …>`, but the build (`tsup`) transpiles without
  * type-checking — so a new `Integration` variant added without a `SKILL_MAP`
  * entry would ship as `undefined` and crash both consumers (`installSkills`,
@@ -86,7 +100,10 @@ const BASE_SKILLS: readonly string[] = [
  * stack trace. (Regression-guarded by a test asserting SKILL_MAP has a
  * non-empty entry for every value in a maintained `ALL_INTEGRATIONS` list.)
  */
-export function skillsFor(integration: Integration): readonly string[] {
+export function skillsFor(
+  integration: Integration | undefined,
+): readonly string[] {
+  if (integration === undefined) return BASE_SKILLS
   return SKILL_MAP[integration] ?? BASE_SKILLS
 }
 
@@ -100,7 +117,9 @@ export function skillsFor(integration: Integration): readonly string[] {
  * is what keeps "inlining N skills" claims honest (#714 / #687 removed
  * exactly this kind of false success elsewhere in init).
  */
-export function availableSkills(integration: Integration): string[] {
+export function availableSkills(
+  integration: Integration | undefined,
+): string[] {
   const bundledRoot = findBundledDir('skills')
   if (!bundledRoot) return []
   return skillsFor(integration).filter((name) =>
@@ -151,7 +170,7 @@ export interface SkillsInstallResult {
 export function installSkills(
   cwd: string,
   destDir: string,
-  integration: Integration,
+  integration: Integration | undefined,
 ): SkillsInstallResult {
   const bundledRoot = findBundledDir('skills')
   if (!bundledRoot) {

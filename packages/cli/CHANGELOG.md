@@ -1,5 +1,79 @@
 # stash
 
+## 1.1.1
+
+### Patch Changes
+
+- 44e2921: Fix `stash eql migration --drizzle`, which aborted for every project with a `drizzle.config.ts` (#924).
+
+  - **Stop passing `--out` to `drizzle-kit generate`.** drizzle-kit reads its config file _or_ its command-line options, never both: any of `--schema`/`--out`/`--dialect` switches it into CLI mode, where it then aborts demanding the two we cannot supply (`Please provide required params: [x] schema [x] dialect`). Verified against drizzle-kit 0.28.5, 0.30.6 and 0.31.4 — this was never version-specific. Your `drizzle.config.ts` now decides the output directory and stash follows the path drizzle-kit reports, warning when it differs from a `--out` you passed. `--out` remains the fallback directory to search.
+  - **Pass the resolved `DATABASE_URL` into the drizzle-kit child process.** A `drizzle.config.ts` that reads `process.env.DATABASE_URL` (and often throws when it is missing) previously saw nothing, because the project's usual `dotenv -e .env.local -- drizzle-kit …` wrapper never runs when stash invokes drizzle-kit directly. stash already loads `.env`/`.env.local` at startup; it now also threads down a URL only the CLI can find, such as a running local Supabase.
+  - **Report the actual failure.** drizzle-kit writes its errors to stdout, not stderr, so the abort printed nothing but "Make sure drizzle-kit is installed and configured" — the one thing that was never wrong. Both streams are now surfaced, and a config that could not read `DATABASE_URL` gets a follow-up naming that instead.
+
+- 67b137a: `stash init` installs the agent skills again, and does it first.
+
+  Since 1.0.0-rc.4 the only callers of the skills installer were the `plan` and
+  `impl` handoff steps, which `stash init` never reaches — so `stash@1.1.0`
+  installed no `stash-*` skills for anyone, in any mode. The most common flow, a
+  coding agent running `npx stash init --supabase` inside a project, completed
+  with a green summary, a plausible-looking `.cipherstash/context.json`, and zero
+  guidance: the skills sat unread in `node_modules/stash/dist/skills/` unless the
+  agent thought to go digging. Fixes #923.
+
+  Init now copies the per-integration skills into `.claude/skills/` (Claude Code
+  detected via the `claude` binary or a `.claude/` directory) and `.codex/skills/`
+  (Codex), installing to both when both are detected, and records them in
+  `context.json`.
+
+  It runs as init's **first** step, ahead of authentication. Installing skills
+  needs no network, no credentials and no database, while authenticate,
+  resolve-database and install-eql each need one and each can exit non-zero —
+  so the guidance now survives a run that fails partway, which is when it is
+  needed most. One behaviour change falls out of that: a run cancelled at the
+  first prompt leaves the skills directory behind where previously it wrote
+  nothing.
+
+  Also:
+
+  - **New optional `stash init --target <claude-code|codex>`** names the skills
+    destination and skips detection. Unlike `plan --target` / `impl --target` it
+    selects the destination only — `init` still performs no handoff. Existing
+    invocations are unaffected.
+  - **The summary reports the outcome either way.** A run that installs nothing
+    now says so, and prints the command that will install them, instead of a
+    silent `installedSkills: []`.
+  - **`--target` is validated properly on `init`, `plan` and `impl`.** A
+    trailing `--target` with no value, and `--target=`, were both treated as
+    "flag absent" — so the command silently did whatever it does with no flag at
+    all, rather than telling you the value was missing. All three commands share
+    one validator now.
+  - **A later handoff no longer erases the record.** `stash plan --target
+agents-md` installs no skill directories of its own and used to overwrite
+    `installedSkills` with an empty list, dropping skills that were on disk.
+    Deliveries are merged across hops now.
+
+- ec0c5a7: `stash-managed-platforms` skill: fold in what a live Lovable Cloud integration actually hit.
+
+  Four additions, each from a verified failure in the 2026-08-19 skilltester run
+  (cipherstash/skilltester branch `20260819-01-lovable`):
+
+  - **Command-time ceilings.** Replaying the ~2.6 MB EQL bundle with `psql -f` sends one statement
+    per round trip and dies partway under Lovable's 600 s ceiling, leaving a half-installed schema.
+    The skill now says to prefer `stash eql install` / the generated migration, gives the
+    chunk-and-apply recipe for when raw SQL is unavoidable, and covers the ownership trap when
+    cleaning up a half-install.
+  - **Data API grants.** The EQL install grants nothing to `authenticated` / `anon` /
+    `service_role`, so every PostgREST function-form call fails until an explicit
+    `GRANT USAGE / EXECUTE` — now stated with the exact SQL.
+  - **Install cooldowns.** Lovable's `bunfig.toml` `minimumReleaseAge` and Deno's
+    `--minimum-dependency-age` both refuse a same-day CipherStash release; the skill names the
+    exclude-list workaround and says to disclose it.
+  - **Lovable secrets.** Who sets them depends on where the agent runs: Lovable's in-product agent
+    can store project secrets itself, while the external Lovable MCP surface has no secrets tool —
+    there the values are handed to the human (they run `stash env` themselves, or copy from the
+    agent-written 0600 file and delete it), never through chat or logs.
+  - @cipherstash/migrate@1.0.0
+
 ## 1.1.0
 
 ### Minor Changes

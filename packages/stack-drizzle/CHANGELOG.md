@@ -1,5 +1,11 @@
 # @cipherstash/stack-drizzle
 
+## 1.1.1
+
+### Patch Changes
+
+- @cipherstash/stack@1.1.1
+
 ## 1.1.0
 
 ### Minor Changes

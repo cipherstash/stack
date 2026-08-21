@@ -128,7 +128,10 @@ function resolveMigrationRoute(
       options: { drizzle: true, supabase: supabase || undefined },
       retryCommand: 'stash eql migration --drizzle',
       failureHint:
-        'Could not generate the EQL migration — check that drizzle-kit is installed and configured.',
+        // Not "check that drizzle-kit is installed" (#924): that was almost
+        // never the cause, and drizzle-kit's own output — now printed above
+        // this line, from both streams — says what actually went wrong.
+        'Could not generate the EQL migration. drizzle-kit reported the failure above; the usual cause is a drizzle.config.ts that cannot read DATABASE_URL.',
     }
   }
   if (supabase && hasLocalSupabaseScaffolding()) {
@@ -159,7 +162,16 @@ async function generateEqlMigration(
   await scaffoldConfigAndClient(state)
 
   try {
-    await eqlMigrationCommand({ ...route.options, embedded: true })
+    // The URL init resolved at the start of the run. It lives only in
+    // `InitState` — `resolveDatabaseUrl` never writes to `process.env` — so
+    // the Drizzle route's `drizzle-kit` child would otherwise see nothing and
+    // abort on a config that reads `DATABASE_URL` (#924). Same reason the
+    // direct-install route below passes it to `installCommand`.
+    await eqlMigrationCommand({
+      ...route.options,
+      databaseUrl: state.databaseUrl,
+      embedded: true,
+    })
   } catch {
     p.log.error(route.failureHint)
     p.note(`Re-run with: ${route.retryCommand}`, 'You can retry manually')
