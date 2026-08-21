@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use stack_encrypt::{ContextTag, ZeroKmsCipher};
+use stack_encrypt::{CipherText, ContextTag, ZeroKmsCipher};
 use stack_kms::FakeDataKeySource;
 use vitaminc_protected::{Controlled, Protected};
 
@@ -154,6 +154,84 @@ async fn context_tag_wrong_context_fails() {
 
     let result: Result<String, _> = cipher.decrypt(ct, ContextTag::aad("user:99")).await;
     assert!(result.is_err(), "wrong context tag must not decrypt");
+}
+
+#[tokio::test]
+async fn empty_vec_roundtrips() {
+    // An empty sequence seals an authenticated marker, so emptiness is provable.
+    let cipher = cipher();
+    let ct = cipher
+        .encrypt(Vec::<String>::new(), ())
+        .await
+        .expect("encrypt");
+    let pt: Vec<String> = cipher.decrypt(ct, ()).await.expect("decrypt");
+    assert!(pt.is_empty());
+}
+
+#[tokio::test]
+async fn empty_map_roundtrips() {
+    let cipher = cipher();
+    let ct = cipher
+        .encrypt(HashMap::<&'static str, String>::new(), ())
+        .await
+        .expect("encrypt");
+    let pt: HashMap<String, String> = cipher.decrypt(ct, ()).await.expect("decrypt");
+    assert!(pt.is_empty());
+}
+
+#[tokio::test]
+async fn empty_marker_does_not_decode_under_wrong_aad() {
+    let cipher = cipher();
+    let ct = cipher
+        .encrypt(Vec::<String>::new(), b"bound".as_slice())
+        .await
+        .expect("encrypt");
+    let result: Result<Vec<String>, _> = cipher.decrypt(ct, ()).await;
+    assert!(result.is_err(), "empty marker must authenticate its AAD");
+}
+
+#[tokio::test]
+async fn renamed_map_key_fails() {
+    // Map keys travel in the clear but are bound into their value's AAD, so
+    // renaming a key in the stored ciphertext must fail decryption.
+    let cipher = cipher();
+    let mut input: HashMap<&'static str, String> = HashMap::new();
+    input.insert("name", "alice".to_string());
+
+    let ct = cipher.encrypt(input, ()).await.expect("encrypt");
+    let tampered = match ct {
+        CipherText::Map(entries) => CipherText::Map(
+            entries
+                .into_iter()
+                .map(|(_, v)| ("role".to_string(), v))
+                .collect(),
+        ),
+        other => other,
+    };
+
+    let result: Result<HashMap<String, String>, _> = cipher.decrypt(tampered, ()).await;
+    assert!(result.is_err(), "renamed map key must not decrypt");
+}
+
+#[tokio::test]
+async fn sequence_element_cannot_be_rehomed_as_scalar() {
+    // Elements are sealed under the `for_sequence_element` derivation, so a
+    // leaf spliced out of a sequence must not verify as a top-level scalar.
+    let cipher = cipher();
+    let ct = cipher
+        .encrypt(vec!["a".to_string()], ())
+        .await
+        .expect("encrypt");
+    let element = match ct {
+        CipherText::Sequence(mut items) => items.remove(0),
+        other => other,
+    };
+
+    let result: Result<String, _> = cipher.decrypt(element, ()).await;
+    assert!(
+        result.is_err(),
+        "re-homed sequence element must not decrypt"
+    );
 }
 
 #[tokio::test]

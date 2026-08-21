@@ -1,4 +1,16 @@
 #![doc(html_favicon_url = "https://cipherstash.com/favicon.ico")]
+#![deny(unsafe_code)]
+#![warn(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::mem_forget,
+    clippy::print_stdout,
+    clippy::print_stderr,
+    clippy::dbg_macro,
+    clippy::todo,
+    clippy::unimplemented
+)]
 //! `stack-encrypt` bridges ZeroKMS data keys into the vitaminc encryption
 //! ecosystem.
 //!
@@ -31,8 +43,12 @@
 
 mod cipher;
 
-pub use cipher::{DataKeyCipherText, Error, PendingCipherText, ZeroKmsCipher, ZeroKmsCipherText};
+pub use cipher::{
+    BoxedPassthrough, DataKeyCipherText, Error, PendingCipherText, ZeroKmsCipher, ZeroKmsCipherText,
+};
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they
 // don't have to depend on `vitaminc-aead` directly for the common path.
-pub use vitaminc_aead::{Aad, Cipher, ContextTag, Decrypt, Encrypt, IntoAad, Unspecified};
+pub use vitaminc_aead::{
+    Aad, Cipher, CipherText, ContextTag, Decipher, Decrypt, Encrypt, IntoAad, Unspecified,
+};

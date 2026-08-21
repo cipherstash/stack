@@ -13,12 +13,12 @@ license-file = "LICENSE"
 [dependencies]
 stack-kms = { path = "../stack-kms" }
 
-# Scoped to the vitaminc PR #190 branch (re-introduced ContextTag on the revised
-# Cipher/Decipher traits, stacked on the new Decipher trait + zeroize-on-drop
-# work). Pinned here rather than via the workspace dep so the rest of the suite
-# stays on the published 0.2.0-pre until the vitaminc PRs land.
-vitaminc-aead = { git = "https://github.com/cipherstash/vitaminc", branch = "claude/vitaminc-aead-issue-178-vCypS" }
-vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", branch = "claude/vitaminc-aead-issue-178-vCypS" }
+# The revised Cipher/Decipher traits, ContextTag, and the PRF crates have all
+# merged to vitaminc main but are not yet published (crates.io is 200+ commits
+# behind). Pinned here rather than via the workspace dep so the rest of the
+# suite stays on the published 0.2.0-pre until the next vitaminc release.
+vitaminc-aead = { git = "https://github.com/cipherstash/vitaminc", branch = "main" }
+vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", branch = "main" }
 zeroize = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
@@ -28,7 +28,7 @@ aes-gcm-siv = "0.11.1"
 [dev-dependencies]
 stack-kms = { path = "../stack-kms", features = ["test-support"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
-vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", branch = "claude/vitaminc-aead-issue-178-vCypS" }
+vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", branch = "main" }
 
 [package.metadata.docs.rs]
 all-features = true
