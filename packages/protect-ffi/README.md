@@ -261,7 +261,7 @@ For those, see [below](#integration-tests).
 
 #### `pnpm run test:cargo`
 
-The Rust half of the test suite: `cargo test` plus `cargo fmt --check`. Run by a path-filtered root workflow, not by `pnpm test`.
+The Rust half of the test suite: `cargo test --locked` plus `cargo fmt --check`. Run by a path-filtered root workflow, not by `pnpm test`. `--locked` fails rather than silently regenerating a stale `Cargo.lock` — the build scripts do not pass it, so a local build that legitimately updates the lock still works.
 
 #### `pnpm run test:typecheck:wasm`
 
@@ -379,13 +379,26 @@ packages. The changeset body becomes the `CHANGELOG.md` entry — Changesets own
 that file now, so the `[Unreleased]` heading and the `version` npm lifecycle
 hook that used to promote it are gone.
 
-npm trusted publishing for all seven packages names `cipherstash/stack` and the
-repository-root `release.yml`, so a changeset here releases like any other
-package. The temporary guard that blocked one during the cutover window, and the
-`.md.deferred` convention for parking one behind it, are both gone.
+**The publishing cutover is done, and with it the changeset embargo.** npm
+trusted publishing for all seven packages now names `cipherstash/stack`, bound
+to `release.yml`, so a changeset naming `@cipherstash/protect-ffi` releases
+normally. The guard that blocked one (`scripts/lint-no-ffi-changeset.mjs`) and
+the `.changeset/<name>.md.deferred` convention that parked it until the cutover
+are both gone.
 
-No FFI release has run from this repository yet — 0.31.0 was published from the
-old one. Until the first one lands, the path is configured rather than proven.
+**And the path is proven, not merely configured** — `0.32.0` was published from
+this repository. Its SLSA provenance on npm names
+`https://github.com/cipherstash/stack` and `.github/workflows/release.yml`,
+which is the only evidence that settles the question: an earlier revision of
+this paragraph said no FFI release had run from here, written while 0.31.0 was
+the newest and never revisited when 0.32.0 landed.
+
+If you find a file still carrying that extension, it was written during the
+embargo and is now inert rather than parked: `@changesets/read` selects on
+`.endsWith('.md')`, so the change it describes would release with an empty
+changelog entry and nothing in `changeset version` or `changeset publish` would
+say so. Rename it back with `git mv`, or delete it if the change never shipped.
+`scripts/__tests__/no-parked-changesets.test.mjs` fails CI on one either way.
 
 The previous repository's GitHub Actions workflows were deposited under
 `.github/` in this directory by the subtree import and kept as the reference for

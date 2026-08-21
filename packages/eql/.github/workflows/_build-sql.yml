@@ -1,0 +1,122 @@
+name: "Build SQL (reusable)"
+
+# Reusable SQL build+attach. Called inline by release.yml (production and
+# prerelease paths) so SQL releases have one build path.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref/SHA to build from. Empty -> default checkout (github.sha)."
+        required: false
+        type: string
+        default: ""
+      tag:
+        description: "Full release tag (e.g. eql-3.0.0-alpha.2). Empty -> DEV build, no attach."
+        required: false
+        type: string
+        default: ""
+      attach:
+        description: "Attach the built .sql artefacts to a GitHub Release."
+        required: false
+        type: boolean
+        default: false
+      target_commitish:
+        description: "Non-empty -> create a prerelease at this commit; empty -> attach to the existing release named by tag."
+        required: false
+        type: string
+        default: ""
+      prerelease:
+        description: "Mark the created release as a prerelease (create path only)."
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      MULTITUDES_ACCESS_TOKEN:
+        required: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  MISE_VERBOSE: "1"
+
+defaults:
+  run:
+    shell: bash {0}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    name: Build EQL
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+
+      - uses: jdx/mise-action@v3
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+
+      - name: Build EQL release
+        # Strip `eql-` so eql_v3.version() reports bare semver. Empty TAG
+        # intentionally falls through build.sh's ${usage_version:-DEV} default.
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          mise run build --version "${TAG#eql-}"
+
+      - name: Upload EQL artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: eql-release
+          path: |
+            release/cipherstash-encrypt.sql
+            release/cipherstash-encrypt-uninstall.sql
+
+      - name: Attach artefacts to existing release
+        if: ${{ inputs.attach && inputs.target_commitish == '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: |
+            release/cipherstash-encrypt.sql
+            release/cipherstash-encrypt-uninstall.sql
+
+      - name: Create prerelease at commit
+        if: ${{ inputs.attach && inputs.target_commitish != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          target_commitish: ${{ inputs.target_commitish }}
+          prerelease: ${{ inputs.prerelease }}
+          name: ${{ inputs.tag }}
+          body: "Preview (prerelease) of the standalone eql_v3 surface. See [Unreleased] in CHANGELOG.md."
+          files: |
+            release/cipherstash-encrypt.sql
+            release/cipherstash-encrypt-uninstall.sql
+
+      - name: Notify Multitudes
+        # Production deploy tracking: fire only when release.yml creates a
+        # non-prerelease SQL release (attach + create path + not a prerelease).
+        # release.yml runs on `push`, so the old `event_name == 'release'` gate
+        # never matched under the unified workflow.
+        # continue-on-error: a deploy-tracking ping is not part of the release
+        # itself. If Multitudes is down / rate-limits / the token is empty, the
+        # curl failing must not fail build-sql and skip downstream build-docs /
+        # build-image after npm + SQL have already published.
+        if: ${{ inputs.attach && !inputs.prerelease && inputs.target_commitish != '' }}
+        continue-on-error: true
+        run: |
+          curl --request POST \
+            --fail-with-body \
+            --url "https://api.developer.multitudes.co/deployments" \
+            --header "Content-Type: application/json" \
+            --header "Authorization: ${{ secrets.MULTITUDES_ACCESS_TOKEN }}" \
+            --data '{"commitSha": "${{ github.sha }}", "environmentName":"production"}'

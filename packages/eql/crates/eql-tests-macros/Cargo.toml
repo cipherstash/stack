@@ -1,0 +1,20 @@
+[package]
+name = "eql-tests-macros"
+version = "0.1.0"
+edition = "2021"
+description = "Proc-macros that expand a single scalar-harness list into the per-type SQLx-matrix wiring (ScalarType impls, fixture modules, matrix suites, fixture dispatch)."
+# Internal test-support crate — not published to crates.io. release-plz skips
+# `publish = false` packages, so only eql-bindings is ever released.
+publish = false
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
+eql-domains = { path = "../eql-domains" }
+
+[lints]
+workspace = true

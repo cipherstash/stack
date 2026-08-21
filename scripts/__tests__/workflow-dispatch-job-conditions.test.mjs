@@ -83,10 +83,41 @@ const EXPECTED_FORK_GUARDED_JOBS = [
   '.github/workflows/integration-supabase.yml / integration',
   '.github/workflows/prisma-example-readme-e2e.yml / walkthrough',
   '.github/workflows/prisma-next-e2e.yml / e2e',
+  '.github/workflows/test-eql.yml / build-archive',
+  '.github/workflows/test-eql.yml / e2e',
 ]
 
 /** The context path every fork guard turns on. */
 const FORK_PATH = 'github.event.pull_request.head.repo.full_name'
+
+/**
+ * The guard clause itself, as every copy must spell it.
+ *
+ * Six of the eight conditions ARE this string and nothing else. The two EQL
+ * jobs `&&` it with a relevance gate, because a docs-only PR should not pay a
+ * four-minute compile — so "identical spelling" had to become a claim about the
+ * CLAUSE rather than the whole condition. The clause is still compared
+ * verbatim: what the check below permits is another conjunct beside it, not a
+ * different way of writing it.
+ *
+ * Keeping it whole matters more here than the parenthesisation does. A guard
+ * rewritten as `github.event_name == 'pull_request' && <same-repo>` reads the
+ * same and is not: it skips push, merge_group and dispatch runs entirely. That
+ * class of edit is what the single-spelling rule catches, and it survives the
+ * generalisation.
+ */
+const CANONICAL_FORK_CLAUSE = `github.event_name != 'pull_request' || ${FORK_PATH} == github.repository`
+
+/**
+ * The clause as it appears inside a condition, ignoring the line breaks and
+ * indentation YAML block scalars introduce. Returns null when the condition
+ * contains `FORK_PATH` but not the canonical clause — which is the finding, not
+ * a parse failure.
+ */
+function extractForkClause(condition) {
+  const flat = unwrap(condition).replace(/\s+/g, ' ')
+  return flat.includes(CANONICAL_FORK_CLAUSE) ? CANONICAL_FORK_CLAUSE : null
+}
 
 // ---------------------------------------------------------------------------
 // A small evaluator for the GitHub Actions expression subset used by job `if:`
@@ -200,10 +231,29 @@ function lookup(path, context) {
 }
 
 /**
+ * The only status function this evaluator will accept, and only in its
+ * zero-argument form.
+ *
+ * `always()` is total: it is true on every event, for every job, whatever its
+ * `needs:` reported. So it can be modelled exactly rather than guessed at,
+ * which is the bar the rest of this file sets. An aggregator job — EQL's
+ * `ci-required`, the single required status check its merge queue references —
+ * cannot be written without it, and refusing the whole grammar would have meant
+ * either no such job in a dispatchable workflow, or this guard skipping the
+ * workflow that contains one.
+ *
+ * Everything else still throws. `success()`, `failure()` and `cancelled()`
+ * depend on run state this file does not model, and `contains()` / `startsWith`
+ * take arguments the parser below deliberately cannot evaluate.
+ */
+const SUPPORTED_FUNCTIONS = new Map([['always', () => true]])
+
+/**
  * Recursive descent over `|| && ! == != ()`, string / number / boolean
- * literals and context paths. Deliberately no function calls: `always()`,
- * `contains()` and friends are not used by any job-level `if:` here, and
- * guessing at one is worse than refusing it.
+ * literals, context paths, and the zero-argument functions in
+ * `SUPPORTED_FUNCTIONS`. Any other call throws: guessing at a function's
+ * verdict is worse than refusing it, because "the evaluator did not understand
+ * it" and "the job runs" must not produce the same green.
  */
 function evaluate(expression, context) {
   const tokens = tokenize(expression)
@@ -230,6 +280,13 @@ function evaluate(expression, context) {
     if (token.type === 'string' || token.type === 'number') return token.value
     if (token.type === 'path') {
       if (peek()?.value === '(') {
+        const fn = SUPPORTED_FUNCTIONS.get(token.value)
+        // Zero-argument only: `(` must be followed directly by `)`. A call with
+        // arguments falls through to the throw, even for a supported name.
+        if (fn && tokens[position + 1]?.value === ')') {
+          position += 2
+          return fn()
+        }
         throw new UnsupportedExpression(
           `function call ${token.value}() is not understood`,
         )
@@ -302,12 +359,34 @@ function runsWhen(condition, context) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Every upstream job output a condition in this repo reads, set to the value
+ * that lets the run PROCEED.
+ *
+ * The fork guard is the property under test, so every other gate has to be
+ * held open — otherwise a job that skips for an unrelated reason reads as a
+ * job the fork guard skipped, and the assertion below would be satisfied by
+ * the wrong mechanism. `test-eql.yml`'s two credentialed jobs are `&&`-ed with
+ * `needs.changes.outputs.relevant == 'true'`, which is that unrelated reason:
+ * with `needs` absent the path resolves to null, `null == 'true'` is false,
+ * and both jobs read as skipped on EVERY event including the ones that must
+ * run.
+ */
+const PERMISSIVE_NEEDS = {
+  changes: { outputs: { relevant: 'true' } },
+}
+
+/**
  * `github.event` carries the webhook payload of the triggering event, so on a
  * manual dispatch there is no `pull_request` key to reach through — that
  * absence is the whole bug.
+ *
+ * Keyed by CONTEXT, not by event: the two pull_request entries differ only in
+ * which repository the head branch lives in, and that difference is the whole
+ * point. `EVENT_OF` below maps each back to the `on:` key that produces it.
  */
 const CONTEXTS = {
   push: {
+    needs: PERMISSIVE_NEEDS,
     github: {
       event_name: 'push',
       repository: REPOSITORY,
@@ -315,7 +394,17 @@ const CONTEXTS = {
       event: { ref: 'refs/heads/main', repository: { full_name: REPOSITORY } },
     },
   },
+  merge_group: {
+    needs: PERMISSIVE_NEEDS,
+    github: {
+      event_name: 'merge_group',
+      repository: REPOSITORY,
+      ref: 'refs/heads/gh-readonly-queue/main/pr-1-abc',
+      event: { merge_group: { head_ref: 'refs/heads/main' } },
+    },
+  },
   workflow_dispatch: {
+    needs: PERMISSIVE_NEEDS,
     github: {
       event_name: 'workflow_dispatch',
       repository: REPOSITORY,
@@ -324,6 +413,7 @@ const CONTEXTS = {
     },
   },
   same_repo_pull_request: {
+    needs: PERMISSIVE_NEEDS,
     github: {
       event_name: 'pull_request',
       repository: REPOSITORY,
@@ -334,6 +424,7 @@ const CONTEXTS = {
     },
   },
   fork_pull_request: {
+    needs: PERMISSIVE_NEEDS,
     github: {
       event_name: 'pull_request',
       repository: REPOSITORY,
@@ -343,6 +434,15 @@ const CONTEXTS = {
       },
     },
   },
+}
+
+/** The `on:` key each context stands in for. */
+const EVENT_OF = {
+  push: 'push',
+  merge_group: 'merge_group',
+  workflow_dispatch: 'workflow_dispatch',
+  same_repo_pull_request: 'pull_request',
+  fork_pull_request: 'pull_request',
 }
 
 // ---------------------------------------------------------------------------
@@ -430,31 +530,60 @@ describe('the fork-PR guard keeps its meaning', () => {
   })
 
   it('spells the guard identically in every copy', () => {
-    // GitHub Actions has no YAML anchors, so this condition is written out six
+    // GitHub Actions has no YAML anchors, so this clause is written out eight
     // times. It stays identical for the same reason the `paths:` filters are
     // compared pairwise in `integration-workflow-paths.test.mjs`: the next
     // person writes their guard by copying one of these, and a divergent copy
     // is how the copied-from version keeps being the broken one.
+    //
+    // The CLAUSE, not the condition — see `CANONICAL_FORK_CLAUSE`. A condition
+    // that mentions FORK_PATH without containing the clause verbatim extracts
+    // to `null`, which lands here as a distinct "spelling" and fails.
     const spellings = [
-      ...new Set(FORK_GUARDS.map((entry) => unwrap(entry.condition))),
+      ...new Set(
+        FORK_GUARDS.map((entry) => extractForkClause(entry.condition)),
+      ),
     ]
-    expect(spellings).toHaveLength(1)
+    expect(
+      spellings,
+      `Every fork guard must contain this clause verbatim, alone or as one conjunct:\n  ${CANONICAL_FORK_CLAUSE}\nFound ${spellings.length} distinct spellings (a \`null\` below means a condition names ${FORK_PATH} but not the canonical clause):\n${spellings
+        .map((s) => `  ${s}`)
+        .join('\n')}`,
+    ).toEqual([CANONICAL_FORK_CLAUSE])
   })
 
-  for (const { id, condition } of FORK_GUARDS) {
+  for (const { id, relPath, condition } of FORK_GUARDS) {
     it(`${id} skips fork PRs and runs everything else`, () => {
-      const verdicts = Object.fromEntries(
-        Object.entries(CONTEXTS).map(([event, context]) => [
-          event,
-          runsWhen(condition, context),
-        ]),
+      const declared = triggers(readWorkflow(relPath))
+
+      // Every context, then narrowed to the ones this workflow can actually be
+      // in. A workflow with no `push:` trigger is never evaluated on a push, so
+      // requiring `push: true` there would be asserting about a run that cannot
+      // happen. (`test-eql.yml` carried no `push:` when this was written,
+      // justified by a merge queue that does not exist in this repository; it
+      // has one now, and this narrowing simply picks the trigger up.)
+      //
+      // `workflow_dispatch` is the exception and stays unconditional: this file
+      // exists because a job silently skipped on a dispatch that WAS declared,
+      // and "adding the trigger later would work" is worth holding even where
+      // it is not declared yet. It costs nothing — no guard here gates on
+      // anything a dispatch fails to provide except the fork payload, which is
+      // the bug.
+      const applicable = Object.keys(CONTEXTS).filter(
+        (name) => name === 'workflow_dispatch' || EVENT_OF[name] in declared,
       )
-      expect(verdicts, `  if: ${condition}`).toEqual({
-        push: true,
-        workflow_dispatch: true,
-        same_repo_pull_request: true,
-        fork_pull_request: false,
-      })
+
+      const verdicts = Object.fromEntries(
+        applicable.map((name) => [name, runsWhen(condition, CONTEXTS[name])]),
+      )
+      const expected = Object.fromEntries(
+        applicable.map((name) => [name, name !== 'fork_pull_request']),
+      )
+
+      expect(
+        verdicts,
+        `  if: ${condition}\nEvaluated with every OTHER gate held open (needs.changes.outputs.relevant = 'true'), so a false here is the fork guard's doing and nothing else.`,
+      ).toEqual(expected)
     })
   }
 })
@@ -483,7 +612,32 @@ describe('the expression evaluator this guard depends on', () => {
 
   it('rejects an expression it cannot reason about', () => {
     // Fail shut. An `if:` outside the grammar must not read as "runs".
-    expect(() => runsWhen('always()', CONTEXTS.workflow_dispatch)).toThrow(
+    //
+    // `success()` rather than `always()`: the latter is now modelled (see
+    // SUPPORTED_FUNCTIONS), and this assertion has to name something the
+    // evaluator genuinely cannot answer. `success()` is that — it depends on
+    // the run state of the job's `needs:`, which nothing here models.
+    expect(() => runsWhen('success()', CONTEXTS.workflow_dispatch)).toThrow(
+      UnsupportedExpression,
+    )
+    expect(() =>
+      runsWhen("contains(github.ref, 'main')", CONTEXTS.push),
+    ).toThrow(UnsupportedExpression)
+  })
+
+  it('models `always()` exactly, and only in its zero-argument form', () => {
+    // Total on every event, which is what makes it modellable at all. EQL's
+    // `ci-required` — the single required status check its merge queue
+    // references — is written this way, and a guard that threw on it would
+    // have to skip the whole workflow.
+    for (const context of Object.values(CONTEXTS)) {
+      expect(runsWhen('always()', context)).toBe(true)
+    }
+
+    // Arguments are refused even for a supported name: `always(x)` is not a
+    // thing GitHub accepts, and quietly evaluating it as `always()` would mean
+    // the evaluator answering a question nobody asked.
+    expect(() => runsWhen('always(true)', CONTEXTS.push)).toThrow(
       UnsupportedExpression,
     )
   })

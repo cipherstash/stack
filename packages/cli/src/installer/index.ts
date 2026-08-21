@@ -1,6 +1,7 @@
 import { readInstallSql } from '@cipherstash/eql/sql'
 import type pg from 'pg'
 import { createPgClient, TlsVerificationError } from '@/db/client.js'
+import { assertBundledEqlSqlDigest } from './bundle-digest.js'
 import {
   DEFERRED_GRANTS_HEADER,
   EQL_V3_INTERNAL_SCHEMA_NAME,
@@ -28,16 +29,31 @@ export type EqlVersion = 2 | 3
 
 const EQL_V2_SCHEMA_NAME = 'eql_v2'
 
-/** The pinned EQL v3 install SQL. */
+/**
+ * The pinned EQL v3 install SQL, verified against the resolved release's
+ * `installSqlSha256` before it is handed to anything that executes or emits it.
+ *
+ * This is the CLI's single choke point for the bundle — `install()`,
+ * `stash eql migration`'s emitter and `bundledExpectedSurface()` all come
+ * through here — which is why the digest check lives in the wrapper rather than
+ * at each call site. `readInstallSql()` itself is in the frozen
+ * `@cipherstash/eql` subtree, published from another repository, so a check
+ * added there would be dead code for every consumer installing from npm.
+ *
+ * @throws if the bundle cannot be read, or if its bytes are not the ones the
+ * resolved release attests to (see {@link assertBundledEqlSqlDigest}).
+ */
 export function loadBundledEqlSql(): string {
+  let sql: string
   try {
-    return readInstallSql()
+    sql = readInstallSql()
   } catch (error) {
     throw new Error(
       'Failed to read the EQL v3 install SQL from `@cipherstash/eql`. Reinstall dependencies (the package ships the bundle in `dist/sql/`).',
       { cause: error },
     )
   }
+  return assertBundledEqlSqlDigest(sql)
 }
 
 /** Supabase grants for the sole installable generation, EQL v3. */
@@ -409,6 +425,13 @@ export class EQLInstaller {
    * install/upgrade — the install is complete without them.
    */
   async install(options?: { supabase?: boolean }): Promise<InstallResult> {
+    // Read and digest-verify BEFORE connecting. A bundle that fails
+    // verification must not reach the database at all — not even as an opened
+    // connection and a `BEGIN` — so the refusal cannot be read as "something
+    // was attempted and rolled back". It also keeps the digest message the
+    // whole error, rather than a `detail` interpolated into the install
+    // wrapper's transaction narration below.
+    const bundledSql = loadBundledEqlSql()
     const client = createPgClient(this.databaseUrl)
     try {
       await client.connect()
@@ -423,7 +446,7 @@ export class EQLInstaller {
     try {
       try {
         await client.query('BEGIN')
-        await client.query(loadBundledEqlSql())
+        await client.query(bundledSql)
         await client.query('COMMIT')
       } catch (error) {
         await client.query('ROLLBACK').catch(() => {})

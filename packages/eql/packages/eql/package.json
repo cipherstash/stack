@@ -1,0 +1,65 @@
+{
+  "name": "@cipherstash/eql",
+  "version": "3.0.5",
+  "description": "Canonical EQL v3 wire types, JSON schemas, and SQL bundle.",
+  "keywords": [
+    "eql",
+    "cipherstash",
+    "encryption",
+    "postgres",
+    "typescript"
+  ],
+  "bugs": {
+    "url": "https://github.com/cipherstash/encrypt-query-language/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cipherstash/encrypt-query-language.git",
+    "directory": "packages/eql"
+  },
+  "license": "MIT",
+  "author": "CipherStash <hello@cipherstash.com>",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js",
+      "require": "./dist/schema.cjs"
+    },
+    "./schema/v3/*.json": "./dist/schema/v3/*.json",
+    "./sql": {
+      "types": "./dist/sql.d.ts",
+      "import": "./dist/sql.js",
+      "require": "./dist/sql.cjs"
+    },
+    "./sql/*": "./dist/sql/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "sync:generated": "node scripts/sync-generated.mjs",
+    "check:generated": "node scripts/sync-generated.mjs --check",
+    "build": "tsup",
+    "prepublishOnly": "node scripts/verify-release-assets.mjs",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "release": "pnpm run check:generated && pnpm run build && node scripts/npm-publish.mjs"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:repo",
+    "tsup": "catalog:repo",
+    "typescript": "catalog:repo",
+    "vitest": "catalog:repo"
+  }
+}

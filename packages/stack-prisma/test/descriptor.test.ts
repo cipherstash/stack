@@ -38,6 +38,7 @@ import { CIPHERSTASH_SPACE_ID } from '../src/extension-metadata/constants'
 import {
   CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME,
+  CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
   CIPHERSTASH_V3_INVARIANTS,
 } from '../src/extension-metadata/constants-v3'
@@ -71,7 +72,7 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
 
   it('publishes the v3 baseline and versioned EQL upgrade edges', () => {
     const space = cipherstashExtensionDescriptor.contractSpace!
-    expect(space.migrations).toHaveLength(3)
+    expect(space.migrations).toHaveLength(4)
     const v3Baseline = space.migrations[0]!
     expect(v3Baseline.dirName).toBe(CIPHERSTASH_V3_BASELINE_MIGRATION_NAME)
     // Genesis edge (`from: null`): the bundle declares no contract-space
@@ -87,6 +88,10 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
     expect(v3Upgrade304.dirName).toBe(CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME)
     expect(v3Upgrade304.metadata.from).toBe(v3Baseline.metadata.to)
     expect(v3Upgrade304.metadata.to).toBe(v3Baseline.metadata.to)
+    const v3Upgrade305 = space.migrations[3]!
+    expect(v3Upgrade305.dirName).toBe(CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME)
+    expect(v3Upgrade305.metadata.from).toBe(v3Baseline.metadata.to)
+    expect(v3Upgrade305.metadata.to).toBe(v3Baseline.metadata.to)
   })
 
   it('v3 baseline ops carry the install op plus the upgrade-invariant carriers', () => {
@@ -99,6 +104,7 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
       CIPHERSTASH_V3_INVARIANTS.installBundle,
       CIPHERSTASH_V3_INVARIANTS.upgradeBundle302,
       CIPHERSTASH_V3_INVARIANTS.upgradeBundle304,
+      CIPHERSTASH_V3_INVARIANTS.upgradeBundle305,
     ])
   })
 

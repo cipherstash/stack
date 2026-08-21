@@ -31,6 +31,18 @@ on:
       - 'packages/protect-ffi/Cargo.lock'
       - 'packages/protect-ffi/package.json'
       - 'packages/protect-ffi/mise.toml'
+      # Out of that package, and a compile input all the same: the cdylib
+      # crate carries
+      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # EQL wire types are linked into the `index.node` this job encrypts
+      # through. The native cache key in `.github/actions/build-ffi-binding`
+      # hashes both, so an edit here misses that cache and the binding gets
+      # rebuilt — correctly. Without these two entries the miss never happens,
+      # because the workflow does not trigger at all: a payload-encoding change
+      # under packages/eql/crates merges with this suite green by absence.
+      # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
+      - 'packages/eql/crates/**'
+      - 'packages/eql/Cargo.toml'
   pull_request:
     branches:
       - '**'
@@ -52,6 +64,18 @@ on:
       - 'packages/protect-ffi/Cargo.lock'
       - 'packages/protect-ffi/package.json'
       - 'packages/protect-ffi/mise.toml'
+      # Out of that package, and a compile input all the same: the cdylib
+      # crate carries
+      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # EQL wire types are linked into the `index.node` this job encrypts
+      # through. The native cache key in `.github/actions/build-ffi-binding`
+      # hashes both, so an edit here misses that cache and the binding gets
+      # rebuilt — correctly. Without these two entries the miss never happens,
+      # because the workflow does not trigger at all: a payload-encoding change
+      # under packages/eql/crates merges with this suite green by absence.
+      # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
+      - 'packages/eql/crates/**'
+      - 'packages/eql/Cargo.toml'
 
 jobs:
   e2e:
@@ -149,7 +173,7 @@ jobs:
         run: pnpm exec turbo run build --filter @cipherstash/stack-prisma
 
       - name: Emit example contract
-        run: pnpm --filter @cipherstash/prisma-example emit
+        run: pnpm exec turbo run emit --filter @cipherstash/prisma-example
 
       - name: Start E2E Postgres container
         working-directory: examples/prisma

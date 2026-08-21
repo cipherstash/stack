@@ -1,0 +1,912 @@
+name: "Test EQL"
+
+# The EQL suite, ported from cipherstash/encrypt-query-language when the subtree
+# landed at `packages/eql`. It arrived under `packages/eql/.github/workflows/` —
+# a directory GitHub never reads — so between the import and this file it ran
+# NOWHERE. That is the same failure the protect-ffi absorption hit, and
+# `scripts/__tests__/eql-suite-ci.test.mjs` is what stops it recurring.
+#
+# Four things changed in the port, all of them because the tree moved one level
+# down. Each is silent when wrong:
+#
+#   * `defaults.run.working-directory` — every `run:` here is written against
+#     the EQL root (`mise run …`, `release/*.sql`, `tests/sqlx/snapshots`).
+#     Without it they resolve against the monorepo root and fail with paths that
+#     look like typos.
+#   * `working_directory:` on each mise-action step — mise reads config from the
+#     current directory and its PARENTS, so an action running at the repo root
+#     never sees `packages/eql/mise.toml`. It would install nothing and leave the
+#     config untrusted, and the first `mise run` fails with "Config files … are
+#     not trusted", which reads as a toolchain problem rather than a path one.
+#     `defaults.run` does not reach a `uses:` step, so this is separate.
+#   * `workspaces:` on each rust-cache step — the Cargo workspace is nested now.
+#   * artifact `path:`/`path:` on upload/download — those are workspace-root
+#     relative and `defaults.run` does not touch them either.
+#
+# The credentials also changed shape. Upstream read all four from `secrets.`;
+# this repo keeps the two non-sensitive ones in `vars.` (see
+# `.github/actions/require-cs-secrets`), so `CS_WORKSPACE_CRN` and
+# `CS_CLIENT_ID` are `vars.` here. Reading them from `secrets.` would not error
+# — it yields the empty string, and the suite would fail at client construction
+# in every shard instead of saying what was missing.
+#
+# NB: NO path filter on `pull_request`. A workflow skipped by a path filter
+# leaves its required checks stuck Pending and blocks merge. Relevance is
+# computed by the `changes` job and applied per-job via `if:` instead. `push`
+# carries one because nothing waits on a push run, so a skipped one costs
+# nothing — and the two lists are kept identical by
+# `scripts/__tests__/eql-workflow-filters.test.mjs`.
+#
+# WHY `push` AND `schedule` EXIST. The port arrived with `merge_group` as the
+# ONLY route to the full PG 14-17 matrix, and with no `push:` at all,
+# justified by "under a required merge queue, push-to-main validation is
+# redundant". Every clause of that premise is false in this repository, checked
+# against the live API: there is no merge queue on `main`
+# (`mergeQueue(branch:"main")` -> null), `main` is not protected
+# (`branches/main/protection` -> 404), and the active ruleset carries no
+# `required_status_checks` rule, so `ci-required` is required by nothing.
+# `merge_group` is an event this repo never emits — so PG 14, 15 and 16 were
+# tested NEVER, and nothing EQL-related ran after a merge. Both failures are
+# invisible, because an event that is never delivered produces no runs to
+# notice the absence of. Pinned by
+# `scripts/__tests__/eql-matrix-triggers.test.mjs`, which refuses to count
+# `merge_group` or `workflow_dispatch` as reachable.
+#
+# WHY THIS SHAPE, and not "full matrix on every push". The expensive axis is
+# the fan-out, not the trigger: PG 14-17 x 2 shards is roughly double the
+# runner-minutes of the PR lane. So the cost is bounded by the FILTER rather
+# than by running a smaller matrix — a `push` run only starts when the merge
+# actually touched EQL, which is a small fraction of merges to `main`, and when
+# it does start the extra PG versions are the entire reason to run it at all.
+# Attributing a PG14 break to the merge that caused it is worth much more than
+# finding it detached at 04:00 the next morning. `schedule` then backstops the
+# case the filter cannot see (a dependency or toolchain moving underneath a
+# tree nobody touched), and both use the same full matrix.
+#
+# `pull_request` keeps the fast lane — PG17 x 4 shards, every PR, unfiltered,
+# with relevance applied per job — because latency is what matters there and
+# PG17 catches all but version-specific breakage.
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+    # Identical to the `relevant:` filter in the `changes` job below. GitHub
+    # Actions has no YAML anchors, so the list is written twice; the guard named
+    # above fails a one-sided edit.
+    #
+    # The last four entries are the documentation surface, and they are here
+    # because a job in THIS file reads them: `docs-static` runs
+    # `mise run test:docs_v3_grep`, which scans `README.md`, `SUPABASE.md`,
+    # `docker/README.md` and every tracked `docs/` markdown for the eql_v2
+    # surface removed in 3.0.0. All four were missing from all three copies of
+    # this list, so a push to main touching only docs started no run of this
+    # workflow at all — `pull_request` was unaffected, because it applies no
+    # `paths:` filter and `docs-static` is deliberately not relevance-gated.
+    # Derived rather than remembered now: the second half of
+    # `scripts/__tests__/eql-workflow-filters.test.mjs` walks each `mise run`
+    # out to the paths the task names and fails on any this list does not select.
+    paths:
+      - ".github/workflows/test-eql.yml"
+      - ".github/actions/require-cs-secrets/**"
+      - "packages/eql/src/**"
+      - "packages/eql/tests/**"
+      - "packages/eql/tasks/**"
+      - "packages/eql/crates/**"
+      - "packages/eql/packages/**"
+      - "packages/eql/Cargo.toml"
+      - "packages/eql/Cargo.lock"
+      - "packages/eql/mise.toml"
+      - "packages/eql/docs/**"
+      - "packages/eql/docker/**"
+      - "packages/eql/README.md"
+      - "packages/eql/SUPABASE.md"
+  schedule:
+    - cron: "0 4 * * *"      # 04:00 UTC daily; full matrix, off the merge path
+  merge_group: {}            # inert today (no queue); kept so enabling one works
+  workflow_dispatch: {}      # manual runs use the PR shape (PG17 x 4 shards)
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  MISE_VERBOSE: "1"
+  # CI compile-time tuning (CI-only; local dev keeps full debuginfo + incremental).
+  # Clean CI builds never reuse incremental state, so it only bloats target/ and
+  # the rust-cache up/download. line-tables-only keeps readable panic backtraces
+  # for failing tests at a fraction of full-debuginfo compile cost. nextest's
+  # `test` profile inherits these from `dev`.
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
+
+defaults:
+  run:
+    shell: bash {0}
+    # Every `run:` in this workflow is written against the EQL root. This is the
+    # one-line form of what would otherwise be ~30 per-step `working-directory:`
+    # lines, each of which could be forgotten independently.
+    working-directory: packages/eql
+
+permissions:
+  contents: read
+
+# PRs cancel superseded runs; the merge queue must NOT cancel — a cancelled
+# merge_group run never reports a final status and ejects the PR from the queue.
+concurrency:
+  group: test-eql-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Runs on EVERY event and MUST always succeed (never skipped, never failed) —
+  # downstream heavy jobs `needs: [changes]`, and a skipped/failed `changes`
+  # would either skip the merge-queue matrix or deadlock `ci-required`.
+  changes:
+    name: "Detect relevant changes"
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    outputs:
+      relevant: ${{ steps.r.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      # Diff ONLY on pull_request, where a base ref is well-defined. On
+      # push/schedule/merge_group/workflow_dispatch there is no base ref to
+      # diff against and the filter errors or empties — so those events take the
+      # hardcoded default in the step below instead. `push` does not need it:
+      # its `on:`-level `paths:` has already decided whether the run happens.
+      - id: f
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
+        with:
+          # Every path except the workflow itself gained the `packages/eql/`
+          # prefix with the subtree. dorny/paths-filter matches against
+          # repo-root-relative paths, so the unprefixed globs would match
+          # `packages/stack/src/**` and friends instead — firing the whole
+          # matrix on changes that cannot affect EQL, and (worse) NOT firing on
+          # EQL's own `src/`, since nothing at the repo root is called that.
+          #
+          # Identical to the `push` `paths:` list at the top of this file — the
+          # same question asked of two mechanisms GitHub gives no way to share.
+          # `scripts/__tests__/eql-workflow-filters.test.mjs` compares them, and
+          # also fails any entry here that matches no tracked file (a dead
+          # `packages/eql/sql/**` sat in this list from the port: there is no
+          # such directory, so it narrowed the filter by exactly nothing while
+          # reading as coverage).
+          #
+          # The four documentation entries are inputs to `docs-static` and
+          # `doc-anchors`, neither of which is relevance-gated, so this copy
+          # does not strictly need them. It carries them because the three
+          # copies are held EQUAL — see the note above the `push` list, and the
+          # reasoning on `bench-eql.yml`'s own filter for why equal beats
+          # minimal.
+          filters: |
+            relevant:
+              - ".github/workflows/test-eql.yml"
+              - ".github/actions/require-cs-secrets/**"
+              - "packages/eql/src/**"
+              - "packages/eql/tests/**"
+              - "packages/eql/tasks/**"
+              - "packages/eql/crates/**"
+              - "packages/eql/packages/**"
+              - "packages/eql/Cargo.toml"
+              - "packages/eql/Cargo.lock"
+              - "packages/eql/mise.toml"
+              - "packages/eql/docs/**"
+              - "packages/eql/docker/**"
+              - "packages/eql/README.md"
+              - "packages/eql/SUPABASE.md"
+
+      # Explicit default (not `|| 'true'`, which trips GitHub's inconsistent
+      # treatment of the string 'false'). push/schedule/merge_group/dispatch
+      # never run the filter above — it needs a base ref that only a pull
+      # request has — so they take the default, and `push` is already narrowed
+      # by its own `on:`-level `paths:`.
+      #
+      # The event arrives through `env:`, not through a `${{ }}` interpolated
+      # into the body. That is what lets
+      # `scripts/__tests__/eql-matrix-triggers.test.mjs` EXECUTE this script
+      # once per event and read back what it wrote, rather than reimplementing
+      # the branch and agreeing with a rewritten one by luck.
+      - id: r
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          FILTER_RELEVANT: ${{ steps.f.outputs.relevant }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            echo "relevant=$FILTER_RELEVANT" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Pure bash; no checkout/toolchain. Derives the PG-version + shard fan-out
+  # from the event: PR and manual dispatch -> PG17 x 4 shards (latency lane);
+  # everything else -> PG 14-17 x 2 shards (coverage lane).
+  setup:
+    name: "Compute matrix"
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    # Opts out of the workflow-level `working-directory: packages/eql`. This job
+    # deliberately does not check out — it is pure bash deriving a matrix — so
+    # `packages/eql` does not exist on the runner and every `run:` step fails
+    # before its first line, with `chdir: No such file or directory`. Guarded by
+    # `scripts/__tests__/workflow-working-directory.test.mjs`.
+    defaults:
+      run:
+        working-directory: .
+    outputs:
+      pg-versions: ${{ steps.cfg.outputs.pg }}
+      shard-total: ${{ steps.cfg.outputs.shard_total }}
+      shards: ${{ steps.cfg.outputs.shards }}
+    steps:
+      # Written as an exclusion, and that direction is the point: the FULL
+      # matrix is the default, so a trigger added later lands in the coverage
+      # lane rather than in the fast one. The version of this that enumerated
+      # `merge_group` as the only full-matrix event is why PG 14-16 went
+      # untested for the life of the port — an allowlist fails shut on the case
+      # nobody enumerated, and here "shut" meant three Postgres versions.
+      #
+      # The event arrives through `env:` rather than an interpolated `${{ }}`
+      # so `scripts/__tests__/eql-matrix-triggers.test.mjs` can run this script
+      # against each event and read the real fan-out back out of
+      # `$GITHUB_OUTPUT`.
+      - id: cfg
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request|workflow_dispatch)
+              # Latency lane: PG17 only, split four ways.
+              echo 'pg=[17]'          >> "$GITHUB_OUTPUT"
+              echo 'shard_total=4'    >> "$GITHUB_OUTPUT"
+              echo 'shards=[1,2,3,4]' >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              # Coverage lane: every version tests/docker-compose.yml ships a
+              # container for. Kept in step by the guard named above.
+              echo 'pg=[14,15,16,17]' >> "$GITHUB_OUTPUT"
+              echo 'shard_total=2'    >> "$GITHUB_OUTPUT"
+              echo 'shards=[1,2]'     >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+  # Compile the test binaries ONCE. Runs on every non-PR event, and on PRs only
+  # when relevant files changed (docs-only PRs never pay the ~4-min compile).
+  build-archive:
+    name: "Build test archive"
+    needs: [changes]
+    # This repo is PUBLIC and accepts fork PRs (the approval policy only gates
+    # first-time contributors). build-archive is the sole holder of the CS_*
+    # credentials below, so it must never run on a fork PR. The trailing clause
+    # is the only thing that skips it: a fork pull request. Every other event —
+    # push, schedule, merge_group, dispatch, and a same-repo branch PR — runs;
+    # the downstream test/validate shards `needs:` it, so they skip on fork PRs
+    # too.
+    #
+    # Both clauses are written as exclusions rather than as a list of admitted
+    # events. An allowlist fails SHUT on the event nobody enumerated, and the
+    # `push`/`schedule` triggers added above would have skipped every job in
+    # this file while the run still reported success. Pinned by
+    # `scripts/__tests__/eql-matrix-triggers.test.mjs`; the fork clause itself
+    # is compared verbatim across all eight copies in the repo by
+    # `scripts/__tests__/workflow-dispatch-job-conditions.test.mjs`.
+    if: >-
+      (github.event_name != 'pull_request'
+       || needs.changes.outputs.relevant == 'true')
+      && (github.event_name != 'pull_request'
+          || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    env:
+      # test:sqlx:archive depends on test:sqlx:prep, which copies the built EQL
+      # into migrations/, applies it to a live Postgres, and regenerates the
+      # per-type fixtures — both are include_str!'d into the test binaries at
+      # COMPILE time, so they must exist before `cargo nextest archive`. Fixture
+      # generation needs a live PG with EQL installed (the postgres:up step
+      # below) plus CS_* creds. The job-level `if:` above keeps those creds off
+      # fork-PR runs.
+      POSTGRES_VERSION: "17"
+      CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+      CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
+      CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      # Fast pre-flight: fail in seconds if a secret was rotated or cleared,
+      # before the rust-cache restore and the ~4-minute nextest archive build.
+      # Ordering is asserted by scripts/__tests__/ffi-binding-step-order.test.mjs.
+      - uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+          working_directory: packages/eql
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+          shared-key: sqlx-tests
+          # The sole saver of the shared cache: this job compiles the full heavy
+          # dep tree, so it must own the `sqlx-tests` key. All other jobs set
+          # `save-if: false` so a fast-finishing light job can't win the save race
+          # and overwrite the key with a deps-less target/.
+
+      - name: Setup database (Postgres 17)
+        run: |
+          mise run postgres:up postgres-${POSTGRES_VERSION} --extra-args "--detach --wait"
+
+      - name: Build EQL + archive test binaries
+        run: |
+          mise run test:sqlx:archive
+
+      # Ship the built release artifacts: build_validation_tests read
+      # cipherstash-encrypt{,-uninstall}.sql from ../../release at RUN time
+      # (std::fs, not embedded), and release/ is gitignored so the shard checkout
+      # has none of them. `mise run build` (via prep) produced them in build-archive.
+      #
+      # `path:` is workspace-root relative — `defaults.run.working-directory`
+      # does not reach a `uses:` step — hence the prefix. upload-artifact v4
+      # roots the archive at the least common ancestor of everything it matched,
+      # which for these two is `packages/eql`, so the artifact still contains
+      # `nextest.tar.zst` and `release/*.sql` at its top level and the shard's
+      # `download-artifact` puts them back where the archive expects them.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nextest-archive
+          path: |
+            packages/eql/nextest.tar.zst
+            packages/eql/release/*.sql
+          retention-days: 1
+          if-no-files-found: error
+
+  # Sharded sqlx suite. No longer needs [schema, codegen] (gate removed) —
+  # shards start right after build-archive.
+  test:
+    name: "Shard PG${{ matrix.postgres-version }} ${{ matrix.shard }}/${{ needs.setup.outputs.shard-total }}"
+    needs: [changes, setup, build-archive]
+    # Exclusion, not an allowlist — see the note on `build-archive`.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.relevant == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres-version: ${{ fromJSON(needs.setup.outputs.pg-versions) }}
+        shard: ${{ fromJSON(needs.setup.outputs.shards) }}
+    env:
+      POSTGRES_VERSION: ${{ matrix.postgres-version }}
+      SHARD: ${{ matrix.shard }}
+      SHARD_TOTAL: ${{ needs.setup.outputs.shard-total }}
+      # No CS_* here: the shard runs the prebuilt archive (fixtures + migration
+      # embedded by build-archive), so it does not regenerate fixtures and needs
+      # no credentials. It only needs the live Postgres (below) for sqlx::test's
+      # per-test scratch databases and the release/*.sql from the artifact.
+    steps:
+      # Checkout path MUST be identical to build-archive so the archive's
+      # workspace remap lines up (design: archive<->commit coupling).
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+          working_directory: packages/eql
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+          shared-key: sqlx-tests
+          save-if: false
+
+      # Extracts to the workspace root by default, which would drop
+      # `nextest.tar.zst` and `release/` two levels above where the archive's
+      # workspace remap and the build_validation_tests expect them.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: nextest-archive
+          path: packages/eql
+
+      - name: Setup database (Postgres ${{ matrix.postgres-version }})
+        run: |
+          mise run postgres:up postgres-${POSTGRES_VERSION} --extra-args "--detach --wait"
+
+      - name: Run shard ${{ matrix.shard }}/${{ needs.setup.outputs.shard-total }}
+        run: |
+          mise run test:sqlx:partition
+
+  # docs:validate + Clean-DB v3 install smoke. Both are version-relevant, so
+  # they follow the event's PG set (PG17 on PR; 14-17 in the queue). Moved out
+  # of the old per-version test job so they run ONCE per version, not per shard.
+  validate:
+    name: "Validate (Postgres ${{ matrix.postgres-version }})"
+    needs: [changes, setup]
+    # Exclusion, not an allowlist — see the note on `build-archive`.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.relevant == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres-version: ${{ fromJSON(needs.setup.outputs.pg-versions) }}
+    env:
+      POSTGRES_VERSION: ${{ matrix.postgres-version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+          working_directory: packages/eql
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+          shared-key: sqlx-tests
+          save-if: false
+
+      - name: Setup database (Postgres ${{ matrix.postgres-version }})
+        run: |
+          mise run postgres:up postgres-${POSTGRES_VERSION} --extra-args "--detach --wait"
+
+      # Source-only doc checks (coverage + required-tags) moved to the dedicated
+      # `docs-static` job so they run exactly once, not per-Postgres. This step
+      # keeps only the DB-backed SQL-syntax validation, which genuinely needs the
+      # per-version Postgres.
+      - name: Validate documented SQL syntax (Postgres ${{ matrix.postgres-version }})
+        run: |
+          mise run docs:validate:documented-sql
+
+      - name: Clean-DB v3 install smoke (Postgres ${{ matrix.postgres-version }})
+        # `set -euo pipefail` for the reason spelled out on `matrix-coverage`'s
+        # inventory step and enforced by
+        # `scripts/__tests__/workflow-run-fail-fast.test.mjs`: the workflow-wide
+        # `shell: bash {0}` drops GitHub's implicit `-eo pipefail`, so without
+        # it a failing BUILD on the first line is discarded and the smoke test
+        # on the second decides the step — i.e. the install smoke would pass by
+        # installing the previous build.
+        run: |
+          set -euo pipefail
+          mise run clean && mise run build
+          mise run test:clean_install_v3
+
+  schema:
+    name: "JSON Schema validation"
+    needs: [changes]
+    # Exclusion, not an allowlist — see the note on `build-archive`.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.relevant == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+          working_directory: packages/eql
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+          shared-key: sqlx-tests
+          save-if: false
+      - name: Validate v2.2 / v2.3 payload schemas
+        run: |
+          mise run test:schema
+
+  rust-crates:
+    name: "Rust workspace crates"
+    needs: [changes]
+    # Exclusion, not an allowlist — see the note on `build-archive`.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.relevant == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+          working_directory: packages/eql
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+          shared-key: sqlx-tests
+          save-if: false
+      # `mise run test:crates` runs `cargo fmt --check` at the workspace root,
+      # which covers tests/sqlx (a workspace member). This subsumes the old
+      # standalone `test:lint` step that the removed per-version test job ran.
+      - name: Compile, lint and test the Rust workspace crates
+        run: |
+          set -euo pipefail
+          # Assignment on its own, not `export x=$(…)`: errexit ignores the
+          # substitution's status when the line starts with a command word, so
+          # the `export` form would swallow a failing `rustup show` even under
+          # `set -e`.
+          active_rust_toolchain=$(rustup show active-toolchain | cut -d' ' -f1)
+          rustup component add --toolchain "${active_rust_toolchain}" rustfmt clippy
+          mise run test:crates
+
+      # Freshness gate for the eql-types codegen output: regenerate the
+      # TypeScript bindings and JSON Schemas and fail if the checked-in
+      # copies differ. Reuses the toolchain from the step above.
+      - name: Verify eql-types bindings and schemas are fresh
+        run: |
+          mise run types:check
+
+      # Publish gate for eql-bindings (the one crate we ship to crates.io via
+      # release-plz). `--dry-run` packages + compiles the crate exactly as
+      # crates.io would, catching publish-blockers — missing `license`/metadata,
+      # a real path dependency without a version — on the PR rather than at
+      # release time. No token needed. `--allow-dirty` tolerates any files the
+      # preceding regenerate-and-diff steps leave in the working tree.
+      - name: Verify eql-bindings packages cleanly for crates.io
+        run: |
+          cargo publish -p eql-bindings --dry-run --allow-dirty
+
+  codegen:
+    name: "Encrypted-domain codegen"
+    needs: [changes]
+    # Exclusion, not an allowlist — see the note on `build-archive`.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.relevant == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+          working_directory: packages/eql
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+          shared-key: sqlx-tests
+          save-if: false
+      - name: Verify generator parity (golden)
+        run: |
+          mise run codegen:parity
+      - name: Verify schema split parity (SQL owned_schemas vs Rust consts)
+        run: |
+          mise run test:schemas:parity
+
+  self-contained-v3:
+    name: "eql_v3 self-containment"
+    needs: [changes]
+    # Exclusion, not an allowlist — see the note on `build-archive`.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.relevant == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+          working_directory: packages/eql
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+          shared-key: sqlx-tests
+          save-if: false
+      - name: Build EQL
+        run: mise run clean && mise run --force build
+      - name: Assert eql_v3 is self-contained
+        run: mise run test:self_contained_v3
+      - name: Assert the installer contains every ordered file
+        run: mise run test:installer_complete
+      - name: Symbol-order cross-check (v3)
+        run: mise run test:symbol_order_v3
+      - name: Build-ordering helper unit tests
+        run: mise run test:build_ordering_helpers
+
+  matrix-coverage:
+    name: "Matrix coverage inventory"
+    needs: [changes]
+    # Exclusion, not an allowlist — see the note on `build-archive`.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.relevant == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+          working_directory: packages/eql
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+          shared-key: sqlx-tests
+          save-if: false
+      - name: Verify the matrix test-name inventory
+        # The workflow-wide `shell: bash {0}` default drops GitHub's implicit
+        # `-eo pipefail`, so without fail-fast this multi-command step only
+        # reports the LAST command's exit code and a failing inventory task is
+        # silently swallowed. Restore fail-fast for this step.
+        run: |
+          set -euo pipefail
+          mise run test:matrix:inventory
+          mise run test:matrix:inventory:jsonb_entry
+          mise run test:matrix:inventory:ope
+          mise run test:v3-jsonb:inventory
+          git add -N tests/sqlx/snapshots
+          git diff --exit-code -- tests/sqlx/snapshots \
+            || { echo "Coverage inventory stale — run the relevant inventory task and commit."; exit 1; }
+      - name: Verify catalog-surface coverage
+        run: mise run test:matrix:catalog-coverage
+
+  splinter:
+    name: "Supabase splinter"
+    needs: [changes]
+    # Exclusion, not an allowlist — see the note on `build-archive`.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.relevant == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    env:
+      POSTGRES_VERSION: "17"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+          working_directory: packages/eql
+      # This job looks Rust-free and is not. `test:splinter` is a bash script
+      # that pipes SQL through psql, but the build step below runs `mise run
+      # build`, and `tasks/build.sh` shells out to `cargo run -q -p eql-codegen`
+      # twice — so without this restore the job cold-compiles that crate and its
+      # dependency tree on every run, beside nine sibling jobs that restore a
+      # warm `target/` for the same workspace. The only symptom is a slower run.
+      #
+      # `save-if: false` for the reason `build-archive` records: it is the sole
+      # designated saver of this shared key. Both halves are asserted by
+      # scripts/__tests__/eql-suite-ci.test.mjs, which finds the cargo by
+      # closing over the mise task graph rather than grepping this file — the
+      # string `cargo` appears nowhere in it.
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+          shared-key: sqlx-tests
+          save-if: false
+      - name: Setup database
+        run: |
+          mise run postgres:up postgres-${POSTGRES_VERSION} --extra-args "--detach --wait"
+      - name: Build and install EQL
+        run: |
+          set -euo pipefail
+          mise run clean && mise run --output prefix --force build
+          # Redirected, not piped. `psql -v ON_ERROR_STOP=1` exits at the first
+          # SQL error, which under `pipefail` leaves a `cat` writing into a
+          # closed pipe and reports the step as 141 — the SIGPIPE hazard
+          # `scripts/__tests__/workflow-grep-q-pipelines.test.mjs` documents.
+          # The redirect is the same bytes with no writer to signal, so the
+          # step reports psql's own status and says which statement failed.
+          docker exec -i postgres-${POSTGRES_VERSION} \
+            psql -v ON_ERROR_STOP=1 \
+              postgresql://cipherstash:password@localhost/cipherstash -f- \
+            < release/cipherstash-encrypt.sql
+      - name: Run splinter
+        run: |
+          mise run --output prefix test:splinter --postgres ${POSTGRES_VERSION}
+
+  # Source-only SQL documentation validation (coverage + required Doxygen tags).
+  # Deliberately NOT relevance-gated: it runs on EVERY pull_request — including
+  # docs-only PRs that skip the heavy jobs — so documentation is always
+  # validated. DB-free and creds-free (the psql-backed syntax check stays in the
+  # per-version `validate` job).
+  docs-static:
+    name: "SQL doc validation"
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+          working_directory: packages/eql
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+          shared-key: sqlx-tests
+          save-if: false
+      - name: Validate SQL doc coverage + required tags
+        run: |
+          mise run docs:validate:source
+
+      - name: Assert user-facing docs are free of the removed eql_v2 surface
+        run: |
+          mise run test:docs_v3_grep
+
+      - name: Assert public files contain no private issue identifiers
+        run: |
+          mise run test:public_identifiers
+
+  # Every `known_failure` marker must name a real, OPEN issue, and its constant
+  # must actually be referenced by a test. The Rust half of the contract is
+  # self-expiring (the marker FAILS once the wrapped assertion starts passing);
+  # this is the half that stops a suppression outliving a closed issue.
+  #
+  # Credential-free and DB-free — it only reads the registry and asks GitHub for
+  # issue state, so it runs on every PR rather than hiding behind the e2e job.
+  known-failures:
+    name: "known-failure markers"
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+          working_directory: packages/eql
+      # The gate detects drift by cross-checking a loose declaration count against
+      # a strict parse, so an over-accepting parser defeats it silently. Runs
+      # first, and needs no token: a broken parser makes the gate below
+      # meaningless, not merely wrong.
+      - name: The gate's strict ISSUE_ parser is sound
+        run: |
+          mise run test:known-failures:parser
+
+      - name: Every suppressed test names an open issue
+        env:
+          # `gh` needs a token to read issue state; the default job token is
+          # sufficient (issues: read, same repo).
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mise run test:known-failures
+
+  # Markdown anchor links. DB-free, credential-free and fast, and deliberately
+  # NOT relevance-gated: its inputs are the docs themselves, so gating it on the
+  # `relevant` filter (src/**, crates/**) would skip it on exactly the docs-only
+  # PRs it exists to check.
+  doc-anchors:
+    name: "doc anchor links"
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+          working_directory: packages/eql
+      - name: Every intra-document anchor link resolves
+        run: |
+          mise run test:doc-anchors
+
+  # The e2e (fresh-encryption) property suite. Encrypts random values through
+  # ZeroKMS at run time, so it needs CS_* creds and is PG-version-independent —
+  # one PG17 run, never the matrix. Compiles the `proptest-e2e`-gated binaries
+  # (which the default-feature sharded archive excludes) and runs only the
+  # e2e oracle. Like build-archive, it holds CS_* and so carries the same
+  # fork-PR guard to keep the secrets off fork runs.
+  e2e:
+    name: "e2e property suite (fresh encryption)"
+    needs: [changes, setup]
+    # Exclusion, not an allowlist — see the note on `build-archive`, which
+    # carries the same two clauses for the same two reasons.
+    if: >-
+      (github.event_name != 'pull_request'
+       || needs.changes.outputs.relevant == 'true')
+      && (github.event_name != 'pull_request'
+          || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    env:
+      POSTGRES_VERSION: "17"
+      CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+      CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
+      CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      # Fast pre-flight: fail in seconds if a secret was rotated or cleared,
+      # before the rust-cache restore and the proptest-e2e compile.
+      - uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: true
+          working_directory: packages/eql
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: packages/eql
+          shared-key: sqlx-tests
+          save-if: false
+      - name: Setup database (Postgres 17)
+        run: |
+          mise run postgres:up postgres-${POSTGRES_VERSION} --extra-args "--detach --wait"
+      - name: Run e2e property suite
+        run: |
+          mise run test:sqlx:e2e
+
+  # The ONE required status check. Stable name on every event, so branch
+  # protection never references an event-dependent leaf name (which would
+  # deadlock). Passes iff every needed job is success or skipped. Treating
+  # skipped as pass is intentional: heavy jobs are legitimately skipped on
+  # docs-only PRs, and a genuine failure is still caught because the FAILING
+  # source job is itself in `needs` and reports failure.
+  ci-required:
+    name: "ci-required"
+    needs: [changes, setup, build-archive, test, validate, schema, rust-crates,
+            codegen, self-contained-v3, matrix-coverage, splinter, docs-static,
+            known-failures, doc-anchors, e2e]
+    if: always()
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    # Same opt-out as `setup`, and this is the worse of the two to get wrong:
+    # this job is the required check. It reads `needs.*.result` and checks out
+    # nothing, so under the workflow-level `working-directory` it fails for a
+    # reason unrelated to any job it is reporting on — a red required check that
+    # says nothing about the suite.
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - name: Assert all required jobs passed or were skipped
+        run: |
+          set -euo pipefail
+          results='${{ join(needs.*.result, ' ') }}'
+          echo "needed results: $results"
+          for r in $results; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "gate fail: a needed job reported '$r'"; exit 1 ;;
+            esac
+          done
+          echo "ci-required: all needed jobs passed or were skipped"

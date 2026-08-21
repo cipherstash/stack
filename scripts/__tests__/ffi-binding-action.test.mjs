@@ -38,7 +38,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import { readJsonc } from './lib/read-jsonc.mjs'
@@ -352,6 +352,259 @@ describe('build-ffi-binding — the WASM key covers the build it skips', () => {
       `These are compiled into the cached directory but absent from the cache key, so an edit to one leaves the key unchanged, the restore hits, and the build step is skipped over stale output. Add each to the \`hashFiles(...)\` list on the "${label(WASM_STEP, 0)}" step.`,
     ).toEqual([])
   })
+})
+
+/**
+ * The third question a cache key has to answer, and the one the two suites
+ * above cannot see: does it cover every crate the build COMPILES?
+ *
+ * Both of those reason about files inside `packages/protect-ffi`. Cargo does
+ * not. `crates/protect-ffi/Cargo.toml` carries
+ *
+ *     eql-bindings = { path = "../../../eql/crates/eql-bindings" }
+ *
+ * — an in-tree path dependency in a DIFFERENT package, and a genuine compile
+ * input to both `index.node` and the wasm32 build. A path dep carries no
+ * registry checksum, so a src-only edit under that crate touches nothing else:
+ * not `packages/protect-ffi/crates/**`, not either `Cargo.toml`, and not
+ * `Cargo.lock` (which records the path dep by name and version, and only moves
+ * when the version does). Every glob in both keys therefore hashes identically,
+ * the restore hits, `Build index.node (cargo)` is SKIPPED, and every
+ * credentialed job in CI proceeds on a binding compiled from the old crate.
+ *
+ * That is not hypothetical: across the three commits that shipped this
+ * dependency the crate's version moved 3.0.4 -> 4.0.0 -> 3.0.5 and neither
+ * cache key changed by a byte.
+ *
+ * DISCOVERED, not listed. The dependency set is read out of the manifest and
+ * followed transitively, so the second path dep — or one that moves — is held
+ * to the same bar the day it lands. A hand-written list would have been right
+ * on the commit that added it and silently wrong afterwards, which is the same
+ * failure shape one level down.
+ *
+ * `[dev-dependencies]` are deliberately NOT followed. `build:native` is
+ * `cargo build --release` and `build:wasm` is wasm-pack; neither compiles a
+ * dependency's dev-deps, so requiring them in the key would bust the cache on
+ * edits that cannot reach the artifact. (`eql-bindings` has one — `eql-domains`,
+ * its parity oracle — so this is a live distinction, not a hypothetical.)
+ */
+
+const CARGO_ROOT_CRATE = `${FFI_PKG}/crates/protect-ffi/Cargo.toml`
+
+/**
+ * The path dependencies declared by one Cargo manifest, as `{ name, path }`
+ * with `path` exactly as written.
+ *
+ * Deliberately a narrow reader over the text rather than a TOML parse: there is
+ * no TOML parser in this repo's dependency tree, and `cargo metadata` would put
+ * a Rust toolchain on `pnpm test:scripts` — which `packages/protect-ffi`'s
+ * `lintWiring.test.ts` exists to keep off the JS entry points.
+ *
+ * It reads both spellings cargo accepts: the inline table
+ * (`foo = { path = "..." }`) and the section form (`[dependencies.foo]` with a
+ * `path =` line beneath it). Sections are matched by their TAIL, so
+ * `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]` is read the same
+ * as `[dependencies]` — the wasm and native halves of this crate declare
+ * different dependency sets and both compile.
+ *
+ * Exported shape is a pure function of the text so `the manifest reader is
+ * sound` below can exercise it on a literal, rather than on whatever the real
+ * manifest happens to say today.
+ */
+function parsePathDependencies(text) {
+  const found = []
+  let section = null
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/#.*$/, '').trim()
+    if (line === '') continue
+
+    const header = /^\[([^\]]+)\]$/.exec(line)
+    if (header) {
+      section = header[1]
+      continue
+    }
+    if (section === null) continue
+
+    // `[dependencies]`, `[build-dependencies]`, `[target.'…'.dependencies]`.
+    // `dev-dependencies` is excluded — see the note above the describe.
+    const isDepTable = /(^|\.)(build-)?dependencies$/.test(section)
+    // `[dependencies.foo]` / `[target.'…'.dependencies.foo]`
+    const namedDep = /(^|\.)(build-)?dependencies\.([A-Za-z0-9_-]+)$/.exec(
+      section,
+    )
+
+    if (isDepTable) {
+      const inline = /^([A-Za-z0-9_-]+)\s*=\s*\{(.*)\}$/.exec(line)
+      if (!inline) continue
+      const path = /\bpath\s*=\s*"([^"]+)"/.exec(inline[2])
+      if (path) found.push({ name: inline[1], path: path[1] })
+    } else if (namedDep) {
+      const path = /^path\s*=\s*"([^"]+)"$/.exec(line)
+      if (path) found.push({ name: namedDep[3], path: path[1] })
+    }
+  }
+  return found
+}
+
+/**
+ * Every crate `cargo build` compiles into the artifact, as repo-relative
+ * directories, starting from the cdylib crate and following path deps
+ * transitively. The starting crate itself is excluded: it lives under
+ * `packages/protect-ffi/crates/**`, which both keys already hash.
+ */
+function compiledPathDependencies(rootManifestRel) {
+  const crates = new Map()
+  const unresolved = []
+  const queue = [rootManifestRel]
+  const seen = new Set([rootManifestRel])
+
+  while (queue.length > 0) {
+    const manifestRel = queue.shift()
+    const full = resolve(REPO_ROOT, manifestRel)
+    if (!existsSync(full)) {
+      unresolved.push(manifestRel)
+      continue
+    }
+    for (const dep of parsePathDependencies(readFileSync(full, 'utf8'))) {
+      const dirRel = relative(
+        REPO_ROOT,
+        resolve(dirname(full), dep.path),
+      ).replaceAll('\\', '/')
+      const depManifest = `${dirRel}/Cargo.toml`
+      if (!crates.has(dirRel)) crates.set(dirRel, dep.name)
+      if (seen.has(depManifest)) continue
+      seen.add(depManifest)
+      queue.push(depManifest)
+    }
+  }
+  return {
+    crates: [...crates.entries()].map(([dir, name]) => ({ dir, name })),
+    unresolved,
+  }
+}
+
+/**
+ * The nearest ancestor manifest declaring `[workspace]` — the file cargo reads
+ * for the crate's workspace context, and the one a `foo.workspace = true` key
+ * inherits from. `eql-bindings` inherits nothing today, and three of its four
+ * siblings inherit `[lints]`, so the file is one `workspace = true` away from
+ * being a compile input for this crate too.
+ */
+function workspaceRootOf(dirRel) {
+  let current = dirRel
+  while (current !== '' && current !== '.') {
+    const candidate = `${current}/Cargo.toml`
+    const full = resolve(REPO_ROOT, candidate)
+    if (
+      existsSync(full) &&
+      /^\s*\[workspace\]/m.test(readFileSync(full, 'utf8'))
+    ) {
+      return candidate
+    }
+    current = dirname(current)
+  }
+  return null
+}
+
+const COMPILED = compiledPathDependencies(CARGO_ROOT_CRATE)
+
+/** Which of this action's cache steps must cover a Rust compile input. */
+const RUST_CACHE_STEPS = cacheSteps.map((step, idx) => ({
+  step,
+  name: label(step, idx),
+}))
+
+describe('build-ffi-binding — the keys cover every crate the build compiles', () => {
+  it('the manifest reader is sound', () => {
+    // The discovery below is only as good as this. An over-accepting reader
+    // that returned nothing would make every check that follows vacuous, and a
+    // reader that missed the `[target.'cfg(…)'.dependencies]` form would miss
+    // exactly the half of this crate that only the wasm build compiles.
+    const deps = parsePathDependencies(`
+      [package]
+      name = "example"
+      path = "not-a-dependency"
+
+      [dependencies]
+      registry-only = "1.0"
+      inline = { path = "../inline", version = "1" }
+
+      [dev-dependencies]
+      oracle = { path = "../oracle" }
+
+      [build-dependencies]
+      codegen = { path = "../codegen" }
+
+      [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+      native = { path = "../native" }
+
+      [dependencies.sectioned]
+      path = "../sectioned"
+    `)
+    expect(deps).toEqual([
+      { name: 'inline', path: '../inline' },
+      { name: 'codegen', path: '../codegen' },
+      { name: 'native', path: '../native' },
+      { name: 'sectioned', path: '../sectioned' },
+    ])
+  })
+
+  it('found the path dependencies it means to check', () => {
+    expect(
+      COMPILED.unresolved,
+      `These manifests are named by a \`path = \` dependency and do not exist. A path dep cargo cannot resolve does not build at all, so this is a broken manifest rather than a broken guard.`,
+    ).toEqual([])
+
+    expect(
+      COMPILED.crates.map((crate) => crate.dir),
+      `\`${CARGO_ROOT_CRATE}\` declares no path dependencies, so every assertion below iterates nothing and passes having checked nothing. If the in-tree crate moved to a registry pin, this guard is obsolete — but read \`scripts/lint-no-eql-registry-pins.mjs\` first, which exists to stop exactly that.`,
+    ).not.toEqual([])
+
+    for (const crate of COMPILED.crates) {
+      expect(
+        trackedUnder(crate.dir).length,
+        `${crate.dir} (\`${crate.name}\`) has no git-tracked files, so the coverage check below has nothing to compare against.`,
+      ).toBeGreaterThan(0)
+    }
+  })
+
+  for (const { step, name } of RUST_CACHE_STEPS) {
+    it(`"${name}" hashes every crate the build compiles`, () => {
+      const patterns = hashFilesPatterns(step?.with?.key)
+      const uncovered = COMPILED.crates.flatMap((crate) =>
+        trackedUnder(crate.dir).filter(
+          (file) => !patterns.some((pattern) => globMatches(pattern, file)),
+        ),
+      )
+      expect(
+        uncovered,
+        `These files are compiled into the artifact this step caches and are absent from its key, so an edit to one leaves the key unchanged, the restore hits, and the build step is skipped over a stale binary. A path dependency carries no registry checksum and does not move \`Cargo.lock\` on a source-only edit, so nothing else in the key covers it either.\nAdd a glob for each crate to the \`hashFiles(...)\` list on the "${name}" step.`,
+      ).toEqual([])
+    })
+
+    it(`"${name}" hashes the workspace root of every out-of-tree crate`, () => {
+      const patterns = hashFilesPatterns(step?.with?.key)
+      const roots = [
+        ...new Set(
+          COMPILED.crates
+            .map((crate) => workspaceRootOf(crate.dir))
+            .filter(Boolean),
+        ),
+      ]
+      expect(
+        roots,
+        'No path dependency resolved to a crate inside a Cargo workspace, so this check compares nothing.',
+      ).not.toEqual([])
+
+      const uncovered = roots.filter(
+        (root) => !patterns.some((pattern) => globMatches(pattern, root)),
+      )
+      expect(
+        uncovered,
+        `Cargo reads these workspace manifests to resolve the path dependencies above — a \`<key>.workspace = true\` in a dependency crate inherits from here, and \`[patch]\` is read from here too. They are build inputs on the same footing as the crate sources, and neither is covered by \`${FFI_PKG}\`'s own manifests.\nAdd each to the \`hashFiles(...)\` list on the "${name}" step.`,
+      ).toEqual([])
+    })
+  }
 })
 
 describe('jdx/mise-action is pinned to an immutable commit', () => {

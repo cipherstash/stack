@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "Ciphertext": {
+      "description": "mp_base85 source ciphertext — the `c` envelope key.\n\nRequired by every v3 domain CHECK; present on every payload.",
+      "type": "string"
+    },
+    "Hmac256": {
+      "description": "HMAC-SHA-256 equality term — the `hm` wire key. Backs the `_eq` domains\n(`=`, `<>`). SQL-side constructor: `eql_v3_internal.hmac_256`.",
+      "type": "string"
+    },
+    "Identifier": {
+      "additionalProperties": false,
+      "description": "Table + column identifier — wire shape `{\"t\": \"...\", \"c\": \"...\"}`.\n\nShared by every payload.",
+      "properties": {
+        "c": {
+          "description": "Column name.",
+          "type": "string"
+        },
+        "t": {
+          "description": "Table name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "t",
+        "c"
+      ],
+      "type": "object"
+    },
+    "SchemaVersion": {
+      "const": 3,
+      "description": "The envelope version field (`v`) — always exactly `3` on the wire.",
+      "type": "integer"
+    }
+  },
+  "$id": "https://schemas.cipherstash.com/eql/v3/eql_v3_bigint_eq.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "`public.eql_v3_bigint_eq` — equality domain.\n\nOperators: `=` `<>`. Required keys: `v` `i` `c` `hm`.",
+  "properties": {
+    "c": {
+      "$ref": "#/$defs/Ciphertext"
+    },
+    "hm": {
+      "$ref": "#/$defs/Hmac256"
+    },
+    "i": {
+      "$ref": "#/$defs/Identifier"
+    },
+    "v": {
+      "$ref": "#/$defs/SchemaVersion"
+    }
+  },
+  "required": [
+    "v",
+    "i",
+    "c",
+    "hm"
+  ],
+  "title": "BigintEq",
+  "type": "object"
+}

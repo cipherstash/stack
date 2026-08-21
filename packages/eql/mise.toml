@@ -1,0 +1,898 @@
+[settings]
+# Config for test environments
+# Can be invoked with: mise --env tcp run <task>
+# trusted_config_paths = [
+#     "./tests/mise.toml",
+#     "./tests/mise.tcp.toml",
+#     "./tests/mise.tls.toml",
+# ]
+
+[tools]
+"rust" = { version = "latest", components = "rustc,rust-std,cargo,rustfmt,rust-docs,clippy" }
+# Use the registry (aqua) backend to download a prebuilt cargo-binstall binary
+# rather than `cargo:cargo-binstall`, which compiles it from source. A source
+# build now fails in CI: the latest cargo-binstall pulls vergen@10.0.0 (MSRV
+# rustc 1.95), but the toolchain bootstrapping mise's cargo backend is older,
+# so every job that runs mise-action dies before any tools install. The
+# prebuilt binary has no compiler/MSRV dependency. Downstream cargo: tools
+# below are then fetched as prebuilt binaries via this cargo-binstall.
+# Node drives the @cipherstash/eql generated-output gates (types:check /
+# typescript:check invoke packages/eql/scripts/sync-generated.mjs directly —
+# node builtins only, no pnpm/node_modules needed at gate time).
+"node" = "22"
+"cargo-binstall" = "latest"
+"cargo:sqlx-cli" = "latest"
+# Installed via the already-present cargo-binstall (fast in CI). Drives the
+# sharded sqlx suite: `cargo nextest archive` builds the test binaries once and
+# `cargo nextest run --partition hash:K/N` runs a stable hash-partitioned shard.
+"cargo:cargo-nextest" = "latest"
+# Single source of truth for the cargo-expand version used by `test:matrix:expand`.
+# Pinned in lockstep with the nightly date in that task: cargo-expand drives the
+# rustfmt pass, so an unpinned version can drift the matrix snapshot even with a
+# frozen macro + nightly. mise installs this for both local runs and CI (the
+# macro-expand-eql.yml workflow's mise-action step), so there is no separate
+# hardcoded version to keep in lockstep.
+"cargo:cargo-expand" = "1.0.122"
+# Still required by the documentation tooling (`tasks/docs/generate/*.py`, run
+# by `docs:generate:markdown` in the release workflow). The encrypted-domain
+# codegen toolchain is now Rust (eql-domains/eql-codegen) and needs no Python.
+"python" = "3.13"
+
+[task_config]
+includes = ["tasks", "tasks/postgres.toml", "tasks/fixtures.toml"]
+
+[env]
+# Two task scripts locate the EQL root with `git rev-parse --show-toplevel`
+# (tasks/test/doc-anchors.sh, tasks/test/known-failures.sh). Since the subtree
+# import that returns the MONOREPO root, not this directory. Both honour this
+# override, so setting it here is the whole fix — and mise's [env] beats an
+# inherited value, so a stale EQL_ROOT in a shell cannot defeat it.
+#
+# known-failures.sh fails loudly when this is wrong (exit 2, missing file).
+# doc-anchors.sh does not: it cd's to the computed root and validates anchors
+# against whatever tree it finds, reporting success. Do not treat a passing
+# doc-anchors.sh as evidence this is set correctly.
+EQL_ROOT = "{{config_root}}"
+POSTGRES_DB = "cipherstash"
+POSTGRES_USER = "cipherstash"
+POSTGRES_PASSWORD = "password"
+POSTGRES_HOST = "localhost"
+POSTGRES_PORT = "7432"
+DATABASE_URL = "postgresql://cipherstash:password@localhost:7432/cipherstash"
+
+[tasks."clean"]
+alias = 'k'
+description = "Clean release"
+run = """
+  rm -f release/cipherstash-encrypt-uninstall.sql
+  rm -f release/cipherstash-encrypt.sql
+"""
+
+[tasks."release:prepare_bindings_assets"]
+description = "Prepare exact-version SQL assets for Rust and TypeScript binding packages"
+dir = "{{config_root}}"
+run = "tasks/release/prepare-bindings-assets.sh"
+
+[tasks."test:sqlx:prep"]
+description = "Prepare the SQLx test DB: cp built EQL into migrations, migrate, regenerate fixtures"
+# `build` produces release/cipherstash-encrypt.sql (the self-contained eql_v3
+# surface), which is then cp'd into tests/sqlx/migrations/001_install_eql.sql
+# below. Without this dep, a stale release artifact silently ships an old EQL
+# extension into the test DB.
+depends = ["build"]
+dir = "{{config_root}}"
+run = """
+# Copy built SQL to SQLx migrations (EQL install is generated, not static)
+echo "Updating SQLx migrations with built EQL..."
+cp release/cipherstash-encrypt.sql tests/sqlx/migrations/001_install_eql.sql
+
+# Run SQLx migrations and tests
+echo "Running SQLx migrations..."
+cd tests/sqlx
+sqlx migrate run
+
+# Regenerate fixtures every run — they are not committed (see .gitignore).
+# fixture:generate:all iterates eql-domains::CATALOG and generates every
+# scalar fixture in one process, so new scalar types are picked up
+# automatically (add the catalog row + the fixture wiring) without editing
+# this task.
+# Generator encrypts via cipherstash-client directly, which needs BOTH a
+# ZeroKMS auth credential (CS_CLIENT_ACCESS_KEY + CS_WORKSPACE_CRN, via
+# AutoStrategy) AND a client key (CS_CLIENT_ID + CS_CLIENT_KEY, via
+# EnvKeyProvider) in the shell environment. Auth and key material are
+# separate roles — the two pairs are not alternatives.
+echo "Regenerating SQLx fixtures..."
+cd "{{config_root}}"
+mise run fixture:generate:all
+"""
+
+[tasks."test:sqlx"]
+description = "Run SQLx tests with hybrid migration approach"
+# Prep (build + cp + migrate + fixtures) is shared with test:sqlx:watch.
+depends = ["test:sqlx:prep"]
+dir = "{{config_root}}/tests/sqlx"
+run = """
+echo "Running Rust tests..."
+cargo test --features proptest-e2e
+"""
+
+[tasks."test:sqlx:e2e"]
+description = "Run the fresh-encryption suites (e2e oracle + float specials + query operands) — needs ZeroKMS creds"
+# Prep builds + migrates + regenerates fixtures (the latter needs CS_* creds,
+# which the dedicated CI `e2e` job supplies). These suites are the only ones that
+# encrypt fresh values through ZeroKMS at run time, so they cannot run from the
+# credential-free sharded archive; they get their own job. The fixture suite (which
+# DOES run in the shards) is intentionally excluded here via the name filters
+# below, so this job does not duplicate sharded work.
+#
+# EVERY `proptest-e2e`-gated suite must be named explicitly. A bare
+# `cargo test --features proptest-e2e` would re-run the whole sharded fixture
+# suite; conversely a lone `e2e_oracle` filter silently skipped `float_special`
+# from the day it was written — it is `#[cfg(feature = "proptest-e2e")]` too, so
+# the default-feature shards never compiled it either, and it ran nowhere.
+# `v3_scalar_query_operand_tests` was orphaned the same way, and is a whole test
+# TARGET rather than a module: no name filter reaches it, so it is invoked with
+# `--test`. Adding a new `proptest-e2e`-gated suite means adding a line here; no
+# glob catches it for you.
+depends = ["test:sqlx:prep"]
+dir = "{{config_root}}/tests/sqlx"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+echo "Running e2e property suite (fresh ZeroKMS encryption)..."
+cargo test --features proptest-e2e e2e_oracle
+echo "Running empty-bloom guard property suite (fresh ZeroKMS encryption)..."
+cargo test --features proptest-e2e empty_bloom_guard
+echo "Running float special-value suite (fresh ZeroKMS encryption)..."
+cargo test --features proptest-e2e float_special
+echo "Running scalar query-operand conformance suite (fresh ZeroKMS encryption)..."
+cargo test --features proptest-e2e --test v3_scalar_query_operand_tests
+echo "Running json_entry query-operand conformance suite (fresh ZeroKMS encryption)..."
+cargo test --features proptest-e2e --test v3_json_entry_query_operand_e2e_tests
+"""
+
+[tasks."test:known-failures"]
+description = "Drift gate: every known_failure marker must name a real, OPEN issue (needs gh)"
+# The Rust-side marker is self-expiring — `known_failure()` fails once the
+# wrapped assertion starts passing, so it cannot outlive its bug. This is the
+# other half of the contract: the issue it names must exist, still be open, and
+# the constant must actually be referenced by a test.
+# See tests/sqlx/src/known_failure.rs.
+dir = "{{config_root}}"
+run = "bash tasks/test/known-failures.sh"
+
+[tasks."test:known-failures:parser"]
+description = "Unit-test the known-failure gate's strict ISSUE_ parser (no gh, no database)"
+# The gate above is only as trustworthy as its strict parser: it detects drift by
+# cross-checking a loose declaration count against that parse, so a regex that
+# over-accepts defeats the cross-check silently. Hermetic and offline — every
+# case is decided before the gate reaches a `gh` call.
+dir = "{{config_root}}"
+run = "bash tasks/test/known-failures-parser.test.sh"
+
+[tasks."test:doc-anchors"]
+description = "Drift gate: every intra-document markdown anchor link resolves (no database)"
+# The upgrade guides cross-link their numbered U-NNN notes from the summary and
+# the compatibility table, so a stale fragment strands the reader on exactly the
+# passage meant to explain a breaking change — and renders as a working link
+# while doing it. Hand-written markdown only; docs/api is generated + gitignored.
+dir = "{{config_root}}"
+run = "bash tasks/test/doc-anchors.sh"
+
+[tasks."test:sqlx:watch"]
+description = "Run SQLx tests in watch mode (rebuild EQL on changes)"
+# Same prep as test:sqlx so watch mode starts from a migrated DB + fresh
+# fixtures, not a stale checkout.
+depends = ["test:sqlx:prep"]
+dir = "{{config_root}}/tests/sqlx"
+run = """
+cargo watch -x test
+"""
+
+[tasks."test:sqlx:archive"]
+description = "Build EQL + compile the sqlx test binaries once into a reusable nextest archive"
+# Depends on test:sqlx:prep (NOT just build): `#[sqlx::test(fixtures(scripts(…)))]`
+# embeds the per-type fixture SQL AND the 001_install_eql.sql migration into the
+# compiled test binaries via `include_str!` at COMPILE time. So the fixtures +
+# migration must exist on disk BEFORE `cargo nextest archive` compiles — prep
+# produces both (build → cp migration → sqlx migrate → fixture:generate:all).
+# Consequence: this task needs a live Postgres + CS_* creds (prep's
+# fixture:generate:all prerequisites), so the build-archive CI job runs
+# postgres:up and carries the CS_* env. The `#MISE depends` directive in the
+# script is inert under `bash tasks/...`, so the dependency MUST be declared here.
+depends = ["test:sqlx:prep"]
+dir = "{{config_root}}"
+run = "bash tasks/test/sqlx-archive.sh"
+
+[tasks."test:sqlx:partition"]
+description = "Run one hash partition of the sqlx suite from a prebuilt nextest archive (SHARD / SHARD_TOTAL env)"
+dir = "{{config_root}}"
+run = "bash tasks/test/sqlx-partition.sh"
+
+[tasks."test:schema"]
+description = "Validate sample payloads against the v2.2 / v2.3 JSON Schemas (no database required)"
+dir = "{{config_root}}/tests/sqlx"
+run = """
+cargo test --test payload_schema_tests
+"""
+
+[tasks."codegen:parity"]
+description = "Drift gate: regenerate the scalar SQL surface in place (overwrites src/v3/scalars in the working tree) and fail if the committed files differ (mirrors types:check)"
+dir = "{{config_root}}"
+run = "bash tasks/codegen-parity.sh"
+
+[tasks."test:schemas:parity"]
+description = "Drift gate: the SQL eql_v3_internal.owned_schemas() array must match the Rust codegen SCHEMA/INTERNAL_SCHEMA consts (DB-free, via list-schemas)"
+dir = "{{config_root}}"
+run = "bash tasks/schemas-parity.sh"
+
+[tasks."install-hooks"]
+description = "Point git at the committed hooks in tasks/githooks (run once per clone) so commits touching the catalog/generated surfaces are drift-gated locally"
+dir = "{{config_root}}"
+run = "git config core.hooksPath tasks/githooks"
+
+[tasks."test:codegen"]
+description = "Run the encrypted-domain catalog + generator tests (no database required)"
+dir = "{{config_root}}"
+run = """
+cargo test -p eql-domains -p eql-codegen
+"""
+
+[tasks."test:symbol_order_v3"]
+description = "Cross-check installer symbol definition order (DB-free)"
+depends = ["build"]
+dir = "{{config_root}}"
+run = """
+bash tasks/test/symbol_order_selftest.sh
+bash tasks/test/verify_symbol_order_v3.sh src/deps-ordered-v3.txt
+"""
+
+[tasks."test:installer_complete"]
+description = "Assert the installer contains every ordered src/v3 file's body (DB-free)"
+depends = ["build"]
+dir = "{{config_root}}"
+run = "bash tasks/test/verify_installer_complete.sh src/deps-ordered-v3.txt release/cipherstash-encrypt.sql"
+
+[tasks."test:build_ordering_helpers"]
+description = "Unit tests for tasks/build/ordering.sh strip_require_lines (DB-free)"
+dir = "{{config_root}}"
+run = "bash tasks/test/build_ordering_helpers_test.sh"
+
+[tasks."test:crates"]
+description = "Compile, lint and test the std-only Rust workspace crates (no database)"
+dir = "{{config_root}}"
+run = """
+#!/usr/bin/env bash
+# eql-domains / eql-codegen / eql-tests-macros / eql-bindings are the lean
+# workspace members. Scope explicitly to them (NOT --workspace): a
+# workspace-wide test would drag in tests/sqlx, whose suite needs Postgres +
+# CS_* secrets and is already covered by the `test` job. eql-tests-macros only
+# pulls syn/quote/proc-macro2 and eql-bindings only serde/serde_json/ts-rs, so
+# they stay in the lean set. clippy is likewise scoped — a workspace clippy
+# recompiles the heavy sqlx/tokio/cipherstash-client tree for no added coverage
+# of these crates.
+# bash is pinned via the `#!/usr/bin/env bash` shebang above (mise honors a
+# `#!` first line), so `set -o pipefail` is available regardless of the runner's
+# /bin/sh (dash on the CI images).
+set -euo pipefail
+cargo fmt --check
+cargo clippy -p eql-domains -p eql-codegen -p eql-tests-macros -p eql-bindings --all-targets -- -D warnings
+cargo test -p eql-domains -p eql-codegen -p eql-tests-macros -p eql-bindings
+"""
+
+[tasks."types:generate"]
+description = "Regenerate eql-bindings TypeScript bindings and JSON Schemas from the Rust types (no database required)"
+dir = "{{config_root}}"
+run = """
+#!/usr/bin/env bash
+# Clean-then-regenerate: ts-rs and tests/export.rs only ever ADD files, so a
+# renamed or removed type would otherwise leave an orphaned binding/schema
+# behind — we need clean dirs, not an overlay. But we must NOT rm the
+# checked-in output before the build: a failing or interrupted `cargo test`
+# would then leave the working tree missing it. Instead, export into a
+# throwaway temp dir (ts-rs honors TS_RS_EXPORT_DIR; tests/export.rs honors
+# EQL_TYPES_SCHEMA_DIR; every type uses the v3/ subdir, so the temp tree
+# mirrors crates/eql-bindings/{bindings,schema} exactly) and only swap it into
+# place after the tests succeed. The swap stays out of the tests themselves —
+# they run in parallel and can't safely rm.
+set -euo pipefail
+tmp="$(mktemp -d)"
+# The committed Rust payload bindings must be regenerated FIRST and IN PLACE —
+# the ts-rs/schemars derives below need the generated structs on disk to
+# compile, so (unlike the TS/JSON, which export to a temp dir and swap on
+# success) they cannot be temp-swapped. To keep the task atomic-on-failure,
+# snapshot the whole src/v3 tree (generated + hand-written) up front; if the
+# regen or the cargo test that follows fails or is interrupted, the trap
+# restores the snapshot so the working tree is left exactly as it was — never
+# fresh structs against stale committed TS/JSON that an automated commit could
+# capture. The snapshot is a filesystem copy (not `git checkout`) so a dev's
+# legitimate uncommitted edits survive a failed run.
+v3="crates/eql-bindings/src/v3"
+bindings="crates/eql-bindings/bindings"
+schema="crates/eql-bindings/schema"
+cp -R "$v3" "$tmp/v3-snapshot"
+cp -R "$bindings" "$tmp/bindings-snapshot"
+cp -R "$schema" "$tmp/schema-snapshot"
+ok=0
+trap 'if [ "$ok" != 1 ]; then
+  rm -rf "$v3" "$bindings" "$schema"
+  mv "$tmp/v3-snapshot" "$v3"
+  mv "$tmp/bindings-snapshot" "$bindings"
+  mv "$tmp/schema-snapshot" "$schema"
+fi
+rm -rf "$tmp"' EXIT
+# Default no-arg eql-codegen stays SQL-only; `bindings` is the Rust-only subcommand.
+cargo run -q -p eql-codegen -- bindings
+TS_RS_EXPORT_DIR="$tmp/bindings" EQL_TYPES_SCHEMA_DIR="$tmp/schema" cargo test -p eql-bindings
+rm -rf "$bindings" "$schema"
+mv "$tmp/bindings" "$bindings"
+mv "$tmp/schema" "$schema"
+ok=1
+"""
+
+[tasks."types:check"]
+description = "Verify the checked-in eql-bindings Rust bindings, TS, and JSON Schemas are fresh (regenerate + git diff)"
+dir = "{{config_root}}"
+depends = ["types:generate"]
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+# node, not pnpm: sync-generated.mjs uses only node builtins, and this gate
+# runs in contexts (test-eql.yml's Rust job, the pre-commit hook) that
+# provision mise tools but not pnpm/node_modules.
+node packages/eql/scripts/sync-generated.mjs
+git diff --exit-code -- crates/eql-bindings/src/v3 crates/eql-bindings/bindings crates/eql-bindings/schema packages/eql/src/generated || {
+  echo "eql-bindings generated Rust/TS/JSON or @cipherstash/eql package output is stale — run 'mise run types:generate' and 'mise run typescript:generate' and commit the result" >&2
+  exit 1
+}
+# git diff is blind to brand-new files; untracked output is stale too.
+untracked=$(git ls-files --others --exclude-standard -- crates/eql-bindings/src/v3 crates/eql-bindings/bindings crates/eql-bindings/schema packages/eql/src/generated)
+if [ -n "$untracked" ]; then
+  echo "eql-bindings has uncommitted generated files:" >&2
+  echo "$untracked" >&2
+  exit 1
+fi
+"""
+
+[tasks."typescript:generate"]
+description = "Regenerate @cipherstash/eql TypeScript package source from eql-bindings outputs"
+dir = "{{config_root}}"
+depends = ["types:generate"]
+run = "node packages/eql/scripts/sync-generated.mjs"
+
+[tasks."typescript:check"]
+description = "Verify @cipherstash/eql generated package source is fresh"
+dir = "{{config_root}}"
+depends = ["types:generate"]
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+node packages/eql/scripts/sync-generated.mjs
+git diff --exit-code -- packages/eql/src/generated || {
+  echo "@cipherstash/eql generated files are stale — run 'mise run typescript:generate' and commit the result" >&2
+  exit 1
+}
+untracked=$(git ls-files --others --exclude-standard -- packages/eql/src/generated)
+if [ -n "$untracked" ]; then
+  echo "@cipherstash/eql has uncommitted generated files:" >&2
+  echo "$untracked" >&2
+  exit 1
+fi
+"""
+
+[tasks."test:matrix:inventory"]
+description = "Verify the matrix test-name set against the canonical snapshot (its derived eq-only subset, the committed text superset, or the storage-only set), catalog-cross-checked (no database required)"
+dir = "{{config_root}}/tests/sqlx"
+run = """
+#!/usr/bin/env bash
+# Four committed, token-normalized snapshots. The canonical one
+# (snapshots/matrix_tests.txt) pins the set of macro-emitted matrix test names
+# for the ORDERED scalar shape. The second (snapshots/matrix_tests_eq_only.txt)
+# is the equality-only shape: an eq-only type's name set is exactly the ordered
+# set MINUS the ord-only lines (`_ord`/`order_by`), so it is
+# DERIVED from the one baseline — but it is also committed and PINNED: the gate
+# re-derives the subset at runtime and asserts it equals the committed file
+# (step 3 below), so a change to the baseline or the strip filter that alters the
+# eq-only set must be re-committed deliberately. The third
+# (snapshots/matrix_tests_text.txt) is the TEXT shape: a SUPERSET of the ordered
+# baseline (every ordered arm PLUS the text-only `_search` / `_eqidx` / `_match`
+# arms). It is not derivable by a strip filter, so it is committed directly and
+# pinned as a strict superset of the baseline. The fourth
+# (snapshots/matrix_tests_storage_only.txt) is the STORAGE-ONLY / encryption-only
+# shape (e.g. `boolean`): a single term-less domain with NO comparison/index/order
+# tests — only the surface arms (sanity, blocker, payload-check, path-op,
+# native-absent, typed-column, count, aggregate-typecheck, fixture-shape). It is
+# neither a subset derivable by a strip filter nor a superset, so it is committed
+# directly. Each discovered type must then match the full baseline (ordered), that
+# derived/pinned subset (eq-only), the committed text superset, or the storage-only
+# set. One baseline drives the ordered/eq-only shapes however many types exist.
+#
+# Steps:
+#   1. List the encrypted_domain binary ONCE (deterministic; reused below).
+#   2. Discover the set of scalar types present FROM THE BINARY'S OWN OUTPUT
+#      (scalars::<X>:: prefixes) — never a directory glob.
+#   3. Derive the eq-only subset from the ordered baseline and assert it equals
+#      the committed snapshots/matrix_tests_eq_only.txt (pins the derivation).
+#   4. For each discovered type, normalize its token to <T> and assert its set
+#      equals the canonical snapshot (ordered), the derived eq-only subset, the
+#      committed text superset, OR the storage-only set. Assert at least one type
+#      is present.
+#   5. Completeness cross-check: assert the discovered type set equals
+#      `eql-codegen list-types`. A catalog type added without its matrix wiring
+#      (no scalars::<T>:: tests in the binary) fails here.
+#
+# `--no-default-features` excludes the `scale` arm (a known, documented blind
+# spot, covered by the scale gate + family::mutations negative controls).
+# `LC_ALL=C sort` makes ordering byte-stable across locales. No database needed.
+set -euo pipefail
+
+test -f snapshots/matrix_tests.txt || { echo "snapshots/matrix_tests.txt missing — regenerate (see snapshots/README.md)." >&2; exit 1; }
+test -f snapshots/matrix_tests_eq_only.txt || { echo "snapshots/matrix_tests_eq_only.txt missing — regenerate (see snapshots/README.md)." >&2; exit 1; }
+test -f snapshots/matrix_tests_text.txt || { echo "snapshots/matrix_tests_text.txt missing — regenerate (see snapshots/README.md)." >&2; exit 1; }
+test -f snapshots/matrix_tests_storage_only.txt || { echo "snapshots/matrix_tests_storage_only.txt missing — regenerate (see snapshots/README.md)." >&2; exit 1; }
+
+# On a bare / no-creds worktree (the matrix-coverage CI job, or a checkout that
+# has not run test:sqlx:prep) the generated fixtures `include_str!`'d at compile
+# time are absent. The shared stub preamble creates empty stand-ins for the whole
+# generated set and removes them on exit; we then compile + list the binary.
+EQL_ROOT="{{config_root}}"
+source "${EQL_ROOT}/tasks/test/stub-fixtures.sh"
+listing=$(cargo test --no-default-features --test encrypted_domain -- --list | sed -n 's/: test$//p')
+
+# Types present in the binary, from scalars::<X>:: prefixes.
+discovered=$(printf '%s\\n' "$listing" \
+  | sed -n 's/^scalars::\\([a-z0-9_]*\\)::.*/\\1/p' \
+  | LC_ALL=C sort -u)
+[ -n "$discovered" ] || { echo "No scalars::<X>:: tests found in the encrypted_domain binary." >&2; exit 1; }
+
+# An equality-only type (no `_ord` domain) emits a strict SUBSET of the
+# canonical (ordered) snapshot: the same names minus every ord-only line
+# (`_ord` / `order_by`). Derive that subset once into a
+# file, so an equality-only scalar (e.g. timestamp) needs NO second committed
+# snapshot — it is validated against this derivation from the single baseline.
+# Materialise to a file (not a shell variable) so both shapes compare via the
+# same `cmp`/`diff` path: a variable would strip trailing newlines on capture
+# and force the failure diff to reconstruct the string with `printf`.
+eq_only_expected="/tmp/matrix-eq-only-expected.txt"
+grep -vE '_ord|order_by' snapshots/matrix_tests.txt | LC_ALL=C sort -u > "$eq_only_expected"
+
+# Pin the derivation: the runtime-derived eq-only set must equal the COMMITTED
+# snapshot. This closes the blind spot where the strip filter (or a new ordered
+# test name that the filter wrongly keeps/drops) silently changes what the
+# eq-only gate accepts — any such change now diffs against a committed artifact
+# and must be re-committed deliberately.
+if ! cmp -s "$eq_only_expected" snapshots/matrix_tests_eq_only.txt; then
+  echo "Derived eq-only set differs from committed snapshots/matrix_tests_eq_only.txt." >&2
+  echo "If the ordered baseline changed intentionally, regenerate the eq-only snapshot:" >&2
+  echo "  grep -vE '_ord|order_by' snapshots/matrix_tests.txt | LC_ALL=C sort -u > snapshots/matrix_tests_eq_only.txt" >&2
+  diff snapshots/matrix_tests_eq_only.txt "$eq_only_expected" >&2 || true
+  exit 1
+fi
+
+# The text shape is the THIRD committed snapshot: a SUPERSET of the ordered
+# baseline (every ordered arm PLUS the text-only `_search` / `_eqidx` / `_match`
+# arms). Unlike eq-only it is not derivable by a strip filter, so it is committed
+# directly. Pin the superset invariant: every ordered-baseline arm must be
+# present in the text shape, so an edit that silently drops a baseline arm for
+# text (regressing coverage) is caught here, not just at the per-type compare.
+missing_from_text=$(comm -23 <(LC_ALL=C sort snapshots/matrix_tests.txt) <(LC_ALL=C sort snapshots/matrix_tests_text.txt))
+if [ -n "$missing_from_text" ]; then
+  echo "snapshots/matrix_tests_text.txt is missing ordered-baseline arms (text must be a superset):" >&2
+  printf '%s\\n' "$missing_from_text" >&2
+  exit 1
+fi
+
+# Per-type normalize + compare: each type must match the full canonical snapshot
+# (ordered shape), the derived eq-only subset (equality-only shape), or the
+# committed text superset (text shape), or the committed storage-only set
+# (storage-only / encryption-only shape, e.g. `boolean` — a single term-less
+# domain with no comparison/index/order tests, only the surface arms).
+checked=0
+while IFS= read -r t; do
+  [ -n "$t" ] || continue
+  printf '%s\\n' "$listing" | grep "^scalars::${t}::" \
+    | sed -e "s/^scalars::${t}::/scalars::<T>::/" -e "s/_${t}_/_<T>_/g" | LC_ALL=C sort > "/tmp/matrix-norm-${t}.txt"
+  if cmp -s "/tmp/matrix-norm-${t}.txt" snapshots/matrix_tests.txt; then
+    shape="ordered"
+  elif cmp -s "/tmp/matrix-norm-${t}.txt" "$eq_only_expected"; then
+    shape="eq_only"
+  elif cmp -s "/tmp/matrix-norm-${t}.txt" snapshots/matrix_tests_text.txt; then
+    shape="text"
+  elif cmp -s "/tmp/matrix-norm-${t}.txt" snapshots/matrix_tests_storage_only.txt; then
+    shape="storage_only"
+  else
+    echo "Matrix test-name set for '${t}' matches NONE of the known shapes (ordered, eq-only, text, storage-only)." >&2
+    echo "  vs ordered (snapshots/matrix_tests.txt):" >&2
+    diff snapshots/matrix_tests.txt "/tmp/matrix-norm-${t}.txt" >&2 || true
+    echo "  vs derived eq-only (ordered minus _ord/order_by):" >&2
+    diff "$eq_only_expected" "/tmp/matrix-norm-${t}.txt" >&2 || true
+    echo "  vs text superset (snapshots/matrix_tests_text.txt):" >&2
+    diff snapshots/matrix_tests_text.txt "/tmp/matrix-norm-${t}.txt" >&2 || true
+    echo "  vs storage-only (snapshots/matrix_tests_storage_only.txt):" >&2
+    diff snapshots/matrix_tests_storage_only.txt "/tmp/matrix-norm-${t}.txt" >&2 || true
+    exit 1
+  fi
+  echo "  ${t}: ${shape}"
+  checked=$((checked + 1))
+done <<< "$discovered"
+[ "$checked" -gt 0 ] || { echo "No scalar type matched the canonical snapshot, its derived eq-only subset, or the text superset." >&2; exit 1; }
+
+# Completeness cross-check against the catalog (the single source of truth).
+catalog=$(cd "{{config_root}}" && cargo run -p eql-codegen -- list-types | LC_ALL=C sort -u)
+if [ "$discovered" != "$catalog" ]; then
+  echo "Catalog types and matrix-wired types disagree." >&2
+  echo "  catalog (eql-codegen list-types): $(echo "$catalog" | tr '\\n' ' ')" >&2
+  echo "  matrix-wired (binary --list):     $(echo "$discovered" | tr '\\n' ' ')" >&2
+  echo "A catalog type missing its matrix wiring (or a wired type not in the catalog) trips this." >&2
+  exit 1
+fi
+
+echo "Matrix inventory OK: ${checked} type(s) match the canonical snapshot, its derived eq-only subset, the committed text superset, or the storage-only set; catalog reconciled."
+"""
+
+[tasks."test:surface:snapshot:regen"]
+description = "Regenerate the committed eql_v3 public-surface golden snapshot (DB-backed; needs a running Postgres)"
+dir = "{{config_root}}/tests/sqlx"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+# Unlike the matrix snapshots (regenerated DB-free via `--list`), the public-
+# surface golden is DB-backed: the #[sqlx::test] enumerates the installed eql_v3
+# objects from pg_catalog and writes snapshots/eql_v3_public_surface.txt when
+# EQL_UPDATE_SNAPSHOTS is set (the harness installs the schema per test, so a
+# running Postgres reachable via DATABASE_URL is required). This task only
+# WRITES; the same test asserts against the committed file in a normal run, so
+# validate by re-running the suite without the env var, then commit.
+EQL_UPDATE_SNAPSHOTS=1 cargo test -p eql_tests --test v3_public_surface_tests \\
+  eql_v3_public_surface_matches_golden -- --nocapture
+echo "Wrote snapshots/eql_v3_public_surface.txt — re-run 'mise run test:sqlx' to validate, then commit."
+"""
+
+[tasks."test:matrix:snapshots:regen"]
+description = "Regenerate ALL FOUR scalar matrix shape snapshots atomically (ordered, eq-only, text, storage-only) from one binary listing"
+dir = "{{config_root}}/tests/sqlx"
+run = """
+#!/usr/bin/env bash
+# Atomic regeneration of the four committed scalar-matrix shape snapshots, so a
+# macro change that touches every shape can't silently drift the one snapshot the
+# author forgets. (Issue #300: the storage-only snapshot drifted when a
+# count_distinct dispatch arm switched to a runtime early-return and began
+# emitting for the storage shape too — a change that regenerated 3 of 4 snapshots
+# by hand and missed the fourth.) The four shapes are NOT independent: eq-only is
+# DERIVED from the ordered baseline, so regenerating them one at a time off stale
+# inputs is the footgun. This task lists the encrypted_domain binary ONCE and
+# rewrites all four in dependency order.
+#
+# Drivers (one representative type per shape; the inventory gate then asserts
+# every type of that shape matches the snapshot after <T> normalization):
+#   ordered      → scalars::integer::  (caps = [eq, ord])
+#   text         → scalars::text::  (caps = [eq, ord, search]; superset of ordered)
+#   storage-only → scalars::boolean::  (caps = [storage]; term-less surface arms)
+#   eq-only      → DERIVED from the ordered baseline (minus _ord/order_by)
+#
+# Out of scope by design: the sibling snapshots matrix_jsonb_entry_tests.txt and
+# v3_jsonb_tests.txt (driven by non-CATALOG types; regenerated by their own
+# documented recipes in snapshots/README.md). This task is the scalar-matrix
+# four-shape set only.
+#
+# This task only WRITES the snapshots; `mise run test:matrix:inventory` is the
+# gate that validates them. After regen, run the inventory task and commit any
+# changed snapshot. `--no-default-features` and `LC_ALL=C sort` match the
+# inventory's determinism; no database is required.
+set -euo pipefail
+
+# Stub generated fixtures on a bare / no-creds worktree (see test:matrix:inventory),
+# then compile + list ONCE. Harmless when real fixtures exist.
+EQL_ROOT="{{config_root}}"
+source "${EQL_ROOT}/tasks/test/stub-fixtures.sh"
+listing=$(cargo test --no-default-features --test encrypted_domain -- --list | sed -n 's/: test$//p')
+
+# A compile failure already aborts above (set -e on the assignment); this guards
+# the rarer "compiled but produced no test names" case so an empty listing can
+# never reach the writes below and overwrite the committed baselines with nothing.
+[ -n "$listing" ] || { echo "No test names from 'cargo test --list' — refusing to touch snapshots." >&2; exit 1; }
+
+# Build all four shapes into a temp dir, validate each is non-empty, THEN move
+# them into place together. Writing snapshots/ directly is unsafe: the `>` redirect
+# truncates the committed file before the pipeline's grep runs, so a driver type
+# whose arms vanished (matrix wiring removed) would leave a truncated baseline
+# behind. Staging in a temp dir keeps the task atomic — on any failure the
+# committed snapshots are never touched. NOTE: stub-fixtures.sh owns the single
+# EXIT trap (it removes the compile stubs), so we must NOT set our own; remove the
+# temp dir explicitly instead (a harmless leak under $TMPDIR on early abort).
+stage=$(mktemp -d)
+
+# Ordered baseline (canonical) — staged first because the eq-only shape is
+# DERIVED from it below.
+printf '%s\\n' "$listing" | grep '^scalars::integer::' \
+  | sed -e 's/^scalars::integer::/scalars::<T>::/' -e 's/_integer_/_<T>_/g' \
+  | LC_ALL=C sort > "$stage/matrix_tests.txt"
+
+# Eq-only shape: DERIVED from the freshly-regenerated ordered baseline (the
+# inventory gate re-derives and pins this exact relationship).
+grep -vE '_ord|order_by' "$stage/matrix_tests.txt" \
+  | LC_ALL=C sort -u > "$stage/matrix_tests_eq_only.txt"
+
+# Text shape: SUPERSET of ordered, from its own driver type.
+printf '%s\\n' "$listing" | grep '^scalars::text::' \
+  | sed -e 's/^scalars::text::/scalars::<T>::/' -e 's/_text_/_<T>_/g' \
+  | LC_ALL=C sort > "$stage/matrix_tests_text.txt"
+
+# Storage-only shape: term-less surface arms only, from its own driver type.
+printf '%s\\n' "$listing" | grep '^scalars::boolean::' \
+  | sed -e 's/^scalars::boolean::/scalars::<T>::/' -e 's/_boolean_/_<T>_/g' \
+  | LC_ALL=C sort > "$stage/matrix_tests_storage_only.txt"
+
+# Every shape must have arms; an empty one means a driver type lost its matrix
+# wiring. Fail WITHOUT overwriting the committed snapshot.
+for f in matrix_tests.txt matrix_tests_eq_only.txt matrix_tests_text.txt matrix_tests_storage_only.txt; do
+  [ -s "$stage/$f" ] || { echo "Regenerated $f is empty (driver type missing its matrix tests?) — refusing to overwrite snapshots/$f." >&2; rm -rf "$stage"; exit 1; }
+done
+
+mv "$stage/matrix_tests.txt" "$stage/matrix_tests_eq_only.txt" \
+   "$stage/matrix_tests_text.txt" "$stage/matrix_tests_storage_only.txt" snapshots/
+rm -rf "$stage"
+
+echo "Regenerated 4 scalar matrix snapshots (ordered, eq-only, text, storage-only)."
+echo "Run 'mise run test:matrix:inventory' to validate, then commit any changes."
+"""
+
+[tasks."test:matrix:inventory:jsonb_entry"]
+description = "Verify jsonb-entry matrix test-name set against its own snapshot (no scalar catalog cross-check)"
+dir = "{{config_root}}/tests/sqlx"
+run = """
+#!/usr/bin/env bash
+# The jsonb-entry behaviour matrix (jsonb_entry_matrix!) is a SIBLING of the
+# scalar matrix inventory, NOT folded into it: JsonbEntryInteger is deliberately
+# not a eql-domains::CATALOG type, so it has no scalars::<T>:: tests and no
+# `eql-codegen list-types` row. Its names live under `jsonb_entry::…` and are
+# pinned by this isolated snapshot (no catalog cross-check). No database needed.
+set -euo pipefail
+test -f snapshots/matrix_jsonb_entry_tests.txt || { echo "snapshots/matrix_jsonb_entry_tests.txt missing — regenerate." >&2; exit 1; }
+# Stub the generated fixtures on a bare / no-creds worktree (see
+# test:matrix:inventory), then compile + list. Harmless when real fixtures exist.
+EQL_ROOT="{{config_root}}"
+source "${EQL_ROOT}/tasks/test/stub-fixtures.sh"
+listing=$(cargo test --no-default-features --test encrypted_domain -- --list | sed -n 's/: test$//p')
+printf '%s\\n' "$listing" \
+  | grep '^jsonb_entry::.*jsonb_entry_integer' \
+  | sed -E 's/_integer_/_<T>_/' \
+  | LC_ALL=C sort -u > /tmp/matrix-jsonb-entry-current.txt
+if ! cmp -s /tmp/matrix-jsonb-entry-current.txt snapshots/matrix_jsonb_entry_tests.txt; then
+  echo "JSONB-entry matrix test-name set differs from snapshots/matrix_jsonb_entry_tests.txt." >&2
+  diff snapshots/matrix_jsonb_entry_tests.txt /tmp/matrix-jsonb-entry-current.txt >&2 || true
+  exit 1
+fi
+echo "JSONB-entry matrix inventory OK."
+"""
+
+[tasks."test:matrix:inventory:ope"]
+description = "Verify the CLLW-OPE (<t>_ord_ope) test-name set against snapshots/ope_tests.txt (no database required)"
+dir = "{{config_root}}/tests/sqlx"
+run = """
+#!/usr/bin/env bash
+# The nine `<t>_ord_ope::` suites are SIBLINGS of the scalar matrix inventory,
+# NOT folded into it: they live as top-level modules (outside `scalars::`, so
+# the type-discovery step does not mis-read them as scalar types) and their
+# per-type name sets are not uniform (the integer reference module goes deeper;
+# text pins its hm-routed equality), so no single <T>-normalized baseline fits.
+# This pins the FULL name list instead — every individual ope test — so a
+# deleted/renamed/cfg-hidden ope test shows up as a removed line (the same
+# silent-shrinkage gap the scalar snapshot closes; deferred minor from #340,
+# picked up with ). No database needed.
+set -euo pipefail
+test -f snapshots/ope_tests.txt || { echo "snapshots/ope_tests.txt missing — regenerate (see snapshots/README.md)." >&2; exit 1; }
+# Stub the generated fixtures on a bare / no-creds worktree (see
+# test:matrix:inventory), then compile + list. Harmless when real fixtures exist.
+EQL_ROOT="{{config_root}}"
+source "${EQL_ROOT}/tasks/test/stub-fixtures.sh"
+tmp=$(mktemp)
+cargo test --no-default-features --test encrypted_domain -- --list \\
+  | sed -n 's/: test$//p' \\
+  | grep -E '^[a-z0-9_]+_ord_ope::' \\
+  | LC_ALL=C sort > "$tmp"
+[ -s "$tmp" ] || { echo "No <t>_ord_ope:: tests found in the encrypted_domain binary." >&2; rm -f "$tmp"; exit 1; }
+if ! cmp -s "$tmp" snapshots/ope_tests.txt; then
+  echo "OPE test-name set differs from snapshots/ope_tests.txt." >&2
+  diff snapshots/ope_tests.txt "$tmp" >&2 || true
+  rm -f "$tmp"
+  exit 1
+fi
+rm -f "$tmp"
+echo "OPE inventory OK ($(wc -l < snapshots/ope_tests.txt | tr -d ' ') pinned tests)."
+"""
+
+[tasks."test:v3-jsonb:inventory"]
+description = "Verify the v3 jsonb SQLx test-name inventory snapshot (no database required)"
+dir = "{{config_root}}/tests/sqlx"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+test -f snapshots/v3_jsonb_tests.txt || { echo "snapshots/v3_jsonb_tests.txt missing — regenerate and commit it." >&2; exit 1; }
+
+# The v3_jsonb_* binaries `include_str!` generated fixtures (e.g. v3_ste_vec.sql)
+# at compile time, so on a bare / no-creds worktree they cannot compile to
+# --list. The shared stub preamble creates empty stand-ins for the whole
+# generated set and removes them on exit (its EXIT trap is the only one here).
+EQL_ROOT="{{config_root}}"
+source "${EQL_ROOT}/tasks/test/stub-fixtures.sh"
+
+tmp=$(mktemp)
+cargo test --test v3_jsonb_tests --test v3_jsonb_operator_surface_tests -- --list \
+  | sed -n 's/: test$//p' \
+  | LC_ALL=C sort > "$tmp"
+
+diff -u snapshots/v3_jsonb_tests.txt "$tmp"
+rm -f "$tmp"
+echo "v3 jsonb inventory OK"
+"""
+
+[tasks."test:matrix:catalog-coverage"]
+description = "Assert every CATALOG (type, domain) has matrix tests, cross-checked against the encrypted_domain binary (no database required)"
+dir = "{{config_root}}/tests/sqlx"
+run = """
+#!/usr/bin/env bash
+# Forward catalog-coverage: for each scalar type in the catalog, every domain
+# the catalog declares for it must have at least one matrix test name. FINER
+# than test:matrix:inventory (which reconciles only TYPES against list-types):
+# a Domain added to a catalog row without matrix wiring passes the type
+# inventory but fails here. Domain granularity only (Stage 1); per-operator
+# execution coverage is the Stage 4 matcher's job. No database needed.
+#
+# Compile precondition: encrypted_domain include_str!s its fixtures + the
+# 001 migration at compile time (mise.toml:104). Those are generated/gitignored,
+# so a bare worktree cannot compile it for --list. We never RUN tests here, so
+# empty stub files satisfy include_str!. We create only the missing files (rustc
+# reports them all in one pass) and remove them on exit. Bash 3.2 compatible
+# (macOS): no mapfile/arrays; created stubs are tracked in a temp file.
+set -euo pipefail
+root="{{config_root}}"
+
+# --- DB-free stub preamble so --list can compile on a bare worktree ----------
+# Shared with test:matrix:inventory so the no-creds tasks can never drift (a gap
+# between them is exactly what broke CI). The helper stubs the whole generated
+# fixture set + sets a cleanup trap; we then compile + list (stripped).
+EQL_ROOT="$root"
+source "${root}/tasks/test/stub-fixtures.sh"
+listing=$(cargo test --no-default-features --test encrypted_domain -- --list | sed -n 's/: test$//p')
+[ -n "$listing" ] || { echo "No tests listed from the encrypted_domain binary." >&2; exit 1; }
+
+# --- Catalog surface (overridable for testing via EQL_CATALOG_DUMP_FILE) -----
+# The seam lets the fault-injection check (Step 3) run THIS exact loop against a
+# doctored dump without editing the task.
+if [ -n "${EQL_CATALOG_DUMP_FILE:-}" ]; then
+  dump=$(cat "$EQL_CATALOG_DUMP_FILE")
+else
+  dump=$(cd "$root" && cargo run -q -p eql-codegen -- dump-catalog)
+fi
+
+# --- Forward coverage check --------------------------------------------------
+failed=0
+while IFS= read -r t; do
+  [ -n "$t" ] || continue
+  # Segments the catalog declares for this type, longest-first so the prefix
+  # exclusion below (ord vs ord_ore) is well-defined.
+  segments=$(printf '%s' "$dump" \
+    | jq -r --arg t "$t" '.types[] | select(.token==$t) | .domains[].segment' \
+    | awk '{ print length, $0 }' | LC_ALL=C sort -rn | cut -d" " -f2-)
+
+  while IFS= read -r seg; do
+    [ -n "$seg" ] || continue
+    # Longer catalog segments having `seg` as a prefix (e.g. ord_ore when seg=ord).
+    longer=$(printf '%s\\n' "$segments" | grep -xvF "$seg" | grep -E "^${seg}_" || true)
+    # (a) Matrix-shape tests: scalars::<t>::matrix_<t>_<seg>_* . The macro emits
+    #     these for the ordered/eq shapes (storage, eq, ord, ord_ore). Strip
+    #     longer-prefix tests so seg=ord does not borrow ord_ore's names.
+    matches=$(printf '%s\\n' "$listing" | grep -E "^scalars::${t}::matrix_${t}_${seg}_" || true)
+    if [ -n "$longer" ]; then
+      while IFS= read -r l; do
+        [ -n "$l" ] || continue
+        matches=$(printf '%s\\n' "$matches" | grep -vE "^scalars::${t}::matrix_${t}_${l}_" || true)
+      done <<< "$longer"
+    fi
+    # (b) Dedicated-module tests: <t>_<seg>::* . Some domains are covered by a
+    #     hand-written suite rather than the matrix macro — text's Bloom `_match`
+    #     domain (`@>`/`<@` containment) lives in the `text_match` module, since
+    #     containment is not an eq/ord shape the matrix emits. The `::` separator
+    #     makes this exact per segment, so no longer-prefix exclusion is needed.
+    module_matches=$(printf '%s\\n' "$listing" | grep -E "^${t}_${seg}::" || true)
+    if [ -z "$(printf '%s' "${matches}${module_matches}" | tr -d '[:space:]')" ]; then
+      echo "MISSING: catalog declares domain '${seg}' for type '${t}', but no scalars::${t}::matrix_${t}_${seg}_* or ${t}_${seg}::* test exists." >&2
+      failed=1
+    fi
+  done <<< "$segments"
+done < <(printf '%s' "$dump" | jq -r '.types[].token')
+
+if [ "$failed" -ne 0 ]; then
+  echo "Catalog-coverage FAILED: a catalog domain has no matrix wiring (see MISSING lines above)." >&2
+  exit 1
+fi
+
+echo "Catalog-coverage OK: every CATALOG (type, domain) has matrix tests."
+"""
+
+[tasks."test:matrix:expand"]
+description = "Regenerate the matrix cargo-expand drift snapshots (integer, text, bool — one per reachable scalar_matrix! arm; requires the pinned nightly + cargo-expand)"
+dir = "{{config_root}}/tests/sqlx"
+run = """
+#!/usr/bin/env bash
+# Body-level fidelity backstop for the macro: the expanded source of the matrix
+# arms, one snapshot per *reachable* `scalar_matrix!` arm (tests/sqlx/src/matrix.rs):
+#   integer -> [eq, ord]          (= rides the ORE ordered index)
+#   text -> [eq, ord, search]  (bloom `_match` + `_eqidx` index split)
+#   bool -> [storage]          (single term-less domain; direct leaf drivers)
+# The arms emit structurally different bodies, so no single type subsumes the
+# others (text does NOT subsume integer: its `ord` btree combo omits `=`). The `[eq]`
+# arm has no consumer and is uncovered by design. The `cargo +nightly-...`
+# invocation below is the SINGLE source of the pinned nightly date —
+# .github/workflows/macro-expand-eql.yml greps it from here rather than
+# hardcoding, so there is nothing to keep in lockstep. The date is pinned to a
+# known-good value so the snapshots only move when *the macro* moves, not when
+# nightly reformats — bump it deliberately, here, in one place.
+#
+# `#[sqlx::test]` embeds one `sqlx::migrate::Migration` per file in migrations/
+# plus the fixture (via include_str) into EVERY generated test — hundreds of MB
+# of repeated data dwarfing the macro bodies, and non-deterministic across
+# environments (the generated 001_install_eql.sql is absent in a bare checkout).
+# Normalise both to fixed empties so each snapshot depends only on matrix.rs +
+# the sqlx/test harness: swap migrations/ for a single empty placeholder and
+# empty each target's fixture (every scalar suite include_str!'s exactly
+# fixtures/eql_v3_<token>.sql), expand, then restore (trap fires on any exit).
+# This is expand-only surgery on gitignored/generated inputs; nothing here is
+# committed.
+#
+# Non-blocking lane (no Postgres, never compiled): the `.rs` names live under
+# snapshots/, not tests/, so Cargo never treats them as test targets.
+set -euo pipefail
+# Force the mise-pinned cargo-expand (mise.toml [tools]) to win over any stray
+# global `cargo install cargo-expand` in ~/.cargo/bin, which otherwise sits
+# ahead of mise's install dir on PATH and silently drifts the snapshot. The
+# version is single-sourced in [tools]; this only fixes PATH precedence.
+PATH="$(mise where cargo:cargo-expand)/bin:$PATH"
+export PATH
+mkdir -p snapshots fixtures
+# One target per reachable scalar_matrix! arm. Add a token here to pin another
+# arm; its snapshot is written to snapshots/<token>_expanded.rs.
+TARGETS=(integer text boolean)
+BK=$(mktemp -d)
+cp -a migrations "$BK/migrations"
+mkdir -p "$BK/fixtures"
+# Each target fixture is gitignored (regenerated) and absent in a bare checkout —
+# back it up only if present. Presence of the backup file is itself the record of
+# "this fixture existed", so restore needs no separate flag (bash 3.2 safe: no
+# associative arrays).
+for t in "${TARGETS[@]}"; do
+  if [ -f "fixtures/eql_v3_${t}.sql" ]; then
+    cp -a "fixtures/eql_v3_${t}.sql" "$BK/fixtures/eql_v3_${t}.sql"
+  fi
+done
+restore() {
+  rm -rf migrations && cp -a "$BK/migrations" migrations
+  for t in "${TARGETS[@]}"; do
+    if [ -f "$BK/fixtures/eql_v3_${t}.sql" ]; then
+      cp -af "$BK/fixtures/eql_v3_${t}.sql" "fixtures/eql_v3_${t}.sql"
+    else
+      rm -f "fixtures/eql_v3_${t}.sql"
+    fi
+  done
+  rm -rf "$BK"
+}
+trap restore EXIT
+# Wipe + recreate so the expand input is ALWAYS exactly one empty migration + one
+# empty fixture per target, regardless of what the checkout had — this is what
+# makes the snapshots deterministic across local and CI.
+rm -rf migrations && mkdir migrations
+: > migrations/0001_placeholder.sql
+for t in "${TARGETS[@]}"; do : > "fixtures/eql_v3_${t}.sql"; done
+# Expand each target into a temp file and mv into place only on success — a
+# redirect straight onto the snapshot would zero it before cargo runs, so a
+# transient expand failure would leave a 0-byte snapshot locally. (Under
+# `set -euo pipefail` a cargo failure aborts the script and the trap restores
+# migrations/fixtures; the temp file is then orphaned in $TMPDIR, acceptable.)
+for t in "${TARGETS[@]}"; do
+  OUT=$(mktemp)
+  cargo +nightly-2026-05-01 expand --test encrypted_domain "scalars::${t}" > "$OUT"
+  mv "$OUT" "snapshots/${t}_expanded.rs"
+done
+"""

@@ -1,0 +1,37 @@
+-- AUTOMATICALLY GENERATED FILE
+-- Source is src/v3/version.template
+-- REQUIRE: src/v3/schema.sql
+
+DROP FUNCTION IF EXISTS eql_v3.version();
+
+--! @file v3/version.sql
+--! @brief EQL version reporting (self-contained eql_v3 surface)
+--!
+--! This file is auto-generated from src/v3/version.template during build.
+--! The $RELEASE_VERSION placeholder is replaced with the actual release
+--! version (bare semver, e.g. "3.0.0") supplied via `mise run build --version`,
+--! or "DEV" for development builds.
+
+--! @brief Get the installed EQL version string
+--!
+--! Returns the version string for the installed EQL library. This value is
+--! baked in at build time from the release tag.
+--!
+--! @return text Version string (e.g. "3.0.0" or "DEV" for development builds)
+--!
+--! @note Auto-generated during build from src/v3/version.template
+--!
+--! Example: `SELECT eql_v3.version()` returns the installed version string,
+--! e.g. `'3.0.0'` (or `'DEV'` for development builds).
+CREATE FUNCTION eql_v3.version()
+  RETURNS text
+  IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+  SELECT '$RELEASE_VERSION';
+$$ LANGUAGE SQL;
+
+--! @brief Schema-level version marker for obj_description() discoverability
+--!
+--! Mirrors eql_v3.version() as a comment on the schema so the installed
+--! version can also be read via obj_description('eql_v3'::regnamespace).
+COMMENT ON SCHEMA eql_v3 IS '$RELEASE_VERSION';

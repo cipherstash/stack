@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cipherstash.com/schemas/eql/v2.3/payload.schema.json",
+  "title": "EQL v2.3 payload",
+  "description": "JSON Schema describing the on-the-wire EQL payload format as of release v2.3. Two top-level shapes are accepted, mutually exclusive: an `EncryptedPayload` (a single encrypted scalar value, with any combination of index terms) and an `SteVecPayload` (an STE vector for jsonb / containment queries). The encrypted root form is what `eql_v2.check_encrypted` validates and what `eql_v2_encrypted` columns hold.\n\nChanges since v2.2:\n- The `b3` (Blake3) index term is removed everywhere. STE vector element equality now uses `hm` directly.\n- `SteVecElement` may now carry an `hm` field (matches the root `EncryptedPayload`); the previous prohibition is lifted.\n- `ste_vec` elements now carry a single ORE term `oc` (CLLW ORE). The pre-2.3 `ocf` / `ocv` split collapses into this one field: width information that was previously implied by the field name is now carried on the ciphertext via a leading domain-tag byte (`0x00` numeric, `0x01` string).\n- The two ordered schemes are scope-disjoint: `ob` (Block ORE) appears only on the root payload (scalar `eql_v2_encrypted` values), `oc` (CLLW ORE) appears only on `sv` elements.\n- Each `SteVecElement` carries exactly one of `hm` (boolean leaves / array / object roots) or `oc` (string / number leaves). They are mutually exclusive — cipherstash-suite never emits both on the same element. This is enforced by a `oneOf` constraint on `SteVecElement` and by the `eql_v2.ste_vec_entry` DOMAIN check in the EQL install.",
+
+  "oneOf": [
+    { "$ref": "#/$defs/EncryptedPayload" },
+    { "$ref": "#/$defs/SteVecPayload" }
+  ],
+
+  "$defs": {
+    "Version": {
+      "title": "Payload version (v)",
+      "description": "Configuration version that produced the payload. Hard-coded to 2 in EQL v2; `eql_v2._encrypted_check_v` raises if any other value is present.",
+      "type": "integer",
+      "const": 2
+    },
+
+    "Kind": {
+      "title": "Payload kind (k)",
+      "description": "Disambiguates payload shape. `ct` = ciphertext scalar (the EncryptedPayload form), `sv` = STE vector (the SteVecPayload form). Used as the discriminator between the two top-level variants.",
+      "type": "string",
+      "enum": ["ct", "sv"]
+    },
+
+    "Ident": {
+      "title": "Column ident (i)",
+      "description": "Identifies the table and column the payload belongs to. Required on every encrypted payload; both `t` and `c` must be present (enforced by `eql_v2._encrypted_check_i_ct`).",
+      "type": "object",
+      "properties": {
+        "t": { "type": "string", "description": "Table name." },
+        "c": { "type": "string", "description": "Column name." }
+      },
+      "required": ["t", "c"],
+      "additionalProperties": false
+    },
+
+    "Ciphertext": {
+      "title": "Ciphertext (c)",
+      "description": "Opaque, non-deterministic encrypted blob produced by Proxy. Required on every encrypted payload (enforced by `eql_v2._encrypted_check_c`). Excluded from GIN containment comparison via `eql_v2.jsonb_array`, which keeps only deterministic index-term fields.",
+      "type": "string",
+      "minLength": 1
+    },
+
+    "EncryptedPayload": {
+      "title": "Encrypted payload (scalar, database side)",
+      "description": "Shape stored in `eql_v2_encrypted` columns for a single encrypted scalar value. `v`, `c`, and `i.{t,c}` are required by `eql_v2.check_encrypted`. Any subset of the index-term fields may be present, depending on the configured indexes for the column. The orderable term at this scope is `ob` (Block ORE); `oc` lives only on `sv` elements. Mutually exclusive with `SteVecPayload`: must not carry `sv`.",
+      "type": "object",
+      "properties": {
+        "v": { "$ref": "#/$defs/Version" },
+        "k": {
+          "type": "string",
+          "const": "ct",
+          "description": "Discriminator: identifies this as the scalar ciphertext form."
+        },
+        "c": { "$ref": "#/$defs/Ciphertext" },
+        "i": { "$ref": "#/$defs/Ident" },
+
+        "hm": { "$ref": "#/$defs/IndexTerms/properties/hm" },
+        "bf": { "$ref": "#/$defs/IndexTerms/properties/bf" },
+        "ob": { "$ref": "#/$defs/IndexTerms/properties/ob" }
+      },
+      "required": ["v", "c", "i"],
+      "allOf": [{ "not": { "required": ["sv"] } }],
+      "additionalProperties": false
+    },
+
+    "SteVecPayload": {
+      "title": "STE vector payload (database side)",
+      "description": "Shape stored in `eql_v2_encrypted` columns for jsonb / structured values. Carries only the discriminator metadata (`v`, `k`, `i`) and the STE vector array (`sv`). Mutually exclusive with `EncryptedPayload`: must not carry a top-level `c` or any of the scalar index terms — those live on individual `sv` elements instead.",
+      "type": "object",
+      "properties": {
+        "v": { "$ref": "#/$defs/Version" },
+        "k": {
+          "type": "string",
+          "const": "sv",
+          "description": "Discriminator: identifies this as the STE vector form."
+        },
+        "i": { "$ref": "#/$defs/Ident" },
+        "sv": {
+          "type": "array",
+          "description": "STE vector: array of per-selector encrypted terms used for jsonb containment (`@>`, `<@`) and path queries.",
+          "items": { "$ref": "#/$defs/SteVecElement" }
+        }
+      },
+      "required": ["v", "k", "i", "sv"],
+      "additionalProperties": false
+    },
+
+    "SteVecQueryPayload": {
+      "title": "STE vector query payload",
+      "description": "Shape used as the right-hand needle of `@>` containment against an `eql_v2_encrypted` column. Same outer shape as `SteVecPayload` (a top-level `sv` array) but elements explicitly omit `c` — a containment query matches indexes (`s` + `hm`/`oc`), never ciphertexts. Modelled in EQL by the `eql_v2.stevec_query` DOMAIN, which enforces the no-`c` invariant via a CHECK constraint. Use the standard DOMAIN cast to construct: `'{\"sv\":[...]}'::eql_v2.stevec_query`.",
+      "type": "object",
+      "properties": {
+        "sv": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SteVecQueryElement" }
+        }
+      },
+      "required": ["sv"],
+      "additionalProperties": false
+    },
+
+    "SteVecQueryElement": {
+      "title": "STE vector query element",
+      "description": "One entry inside an `sv` query array. Differs from `SteVecElement` in that `c` (ciphertext) is forbidden — a query payload matches indexes, not ciphertexts. Otherwise identical: carries the per-element selector `s` and exactly one of `hm` / `oc`.",
+      "type": "object",
+      "properties": {
+        "s": {
+          "type": "string",
+          "description": "Selector — deterministic per (path, key) within the document. Required."
+        },
+        "a": {
+          "type": "boolean",
+          "description": "Array marker. Optional. True when the selector points at a JSON array context."
+        },
+        "hm": { "$ref": "#/$defs/IndexTerms/properties/hm" },
+        "oc": { "$ref": "#/$defs/IndexTerms/properties/oc" }
+      },
+      "required": ["s"],
+      "allOf": [
+        {
+          "description": "A query element must NOT carry `c`. Containment matches selectors + index terms, not ciphertexts.",
+          "not": { "required": ["c"] }
+        },
+        {
+          "description": "Exactly one of `hm` or `oc` must be present, mirroring `SteVecElement`.",
+          "oneOf": [{ "required": ["hm"] }, { "required": ["oc"] }]
+        }
+      ],
+      "additionalProperties": false
+    },
+
+    "SteVecElement": {
+      "title": "STE vector element",
+      "description": "One entry inside `sv`. Distinct from the root payload: carries a per-element selector `s` and an array flag `a`, but never an `i`, `v`, or nested `sv`. Every element carries exactly one of two equality / ordering terms — `hm` (HMAC-256) for boolean leaves and for the placeholder entries that represent array / object roots, or `oc` (CLLW ORE) for string and number leaves. They are mutually exclusive: cipherstash-suite emits one and only one per entry; an element with both terms or with neither is malformed.",
+      "type": "object",
+      "properties": {
+        "s": {
+          "type": "string",
+          "description": "Selector — deterministic per (path, key) within the document. Required: equality matching of STE vector elements compares selectors first."
+        },
+        "a": {
+          "type": "boolean",
+          "description": "Array marker. True when the selector points at a JSON array context."
+        },
+        "c": { "$ref": "#/$defs/Ciphertext" },
+        "hm": { "$ref": "#/$defs/IndexTerms/properties/hm" },
+        "oc": { "$ref": "#/$defs/IndexTerms/properties/oc" }
+      },
+      "required": ["s", "c"],
+      "allOf": [
+        {
+          "not": {
+            "anyOf": [
+              { "required": ["i"] },
+              { "required": ["v"] },
+              { "required": ["sv"] }
+            ]
+          }
+        },
+        {
+          "description": "Exactly one of `hm` or `oc` must be present. `hm` covers boolean leaves and array / object root placeholders; `oc` covers string and number leaves. cipherstash-suite never emits both or neither on the same element.",
+          "oneOf": [{ "required": ["hm"] }, { "required": ["oc"] }]
+        }
+      ],
+      "additionalProperties": false
+    },
+
+    "IndexTerms": {
+      "title": "Index term field catalogue",
+      "description": "Catalogue of every deterministic / order-preserving index term emitted by Proxy in v2.3. Defined here so both the root payload and STE vector elements can $ref individual entries without duplicating descriptions.",
+      "type": "object",
+      "properties": {
+        "hm": {
+          "title": "HMAC-SHA-256 (hm)",
+          "description": "Deterministic hex-encoded HMAC used for `=` / `<>` equality. As of v2.3 also used for STE vector element equality (selector + hm = match), replacing the previous `b3` term.",
+          "type": "string",
+          "pattern": "^[0-9a-f]+$"
+        },
+
+        "bf": {
+          "title": "Bloom filter (bf)",
+          "description": "Bloom filter representation as an array of set bit positions. Used by `LIKE` / `ILIKE` (`~~`, `~~*`) via `eql_v2.bloom_filter` and the corresponding GIN index. Stored as `smallint[]` (signed `int2`): the filter size is a power of two up to 65536, so positions in the upper half of a filter larger than 32768 are emitted as negative signed values (two's-complement of the unsigned position). Consumers must use a signed 16-bit integer type.",
+          "type": "array",
+          "items": { "type": "integer", "minimum": -32768, "maximum": 32767 }
+        },
+
+        "ob": {
+          "title": "ORE block u64_8_256 (ob)",
+          "description": "Order-Revealing Encryption term used for ordered comparisons (`<`, `<=`, `>`, `>=`) on root scalars via the custom `eql_v2.ore_block_u64_8_256` comparator. Stored as an array of hex-encoded ORE blocks. Mutually exclusive with `oc`.",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[0-9a-f]+$" }
+        },
+
+        "oc": {
+          "title": "ORE CLLW (oc)",
+          "description": "CLLW Order-Revealing Encryption term for `ste_vec` elements. Hex-encoded; the decoded byte string starts with a domain-tag byte (`0x00` numeric, `0x01` string) followed by the CLLW ciphertext, which lets a single column hold mixed numeric and string values with a consistent total order. Mutually exclusive with `ob`. Comparison uses the CLLW per-byte protocol (`y + 1 == x`), so a custom comparator / opclass is required for index-driven ordered queries.",
+          "type": "string",
+          "pattern": "^[0-9a-f]+$"
+        }
+      }
+    }
+  }
+}

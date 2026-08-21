@@ -128,14 +128,14 @@ jobs:
         uses: ./.github/actions/build-ffi-binding
 
       - name: Type tests (stack)
-        run: pnpm --filter @cipherstash/stack run test:types
+        run: pnpm exec turbo run test:types --filter @cipherstash/stack
 
       # The v3 domain catalog lives in the test kit, and its
       # `satisfies Record<EqlV3TypeName, DomainSpec>` is what forces a new SDK
       # domain to be covered. That check only fires under `tsc`, so without this
       # step a domain added to stack would slip through untested.
       - name: Type tests (test-kit — enforces v3 domain coverage)
-        run: pnpm --filter @cipherstash/test-kit run test:types
+        run: pnpm exec turbo run test:types --filter @cipherstash/test-kit
 
       # The adapter packages carry their own `.test-d.ts` type-contract guards
       # (the M1 client-surface / #622 erasure guards, the Supabase key-set
@@ -143,19 +143,29 @@ jobs:
       # were never wired into CI, so type-level regressions in them went
       # undetected — run them explicitly.
       - name: Type tests (stack-drizzle)
-        run: pnpm --filter @cipherstash/stack-drizzle run test:types
+        run: pnpm exec turbo run test:types --filter @cipherstash/stack-drizzle
 
       - name: Type tests (stack-supabase)
-        run: pnpm --filter @cipherstash/stack-supabase run test:types
+        run: pnpm exec turbo run test:types --filter @cipherstash/stack-supabase
 
       # prisma-next's operator-capability gating is proven by `.test-d.ts`
       # `@ts-expect-error` assertions (an unsupported operator on a column
       # must be a compile error). Those only fire when tsc processes them,
       # so the package `typecheck` must run — and be required — here (#684).
-      # Its tsconfig resolves stack subpaths to SOURCE, so no build step is
-      # needed first.
+      # Its tsconfig resolves stack subpaths to SOURCE — but NOT
+      # `@cipherstash/eql`, which it reaches through the package `exports` map
+      # at `./dist/sql.d.ts`. That used to be a registry tarball with `dist/`
+      # already in it, so a bare `pnpm --filter` resolved it whatever CI had
+      # built. The EQL subtree import made it a workspace package whose `dist/`
+      # is a build output, and this step became the first in the job to need
+      # something built — failing `TS2307` on three files.
+      #
+      # Through turbo, so `typecheck`'s `dependsOn: ["^build"]` builds
+      # `@cipherstash/eql` first. This is the trap
+      # `workflow-turbo-build-deps.test.mjs` was written for; the step was on
+      # its grandfathered KNOWN_BARE list, and the import is what collected.
       - name: Typecheck (prisma-next — enforces v3 operator-capability gating)
-        run: pnpm --filter @cipherstash/stack-prisma run typecheck
+        run: pnpm exec turbo run typecheck --filter @cipherstash/stack-prisma
 
       # `packages/bench` is a live importer of `@cipherstash/stack` and
       # `@cipherstash/stack-drizzle`, but it has no `test` script (its suites
@@ -171,7 +181,7 @@ jobs:
       # nothing here caught the three `auth.AutoStrategy` resolution errors that
       # sat in `main` until #771. Gate it so they cannot come back silently.
       - name: Typecheck (wizard)
-        run: pnpm --filter @cipherstash/wizard run typecheck
+        run: pnpm exec turbo run typecheck --filter @cipherstash/wizard
 
       # `examples/*` are standalone apps outside the `./packages/*` filter that
       # root `build`/`test` use, so nothing in CI compiled them. `examples/basic`
@@ -245,6 +255,42 @@ jobs:
       # dangling in docs and CI config. Nothing else catches it (#760 review).
       - name: Lint — no references to deleted package directories
         run: pnpm run lint:package-paths
+
+      # `eql-bindings` emits EQL payloads; `@cipherstash/eql` carries the SQL
+      # that stores them. Both live here now and release at one lockstep
+      # version. A registry pin on either lets them drift apart — it compiles,
+      # it passes every suite, and it fails in a customer's database.
+      - name: Lint — EQL resolves in-tree, not from a registry
+        run: pnpm run lint:eql-pins
+
+      # THE SAME GATE release.yml RUNS, one merge earlier.
+      #
+      # `changeset publish` publishes every public workspace package whose
+      # version is absent from npm — with no dependency ordering, and a failed
+      # publish returns a result rather than throwing, so it does not stop the
+      # siblings that depend on it. A merge can therefore ARM a release that
+      # cannot succeed, and this repository has done it. `@cipherstash/eql` is
+      # published from cipherstash/encrypt-query-language, so a version bumped
+      # in this workspace cannot be published from here — while `packages/cli`
+      # and `packages/stack-prisma` carry it in RUNTIME dependencies, so pnpm
+      # packs whatever version this tree holds into both tarballs. Bump it past
+      # what the registry carries and both ship a range no published version
+      # satisfies, in tarballs that publish fine. That is what the hand-applied
+      # 3.0.5 bump did; upstream has since released 3.0.5 and it cleared on its
+      # own. The CONDITION is what this step is for — the verdict is whatever it
+      # prints on the day.
+      #
+      # The gate in release.yml blocks the publish, which is the load-bearing
+      # half. This step is the half that says so BEFORE the merge rather than
+      # after it, which is the difference between a red pull request and a red
+      # main. Same script, same verdict, no second copy to drift.
+      #
+      # It talks to the registry, in a job that already installs the whole
+      # workspace from it — so this adds a class of dependency the job does not
+      # already have, only a few more requests. A lookup that fails for any
+      # reason other than a 404 throws rather than being read as "published".
+      - name: Lint — this tree can be published, and installed
+        run: pnpm run release:gate
 
       - name: Test — lint script self-tests
         run: pnpm run test:scripts

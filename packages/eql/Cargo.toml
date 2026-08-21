@@ -1,0 +1,36 @@
+# Cargo workspace root.
+#
+# Members:
+#   crates/eql-domains  — the scalar/term catalog (std-only, no deps). Source of
+#                         truth for the Rust generator (Plan 2) and the SQLx test
+#                         harness (Plan 3).
+#   crates/eql-codegen  — the SQL generator binary (stub here; Plan 2 fills it in).
+#   crates/eql-tests-macros — proc-macros expanding the single scalar-harness
+#                         list into the per-type SQLx-matrix wiring.
+#   crates/eql-bindings — canonical Rust wire types for EQL payloads, parity-
+#                         tested against the eql-domains catalog. (TypeScript
+#                         bindings and JSON Schemas are generated from these
+#                         types in stacked changes.)
+#   tests/sqlx          — the existing `eql_tests` SQLx integration crate.
+#
+# resolver = "2" keeps the heavy test-crate feature set (sqlx/tokio/cipherstash-
+# client) from unifying into the lean catalog/generator crates.
+#
+# default-members = ["tests/sqlx"] keeps a bare `cargo test` / `cargo build` at the
+# root building only the test crate, exactly as the pre-workspace layout did.
+[workspace]
+resolver = "2"
+members = [
+    "crates/eql-domains",
+    "crates/eql-codegen",
+    "crates/eql-tests-macros",
+    "crates/eql-bindings",
+    "tests/sqlx",
+]
+default-members = ["tests/sqlx"]
+
+# Dead code is a hard error. Note: rustc exempts unused `pub` items in a lib, so
+# don't `pub` a test-support item unless an integration test consumes it.
+[workspace.lints.rust]
+dead_code = "deny"
+unused_imports = "deny"

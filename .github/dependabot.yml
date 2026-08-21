@@ -62,7 +62,7 @@ updates:
         update-types:
           - version-update:semver-major
 
-  # ── Cargo (packages/protect-ffi — the only Rust in the repo) ────
+  # ── Cargo (packages/protect-ffi — one of two Rust workspaces) ───
   # Absorbing protect-ffi brought a 494-crate Cargo.lock in-tree. osv-scanner
   # already sees it — `--recursive ./` walks the tree and extracts every
   # lockfile it recognises — so known advisories were visible from day one, but
@@ -144,6 +144,69 @@ updates:
       - dependency-name: "stack-profile"
       - dependency-name: "eql-bindings"
       - dependency-name: "vitaminc"
+      # Major bumps are reviewed and applied manually, not by Dependabot.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  # ── Cargo (packages/eql — the second Rust workspace) ───────────
+  # The EQL subtree brought a second Cargo workspace: five members
+  # (crates/eql-{domains,codegen,tests-macros,bindings} plus tests/sqlx) and
+  # its own Cargo.lock. It needs its own entry because Dependabot's cargo
+  # `directory:` is a single workspace root, not a glob — the protect-ffi entry
+  # above cannot reach it. The lockfile-to-ecosystem check in
+  # e2e/tests/supply-chain.e2e.test.ts asserts coverage per ECOSYSTEM, so it
+  # was already satisfied by that entry and would NOT have caught this gap;
+  # the symptom would simply have been that no PR ever arrived.
+  - package-ecosystem: cargo
+    # The workspace root, where Cargo.toml and Cargo.lock live. Not `/`, and
+    # not a crate directory — same trap as the protect-ffi entry documents.
+    directory: /packages/eql
+    # Monthly, matching protect-ffi and for the same reason: validating a
+    # Cargo.lock bump here means the sharded SQLx matrix in test-eql.yml, which
+    # compiles the full dependency tree and runs against live Postgres with
+    # CipherStash credentials. Security fixes are unaffected — those are driven
+    # by alerts, not by `schedule`.
+    #
+    # No `day:`, for the reason recorded above: it applies to `interval: weekly`
+    # and would be configuration that does nothing.
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - supply-chain
+    commit-message:
+      prefix: "chore"
+      include: scope
+    groups:
+      cargo-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # `cipherstash-client = "=0.42.0"` in tests/sqlx/Cargo.toml — the SAME
+      # exact pin, at the SAME version, as packages/protect-ffi. That is not a
+      # coincidence and it is the reason the subtree was imported: the two now
+      # share one release train, and a Dependabot PR that moved one workspace
+      # and not the other would reintroduce precisely the skew the absorption
+      # removed. Bump both, manually, in step with the npm catalog.
+      #
+      # Same caveat as above: `ignore` suppresses security PRs too. osv-scanner
+      # is the compensating control and already reaches this lockfile
+      # (`--recursive ./`).
+      - dependency-name: "cipherstash-client"
+      - dependency-name: "cts-common"
+      - dependency-name: "stack-auth"
+      - dependency-name: "stack-profile"
+      # Published from this workspace by release-plz. A Dependabot PR proposing
+      # a registry version for a crate we release here would fight the lockstep
+      # version hook (scripts/sync-lockstep-versions.mjs).
+      - dependency-name: "eql-bindings"
       # Major bumps are reviewed and applied manually, not by Dependabot.
       - dependency-name: "*"
         update-types:

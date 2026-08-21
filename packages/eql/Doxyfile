@@ -1,0 +1,131 @@
+# Doxyfile for Encrypt Query Language (EQL)
+# PostgreSQL extension for searchable encryption
+
+#---------------------------------------------------------------------------
+# Project Settings
+#---------------------------------------------------------------------------
+
+PROJECT_NAME           = "Encrypt Query Language (EQL)"
+PROJECT_NUMBER         = "2.x"
+PROJECT_BRIEF          = "PostgreSQL extension for searchable encryption"
+
+OUTPUT_DIRECTORY       = docs/api
+CREATE_SUBDIRS         = NO
+
+#---------------------------------------------------------------------------
+# Build Settings
+#---------------------------------------------------------------------------
+# PRIMARY OUTPUT: XML for downstream processing
+# HTML: Optional, for local preview only
+# MARKDOWN: Experimental (may not generate in all Doxygen versions)
+
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_XML           = YES
+GENERATE_MAN           = NO
+GENERATE_MARKDOWN      = YES
+
+HTML_OUTPUT            = html
+HTML_FILE_EXTENSION    = .html
+HTML_DYNAMIC_SECTIONS  = YES
+
+# XML Settings - Primary documentation format
+XML_OUTPUT             = xml
+XML_PROGRAMLISTING     = YES
+
+# Markdown generation not supported in Doxygen 1.15.0
+# Use external tools to convert XML to Markdown:
+# - doxybook2 (C++, recommended): https://github.com/matusnovak/doxybook2
+# - moxygen (Node.js): https://github.com/sourcey/moxygen
+# - esp-doxybook (Python): https://pypi.org/project/esp-doxybook/
+# See docs/api/README.md for integration examples
+
+#---------------------------------------------------------------------------
+# Input Settings
+#---------------------------------------------------------------------------
+
+INPUT                  = src/
+# Only the generated *.sql is documented. *.template files are build-time
+# sources (they still carry $RELEASE_VERSION placeholders and duplicate their
+# generated .sql), so documenting them produced a spurious second `version`
+# memberdef with placeholder text.
+FILE_PATTERNS          = *.sql
+RECURSIVE              = YES
+EXCLUDE_PATTERNS       = *_test.sql
+
+# Treat SQL files as C++ for parsing
+# NOTE: Doxygen has no native SQL support. Parsing as C++ is imperfect but allows
+# extraction of function names and documentation comments.
+EXTENSION_MAPPING      = sql=C++ template=C++
+
+# CRITICAL: Input filter to convert SQL comments (--!) to C++ style (//!)
+# This is REQUIRED for Doxygen to recognize SQL comments
+INPUT_FILTER           = "tasks/docs/doxygen-filter.sh"
+FILTER_SOURCE_FILES    = YES
+
+# Source patterns - treat SQL keywords more gracefully
+FILTER_PATTERNS        =
+
+#---------------------------------------------------------------------------
+# Extraction Settings
+#---------------------------------------------------------------------------
+
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+
+HIDE_UNDOC_MEMBERS     = NO
+HIDE_UNDOC_CLASSES     = NO
+
+SHOW_FILES             = YES
+SHOW_NAMESPACES        = YES
+
+#---------------------------------------------------------------------------
+# Documentation Settings
+#---------------------------------------------------------------------------
+
+JAVADOC_AUTOBRIEF      = YES
+# Changed from YES to NO to support SQL function overloading
+# C doesn't support overloading, but SQL does (like C++)
+OPTIMIZE_OUTPUT_FOR_C  = NO
+
+# Disable some C++-specific features that don't apply to SQL
+BUILTIN_STL_SUPPORT    = NO
+CPP_CLI_SUPPORT        = NO
+IDL_PROPERTY_SUPPORT   = NO
+
+# Enable better handling of functions/procedures
+EXTRACT_LOCAL_METHODS  = YES
+SORT_MEMBER_DOCS       = YES
+SORT_BRIEF_DOCS        = YES
+
+#---------------------------------------------------------------------------
+# Warning Settings
+#---------------------------------------------------------------------------
+
+QUIET                  = NO
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = NO
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = NO
+
+#---------------------------------------------------------------------------
+# Source Browsing
+#---------------------------------------------------------------------------
+
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+
+#---------------------------------------------------------------------------
+# Alphabetical Index
+#---------------------------------------------------------------------------
+
+ALPHABETICAL_INDEX     = YES
+
+#---------------------------------------------------------------------------
+# Search Engine
+#---------------------------------------------------------------------------
+
+SEARCHENGINE           = YES

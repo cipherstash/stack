@@ -1,0 +1,9 @@
+{
+  "from": "0c0734babd6eeb868fee1f281ca96963022475611560e9f170f465daa35f8599",
+  "to": "0c0734babd6eeb868fee1f281ca96963022475611560e9f170f465daa35f8599",
+  "providedInvariants": [
+    "cipherstash:upgrade-eql-v3-bundle-3.0.5-v1"
+  ],
+  "createdAt": "2026-08-14T00:45:14.365Z",
+  "migrationHash": "8c47bd1d54ef49028c230466d9145d1d74bdaef12981a81230e3c10a266d4e93"
+}

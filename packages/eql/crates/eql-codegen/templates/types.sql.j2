@@ -1,0 +1,32 @@
+-- AUTOMATICALLY GENERATED FILE.
+-- REQUIRE: src/v3/schema.sql
+
+--! @file v3/scalars/{{ family_name }}/{{ family_name }}_types.sql
+--! @brief Encrypted-domain types for {{ family_name }}.
+
+DO $$
+BEGIN
+{%- for d in domains %}
+  --! @brief Encrypted domain public.{{ d.name }}.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type
+    WHERE typname = '{{ d.typname }}' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE DOMAIN public.{{ d.name }} AS jsonb
+      CHECK (
+        jsonb_typeof(VALUE) = 'object'
+        {%- for k in d.keys %}
+        AND VALUE ? '{{ k }}'
+        {%- endfor %}
+        {%- for k in d.nonempty_array_keys %}
+        AND jsonb_typeof(VALUE -> '{{ k }}') = 'array'
+        AND jsonb_array_length(VALUE -> '{{ k }}') > 0
+        {%- endfor %}
+        AND VALUE->>'v' = '3'
+      );
+  END IF;
+
+  COMMENT ON DOMAIN public.{{ d.name }} IS '{{ d.comment }}';
+{% endfor -%}
+END
+$$;

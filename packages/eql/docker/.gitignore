@@ -1,0 +1,3 @@
+# Build context only — populated by `mise run build` locally
+# or by the download-artifact step in CI.
+cipherstash-encrypt.sql

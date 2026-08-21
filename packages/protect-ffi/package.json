@@ -17,7 +17,7 @@
     "test:typecheck": "tsc && tsc -p tsconfig.test.json",
     "test:typecheck:wasm": "tsc -p type-tests/tsconfig.json",
     "test:unit": "vitest run",
-    "test:rust": "cargo test",
+    "test:rust": "cargo test --locked",
     "test:lint": "pnpm run test:lint:ts",
     "test:lint:ts": "biome lint",
     "test:format:ts": "biome format",

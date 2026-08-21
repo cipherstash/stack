@@ -1,8 +1,8 @@
-import { readInstallSql, releaseManifest } from '@cipherstash/eql/sql'
+import { releaseManifest } from '@cipherstash/eql/sql'
 import type pg from 'pg'
 import { createPgClient, TlsVerificationError } from '@/db/client.js'
 import { EQL_V3_INTERNAL_SCHEMA_NAME, EQL_V3_SCHEMA_NAME } from './grants.js'
-import { SUPPORTED_PGCRYPTO_SCHEMAS } from './index.js'
+import { loadBundledEqlSql, SUPPORTED_PGCRYPTO_SCHEMAS } from './index.js'
 import {
   classifyOreState,
   describeOreState,
@@ -355,16 +355,13 @@ export function parseExpectedSurface(sql: string): ExpectedSurface {
 
 /** The expected surface of the pinned bundle this CLI installs. */
 export function bundledExpectedSurface(): ExpectedSurface {
-  let sql: string
-  try {
-    sql = readInstallSql()
-  } catch (error) {
-    throw new Error(
-      'Failed to read the EQL v3 install SQL from `@cipherstash/eql`. Reinstall dependencies (the package ships the bundle in `dist/sql/`).',
-      { cause: error },
-    )
-  }
-  // Deliberately outside the try: a parse failure is a bundle the parser has
+  // Through `loadBundledEqlSql()` rather than `readInstallSql()` directly, so
+  // this shares the CLI's one digest check. `stash eql verify` compares a live
+  // database against this expectation — derived from an unverified bundle it
+  // would answer a different question than the one asked, and could report a
+  // healthy install as broken (or the reverse) from tampered bytes alone.
+  const sql = loadBundledEqlSql()
+  // Deliberately outside any try: a parse failure is a bundle the parser has
   // outgrown ({@link assertEveryStatementModelled}), and its message names the
   // statement. Wrapping it in "reinstall dependencies" would send whoever hits
   // it to the one remedy that cannot help.

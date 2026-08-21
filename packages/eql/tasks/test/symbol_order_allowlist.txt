@@ -1,0 +1,15 @@
+# One fully-qualified symbol per line (e.g. eql_v3.foo) whose "defined earlier"
+# check should be skipped. Use ONLY for genuine false positives (a reference the
+# regex sees but that is not a real dependency). Keep this list minimal and
+# comment WHY each entry is here.
+#
+# The two cases that are genuinely not dependencies:
+#   - a symbol assembled by dynamic SQL (EXECUTE format(...)), which the scan
+#     reads as a reference but Postgres never resolves at install time;
+#   - a symbol forward-referenced from a `LANGUAGE plpgsql` body, whose callees
+#     Postgres resolves at execution time, not at CREATE time. (A `LANGUAGE sql`
+#     body IS resolved at CREATE time — never allowlist one of those; fix the
+#     `-- REQUIRE:` edge instead, or the install will fail.)
+#
+# Adding an entry here weakens the gate that keeps the concatenated installer
+# in define-before-use order. Prefer a `-- REQUIRE:` edge whenever one exists.

@@ -1,0 +1,79 @@
+name: "Lint release tooling"
+
+# Durable gate for the release machinery. It catches workflow syntax, wrapper
+# shell issues, and supply-chain cache regressions before a real release.
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/_build-sql.yml
+      - .github/workflows/_build-docs.yml
+      - .github/workflows/release-plz.yml
+      - .github/workflows/release.yml
+      - .github/workflows/lint-release.yml
+      - .github/actionlint.yaml
+      - package.json
+      - scripts/*.mjs
+      - tasks/release/*.sh
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    name: actionlint + shellcheck + unit test
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint
+        run: |
+          set -euo pipefail
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          echo "$PWD" >> "$GITHUB_PATH"
+
+      - name: actionlint (release workflows)
+        run: |
+          set -euo pipefail
+          actionlint \
+            .github/workflows/_build-sql.yml \
+            .github/workflows/_build-docs.yml \
+            .github/workflows/release-plz.yml \
+            .github/workflows/release.yml \
+            .github/workflows/lint-release.yml
+
+      - name: shellcheck (wrappers + helpers)
+        run: |
+          set -euo pipefail
+          shellcheck \
+            tasks/release/prepare-bindings-assets.sh \
+            tasks/release/prepare-bindings-assets.test.sh
+
+      - name: prepare-bindings-assets validation unit test
+        run: bash tasks/release/prepare-bindings-assets.test.sh
+
+      - uses: pnpm/action-setup@v6.0.8
+        name: Install pnpm
+        with:
+          run_install: false
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: release workflow supply-chain cache guard
+        run: |
+          pnpm run lint:workflow-cache
+          pnpm run test:scripts

@@ -3,6 +3,7 @@
   "invariants": [
     "cipherstash:install-eql-v3-bundle-v1",
     "cipherstash:upgrade-eql-v3-bundle-3.0.2-v1",
-    "cipherstash:upgrade-eql-v3-bundle-3.0.4-v1"
+    "cipherstash:upgrade-eql-v3-bundle-3.0.4-v1",
+    "cipherstash:upgrade-eql-v3-bundle-3.0.5-v1"
   ]
 }

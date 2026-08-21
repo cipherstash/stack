@@ -1,0 +1,34 @@
+-- AUTOMATICALLY GENERATED FILE.
+{% for r in requires -%}
+-- REQUIRE: {{ r }}
+{% endfor %}
+--! @file encrypted_domain/{{ family_name }}/{{ name }}_aggregates.sql
+--! @brief Aggregates for {{ dom }}.
+{% for a in aggregates %}
+--! @brief State function for {{ a.name }} on {{ dom }}.
+--! @param state {{ dom }}
+--! @param value {{ dom }}
+--! @return {{ dom }}
+CREATE FUNCTION {{ internal_schema }}.{{ a.name }}_sfunc(state {{ dom }}, value {{ dom }})
+RETURNS {{ dom }}
+LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE
+SET search_path = pg_catalog, extensions, public
+AS $$
+BEGIN
+  IF value {{ a.comparator }} state THEN
+    RETURN value;
+  END IF;
+  RETURN state;
+END;
+$$;
+
+--! @brief {{ a.name }} aggregate for {{ dom }}.
+--! @param input {{ dom }}
+--! @return {{ dom }}
+CREATE AGGREGATE {{ schema }}.{{ a.name }}({{ dom }}) (
+  sfunc = {{ internal_schema }}.{{ a.name }}_sfunc,
+  stype = {{ dom }},
+  combinefunc = {{ internal_schema }}.{{ a.name }}_sfunc,
+  parallel = safe
+);
+{% endfor -%}

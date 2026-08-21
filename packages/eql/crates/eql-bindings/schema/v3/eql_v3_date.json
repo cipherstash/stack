@@ -1,0 +1,54 @@
+{
+  "$defs": {
+    "Ciphertext": {
+      "description": "mp_base85 source ciphertext — the `c` envelope key.\n\nRequired by every v3 domain CHECK; present on every payload.",
+      "type": "string"
+    },
+    "Identifier": {
+      "additionalProperties": false,
+      "description": "Table + column identifier — wire shape `{\"t\": \"...\", \"c\": \"...\"}`.\n\nShared by every payload.",
+      "properties": {
+        "c": {
+          "description": "Column name.",
+          "type": "string"
+        },
+        "t": {
+          "description": "Table name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "t",
+        "c"
+      ],
+      "type": "object"
+    },
+    "SchemaVersion": {
+      "const": 3,
+      "description": "The envelope version field (`v`) — always exactly `3` on the wire.",
+      "type": "integer"
+    }
+  },
+  "$id": "https://schemas.cipherstash.com/eql/v3/eql_v3_date.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "`public.eql_v3_date` — storage-only domain.\n\nOperators: none. Required keys: `v` `i` `c`.",
+  "properties": {
+    "c": {
+      "$ref": "#/$defs/Ciphertext"
+    },
+    "i": {
+      "$ref": "#/$defs/Identifier"
+    },
+    "v": {
+      "$ref": "#/$defs/SchemaVersion"
+    }
+  },
+  "required": [
+    "v",
+    "i",
+    "c"
+  ],
+  "title": "Date",
+  "type": "object"
+}

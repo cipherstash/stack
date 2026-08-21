@@ -81,11 +81,22 @@ on:
       # emits `dist/wasm/protect_ffi_inline.js` — the bundle the
       # `integration/wasm/**` suites selected below actually load. Both files
       # are in the WASM cache key of `.github/actions/build-ffi-binding`, so an
-      # edit to either misses that cache and REBUILDS the bundle; without these
-      # two entries it gets rebuilt and the only suite that loads it never runs.
+      # edit to either misses that cache and REBUILDS the bundle. Without these
+      # two entries the workflow does not trigger at all, so neither the rebuild
+      # nor the only suite that loads it ever runs.
       # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
       - 'packages/protect-ffi/tsconfig.wasm-errors.json'
       - 'packages/protect-ffi/scripts/inline-wasm.mjs'
+      # Out of that package, and compiled into the same two artifacts: the
+      # cdylib crate carries
+      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # EQL wire types are linked into `index.node` and into
+      # `protect_ffi_inline.js`. Both cache keys in
+      # `.github/actions/build-ffi-binding` hash them, so an edit here misses
+      # that cache and rebuilds the bundle the `integration/wasm/**` suites
+      # load. Same argument as the two entries above, same guard.
+      - 'packages/eql/crates/**'
+      - 'packages/eql/Cargo.toml'
   pull_request:
     branches: ['**']
     # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
@@ -155,11 +166,22 @@ on:
       # emits `dist/wasm/protect_ffi_inline.js` — the bundle the
       # `integration/wasm/**` suites selected below actually load. Both files
       # are in the WASM cache key of `.github/actions/build-ffi-binding`, so an
-      # edit to either misses that cache and REBUILDS the bundle; without these
-      # two entries it gets rebuilt and the only suite that loads it never runs.
+      # edit to either misses that cache and REBUILDS the bundle. Without these
+      # two entries the workflow does not trigger at all, so neither the rebuild
+      # nor the only suite that loads it ever runs.
       # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
       - 'packages/protect-ffi/tsconfig.wasm-errors.json'
       - 'packages/protect-ffi/scripts/inline-wasm.mjs'
+      # Out of that package, and compiled into the same two artifacts: the
+      # cdylib crate carries
+      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # EQL wire types are linked into `index.node` and into
+      # `protect_ffi_inline.js`. Both cache keys in
+      # `.github/actions/build-ffi-binding` hash them, so an edit here misses
+      # that cache and rebuilds the bundle the `integration/wasm/**` suites
+      # load. Same argument as the two entries above, same guard.
+      - 'packages/eql/crates/**'
+      - 'packages/eql/Cargo.toml'
 
 jobs:
   integration:
