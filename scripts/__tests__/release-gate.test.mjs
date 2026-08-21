@@ -770,7 +770,11 @@ describe('the gate exits non-zero when a blocker is found', () => {
         '    installSqlSha256: process.env.FAKE_NPM_PACK_DIGEST,\n' +
         "    uninstallSqlSha256: 'unused',\n" +
         '  }))\n' +
-        "  require('node:child_process').execFileSync('tar', ['-czf', path.join(dest, 'f.tgz'), '-C', path.join(dest, 'stage'), '.'])\n" +
+        // Archive the staged entries by name, not `.` — GNU tar (the CI
+        // runner) writes `.`-relative members as `./package/...`, and the
+        // production extraction call matches an exact member path, which
+        // does not strip that prefix the way bsdtar (macOS) does.
+        "  require('node:child_process').execFileSync('tar', ['-czf', path.join(dest, 'f.tgz'), '-C', path.join(dest, 'stage'), ...fs.readdirSync(path.join(dest, 'stage'))])\n" +
         "  process.stdout.write('f.tgz\\n'); process.exit(0)\n" +
         '}\n' +
         'const found = map[process.argv[3]]\n' +
