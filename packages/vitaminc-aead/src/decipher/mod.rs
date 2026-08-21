@@ -287,3 +287,57 @@ pub trait MapAccess<'c> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::MockMapAccess;
+
+    /// `next_entry` is a default method over `next_key` + `next_value`, so
+    /// nothing but this pins it down: a homogeneous consumer such as
+    /// `HashMap`'s `Decrypt` impl reaches every entry through it, and a
+    /// version that reported the map exhausted would decode silently to an
+    /// empty map rather than failing.
+    #[test]
+    fn next_entry_default_yields_every_entry_then_none() {
+        let mut map = MockMapAccess::new([("first", "a"), ("second", "b")]);
+
+        assert_eq!(
+            MapAccess::<'static>::next_entry::<String>(&mut map),
+            Ok(Some(("first".to_string(), "a".to_string())))
+        );
+        assert_eq!(
+            MapAccess::<'static>::next_entry::<String>(&mut map),
+            Ok(Some(("second".to_string(), "b".to_string())))
+        );
+        assert_eq!(
+            MapAccess::<'static>::next_entry::<String>(&mut map),
+            Ok(None)
+        );
+    }
+
+    /// The default must not paper over the contract the split imposes:
+    /// `next_value` with no pending key is an error, and it propagates.
+    #[test]
+    fn next_value_without_a_key_is_an_error() {
+        let mut map = MockMapAccess::new([("first", "a")]);
+
+        assert_eq!(
+            MapAccess::<'static>::next_value::<String>(&mut map),
+            Err(Unspecified)
+        );
+    }
+
+    /// Skipping a value leaves its AAD binding unverified, so a second
+    /// `next_key` must fail rather than discard the pending entry.
+    #[test]
+    fn skipping_a_value_is_an_error() {
+        let mut map = MockMapAccess::new([("first", "a"), ("second", "b")]);
+
+        assert_eq!(
+            MapAccess::<'static>::next_key(&mut map),
+            Ok(Some("first".to_string()))
+        );
+        assert_eq!(MapAccess::<'static>::next_key(&mut map), Err(Unspecified));
+    }
+}

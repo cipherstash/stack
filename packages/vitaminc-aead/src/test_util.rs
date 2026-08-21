@@ -9,7 +9,7 @@ use vitaminc_protected::{Controlled, Protected};
 
 use crate::{
     cipher::{Cipher, MapCipher, SeqCipher},
-    decipher::{Decipher, DecipherVisitor},
+    decipher::{Decipher, DecipherVisitor, MapAccess},
     Encrypt, IntoAad, Unspecified,
 };
 
@@ -228,5 +228,59 @@ impl<'c> Decipher<'c> for &MockDecipher {
     {
         *self.captured_aad.borrow_mut() = aad.into_aad().as_bytes().to_vec();
         Err(Unspecified)
+    }
+}
+
+/// A minimal [`MapAccess`] over an in-memory list of `(key, payload)` pairs.
+///
+/// Enough to drive the trait's own default method — [`MapAccess::next_entry`],
+/// which is defined in terms of [`MapAccess::next_key`] and
+/// [`MapAccess::next_value`] — without a real cipher. Each value is handed to
+/// a fresh [`MockDecipher`], so any byte-leaf `Decrypt` type works as the
+/// value type.
+pub(crate) struct MockMapAccess {
+    entries: std::vec::IntoIter<(String, Vec<u8>)>,
+    /// Mirrors the contract a real implementation must uphold: a key handed
+    /// out by `next_key` stays pending until `next_value` consumes it.
+    pending: Option<Vec<u8>>,
+}
+
+impl MockMapAccess {
+    pub(crate) fn new<K, V>(entries: impl IntoIterator<Item = (K, V)>) -> Self
+    where
+        K: Into<String>,
+        V: Into<Vec<u8>>,
+    {
+        MockMapAccess {
+            entries: entries
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect::<Vec<_>>()
+                .into_iter(),
+            pending: None,
+        }
+    }
+}
+
+impl<'c> MapAccess<'c> for MockMapAccess {
+    type Error = Unspecified;
+
+    fn next_key(&mut self) -> Result<Option<String>, Self::Error> {
+        if self.pending.is_some() {
+            return Err(Unspecified);
+        }
+        match self.entries.next() {
+            Some((key, payload)) => {
+                self.pending = Some(payload);
+                Ok(Some(key))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn next_value<T: crate::Decrypt<'c> + 'c>(&mut self) -> Result<T, Self::Error> {
+        let payload = self.pending.take().ok_or(Unspecified)?;
+        let decipher = MockDecipher::new(payload);
+        T::decrypt_with_aad(&decipher, crate::Aad::empty())
     }
 }
