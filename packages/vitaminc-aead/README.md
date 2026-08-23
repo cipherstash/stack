@@ -333,6 +333,65 @@ impl<'c> Decrypt<'c> for User {
 
 The visitor pattern keeps the cipher and the type independent: the cipher decides how the ciphertext is laid out and how AAD is enforced, while the type decides how its fields are reassembled.
 
+### Passing fields through in the clear
+
+Not every field of a record is sensitive. Wrap a field in [`Passthrough`] to carry it through the ciphertext container **unencrypted and unauthenticated** — routing or display data such as identifiers and schema versions. Because a custom type's impl is generic over every cipher, it cannot name a particular cipher's passthrough payload type; `Passthrough<T>` drives the type-erased channel for it, through the same `encrypt_entry` / `next_entry` calls as any encrypted field:
+
+```rust
+use vitaminc_aead::{
+    Cipher, Decipher, DecipherVisitor, Decrypt, Encrypt, IntoAad, MapAccess, MapCipher,
+    Passthrough, Unspecified,
+};
+
+struct User {
+    id: u32,       // stored in the clear
+    email: String, // encrypted
+}
+
+impl Encrypt for User {
+    fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
+    where
+        C: Cipher,
+        A: IntoAad<'a>,
+    {
+        cipher
+            .encrypt_map(aad)
+            .encrypt_entry("id", Passthrough(self.id))?
+            .encrypt_entry("email", self.email)?
+            .end()
+    }
+}
+
+impl<'c> Decrypt<'c> for User {
+    fn decrypt_with_aad<'a, D, A>(decipher: D, aad: A) -> D::Ok<Self>
+    where
+        D: Decipher<'c>,
+        A: IntoAad<'a>,
+    {
+        struct UserVisitor;
+        impl<'c> DecipherVisitor<'c> for UserVisitor {
+            type Value = User;
+
+            fn visit_map<A: MapAccess<'c>>(self, mut map: A) -> Result<Self::Value, Unspecified> {
+                // Entries come back in encryption order; pull each with its type.
+                let (_, Passthrough(id)) = map
+                    .next_entry::<Passthrough<u32>>()
+                    .map_err(|_| Unspecified)?
+                    .ok_or(Unspecified)?;
+                let (_, email) = map
+                    .next_entry::<String>()
+                    .map_err(|_| Unspecified)?
+                    .ok_or(Unspecified)?;
+                Ok(User { id, email })
+            }
+        }
+        decipher.decrypt_map(UserVisitor, aad)
+    }
+}
+```
+
+A passthrough value — and, for map entries, its key — can be altered in the stored ciphertext without detection. Never route secret-bearing data through it; wrap it in `Protected` and encrypt it instead.
+
 ### Nonce Generation
 
 The crate provides nonce generation utilities for AEAD operations:
