@@ -80,6 +80,10 @@ pub trait DataKeySource {
 /// Split from [`DataKeySource`] because the two capabilities are consumed
 /// separately: record encryption needs data keys, term generation needs the
 /// index key. Production implementations provide both.
+///
+/// As with [`DataKeySource`], the returned future is `Send` on native targets
+/// and unbounded on wasm32.
+#[cfg(not(target_arch = "wasm32"))]
 pub trait IndexKeySource {
     /// Load the index key for a keyset (the client's default keyset when
     /// `keyset_id` is `None`). Returns the resolved keyset id alongside the
@@ -92,6 +96,19 @@ pub trait IndexKeySource {
         &self,
         keyset_id: Option<Uuid>,
     ) -> impl Future<Output = Result<(Uuid, IndexKey), Error>> + Send;
+}
+
+/// See the native definition above; identical minus the `Send` bound on the
+/// returned future.
+#[cfg(target_arch = "wasm32")]
+pub trait IndexKeySource {
+    /// Load the index key for a keyset (the client's default keyset when
+    /// `keyset_id` is `None`). Returns the resolved keyset id alongside the
+    /// key, so callers pinning `None` learn which keyset they resolved to.
+    fn load_index_key(
+        &self,
+        keyset_id: Option<Uuid>,
+    ) -> impl Future<Output = Result<(Uuid, IndexKey), Error>>;
 }
 
 impl<C> DataKeySource for crate::StackKms<C>
