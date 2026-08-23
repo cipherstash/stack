@@ -1,14 +1,14 @@
-//! End-to-end encrypt/decrypt tests for `ZeroKmsCipher` against the deterministic
+//! End-to-end encrypt/decrypt tests for `StackCipher` against the deterministic
 //! `FakeDataKeySource` — no ZeroKMS credentials or network required.
 
 use std::collections::HashMap;
 
-use stack_encrypt::{Aad, CipherText, ContextTag, Element, IntoAad, ZeroKmsCipher};
+use stack_encrypt::{Aad, CipherText, ContextTag, Element, IntoAad, SealedValue, StackCipher};
 use stack_kms::FakeDataKeySource;
 use vitaminc_protected::{Controlled, Protected};
 
-fn cipher() -> ZeroKmsCipher<FakeDataKeySource> {
-    ZeroKmsCipher::new(FakeDataKeySource::new())
+fn cipher() -> StackCipher<FakeDataKeySource> {
+    StackCipher::new(FakeDataKeySource::new())
 }
 
 #[tokio::test]
@@ -301,7 +301,7 @@ async fn element_fails_under_wrong_caller_aad() {
 
 #[tokio::test]
 async fn decipher_can_be_driven_directly() {
-    // `ZeroKmsCipher::decipher` mirrors `Aes256Cipher::decipher`: the returned
+    // `StackCipher::decipher` mirrors `Aes256Cipher::decipher`: the returned
     // Decipher is driven via `Decrypt::decrypt_with_aad` with a caller-chosen
     // AAD, so manual derivations work too.
     let cipher = cipher();
@@ -338,4 +338,71 @@ async fn wrong_shape_fails() {
         .expect("encrypt");
     let result: Result<Vec<String>, _> = cipher.decrypt(ct, ()).await;
     assert!(result.is_err(), "scalar must not decode as a Vec");
+}
+
+#[tokio::test]
+async fn leaf_survives_persistence_via_parts() {
+    // A leaf can be decomposed into (iv, tag, ciphertext), stored, and rebuilt
+    // — the in-memory original need not be retained to decrypt.
+    let cipher = cipher();
+    let ct = cipher
+        .encrypt("durable".to_string(), b"ctx".as_slice())
+        .await
+        .expect("encrypt");
+    let leaf = match ct {
+        CipherText::Single(leaf) => leaf,
+        other => panic!("expected a Single leaf, got {other:?}"),
+    };
+    let (iv, tag, bytes) = leaf.into_parts();
+    let rebuilt = SealedValue::from_parts(iv, tag, bytes);
+
+    let pt: String = cipher
+        .decrypt(CipherText::Single(rebuilt), b"ctx".as_slice())
+        .await
+        .expect("rebuilt leaf must decrypt");
+    assert_eq!(pt, "durable");
+}
+
+#[tokio::test]
+async fn leaf_survives_persistence_via_serde() {
+    let cipher = cipher();
+    let ct = cipher
+        .encrypt("durable".to_string(), ())
+        .await
+        .expect("encrypt");
+    let leaf = match ct {
+        CipherText::Single(leaf) => leaf,
+        other => panic!("expected a Single leaf, got {other:?}"),
+    };
+    let json = serde_json::to_string(&leaf).expect("serialise leaf");
+    let restored: SealedValue = serde_json::from_str(&json).expect("deserialise leaf");
+    assert_eq!(restored.iv(), leaf.iv());
+    assert_eq!(restored.tag(), leaf.tag());
+    assert_eq!(restored.ciphertext(), leaf.ciphertext());
+
+    let pt: String = cipher
+        .decrypt(CipherText::Single(restored), ())
+        .await
+        .expect("restored leaf must decrypt");
+    assert_eq!(pt, "durable");
+}
+
+#[tokio::test]
+async fn tampered_leaf_bytes_fail() {
+    let cipher = cipher();
+    let ct = cipher
+        .encrypt("durable".to_string(), ())
+        .await
+        .expect("encrypt");
+    let leaf = match ct {
+        CipherText::Single(leaf) => leaf,
+        other => panic!("expected a Single leaf, got {other:?}"),
+    };
+    let (iv, tag, mut bytes) = leaf.into_parts();
+    let last = bytes.len() - 1;
+    bytes[last] ^= 0x01;
+    let tampered = SealedValue::from_parts(iv, tag, bytes);
+
+    let result: Result<String, _> = cipher.decrypt(CipherText::Single(tampered), ()).await;
+    assert!(result.is_err(), "a flipped ciphertext bit must not decrypt");
 }

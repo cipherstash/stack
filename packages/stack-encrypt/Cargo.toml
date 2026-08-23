@@ -1,6 +1,6 @@
 [package]
 name = "stack-encrypt"
-description = "AES-256-GCM-SIV cipher implementing the vitaminc Cipher traits, keyed by ZeroKMS data keys"
+description = "Encrypt Rust values under per-value ZeroKMS data keys via the vitaminc cipher traits"
 version = "0.1.0"
 edition.workspace = true
 authors.workspace = true
@@ -24,14 +24,14 @@ stack-kms = { path = "../stack-kms" }
 # and declared here rather than via the workspace dep so the rest of the suite
 # stays on the published 0.2.0-pre until the next vitaminc release.
 vitaminc-aead = { git = "https://github.com/cipherstash/vitaminc", rev = "06fc3eaf8e39eab4aa9c6107c0ff2fc2952bebc3" }
+vitaminc-encrypt = { git = "https://github.com/cipherstash/vitaminc", rev = "06fc3eaf8e39eab4aa9c6107c0ff2fc2952bebc3" }
 vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "06fc3eaf8e39eab4aa9c6107c0ff2fc2952bebc3" }
-zeroize = { workspace = true }
+serde = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 
-aes-gcm-siv = "0.11.1"
-
 [dev-dependencies]
+serde_json = { workspace = true }
 stack-kms = { path = "../stack-kms", features = ["test-support"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
 vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "06fc3eaf8e39eab4aa9c6107c0ff2fc2952bebc3" }
