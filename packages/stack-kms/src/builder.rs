@@ -1,4 +1,6 @@
-use crate::client::{ClientOpts, StackKms, DEFAULT_CONCURRENT_REQS, DEFAULT_KEYS_PER_REQ};
+use crate::client::{
+    ClientOpts, InvalidClientOpts, StackKms, DEFAULT_CONCURRENT_REQS, DEFAULT_KEYS_PER_REQ,
+};
 use crate::connection::HttpConnectionOpts;
 use crate::key::ClientKey;
 use crate::key_provider::{KeyProvider, KeyProviderError};
@@ -23,8 +25,8 @@ pub enum StackKmsBuilderError {
 
     /// A builder option was set to an invalid value (e.g. a zero concurrency
     /// or keys-per-request limit).
-    #[error("Invalid builder configuration: {0}")]
-    InvalidConfig(&'static str),
+    #[error(transparent)]
+    InvalidConfig(#[from] InvalidClientOpts),
 }
 
 /// A builder for creating [`StackKms`] clients.
@@ -190,20 +192,6 @@ impl<C, S> StackKmsBuilder<C, S> {
     }
 
     fn build_opts(self) -> Result<(ClientOpts<HttpConnectionOpts>, C, S), StackKmsBuilderError> {
-        // Reject degenerate concurrency/chunking config here rather than letting
-        // it reach `map_async_chunked` (0 keys-per-req panics `slice::chunks`;
-        // 0 concurrent-reqs silently yields no keys).
-        if self.max_keys_per_req == 0 {
-            return Err(StackKmsBuilderError::InvalidConfig(
-                "max_keys_per_req must be at least 1",
-            ));
-        }
-        if self.max_concurrent_reqs == 0 {
-            return Err(StackKmsBuilderError::InvalidConfig(
-                "max_concurrent_reqs must be at least 1",
-            ));
-        }
-
         let base_url = self.base_url_override.or_else(Self::base_url_from_env);
         let mut connection_opts = HttpConnectionOpts::new(base_url);
         if let Some(timeout) = self.request_timeout {
@@ -216,11 +204,12 @@ impl<C, S> StackKmsBuilder<C, S> {
             connection_opts = connection_opts.with_pool_idle_timeout(pool_idle_timeout);
         }
 
-        let opts = ClientOpts {
-            max_keys_per_req: self.max_keys_per_req,
-            max_concurrent_reqs: self.max_concurrent_reqs,
-            connection_opts,
-        };
+        // `ClientOpts` rejects degenerate limits (0 keys-per-req would panic
+        // `slice::chunks`; 0 concurrent-reqs would leave the request stream
+        // pending forever) so they never reach `map_async_chunked`.
+        let opts = ClientOpts::new(connection_opts)
+            .with_max_keys_per_req(self.max_keys_per_req)?
+            .with_max_concurrent_reqs(self.max_concurrent_reqs)?;
 
         Ok((opts, self.credentials, self.client_key))
     }
@@ -281,5 +270,125 @@ where
         let (opts, credentials, provider) = self.build_opts()?;
         let client_key = provider.0.client_key().await?;
         Ok(StackKms::connect(opts, credentials, client_key)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_env::ScopedEnv;
+    use stack_auth::{AuthError, AuthStrategyFn, ServiceToken};
+
+    type NeverStrategy =
+        AuthStrategyFn<fn() -> std::future::Ready<Result<ServiceToken, AuthError>>>;
+
+    fn never_get_token() -> std::future::Ready<Result<ServiceToken, AuthError>> {
+        unreachable!("builder tests never fetch a token")
+    }
+
+    fn builder() -> StackKmsBuilder<NeverStrategy, ()> {
+        StackKmsBuilder::new(AuthStrategyFn::new(never_get_token as fn() -> _))
+    }
+
+    fn random_client_key() -> ClientKey {
+        use recipher::keyset::{EncryptionKeySet, ProxyKeySet};
+        let ek_a = EncryptionKeySet::generate().unwrap();
+        let ek_b = EncryptionKeySet::generate().unwrap();
+        ClientKey::new_v1(uuid::Uuid::new_v4(), ProxyKeySet::generate(&ek_a, &ek_b))
+    }
+
+    mod invalid_config {
+        use super::*;
+
+        #[test]
+        fn rejects_zero_max_keys_per_req() {
+            let err = builder()
+                .with_max_keys_per_req(0)
+                .with_client_key(random_client_key())
+                .build()
+                .err()
+                .expect("zero keys-per-req must be rejected");
+            assert!(
+                matches!(err, StackKmsBuilderError::InvalidConfig(_)),
+                "expected InvalidConfig, got: {err:?}"
+            );
+            assert!(err.to_string().contains("max_keys_per_req"), "{err}");
+        }
+
+        #[test]
+        fn rejects_zero_max_concurrent_reqs() {
+            let err = builder()
+                .with_max_concurrent_reqs(0)
+                .with_client_key(random_client_key())
+                .build()
+                .err()
+                .expect("zero concurrent-reqs must be rejected");
+            assert!(
+                matches!(err, StackKmsBuilderError::InvalidConfig(_)),
+                "expected InvalidConfig, got: {err:?}"
+            );
+            assert!(err.to_string().contains("max_concurrent_reqs"), "{err}");
+        }
+
+        #[test]
+        fn accepts_the_defaults() {
+            builder()
+                .with_client_key(random_client_key())
+                .build()
+                .expect("default limits are valid");
+        }
+    }
+
+    mod base_url_from_env {
+        use super::*;
+
+        // Pinned by name rather than read from `vars::CS_ZEROKMS_HOST` so a
+        // reordering of that list (which changes precedence) fails these tests.
+        const PRIMARY: &str = "CS_ZEROKMS_HOST";
+        const LEGACY: &str = "CS_VITUR_HOST";
+
+        #[test]
+        fn the_primary_variable_is_listed_first() {
+            assert_eq!(crate::vars::CS_ZEROKMS_HOST, &[PRIMARY, LEGACY]);
+        }
+
+        #[test]
+        fn returns_none_when_neither_variable_is_set() {
+            let _env = ScopedEnv::new(&[(PRIMARY, None), (LEGACY, None)]);
+            assert!(StackKmsBuilder::<NeverStrategy>::base_url_from_env().is_none());
+        }
+
+        #[test]
+        fn parses_the_primary_variable() {
+            let _env = ScopedEnv::new(&[
+                (PRIMARY, Some("https://primary.example")),
+                (LEGACY, Some("https://legacy.example")),
+            ]);
+            let url = StackKmsBuilder::<NeverStrategy>::base_url_from_env().unwrap();
+            assert_eq!(url.as_str(), "https://primary.example/");
+        }
+
+        #[test]
+        fn falls_back_to_the_legacy_variable() {
+            let _env = ScopedEnv::new(&[(PRIMARY, None), (LEGACY, Some("https://legacy.example"))]);
+            let url = StackKmsBuilder::<NeverStrategy>::base_url_from_env().unwrap();
+            assert_eq!(url.as_str(), "https://legacy.example/");
+        }
+
+        #[test]
+        fn skips_an_invalid_primary_and_uses_the_legacy_variable() {
+            let _env = ScopedEnv::new(&[
+                (PRIMARY, Some("not a url")),
+                (LEGACY, Some("https://legacy.example")),
+            ]);
+            let url = StackKmsBuilder::<NeverStrategy>::base_url_from_env().unwrap();
+            assert_eq!(url.as_str(), "https://legacy.example/");
+        }
+
+        #[test]
+        fn returns_none_when_every_candidate_is_invalid() {
+            let _env = ScopedEnv::new(&[(PRIMARY, Some("not a url")), (LEGACY, Some("also not"))]);
+            assert!(StackKmsBuilder::<NeverStrategy>::base_url_from_env().is_none());
+        }
     }
 }

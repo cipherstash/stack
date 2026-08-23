@@ -37,7 +37,6 @@ tracing = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true }
-rand = { workspace = true }
 
 base16ct = { version = "0.2.0", features = ["alloc"] }
 base64ct = { version = "1.7", features = ["alloc"] }

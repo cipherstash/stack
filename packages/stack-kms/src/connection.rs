@@ -319,3 +319,66 @@ impl ZeroKMSConnection for HttpConnection {
         }
     }
 }
+
+#[cfg(test)]
+mod base_url_tests {
+    use super::*;
+
+    fn conn(base_url: Option<Url>) -> HttpConnection {
+        HttpConnection::init(HttpConnectionOpts::new(base_url)).unwrap()
+    }
+
+    fn url(s: &str) -> Url {
+        Url::parse(s).unwrap()
+    }
+
+    #[test]
+    fn is_unset_until_ensured() {
+        let c = conn(None);
+        assert!(!c.has_base_url());
+
+        c.ensure_base_url(url("https://a.example"));
+
+        assert!(c.has_base_url());
+        assert_eq!(c.base_url.get().unwrap().as_str(), "https://a.example/");
+    }
+
+    #[test]
+    fn the_first_ensured_url_wins() {
+        let c = conn(None);
+        c.ensure_base_url(url("https://first.example"));
+        c.ensure_base_url(url("https://second.example"));
+
+        assert_eq!(c.base_url.get().unwrap().as_str(), "https://first.example/");
+    }
+
+    #[test]
+    fn a_url_given_at_init_is_kept_over_a_later_ensure() {
+        let c = conn(Some(url("https://init.example")));
+        assert!(c.has_base_url());
+
+        c.ensure_base_url(url("https://other.example"));
+
+        assert_eq!(c.base_url.get().unwrap().as_str(), "https://init.example/");
+    }
+
+    #[tokio::test]
+    async fn send_without_a_base_url_is_a_prepare_error_not_an_auth_error() {
+        use zerokms_protocol::{GenerateKeyRequest, ViturRequestErrorKind};
+
+        let c = conn(None);
+        let req = GenerateKeyRequest {
+            client_id: uuid::Uuid::nil(),
+            keyset_id: None,
+            keys: std::borrow::Cow::Owned(vec![]),
+            unverified_context: Default::default(),
+        };
+
+        let err = c.send(req, "token").await.unwrap_err();
+
+        assert!(
+            matches!(err.kind, ViturRequestErrorKind::PrepareRequest),
+            "a missing base URL must not look like a 401 (and trigger a reauth loop), got: {err:?}"
+        );
+    }
+}

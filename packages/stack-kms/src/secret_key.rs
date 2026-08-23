@@ -311,6 +311,62 @@ mod tests {
         }
     }
 
+    mod from_env {
+        use super::*;
+        use crate::test_env::ScopedEnv;
+        use crate::vars::{CS_CLIENT_ID, CS_CLIENT_KEY};
+
+        #[test]
+        fn both_set_and_valid_returns_some() {
+            let (_, id, bytes) = random_secret_key();
+            let id = id.to_string();
+            let hex = base16ct::lower::encode_string(&bytes);
+            let _env = ScopedEnv::new(&[(CS_CLIENT_ID, Some(&id)), (CS_CLIENT_KEY, Some(&hex))]);
+
+            let key = SecretKey::from_env().unwrap().expect("both variables set");
+
+            assert_eq!(key.client_id.to_string(), id);
+            assert_eq!(&*key.client_key, bytes.as_slice());
+        }
+
+        #[test]
+        fn only_id_set_returns_none() {
+            let id = Uuid::new_v4().to_string();
+            let _env = ScopedEnv::new(&[(CS_CLIENT_ID, Some(&id)), (CS_CLIENT_KEY, None)]);
+
+            assert!(SecretKey::from_env().unwrap().is_none());
+        }
+
+        #[test]
+        fn only_key_set_returns_none() {
+            let _env = ScopedEnv::new(&[(CS_CLIENT_ID, None), (CS_CLIENT_KEY, Some("deadbeef"))]);
+
+            assert!(SecretKey::from_env().unwrap().is_none());
+        }
+
+        #[test]
+        fn neither_set_returns_none() {
+            let _env = ScopedEnv::new(&[(CS_CLIENT_ID, None), (CS_CLIENT_KEY, None)]);
+
+            assert!(SecretKey::from_env().unwrap().is_none());
+        }
+
+        #[test]
+        fn both_set_but_invalid_returns_err() {
+            let _env = ScopedEnv::new(&[
+                (CS_CLIENT_ID, Some("not-a-uuid")),
+                (CS_CLIENT_KEY, Some("deadbeef")),
+            ]);
+
+            let err = SecretKey::from_env().unwrap_err();
+
+            assert!(
+                matches!(err, KeyProviderError::InvalidKey(_)),
+                "expected InvalidKey, got: {err:?}"
+            );
+        }
+    }
+
     mod profile_store_provider {
         use super::*;
 

@@ -75,3 +75,57 @@ impl<'a> From<RetrieveKeyPayload<'a>> for RetrieveKeySpec<'a> {
         spec
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zerokms_protocol::PolicyCondition;
+
+    fn policy() -> DecryptionPolicy {
+        DecryptionPolicy {
+            conditions: vec![PolicyCondition {
+                claim: "sub".into(),
+                value: Some("alice".into()),
+            }],
+        }
+    }
+
+    mod retrieve_key_spec_from_payload {
+        use super::*;
+
+        #[test]
+        fn carries_iv_descriptor_tag_and_context_without_a_policy() {
+            let iv: Iv = [7u8; 16];
+            let ctx = vec![Context::Tag("tenant-1".into())];
+            let payload = RetrieveKeyPayload::new(iv, "users/email", b"tag")
+                .with_context(Cow::Borrowed(&ctx));
+
+            let spec = RetrieveKeySpec::from(payload);
+
+            assert_eq!(spec.iv, KeyId::from(iv));
+            assert_eq!(spec.descriptor, "users/email");
+            assert_eq!(spec.tag.as_ref(), b"tag");
+            assert_eq!(spec.context.len(), 1);
+            assert!(spec.decryption_policy.is_none());
+        }
+
+        #[test]
+        fn forwards_the_policy_when_present() {
+            let payload =
+                RetrieveKeyPayload::new([0u8; 16], "d", b"tag").with_decryption_policy(policy());
+
+            let spec = RetrieveKeySpec::from(payload);
+
+            assert_eq!(spec.decryption_policy, Some(policy()));
+        }
+    }
+
+    #[test]
+    fn generate_key_payload_with_decryption_policy_sets_the_policy() {
+        let payload = GenerateKeyPayload::new("d", Cow::Owned(vec![]));
+        assert!(payload.decryption_policy.is_none());
+
+        let payload = payload.with_decryption_policy(policy());
+        assert_eq!(payload.decryption_policy, Some(policy()));
+    }
+}

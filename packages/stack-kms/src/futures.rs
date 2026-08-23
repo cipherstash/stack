@@ -58,6 +58,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_a_failing_chunk_fails_the_whole_call() {
+        let input = vec![1, 2, 3, 4, 5, 6];
+
+        let result = map_async_chunked(
+            &input,
+            |chunk| async move {
+                if chunk.contains(&4) {
+                    Err(format!("chunk {chunk:?} failed"))
+                } else {
+                    Ok(chunk.to_vec())
+                }
+            },
+            2,
+            3,
+        )
+        .await;
+
+        assert_eq!(result, Err("chunk [3, 4] failed".to_string()));
+    }
+
+    #[tokio::test]
     async fn test_works_when_chunks_dont_divide_nicely() {
         let input = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 

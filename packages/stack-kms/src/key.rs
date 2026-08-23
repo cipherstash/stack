@@ -175,11 +175,13 @@ impl<'de> Deserialize<'de> for V1KeySet {
     where
         D: Deserializer<'de>,
     {
-        // CBOR encoded keyset is 168 bytes
-        let mut buffer = [0; 168];
-        serdect::array::deserialize_hex_or_bin(&mut buffer, deserializer)?;
-        let keyset = KeySet::from_bytes(&buffer).map_err(serde::de::Error::custom)?;
-        buffer.zeroize();
+        // CBOR encoded keyset is 168 bytes. `Zeroizing` wipes the buffer on
+        // every exit path — including the `?` early returns below, where a
+        // malformed or truncated input would otherwise leave whatever was
+        // decoded so far on the stack.
+        let mut buffer = Zeroizing::new([0u8; 168]);
+        serdect::array::deserialize_hex_or_bin(&mut *buffer, deserializer)?;
+        let keyset = KeySet::from_bytes(&*buffer).map_err(serde::de::Error::custom)?;
 
         Ok(Self(keyset))
     }
@@ -189,6 +191,66 @@ impl<'de> Deserialize<'de> for V1KeySet {
 mod tests {
     use super::{ClientKey, DataKey};
     use recipher::keyset::{EncryptionKeySet, ProxyKeySet};
+
+    fn random_keyset() -> ProxyKeySet {
+        let ek_a = EncryptionKeySet::generate().unwrap();
+        let ek_b = EncryptionKeySet::generate().unwrap();
+        ProxyKeySet::generate(&ek_a, &ek_b)
+    }
+
+    mod from_hex_v1 {
+        use super::*;
+
+        #[test]
+        fn round_trips_through_to_hex_v1() {
+            let id = uuid::Uuid::new_v4();
+            let hex = ClientKey::new_v1(id, random_keyset()).to_hex_v1().unwrap();
+
+            let restored = ClientKey::from_hex_v1(id, &hex).unwrap();
+
+            assert_eq!(restored.key_id, id);
+            assert_eq!(restored.to_hex_v1().unwrap(), hex, "hex must round-trip");
+        }
+
+        #[test]
+        fn rejects_non_hex_with_the_custom_message() {
+            let err = ClientKey::from_hex_v1(uuid::Uuid::nil(), "not hex!!").unwrap_err();
+
+            assert!(
+                err.to_string().contains("invalid hex"),
+                "expected the custom invalid-hex message, got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_hex_that_is_not_a_keyset() {
+            let err = ClientKey::from_hex_v1(uuid::Uuid::nil(), "deadbeef").unwrap_err();
+
+            assert!(
+                !err.to_string().contains("invalid hex"),
+                "valid hex of the wrong shape must fail at keyset decoding, got: {err}"
+            );
+        }
+    }
+
+    mod v1_keyset_deserialize {
+        use super::super::V1KeySet;
+
+        #[test]
+        fn rejects_a_truncated_keyset() {
+            // Valid hex, but shorter than the 168-byte CBOR keyset — exercises
+            // the early-return after the buffer was partially written.
+            let short = serde_json::to_string(&"00".repeat(20)).unwrap();
+            let err = serde_json::from_str::<V1KeySet>(&short).unwrap_err();
+            assert!(!err.to_string().is_empty());
+        }
+
+        #[test]
+        fn rejects_non_hex_input() {
+            let err = serde_json::from_str::<V1KeySet>("\"zz\"").unwrap_err();
+            assert!(!err.to_string().is_empty());
+        }
+    }
 
     #[test]
     fn test_opaque_debug_datakey() {

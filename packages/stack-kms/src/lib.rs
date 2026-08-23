@@ -75,7 +75,10 @@ pub mod vars;
 pub use builder::{StackKmsBuilder, StackKmsBuilderError, WithKeyProvider};
 
 // Clients
-pub use client::{Client, ClientOpts, FallibleDataKeyVec, StackKms};
+pub use client::{
+    Client, ClientOpts, FallibleDataKeyVec, InvalidClientOpts, StackKms, DEFAULT_CONCURRENT_REQS,
+    DEFAULT_KEYS_PER_REQ,
+};
 
 // Transport
 pub use connection::{
@@ -106,3 +109,56 @@ pub use payload::{GenerateKeyPayload, RetrieveKeyPayload};
 // Commonly needed re-exports from the protocol / crypto layers
 pub use recipher::key::{GenRandom, Iv};
 pub use zerokms_protocol::{Context, DecryptionPolicy, KeyId, UnverifiedContext, ViturKeyMaterial};
+
+/// Process-wide environment guard for tests that set or clear env vars.
+///
+/// `cargo nextest` runs each test in its own process, but plain `cargo test`
+/// runs them as threads of one process, so env-mutating tests serialise on a
+/// global lock and restore the prior values on drop.
+#[cfg(test)]
+pub(crate) mod test_env {
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    pub(crate) struct ScopedEnv {
+        previous: Vec<(&'static str, Option<String>)>,
+        _guard: MutexGuard<'static, ()>,
+    }
+
+    impl ScopedEnv {
+        /// Lock the environment, then set (`Some`) or clear (`None`) each
+        /// variable for the lifetime of the returned guard.
+        pub(crate) fn new(vars: &[(&'static str, Option<&str>)]) -> Self {
+            let guard = ENV_LOCK
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let previous = vars
+                .iter()
+                .map(|(name, value)| {
+                    let prior = std::env::var(name).ok();
+                    match value {
+                        Some(v) => std::env::set_var(name, v),
+                        None => std::env::remove_var(name),
+                    }
+                    (*name, prior)
+                })
+                .collect();
+            Self {
+                previous,
+                _guard: guard,
+            }
+        }
+    }
+
+    impl Drop for ScopedEnv {
+        fn drop(&mut self) {
+            for (name, prior) in self.previous.drain(..) {
+                match prior {
+                    Some(v) => std::env::set_var(name, v),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+    }
+}

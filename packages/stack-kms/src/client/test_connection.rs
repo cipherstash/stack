@@ -1,9 +1,5 @@
 //! In-memory [`ZeroKMSConnection`] used by unit tests to stub ZeroKMS
 //! responses without touching the network.
-//!
-//! Not every matcher helper is exercised by the current tests, but the full
-//! harness is kept so future key-operation tests can use it.
-#![allow(dead_code)]
 
 use async_mutex::Mutex;
 use zerokms_protocol::{ViturRequest, ViturRequestError};
@@ -84,16 +80,6 @@ impl Default for TestConnectionBuilder {
 pub struct TestConnection {
     handlers: Mutex<RequestHandlers>,
     effects: Mutex<EffectHandlers>,
-}
-
-impl TestConnection {
-    pub fn builder() -> TestConnectionBuilder {
-        TestConnectionBuilder::new()
-    }
-
-    pub fn empty() -> Self {
-        Self::builder().build()
-    }
 }
 
 impl ZeroKMSConnectionInit for TestConnection {

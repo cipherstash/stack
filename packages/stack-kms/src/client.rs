@@ -16,26 +16,83 @@ use crate::futures::map_async_chunked;
 use crate::key::{ClientKey, DataKey, DataKeyWithTag};
 use crate::payload::{GenerateKeyPayload, RetrieveKeyPayload};
 
-pub(crate) const DEFAULT_KEYS_PER_REQ: usize = 500;
-pub(crate) const DEFAULT_CONCURRENT_REQS: usize = 5;
+/// Default [`ClientOpts::max_keys_per_req`].
+pub const DEFAULT_KEYS_PER_REQ: usize = 500;
+/// Default [`ClientOpts::max_concurrent_reqs`].
+pub const DEFAULT_CONCURRENT_REQS: usize = 5;
+
+/// Returned when a [`ClientOpts`] limit is set to a value the client can't
+/// operate with (currently: a zero `max_keys_per_req` or `max_concurrent_reqs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("Invalid client options: {0}")]
+pub struct InvalidClientOpts(&'static str);
 
 /// Options for configuring certain behaviours of the [`Client`].
 ///
-/// You should generally use the [`StackKmsBuilder`](crate::StackKmsBuilder) to create a
-/// configured instance rather than instantiating this struct directly.
+/// You should generally use the [`StackKmsBuilder`](crate::StackKmsBuilder) to
+/// create a configured instance rather than instantiating this struct directly.
+///
+/// The limits are validated by the `with_*` setters, so a `ClientOpts` value
+/// is always usable: a zero `max_keys_per_req` would panic in `slice::chunks`
+/// and a zero `max_concurrent_reqs` would leave the request stream pending
+/// forever, so both are rejected at construction rather than at call time.
 pub struct ClientOpts<CONNOPTS> {
-    /// The maximum number of key specs that should be in each generate or retrieve request to
-    /// ZeroKMS. Having too large a number of specs per request can panic by exceeding reqwest's max
-    /// body size.
-    pub max_keys_per_req: usize,
+    max_keys_per_req: usize,
+    max_concurrent_reqs: usize,
+    connection_opts: CONNOPTS,
+}
 
-    /// The maximum number of requests that will be spun up per call to `generate_keys` or
-    /// `retrieve_keys`. Having too large a number of concurrent requests can result in
-    /// dropped connections which will fail the calls.
-    pub max_concurrent_reqs: usize,
+impl<CONNOPTS> ClientOpts<CONNOPTS> {
+    /// Options with the default limits ([`DEFAULT_KEYS_PER_REQ`] keys per
+    /// request, [`DEFAULT_CONCURRENT_REQS`] concurrent requests) and the given
+    /// connection options.
+    pub fn new(connection_opts: CONNOPTS) -> Self {
+        Self {
+            max_keys_per_req: DEFAULT_KEYS_PER_REQ,
+            max_concurrent_reqs: DEFAULT_CONCURRENT_REQS,
+            connection_opts,
+        }
+    }
 
-    /// The connection options to use when initializing the connection to ZeroKMS.
-    pub connection_opts: CONNOPTS,
+    /// The maximum number of key specs in each generate or retrieve request to
+    /// ZeroKMS. Too large a number can exceed reqwest's max body size. Must be
+    /// at least 1.
+    pub fn with_max_keys_per_req(mut self, max_keys: usize) -> Result<Self, InvalidClientOpts> {
+        if max_keys == 0 {
+            return Err(InvalidClientOpts("max_keys_per_req must be at least 1"));
+        }
+        self.max_keys_per_req = max_keys;
+        Ok(self)
+    }
+
+    /// The maximum number of requests spun up per call to `generate_keys` or
+    /// `retrieve_keys`. Too many concurrent requests can result in dropped
+    /// connections which fail the calls. Must be at least 1.
+    pub fn with_max_concurrent_reqs(
+        mut self,
+        max_concurrent: usize,
+    ) -> Result<Self, InvalidClientOpts> {
+        if max_concurrent == 0 {
+            return Err(InvalidClientOpts("max_concurrent_reqs must be at least 1"));
+        }
+        self.max_concurrent_reqs = max_concurrent;
+        Ok(self)
+    }
+
+    /// The maximum number of key specs per request.
+    pub fn max_keys_per_req(&self) -> usize {
+        self.max_keys_per_req
+    }
+
+    /// The maximum number of concurrent requests per key operation.
+    pub fn max_concurrent_reqs(&self) -> usize {
+        self.max_concurrent_reqs
+    }
+
+    /// The connection options used to initialize the ZeroKMS connection.
+    pub fn connection_opts(&self) -> &CONNOPTS {
+        &self.connection_opts
+    }
 }
 
 /// Low-level client for ZeroKMS key generation and retrieval.
@@ -471,11 +528,11 @@ mod tests {
         callback: impl FnOnce(TestConnectionBuilder) -> TestConnectionBuilder,
     ) -> Client<TestConnection> {
         let builder = callback(TestConnectionBuilder::new());
-        let client_opts = ClientOpts {
-            max_keys_per_req: 10,
-            max_concurrent_reqs: 5,
-            connection_opts: builder,
-        };
+        let client_opts = ClientOpts::new(builder)
+            .with_max_keys_per_req(10)
+            .unwrap()
+            .with_max_concurrent_reqs(5)
+            .unwrap();
         Client::init_opts(client_opts).expect("Failed to initialize test client")
     }
 
@@ -483,6 +540,296 @@ mod tests {
     // recipher proxy re-encryption scheme.
     fn key_material() -> ViturKeyMaterial {
         ViturKeyMaterial::from(vec![7u8; 528])
+    }
+
+    fn generated_key(tag: Vec<u8>) -> GeneratedKey {
+        GeneratedKey {
+            key_material: key_material(),
+            tag,
+            decryption_policy: None,
+        }
+    }
+
+    fn policy(claim: &str, value: &str) -> zerokms_protocol::DecryptionPolicy {
+        zerokms_protocol::DecryptionPolicy {
+            conditions: vec![zerokms_protocol::PolicyCondition {
+                claim: claim.to_string(),
+                value: Some(value.to_string()),
+            }],
+        }
+    }
+
+    mod client_opts {
+        use super::*;
+
+        #[test]
+        fn defaults_to_the_documented_limits() {
+            let opts = ClientOpts::new(());
+            assert_eq!(opts.max_keys_per_req(), DEFAULT_KEYS_PER_REQ);
+            assert_eq!(opts.max_concurrent_reqs(), DEFAULT_CONCURRENT_REQS);
+        }
+
+        #[test]
+        fn rejects_zero_max_keys_per_req() {
+            let err = ClientOpts::new(())
+                .with_max_keys_per_req(0)
+                .err()
+                .expect("zero must be rejected");
+            assert!(err.to_string().contains("max_keys_per_req"), "{err}");
+        }
+
+        #[test]
+        fn rejects_zero_max_concurrent_reqs() {
+            let err = ClientOpts::new(())
+                .with_max_concurrent_reqs(0)
+                .err()
+                .expect("zero must be rejected");
+            assert!(err.to_string().contains("max_concurrent_reqs"), "{err}");
+        }
+
+        #[test]
+        fn accepts_positive_limits() {
+            let opts = ClientOpts::new(())
+                .with_max_keys_per_req(1)
+                .unwrap()
+                .with_max_concurrent_reqs(1)
+                .unwrap();
+            assert_eq!(opts.max_keys_per_req(), 1);
+            assert_eq!(opts.max_concurrent_reqs(), 1);
+        }
+    }
+
+    mod count_mismatch {
+        use super::*;
+
+        #[tokio::test]
+        async fn generate_keys_rejects_a_short_response() {
+            let client_key = random_client_key();
+            // Ask for two, stub a response with only one.
+            let client = build_client(|builder| {
+                builder.add_success_response::<GenerateKeyRequest>(GenerateKeyResponse {
+                    keys: vec![generated_key(vec![1])],
+                })
+            });
+
+            let err = client
+                .generate_keys(
+                    vec![
+                        GenerateKeyPayload::new("a", Cow::Owned(vec![])),
+                        GenerateKeyPayload::new("b", Cow::Owned(vec![])),
+                    ],
+                    &client_key,
+                    None,
+                    "token",
+                    None,
+                )
+                .await
+                .expect_err("count mismatch must be an error");
+
+            assert!(
+                matches!(
+                    err,
+                    GenerateKeyError::InvalidNumberOfKeys {
+                        expected: 2,
+                        received: 1
+                    }
+                ),
+                "expected InvalidNumberOfKeys, got: {err:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn retrieve_keys_rejects_a_short_response() {
+            let client_key = random_client_key();
+            let client = build_client(|builder| {
+                builder.add_success_response::<RetrieveKeyRequest>(RetrieveKeyResponse {
+                    keys: vec![],
+                })
+            });
+
+            let err = client
+                .retrieve_keys(
+                    vec![RetrieveKeyPayload::new(Iv::default(), "a", &[1])],
+                    &client_key,
+                    None,
+                    "token",
+                    None,
+                )
+                .await
+                .expect_err("count mismatch must be an error");
+
+            assert!(
+                matches!(
+                    err,
+                    RetrieveKeyError::InvalidNumberOfKeys {
+                        expected: 1,
+                        received: 0
+                    }
+                ),
+                "expected InvalidNumberOfKeys, got: {err:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn retrieve_keys_fallible_rejects_a_short_response() {
+            let client_key = random_client_key();
+            let client = build_client(|builder| {
+                builder.add_success_response::<RetrieveKeyRequestFallible>(
+                    zerokms_protocol::RetrieveKeyResponseFallible { keys: vec![] },
+                )
+            });
+
+            let err = client
+                .retrieve_keys_fallible(
+                    vec![RetrieveKeyPayload::new(Iv::default(), "a", &[1])],
+                    &client_key,
+                    None,
+                    "token",
+                    None,
+                )
+                .await
+                .expect_err("count mismatch must be an error");
+
+            assert!(
+                matches!(
+                    err,
+                    RetrieveKeyError::InvalidNumberOfKeys {
+                        expected: 1,
+                        received: 0
+                    }
+                ),
+                "expected InvalidNumberOfKeys, got: {err:?}"
+            );
+        }
+    }
+
+    mod transport_errors {
+        use super::*;
+        use zerokms_protocol::{ViturRequestError, ViturRequestErrorKind};
+
+        fn vitur_error(kind: ViturRequestErrorKind) -> ViturRequestError {
+            ViturRequestError::new(kind, "stubbed", std::io::Error::other("boom"))
+        }
+
+        #[tokio::test]
+        async fn generate_keys_classifies_a_forbidden_response() {
+            let client_key = random_client_key();
+            let client = build_client(|builder| {
+                builder.add_failed_response::<GenerateKeyRequest>(vitur_error(
+                    ViturRequestErrorKind::Forbidden,
+                ))
+            });
+
+            let err = client
+                .generate_keys(
+                    vec![GenerateKeyPayload::new("a", Cow::Owned(vec![]))],
+                    &client_key,
+                    None,
+                    "token",
+                    None,
+                )
+                .await
+                .expect_err("a failed request must surface");
+
+            assert!(
+                matches!(err, GenerateKeyError::Forbidden),
+                "expected Forbidden, got: {err:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn retrieve_keys_wraps_the_transport_error() {
+            let client_key = random_client_key();
+            let client = build_client(|builder| {
+                builder.add_failed_response::<RetrieveKeyRequest>(vitur_error(
+                    ViturRequestErrorKind::SendRequest,
+                ))
+            });
+
+            let err = client
+                .retrieve_keys(
+                    vec![RetrieveKeyPayload::new(Iv::default(), "a", &[1])],
+                    &client_key,
+                    None,
+                    "token",
+                    None,
+                )
+                .await
+                .expect_err("a failed request must surface");
+
+            assert!(
+                matches!(
+                    &err,
+                    RetrieveKeyError::RequestFailed(e)
+                        if matches!(e.kind, ViturRequestErrorKind::SendRequest)
+                ),
+                "expected RequestFailed(SendRequest), got: {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn generate_keys_forwards_the_decryption_policy_and_returns_the_resolved_one() {
+        use std::sync::{Arc, Mutex};
+
+        let client_key = random_client_key();
+        let requested = policy("sub", "alice");
+        // ZeroKMS fills in `None` claim values; simulate a resolved policy that
+        // differs from the request to prove the *response* policy is returned.
+        let resolved = policy("sub", "alice-resolved");
+
+        let seen: Arc<Mutex<Option<GenerateKeyRequest<'static>>>> = Arc::new(Mutex::new(None));
+        let seen_in_effect = seen.clone();
+
+        let client = build_client(|builder| {
+            builder
+                .add_effect::<GenerateKeyRequest, _>(move |req| {
+                    *seen_in_effect.lock().unwrap() = Some(req);
+                })
+                .add_success_response::<GenerateKeyRequest>(GenerateKeyResponse {
+                    keys: vec![
+                        GeneratedKey {
+                            key_material: key_material(),
+                            tag: vec![1],
+                            decryption_policy: Some(resolved.clone()),
+                        },
+                        generated_key(vec![2]),
+                    ],
+                })
+        });
+
+        let ctx = vec![zerokms_protocol::Context::Tag("dropped-with-policy".into())];
+        let keys = client
+            .generate_keys(
+                vec![
+                    GenerateKeyPayload::new("a", Cow::Borrowed(&ctx))
+                        .with_decryption_policy(requested.clone()),
+                    GenerateKeyPayload::new("b", Cow::Borrowed(&ctx)),
+                ],
+                &client_key,
+                None,
+                "token",
+                None,
+            )
+            .await
+            .expect("generate_keys should succeed");
+
+        // Request side: the policy-bearing spec carries the policy and no
+        // context; the plain spec carries the context and no policy.
+        let req = seen
+            .lock()
+            .unwrap()
+            .take()
+            .expect("the effect should have captured the request");
+        assert_eq!(req.keys.len(), 2);
+        assert_eq!(req.keys[0].decryption_policy.as_ref(), Some(&requested));
+        assert!(req.keys[0].context.is_empty());
+        assert!(req.keys[1].decryption_policy.is_none());
+        assert_eq!(req.keys[1].context.len(), 1);
+
+        // Response side: the resolved policy lands on the returned key.
+        assert_eq!(keys[0].decryption_policy.as_ref(), Some(&resolved));
+        assert!(keys[1].decryption_policy.is_none());
     }
 
     #[tokio::test]
@@ -601,15 +948,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retrieve_keys_fallible_surfaces_per_key_failures() {
+    async fn retrieve_keys_fallible_surfaces_per_key_results() {
         let client_key = random_client_key();
 
+        // One key succeeds, one fails: the batch call itself succeeds and the
+        // per-key results land in payload order.
         let client = build_client(|builder| {
             builder.add_success_response::<RetrieveKeyRequestFallible>(
                 zerokms_protocol::RetrieveKeyResponseFallible {
-                    keys: vec![Ok(RetrievedKey {
-                        key_material: key_material(),
-                    })],
+                    keys: vec![
+                        Ok(RetrievedKey {
+                            key_material: key_material(),
+                        }),
+                        Err("key not found".to_string()),
+                    ],
                 },
             )
         });
@@ -617,16 +969,24 @@ mod tests {
         let iv = Iv::default();
         let keys = client
             .retrieve_keys_fallible(
-                vec![RetrieveKeyPayload::new(iv, "a", &[1])],
+                vec![
+                    RetrieveKeyPayload::new(iv, "a", &[1]),
+                    RetrieveKeyPayload::new(iv, "b", &[2]),
+                ],
                 &client_key,
                 None,
                 "token",
                 None,
             )
             .await
-            .expect("retrieve_keys_fallible should succeed");
+            .expect("batch call itself should succeed");
 
-        assert_eq!(keys.len(), 1);
+        assert_eq!(keys.len(), 2);
         assert!(keys[0].is_ok());
+        assert!(
+            matches!(&keys[1], Err(RetrieveKeyError::FailedRetrieval(msg)) if msg == "key not found"),
+            "a per-key failure must be surfaced as FailedRetrieval, got: {:?}",
+            keys[1]
+        );
     }
 }
