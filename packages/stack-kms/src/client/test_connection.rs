@@ -9,13 +9,13 @@ use crate::connection::{ZeroKMSConnection, ZeroKMSConnectionInit};
 type EffectHandlers = Vec<(String, Box<dyn FnOnce(&str) + Send>)>;
 type RequestHandlers = Vec<(String, Result<String, ViturRequestError>)>;
 
-pub struct TestConnectionBuilder {
+pub(crate) struct TestConnectionBuilder {
     handlers: RequestHandlers,
     effects: EffectHandlers,
 }
 
 impl TestConnectionBuilder {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             handlers: vec![],
             effects: vec![],
@@ -25,7 +25,7 @@ impl TestConnectionBuilder {
     /// Add a matcher for a particular request, returning a success message.
     ///
     /// The matcher is only run once.
-    pub fn add_success_response<R: ViturRequest>(mut self, response: R::Response) -> Self {
+    pub(crate) fn add_success_response<R: ViturRequest>(mut self, response: R::Response) -> Self {
         self.handlers.push((
             R::ENDPOINT.to_string(),
             Ok(serde_json::to_string(&response)
@@ -37,7 +37,7 @@ impl TestConnectionBuilder {
     /// Add a matcher for a particular request, returning a [`ViturRequestError`].
     ///
     /// The matcher is only run once.
-    pub fn add_failed_response<R: ViturRequest>(mut self, error: ViturRequestError) -> Self {
+    pub(crate) fn add_failed_response<R: ViturRequest>(mut self, error: ViturRequestError) -> Self {
         self.handlers.push((R::ENDPOINT.to_string(), Err(error)));
         self
     }
@@ -45,7 +45,7 @@ impl TestConnectionBuilder {
     /// Add a matcher for a particular request, running an effect on the body of the request.
     ///
     /// This matcher is only run once.
-    pub fn add_effect<R: ViturRequest, H: FnOnce(R) + Send + 'static>(
+    pub(crate) fn add_effect<R: ViturRequest, H: FnOnce(R) + Send + 'static>(
         mut self,
         handler: H,
     ) -> Self {
@@ -63,7 +63,7 @@ impl TestConnectionBuilder {
         self
     }
 
-    pub fn build(self) -> TestConnection {
+    pub(crate) fn build(self) -> TestConnection {
         TestConnection {
             handlers: Mutex::new(self.handlers),
             effects: Mutex::new(self.effects),
@@ -77,7 +77,7 @@ impl Default for TestConnectionBuilder {
     }
 }
 
-pub struct TestConnection {
+pub(crate) struct TestConnection {
     handlers: Mutex<RequestHandlers>,
     effects: Mutex<EffectHandlers>,
 }

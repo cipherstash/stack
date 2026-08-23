@@ -1,4 +1,3 @@
-use log::{debug, trace};
 use std::borrow::Cow;
 use uuid::Uuid;
 use zerokms_protocol::{
@@ -135,13 +134,15 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
     /// per spec, and zip the entries back onto their specs — in order — with
     /// `map_key`.
     ///
-    /// `target` is the `log` target for the per-chunk trace lines, so
-    /// operators can filter by operation (`stack_kms::retrieve_keys`,
-    /// `stack_kms::retrieve_keys_fallible`, `stack_kms::generate_keys`).
+    /// `operation` is recorded as a field on the per-chunk trace lines, so
+    /// operators can filter by operation (`retrieve_keys`,
+    /// `retrieve_keys_fallible`, `generate_keys`). It is a field rather than a
+    /// `tracing` target because `tracing` targets are baked into static
+    /// callsite metadata and so must be literals.
     #[allow(clippy::too_many_arguments)]
     async fn send_chunked<'a, Spec, Req, Item, Out, E>(
         &self,
-        target: &'static str,
+        operation: &'static str,
         specs: &'a [Spec],
         access_token: &str,
         make_request: impl Fn(&'a [Spec]) -> Req + Sync,
@@ -157,7 +158,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         let result = map_async_chunked(
             specs,
             |chunk| async {
-                trace!(target: target, "sending request with {} keys", chunk.len());
+                tracing::trace!(target: "stack_kms::client", operation, "sending request with {} keys", chunk.len());
 
                 let keys = self
                     .connection
@@ -171,7 +172,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
                     return Err(count_mismatch(chunk.len(), keys.len()));
                 }
 
-                trace!(target: target, "received {} keys - creating data keys", keys.len());
+                tracing::trace!(target: "stack_kms::client", operation, "received {} keys - creating data keys", keys.len());
 
                 Ok(chunk
                     .iter()
@@ -185,8 +186,12 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         .await;
 
         match &result {
-            Err(x) => trace!(target: target, "failed with error: {x}"),
-            Ok(x) => trace!(target: target, "successfully processed {} keys", x.len()),
+            Err(x) => {
+                tracing::trace!(target: "stack_kms::client", operation, "failed with error: {x}")
+            }
+            Ok(x) => {
+                tracing::trace!(target: "stack_kms::client", operation, "successfully processed {} keys", x.len())
+            }
         }
 
         result
@@ -201,7 +206,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         access_token: &str,
         unverified_context: Option<&UnverifiedContext>,
     ) -> Result<Vec<DataKey>, RetrieveKeyError> {
-        trace!(target: "stack_kms::retrieve_keys", "preparing payloads");
+        tracing::trace!(target: "stack_kms::retrieve_keys", "preparing payloads");
 
         let keys = keys
             .into_iter()
@@ -211,7 +216,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         tracing::trace!(target: "stack_kms::retrieve_keys", max_keys_per_req = self.max_keys_per_req, max_parallel_reqs = self.max_concurrent_reqs);
 
         self.send_chunked(
-            "stack_kms::retrieve_keys",
+            "retrieve_keys",
             &keys,
             access_token,
             |keys| RetrieveKeyRequest {
@@ -239,7 +244,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         access_token: &str,
         unverified_context: Option<Cow<'a, UnverifiedContext>>,
     ) -> Result<FallibleDataKeyVec, RetrieveKeyError> {
-        trace!(target: "stack_kms::retrieve_keys_fallible", "preparing payloads");
+        tracing::trace!(target: "stack_kms::retrieve_keys_fallible", "preparing payloads");
 
         let keys = keys
             .into_iter()
@@ -249,7 +254,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         tracing::trace!(target: "stack_kms::retrieve_keys_fallible", max_keys_per_req = self.max_keys_per_req, max_parallel_reqs = self.max_concurrent_reqs);
 
         self.send_chunked(
-            "stack_kms::retrieve_keys_fallible",
+            "retrieve_keys_fallible",
             &keys,
             access_token,
             |keys| RetrieveKeyRequestFallible {
@@ -306,11 +311,11 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
                 .collect::<Result<Vec<_>, GenerateKeyError>>()?
         };
 
-        trace!(target: "stack_kms::generate_keys", "generated {} key payloads", keys.len());
+        tracing::trace!(target: "stack_kms::generate_keys", "generated {} key payloads", keys.len());
         tracing::trace!(target: "stack_kms::generate_keys", max_keys_per_req = self.max_keys_per_req, max_parallel_reqs = self.max_concurrent_reqs);
 
         self.send_chunked(
-            "stack_kms::generate_keys",
+            "generate_keys",
             &keys,
             access_token,
             |keys| GenerateKeyRequest {
@@ -441,7 +446,7 @@ where
     ) -> Result<FallibleDataKeyVec, Error> {
         let token = self.get_token().await?;
 
-        debug!(target: "stack_kms::retrieve_keys_fallible", "got token, retrieving keys");
+        tracing::debug!(target: "stack_kms::retrieve_keys_fallible", "got token, retrieving keys");
         self.client
             .retrieve_keys_fallible(
                 payloads,

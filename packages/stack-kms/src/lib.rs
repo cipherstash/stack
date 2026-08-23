@@ -51,12 +51,16 @@
 #![warn(clippy::print_stdout)]
 #![warn(clippy::print_stderr)]
 #![warn(clippy::dbg_macro)]
+// Code quality
+#![warn(unreachable_pub)]
+#![warn(unused_results)]
 #![warn(clippy::todo)]
 #![warn(clippy::unimplemented)]
 // Relax in tests
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 #![cfg_attr(test, allow(clippy::expect_used))]
 #![cfg_attr(test, allow(clippy::panic))]
+#![cfg_attr(test, allow(unused_results))]
 
 mod builder;
 mod client;

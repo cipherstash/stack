@@ -36,7 +36,6 @@ vitaminc = { workspace = true, features = ["protected", "random"] }
 vitaminc-protected = { workspace = true }
 
 lazy_static = { workspace = true }
-log = { workspace = true }
 miette = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }

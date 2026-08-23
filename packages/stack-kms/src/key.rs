@@ -1,4 +1,4 @@
-pub use recipher::{
+pub(crate) use recipher::{
     cipher::ProxyCipher,
     key::{Iv, Key},
     keyset::ProxyKeySet as KeySet,
@@ -89,7 +89,7 @@ impl DataKey {
 }
 
 // FIXME: Making this Cloneable for now so that we can use the same key many times for the JSONB indexer.
-// We should modifier the indexer so each value has a separate key.
+// We should modify the indexer so each value has a separate key.
 // No `PartialEq`/`Eq` on the wrapper: the `tag` is public but `key` is secret.
 // If key equality is ever needed, compare `a.key == b.key` (constant-time via
 // `DataKey`'s `TimingSafeEq`-derived `PartialEq`) or `a.key.ts_eq(&b.key)`.
@@ -182,7 +182,9 @@ impl<'de> Deserialize<'de> for V1KeySet {
         // malformed or truncated input would otherwise leave whatever was
         // decoded so far on the stack.
         let mut buffer = Zeroizing::new([0u8; 168]);
-        serdect::array::deserialize_hex_or_bin(&mut *buffer, deserializer)?;
+        // Discards the returned `&[u8]`: it just borrows `buffer`, which we
+        // read through the `Zeroizing` guard below so it still gets wiped.
+        let _ = serdect::array::deserialize_hex_or_bin(&mut *buffer, deserializer)?;
         let keyset = KeySet::from_bytes(&*buffer).map_err(serde::de::Error::custom)?;
 
         Ok(Self(keyset))
