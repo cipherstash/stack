@@ -15,6 +15,12 @@ license-file = "LICENSE"
 # downstream crates (e.g. `stack-encrypt`) to unit-test encrypt/decrypt without
 # ZeroKMS credentials or network access.
 test-support = []
+# Enables HTTP/2 in the reqwest client. ZeroKMS endpoints negotiate h2 via
+# ALPN; without it reqwest is HTTP/1.1-only and opens a connection per
+# concurrent request (`max_concurrent_reqs`), which can exhaust client-side
+# ephemeral ports under load. Off by default while we validate it; intended to
+# default-on later. Mirrors the same feature on `cipherstash-client`.
+http2 = ["reqwest/http2"]
 
 [dependencies]
 recipher = { workspace = true }

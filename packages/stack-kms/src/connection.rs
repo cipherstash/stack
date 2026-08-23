@@ -173,6 +173,33 @@ fn header_map_to_hash(map: &HeaderMap) -> HashMap<String, String> {
         .collect()
 }
 
+/// Ensure the base URL's path ends with `/` so that `Url::join` with a
+/// relative endpoint *appends* to it instead of replacing the last segment.
+///
+/// Endpoint paths in `zerokms-protocol` have no leading slash, so
+/// `https://gateway.example/zerokms` + `retrieve-data-key` would otherwise
+/// resolve to `https://gateway.example/retrieve-data-key` — silently dropping
+/// the `/zerokms` prefix. A URL whose path already ends in `/` (including the
+/// bare-host form, whose path is `/`) is returned unchanged.
+fn with_trailing_slash(mut url: Url) -> Url {
+    if !url.path().ends_with('/') {
+        let path = format!("{}/", url.path());
+        url.set_path(&path);
+    }
+    url
+}
+
+/// `true` if a `content-type` header value denotes JSON, ignoring any
+/// parameters (`application/json; charset=utf-8`) and ASCII case — proxies and
+/// API gateways commonly normalise the header that way.
+fn is_json_content_type(value: &str) -> bool {
+    value
+        .split(';')
+        .next()
+        .map(str::trim)
+        .is_some_and(|media_type| media_type.eq_ignore_ascii_case("application/json"))
+}
+
 impl HttpConnection {
     /// Set the base URL if it has not already been set.
     ///
@@ -180,7 +207,7 @@ impl HttpConnection {
     /// previous call to this method.
     pub fn ensure_base_url(&self, url: Url) {
         // OnceLock::set returns Err if already set — that's fine, we keep the first value.
-        let _ = self.base_url.set(url);
+        let _ = self.base_url.set(with_trailing_slash(url));
     }
 
     /// Returns `true` if the base URL has been resolved (either at init time
@@ -225,7 +252,7 @@ impl ZeroKMSConnectionInit for HttpConnection {
         let base_url = OnceLock::new();
         if let Some(url) = opts.base_url {
             // Pre-fill when an explicit URL was provided at build time.
-            let _ = base_url.set(url);
+            let _ = base_url.set(with_trailing_slash(url));
         }
 
         Ok(Self { base_url, client })
@@ -278,7 +305,7 @@ impl ZeroKMSConnection for HttpConnection {
 
             let expected = "application/json";
 
-            if content_type != Some(expected) {
+            if !content_type.is_some_and(is_json_content_type) {
                 return Err(ViturRequestError::parse(
                     "Invalid content type header",
                     UnexpectedError {
@@ -353,6 +380,45 @@ mod base_url_tests {
     }
 
     #[test]
+    fn a_path_prefix_gets_a_trailing_slash_so_endpoints_append_to_it() {
+        let c = conn(Some(url("https://gateway.example/zerokms")));
+        let base = c.base_url.get().unwrap();
+
+        assert_eq!(base.as_str(), "https://gateway.example/zerokms/");
+        assert_eq!(
+            base.join("retrieve-data-key").unwrap().as_str(),
+            "https://gateway.example/zerokms/retrieve-data-key"
+        );
+    }
+
+    #[test]
+    fn ensure_base_url_normalises_the_same_way() {
+        let c = conn(None);
+        c.ensure_base_url(url("https://gateway.example/zerokms?x=1"));
+
+        assert_eq!(
+            c.base_url.get().unwrap().as_str(),
+            "https://gateway.example/zerokms/?x=1"
+        );
+    }
+
+    #[test]
+    fn an_already_slash_terminated_url_is_unchanged() {
+        for s in [
+            "https://a.example",
+            "https://a.example/",
+            "https://a.example/zerokms/",
+        ] {
+            let c = conn(Some(url(s)));
+            assert_eq!(
+                c.base_url.get().unwrap().as_str(),
+                url(s).as_str(),
+                "{s} should be left as-is"
+            );
+        }
+    }
+
+    #[test]
     fn a_url_given_at_init_is_kept_over_a_later_ensure() {
         let c = conn(Some(url("https://init.example")));
         assert!(c.has_base_url());
@@ -380,5 +446,35 @@ mod base_url_tests {
             matches!(err.kind, ViturRequestErrorKind::PrepareRequest),
             "a missing base URL must not look like a 401 (and trigger a reauth loop), got: {err:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod content_type_tests {
+    use super::is_json_content_type;
+
+    #[test]
+    fn accepts_json_with_or_without_parameters_and_ignoring_case() {
+        for value in [
+            "application/json",
+            "application/json; charset=utf-8",
+            "application/json;charset=UTF-8",
+            "  Application/JSON ; charset=utf-8",
+        ] {
+            assert!(is_json_content_type(value), "{value:?} should be accepted");
+        }
+    }
+
+    #[test]
+    fn rejects_other_media_types() {
+        for value in [
+            "text/html",
+            "application/jsonx",
+            "text/json",
+            "",
+            "; charset=utf-8",
+        ] {
+            assert!(!is_json_content_type(value), "{value:?} should be rejected");
+        }
     }
 }

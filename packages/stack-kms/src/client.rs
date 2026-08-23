@@ -3,7 +3,8 @@ use std::borrow::Cow;
 use uuid::Uuid;
 use zerokms_protocol::{
     GenerateKeyRequest, GenerateKeySpec, GeneratedKey, RetrieveKeyRequest,
-    RetrieveKeyRequestFallible, RetrieveKeySpec, RetrievedKey, UnverifiedContext,
+    RetrieveKeyRequestFallible, RetrieveKeySpec, RetrievedKey, UnverifiedContext, ViturRequest,
+    ViturRequestError,
 };
 
 use recipher::key::Iv;
@@ -128,6 +129,69 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         })
     }
 
+    /// Shared scaffolding for the batch operations: split `specs` into chunks
+    /// of at most `max_keys_per_req`, send up to `max_concurrent_reqs` chunks
+    /// to ZeroKMS at once, check that every response carries exactly one entry
+    /// per spec, and zip the entries back onto their specs — in order — with
+    /// `map_key`.
+    ///
+    /// `target` is the `log` target for the per-chunk trace lines, so
+    /// operators can filter by operation (`stack_kms::retrieve_keys`,
+    /// `stack_kms::retrieve_keys_fallible`, `stack_kms::generate_keys`).
+    #[allow(clippy::too_many_arguments)]
+    async fn send_chunked<'a, Spec, Req, Item, Out, E>(
+        &self,
+        target: &'static str,
+        specs: &'a [Spec],
+        access_token: &str,
+        make_request: impl Fn(&'a [Spec]) -> Req + Sync,
+        response_keys: impl Fn(Req::Response) -> Vec<Item> + Sync,
+        map_key: impl Fn(&'a Spec, Item) -> Out + Sync,
+        count_mismatch: impl Fn(usize, usize) -> E + Sync,
+    ) -> Result<Vec<Out>, E>
+    where
+        Spec: Send + Sync,
+        Req: ViturRequest,
+        E: From<ViturRequestError> + std::fmt::Display,
+    {
+        let result = map_async_chunked(
+            specs,
+            |chunk| async {
+                trace!(target: target, "sending request with {} keys", chunk.len());
+
+                let keys = self
+                    .connection
+                    .send(make_request(chunk), access_token)
+                    .await
+                    .map(&response_keys)
+                    .map_err(E::from)?;
+
+                // This should never happen with ZeroKMS but check just to be sure.
+                if keys.len() != chunk.len() {
+                    return Err(count_mismatch(chunk.len(), keys.len()));
+                }
+
+                trace!(target: target, "received {} keys - creating data keys", keys.len());
+
+                Ok(chunk
+                    .iter()
+                    .zip(keys)
+                    .map(|(spec, item)| map_key(spec, item))
+                    .collect())
+            },
+            self.max_keys_per_req,
+            self.max_concurrent_reqs,
+        )
+        .await;
+
+        match &result {
+            Err(x) => trace!(target: target, "failed with error: {x}"),
+            Ok(x) => trace!(target: target, "successfully processed {} keys", x.len()),
+        }
+
+        result
+    }
+
     /// Retrieve multiple data keys for an iterator of [`RetrieveKeyPayload`].
     pub async fn retrieve_keys(
         &self,
@@ -146,62 +210,23 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
 
         tracing::trace!(target: "stack_kms::retrieve_keys", max_keys_per_req = self.max_keys_per_req, max_parallel_reqs = self.max_concurrent_reqs);
 
-        // map_async_chunked will split the retrieve key requests up into chunks and send them to
-        // ZeroKMS concurrently. The number of concurrent requests and size of the chunks are passed
-        // through from ClientOpts.
-        let result = map_async_chunked(
+        self.send_chunked(
+            "stack_kms::retrieve_keys",
             &keys,
-            |keys| async {
-                let req = RetrieveKeyRequest {
-                    keys: keys.into(),
-                    keyset_id: keyset_id.map(Into::into),
-                    client_id: key.key_id,
-                    unverified_context: unverified_context.cloned().unwrap_or_default(),
-                };
-
-                trace!(target: "stack_kms::retrieve_keys", "sending request with {} keys", keys.len());
-
-                self.connection
-                    .send(req, access_token)
-                    .await
-                    .map_err(RetrieveKeyError::RequestFailed)
-                    .and_then(|res| {
-                        // This should never happen with ZeroKMS but check just to be sure.
-                        if res.keys.len() != keys.len() {
-                            return Err(RetrieveKeyError::InvalidNumberOfKeys {
-                                expected: keys.len(),
-                                received: res.keys.len(),
-                            });
-                        }
-
-                        trace!(target: "stack_kms::retrieve_keys", "retrieved keys - creating data keys");
-
-                        Ok(keys
-                            .iter()
-                            .zip(res.keys)
-                            .map(
-                                |(RetrieveKeySpec { iv, .. }, RetrievedKey { key_material })| {
-                                    DataKey::from_key_material(key, iv.into_inner(), &key_material)
-                                },
-                            )
-                            .collect())
-                    })
+            access_token,
+            |keys| RetrieveKeyRequest {
+                keys: keys.into(),
+                keyset_id: keyset_id.map(Into::into),
+                client_id: key.key_id,
+                unverified_context: unverified_context.cloned().unwrap_or_default(),
             },
-            self.max_keys_per_req,
-            self.max_concurrent_reqs,
+            |res| res.keys,
+            |RetrieveKeySpec { iv, .. }, RetrievedKey { key_material }| {
+                DataKey::from_key_material(key, iv.into_inner(), &key_material)
+            },
+            |expected, received| RetrieveKeyError::InvalidNumberOfKeys { expected, received },
         )
-        .await;
-
-        match &result {
-            Err(x) => {
-                trace!(target: "stack_kms::retrieve_keys", "failed with error: {x}");
-            }
-            Ok(x) => {
-                trace!(target: "stack_kms::retrieve_keys", "successfully retrieved {} keys", x.len());
-            }
-        }
-
-        result
+        .await
     }
 
     /// Retrieve multiple data keys, returning a per-key result so partial failures
@@ -214,74 +239,37 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         access_token: &str,
         unverified_context: Option<Cow<'a, UnverifiedContext>>,
     ) -> Result<FallibleDataKeyVec, RetrieveKeyError> {
-        trace!(target: "stack_kms::retrieve_keys", "preparing payloads");
+        trace!(target: "stack_kms::retrieve_keys_fallible", "preparing payloads");
 
         let keys = keys
             .into_iter()
             .map(RetrieveKeySpec::from)
             .collect::<Vec<_>>();
 
-        tracing::trace!(target: "stack_kms::retrieve_keys", max_keys_per_req = self.max_keys_per_req, max_parallel_reqs = self.max_concurrent_reqs);
+        tracing::trace!(target: "stack_kms::retrieve_keys_fallible", max_keys_per_req = self.max_keys_per_req, max_parallel_reqs = self.max_concurrent_reqs);
 
-        // map_async_chunked will split the retrieve key requests up into chunks and send them to
-        // ZeroKMS concurrently. The number of concurrent requests and size of the chunks are passed
-        // through from ClientOpts.
-        let result = map_async_chunked(
+        self.send_chunked(
+            "stack_kms::retrieve_keys_fallible",
             &keys,
-            |keys| async {
-                let req = RetrieveKeyRequestFallible {
-                    keys: keys.into(),
-                    keyset_id: keyset_id.map(Into::into),
-                    client_id: client_key.key_id,
-                    unverified_context: unverified_context.clone().unwrap_or_default(),
-                };
-
-                trace!(target: "stack_kms::retrieve_keys", "sending request with {} keys", keys.len());
-
-                self.connection
-                    .send(req, access_token)
-                    .await
-                    .map_err(RetrieveKeyError::RequestFailed)
-                    .and_then(|res| {
-                        // This should never happen with ZeroKMS but check just to be sure.
-                        if res.keys.len() != keys.len() {
-                            return Err(RetrieveKeyError::InvalidNumberOfKeys {
-                                expected: keys.len(),
-                                received: res.keys.len(),
-                            });
-                        }
-
-                        trace!(target: "stack_kms::retrieve_keys", "retrieved keys - creating data keys");
-
-                        Ok(keys
-                            .iter()
-                            .zip(res.keys)
-                            .map(|(RetrieveKeySpec { iv, .. }, result)| {
-                                result
-                                    .map(|key| {
-                                        // If the key retrieval was successful, we create a DataKey from the key material
-                                        DataKey::from_key_material(client_key, iv.into_inner(), &key.key_material)
-                                    })
-                                    .map_err(RetrieveKeyError::FailedRetrieval)
-                            })
-                            .collect())
-                    })
+            access_token,
+            |keys| RetrieveKeyRequestFallible {
+                keys: keys.into(),
+                keyset_id: keyset_id.map(Into::into),
+                client_id: client_key.key_id,
+                unverified_context: unverified_context.clone().unwrap_or_default(),
             },
-            self.max_keys_per_req,
-            self.max_concurrent_reqs,
+            |res| res.keys,
+            |RetrieveKeySpec { iv, .. }, result| {
+                result
+                    .map(|key| {
+                        // If the key retrieval was successful, we create a DataKey from the key material
+                        DataKey::from_key_material(client_key, iv.into_inner(), &key.key_material)
+                    })
+                    .map_err(RetrieveKeyError::FailedRetrieval)
+            },
+            |expected, received| RetrieveKeyError::InvalidNumberOfKeys { expected, received },
         )
-        .await;
-
-        match &result {
-            Err(x) => {
-                trace!(target: "stack_kms::retrieve_keys", "failed with error: {x}");
-            }
-            Ok(x) => {
-                trace!(target: "stack_kms::retrieve_keys", "successfully retrieved {} keys", x.len());
-            }
-        }
-
-        result
+        .await
     }
 
     /// Generate multiple data keys for an iterator of [`GenerateKeyPayload`].
@@ -321,65 +309,34 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         trace!(target: "stack_kms::generate_keys", "generated {} key payloads", keys.len());
         tracing::trace!(target: "stack_kms::generate_keys", max_keys_per_req = self.max_keys_per_req, max_parallel_reqs = self.max_concurrent_reqs);
 
-        // map_async_chunked will split the generate key requests up into chunks and send them to
-        // ZeroKMS concurrently. The number of concurrent requests and size of the chunks are passed
-        // through from ClientOpts.
-        let result = map_async_chunked(
+        self.send_chunked(
+            "stack_kms::generate_keys",
             &keys,
-            |keys| async {
-                let req = GenerateKeyRequest {
-                    keys: keys.into(),
-                    keyset_id: keyset_id.map(Into::into),
-                    client_id: client_key.key_id,
-                    unverified_context: unverified_context.clone().unwrap_or_default(),
-                };
-
-                trace!(target: "stack_kms::generate_keys", "sending request with {} keys", keys.len());
-
-                self.connection
-                    .send(req, access_token)
-                    .await
-                    .map_err(GenerateKeyError::from)
-                    .and_then(|res| {
-                        // This should never happen with ZeroKMS but check just to be sure.
-                        if res.keys.len() != keys.len() {
-                            return Err(GenerateKeyError::InvalidNumberOfKeys {
-                                expected: keys.len(),
-                                received: res.keys.len(),
-                            });
-                        }
-
-                        trace!(target: "stack_kms::generate_keys", "generated {} keys", keys.len());
-
-                        Ok(keys
-                            .iter()
-                            .zip(res.keys)
-                            .map(
-                                |(
-                                    GenerateKeySpec { iv, .. },
-                                    GeneratedKey { key_material, tag, decryption_policy },
-                                )| {
-                                    DataKeyWithTag::from_key_material(client_key, iv.into_inner(), &key_material, tag, decryption_policy)
-                                },
-                            )
-                            .collect())
-                    })
+            access_token,
+            |keys| GenerateKeyRequest {
+                keys: keys.into(),
+                keyset_id: keyset_id.map(Into::into),
+                client_id: client_key.key_id,
+                unverified_context: unverified_context.clone().unwrap_or_default(),
             },
-            self.max_keys_per_req,
-            self.max_concurrent_reqs,
+            |res| res.keys,
+            |GenerateKeySpec { iv, .. },
+             GeneratedKey {
+                 key_material,
+                 tag,
+                 decryption_policy,
+             }| {
+                DataKeyWithTag::from_key_material(
+                    client_key,
+                    iv.into_inner(),
+                    &key_material,
+                    tag,
+                    decryption_policy,
+                )
+            },
+            |expected, received| GenerateKeyError::InvalidNumberOfKeys { expected, received },
         )
-        .await;
-
-        match &result {
-            Err(x) => {
-                trace!(target: "stack_kms::generate_keys", "failed with error: {x}");
-            }
-            Ok(x) => {
-                trace!(target: "stack_kms::generate_keys", "successfully generated {} keys", x.len());
-            }
-        }
-
-        result
+        .await
     }
 }
 

@@ -45,7 +45,9 @@ mod tests {
         let output = map_async_chunked(
             &input,
             |x| async {
-                tokio::time::sleep(Duration::from_millis(input[0])).await;
+                // Sleep for the chunk's own (descending) value so that a
+                // regression to unordered buffering would reorder the output.
+                tokio::time::sleep(Duration::from_millis(x[0])).await;
                 Result::<_, ()>::Ok(x.to_vec())
             },
             2,
