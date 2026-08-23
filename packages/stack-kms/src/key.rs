@@ -155,13 +155,14 @@ impl IndexKey {
         let rect = Zeroizing::new(cipher.reencrypt::<16>(&iv, key_material));
 
         let mut hasher = blake3::Hasher::new();
-        // Fixed info string
-        hasher.update(b"ZEROKMS-INDEXKEY");
-        hasher.update(rect.as_slice());
-
         let key: Key = {
             let mut key = Key::default();
-            hasher.finalize_xof().fill(&mut key);
+            hasher
+                // Fixed info string
+                .update(b"ZEROKMS-INDEXKEY")
+                .update(rect.as_slice())
+                .finalize_xof()
+                .fill(&mut key);
             key
         };
 

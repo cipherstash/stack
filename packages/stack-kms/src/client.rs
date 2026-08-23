@@ -480,7 +480,7 @@ where
             .load_keyset(&self.client_key, keyset_id, token.as_str())
             .await?;
 
-        debug!(target: "stack_kms::load_keyset", "loaded keyset: [{}]({})", keyset.id, keyset.name);
+        tracing::debug!(target: "stack_kms::load_keyset", "loaded keyset: [{}]({})", keyset.id, keyset.name);
 
         Ok((keyset, index_key))
     }
