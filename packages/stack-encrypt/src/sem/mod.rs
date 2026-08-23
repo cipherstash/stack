@@ -1,7 +1,7 @@
 //! Searchable Encrypted Metadata (SEM) term generation.
 //!
 //! [`TermGenerator`] produces the index terms stored alongside a
-//! [`ZeroKmsCipherText`](crate::ZeroKmsCipherText) so encrypted values can be
+//! [`StackCipherText`](crate::StackCipherText) so encrypted values can be
 //! queried without decryption:
 //!
 //! * **Equality terms** ([`TermGenerator::equality_term`]) — a PRF of the whole

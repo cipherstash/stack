@@ -33,7 +33,6 @@ vitaminc-hmac = { git = "https://github.com/cipherstash/vitaminc", rev = "06fc3e
 vitaminc-prf = { git = "https://github.com/cipherstash/vitaminc", rev = "06fc3eaf8e39eab4aa9c6107c0ff2fc2952bebc3" }
 vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "06fc3eaf8e39eab4aa9c6107c0ff2fc2952bebc3" }
 serde = { workspace = true }
-zeroize = { workspace = true }
 
 cllw-ore = { workspace = true }
 thiserror = { workspace = true }
