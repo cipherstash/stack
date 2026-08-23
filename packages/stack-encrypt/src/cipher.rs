@@ -7,19 +7,22 @@
 //! sealed under its own ZeroKMS data key.
 //!
 //! Because data-key generation/retrieval is an async ZeroKMS round-trip, the
-//! crypto cannot happen inside the synchronous [`Cipher`]/[`Decipher`] trait
-//! methods. Instead:
+//! key fetch cannot happen inside the synchronous [`Cipher`]/[`Decipher`] trait
+//! methods. It is front-loaded on both sides, and the AES work stays inside the
+//! trait drive:
 //!
 //! * **Encrypt** — driving the [`Cipher`] trait builds a *pending* tree
 //!   ([`PendingCipherText`]) that holds plaintext but does no I/O. A single
 //!   [`PendingCipherText::seal`] (or the [`ZeroKmsCipher::encrypt`] convenience)
 //!   then batches **one** `generate_keys` call for the whole tree and seals
 //!   every leaf.
-//! * **Decrypt** — [`ZeroKmsCipher::decrypt`] batches **one** `retrieve_keys`
-//!   call, decrypts every leaf, then drives the value's [`Decrypt`] impl through
-//!   a synchronous in-memory [`Decipher`] over the recovered plaintext — so the
-//!   visitor pattern (and arbitrary nested `Vec`/`HashMap`/`Option`/`Protected`
-//!   values) works exactly as it does for `Aes256Cipher`.
+//! * **Decrypt** — [`ZeroKmsCipher::decipher`] batches **one** `retrieve_keys`
+//!   call and zips each key onto its leaf, returning a [`ZeroKmsDecipher`]. The
+//!   value's [`Decrypt`] impl then drives that decipher exactly as it would
+//!   `AesDecipher`: each leaf is opened under the AAD the drive supplies, so
+//!   the visitor pattern (arbitrary nested `Vec`/`HashMap`/`Option`/`Protected`
+//!   values, and AAD-deriving wrappers such as `vitaminc_aead::Element`) works
+//!   identically to `Aes256Cipher`.
 //!
 //! ## AAD derivation
 //!
@@ -33,9 +36,9 @@
 //!   sequences/maps under [`Aad::for_empty_sequence`]/[`Aad::for_empty_map`] —
 //!   each sealing an *empty* plaintext, verified as empty on open.
 //!
-//! Because leaf decryption happens *before* the structural decode (in
-//! [`decrypt_tree`], while the [`Decipher`] drive is crypto-free), the decrypt
-//! side re-derives the same per-node AADs by walking the ciphertext tree.
+//! The decrypt side performs the same derivations inside [`ZeroKmsDecipher`]'s
+//! `decrypt_seq`/`decrypt_map`/`decrypt_option` as the caller's `Decrypt` impl
+//! drives it, so there is a single source of truth for the per-node AAD.
 //!
 //! ## Wire format
 //!
@@ -145,15 +148,30 @@ impl<K: DataKeySource> ZeroKmsCipher<K> {
     }
 
     /// Decrypt a [`ZeroKmsCipherText`] into `T`, authenticating against `aad`.
-    /// Retrieves every leaf's data key in a single batched `retrieve_keys` call,
-    /// then drives `T`'s [`Decrypt`] impl over the recovered plaintext.
+    ///
+    /// Thin wrapper over [`decipher`](Self::decipher): one batched
+    /// `retrieve_keys` call, then `T`'s [`Decrypt`] impl drives the returned
+    /// [`ZeroKmsDecipher`] with `aad` — exactly as `Aes256Cipher::decrypt_with_aad`
+    /// drives `AesDecipher`.
     pub async fn decrypt<'a, T, A>(&self, ciphertext: ZeroKmsCipherText, aad: A) -> Result<T, Error>
     where
         T: Decrypt<'static> + 'static,
         A: IntoAad<'a>,
     {
-        let aad = aad.into_aad().into_owned();
+        let decipher = self.decipher(ciphertext).await?;
+        T::decrypt_with_aad(decipher, aad).map_err(Error::from)
+    }
 
+    /// Fetch every leaf's data key (one batched `retrieve_keys` call) and bind
+    /// them onto the ciphertext, returning a synchronous [`Decipher`] that does
+    /// the AEAD opening as the value's [`Decrypt`] impl drives it.
+    ///
+    /// This is the decrypt-side counterpart to passing `&cipher` (a [`Cipher`])
+    /// on the encrypt side, mirroring `Aes256Cipher::decipher`: the ZeroKMS I/O
+    /// is front-loaded here, and the AAD is supplied per call by
+    /// [`Decrypt::decrypt_with_aad`], so `Decrypt` impls that derive their own
+    /// AAD (e.g. `vitaminc_aead::Element`) behave identically to `AesDecipher`.
+    pub async fn decipher(&self, ciphertext: ZeroKmsCipherText) -> Result<ZeroKmsDecipher, Error> {
         // Collect every leaf's retrieve payload (borrowing the ciphertext), make
         // one batched call, then drop the borrow before consuming the tree.
         let keys = {
@@ -162,23 +180,29 @@ impl<K: DataKeySource> ZeroKmsCipher<K> {
             if payloads.is_empty() {
                 Vec::new()
             } else {
-                self.kms
+                let expected = payloads.len();
+                let keys = self
+                    .kms
                     .retrieve_keys(payloads, self.keyset_id, None)
-                    .await?
+                    .await?;
+                if keys.len() != expected {
+                    return Err(Error::KeyCountMismatch {
+                        expected,
+                        received: keys.len(),
+                    });
+                }
+                keys
             }
         };
 
         let mut keys = keys.into_iter();
-        let plaintext = decrypt_tree(ciphertext, &mut keys, &aad)?;
+        let ciphertext = bind_keys(ciphertext, &mut keys)?;
         // Every key must have been consumed; leftovers mean the tree shape and
         // the payload collection disagreed.
         if keys.next().is_some() {
             return Err(Error::Aead);
         }
-
-        // The plaintext is fully recovered; the structural decode is synchronous
-        // and ignores AAD (already authenticated above).
-        T::decrypt_with_aad(PlaintextDecipher { tree: plaintext }, ()).map_err(Error::from)
+        Ok(ZeroKmsDecipher { ciphertext })
     }
 }
 
@@ -196,7 +220,7 @@ pub struct DataKeyCipherText {
 }
 
 /// Walk the tree in depth-first order, pushing one retrieve payload per keyed
-/// leaf (markers included). Must match [`decrypt_tree`]'s traversal so payloads
+/// leaf (markers included). Must match [`bind_keys`]'s traversal so payloads
 /// and returned keys line up.
 fn collect_retrieve_payloads<'b>(
     ciphertext: &'b ZeroKmsCipherText,
@@ -221,6 +245,56 @@ fn collect_retrieve_payloads<'b>(
             }
         }
         CipherText::Passthrough(_) => {}
+    }
+}
+
+/// A leaf with its retrieved data key bound alongside. Produced by
+/// [`bind_keys`] once the batched `retrieve_keys` call has returned; consumed by
+/// [`ZeroKmsDecipher`], which opens it under whatever AAD the driving
+/// [`Decrypt`] impl supplies.
+struct KeyedLeaf {
+    leaf: DataKeyCipherText,
+    key: DataKey,
+}
+
+/// [`ZeroKmsCipherText`] with a [`DataKey`] zipped onto every keyed leaf.
+type KeyedCipherText = CipherText<KeyedLeaf, BoxedPassthrough>;
+
+/// Zip retrieved keys onto the tree in the same depth-first order
+/// [`collect_retrieve_payloads`] requested them, so each leaf carries its own
+/// key and the subsequent [`Decipher`] drive is free of ordering assumptions.
+fn bind_keys(
+    ciphertext: ZeroKmsCipherText,
+    keys: &mut impl Iterator<Item = DataKey>,
+) -> Result<KeyedCipherText, Unspecified> {
+    fn bind(
+        leaf: DataKeyCipherText,
+        keys: &mut impl Iterator<Item = DataKey>,
+    ) -> Result<KeyedLeaf, Unspecified> {
+        let key = keys.next().ok_or(Unspecified)?;
+        Ok(KeyedLeaf { leaf, key })
+    }
+
+    match ciphertext {
+        CipherText::Single(leaf) => Ok(CipherText::Single(bind(leaf, keys)?)),
+        CipherText::None(leaf) => Ok(CipherText::None(bind(leaf, keys)?)),
+        CipherText::EmptySequence(leaf) => Ok(CipherText::EmptySequence(bind(leaf, keys)?)),
+        CipherText::EmptyMap(leaf) => Ok(CipherText::EmptyMap(bind(leaf, keys)?)),
+        CipherText::Sequence(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                out.push(bind_keys(item, keys)?);
+            }
+            Ok(CipherText::Sequence(out))
+        }
+        CipherText::Map(entries) => {
+            let mut out = Vec::with_capacity(entries.len());
+            for (k, v) in entries {
+                out.push((k, bind_keys(v, keys)?));
+            }
+            Ok(CipherText::Map(out))
+        }
+        CipherText::Passthrough(value) => Ok(CipherText::Passthrough(value)),
     }
 }
 
@@ -386,12 +460,9 @@ fn seal_leaf(
     })
 }
 
-/// Open one leaf with its retrieved data key, returning the plaintext bytes.
-fn open_leaf(
-    leaf: DataKeyCipherText,
-    key: &DataKey,
-    aad: &Aad<'_>,
-) -> Result<Protected<Vec<u8>>, Unspecified> {
+/// Open one keyed leaf under `aad`, returning the plaintext bytes.
+fn open_leaf(keyed: KeyedLeaf, aad: &Aad<'_>) -> Result<Protected<Vec<u8>>, Unspecified> {
+    let KeyedLeaf { leaf, key } = keyed;
     let aead = Aes256GcmSiv::new_from_slice(key.key()).map_err(|_| Unspecified)?;
     let nonce = GcmNonce::from_slice(&leaf.iv[..NONCE_LEN]);
     let aad = leaf_aad(aad, &leaf.tag);
@@ -405,97 +476,12 @@ fn open_leaf(
 /// Open one marker leaf (absent / empty-sequence / empty-map) and require the
 /// sealed plaintext to be empty. Without the emptiness check, a `Single` leaf
 /// could be re-tagged as a marker of the same AAD derivation.
-fn verify_empty_marker(
-    leaf: DataKeyCipherText,
-    key: &DataKey,
-    aad: &Aad<'_>,
-) -> Result<(), Unspecified> {
-    let plaintext = open_leaf(leaf, key, aad)?;
+fn verify_empty_marker(keyed: KeyedLeaf, aad: &Aad<'_>) -> Result<(), Unspecified> {
+    let plaintext = open_leaf(keyed, aad)?;
     if plaintext.risky_ref().is_empty() {
         Ok(())
     } else {
         Err(Unspecified)
-    }
-}
-
-/// Recursively open every leaf into a plaintext tree, drawing one key per leaf
-/// from `keys` in the same order [`collect_retrieve_payloads`] produced them.
-///
-/// This is where the decrypt side re-derives the per-node AADs (the structural
-/// [`Decipher`] drive that follows is crypto-free): sequence elements verify
-/// under [`Aad::for_sequence_element`], map values under [`Aad::for_map_entry`]
-/// of their key, and markers under their respective derivations with an
-/// enforced-empty plaintext. Verified empty markers collapse to empty
-/// `Sequence`/`Map` nodes so the structural decode sees ordinary containers.
-fn decrypt_tree(
-    ciphertext: ZeroKmsCipherText,
-    keys: &mut impl Iterator<Item = DataKey>,
-    aad: &Aad<'_>,
-) -> Result<PlaintextTree, Unspecified> {
-    match ciphertext {
-        CipherText::Single(leaf) => {
-            let key = keys.next().ok_or(Unspecified)?;
-            Ok(PlaintextTree::Single(open_leaf(leaf, &key, aad)?))
-        }
-        CipherText::None(leaf) => {
-            let key = keys.next().ok_or(Unspecified)?;
-            verify_empty_marker(leaf, &key, &aad.for_none())?;
-            Ok(PlaintextTree::None)
-        }
-        CipherText::EmptySequence(leaf) => {
-            let key = keys.next().ok_or(Unspecified)?;
-            verify_empty_marker(leaf, &key, &aad.for_empty_sequence())?;
-            Ok(PlaintextTree::Sequence(Vec::new()))
-        }
-        CipherText::EmptyMap(leaf) => {
-            let key = keys.next().ok_or(Unspecified)?;
-            verify_empty_marker(leaf, &key, &aad.for_empty_map())?;
-            Ok(PlaintextTree::Map(Vec::new()))
-        }
-        CipherText::Sequence(items) => {
-            // At least one non-passthrough item required: passthrough items
-            // authenticate nothing, so an all-passthrough (or entry-less)
-            // sequence would verify under any AAD. The encrypt side refuses to
-            // produce one; refuse to open one. Emptiness is only provable by
-            // the authenticated `EmptySequence` marker.
-            if !items
-                .iter()
-                .any(|i| !matches!(i, CipherText::Passthrough(_)))
-            {
-                return Err(Unspecified);
-            }
-            let element_aad = aad.for_sequence_element();
-            let mut out = Vec::with_capacity(items.len());
-            for item in items {
-                out.push(decrypt_tree(item, keys, &element_aad)?);
-            }
-            Ok(PlaintextTree::Sequence(out))
-        }
-        CipherText::Map(entries) => {
-            // Same all-passthrough/entry-less rejection as `Sequence`.
-            if !entries
-                .iter()
-                .any(|(_, v)| !matches!(v, CipherText::Passthrough(_)))
-            {
-                return Err(Unspecified);
-            }
-            // Reject duplicate keys before opening anything: two ciphertexts of
-            // the same logical record seal a given key's value against the
-            // identical `for_map_entry` AAD, so a stale entry appended to a
-            // current ciphertext *verifies* — with a last-wins decoder that is
-            // a single-field rollback.
-            let mut seen = HashSet::with_capacity(entries.len());
-            if !entries.iter().all(|(key, _)| seen.insert(key.clone())) {
-                return Err(Unspecified);
-            }
-            let mut out = Vec::with_capacity(entries.len());
-            for (k, v) in entries {
-                let entry_aad = aad.for_map_entry(&k);
-                out.push((k, decrypt_tree(v, keys, &entry_aad)?));
-            }
-            Ok(PlaintextTree::Map(out))
-        }
-        CipherText::Passthrough(value) => Ok(PlaintextTree::Passthrough(value)),
     }
 }
 
@@ -725,30 +711,45 @@ impl<'c, K> MapCipher for PendingMapCipher<'c, K> {
     }
 }
 
-// =============================================================================
-// Decrypt side: a synchronous `Decipher` over already-recovered plaintext
+// Decrypt side: a synchronous `Decipher` over a key-bound ciphertext tree
 // =============================================================================
 
-/// Plaintext counterpart to [`ZeroKmsCipherText`], produced by [`decrypt_tree`]
-/// once every leaf has been opened (and every marker verified). Verified empty
-/// markers appear as empty `Sequence`/`Map` nodes.
-enum PlaintextTree {
-    Single(Protected<Vec<u8>>),
-    Sequence(Vec<PlaintextTree>),
-    Map(Vec<(String, PlaintextTree)>),
-    None,
-    Passthrough(BoxedPassthrough),
+/// A [`Decipher`] over a single [`ZeroKmsCipherText`] whose leaves already
+/// carry their retrieved data keys, produced by [`ZeroKmsCipher::decipher`].
+///
+/// Structurally identical to `vitaminc_encrypt::AesDecipher` — the only
+/// difference is where each leaf's key comes from. The AAD is supplied per call
+/// by [`Decrypt::decrypt_with_aad`] and refined here exactly as the encrypt side
+/// refined it: sequence elements under [`Aad::for_sequence_element`], map
+/// values under [`Aad::for_map_entry`] of their key, markers under their
+/// respective derivations with an enforced-empty plaintext. Because the
+/// derivation lives in this drive (not in a pre-pass), `Decrypt` impls that
+/// transform the AAD themselves (e.g. `vitaminc_aead::Element`) work unchanged.
+pub struct ZeroKmsDecipher {
+    ciphertext: KeyedCipherText,
 }
 
-/// A synchronous [`Decipher`] over a fully-decrypted [`PlaintextTree`]. It does
-/// no crypto — decryption (including AAD verification) already happened in
-/// [`decrypt_tree`] — so it drives the [`DecipherVisitor`] pattern purely
-/// structurally and ignores AAD.
-struct PlaintextDecipher {
-    tree: PlaintextTree,
+impl ZeroKmsDecipher {
+    fn over(ciphertext: KeyedCipherText) -> Self {
+        Self { ciphertext }
+    }
+
+    /// Typed convenience over [`Decipher::decrypt_passthrough`] for this
+    /// cipher's [`BoxedPassthrough`] payload type: recovers the payload and
+    /// downcasts it to `T`, returning [`Unspecified`] if the ciphertext is not
+    /// a passthrough or the stored type does not match.
+    pub fn decrypt_passthrough_as<T>(self) -> Result<T, Unspecified>
+    where
+        T: Any + Send + 'static,
+    {
+        self.decrypt_passthrough()?
+            .downcast::<T>()
+            .map(|b| *b)
+            .map_err(|_| Unspecified)
+    }
 }
 
-impl<'c> Decipher<'c> for PlaintextDecipher {
+impl<'c> Decipher<'c> for ZeroKmsDecipher {
     type Ok<T>
         = Result<T, Unspecified>
     where
@@ -765,39 +766,91 @@ impl<'c> Decipher<'c> for PlaintextDecipher {
         ok.map(f)
     }
 
-    fn decrypt_bytes<'a, V, A>(self, visitor: V, _aad: A) -> Self::Ok<V::Value>
+    fn decrypt_bytes<'a, V, A>(self, visitor: V, aad: A) -> Self::Ok<V::Value>
     where
         V: DecipherVisitor<'c> + Send + 'c,
         A: IntoAad<'a>,
     {
-        match self.tree {
-            PlaintextTree::Single(bytes) => visitor.visit_bytes_vec(bytes),
+        match self.ciphertext {
+            CipherText::Single(keyed) => {
+                let bytes = open_leaf(keyed, &aad.into_aad())?;
+                visitor.visit_bytes_vec(bytes)
+            }
             _ => Err(Unspecified),
         }
     }
 
-    fn decrypt_seq<'a, V, A>(self, visitor: V, _aad: A) -> Self::Ok<V::Value>
+    fn decrypt_seq<'a, V, A>(self, visitor: V, aad: A) -> Self::Ok<V::Value>
     where
         V: DecipherVisitor<'c> + Send + 'c,
         A: IntoAad<'a>,
     {
-        match self.tree {
-            PlaintextTree::Sequence(items) => visitor.visit_seq(PlaintextSeqAccess {
-                items: items.into_iter(),
-            }),
+        match self.ciphertext {
+            // At least one non-passthrough item required: passthrough items
+            // authenticate nothing, so an all-passthrough (or entry-less)
+            // sequence would verify under any AAD. The encrypt side refuses to
+            // produce one; refuse to open one. Emptiness is only provable by
+            // the authenticated `EmptySequence` marker.
+            CipherText::Sequence(items)
+                if items
+                    .iter()
+                    .any(|i| !matches!(i, CipherText::Passthrough(_))) =>
+            {
+                visitor.visit_seq(ZeroKmsSeqAccess {
+                    items: items.into_iter(),
+                    element_aad: aad.into_aad().for_sequence_element(),
+                })
+            }
+            CipherText::EmptySequence(keyed) => {
+                let aad = aad.into_aad();
+                verify_empty_marker(keyed, &aad.for_empty_sequence())?;
+                // Store the element derivation exactly as the non-empty arm
+                // does: never read (the iterator is empty), but a divergent
+                // value here would silently break a visitor that consulted it.
+                visitor.visit_seq(ZeroKmsSeqAccess {
+                    items: Vec::new().into_iter(),
+                    element_aad: aad.for_sequence_element(),
+                })
+            }
             _ => Err(Unspecified),
         }
     }
 
-    fn decrypt_map<'a, V, A>(self, visitor: V, _aad: A) -> Self::Ok<V::Value>
+    fn decrypt_map<'a, V, A>(self, visitor: V, aad: A) -> Self::Ok<V::Value>
     where
         V: DecipherVisitor<'c> + Send + 'c,
         A: IntoAad<'a>,
     {
-        match self.tree {
-            PlaintextTree::Map(entries) => visitor.visit_map(PlaintextMapAccess {
-                entries: entries.into_iter(),
-            }),
+        match self.ciphertext {
+            // At least one non-passthrough entry required — see `decrypt_seq`.
+            CipherText::Map(entries)
+                if entries
+                    .iter()
+                    .any(|(_, v)| !matches!(v, CipherText::Passthrough(_))) =>
+            {
+                // Reject duplicate keys before the visitor sees any entry: two
+                // ciphertexts of the same logical record seal a given key's
+                // value against the identical `for_map_entry` AAD, so a stale
+                // entry appended to a current ciphertext *verifies* — with a
+                // last-wins visitor that is a single-field rollback.
+                let mut seen = HashSet::with_capacity(entries.len());
+                if !entries.iter().all(|(key, _)| seen.insert(key.as_str())) {
+                    return Err(Unspecified);
+                }
+                visitor.visit_map(ZeroKmsMapAccess {
+                    entries: entries.into_iter(),
+                    aad: aad.into_aad(),
+                })
+            }
+            CipherText::EmptyMap(keyed) => {
+                let aad = aad.into_aad();
+                verify_empty_marker(keyed, &aad.for_empty_map())?;
+                // Raw caller AAD, not the marker derivation — see `decrypt_seq`.
+                visitor.visit_map(ZeroKmsMapAccess {
+                    entries: Vec::new().into_iter(),
+                    aad,
+                })
+            }
             _ => Err(Unspecified),
         }
     }
@@ -807,70 +860,99 @@ impl<'c> Decipher<'c> for PlaintextDecipher {
         V: DecipherVisitor<'c> + Send + 'c,
         A: IntoAad<'a>,
     {
-        match self.tree {
-            tree @ PlaintextTree::Single(_) => {
-                PlaintextDecipher { tree }.decrypt_bytes(visitor, aad)
+        match self.ciphertext {
+            ct @ CipherText::Single(_) => Self::over(ct).decrypt_bytes(visitor, aad),
+            ct @ (CipherText::Sequence(_) | CipherText::EmptySequence(_)) => {
+                Self::over(ct).decrypt_seq(visitor, aad)
             }
-            tree @ PlaintextTree::Sequence(_) => {
-                PlaintextDecipher { tree }.decrypt_seq(visitor, aad)
+            ct @ (CipherText::Map(_) | CipherText::EmptyMap(_)) => {
+                Self::over(ct).decrypt_map(visitor, aad)
             }
-            tree @ PlaintextTree::Map(_) => PlaintextDecipher { tree }.decrypt_map(visitor, aad),
-            // The marker's AAD binding was verified in `decrypt_tree`.
-            PlaintextTree::None => visitor.visit_none(),
-            PlaintextTree::Passthrough(boxed) => visitor.visit_passthrough(boxed),
+            CipherText::None(keyed) => {
+                // Verify the domain-separated marker (tag AND empty plaintext)
+                // before reporting absence — an unauthenticated `visit_none`
+                // would let an attacker forge "absent" values, and a bare-AAD
+                // check would let a `Single` leaf be re-tagged as one. Mirrors
+                // `decrypt_option`.
+                verify_empty_marker(keyed, &aad.into_aad().for_none())?;
+                visitor.visit_none()
+            }
+            // A self-describing visitor recovers a passthrough via
+            // `visit_passthrough` (type-erased); visitors that do not override
+            // it inherit the default rejection.
+            CipherText::Passthrough(boxed) => visitor.visit_passthrough(boxed),
         }
     }
 
     fn decrypt_passthrough(self) -> Self::Ok<Self::Passthrough> {
-        match self.tree {
-            PlaintextTree::Passthrough(boxed) => Ok(boxed),
+        match self.ciphertext {
+            CipherText::Passthrough(boxed) => Ok(boxed),
             _ => Err(Unspecified),
         }
     }
 
-    fn decrypt_option<'a, T, A>(self, _aad: A) -> Self::Ok<Option<T>>
+    fn decrypt_option<'a, T, A>(self, aad: A) -> Self::Ok<Option<T>>
     where
         T: Decrypt<'c> + 'c,
         A: IntoAad<'a>,
     {
-        match self.tree {
-            // The `for_none` marker (tag and enforced-empty plaintext) was
-            // verified in `decrypt_tree`.
-            PlaintextTree::None => Ok(None),
+        match self.ciphertext {
+            CipherText::None(keyed) => {
+                // Verify the tag over the domain-separated marker AAD AND that
+                // the sealed plaintext is actually empty. Without both, a
+                // `Single(leaf)` sealed under the same caller AAD could be
+                // re-tagged as `None(leaf)` and decrypt as Ok(None) — silent
+                // authenticated data deletion.
+                verify_empty_marker(keyed, &aad.into_aad().for_none())?;
+                Ok(None)
+            }
             // Passthrough must never be decoded as an Option payload.
-            PlaintextTree::Passthrough(_) => Err(Unspecified),
-            // Any other shape is the `Some` payload — recurse into `T`.
-            other => T::decrypt_with_aad(PlaintextDecipher { tree: other }, ()).map(Some),
+            CipherText::Passthrough(_) => Err(Unspecified),
+            // Any other variant is the `Some` payload: recurse into `T` with
+            // the caller's AAD unchanged (there is no depth tag; the shape of
+            // nested options is decided by `T` at the call site, as in
+            // `AesDecipher`).
+            other => T::decrypt_with_aad(Self::over(other), aad).map(Some),
         }
     }
 }
 
-struct PlaintextSeqAccess {
-    items: std::vec::IntoIter<PlaintextTree>,
+struct ZeroKmsSeqAccess {
+    items: std::vec::IntoIter<KeyedCipherText>,
+    /// [`Aad::for_sequence_element`] of the caller's AAD, derived once at
+    /// construction and re-supplied per element by borrowing. Mirrors
+    /// `PendingSeqCipher::element_aad` on the encrypt side.
+    element_aad: Aad<'static>,
 }
 
-impl<'c> SeqAccess<'c> for PlaintextSeqAccess {
+impl<'c> SeqAccess<'c> for ZeroKmsSeqAccess {
     type Error = Unspecified;
 
     fn next_element<T: Decrypt<'c> + 'c>(&mut self) -> Result<Option<T>, Self::Error> {
         match self.items.next() {
-            Some(tree) => T::decrypt_with_aad(PlaintextDecipher { tree }, ()).map(Some),
+            Some(ct) => T::decrypt_with_aad(ZeroKmsDecipher::over(ct), self.element_aad.as_bytes())
+                .map(Some),
             None => Ok(None),
         }
     }
 }
 
-struct PlaintextMapAccess {
-    entries: std::vec::IntoIter<(String, PlaintextTree)>,
+struct ZeroKmsMapAccess<'a> {
+    entries: std::vec::IntoIter<(String, KeyedCipherText)>,
+    aad: Aad<'a>,
 }
 
-impl<'c> MapAccess<'c> for PlaintextMapAccess {
+impl<'c, 'a> MapAccess<'c> for ZeroKmsMapAccess<'a> {
     type Error = Unspecified;
 
     fn next_entry<T: Decrypt<'c> + 'c>(&mut self) -> Result<Option<(String, T)>, Self::Error> {
         match self.entries.next() {
-            Some((key, tree)) => {
-                let value = T::decrypt_with_aad(PlaintextDecipher { tree }, ())?;
+            Some((key, ct)) => {
+                // Mirror `PendingMapCipher::encrypt_value`: the value was sealed
+                // against `for_map_entry(key)`, so a swapped or renamed key
+                // fails here.
+                let entry_aad = self.aad.for_map_entry(&key);
+                let value = T::decrypt_with_aad(ZeroKmsDecipher::over(ct), entry_aad)?;
                 Ok(Some((key, value)))
             }
             None => Ok(None),

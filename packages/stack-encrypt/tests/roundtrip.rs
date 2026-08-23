@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use stack_encrypt::{CipherText, ContextTag, ZeroKmsCipher};
+use stack_encrypt::{Aad, CipherText, ContextTag, Element, IntoAad, ZeroKmsCipher};
 use stack_kms::FakeDataKeySource;
 use vitaminc_protected::{Controlled, Protected};
 
@@ -232,6 +232,100 @@ async fn sequence_element_cannot_be_rehomed_as_scalar() {
         result.is_err(),
         "re-homed sequence element must not decrypt"
     );
+}
+
+#[tokio::test]
+async fn element_roundtrips_under_bare_caller_aad() {
+    // `Element<T>` derives `for_sequence_element` inside its own Encrypt/Decrypt
+    // impls. Both sides must honour that derivation: the decipher opens the leaf
+    // under the AAD the Decrypt drive supplies, not a pre-derived one.
+    let cipher = cipher();
+    let ct = cipher
+        .encrypt(Element("row".to_string()), b"users".as_slice())
+        .await
+        .expect("encrypt");
+    let pt: Element<String> = cipher
+        .decrypt(ct, b"users".as_slice())
+        .await
+        .expect("Element must round-trip under the bare caller AAD");
+    assert_eq!(pt.into_inner(), "row");
+}
+
+#[tokio::test]
+async fn element_interchanges_with_vec_element() {
+    // A row sealed as one element of a `Vec` decrypts alone as `Element<T>`
+    // under the same caller AAD (Element's documented use-case), and a lone
+    // `Element` ciphertext decrypts as a one-element `Vec`.
+    let cipher = cipher();
+    let aad = b"users".as_slice();
+
+    let ct = cipher
+        .encrypt(vec!["a".to_string(), "b".to_string()], aad)
+        .await
+        .expect("encrypt");
+    let second = match ct {
+        CipherText::Sequence(mut items) => items.remove(1),
+        other => other,
+    };
+    let pt: Element<String> = cipher
+        .decrypt(second, aad)
+        .await
+        .expect("spliced element must decrypt as Element");
+    assert_eq!(pt.into_inner(), "b");
+
+    let lone = cipher
+        .encrypt(Element("c".to_string()), aad)
+        .await
+        .expect("encrypt");
+    let wrapped = CipherText::Sequence(vec![lone]);
+    let pt: Vec<String> = cipher
+        .decrypt(wrapped, aad)
+        .await
+        .expect("lone Element must decrypt as a one-element Vec");
+    assert_eq!(pt, vec!["c".to_string()]);
+}
+
+#[tokio::test]
+async fn element_fails_under_wrong_caller_aad() {
+    let cipher = cipher();
+    let ct = cipher
+        .encrypt(Element("row".to_string()), b"users".as_slice())
+        .await
+        .expect("encrypt");
+    let result: Result<Element<String>, _> = cipher.decrypt(ct, b"orders".as_slice()).await;
+    assert!(
+        result.is_err(),
+        "Element under the wrong caller AAD must not decrypt"
+    );
+}
+
+#[tokio::test]
+async fn decipher_can_be_driven_directly() {
+    // `ZeroKmsCipher::decipher` mirrors `Aes256Cipher::decipher`: the returned
+    // Decipher is driven via `Decrypt::decrypt_with_aad` with a caller-chosen
+    // AAD, so manual derivations work too.
+    let cipher = cipher();
+    let ct = cipher
+        .encrypt(Element("row".to_string()), b"users".as_slice())
+        .await
+        .expect("encrypt");
+    let decipher = cipher.decipher(ct).await.expect("retrieve keys");
+    let pt = <String as stack_encrypt::Decrypt>::decrypt_with_aad(
+        decipher,
+        Aad::from_slice(b"users").for_sequence_element(),
+    )
+    .expect("manual element derivation must open the leaf");
+    assert_eq!(pt, "row");
+
+    // And a plain scalar opens under the bare AAD through the same path.
+    let ct = cipher
+        .encrypt("scalar".to_string(), b"ctx".as_slice())
+        .await
+        .expect("encrypt");
+    let decipher = cipher.decipher(ct).await.expect("retrieve keys");
+    let pt = <String as stack_encrypt::Decrypt>::decrypt_with_aad(decipher, b"ctx".into_aad())
+        .expect("decrypt");
+    assert_eq!(pt, "scalar");
 }
 
 #[tokio::test]
