@@ -68,6 +68,7 @@ use vitaminc_aead::{
     MapCipher, SeqAccess, SeqCipher, Unspecified,
 };
 use vitaminc_protected::{Controlled, Protected};
+use zeroize::Zeroizing;
 
 /// AES-256-GCM-SIV nonce length in bytes (the leading bytes of the ZeroKMS IV).
 const NONCE_LEN: usize = 12;
@@ -448,15 +449,19 @@ fn seal_leaf(
     let nonce = GcmNonce::from_slice(&iv[..NONCE_LEN]);
     let aad = leaf_aad(aad, &key.tag);
 
-    // The plaintext bytes are overwritten in place by the ciphertext.
-    let mut buf = plaintext.risky_unwrap();
-    aead.encrypt_in_place(nonce, &aad, &mut buf)
+    // The plaintext bytes are overwritten in place by the ciphertext. Until
+    // that succeeds the buffer still holds plaintext, so keep it `Zeroizing`:
+    // `risky_unwrap` surrenders `Protected`'s wipe-on-drop, and the error path
+    // must not leave the plaintext behind on the heap.
+    let mut buf = Zeroizing::new(plaintext.risky_unwrap());
+    aead.encrypt_in_place(nonce, &aad, &mut *buf)
         .map_err(|_| Unspecified)?;
 
     Ok(DataKeyCipherText {
         iv,
         tag: key.tag,
-        ciphertext: buf,
+        // Now ciphertext; take it out and let the (empty) wrapper zeroize.
+        ciphertext: std::mem::take(&mut *buf),
     })
 }
 

@@ -26,11 +26,16 @@
 //! with `vitaminc_encrypt::Aes256Cipher`.
 //!
 //! The data keys are sourced through a [`stack_kms::DataKeySource`]
-//! (production: `stack_kms::StackKms`; tests: `stack_kms::FakeDataKeySource`).
+//! (production: `stack_kms::StackKms`; tests: `stack_kms::FakeDataKeySource`,
+//! available only with stack-kms's `test-support` feature — add
+//! `stack-kms = { version = "..", features = ["test-support"] }` to your
+//! `[dev-dependencies]`, as this crate does).
 //!
 //! ```no_run
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
 //! use stack_encrypt::ZeroKmsCipher;
+//! // Requires the `test-support` feature on `stack-kms` (see above); in
+//! // production construct a `stack_kms::StackKms` instead.
 //! use stack_kms::FakeDataKeySource;
 //!
 //! let cipher = ZeroKmsCipher::new(FakeDataKeySource::new());
