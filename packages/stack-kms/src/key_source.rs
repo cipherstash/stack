@@ -102,6 +102,7 @@ where
 #[cfg(feature = "test-support")]
 mod fake {
     use super::*;
+    use crate::errors::RetrieveKeyError;
     use crate::key::DataKey;
     use recipher::key::{Iv, Key};
     use sha2::{Digest, Sha256};
@@ -109,25 +110,33 @@ mod fake {
 
     /// A deterministic, in-process [`DataKeySource`] for tests.
     ///
-    /// `generate_keys` hands out a unique IV + tag per payload (driven by an
-    /// internal counter). The key material is derived from the IV and tag
-    /// **together with** the `keyset_id`, per-payload `descriptor`, `context`
-    /// and `decryption_policy` — the same inputs real ZeroKMS binds a data key
-    /// to. `retrieve_keys` re-derives the key from those same inputs, so a
-    /// generate-then-retrieve round-trip reproduces the key only when every one
-    /// of them matches (as with real ZeroKMS), without credentials or network.
+    /// Mirrors the *shape* of ZeroKMS's key/tag split so error behaviour matches
+    /// production, without credentials or network:
     ///
-    /// Policies are mirrored too: a payload's `decryption_policy` is returned
-    /// on the generated [`DataKeyWithTag`] (real ZeroKMS returns the resolved
-    /// policy for storage beside the ciphertext) and bound into the derivation
-    /// on both sides, so stripping or swapping the policy at retrieval yields
-    /// different material — the fake's analogue of ZeroKMS's tag mismatch. As
-    /// in the production client, a generate payload carrying a policy has its
-    /// `context` dropped (`GenerateKeySpec::new_with_policy` sends none).
+    /// * **Key material** is derived from the `keyset_id`, the IV and the
+    ///   `descriptor` only — as in ZeroKMS, where it is a function of the IV,
+    ///   descriptor and the keyset's authority key, never of the tag, context
+    ///   or policy.
+    /// * **The tag** binds the `keyset_id`, IV, descriptor and either the
+    ///   `decryption_policy` (policy-bearing "v1" keys, where context is
+    ///   ignored on both sides — `GenerateKeySpec::new_with_policy` sends none
+    ///   and `create_v1_tag` does not read it) or the `context` ("v0" keys).
+    /// * **`retrieve_keys` recomputes the expected tag** from the retrieve
+    ///   payload and rejects a mismatch with
+    ///   [`RetrieveKeyError::FailedRetrieval`](crate::errors::RetrieveKeyError::FailedRetrieval),
+    ///   as ZeroKMS rejects a failed tag proof — it never returns wrong key
+    ///   material. So a wrong IV, descriptor, keyset, context or policy
+    ///   surfaces as `Err`, not as an AEAD failure downstream.
     ///
-    /// The derivation is a plain SHA-256: deterministic and binding, but **not**
-    /// a stand-in for ZeroKMS's real key derivation. Use it for encrypt/decrypt
-    /// round-trip and wrong-context tests, not for cryptographic assertions.
+    /// `generate_keys` hands out a unique IV per payload (driven by an internal
+    /// counter) and returns the payload's `decryption_policy` on the
+    /// [`DataKeyWithTag`], as real ZeroKMS returns the resolved policy for
+    /// storage beside the ciphertext.
+    ///
+    /// The derivations are plain SHA-256: deterministic and binding, but **not**
+    /// a stand-in for ZeroKMS's real key derivation or HMAC tag. Use it for
+    /// encrypt/decrypt round-trip and wrong-context/policy tests, not for
+    /// cryptographic assertions.
     #[derive(Debug, Default)]
     pub struct FakeDataKeySource {
         counter: AtomicU64,
@@ -139,52 +148,72 @@ mod fake {
         }
     }
 
-    /// Everything a fake data key is bound to. Mirrors the inputs the production
-    /// client sends to ZeroKMS for one key.
-    struct KeyInputs<'a> {
+    fn update_field(hasher: &mut Sha256, field: &[u8]) {
+        hasher.update((field.len() as u64).to_le_bytes());
+        hasher.update(field);
+    }
+
+    fn update_option(hasher: &mut Sha256, field: Option<&[u8]>) {
+        match field {
+            Some(bytes) => {
+                hasher.update([1u8]);
+                update_field(hasher, bytes);
+            }
+            None => hasher.update([0u8]),
+        }
+    }
+
+    /// Key material: a function of the keyset, IV and descriptor only. Every
+    /// field is length-prefixed (and `Option`s tagged) so distinct inputs can't
+    /// collide via ambiguous concatenation.
+    fn derive_key(keyset_id: Option<Uuid>, iv: &Iv, descriptor: &str) -> Key {
+        let mut hasher = Sha256::new();
+        hasher.update(b"stack-kms::FakeDataKeySource::key::v3");
+        update_option(
+            &mut hasher,
+            keyset_id.as_ref().map(|id| id.as_bytes().as_slice()),
+        );
+        update_field(&mut hasher, iv);
+        update_field(&mut hasher, descriptor.as_bytes());
+        hasher.finalize().into()
+    }
+
+    /// Everything the fake tag binds. Mirrors what ZeroKMS's HMAC tag covers
+    /// for one key.
+    struct TagInputs<'a> {
         keyset_id: Option<Uuid>,
         iv: &'a Iv,
         descriptor: &'a str,
         context: &'a [zerokms_protocol::Context],
         decryption_policy: Option<&'a zerokms_protocol::DecryptionPolicy>,
-        tag: &'a [u8],
     }
 
-    /// Deterministically derive 32 bytes of key material from [`KeyInputs`].
-    /// Every field is length-prefixed (and `Option`s are tagged) so distinct
-    /// inputs can't collide via ambiguous concatenation.
-    fn derive_key(inputs: KeyInputs<'_>) -> Key {
-        fn update_field(hasher: &mut Sha256, field: &[u8]) {
-            hasher.update((field.len() as u64).to_le_bytes());
-            hasher.update(field);
-        }
-        fn update_option(hasher: &mut Sha256, field: Option<&[u8]>) {
-            match field {
-                Some(bytes) => {
-                    hasher.update([1u8]);
-                    update_field(hasher, bytes);
-                }
-                None => hasher.update([0u8]),
-            }
-        }
-
-        let context_json = serde_json::to_vec(inputs.context).unwrap_or_default();
-        let policy_json = inputs
-            .decryption_policy
-            .map(|p| serde_json::to_vec(p).unwrap_or_default());
-
+    /// The tag: binds keyset, IV, descriptor and *either* the policy (v1 —
+    /// context ignored) *or* the context (v0), exactly as `create_v1_tag` /
+    /// `create_v0_tag` split them.
+    fn derive_tag(inputs: TagInputs<'_>) -> Vec<u8> {
         let mut hasher = Sha256::new();
-        hasher.update(b"stack-kms::FakeDataKeySource::v2");
+        hasher.update(b"stack-kms::FakeDataKeySource::tag::v3");
         update_option(
             &mut hasher,
             inputs.keyset_id.as_ref().map(|id| id.as_bytes().as_slice()),
         );
         update_field(&mut hasher, inputs.iv);
         update_field(&mut hasher, inputs.descriptor.as_bytes());
-        update_field(&mut hasher, &context_json);
-        update_option(&mut hasher, policy_json.as_deref());
-        update_field(&mut hasher, inputs.tag);
-        hasher.finalize().into()
+        match inputs.decryption_policy {
+            Some(policy) => {
+                hasher.update([1u8]);
+                update_field(&mut hasher, &serde_json::to_vec(policy).unwrap_or_default());
+            }
+            None => {
+                hasher.update([0u8]);
+                update_field(
+                    &mut hasher,
+                    &serde_json::to_vec(inputs.context).unwrap_or_default(),
+                );
+            }
+        }
+        hasher.finalize().to_vec()
     }
 
     impl DataKeySource for FakeDataKeySource {
@@ -200,22 +229,13 @@ mod fake {
                     let n = self.counter.fetch_add(1, Ordering::Relaxed);
                     let mut iv: Iv = [0u8; 16];
                     iv[..8].copy_from_slice(&n.to_le_bytes());
-                    let tag = format!("fake-kms-tag-{n}").into_bytes();
-                    // Mirror `Client::generate_keys`: a policy-bearing spec is
-                    // built with `new_with_policy`, which carries no context.
-                    let context: &[zerokms_protocol::Context] =
-                        if payload.decryption_policy.is_some() {
-                            &[]
-                        } else {
-                            &payload.context
-                        };
-                    let key = derive_key(KeyInputs {
+                    let key = derive_key(keyset_id, &iv, payload.descriptor);
+                    let tag = derive_tag(TagInputs {
                         keyset_id,
                         iv: &iv,
                         descriptor: payload.descriptor,
-                        context,
+                        context: &payload.context,
                         decryption_policy: payload.decryption_policy.as_ref(),
-                        tag: &tag,
                     });
                     DataKeyWithTag {
                         key: DataKey { iv, key },
@@ -232,21 +252,32 @@ mod fake {
             keyset_id: Option<Uuid>,
             _unverified_context: Option<&UnverifiedContext>,
         ) -> Result<Vec<DataKey>, Error> {
-            Ok(payloads
+            payloads
                 .iter()
                 .map(|p| {
                     let iv: Iv = *p.iv.as_ref();
-                    let key = derive_key(KeyInputs {
+                    let expected = derive_tag(TagInputs {
                         keyset_id,
                         iv: &iv,
                         descriptor: p.descriptor,
                         context: &p.context,
                         decryption_policy: p.decryption_policy.as_ref(),
-                        tag: p.tag,
                     });
-                    DataKey { iv, key }
+                    // A fake, so a plain comparison is fine; ZeroKMS compares
+                    // its HMAC tags in constant time.
+                    if expected != p.tag {
+                        return Err(Error::RetrieveKey(RetrieveKeyError::FailedRetrieval(
+                            "tag mismatch: the iv, descriptor, keyset, context or policy \
+                             differs from what the key was generated under"
+                                .to_string(),
+                        )));
+                    }
+                    Ok(DataKey {
+                        iv,
+                        key: derive_key(keyset_id, &iv, p.descriptor),
+                    })
                 })
-                .collect())
+                .collect()
         }
     }
 }
@@ -257,6 +288,7 @@ pub use fake::FakeDataKeySource;
 #[cfg(all(test, feature = "test-support"))]
 mod tests {
     use super::*;
+    use crate::errors::RetrieveKeyError;
     use crate::payload::{GenerateKeyPayload, RetrieveKeyPayload};
     use std::borrow::Cow;
     use zerokms_protocol::{Context, DecryptionPolicy, PolicyCondition};
@@ -285,11 +317,18 @@ mod tests {
         src: &FakeDataKeySource,
         payload: RetrieveKeyPayload<'_>,
         keyset_id: Option<Uuid>,
-    ) -> DataKey {
+    ) -> Result<DataKey, Error> {
         src.retrieve_keys(vec![payload], keyset_id, None)
             .await
-            .unwrap()
-            .remove(0)
+            .map(|mut keys| keys.remove(0))
+    }
+
+    fn assert_rejected(result: Result<DataKey, Error>, what: &str) {
+        match result {
+            Err(Error::RetrieveKey(RetrieveKeyError::FailedRetrieval(_))) => {}
+            Err(other) => panic!("{what}: expected FailedRetrieval, got {other:?}"),
+            Ok(_) => panic!("{what}: expected rejection, got a key"),
+        }
     }
 
     #[tokio::test]
@@ -307,7 +346,8 @@ mod tests {
             RetrieveKeyPayload::new(dk.key.iv, "users/email", &dk.tag),
             None,
         )
-        .await;
+        .await
+        .unwrap();
 
         assert_eq!(
             dk.key.key(),
@@ -338,38 +378,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mismatched_tag_yields_a_different_key() {
+    async fn mismatched_tag_is_rejected() {
+        // ZeroKMS fails the tag proof rather than returning other material.
         let src = FakeDataKeySource::new();
         let dk = generate_one(&src, GenerateKeyPayload::new("d", Cow::Owned(vec![])), None).await;
 
-        let wrong = retrieve_one(
+        let result = retrieve_one(
             &src,
             RetrieveKeyPayload::new(dk.key.iv, "d", b"wrong-tag"),
             None,
         )
         .await;
-
-        assert_ne!(dk.key.key(), wrong.key());
+        assert_rejected(result, "wrong tag");
     }
 
     #[tokio::test]
-    async fn mismatched_iv_yields_a_different_key() {
+    async fn mismatched_iv_is_rejected() {
         let src = FakeDataKeySource::new();
         let dk = generate_one(&src, GenerateKeyPayload::new("d", Cow::Owned(vec![])), None).await;
 
         let mut other_iv = dk.key.iv;
         other_iv[15] ^= 0xff;
-        let wrong = retrieve_one(&src, RetrieveKeyPayload::new(other_iv, "d", &dk.tag), None).await;
-
-        assert_ne!(
-            dk.key.key(),
-            wrong.key(),
-            "the IV must feed the derivation, as it does in production"
-        );
+        let result =
+            retrieve_one(&src, RetrieveKeyPayload::new(other_iv, "d", &dk.tag), None).await;
+        assert_rejected(result, "wrong iv");
     }
 
     #[tokio::test]
-    async fn mismatched_descriptor_yields_a_different_key() {
+    async fn mismatched_descriptor_is_rejected() {
         let src = FakeDataKeySource::new();
         let dk = generate_one(
             &src,
@@ -378,18 +414,17 @@ mod tests {
         )
         .await;
 
-        let wrong = retrieve_one(
+        let result = retrieve_one(
             &src,
             RetrieveKeyPayload::new(dk.key.iv, "users/name", &dk.tag),
             None,
         )
         .await;
-
-        assert_ne!(dk.key.key(), wrong.key());
+        assert_rejected(result, "wrong descriptor");
     }
 
     #[tokio::test]
-    async fn mismatched_keyset_yields_a_different_key() {
+    async fn mismatched_keyset_is_rejected() {
         let src = FakeDataKeySource::new();
         let keyset = Uuid::new_v4();
         let dk = generate_one(
@@ -404,22 +439,24 @@ mod tests {
             RetrieveKeyPayload::new(dk.key.iv, "d", &dk.tag),
             Some(keyset),
         )
-        .await;
+        .await
+        .unwrap();
+        assert_eq!(dk.key.key(), same.key());
+
         let other = retrieve_one(
             &src,
             RetrieveKeyPayload::new(dk.key.iv, "d", &dk.tag),
             Some(Uuid::new_v4()),
         )
         .await;
-        let none = retrieve_one(&src, RetrieveKeyPayload::new(dk.key.iv, "d", &dk.tag), None).await;
+        assert_rejected(other, "other keyset");
 
-        assert_eq!(dk.key.key(), same.key());
-        assert_ne!(dk.key.key(), other.key());
-        assert_ne!(dk.key.key(), none.key());
+        let none = retrieve_one(&src, RetrieveKeyPayload::new(dk.key.iv, "d", &dk.tag), None).await;
+        assert_rejected(none, "no keyset");
     }
 
     #[tokio::test]
-    async fn mismatched_context_yields_a_different_key() {
+    async fn mismatched_context_is_rejected() {
         let src = FakeDataKeySource::new();
         let ctx = vec![Context::Tag("tenant-1".into())];
         let dk = generate_one(
@@ -434,12 +471,13 @@ mod tests {
             RetrieveKeyPayload::new(dk.key.iv, "d", &dk.tag).with_context(Cow::Borrowed(&ctx)),
             None,
         )
-        .await;
+        .await
+        .unwrap();
+        assert_eq!(dk.key.key(), same.key());
+
         let stripped =
             retrieve_one(&src, RetrieveKeyPayload::new(dk.key.iv, "d", &dk.tag), None).await;
-
-        assert_eq!(dk.key.key(), same.key());
-        assert_ne!(dk.key.key(), stripped.key());
+        assert_rejected(stripped, "stripped context");
     }
 
     #[tokio::test]
@@ -461,7 +499,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn policy_round_trips_and_a_stripped_or_swapped_policy_changes_the_key() {
+    async fn policy_round_trips_and_a_stripped_or_swapped_policy_is_rejected() {
         let src = FakeDataKeySource::new();
         let p = policy("sub", "alice");
         let dk = generate_one(
@@ -476,9 +514,14 @@ mod tests {
             RetrieveKeyPayload::new(dk.key.iv, "d", &dk.tag).with_decryption_policy(p.clone()),
             None,
         )
-        .await;
+        .await
+        .unwrap();
+        assert_eq!(dk.key.key(), same.key());
+
         let stripped =
             retrieve_one(&src, RetrieveKeyPayload::new(dk.key.iv, "d", &dk.tag), None).await;
+        assert_rejected(stripped, "stripped policy");
+
         let swapped = retrieve_one(
             &src,
             RetrieveKeyPayload::new(dk.key.iv, "d", &dk.tag)
@@ -486,20 +529,18 @@ mod tests {
             None,
         )
         .await;
-
-        assert_eq!(dk.key.key(), same.key());
-        assert_ne!(dk.key.key(), stripped.key());
-        assert_ne!(dk.key.key(), swapped.key());
+        assert_rejected(swapped, "swapped policy");
     }
 
     #[tokio::test]
-    async fn a_policy_bearing_generate_payload_drops_its_context_like_the_client() {
+    async fn policy_bearing_keys_ignore_context_on_both_sides() {
         // `Client::generate_keys` builds `GenerateKeySpec::new_with_policy`,
-        // which sends no context; the fake mirrors that so a retrieve without
-        // context reproduces the key.
+        // which sends no context, and ZeroKMS's v1 (policy) tag never reads
+        // the retrieve-side context either. So with a policy present, any
+        // context — matching, stripped, or different — retrieves the key.
         let src = FakeDataKeySource::new();
         let p = policy("sub", "alice");
-        let ctx = vec![Context::Tag("ignored".into())];
+        let ctx = vec![Context::Tag("tenant-1".into())];
         let dk = generate_one(
             &src,
             GenerateKeyPayload::new("d", Cow::Borrowed(&ctx)).with_decryption_policy(p.clone()),
@@ -507,14 +548,61 @@ mod tests {
         )
         .await;
 
-        let retrieved = retrieve_one(
+        let with_same_context = retrieve_one(
             &src,
-            RetrieveKeyPayload::new(dk.key.iv, "d", &dk.tag).with_decryption_policy(p),
+            RetrieveKeyPayload::new(dk.key.iv, "d", &dk.tag)
+                .with_context(Cow::Borrowed(&ctx))
+                .with_decryption_policy(p.clone()),
             None,
         )
-        .await;
+        .await
+        .unwrap();
+        assert_eq!(dk.key.key(), with_same_context.key());
 
-        assert_eq!(dk.key.key(), retrieved.key());
+        let without_context = retrieve_one(
+            &src,
+            RetrieveKeyPayload::new(dk.key.iv, "d", &dk.tag).with_decryption_policy(p.clone()),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(dk.key.key(), without_context.key());
+
+        let other_ctx = vec![Context::Tag("tenant-2".into())];
+        let with_other_context = retrieve_one(
+            &src,
+            RetrieveKeyPayload::new(dk.key.iv, "d", &dk.tag)
+                .with_context(Cow::Borrowed(&other_ctx))
+                .with_decryption_policy(p),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(dk.key.key(), with_other_context.key());
+    }
+
+    #[tokio::test]
+    async fn a_batch_with_one_bad_tag_fails_as_a_whole() {
+        let src = FakeDataKeySource::new();
+        let dk = generate_one(&src, GenerateKeyPayload::new("d", Cow::Owned(vec![])), None).await;
+
+        let result = src
+            .retrieve_keys(
+                vec![
+                    RetrieveKeyPayload::new(dk.key.iv, "d", &dk.tag),
+                    RetrieveKeyPayload::new(dk.key.iv, "d", b"wrong-tag"),
+                ],
+                None,
+                None,
+            )
+            .await;
+        assert!(
+            matches!(
+                result,
+                Err(Error::RetrieveKey(RetrieveKeyError::FailedRetrieval(_)))
+            ),
+            "one bad tag must fail the batch"
+        );
     }
 
     #[test]

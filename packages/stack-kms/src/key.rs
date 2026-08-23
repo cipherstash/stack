@@ -51,8 +51,9 @@ impl ClientKey {
 }
 
 // FIXME: This shouldn't be Clone but it is needed right now for the JSONB indexer.
-// `key` is secret DEK material, so comparison is constant-time via `TimingSafeEq`
-// (`.timing_safe_eq()`) rather than a variable-time `derive(PartialEq)`.
+// `key` is secret DEK material, so equality is constant-time: the `TimingSafeEq`
+// derive provides `ts_eq` *and* `PartialEq`/`Eq` implemented on top of it, so
+// `==` is safe here — never add a variable-time `derive(PartialEq)`.
 #[derive(TimingSafeEq, Zeroize, ZeroizeOnDrop, Clone)]
 #[cfg_attr(test, derive(Default))]
 pub struct DataKey {
@@ -89,8 +90,9 @@ impl DataKey {
 
 // FIXME: Making this Cloneable for now so that we can use the same key many times for the JSONB indexer.
 // We should modifier the indexer so each value has a separate key.
-// No `PartialEq`/`Eq`: the wrapped `DataKey` is secret — compare via
-// `deref().timing_safe_eq(..)` if key equality is ever needed.
+// No `PartialEq`/`Eq` on the wrapper: the `tag` is public but `key` is secret.
+// If key equality is ever needed, compare `a.key == b.key` (constant-time via
+// `DataKey`'s `TimingSafeEq`-derived `PartialEq`) or `a.key.ts_eq(&b.key)`.
 #[derive(Clone)]
 #[cfg_attr(test, derive(Default))]
 pub struct DataKeyWithTag {
