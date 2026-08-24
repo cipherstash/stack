@@ -37,7 +37,7 @@ pub(crate) fn jwt_token(claims: serde_json::Value) -> Token {
 }
 
 /// Standard CTS JWT claims for `workspace`, with the other required claims
-/// (`iss`/`sub`/`aud`/`iat`/`exp`/`scope`) filled in with valid placeholders.
+/// (`iss`/`sub`/`aud`/`iat`/`exp`/`org_id`/`scope`) filled in with valid placeholders.
 ///
 /// NOTE: `exp` is a fixed *past* epoch, so the token reads as expired — use
 /// [`jwt_with_workspace`] instead when a currently-valid token is needed.
@@ -49,6 +49,7 @@ pub(crate) fn claims_with_workspace(workspace: &str) -> serde_json::Value {
         "aud": "https://cts.example.com",
         "iat": 1_700_000_000u64,
         "exp": 1_700_003_600u64,
+        "org_id": "org_test_default",
         "scope": "dataset:create",
     })
 }
@@ -81,6 +82,7 @@ pub(crate) fn jwt_with_workspace(workspace: &str) -> String {
         "iat": now,
         "exp": now + 3600,
         "workspace": workspace,
+        "org_id": "org_test_default",
         "scope": "",
     });
     encode(
