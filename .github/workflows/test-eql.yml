@@ -340,7 +340,7 @@ jobs:
 
       - name: Setup database (Postgres 17)
         run: |
-          mise run postgres:up postgres-${POSTGRES_VERSION} --extra-args "--detach --wait"
+          mise run postgres:up "postgres-${POSTGRES_VERSION}" --extra-args "--detach --wait"
 
       - name: Build EQL + archive test binaries
         run: |
@@ -419,7 +419,7 @@ jobs:
 
       - name: Setup database (Postgres ${{ matrix.postgres-version }})
         run: |
-          mise run postgres:up postgres-${POSTGRES_VERSION} --extra-args "--detach --wait"
+          mise run postgres:up "postgres-${POSTGRES_VERSION}" --extra-args "--detach --wait"
 
       - name: Run shard ${{ matrix.shard }}/${{ needs.setup.outputs.shard-total }}
         run: |
@@ -462,7 +462,7 @@ jobs:
 
       - name: Setup database (Postgres ${{ matrix.postgres-version }})
         run: |
-          mise run postgres:up postgres-${POSTGRES_VERSION} --extra-args "--detach --wait"
+          mise run postgres:up "postgres-${POSTGRES_VERSION}" --extra-args "--detach --wait"
 
       # Source-only doc checks (coverage + required-tags) moved to the dedicated
       # `docs-static` job so they run exactly once, not per-Postgres. This step
@@ -709,7 +709,7 @@ jobs:
           save-if: false
       - name: Setup database
         run: |
-          mise run postgres:up postgres-${POSTGRES_VERSION} --extra-args "--detach --wait"
+          mise run postgres:up "postgres-${POSTGRES_VERSION}" --extra-args "--detach --wait"
       - name: Build and install EQL
         run: |
           set -euo pipefail
@@ -720,13 +720,13 @@ jobs:
           # `scripts/__tests__/workflow-grep-q-pipelines.test.mjs` documents.
           # The redirect is the same bytes with no writer to signal, so the
           # step reports psql's own status and says which statement failed.
-          docker exec -i postgres-${POSTGRES_VERSION} \
+          docker exec -i "postgres-${POSTGRES_VERSION}" \
             psql -v ON_ERROR_STOP=1 \
               postgresql://cipherstash:password@localhost/cipherstash -f- \
             < release/cipherstash-encrypt.sql
       - name: Run splinter
         run: |
-          mise run --output prefix test:splinter --postgres ${POSTGRES_VERSION}
+          mise run --output prefix test:splinter --postgres "${POSTGRES_VERSION}"
 
   # Source-only SQL documentation validation (coverage + required Doxygen tags).
   # Deliberately NOT relevance-gated: it runs on EVERY pull_request — including
@@ -871,7 +871,7 @@ jobs:
           save-if: false
       - name: Setup database (Postgres 17)
         run: |
-          mise run postgres:up postgres-${POSTGRES_VERSION} --extra-args "--detach --wait"
+          mise run postgres:up "postgres-${POSTGRES_VERSION}" --extra-args "--detach --wait"
       - name: Run e2e property suite
         run: |
           mise run test:sqlx:e2e
