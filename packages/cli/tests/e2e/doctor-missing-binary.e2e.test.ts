@@ -35,7 +35,7 @@ interface Target {
 const TARGETS: Target[] = [
   {
     pkg: '@cipherstash/protect-ffi',
-    label: 'Encryption engine (@cipherstash/stack → protect-ffi)',
+    label: messages.doctor.encryptionProbeLabel,
     // `src/load.cts`'s debug arm — a local cargo build sitting beside `lib/`.
     // A contributor who has run `pnpm run debug` has one, and without this the
     // fixture would load the binding it means to be missing.
@@ -43,7 +43,7 @@ const TARGETS: Target[] = [
   },
   {
     pkg: '@cipherstash/auth',
-    label: 'Auth (@cipherstash/auth)',
+    label: messages.doctor.authProbeLabel,
     // napi's local-build arm, tried before the platform package.
     extra: String.raw`|(?:^|[\\/])stack-auth-node\.node$`,
   },

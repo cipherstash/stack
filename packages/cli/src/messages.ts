@@ -35,6 +35,15 @@ export const messages = {
     title: 'stash doctor',
     /** Leader of the platform check line; the `<platform>-<arch>` is appended. */
     platformLabel: 'Platform',
+    /**
+     * Probe row labels. Here rather than inline in `commands/doctor/index.ts`
+     * because both E2E suites match a row as `<label> — <detail>`: the detail
+     * halves were already constants while the labels were copied into each
+     * suite, so a copy tweak broke the tests from a file they don't name.
+     */
+    encryptionProbeLabel:
+      'Encryption engine (@cipherstash/stack → protect-ffi)',
+    authProbeLabel: 'Auth (@cipherstash/auth)',
     allChecksPassed: 'All checks passed.',
     /** Row detail when a probe reached the loader and no platform binary was there. */
     nativeBinaryMissing: 'native binary missing',

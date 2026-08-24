@@ -37,7 +37,7 @@ interface Probe {
 
 const PROBES: Probe[] = [
   {
-    label: 'Encryption engine (@cipherstash/stack → protect-ffi)',
+    label: messages.doctor.encryptionProbeLabel,
     pkg: '@cipherstash/stack',
     subpath: './diagnostics',
     optional: true,
@@ -52,7 +52,7 @@ const PROBES: Probe[] = [
     },
   },
   {
-    label: 'Auth (@cipherstash/auth)',
+    label: messages.doctor.authProbeLabel,
     pkg: '@cipherstash/auth',
     async force() {
       // No counterpart call needed. This package's entry is `module.exports =
@@ -116,7 +116,12 @@ export async function doctorCommand(): Promise<void> {
             ? messages.doctor.notInstalledOptional
             : messages.doctor.notInstalled,
         )
-        if (!probe.optional) failed = true
+        // The row stays green — absence before `stash init` is expected, and
+        // the detail already says so — but the check did not RUN, which is the
+        // same thing the too-old arm below records. Without this the outro said
+        // every check passed while one of the two never executed.
+        if (probe.optional) incomplete = true
+        else failed = true
       } else if (isSubpathUnavailable(err, probe)) {
         report('warn', probe.label, messages.doctor.cannotProbe)
         incomplete = true
