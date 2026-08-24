@@ -1,0 +1,147 @@
+name: "Build EQL SQL (reusable)"
+
+# Reusable SQL build + attach for the EQL release line. Called inline by
+# `release.yml` on BOTH the production and the prerelease path, so an EQL SQL
+# release has exactly one build path regardless of which one produced it.
+#
+# Ported from `packages/eql/.github/workflows/_build-sql.yml`, which GitHub
+# never read — see the header of `test-eql.yml` for the same story about the
+# test suite. Four things changed on the way in, each silent when wrong:
+#
+#   * RENAMED. Upstream this file was `_build-sql.yml`, in a repository whose
+#     only artefact was SQL. Here `_build-ffi-artifacts.yml` is the sibling and
+#     "SQL" names nothing on its own, so the file follows the `*-eql.yml`
+#     convention `test-eql.yml` / `bench-eql.yml` / `macro-expand-eql.yml`
+#     already set. Nothing binds to the filename: it is reachable only through
+#     a job-level `uses:` in `release.yml`.
+#   * `defaults.run.working-directory: packages/eql` — `mise run build` and
+#     `release/*.sql` are written against the EQL root, which is one level down
+#     here. Without it they resolve against the monorepo root.
+#   * `working_directory:` on the mise step — `defaults.run` does not reach a
+#     `uses:` step, and mise reads config from the current directory and its
+#     PARENTS only, so an action running at the repo root never sees
+#     `packages/eql/mise.toml`. It installs nothing and leaves the config
+#     untrusted, and the first `mise run` fails with "Config files … are not
+#     trusted" — which reads as a broken toolchain rather than a wrong
+#     directory.
+#   * artifact and release `path:` / `files:` values are workspace-root
+#     relative and `defaults.run` does not touch them either, so they carry the
+#     `packages/eql/` prefix explicitly.
+#
+# `defaults.run.shell` is deliberately NOT overridden, where the imported file
+# carried `bash {0}`. GitHub's default `bash` runs with `-eo pipefail`; `bash
+# {0}` gives exactly the flags asked for, which is none of them, and a failing
+# first line of a multi-command block is then discarded. See
+# `scripts/__tests__/workflow-run-fail-fast.test.mjs`.
+#
+# THE MULTITUDES DEPLOY PING WAS DROPPED. Upstream ended this job with a
+# `continue-on-error` curl to `api.developer.multitudes.co` authenticated with
+# `MULTITUDES_ACCESS_TOKEN`. That secret does not exist in this repository
+# (`gh secret list`), so the step would have failed on every production release
+# and been swallowed by its own `continue-on-error` — indistinguishable from
+# one that worked. Deploy tracking for `cipherstash/stack` is a repository-wide
+# decision, not something an EQL SQL release should carry alone; if it is
+# wanted, it arrives with the secret.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref/SHA to build from. Empty -> default checkout (github.sha)."
+        required: false
+        type: string
+        default: ""
+      tag:
+        description: "Full release tag (e.g. eql-3.0.6). Empty -> DEV build, no attach."
+        required: false
+        type: string
+        default: ""
+      attach:
+        description: "Attach the built .sql artefacts to a GitHub Release."
+        required: false
+        type: boolean
+        default: false
+      target_commitish:
+        description: "Non-empty -> create a release at this commit; empty -> attach to the existing release named by tag."
+        required: false
+        type: string
+        default: ""
+      prerelease:
+        description: "Mark the created release as a prerelease (create path only)."
+        required: false
+        type: boolean
+        default: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  MISE_VERBOSE: "1"
+
+defaults:
+  run:
+    working-directory: packages/eql
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build EQL
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          # `cache: false` IS NOT THE DEFAULT — mise-action caches unless told
+          # otherwise, and `scripts/lint-no-workflow-caching.mjs` forbids a
+          # GitHub Actions cache restore anywhere an artefact gets published.
+          # This workflow is reached only from `release.yml`, the job that holds
+          # the npm publishing credential, so a poisoned toolchain entry here
+          # would compile the SQL that ships. Upstream had `cache: true`.
+          cache: false
+          working_directory: packages/eql
+
+      - name: Build EQL release
+        # Strip `eql-` so `eql_v3.version()` reports bare semver. An empty TAG
+        # intentionally falls through `tasks/build.sh`'s `${usage_version:-DEV}`
+        # default.
+        env:
+          TAG: ${{ inputs.tag }}
+        run: mise run build --version "${TAG#eql-}"
+
+      - name: Upload EQL artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: eql-release
+          path: |
+            packages/eql/release/cipherstash-encrypt.sql
+            packages/eql/release/cipherstash-encrypt-uninstall.sql
+
+      - name: Attach artefacts to existing release
+        if: ${{ inputs.attach && inputs.target_commitish == '' }}
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: |
+            packages/eql/release/cipherstash-encrypt.sql
+            packages/eql/release/cipherstash-encrypt-uninstall.sql
+
+      - name: Create release at commit
+        if: ${{ inputs.attach && inputs.target_commitish != '' }}
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          target_commitish: ${{ inputs.target_commitish }}
+          prerelease: ${{ inputs.prerelease }}
+          name: ${{ inputs.tag }}
+          body: "The standalone eql_v3 SQL surface. See packages/eql/CHANGELOG.md."
+          files: |
+            packages/eql/release/cipherstash-encrypt.sql
+            packages/eql/release/cipherstash-encrypt-uninstall.sql

@@ -1,0 +1,101 @@
+name: "Build EQL docs (reusable)"
+
+# Reusable docs build + attach for the EQL release line. Called inline by
+# `release.yml` on BOTH the production and the prerelease path. The target
+# release already exists by the time this runs: `_build-eql-sql.yml` creates it
+# earlier in the same run, which is why both callers declare it as a `needs:`.
+#
+# Ported from `packages/eql/.github/workflows/_build-docs.yml` — see
+# `_build-eql-sql.yml`'s header for the rename, the two `packages/eql`
+# rewrites, and why `defaults.run.shell: bash {0}` was dropped.
+#
+# THIS PIPELINE HAS NEVER EXECUTED IN THIS REPOSITORY. `docs:generate:json`'s
+# only caller was the unported copy of this file, which is why it carried a
+# written exemption in `scripts/__tests__/eql-suite-ci.test.mjs` until this
+# workflow landed. The doxygen half is the part to watch: `docs:generate` shells
+# out to a `doxygen` binary that mise does not provide (`packages/eql/mise.toml`
+# pins `python = "3.13"` under `[tools]`, and nothing else), so the apt install
+# below is load-bearing and is the only thing standing between this job and a
+# `doxygen: command not found` on the first real release.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref/SHA to build docs from. Empty -> default checkout (github.sha)."
+        required: false
+        type: string
+        default: ""
+      tag:
+        description: "Full release tag. Empty -> build only, no attach."
+        required: false
+        type: string
+        default: ""
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  MISE_VERBOSE: "1"
+
+defaults:
+  run:
+    working-directory: packages/eql
+
+permissions:
+  contents: write
+
+jobs:
+  publish-docs:
+    name: Build and publish documentation
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          # Reached only from `release.yml`; see `_build-eql-sql.yml` for why a
+          # publish path restores no cache. Upstream had `cache: true`.
+          cache: false
+          working_directory: packages/eql
+
+      - name: Install Doxygen
+        # Not from mise: `packages/eql/mise.toml` does not pin doxygen, and
+        # `tasks/docs/generate.sh` invokes the binary directly.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y doxygen
+
+      - name: Generate documentation
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          mise run docs:generate
+          mise run docs:generate:markdown -- "${TAG}"
+          mise run docs:generate:json -- "${TAG}"
+
+      - name: Package documentation
+        env:
+          TAG: ${{ inputs.tag }}
+        run: mise run docs:package "${TAG}"
+
+      - name: Upload documentation artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: eql-docs
+          path: |
+            packages/eql/release/eql-docs-*.zip
+            packages/eql/release/eql-docs-*.tar.gz
+
+      - name: Publish documentation to release
+        if: ${{ inputs.tag != '' }}
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: |
+            packages/eql/release/eql-docs-*.zip
+            packages/eql/release/eql-docs-*.tar.gz

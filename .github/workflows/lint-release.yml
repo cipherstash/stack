@@ -10,27 +10,40 @@ name: Lint release tooling
 # shellcheck over every `run:` block — which is why the workflows it gates
 # avoid `sed`-into-`export` (SC2001, SC2155), `ls | wc -l` (SC2012), and
 # dollar-braces or backticks inside single-quoted `node -e` arguments (SC2016).
+#
+# THE EQL RELEASE WORKFLOWS ARE IN SCOPE, and that is the whole reason their
+# `actionlint` cleanliness is a property rather than a coincidence. They were
+# ported from `packages/eql/.github/`, where an EQL-local `lint-release.yml`
+# linted them and — like everything else in that directory — ran on nothing.
+# Its two unique checks came with them: `shellcheck` over the
+# `prepare-bindings-assets` wrapper and that wrapper's own bash unit test, both
+# of which ran NOWHERE in this repository until this file named them.
 
 on:
   pull_request:
-    # Exactly what the job reads: the four workflows actionlint is pointed at,
-    # plus the config it resolves the Blacksmith label from. The filter also
-    # named scripts/release-gate.mjs, scripts/ffi-release-matrix.mjs,
-    # scripts/lint-no-workflow-caching.mjs and package.json — none of which this
-    # job looks at, since it deliberately does not run `test:scripts` (see the
-    # job comment). Editing one booted a runner and downloaded a Go binary to
-    # lint four unchanged files, which is how a job trains reviewers to ignore
-    # it. `tests.yml`'s `lint` job runs `test:scripts` unfiltered on every PR,
-    # so those four are already covered.
+    # Exactly what the job reads: the workflows actionlint is pointed at, the
+    # config it resolves the Blacksmith label from, and the two shell scripts
+    # the last two steps run. The filter also named scripts/release-gate.mjs,
+    # scripts/ffi-release-matrix.mjs, scripts/lint-no-workflow-caching.mjs and
+    # package.json — none of which this job looks at, since it deliberately does
+    # not run `test:scripts` (see the job comment). Editing one booted a runner
+    # and downloaded a Go binary to lint four unchanged files, which is how a
+    # job trains reviewers to ignore it. `tests.yml`'s `lint` job runs
+    # `test:scripts` unfiltered on every PR, so those four are already covered.
     #
-    # `lint-release-scope.test.mjs` asserts this list and the actionlint
-    # argument list below stay the same set.
+    # `lint-release-scope.test.mjs` asserts the `.github/workflows/` half of
+    # this list and the actionlint argument list below stay the same set.
     paths:
       - .github/workflows/release.yml
       - .github/workflows/_build-ffi-artifacts.yml
       - .github/workflows/ffi-preflight.yml
+      - .github/workflows/_build-eql-sql.yml
+      - .github/workflows/_build-eql-docs.yml
+      - .github/workflows/release-plz.yml
+      - .github/workflows/release-postgres-eql-image.yml
       - .github/workflows/lint-release.yml
       - .github/actionlint.yaml
+      - packages/eql/tasks/release/*.sh
   workflow_dispatch: {}
 
 permissions:
@@ -46,15 +59,15 @@ concurrency:
 
 jobs:
   # No pnpm, no Node, no install: actionlint is a downloaded Go binary and
-  # shellcheck ships in the runner image, so this job is a checkout and one
-  # command.
+  # shellcheck ships in the runner image, so this job is a checkout and a few
+  # commands.
   #
   # It deliberately does NOT also run `test:scripts` or `lint:workflow-cache`.
   # `tests.yml`'s `lint` job runs `test:scripts` on every pull request with no
   # path filter, and `tests-supply-chain.yml` runs both — so a copy here would
   # be the second and third run of the same checks on any PR touching the
   # release machinery, each behind its own uncached full-workspace install. What
-  # this workflow uniquely has is actionlint.
+  # this workflow uniquely has is actionlint, and the two shell checks below.
   lint:
     name: actionlint (release workflows)
     runs-on: ubuntu-latest
@@ -81,5 +94,23 @@ jobs:
             .github/workflows/release.yml \
             .github/workflows/_build-ffi-artifacts.yml \
             .github/workflows/ffi-preflight.yml \
+            .github/workflows/_build-eql-sql.yml \
+            .github/workflows/_build-eql-docs.yml \
+            .github/workflows/release-plz.yml \
+            .github/workflows/release-postgres-eql-image.yml \
             .github/workflows/lint-release.yml
 
+      # The EQL half. `prepare-bindings-assets.sh` is what stamps the SQL bundle
+      # and rewrites the four release manifests during `pnpm run version`, so a
+      # shell mistake in it lands mid-release with every manifest already
+      # rewritten. Neither of these ran anywhere in this repository before the
+      # release port.
+      - name: shellcheck (EQL release wrappers)
+        run: |
+          set -euo pipefail
+          shellcheck \
+            packages/eql/tasks/release/prepare-bindings-assets.sh \
+            packages/eql/tasks/release/prepare-bindings-assets.test.sh
+
+      - name: prepare-bindings-assets validation unit test
+        run: bash packages/eql/tasks/release/prepare-bindings-assets.test.sh

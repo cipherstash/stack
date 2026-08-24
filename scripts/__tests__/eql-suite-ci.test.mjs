@@ -865,10 +865,12 @@ const CI_EXEMPT_CARGO_TASKS = new Map([
     'test:lint',
     '`cargo fmt --check` scoped to tests/sqlx. `test:crates` runs `cargo fmt --check` at the EQL workspace ROOT, and tests/sqlx is a workspace member, so the CI run covers exactly these files and four crates more — verified against `cargo fmt --check -v`, which lists packages/eql/tests/sqlx/** among its targets. test-eql.yml says the same thing at the `rust-crates` job, which is where the standalone lint step used to be.',
   ],
-  [
-    'docs:generate:json',
-    'Generates docs/api/json/eql-manifest.json for the release docs bundle. Its only caller is `packages/eql/.github/workflows/_build-docs.yml` — one of the four unported RELEASE workflows in UNPORTED_DEPOSIT — so this is category (d): it becomes reachable the day that file is ported, and this entry then goes stale and must be deleted. It is also not portable as-is, since it falls back to `mise run docs:generate`, which needs a doxygen binary no job installs. Its cargo step (`cargo run -p eql-codegen dump-catalog`) is separately exercised in CI by `test:matrix:catalog-coverage`.',
-  ],
+  // `docs:generate:json` WAS HERE, as category (d) — "unreached only because the
+  // workflow that runs it has not been ported yet" — naming
+  // `packages/eql/.github/workflows/_build-docs.yml` as its sole caller. That
+  // file is now `.github/workflows/_build-eql-docs.yml` and does run, so the
+  // exemption went stale exactly as it said it would, and the staleness check
+  // below is what forced its removal rather than a memory of having written it.
 ])
 
 /** Cargo tasks a given reachability set leaves unaccounted for. */
@@ -1292,6 +1294,13 @@ describe('every cargo check EQL owns is reached by a root workflow', () => {
  * actually fails.
  */
 const SOLE_CALLER_WORKFLOWS = [
+  // docs:generate:json. It arrived on this list the day the release port
+  // landed — until then that task was reachable from nothing at all and carried
+  // a written exemption saying so. Note what "sole caller" costs here that it
+  // does not cost for the three below: this workflow runs only on a RELEASE, so
+  // a break in the doxygen -> JSON pipeline surfaces mid-publish rather than on
+  // the pull request that caused it.
+  `${WORKFLOW_DIR}/_build-eql-docs.yml`,
   `${WORKFLOW_DIR}/bench-eql.yml`, // test:bench
   `${WORKFLOW_DIR}/macro-expand-eql.yml`, // test:matrix:expand
   `${WORKFLOW_DIR}/test-eql.yml`, // most of the suite
@@ -1350,63 +1359,81 @@ describe('the guard fails when a workflow stops calling a cargo check', () => {
 })
 
 /**
- * What is still allowed to sit in the deposited `.github`, and why.
+ * The deposited `.github` is GONE, and must stay gone.
  *
- * The end state is no directory at all — the rule `lintWiring.test.ts` applies
- * to protect-ffi's deposit, and for the same reason: a workflow file under a
- * package reads as live CI and is not. It cannot be deleted in one step here,
- * because four of EQL's ten workflows are the RELEASE machinery. Porting those
- * to the repository root is what makes them fire, and it is gated on repointing
- * npm and crates.io trusted publishing — an irreversible cutover that has not
- * happened. Deleting them first would mean porting from git history at the one
- * moment nobody wants to be reconstructing a publish pipeline.
+ * This used to be a SHRINKING ALLOWLIST — eleven entries, asserted by equality,
+ * emptied one commit at a time as each file was ported or deliberately dropped.
+ * The last of them left with the release port, which is what the allowlist's own
+ * failure message asked for: "When this list empties, delete the directory and
+ * replace this check with `expect(existsSync(...)).toBe(false)`."
  *
- * So this is a SHRINKING allowlist, not an exemption list. Each entry names a
- * file that has not been ported yet; porting one means deleting it here in the
- * same commit. The equality below fails in both directions — a file that comes
- * back fails, and so does an entry left behind after its file is gone, which is
- * what turns the last removal into "delete the directory" rather than a check
- * that quietly stops meaning anything.
+ * The rule it enforced does not expire with it. A workflow file under a package
+ * reads as live CI and is not: GitHub reads workflows from the repository root
+ * alone, so anything deposited here executes on no event — which is
+ * indistinguishable, on every run and every PR page, from a check that passes.
+ * That is the failure this whole file exists to prevent, and `lintWiring.test.ts`
+ * asserts exactly the same thing for protect-ffi's deposit.
+ *
+ * WHERE EACH FILE WENT, because "it was deleted" is not the same claim as "it
+ * was ported" and a reader a year from now cannot tell them apart from a diff:
+ *
+ *   _build-sql.yml                 -> .github/workflows/_build-eql-sql.yml
+ *   _build-docs.yml                -> .github/workflows/_build-eql-docs.yml
+ *   release.yml                    -> merged into .github/workflows/release.yml
+ *                                     (npm trusted publishing binds to a
+ *                                     filename, so it could not stay separate)
+ *   release-plz.yml                -> .github/workflows/release-plz.yml, name
+ *                                     unchanged (crates.io binds to it)
+ *   release-postgres-eql-image.yml -> same filename at the root
+ *   rebuild-docs.yml               -> merged into the root file of that name
+ *   lint-release.yml               -> merged into the root file of that name
+ *   .github/actionlint.yaml        -> DROPPED: the root copy already carries the
+ *                                     `blacksmith-16vcpu-ubuntu-2204` label
+ *   ISSUE_TEMPLATE/docs-feedback.yml -> DROPPED: the root copy is the same file
+ *                                     with the Code of Conduct link already
+ *                                     repointed at cipherstash/stack
+ *   .github/release.yml            -> DROPPED: GitHub's release-notes
+ *                                     categoriser. Nothing here generates notes
+ *                                     that way — changesets writes CHANGELOGs
+ *                                     and the FFI release passes `--notes`
+ *                                     explicitly — so it would be configuration
+ *                                     that does nothing
+ *   workflows/README.md            -> DROPPED: it documented a merge-queue model
+ *                                     this repository does not have. `main` is
+ *                                     unprotected and there is no queue (see
+ *                                     test-eql.yml's header, which checked that
+ *                                     against the live API), so porting it would
+ *                                     have installed a confidently wrong
+ *                                     document at the root. Its still-true half
+ *                                     — the two release tag families — is in
+ *                                     AGENTS.md and in rebuild-docs.yml's header
  */
-const UNPORTED_DEPOSIT = [
-  // Phase 5 — the release cutover. Each publishes something, and each is inert
-  // until trusted publishing is repointed at cipherstash/stack.
-  '.github/release.yml', // release-notes categorisation config, not a workflow
-  '.github/workflows/README.md', // documents the four below
-  '.github/workflows/_build-docs.yml', // the sole caller of `docs:generate:json`
-  '.github/workflows/_build-sql.yml',
-  '.github/workflows/lint-release.yml', // actionlints the four below
-  '.github/workflows/rebuild-docs.yml',
-  '.github/workflows/release-plz.yml',
-  '.github/workflows/release-postgres-eql-image.yml',
-  '.github/workflows/release.yml',
-  // Not CI. Ported with the repository settings, not with a workflow.
-  '.github/ISSUE_TEMPLATE/docs-feedback.yml',
-  '.github/actionlint.yaml',
-].sort()
+describe('the imported workflow directory is gone', () => {
+  it('does not exist', () => {
+    expect(
+      existsSync(join(REPO_ROOT, DEAD_GITHUB_DIR)),
+      `${DEAD_GITHUB_DIR} is back. GitHub reads workflows from the repository root alone, ` +
+        'so anything in there runs on no event — which looks exactly like a check that passes. ' +
+        'Put the workflow in .github/workflows/ instead.',
+    ).toBe(false)
+  })
 
-describe('the imported workflow directory is on its way out', () => {
-  it('holds only the files still waiting to be ported', () => {
-    const deposit = existsSync(join(REPO_ROOT, DEAD_GITHUB_DIR))
-      ? execFileSync('git', ['ls-files', '-z', '--', DEAD_GITHUB_DIR], {
-          cwd: REPO_ROOT,
-          encoding: 'utf8',
-        })
-          .split('\0')
-          .filter(Boolean)
-          .map((path) => path.slice('packages/eql/'.length))
-          .sort()
-      : []
+  it('has no tracked files, even if the directory is untracked scratch', () => {
+    // `existsSync` alone would miss the case that actually matters: a file
+    // committed back into the deposit by a subtree pull, in a working tree
+    // where the directory was never removed locally.
+    const tracked = execFileSync(
+      'git',
+      ['ls-files', '-z', '--', DEAD_GITHUB_DIR],
+      { cwd: REPO_ROOT, encoding: 'utf8' },
+    )
+      .split('\0')
+      .filter(Boolean)
 
     expect(
-      deposit,
-      `${DEAD_GITHUB_DIR} no longer matches the list of files still waiting to be ported.\n` +
-        'If you PORTED one, delete it from the deposit and from UNPORTED_DEPOSIT in the same commit — ' +
-        'leaving it here means two copies of a workflow, one of which GitHub ignores.\n' +
-        'If you ADDED one, it is inert: GitHub reads workflows from the repository root alone.\n' +
-        'When this list empties, delete the directory and replace this check with ' +
-        '`expect(existsSync(...)).toBe(false)`.',
-    ).toEqual(UNPORTED_DEPOSIT)
+      tracked,
+      `These files are tracked under ${DEAD_GITHUB_DIR} and execute on nothing.`,
+    ).toEqual([])
   })
 })
 
@@ -1455,6 +1482,50 @@ function reachesCargo(name, seen = new Set()) {
   if (seen.size === 1 || result) cargoReach.set(name, result)
   return result
 }
+
+/**
+ * The workflows that MUST NOT restore a cache, read from the gate that says so.
+ *
+ * THE TWO RULES IN THIS REPOSITORY POINT OPPOSITE WAYS, and the EQL release port
+ * is where they met. `scripts/lint-no-workflow-caching.mjs` forbids a GitHub
+ * Actions cache restore anywhere an artefact gets published — a poisoned entry
+ * would execute in the job holding the npm or crates.io credential — and
+ * `Swatinem/rust-cache` is precisely such a restore. The check below asks for
+ * one on every job that compiles Rust. Four release jobs do both: they compile
+ * the EQL workspace (`mise run build` shells out to `cargo run -p eql-codegen`)
+ * inside a workflow that publishes.
+ *
+ * Supply chain wins, so those jobs pay a cold compile. What must not happen is
+ * this file and that linter disagreeing about WHICH jobs those are: a workflow
+ * added to one list and not the other would either be told to add a cache the
+ * linter then rejects, or be quietly dropped from both checks.
+ *
+ * So the list is derived rather than copied. The linter prints its default
+ * TARGETS on a clean run — the same trick `lint-no-workflow-caching.test.mjs`
+ * uses to read them — because the script lints on import and cannot be imported
+ * for the constant alone. If it ever exits non-zero this throws, rather than
+ * falling back to an empty set: an exemption list that silently empties would
+ * re-report all four jobs, and one that silently fills would excuse everything.
+ */
+const NO_CACHE_WORKFLOWS = (() => {
+  const stdout = execFileSync(
+    'node',
+    [join(REPO_ROOT, 'scripts/lint-no-workflow-caching.mjs')],
+    { cwd: REPO_ROOT, encoding: 'utf8' },
+  )
+  const targets = stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith(`${WORKFLOW_DIR}/`))
+  if (targets.length === 0) {
+    throw new Error(
+      'lint-no-workflow-caching.mjs printed no targets. Its success output is the ' +
+        'only readable copy of its TARGETS, and without it the publish-path ' +
+        'exemption below silently covers nothing.',
+    )
+  }
+  return new Set(targets)
+})()
 
 /**
  * Every job in a root workflow, with the cargo-reaching mise tasks its steps
@@ -1512,8 +1583,36 @@ describe('every job that compiles Rust restores the shared cache', () => {
     ).toBeGreaterThan(0)
   })
 
+  it('exempts the publish paths, and only those', () => {
+    // The exemption is worth an assertion of its own rather than only ever
+    // appearing as an absence in the check below: if the derivation above stops
+    // selecting the release jobs, they rejoin that check and the natural repair
+    // is to add a rust-cache step the caching gate then rejects.
+    const exempt = RUST_JOBS.filter(({ relPath }) =>
+      NO_CACHE_WORKFLOWS.has(relPath),
+    )
+    expect(
+      exempt.map(({ relPath, jobName }) => `${relPath} (${jobName})`).sort(),
+      'No cargo-compiling job sits in a no-cache publish workflow any more. If the EQL release pipeline moved, move this with it; if it was deleted, delete this.',
+    ).toEqual([
+      '.github/workflows/_build-eql-docs.yml (publish-docs)',
+      '.github/workflows/_build-eql-sql.yml (build)',
+      '.github/workflows/release-postgres-eql-image.yml (build-sql)',
+      '.github/workflows/release.yml (prerelease-eql-npm)',
+    ])
+
+    // …and none of them smuggled the cache in anyway. The caching gate would
+    // catch it too; this says so where the reader is already looking.
+    expect(
+      exempt.filter(({ cached }) => cached).map(({ relPath }) => relPath),
+      'A publish-path job carries a `Swatinem/rust-cache` step. That is a GitHub Actions cache restore inside a job holding a publishing credential — see scripts/lint-no-workflow-caching.mjs.',
+    ).toEqual([])
+  })
+
   it('leaves no cargo-compiling job uncached', () => {
-    const uncached = RUST_JOBS.filter(({ cached }) => !cached).map(
+    const uncached = RUST_JOBS.filter(
+      ({ relPath, cached }) => !cached && !NO_CACHE_WORKFLOWS.has(relPath),
+    ).map(
       ({ relPath, jobName, compiling }) =>
         `${relPath} (${jobName}): runs ${compiling.join(', ')}`,
     )

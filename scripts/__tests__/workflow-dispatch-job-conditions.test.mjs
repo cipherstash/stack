@@ -65,6 +65,49 @@ const EXPECTED_DISPATCHABLE = [
   '.github/workflows/lint-release.yml',
   '.github/workflows/osv-scanner.yml',
   '.github/workflows/tests-rust.yml',
+  // The EQL release line. `release.yml` gained a dispatch with the port,
+  // because the EQL PRERELEASE path is cut by dispatching a batching branch
+  // whose HEAD is a `chore(release):` marker; the other two are how an image or
+  // a crate publish is re-run by hand after a partial failure.
+  '.github/workflows/release.yml',
+  '.github/workflows/release-plz.yml',
+  '.github/workflows/release-postgres-eql-image.yml',
+]
+
+/**
+ * Jobs that legitimately do NOT run on a plain manual dispatch, with the reason.
+ *
+ * WHY THIS EXISTS AT ALL. The check below reads "a declared `workflow_dispatch`
+ * must actually dispatch", and it enforced that by requiring EVERY job-level
+ * `if:` in such a workflow to be true under one synthetic dispatch context.
+ * That is exact for a workflow with one path through it, which every
+ * dispatchable workflow here had. `release.yml` has two, and they are mutually
+ * exclusive by construction: `classify` reports `production` for `main` and
+ * `prerelease` for a marker commit on any other branch, and each half of the
+ * file is keyed on one of them. Under any single context one half is false. No
+ * spelling of the conditions avoids that, because the exclusivity is the
+ * design.
+ *
+ * WHAT IS NOT WEAKENED. The alternative was to relax the rule to "at least one
+ * job runs", which would still have caught the original defect (a
+ * single-job workflow whose only job skipped) and would have said nothing about
+ * a ten-job workflow where nine skip. This keeps the per-job requirement and
+ * makes the exceptions an equality instead — so an unlisted job that stops
+ * running on dispatch fails, AND an entry that stops being needed fails.
+ *
+ * The synthetic context dispatches against `refs/heads/main`, so "production"
+ * is the path being modelled. That is the right default: it is what a dispatch
+ * of `release.yml` does unless someone deliberately points it at a release
+ * branch.
+ */
+const DISPATCH_SKIPPED_JOBS = [
+  // The four prerelease jobs. A dispatch against `main` classifies as
+  // `production`, so these are correctly skipped; they run when the dispatch
+  // names a branch whose HEAD commit subject is `chore(release):`.
+  '.github/workflows/release.yml / prerelease-eql-crate',
+  '.github/workflows/release.yml / prerelease-eql-docs',
+  '.github/workflows/release.yml / prerelease-eql-npm',
+  '.github/workflows/release.yml / prerelease-eql-sql',
 ]
 
 /**
@@ -373,6 +416,30 @@ function runsWhen(condition, context) {
  */
 const PERMISSIVE_NEEDS = {
   changes: { outputs: { relevant: 'true' } },
+  // release.yml, release-plz.yml and release-postgres-eql-image.yml. Every one
+  // of these is a gate that has nothing to do with how the run was triggered,
+  // so it is held open — otherwise "this job skips because there is nothing to
+  // publish" would be indistinguishable from "this job skips on a dispatch",
+  // and the check below would pass for the wrong reason on the FFI jobs it has
+  // been covering since before the EQL port.
+  classify: { outputs: { mode: 'production', version: '3.0.6' } },
+  'eql-armed': { outputs: { armed: 'true' } },
+  gate: { result: 'success', outputs: { ffi: 'true' } },
+  'publish-ffi': { result: 'success' },
+  release: {
+    result: 'success',
+    outputs: {
+      eql_published: 'true',
+      eql_version: '3.0.6',
+      // A FINAL, not a prerelease: `eql-image` runs only for a final, and this
+      // is the value that lets it through. The prerelease half of the file is
+      // in DISPATCH_SKIPPED_JOBS rather than being served by a second context.
+      eql_prerelease: 'false',
+    },
+  },
+  // release-postgres-eql-image.yml's `promote-latest` reads this from its own
+  // `build-sql` job, which copies the dispatch input through.
+  'build-sql': { outputs: { update_floating_tags: 'true' } },
 }
 
 /**
@@ -512,7 +579,24 @@ describe('a declared workflow_dispatch actually dispatches', () => {
     ).not.toEqual([])
   })
 
-  for (const { id, condition } of DISPATCHABLE_CONDITIONS) {
+  it('skips exactly the jobs declared unreachable by a plain dispatch', () => {
+    // An equality, both directions. A job that quietly stops running on
+    // dispatch fails; an entry left behind after its job starts running (or
+    // after the job is deleted) fails too, so the list cannot become a place
+    // findings go to be forgotten.
+    const skipped = DISPATCHABLE_CONDITIONS.filter(
+      ({ condition }) => !runsWhen(condition, CONTEXTS.workflow_dispatch),
+    ).map((entry) => entry.id)
+
+    expect(
+      skipped.sort(),
+      'The set of jobs that do not run on a manual dispatch has changed. If a job JOINED it, its `workflow_dispatch:` just became decorative for that job — gate on the case that genuinely cannot run rather than enumerating the events that can. If a job LEFT it, delete its DISPATCH_SKIPPED_JOBS entry in the same commit.',
+    ).toEqual([...DISPATCH_SKIPPED_JOBS].sort())
+  })
+
+  for (const { id, condition } of DISPATCHABLE_CONDITIONS.filter(
+    (entry) => !DISPATCH_SKIPPED_JOBS.includes(entry.id),
+  )) {
     it(`${id} runs on a manual dispatch`, () => {
       expect(
         runsWhen(condition, CONTEXTS.workflow_dispatch),

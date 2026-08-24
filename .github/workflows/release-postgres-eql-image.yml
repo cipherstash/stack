@@ -1,0 +1,251 @@
+name: "Release Postgres + EQL image"
+
+# Builds `ghcr.io/cipherstash/postgres-eql` — Postgres with the EQL SQL surface
+# already installed — for PG 14 through 17, and pushes it to GHCR.
+#
+# Ported from `packages/eql/.github/workflows/release-postgres-eql-image.yml`.
+# Every path it names moved one level down; see `_build-eql-sql.yml`'s header
+# for the `defaults.run.working-directory` / `working_directory:` split and why
+# `defaults.run.shell: bash {0}` was dropped.
+#
+# DISPATCH-ONLY, and that is deliberate rather than incidental. `release.yml`
+# dispatches it on production finals with `update_floating_tags=true`. It is not
+# `on: release`, because a release created by GITHUB_TOKEN does not trigger
+# `on: release` fan-out — whereas a GITHUB_TOKEN `workflow_dispatch` does.
+#
+# ## Inert until the cutover
+#
+# The `eql-armed` job below reads `scripts/eql-pipeline-armed.mjs`, so a manual
+# dispatch does nothing while `@cipherstash/eql` is still published from
+# `cipherstash/encrypt-query-language`. `release.yml`'s dispatch is behind the
+# same switch, so the two cannot disagree. Deleting the `FROZEN_PUBLISHERS`
+# entry at the Phase-5 cutover arms both.
+#
+# The GHCR package itself is a second, independent gate that this workflow does
+# not control: `ghcr.io/cipherstash/postgres-eql` is currently linked to
+# `cipherstash/encrypt-query-language`, so this repository's GITHUB_TOKEN has no
+# write access to it until the package's own repository access is updated. That
+# has to happen with the cutover, and it is not something a workflow can assert
+# ahead of time — the first armed run is what proves it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      eql_version:
+        description: "EQL version to embed (e.g. 3.0.6). Used as the image tag and the SQL build version."
+        required: true
+        type: string
+      update_floating_tags:
+        description: "Also update :latest, :<pg>, and :<eql_version> floating tags. Off by default for test runs."
+        required: false
+        type: boolean
+        default: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  MISE_VERBOSE: "1"
+  IMAGE: ghcr.io/cipherstash/postgres-eql
+
+permissions:
+  contents: read
+
+jobs:
+  # See `release-plz.yml` for why the switch is derived from
+  # `FROZEN_PUBLISHERS` rather than being a flag somebody flips.
+  eql-armed:
+    name: Is the EQL release line armed?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      armed: ${{ steps.armed.outputs.armed }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Read the publisher switch
+        id: armed
+        run: node scripts/eql-pipeline-armed.mjs
+
+  build-sql:
+    name: Build EQL SQL
+    needs: [eql-armed]
+    if: needs.eql-armed.outputs.armed == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: packages/eql
+    outputs:
+      # Used for image tags, e.g. "3.0.6" -> ghcr.io/.../postgres-eql:17-3.0.6
+      eql_version: ${{ steps.ver.outputs.eql_version }}
+      # Passed to `mise run build --version`. Bare semver (no `eql-` prefix),
+      # matching the SQL release build (`_build-eql-sql.yml`), so
+      # `eql_v3.version()` in the image is byte-identical to the SQL release.
+      build_version: ${{ steps.ver.outputs.build_version }}
+      update_floating_tags: ${{ steps.ver.outputs.update_floating_tags }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          # This workflow pushes an image, so it is a publish path: no cache.
+          # Upstream had `cache: true`. Enforced by
+          # `scripts/lint-no-workflow-caching.mjs`.
+          cache: false
+          working_directory: packages/eql
+
+      - name: Compute EQL version and tag policy
+        id: ver
+        # `eql_version` arrives as bare semver (`release.yml` sends
+        # `needs.release.outputs.eql_version`, e.g. "3.0.6"), used both as the
+        # image tag and, verbatim, as the `mise run build --version` value.
+        env:
+          INPUT_VERSION: ${{ inputs.eql_version }}
+          INPUT_FLOATING: ${{ inputs.update_floating_tags }}
+        run: |
+          {
+            echo "eql_version=${INPUT_VERSION}"
+            echo "build_version=${INPUT_VERSION}"
+            echo "update_floating_tags=${INPUT_FLOATING}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build EQL release SQL
+        env:
+          BUILD_VERSION: ${{ steps.ver.outputs.build_version }}
+        run: mise run build --version "$BUILD_VERSION"
+
+      - name: Upload EQL SQL artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: eql-sql
+          # Workspace-root relative: `defaults.run` does not reach a `uses:` step.
+          path: packages/eql/release/cipherstash-encrypt.sql
+
+  build-images:
+    name: Build postgres-eql image (PG ${{ matrix.pg_version }})
+    needs: [eql-armed, build-sql]
+    if: needs.eql-armed.outputs.armed == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+    strategy:
+      fail-fast: false
+      matrix:
+        pg_version: ["14", "15", "16", "17"]
+    env:
+      EQL_VERSION: ${{ needs.build-sql.outputs.eql_version }}
+      UPDATE_FLOATING: ${{ needs.build-sql.outputs.update_floating_tags }}
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Download EQL SQL artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: eql-sql
+          # The Dockerfile `COPY`s the bundle from its own build context, which
+          # is `packages/eql/docker` below.
+          path: packages/eql/docker/
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          # `cache-image` DEFAULTS TO TRUE and stores the binfmt image in the
+          # GitHub Actions cache. This job pushes a published image, so it
+          # restores nothing. See scripts/lint-no-workflow-caching.mjs.
+          cache-image: false
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          # `cache-binary` DEFAULTS TO TRUE — same rule, same reason.
+          cache-binary: false
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: tags
+        # Always push the immutable :<pg>-<version> tag. Only push the floating
+        # :<pg> tag on a release, or on a dispatch that opted in.
+        env:
+          PG_VERSION: ${{ matrix.pg_version }}
+        run: |
+          tags="${IMAGE}:${PG_VERSION}-${EQL_VERSION}"
+          if [[ "${UPDATE_FLOATING}" == "true" ]]; then
+            tags+=$'\n'"${IMAGE}:${PG_VERSION}"
+          fi
+          {
+            echo 'tags<<EOF'
+            echo "${tags}"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        # NO `cache-from:` / `cache-to:`. Both are absent rather than disabled —
+        # this action has no boolean that turns caching off, and `type=gha`
+        # names the GitHub Actions cache directly. See the AUDITED_ACTIONS entry
+        # in scripts/lint-no-workflow-caching.mjs, which forbids the two inputs
+        # outright rather than asking for a `false` that does not exist.
+        with:
+          context: packages/eql/docker
+          file: packages/eql/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            PG_VERSION=${{ matrix.pg_version }}
+            EQL_VERSION=${{ env.EQL_VERSION }}
+          tags: ${{ steps.tags.outputs.tags }}
+
+  promote-latest:
+    name: Promote PG17 image to :latest and :<eql_version>
+    needs: [eql-armed, build-sql, build-images]
+    if: needs.build-sql.outputs.update_floating_tags == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write # re-tag in ghcr.io
+    env:
+      EQL_VERSION: ${{ needs.build-sql.outputs.eql_version }}
+
+    steps:
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          cache-binary: false
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Re-tag PG17 image as :latest and :<eql_version>
+        # buildx imagetools preserves multi-arch manifests; `docker tag` would not.
+        run: |
+          docker buildx imagetools create \
+            -t "${IMAGE}:latest" \
+            -t "${IMAGE}:${EQL_VERSION}" \
+            "${IMAGE}:17-${EQL_VERSION}"

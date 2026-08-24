@@ -1,17 +1,28 @@
 # release-plz configuration. Mirrors the canonical cipherstash-suite setup.
 #
-# Scope: this repository's primary artefact is the EQL SQL surface, released
-# manually via `eql-<semver>` git tags (see `.github/workflows/release-eql.yml`
-# and the "Cutting a release" section of CLAUDE.md). release-plz is scoped to
-# the one Rust crate we ship to crates.io: `eql-bindings`. Every other workspace
-# member is `publish = false` in its Cargo.toml, so release-plz skips it
-# automatically (same convention as cipherstash-suite) — no per-package config.
+# Scope: release-plz is scoped to the one Rust crate shipped to crates.io,
+# `eql-bindings`. Every other member of this workspace is `publish = false` in
+# its Cargo.toml, so release-plz skips it automatically — no per-package config.
+#
+# THE PATHS IN THIS FILE ARE RELATIVE TO THIS DIRECTORY, not to the repository
+# root. This subtree was imported into cipherstash/stack at `packages/eql`, so
+# `<repo-root>/.github/workflows/release-plz.yml` passes
+# `--manifest-path packages/eql/Cargo.toml --config packages/eql/release-plz.toml`.
+# `changelog_config` below is only read by the `update` / `release-pr` commands,
+# which this repository never runs: versioning is owned by CHANGESETS
+# (`scripts/sync-lockstep-versions.mjs` bumps this crate in lockstep with the
+# npm package), and the workflow runs `command: release` — publish only.
+#
+# This header used to point at `.github/workflows/release-eql.yml` and a
+# "Cutting a release" section of CLAUDE.md. Neither existed even upstream: the
+# workflow was `release.yml`, and this repository has no such CLAUDE.md section.
 #
 # The crate is tagged `eql-bindings-v<semver>` (release-plz's default workspace
-# tag). That tag deliberately does NOT match the EQL SQL-release automation: the
-# `eql`-keyed workflows (release-eql, release-postgres-eql-image, rebuild-docs)
-# exclude `eql-bindings-*`, so a crate release never triggers an SQL build,
-# Docker image, or docs-site rebuild.
+# tag). That tag shape is part of the release identity, not a default nobody
+# chose: it deliberately does NOT match the `eql-<semver>` SQL-release
+# automation, so a crate release never fires an SQL build, a Docker image, or
+# the docs-site rebuild. `<repo-root>/.github/workflows/rebuild-docs.yml`
+# carries the matching `!eql-bindings-*` exclusion.
 
 [workspace]
 changelog_config = "cliff.toml"
