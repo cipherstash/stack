@@ -154,7 +154,7 @@ jobs:
       # its `on:`-level `paths:` has already decided whether the run happens.
       - id: f
         if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:
           # Every path except the workflow itself gained the `packages/eql/`
           # prefix with the subtree. dorny/paths-filter matches against
