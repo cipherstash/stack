@@ -1,27 +1,21 @@
 name: Rebuild Docs
 
-# Fires the docs-site rebuild webhook when a release tag lands.
+# ⚠️ THIS WORKFLOW HAS NEVER RUN. `gh run list --workflow rebuild-docs.yml` is
+# empty, across @cipherstash/stack@1.0.0, 1.1.0 and 1.1.1. A ref created with
+# the repository's GITHUB_TOKEN does not start a workflow run, and
+# changesets/action creates these tags with that token — so the `push` event
+# below is never delivered. Valid file, configured secret, existing tags, and
+# the docs site rebuilt by nothing.
 #
-# TWO TAG FAMILIES, ONE WEBHOOK. This file used to watch only the changesets tag
-# for `@cipherstash/stack`. The EQL port added the second family: the imported
-# copy at `packages/eql/.github/workflows/rebuild-docs.yml` watched `eql-*` and
-# ran nowhere, because GitHub reads workflows from the repository root alone.
-# Merging them rather than keeping two files was the obvious call — the job is
-# one `curl` against one secret, and nothing binds to either filename.
-#
-# `!eql-bindings-*` IS PART OF THE RELEASE IDENTITY, not a tidy-up. release-plz
-# tags the Rust crate `eql-bindings-v<semver>` (its default workspace tag), and
-# a crate release must not fire the docs rebuild — nor the SQL build or the
-# Postgres image, which is why `packages/eql/release-plz.toml` chose a tag shape
-# the `eql-*` automation does not match. GitHub applies these patterns in order:
-# a ref matching a negative pattern AFTER a positive one is excluded, so
-# `eql-bindings-v3.0.6` matches `eql-*` and is then dropped.
+# Left as-is because fixing it means changing the JS release path, which the
+# pull request that discovered it was not doing. DO NOT ADD A TAG PATTERN HERE
+# expecting it to fire. The EQL half was routed around it: it is now the
+# `eql-docs-rebuild` job in release.yml, firing the webhook from inside the run
+# that published. The same fix applies here.
 on:
   push:
     tags:
       - '@cipherstash/stack@*'
-      - 'eql-*'
-      - '!eql-bindings-*'
 
 permissions:
   contents: read

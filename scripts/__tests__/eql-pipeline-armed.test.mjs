@@ -13,37 +13,28 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow } from './lib/workflows.mjs'
 
 /**
- * The switch that keeps the EQL release pipeline inert, and the wiring that
- * makes it mean anything.
+ * The arming switch, and the wiring that makes it mean anything.
  *
- * The whole point of deriving the switch from `FROZEN_PUBLISHERS` is that the
- * Phase-5 cutover arms the pipeline by deleting a map entry it has to delete
- * anyway — the release gate refuses every release until it does. What that
- * buys is undone completely by a job that stops reading the answer, and a
- * dropped `if:` is invisible: while the pipeline is inert for OTHER reasons
- * (the gate blocks, and `changeset publish` finds nothing), a job with no guard
- * behaves exactly like a job with one. It would first differ on the day of the
- * cutover, in the direction that publishes.
- *
- * So the wiring is asserted as an equality here, not just the script's logic.
+ * Deriving the switch from `FROZEN_PUBLISHERS` buys nothing if a job stops
+ * reading it, and a dropped `if:` is invisible: the pipeline is inert for other
+ * reasons too, so an unguarded job behaves exactly like a guarded one right up
+ * to the cutover, when it publishes. Hence the equality on the wiring below.
  */
 
 const SCRIPT = join(REPO_ROOT, 'scripts/eql-pipeline-armed.mjs')
 
 /**
- * Every job that must be gated on the switch, as `<file> / <job>`.
+ * Every job that must be gated on the switch.
  *
- * `release-postgres-eql-image.yml / promote-latest` is deliberately absent: it
- * `needs:` two jobs that ARE gated, so it cannot run without them, and its own
- * `if:` carries the floating-tag policy instead. Adding a second condition
- * there would read as belt-and-braces and would in fact be a second place to
- * forget.
+ * `promote-latest` is absent on purpose: it `needs:` two gated jobs, so it
+ * cannot run without them, and its own `if:` carries the floating-tag policy.
  */
 const GATED_JOBS = [
   '.github/workflows/release-plz.yml / release',
   '.github/workflows/release-postgres-eql-image.yml / build-images',
   '.github/workflows/release-postgres-eql-image.yml / build-sql',
   '.github/workflows/release.yml / eql-docs',
+  '.github/workflows/release.yml / eql-docs-rebuild',
   '.github/workflows/release.yml / eql-image',
   '.github/workflows/release.yml / eql-sql',
   '.github/workflows/release.yml / prerelease-eql-crate',
@@ -82,9 +73,8 @@ describe('the switch answers from FROZEN_PUBLISHERS', () => {
   })
 
   it('is armed once the entry is gone — the cutover, exercised now', () => {
-    // The state that does not exist yet. Without this the "armed" branch would
-    // first execute during the cutover, which is the worst possible moment to
-    // discover the switch was inverted.
+    // Without this the armed branch first executes at the cutover, which is the
+    // worst moment to discover the switch was inverted.
     expect(eqlPipelineArmed(new Map())).toBe(true)
     expect(eqlPipelineArmed(new Map([['@cipherstash/other', 'x']]))).toBe(true)
   })
@@ -95,8 +85,8 @@ describe('the switch answers from FROZEN_PUBLISHERS', () => {
   })
 
   it('matches the live map, whichever state that is in', () => {
-    // Not "is currently false". The map is what Phase 5 edits, and pinning the
-    // verdict here would make the cutover fail in this file for no reason.
+    // Not "is currently false" — pinning the verdict would make the cutover
+    // fail here for no reason.
     expect(eqlPipelineArmed()).toBe(!FROZEN_PUBLISHERS.has(EQL_PACKAGE))
   })
 })
@@ -124,8 +114,7 @@ describe('the switch is readable by a workflow', () => {
   })
 
   it('does not write GITHUB_OUTPUT when there is none', () => {
-    // A `main()` that assumed the variable would throw on a local run, which is
-    // how someone checks the answer before a cutover.
+    // A local run is how someone checks the answer before a cutover.
     const stdout = run({ GITHUB_OUTPUT: '' })
     expect(stdout).toContain(EQL_PACKAGE)
   })

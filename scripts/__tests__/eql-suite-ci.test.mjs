@@ -865,12 +865,10 @@ const CI_EXEMPT_CARGO_TASKS = new Map([
     'test:lint',
     '`cargo fmt --check` scoped to tests/sqlx. `test:crates` runs `cargo fmt --check` at the EQL workspace ROOT, and tests/sqlx is a workspace member, so the CI run covers exactly these files and four crates more — verified against `cargo fmt --check -v`, which lists packages/eql/tests/sqlx/** among its targets. test-eql.yml says the same thing at the `rust-crates` job, which is where the standalone lint step used to be.',
   ],
-  // `docs:generate:json` WAS HERE, as category (d) — "unreached only because the
-  // workflow that runs it has not been ported yet" — naming
-  // `packages/eql/.github/workflows/_build-docs.yml` as its sole caller. That
-  // file is now `.github/workflows/_build-eql-docs.yml` and does run, so the
-  // exemption went stale exactly as it said it would, and the staleness check
-  // below is what forced its removal rather than a memory of having written it.
+  // `docs:generate:json` was here as category (d), naming the unported
+  // `_build-docs.yml` as its sole caller. That file now runs as
+  // `_build-eql-docs.yml`, so the exemption went stale exactly as it predicted
+  // and the staleness check below is what forced its removal.
 ])
 
 /** Cargo tasks a given reachability set leaves unaccounted for. */
@@ -1294,12 +1292,9 @@ describe('every cargo check EQL owns is reached by a root workflow', () => {
  * actually fails.
  */
 const SOLE_CALLER_WORKFLOWS = [
-  // docs:generate:json. It arrived on this list the day the release port
-  // landed — until then that task was reachable from nothing at all and carried
-  // a written exemption saying so. Note what "sole caller" costs here that it
-  // does not cost for the three below: this workflow runs only on a RELEASE, so
-  // a break in the doxygen -> JSON pipeline surfaces mid-publish rather than on
-  // the pull request that caused it.
+  // docs:generate:json, reachable from nothing at all before the release port.
+  // Note what "sole caller" costs here and not for the three below: this runs
+  // only on a RELEASE, so a break surfaces mid-publish.
   `${WORKFLOW_DIR}/_build-eql-docs.yml`,
   `${WORKFLOW_DIR}/bench-eql.yml`, // test:bench
   `${WORKFLOW_DIR}/macro-expand-eql.yml`, // test:matrix:expand
@@ -1361,21 +1356,12 @@ describe('the guard fails when a workflow stops calling a cargo check', () => {
 /**
  * The deposited `.github` is GONE, and must stay gone.
  *
- * This used to be a SHRINKING ALLOWLIST — eleven entries, asserted by equality,
- * emptied one commit at a time as each file was ported or deliberately dropped.
- * The last of them left with the release port, which is what the allowlist's own
- * failure message asked for: "When this list empties, delete the directory and
- * replace this check with `expect(existsSync(...)).toBe(false)`."
+ * It was a shrinking allowlist of eleven files, emptied by the release port.
+ * The rule does not expire with it: a workflow under a package executes on no
+ * event, which looks exactly like a check that passes.
  *
- * The rule it enforced does not expire with it. A workflow file under a package
- * reads as live CI and is not: GitHub reads workflows from the repository root
- * alone, so anything deposited here executes on no event — which is
- * indistinguishable, on every run and every PR page, from a check that passes.
- * That is the failure this whole file exists to prevent, and `lintWiring.test.ts`
- * asserts exactly the same thing for protect-ffi's deposit.
- *
- * WHERE EACH FILE WENT, because "it was deleted" is not the same claim as "it
- * was ported" and a reader a year from now cannot tell them apart from a diff:
+ * Where each file went — "deleted" and "ported" are different claims and a diff
+ * cannot tell them apart:
  *
  *   _build-sql.yml                 -> .github/workflows/_build-eql-sql.yml
  *   _build-docs.yml                -> .github/workflows/_build-eql-docs.yml
@@ -1486,46 +1472,48 @@ function reachesCargo(name, seen = new Set()) {
 /**
  * The workflows that MUST NOT restore a cache, read from the gate that says so.
  *
- * THE TWO RULES IN THIS REPOSITORY POINT OPPOSITE WAYS, and the EQL release port
- * is where they met. `scripts/lint-no-workflow-caching.mjs` forbids a GitHub
- * Actions cache restore anywhere an artefact gets published — a poisoned entry
- * would execute in the job holding the npm or crates.io credential — and
- * `Swatinem/rust-cache` is precisely such a restore. The check below asks for
- * one on every job that compiles Rust. Four release jobs do both: they compile
- * the EQL workspace (`mise run build` shells out to `cargo run -p eql-codegen`)
- * inside a workflow that publishes.
+ * `lint-no-workflow-caching.mjs` forbids a cache restore in a publishing
+ * workflow; the check below wants a `Swatinem/rust-cache` step on every job
+ * that compiles Rust. Four EQL release jobs do both, so they pay a cold
+ * compile. Derived from the linter's own target list rather than copied, so the
+ * two cannot disagree about which jobs those are.
  *
- * Supply chain wins, so those jobs pay a cold compile. What must not happen is
- * this file and that linter disagreeing about WHICH jobs those are: a workflow
- * added to one list and not the other would either be told to add a cache the
- * linter then rejects, or be quietly dropped from both checks.
- *
- * So the list is derived rather than copied. The linter prints its default
- * TARGETS on a clean run — the same trick `lint-no-workflow-caching.test.mjs`
- * uses to read them — because the script lints on import and cannot be imported
- * for the constant alone. If it ever exits non-zero this throws, rather than
- * falling back to an empty set: an exemption list that silently empties would
- * re-report all four jobs, and one that silently fills would excuse everything.
+ * Lazy: the linter lints on import, so its targets are read by running it, and
+ * a real caching violation exits non-zero. Computing this at module scope made
+ * that a collect failure, taking all 40-odd assertions in this file with it.
  */
-const NO_CACHE_WORKFLOWS = (() => {
-  const stdout = execFileSync(
-    'node',
-    [join(REPO_ROOT, 'scripts/lint-no-workflow-caching.mjs')],
-    { cwd: REPO_ROOT, encoding: 'utf8' },
-  )
-  const targets = stdout
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith(`${WORKFLOW_DIR}/`))
-  if (targets.length === 0) {
-    throw new Error(
-      'lint-no-workflow-caching.mjs printed no targets. Its success output is the ' +
-        'only readable copy of its TARGETS, and without it the publish-path ' +
-        'exemption below silently covers nothing.',
-    )
+let noCacheWorkflows
+function inNoCacheWorkflow(relPath) {
+  if (noCacheWorkflows === undefined) {
+    let stdout
+    try {
+      stdout = execFileSync(
+        'node',
+        [join(REPO_ROOT, 'scripts/lint-no-workflow-caching.mjs')],
+        { cwd: REPO_ROOT, encoding: 'utf8' },
+      )
+    } catch (err) {
+      throw new Error(
+        'lint-no-workflow-caching.mjs exited non-zero, so its target list could ' +
+          'not be read. Fix the caching finding it reports first:\n' +
+          String(err?.stdout ?? '') +
+          String(err?.stderr ?? ''),
+      )
+    }
+    const targets = stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith(`${WORKFLOW_DIR}/`))
+    if (targets.length === 0) {
+      throw new Error(
+        'lint-no-workflow-caching.mjs printed no targets, so the publish-path ' +
+          'exemption below would silently cover nothing.',
+      )
+    }
+    noCacheWorkflows = new Set(targets)
   }
-  return new Set(targets)
-})()
+  return noCacheWorkflows.has(relPath)
+}
 
 /**
  * Every job in a root workflow, with the cargo-reaching mise tasks its steps
@@ -1584,13 +1572,10 @@ describe('every job that compiles Rust restores the shared cache', () => {
   })
 
   it('exempts the publish paths, and only those', () => {
-    // The exemption is worth an assertion of its own rather than only ever
-    // appearing as an absence in the check below: if the derivation above stops
-    // selecting the release jobs, they rejoin that check and the natural repair
-    // is to add a rust-cache step the caching gate then rejects.
-    const exempt = RUST_JOBS.filter(({ relPath }) =>
-      NO_CACHE_WORKFLOWS.has(relPath),
-    )
+    // Worth its own assertion: if the derivation stops selecting these jobs
+    // they rejoin the check below, whose natural repair is a rust-cache step
+    // the caching gate then rejects.
+    const exempt = RUST_JOBS.filter(({ relPath }) => inNoCacheWorkflow(relPath))
     expect(
       exempt.map(({ relPath, jobName }) => `${relPath} (${jobName})`).sort(),
       'No cargo-compiling job sits in a no-cache publish workflow any more. If the EQL release pipeline moved, move this with it; if it was deleted, delete this.',
@@ -1601,8 +1586,8 @@ describe('every job that compiles Rust restores the shared cache', () => {
       '.github/workflows/release.yml (prerelease-eql-npm)',
     ])
 
-    // …and none of them smuggled the cache in anyway. The caching gate would
-    // catch it too; this says so where the reader is already looking.
+    // …and none smuggled one in anyway. The caching gate would catch it too;
+    // this says so where the reader is already looking.
     expect(
       exempt.filter(({ cached }) => cached).map(({ relPath }) => relPath),
       'A publish-path job carries a `Swatinem/rust-cache` step. That is a GitHub Actions cache restore inside a job holding a publishing credential — see scripts/lint-no-workflow-caching.mjs.',
@@ -1611,7 +1596,7 @@ describe('every job that compiles Rust restores the shared cache', () => {
 
   it('leaves no cargo-compiling job uncached', () => {
     const uncached = RUST_JOBS.filter(
-      ({ relPath, cached }) => !cached && !NO_CACHE_WORKFLOWS.has(relPath),
+      ({ relPath, cached }) => !cached && !inNoCacheWorkflow(relPath),
     ).map(
       ({ relPath, jobName, compiling }) =>
         `${relPath} (${jobName}): runs ${compiling.join(', ')}`,

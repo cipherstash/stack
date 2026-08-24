@@ -11,13 +11,10 @@ name: Lint release tooling
 # avoid `sed`-into-`export` (SC2001, SC2155), `ls | wc -l` (SC2012), and
 # dollar-braces or backticks inside single-quoted `node -e` arguments (SC2016).
 #
-# THE EQL RELEASE WORKFLOWS ARE IN SCOPE, and that is the whole reason their
-# `actionlint` cleanliness is a property rather than a coincidence. They were
-# ported from `packages/eql/.github/`, where an EQL-local `lint-release.yml`
-# linted them and — like everything else in that directory — ran on nothing.
-# Its two unique checks came with them: `shellcheck` over the
-# `prepare-bindings-assets` wrapper and that wrapper's own bash unit test, both
-# of which ran NOWHERE in this repository until this file named them.
+# The EQL release workflows are in scope. They came from `packages/eql/.github/`,
+# where an EQL-local copy of this file linted them and ran on nothing — along
+# with its two unique checks, the `prepare-bindings-assets` shellcheck and that
+# wrapper's bash unit test, neither of which ran anywhere here until now.
 
 on:
   pull_request:
@@ -100,11 +97,9 @@ jobs:
             .github/workflows/release-postgres-eql-image.yml \
             .github/workflows/lint-release.yml
 
-      # The EQL half. `prepare-bindings-assets.sh` is what stamps the SQL bundle
-      # and rewrites the four release manifests during `pnpm run version`, so a
-      # shell mistake in it lands mid-release with every manifest already
-      # rewritten. Neither of these ran anywhere in this repository before the
-      # release port.
+      # `prepare-bindings-assets.sh` stamps the SQL bundle and rewrites the four
+      # release manifests during `pnpm run version`, so a shell mistake in it
+      # lands mid-release with every manifest already rewritten.
       - name: shellcheck (EQL release wrappers)
         run: |
           set -euo pipefail

@@ -293,10 +293,8 @@ monorepo, which is where the silent failures are.
   dead deposit: GitHub reads workflows from the repo root and nowhere else, so
   the eleven files that arrived with the subtree ran on nothing.
   `scripts/__tests__/eql-suite-ci.test.mjs` held them as a shrinking allowlist
-  until the release port emptied it, and now asserts the directory does not
-  exist and that nothing is tracked under it. **Never put a workflow under a
-  package** — it executes on no event, which reads exactly like a check that
-  passes. That same test also asserts that the three SQLx suite tasks are
+  until the release port emptied it, and now asserts the directory is gone.
+  **Never put a workflow under a package.** That same test also asserts that the three SQLx suite tasks are
   invoked by name from a root workflow, that every `dorny/paths-filter` path is
   scoped to `packages/eql/`, and that every mise task shelling out to cargo is
   either reachable from a root workflow or exempted with a written reason.
@@ -323,39 +321,28 @@ monorepo, which is where the silent failures are.
   | `release-postgres-eql-image.yml` | the GHCR image, dispatched by `release.yml` on production finals |
   | `rebuild-docs.yml`, `lint-release.yml` | merged into the root files of the same name |
 
-  Every one of those sits behind `scripts/eql-pipeline-armed.mjs`, which reads
-  `FROZEN_PUBLISHERS` in `scripts/release-gate.mjs` and answers "may this
-  repository publish EQL at all?". **Deleting the `@cipherstash/eql` entry at
-  the Phase-5 cutover is what arms the pipeline** — there is deliberately no
-  second flag, because a forgotten one fails silently in the direction that
-  publishes an npm package with no SQL release, no docs and no crate. The gate
-  itself is the other half: it exits non-zero the moment a frozen package's
-  committed version is missing from npm, which skips `release` and everything
-  downstream of it. Read `node scripts/release-gate.mjs` for what it is doing
-  right now rather than inferring it from here.
-  Two things the cutover also needs, neither of which a workflow can assert
-  ahead of time: a `GPG_PRIVATE_KEY` secret in this repository (release-plz
-  signs its commit and tag), and write access from this repository to the
-  `ghcr.io/cipherstash/postgres-eql` package, which is currently linked to
-  `cipherstash/encrypt-query-language`.
-- **A release workflow may not restore a cache, including a Rust one, and the
-  two rules that say so now know about each other.**
-  `scripts/lint-no-workflow-caching.mjs` forbids a GitHub Actions cache restore
-  anywhere an artefact is published; `eql-suite-ci.test.mjs` requires a
-  `Swatinem/rust-cache` step on every job that compiles Rust. Four EQL release
-  jobs do both, so they pay a cold cargo compile — and the exemption is derived
-  from the linter's own target list (read out of its success output, since the
-  script lints on import) rather than copied, so the two cannot disagree about
-  which jobs those are.
-  That scan now follows a task's `tasks/*.sh` delegations **transitively**
-  (cycle-guarded, and it throws rather than truncating past
-  `MAX_SCRIPT_DEPTH`), and it reads the `run:` bodies of composite actions a
-  workflow reaches through `uses: ./…`. Both used to stop at one hop, and both
-  failure directions were live: a cargo helper reached only at depth 2 dropped
-  out of `CARGO_TASKS` entirely — no orphan reported, no exemption demanded,
-  and the job running it stopped counting as a Rust job for the cache check —
-  while a mise task invoked from a composite action read as run by nobody,
-  whose natural repair is an exemption claiming CI does not run it.
+  Every one sits behind `scripts/eql-pipeline-armed.mjs`, which reads
+  `FROZEN_PUBLISHERS` in `scripts/release-gate.mjs`. **Deleting the
+  `@cipherstash/eql` entry at the Phase-5 cutover is what arms the pipeline** —
+  there is no second flag, because a forgotten one fails silently in the
+  direction that publishes an npm package with no SQL release, docs or crate.
+  Run `node scripts/release-gate.mjs` for what the gate is doing right now
+  rather than inferring it from here.
+
+  **The cutover needs three more things, none of which a workflow can assert
+  ahead of time:** a `GPG_PRIVATE_KEY` secret (release-plz signs its commit and
+  tag, and this repository has none); write access from here to the
+  `ghcr.io/cipherstash/postgres-eql` package, still linked to
+  `cipherstash/encrypt-query-language`; and a docs-site rebuild that actually
+  fires — `rebuild-docs.yml` has never run in its life, because a ref created
+  with `GITHUB_TOKEN` starts no workflow. The EQL half is routed around it as a
+  job in `release.yml`; the `@cipherstash/stack@*` half is still broken.
+- **A release workflow may not restore a cache, including a Rust one.**
+  `lint-no-workflow-caching.mjs` forbids a cache restore anywhere an artefact is
+  published; `eql-suite-ci.test.mjs` wants `Swatinem/rust-cache` on every job
+  that compiles Rust. Four EQL release jobs do both, so they pay a cold compile.
+  The exemption is derived from the linter's own target list rather than copied,
+  so the two cannot disagree about which jobs those are.
 - **The EQL path filters are three copies of one list, and the list is derived
   now, not remembered.** `test-eql.yml` writes it twice (an `on: push: paths:`
   filter deciding whether the workflow starts at all, and a

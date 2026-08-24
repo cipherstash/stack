@@ -57,26 +57,15 @@ const OIDC_JOBS = [
 ]
 
 /**
- * The jobs in a publishing workflow that may hold ANY writable scope, as
- * `<file> / <job>`. A superset of `OIDC_JOBS`, asserted as such below.
+ * The jobs in a publishing workflow that may hold ANY writable scope. A
+ * superset of `OIDC_JOBS`, asserted as such below.
  *
- * WHY THIS IS A SECOND LIST AND NOT THE SAME ONE. The third check below reads
- * "a job in a publishing workflow that does not publish must not be able to
- * write to the repository", and it enforced that by asking whether the job was
- * in `OIDC_JOBS` — which made the npm-credential list do double duty as the
- * write list. That was exactly right while the only writing jobs were the two
- * that publish. It stopped being expressible the moment `release.yml` grew the
- * EQL release line: `eql-sql` creates the `eql-<version>` GitHub release,
- * `eql-image` dispatches another workflow, `prerelease-eql-crate` moves a
- * branch ref. All three need a writable scope; none of them may mint a publish
- * token, and putting them in `OIDC_JOBS` to buy the write would have said they
+ * A second list because `OIDC_JOBS` was doing double duty as the write list —
+ * fine while the only writing jobs were the two that publish, and not
+ * expressible once `release.yml` grew jobs that create a release, dispatch a
+ * workflow or move a branch ref. Those need a writable scope and must not be
+ * able to mint a publish token; adding them to `OIDC_JOBS` would have said they
  * could.
- *
- * So the two facts are separated. `OIDC_JOBS` still answers "who may publish?"
- * as an equality, which is the strong claim; this answers the weaker one, and
- * every entry names the scope and what it is for — because `contents: write` in
- * a file registered as a trusted publisher is still the scope that lets a
- * compromised step rewrite the tree the publish jobs build from.
  */
 const REPO_WRITE_JOBS = [
   ...OIDC_JOBS,

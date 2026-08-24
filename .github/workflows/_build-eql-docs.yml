@@ -1,27 +1,19 @@
 name: "Build EQL docs (reusable)"
 
-# Reusable docs build + attach for the EQL release line. Called inline by
-# `release.yml` on BOTH the production and the prerelease path. The target
-# release already exists by the time this runs: `_build-eql-sql.yml` creates it
-# earlier in the same run, which is why both callers declare it as a `needs:`.
+# Builds the EQL docs bundle and attaches it to the release _build-eql-sql.yml
+# created earlier in the same run. Called by release.yml on both paths.
 #
-# Ported from `packages/eql/.github/workflows/_build-docs.yml` — see
-# `_build-eql-sql.yml`'s header for the rename, the two `packages/eql`
-# rewrites, and why `defaults.run.shell: bash {0}` was dropped.
+# Ported from packages/eql/.github/workflows/_build-docs.yml — see
+# _build-eql-sql.yml for the rename and the path rewrites.
 #
-# THIS PIPELINE HAS NEVER EXECUTED IN THIS REPOSITORY. `docs:generate:json`'s
-# only caller was the unported copy of this file, which is why it carried a
-# written exemption in `scripts/__tests__/eql-suite-ci.test.mjs` until this
-# workflow landed. The doxygen half is the part to watch: `docs:generate` shells
-# out to a `doxygen` binary that mise does not provide (`packages/eql/mise.toml`
-# pins `python = "3.13"` under `[tools]`, and nothing else), so the apt install
-# below is load-bearing and is the only thing standing between this job and a
-# `doxygen: command not found` on the first real release.
+# This pipeline has never executed here: `docs:generate:json` had no caller at
+# all until this file landed. The apt install below is load-bearing — mise does
+# not provide doxygen.
 on:
   workflow_call:
     inputs:
       ref:
-        description: "Git ref/SHA to build docs from. Empty -> default checkout (github.sha)."
+        description: "Git ref/SHA to build docs from. Empty -> default checkout."
         required: false
         type: string
         default: ""
@@ -58,14 +50,10 @@ jobs:
         with:
           version: 2026.4.0
           install: true
-          # Reached only from `release.yml`; see `_build-eql-sql.yml` for why a
-          # publish path restores no cache. Upstream had `cache: true`.
-          cache: false
+          cache: false # publish path; see _build-eql-sql.yml
           working_directory: packages/eql
 
       - name: Install Doxygen
-        # Not from mise: `packages/eql/mise.toml` does not pin doxygen, and
-        # `tasks/docs/generate.sh` invokes the binary directly.
         run: |
           sudo apt-get update
           sudo apt-get install -y doxygen

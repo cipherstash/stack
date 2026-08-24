@@ -17,19 +17,14 @@ const TARGETS = process.argv.slice(2).length
       // calls it too — cannot become a way to build these artifacts under
       // different rules.
       '.github/workflows/_build-ffi-artifacts.yml',
-      // The EQL release line. `_build-eql-sql.yml` and `_build-eql-docs.yml`
-      // are reached from release.yml anyway (the traversal follows a job-level
-      // `uses:`) and are named for the same reason `_build-ffi-artifacts.yml`
-      // is: so a second caller cannot become a way to build the released SQL
-      // and docs under different rules.
+      // The EQL release line. The two reusables are reached from release.yml
+      // anyway and named for the same reason `_build-ffi-artifacts.yml` is: a
+      // second caller must not become a way to build them under other rules.
       //
-      // `release-plz.yml` and `release-postgres-eql-image.yml` are NOT reached
-      // from anywhere — `release.yml` starts them with `gh workflow run`, which
-      // no traversal can follow — so naming them here is the only thing that
-      // brings them into scope. One publishes a crate to crates.io over OIDC;
-      // the other pushes a multi-arch image to GHCR. Both hold a publishing
-      // credential, which is the property this gate is about, and neither is
-      // reachable by reading `uses:` from a target.
+      // The other two are reached from NOWHERE — release.yml starts them with
+      // `gh workflow run`, which no traversal can follow — so naming them here
+      // is the only thing that brings them into scope. One publishes a crate
+      // over OIDC, the other pushes an image to GHCR.
       '.github/workflows/_build-eql-sql.yml',
       '.github/workflows/_build-eql-docs.yml',
       '.github/workflows/release-plz.yml',
@@ -175,50 +170,37 @@ const AUDITED_ACTIONS = new Map([
 
   // ---- The EQL release line -------------------------------------------
   //
-  // Creates and attaches the `eql-<version>` GitHub release from
-  // `_build-eql-sql.yml` and `_build-eql-docs.yml`. Read at the pinned v2: its
-  // inputs are release metadata and file globs, and it uploads through the
-  // releases API. No cache, no cache input.
+  // Creates and attaches the eql-<version> GitHub release. Read at the pinned
+  // v2: release metadata and file globs, uploaded through the releases API.
   ['softprops/action-gh-release', { cacheInput: null }],
-  // Imports the GPG key release-plz signs its commit and tag with. Read at the
-  // pinned v7: key material, git config and fingerprint inputs only.
+  // Imports the GPG key release-plz signs with. Read at v7: key material, git
+  // config and fingerprint inputs only.
   ['crazy-max/ghaction-import-gpg', { cacheInput: null }],
-  // Publishes the `eql-bindings` crate. It has no cache input — AND IT IS A
-  // COMPOSITE, so a second sentence is owed here that the other entries do not
-  // need. At the pinned v0.5 it reaches three published actions of its own
-  // (`taiki-e/install-action`, `cargo-bins/cargo-binstall`,
-  // `release-plz/git-config`), and this gate CANNOT read them: it opens local
-  // `./` composites and nothing else. So this entry is an audit of the version
-  // pinned above, not a standing property of the action — read the composite
-  // again when the pin moves. It was read at 2eb1d8bc: the three nested actions
-  // download binaries (GitHub releases and crates.io) and none of them touches
-  // the GitHub Actions cache.
+  // Publishes the eql-bindings crate. No cache input — AND IT IS A COMPOSITE
+  // reaching three published actions of its own (taiki-e/install-action,
+  // cargo-bins/cargo-binstall, release-plz/git-config) that this gate cannot
+  // read; it opens local `./` composites only. So this is an audit of the
+  // pinned version, not a standing property: re-read it when the pin moves.
+  // Read at 2eb1d8bc — all three download binaries, none touches the cache.
   ['release-plz/action', { cacheInput: null }],
 
   // ---- Docker, for the postgres-eql image ------------------------------
   //
-  // The plan for these three said their caching was "registry-backed rather
-  // than GitHub-Actions-cache", so the allowlist's rule would not transfer.
-  // Reading the pinned action manifests, that is true of exactly ONE of them.
+  // The plan called all three "registry-backed rather than
+  // GitHub-Actions-cache". Reading the pinned manifests, that is true of one.
   //
-  // `cache-image` DEFAULTS TO TRUE and stores the binfmt image in the GitHub
-  // Actions cache — the same shape as `jdx/mise-action` above, and an omitted
-  // key is a restore.
+  // `cache-image` DEFAULTS TO TRUE — binfmt image in the Actions cache.
   ['docker/setup-qemu-action', { cacheInput: 'cache-image' }],
-  // `cache-binary` DEFAULTS TO TRUE and caches the buildx binary the same way.
+  // `cache-binary` DEFAULTS TO TRUE — the buildx binary, same way.
   ['docker/setup-buildx-action', { cacheInput: 'cache-binary' }],
-  // Authenticates to GHCR. No cache, no cache input.
+  // GHCR auth. No cache, no cache input.
   ['docker/login-action', { cacheInput: null }],
-  // THE ONE THE PLAN DESCRIBED, and the only entry that needs
-  // `forbiddenInputs`. It has no boolean that turns caching off, because it has
-  // no caching of its own to turn off: buildx caches only what `cache-from` /
-  // `cache-to` ask it to. Those are usually registry-backed
-  // (`type=registry,ref=…`), which is outside this gate's concern — but
-  // `type=gha` names the GitHub Actions cache directly, and would be a restore
-  // AND a write inside the job that pushes the published image. `cacheInput`
-  // cannot express that: there is no input to set to `false`. So the two inputs
-  // are forbidden outright. Adding one back means deciding here, in this file,
-  // which backend it names.
+  // The one the plan described, and the only `forbiddenInputs` entry. It has no
+  // boolean to turn caching off because it has none of its own: buildx caches
+  // what `cache-from` / `cache-to` ask for. Usually registry-backed, which is
+  // outside this gate — but `type=gha` is the Actions cache, restored AND
+  // written inside the job that pushes the image. Forbidden outright; adding
+  // one back means deciding here which backend it names.
   [
     'docker/build-push-action',
     { cacheInput: null, forbiddenInputs: ['cache-from', 'cache-to'] },
@@ -382,14 +364,11 @@ function checkStep(step, at, bodyAudited = false) {
     if (reason) offenders.push(`${at}: ${path} ${reason}`)
   }
 
-  // The other half of the same audit, for an action whose caching is opted
-  // INTO rather than defaulted on. `cacheInput` asks for an explicit `false`;
-  // there is nothing to set to `false` here, so the requirement is that the
-  // input is absent. Presence is the finding, whatever its value — the value is
-  // a backend name (`type=gha` restores and writes the GitHub Actions cache,
-  // `type=registry` does not), and deciding which is which by string-matching a
-  // buildx cache spec would be a parser this file does not want to own. Naming
-  // one at all is the moment to record the decision on the allowlist entry.
+  // The same audit for an action whose caching is opted INTO rather than
+  // defaulted on: nothing to set to `false`, so the input must be absent.
+  // Presence is the finding whatever the value — the value is a backend name,
+  // and telling `type=gha` from `type=registry` would mean owning a parser for
+  // buildx cache specs. Naming one is the moment to record the decision above.
   for (const forbidden of audited?.forbiddenInputs ?? []) {
     if (step?.with && Object.hasOwn(step.with, forbidden)) {
       offenders.push(

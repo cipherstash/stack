@@ -1,32 +1,16 @@
 name: "Release Postgres + EQL image"
 
-# Builds `ghcr.io/cipherstash/postgres-eql` — Postgres with the EQL SQL surface
-# already installed — for PG 14 through 17, and pushes it to GHCR.
+# Builds ghcr.io/cipherstash/postgres-eql (Postgres with EQL preinstalled) for
+# PG 14-17 and pushes it.
 #
-# Ported from `packages/eql/.github/workflows/release-postgres-eql-image.yml`.
-# Every path it names moved one level down; see `_build-eql-sql.yml`'s header
-# for the `defaults.run.working-directory` / `working_directory:` split and why
-# `defaults.run.shell: bash {0}` was dropped.
+# Dispatch-only: release.yml dispatches it on production finals. Not
+# `on: release`, because a release created with GITHUB_TOKEN does not trigger
+# that event — whereas a GITHUB_TOKEN workflow_dispatch does.
 #
-# DISPATCH-ONLY, and that is deliberate rather than incidental. `release.yml`
-# dispatches it on production finals with `update_floating_tags=true`. It is not
-# `on: release`, because a release created by GITHUB_TOKEN does not trigger
-# `on: release` fan-out — whereas a GITHUB_TOKEN `workflow_dispatch` does.
-#
-# ## Inert until the cutover
-#
-# The `eql-armed` job below reads `scripts/eql-pipeline-armed.mjs`, so a manual
-# dispatch does nothing while `@cipherstash/eql` is still published from
-# `cipherstash/encrypt-query-language`. `release.yml`'s dispatch is behind the
-# same switch, so the two cannot disagree. Deleting the `FROZEN_PUBLISHERS`
-# entry at the Phase-5 cutover arms both.
-#
-# The GHCR package itself is a second, independent gate that this workflow does
-# not control: `ghcr.io/cipherstash/postgres-eql` is currently linked to
-# `cipherstash/encrypt-query-language`, so this repository's GITHUB_TOKEN has no
-# write access to it until the package's own repository access is updated. That
-# has to happen with the cutover, and it is not something a workflow can assert
-# ahead of time — the first armed run is what proves it.
+# INERT until the cutover via the eql-armed job. A second gate is outside this
+# file's control: the GHCR package is still linked to
+# cipherstash/encrypt-query-language, so this repository has no write access to
+# it until that moves.
 
 on:
   workflow_dispatch:
@@ -50,8 +34,6 @@ permissions:
   contents: read
 
 jobs:
-  # See `release-plz.yml` for why the switch is derived from
-  # `FROZEN_PUBLISHERS` rather than being a flag somebody flips.
   eql-armed:
     name: Is the EQL release line armed?
     runs-on: ubuntu-latest
@@ -82,11 +64,9 @@ jobs:
       run:
         working-directory: packages/eql
     outputs:
-      # Used for image tags, e.g. "3.0.6" -> ghcr.io/.../postgres-eql:17-3.0.6
       eql_version: ${{ steps.ver.outputs.eql_version }}
-      # Passed to `mise run build --version`. Bare semver (no `eql-` prefix),
-      # matching the SQL release build (`_build-eql-sql.yml`), so
-      # `eql_v3.version()` in the image is byte-identical to the SQL release.
+      # Bare semver, passed verbatim to `mise run build --version`, so
+      # eql_v3.version() in the image matches the SQL release byte for byte.
       build_version: ${{ steps.ver.outputs.build_version }}
       update_floating_tags: ${{ steps.ver.outputs.update_floating_tags }}
 
@@ -99,17 +79,11 @@ jobs:
         with:
           version: 2026.4.0
           install: true
-          # This workflow pushes an image, so it is a publish path: no cache.
-          # Upstream had `cache: true`. Enforced by
-          # `scripts/lint-no-workflow-caching.mjs`.
-          cache: false
+          cache: false # pushes an image; publish path. Upstream had `true`.
           working_directory: packages/eql
 
       - name: Compute EQL version and tag policy
         id: ver
-        # `eql_version` arrives as bare semver (`release.yml` sends
-        # `needs.release.outputs.eql_version`, e.g. "3.0.6"), used both as the
-        # image tag and, verbatim, as the `mise run build --version` value.
         env:
           INPUT_VERSION: ${{ inputs.eql_version }}
           INPUT_FLOATING: ${{ inputs.update_floating_tags }}
@@ -129,7 +103,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: eql-sql
-          # Workspace-root relative: `defaults.run` does not reach a `uses:` step.
+          # Workspace-root relative; `defaults.run` does not reach a `uses:` step.
           path: packages/eql/release/cipherstash-encrypt.sql
 
   build-images:
@@ -140,7 +114,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      packages: write # push to ghcr.io
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -158,23 +132,18 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: eql-sql
-          # The Dockerfile `COPY`s the bundle from its own build context, which
-          # is `packages/eql/docker` below.
+          # The Dockerfile COPYs it from its own build context.
           path: packages/eql/docker/
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
-          # `cache-image` DEFAULTS TO TRUE and stores the binfmt image in the
-          # GitHub Actions cache. This job pushes a published image, so it
-          # restores nothing. See scripts/lint-no-workflow-caching.mjs.
-          cache-image: false
+          cache-image: false # defaults to true; GitHub Actions cache
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
-          # `cache-binary` DEFAULTS TO TRUE — same rule, same reason.
-          cache-binary: false
+          cache-binary: false # defaults to true; GitHub Actions cache
 
       - name: Login to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -185,8 +154,8 @@ jobs:
 
       - name: Compute image tags
         id: tags
-        # Always push the immutable :<pg>-<version> tag. Only push the floating
-        # :<pg> tag on a release, or on a dispatch that opted in.
+        # Always the immutable :<pg>-<version>; the floating :<pg> only on
+        # release or an opted-in dispatch.
         env:
           PG_VERSION: ${{ matrix.pg_version }}
         run: |
@@ -202,11 +171,9 @@ jobs:
 
       - name: Build and push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        # NO `cache-from:` / `cache-to:`. Both are absent rather than disabled —
-        # this action has no boolean that turns caching off, and `type=gha`
-        # names the GitHub Actions cache directly. See the AUDITED_ACTIONS entry
-        # in scripts/lint-no-workflow-caching.mjs, which forbids the two inputs
-        # outright rather than asking for a `false` that does not exist.
+        # No cache-from/cache-to: `type=gha` is the GitHub Actions cache and
+        # this action has no boolean to disable caching. Forbidden outright by
+        # scripts/lint-no-workflow-caching.mjs.
         with:
           context: packages/eql/docker
           file: packages/eql/docker/Dockerfile
@@ -219,13 +186,15 @@ jobs:
 
   promote-latest:
     name: Promote PG17 image to :latest and :<eql_version>
+    # No eql-armed condition: both its `needs` carry one, and a skipped `needs`
+    # skips this job.
     needs: [eql-armed, build-sql, build-images]
     if: needs.build-sql.outputs.update_floating_tags == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     timeout-minutes: 10
     permissions:
       contents: read
-      packages: write # re-tag in ghcr.io
+      packages: write
     env:
       EQL_VERSION: ${{ needs.build-sql.outputs.eql_version }}
 
@@ -243,7 +212,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Re-tag PG17 image as :latest and :<eql_version>
-        # buildx imagetools preserves multi-arch manifests; `docker tag` would not.
+        # imagetools preserves multi-arch manifests; `docker tag` would not.
         run: |
           docker buildx imagetools create \
             -t "${IMAGE}:latest" \

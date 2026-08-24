@@ -1,56 +1,23 @@
 name: "Release eql-bindings (crates.io)"
 
-# Publishes the `eql-bindings` crate to crates.io via release-plz (crates.io
-# Trusted Publishing over OIDC — no long-lived token; GPG-signed release
-# commits and tags).
+# Publishes the `eql-bindings` crate via release-plz (crates.io Trusted
+# Publishing over OIDC — no CARGO_REGISTRY_TOKEN).
 #
-# THE FILENAME IS LOAD-BEARING AND MUST NOT CHANGE. crates.io Trusted
-# Publishing binds a crate to a repository AND a workflow filename, exactly as
-# npm's does. `_build-sql.yml` and `_build-docs.yml` could be renamed on the way
-# in (see `_build-eql-sql.yml`); this one could not.
+# THE FILENAME CANNOT CHANGE: crates.io binds the publisher to it.
 #
-# PUBLISH-ONLY. Crate versioning is owned by CHANGESETS, not release-plz. The
-# Version Packages PR bumps `packages/eql/crates/eql-bindings/Cargo.toml` to the
-# lockstep version V (`scripts/sync-lockstep-versions.mjs`, driven by the root
-# `version` script) alongside the npm package. This workflow publishes the
-# COMMITTED version — a no-op when V is already on crates.io — and tags
-# `eql-bindings-v<V>`. There is deliberately no release-plz `release-pr` job: a
-# release-plz version PR would fight the changesets one.
+# Publish-only. Changesets owns the version — the Version Packages PR bumps
+# crates/eql-bindings/Cargo.toml in lockstep with the npm package via
+# scripts/sync-lockstep-versions.mjs. A release-plz `release-pr` job would
+# fight it, so there isn't one. The tag is `eql-bindings-v<semver>`, chosen so a
+# crate release does not fire the `eql-*` SQL/docs/image automation.
 #
-# THE `eql-bindings-v*` TAG SHAPE IS PART OF THE RELEASE IDENTITY. It is
-# release-plz's default workspace tag, and it deliberately does NOT match the
-# `eql-<semver>` tags the SQL surface releases under. `rebuild-docs.yml` carries
-# the matching `!eql-bindings-*` exclusion, so a crate release never fires the
-# docs-site rebuild, the SQL build or the Postgres image.
-#
-# ## Inert until the cutover
-#
-# `@cipherstash/eql` is still published from `cipherstash/encrypt-query-language`
-# — including this crate, whose crates.io Trusted Publishing configuration names
-# that repository and this filename. So the `release` job below is gated on
-# `scripts/eql-pipeline-armed.mjs`, which reads `FROZEN_PUBLISHERS` in
-# `scripts/release-gate.mjs`. Deleting that entry at the Phase-5 cutover is what
-# arms this workflow; there is no separate flag to remember. Read that script's
-# header for why the switch is derived rather than flipped, and why the npm
-# release gate could not be reused here (crates.io is not a registry it models,
-# and keying on the npm answer would race `release.yml` on the very push that
-# releases a version).
-#
-# ## Before the cutover arms this, two things must exist
-#
-#  1. `GPG_PRIVATE_KEY` in this repository's secrets. It does not exist today
-#     (`gh secret list`), and the import step below fails without it.
-#  2. A crates.io Trusted Publishing entry on the `eql-bindings` crate naming
-#     Repository `cipherstash/stack` and Workflow `release-plz.yml`.
-#
-# crates.io auth is OIDC (`id-token: write`), so there is NO
-# CARGO_REGISTRY_TOKEN. GitHub PR/tag operations use the default GITHUB_TOKEN.
+# INERT until the Phase-5 cutover: the `release` job is gated on
+# scripts/eql-pipeline-armed.mjs, which reads FROZEN_PUBLISHERS. Before arming
+# it, this repository also needs a GPG_PRIVATE_KEY secret (it has none) and a
+# crates.io Trusted Publishing entry naming cipherstash/stack + release-plz.yml.
 
-# READ-ONLY BY DEFAULT; the one job that publishes escalates for itself. Same
-# rule and same reason as `release.yml`: a workflow-level `id-token: write` is a
-# default rather than a ceiling, so every job in a file registered as a trusted
-# publisher would be able to mint a token the registry accepts. Enforced by
-# `scripts/__tests__/workflow-publish-permissions.test.mjs`.
+# Read-only by default; the publishing job escalates for itself. Enforced by
+# scripts/__tests__/workflow-publish-permissions.test.mjs.
 permissions:
   contents: read
 
@@ -60,18 +27,14 @@ on:
       - main
   workflow_dispatch: {}
 
-# Static group: push-to-main and workflow_dispatch share it so two release-plz
-# invocations never race a tag or a publish. Never cancel — a cancelled release
-# could leave a half-published state.
+# Never cancel — a cancelled release can leave a half-published state.
 concurrency:
   group: release-plz
   cancel-in-progress: false
 
 jobs:
-  # WHETHER THIS REPOSITORY MAY PUBLISH THE CRATE AT ALL. A checkout and one
-  # `node` call reading a Map — no registry lookup, so it cannot disagree with
-  # itself between runs or race the npm publish happening in `release.yml` on
-  # the same push.
+  # No registry lookup, so it cannot race release.yml's npm publish on the same
+  # push. See scripts/eql-pipeline-armed.mjs.
   eql-armed:
     name: Is the EQL release line armed?
     runs-on: ubuntu-latest
@@ -86,11 +49,9 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
-          # No cache anywhere in a publishing workflow — see `release.yml`.
           package-manager-cache: false
 
-      # No pnpm, no install: the script imports node builtins and
-      # `scripts/release-gate.mjs`, which does the same.
+      # No pnpm install: the script imports node builtins only.
       - name: Read the publisher switch
         id: armed
         run: node scripts/eql-pipeline-armed.mjs
@@ -99,23 +60,18 @@ jobs:
     name: "Release"
     needs: [eql-armed]
     if: needs.eql-armed.outputs.armed == 'true'
-    # GitHub-hosted, not Blacksmith. crates.io Trusted Publishing exchanges a
-    # GitHub OIDC token, and the equivalent npm path rejects self-hosted runners
-    # outright (E422); this repository's other publishing jobs are all
-    # `ubuntu-latest` for that reason and this one matches them rather than
-    # keeping upstream's Blacksmith label.
+    # GitHub-hosted, matching this repo's other publishing jobs.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: write # release-plz creates the eql-bindings-v<V> tag and release
-      pull-requests: write # release-plz reads/links PRs when writing release notes
-      id-token: write # crates.io Trusted Publishing (OIDC)
+      contents: write # the eql-bindings-v<V> tag and release
+      pull-requests: write # release-plz links PRs in release notes
+      id-token: write # crates.io Trusted Publishing
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
 
-      # Sign release-plz's commits and tags with the shared release key.
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7
         with:
@@ -124,51 +80,38 @@ jobs:
           git_commit_gpgsign: true
           git_tag_gpgsign: true
 
-      # NO mise STEP, where upstream had one. Nothing in this job runs a mise
-      # task: the guard below is `curl` + `jq` + `grep` from the runner image,
-      # and `release-plz/action` needs only `cargo` and `git`, both of which
-      # `ubuntu-latest` ships. Installing mise here would have cost a third-party
-      # action inside the job that holds the crates.io credential, and it would
-      # have had to carry `add_shims_to_path: false` (the rule
-      # scripts/__tests__/workflow-mise-setup.test.mjs applies to every
-      # `id-token: write` job) — at which point mise's toolchain would not be on
-      # PATH and the step would be installing tools nothing could reach.
-      #
-      # The pinned toolchain is not what is lost. `packages/eql/mise.toml` pins
-      # `rust = { version = "latest" }`, so it never named a fixed compiler; the
-      # image's rustup gives a recent stable and `cargo publish` packages the
-      # committed tree either way.
+      # No mise step (upstream had one): nothing here runs a mise task, and
+      # release-plz needs only cargo and git, which the runner image ships.
+
       - name: Verify bundled SQL matches the crate version
-        # The crate bundles its SQL via `include_str!` on COMMITTED files, and
-        # release-plz publishes the committed tree verbatim. Refuse to publish a
-        # crate whose bundled SQL was not prepared for this exact version — a
-        # hand-pinned Cargo.toml without `pnpm run version` would otherwise ship
-        # the DEV placeholder as its "exact SQL". Enforced only when this run
-        # would actually publish (the committed version is not on crates.io
-        # yet): routine no-op runs on main between releases carry the DEV
-        # placeholder legitimately. A crates.io API failure fails towards
-        # ENFORCING the guard, never towards skipping it.
+        # The crate `include_str!`s COMMITTED SQL and release-plz publishes the
+        # committed tree verbatim, so a hand-pinned Cargo.toml would ship the
+        # DEV placeholder as its "exact SQL". Only enforced when this run would
+        # actually publish; a crates.io API failure fails towards enforcing.
         working-directory: packages/eql
         run: |
           set -euo pipefail
           cargo_version="$(grep -m1 '^version = ' crates/eql-bindings/Cargo.toml | cut -d'"' -f2)"
-          # crates.io rejects curl's default User-Agent with a 403. Without an
-          # explicit UA the request always fails, `|| true` swallows it, and the
-          # no-op short-circuit below is unreachable.
+          # crates.io 403s curl's default User-Agent, which would make the
+          # short-circuit below unreachable.
           published="$(curl -fsSL --retry 3 -H "User-Agent: cipherstash-eql-release (https://github.com/cipherstash/stack)" "https://crates.io/api/v1/crates/eql-bindings/versions" | jq -r '.versions[].num' | grep -Fx "$cargo_version" || true)"
           if [[ -n "$published" ]]; then
-            echo "eql-bindings@${cargo_version} is already on crates.io; this run is a publish no-op — skipping the bundled-SQL guard"
+            echo "eql-bindings@${cargo_version} is already on crates.io; publish no-op — skipping the bundled-SQL guard"
             exit 0
           fi
           manifest_version="$(jq -r '.eqlVersion' crates/eql-bindings/sql/release-manifest.json)"
           if [[ "$manifest_version" != "$cargo_version" ]]; then
-            echo "::error::packages/eql/crates/eql-bindings/sql/release-manifest.json eqlVersion ('$manifest_version') does not match Cargo.toml version ('$cargo_version') — the bundled SQL was not prepared for this release. Run 'pnpm run version' from the repository root (or 'mise run release:prepare_bindings_assets --version $cargo_version' from packages/eql) and commit the result." >&2
+            echo "::error::release-manifest.json eqlVersion ('$manifest_version') does not match Cargo.toml ('$cargo_version'). Run 'pnpm run version' from the repository root." >&2
             exit 1
           fi
-          # `grep -q` on a FILE, not a pipeline: there is no upstream writer to
-          # take SIGPIPE. See scripts/__tests__/workflow-grep-q-pipelines.test.mjs.
-          if ! grep -q "eql_v3" crates/eql-bindings/sql/cipherstash-encrypt.sql; then
-            echo "::error::packages/eql/crates/eql-bindings/sql/cipherstash-encrypt.sql looks like the DEV placeholder — refusing to publish it as release SQL." >&2
+          # THE STAMP, not the schema name. Upstream grepped for `eql_v3`, which
+          # appears 23,000 times in every build including a DEV one, so the
+          # guard could not fire. tasks/build.sh writes the version into this
+          # COMMENT and it is the only record of which build produced the bytes
+          # — the manifest is regenerated alongside them and goes on agreeing.
+          if ! grep -q "COMMENT ON SCHEMA eql_v3 IS '${cargo_version}'" crates/eql-bindings/sql/cipherstash-encrypt.sql; then
+            stamped="$(grep -o "COMMENT ON SCHEMA eql_v3 IS '[^']*'" crates/eql-bindings/sql/cipherstash-encrypt.sql | head -1)"
+            echo "::error::bundled SQL was not built for ${cargo_version} — it carries ${stamped:-no version stamp}. Run 'pnpm run version' from the repository root." >&2
             exit 1
           fi
 
@@ -176,13 +119,10 @@ jobs:
         uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5
         with:
           command: release
-          # BOTH PATHS ARE REQUIRED HERE AND WERE ABSENT UPSTREAM, where the
-          # repository root WAS the Cargo workspace root. A composite action's
-          # steps do not inherit the caller's `defaults.run.working-directory`,
-          # so `working-directory:` on this step would do nothing — the paths
-          # have to be passed as inputs. Without them release-plz reads the
-          # monorepo root, finds no `[workspace]` naming `eql-bindings`, and
-          # publishes nothing while exiting 0.
+          # Required here and absent upstream: a composite action's steps do not
+          # inherit the caller's working-directory, so without these release-plz
+          # reads the monorepo root, finds no `eql-bindings` workspace, and
+          # exits 0 having published nothing.
           manifest_path: packages/eql/Cargo.toml
           config: packages/eql/release-plz.toml
         env:

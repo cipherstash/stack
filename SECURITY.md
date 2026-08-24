@@ -156,12 +156,13 @@ Both bind to a *workflow filename* at the registry, so renaming either file
 silently invalidates its publisher configuration.
 
 `scripts/__tests__/workflow-publish-permissions.test.mjs` holds the shape those
-two files must keep: `id-token: write` is granted per job and never at workflow
-level (where it would be a default inherited by every job in a file the registry
-already trusts), and a job in such a file that does not publish may not hold a
-writable scope. Both lists are equalities, so a new publisher — or a new job
-that can write to the repository the publishers build from — has to be argued
-for in the same diff.
+two files must keep, as two separate equalities: who may publish (`id-token:
+write`, granted per job and never at workflow level, where it would be inherited
+by every job in a file the registry already trusts), and who may write to the
+repository at all. They are separate because a publishing workflow also contains
+jobs that create a release or dispatch another workflow — holding one does not
+confer the other. Both are equalities, so either addition has to be argued for
+in the same diff.
 
 [GitHub Actions cache poisoning is a known attack][1] against credential-bearing
 workflows. The mechanism is:
@@ -179,12 +180,10 @@ We mitigate this by:
   `_build-eql-sql.yml`, `_build-eql-docs.yml`), `release-plz.yml` and
   `release-postgres-eql-image.yml`
 - Automated checks for disabled caching on high-risk workflows
-  (`scripts/lint-no-workflow-caching.mjs`). It works from an ALLOWLIST of
-  audited actions rather than a denylist of cache actions, so an action it has
-  never seen is a finding by default — the cases that matter most are
-  `setup-<tool>` actions that cache by default, with no `cache:` input and no
-  telling name. The cost is real and accepted: four EQL release jobs compile
-  Rust with no `Swatinem/rust-cache` restore.
+  (`scripts/lint-no-workflow-caching.mjs`), working from an allowlist of audited
+  actions rather than a denylist of cache actions — so an action it has never
+  seen is a finding by default. The cost is accepted: four EQL release jobs
+  compile Rust with no cache restore.
 
 [1]: https://adnanthekhan.com/2024/05/06/the-monsters-in-your-build-cache-github-actions-cache-poisoning/
 
