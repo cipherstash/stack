@@ -296,7 +296,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
             partial_index_key,
         } = self.connection.send(req, access_token).await?;
 
-        let index_key = IndexKey::from_key_material(client_key, &partial_index_key.key_material);
+        let index_key = IndexKey::from_key_material(client_key, &partial_index_key.key_material)?;
 
         Ok((keyset, index_key))
     }

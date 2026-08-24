@@ -11,7 +11,7 @@ use std::borrow::Cow;
 use std::future::Future;
 
 use uuid::Uuid;
-use zerokms_protocol::UnverifiedContext;
+use zerokms_protocol::{IdentifiedBy, UnverifiedContext};
 
 use crate::errors::Error;
 use crate::key::{DataKey, DataKeyWithTag, IndexKey};
@@ -85,16 +85,17 @@ pub trait DataKeySource {
 /// and unbounded on wasm32.
 #[cfg(not(target_arch = "wasm32"))]
 pub trait IndexKeySource {
-    /// Load the index key for a keyset (the client's default keyset when
-    /// `keyset_id` is `None`). Returns the resolved keyset id alongside the
-    /// key, so callers pinning `None` learn which keyset they resolved to.
+    /// Load the index key for a keyset — identified by id or name, or the
+    /// client's default keyset when `keyset_id` is `None`. Returns the
+    /// resolved keyset id alongside the key, so callers pinning `None` or a
+    /// name learn which keyset they resolved to.
     ///
     /// The index key is deterministic per keyset: loading it twice yields the
     /// same key, so terms generated at write time match terms generated at
     /// query time.
     fn load_index_key(
         &self,
-        keyset_id: Option<Uuid>,
+        keyset_id: Option<IdentifiedBy>,
     ) -> impl Future<Output = Result<(Uuid, IndexKey), Error>> + Send;
 }
 
@@ -102,12 +103,17 @@ pub trait IndexKeySource {
 /// returned future.
 #[cfg(target_arch = "wasm32")]
 pub trait IndexKeySource {
-    /// Load the index key for a keyset (the client's default keyset when
-    /// `keyset_id` is `None`). Returns the resolved keyset id alongside the
-    /// key, so callers pinning `None` learn which keyset they resolved to.
+    /// Load the index key for a keyset — identified by id or name, or the
+    /// client's default keyset when `keyset_id` is `None`. Returns the
+    /// resolved keyset id alongside the key, so callers pinning `None` or a
+    /// name learn which keyset they resolved to.
+    ///
+    /// The index key is deterministic per keyset: loading it twice yields the
+    /// same key, so terms generated at write time match terms generated at
+    /// query time.
     fn load_index_key(
         &self,
-        keyset_id: Option<Uuid>,
+        keyset_id: Option<IdentifiedBy>,
     ) -> impl Future<Output = Result<(Uuid, IndexKey), Error>>;
 }
 
@@ -142,8 +148,11 @@ where
     C: stack_auth::AuthStrategyBounds,
     for<'a> &'a C: stack_auth::AuthStrategy,
 {
-    async fn load_index_key(&self, keyset_id: Option<Uuid>) -> Result<(Uuid, IndexKey), Error> {
-        let (keyset, index_key) = self.load_keyset(keyset_id.map(Into::into)).await?;
+    async fn load_index_key(
+        &self,
+        keyset_id: Option<IdentifiedBy>,
+    ) -> Result<(Uuid, IndexKey), Error> {
+        let (keyset, index_key) = self.load_keyset(keyset_id).await?;
         Ok((keyset.id, index_key))
     }
 }
@@ -177,9 +186,17 @@ mod fake {
     /// different caller all retrieve just fine here. Those decisions are
     /// ZeroKMS's, tested in `vitur-server-core`; do not assert them against
     /// this stub. Consumers testing *what they send* should mock the trait.
+    ///
+    /// As an [`IndexKeySource`] it is likewise a stub: each keyset gets a
+    /// random index key on first load and the same one thereafter, names
+    /// resolve to a random keyset id memoised per name, and `None` is the
+    /// nil UUID. Deterministic *per instance* — which is all the trait asks —
+    /// and nothing more.
     #[derive(Debug, Default)]
     pub struct FakeDataKeySource {
         keys: Mutex<HashMap<(Iv, Vec<u8>), Key>>,
+        keysets_by_name: Mutex<HashMap<Vec<u8>, Uuid>>,
+        index_keys: Mutex<HashMap<Uuid, Key>>,
     }
 
     impl FakeDataKeySource {
@@ -197,25 +214,37 @@ mod fake {
         }
 
         fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(Iv, Vec<u8>), Key>> {
-            // A poisoned lock only means another test thread panicked mid-insert;
-            // the map is still a valid map.
-            self.keys
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+            lock(&self.keys)
         }
     }
 
+    /// A poisoned lock only means another test thread panicked mid-insert;
+    /// the map is still a valid map.
+    fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+        m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn random<T: Generatable>(rng: &mut SafeRand) -> Result<T, Error> {
+        Ok(Generatable::random(rng).map_err(GenerateKeyError::GenerateIv)?)
+    }
+
     impl IndexKeySource for FakeDataKeySource {
-        /// Deterministically derive an index key from the `keyset_id` alone —
-        /// like real ZeroKMS, the same keyset always yields the same index key,
-        /// and distinct keysets yield distinct keys. `None` resolves to the nil
-        /// UUID as the fake's "default keyset".
-        async fn load_index_key(&self, keyset_id: Option<Uuid>) -> Result<(Uuid, IndexKey), Error> {
-            let resolved = keyset_id.unwrap_or_else(Uuid::nil);
-            let mut hasher = Sha256::new();
-            hasher.update(b"stack-kms::FakeDataKeySource::index-key::v1");
-            hasher.update(resolved.as_bytes());
-            let key: Key = hasher.finalize().into();
+        async fn load_index_key(
+            &self,
+            keyset_id: Option<IdentifiedBy>,
+        ) -> Result<(Uuid, IndexKey), Error> {
+            let mut rng = SafeRand::from_entropy().map_err(GenerateKeyError::GenerateIv)?;
+            let resolved = match keyset_id {
+                None => Uuid::nil(),
+                Some(IdentifiedBy::Uuid(id)) => id,
+                Some(IdentifiedBy::Name(name)) => *lock(&self.keysets_by_name)
+                    .entry(name.as_bytes().to_vec())
+                    .or_insert_with(Uuid::new_v4),
+            };
+            let key = match lock(&self.index_keys).entry(resolved) {
+                std::collections::hash_map::Entry::Occupied(e) => *e.get(),
+                std::collections::hash_map::Entry::Vacant(e) => *e.insert(random::<Key>(&mut rng)?),
+            };
             Ok((resolved, IndexKey::from(key)))
         }
     }
@@ -232,12 +261,9 @@ mod fake {
             payloads
                 .into_iter()
                 .map(|payload| {
-                    let iv: Iv =
-                        Generatable::random(&mut rng).map_err(GenerateKeyError::GenerateIv)?;
-                    let key: Key =
-                        Generatable::random(&mut rng).map_err(GenerateKeyError::GenerateIv)?;
-                    let tag: [u8; 32] =
-                        Generatable::random(&mut rng).map_err(GenerateKeyError::GenerateIv)?;
+                    let iv: Iv = random(&mut rng)?;
+                    let key: Key = random(&mut rng)?;
+                    let tag: [u8; 32] = random(&mut rng)?;
                     let _ = keys.insert((iv, tag.to_vec()), key);
                     Ok(DataKeyWithTag {
                         key: DataKey { iv, key },
@@ -317,15 +343,45 @@ mod tests {
         let keyset_a = Uuid::from_u128(1);
         let keyset_b = Uuid::from_u128(2);
 
-        let (id_a, key_a) = src.load_index_key(Some(keyset_a)).await.unwrap();
-        let (_, key_a_again) = src.load_index_key(Some(keyset_a)).await.unwrap();
-        let (_, key_b) = src.load_index_key(Some(keyset_b)).await.unwrap();
+        let (id_a, key_a) = src.load_index_key(Some(keyset_a.into())).await.unwrap();
+        let (_, key_a_again) = src.load_index_key(Some(keyset_a.into())).await.unwrap();
+        let (_, key_b) = src.load_index_key(Some(keyset_b.into())).await.unwrap();
         let (id_none, _) = src.load_index_key(None).await.unwrap();
 
         assert_eq!(id_a, keyset_a);
         assert_eq!(key_a.key(), key_a_again.key());
         assert_ne!(key_a.key(), key_b.key());
         assert_eq!(id_none, Uuid::nil());
+    }
+
+    #[tokio::test]
+    async fn fake_index_key_resolves_names_deterministically() {
+        let src = FakeDataKeySource::new();
+        // `InvalidNameError` has no `Debug`, so go via `ok()`.
+        let by_name = |n: &str| zerokms_protocol::IdentifiedBy::Name(n.try_into().ok().unwrap());
+
+        let (id_a, key_a) = src.load_index_key(Some(by_name("users"))).await.unwrap();
+        let (id_a_again, key_a_again) = src.load_index_key(Some(by_name("users"))).await.unwrap();
+        let (id_b, key_b) = src.load_index_key(Some(by_name("orders"))).await.unwrap();
+        // Pinning the resolved id must reach the same keyset as the name.
+        let (_, key_a_by_id) = src.load_index_key(Some(id_a.into())).await.unwrap();
+
+        assert_eq!(id_a, id_a_again);
+        assert_eq!(key_a.key(), key_a_again.key());
+        assert_ne!(id_a, id_b);
+        assert_ne!(key_a.key(), key_b.key());
+        assert_eq!(key_a.key(), key_a_by_id.key());
+    }
+
+    #[tokio::test]
+    async fn none_resolves_to_the_same_index_key_as_the_reported_default_keyset() {
+        // The pin-the-resolved-id pattern advertised by
+        // `IndexKeySource::load_index_key`: loading under `None` and then under
+        // the id it reported must yield the same index key.
+        let src = FakeDataKeySource::new();
+        let (resolved, key_none) = src.load_index_key(None).await.unwrap();
+        let (_, key_resolved) = src.load_index_key(Some(resolved.into())).await.unwrap();
+        assert_eq!(key_none.key(), key_resolved.key());
     }
 
     #[tokio::test]

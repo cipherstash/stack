@@ -8,9 +8,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use std::ops::Deref;
 use uuid::Uuid;
-use vitaminc::protected::TimingSafeEq;
+use vitaminc::protected::{OpaqueDebug, TimingSafeEq};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 use zerokms_protocol::{DecryptionPolicy, ViturKeyMaterial};
+
+use crate::errors::LoadKeysetError;
 
 /// NOTE: Debug is safe to implement because [KeySet] is opaque.
 #[derive(Debug, Deserialize, Clone, Zeroize, ZeroizeOnDrop, Serialize)]
@@ -135,14 +137,35 @@ impl Deref for DataKeyWithTag {
 /// `load-keyset` operation: unlike data keys, the same keyset always yields the
 /// same index key, so terms generated at write time match terms generated at
 /// query time.
-#[derive(Zeroize, ZeroizeOnDrop)]
+#[derive(Zeroize, ZeroizeOnDrop, OpaqueDebug)]
 pub struct IndexKey(Key);
-opaque_debug::implement!(IndexKey);
+
+/// The exact key-material length `ProxyCipher::reencrypt::<16>` accepts: the
+/// keyset's block permutation covers 33 16-byte blocks (see recipher's
+/// `EncryptionKeySet`), so anything else panics inside recipher
+/// (`copy_from_slice` on a short final chunk, or the permutation length
+/// assert). Validated up front so a malformed ZeroKMS response surfaces as a
+/// typed error instead of a crash.
+pub(crate) const KEYSET_KEY_MATERIAL_LEN: usize = 33 * 16;
 
 impl IndexKey {
     /// Derive the index key for a specific [`ClientKey`] from the partial
     /// keyset-root key material obtained from ZeroKMS.
-    pub fn from_key_material(key: &ClientKey, key_material: &ViturKeyMaterial) -> Self {
+    ///
+    /// Returns [`LoadKeysetError::InvalidKeyMaterial`] when the material is
+    /// not exactly [`KEYSET_KEY_MATERIAL_LEN`] bytes — the material is
+    /// network-supplied, so a truncated or corrupt response must not panic.
+    pub fn from_key_material(
+        key: &ClientKey,
+        key_material: &ViturKeyMaterial,
+    ) -> Result<Self, LoadKeysetError> {
+        if key_material.len() != KEYSET_KEY_MATERIAL_LEN {
+            return Err(LoadKeysetError::InvalidKeyMaterial {
+                expected: KEYSET_KEY_MATERIAL_LEN,
+                received: key_material.len(),
+            });
+        }
+
         // We use all zeros for the IV for the keyset index key.
         // This key is not used for encryption but for indexing using PRFs and
         // similar constructions. Even then, because all other data keys are
@@ -155,20 +178,26 @@ impl IndexKey {
         let rect = Zeroizing::new(cipher.reencrypt::<16>(&iv, key_material));
 
         let mut hasher = blake3::Hasher::new();
+        // Bind the `OutputReader` so it can be wiped: it holds the final
+        // chaining value from which the whole XOF stream — the index key —
+        // is recomputable, and blake3's `zeroize` feature implements
+        // `Zeroize` for it but not wipe-on-drop.
+        let mut reader = hasher
+            // Fixed info string
+            .update(b"ZEROKMS-INDEXKEY")
+            .update(rect.as_slice())
+            .finalize_xof();
+
         let key: Key = {
             let mut key = Key::default();
-            hasher
-                // Fixed info string
-                .update(b"ZEROKMS-INDEXKEY")
-                .update(rect.as_slice())
-                .finalize_xof()
-                .fill(&mut key);
+            reader.fill(&mut key);
             key
         };
 
+        reader.zeroize();
         hasher.zeroize();
 
-        Self(key)
+        Ok(Self(key))
     }
 
     pub fn key(&self) -> &Key {
@@ -176,6 +205,14 @@ impl IndexKey {
     }
 }
 
+/// Test-support only: mint an [`IndexKey`] from raw bytes, bypassing the
+/// keyset-root derivation. Kept off the public API so production callers can
+/// only obtain an index key through
+/// [`from_key_material`](IndexKey::from_key_material) (or a
+/// [`IndexKeySource`](crate::IndexKeySource)) — an index key that never went
+/// through `load_keyset` would silently generate index terms that match
+/// nothing written by other services.
+#[cfg(feature = "test-support")]
 impl From<Key> for IndexKey {
     fn from(key: Key) -> Self {
         Self(key)
@@ -307,6 +344,72 @@ mod tests {
         fn rejects_non_hex_input() {
             let err = serde_json::from_str::<V1KeySet>("\"zz\"").unwrap_err();
             assert!(!err.to_string().is_empty());
+        }
+    }
+
+    mod index_key {
+        use super::*;
+        use crate::errors::LoadKeysetError;
+        use crate::key::{IndexKey, KEYSET_KEY_MATERIAL_LEN};
+
+        /// Fixed keyset for the known-answer test below (see its comment).
+        const KAT_KEYSET_HEX: &str = "a4627031a16b7065726d75746174696f6e900e02000c0705010b0f09080a0d0304066770325f66726f6da16b7065726d75746174696f6e9005000c020b0d06010a0903080e0f04076570325f746fa16b7065726d75746174696f6e900e00030c05060b010a0407090d0f0802627033a16b7065726d75746174696f6e982102160f09181e1819181f0d07181b13110804150610050e1818181c00181a0a0112031820140b17181d0c";
+
+        fn kat_client_key() -> ClientKey {
+            ClientKey::from_hex_v1(uuid::Uuid::nil(), KAT_KEYSET_HEX).unwrap()
+        }
+
+        fn kat_material() -> zerokms_protocol::ViturKeyMaterial {
+            (0..KEYSET_KEY_MATERIAL_LEN as u32)
+                .map(|i| (i % 251) as u8)
+                .collect::<Vec<u8>>()
+                .into()
+        }
+
+        /// Known-answer test pinning the index-key derivation to fixed bytes.
+        ///
+        /// The identical vector lives in cipherstash-client
+        /// (`zerokms::vitur_client::key`): the `ZEROKMS-INDEXKEY` zero-IV
+        /// blake3-XOF derivation is duplicated across the two crates and must
+        /// stay bit-identical, or records indexed via one stack become
+        /// silently unfindable when queried via the other. If this test
+        /// breaks, the derivation changed — do NOT update the expected bytes
+        /// without changing cipherstash-client in lockstep.
+        #[test]
+        fn from_key_material_matches_the_known_answer() {
+            let index_key =
+                IndexKey::from_key_material(&kat_client_key(), &kat_material()).unwrap();
+
+            assert_eq!(
+                base16ct::lower::encode_string(index_key.key()),
+                "f68a664c120234a50f98ca5301a3c8e7a4762626f33a7af02068c0dbd84dd416",
+            );
+        }
+
+        #[test]
+        fn from_key_material_is_deterministic() {
+            let a = IndexKey::from_key_material(&kat_client_key(), &kat_material()).unwrap();
+            let b = IndexKey::from_key_material(&kat_client_key(), &kat_material()).unwrap();
+            assert_eq!(a.key(), b.key());
+        }
+
+        #[test]
+        fn from_key_material_rejects_invalid_lengths_instead_of_panicking() {
+            let ck = kat_client_key();
+            // Truncated, empty, non-block-multiple and over-long payloads: all
+            // network-supplied shapes that previously panicked inside recipher.
+            for len in [0usize, 1, 16, 527, 529, KEYSET_KEY_MATERIAL_LEN * 2] {
+                let material: zerokms_protocol::ViturKeyMaterial = vec![0u8; len].into();
+                match IndexKey::from_key_material(&ck, &material) {
+                    Err(LoadKeysetError::InvalidKeyMaterial { expected, received }) => {
+                        assert_eq!(expected, KEYSET_KEY_MATERIAL_LEN);
+                        assert_eq!(received, len);
+                    }
+                    other => panic!(
+                        "length {len} must be rejected as InvalidKeyMaterial, got: {other:?}"
+                    ),
+                }
+            }
         }
     }
 
