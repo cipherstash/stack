@@ -4,7 +4,7 @@
 use std::cmp::Ordering;
 
 use stack_encrypt::sem::{MatchOptions, TermGenerator, Tokenizer};
-use stack_kms::{FakeDataKeySource, IndexKeySource};
+use stack_kms::{FakeDataKeySource, IdentifiedBy, IndexKeySource};
 use uuid::Uuid;
 
 async fn generator() -> TermGenerator<vitaminc_hmac::HmacSha256Prf> {
@@ -17,7 +17,7 @@ async fn generator() -> TermGenerator<vitaminc_hmac::HmacSha256Prf> {
 
 async fn generator_for(keyset: Uuid) -> TermGenerator<vitaminc_hmac::HmacSha256Prf> {
     let (_, index_key) = FakeDataKeySource::new()
-        .load_index_key(Some(keyset))
+        .load_index_key(Some(IdentifiedBy::Uuid(keyset)))
         .await
         .expect("load index key");
     TermGenerator::from_index_key(&index_key)
