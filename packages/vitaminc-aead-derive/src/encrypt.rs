@@ -60,8 +60,22 @@ fn map_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
     let entries = fields.iter().map(|field| {
         let key = &field.key;
         let member = &field.member;
-        quote! {
-            let __map = #krate::MapCipher::encrypt_entry(__map, #key, self.#member)?;
+        if field.passthrough {
+            // Stored in the clear and bound to nothing — not the value, not
+            // even its key. That is what lets the entry be an ordinary
+            // database column other queries read and write independently of
+            // the encrypted ones.
+            quote! {
+                let __map = #krate::MapCipher::passthrough_entry_boxed(
+                    __map,
+                    #key,
+                    ::std::boxed::Box::new(self.#member),
+                )?;
+            }
+        } else {
+            quote! {
+                let __map = #krate::MapCipher::encrypt_entry(__map, #key, self.#member)?;
+            }
         }
     });
 
@@ -161,6 +175,43 @@ mod tests {
             &out,
             quote!(::vitaminc_aead::MapCipher::encrypt_entry(
                 __map, "1", self.1
+            )),
+        );
+    }
+
+    /// A passthrough field is written through the boxed channel — the derive is
+    /// generic over every cipher, so it cannot name `__C::Passthrough` — and is
+    /// never handed to `encrypt_entry`.
+    #[test]
+    fn a_passthrough_field_is_stored_in_the_clear() {
+        let out = expand(parse_quote! {
+            struct Row {
+                #[aead(passthrough)]
+                tenant: String,
+                ssn: String,
+            }
+        });
+
+        assert_contains(
+            &out,
+            quote!(::vitaminc_aead::MapCipher::passthrough_entry_boxed(
+                __map,
+                "tenant",
+                ::std::boxed::Box::new(self.tenant),
+            )),
+        );
+        assert_contains(
+            &out,
+            quote!(::vitaminc_aead::MapCipher::encrypt_entry(
+                __map, "ssn", self.ssn
+            )),
+        );
+        assert_lacks(
+            &out,
+            quote!(::vitaminc_aead::MapCipher::encrypt_entry(
+                __map,
+                "tenant",
+                self.tenant
             )),
         );
     }

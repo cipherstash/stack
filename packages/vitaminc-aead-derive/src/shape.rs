@@ -19,6 +19,9 @@ pub(crate) struct FieldInfo {
     /// Derived from the position so tuple fields get a legal identifier.
     pub(crate) local: Ident,
     pub(crate) ty: Type,
+    /// `#[aead(passthrough)]`: stored in the clear, never encrypted and never
+    /// authenticated.
+    pub(crate) passthrough: bool,
 }
 
 /// The wire shape a struct maps onto — see the crate docs.
@@ -61,7 +64,16 @@ impl Shape {
         // its field name is a meaningful part of the wire contract.
         if !named && fields.len() == 1 {
             let mut fields = fields;
-            return Ok(Shape::Newtype(Box::new(fields.remove(0))));
+            let field = fields.remove(0);
+            if field.passthrough {
+                return Err(syn::Error::new_spanned(
+                    &input.ident,
+                    "`#[aead(passthrough)]` is meaningless on a newtype struct: a newtype is \
+                     transparent, so there is no map entry to store in the clear and nothing \
+                     would be encrypted at all. Give the struct a named field instead.",
+                ));
+            }
+            return Ok(Shape::Newtype(Box::new(field)));
         }
 
         if fields.is_empty() {
@@ -69,6 +81,7 @@ impl Shape {
         }
 
         reject_duplicate_keys(&fields, input)?;
+        reject_all_passthrough(&fields, input)?;
         Ok(Shape::Map(fields))
     }
 }
@@ -88,6 +101,7 @@ fn collect(fields: &Fields) -> Result<Vec<FieldInfo>> {
                 member,
                 local: Ident::new(&format!("__field_{index}"), Span::call_site()),
                 ty: field.ty.clone(),
+                passthrough: attrs.passthrough,
             })
         })
         .collect()
@@ -108,6 +122,23 @@ fn reject_duplicate_keys(fields: &[FieldInfo], input: &DeriveInput) -> Result<()
                 ),
             ));
         }
+    }
+    Ok(())
+}
+
+/// A map with no encrypted entries carries no tag at all — nothing
+/// authenticates the map's AAD, and nothing binds the entry keys — so
+/// `MapCipher::end` rejects one at seal time. Catch it here, where the error
+/// names the struct instead of surfacing as a runtime encrypt failure.
+fn reject_all_passthrough(fields: &[FieldInfo], input: &DeriveInput) -> Result<()> {
+    if fields.iter().all(|field| field.passthrough) {
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "every field is `#[aead(passthrough)]`, so nothing would be encrypted and the \
+             ciphertext would carry no tag — neither the associated data nor the entry keys \
+             would be authenticated. Encrypt at least one field, or do not derive Encrypt for \
+             this struct at all.",
+        ));
     }
     Ok(())
 }
@@ -155,6 +186,54 @@ mod tests {
         };
         let err = Shape::parse(&input).expect_err("duplicate key should be rejected");
         assert!(err.to_string().contains("duplicate map key `a`"));
+    }
+
+    /// A map with no encrypted entries carries no tag at all, and
+    /// `MapCipher::end` rejects one at seal time — so catch it at compile time.
+    #[test]
+    fn an_all_passthrough_struct_is_rejected() {
+        let input: DeriveInput = parse_quote! {
+            struct Row {
+                #[aead(passthrough)]
+                id: i64,
+                #[aead(passthrough)]
+                tenant: String,
+            }
+        };
+        let err = Shape::parse(&input).expect_err("all-passthrough struct should be rejected");
+        assert!(err.to_string().contains("nothing would be encrypted"));
+    }
+
+    /// A newtype is transparent, so there is no map entry for a passthrough to
+    /// occupy. Silently ignoring the attribute would leave the author believing
+    /// a field is stored in the clear when the whole value is encrypted.
+    #[test]
+    fn passthrough_on_a_newtype_is_rejected() {
+        let input: DeriveInput = parse_quote!(
+            struct Wrapper(#[aead(passthrough)] String);
+        );
+        let err = Shape::parse(&input).expect_err("passthrough newtype should be rejected");
+        assert!(err.to_string().contains("meaningless on a newtype"));
+    }
+
+    /// A mixed struct is the shape the attribute exists for: some columns in
+    /// the clear, at least one encrypted.
+    #[test]
+    fn a_mixed_struct_records_which_fields_are_passthrough() {
+        let input: DeriveInput = parse_quote! {
+            struct Row {
+                #[aead(passthrough)]
+                id: i64,
+                ssn: String,
+            }
+        };
+        match Shape::parse(&input) {
+            Ok(Shape::Map(fields)) => {
+                assert!(fields[0].passthrough);
+                assert!(!fields[1].passthrough);
+            }
+            _ => panic!("expected a map shape"),
+        }
     }
 
     #[test]

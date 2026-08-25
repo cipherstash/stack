@@ -56,6 +56,51 @@
 //!   generated code at a re-export of `vitaminc_aead` (e.g. `::vitaminc::aead`).
 //! - `#[aead(rename = "name")]` on a field — use `name` as the map key instead
 //!   of the field's own name.
+//! - `#[aead(passthrough)]` on a field — store the value **in the clear**
+//!   instead of encrypting it. See the section below before reaching for it.
+//!
+//! # Passthrough fields
+//!
+//! `#[aead(passthrough)]` stores a field as a cleartext map entry, so it can be
+//! an ordinary database column that other queries select, filter, and update
+//! without holding the key:
+//!
+//! ```ignore
+//! #[derive(Encrypt, Decrypt)]
+//! struct Row {
+//!     #[aead(passthrough)]
+//!     tenant: String,   // a plain column
+//!     ssn: String,      // encrypted
+//! }
+//! ```
+//!
+//! That independence is bought by giving up all protection on the field, and
+//! the trade is total:
+//!
+//! - The value is **not encrypted** — anyone who can read the stored ciphertext
+//!   can read it.
+//! - The value is **not authenticated**. No tag covers it, and unlike an
+//!   encrypted entry's key, nothing binds its key either. It can be edited,
+//!   retargeted at another key, or removed, and the surrounding encrypted
+//!   fields still decrypt. Treat what comes back as untrusted input — it is
+//!   exactly as trustworthy as the column it was read from.
+//! - Deleting the entry is caught only by the ordinary missing-field rule, and
+//!   not distinguished from a value that was never written.
+//!
+//! So: non-sensitive, non-security-deciding data only. Never a field the
+//! program later trusts to make an authorization choice. If a cleartext field
+//! must be tamper-evident, it needs to be bound into the AAD rather than passed
+//! through — and note that binding it couples the two, so any independent write
+//! to that column breaks decryption of every encrypted field beside it.
+//!
+//! Two shapes are rejected at compile time: a struct whose fields are *all*
+//! passthrough (nothing would be encrypted, so the ciphertext would carry no
+//! tag at all — `MapCipher::end` refuses to seal one), and `passthrough` on a
+//! newtype (transparent, so there is no map entry to hold it).
+//!
+//! A passthrough field's type must be `Any + Send + 'static`, since the value
+//! travels through the cipher type-erased and is downcast on the way out. That
+//! rules out borrowed types such as `&'a str`.
 //!
 //! [`Encrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Encrypt.html
 //! [`Decrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Decrypt.html

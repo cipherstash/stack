@@ -274,6 +274,32 @@ pub trait MapAccess<'c> {
     /// implementations must return an error.
     fn next_value<T: Decrypt<'c> + 'c>(&mut self) -> Result<T, Self::Error>;
 
+    /// Take the value belonging to the key most recently returned by
+    /// [`next_key`](MapAccess::next_key) as a **passthrough** payload,
+    /// consuming the pending entry.
+    ///
+    /// The counterpart of
+    /// [`MapCipher::passthrough_entry_boxed`](crate::MapCipher::passthrough_entry_boxed),
+    /// and type-erased for the same reason: a decoder generic over every
+    /// decipher cannot name the payload type. The caller downcasts.
+    ///
+    /// Implementations must return an error when there is no pending key, and
+    /// when the pending entry is an *encrypted* value rather than a
+    /// passthrough — reading a sealed value through this method would hand back
+    /// a payload whose tag was never checked.
+    ///
+    /// # ⚠️ Unauthenticated data
+    ///
+    /// Unlike [`next_value`](MapAccess::next_value), nothing here is verified.
+    /// A passthrough entry carries no tag, and — unlike an encrypted entry's
+    /// key — its key is not bound into anything either, so a stored passthrough
+    /// entry can be edited, retargeted at another key, added, or removed with
+    /// no effect on whether the rest of the map decrypts. That independence is
+    /// the point: it is what lets a passthrough value be a plain database
+    /// column that other queries read and write on their own. Treat what comes
+    /// back as untrusted input, exactly as you would treat that column.
+    fn next_passthrough(&mut self) -> Result<Box<dyn Any + Send + 'static>, Self::Error>;
+
     /// Returns the next decrypted `(key, value)` entry, or `None` when the map is exhausted.
     ///
     /// Convenience for [`next_key`](MapAccess::next_key) followed by

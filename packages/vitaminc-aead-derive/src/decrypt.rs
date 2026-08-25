@@ -122,18 +122,35 @@ fn visit_map_body(krate: &syn::Path, name: &syn::Ident, fields: &[FieldInfo]) ->
         let key = &field.key;
         let local = &field.local;
         let ty = &field.ty;
+        // The duplicate guard is common to both arms: the decipher rejects
+        // duplicate keys too, but this catches a decipher that does not,
+        // rather than last-wins overwriting an already-verified field.
+        let reject_duplicate = quote! {
+            if #local.is_some() {
+                return ::core::result::Result::Err(#krate::Unspecified);
+            }
+        };
+        let read = if field.passthrough {
+            // Nothing here is verified — no tag covers a passthrough entry and
+            // nothing binds its key — so this value is untrusted input, exactly
+            // as the column it came from is. The downcast is the only check:
+            // it rejects a payload of the wrong type, not a tampered one.
+            quote! {
+                *<__M as #krate::MapAccess<'__c>>::next_passthrough(&mut __map)
+                    .map_err(|_| #krate::Unspecified)?
+                    .downcast::<#ty>()
+                    .map_err(|_| #krate::Unspecified)?
+            }
+        } else {
+            quote! {
+                <__M as #krate::MapAccess<'__c>>::next_value::<#ty>(&mut __map)
+                    .map_err(|_| #krate::Unspecified)?
+            }
+        };
         quote! {
             #key => {
-                // The decipher rejects duplicate keys too; this catches a
-                // decipher that does not, rather than last-wins overwriting
-                // an already-verified field.
-                if #local.is_some() {
-                    return ::core::result::Result::Err(#krate::Unspecified);
-                }
-                #local = ::core::option::Option::Some(
-                    <__M as #krate::MapAccess<'__c>>::next_value::<#ty>(&mut __map)
-                        .map_err(|_| #krate::Unspecified)?,
-                );
+                #reject_duplicate
+                #local = ::core::option::Option::Some(#read);
             }
         }
     });
@@ -276,6 +293,32 @@ mod tests {
         assert_contains(
             &out,
             quote!(_ => return ::core::result::Result::Err(::vitaminc_aead::Unspecified),),
+        );
+    }
+
+    /// A passthrough field is read through `next_passthrough` and downcast — no
+    /// tag is checked, because none covers it. `next_value` must not appear for
+    /// that key, or the read would demand a sealed node that is not there.
+    #[test]
+    fn a_passthrough_field_is_read_without_verification() {
+        let out = expand(parse_quote! {
+            struct Row {
+                #[aead(passthrough)]
+                tenant: String,
+                ssn: String,
+            }
+        });
+
+        assert_contains(&out, quote!(::next_passthrough(&mut __map)));
+        assert_contains(&out, quote!(.downcast::<String>()));
+        assert_contains(&out, quote!(::next_value::<String>(&mut __map)));
+        // The duplicate guard applies to passthrough entries too: a repeated
+        // key must not overwrite an already-read field.
+        assert_contains(
+            &out,
+            quote!(if __field_0.is_some() {
+                return ::core::result::Result::Err(::vitaminc_aead::Unspecified);
+            }),
         );
     }
 

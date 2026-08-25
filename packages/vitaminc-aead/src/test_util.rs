@@ -137,6 +137,17 @@ impl MapCipher for UnusedMap {
         Ok(self)
     }
 
+    fn passthrough_entry_boxed<K>(
+        self,
+        _key: K,
+        _value: Box<dyn std::any::Any + Send + 'static>,
+    ) -> Result<Self, Self::Error>
+    where
+        K: Into<std::borrow::Cow<'static, str>>,
+    {
+        Ok(self)
+    }
+
     fn end(self) -> Result<Self::Ok, Self::Error> {
         Ok(Vec::new())
     }
@@ -282,5 +293,11 @@ impl<'c> MapAccess<'c> for MockMapAccess {
         let payload = self.pending.take().ok_or(Unspecified)?;
         let decipher = MockDecipher::new(payload);
         T::decrypt_with_aad(&decipher, crate::Aad::empty())
+    }
+
+    /// The mock stores every entry as an encrypted payload, so there is no
+    /// passthrough for it to hand back.
+    fn next_passthrough(&mut self) -> Result<Box<dyn std::any::Any + Send + 'static>, Self::Error> {
+        Err(Unspecified)
     }
 }

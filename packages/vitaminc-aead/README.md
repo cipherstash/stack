@@ -139,6 +139,18 @@ impl<'c> MapCipher for MyMapCipher<'c> {
         K: Into<std::borrow::Cow<'static, str>>,
     { unimplemented!() }
 
+    // The type-erased counterpart, for callers that cannot name
+    // `Self::Passthrough` — a derived `Encrypt` impl, or a self-describing
+    // tree value. Absorb the box, or reject a payload type you don't own.
+    fn passthrough_entry_boxed<K>(
+        self,
+        _key: K,
+        _value: Box<dyn std::any::Any + Send + 'static>,
+    ) -> Result<Self, Self::Error>
+    where
+        K: Into<std::borrow::Cow<'static, str>>,
+    { unimplemented!() }
+
     fn end(self) -> Result<Self::Ok, Self::Error> { unimplemented!() }
 }
 ```
