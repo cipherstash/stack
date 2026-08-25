@@ -25,7 +25,7 @@
     "changeset": "changeset",
     "changeset:version": "pnpm run version",
     "changeset:publish": "pnpm run release",
-    "dev": "turbo dev --filter './packages/*'",
+    "dev": "turbo dev --filter './packages/**'",
     "clean": "rimraf --glob **/.next **/.turbo **/dist **/node_modules",
     "code:fix": "biome check --write",
     "code:check": "biome check",

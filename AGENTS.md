@@ -289,23 +289,15 @@ monorepo, which is where the silent failures are.
   because two task scripts use `git rev-parse --show-toplevel`, which after the
   import returns the **monorepo** root — and one of them,
   `tasks/test/doc-anchors.sh`, fails silently when that is wrong.
-- **`packages/eql/.github/` is a dead deposit.** GitHub reads workflows from the
-  repo root and nowhere else, so the eleven files there run on nothing. Seven
-  are workflows — four publish something (`release.yml`, `release-plz.yml`,
-  `release-postgres-eql-image.yml`, `rebuild-docs.yml`) and three exist only to
-  serve them (two `workflow_call` reusables and `lint-release.yml`) — alongside
-  a `workflows/README.md`, the release-notes config, and two
-  repository-settings files. `scripts/__tests__/eql-suite-ci.test.mjs` holds
-  them as a **shrinking allowlist** (`UNPORTED_DEPOSIT`), asserted by equality so
-  it fails in both directions: porting a workflow means deleting it from the
-  deposit *and* from the list in the same commit, and dropping a new file in
-  there without listing it fails too. The same test asserts that the three SQLx
-  suite tasks are invoked by name from a root workflow, that every
-  `dorny/paths-filter` path is scoped to `packages/eql/`, and that every mise
-  task shelling out to cargo is either reachable from a root workflow or
-  exempted with a written reason. It is the guard against the failure this
-  absorption keeps rediscovering: a check that arrives as a file and executes on
-  no event reads exactly like a check that passes.
+- **`packages/eql/.github/` is gone, and a test fails if it returns.** It was a
+  dead deposit: GitHub reads workflows from the repo root and nowhere else, so
+  the eleven files that arrived with the subtree ran on nothing.
+  `scripts/__tests__/eql-suite-ci.test.mjs` held them as a shrinking allowlist
+  until the release port emptied it, and now asserts the directory is gone.
+  **Never put a workflow under a package.** That same test also asserts that the three SQLx suite tasks are
+  invoked by name from a root workflow, that every `dorny/paths-filter` path is
+  scoped to `packages/eql/`, and that every mise task shelling out to cargo is
+  either reachable from a root workflow or exempted with a written reason.
   That scan now follows a task's `tasks/*.sh` delegations **transitively**
   (cycle-guarded, and it throws rather than truncating past
   `MAX_SCRIPT_DEPTH`), and it reads the `run:` bodies of composite actions a
@@ -315,6 +307,66 @@ monorepo, which is where the silent failures are.
   and the job running it stopped counting as a Rust job for the cache check —
   while a mise task invoked from a composite action read as run by nobody,
   whose natural repair is an exemption claiming CI does not run it.
+- **The EQL release pipeline is built and INERT, and the switch that arms it is
+  derived rather than flipped.** Five artefacts ship at one version — the npm
+  package, the `eql-bindings` crate, the SQL bundle, the docs bundle and the
+  `postgres-eql` image — and the workflows that produce them all live at the
+  repo root now:
+
+  | file | what it does |
+  |---|---|
+  | `release.yml` | `classify` + the EQL production and prerelease jobs. It is one file with the JS and FFI releases because npm trusted publishing binds a package to a repository **and a workflow filename** |
+  | `_build-eql-sql.yml`, `_build-eql-docs.yml` | `workflow_call` reusables, called from both EQL paths so there is one build path per artefact |
+  | `release-plz.yml` | the crate. **Its filename cannot change** — crates.io Trusted Publishing binds to it |
+  | `release-postgres-eql-image.yml` | the GHCR image, dispatched by `release.yml` on production finals |
+  | `lint-release.yml` | merged into the root file of the same name |
+  | ~~`rebuild-docs.yml`~~ | **not ported.** It targeted the retired docs site through the deprecated `DOCS_WEBHOOK_URL`; versioned docs artifacts are still built by `_build-eql-docs.yml` |
+
+  **Inertness is a derived switch, not a flag somebody flips.** The one piece
+  of state is `FROZEN_PUBLISHERS` in `scripts/release-gate.mjs` — the existing
+  map recording "this package lives here but is published elsewhere" — and
+  every job that publishes an EQL artefact is gated on its answer. **Deleting
+  the `@cipherstash/eql` entry at the Phase-5 cutover is what arms the
+  pipeline**, and there is no second thing to remember, because the cutover has
+  to delete it anyway: the release gate blocks every release until it does. A
+  separate flag would have failed silently in the worst direction — an npm
+  package published with no SQL release, no docs and no crate.
+
+  **Two readers, one map, and they are not the same code path.** Say which you
+  mean:
+
+  - `scripts/eql-pipeline-armed.mjs` imports the map and answers "may this
+    repository publish EQL at all?". Ten jobs across `release.yml`,
+    `release-plz.yml` and `release-postgres-eql-image.yml` carry
+    `if: needs.eql-armed.outputs.armed == 'true'`. That covers the SQL bundle,
+    the docs, the crate, the image and the *prerelease* npm publish.
+  - The **production npm publish does not.** `release.yml`'s `release` job runs
+    `changeset publish` gated only on `needs.gate.result == 'success'`, and
+    `.changeset/config.json` has `"ignore": []`, so `@cipherstash/eql` is
+    publishable like any other workspace member. What holds it is
+    `release-gate.mjs` exiting non-zero for a frozen publisher, which fails the
+    `gate` job and skips `release` entirely.
+
+  Both keyed on the same entry, so one deletion still arms all five. But
+  nothing asserts the two agree: relax the gate and the npm half opens while
+  `eql-armed` still reports `false` and the other four jobs skip correctly —
+  which is exactly the outcome the derived switch exists to prevent. This
+  paragraph said "every one sits behind `eql-pipeline-armed.mjs`" until an
+  audit read the `needs:` list. Run `node scripts/release-gate.mjs` for what
+  the gate is doing right now rather than inferring it from here.
+
+  **The cutover needs two more things, neither of which a workflow can assert
+  ahead of time:** a `GPG_PRIVATE_KEY` secret (release-plz signs its commit and
+  tag, and this repository has none); write access from here to the
+  `ghcr.io/cipherstash/postgres-eql` package, still linked to
+  `cipherstash/encrypt-query-language`. The old docs-site webhook is not a
+  cutover dependency: that site and `DOCS_WEBHOOK_URL` are retired.
+- **A release workflow may not restore a cache, including a Rust one.**
+  `lint-no-workflow-caching.mjs` forbids a cache restore anywhere an artefact is
+  published; `eql-suite-ci.test.mjs` wants `Swatinem/rust-cache` on every job
+  that compiles Rust. Four EQL release jobs do both, so they pay a cold compile.
+  The exemption is derived from the linter's own target list rather than copied,
+  so the two cannot disagree about which jobs those are.
 - **The EQL path filters are three copies of one list, and the list is derived
   now, not remembered.** `test-eql.yml` writes it twice (an `on: push: paths:`
   filter deciding whether the workflow starts at all, and a
@@ -440,84 +492,73 @@ monorepo, which is where the silent failures are.
   `CS_WORKSPACE_CRN` re-pins both. `tests/sqlx/src/selectors.rs` holds five more
   workspace-keyed constants with no consumers and no guard — delete or guard
   them before using any of them.
-- **Publishing has not moved yet.** npm trusted publishing for `@cipherstash/eql`
-  still names `cipherstash/encrypt-query-language` — the SLSA provenance on
-  `@cipherstash/eql@3.0.5` records that repository and
-  `.github/workflows/release.yml` — and the package's own `repository` / `bugs`
-  fields still point there, as do the `eql-bindings` crate's. Repointing all of
-  it is the Phase-5 cutover, together with the nine parked workflows above.
-  This was protect-ffi's situation until its own cutover, with one difference:
-  the guard is not a changeset lint but `scripts/release-gate.mjs`, and it is
-  the stronger of the two. Its `FROZEN_PUBLISHERS` map lists every package that lives here but is
-  published from another repository, and the gate **exits non-zero** — failing
-  the `gate` job, which skips `release` entirely — if such a package's committed
-  version is missing from npm, if any published package carries a runtime
-  `workspace:` range that only that package could satisfy, or — the third
-  check, added after a review caught it by hand — if a frozen package's
-  in-tree artefact is **not the bytes published under the version the tree
-  claims**. Any one stops the Version Packages PR and the publish alike. A
-  changeset-side guard sees none of them — which is why the hand-applied 3.0.5
-  bump needed this one.
+- **`FROZEN_PUBLISHERS` is what stops this repo publishing EQL, and it is a
+  mechanism, not a status.** `scripts/release-gate.mjs` carries a map of every
+  package that lives here but is published from another repository. For each,
+  the gate **exits non-zero** — failing the `gate` job, which skips `release`
+  entirely — on any of three conditions:
 
-  **That third check is the one worth understanding before you touch
-  `packages/eql`.** For a package this repo publishes, in-tree bytes differing
-  from npm is an unreleased change — every pull request. For a frozen one it is
-  a contradiction: the version cannot be released from here, so the tree is not
-  proposing those bytes, it is *asserting they are already on npm under that
-  number*. Nothing local can notice when that stops being true, because
-  `sql/release-manifest.json` is regenerated with the SQL and goes on agreeing
-  with it; only the registry disagrees. This branch shipped exactly that — a
-  `3.0.5` subtree whose install bundle hashed `7ad9c9f8…` against npm's
-  `accde0030…`, because upstream restored the deprecated `ste_vec_contains`
-  aliases in the real release — and `stash eql install` would have executed that
-  SQL against a customer database, which would then have carried functions the
-  version it reports does not define. (The CLI now refuses a bundle whose bytes
-  do not hash to its own release manifest — see
-  `packages/cli/src/installer/bundle-digest.ts`. That catches a corrupt or
-  tampered `node_modules`, **not** this: a frozen-package skew regenerates the
-  manifest alongside the SQL, so the two agree locally and only the registry
-  disagrees. The release gate is still the only thing that notices.) The check
-  `npm pack`s the frozen package
-  and compares the two release manifests; `FROZEN_ARTEFACT_DIGESTS` says which
-  artefact, keyed identically to `FROZEN_PUBLISHERS` and deleted with it at the
-  cutover.
-  **That `npm pack` + `tar` extraction was itself executed by no test until the
-  #915 follow-up** — every `frozenBytesSkew` unit test injected both digests,
-  and the end-to-end process test shimmed `npm` with a script answering `npm
-  view` only, so `npm pack` got a synthetic `E404` and the comparison was
-  skipped on every run. Driving it for real found two defects in it: `--silent`
-  suppressed the very error text the function classified on, and npm answers a
-  missing *version* of an existing package with `ETARGET`, not `E404` — so
-  `@cipherstash/eql@<next>`, the exact case the function documents, became an
-  uncaught throw with an empty reason, raised while building the blocker array,
-  which meant `reportBlockers` never printed the actionable `frozen-publisher`
-  remedy it had already computed.
+  1. the package's committed version is missing from npm;
+  2. any published package carries a runtime `workspace:` range that only that
+     package could satisfy;
+  3. the frozen package's in-tree artefact is **not the bytes published under
+     the version the tree claims**.
+
+  Any one stops the Version Packages PR and the publish alike. A changeset-side
+  guard sees none of them.
+
   **Whether the gate is blocking anything right now is a question for the
   registry, not for this file: run `node scripts/release-gate.mjs` and read what
   it says.** `tests.yml` runs the same script at PR time so the answer arrives a
-  merge earlier. `@cipherstash/eql` is the map's ONLY entry: the seven
-  protect-ffi packages were listed there too, and the cutover that repointed
-  their publisher at this repo did not take them out — which left the gate
-  armed against the first release that cutover had just enabled. Delete the
-  `@cipherstash/eql` entry in the Phase-5 cutover —
+  merge earlier. Which registry publishes what, and whether trusted publishing
+  has been repointed, is likewise configuration — check the registry, do not
+  read it here. This bullet used to narrate that state and was wrong twice.
+
+  **Delete the `@cipherstash/eql` entry in the Phase-5 cutover.**
   `scripts/__tests__/frozen-publisher-docs.test.mjs` fails until this paragraph
-  goes with it, and `release-gate.test.mjs` now asserts the map carries no FFI
-  name, so that particular mistake cannot be made twice.
-  **`SECURITY.md`'s "Note on publishing" is the third document that guard
-  holds**, added after it was found still naming the seven
-  `@cipherstash/protect-ffi*` packages as published from `protectjs-ffi` — a
-  sentence the FFI cutover made false and nothing checked, in the one file that
-  tells a reporter which pipeline built the artefact they are reporting on. The
-  guard now fails on a doc that freezes a package the map does not, so the same
-  drift cannot outlive the next cutover either.
-  Note too that 3.0.5 did *not* come from `changeset version` —
-  eleven unrelated changesets were pending, so the bump was entered by hand in
-  `packages/eql/packages/eql/CHANGELOG.md` and the parked
-  `rename-ste-vec-contains.md.deferred` deleted with it, precisely so the
-  cutover cannot apply the same bump twice. Read that CHANGELOG entry before
-  assuming a version's provenance.
-- **Changesets for `@cipherstash/eql` go in the repo-root `.changeset/`.**
-  `packages/eql/.changeset/` is an empty leftover of the subtree.
+  goes with it, and `SECURITY.md`'s "Note on publishing" is the third document
+  it holds — the one file that tells a reporter which pipeline built the
+  artefact they are reporting on. `release-gate.test.mjs` also asserts the map
+  carries no FFI name: the seven protect-ffi packages were left in it after
+  their own cutover, which armed the gate against the first release that
+  cutover had just enabled.
+
+  **Check 3 is the one worth understanding before you touch `packages/eql`.**
+  For a package this repo publishes, in-tree bytes differing from npm is an
+  unreleased change — every pull request. For a frozen one it is a
+  contradiction: the version cannot be released from here, so the tree is not
+  proposing those bytes, it is *asserting they are already on npm under that
+  number*. Nothing local can notice when that stops being true, because
+  `sql/release-manifest.json` is regenerated with the SQL and goes on agreeing
+  with it; only the registry disagrees. That has happened, and the SQL would
+  have reached a customer database through `stash eql install`, carrying
+  functions the version it reports does not define.
+
+  The CLI now refuses a bundle whose bytes do not hash to its own release
+  manifest (`packages/cli/src/installer/bundle-digest.ts`), but that catches a
+  corrupt or tampered `node_modules`, **not** this — a frozen-package skew
+  regenerates the manifest alongside the SQL, so the two agree locally. The
+  release gate is still the only thing that notices. It `npm pack`s the frozen
+  package and compares the two release manifests; `FROZEN_ARTEFACT_DIGESTS`
+  says which artefact, keyed identically to `FROZEN_PUBLISHERS` and deleted
+  with it.
+
+  That `npm pack` path was itself executed by **no test** until the #915
+  follow-up: every unit test injected both digests and the process test shimmed
+  `npm` to answer `npm view` only. Driving it for real found two defects —
+  `--silent` suppressed the error text the function classified on, and npm
+  answers a missing *version* of an existing package with `ETARGET`, not
+  `E404`, so the exact case the function documents became an uncaught throw
+  that swallowed the actionable remedy. Assume a guard is untested until you
+  have watched it fail.
+
+  Note also that `@cipherstash/eql@3.0.5` did not come from `changeset
+  version`: eleven unrelated changesets were pending, so the bump was entered
+  by hand in `packages/eql/packages/eql/CHANGELOG.md`. Read that CHANGELOG
+  entry before assuming a version's provenance.
+- **Changesets for `@cipherstash/eql` go in the repo-root `.changeset/`.** The
+  subtree's own `.changeset/` was deleted with the import; there is no second
+  one to put them in by mistake.
 
 ## Agent Skills — these ship to customers
 

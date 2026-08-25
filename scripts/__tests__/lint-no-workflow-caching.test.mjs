@@ -17,6 +17,14 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
 const TARGET_WORKFLOWS = [
   '.github/workflows/release.yml',
   '.github/workflows/_build-ffi-artifacts.yml',
+  // The EQL release line. `scripts/__tests__/eql-suite-ci.test.mjs` reads the
+  // script's real list too, and uses it to exempt these workflows from the
+  // rust-cache requirement — the two rules point opposite ways for a job that
+  // compiles Rust inside a publish path, and that file records which one wins.
+  '.github/workflows/_build-eql-sql.yml',
+  '.github/workflows/_build-eql-docs.yml',
+  '.github/workflows/release-plz.yml',
+  '.github/workflows/release-postgres-eql-image.yml',
   '.github/workflows/tests-supply-chain.yml',
 ]
 

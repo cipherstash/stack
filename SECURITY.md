@@ -27,24 +27,28 @@ lockstep with `@cipherstash/eql`. It is in scope for security reports on the
 same terms as the npm packages above.
 
 > **Note on publishing.** `@cipherstash/eql` and the `eql-bindings` crate are
-> developed here but are still *published* from
-> `cipherstash/encrypt-query-language` — the npm package's `repository` /
-> `bugs` fields and the crate's `repository` / `homepage` all still name it, as
-> does npm trusted publishing, and repointing every one of them is Phase 5 of
-> `docs/plans/2026-08-13-eql-monorepo-absorption.md`. Everything else in the
-> table above — including all seven `@cipherstash/protect-ffi*` packages, whose
-> own cutover has completed — is published from this repository by
-> `.github/workflows/release.yml`. Source, issues, and security reports for all
-> of them belong here regardless.
+> developed here but are *published* from `cipherstash/encrypt-query-language`
+> until the Phase 5 cutover in
+> `docs/plans/2026-08-13-eql-monorepo-absorption.md` completes. Everything else
+> in the table above, including all seven `@cipherstash/protect-ffi*` packages,
+> is published from this repository by `.github/workflows/release.yml`.
+> **Source, issues, and security reports for all of them belong here
+> regardless** — that part does not depend on which pipeline built the
+> artefact.
 >
-> The provenance attestation on a release names the repository that built it,
-> and is the only thing that settles the paragraph above:
-> `curl -s https://registry.npmjs.org/-/npm/v1/attestations/@cipherstash%2fprotect-ffi@0.32.0`
-> returns `cipherstash/stack`; the same call against `@cipherstash%2feql@3.0.5`
-> returns `cipherstash/encrypt-query-language`. Check there before repeating
-> either claim: this note went on naming `cipherstash/protectjs-ffi` as the
-> protect-ffi publisher through `0.32.0` — the release that proved the cutover
-> and disproved the sentence.
+> **Do not trust this note for which repository published a given release.**
+> Registry configuration changes without touching this file, and this note has
+> been wrong before: it named `cipherstash/protectjs-ffi` as the protect-ffi
+> publisher through `0.32.0`, the release that disproved the sentence. The
+> provenance attestation is the authority, and it is per-release:
+>
+> ```
+> curl -s https://registry.npmjs.org/-/npm/v1/attestations/@cipherstash%2f<pkg>@<version>
+> ```
+>
+> Read the `workflow.repository` and `workflow.path` it returns. That names the
+> repository and workflow that actually built the artefact you are reporting
+> on.
 >
 > `scripts/__tests__/frozen-publisher-docs.test.mjs` now holds this paragraph to
 > `FROZEN_PUBLISHERS` in `scripts/release-gate.mjs`. It fails if the note names
@@ -150,7 +154,19 @@ CI. See `skills/stash-supply-chain-security/SKILL.md` for the full guide.
 The `release.yml` workflow publishes packages to npm using OIDC trusted
 publishing (`id-token: write`). There is no long-lived `NPM_TOKEN` — the
 workflow deliberately avoids one, and setting one would bypass trusted
-publishing.
+publishing. `release-plz.yml` publishes the `eql-bindings` crate to crates.io
+over the same token exchange, and likewise carries no `CARGO_REGISTRY_TOKEN`.
+Both bind to a *workflow filename* at the registry, so renaming either file
+silently invalidates its publisher configuration.
+
+`scripts/__tests__/workflow-publish-permissions.test.mjs` holds the shape those
+two files must keep, as two separate equalities: who may publish (`id-token:
+write`, granted per job and never at workflow level, where it would be inherited
+by every job in a file the registry already trusts), and who may write to the
+repository at all. They are separate because a publishing workflow also contains
+jobs that create a release or dispatch another workflow — holding one does not
+confer the other. Both are equalities, so either addition has to be argued for
+in the same diff.
 
 [GitHub Actions cache poisoning is a known attack][1] against credential-bearing
 workflows. The mechanism is:
@@ -163,8 +179,15 @@ workflows. The mechanism is:
 
 We mitigate this by:
 
-- Explicitly disabling all caching in `release.yml`
+- Explicitly disabling all caching in every workflow that publishes an artefact
+  — `release.yml`, the reusables it calls (`_build-ffi-artifacts.yml`,
+  `_build-eql-sql.yml`, `_build-eql-docs.yml`), `release-plz.yml` and
+  `release-postgres-eql-image.yml`
 - Automated checks for disabled caching on high-risk workflows
+  (`scripts/lint-no-workflow-caching.mjs`), working from an allowlist of audited
+  actions rather than a denylist of cache actions — so an action it has never
+  seen is a finding by default. The cost is accepted: four EQL release jobs
+  compile Rust with no cache restore.
 
 [1]: https://adnanthekhan.com/2024/05/06/the-monsters-in-your-build-cache-github-actions-cache-poisoning/
 

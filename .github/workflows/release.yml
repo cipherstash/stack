@@ -15,6 +15,20 @@ name: Release JS
 #
 # See https://docs.npmjs.com/trusted-publishers#supported-cicd-providers
 # Enforced by scripts/__tests__/workflow-publish-permissions.test.mjs.
+#
+# THREE RELEASE LINES, ONE FILE: the JS packages (changesets), the seven FFI
+# tarballs, and the EQL line ported here from packages/eql/.github/. They share
+# a file because npm trusted publishing binds to a repository AND a workflow
+# filename, so every npm publish in this repository has to happen here.
+#
+# `workflow_dispatch` came with the EQL port (its prerelease path is dispatched
+# against a release branch). A dispatch reaches every job in the file, so
+# `classify` computes the mode once and the publishing jobs key on it rather
+# than assuming a push to `main`.
+#
+# The EQL jobs are INERT: they sit behind `eql-armed`
+# (scripts/eql-pipeline-armed.mjs) as well as behind `gate`. See AGENTS.md,
+# "Working on EQL".
 permissions:
   contents: read
 
@@ -22,10 +36,120 @@ on:
   push:
     branches:
       - main
+  # The EQL prerelease path: dispatched against a release branch whose HEAD is
+  # an explicit `chore(release): …` marker commit. A dispatch against `main`
+  # classifies as `production` and behaves exactly like a push — `gate` makes it
+  # a no-op when there is nothing unpublished.
+  workflow_dispatch: {}
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
+  # Which release shape this run is, read by every publishing job below.
+  #
+  #   production — a push to `main`, or a dispatch against it.
+  #   prerelease — a dispatch against any other branch whose HEAD subject is
+  #                `chore(release):`. Cuts an EQL alpha/rc without merging.
+  #   skip       — everything else, including an already-published identity.
+  #
+  # Safety on the prerelease path is the marker commit, the version regex and
+  # the tag short-circuit — not the branch name. Exactly `chore(release):`; a
+  # bare `release:` must not re-trigger a publish.
+  classify:
+    name: Classify release intent
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.classify.outputs.mode }}
+      version: ${{ steps.classify.outputs.version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          # Depth 1 (the default): this reads `git log -1` and runs on every
+          # push to main. Upstream used `fetch-depth: 0`. The tag check below
+          # asks the API, not the remote, so no pushable credential either.
+          persist-credentials: false
+
+      - id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          branch="${GITHUB_REF_NAME}"
+          subject="$(git log -1 --format=%s)"
+          mode="skip"
+          version=""
+
+          if [[ "$branch" == "main" ]]; then
+            mode="production"
+          else
+            case "$subject" in
+              chore\(release\):*)
+                mode="prerelease"
+                ;;
+            esac
+          fi
+
+          if [[ "$mode" == "prerelease" ]]; then
+            # Two levels down: the subtree root carries no package.json.
+            # Upstream this was `./packages/eql/package.json`.
+            version="$(node -p "require('./packages/eql/packages/eql/package.json').version")"
+            # prepare-bindings-assets.sh enforces the same shape with the
+            # suffix OPTIONAL; here it is required, because a version reaching
+            # this branch has already been classified a prerelease and a bare
+            # `3.0.6` would be one wearing the wrong identity. Checked here
+            # because this job runs first and that script runs last. Upstream
+            # checked only for a hyphen, so `3.0.6-beta` classified as a
+            # prerelease and got a public tag and GitHub release before the npm
+            # job died on it.
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9]+$ ]]; then
+              echo "::error::a prerelease release commit must pin an exact prerelease identity (X.Y.Z-(alpha|beta|rc).N) in packages/eql/packages/eql/package.json; found '${version}'" >&2
+              exit 1
+            fi
+            # Idempotency: if this identity's tag exists the release was cut,
+            # so a re-push of the marker must not publish it twice.
+            # `matching-refs`, not `git/ref` — see the note on `publish-ffi`.
+            tag="eql-typescript-v${version}"
+            at="$(gh api "repos/${REPO}/git/matching-refs/tags/${tag}" \
+              --jq ".[] | select(.ref == \"refs/tags/${tag}\") | .object.sha" 2>/dev/null || true)"
+            if [ -n "$at" ]; then
+              echo "${tag} already exists; prerelease ${version} was already published — skipping"
+              mode="skip"
+              version=""
+            fi
+          fi
+
+          echo "classified as ${mode}${version:+ at ${version}}"
+          {
+            echo "mode=$mode"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+  # May this repository publish the EQL line at all? A checkout and one `node`
+  # call reading a Map — no registry lookup, so every EQL job in this run gets
+  # the same answer. See scripts/eql-pipeline-armed.mjs.
+  eql-armed:
+    name: Is the EQL release line armed?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      armed: ${{ steps.armed.outputs.armed }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      # No pnpm install: the script imports node builtins only, as `gate` does.
+      - name: Read the publisher switch
+        id: armed
+        run: node scripts/eql-pipeline-armed.mjs
+
   # WHAT STILL HAS TO BE PUBLISHED, asked of the registry rather than of the
   # `.changeset/` directory. "No unconsumed changesets" is also true of an
   # ordinary docs commit and of the commit right after a release, so gating the
@@ -69,16 +193,18 @@ jobs:
 
   ffi-artifacts:
     name: Build FFI artifacts
-    needs: [gate]
-    if: needs.gate.outputs.ffi == 'true'
+    needs: [classify, gate]
+    # `mode == 'production'` is what workflow_dispatch cost: without it a
+    # dispatch against a feature branch could publish FFI from that branch.
+    if: needs.classify.outputs.mode == 'production' && needs.gate.outputs.ffi == 'true'
     uses: ./.github/workflows/_build-ffi-artifacts.yml
     with:
       ref: ${{ github.sha }}
 
   publish-ffi:
     name: Publish FFI packages
-    needs: [gate, ffi-artifacts]
-    if: needs.gate.outputs.ffi == 'true'
+    needs: [classify, gate, ffi-artifacts]
+    if: needs.classify.outputs.mode == 'production' && needs.gate.outputs.ffi == 'true'
     # GitHub-hosted for the same reason the release job is: npm rejects
     # provenance from a self-hosted runner with E422. This job only uploads
     # prebuilt tarballs, so it needs no toolchain beyond node and npm.
@@ -216,7 +342,7 @@ jobs:
 
   release:
     name: Release
-    needs: [gate, publish-ffi]
+    needs: [classify, gate, publish-ffi]
     # `always()` because `publish-ffi` is SKIPPED for an ordinary JS release,
     # and a skipped dependency would otherwise skip this job too.
     #
@@ -229,6 +355,7 @@ jobs:
     # SUCCEEDED.
     if: >-
       always() &&
+      needs.classify.outputs.mode == 'production' &&
       needs.gate.result == 'success' &&
       (
         needs.gate.outputs.ffi != 'true' ||
@@ -242,6 +369,12 @@ jobs:
       id-token: write # npm OIDC trusted publishing
       contents: write # changesets commits and pushes the Version Packages branch
       pull-requests: write # …and opens/updates the PR for it
+    # `published` alone is not enough: this job publishes every unpublished JS
+    # package, and a `@cipherstash/stack` release must not fire an EQL one.
+    outputs:
+      eql_published: ${{ steps.eql.outputs.eql_published }}
+      eql_version: ${{ steps.eql.outputs.eql_version }}
+      eql_prerelease: ${{ steps.eql.outputs.eql_prerelease }}
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
@@ -367,3 +500,358 @@ jobs:
           # the single go-live switch — set it with:
           #   gh variable set STASH_POSTHOG_KEY --repo cipherstash/stack --body '<phc_...>'
           STASH_POSTHOG_KEY: ${{ vars.STASH_POSTHOG_KEY }}
+
+      # Read from `publishedPackages` rather than from the tree, so the SQL
+      # release, docs bundle and image tag agree with what reached npm. A re-run
+      # against an already-published version finds nothing and the EQL branch
+      # skips, which is correct.
+      - name: Resolve the published EQL version
+        id: eql
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          PUBLISHED: ${{ steps.changesets.outputs.publishedPackages }}
+        run: |
+          set -euo pipefail
+          version="$(node -e "const p=JSON.parse(process.env.PUBLISHED);const e=p.find(x=>x.name==='@cipherstash/eql');console.log(e ? e.version : '')")"
+          if [ -z "$version" ]; then
+            echo "@cipherstash/eql was not part of this release"
+            exit 0
+          fi
+          if [[ "$version" == *-* ]]; then
+            prerelease=true
+          else
+            prerelease=false
+          fi
+          echo "@cipherstash/eql@${version} published (prerelease=${prerelease})"
+          {
+            echo "eql_published=true"
+            echo "eql_version=${version}"
+            echo "eql_prerelease=${prerelease}"
+          } >> "$GITHUB_OUTPUT"
+
+  # ---- The EQL release line: production ------------------------------------
+  #
+  # EQL ships as five artefacts at one version. Changesets publishes the npm
+  # package (above) and release-plz.yml the crate on the same push; the rest are
+  # built here, in the run that published, so they cannot drift from it.
+  #
+  # The `needs:` chain is load-bearing: `eql-docs` attaches to the release
+  # `eql-sql` creates, and `eql-image` dispatches against the tag it produced.
+
+  eql-sql:
+    name: Build and attach the EQL SQL release
+    needs: [classify, gate, eql-armed, release]
+    if: >-
+      needs.classify.outputs.mode == 'production' &&
+      needs.eql-armed.outputs.armed == 'true' &&
+      needs.release.outputs.eql_published == 'true'
+    permissions:
+      contents: write # creates the eql-<version> tag and release
+    uses: ./.github/workflows/_build-eql-sql.yml
+    with:
+      ref: ${{ github.sha }}
+      tag: eql-${{ needs.release.outputs.eql_version }}
+      attach: true
+      target_commitish: ${{ github.sha }}
+      prerelease: ${{ needs.release.outputs.eql_prerelease == 'true' }}
+
+  eql-docs:
+    name: Build and attach the EQL docs bundle
+    needs: [classify, gate, eql-armed, release, eql-sql]
+    if: >-
+      needs.classify.outputs.mode == 'production' &&
+      needs.eql-armed.outputs.armed == 'true' &&
+      needs.release.outputs.eql_published == 'true'
+    permissions:
+      contents: write # attaches to the release eql-sql just created
+    uses: ./.github/workflows/_build-eql-docs.yml
+    with:
+      ref: ${{ github.sha }}
+      tag: eql-${{ needs.release.outputs.eql_version }}
+
+  eql-image:
+    name: Dispatch the Postgres + EQL image build
+    needs: [classify, gate, eql-armed, release, eql-sql, eql-docs]
+    # Production finals only: the floating :latest / :<version> tags must not
+    # move for a prerelease. An alpha image is still buildable on demand.
+    if: >-
+      needs.classify.outputs.mode == 'production' &&
+      needs.eql-armed.outputs.armed == 'true' &&
+      needs.release.outputs.eql_published == 'true' &&
+      needs.release.outputs.eql_prerelease == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write # gh workflow run
+    steps:
+      - name: Dispatch release-postgres-eql-image.yml
+        # Dispatched, not `on: release`: a GITHUB_TOKEN-created release does not
+        # trigger that event, but a GITHUB_TOKEN dispatch does. Against the
+        # eql-<version> TAG that `eql-sql` created, so the image is built from
+        # the released source even if main has advanced.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.eql_version }}
+        run: |
+          set -euo pipefail
+          # `--repo` is required: no checkout, so gh cannot infer it.
+          gh workflow run release-postgres-eql-image.yml \
+            --repo "${GITHUB_REPOSITORY}" \
+            --ref "eql-${VERSION}" \
+            -f eql_version="$VERSION" \
+            -f update_floating_tags=true
+
+  # ---- The EQL release line: prerelease ------------------------------------
+  #
+  # Dispatched against a branch whose HEAD is a `chore(release):` marker, so an
+  # alpha/rc can be cut without merging to `main`. Changesets is not involved —
+  # the version is already pinned in the manifest.
+  #
+  # SQL and docs build first and the npm publish `needs:` both: the tarball
+  # embeds the SQL assets, so a build failure must not arrive after the publish.
+
+  prerelease-eql-sql:
+    name: Build and attach the prerelease EQL SQL
+    needs: [classify, gate, eql-armed]
+    if: >-
+      needs.classify.outputs.mode == 'prerelease' &&
+      needs.eql-armed.outputs.armed == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/_build-eql-sql.yml
+    with:
+      ref: ${{ github.sha }}
+      tag: eql-${{ needs.classify.outputs.version }}
+      attach: true
+      target_commitish: ${{ github.sha }}
+      prerelease: true
+
+  prerelease-eql-docs:
+    name: Build and attach the prerelease EQL docs
+    needs: [classify, gate, eql-armed, prerelease-eql-sql]
+    if: >-
+      needs.classify.outputs.mode == 'prerelease' &&
+      needs.eql-armed.outputs.armed == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/_build-eql-docs.yml
+    with:
+      ref: ${{ github.sha }}
+      tag: eql-${{ needs.classify.outputs.version }}
+
+  prerelease-eql-npm:
+    name: Publish the prerelease npm package
+    needs: [classify, gate, eql-armed, prerelease-eql-sql, prerelease-eql-docs]
+    if: >-
+      needs.classify.outputs.mode == 'prerelease' &&
+      needs.eql-armed.outputs.armed == 'true'
+    # GitHub-hosted for the same reason as `release` and `publish-ffi`: npm
+    # rejects provenance from a self-hosted runner with E422.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write # npm OIDC trusted publishing
+      contents: write # creates the eql-typescript-v<version> tag
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        name: Install pnpm
+        with:
+          run_install: false
+          # Never cache the pnpm store in a credential-bearing workflow.
+          cache: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      # `add_shims_to_path: false` and `env: false` are load-bearing — see the
+      # `release` job above for both.
+      - name: Install mise (release:prepare_bindings_assets runs through it)
+        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: false
+          working_directory: packages/eql
+          add_shims_to_path: false
+          env: false
+
+      # AFTER mise-action, deliberately: see the `release` job.
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@^11.5.1
+
+      # node-pty's install hook falls back to `node-gyp rebuild` on Linux and
+      # pnpm/action-setup v6 does not ship node-gyp. Upstream had no node-pty,
+      # so no such step. Asserted by workflow-node-gyp.test.mjs.
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify the prerelease marker and version
+        env:
+          VERSION: ${{ needs.classify.outputs.version }}
+        run: |
+          set -euo pipefail
+          actual="$(node -p "require('./packages/eql/packages/eql/package.json').version")"
+          test "$actual" = "$VERSION" || {
+            echo "::error::package version ${actual} does not match the prerelease identity ${VERSION}" >&2
+            exit 1
+          }
+
+      - name: Prepare the exact SQL assets
+        # The task passes `--force` itself: `mise run build --version` does not
+        # treat `--version` as a cache-key input. See AGENTS.md.
+        working-directory: packages/eql
+        env:
+          VERSION: ${{ needs.classify.outputs.version }}
+        run: mise run release:prepare_bindings_assets --version "$VERSION"
+
+      # Through turbo, not `pnpm --filter … build` as upstream ran:
+      # `@cipherstash/eql#build` declares `dependsOn: ["^build"]`. Asserted by
+      # workflow-turbo-build-deps.test.mjs.
+      - name: Build the package
+        run: pnpm exec turbo run build --filter @cipherstash/eql
+
+      - name: Publish the package
+        # Two levels down — the npm package, not the subtree root.
+        working-directory: packages/eql/packages/eql
+        env:
+          VERSION: ${{ needs.classify.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "$(npm view "@cipherstash/eql@${VERSION}" version 2>/dev/null)" ]; then
+            echo "@cipherstash/eql@${VERSION} is already published; skipping publish"
+          else
+            node scripts/npm-publish.mjs
+          fi
+
+      - name: Tag the TypeScript release
+        env:
+          VERSION: ${{ needs.classify.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Through the REST API, not git: the checkout has
+          # persist-credentials: false. `classify` reads this same tag.
+          tag="eql-typescript-v${VERSION}"
+          at="$(gh api "repos/${REPO}/git/matching-refs/tags/${tag}" \
+            --jq ".[] | select(.ref == \"refs/tags/${tag}\") | .object.sha" 2>/dev/null || true)"
+          if [ -n "$at" ]; then
+            echo "tag ${tag} already exists at ${at} — skipping"
+          else
+            gh api -X POST "repos/${REPO}/git/refs" \
+              -f ref="refs/tags/${tag}" -f sha="$GITHUB_SHA" >/dev/null
+            echo "created ${tag} at ${GITHUB_SHA}"
+          fi
+
+  prerelease-eql-crate:
+    name: Dispatch the prerelease crate publish
+    needs: [classify, gate, eql-armed, prerelease-eql-sql, prerelease-eql-docs]
+    if: >-
+      needs.classify.outputs.mode == 'prerelease' &&
+      needs.eql-armed.outputs.armed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write # gh workflow run
+      contents: write # create/update the release/eql-<version> branch ref
+    steps:
+      - name: Dispatch release-plz.yml at the release commit
+        # release-plz refuses a detached HEAD, so a tag dispatch does not work.
+        # Pin a release/eql-<version> branch at this run's commit instead — a
+        # stable pointer per identity, force-updated on a retry of the same one.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.classify.outputs.version }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          branch="release/eql-${VERSION}"
+          if ! gh api -X POST "repos/${REPO}/git/refs" \
+              -f ref="refs/heads/${branch}" -f sha="$SHA" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/${REPO}/git/refs/heads/${branch}" \
+              -f sha="$SHA" -F force=true >/dev/null
+          fi
+          # `--repo` is required: no checkout.
+          gh workflow run release-plz.yml --repo "$REPO" --ref "$branch"
+
+  # What this run actually did. Worth a job because both EQL paths can
+  # legitimately do nothing — an already-tagged identity classifies as `skip`,
+  # and the run page renders that identically to "a dependency failed".
+  eql-summary:
+    name: EQL release summary
+    needs:
+      - classify
+      - eql-armed
+      # `gate` and `release` are not EQL jobs, and they are the two that most
+      # often decide an EQL run does nothing. `gate` exits non-zero for a frozen
+      # publisher — which is the NORMAL inert state — and skips `release`, whose
+      # `eql_published` output then gates the production EQL chain. Without them
+      # here every job below reads `skipped` and the table cannot separate
+      # "correctly inert" from "the gate refused this release" from "changesets
+      # failed", which is the distinction this job exists to draw.
+      - gate
+      - release
+      - eql-sql
+      - eql-docs
+      - eql-image
+      - prerelease-eql-sql
+      - prerelease-eql-docs
+      - prerelease-eql-npm
+      - prerelease-eql-crate
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Emit the run summary
+        env:
+          MODE: ${{ needs.classify.outputs.mode }}
+          VERSION: ${{ needs.classify.outputs.version }}
+          ARMED: ${{ needs.eql-armed.outputs.armed }}
+          GATE: ${{ needs.gate.result }}
+          RELEASE: ${{ needs.release.result }}
+          EQL_SQL: ${{ needs.eql-sql.result }}
+          EQL_DOCS: ${{ needs.eql-docs.result }}
+          EQL_IMAGE: ${{ needs.eql-image.result }}
+          PRE_SQL: ${{ needs.prerelease-eql-sql.result }}
+          PRE_DOCS: ${{ needs.prerelease-eql-docs.result }}
+          PRE_NPM: ${{ needs.prerelease-eql-npm.result }}
+          PRE_CRATE: ${{ needs.prerelease-eql-crate.result }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## EQL release"
+            echo ""
+            echo "- mode: \`${MODE}\`"
+            echo "- pipeline armed: \`${ARMED}\`"
+            echo "- classified version: \`${VERSION:-n/a}\`"
+            echo ""
+            echo "| job | result |"
+            echo "| --- | --- |"
+            echo "| gate | ${GATE} |"
+            echo "| release (changesets) | ${RELEASE} |"
+            echo "| eql-sql | ${EQL_SQL} |"
+            echo "| eql-docs | ${EQL_DOCS} |"
+            echo "| eql-image | ${EQL_IMAGE} |"
+            echo "| prerelease-eql-sql | ${PRE_SQL} |"
+            echo "| prerelease-eql-docs | ${PRE_DOCS} |"
+            echo "| prerelease-eql-npm | ${PRE_NPM} |"
+            echo "| prerelease-eql-crate | ${PRE_CRATE} |"
+            if [[ "${ARMED}" != "true" ]]; then
+              echo ""
+              echo "The EQL pipeline is INERT: \`@cipherstash/eql\` is a frozen publisher in \`scripts/release-gate.mjs\`, so every job above is expected to be \`skipped\`. Deleting that entry is what arms it — see the Phase 5 cutover in \`docs/plans/2026-08-13-eql-monorepo-absorption.md\`."
+            elif [[ "${GATE}" != "success" ]]; then
+              echo ""
+              echo "The pipeline is armed but \`gate\` did not succeed, so nothing downstream of it ran. Run \`node scripts/release-gate.mjs\` for what it is refusing."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -17,6 +17,18 @@ const TARGETS = process.argv.slice(2).length
       // calls it too — cannot become a way to build these artifacts under
       // different rules.
       '.github/workflows/_build-ffi-artifacts.yml',
+      // The EQL release line. The two reusables are reached from release.yml
+      // anyway and named for the same reason `_build-ffi-artifacts.yml` is: a
+      // second caller must not become a way to build them under other rules.
+      //
+      // The other two are reached from NOWHERE — release.yml starts them with
+      // `gh workflow run`, which no traversal can follow — so naming them here
+      // is the only thing that brings them into scope. One publishes a crate
+      // over OIDC, the other pushes an image to GHCR.
+      '.github/workflows/_build-eql-sql.yml',
+      '.github/workflows/_build-eql-docs.yml',
+      '.github/workflows/release-plz.yml',
+      '.github/workflows/release-postgres-eql-image.yml',
       '.github/workflows/tests-supply-chain.yml',
     ]
 
@@ -155,6 +167,44 @@ const AUDITED_ACTIONS = new Map([
   // fires only on a truthy value, which is how a mise-action step carrying no
   // `cache:` passed this gate. SHA-pinned at every call site.
   ['jdx/mise-action', { cacheInput: 'cache' }],
+
+  // ---- The EQL release line -------------------------------------------
+  //
+  // Creates and attaches the eql-<version> GitHub release. Read at the pinned
+  // v2: release metadata and file globs, uploaded through the releases API.
+  ['softprops/action-gh-release', { cacheInput: null }],
+  // Imports the GPG key release-plz signs with. Read at v7: key material, git
+  // config and fingerprint inputs only.
+  ['crazy-max/ghaction-import-gpg', { cacheInput: null }],
+  // Publishes the eql-bindings crate. No cache input — AND IT IS A COMPOSITE
+  // reaching three published actions of its own (taiki-e/install-action,
+  // cargo-bins/cargo-binstall, release-plz/git-config) that this gate cannot
+  // read; it opens local `./` composites only. So this is an audit of the
+  // pinned version, not a standing property: re-read it when the pin moves.
+  // Read at 2eb1d8bc — all three download binaries, none touches the cache.
+  ['release-plz/action', { cacheInput: null }],
+
+  // ---- Docker, for the postgres-eql image ------------------------------
+  //
+  // The plan called all three "registry-backed rather than
+  // GitHub-Actions-cache". Reading the pinned manifests, that is true of one.
+  //
+  // `cache-image` DEFAULTS TO TRUE — binfmt image in the Actions cache.
+  ['docker/setup-qemu-action', { cacheInput: 'cache-image' }],
+  // `cache-binary` DEFAULTS TO TRUE — the buildx binary, same way.
+  ['docker/setup-buildx-action', { cacheInput: 'cache-binary' }],
+  // GHCR auth. No cache, no cache input.
+  ['docker/login-action', { cacheInput: null }],
+  // The one the plan described, and the only `forbiddenInputs` entry. It has no
+  // boolean to turn caching off because it has none of its own: buildx caches
+  // what `cache-from` / `cache-to` ask for. Usually registry-backed, which is
+  // outside this gate — but `type=gha` is the Actions cache, restored AND
+  // written inside the job that pushes the image. Forbidden outright; adding
+  // one back means deciding here which backend it names.
+  [
+    'docker/build-push-action',
+    { cacheInput: null, forbiddenInputs: ['cache-from', 'cache-to'] },
+  ],
 ])
 
 // A secondary, deliberately over-broad read of the action's name. It is NOT the
@@ -307,10 +357,26 @@ function checkStep(step, at, bodyAudited = false) {
   // from a parallel list of per-action rules. An audited action that caches is
   // an additional constraint on it, not a substitute for being audited.
   const path = actionPath(uses)
-  const cacheInput = AUDITED_ACTIONS.get(path)?.cacheInput
+  const audited = AUDITED_ACTIONS.get(path)
+  const cacheInput = audited?.cacheInput
   if (cacheInput) {
     const reason = explicitFalseReason(step, cacheInput)
     if (reason) offenders.push(`${at}: ${path} ${reason}`)
+  }
+
+  // The same audit for an action whose caching is opted INTO rather than
+  // defaulted on: nothing to set to `false`, so the input must be absent.
+  // Presence is the finding whatever the value — the value is a backend name,
+  // and telling `type=gha` from `type=registry` would mean owning a parser for
+  // buildx cache specs. Naming one is the moment to record the decision above.
+  for (const forbidden of audited?.forbiddenInputs ?? []) {
+    if (step?.with && Object.hasOwn(step.with, forbidden)) {
+      offenders.push(
+        `${at}: ${path} must not set \`${forbidden}\` — it can name the GitHub ` +
+          'Actions cache (`type=gha`), and this action has no input that turns ' +
+          'caching off. See its AUDITED_ACTIONS entry.',
+      )
+    }
   }
 
   // One verdict per `uses:`, most specific first — a step reported twice reads

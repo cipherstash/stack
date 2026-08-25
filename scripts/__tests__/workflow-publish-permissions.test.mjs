@@ -46,6 +46,45 @@ const OIDC_JOBS = [
   '.github/workflows/release.yml / publish-ffi',
   // `changeset publish` for the JS packages, plus the Version Packages PR.
   '.github/workflows/release.yml / release',
+  // The EQL prerelease path publishes @cipherstash/eql directly rather than
+  // through changesets, so it mints its own npm token.
+  '.github/workflows/release.yml / prerelease-eql-npm',
+  // release-plz publishes the eql-bindings crate to crates.io, which uses the
+  // same OIDC token exchange. A DIFFERENT registry, and the reason this list
+  // could not stay a two-line one: the workflow filename is bound at crates.io
+  // rather than npm, but the scope is the same scope.
+  '.github/workflows/release-plz.yml / release',
+]
+
+/**
+ * The jobs in a publishing workflow that may hold ANY writable scope. A
+ * superset of `OIDC_JOBS`, asserted as such below.
+ *
+ * A second list because `OIDC_JOBS` was doing double duty as the write list —
+ * fine while the only writing jobs were the two that publish, and not
+ * expressible once `release.yml` grew jobs that create a release, dispatch a
+ * workflow or move a branch ref. Those need a writable scope and must not be
+ * able to mint a publish token; adding them to `OIDC_JOBS` would have said they
+ * could.
+ */
+const REPO_WRITE_JOBS = [
+  ...OIDC_JOBS,
+  // contents: write — creates the eql-<version> tag and GitHub release, and
+  // uploads the SQL bundle to it. Reached through a job-level `uses:`, whose
+  // grant is the CEILING for the reusable workflow, so this is also what
+  // constrains `_build-eql-sql.yml`.
+  '.github/workflows/release.yml / eql-sql',
+  // contents: write — attaches the docs bundle to the release above.
+  '.github/workflows/release.yml / eql-docs',
+  // actions: write — `gh workflow run release-postgres-eql-image.yml`.
+  '.github/workflows/release.yml / eql-image',
+  // contents: write — the prerelease halves of the two above.
+  '.github/workflows/release.yml / prerelease-eql-sql',
+  '.github/workflows/release.yml / prerelease-eql-docs',
+  // actions: write to dispatch release-plz.yml, contents: write to pin the
+  // release/eql-<version> branch it must be dispatched against (release-plz
+  // refuses a detached HEAD).
+  '.github/workflows/release.yml / prerelease-eql-crate',
 ]
 
 /**
@@ -107,6 +146,9 @@ const workflows = workflowFiles().map((file) => {
 /** Is this the `<file> / <job>` of a job sanctioned to publish? */
 const sanctioned = (file, name) => OIDC_JOBS.includes(`${file} / ${name}`)
 
+/** …and of a job sanctioned to hold a writable scope at all? */
+const mayWrite = (file, name) => REPO_WRITE_JOBS.includes(`${file} / ${name}`)
+
 describe('supply chain — a publishing workflow grants OIDC per job', () => {
   it('discovers the jobs that hold id-token: write', () => {
     // The guard on the scan. Every check below is "for each workflow that mints
@@ -156,7 +198,7 @@ describe('supply chain — a publishing workflow grants OIDC per job', () => {
       )
       .flatMap(({ file, workflowLevel, jobs }) =>
         jobs
-          .filter(([name]) => !sanctioned(file, name))
+          .filter(([name]) => !mayWrite(file, name))
           .flatMap(([name, job]) => {
             const writes = writable(effective(job, workflowLevel))
             return writes.length
@@ -166,8 +208,20 @@ describe('supply chain — a publishing workflow grants OIDC per job', () => {
       )
     expect(
       offenders,
-      'A job in a publishing workflow that does not publish must not be able to write to the repository.',
+      'A job in a publishing workflow that does not publish must not be able to write to the repository. If it genuinely needs a writable scope and must NOT be able to publish, add it to REPO_WRITE_JOBS with the scope and the reason — not to OIDC_JOBS.',
     ).toEqual([])
+  })
+
+  it('never sanctions a write without sanctioning it as a write', () => {
+    // The one way the split above could go wrong: a publisher added to
+    // `OIDC_JOBS` and not carried into `REPO_WRITE_JOBS`. It is spelled as a
+    // spread today, so this cannot fail — which is the point. It fails the day
+    // somebody writes the two lists out separately, before the third check
+    // starts reporting a publisher as an offender.
+    const missing = OIDC_JOBS.filter(
+      (entry) => !REPO_WRITE_JOBS.includes(entry),
+    )
+    expect(missing).toEqual([])
   })
 
   it('declares workflow-level permissions in a publishing workflow', () => {

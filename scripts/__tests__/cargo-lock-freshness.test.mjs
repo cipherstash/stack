@@ -43,6 +43,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
 /** Same skip set, and the same reasons, as `lint-no-eql-registry-pins.mjs`. */
 const SKIP_DIRS = new Set([
   '.git',
+  '.claude',
   'node_modules',
   'target',
   'dist',

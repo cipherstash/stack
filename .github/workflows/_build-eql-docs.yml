@@ -1,0 +1,95 @@
+name: "Build EQL docs (reusable)"
+
+# Builds the EQL docs bundle and attaches it to the release _build-eql-sql.yml
+# created earlier in the same run. Called by release.yml on both paths.
+#
+# Ported from packages/eql/.github/workflows/_build-docs.yml — see
+# _build-eql-sql.yml for the rename and the path rewrites.
+#
+# This pipeline has never executed here: `docs:generate:json` had no caller at
+# all until this file landed. The apt install below is load-bearing — mise does
+# not provide doxygen.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref/SHA to build docs from. Empty -> default checkout."
+        required: false
+        type: string
+        default: ""
+      tag:
+        description: "Full release tag. Empty -> build only, no attach."
+        required: false
+        type: string
+        default: ""
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  MISE_VERBOSE: "1"
+
+defaults:
+  run:
+    working-directory: packages/eql
+
+permissions:
+  contents: write
+
+jobs:
+  publish-docs:
+    name: Build and publish documentation
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.ref }}
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          cache: false # publish path; see _build-eql-sql.yml
+          working_directory: packages/eql
+
+      - name: Install Doxygen
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y doxygen
+
+      - name: Generate documentation
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          mise run docs:generate
+          mise run docs:generate:markdown -- "${TAG}"
+          mise run docs:generate:json -- "${TAG}"
+
+      - name: Package documentation
+        env:
+          TAG: ${{ inputs.tag }}
+        run: mise run docs:package "${TAG}"
+
+      - name: Upload documentation artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: eql-docs
+          path: |
+            packages/eql/release/eql-docs-*.zip
+            packages/eql/release/eql-docs-*.tar.gz
+          # `warn` is the default, and a warning here is indistinguishable from
+          # a successful upload on the run page. These paths are the one thing
+          # the subtree import could plausibly get wrong — they are workspace-
+          # root relative and so are NOT covered by `defaults.run.working-
+          # directory` — and a wrong one publishes a release with no assets.
+          if-no-files-found: error
+
+      - name: Publish documentation to release
+        if: ${{ inputs.tag != '' }}
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: |
+            packages/eql/release/eql-docs-*.zip
+            packages/eql/release/eql-docs-*.tar.gz

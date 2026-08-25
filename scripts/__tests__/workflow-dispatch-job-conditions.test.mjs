@@ -65,6 +65,37 @@ const EXPECTED_DISPATCHABLE = [
   '.github/workflows/lint-release.yml',
   '.github/workflows/osv-scanner.yml',
   '.github/workflows/tests-rust.yml',
+  // The EQL release line. `release.yml` gained a dispatch with the port,
+  // because the EQL PRERELEASE path is cut by dispatching a batching branch
+  // whose HEAD is a `chore(release):` marker; the other two are how an image or
+  // a crate publish is re-run by hand after a partial failure.
+  '.github/workflows/release.yml',
+  '.github/workflows/release-plz.yml',
+  '.github/workflows/release-postgres-eql-image.yml',
+]
+
+/**
+ * Jobs that legitimately do NOT run on a plain manual dispatch, with the reason.
+ *
+ * The check below required EVERY job-level `if:` to be true under one synthetic
+ * dispatch context. Exact for a workflow with one path; `release.yml` has two,
+ * mutually exclusive by construction (`classify` reports `production` for main
+ * and `prerelease` for a marker commit elsewhere), so under any single context
+ * one half is false.
+ *
+ * Relaxing to "at least one job runs" would say nothing about a ten-job
+ * workflow where nine skip. The per-job requirement stays; the exceptions
+ * become an equality, failing in both directions. The synthetic context
+ * dispatches against `refs/heads/main`, so production is what is modelled.
+ */
+const DISPATCH_SKIPPED_JOBS = [
+  // The four prerelease jobs. A dispatch against `main` classifies as
+  // `production`, so these are correctly skipped; they run when the dispatch
+  // names a branch whose HEAD commit subject is `chore(release):`.
+  '.github/workflows/release.yml / prerelease-eql-crate',
+  '.github/workflows/release.yml / prerelease-eql-docs',
+  '.github/workflows/release.yml / prerelease-eql-npm',
+  '.github/workflows/release.yml / prerelease-eql-sql',
 ]
 
 /**
@@ -373,6 +404,26 @@ function runsWhen(condition, context) {
  */
 const PERMISSIVE_NEEDS = {
   changes: { outputs: { relevant: 'true' } },
+  // The release workflows' gates, none of which is about how the run was
+  // triggered. Held open, or "skips because there is nothing to publish" would
+  // be indistinguishable from "skips on a dispatch".
+  classify: { outputs: { mode: 'production', version: '3.0.6' } },
+  'eql-armed': { outputs: { armed: 'true' } },
+  gate: { result: 'success', outputs: { ffi: 'true' } },
+  'publish-ffi': { result: 'success' },
+  release: {
+    result: 'success',
+    outputs: {
+      eql_published: 'true',
+      eql_version: '3.0.6',
+      // A final: `eql-image` runs only for one. The prerelease half of the
+      // file is in DISPATCH_SKIPPED_JOBS instead.
+      eql_prerelease: 'false',
+    },
+  },
+  // release-postgres-eql-image.yml's `promote-latest` reads this from its own
+  // `build-sql` job, which copies the dispatch input through.
+  'build-sql': { outputs: { update_floating_tags: 'true' } },
 }
 
 /**
@@ -512,7 +563,22 @@ describe('a declared workflow_dispatch actually dispatches', () => {
     ).not.toEqual([])
   })
 
-  for (const { id, condition } of DISPATCHABLE_CONDITIONS) {
+  it('skips exactly the jobs declared unreachable by a plain dispatch', () => {
+    // Both directions, so the list cannot become a place findings go to be
+    // forgotten.
+    const skipped = DISPATCHABLE_CONDITIONS.filter(
+      ({ condition }) => !runsWhen(condition, CONTEXTS.workflow_dispatch),
+    ).map((entry) => entry.id)
+
+    expect(
+      skipped.sort(),
+      'The set of jobs that do not run on a manual dispatch has changed. If a job JOINED it, its `workflow_dispatch:` just became decorative for that job — gate on the case that genuinely cannot run rather than enumerating the events that can. If a job LEFT it, delete its DISPATCH_SKIPPED_JOBS entry in the same commit.',
+    ).toEqual([...DISPATCH_SKIPPED_JOBS].sort())
+  })
+
+  for (const { id, condition } of DISPATCHABLE_CONDITIONS.filter(
+    (entry) => !DISPATCH_SKIPPED_JOBS.includes(entry.id),
+  )) {
     it(`${id} runs on a manual dispatch`, () => {
       expect(
         runsWhen(condition, CONTEXTS.workflow_dispatch),

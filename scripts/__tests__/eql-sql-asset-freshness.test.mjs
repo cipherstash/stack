@@ -1,5 +1,11 @@
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -71,6 +77,20 @@ const VERSION = readEqlVersion(EQL_ROOT)
 const { checked, skew } = eqlLockstepSkew({
   eqlRoot: EQL_ROOT,
   version: VERSION,
+})
+
+describe('the release SQL build stamps the requested version', () => {
+  it('forces mise to rebuild when only --version changed', () => {
+    const workflow = readFileSync(
+      join(REPO_ROOT, '.github/workflows/_build-eql-sql.yml'),
+      'utf8',
+    )
+
+    const tagExpansion = '${' + 'TAG#eql-}'
+    expect(workflow).toContain(
+      `mise run --force build --version "${tagExpansion}"`,
+    )
+  })
 })
 
 describe('the EQL lockstep artefacts all declare one version', () => {

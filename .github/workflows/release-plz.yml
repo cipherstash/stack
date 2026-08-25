@@ -1,0 +1,162 @@
+name: "Release eql-bindings (crates.io)"
+
+# Publishes the `eql-bindings` crate via release-plz (crates.io Trusted
+# Publishing over OIDC — no CARGO_REGISTRY_TOKEN).
+#
+# THE FILENAME CANNOT CHANGE: crates.io binds the publisher to it.
+#
+# Publish-only. Changesets owns the version — the Version Packages PR bumps
+# crates/eql-bindings/Cargo.toml in lockstep with the npm package via
+# scripts/sync-lockstep-versions.mjs. A release-plz `release-pr` job would
+# fight it, so there isn't one. The tag is `eql-bindings-v<semver>`, chosen so a
+# crate release does not fire the `eql-*` SQL/docs/image automation.
+#
+# INERT until the Phase-5 cutover: the `release` job is gated on
+# scripts/eql-pipeline-armed.mjs, which reads FROZEN_PUBLISHERS. Before the
+# first crate release this repository also needs a GPG_PRIVATE_KEY secret (it
+# has none) and a crates.io Trusted Publishing entry naming cipherstash/stack +
+# release-plz.yml. Neither is needed for a run that publishes nothing: the
+# preflight step decides that before the key is imported.
+
+# Read-only by default; the publishing job escalates for itself. Enforced by
+# scripts/__tests__/workflow-publish-permissions.test.mjs.
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+    # Scoped to the subtree. Upstream had no filter and did not need one: it was
+    # an EQL-ONLY repository, where "every push to main" and "every EQL change"
+    # were the same set. Here they are not, and this job holds crates.io OIDC,
+    # `contents: write` and the signing key — booting it on every merge to a
+    # monorepo is a standing credential exposure for no release.
+    #
+    # A release that moves the crate always matches: `changeset version` runs
+    # scripts/sync-lockstep-versions.mjs, which rewrites
+    # packages/eql/crates/eql-bindings/Cargo.toml and the SQL assets beside it.
+    # Kept in step with the other EQL filters by
+    # scripts/__tests__/eql-workflow-filters.test.mjs.
+    paths:
+      - "packages/eql/**"
+      - ".github/workflows/release-plz.yml"
+  workflow_dispatch: {}
+
+# Never cancel — a cancelled release can leave a half-published state.
+concurrency:
+  group: release-plz
+  cancel-in-progress: false
+
+jobs:
+  # No registry lookup, so it cannot race release.yml's npm publish on the same
+  # push. See scripts/eql-pipeline-armed.mjs.
+  eql-armed:
+    name: Is the EQL release line armed?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      armed: ${{ steps.armed.outputs.armed }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      # No pnpm install: the script imports node builtins only.
+      - name: Read the publisher switch
+        id: armed
+        run: node scripts/eql-pipeline-armed.mjs
+
+  release:
+    name: "Release"
+    needs: [eql-armed]
+    if: needs.eql-armed.outputs.armed == 'true'
+    # GitHub-hosted, matching this repo's other publishing jobs.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # the eql-bindings-v<V> tag and release
+      pull-requests: write # release-plz links PRs in release notes
+      id-token: write # crates.io Trusted Publishing
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+
+      # No mise step (upstream had one): nothing here runs a mise task, and
+      # release-plz needs only cargo and git, which the runner image ships.
+
+      - name: Verify bundled SQL matches the crate version
+        # The crate `include_str!`s COMMITTED SQL and release-plz publishes the
+        # committed tree verbatim, so a hand-pinned Cargo.toml would ship the
+        # DEV placeholder as its "exact SQL". Only enforced when this run would
+        # actually publish; a crates.io API failure fails towards enforcing.
+        #
+        # ALSO decides whether the GPG import below runs. This step used to sit
+        # BELOW the key import, which meant a repository with no GPG_PRIVATE_KEY
+        # failed here on every push to main the moment the pipeline was armed —
+        # including pushes that release nothing. Nothing published (the import
+        # fails closed), but main went permanently red with an error that reads
+        # like a broken release rather than a missing secret. Ordering the
+        # registry question first is what makes a no-op run a no-op.
+        id: preflight
+        working-directory: packages/eql
+        run: |
+          set -euo pipefail
+          cargo_version="$(grep -m1 '^version = ' crates/eql-bindings/Cargo.toml | cut -d'"' -f2)"
+          # crates.io 403s curl's default User-Agent, which would make the
+          # short-circuit below unreachable.
+          published="$(curl -fsSL --retry 3 -H "User-Agent: cipherstash-eql-release (https://github.com/cipherstash/stack)" "https://crates.io/api/v1/crates/eql-bindings/versions" | jq -r '.versions[].num' | grep -Fx "$cargo_version" || true)"
+          if [[ -n "$published" ]]; then
+            echo "eql-bindings@${cargo_version} is already on crates.io; publish no-op — skipping the bundled-SQL guard"
+            echo "publish_needed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Empty `published` also covers a crates.io API failure, so this is
+          # the fail-towards-enforcing branch: guard the SQL, import the key.
+          echo "publish_needed=true" >> "$GITHUB_OUTPUT"
+          manifest_version="$(jq -r '.eqlVersion' crates/eql-bindings/sql/release-manifest.json)"
+          if [[ "$manifest_version" != "$cargo_version" ]]; then
+            echo "::error::release-manifest.json eqlVersion ('$manifest_version') does not match Cargo.toml ('$cargo_version'). Run 'pnpm run version' from the repository root." >&2
+            exit 1
+          fi
+          # THE STAMP, not the schema name. Upstream grepped for `eql_v3`, which
+          # appears 23,000 times in every build including a DEV one, so the
+          # guard could not fire. tasks/build.sh writes the version into this
+          # COMMENT and it is the only record of which build produced the bytes
+          # — the manifest is regenerated alongside them and goes on agreeing.
+          if ! grep -q "COMMENT ON SCHEMA eql_v3 IS '${cargo_version}'" crates/eql-bindings/sql/cipherstash-encrypt.sql; then
+            stamped="$(grep -o "COMMENT ON SCHEMA eql_v3 IS '[^']*'" crates/eql-bindings/sql/cipherstash-encrypt.sql | head -1)"
+            echo "::error::bundled SQL was not built for ${cargo_version} — it carries ${stamped:-no version stamp}. Run 'pnpm run version' from the repository root." >&2
+            exit 1
+          fi
+
+      - name: Import GPG key
+        # release-plz signs the commit and tag it creates. When the preflight
+        # says the version is already published it creates neither, so there is
+        # nothing to sign and no reason to require the secret.
+        if: steps.preflight.outputs.publish_needed == 'true'
+        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+          git_tag_gpgsign: true
+
+      - name: Run release-plz release
+        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5
+        with:
+          command: release
+          # Required here and absent upstream: a composite action's steps do not
+          # inherit the caller's working-directory, so without these release-plz
+          # reads the monorepo root, finds no `eql-bindings` workspace, and
+          # exits 0 having published nothing.
+          manifest_path: packages/eql/Cargo.toml
+          config: packages/eql/release-plz.toml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

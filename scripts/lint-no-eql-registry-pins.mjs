@@ -104,9 +104,19 @@ const WORKSPACE_FILE = 'pnpm-workspace.yaml'
  * `target/package`, and every transitive dependency under `node_modules` —
  * which name their own dependencies by registry version, correctly. Scanning
  * them turns this linter into a permanent false alarm.
+ *
+ * `.claude` is the same argument one tool along. Claude Code puts agent
+ * worktrees under `.claude/worktrees/`, and a worktree is a FULL checkout of
+ * some other commit — including ones predating the in-tree flip, which still
+ * pin `@cipherstash/eql` by registry version and were correct when they were
+ * written. Descending into them reported 31 offenders and exited 1 on a clean
+ * tree. It is excluded through `.git/info/exclude`, which is local and travels
+ * to no other checkout, so `git check-ignore` is not a substitute for naming
+ * it here.
  */
 const SKIP_DIRS = new Set([
   '.git',
+  '.claude',
   'node_modules',
   'target',
   'dist',

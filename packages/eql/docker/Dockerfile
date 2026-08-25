@@ -6,7 +6,7 @@ FROM postgres:${PG_VERSION}
 ARG PG_VERSION=17
 ARG EQL_VERSION=DEV
 
-LABEL org.opencontainers.image.source="https://github.com/cipherstash/encrypt-query-language"
+LABEL org.opencontainers.image.source="https://github.com/cipherstash/stack"
 LABEL org.opencontainers.image.description="PostgreSQL ${PG_VERSION} with CipherStash EQL ${EQL_VERSION} pre-installed"
 LABEL org.opencontainers.image.licenses="MPL-2.0"
 LABEL com.cipherstash.eql.version="${EQL_VERSION}"
