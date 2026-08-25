@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { packageReadmePathspecs } from './lib/package-readmes.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 
 /** Tracked executable examples that describe the current public surface. */
@@ -12,7 +13,9 @@ function publicCommandDocs() {
       'ls-files',
       '-z',
       ':(glob)skills/*/SKILL.md',
-      ':(glob)packages/*/README.md',
+      // Derived, not written down: two package roots sit deeper than one level
+      // and `:(glob)` does not cross `/`. See `lib/package-readmes.mjs`.
+      ...packageReadmePathspecs(),
       'docs/reference/supabase-sdk.md',
     ],
     {
@@ -77,6 +80,14 @@ describe('public eql install examples use the current CLI', () => {
     expect(files).toContain('skills/stash-supabase/SKILL.md')
     expect(files).toContain('packages/stack/README.md')
     expect(files).toContain('docs/reference/supabase-sdk.md')
+    // The two roots nested deeper than `packages/*`. Pinned by name because
+    // they are what the hardcoded `:(glob)packages/*/README.md` silently
+    // missed: `:(glob)` does not cross `/`, so it selected the EQL subtree
+    // ROOT's README — which ships in no tarball — instead of the package's.
+    expect(files).toContain('packages/eql/packages/eql/README.md')
+    expect(files).toContain(
+      'packages/protect-ffi/platforms/linux-x64-gnu/README.md',
+    )
   })
 
   it.each(files)('%s', (file) => {

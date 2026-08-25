@@ -34,7 +34,6 @@ const GATED_JOBS = [
   '.github/workflows/release-postgres-eql-image.yml / build-images',
   '.github/workflows/release-postgres-eql-image.yml / build-sql',
   '.github/workflows/release.yml / eql-docs',
-  '.github/workflows/release.yml / eql-docs-rebuild',
   '.github/workflows/release.yml / eql-image',
   '.github/workflows/release.yml / eql-sql',
   '.github/workflows/release.yml / prerelease-eql-crate',

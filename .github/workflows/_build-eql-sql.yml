@@ -92,6 +92,12 @@ jobs:
           path: |
             packages/eql/release/cipherstash-encrypt.sql
             packages/eql/release/cipherstash-encrypt-uninstall.sql
+          # `warn` is the default, and a warning here is indistinguishable from
+          # a successful upload on the run page. These paths are the one thing
+          # the subtree import could plausibly get wrong — they are workspace-
+          # root relative and so are NOT covered by `defaults.run.working-
+          # directory` — and a wrong one publishes a release with no assets.
+          if-no-files-found: error
 
       - name: Attach artefacts to existing release
         if: ${{ inputs.attach && inputs.target_commitish == '' }}

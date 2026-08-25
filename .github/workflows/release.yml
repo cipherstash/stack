@@ -95,10 +95,14 @@ jobs:
             # Two levels down: the subtree root carries no package.json.
             # Upstream this was `./packages/eql/package.json`.
             version="$(node -p "require('./packages/eql/packages/eql/package.json').version")"
-            # The same regex prepare-bindings-assets.sh enforces, because this
-            # job runs first and that script runs last. Upstream checked only
-            # for a hyphen, so `3.0.6-beta` classified as a prerelease and got
-            # a public tag and GitHub release before the npm job died on it.
+            # prepare-bindings-assets.sh enforces the same shape with the
+            # suffix OPTIONAL; here it is required, because a version reaching
+            # this branch has already been classified a prerelease and a bare
+            # `3.0.6` would be one wearing the wrong identity. Checked here
+            # because this job runs first and that script runs last. Upstream
+            # checked only for a hyphen, so `3.0.6-beta` classified as a
+            # prerelease and got a public tag and GitHub release before the npm
+            # job died on it.
             if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9]+$ ]]; then
               echo "::error::a prerelease release commit must pin an exact prerelease identity (X.Y.Z-(alpha|beta|rc).N) in packages/eql/packages/eql/package.json; found '${version}'" >&2
               exit 1
@@ -565,35 +569,6 @@ jobs:
       ref: ${{ github.sha }}
       tag: eql-${{ needs.release.outputs.eql_version }}
 
-  eql-docs-rebuild:
-    name: Rebuild the docs site
-    needs: [classify, gate, eql-armed, release, eql-sql, eql-docs]
-    # Not a tag trigger, which is why this job exists. Upstream used
-    # `on: push: tags: ['eql-*']`, but the eql-<version> tag is created by
-    # softprops/action-gh-release with GITHUB_TOKEN, and a ref created with that
-    # token starts no workflow run — the same rule `eql-image` works around, and
-    # the reason rebuild-docs.yml has never run. Firing from inside the
-    # publishing run removes the trigger from the picture.
-    if: >-
-      needs.classify.outputs.mode == 'production' &&
-      needs.eql-armed.outputs.armed == 'true' &&
-      needs.release.outputs.eql_published == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Send webhook
-        env:
-          WEBHOOK_URL: ${{ secrets.DOCS_WEBHOOK_URL }}
-          VERSION: ${{ needs.release.outputs.eql_version }}
-        run: |
-          set -euo pipefail
-          if [ -z "$WEBHOOK_URL" ]; then
-            echo "::error::DOCS_WEBHOOK_URL is not configured; the docs site will not rebuild for eql-${VERSION}" >&2
-            exit 1
-          fi
-          curl -X POST --fail-with-body "$WEBHOOK_URL"
-          echo "docs rebuild requested for eql-${VERSION}"
-
   eql-image:
     name: Dispatch the Postgres + EQL image build
     needs: [classify, gate, eql-armed, release, eql-sql, eql-docs]
@@ -818,9 +793,17 @@ jobs:
     needs:
       - classify
       - eql-armed
+      # `gate` and `release` are not EQL jobs, and they are the two that most
+      # often decide an EQL run does nothing. `gate` exits non-zero for a frozen
+      # publisher — which is the NORMAL inert state — and skips `release`, whose
+      # `eql_published` output then gates the production EQL chain. Without them
+      # here every job below reads `skipped` and the table cannot separate
+      # "correctly inert" from "the gate refused this release" from "changesets
+      # failed", which is the distinction this job exists to draw.
+      - gate
+      - release
       - eql-sql
       - eql-docs
-      - eql-docs-rebuild
       - eql-image
       - prerelease-eql-sql
       - prerelease-eql-docs
@@ -835,9 +818,10 @@ jobs:
           MODE: ${{ needs.classify.outputs.mode }}
           VERSION: ${{ needs.classify.outputs.version }}
           ARMED: ${{ needs.eql-armed.outputs.armed }}
+          GATE: ${{ needs.gate.result }}
+          RELEASE: ${{ needs.release.result }}
           EQL_SQL: ${{ needs.eql-sql.result }}
           EQL_DOCS: ${{ needs.eql-docs.result }}
-          EQL_DOCS_REBUILD: ${{ needs.eql-docs-rebuild.result }}
           EQL_IMAGE: ${{ needs.eql-image.result }}
           PRE_SQL: ${{ needs.prerelease-eql-sql.result }}
           PRE_DOCS: ${{ needs.prerelease-eql-docs.result }}
@@ -854,12 +838,20 @@ jobs:
             echo ""
             echo "| job | result |"
             echo "| --- | --- |"
+            echo "| gate | ${GATE} |"
+            echo "| release (changesets) | ${RELEASE} |"
             echo "| eql-sql | ${EQL_SQL} |"
             echo "| eql-docs | ${EQL_DOCS} |"
-            echo "| eql-docs-rebuild | ${EQL_DOCS_REBUILD} |"
             echo "| eql-image | ${EQL_IMAGE} |"
             echo "| prerelease-eql-sql | ${PRE_SQL} |"
             echo "| prerelease-eql-docs | ${PRE_DOCS} |"
             echo "| prerelease-eql-npm | ${PRE_NPM} |"
             echo "| prerelease-eql-crate | ${PRE_CRATE} |"
+            if [[ "${ARMED}" != "true" ]]; then
+              echo ""
+              echo "The EQL pipeline is INERT: \`@cipherstash/eql\` is a frozen publisher in \`scripts/release-gate.mjs\`, so every job above is expected to be \`skipped\`. Deleting that entry is what arms it — see the Phase 5 cutover in \`docs/plans/2026-08-13-eql-monorepo-absorption.md\`."
+            elif [[ "${GATE}" != "success" ]]; then
+              echo ""
+              echo "The pipeline is armed but \`gate\` did not succeed, so nothing downstream of it ran. Run \`node scripts/release-gate.mjs\` for what it is refusing."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

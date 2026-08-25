@@ -1371,7 +1371,10 @@ describe('the guard fails when a workflow stops calling a cargo check', () => {
  *   release-plz.yml                -> .github/workflows/release-plz.yml, name
  *                                     unchanged (crates.io binds to it)
  *   release-postgres-eql-image.yml -> same filename at the root
- *   rebuild-docs.yml               -> merged into the root file of that name
+ *   rebuild-docs.yml               -> DROPPED: it posted to the deprecated
+ *                                     DOCS_WEBHOOK_URL for the retired docs
+ *                                     site. Versioned docs artifacts are still
+ *                                     built by _build-eql-docs.yml
  *   lint-release.yml               -> merged into the root file of that name
  *   .github/actionlint.yaml        -> DROPPED: the root copy already carries the
  *                                     `blacksmith-16vcpu-ubuntu-2204` label
@@ -1392,7 +1395,8 @@ describe('the guard fails when a workflow stops calling a cargo check', () => {
  *                                     have installed a confidently wrong
  *                                     document at the root. Its still-true half
  *                                     — the two release tag families — is in
- *                                     AGENTS.md and in rebuild-docs.yml's header
+ *                                     AGENTS.md and in packages/eql/release-plz.toml's
+ *                                     header
  */
 describe('the imported workflow directory is gone', () => {
   it('does not exist', () => {
@@ -1419,6 +1423,19 @@ describe('the imported workflow directory is gone', () => {
     expect(
       tracked,
       `These files are tracked under ${DEAD_GITHUB_DIR} and execute on nothing.`,
+    ).toEqual([])
+  })
+})
+
+describe('the retired docs site stays retired', () => {
+  it('has no workflow consuming the deprecated webhook secret', () => {
+    const consumers = workflowFiles().filter((file) =>
+      readRepo(file).includes('DOCS_WEBHOOK_URL'),
+    )
+
+    expect(
+      consumers,
+      'DOCS_WEBHOOK_URL belonged to the retired docs site; release workflows must publish the versioned docs artifact without invoking that webhook.',
     ).toEqual([])
   })
 })

@@ -98,6 +98,20 @@ const EXPECTED_PARITY_WORKFLOWS = [
  */
 const EXPECTED_ASYMMETRIES = new Map([
   [
+    '.github/workflows/release-plz.yml',
+    // There is no `pull_request:` trigger at all, and there must not be: this
+    // workflow PUBLISHES the `eql-bindings` crate to crates.io over OIDC. A
+    // pull_request copy would be a publishing job reachable from a fork branch.
+    // So there is no second list to drift from. The direction that would hurt
+    // here is not a narrow filter but a MISSING run — a release that moves the
+    // crate and never triggers — and that is unreachable by construction:
+    // `changeset version` runs scripts/sync-lockstep-versions.mjs, which
+    // rewrites packages/eql/crates/eql-bindings/Cargo.toml and the SQL assets
+    // beside it, so every version-moving commit touches `packages/eql/**`.
+    // The list itself is kept honest by eql-workflow-filters.test.mjs.
+    'push is the only trigger; a pull_request copy would make a crates.io publisher reachable from a fork',
+  ],
+  [
     '.github/workflows/tests-rust.yml',
     // `push:` is `branches: [main]` with no `paths:`, so every push to main runs
     // the Rust checks and only pull requests are filtered. There is no second

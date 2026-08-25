@@ -421,27 +421,12 @@ Changesets assembles `CHANGELOG.md` and computes the version from these files, s
 do not hand-edit `CHANGELOG.md`. Behaviour callers should be aware of also needs
 a numbered upgrade note under `docs/upgrading/`.
 
-#### Public documentation updates
+#### Public documentation artifacts
 
-When a tag with the `eql-` prefix is pushed (for example, `eql-1.2.3`), the
-workflow at `.github/workflows/rebuild-docs.yml` runs and sends a webhook to the
-Vercel-hosted public docs site to trigger a rebuild.
-
-What happens end-to-end:
-
-- Release EQL builds EQL artifacts and generates API docs (HTML, XML, Markdown).
-  The Markdown frontmatter includes the release version.
-- Rebuild Docs posts to the `DOCS_WEBHOOK_URL` secret, which Vercel uses to kick
-  off a fresh build of the public docs.
-- The public docs site pulls the latest generated reference
-  (`docs/api/markdown/API.md`) and publishes it under the corresponding version.
-
-Manual triggers and troubleshooting:
-
-- You can re-run the "Rebuild Docs" workflow from the Actions tab if a build
-  fails downstream.
-- Ensure the repository secret `DOCS_WEBHOOK_URL` is set and valid; the workflow
-  simply POSTs to that URL.
+EQL releases generate and attach versioned API documentation artifacts (HTML,
+XML, and Markdown) alongside the SQL release. The former Vercel-hosted docs site
+and its `DOCS_WEBHOOK_URL` rebuild hook have been retired; publishing an EQL
+release does not trigger an external documentation deployment.
 
 ### dbdev
 

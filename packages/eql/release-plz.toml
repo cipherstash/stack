@@ -20,9 +20,14 @@
 # The crate is tagged `eql-bindings-v<semver>` (release-plz's default workspace
 # tag). That tag shape is part of the release identity, not a default nobody
 # chose: it deliberately does NOT match the `eql-<semver>` SQL-release
-# automation, so a crate release never fires an SQL build, a Docker image, or
-# the docs-site rebuild. `<repo-root>/.github/workflows/rebuild-docs.yml`
-# carries the matching `!eql-bindings-*` exclusion.
+# automation, so a crate release never fires an SQL build or a Docker image.
+#
+# In THIS repository that holds for a stronger reason than upstream's, and the
+# difference matters if you go looking: upstream also had a deprecated docs-site
+# webhook triggered by `eql-*` tags. That workflow was deliberately not ported.
+# The SQL and docs artifact builds are jobs inside `release.yml`, and the image
+# is dispatched from it by `gh workflow run`, so a tag of any shape reaches none
+# of them.
 
 [workspace]
 changelog_config = "cliff.toml"

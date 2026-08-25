@@ -78,6 +78,12 @@ jobs:
           path: |
             packages/eql/release/eql-docs-*.zip
             packages/eql/release/eql-docs-*.tar.gz
+          # `warn` is the default, and a warning here is indistinguishable from
+          # a successful upload on the run page. These paths are the one thing
+          # the subtree import could plausibly get wrong — they are workspace-
+          # root relative and so are NOT covered by `defaults.run.working-
+          # directory` — and a wrong one publishes a release with no assets.
+          if-no-files-found: error
 
       - name: Publish documentation to release
         if: ${{ inputs.tag != '' }}
