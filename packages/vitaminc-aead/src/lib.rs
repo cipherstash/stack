@@ -35,7 +35,8 @@ pub use element::Element;
 pub use encrypt::Encrypt;
 #[doc(inline)]
 pub use nonce::{Nonce, NonceGenerator, RandomNonceGenerator};
-/// Derive macros for [`Encrypt`] and [`Decrypt`]. See the
-/// [`vitaminc_aead_derive`] crate docs for the wire shape they produce and the
-/// `#[aead(...)]` attributes they accept.
+// Inlined rather than linked, so the macros' own documentation — the
+// `#[aead(...)]` reference in particular — renders here instead of sending the
+// reader to another crate. There is still only one copy of that text.
+#[doc(inline)]
 pub use vitaminc_aead_derive::{Decrypt, Encrypt};
