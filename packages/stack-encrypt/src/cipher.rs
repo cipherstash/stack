@@ -112,6 +112,26 @@ pub enum Error {
     /// client key missing or malformed.
     #[error("could not build a ZeroKMS client from the environment: {0}")]
     Config(#[from] stack_kms::StackKmsBuilderError),
+    /// The per-field encryption context was empty. An empty context defeats
+    /// per-field domain separation: equal plaintexts in different fields
+    /// would produce identical index terms, ORE/OPE keys would be shared
+    /// across fields, and ciphertexts would be transplantable between them.
+    #[error("the encryption context must not be empty (it domain-separates fields)")]
+    EmptyContext,
+    /// An index term failed to derive.
+    #[error(transparent)]
+    Term(#[from] crate::sem::TermError),
+    /// A third-party [`EncryptedFrom`](crate::target::EncryptedFrom) /
+    /// [`DecryptedFrom`](crate::target::DecryptedFrom) implementation failed
+    /// for a reason of its own.
+    #[error(transparent)]
+    Other(Box<dyn std::error::Error + Send + Sync + 'static>),
+    /// A [`Pending`](crate::target::Pending) fulfilment drew more responses —
+    /// or a different kind of response — than its requests asked for. Always a
+    /// composition bug in an `EncryptedFrom`/`DecryptedFrom` implementation,
+    /// never a data error.
+    #[error("a pending fulfilment drew responses its requests never asked for")]
+    ResponseShape,
 }
 
 impl From<Unspecified> for Error {
@@ -516,18 +536,18 @@ fn collect_retrieve_payloads<'b>(
 /// [`bind_keys`] once the batched `retrieve_keys` call has returned; consumed by
 /// [`StackDecipher`], which opens it under whatever AAD the driving
 /// [`Decrypt`] impl supplies.
-struct KeyedLeaf {
+pub(crate) struct KeyedLeaf {
     leaf: SealedValue,
     key: DataKey,
 }
 
 /// [`StackCipherText`] with a [`DataKey`] zipped onto every keyed leaf.
-type KeyedCipherText = CipherText<KeyedLeaf, BoxedPassthrough>;
+pub(crate) type KeyedCipherText = CipherText<KeyedLeaf, BoxedPassthrough>;
 
 /// Zip retrieved keys onto the tree in the same depth-first order
 /// [`collect_retrieve_payloads`] requested them, so each leaf carries its own
 /// key and the subsequent [`Decipher`] drive is free of ordering assumptions.
-fn bind_keys(
+pub(crate) fn bind_keys(
     ciphertext: StackCipherText,
     keys: &mut impl Iterator<Item = DataKey>,
 ) -> Result<KeyedCipherText, Unspecified> {
@@ -596,7 +616,7 @@ pub enum PendingStackCipherText {
 impl PendingStackCipherText {
     /// Number of leaves that need a ZeroKMS data key (everything but
     /// passthrough — markers are sealed leaves too).
-    fn key_count(&self) -> usize {
+    pub(crate) fn key_count(&self) -> usize {
         match self {
             PendingStackCipherText::Single { .. }
             | PendingStackCipherText::None { .. }
@@ -644,7 +664,7 @@ impl PendingStackCipherText {
     }
 
     /// Recursively seal, drawing one key per leaf from `keys` in traversal order.
-    fn seal_with(
+    pub(crate) fn seal_with(
         self,
         keys: &mut impl Iterator<Item = DataKeyWithTag>,
     ) -> Result<StackCipherText, Unspecified> {
@@ -1002,7 +1022,7 @@ pub struct StackDecipher {
 }
 
 impl StackDecipher {
-    fn over(ciphertext: KeyedCipherText) -> Self {
+    pub(crate) fn over(ciphertext: KeyedCipherText) -> Self {
         Self { ciphertext }
     }
 

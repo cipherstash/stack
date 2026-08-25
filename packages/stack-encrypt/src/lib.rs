@@ -117,10 +117,15 @@
 
 mod cipher;
 pub mod sem;
+pub mod target;
 
 pub use cipher::{
     BoxedPassthrough, Error, FromEnv, PendingStackCipherText, SealedValue, StackCipher,
     StackCipherBuilder, StackCipherText, StackDecipher,
+};
+pub use target::{
+    DecryptContext, DecryptExt, DecryptTarget, DecryptedFrom, EncryptContext, EncryptExt,
+    EncryptTarget, EncryptedFrom, Pending, PendingFuture, Request, Responses,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they

@@ -1,0 +1,685 @@
+//! Target-directed encryption tests: leaf `EncryptedFrom`/`DecryptedFrom`
+//! implementations, a hand-written composite record (the shape a future
+//! derive will emit), a "third-party" term type built on the public extension
+//! surface only, and — the point of the design — proof that however large the
+//! assembly, settling it is one batched ZeroKMS call per request kind.
+
+use std::borrow::Cow;
+use std::cmp::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::Arc;
+
+use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerm, OreTerm};
+use stack_encrypt::target::{
+    DecryptContext, DecryptExt, DecryptedFrom, EncryptContext, EncryptExt, EncryptedFrom, Pending,
+    Request,
+};
+use stack_encrypt::{Error, StackCipher, StackCipherText};
+use stack_kms::{
+    DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,
+    IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
+};
+use uuid::Uuid;
+use vitaminc_prf::{BlockVisitor, PrfContext, PrfValue};
+
+/// A cipher over the deterministic fake source. Built independently of
+/// [`stack_cipher`] below: the fake index key is deterministic per keyset, so
+/// two separately built ciphers stand in for the write path and a query path
+/// in another process.
+async fn generator() -> StackCipher<FakeDataKeySource> {
+    stack_cipher().await
+}
+
+async fn stack_cipher() -> StackCipher<FakeDataKeySource> {
+    StackCipher::builder()
+        .kms(FakeDataKeySource::new())
+        .init()
+        .await
+        .expect("build cipher")
+}
+
+/// The fake source with ZeroKMS *call* counters (not key counters): the
+/// design's whole claim is that an assembly of any size settles in one
+/// batched call per request kind, and these tests hold it to that.
+struct CountingSource {
+    inner: FakeDataKeySource,
+    generate_calls: Arc<AtomicUsize>,
+    retrieve_calls: Arc<AtomicUsize>,
+}
+
+impl CountingSource {
+    fn new() -> Self {
+        Self {
+            inner: FakeDataKeySource::new(),
+            generate_calls: Arc::new(AtomicUsize::new(0)),
+            retrieve_calls: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn counters(&self) -> (Arc<AtomicUsize>, Arc<AtomicUsize>) {
+        (self.generate_calls.clone(), self.retrieve_calls.clone())
+    }
+}
+
+impl DataKeySource for CountingSource {
+    async fn generate_keys(
+        &self,
+        payloads: Vec<GenerateKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<Cow<'_, UnverifiedContext>>,
+    ) -> Result<Vec<DataKeyWithTag>, stack_kms::Error> {
+        self.generate_calls.fetch_add(1, AtomicOrdering::SeqCst);
+        self.inner
+            .generate_keys(payloads, keyset_id, unverified_context)
+            .await
+    }
+
+    async fn retrieve_keys(
+        &self,
+        payloads: Vec<RetrieveKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<&UnverifiedContext>,
+    ) -> Result<Vec<DataKey>, stack_kms::Error> {
+        self.retrieve_calls.fetch_add(1, AtomicOrdering::SeqCst);
+        self.inner
+            .retrieve_keys(payloads, keyset_id, unverified_context)
+            .await
+    }
+}
+
+impl IndexKeySource for CountingSource {
+    async fn load_index_key(
+        &self,
+        keyset_id: Option<IdentifiedBy>,
+    ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
+        self.inner.load_index_key(keyset_id).await
+    }
+}
+
+async fn counting_cipher() -> (
+    StackCipher<CountingSource>,
+    Arc<AtomicUsize>,
+    Arc<AtomicUsize>,
+) {
+    let source = CountingSource::new();
+    let (generates, retrieves) = source.counters();
+    let cipher = StackCipher::builder()
+        .kms(source)
+        .init()
+        .await
+        .expect("build cipher");
+    (cipher, generates, retrieves)
+}
+
+// --- Leaf implementations ---------------------------------------------------
+
+#[tokio::test]
+async fn equality_leaf_agrees_with_the_descriptor_api() {
+    let generator = generator().await;
+
+    let via_target: EqualityTerm = "alice"
+        .encrypt_into(&generator, "users/email")
+        .await
+        .unwrap();
+    let via_descriptor = generator
+        .equality_term("alice", "users/email")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        via_target, via_descriptor,
+        "target-directed and descriptor-string call sites must agree on term bytes"
+    );
+}
+
+#[tokio::test]
+async fn terms_agree_between_independently_built_ciphers() {
+    // Query-side code in another process, holding its own cipher over the same
+    // keyset, must produce the same terms
+    // as write-side code holding the full StackCipher (same index key).
+    let cipher = stack_cipher().await;
+    let generator = generator().await;
+
+    let a: EqualityTerm = "alice".encrypt_into(&cipher, "users/email").await.unwrap();
+    let b: EqualityTerm = "alice"
+        .encrypt_into(&generator, "users/email")
+        .await
+        .unwrap();
+    assert_eq!(a, b);
+
+    let a: OreTerm<u64> = 7u64.encrypt_into(&cipher, "users/n").await.unwrap();
+    let b: OreTerm<u64> = 7u64.encrypt_into(&generator, "users/n").await.unwrap();
+    assert_eq!(a, b);
+}
+
+#[tokio::test]
+async fn equality_leaf_binds_the_context() {
+    let generator = generator().await;
+
+    let email: EqualityTerm = "alice"
+        .encrypt_into(&generator, "users/email")
+        .await
+        .unwrap();
+    let name: EqualityTerm = "alice"
+        .encrypt_into(&generator, "users/name")
+        .await
+        .unwrap();
+
+    assert_ne!(email, name);
+}
+
+#[tokio::test]
+async fn term_derivation_makes_no_kms_calls() {
+    // Terms derive under the index key the cipher already holds: building a
+    // query probe must never touch ZeroKMS.
+    let (cipher, generates, retrieves) = counting_cipher().await;
+
+    let _term: EqualityTerm = "alice".encrypt_into(&cipher, "users/email").await.unwrap();
+    let _ore: OreTerm<u64> = 7u64.encrypt_into(&cipher, "users/age").await.unwrap();
+
+    assert_eq!(generates.load(AtomicOrdering::SeqCst), 0);
+    assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn ciphertext_leaf_round_trips_via_decrypt_into() {
+    let cipher = stack_cipher().await;
+
+    let ciphertext: StackCipherText = "secret"
+        .to_string()
+        .encrypt_into(&cipher, "users/email")
+        .await
+        .unwrap();
+    let plaintext: String = ciphertext
+        .decrypt_into(&cipher, "users/email")
+        .await
+        .unwrap();
+
+    assert_eq!(plaintext, "secret");
+}
+
+#[tokio::test]
+async fn ciphertext_leaf_cannot_be_transplanted_to_another_context() {
+    let cipher = stack_cipher().await;
+
+    let ciphertext: StackCipherText = "secret"
+        .to_string()
+        .encrypt_into(&cipher, "users/email")
+        .await
+        .unwrap();
+
+    let transplanted: Result<String, _> = ciphertext.decrypt_into(&cipher, "users/name").await;
+    assert!(
+        transplanted.is_err(),
+        "the context is bound into the AAD, so a ciphertext must not decrypt under another field's context"
+    );
+}
+
+#[tokio::test]
+async fn match_leaf_supports_containment_queries() {
+    let generator = generator().await;
+
+    let stored: MatchTerm = "alice wonderland"
+        .to_string()
+        .encrypt_into(&generator, "users/bio")
+        .await
+        .unwrap();
+    let query: MatchTerm = "wonder"
+        .to_string()
+        .encrypt_into(&generator, "users/bio")
+        .await
+        .unwrap();
+
+    assert!(stored.contains(&query));
+}
+
+/// A custom type-level match configuration.
+struct SmallFilter;
+
+impl MatchConfig for SmallFilter {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            m: 64,
+            ..Default::default()
+        }
+    }
+}
+
+#[tokio::test]
+async fn match_leaf_config_is_type_level() {
+    let generator = generator().await;
+
+    let term: MatchTerm<SmallFilter> = "a longer piece of text"
+        .to_string()
+        .encrypt_into(&generator, "users/bio")
+        .await
+        .unwrap();
+    assert!(term.positions().iter().all(|&p| u32::from(p) < 64));
+
+    // The same text under the default config is a different (larger-filter)
+    // term — and a different type, so the two cannot be compared by mistake.
+    let default_term: MatchTerm = "a longer piece of text"
+        .to_string()
+        .encrypt_into(&generator, "users/bio")
+        .await
+        .unwrap();
+    assert_ne!(term.positions(), default_term.positions());
+}
+
+#[tokio::test]
+async fn ore_leaf_preserves_order_and_binds_the_context() {
+    let generator = generator().await;
+
+    let ten: OreTerm<u64> = 10u64.encrypt_into(&generator, "users/age").await.unwrap();
+    let ten_again: OreTerm<u64> = 10u64.encrypt_into(&generator, "users/age").await.unwrap();
+    let twenty: OreTerm<u64> = 20u64.encrypt_into(&generator, "users/age").await.unwrap();
+    let other_field: OreTerm<u64> = 10u64
+        .encrypt_into(&generator, "users/height")
+        .await
+        .unwrap();
+
+    assert_eq!(ten, ten_again, "ORE terms must be deterministic");
+    assert_eq!(ten.cmp(&twenty), Ordering::Less);
+    assert_ne!(ten, other_field, "per-context ORE keys must differ");
+}
+
+#[tokio::test]
+async fn ope_leaf_compares_with_plain_byte_order() {
+    use stack_encrypt::sem::OpeTerm;
+
+    let generator = generator().await;
+
+    let ten: OpeTerm<u64> = 10u64.encrypt_into(&generator, "users/age").await.unwrap();
+    let twenty: OpeTerm<u64> = 20u64.encrypt_into(&generator, "users/age").await.unwrap();
+
+    assert_eq!(ten.cmp(&twenty), Ordering::Less);
+    assert!(ten.inner().as_ref() < twenty.inner().as_ref());
+}
+
+// --- Columns: batching comes from the source shape ---------------------------
+
+#[tokio::test]
+async fn a_column_encrypts_in_one_batched_call() {
+    let (cipher, generates, _) = counting_cipher().await;
+
+    let ages: Vec<u32> = vec![29, 34, 41, 34, 57];
+    let sealed: Vec<StackCipherText> = ages.encrypt_into(&cipher, "users/age").await.unwrap();
+
+    assert_eq!(sealed.len(), 5);
+    assert_eq!(
+        generates.load(AtomicOrdering::SeqCst),
+        1,
+        "five records must share ONE generate_keys call"
+    );
+}
+
+#[tokio::test]
+async fn a_column_decrypts_in_one_batched_call() {
+    let (cipher, _, retrieves) = counting_cipher().await;
+
+    let ages: Vec<u32> = vec![29, 34, 41];
+    let sealed: Vec<StackCipherText> = ages.encrypt_into(&cipher, "users/age").await.unwrap();
+
+    let roundtrip: Vec<u32> = sealed.decrypt_into(&cipher, "users/age").await.unwrap();
+
+    assert_eq!(roundtrip, ages);
+    assert_eq!(
+        retrieves.load(AtomicOrdering::SeqCst),
+        1,
+        "three rows must share ONE retrieve_keys call"
+    );
+}
+
+#[tokio::test]
+async fn optional_fields_encrypt_and_decrypt_structurally() {
+    let cipher = stack_cipher().await;
+
+    let present: Option<StackCipherText> = Some("here".to_string())
+        .encrypt_into(&cipher, "users/nickname")
+        .await
+        .unwrap();
+    let absent: Option<StackCipherText> = Option::<String>::None
+        .encrypt_into(&cipher, "users/nickname")
+        .await
+        .unwrap();
+
+    assert!(present.is_some());
+    assert!(absent.is_none());
+
+    let roundtrip: Option<String> = present
+        .decrypt_into(&cipher, "users/nickname")
+        .await
+        .unwrap();
+    assert_eq!(roundtrip.as_deref(), Some("here"));
+}
+
+// --- A hand-written composite record ----------------------------------------
+//
+// The shape a `#[derive(Encrypted)]` will emit: one impl, pendings combined
+// with zip/map (never awaited), one context fanning out to every field, the
+// caller seeing a single await — and a single batched call.
+
+/// "An encrypted `u32`, stored as its ciphertext plus an equality term and an
+/// ORE term" — an EQL `integer_ord_ore`-shaped record, minus the EQL.
+struct EncryptedAge {
+    c: StackCipherText,
+    hm: EqualityTerm,
+    ob: OreTerm<u32>,
+}
+
+impl<K> EncryptedFrom<u32, StackCipher<K>> for EncryptedAge {
+    fn encrypt_from<'a, 'c, Ctx>(
+        source: &'a u32,
+        cipher: &'a StackCipher<K>,
+        context: Ctx,
+    ) -> Pending<'a, Self, K>
+    where
+        Ctx: EncryptContext<'c>,
+        Self: 'a,
+    {
+        StackCipherText::encrypt_from(source, cipher, context.clone())
+            .zip(EqualityTerm::encrypt_from(source, cipher, context.clone()))
+            .zip(OreTerm::<u32>::encrypt_from(source, cipher, context))
+            .map(|((c, hm), ob)| Self { c, hm, ob })
+    }
+}
+
+/// The decrypt mirror a derive would emit: only the ciphertext field
+/// participates — terms are one-way.
+impl<K> DecryptedFrom<EncryptedAge, StackCipher<K>> for u32 {
+    fn decrypt_from<'a, 'c, Ctx>(
+        source: EncryptedAge,
+        cipher: &'a StackCipher<K>,
+        context: Ctx,
+    ) -> Pending<'a, Self, K>
+    where
+        Ctx: DecryptContext<'c>,
+        EncryptedAge: 'a,
+        Self: 'a,
+    {
+        source.c.decrypt_into(cipher, context)
+    }
+}
+
+#[tokio::test]
+async fn composite_record_encrypts_every_field_from_one_source() {
+    let cipher = stack_cipher().await;
+    let generator = generator().await;
+
+    let record: EncryptedAge = 42u32.encrypt_into(&cipher, "users/age").await.unwrap();
+
+    // The ciphertext round-trips through the decrypt mirror.
+    let plaintext: u32 = record.decrypt_into(&cipher, "users/age").await.unwrap();
+    assert_eq!(plaintext, 42);
+
+    // Each term matches what the primitive would derive on its own, so query
+    // terms generated leaf-by-leaf find records encrypted as composites.
+    let record: EncryptedAge = 42u32.encrypt_into(&cipher, "users/age").await.unwrap();
+    let hm: EqualityTerm = 42u32.encrypt_into(&generator, "users/age").await.unwrap();
+    assert_eq!(record.hm, hm);
+
+    let ob: OreTerm<u32> = 42u32.encrypt_into(&generator, "users/age").await.unwrap();
+    assert_eq!(record.ob, ob);
+}
+
+#[tokio::test]
+async fn a_composite_record_is_one_batched_call() {
+    let (cipher, generates, _) = counting_cipher().await;
+
+    let _record: EncryptedAge = 42u32.encrypt_into(&cipher, "users/age").await.unwrap();
+    assert_eq!(
+        generates.load(AtomicOrdering::SeqCst),
+        1,
+        "ciphertext + two terms must settle in ONE generate_keys call"
+    );
+
+    // A whole column of records: still one call.
+    let ages: Vec<u32> = vec![10, 20, 30];
+    let _column: Vec<EncryptedAge> = ages.encrypt_into(&cipher, "users/age").await.unwrap();
+    assert_eq!(
+        generates.load(AtomicOrdering::SeqCst),
+        2,
+        "a column of composite records must add ONE more call, not one per row"
+    );
+}
+
+#[tokio::test]
+async fn composite_record_terms_preserve_order() {
+    let cipher = stack_cipher().await;
+
+    let ten: EncryptedAge = 10u32.encrypt_into(&cipher, "users/age").await.unwrap();
+    let twenty: EncryptedAge = 20u32.encrypt_into(&cipher, "users/age").await.unwrap();
+
+    assert_eq!(ten.ob.cmp(&twenty.ob), Ordering::Less);
+}
+
+// --- A "third-party" term type ----------------------------------------------
+//
+// Defined here using only the public extension surface: `EncryptedFrom`,
+// `Pending::ready`, and the cipher's public PRF. This is the proof that the
+// set of SEM types is open — a separate crate can do exactly this.
+
+/// A prefix term: the PRF of the first `N` characters of a string, enabling
+/// "starts with" queries on the first N chars. (Illustrative only.)
+#[derive(Debug, PartialEq, Eq)]
+struct PrefixTerm<const N: usize>([u8; 32]);
+
+impl<S, K, const N: usize> EncryptedFrom<S, StackCipher<K>> for PrefixTerm<N>
+where
+    S: AsRef<str>,
+{
+    fn encrypt_from<'a, 'c, Ctx>(
+        source: &'a S,
+        cipher: &'a StackCipher<K>,
+        context: Ctx,
+    ) -> Pending<'a, Self, K>
+    where
+        Ctx: EncryptContext<'c>,
+        Self: 'a,
+    {
+        // Own domain label: can never collide with a built-in term under the
+        // same context.
+        let context = PrfContext::pae(&[
+            b"example/prefix-term/v1",
+            &(N as u64).to_le_bytes(),
+            context.into_prf_context().as_bytes(),
+        ]);
+        let prefix: String = source.as_ref().chars().take(N).collect();
+        let term = prefix
+            .prf_visit_with_context(cipher.prf().clone(), context, BlockVisitor)
+            .into_result()
+            .map(PrefixTerm)
+            .map_err(|e| Error::Other(Box::new(e)));
+        Pending::ready(cipher, term)
+    }
+}
+
+#[tokio::test]
+async fn third_party_term_type_works_on_the_public_surface() {
+    let cipher = stack_cipher().await;
+    let generator = generator().await;
+
+    let stored: PrefixTerm<3> = "alice".encrypt_into(&cipher, "users/name").await.unwrap();
+    let probe: PrefixTerm<3> = "alicia"
+        .encrypt_into(&generator, "users/name")
+        .await
+        .unwrap();
+    let miss: PrefixTerm<3> = "bob".encrypt_into(&generator, "users/name").await.unwrap();
+
+    assert_eq!(stored, probe, "same 3-char prefix, same term");
+    assert_ne!(stored, miss);
+
+    // And it composes into a record like any built-in term.
+    struct NameRecord {
+        c: StackCipherText,
+        prefix: PrefixTerm<3>,
+    }
+
+    impl<K> EncryptedFrom<String, StackCipher<K>> for NameRecord {
+        fn encrypt_from<'a, 'c, Ctx>(
+            source: &'a String,
+            cipher: &'a StackCipher<K>,
+            context: Ctx,
+        ) -> Pending<'a, Self, K>
+        where
+            Ctx: EncryptContext<'c>,
+            Self: 'a,
+        {
+            StackCipherText::encrypt_from(source, cipher, context.clone())
+                .zip(PrefixTerm::<3>::encrypt_from(source, cipher, context))
+                .map(|(c, prefix)| Self { c, prefix })
+        }
+    }
+
+    let record: NameRecord = "alice"
+        .to_string()
+        .encrypt_into(&cipher, "users/name")
+        .await
+        .unwrap();
+    assert_eq!(record.prefix, stored);
+    let name: String = record.c.decrypt_into(&cipher, "users/name").await.unwrap();
+    assert_eq!(name, "alice");
+}
+
+// --- Guard rails --------------------------------------------------------------
+
+#[tokio::test]
+async fn init_pins_the_cipher_to_the_keyset_it_resolved() {
+    // The keyset a cipher seals data keys under is the same one whose index
+    // key derives its terms: `init` resolves both together, so they cannot
+    // diverge. (Sealing under one keyset while deriving terms under another
+    // would make every query silently match nothing.)
+    let cipher = StackCipher::builder()
+        .kms(FakeDataKeySource::new())
+        .init()
+        .await
+        .expect("build cipher");
+
+    let (expected, _) = FakeDataKeySource::new()
+        .load_index_key(None)
+        .await
+        .expect("load index key");
+    assert_eq!(cipher.keyset_id(), expected);
+}
+
+#[tokio::test]
+async fn an_explicit_keyset_is_honoured() {
+    let keyset = Uuid::from_u128(42);
+    let cipher = StackCipher::builder()
+        .kms(FakeDataKeySource::new())
+        .keyset(IdentifiedBy::Uuid(keyset))
+        .init()
+        .await
+        .expect("build cipher");
+
+    assert_eq!(cipher.keyset_id(), keyset);
+
+    // And its terms differ from the default keyset's: a different keyset means
+    // a different index key.
+    let default = stack_cipher().await;
+    let a = cipher.equality_term("alice", "users/email").await.unwrap();
+    let b = default.equality_term("alice", "users/email").await.unwrap();
+    assert_ne!(a, b);
+}
+
+#[tokio::test]
+async fn empty_context_is_rejected_everywhere() {
+    use stack_encrypt::sem::{OpeTerm, TermError};
+
+    let cipher = stack_cipher().await;
+    let generator = generator().await;
+
+    // Terms: an empty context would collapse per-field domain separation.
+    // Rejected during the synchronous build — before any I/O could happen.
+    let eq: Result<EqualityTerm, _> = "alice".encrypt_into(&generator, "").await;
+    assert!(matches!(eq, Err(Error::Term(TermError::EmptyContext))));
+    let m: Result<MatchTerm, _> = "alice".to_string().encrypt_into(&generator, "").await;
+    assert!(matches!(m, Err(Error::Term(TermError::EmptyContext))));
+    let ore: Result<OreTerm<u64>, _> = 7u64.encrypt_into(&generator, "").await;
+    assert!(matches!(ore, Err(Error::Term(TermError::EmptyContext))));
+    let ope: Result<OpeTerm<u64>, _> = 7u64.encrypt_into(&generator, "").await;
+    assert!(matches!(ope, Err(Error::Term(TermError::EmptyContext))));
+
+    // Descriptor-string convenience methods route through the same guard.
+    assert!(matches!(
+        generator.equality_term("alice", "").await,
+        Err(TermError::EmptyContext)
+    ));
+
+    // The ciphertext leaf: an empty AAD would make ciphertexts transplantable
+    // between ()-context fields.
+    let ct: Result<StackCipherText, _> = "secret".to_string().encrypt_into(&cipher, "").await;
+    assert!(matches!(ct, Err(Error::EmptyContext)));
+
+    // And the decrypt mirror never opens under one either.
+    let sealed: StackCipherText = "secret"
+        .to_string()
+        .encrypt_into(&cipher, "users/email")
+        .await
+        .unwrap();
+    let opened: Result<String, _> = sealed.decrypt_into(&cipher, "").await;
+    assert!(matches!(opened, Err(Error::EmptyContext)));
+}
+
+#[tokio::test]
+async fn an_overdrawing_fulfilment_is_a_response_shape_error() {
+    // A fulfilment is scoped to exactly the responses its requests asked for:
+    // drawing more must fail loudly, never consume a sibling's responses.
+    let cipher = stack_cipher().await;
+
+    let pending: Pending<'_, (), _> =
+        Pending::request(&cipher, vec![Request::generate_data_key()], |responses| {
+            responses.next_generated_key()?;
+            responses.next_generated_key()?; // one more than requested
+            Ok(())
+        });
+
+    assert!(matches!(pending.await, Err(Error::ResponseShape)));
+}
+
+// Terms rebuilt from persisted parts must behave like freshly generated ones.
+#[tokio::test]
+async fn terms_rehydrate_from_persisted_parts() {
+    let generator = generator().await;
+
+    let eq: EqualityTerm = "alice"
+        .encrypt_into(&generator, "users/email")
+        .await
+        .unwrap();
+    let rehydrated = EqualityTerm::from_bytes(eq.clone().into_bytes());
+    assert_eq!(eq, rehydrated);
+
+    let stored: MatchTerm = "alice wonderland"
+        .to_string()
+        .encrypt_into(&generator, "users/bio")
+        .await
+        .unwrap();
+    let query: MatchTerm = "wonder"
+        .to_string()
+        .encrypt_into(&generator, "users/bio")
+        .await
+        .unwrap();
+    // Rehydrate from unsorted positions: from_positions normalises.
+    let mut positions = stored.clone().into_positions();
+    positions.reverse();
+    let rehydrated: MatchTerm = MatchTerm::from_positions(positions);
+    assert_eq!(stored, rehydrated);
+    assert!(rehydrated.contains(&query));
+}
+
+// The pending futures are `Send` on native targets, so target-directed
+// encryption can hop threads (e.g. `tokio::spawn`).
+#[tokio::test]
+async fn pending_futures_are_send() {
+    let generator = generator().await;
+
+    let handle = tokio::spawn(async move {
+        let term: EqualityTerm = "alice"
+            .encrypt_into(&generator, "users/email")
+            .await
+            .unwrap();
+        term
+    });
+
+    let _term = handle.await.unwrap();
+}

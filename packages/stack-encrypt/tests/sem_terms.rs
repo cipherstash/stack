@@ -3,10 +3,40 @@
 
 use std::cmp::Ordering;
 
-use stack_encrypt::sem::{MatchOptions, Tokenizer};
+use stack_encrypt::sem::{DefaultMatch, MatchConfig, MatchOptions, Tokenizer};
 use stack_encrypt::StackCipher;
 use stack_kms::{FakeDataKeySource, IdentifiedBy};
 use uuid::Uuid;
+
+/// Type-level config with the v1 `Standard` (word) tokenizer.
+struct WordMatch;
+
+impl MatchConfig for WordMatch {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            tokenizer: Tokenizer::Standard,
+            ..Default::default()
+        }
+    }
+}
+
+/// A config whose options fail validation at term-generation time.
+macro_rules! bad_config {
+    ($name:ident, $($field:ident: $value:expr),+ $(,)?) => {
+        struct $name;
+        impl MatchConfig for $name {
+            fn options() -> MatchOptions {
+                MatchOptions { $($field: $value,)+ ..Default::default() }
+            }
+        }
+    };
+}
+
+bad_config!(TooBigK, k: 17);
+bad_config!(TooSmallK, k: 1);
+bad_config!(NonPowerOfTwoM, m: 100);
+bad_config!(TooSmallM, m: 16);
+bad_config!(ZeroNgram, tokenizer: Tokenizer::Ngram { length: 0 });
 
 async fn generator() -> StackCipher<FakeDataKeySource> {
     StackCipher::builder()
@@ -61,13 +91,15 @@ async fn equality_terms_bind_the_index_key() {
 #[tokio::test]
 async fn match_query_terms_are_contained_in_stored_terms() {
     let gen = generator().await;
-    let opts = MatchOptions::default();
 
     let stored = gen
-        .match_terms("alice wonderland", "users/bio", &opts)
+        .match_terms::<DefaultMatch>("alice wonderland", "users/bio")
         .await
         .unwrap();
-    let query = gen.match_terms("wonder", "users/bio", &opts).await.unwrap();
+    let query = gen
+        .match_terms::<DefaultMatch>("wonder", "users/bio")
+        .await
+        .unwrap();
 
     assert!(
         stored.contains(&query),
@@ -78,37 +110,52 @@ async fn match_query_terms_are_contained_in_stored_terms() {
 #[tokio::test]
 async fn match_is_case_insensitive_by_default() {
     let gen = generator().await;
-    let opts = MatchOptions::default();
 
-    let stored = gen.match_terms("Alice", "users/name", &opts).await.unwrap();
-    let query = gen.match_terms("alice", "users/name", &opts).await.unwrap();
+    let stored = gen
+        .match_terms::<DefaultMatch>("Alice", "users/name")
+        .await
+        .unwrap();
+    let query = gen
+        .match_terms::<DefaultMatch>("alice", "users/name")
+        .await
+        .unwrap();
     assert_eq!(stored, query);
 }
 
 #[tokio::test]
 async fn match_binds_the_descriptor() {
     let gen = generator().await;
-    let opts = MatchOptions::default();
 
-    let stored = gen.match_terms("alice", "users/bio", &opts).await.unwrap();
-    let query = gen.match_terms("alice", "users/name", &opts).await.unwrap();
+    let stored = gen
+        .match_terms::<DefaultMatch>("alice", "users/bio")
+        .await
+        .unwrap();
+    let query = gen
+        .match_terms::<DefaultMatch>("alice", "users/name")
+        .await
+        .unwrap();
     assert_ne!(stored, query, "match tokens must be descriptor-bound");
 }
 
 #[tokio::test]
 async fn match_positions_stay_within_the_filter() {
-    let gen = generator().await;
-    let opts = MatchOptions {
-        m: 64,
-        ..Default::default()
-    };
+    struct SmallFilter;
+    impl MatchConfig for SmallFilter {
+        fn options() -> MatchOptions {
+            MatchOptions {
+                m: 64,
+                ..Default::default()
+            }
+        }
+    }
 
+    let gen = generator().await;
     let term = gen
-        .match_terms("a longer piece of text", "users/bio", &opts)
+        .match_terms::<SmallFilter>("a longer piece of text", "users/bio")
         .await
         .unwrap();
     assert!(!term.positions().is_empty());
-    assert!(term.positions().iter().all(|&p| u32::from(p) < opts.m));
+    assert!(term.positions().iter().all(|&p| u32::from(p) < 64));
     // Sorted + deduped.
     assert!(term.positions().windows(2).all(|w| w[0] < w[1]));
 }
@@ -116,38 +163,17 @@ async fn match_positions_stay_within_the_filter() {
 #[tokio::test]
 async fn match_rejects_invalid_options() {
     let gen = generator().await;
-    let bad_k = MatchOptions {
-        k: 17,
-        ..Default::default()
-    };
-    assert!(gen.match_terms("xxx", "d", &bad_k).await.is_err());
 
-    // The v1 match indexer's lower bounds apply: k >= 3, m >= 32.
-    let small_k = MatchOptions {
-        k: 1,
-        ..Default::default()
-    };
-    assert!(gen.match_terms("xxx", "d", &small_k).await.is_err());
-
-    let bad_m = MatchOptions {
-        m: 100,
-        ..Default::default()
-    };
-    assert!(gen.match_terms("xxx", "d", &bad_m).await.is_err());
-
-    let small_m = MatchOptions {
-        m: 16,
-        ..Default::default()
-    };
-    assert!(gen.match_terms("xxx", "d", &small_m).await.is_err());
+    // The v1 match indexer's bounds apply: k in 3..=16, m a power of two in
+    // [32, 65536].
+    assert!(gen.match_terms::<TooBigK>("xxx", "d").await.is_err());
+    assert!(gen.match_terms::<TooSmallK>("xxx", "d").await.is_err());
+    assert!(gen.match_terms::<NonPowerOfTwoM>("xxx", "d").await.is_err());
+    assert!(gen.match_terms::<TooSmallM>("xxx", "d").await.is_err());
 
     // A zero-length n-gram must be an options error, not a panic.
-    let bad_ngram = MatchOptions {
-        tokenizer: Tokenizer::Ngram { length: 0 },
-        ..Default::default()
-    };
     assert!(matches!(
-        gen.match_terms("xxx", "d", &bad_ngram).await,
+        gen.match_terms::<ZeroNgram>("xxx", "d").await,
         Err(stack_encrypt::sem::TermError::InvalidOptions(_))
     ));
 }
@@ -157,13 +183,12 @@ async fn match_rejects_text_that_yields_no_tokens() {
     use stack_encrypt::sem::TermError;
 
     let gen = generator().await;
-    let opts = MatchOptions::default();
 
     // An empty term used as a query would vacuously match every stored row.
     for text in ["", "  "] {
         assert!(
             matches!(
-                gen.match_terms(text, "users/bio", &opts).await,
+                gen.match_terms::<DefaultMatch>(text, "users/bio").await,
                 Err(TermError::EmptyTermText)
             ),
             "{text:?} must be rejected"
@@ -173,17 +198,13 @@ async fn match_rejects_text_that_yields_no_tokens() {
     // A probe shorter than the n-gram length could never match a stored gram
     // (v1 indexer semantics) — rejected instead of a silent false negative.
     assert!(matches!(
-        gen.match_terms("hi", "users/bio", &opts).await,
+        gen.match_terms::<DefaultMatch>("hi", "users/bio").await,
         Err(TermError::EmptyTermText)
     ));
 
     // Separator-only text under the Standard tokenizer.
-    let standard = MatchOptions {
-        tokenizer: Tokenizer::Standard,
-        ..Default::default()
-    };
     assert!(matches!(
-        gen.match_terms(" ,;:! ", "users/bio", &standard).await,
+        gen.match_terms::<WordMatch>(" ,;:! ", "users/bio").await,
         Err(TermError::EmptyTermText)
     ));
 }
@@ -191,17 +212,13 @@ async fn match_rejects_text_that_yields_no_tokens() {
 #[tokio::test]
 async fn word_tokenizer_matches_whole_words() {
     let gen = generator().await;
-    let opts = MatchOptions {
-        tokenizer: Tokenizer::Standard,
-        ..Default::default()
-    };
 
     let stored = gen
-        .match_terms("alice in wonderland", "users/bio", &opts)
+        .match_terms::<WordMatch>("alice in wonderland", "users/bio")
         .await
         .unwrap();
     let query = gen
-        .match_terms("wonderland", "users/bio", &opts)
+        .match_terms::<WordMatch>("wonderland", "users/bio")
         .await
         .unwrap();
     assert!(stored.contains(&query));
