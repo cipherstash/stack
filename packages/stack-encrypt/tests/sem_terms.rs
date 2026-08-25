@@ -118,13 +118,72 @@ async fn match_rejects_invalid_options() {
         k: 17,
         ..Default::default()
     };
-    assert!(gen.match_terms("x", "d", &bad_k).await.is_err());
+    assert!(gen.match_terms("xxx", "d", &bad_k).await.is_err());
+
+    // The v1 match indexer's lower bounds apply: k >= 3, m >= 32.
+    let small_k = MatchOptions {
+        k: 1,
+        ..Default::default()
+    };
+    assert!(gen.match_terms("xxx", "d", &small_k).await.is_err());
 
     let bad_m = MatchOptions {
         m: 100,
         ..Default::default()
     };
-    assert!(gen.match_terms("x", "d", &bad_m).await.is_err());
+    assert!(gen.match_terms("xxx", "d", &bad_m).await.is_err());
+
+    let small_m = MatchOptions {
+        m: 16,
+        ..Default::default()
+    };
+    assert!(gen.match_terms("xxx", "d", &small_m).await.is_err());
+
+    // A zero-length n-gram must be an options error, not a panic.
+    let bad_ngram = MatchOptions {
+        tokenizer: Tokenizer::Ngram { length: 0 },
+        ..Default::default()
+    };
+    assert!(matches!(
+        gen.match_terms("xxx", "d", &bad_ngram).await,
+        Err(stack_encrypt::sem::TermError::InvalidOptions(_))
+    ));
+}
+
+#[tokio::test]
+async fn match_rejects_text_that_yields_no_tokens() {
+    use stack_encrypt::sem::TermError;
+
+    let gen = generator().await;
+    let opts = MatchOptions::default();
+
+    // An empty term used as a query would vacuously match every stored row.
+    for text in ["", "  "] {
+        assert!(
+            matches!(
+                gen.match_terms(text, "users/bio", &opts).await,
+                Err(TermError::EmptyTermText)
+            ),
+            "{text:?} must be rejected"
+        );
+    }
+
+    // A probe shorter than the n-gram length could never match a stored gram
+    // (v1 indexer semantics) — rejected instead of a silent false negative.
+    assert!(matches!(
+        gen.match_terms("hi", "users/bio", &opts).await,
+        Err(TermError::EmptyTermText)
+    ));
+
+    // Separator-only text under the Standard tokenizer.
+    let standard = MatchOptions {
+        tokenizer: Tokenizer::Standard,
+        ..Default::default()
+    };
+    assert!(matches!(
+        gen.match_terms(" ,;:! ", "users/bio", &standard).await,
+        Err(TermError::EmptyTermText)
+    ));
 }
 
 #[tokio::test]

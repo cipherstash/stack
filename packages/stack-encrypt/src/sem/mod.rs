@@ -51,6 +51,7 @@ use vitaminc_prf::{
     SeqAccess,
 };
 use vitaminc_protected::Protected;
+use zeroize::Zeroize;
 
 /// PAE domain for equality (exact-match) terms.
 const EQUALITY_DOMAIN: &[u8] = b"stack-encrypt/sem/equality/v1";
@@ -75,6 +76,16 @@ pub enum TermError {
     /// The supplied [`MatchOptions`] are invalid.
     #[error("invalid match options: {0}")]
     InvalidOptions(&'static str),
+    /// The text produced no tokens under the configured tokenizer — empty or
+    /// separator-only text, or (for n-grams, as in the v1 match indexer) text
+    /// shorter than the n-gram length. Rejected at generation time for both
+    /// the write and query paths: an empty term used as a query would
+    /// vacuously match every stored row, and a sub-gram-length probe could
+    /// never match anything (a silent false negative).
+    #[error(
+        "text produces no match tokens (empty, separator-only, or shorter than the n-gram length)"
+    )]
+    EmptyTermText,
 }
 
 impl TermError {
@@ -124,12 +135,20 @@ impl MatchTerm {
 
     /// Whether this term's positions are a superset of `query`'s — the Bloom
     /// containment check used to evaluate a match query (with the usual Bloom
-    /// false-positive rate; false negatives cannot occur).
+    /// false-positive rate; a query that generates tokens can never produce a
+    /// false negative).
+    ///
+    /// An empty `query` returns `false`: containment of zero positions is
+    /// vacuously true, which would turn an empty probe into a match-every-row
+    /// query. [`TermGenerator::match_terms`] already refuses to build such a
+    /// term ([`TermError::EmptyTermText`]); this guards any other
+    /// (e.g. deserialized) source of an empty term.
     pub fn contains(&self, query: &MatchTerm) -> bool {
-        query
-            .positions
-            .iter()
-            .all(|p| self.positions.binary_search(p).is_ok())
+        !query.positions.is_empty()
+            && query
+                .positions
+                .iter()
+                .all(|p| self.positions.binary_search(p).is_ok())
     }
 }
 
@@ -142,10 +161,12 @@ pub struct MatchOptions {
     pub tokenizer: Tokenizer,
     /// Lower-case the text before tokenization (case-insensitive matching).
     pub downcase: bool,
-    /// Number of bit positions derived per token. Bounded by the PRF block
-    /// size: each position consumes 2 bytes of the 32-byte block, so `1..=16`.
+    /// Number of bit positions derived per token, `3..=16` (the v1 match
+    /// indexer's bounds; the upper bound is also the PRF block size — each
+    /// position consumes 2 bytes of the 32-byte block).
     pub k: usize,
-    /// Bloom filter size in bits. Must be a power of two in `[16, 65536]`.
+    /// Bloom filter size in bits. Must be a power of two in `[32, 65536]`
+    /// (the v1 match indexer's bounds).
     pub m: u32,
 }
 
@@ -161,13 +182,21 @@ impl Default for MatchOptions {
 }
 
 impl MatchOptions {
+    // Bounds mirror the v1 match indexer (`cipherstash-core`'s
+    // `bloom_filter`: K_MIN/K_MAX/M_MIN/M_MAX) so the same configuration
+    // validates identically across the two stacks.
     fn validate(&self) -> Result<u16, TermError> {
-        if !(1..=16).contains(&self.k) {
-            return Err(TermError::InvalidOptions("k must be in 1..=16"));
-        }
-        if !self.m.is_power_of_two() || !(16..=65536).contains(&self.m) {
+        if let Tokenizer::Ngram { length: 0 } = self.tokenizer {
             return Err(TermError::InvalidOptions(
-                "m must be a power of two in [16, 65536]",
+                "n-gram length must be at least 1",
+            ));
+        }
+        if !(3..=16).contains(&self.k) {
+            return Err(TermError::InvalidOptions("k must be in 3..=16"));
+        }
+        if !self.m.is_power_of_two() || !(32..=65536).contains(&self.m) {
+            return Err(TermError::InvalidOptions(
+                "m must be a power of two in [32, 65536]",
             ));
         }
         // For m = 65536 the mask is u16::MAX; positions always fit in u16.
@@ -267,6 +296,10 @@ where
     /// The same call serves both write time (index the stored text) and query
     /// time (index the probe text, then test
     /// [`MatchTerm::contains`] server-side).
+    ///
+    /// Returns [`TermError::EmptyTermText`] when the text yields no tokens —
+    /// empty or separator-only text, or an n-gram probe shorter than the gram
+    /// length (which could never match; see [`Tokenizer::Ngram`]).
     pub async fn match_terms(
         &self,
         text: &str,
@@ -275,6 +308,9 @@ where
     ) -> Result<MatchTerm, TermError> {
         let mask = options.validate()?;
         let tokens = tokenize::tokenize(text, options.tokenizer, options.downcase);
+        if tokens.is_empty() {
+            return Err(TermError::EmptyTermText);
+        }
         let context = PrfContext::pae(&[MATCH_DOMAIN, descriptor.as_bytes()]);
 
         tokens
@@ -312,19 +348,26 @@ where
         value.encrypt_ope(&key).map_err(TermError::Ore)
     }
 
-    /// Derive a per-descriptor CLLW key: PRF of the descriptor under the given
-    /// domain. Deterministic, so write-time and query-time terms agree; under a
+    /// Derive a per-descriptor CLLW key: PRF of the descriptor under a
+    /// PAE-encoded `[domain, descriptor]` context — the same framing every
+    /// other term kind uses (see the module docs), so no reimplementation of
+    /// this derivation can collide with an equality or match derivation.
+    /// Deterministic, so write-time and query-time terms agree; under a
     /// 2-party PRF backend this derivation is a visible ZeroKMS event.
     async fn derive_cllw_key(
         &self,
         domain: &'static [u8],
         descriptor: &str,
     ) -> Result<cllw_ore::Key, TermError> {
-        let context = PrfContext::from_slice(domain).into_owned();
-        let block = descriptor
+        let context = PrfContext::pae(&[domain, descriptor.as_bytes()]);
+        let mut block = descriptor
             .prf_with_context(self.prf.clone(), context)
             .await
             .map_err(TermError::from_prf)?;
-        Ok(cllw_ore::Key::from(block))
+        // `Key` wipes itself on drop; wipe the stack copy the move leaves
+        // behind ([u8; 32] is `Copy`).
+        let key = cllw_ore::Key::from(block);
+        block.zeroize();
+        Ok(key)
     }
 }
