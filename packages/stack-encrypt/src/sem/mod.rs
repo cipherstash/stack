@@ -14,16 +14,24 @@
 //!   ciphertexts under a per-descriptor key derived *through the PRF*; support
 //!   range queries.
 //!
-//! # PRF backends and the 2-party future
+//! # PRF backends, visitors, and the 2-party future
 //!
-//! Every term method awaits its PRF output ([`Prf::Ok`](vitaminc_prf::Prf::Ok) is `IntoFuture`). The
-//! backend today is the local
+//! The PRF backend produces **blocks**; a [`PrfVisitor`] shapes blocks into
+//! the term ([`EqualityVisitor`], [`BloomVisitor`], [`CllwKeyVisitor`] —
+//! all private). The shaping is pure and synchronous by construction: only
+//! the block production can involve I/O, so a visitor never knows which side
+//! of a round-trip it runs on. All pure work — option validation,
+//! tokenization, context framing — happens *before* the PRF is invoked.
+//!
+//! Every term method awaits its PRF output ([`Prf::Ok`](vitaminc_prf::Prf::Ok)
+//! is `IntoFuture`). The backend today is the local
 //! [`HmacSha256Prf`](vitaminc_hmac::HmacSha256Prf), keyed by the deterministic
 //! per-keyset [`IndexKey`](stack_kms::IndexKey) the cipher loads during
 //! construction, so outputs are immediately ready. The next ZeroKMS release
 //! adds 2-party PRF generation: that backend returns deferred outputs resolved
-//! by a server round-trip, and because every derivation is already behind an
-//! `await` it slots in without changing a single call site.
+//! by a server round-trip, and it slots in without touching any shaping code —
+//! the same visitor runs over the blocks the server returns, and every
+//! derivation is already behind an `await`.
 //!
 //! This is also why ORE/OPE *keys* are derived through the PRF (from the field
 //! descriptor, never the plaintext): under a 2-party backend, per-field key
@@ -119,6 +127,17 @@ impl EqualityTerm {
 impl From<EqualityTerm> for Vec<u8> {
     fn from(term: EqualityTerm) -> Self {
         term.0.to_vec()
+    }
+}
+
+/// A [`PrfVisitor`] that wraps one PRF block as an [`EqualityTerm`].
+struct EqualityVisitor;
+
+impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for EqualityVisitor {
+    type Value = EqualityTerm;
+
+    fn visit_block(self, block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
+        Ok(EqualityTerm(block))
     }
 }
 
@@ -237,6 +256,22 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for BloomVisitor {
     }
 }
 
+/// A [`PrfVisitor`] that turns one PRF block into a self-wiping CLLW
+/// [`Key`](cllw_ore::Key). Key material never leaves the visitor unwrapped:
+/// the block arrives by value, is moved into the `ZeroizeOnDrop` key, and the
+/// stack copy left behind (`[u8; 32]` is `Copy`) is wiped before returning.
+struct CllwKeyVisitor;
+
+impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for CllwKeyVisitor {
+    type Value = cllw_ore::Key;
+
+    fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
+        let key = cllw_ore::Key::from(block);
+        block.zeroize();
+        Ok(key)
+    }
+}
+
 /// Term generation on the cipher itself: every [`StackCipher`] carries the PRF
 /// keyed by its keyset's index key, so the same handle that seals a value
 /// derives the terms stored beside it, and a query builder holding a cipher
@@ -257,11 +292,10 @@ impl<K> StackCipher<K> {
         T: PrfValue,
     {
         let context = PrfContext::pae(&[EQUALITY_DOMAIN, descriptor.as_bytes()]);
-        let block = value
-            .prf_with_context(self.prf().clone(), context)
+        value
+            .prf_visit_with_context(self.prf().clone(), context, EqualityVisitor)
             .await
-            .map_err(TermError::from_prf)?;
-        Ok(EqualityTerm(block))
+            .map_err(TermError::from_prf)
     }
 
     /// Generate a match (full-text) term for `text` under the field
@@ -335,14 +369,9 @@ impl<K> StackCipher<K> {
         descriptor: &str,
     ) -> Result<cllw_ore::Key, TermError> {
         let context = PrfContext::pae(&[domain, descriptor.as_bytes()]);
-        let mut block = descriptor
-            .prf_with_context(self.prf().clone(), context)
+        descriptor
+            .prf_visit_with_context(self.prf().clone(), context, CllwKeyVisitor)
             .await
-            .map_err(TermError::from_prf)?;
-        // `Key` wipes itself on drop; wipe the stack copy the move leaves
-        // behind ([u8; 32] is `Copy`).
-        let key = cllw_ore::Key::from(block);
-        block.zeroize();
-        Ok(key)
+            .map_err(TermError::from_prf)
     }
 }
