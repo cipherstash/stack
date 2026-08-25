@@ -20,6 +20,9 @@ publish = false
 # `secretkey.json` via `stack-profile`). Consumers that want it enable it on
 # their own `stack-kms` dependency.
 stack-kms = { path = "../stack-kms", default-features = false }
+# `StackCipher::new()` builds a ZeroKMS client from the environment, so its
+# return type names the auto-detected auth strategy.
+stack-auth = { workspace = true }
 
 # The revised Cipher/Decipher traits, ContextTag, Element, and the PRF crates
 # have all merged to vitaminc main but are not yet published (crates.io is 200+

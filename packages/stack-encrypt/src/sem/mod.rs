@@ -1,32 +1,34 @@
 //! Searchable Encrypted Metadata (SEM) term generation.
 //!
-//! [`TermGenerator`] produces the index terms stored alongside a
+//! [`StackCipher`] produces the index terms stored alongside a
 //! [`StackCipherText`](crate::StackCipherText) so encrypted values can be
 //! queried without decryption:
 //!
-//! * **Equality terms** ([`TermGenerator::equality_term`]) — a PRF of the whole
+//! * **Equality terms** ([`StackCipher::equality_term`]) — a PRF of the whole
 //!   value; supports exact-match queries.
-//! * **Match terms** ([`TermGenerator::match_terms`]) — the value is tokenized
+//! * **Match terms** ([`StackCipher::match_terms`]) — the value is tokenized
 //!   locally, each token is PRF'd, and the outputs fold into Bloom-filter bit
 //!   positions; supports full-text match queries.
-//! * **ORE / OPE terms** ([`TermGenerator::ore_term`] /
-//!   [`TermGenerator::ope_term`]) — CLLW order-revealing / order-preserving
+//! * **ORE / OPE terms** ([`StackCipher::ore_term`] /
+//!   [`StackCipher::ope_term`]) — CLLW order-revealing / order-preserving
 //!   ciphertexts under a per-descriptor key derived *through the PRF*; support
 //!   range queries.
 //!
 //! # PRF backends and the 2-party future
 //!
-//! The generator is generic over `P:`[`Prf`], and every term method awaits the
-//! PRF output ([`Prf::Ok`] is `IntoFuture`). With the local
-//! [`HmacSha256Prf`](vitaminc_hmac::HmacSha256Prf) backend — keyed by the
-//! deterministic per-keyset [`IndexKey`](stack_kms::IndexKey) from
-//! [`stack_kms::IndexKeySource`] — outputs are immediately ready. The next
-//! ZeroKMS release adds 2-party PRF generation; that backend returns deferred
-//! outputs resolved by a server round-trip, and slots in behind the same `P`
-//! parameter with no API change. This is also why ORE/OPE *keys* are derived
-//! through the PRF (from the field descriptor, never the plaintext): under a
-//! 2-party backend, per-field key derivation becomes a visible, auditable
-//! ZeroKMS event while plaintext stays local.
+//! Every term method awaits its PRF output ([`Prf::Ok`](vitaminc_prf::Prf::Ok) is `IntoFuture`). The
+//! backend today is the local
+//! [`HmacSha256Prf`](vitaminc_hmac::HmacSha256Prf), keyed by the deterministic
+//! per-keyset [`IndexKey`](stack_kms::IndexKey) the cipher loads during
+//! construction, so outputs are immediately ready. The next ZeroKMS release
+//! adds 2-party PRF generation: that backend returns deferred outputs resolved
+//! by a server round-trip, and because every derivation is already behind an
+//! `await` it slots in without changing a single call site.
+//!
+//! This is also why ORE/OPE *keys* are derived through the PRF (from the field
+//! descriptor, never the plaintext): under a 2-party backend, per-field key
+//! derivation becomes a visible, auditable ZeroKMS event while plaintext stays
+//! local.
 //!
 //! # Determinism and domain separation
 //!
@@ -37,7 +39,7 @@
 //! caller's field `descriptor`, so the same value indexed as an equality term,
 //! a match token, or an ORE key can never produce colliding PRF outputs.
 //!
-//! This is a fresh (v2) term format: PRF inputs are framed with vitaminc's PAE
+//! This is a fresh term format: PRF inputs are framed with vitaminc's PAE
 //! context encoding, so terms are intentionally **not** byte-compatible with
 //! `cipherstash-client`'s existing `IndexTerm` values.
 
@@ -47,11 +49,11 @@ pub use tokenize::Tokenizer;
 
 use cllw_ore::{CllwOpeEncrypt, CllwOreEncrypt};
 use vitaminc_prf::{
-    BlockVisitor, MapAccess, Prf, PrfContext, PrfError, PrfValue, PrfVisitor, PrfVisitorError,
-    SeqAccess,
+    BlockVisitor, MapAccess, PrfContext, PrfError, PrfValue, PrfVisitor, PrfVisitorError, SeqAccess,
 };
-use vitaminc_protected::Protected;
 use zeroize::Zeroize;
+
+use crate::StackCipher;
 
 /// PAE domain for equality (exact-match) terms.
 const EQUALITY_DOMAIN: &[u8] = b"stack-encrypt/sem/equality/v1";
@@ -140,7 +142,7 @@ impl MatchTerm {
     ///
     /// An empty `query` returns `false`: containment of zero positions is
     /// vacuously true, which would turn an empty probe into a match-every-row
-    /// query. [`TermGenerator::match_terms`] already refuses to build such a
+    /// query. [`StackCipher::match_terms`] already refuses to build such a
     /// term ([`TermError::EmptyTermText`]); this guards any other
     /// (e.g. deserialized) source of an empty term.
     pub fn contains(&self, query: &MatchTerm) -> bool {
@@ -235,44 +237,17 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for BloomVisitor {
     }
 }
 
-/// Generates Searchable Encrypted Metadata terms over a PRF backend `P`.
+/// Term generation on the cipher itself: every [`StackCipher`] carries the PRF
+/// keyed by its keyset's index key, so the same handle that seals a value
+/// derives the terms stored beside it, and a query builder holding a cipher
+/// derives probe terms with no data-key traffic at all.
 ///
-/// Construct from a per-keyset index key with [`from_index_key`]
-/// (local HMAC backend), or from any [`Prf`] backend with [`new`] — see the
-/// module docs for the 2-party story.
-///
-/// [`from_index_key`]: TermGenerator::from_index_key
-/// [`new`]: TermGenerator::new
-#[derive(Clone)]
-pub struct TermGenerator<P> {
-    prf: P,
-}
-
-impl TermGenerator<vitaminc_hmac::HmacSha256Prf> {
-    /// Build a generator over the local HMAC-SHA256 PRF, keyed by the
-    /// deterministic per-keyset index key (see
-    /// [`stack_kms::IndexKeySource::load_index_key`]).
-    pub fn from_index_key(index_key: &stack_kms::IndexKey) -> Self {
-        Self::new(vitaminc_hmac::HmacSha256Prf::new(Protected::new(
-            *index_key.key(),
-        )))
-    }
-}
-
-impl<P> TermGenerator<P> {
-    /// Build a generator over an arbitrary PRF backend.
-    pub fn new(prf: P) -> Self {
-        Self { prf }
-    }
-}
-
-impl<P> TermGenerator<P>
-where
-    P: Prf<Block = [u8; 32]> + Clone,
-{
+/// Terms are deterministic: the same value and descriptor yield the same term
+/// at write time and at query time. They are pseudorandom under the index key
+/// and are stored server-side — they are not secret key material.
+impl<K> StackCipher<K> {
     /// Generate an equality (exact-match) term for `value` under the field
-    /// `descriptor`. Deterministic: the same value + descriptor always yields
-    /// the same term, at write time and at query time.
+    /// `descriptor`.
     pub async fn equality_term<T>(
         &self,
         value: T,
@@ -283,7 +258,7 @@ where
     {
         let context = PrfContext::pae(&[EQUALITY_DOMAIN, descriptor.as_bytes()]);
         let block = value
-            .prf_with_context(self.prf.clone(), context)
+            .prf_with_context(self.prf().clone(), context)
             .await
             .map_err(TermError::from_prf)?;
         Ok(EqualityTerm(block))
@@ -315,7 +290,7 @@ where
 
         tokens
             .prf_visit_with_context(
-                self.prf.clone(),
+                self.prf().clone(),
                 context,
                 BloomVisitor { k: options.k, mask },
             )
@@ -361,7 +336,7 @@ where
     ) -> Result<cllw_ore::Key, TermError> {
         let context = PrfContext::pae(&[domain, descriptor.as_bytes()]);
         let mut block = descriptor
-            .prf_with_context(self.prf.clone(), context)
+            .prf_with_context(self.prf().clone(), context)
             .await
             .map_err(TermError::from_prf)?;
         // `Key` wipes itself on drop; wipe the stack copy the move leaves

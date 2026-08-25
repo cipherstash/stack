@@ -17,7 +17,7 @@ pub enum Tokenizer {
     /// (whitespace included). Text shorter than `length` yields **no tokens**,
     /// exactly like the v1 match indexer — so a probe shorter than the gram
     /// length is rejected by
-    /// [`match_terms`](crate::sem::TermGenerator::match_terms) rather than
+    /// [`match_terms`](crate::StackCipher::match_terms) rather than
     /// silently never matching. This is the default, matching the existing
     /// match indexer's 3-gram configuration.
     Ngram { length: usize },
@@ -44,7 +44,7 @@ impl Default for Tokenizer {
 /// than the n-gram length); [`match_terms`] rejects that case so an empty
 /// term can never reach a query.
 ///
-/// [`match_terms`]: crate::sem::TermGenerator::match_terms
+/// [`match_terms`]: crate::StackCipher::match_terms
 pub(crate) fn tokenize(text: &str, tokenizer: Tokenizer, downcase: bool) -> Vec<String> {
     let text = if downcase {
         text.to_lowercase()

@@ -10,13 +10,17 @@ use stack_encrypt::{Aad, CipherText, ContextTag, Element, IntoAad, SealedValue, 
 use stack_kms::FakeDataKeySource;
 use vitaminc_protected::{Controlled, Protected};
 
-fn cipher() -> StackCipher<FakeDataKeySource> {
-    StackCipher::new(FakeDataKeySource::new())
+async fn cipher() -> StackCipher<FakeDataKeySource> {
+    StackCipher::builder()
+        .kms(FakeDataKeySource::new())
+        .init()
+        .await
+        .expect("build cipher")
 }
 
 #[tokio::test]
 async fn scalar_roundtrips_with_no_aad() {
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt("hello world".to_string(), ())
         .await
@@ -27,7 +31,7 @@ async fn scalar_roundtrips_with_no_aad() {
 
 #[tokio::test]
 async fn scalar_roundtrips_with_matching_aad() {
-    let cipher = cipher();
+    let cipher = cipher().await;
     let aad = b"public-context".as_slice();
     let ct = cipher
         .encrypt("secret".to_string(), aad)
@@ -39,7 +43,7 @@ async fn scalar_roundtrips_with_matching_aad() {
 
 #[tokio::test]
 async fn decrypt_fails_with_wrong_aad() {
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt("secret".to_string(), b"aad-a".as_slice())
         .await
@@ -50,7 +54,7 @@ async fn decrypt_fails_with_wrong_aad() {
 
 #[tokio::test]
 async fn decrypt_fails_when_aad_omitted() {
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt("secret".to_string(), b"bound".as_slice())
         .await
@@ -63,7 +67,7 @@ async fn decrypt_fails_when_aad_omitted() {
 
 #[tokio::test]
 async fn vec_roundtrips() {
-    let cipher = cipher();
+    let cipher = cipher().await;
     let items = vec!["a".to_string(), "b".to_string(), "c".to_string()];
     let ct = cipher.encrypt(items.clone(), ()).await.expect("encrypt");
     let pt: Vec<String> = cipher.decrypt(ct, ()).await.expect("decrypt");
@@ -72,7 +76,7 @@ async fn vec_roundtrips() {
 
 #[tokio::test]
 async fn map_roundtrips() {
-    let cipher = cipher();
+    let cipher = cipher().await;
     // Encrypt side keys are `&'static str`; decrypt side yields `String` keys.
     let mut input: HashMap<&'static str, String> = HashMap::new();
     input.insert("name", "alice".to_string());
@@ -88,7 +92,7 @@ async fn map_roundtrips() {
 
 #[tokio::test]
 async fn option_some_roundtrips() {
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt(Some("present".to_string()), ())
         .await
@@ -99,7 +103,7 @@ async fn option_some_roundtrips() {
 
 #[tokio::test]
 async fn option_none_roundtrips() {
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt(Option::<String>::None, ())
         .await
@@ -113,7 +117,7 @@ async fn protected_roundtrip() {
     // Exercises the `Protected` Decrypt impl, the sole user of `Decipher::map_ok`.
     // (`Vec<u8>` would encrypt element-wise as a sequence of `u8`, not as bytes,
     // so a string leaf is used here.)
-    let cipher = cipher();
+    let cipher = cipher().await;
     let secret = Protected::new("classified".to_string());
     let ct = cipher.encrypt(secret, ()).await.expect("encrypt");
     let pt: Protected<String> = cipher.decrypt(ct, ()).await.expect("decrypt");
@@ -122,7 +126,7 @@ async fn protected_roundtrip() {
 
 #[tokio::test]
 async fn nested_vec_roundtrips() {
-    let cipher = cipher();
+    let cipher = cipher().await;
     let nested = vec![
         vec!["a".to_string(), "b".to_string()],
         vec!["c".to_string()],
@@ -134,7 +138,7 @@ async fn nested_vec_roundtrips() {
 
 #[tokio::test]
 async fn context_tag_binds_and_roundtrips() {
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt(ContextTag::new("token".to_string(), "user:42"), ())
         .await
@@ -150,7 +154,7 @@ async fn context_tag_binds_and_roundtrips() {
 
 #[tokio::test]
 async fn context_tag_wrong_context_fails() {
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt(ContextTag::new("token".to_string(), "user:42"), ())
         .await
@@ -163,7 +167,7 @@ async fn context_tag_wrong_context_fails() {
 #[tokio::test]
 async fn empty_vec_roundtrips() {
     // An empty sequence seals an authenticated marker, so emptiness is provable.
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt(Vec::<String>::new(), ())
         .await
@@ -174,7 +178,7 @@ async fn empty_vec_roundtrips() {
 
 #[tokio::test]
 async fn empty_map_roundtrips() {
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt(HashMap::<&'static str, String>::new(), ())
         .await
@@ -185,7 +189,7 @@ async fn empty_map_roundtrips() {
 
 #[tokio::test]
 async fn empty_marker_does_not_decode_under_wrong_aad() {
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt(Vec::<String>::new(), b"bound".as_slice())
         .await
@@ -198,7 +202,7 @@ async fn empty_marker_does_not_decode_under_wrong_aad() {
 async fn renamed_map_key_fails() {
     // Map keys travel in the clear but are bound into their value's AAD, so
     // renaming a key in the stored ciphertext must fail decryption.
-    let cipher = cipher();
+    let cipher = cipher().await;
     let mut input: HashMap<&'static str, String> = HashMap::new();
     input.insert("name", "alice".to_string());
 
@@ -221,7 +225,7 @@ async fn renamed_map_key_fails() {
 async fn sequence_element_cannot_be_rehomed_as_scalar() {
     // Elements are sealed under the `for_sequence_element` derivation, so a
     // leaf spliced out of a sequence must not verify as a top-level scalar.
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt(vec!["a".to_string()], ())
         .await
@@ -243,7 +247,7 @@ async fn element_roundtrips_under_bare_caller_aad() {
     // `Element<T>` derives `for_sequence_element` inside its own Encrypt/Decrypt
     // impls. Both sides must honour that derivation: the decipher opens the leaf
     // under the AAD the Decrypt drive supplies, not a pre-derived one.
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt(Element("row".to_string()), b"users".as_slice())
         .await
@@ -260,7 +264,7 @@ async fn element_interchanges_with_vec_element() {
     // A row sealed as one element of a `Vec` decrypts alone as `Element<T>`
     // under the same caller AAD (Element's documented use-case), and a lone
     // `Element` ciphertext decrypts as a one-element `Vec`.
-    let cipher = cipher();
+    let cipher = cipher().await;
     let aad = b"users".as_slice();
 
     let ct = cipher
@@ -291,7 +295,7 @@ async fn element_interchanges_with_vec_element() {
 
 #[tokio::test]
 async fn element_fails_under_wrong_caller_aad() {
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt(Element("row".to_string()), b"users".as_slice())
         .await
@@ -308,7 +312,7 @@ async fn decipher_can_be_driven_directly() {
     // `StackCipher::decipher` mirrors `Aes256Cipher::decipher`: the returned
     // Decipher is driven via `Decrypt::decrypt_with_aad` with a caller-chosen
     // AAD, so manual derivations work too.
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt(Element("row".to_string()), b"users".as_slice())
         .await
@@ -335,7 +339,7 @@ async fn decipher_can_be_driven_directly() {
 #[tokio::test]
 async fn wrong_shape_fails() {
     // A scalar ciphertext must not decode as a sequence.
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt("scalar".to_string(), ())
         .await
@@ -348,7 +352,7 @@ async fn wrong_shape_fails() {
 async fn leaf_survives_persistence_via_parts() {
     // A leaf can be decomposed into (iv, tag, ciphertext), stored, and rebuilt
     // — the in-memory original need not be retained to decrypt.
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt("durable".to_string(), b"ctx".as_slice())
         .await
@@ -369,7 +373,7 @@ async fn leaf_survives_persistence_via_parts() {
 
 #[tokio::test]
 async fn leaf_survives_persistence_via_serde() {
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt("durable".to_string(), ())
         .await
@@ -393,7 +397,7 @@ async fn leaf_survives_persistence_via_serde() {
 
 #[tokio::test]
 async fn tampered_leaf_bytes_fail() {
-    let cipher = cipher();
+    let cipher = cipher().await;
     let ct = cipher
         .encrypt("durable".to_string(), ())
         .await

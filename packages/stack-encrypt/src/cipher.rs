@@ -68,7 +68,10 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
-use stack_kms::{DataKey, DataKeySource, DataKeyWithTag, GenerateKeyPayload, RetrieveKeyPayload};
+use stack_kms::{
+    DataKey, DataKeySource, DataKeyWithTag, EnvKeyProvider, GenerateKeyPayload, IdentifiedBy,
+    IndexKeySource, RetrieveKeyPayload, StackKms, StackKmsBuilder,
+};
 use uuid::Uuid;
 use vitaminc_aead::{
     Aad, Cipher, CipherText, Decipher, DecipherVisitor, Decrypt, Encrypt, IntoAad, LocalCipherText,
@@ -103,6 +106,10 @@ pub enum Error {
     /// ZeroKMS returned a different number of keys than were requested.
     #[error("expected {expected} data keys from ZeroKMS but received {received}")]
     KeyCountMismatch { expected: usize, received: usize },
+    /// Building a ZeroKMS client from the environment failed: credentials or
+    /// client key missing or malformed.
+    #[error("could not build a ZeroKMS client from the environment: {0}")]
+    Config(#[from] stack_kms::StackKmsBuilderError),
 }
 
 impl From<Unspecified> for Error {
@@ -111,33 +118,184 @@ impl From<Unspecified> for Error {
     }
 }
 
-/// A vitaminc cipher whose per-leaf keys are ZeroKMS data keys, sourced through
-/// a [`DataKeySource`] (production: `stack_kms::StackKms`; tests:
-/// `stack_kms::FakeDataKeySource`).
+/// The CipherStash cipher: a vitaminc [`Cipher`] whose per-leaf keys are ZeroKMS
+/// data keys, sourced through a [`DataKeySource`] (production:
+/// [`StackKms`]; tests: `stack_kms::FakeDataKeySource`), carrying the
+/// per-keyset PRF that [Searchable Encrypted Metadata](crate::sem) terms are
+/// derived from.
 ///
 /// Per-leaf keying is deliberate: every value access requires its own data-key
 /// retrieval, so individual value accesses are visible (and auditable) as
 /// ZeroKMS key-retrieval events.
+///
+/// A cipher is always able to derive index terms: its keyset's
+/// [`IndexKey`](stack_kms::IndexKey) is loaded during construction, so a
+/// backend that cannot supply one is not a Stack Encrypt backend. Plain AEAD
+/// with no indexing is what `vitaminc` alone provides.
+///
+/// # Construction
+///
+/// [`new`](Self::new) is the default path — a ZeroKMS client from the
+/// environment, on that client's default keyset:
+///
+/// ```no_run
+/// # async fn example() -> Result<(), stack_encrypt::Error> {
+/// use stack_encrypt::StackCipher;
+///
+/// let cipher = StackCipher::new().await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// Override with [`builder`](Self::builder) — a different keyset, or a
+/// different data-key source entirely:
+///
+/// ```
+/// # async fn example() -> Result<(), stack_encrypt::Error> {
+/// use stack_encrypt::StackCipher;
+/// use stack_kms::FakeDataKeySource;
+///
+/// let cipher = StackCipher::builder()
+///     .kms(FakeDataKeySource::new())
+///     .init()
+///     .await?;
+/// # Ok(())
+/// # }
+/// # tokio_test_block_on(example()).unwrap();
+/// # fn tokio_test_block_on<F: std::future::Future>(f: F) -> F::Output {
+/// #     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(f)
+/// # }
+/// ```
+///
+/// Construction is async because it resolves the keyset and loads its index
+/// key — one ZeroKMS round-trip, paid once.
 pub struct StackCipher<K> {
     kms: K,
-    keyset_id: Option<Uuid>,
+    /// The resolved keyset. Every generate/retrieve call is pinned to it, and
+    /// the PRF below is keyed by *this* keyset's index key: sealing data keys
+    /// under one keyset while deriving terms under another's index key would
+    /// make every query silently match nothing.
+    keyset_id: Uuid,
+    prf: vitaminc_hmac::HmacSha256Prf,
+}
+
+impl StackCipher<StackKms<stack_auth::AutoStrategy>> {
+    /// Build a cipher over a ZeroKMS client configured from the environment,
+    /// on that client's default keyset.
+    ///
+    /// Equivalent to `StackCipher::builder().init()`. For a different keyset
+    /// or a different data-key source, use [`builder`](Self::builder).
+    pub async fn new() -> Result<Self, Error> {
+        Self::builder().init().await
+    }
+
+    /// Start building a cipher: pick a keyset, or supply a data-key source
+    /// other than the environment's ZeroKMS client.
+    pub fn builder() -> StackCipherBuilder {
+        StackCipherBuilder {
+            kms: FromEnv,
+            keyset: None,
+        }
+    }
 }
 
 impl<K> StackCipher<K> {
-    /// Create a cipher over the given data-key source, using the source's
-    /// default keyset.
-    pub fn new(kms: K) -> Self {
-        Self {
+    /// The keyset every generate/retrieve call is pinned to, and whose index
+    /// key keys [`prf`](Self::prf).
+    pub fn keyset_id(&self) -> Uuid {
+        self.keyset_id
+    }
+
+    /// The PRF index terms are derived from, keyed by this cipher's keyset.
+    ///
+    /// Public so that other crates can implement their own term types against
+    /// this cipher (see [`crate::sem`]).
+    pub fn prf(&self) -> &vitaminc_hmac::HmacSha256Prf {
+        &self.prf
+    }
+
+    /// The underlying data-key source.
+    pub fn kms(&self) -> &K {
+        &self.kms
+    }
+}
+
+/// The state of a [`StackCipherBuilder`] that has not been given a data-key
+/// source: [`init`](StackCipherBuilder::init) will build a ZeroKMS client from
+/// the environment.
+pub struct FromEnv;
+
+/// Builder for a [`StackCipher`]. See [`StackCipher::builder`].
+pub struct StackCipherBuilder<K = FromEnv> {
+    kms: K,
+    keyset: Option<IdentifiedBy>,
+}
+
+impl<K> StackCipherBuilder<K> {
+    /// Pin the cipher to a specific keyset, by id or by name, instead of the
+    /// data-key source's default.
+    pub fn keyset(mut self, keyset: IdentifiedBy) -> Self {
+        self.keyset = Some(keyset);
+        self
+    }
+}
+
+impl StackCipherBuilder<FromEnv> {
+    /// Use an explicit data-key source rather than building a ZeroKMS client
+    /// from the environment.
+    ///
+    /// This is the seam for a custom authentication strategy: build a
+    /// [`StackKms`] with [`StackKmsBuilder`] and hand it over. It is also how
+    /// tests inject `stack_kms::FakeDataKeySource`.
+    pub fn kms<K>(self, kms: K) -> StackCipherBuilder<K> {
+        StackCipherBuilder {
             kms,
-            keyset_id: None,
+            keyset: self.keyset,
         }
     }
 
-    /// Pin generate/retrieve operations to a specific ZeroKMS keyset.
-    pub fn with_keyset_id(mut self, keyset_id: Uuid) -> Self {
-        self.keyset_id = Some(keyset_id);
-        self
+    /// Build a ZeroKMS client from the environment, then resolve the keyset
+    /// and load its index key.
+    pub async fn init(self) -> Result<StackCipher<StackKms<stack_auth::AutoStrategy>>, Error> {
+        let kms = StackKmsBuilder::auto()?
+            .with_key_provider(EnvKeyProvider)
+            .build()
+            .await?;
+        StackCipherBuilder {
+            kms,
+            keyset: self.keyset,
+        }
+        .init()
+        .await
     }
+}
+
+impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
+    /// Resolve the keyset and load its index key, producing a cipher that can
+    /// both seal values and derive index terms.
+    pub async fn init(self) -> Result<StackCipher<K>, Error> {
+        let (keyset_id, index_key) = self.kms.load_index_key(self.keyset).await?;
+        let prf = hmac_prf_from_index_key(&index_key);
+        Ok(StackCipher {
+            kms: self.kms,
+            keyset_id,
+            prf,
+        })
+    }
+}
+
+/// Build the local HMAC-SHA256 PRF from a per-keyset
+/// [`IndexKey`](stack_kms::IndexKey), wiping the intermediate stack copy of the
+/// raw key bytes.
+fn hmac_prf_from_index_key(index_key: &stack_kms::IndexKey) -> vitaminc_hmac::HmacSha256Prf {
+    use zeroize::Zeroize;
+
+    // `[u8; 32]` is `Copy`: the move into `Protected` leaves this stack copy
+    // behind, so wipe it before returning.
+    let mut key = *index_key.key();
+    let prf = vitaminc_hmac::HmacSha256Prf::new(Protected::new(key));
+    key.zeroize();
+    prf
 }
 
 impl<K: DataKeySource> StackCipher<K> {
@@ -188,7 +346,7 @@ impl<K: DataKeySource> StackCipher<K> {
                 let expected = payloads.len();
                 let keys = self
                     .kms
-                    .retrieve_keys(payloads, self.keyset_id, None)
+                    .retrieve_keys(payloads, Some(self.keyset_id), None)
                     .await?;
                 if keys.len() != expected {
                     return Err(Error::KeyCountMismatch {
@@ -419,7 +577,7 @@ impl PendingStackCipherText {
 
         let keys = cipher
             .kms
-            .generate_keys(payloads, cipher.keyset_id, None)
+            .generate_keys(payloads, Some(cipher.keyset_id), None)
             .await?;
 
         if keys.len() != count {

@@ -3,24 +3,26 @@
 
 use std::cmp::Ordering;
 
-use stack_encrypt::sem::{MatchOptions, TermGenerator, Tokenizer};
-use stack_kms::{FakeDataKeySource, IdentifiedBy, IndexKeySource};
+use stack_encrypt::sem::{MatchOptions, Tokenizer};
+use stack_encrypt::StackCipher;
+use stack_kms::{FakeDataKeySource, IdentifiedBy};
 use uuid::Uuid;
 
-async fn generator() -> TermGenerator<vitaminc_hmac::HmacSha256Prf> {
-    let (_, index_key) = FakeDataKeySource::new()
-        .load_index_key(None)
+async fn generator() -> StackCipher<FakeDataKeySource> {
+    StackCipher::builder()
+        .kms(FakeDataKeySource::new())
+        .init()
         .await
-        .expect("load index key");
-    TermGenerator::from_index_key(&index_key)
+        .expect("build cipher")
 }
 
-async fn generator_for(keyset: Uuid) -> TermGenerator<vitaminc_hmac::HmacSha256Prf> {
-    let (_, index_key) = FakeDataKeySource::new()
-        .load_index_key(Some(IdentifiedBy::Uuid(keyset)))
+async fn generator_for(keyset: Uuid) -> StackCipher<FakeDataKeySource> {
+    StackCipher::builder()
+        .kms(FakeDataKeySource::new())
+        .keyset(IdentifiedBy::Uuid(keyset))
+        .init()
         .await
-        .expect("load index key");
-    TermGenerator::from_index_key(&index_key)
+        .expect("build cipher")
 }
 
 #[tokio::test]

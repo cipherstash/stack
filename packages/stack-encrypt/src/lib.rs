@@ -25,15 +25,10 @@
 //! ```no_run
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! use stack_encrypt::StackCipher;
-//! use stack_kms::StackKmsBuilder;
 //!
 //! // Credentials and the client key come from the environment
 //! // (CS_CLIENT_ID / CS_CLIENT_KEY, plus an access token strategy).
-//! let kms = StackKmsBuilder::auto()?
-//!     .with_key_provider(stack_kms::EnvKeyProvider)
-//!     .build()
-//!     .await?;
-//! let cipher = StackCipher::new(kms);
+//! let cipher = StackCipher::new().await?;
 //!
 //! let ciphertext = cipher.encrypt("secret message".to_string(), ()).await?;
 //! let plaintext: String = cipher.decrypt(ciphertext, ()).await?;
@@ -68,21 +63,19 @@
 //! `[dev-dependencies]`:
 //!
 //! ```
-//! # fn main() -> Result<(), stack_encrypt::Error> {
-//! # tokio::runtime::Builder::new_current_thread()
-//! #     .build()
-//! #     .expect("runtime")
-//! #     .block_on(async {
 //! use stack_encrypt::StackCipher;
 //! use stack_kms::FakeDataKeySource;
 //!
-//! let cipher = StackCipher::new(FakeDataKeySource::new());
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+//! let cipher = StackCipher::builder()
+//!     .kms(FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
 //! let ct = cipher.encrypt(vec!["a".to_string(), "b".to_string()], ()).await?;
 //! let pt: Vec<String> = cipher.decrypt(ct, ()).await?;
 //! assert_eq!(pt, vec!["a", "b"]);
-//! # Ok(())
-//! # })
-//! # }
+//! # Ok::<(), stack_encrypt::Error>(())
+//! # }).unwrap();
 //! ```
 //!
 //! # Storing ciphertext
@@ -126,8 +119,8 @@ mod cipher;
 pub mod sem;
 
 pub use cipher::{
-    BoxedPassthrough, Error, PendingStackCipherText, SealedValue, StackCipher, StackCipherText,
-    StackDecipher,
+    BoxedPassthrough, Error, FromEnv, PendingStackCipherText, SealedValue, StackCipher,
+    StackCipherBuilder, StackCipherText, StackDecipher,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they
