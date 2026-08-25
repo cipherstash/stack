@@ -86,8 +86,9 @@ describe('the release SQL build stamps the requested version', () => {
       'utf8',
     )
 
+    const tagExpansion = '${' + 'TAG#eql-}'
     expect(workflow).toContain(
-      'mise run --force build --version "${TAG#eql-}"',
+      `mise run --force build --version "${tagExpansion}"`,
     )
   })
 })
