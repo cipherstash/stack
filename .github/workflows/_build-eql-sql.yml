@@ -80,9 +80,11 @@ jobs:
       - name: Build EQL release
         # Strip `eql-` so eql_v3.version() reports bare semver. An empty TAG
         # falls through to tasks/build.sh's `${usage_version:-DEV}` default.
+        # `--version` is not one of build.sh's declared mise sources, so force
+        # regeneration when unchanged SQL is being stamped for a new release.
         env:
           TAG: ${{ inputs.tag }}
-        run: mise run build --version "${TAG#eql-}"
+        run: mise run --force build --version "${TAG#eql-}"
 
       # Artifact and release paths are workspace-root relative.
       - name: Upload EQL artifacts
