@@ -57,9 +57,10 @@ describe('packages/cli vitest alias map', () => {
     )
   })
 
-  it.each(
-    targets,
-  )('%s resolves to a file that exists', (_specifier, target) => {
-    expect(existsSync(target), `missing alias target: ${target}`).toBe(true)
-  })
+  it.each(targets)(
+    '%s resolves to a file that exists',
+    (_specifier, target) => {
+      expect(existsSync(target), `missing alias target: ${target}`).toBe(true)
+    },
+  )
 })

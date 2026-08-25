@@ -13,34 +13,38 @@ import { typedEntries, V3_MATRIX } from './catalog'
 describe('eql_v3 type-driven domain matrix (runtime)', () => {
   // `typedEntries` keeps `eqlType` as `EqlV3TypeName` rather than widening to
   // `string`, so the key stays precisely typed through the callback.
-  it.each(
-    typedEntries(V3_MATRIX),
-  )('%s: builder, eqlType, capabilities and build() are consistent', (eqlType, spec) => {
-    const col = spec.builder('value')
+  it.each(typedEntries(V3_MATRIX))(
+    '%s: builder, eqlType, capabilities and build() are consistent',
+    (eqlType, spec) => {
+      const col = spec.builder('value')
 
-    expect(col).toBeInstanceOf(spec.ColumnClass)
-    expect(col.getName()).toBe('value')
-    expect(col.getEqlType()).toBe(eqlType)
-    expect(col.getQueryCapabilities()).toStrictEqual(spec.capabilities)
-    expect(col.isQueryable()).toBe(
-      Object.values(spec.capabilities).some(Boolean),
-    )
+      expect(col).toBeInstanceOf(spec.ColumnClass)
+      expect(col.getName()).toBe('value')
+      expect(col.getEqlType()).toBe(eqlType)
+      expect(col.getQueryCapabilities()).toStrictEqual(spec.capabilities)
+      expect(col.isQueryable()).toBe(
+        Object.values(spec.capabilities).some(Boolean),
+      )
 
-    // Full-fidelity `build()` check: exactly `{ cast_as, indexes }`, no extra
-    // keys — so SDK-facing metadata (eqlType/capabilities) can never leak.
-    expect(col.build()).toStrictEqual({
-      cast_as: spec.castAs,
-      indexes: spec.indexes,
-    })
-  })
+      // Full-fidelity `build()` check: exactly `{ cast_as, indexes }`, no extra
+      // keys — so SDK-facing metadata (eqlType/capabilities) can never leak.
+      expect(col.build()).toStrictEqual({
+        cast_as: spec.castAs,
+        indexes: spec.indexes,
+      })
+    },
+  )
 
   it.each([
     'public.eql_v3_text_ord_ore',
     'public.eql_v3_text_ord',
     'public.eql_v3_text_search',
-  ] as const)('%s uses non-empty positive samples for live Postgres inserts', (eqlType) => {
-    expect(V3_MATRIX[eqlType].samples[0]).not.toBe('')
-  })
+  ] as const)(
+    '%s uses non-empty positive samples for live Postgres inserts',
+    (eqlType) => {
+      expect(V3_MATRIX[eqlType].samples[0]).not.toBe('')
+    },
+  )
 
   // `timestamp` domains set `cast_as: 'timestamp'` (not `'date'`) precisely to
   // preserve the time-of-day. The live matrix can only PROVE that preservation

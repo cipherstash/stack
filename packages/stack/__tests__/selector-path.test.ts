@@ -2,20 +2,19 @@ import { describe, expect, it } from 'vitest'
 import { unsupportedLeafReason } from '@/eql/v3/selector-path'
 
 describe('unsupportedLeafReason', () => {
-  it.each([
-    'value',
-    42,
-    true,
-  ])('accepts the JSON scalar %j for equality', (value) => {
-    expect(unsupportedLeafReason(value, false)).toBeNull()
-  })
+  it.each(['value', 42, true])(
+    'accepts the JSON scalar %j for equality',
+    (value) => {
+      expect(unsupportedLeafReason(value, false)).toBeNull()
+    },
+  )
 
-  it.each([
-    'value',
-    42,
-  ])('accepts the orderable JSON scalar %j for ordering', (value) => {
-    expect(unsupportedLeafReason(value, true)).toBeNull()
-  })
+  it.each(['value', 42])(
+    'accepts the orderable JSON scalar %j for ordering',
+    (value) => {
+      expect(unsupportedLeafReason(value, true)).toBeNull()
+    },
+  )
 
   it.each([
     ['null', null, /non-null scalar leaf/],

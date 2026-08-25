@@ -89,29 +89,30 @@ describe('v3 matrix live round-trip (all domains × samples)', () => {
     ) as Array<Record<string, unknown>>
   }, 60000)
 
-  it.each(
-    roundTripCases,
-  )('%s round-trips through the model path', (_label, col, sample, i) => {
-    // Guard against a false pass: the field must be a real ciphertext, not a
-    // plaintext value that slipped through un-encrypted. Scalar domains carry it
-    // at a top-level `c`; a JSON (`eql_v3_json_search`) document is an ste_vec payload
-    // (`{ k: 'sv', sv: [...] }`) with NO top-level `c`, so it is guarded by the
-    // presence of its `sv` array instead.
-    const payload = encrypted[i][col] as { k?: unknown; sv?: unknown }
-    if (payload?.k === 'sv') {
-      expect(Array.isArray(payload.sv)).toBe(true)
-    } else {
-      expect(payload).toHaveProperty('c')
-    }
+  it.each(roundTripCases)(
+    '%s round-trips through the model path',
+    (_label, col, sample, i) => {
+      // Guard against a false pass: the field must be a real ciphertext, not a
+      // plaintext value that slipped through un-encrypted. Scalar domains carry it
+      // at a top-level `c`; a JSON (`eql_v3_json_search`) document is an ste_vec payload
+      // (`{ k: 'sv', sv: [...] }`) with NO top-level `c`, so it is guarded by the
+      // presence of its `sv` array instead.
+      const payload = encrypted[i][col] as { k?: unknown; sv?: unknown }
+      if (payload?.k === 'sv') {
+        expect(Array.isArray(payload.sv)).toBe(true)
+      } else {
+        expect(payload).toHaveProperty('c')
+      }
 
-    const actual = decrypted[i][col]
-    if (sample instanceof Date) {
-      expect(actual).toBeInstanceOf(Date)
-      expect(actual).toEqual(sample)
-    } else {
-      expect(actual).toStrictEqual(sample)
-    }
-  })
+      const actual = decrypted[i][col]
+      if (sample instanceof Date) {
+        expect(actual).toBeInstanceOf(Date)
+        expect(actual).toEqual(sample)
+      } else {
+        expect(actual).toStrictEqual(sample)
+      }
+    },
+  )
 
   // Mirrors number-protect.test.ts: NaN/±Infinity (number domains) and
   // out-of-range i64 values (bigint domains) must be rejected. The guard

@@ -328,24 +328,25 @@ describe('a wasm-inline client reconstructs every plaintext axis from stored EQL
     )
   }, 60000)
 
-  it.each(
-    matrixCases,
-  )('%s decrypts from a stored EQL v2 payload through the wasm model path', (label, slug, castAs, sample, row) => {
-    const payload = encrypted[row][slug]
+  it.each(matrixCases)(
+    '%s decrypts from a stored EQL v2 payload through the wasm model path',
+    (label, slug, castAs, sample, row) => {
+      const payload = encrypted[row][slug]
 
-    // THE guard for this block. Without it the whole matrix would pass just as
-    // happily against v3 fixtures and prove nothing about legacy reads. The
-    // identifier is checked too: `encryptBulk` correlates positionally, so a
-    // mis-zipped batch could otherwise assert one domain's sample against
-    // another domain's ciphertext and go green by coincidence.
-    expect(payload).toMatchObject({
-      v: 2,
-      i: { t: matrix.tableName, c: slug },
-    })
-    expect(payload).toHaveProperty('c')
+      // THE guard for this block. Without it the whole matrix would pass just as
+      // happily against v3 fixtures and prove nothing about legacy reads. The
+      // identifier is checked too: `encryptBulk` correlates positionally, so a
+      // mis-zipped batch could otherwise assert one domain's sample against
+      // another domain's ciphertext and go green by coincidence.
+      expect(payload).toMatchObject({
+        v: 2,
+        i: { t: matrix.tableName, c: slug },
+      })
+      expect(payload).toHaveProperty('c')
 
-    expectReconstructed(decrypted[row][slug], castAs, sample, label)
-  })
+      expectReconstructed(decrypted[row][slug], castAs, sample, label)
+    },
+  )
 
   /**
    * `decryptModel` and `bulkDecryptModels` are separate wrappers over

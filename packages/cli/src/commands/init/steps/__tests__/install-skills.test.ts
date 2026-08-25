@@ -113,18 +113,17 @@ describe('skillDestinations', () => {
 
   // These handoffs inline the skill bodies into AGENTS.md instead of copying
   // directories, and `init` performs no handoff — so there is nothing to write.
-  it.each([
-    'agents-md',
-    'lovable',
-    'wizard',
-  ] as const)('installs no directories for --target %s', (target) => {
-    expect(
-      skillDestinations(
-        env({ cli: { claudeCode: true, codex: false } }),
-        target,
-      ),
-    ).toEqual([])
-  })
+  it.each(['agents-md', 'lovable', 'wizard'] as const)(
+    'installs no directories for --target %s',
+    (target) => {
+      expect(
+        skillDestinations(
+          env({ cli: { claudeCode: true, codex: false } }),
+          target,
+        ),
+      ).toEqual([])
+    },
+  )
 })
 
 describe('guessIntegration', () => {

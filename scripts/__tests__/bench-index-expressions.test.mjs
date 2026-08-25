@@ -121,29 +121,26 @@ describe('bench index expressions match the EQL v3 operator lowering', () => {
     )
   })
 
-  it.each(
-    INDEX_CONTRACTS,
-  )('$index is built on the function $operator inlines to', ({
-    index,
-    operator,
-    inlinesTo,
-  }) => {
-    const body = functionBody(sql, operator)
+  it.each(INDEX_CONTRACTS)(
+    '$index is built on the function $operator inlines to',
+    ({ index, operator, inlinesTo }) => {
+      const body = functionBody(sql, operator)
 
-    // The operator really does lower to this function — if the bundle
-    // changes shape, this fails here rather than silently passing the
-    // schema check below against a stale assumption.
-    expect(
-      eqlCalls(body),
-      `${operator} no longer calls eql_v3.${inlinesTo}`,
-    ).toContain(inlinesTo)
+      // The operator really does lower to this function — if the bundle
+      // changes shape, this fails here rather than silently passing the
+      // schema check below against a stale assumption.
+      expect(
+        eqlCalls(body),
+        `${operator} no longer calls eql_v3.${inlinesTo}`,
+      ).toContain(inlinesTo)
 
-    expect(
-      eqlCalls(indexes.get(index)),
-      `${index} must index eql_v3.${inlinesTo}(...) — the expression the ` +
-        'operator inlines to — or the planner can never match it',
-    ).toEqual([inlinesTo])
-  })
+      expect(
+        eqlCalls(indexes.get(index)),
+        `${index} must index eql_v3.${inlinesTo}(...) — the expression the ` +
+          'operator inlines to — or the planner can never match it',
+      ).toEqual([inlinesTo])
+    },
+  )
 
   it('the operator wrappers are inlinable (LANGUAGE sql IMMUTABLE STRICT)', () => {
     for (const { operator } of INDEX_CONTRACTS) {

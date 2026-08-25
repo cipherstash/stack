@@ -109,12 +109,15 @@ export function runJsonSuite(makeAdapter: () => JsonIntegrationAdapter): void {
         ['lt', 35, ['ada', 'grace']],
         ['gte', 30, ['ada', 'zoe']],
         ['gt', 100, []],
-      ] as const)('%s(%s) matches the plaintext oracle', async (comparison, value, expected) => {
-        await expectRows(
-          { kind: 'selector', comparison, path: '$.age', value },
-          [...expected],
-        )
-      })
+      ] as const)(
+        '%s(%s) matches the plaintext oracle',
+        async (comparison, value, expected) => {
+          await expectRows(
+            { kind: 'selector', comparison, path: '$.age', value },
+            [...expected],
+          )
+        },
+      )
 
       it('uses explicit absent-path semantics', async () => {
         await expectRows(

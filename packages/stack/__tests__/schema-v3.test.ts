@@ -185,13 +185,16 @@ describe('eql_v3 encryptedTable', () => {
     'toString',
     'valueOf',
     'hasOwnProperty',
-  ])('throws when a column name (%s) collides with a reserved property', (reserved) => {
-    expect(() =>
-      encryptedTable('users', {
-        [reserved]: types.TextSearch(reserved),
-      }),
-    ).toThrow(/reserved EncryptedTable property/)
-  })
+  ])(
+    'throws when a column name (%s) collides with a reserved property',
+    (reserved) => {
+      expect(() =>
+        encryptedTable('users', {
+          [reserved]: types.TextSearch(reserved),
+        }),
+      ).toThrow(/reserved EncryptedTable property/)
+    },
+  )
 
   it('build() assembles { tableName, columns } with built column configs', () => {
     const users = encryptedTable('users', {
@@ -364,28 +367,34 @@ describe('eql_v3 catalog-driven query capability sweep', () => {
         (queryType) => [eqlType, spec, queryType] as const,
       ),
     ),
-  )('%s + queryType=%s: gating matches configured indexes', (_eqlType, spec, queryType) => {
-    const col = spec.builder('value')
-    if (queryTypeAllowed(spec.indexes, queryType)) {
-      expect(() => resolveIndexType(col as never, queryType)).not.toThrow()
-    } else {
-      // Broad message match: for a blocked equality the resolver reports the
-      // missing `unique`; for orderAndRange/freeTextSearch the missing ore/match.
-      expect(() => resolveIndexType(col as never, queryType)).toThrow(
-        /not configured/,
-      )
-    }
-  })
+  )(
+    '%s + queryType=%s: gating matches configured indexes',
+    (_eqlType, spec, queryType) => {
+      const col = spec.builder('value')
+      if (queryTypeAllowed(spec.indexes, queryType)) {
+        expect(() => resolveIndexType(col as never, queryType)).not.toThrow()
+      } else {
+        // Broad message match: for a blocked equality the resolver reports the
+        // missing `unique`; for orderAndRange/freeTextSearch the missing ore/match.
+        expect(() => resolveIndexType(col as never, queryType)).toThrow(
+          /not configured/,
+        )
+      }
+    },
+  )
 
   it.each(
     typedEntries(V3_MATRIX).filter(
       ([, spec]) => Object.keys(spec.indexes ?? {}).length === 0,
     ),
-  )('%s: querying a storage-only column with no queryType throws', (_eqlType, spec) => {
-    expect(() => resolveIndexType(spec.builder('value') as never)).toThrow(
-      /no indexes configured/,
-    )
-  })
+  )(
+    '%s: querying a storage-only column with no queryType throws',
+    (_eqlType, spec) => {
+      expect(() => resolveIndexType(spec.builder('value') as never)).toThrow(
+        /no indexes configured/,
+      )
+    },
+  )
 
   // Spot-check the exact messages for a queryable-but-misused column, so the
   // broad regex above doesn't let a message regression slip through.
@@ -415,11 +424,14 @@ describe('eql_v3 equality via the ordering index on order-capable columns (regre
     ['date_ord', types.DateOrd, 'ope'],
     ['numeric_ord', types.NumericOrd, 'ope'],
     ['IntegerOrdOre', types.IntegerOrdOre, 'ore'],
-  ] as const)('%s resolves equality to its ordering index (%s)', (_name, builder, ordering) => {
-    expect(resolveIndexType(builder('value'), 'equality')).toEqual({
-      indexType: ordering,
-    })
-  })
+  ] as const)(
+    '%s resolves equality to its ordering index (%s)',
+    (_name, builder, ordering) => {
+      expect(resolveIndexType(builder('value'), 'equality')).toEqual({
+        indexType: ordering,
+      })
+    },
+  )
 
   it('preserves v2: an orderAndRange-only column still throws on equality (no-v2-change)', () => {
     // v2 EncryptedColumn has no getQueryCapabilities, so the equality-via-ORE
@@ -445,29 +457,38 @@ describe('eql_v3 text order domains carry the hm (unique) index (regression)', (
       { unique: { token_filters: [] }, ore: {} },
     ],
     ['text_ord', types.TextOrd, { unique: { token_filters: [] }, ope: {} }],
-  ] as const)('%s emits both unique (hm) and its ordering index', (_name, builder, expected) => {
-    expect(builder('c').build().indexes).toStrictEqual(expected)
-  })
+  ] as const)(
+    '%s emits both unique (hm) and its ordering index',
+    (_name, builder, expected) => {
+      expect(builder('c').build().indexes).toStrictEqual(expected)
+    },
+  )
 
   it.each([
     ['IntegerOrdOre', types.IntegerOrdOre, { ore: {} }],
     ['IntegerOrd', types.IntegerOrd, { ope: {} }],
     ['date_ord_ore', types.DateOrdOre, { ore: {} }],
     ['numeric_ord', types.NumericOrd, { ope: {} }],
-  ] as const)('%s (numeric/date order) emits its ordering index only — no unique', (_name, builder, expected) => {
-    expect(builder('c').build().indexes).toStrictEqual(expected)
-  })
+  ] as const)(
+    '%s (numeric/date order) emits its ordering index only — no unique',
+    (_name, builder, expected) => {
+      expect(builder('c').build().indexes).toStrictEqual(expected)
+    },
+  )
 
   // With `unique` present, text order equality resolves to the hm index (not
   // ORE): `resolvesEqualityViaOre` only fires when `unique` is ABSENT.
   it.each([
     ['text_ord_ore', types.TextOrdOre],
     ['text_ord', types.TextOrd],
-  ] as const)('%s resolves equality to the unique (hm) index', (_name, builder) => {
-    expect(resolveIndexType(builder('value'), 'equality')).toEqual({
-      indexType: 'unique',
-    })
-  })
+  ] as const)(
+    '%s resolves equality to the unique (hm) index',
+    (_name, builder) => {
+      expect(resolveIndexType(builder('value'), 'equality')).toEqual({
+        indexType: 'unique',
+      })
+    },
+  )
 })
 
 describe('eql_v3 timestamp domains emit cast_as "timestamp" (time-of-day preserved)', () => {

@@ -272,21 +272,21 @@ export function runFamilySuite(
 
         for (const kind of ['gt', 'gte', 'lt', 'lte'] as const) {
           if (!positive.has(kind)) continue
-          it.each([
-            min,
-            max,
-          ])(`${kind}(%s) matches the oracle`, async (bound) => {
-            const cmp = {
-              gt: (c: number) => c > 0,
-              gte: (c: number) => c >= 0,
-              lt: (c: number) => c < 0,
-              lte: (c: number) => c <= 0,
-            }[kind]
-            await expectRows(
-              { kind, column: slug, value: bound },
-              keysWhere((v) => cmp(comparePlain(v, bound))),
-            )
-          })
+          it.each([min, max])(
+            `${kind}(%s) matches the oracle`,
+            async (bound) => {
+              const cmp = {
+                gt: (c: number) => c > 0,
+                gte: (c: number) => c >= 0,
+                lt: (c: number) => c < 0,
+                lte: (c: number) => c <= 0,
+              }[kind]
+              await expectRows(
+                { kind, column: slug, value: bound },
+                keysWhere((v) => cmp(comparePlain(v, bound))),
+              )
+            },
+          )
         }
 
         if (positive.has('between')) {
@@ -315,30 +315,31 @@ export function runFamilySuite(
         }
 
         if (positive.has('matches')) {
-          it.each(needlesFrom(values))('matches: $label', async ({
-            needle,
-          }) => {
-            await expectRows(
-              { kind: 'matches', column: slug, needle },
-              keysWhere((v) => matchesPlain(v, needle)),
-            )
-          })
+          it.each(needlesFrom(values))(
+            'matches: $label',
+            async ({ needle }) => {
+              await expectRows(
+                { kind: 'matches', column: slug, needle },
+                keysWhere((v) => matchesPlain(v, needle)),
+              )
+            },
+          )
         }
 
         if (positive.has('order')) {
-          it.each([
-            'asc',
-            'desc',
-          ] as const)('order(%s) returns rows in plaintext order', async (direction) => {
-            // Order is the one operation whose ROW ORDER is the assertion, so
-            // it does not go through `expectRows` (which sorts both sides).
-            const rows = await adapter.run(table, {
-              kind: 'order',
-              column: slug,
-              direction,
-            })
-            expect(rows).toEqual(sortedKeysFor(spec, rowKeys, direction))
-          })
+          it.each(['asc', 'desc'] as const)(
+            'order(%s) returns rows in plaintext order',
+            async (direction) => {
+              // Order is the one operation whose ROW ORDER is the assertion, so
+              // it does not go through `expectRows` (which sorts both sides).
+              const rows = await adapter.run(table, {
+                kind: 'order',
+                column: slug,
+                direction,
+              })
+              expect(rows).toEqual(sortedKeysFor(spec, rowKeys, direction))
+            },
+          )
         }
 
         // Structural, never capability-gated: a NULL plaintext is a SQL NULL on

@@ -1151,29 +1151,28 @@ describe('eqlMigrationCommand — Drizzle', () => {
   // work a partial sweep did complete (#786). A throw that is not an object —
   // or not one carrying those arrays — must fall through to the plain "could
   // not sweep" message and still fail closed, not crash on a property read.
-  it.each([
-    null,
-    undefined,
-    'rewrite failed',
-  ])('handles a non-object sweep failure without masking it: %s', async (failure) => {
-    const out = join(tmp, 'drizzle')
-    mkdirSync(out, { recursive: true })
-    spawnMock.mockImplementation(() => {
-      writeFileSync(join(out, '0000_install-eql.sql'), '')
-      return { status: 0, stdout: '', stderr: '' }
-    })
-    rewriteMock.spy.mockRejectedValueOnce(failure)
+  it.each([null, undefined, 'rewrite failed'])(
+    'handles a non-object sweep failure without masking it: %s',
+    async (failure) => {
+      const out = join(tmp, 'drizzle')
+      mkdirSync(out, { recursive: true })
+      spawnMock.mockImplementation(() => {
+        writeFileSync(join(out, '0000_install-eql.sql'), '')
+        return { status: 0, stdout: '', stderr: '' }
+      })
+      rewriteMock.spy.mockRejectedValueOnce(failure)
 
-    await expect(
-      eqlMigrationCommand({ drizzle: true, out }),
-    ).rejects.toBeInstanceOf(CliExit)
-    expect(clack.log.warn).toHaveBeenCalledWith(
-      expect.stringContaining('Could not sweep'),
-    )
-    expect(clack.log.error).toHaveBeenCalledWith(
-      expect.stringContaining('unsafe or unverified SQL'),
-    )
-  })
+      await expect(
+        eqlMigrationCommand({ drizzle: true, out }),
+      ).rejects.toBeInstanceOf(CliExit)
+      expect(clack.log.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Could not sweep'),
+      )
+      expect(clack.log.error).toHaveBeenCalledWith(
+        expect.stringContaining('unsafe or unverified SQL'),
+      )
+    },
+  )
 
   /**
    * A sweep that threw PART WAY through has already written staged twins to

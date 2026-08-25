@@ -63,29 +63,31 @@ describe('encryptQuery with protect-ffi 0.30 SteVec operations', () => {
     expectQueryJson(unwrapResult(result))
   }, 30000)
 
-  it.each([
-    'zoe',
-    42,
-  ])('returns a ciphertext-free selector ordering term for %j', async (value) => {
-    const result = await client.encryptQuery(value, {
-      column: documents.metadata,
-      table: documents,
-      queryType: 'steVecTerm',
-    })
-    expectOrderingTerm(unwrapResult(result))
-  }, 30000)
+  it.each(['zoe', 42])(
+    'returns a ciphertext-free selector ordering term for %j',
+    async (value) => {
+      const result = await client.encryptQuery(value, {
+        column: documents.metadata,
+        table: documents,
+        queryType: 'steVecTerm',
+      })
+      expectOrderingTerm(unwrapResult(result))
+    },
+    30000,
+  )
 
-  it.each([
-    { role: 'admin' },
-    ['admin', 'user'],
-  ])('uses default structural containment for %j', async (value) => {
-    const result = await client.encryptQuery(value, {
-      column: documents.metadata,
-      table: documents,
-      queryType: 'searchableJson',
-    })
-    expectQueryJson(unwrapResult(result))
-  }, 30000)
+  it.each([{ role: 'admin' }, ['admin', 'user']])(
+    'uses default structural containment for %j',
+    async (value) => {
+      const result = await client.encryptQuery(value, {
+        column: documents.metadata,
+        table: documents,
+        queryType: 'searchableJson',
+      })
+      expectQueryJson(unwrapResult(result))
+    },
+    30000,
+  )
 
   it('infers selector versus containment when queryType is omitted', async () => {
     const selector = await client.encryptQuery('$.user.email', {

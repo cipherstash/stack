@@ -34,24 +34,25 @@ const GENERATED_SOURCES: Array<[string, string]> = [
   ['generatePlaceholderClient', generatePlaceholderClient('drizzle')],
 ]
 
-describe.each(
-  GENERATED_SOURCES,
-)('drizzle scaffold — %s', (_name, generated) => {
-  it('names the drizzle package root, never the removed ./v3 subpath', () => {
-    expect(generated).toContain('@cipherstash/stack-drizzle')
-    expect(generated).not.toContain('@cipherstash/stack-drizzle/v3')
-  })
+describe.each(GENERATED_SOURCES)(
+  'drizzle scaffold — %s',
+  (_name, generated) => {
+    it('names the drizzle package root, never the removed ./v3 subpath', () => {
+      expect(generated).toContain('@cipherstash/stack-drizzle')
+      expect(generated).not.toContain('@cipherstash/stack-drizzle/v3')
+    })
 
-  it('uses the de-suffixed export names, never the removed *V3 aliases', () => {
-    expect(generated).not.toContain('extractEncryptionSchemaV3')
-    expect(generated).not.toContain('createEncryptionOperatorsV3')
-  })
+    it('uses the de-suffixed export names, never the removed *V3 aliases', () => {
+      expect(generated).not.toContain('extractEncryptionSchemaV3')
+      expect(generated).not.toContain('createEncryptionOperatorsV3')
+    })
 
-  it('never scaffolds the removed EQL v2 authoring surface', () => {
-    expect(generated).not.toContain('encryptedType')
-    expect(generated).not.toContain('eql_v2_encrypted')
-  })
-})
+    it('never scaffolds the removed EQL v2 authoring surface', () => {
+      expect(generated).not.toContain('encryptedType')
+      expect(generated).not.toContain('eql_v2_encrypted')
+    })
+  },
+)
 
 describe('generatePlaceholderClient (drizzle)', () => {
   const placeholder = generatePlaceholderClient('drizzle')

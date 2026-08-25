@@ -326,21 +326,22 @@ describe('a legacy DynamoDB read reconstructs every plaintext axis', () => {
     }
   })
 
-  it.each(
-    matrixCases,
-  )('%s: rebuilds a v2 envelope and reconstructs the plaintext', (label, slug, castAs, sample, row) => {
-    // THE guard for this file. Rebuilt as v2 — `k: 'ct'` and `v: 2` — around
-    // the CURRENT v3 descriptor's identifier, carrying the stored ciphertext
-    // untouched. Drop the version branch and this goes red per domain.
-    expect(handedToFfi[row]?.[slug]).toEqual({
-      i: { c: slug, t: matrix.tableName },
-      v: 2,
-      k: 'ct',
-      c: ciphertext({ slug, row }),
-    })
+  it.each(matrixCases)(
+    '%s: rebuilds a v2 envelope and reconstructs the plaintext',
+    (label, slug, castAs, sample, row) => {
+      // THE guard for this file. Rebuilt as v2 — `k: 'ct'` and `v: 2` — around
+      // the CURRENT v3 descriptor's identifier, carrying the stored ciphertext
+      // untouched. Drop the version branch and this goes red per domain.
+      expect(handedToFfi[row]?.[slug]).toEqual({
+        i: { c: slug, t: matrix.tableName },
+        v: 2,
+        k: 'ct',
+        c: ciphertext({ slug, row }),
+      })
 
-    expectReconstructed(decrypted[row]?.[slug], castAs, sample, label)
-  })
+      expectReconstructed(decrypted[row]?.[slug], castAs, sample, label)
+    },
+  )
 
   /**
    * `decryptModel` and `bulkDecryptModels` are separate wrappers over the same

@@ -158,27 +158,28 @@ describe('makeEqlV3Column', () => {
     expect(builder?.getEqlType()).toBe('public.eql_v3_integer_ord')
   })
 
-  it.each(
-    typedEntries(V3_MATRIX),
-  )('%s round-trips through makeEqlV3Column and pgTable', (eqlType, spec) => {
-    const columnName = slug(eqlType)
-    const builder = spec.builder(columnName)
-    const column = makeEqlV3Column(builder)
+  it.each(typedEntries(V3_MATRIX))(
+    '%s round-trips through makeEqlV3Column and pgTable',
+    (eqlType, spec) => {
+      const columnName = slug(eqlType)
+      const builder = spec.builder(columnName)
+      const column = makeEqlV3Column(builder)
 
-    expect(builder.getEqlType()).toBe(eqlType)
-    expect(builder).toBeInstanceOf(spec.ColumnClass)
-    expect(isEqlV3Column(column)).toBe(true)
-    expect(getEqlV3Column(columnName, column)?.getEqlType()).toBe(eqlType)
+      expect(builder.getEqlType()).toBe(eqlType)
+      expect(builder).toBeInstanceOf(spec.ColumnClass)
+      expect(isEqlV3Column(column)).toBe(true)
+      expect(getEqlV3Column(columnName, column)?.getEqlType()).toBe(eqlType)
 
-    const table = pgTable('users', { [columnName]: column } as never)
-    const pgColumn = (table as Record<string, { getSQLType(): string }>)[
-      columnName
-    ]
-    // getSQLType() is the bare (unqualified) domain — what drizzle-kit emits —
-    // while recovery still yields the qualified builder identity.
-    expect(pgColumn?.getSQLType()).toBe(slug(eqlType))
-    expect(getEqlV3Column(columnName, pgColumn)?.getEqlType()).toBe(eqlType)
-  })
+      const table = pgTable('users', { [columnName]: column } as never)
+      const pgColumn = (table as Record<string, { getSQLType(): string }>)[
+        columnName
+      ]
+      // getSQLType() is the bare (unqualified) domain — what drizzle-kit emits —
+      // while recovery still yields the qualified builder identity.
+      expect(pgColumn?.getSQLType()).toBe(slug(eqlType))
+      expect(getEqlV3Column(columnName, pgColumn)?.getEqlType()).toBe(eqlType)
+    },
+  )
 
   // The `toDriver`/`fromDriver` closures wired into `customType` (column.ts) are
   // otherwise only tested via the standalone codec functions, so the wiring

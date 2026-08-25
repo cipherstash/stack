@@ -141,42 +141,54 @@ afterAll(async () => {
 }, 30000)
 
 describe('v3 drizzle NULL persistence across tiers (live pg)', () => {
-  it.each(TIERS)('$domain isNull selects the NULL row', async (tier) => {
-    expect(await selectRowKeys(ops.isNull(columnFor(tier.key)))).toEqual([
-      ROW_A,
-    ])
-  }, 30000)
+  it.each(TIERS)(
+    '$domain isNull selects the NULL row',
+    async (tier) => {
+      expect(await selectRowKeys(ops.isNull(columnFor(tier.key)))).toEqual([
+        ROW_A,
+      ])
+    },
+    30000,
+  )
 
-  it.each(TIERS)('$domain isNotNull selects the present row', async (tier) => {
-    expect(await selectRowKeys(ops.isNotNull(columnFor(tier.key)))).toEqual([
-      ROW_B,
-    ])
-  }, 30000)
+  it.each(TIERS)(
+    '$domain isNotNull selects the present row',
+    async (tier) => {
+      expect(await selectRowKeys(ops.isNotNull(columnFor(tier.key)))).toEqual([
+        ROW_B,
+      ])
+    },
+    30000,
+  )
 
-  it.each(
-    TIERS,
-  )('$domain stores a real NULL for the null row', async (tier) => {
-    const [row] = await sqlClient.unsafe<Array<{ value: unknown }>>(
-      `SELECT "${tier.db}"::jsonb AS value FROM ${TABLE_NAME}
+  it.each(TIERS)(
+    '$domain stores a real NULL for the null row',
+    async (tier) => {
+      const [row] = await sqlClient.unsafe<Array<{ value: unknown }>>(
+        `SELECT "${tier.db}"::jsonb AS value FROM ${TABLE_NAME}
          WHERE test_run_id = $1 AND row_key = $2`,
-      [RUN, ROW_A],
-    )
-    // Without this, a missing fixture makes `row.value` raise a TypeError and
-    // the failure reads as a null-handling bug rather than an absent row.
-    expect(row).toBeDefined()
-    expect(row.value).toBeNull()
-  }, 30000)
+        [RUN, ROW_A],
+      )
+      // Without this, a missing fixture makes `row.value` raise a TypeError and
+      // the failure reads as a null-handling bug rather than an absent row.
+      expect(row).toBeDefined()
+      expect(row.value).toBeNull()
+    },
+    30000,
+  )
 
-  it.each(
-    TIERS,
-  )('$domain present cell decrypts to its plaintext', async (tier) => {
-    const [row] = await sqlClient.unsafe<Array<{ value: unknown }>>(
-      `SELECT "${tier.db}"::jsonb AS value FROM ${TABLE_NAME}
+  it.each(TIERS)(
+    '$domain present cell decrypts to its plaintext',
+    async (tier) => {
+      const [row] = await sqlClient.unsafe<Array<{ value: unknown }>>(
+        `SELECT "${tier.db}"::jsonb AS value FROM ${TABLE_NAME}
          WHERE test_run_id = $1 AND row_key = $2`,
-      [RUN, ROW_B],
-    )
-    expect(row.value).toHaveProperty('c')
-    const decrypted = unwrap(await client.decrypt(row.value as never))
-    expect(decrypted).toBe(tier.sample)
-  }, 30000)
+        [RUN, ROW_B],
+      )
+      expect(row.value).toHaveProperty('c')
+      const decrypted = unwrap(await client.decrypt(row.value as never))
+      expect(decrypted).toBe(tier.sample)
+    },
+    30000,
+  )
 })

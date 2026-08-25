@@ -92,33 +92,36 @@ describe('wasm-inline Result contract — failure path', () => {
     ['bulkEncrypt', 'encryptBulk', 'EncryptionError'],
     ['decrypt', 'decrypt', 'DecryptionError'],
     ['bulkDecrypt', 'decryptBulkFallible', 'DecryptionError'],
-  ])('%s surfaces a %s FFI throw as { failure } typed %s', async (method, ffiName, expectedType) => {
-    ;(ffi as Record<string, ReturnType<typeof vi.fn>>)[
-      ffiName
-    ].mockRejectedValueOnce(new Error('ffi exploded'))
+  ])(
+    '%s surfaces a %s FFI throw as { failure } typed %s',
+    async (method, ffiName, expectedType) => {
+      ;(ffi as Record<string, ReturnType<typeof vi.fn>>)[
+        ffiName
+      ].mockRejectedValueOnce(new Error('ffi exploded'))
 
-    const c = await client()
-    const opts = { table: users, column: users.email }
-    const call: Record<string, () => Promise<unknown>> = {
-      encrypt: () => c.encrypt('a@b.com', opts),
-      encryptQuery: () => c.encryptQuery('a@b.com', opts),
-      bulkEncrypt: () => c.bulkEncrypt([{ plaintext: 'a@b.com', ...opts }]),
-      decrypt: () => c.decrypt(ct()),
-      bulkDecrypt: () => c.bulkDecrypt([ct()]),
-    }
+      const c = await client()
+      const opts = { table: users, column: users.email }
+      const call: Record<string, () => Promise<unknown>> = {
+        encrypt: () => c.encrypt('a@b.com', opts),
+        encryptQuery: () => c.encryptQuery('a@b.com', opts),
+        bulkEncrypt: () => c.bulkEncrypt([{ plaintext: 'a@b.com', ...opts }]),
+        decrypt: () => c.decrypt(ct()),
+        bulkDecrypt: () => c.bulkDecrypt([ct()]),
+      }
 
-    // Resolves — it must NOT reject. That is the regression this guards.
-    const result = (await call[method]()) as {
-      data?: unknown
-      failure?: { type: string; message: string }
-    }
+      // Resolves — it must NOT reject. That is the regression this guards.
+      const result = (await call[method]()) as {
+        data?: unknown
+        failure?: { type: string; message: string }
+      }
 
-    expect(result.data).toBeUndefined()
-    expect(result.failure).toMatchObject({
-      type: expectedType,
-      message: 'ffi exploded',
-    })
-  })
+      expect(result.data).toBeUndefined()
+      expect(result.failure).toMatchObject({
+        type: expectedType,
+        message: 'ffi exploded',
+      })
+    },
+  )
 
   // Non-Error rejections must keep their detail. `withResult`'s default
   // `ensureError` would replace them with `new Error('Something went wrong')`,
@@ -137,19 +140,22 @@ describe('wasm-inline Result contract — failure path', () => {
       { code: 'EQL_X', detail: 'bad domain' },
       '{"code":"EQL_X","detail":"bad domain"}',
     ],
-  ])('preserves the detail of %s rejection', async (_label, thrown, expected) => {
-    ffi.encrypt.mockRejectedValueOnce(thrown)
+  ])(
+    'preserves the detail of %s rejection',
+    async (_label, thrown, expected) => {
+      ffi.encrypt.mockRejectedValueOnce(thrown)
 
-    const c = await client()
-    const result = await c.encrypt('a@b.com', {
-      table: users,
-      column: users.email,
-    })
+      const c = await client()
+      const result = await c.encrypt('a@b.com', {
+        table: users,
+        column: users.email,
+      })
 
-    expect(result.failure?.type).toBe('EncryptionError')
-    expect(result.failure?.message).toBe(expected)
-    expect(result.failure?.message).not.toBe('Something went wrong')
-  })
+      expect(result.failure?.type).toBe('EncryptionError')
+      expect(result.failure?.message).toBe(expected)
+      expect(result.failure?.message).not.toBe('Something went wrong')
+    },
+  )
 
   it('falls back to String() for a value JSON cannot serialize', async () => {
     // A cycle makes JSON.stringify throw; the catch must still yield a

@@ -105,31 +105,32 @@ Module.syncBuiltinESMExports()
 const currentTarget = `${process.platform}-${process.arch}`
 
 describe('stash doctor — a platform binary is missing', () => {
-  it.each(
-    TARGETS.map((t) => [t.pkg, t] as const),
-  )('fails the %s row, names the package and exits non-zero', async (_pkg, target) => {
-    // Wider than the 100-col default so the note's `Missing package:` line is
-    // asserted as written rather than as clack happened to wrap it.
-    const r = render(['doctor'], {
-      env: { NODE_OPTIONS: hideBinaryOf(target) },
-      cols: 140,
-    })
-    const { exitCode } = await r.exit
+  it.each(TARGETS.map((t) => [t.pkg, t] as const))(
+    'fails the %s row, names the package and exits non-zero',
+    async (_pkg, target) => {
+      // Wider than the 100-col default so the note's `Missing package:` line is
+      // asserted as written rather than as clack happened to wrap it.
+      const r = render(['doctor'], {
+        env: { NODE_OPTIONS: hideBinaryOf(target) },
+        cols: 140,
+      })
+      const { exitCode } = await r.exit
 
-    expect(
-      exitCode,
-      `stash doctor passed with no ${target.pkg} binary installed:\n${r.output}`,
-    ).toBe(1)
-    expect(r.output).toContain(
-      `${target.label} — ${messages.doctor.nativeBinaryMissing}`,
-    )
-    expect(r.output).toContain(messages.doctor.problemsFound)
+      expect(
+        exitCode,
+        `stash doctor passed with no ${target.pkg} binary installed:\n${r.output}`,
+      ).toBe(1)
+      expect(r.output).toContain(
+        `${target.label} — ${messages.doctor.nativeBinaryMissing}`,
+      )
+      expect(r.output).toContain(messages.doctor.problemsFound)
 
-    // The guidance, not just a red row: the platform package by name is the
-    // one piece of it a user cannot work out for themselves.
-    expect(r.output).toContain(`${target.pkg}-${currentTarget}`)
-    expect(r.output).not.toContain('Fatal error')
-  })
+      // The guidance, not just a red row: the platform package by name is the
+      // one piece of it a user cannot work out for themselves.
+      expect(r.output).toContain(`${target.pkg}-${currentTarget}`)
+      expect(r.output).not.toContain('Fatal error')
+    },
+  )
 
   it('fails only the row whose binary is missing', async () => {
     // Non-vacuity for the pair above. Both probes went through

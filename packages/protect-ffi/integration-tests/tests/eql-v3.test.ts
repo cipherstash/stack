@@ -219,35 +219,35 @@ describe('eql v3 scalar round-trips', async () => {
     },
   ]
 
-  test.each(cases)('round-trips $column as eql_v3.$domain', async ({
-    column,
-    plaintext,
-    expected,
-    domain,
-    keys,
-  }) => {
-    const ciphertext = await encrypt(client, {
-      plaintext,
-      column,
-      table: 'v3users',
-    })
+  test.each(cases)(
+    'round-trips $column as eql_v3.$domain',
+    async ({ column, plaintext, expected, domain, keys }) => {
+      const ciphertext = await encrypt(client, {
+        plaintext,
+        column,
+        table: 'v3users',
+      })
 
-    const payload = expectV3Scalar(ciphertext)
-    expect(
-      Object.keys(payload).sort(),
-      `the config must map ${column} onto eql_v3.${domain}`,
-    ).toEqual(keys)
+      const payload = expectV3Scalar(ciphertext)
+      expect(
+        Object.keys(payload).sort(),
+        `the config must map ${column} onto eql_v3.${domain}`,
+      ).toEqual(keys)
 
-    const decrypted = await decrypt(client, { ciphertext })
-    if (expected !== undefined) {
-      expect(decrypted).toBe(expected)
-    } else if (typeof plaintext === 'number' && !Number.isInteger(plaintext)) {
-      // decimal decrypts to a string representation
-      expect(Number(decrypted)).toBeCloseTo(plaintext)
-    } else {
-      expect(decrypted).toBe(plaintext)
-    }
-  })
+      const decrypted = await decrypt(client, { ciphertext })
+      if (expected !== undefined) {
+        expect(decrypted).toBe(expected)
+      } else if (
+        typeof plaintext === 'number' &&
+        !Number.isInteger(plaintext)
+      ) {
+        // decimal decrypts to a string representation
+        expect(Number(decrypted)).toBeCloseTo(plaintext)
+      } else {
+        expect(decrypted).toBe(plaintext)
+      }
+    },
+  )
 
   test('round-trips a date column as eql_v3.date_ord_ore', async () => {
     const d = new Date('2024-03-01T00:00:00.000Z')
@@ -488,28 +488,23 @@ describe('eql v3 query encryption', async () => {
     },
   ]
 
-  test.each(
-    scalarQueryCases,
-  )('scalar $indexType query on $column returns a term-only eql_v3.query_$domain operand', async ({
-    column,
-    plaintext,
-    indexType,
-    domain,
-    keys,
-  }) => {
-    const result = await encryptQuery(client, {
-      plaintext,
-      column,
-      table: 'v3users',
-      indexType,
-    })
+  test.each(scalarQueryCases)(
+    'scalar $indexType query on $column returns a term-only eql_v3.query_$domain operand',
+    async ({ column, plaintext, indexType, domain, keys }) => {
+      const result = await encryptQuery(client, {
+        plaintext,
+        column,
+        table: 'v3users',
+        indexType,
+      })
 
-    const operand = expectV3QueryOperand(result)
-    expect(
-      Object.keys(operand).sort(),
-      `the operand must target eql_v3.query_${domain}`,
-    ).toEqual(keys)
-  })
+      const operand = expectV3QueryOperand(result)
+      expect(
+        Object.keys(operand).sort(),
+        `the operand must target eql_v3.query_${domain}`,
+      ).toEqual(keys)
+    },
+  )
 
   test('selector query returns the bare selector hash as a string', async () => {
     const selector = await encryptQuery(client, {

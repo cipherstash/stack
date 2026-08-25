@@ -80,50 +80,57 @@ const clientFor = (variant: 'v2' | 'v3'): EncryptionClient =>
 describe.each([
   ['v2', { column: users.score, table: users }],
   ['v3', { column: usersV3.score, table: usersV3 }],
-] as const)('encrypt with lock context rejects non-finite numbers (%s domain)', (variant, target) => {
-  it('rejects NaN and never reaches the FFI', async () => {
-    const result = await clientFor(variant)
-      .encrypt(Number.NaN, target)
-      .withLockContext(new LockContext())
+] as const)(
+  'encrypt with lock context rejects non-finite numbers (%s domain)',
+  (variant, target) => {
+    it('rejects NaN and never reaches the FFI', async () => {
+      const result = await clientFor(variant)
+        .encrypt(Number.NaN, target)
+        .withLockContext(new LockContext())
 
-    expect(failure(result)).toBeDefined()
-    expect(failure(result)?.message).toContain('Cannot encrypt NaN value')
-    expect(vi.mocked(ffi.encrypt)).not.toHaveBeenCalled()
-  })
+      expect(failure(result)).toBeDefined()
+      expect(failure(result)?.message).toContain('Cannot encrypt NaN value')
+      expect(vi.mocked(ffi.encrypt)).not.toHaveBeenCalled()
+    })
 
-  it('rejects +Infinity and never reaches the FFI', async () => {
-    const result = await clientFor(variant)
-      .encrypt(Number.POSITIVE_INFINITY, target)
-      .withLockContext(new LockContext())
+    it('rejects +Infinity and never reaches the FFI', async () => {
+      const result = await clientFor(variant)
+        .encrypt(Number.POSITIVE_INFINITY, target)
+        .withLockContext(new LockContext())
 
-    expect(failure(result)).toBeDefined()
-    expect(failure(result)?.message).toContain('Cannot encrypt Infinity value')
-    expect(vi.mocked(ffi.encrypt)).not.toHaveBeenCalled()
-  })
+      expect(failure(result)).toBeDefined()
+      expect(failure(result)?.message).toContain(
+        'Cannot encrypt Infinity value',
+      )
+      expect(vi.mocked(ffi.encrypt)).not.toHaveBeenCalled()
+    })
 
-  it('rejects -Infinity and never reaches the FFI', async () => {
-    const result = await clientFor(variant)
-      .encrypt(Number.NEGATIVE_INFINITY, target)
-      .withLockContext(new LockContext())
+    it('rejects -Infinity and never reaches the FFI', async () => {
+      const result = await clientFor(variant)
+        .encrypt(Number.NEGATIVE_INFINITY, target)
+        .withLockContext(new LockContext())
 
-    expect(failure(result)).toBeDefined()
-    expect(failure(result)?.message).toContain('Cannot encrypt Infinity value')
-    expect(vi.mocked(ffi.encrypt)).not.toHaveBeenCalled()
-  })
+      expect(failure(result)).toBeDefined()
+      expect(failure(result)?.message).toContain(
+        'Cannot encrypt Infinity value',
+      )
+      expect(vi.mocked(ffi.encrypt)).not.toHaveBeenCalled()
+    })
 
-  it('accepts a finite number and forwards it to the FFI', async () => {
-    // Positive control: proves the guards above reject *because* of the value,
-    // not because the lock-context path is broken for all numbers.
-    const result = await clientFor(variant)
-      .encrypt(42, target)
-      .withLockContext(new LockContext())
+    it('accepts a finite number and forwards it to the FFI', async () => {
+      // Positive control: proves the guards above reject *because* of the value,
+      // not because the lock-context path is broken for all numbers.
+      const result = await clientFor(variant)
+        .encrypt(42, target)
+        .withLockContext(new LockContext())
 
-    expect(failure(result)).toBeUndefined()
-    expect(vi.mocked(ffi.encrypt)).toHaveBeenCalledTimes(1)
-    const opts = vi.mocked(ffi.encrypt).mock.calls[0][1]
-    expect(opts.plaintext).toBe(42)
-  })
-})
+      expect(failure(result)).toBeUndefined()
+      expect(vi.mocked(ffi.encrypt)).toHaveBeenCalledTimes(1)
+      const opts = vi.mocked(ffi.encrypt).mock.calls[0][1]
+      expect(opts.plaintext).toBe(42)
+    })
+  },
+)
 
 // The `bigint` analog of the NaN/±Infinity guard above. `bigint` domains map to
 // Postgres `int8`, so a plaintext outside the signed 64-bit range cannot be
@@ -144,26 +151,32 @@ describe('encrypt rejects out-of-range bigint (i64 bounds)', () => {
     ['i64::MIN', INT64_MIN],
     ['zero', 0n],
     ['a negative', -42n],
-  ] as const)('accepts in-range bigint %s and forwards it to the FFI', async (_label, value) => {
-    const result = await clientV3.encrypt(value, target)
+  ] as const)(
+    'accepts in-range bigint %s and forwards it to the FFI',
+    async (_label, value) => {
+      const result = await clientV3.encrypt(value, target)
 
-    expect(failure(result)).toBeUndefined()
-    expect(vi.mocked(ffi.encrypt)).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(ffi.encrypt).mock.calls[0][1].plaintext).toBe(value)
-  })
+      expect(failure(result)).toBeUndefined()
+      expect(vi.mocked(ffi.encrypt)).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(ffi.encrypt).mock.calls[0][1].plaintext).toBe(value)
+    },
+  )
 
   it.each([
     ['2^63 (i64::MAX + 1)', 9223372036854775808n],
     ['-(2^63) - 1 (i64::MIN - 1)', -9223372036854775809n],
-  ] as const)('rejects out-of-range bigint %s and never reaches the FFI', async (_label, value) => {
-    const result = await clientV3.encrypt(value, target)
+  ] as const)(
+    'rejects out-of-range bigint %s and never reaches the FFI',
+    async (_label, value) => {
+      const result = await clientV3.encrypt(value, target)
 
-    expect(failure(result)).toBeDefined()
-    expect(failure(result)?.message).toContain(
-      'Cannot encrypt bigint value out of int64 range',
-    )
-    expect(vi.mocked(ffi.encrypt)).not.toHaveBeenCalled()
-  })
+      expect(failure(result)).toBeDefined()
+      expect(failure(result)?.message).toContain(
+        'Cannot encrypt bigint value out of int64 range',
+      )
+      expect(vi.mocked(ffi.encrypt)).not.toHaveBeenCalled()
+    },
+  )
 
   it('rejects out-of-range bigint on the lock-context arm too', async () => {
     const result = await clientV3

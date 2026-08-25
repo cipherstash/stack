@@ -48,26 +48,31 @@ describe('encryptQuery with searchableJson', () => {
     { role: 'admin' },
     { user: { profile: { role: 'admin' } } },
     ['admin', 'user'],
-  ])('uses default structural containment for %j', async (value) => {
-    const result = await client.encryptQuery(value, {
-      column: documents.metadata,
-      table: documents,
-      queryType: 'searchableJson',
-    })
-    expectContainment(unwrapResult(result))
-  }, 30000)
+  ])(
+    'uses default structural containment for %j',
+    async (value) => {
+      const result = await client.encryptQuery(value, {
+        column: documents.metadata,
+        table: documents,
+        queryType: 'searchableJson',
+      })
+      expectContainment(unwrapResult(result))
+    },
+    30000,
+  )
 
-  it.each([
-    42,
-    true,
-  ])('rejects a top-level JSON scalar containment needle (%j)', async (value) => {
-    const result = await client.encryptQuery(value, {
-      column: documents.metadata,
-      table: documents,
-      queryType: 'searchableJson',
-    })
-    expectFailure(result)
-  }, 30000)
+  it.each([42, true])(
+    'rejects a top-level JSON scalar containment needle (%j)',
+    async (value) => {
+      const result = await client.encryptQuery(value, {
+        column: documents.metadata,
+        table: documents,
+        queryType: 'searchableJson',
+      })
+      expectFailure(result)
+    },
+    30000,
+  )
 
   it('infers the same operation when queryType is omitted', async () => {
     const explicit = await client.encryptQuery(
@@ -108,21 +113,22 @@ describe('encryptQuery with searchableJson', () => {
     expectContainment(data[1])
   }, 30000)
 
-  it.each([
-    'composite-literal',
-    'escaped-composite-literal',
-  ] as const)('supports %s formatting for containment needles', async (returnType) => {
-    const result = await client.encryptQuery(
-      { role: 'admin' },
-      {
-        column: documents.metadata,
-        table: documents,
-        queryType: 'searchableJson',
-        returnType,
-      },
-    )
-    expect(typeof unwrapResult(result)).toBe('string')
-  }, 30000)
+  it.each(['composite-literal', 'escaped-composite-literal'] as const)(
+    'supports %s formatting for containment needles',
+    async (returnType) => {
+      const result = await client.encryptQuery(
+        { role: 'admin' },
+        {
+          column: documents.metadata,
+          table: documents,
+          queryType: 'searchableJson',
+          returnType,
+        },
+      )
+      expect(typeof unwrapResult(result)).toBe('string')
+    },
+    30000,
+  )
 
   it('supports lock-context chaining for JSON query terms', async () => {
     const operation = client.encryptQuery(

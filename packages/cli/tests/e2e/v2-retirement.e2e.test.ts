@@ -30,15 +30,18 @@ describe('retired EQL v2 CLI surface', () => {
     ['--no-proxy', '--no-proxy'],
     ['--proxy=true', '--proxy'],
     ['--no-proxy=true', '--no-proxy'],
-  ] as const)('rejects retired init flag `%s` before init work', async (arg, flag) => {
-    const result = await runPiped(['init', arg], { timeoutMs: 2_000 })
+  ] as const)(
+    'rejects retired init flag `%s` before init work',
+    async (arg, flag) => {
+      const result = await runPiped(['init', arg], { timeoutMs: 2_000 })
 
-    expect(result.timedOut).toBe(false)
-    expect(result.exitCode).toBe(1)
-    expect(output(result)).toContain(flag)
-    expect(output(result)).toMatch(/removed|retired/i)
-    expect(output(result)).toMatch(/EQL v3/i)
-  })
+      expect(result.timedOut).toBe(false)
+      expect(result.exitCode).toBe(1)
+      expect(output(result)).toContain(flag)
+      expect(output(result)).toMatch(/removed|retired/i)
+      expect(output(result)).toMatch(/EQL v3/i)
+    },
+  )
 
   it.each([
     '--eql-version=2',

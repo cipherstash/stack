@@ -186,19 +186,19 @@ describe('frozen-publisher docs track the map', () => {
     expect(FROZEN_PUBLISHERS.size).toBeGreaterThan(0)
   })
 
-  it.each(DOCS)('$file documents the eql freeze iff the map carries it', ({
-    file,
-    instruction,
-  }) => {
-    expect(
-      satisfies(instruction, read(file)),
-      FROZEN_PUBLISHERS.has(EQL)
-        ? `${file} no longer tells an agent about the ${EQL} freeze, but ` +
-            'FROZEN_PUBLISHERS still carries it.'
-        : `${EQL} has left FROZEN_PUBLISHERS (Phase-5 cutover), so ${file} ` +
-            'must stop instructing agents about the freeze.',
-    ).toBe(FROZEN_PUBLISHERS.has(EQL))
-  })
+  it.each(DOCS)(
+    '$file documents the eql freeze iff the map carries it',
+    ({ file, instruction }) => {
+      expect(
+        satisfies(instruction, read(file)),
+        FROZEN_PUBLISHERS.has(EQL)
+          ? `${file} no longer tells an agent about the ${EQL} freeze, but ` +
+              'FROZEN_PUBLISHERS still carries it.'
+          : `${EQL} has left FROZEN_PUBLISHERS (Phase-5 cutover), so ${file} ` +
+              'must stop instructing agents about the freeze.',
+      ).toBe(FROZEN_PUBLISHERS.has(EQL))
+    },
+  )
 
   it.each(DOCS)('$file freezes only what the map freezes', ({ file }) => {
     const claimed = [...new Set(foreignPublishClaims(read(file)))]
