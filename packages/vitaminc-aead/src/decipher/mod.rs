@@ -144,8 +144,9 @@ pub trait Decipher<'c>: Sized {
     /// for Rust-native ciphers, callers downcast to a concrete type themselves
     /// (concrete deciphers may offer a typed convenience for this).
     ///
-    /// See [`Cipher::passthrough`] — passthrough values are non-sensitive by
-    /// design and must not be used to carry secret data.
+    /// See [`Cipher::passthrough`](crate::Cipher::passthrough) — passthrough
+    /// values are non-sensitive by design and must not be used to carry
+    /// secret data.
     fn decrypt_passthrough(self) -> Self::Ok<Self::Passthrough>;
 
     /// Decrypt an `Option<T>`, authenticating against `aad`. The decipher inspects the

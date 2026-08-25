@@ -137,7 +137,7 @@ pub trait Cipher: Sized {
     ///
     /// The value has the cipher's [`Passthrough`](Cipher::Passthrough) type,
     /// stored opaquely and returned as-is by the corresponding
-    /// [`Decipher::decrypt_passthrough`].
+    /// [`Decipher::decrypt_passthrough`](crate::Decipher::decrypt_passthrough).
     ///
     /// # ⚠️ Non-sensitive data only
     ///
