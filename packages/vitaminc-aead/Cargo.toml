@@ -35,3 +35,5 @@ hlist = []
 [dev-dependencies]
 quickcheck = "1.1.0"
 quickcheck_macros = "1.2.0"
+# Compile-fail tests for the derive macros' guards — see tests/derive_ui.rs.
+trybuild = "1.0.118"

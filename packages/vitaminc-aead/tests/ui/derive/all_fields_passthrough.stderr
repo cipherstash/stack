@@ -1,0 +1,5 @@
+error: every field is `#[aead(passthrough)]`, so nothing would be encrypted and the ciphertext would carry no tag — neither the associated data nor the entry keys would be authenticated. Encrypt at least one field, or do not derive Encrypt for this struct at all.
+ --> tests/ui/derive/all_fields_passthrough.rs:7:8
+  |
+7 | struct Row {
+  |        ^^^

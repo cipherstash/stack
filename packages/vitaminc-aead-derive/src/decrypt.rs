@@ -2,7 +2,7 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{parse_quote, DeriveInput, GenericParam, Generics, Result};
+use syn::{parse_quote, DeriveInput, Result};
 
 use crate::{
     attrs::ContainerAttrs,
@@ -55,7 +55,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                 Shape::Map(fields) => visit_map_body(krate, name, fields),
                 _ => visit_empty_body(krate, name),
             };
-            let phantom = phantom_data(&input.generics);
+            let phantom = phantom_data(name, &ty_generics);
 
             quote! {
                 struct __Visitor #visitor_decl_generics (
@@ -198,25 +198,22 @@ fn visit_empty_body(krate: &syn::Path, name: &syn::Ident) -> TokenStream {
 
 /// The visitor carries no data, but an inner item cannot inherit the outer
 /// generics — it has to redeclare them, and every declared parameter must be
-/// used. `PhantomData` over a tuple of all of them does that without
-/// affecting auto-trait inference: each component is `Send` whenever the
-/// parameter it stands for is.
-fn phantom_data(generics: &Generics) -> TokenStream {
-    let parts = generics.params.iter().map(|param| match param {
-        GenericParam::Lifetime(lt) => {
-            let lifetime = &lt.lifetime;
-            quote!(& #lifetime ())
-        }
-        GenericParam::Type(ty) => {
-            let ident = &ty.ident;
-            quote!(#ident)
-        }
-        GenericParam::Const(c) => {
-            let ident = &c.ident;
-            quote!([u8; #ident])
-        }
-    });
-    quote!((#(#parts,)*))
+/// used. `PhantomData<fn() -> Self::Value>` uses all of them at once, whatever
+/// kind they are.
+///
+/// Naming the parameters individually does not work: a const parameter can
+/// only appear in a type as a generic argument, so the obvious `[u8; N]`
+/// silently requires `N: usize` and makes `#[derive(Decrypt)]` fail on
+/// `struct S<const N: u32>` with an error pointing at the macro. Referencing
+/// them through the value type sidesteps the question — each parameter is
+/// passed along exactly as declared.
+///
+/// A function pointer rather than the value itself, because the visitor owns
+/// nothing: `fn() -> T` imposes no drop obligation on `T` and is `Send` and
+/// `Sync` regardless of what `T` is, so the visitor stays usable for every
+/// type the derive accepts.
+fn phantom_data(name: &syn::Ident, ty_generics: &syn::TypeGenerics<'_>) -> TokenStream {
+    quote!(fn() -> #name #ty_generics)
 }
 
 #[cfg(test)]
@@ -393,11 +390,9 @@ mod tests {
     }
 
     /// The visitor cannot inherit the outer generics, so it redeclares them and
-    /// must use every one. Each `PhantomData` component stands for exactly its
-    /// parameter, which keeps auto-trait inference — `Send`, `Sync` — intact.
-    // The expected `PhantomData` tuple carries a trailing comma, which rustfmt
-    // strips from `quote!`'s body — changing the tokens compared. Opt out.
-    #[rustfmt::skip]
+    /// must use every one. Routing them through the value type uses all of them
+    /// at once, whatever kind they are — and a const parameter has nowhere else
+    /// to appear in a type, so naming them individually would not work.
     #[test]
     fn the_visitor_uses_every_redeclared_parameter() {
         let out = expand(parse_quote! {
@@ -408,12 +403,26 @@ mod tests {
             }
         });
 
+        assert_contains(&out, quote!(struct __Visitor<'a, T, const N: usize>));
         assert_contains(
             &out,
-            quote!(struct __Visitor<'a, T, const N: usize>(
-                ::core::marker::PhantomData<(&'a (), T, [u8; N],)>
-            );),
+            quote!(::core::marker::PhantomData<fn() -> User<'a, T, N>),
         );
+    }
+
+    /// A const parameter that is not a `usize` must derive like any other. The
+    /// previous encoding used each parameter as an array length, which silently
+    /// required `usize` and failed here — with the error blamed on the macro.
+    #[test]
+    fn a_non_usize_const_parameter_is_supported() {
+        let out = expand(parse_quote! {
+            struct User<const N: u32> {
+                value: String,
+            }
+        });
+
+        assert_contains(&out, quote!(::core::marker::PhantomData<fn() -> User<N>));
+        assert_lacks(&out, quote!([u8; N]));
     }
 
     #[test]

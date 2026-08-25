@@ -22,6 +22,10 @@ pub(crate) struct FieldInfo {
     /// `#[aead(passthrough)]`: stored in the clear, never encrypted and never
     /// authenticated.
     pub(crate) passthrough: bool,
+    /// Whether [`key`](FieldInfo::key) came from `#[aead(rename = "...")]`
+    /// rather than the field's own name. Only the newtype guard needs this —
+    /// everywhere else the rename has already been folded into `key`.
+    pub(crate) renamed: bool,
 }
 
 /// The wire shape a struct maps onto — see the crate docs.
@@ -65,14 +69,7 @@ impl Shape {
         if !named && fields.len() == 1 {
             let mut fields = fields;
             let field = fields.remove(0);
-            if field.passthrough {
-                return Err(syn::Error::new_spanned(
-                    &input.ident,
-                    "`#[aead(passthrough)]` is meaningless on a newtype struct: a newtype is \
-                     transparent, so there is no map entry to store in the clear and nothing \
-                     would be encrypted at all. Give the struct a named field instead.",
-                ));
-            }
+            reject_newtype_field_attrs(&field, input)?;
             return Ok(Shape::Newtype(Box::new(field)));
         }
 
@@ -92,6 +89,7 @@ fn collect(fields: &Fields) -> Result<Vec<FieldInfo>> {
         .enumerate()
         .map(|(index, field)| {
             let attrs = FieldAttrs::parse(&field.attrs)?;
+            let renamed = attrs.rename.is_some();
             let (key, member) = match &field.ident {
                 Some(ident) => (ident.to_string(), Member::Named(ident.clone())),
                 None => (index.to_string(), Member::Unnamed(syn::Index::from(index))),
@@ -102,6 +100,7 @@ fn collect(fields: &Fields) -> Result<Vec<FieldInfo>> {
                 local: Ident::new(&format!("__field_{index}"), Span::call_site()),
                 ty: field.ty.clone(),
                 passthrough: attrs.passthrough,
+                renamed,
             })
         })
         .collect()
@@ -122,6 +121,37 @@ fn reject_duplicate_keys(fields: &[FieldInfo], input: &DeriveInput) -> Result<()
                 ),
             ));
         }
+    }
+    Ok(())
+}
+
+/// A newtype is transparent: it encrypts exactly as its inner type, opening no
+/// map and producing no entry. Every field attribute the derive understands
+/// describes a map entry, so on a newtype there is nothing for one to describe.
+///
+/// Both are rejected rather than ignored, because ignoring them is silent and
+/// the author's intent was the opposite of what they would get. `rename` names
+/// a map key that is never written, so a value the author believes is
+/// key-bound has no key binding at all. `passthrough` asks for a cleartext
+/// entry that does not exist; honouring it instead would mean the whole value
+/// travels unencrypted, leaving a container with no tag — the same thing
+/// `MapCipher::end` refuses to seal.
+fn reject_newtype_field_attrs(field: &FieldInfo, input: &DeriveInput) -> Result<()> {
+    if field.renamed {
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "`#[aead(rename = \"...\")]` has no effect on a newtype struct: a newtype is \
+             transparent, so its value is not stored under a map key at all and there is no \
+             key to rename. Give the struct a named field instead.",
+        ));
+    }
+    if field.passthrough {
+        return Err(syn::Error::new_spanned(
+            &input.ident,
+            "`#[aead(passthrough)]` is meaningless on a newtype struct: a newtype is \
+             transparent, so there is no map entry to store in the clear and nothing \
+             would be encrypted at all. Give the struct a named field instead.",
+        ));
     }
     Ok(())
 }
@@ -202,6 +232,18 @@ mod tests {
         };
         let err = Shape::parse(&input).expect_err("all-passthrough struct should be rejected");
         assert!(err.to_string().contains("nothing would be encrypted"));
+    }
+
+    /// A newtype's value is not stored under a map key, so a `rename` names a
+    /// key that is never written. Ignoring it would leave the author believing
+    /// the value is key-bound when nothing binds it at all.
+    #[test]
+    fn rename_on_a_newtype_is_rejected() {
+        let input: DeriveInput = parse_quote!(
+            struct Token(#[aead(rename = "token")] String);
+        );
+        let err = Shape::parse(&input).expect_err("renamed newtype should be rejected");
+        assert!(err.to_string().contains("no effect on a newtype"));
     }
 
     /// A newtype is transparent, so there is no map entry for a passthrough to

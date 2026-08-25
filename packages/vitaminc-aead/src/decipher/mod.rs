@@ -257,6 +257,20 @@ pub trait MapAccess<'c> {
     /// without an intervening `next_value` is a contract violation:
     /// implementations must return an error rather than silently discarding
     /// the skipped value, since a discarded value is an unverified one.
+    ///
+    /// # ⚠️ The key is not yet authenticated
+    ///
+    /// A key is bound into the AAD its value is sealed against, so a swapped or
+    /// renamed key does not survive — but that binding is only *checked* when
+    /// [`next_value`](MapAccess::next_value) opens the value. The key this
+    /// method returns is the raw stored one, verified by nothing.
+    ///
+    /// It is therefore safe to use for what it is for: choosing which field to
+    /// decode next, since a wrong choice fails at `next_value`. It is not safe
+    /// to act on before then. A visitor that branches on the key and returns
+    /// early, selects a code path, or records the key somewhere without
+    /// reaching `next_value` has acted on attacker-modifiable input. Where a
+    /// decision must depend on the key, make it after the value opens.
     fn next_key(&mut self) -> Result<Option<String>, Self::Error>;
 
     /// Decrypt the value belonging to the key most recently returned by

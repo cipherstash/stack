@@ -1,0 +1,5 @@
+error: duplicate map key `a`: two fields would be encrypted under the same key
+ --> tests/ui/derive/duplicate_map_key.rs:7:8
+  |
+7 | struct Clash {
+  |        ^^^^^
