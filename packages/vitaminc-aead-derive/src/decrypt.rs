@@ -201,3 +201,205 @@ fn phantom_data(generics: &Generics) -> TokenStream {
     });
     quote!((#(#parts,)*))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{assert_contains, assert_lacks};
+
+    fn expand(input: DeriveInput) -> String {
+        derive(input).expect("expansion should succeed").to_string()
+    }
+
+    /// Entry order is not authenticated, so the decode reads the key first and
+    /// picks the field type from it — a positional decode would be wrong.
+    #[test]
+    fn fields_are_matched_by_key_not_position() {
+        let out = expand(parse_quote! {
+            struct User {
+                name: String,
+                age: u32,
+            }
+        });
+
+        assert_contains(&out, quote!(::next_key(&mut __map)));
+        assert_contains(&out, quote!("name" =>));
+        assert_contains(&out, quote!("age" =>));
+        assert_contains(&out, quote!(::next_value::<String>(&mut __map)));
+        assert_contains(&out, quote!(::next_value::<u32>(&mut __map)));
+    }
+
+    /// An absent entry is an unauthenticated one, so a missing field is a
+    /// rejection rather than a default.
+    #[test]
+    fn a_missing_field_is_rejected() {
+        let out = expand(parse_quote! {
+            struct User {
+                name: String,
+            }
+        });
+
+        assert_contains(
+            &out,
+            quote!(name: __field_0.ok_or(::vitaminc_aead::Unspecified)?),
+        );
+    }
+
+    /// Belt and braces over the decipher's own duplicate rejection: last-wins
+    /// would overwrite a field that has already been verified.
+    #[test]
+    fn a_duplicate_key_is_rejected() {
+        let out = expand(parse_quote! {
+            struct User {
+                name: String,
+            }
+        });
+
+        assert_contains(
+            &out,
+            quote!(if __field_0.is_some() {
+                return ::core::result::Result::Err(::vitaminc_aead::Unspecified);
+            }),
+        );
+    }
+
+    /// Unknown keys are refused, not skipped: a skipped value is one whose AAD
+    /// binding is never verified.
+    #[test]
+    fn an_unknown_key_is_rejected() {
+        let out = expand(parse_quote! {
+            struct User {
+                name: String,
+            }
+        });
+
+        assert_contains(
+            &out,
+            quote!(_ => return ::core::result::Result::Err(::vitaminc_aead::Unspecified),),
+        );
+    }
+
+    /// Mirrors the `Encrypt` side: a newtype decrypts as its inner type and is
+    /// rewrapped, so no visitor and no map are involved.
+    #[test]
+    fn newtype_is_transparent() {
+        let out = expand(parse_quote!(
+            struct Wrapper(String);
+        ));
+
+        assert_contains(
+            &out,
+            quote!(<__D as ::vitaminc_aead::Decipher<'__c>>::map_ok(
+                <String as ::vitaminc_aead::Decrypt<'__c>>::decrypt_with_aad(__decipher, __aad),
+                Wrapper,
+            )),
+        );
+        assert_lacks(&out, quote!(struct __Visitor));
+    }
+
+    /// A field-less struct accepts only the empty map: any entry at all is a
+    /// forgery attempt against a shape that has no fields to hold it.
+    #[test]
+    fn empty_struct_rejects_any_entry() {
+        let out = expand(parse_quote!(
+            struct Marker {}
+        ));
+
+        assert_contains(
+            &out,
+            quote!(
+                if <__M as ::vitaminc_aead::MapAccess<'__c>>::next_key(&mut __map)
+                    .map_err(|_| ::vitaminc_aead::Unspecified)?
+                    .is_some()
+                {
+                    return ::core::result::Result::Err(::vitaminc_aead::Unspecified);
+                }
+            ),
+        );
+        assert_contains(&out, quote!(::core::result::Result::Ok(Marker {})));
+    }
+
+    /// The visitor is required to be `'__c`, so every type parameter must
+    /// decrypt for that lifetime *and* outlive it, and every lifetime parameter
+    /// must outlive it. The type itself stays `User<'a, T>` — `'__c` is
+    /// introduced by the impl, not by the struct.
+    #[test]
+    fn generic_parameters_are_bound_to_the_decipher_lifetime() {
+        let out = expand(parse_quote! {
+            struct User<'a, T> {
+                borrowed: &'a str,
+                value: T,
+            }
+        });
+
+        assert_contains(
+            &out,
+            quote!(impl<'__c, 'a: '__c, T: ::vitaminc_aead::Decrypt<'__c> + '__c>),
+        );
+        assert_contains(&out, quote!(::vitaminc_aead::Decrypt<'__c> for User<'a, T>));
+        assert_contains(
+            &out,
+            quote!(
+                type Value = User<'a, T>;
+            ),
+        );
+        assert_contains(
+            &out,
+            quote!(__Visitor::<'a, T>(::core::marker::PhantomData)),
+        );
+    }
+
+    /// The visitor cannot inherit the outer generics, so it redeclares them and
+    /// must use every one. Each `PhantomData` component stands for exactly its
+    /// parameter, which keeps auto-trait inference — `Send`, `Sync` — intact.
+    // The expected `PhantomData` tuple carries a trailing comma, which rustfmt
+    // strips from `quote!`'s body — changing the tokens compared. Opt out.
+    #[rustfmt::skip]
+    #[test]
+    fn the_visitor_uses_every_redeclared_parameter() {
+        let out = expand(parse_quote! {
+            struct User<'a, T, const N: usize> {
+                borrowed: &'a str,
+                value: T,
+                bytes: [u8; N],
+            }
+        });
+
+        assert_contains(
+            &out,
+            quote!(struct __Visitor<'a, T, const N: usize>(
+                ::core::marker::PhantomData<(&'a (), T, [u8; N],)>
+            );),
+        );
+    }
+
+    #[test]
+    fn crate_attribute_redirects_every_path() {
+        let out = expand(parse_quote! {
+            #[aead(crate = "::vitaminc::aead")]
+            struct User {
+                name: String,
+            }
+        });
+
+        assert_contains(&out, quote!(::vitaminc::aead::Decrypt<'__c> for User));
+        assert_contains(&out, quote!(::vitaminc::aead::DecipherVisitor<'__c>));
+        assert!(
+            !out.contains("vitaminc_aead"),
+            "expansion still references the default crate path:\n{out}"
+        );
+    }
+
+    #[test]
+    fn unknown_container_attribute_is_rejected() {
+        let err = derive(parse_quote! {
+            #[aead(bogus = "x")]
+            struct User {
+                name: String,
+            }
+        })
+        .expect_err("unknown container attribute should be rejected");
+
+        assert!(err.to_string().contains("unsupported container attribute"));
+    }
+}

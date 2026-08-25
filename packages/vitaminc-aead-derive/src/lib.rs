@@ -69,6 +69,8 @@ mod attrs;
 mod decrypt;
 mod encrypt;
 mod shape;
+#[cfg(test)]
+mod test_support;
 
 /// Derive [`Encrypt`](https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Encrypt.html)
 /// for a struct. See the [crate documentation](crate) for the wire shape and
