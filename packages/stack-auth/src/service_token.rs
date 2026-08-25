@@ -10,8 +10,8 @@ use crate::{AuthError, SecretToken};
 ///
 /// Wraps a bearer credential ([`SecretToken`]) together with eagerly decoded
 /// JWT claims that are used for service discovery. The JWT is decoded (but
-/// **not** signature-verified) using [`cts_common::claims::Claims`], so only
-/// CipherStash-issued service tokens (from CTS or the access-key exchange)
+/// **not** signature-verified) using [`cts_common::claims::ClientClaims`], so
+/// only CipherStash-issued service tokens (from CTS or the access-key exchange)
 /// will have their claims resolved.
 ///
 /// # Decoded claims
@@ -188,10 +188,17 @@ impl ServiceToken {
     }
 }
 
-/// Decode the JWT payload into [`Claims`](cts_common::claims::Claims) without
-/// verifying the signature — we only read claims from a token we already hold.
-/// See [`crate::decode_jwt_payload`] for why we parse by hand.
-fn decode_claims(token_str: &str) -> Result<cts_common::claims::Claims, String> {
+/// Decode the JWT payload into
+/// [`ClientClaims`](cts_common::claims::ClientClaims) without verifying the
+/// signature — we only read claims from a token we already hold. See
+/// [`crate::decode_jwt_payload`] for why we parse by hand.
+///
+/// Deliberately *not* `cts_common::claims::Claims`: that is the server's view,
+/// where every claim is required so an unauthorised token is rejected. Reading
+/// discovery claims out of a token we already hold enforces nothing, so it must
+/// not fail over a claim it never reads — `org_id` in particular, whose absence
+/// is for ZeroKMS and CTS to reject once they have verified the signature.
+fn decode_claims(token_str: &str) -> Result<cts_common::claims::ClientClaims, String> {
     // Strip the `AuthError::InvalidToken` prefix — callers re-wrap this string
     // in `AuthError::InvalidToken(reason)`, and we don't want "Invalid token:
     // Invalid token: ..." in the final message.
@@ -206,8 +213,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    fn make_jwt(iss: &str, services: Option<BTreeMap<&str, &str>>) -> String {
-        use jsonwebtoken::{encode, EncodingKey, Header};
+    fn claims_json(iss: &str, services: Option<BTreeMap<&str, &str>>) -> serde_json::Value {
         use std::time::{SystemTime, UNIX_EPOCH};
 
         let now = SystemTime::now()
@@ -230,12 +236,30 @@ mod tests {
             claims["services"] = serde_json::to_value(svc).unwrap();
         }
 
+        claims
+    }
+
+    fn encode_claims(claims: serde_json::Value) -> String {
+        use jsonwebtoken::{encode, EncodingKey, Header};
+
         encode(
             &Header::default(),
             &claims,
             &EncodingKey::from_secret(b"test-secret"),
         )
         .unwrap()
+    }
+
+    fn make_jwt(iss: &str, services: Option<BTreeMap<&str, &str>>) -> String {
+        encode_claims(claims_json(iss, services))
+    }
+
+    /// A JWT carrying every claim [`make_jwt`] mints *except* `org_id` — i.e. a
+    /// token from a CTS that predates the claim, or one rolled back past it.
+    fn make_jwt_without_org_id(iss: &str, services: Option<BTreeMap<&str, &str>>) -> String {
+        let mut claims = claims_json(iss, services);
+        claims.as_object_mut().unwrap().remove("org_id");
+        encode_claims(claims)
     }
 
     fn services_with_zerokms(url: &str) -> Option<BTreeMap<&str, &str>> {
@@ -458,5 +482,31 @@ mod tests {
         let token = ServiceToken::new(SecretToken::new(jwt.clone()));
         let debug = format!("{:?}", token);
         assert!(!debug.contains(&jwt));
+    }
+
+    /// `org_id` is a *server-side* requirement: ZeroKMS and CTS reject a token
+    /// without it, after verifying the signature. This decode path verifies
+    /// nothing and reads only `sub`/`workspace`/`iss`/`services`, so a claim it
+    /// never looks at must not be able to break service discovery — otherwise a
+    /// CTS rolled back past the commit that started minting `org_id` takes every
+    /// SDK and CLI down with it, not just billing.
+    #[test]
+    fn resolves_discovery_claims_without_org_id() {
+        let jwt = make_jwt_without_org_id(
+            "https://cts.example.com/",
+            services_with_zerokms("https://zerokms.example.com/"),
+        );
+        let token = ServiceToken::new(SecretToken::new(jwt));
+
+        assert_eq!(token.subject().unwrap(), "CS|test-user");
+        assert_eq!(
+            token.workspace_id().unwrap().to_string(),
+            "ZVATKW3VHMFG27DY"
+        );
+        assert_eq!(token.issuer().unwrap().as_str(), "https://cts.example.com/");
+        assert_eq!(
+            token.zerokms_url().unwrap().as_str(),
+            "https://zerokms.example.com/"
+        );
     }
 }

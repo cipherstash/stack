@@ -29,6 +29,7 @@ export function mintJwt(claims: Record<string, unknown> = {}): string {
     iat: now,
     exp: now + 3600,
     workspace: WORKSPACE_ID,
+    org_id: "org_test_default",
     scope: "",
     ...claims,
   });
