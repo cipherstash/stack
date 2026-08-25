@@ -12,7 +12,7 @@ use vitaminc::protected::{OpaqueDebug, TimingSafeEq};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 use zerokms_protocol::{DecryptionPolicy, ViturKeyMaterial};
 
-use crate::errors::LoadKeysetError;
+use crate::errors::{InvalidKeyMaterialError, LoadKeysetError};
 
 /// NOTE: Debug is safe to implement because [KeySet] is opaque.
 #[derive(Debug, Deserialize, Clone, Zeroize, ZeroizeOnDrop, Serialize)]
@@ -67,22 +67,30 @@ opaque_debug::implement!(DataKey);
 impl DataKey {
     /// Create a DataKey for a specific [`ClientKey`] given a specific initialisation vector
     /// (IV) and key material obtained from ZeroKMS.
-    pub fn from_key_material(key: &ClientKey, iv: Iv, key_material: &ViturKeyMaterial) -> Self {
+    ///
+    /// Returns [`InvalidKeyMaterialError`] when the material is not the exact
+    /// length the keyset accepts (recipher validates up front) — the material
+    /// is network-supplied, so a truncated or corrupt response must not panic.
+    pub fn from_key_material(
+        key: &ClientKey,
+        iv: Iv,
+        key_material: &ViturKeyMaterial,
+    ) -> Result<Self, InvalidKeyMaterialError> {
         let cipher = ProxyCipher::new(key.keyset.keyset());
         // `rect` is reencrypted key material — the derived data key is a hash of
-        // it — so wipe the intermediate on drop rather than leave it on the
-        // heap. (The Sha256 block buffer keeps the final <=64-byte block; sha2
-        // 0.10 doesn't implement Zeroize and changing the hash would alter the
-        // derived key, so that residue is accepted.)
-        let rect = Zeroizing::new(cipher.reencrypt::<16>(&iv, key_material));
+        // it — so wipe the returned copy on drop; recipher wipes its own
+        // intermediate block buffer. (The Sha256 block buffer keeps the final
+        // <=64-byte block; sha2 0.10 doesn't implement Zeroize and changing the
+        // hash would alter the derived key, so that residue is accepted.)
+        let rect = Zeroizing::new(cipher.reencrypt::<16>(&iv, key_material)?);
 
         let mut hasher = Sha256::new();
         hasher.update(rect.as_slice());
 
-        DataKey {
+        Ok(DataKey {
             iv,
             key: hasher.finalize().into(),
-        }
+        })
     }
 
     pub fn key(&self) -> &Key {
@@ -106,19 +114,20 @@ opaque_debug::implement!(DataKeyWithTag);
 
 impl DataKeyWithTag {
     /// Create a DataKey for a specific [`ClientKey`] given a specific IV, key material and tag
-    /// obtained from ZeroKMS.
+    /// obtained from ZeroKMS. See [`DataKey::from_key_material`] for the
+    /// key-material validation this inherits.
     pub fn from_key_material(
         key: &ClientKey,
         iv: Iv,
         key_material: &ViturKeyMaterial,
         tag: Vec<u8>,
         decryption_policy: Option<DecryptionPolicy>,
-    ) -> Self {
-        Self {
-            key: DataKey::from_key_material(key, iv, key_material),
+    ) -> Result<Self, InvalidKeyMaterialError> {
+        Ok(Self {
+            key: DataKey::from_key_material(key, iv, key_material)?,
             tag,
             decryption_policy,
-        }
+        })
     }
 }
 
@@ -140,32 +149,18 @@ impl Deref for DataKeyWithTag {
 #[derive(Zeroize, ZeroizeOnDrop, OpaqueDebug)]
 pub struct IndexKey(Key);
 
-/// The exact key-material length `ProxyCipher::reencrypt::<16>` accepts: the
-/// keyset's block permutation covers 33 16-byte blocks (see recipher's
-/// `EncryptionKeySet`), so anything else panics inside recipher
-/// (`copy_from_slice` on a short final chunk, or the permutation length
-/// assert). Validated up front so a malformed ZeroKMS response surfaces as a
-/// typed error instead of a crash.
-pub(crate) const KEYSET_KEY_MATERIAL_LEN: usize = 33 * 16;
-
 impl IndexKey {
     /// Derive the index key for a specific [`ClientKey`] from the partial
     /// keyset-root key material obtained from ZeroKMS.
     ///
     /// Returns [`LoadKeysetError::InvalidKeyMaterial`] when the material is
-    /// not exactly [`KEYSET_KEY_MATERIAL_LEN`] bytes — the material is
+    /// not the exact length the keyset accepts (33 16-byte blocks; recipher
+    /// owns the fact and validates up front) — the material is
     /// network-supplied, so a truncated or corrupt response must not panic.
     pub fn from_key_material(
         key: &ClientKey,
         key_material: &ViturKeyMaterial,
     ) -> Result<Self, LoadKeysetError> {
-        if key_material.len() != KEYSET_KEY_MATERIAL_LEN {
-            return Err(LoadKeysetError::InvalidKeyMaterial {
-                expected: KEYSET_KEY_MATERIAL_LEN,
-                received: key_material.len(),
-            });
-        }
-
         // We use all zeros for the IV for the keyset index key.
         // This key is not used for encryption but for indexing using PRFs and
         // similar constructions. Even then, because all other data keys are
@@ -173,9 +168,13 @@ impl IndexKey {
         let iv = Iv::default();
         let cipher = ProxyCipher::new(key.keyset.keyset());
         // `rect` is reencrypted key material — the derived index key is a hash
-        // of it — so wipe the intermediate on drop rather than leave it on the
-        // heap (matches `DataKey::from_key_material`).
-        let rect = Zeroizing::new(cipher.reencrypt::<16>(&iv, key_material));
+        // of it — so wipe the returned copy on drop; recipher wipes its own
+        // intermediate block buffer (matches `DataKey::from_key_material`).
+        let rect = Zeroizing::new(
+            cipher
+                .reencrypt::<16>(&iv, key_material)
+                .map_err(InvalidKeyMaterialError::from)?,
+        );
 
         let mut hasher = blake3::Hasher::new();
         // Bind the `OutputReader` so it can be wiped: it holds the final
@@ -350,31 +349,27 @@ mod tests {
     mod index_key {
         use super::*;
         use crate::errors::LoadKeysetError;
-        use crate::key::{IndexKey, KEYSET_KEY_MATERIAL_LEN};
-
-        /// Fixed keyset for the known-answer test below (see its comment).
-        const KAT_KEYSET_HEX: &str = "a4627031a16b7065726d75746174696f6e900e02000c0705010b0f09080a0d0304066770325f66726f6da16b7065726d75746174696f6e9005000c020b0d06010a0903080e0f04076570325f746fa16b7065726d75746174696f6e900e00030c05060b010a0407090d0f0802627033a16b7065726d75746174696f6e982102160f09181e1819181f0d07181b13110804150610050e1818181c00181a0a0112031820140b17181d0c";
+        use crate::key::IndexKey;
+        use zerokms_protocol::testing::index_key_kat;
 
         fn kat_client_key() -> ClientKey {
-            ClientKey::from_hex_v1(uuid::Uuid::nil(), KAT_KEYSET_HEX).unwrap()
+            ClientKey::from_hex_v1(uuid::Uuid::nil(), index_key_kat::KEYSET_HEX).unwrap()
         }
 
         fn kat_material() -> zerokms_protocol::ViturKeyMaterial {
-            (0..KEYSET_KEY_MATERIAL_LEN as u32)
-                .map(|i| (i % 251) as u8)
-                .collect::<Vec<u8>>()
-                .into()
+            index_key_kat::key_material().into()
         }
 
-        /// Known-answer test pinning the index-key derivation to fixed bytes.
+        /// Known-answer test pinning the index-key derivation to the shared
+        /// fixture in `zerokms_protocol::testing::index_key_kat`.
         ///
-        /// The identical vector lives in cipherstash-client
-        /// (`zerokms::vitur_client::key`): the `ZEROKMS-INDEXKEY` zero-IV
-        /// blake3-XOF derivation is duplicated across the two crates and must
-        /// stay bit-identical, or records indexed via one stack become
-        /// silently unfindable when queried via the other. If this test
-        /// breaks, the derivation changed — do NOT update the expected bytes
-        /// without changing cipherstash-client in lockstep.
+        /// cipherstash-client (`zerokms::vitur_client::key`) runs the same KAT
+        /// against the same fixture: the `ZEROKMS-INDEXKEY` zero-IV blake3-XOF
+        /// derivation is duplicated across the two crates and must stay
+        /// bit-identical, or records indexed via one stack become silently
+        /// unfindable when queried via the other. If this test breaks, the
+        /// derivation changed — do NOT update the fixture without changing
+        /// cipherstash-client in lockstep.
         #[test]
         fn from_key_material_matches_the_known_answer() {
             let index_key =
@@ -382,7 +377,7 @@ mod tests {
 
             assert_eq!(
                 base16ct::lower::encode_string(index_key.key()),
-                "f68a664c120234a50f98ca5301a3c8e7a4762626f33a7af02068c0dbd84dd416",
+                index_key_kat::EXPECTED_INDEX_KEY_HEX,
             );
         }
 
@@ -395,15 +390,24 @@ mod tests {
 
         #[test]
         fn from_key_material_rejects_invalid_lengths_instead_of_panicking() {
+            use recipher::errors::RecipherError;
+
             let ck = kat_client_key();
+            let expected_len = index_key_kat::key_material().len();
             // Truncated, empty, non-block-multiple and over-long payloads: all
             // network-supplied shapes that previously panicked inside recipher.
-            for len in [0usize, 1, 16, 527, 529, KEYSET_KEY_MATERIAL_LEN * 2] {
+            for len in [0usize, 1, 16, 527, 529, expected_len * 2] {
                 let material: zerokms_protocol::ViturKeyMaterial = vec![0u8; len].into();
                 match IndexKey::from_key_material(&ck, &material) {
-                    Err(LoadKeysetError::InvalidKeyMaterial { expected, received }) => {
-                        assert_eq!(expected, KEYSET_KEY_MATERIAL_LEN);
-                        assert_eq!(received, len);
+                    Err(LoadKeysetError::InvalidKeyMaterial(e)) => {
+                        assert!(
+                            matches!(
+                                e.0,
+                                RecipherError::InvalidInputLength { expected, received }
+                                    if expected == expected_len && received == len
+                            ),
+                            "unexpected inner error: {e:?}"
+                        );
                     }
                     other => panic!(
                         "length {len} must be rejected as InvalidKeyMaterial, got: {other:?}"

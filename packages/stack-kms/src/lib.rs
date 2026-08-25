@@ -73,6 +73,7 @@ mod futures;
 mod key;
 mod key_provider;
 mod key_source;
+mod maybe_send;
 mod payload;
 mod secret_key;
 mod user_agent;
@@ -94,8 +95,13 @@ pub use connection::{
 };
 pub use endpoint::{InvalidEndpoint, ZeroKmsEndpoint};
 
+// The native/wasm32 Send split for the async traits' returned futures
+pub use maybe_send::MaybeSend;
+
 // Errors
-pub use errors::{Error, GenerateKeyError, LoadKeysetError, RetrieveKeyError};
+pub use errors::{
+    Error, GenerateKeyError, InvalidKeyMaterialError, LoadKeysetError, RetrieveKeyError,
+};
 
 // Key material
 pub use key::{ClientKey, DataKey, DataKeyWithTag, IndexKey, V1KeySet};

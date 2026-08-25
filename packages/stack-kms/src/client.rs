@@ -147,7 +147,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         access_token: &str,
         make_request: impl Fn(&'a [Spec]) -> Req + Sync,
         response_keys: impl Fn(Req::Response) -> Vec<Item> + Sync,
-        map_key: impl Fn(&'a Spec, Item) -> Out + Sync,
+        map_key: impl Fn(&'a Spec, Item) -> Result<Out, E> + Sync,
         count_mismatch: impl Fn(usize, usize) -> E + Sync,
     ) -> Result<Vec<Out>, E>
     where
@@ -174,11 +174,11 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
 
                 tracing::trace!(target: "stack_kms::client", operation, "received {} keys - creating data keys", keys.len());
 
-                Ok(chunk
+                chunk
                     .iter()
                     .zip(keys)
                     .map(|(spec, item)| map_key(spec, item))
-                    .collect())
+                    .collect::<Result<Vec<_>, E>>()
             },
             self.max_keys_per_req,
             self.max_concurrent_reqs,
@@ -228,6 +228,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
             |res| res.keys,
             |RetrieveKeySpec { iv, .. }, RetrievedKey { key_material }| {
                 DataKey::from_key_material(key, iv.into_inner(), &key_material)
+                    .map_err(RetrieveKeyError::from)
             },
             |expected, received| RetrieveKeyError::InvalidNumberOfKeys { expected, received },
         )
@@ -265,12 +266,16 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
             },
             |res| res.keys,
             |RetrieveKeySpec { iv, .. }, result| {
-                result
-                    .map(|key| {
-                        // If the key retrieval was successful, we create a DataKey from the key material
-                        DataKey::from_key_material(client_key, iv.into_inner(), &key.key_material)
-                    })
+                // Both failure modes stay per-key so one bad entry doesn't
+                // fail the whole fallible batch: a server-side retrieval
+                // failure and invalid key material in an otherwise-successful
+                // entry.
+                Ok(result
                     .map_err(RetrieveKeyError::FailedRetrieval)
+                    .and_then(|key| {
+                        DataKey::from_key_material(client_key, iv.into_inner(), &key.key_material)
+                            .map_err(RetrieveKeyError::from)
+                    }))
             },
             |expected, received| RetrieveKeyError::InvalidNumberOfKeys { expected, received },
         )
@@ -362,6 +367,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
                     tag,
                     decryption_policy,
                 )
+                .map_err(GenerateKeyError::from)
             },
             |expected, received| GenerateKeyError::InvalidNumberOfKeys { expected, received },
         )
