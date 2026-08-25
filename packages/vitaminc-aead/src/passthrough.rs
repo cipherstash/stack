@@ -3,16 +3,37 @@
 //! [`Cipher::passthrough_boxed`] / [`DecipherVisitor::visit_passthrough`]
 //! channel.
 //!
-//! # Why
+//! # Why carry a field in the clear
+//!
+//! An encrypted record still has to work as a record. The identifier a row is
+//! fetched by, the tenant it is scoped to, the schema version that says how to
+//! read the rest — the storage layer needs those without holding a decryption
+//! key. Encrypt them and the system responsible for the record can no longer
+//! route, index, or interpret it.
+//!
+//! Passthrough keeps such a field inside the *same* ciphertext container as
+//! the encrypted ones, so the record still seals, moves, and round-trips as a
+//! single unit, while the clear fields stay readable along the way. The
+//! alternative — storing them beside the ciphertext — splits one record into
+//! two things that can drift apart.
+//!
+//! Only non-sensitive data qualifies; see the warning below.
+//!
+//! # Why this type rather than the cipher's own hooks
+//!
+//! [`Cipher::passthrough`](crate::Cipher::passthrough) and its map/sequence
+//! siblings already provide the channel, but reaching them means naming the
+//! cipher's own [`Cipher::Passthrough`](crate::Cipher::Passthrough) payload
+//! type — which only code written against one concrete cipher can do.
 //!
 //! A struct's [`Encrypt`] / [`Decrypt`] impl is generic over *every* cipher,
-//! so it cannot name a specific cipher's
-//! [`Cipher::Passthrough`](crate::Cipher::Passthrough) payload type and has
-//! no way to call [`MapCipher::passthrough_entry`](crate::MapCipher::passthrough_entry)
+//! so it cannot name that type and has no way to call
+//! [`MapCipher::passthrough_entry`](crate::MapCipher::passthrough_entry)
 //! or [`SeqCipher::passthrough_next`](crate::SeqCipher::passthrough_next)
-//! with a value it owns. The type-erased hooks close that gap at the trait
-//! level; this wrapper packages them so a field can be declared "stored in
-//! the clear" with one type annotation and driven through the ordinary
+//! with a value it owns (an impl cannot add bounds the trait lacks). The
+//! type-erased hooks close that gap at the trait level; this wrapper packages
+//! them so a field can be declared "stored in the clear" with one type
+//! annotation and driven through the ordinary
 //! [`encrypt_entry`](crate::MapCipher::encrypt_entry) /
 //! [`encrypt_next`](crate::SeqCipher::encrypt_next) /
 //! [`next_entry`](crate::MapAccess::next_entry) calls like any other field:
