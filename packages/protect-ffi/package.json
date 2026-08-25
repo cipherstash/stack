@@ -99,7 +99,7 @@
     "vitest": "catalog:repo"
   },
   "dependencies": {
-    "@neon-rs/load": "^0.1.82"
+    "@neon-rs/load": "^0.2.6"
   },
   "optionalDependencies": {
     "@cipherstash/protect-ffi-darwin-x64": "workspace:*",
