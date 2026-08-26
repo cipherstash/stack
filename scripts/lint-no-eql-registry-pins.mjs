@@ -58,7 +58,9 @@
  *
  * `EXEMPT_DECLARATIONS`, keyed `<manifest> :: <dependency>` with a mandatory
  * written reason, in the shape of `BINDING_EXEMPT_JOBS` in
- * `scripts/__tests__/ffi-binding-step-order.test.mjs`. One entry today.
+ * `scripts/__tests__/ffi-binding-step-order.test.mjs`. NONE today — the one
+ * entry there had ever been was retired when its directory joined the pnpm
+ * workspace.
  *
  * The alternative — narrowing the scan so it never reaches the directory — was
  * rejected for the reason this whole absorption keeps rediscovering: a scan
@@ -165,22 +167,21 @@ export const EXPECTED_SOURCES = [WORKSPACE_FILE]
 /**
  * Declarations allowed to name a registry version, each with the reason.
  *
- * Keep this at one entry if at all possible. Every entry is a place the two
- * halves of EQL can drift apart again, and the reason is what a later reader
- * needs in order to decide whether it is still true.
+ * EMPTY, and that is the goal state rather than an oversight. Every entry is a
+ * place the two halves of EQL can drift apart again, and the reason is what a
+ * later reader needs in order to decide whether it is still true.
+ *
+ * There was one, for `packages/protect-ffi/integration-tests`: it was not a
+ * pnpm workspace member, installed with `npm ci`, and so could not resolve a
+ * `workspace:` specifier at all. Absorbing it into the workspace (CIP-3744) was
+ * what retired the exemption — and the `staleExemptions` spelling below is what
+ * forced the entry to be deleted in the same change, since the manifest still
+ * DECLARES `@cipherstash/eql` and an existence-based check would have gone on
+ * passing over a standing permission nothing needed.
+ *
+ * Adding one back means writing the reason down here. Prefer not to.
  */
-export const EXEMPT_DECLARATIONS = new Map([
-  [
-    `packages/protect-ffi/integration-tests/package.json :: ${NPM_DEPENDENCY}`,
-    'Not a pnpm workspace member: `pnpm-workspace.yaml` globs one level under ' +
-      '`packages/`, so this directory is invisible to pnpm, installs with `npm ' +
-      'ci`, and cannot resolve a `workspace:` specifier. Absorbing it into the ' +
-      'workspace is open decision 3 in ' +
-      'docs/plans/2026-08-13-eql-monorepo-absorption.md — it moves ' +
-      '`@cipherstash/auth`, `vitest` and this pin at once, and only a run with ' +
-      'Docker plus CS_* credentials can show that is neutral.',
-  ],
-])
+export const EXEMPT_DECLARATIONS = new Map([])
 
 /** Files this scan reads, by name. */
 const SCANNED_FILES = new Set(['Cargo.toml', 'package.json', WORKSPACE_FILE])
@@ -645,14 +646,14 @@ export function lint({
     // oversight.
     //
     // Measured against the declarations that are ACTUALLY registry-pinned, not
-    // against every declaration found. The difference is the case that will
-    // really happen: `packages/protect-ffi/integration-tests` is exempt because
-    // it installs with `npm ci` and cannot take a `workspace:` specifier, and
-    // absorbing it into the workspace is a scheduled follow-up. On the day that
-    // lands, the manifest still declares `@cipherstash/eql` — so an
-    // existence-based check would keep passing and leave the exemption behind,
-    // permanently permitting a pin nothing has needed since. This spelling
-    // fails that PR until the entry is deleted.
+    // against every declaration found. The difference is the case that already
+    // happened: `packages/protect-ffi/integration-tests` was exempt because it
+    // installed with `npm ci` and could not take a `workspace:` specifier, and
+    // absorbing it into the workspace was a scheduled follow-up. When that
+    // landed the manifest still declared `@cipherstash/eql` — so an
+    // existence-based check would have kept passing and left the exemption
+    // behind, permanently permitting a pin nothing needed any more. This
+    // spelling failed that PR until the entry was deleted.
     staleExemptions: [...exemptions.keys()].filter(
       (id) => !registryPinned.includes(id),
     ),
@@ -783,8 +784,10 @@ export function report(result) {
       'is nothing in-tree for it to move to that the workspace protocol does\n' +
       'not already say.\n\n' +
       'If the manifest genuinely cannot take an in-tree specifier, add it to\n' +
-      'EXEMPT_DECLARATIONS in this script WITH the reason. There is one such\n' +
-      'case today and it is written up there.\n',
+      'EXEMPT_DECLARATIONS in this script WITH the reason. That list is empty\n' +
+      'today — the last entry was retired when its directory joined the pnpm\n' +
+      'workspace — so an addition is a new standing permission, not a\n' +
+      'precedent being followed.\n',
   }
 }
 

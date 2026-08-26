@@ -23,11 +23,18 @@ description = "Install CipherStash encrypt SQL into the database"
 dir = "{{ config_root }}/integration-tests"
 run = "cat sql/cipherstash-encrypt.sql | docker exec -i protect-ffi-postgres psql postgresql://cipherstash:password@postgres:5432/cipherstash -f-"
 
+# EQL v3 comes from the IN-TREE @cipherstash/eql (`workspace:^`), not from a
+# published tarball. `@cipherstash/eql/sql` resolves through the package's
+# `exports` map to `dist/sql.js`, which is a build output — so the build below
+# is not optional here the way it was when `npm ci` unpacked a prebuilt tarball.
+# Without it this task fails with ERR_MODULE_NOT_FOUND on `dist/sql.js`, which
+# reads as a broken dependency rather than an unbuilt one.
 ["eql:v3:install"]
-description = "Install EQL v3 from the locked @cipherstash/eql package"
+description = "Install EQL v3 from the in-tree @cipherstash/eql workspace package"
 dir = "{{ config_root }}/integration-tests"
 run = """
 set -e
+pnpm --filter @cipherstash/eql run build
 tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
 node --input-type=module -e "import { readInstallSql } from '@cipherstash/eql/sql'; process.stdout.write(readInstallSql())" > "$tmp"
@@ -38,11 +45,19 @@ fi
 docker exec -i protect-ffi-postgres psql postgresql://cipherstash:password@postgres:5432/cipherstash -f- < "$tmp"
 """
 
+# `pnpm install`, not `npm ci`: this directory is a pnpm workspace member as of
+# CIP-3744, so its dependencies come from the repo lockfile and its
+# `@cipherstash/protect-ffi` and `@cipherstash/eql` resolve to the packages in
+# this tree rather than to published tarballs. `--frozen-lockfile` matches what
+# CI does and fails on a manifest the lockfile does not cover, which is the half
+# of `npm ci` worth keeping. It installs the WHOLE workspace — pnpm resolves the
+# workspace root from here — so a contributor who has already run it at the repo
+# root pays a no-op.
 [setup]
 description = "Set up the integration test environment"
 dir = "{{ config_root }}/integration-tests"
 run = [
-    "npm ci",
+    "pnpm install --frozen-lockfile",
     "mise run start-db",
     "mise run eql:download",
     "mise run eql:install",
@@ -56,10 +71,15 @@ depends = ["start-db"]
 # The wasm-round-trip suite reads `dist/wasm/protect_ffi_inline.js`, so
 # the wasm artifacts must exist before vitest runs even though the rest
 # of the integration tests only need the Neon binding.
+#
+# `pnpm exec vitest`, not `pnpm run vitest:live`, only because of the extra
+# flag: pnpm forwards a trailing `--` to the command rather than swallowing it,
+# so `pnpm run vitest:live -- --exclude …` would hand vitest a bare `--`. The
+# `:all` task below, which needs no flag, goes through the script.
 run = [
     "mise run build:debug",
-    "npm run --prefix .. build:wasm",
-    "npx vitest --exclude tests/lock-context.test.ts",
+    "pnpm --filter @cipherstash/protect-ffi run build:wasm",
+    "pnpm exec vitest run --exclude tests/lock-context.test.ts",
 ]
 
 ["test:integration:all"]
@@ -68,6 +88,6 @@ dir = "{{ config_root }}/integration-tests"
 depends = ["start-db"]
 run = [
     "mise run build:debug",
-    "npm run --prefix .. build:wasm",
-    "npx vitest",
+    "pnpm --filter @cipherstash/protect-ffi run build:wasm",
+    "pnpm run vitest:live",
 ]

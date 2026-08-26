@@ -79,9 +79,14 @@ const cargoForms = (body) =>
   cargoDeclarations('Cargo.toml', body).map((d) => d.form)
 
 describe('the tree it actually guards', () => {
-  it('passes: every EQL dependency resolves in-tree or is exempt', () => {
+  it('passes: every EQL dependency resolves in-tree, with nothing exempt', () => {
     const { exitCode, output } = run()
     expect(output).toContain('resolves in-tree')
+    // No `(N exempt: …)` suffix. The exemption list is empty as of CIP-3744
+    // and the success line reports what it excused, so this is the assertion
+    // that the tree needs no standing permission at all — not merely that the
+    // one it had is still described accurately.
+    expect(output).not.toContain('exempt')
     expect(exitCode).toBe(0)
   })
 
@@ -111,11 +116,29 @@ describe('the tree it actually guards', () => {
     )
   })
 
-  it('lists the exempt declaration in its success output', () => {
-    // An exemption that produces silence is an exemption nobody re-reads.
-    expect(run().output).toContain(
-      'packages/protect-ffi/integration-tests/package.json',
+  it('resolves the integration suite in-tree, not from the registry', () => {
+    // What retiring the exemption was FOR. This suite's `postgres-v3.test.ts`
+    // queries SQL installed from `@cipherstash/eql` while the payloads under
+    // test are emitted by the in-tree `eql-bindings`, so a registry pin here
+    // was the one remaining place the two halves could disagree — and it
+    // disagreed in a database, not in CI.
+    const declaration = lint().declarations.find(
+      (d) =>
+        d.file === 'packages/protect-ffi/integration-tests/package.json' &&
+        d.dependency === '@cipherstash/eql',
     )
+    expect(declaration).toBeDefined()
+    expect(declaration.inTree).toBe(true)
+    expect(declaration.spec).toContain('workspace:')
+  })
+
+  it('lists any exempt declaration in its success output', () => {
+    // An exemption that produces silence is an exemption nobody re-reads.
+    // Vacuous while the map is empty, which is the point: it is the assertion
+    // that has to keep passing if an entry is ever added back.
+    for (const id of EXEMPT_DECLARATIONS.keys()) {
+      expect(run().output).toContain(id.split(' :: ')[0])
+    }
   })
 
   it('has a written reason for every exemption', () => {
@@ -851,14 +874,14 @@ describe('the linter fails when its own configuration goes stale', () => {
   })
 
   it('detects an exemption whose manifest went in-tree', () => {
-    // The case that will actually happen. `integration-tests` is exempt
-    // because it installs with `npm ci` and cannot resolve `workspace:`;
-    // absorbing it into the pnpm workspace is a scheduled follow-up. On that
-    // day the manifest still DECLARES `@cipherstash/eql` — it just no longer
-    // needs excusing — so an existence-based staleness check would keep
-    // passing and leave a standing permission behind. Mutation-checked against
-    // the real tree: flipping that pin to `workspace:^` moved the linter from
-    // exit 0 to exit 2, where the looser spelling had left it at 0.
+    // The case that DID happen. `integration-tests` was exempt because it
+    // installed with `npm ci` and could not resolve `workspace:`; absorbing it
+    // into the pnpm workspace was a scheduled follow-up. When that landed the
+    // manifest still DECLARED `@cipherstash/eql` — it just no longer needed
+    // excusing — so an existence-based staleness check would have kept passing
+    // and left a standing permission behind. Mutation-checked against the real
+    // tree at the time: flipping that pin to `workspace:^` moved the linter
+    // from exit 0 to exit 2, where the looser spelling had left it at 0.
     const root = tree({
       'a/package.json': '{"dependencies":{"@cipherstash/eql":"workspace:^"}}',
     })

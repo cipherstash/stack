@@ -1993,22 +1993,27 @@ The Rust emitting EQL payloads is generated from a different catalog commit than
 
 Each of these was in reach and deliberately left, with the reason.
 
-1. **pnpm-absorb `packages/protect-ffi/integration-tests`.** It is not a workspace
-   member — `packages/*` globs one level and the only deeper entry is
-   `platforms/*` — so it carries its own `package-lock.json` and installs with
-   `npm ci`. Absorbing it means adding it to `pnpm-workspace.yaml`, reconciling
-   `@cipherstash/auth ^0.39.0` / `vitest ^3.1.3` / `@cipherstash/eql 3.0.2` with
-   the catalog, and dropping both the lockfile and the `npm ci` step. **Not done
-   because it changes the suite's dependency versions, and only a credentialed
-   run can show that change is neutral** — doing it blind would confound a
-   wiring fix with a semantic one. Two things resolve with it: the second
-   package manager in CI, and the five npm advisories osv-scanner reports in
-   that lockfile today.
+1. ~~**pnpm-absorb `packages/protect-ffi/integration-tests`.**~~ **Done
+   2026-08-26, CIP-3744.** It was not a workspace member — `packages/*` globs one
+   level and the only deeper entry was `platforms/*` — so it carried its own
+   `package-lock.json` and installed with `npm ci`. It is now named literally in
+   `pnpm-workspace.yaml`; `@cipherstash/eql` resolves `workspace:^`,
+   `@cipherstash/protect-ffi` `workspace:*`, and `@cipherstash/auth` / `vitest` /
+   `typescript` come from `catalog:repo`. The lockfile and the `npm ci` step are
+   gone, and with them the second package manager in CI and the npm advisories
+   osv-scanner reported in that lockfile.
 
-2. **`integration-tests/package-lock.json` gets no Dependabot PRs.** Covered at
-   the ecosystem level, but the npm entry follows the pnpm workspace and this
-   directory is not in it. Adding a second npm entry is ~10 lines; left because
-   (1) deletes the file.
+   The caution above was right: it was **not** neutral. `@cipherstash/auth`
+   `^0.39.0 → 0.42.0` is a breaking API move (Result returns on
+   `AccessKeyStrategy.create`, `OidcFederationStrategy.create` and `getToken`;
+   `OidcFederationStrategy.create` re-signatured to take a whole CRN), touching
+   four call sites in the suite. A credentialed local run closed it — 20 files,
+   232 tests, zero skips, EQL v2 and v3 both installed.
+
+2. ~~**`integration-tests/package-lock.json` gets no Dependabot PRs.**~~
+   **Resolved by (1)** — the file is deleted, and the suite's dependencies now
+   reach Dependabot's npm entry at `/` through the root `pnpm-lock.yaml` like
+   every other workspace member's.
 
 3. **CI and `tasks.toml` have forked.** `test:integration:all` still builds the
    binding (debug) and the WASM itself, while CI builds once via

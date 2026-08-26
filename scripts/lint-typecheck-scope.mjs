@@ -31,12 +31,18 @@ const REPO_ROOT = resolve(import.meta.dirname, '..')
 // with argv[2..] for tests / ad-hoc checks (each arg is a package directory).
 //
 // NESTED roots are listed separately because the walk below is one level deep,
-// matching how pnpm globs `packages/*`. Two subtrees put packages a level
+// matching how pnpm globs `packages/*`. Three sets of packages sit a level
 // further down and need their own entry here for the same reason they need one
 // in `pnpm-workspace.yaml`:
 //
 //   packages/protect-ffi/platforms/*   the six per-platform binary packages
 //   packages/eql/packages/*            @cipherstash/eql, from the EQL subtree
+//   packages/protect-ffi/*             the live integration suite
+//
+// The last is spelled as its PARENT rather than as the member, because the walk
+// takes roots and lists their children. That sweeps protect-ffi's non-package
+// siblings (`crates`, `docs`, `src`, …) into the candidate list too; they carry
+// no package.json / tsconfig.json pair, so the loop below skips them.
 //
 // Getting this wrong is silent in the direction that matters: a package outside
 // the scan is never reported, which reads exactly like a package that passed.
@@ -46,6 +52,7 @@ const REPO_ROOT = resolve(import.meta.dirname, '..')
 const WORKSPACE_ROOTS = [
   'packages',
   'examples',
+  'packages/protect-ffi',
   'packages/protect-ffi/platforms',
   'packages/eql/packages',
 ]

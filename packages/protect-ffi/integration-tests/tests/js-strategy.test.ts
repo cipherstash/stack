@@ -37,10 +37,18 @@ function buildAccessKeyStrategy(): AccessKeyStrategy {
   if (!crn || !accessKey) {
     throw new Error('unreachable: skipIf gates this')
   }
-  // @cipherstash/auth 0.39 takes the full workspace CRN and parses the
-  // region from it (earlier versions took only the `<region>.<provider>`
-  // segment, requiring callers to split the CRN themselves).
-  return AccessKeyStrategy.create(crn, accessKey)
+  // The CRN is passed whole: auth parses the region out of it (versions before
+  // 0.39 took only the `<region>.<provider>` segment). Since 0.41 `create`
+  // returns a `Result<AccessKeyStrategy, AuthFailure>` rather than the strategy
+  // — unwrap it here, because the envelope has no `getToken` and handing it to
+  // `newClient` would fail as a wiring error naming nothing useful.
+  const created = AccessKeyStrategy.create(crn, accessKey)
+  if (created.failure) {
+    throw new Error(
+      `AccessKeyStrategy.create failed (${created.failure.type}): ${created.failure.error.message}`,
+    )
+  }
+  return created.data
 }
 
 const clientOpts: ClientOpts = {
@@ -53,9 +61,24 @@ describe.skipIf(missingEnv.length > 0)('opts.strategy (JsBacked)', () => {
     const inner = buildAccessKeyStrategy()
     let callCount = 0
     const strategy: AuthStrategy = {
+      // Resolves the BARE `{ token }` arm, deliberately. `AuthStrategy.getToken`
+      // (src/types.ts) is `Promise<TokenResult | TokenResultEnvelope>` — both
+      // shapes are contract, and the bare one is what a hand-rolled consumer
+      // strategy returns. It used to be covered here for free, because auth 0.39
+      // resolved `{ token }` and this test forwarded it; on 0.42 a forward
+      // resolves the envelope instead, which would leave both live tests in this
+      // file exercising the same arm and no integration test round-tripping the
+      // documented one at all. Unwrapping back to `{ token }` restores the split:
+      // this test owns the bare arm, the test below owns the envelope.
       async getToken() {
         callCount++
-        return await inner.getToken()
+        const result = await inner.getToken()
+        if (result.failure) {
+          throw new Error(
+            `getToken failed (${result.failure.type}): ${result.failure.error.message}`,
+          )
+        }
+        return { token: result.data.token }
       },
     }
 
@@ -82,9 +105,20 @@ describe.skipIf(missingEnv.length > 0)('opts.strategy (JsBacked)', () => {
       // Wrap the real token in `@cipherstash/auth` 0.41's `@byteslice/result`
       // success envelope; protect-ffi must unwrap `data.token` and still
       // complete a round-trip.
+      //
+      // Unwrapped and RE-wrapped, not forwarded. `inner.getToken()` already
+      // returns that envelope on 0.41+, so `return inner.getToken()` would
+      // still pass this test on a build that had stopped unwrapping — it would
+      // be asserting auth's shape rather than protect-ffi's handling of it.
+      // Constructing the envelope here keeps the subject on this side.
       getToken: (async () => {
-        const { token } = await inner.getToken()
-        return { data: { token } }
+        const result = await inner.getToken()
+        if (result.failure) {
+          throw new Error(
+            `getToken failed (${result.failure.type}): ${result.failure.error.message}`,
+          )
+        }
+        return { data: { token: result.data.token } }
       }) as unknown as AuthStrategy['getToken'],
     }
 

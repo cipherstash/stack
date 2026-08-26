@@ -9,6 +9,7 @@
 require('dotenv/config')
 const { newClient, encrypt, decrypt } = require('@cipherstash/protect-ffi')
 
+/** @type {import('@cipherstash/protect-ffi').EncryptConfig} */
 const encryptConfig = {
   v: 1,
   tables: {
@@ -24,9 +25,8 @@ const encryptConfig = {
   // Use the wasm-inline build of @cipherstash/auth — it has no native
   // binary dep, works on any Node target, and lets us exercise the
   // `opts.strategy` (JsBacked) code path with a real getToken.
-  // @cipherstash/auth 0.39 takes the full workspace CRN and parses the
-  // region from it (earlier versions took only the `<region>.<provider>`
-  // segment, requiring callers to split the CRN themselves).
+  // The CRN is passed whole: auth parses the region out of it (versions before
+  // 0.39 took only the `<region>.<provider>` segment).
   const { AccessKeyStrategy } = await import('@cipherstash/auth/wasm-inline')
   const accessKey = process.env.CS_CLIENT_ACCESS_KEY
   const workspaceCrn = process.env.CS_WORKSPACE_CRN
@@ -35,7 +35,17 @@ const encryptConfig = {
       'event-loop-exit-jsbacked fixture needs CS_CLIENT_ACCESS_KEY and CS_WORKSPACE_CRN',
     )
   }
-  const strategy = AccessKeyStrategy.create(workspaceCrn, accessKey)
+  // Since 0.41 `create` returns a `Result<AccessKeyStrategy, AuthFailure>`.
+  // Unwrapped here — the envelope has no `getToken`, and this fixture's whole
+  // job is to prove the event loop drains after a real JsBacked round-trip, so
+  // a construction failure has to fail loudly rather than as a contract error.
+  const created = AccessKeyStrategy.create(workspaceCrn, accessKey)
+  if (created.failure) {
+    throw new Error(
+      `AccessKeyStrategy.create failed (${created.failure.type}): ${created.failure.error.message}`,
+    )
+  }
+  const strategy = created.data
 
   const client = await newClient({ encryptConfig, strategy })
 

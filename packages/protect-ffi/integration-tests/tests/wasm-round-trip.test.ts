@@ -8,7 +8,8 @@
 //
 // # Prerequisites
 //
-// 1. Build the wasm artifacts from the repo root: `npm run build:wasm`.
+// 1. Build the wasm artifacts: `pnpm --filter @cipherstash/protect-ffi run
+//    build:wasm`, or just `mise run test:integration:all`, which does it.
 //    Without `dist/wasm/protect_ffi_inline.js` the suite fails fast with
 //    a clear error rather than skipping silently.
 // 2. Set `CS_WORKSPACE_CRN`, `CS_CLIENT_ACCESS_KEY`, `CS_CLIENT_ID`, and
@@ -53,6 +54,30 @@ function requireEnv() {
   }
 }
 
+/**
+ * The strategy every test here hands the wasm client.
+ *
+ * `AccessKeyStrategy.create` returns a `@byteslice/result`
+ * `Result<AccessKeyStrategy, AuthFailure>` — `{ data }` on success, `{ failure }`
+ * on error — as of `@cipherstash/auth` 0.41. The envelope is NOT a strategy:
+ * it has no `getToken`, so handing it straight to `newClient` fails inside the
+ * Rust with a "getToken is not a function" error that names nothing useful.
+ * Unwrap at the boundary, and throw the failure's own message when it is the
+ * credentials that are wrong rather than the wiring.
+ *
+ * The CRN is passed whole: auth parses the region out of it. Versions before
+ * 0.39 took only the `<region>.<provider>` segment and made the caller split it.
+ */
+function buildStrategy(env: ReturnType<typeof requireEnv>): AccessKeyStrategy {
+  const created = AccessKeyStrategy.create(env.workspaceCrn, env.accessKey)
+  if (created.failure) {
+    throw new Error(
+      `AccessKeyStrategy.create failed (${created.failure.type}): ${created.failure.error.message}`,
+    )
+  }
+  return created.data
+}
+
 // `__dirname` (CJS) instead of `import.meta.url` because the
 // integration-tests tsconfig inherits `module: "node16"` and the package
 // has no `"type": "module"`, so .ts files compile as CJS.
@@ -74,7 +99,7 @@ const WASM_INLINE_PATH = resolve(
 async function loadWasm<T>(): Promise<T> {
   if (!existsSync(WASM_INLINE_PATH)) {
     throw new Error(
-      `wasm-inline build not found at ${WASM_INLINE_PATH}. Run \`npm run build:wasm\` from the repo root before running the integration tests.`,
+      `wasm-inline build not found at ${WASM_INLINE_PATH}. Run \`pnpm --filter @cipherstash/protect-ffi run build:wasm\` before running the integration tests.`,
     )
   }
   return (await import(WASM_INLINE_PATH)) as T
@@ -125,10 +150,7 @@ describe('wasm round-trip', () => {
   test('encrypts and decrypts a scalar value end-to-end', async () => {
     const env = requireEnv()
 
-    // @cipherstash/auth 0.39 takes the full workspace CRN and parses the
-    // region from it (earlier versions took only the `<region>.<provider>`
-    // segment, requiring callers to split the CRN themselves).
-    const strategy = AccessKeyStrategy.create(env.workspaceCrn, env.accessKey)
+    const strategy = buildStrategy(env)
 
     const client = await wasm.newClient({
       strategy,
@@ -207,7 +229,7 @@ describe('wasm round-trip', () => {
   test('round-trips a bigint plaintext exactly and rejects out-of-range values', async () => {
     const env = requireEnv()
 
-    const strategy = AccessKeyStrategy.create(env.workspaceCrn, env.accessKey)
+    const strategy = buildStrategy(env)
 
     const client = await wasm.newClient({
       authStrategy: strategy,
@@ -269,7 +291,7 @@ describe('wasm round-trip', () => {
   test('bulk round-trips a mixed bigint / string / number batch', async () => {
     const env = requireEnv()
 
-    const strategy = AccessKeyStrategy.create(env.workspaceCrn, env.accessKey)
+    const strategy = buildStrategy(env)
 
     const client = await wasm.newClient({
       authStrategy: strategy,
@@ -332,7 +354,7 @@ describe('wasm round-trip', () => {
   test('json plaintexts follow JSON.stringify semantics (Neon parity)', async () => {
     const env = requireEnv()
 
-    const strategy = AccessKeyStrategy.create(env.workspaceCrn, env.accessKey)
+    const strategy = buildStrategy(env)
 
     const client = await wasm.newClient({
       authStrategy: strategy,
@@ -398,7 +420,7 @@ describe('wasm round-trip', () => {
     // value encrypts UNBOUND while the caller believes it is identity-bound,
     // and nothing in the output tells the two apart.
     const env = requireEnv()
-    const strategy = AccessKeyStrategy.create(env.workspaceCrn, env.accessKey)
+    const strategy = buildStrategy(env)
 
     const client = await wasm.newClient({
       authStrategy: strategy,

@@ -11,8 +11,10 @@
 # crate ships its ts-rs output (`bindings/**`), and `cargo metadata` resolves
 # the exact copy in the cargo registry that Cargo.lock pins. The vendored TS
 # types therefore cannot drift from the release the Rust conversion code links
-# against. Integration SQL comes independently from the matching exact
-# @cipherstash/eql version in integration-tests/package-lock.json.
+# against. Integration SQL comes from the in-tree @cipherstash/eql, which
+# integration-tests resolves at `workspace:^` — so the SQL the suite installs
+# and the crate these types come from are the same commit, not two versions
+# that happen to agree.
 #
 # Passing a path to an encrypt-query-language checkout as $1 overrides the
 # source for local development against unreleased bindings — regenerate the
