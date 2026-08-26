@@ -1,6 +1,6 @@
 use base64ct::Encoding;
 use serde::{Deserialize, Serialize};
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "profile", not(target_arch = "wasm32")))]
 use stack_profile::{ProfileData, ProfileError, ProfileStore};
 use uuid::Uuid;
 use vitaminc::protected::OpaqueDebug;
@@ -132,29 +132,24 @@ impl SecretKey {
     pub fn from_env() -> Result<Option<Self>, KeyProviderError> {
         use crate::vars::{CS_CLIENT_ID, CS_CLIENT_KEY};
 
-        match (std::env::var(CS_CLIENT_ID), std::env::var(CS_CLIENT_KEY)) {
-            (Ok(id), Ok(key)) => {
-                tracing::debug!("both {CS_CLIENT_ID} and {CS_CLIENT_KEY} set, loading secret key");
-                Self::from_hex(id, key).map(Some)
-            }
-            (Ok(_), Err(_)) => {
-                tracing::debug!("{CS_CLIENT_ID} set but {CS_CLIENT_KEY} missing, skipping");
-                Ok(None)
-            }
-            (Err(_), Ok(_)) => {
-                tracing::debug!("{CS_CLIENT_KEY} set but {CS_CLIENT_ID} missing, skipping");
-                Ok(None)
-            }
-            (Err(_), Err(_)) => {
-                tracing::debug!("neither {CS_CLIENT_ID} nor {CS_CLIENT_KEY} set");
-                Ok(None)
-            }
-        }
+        // Check the ID first and only then read the key: reading `CS_CLIENT_KEY`
+        // when it can't be used would leave an owned copy of the key material
+        // to be dropped un-zeroized.
+        let Ok(id) = std::env::var(CS_CLIENT_ID) else {
+            tracing::debug!("{CS_CLIENT_ID} not set, skipping env secret key");
+            return Ok(None);
+        };
+        let Ok(key) = std::env::var(CS_CLIENT_KEY) else {
+            tracing::debug!("{CS_CLIENT_ID} set but {CS_CLIENT_KEY} missing, skipping");
+            return Ok(None);
+        };
+        tracing::debug!("both {CS_CLIENT_ID} and {CS_CLIENT_KEY} set, loading secret key");
+        Self::from_hex(id, key).map(Some)
     }
 }
 
 /// Implement [ProfileData] for [SecretKey] to enable loading/saving from the profile directory.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "profile", not(target_arch = "wasm32")))]
 impl ProfileData for SecretKey {
     const FILENAME: &'static str = "secretkey.json";
     const MODE: Option<u32> = Some(0o600);
@@ -168,7 +163,7 @@ impl KeyProvider for SecretKey {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "profile", not(target_arch = "wasm32")))]
 impl KeyProvider for ProfileStore {
     async fn client_key(&self) -> Result<ClientKey, KeyProviderError> {
         let ws_store = self.current_workspace_store().map_err(|e| match e {
@@ -188,7 +183,6 @@ impl KeyProvider for ProfileStore {
 mod tests {
     use super::*;
     use recipher::keyset::{EncryptionKeySet, ProxyKeySet};
-    use tempfile::TempDir;
 
     /// Build a random `SecretKey` and return it alongside the `client_id` and raw keyset bytes.
     fn random_secret_key() -> (SecretKey, Uuid, Vec<u8>) {
@@ -367,8 +361,10 @@ mod tests {
         }
     }
 
+    #[cfg(all(feature = "profile", not(target_arch = "wasm32")))]
     mod profile_store_provider {
         use super::*;
+        use tempfile::TempDir;
 
         const TEST_WORKSPACE_ID: &str = "ZVATKW3VHMFG27DY";
 

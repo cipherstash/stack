@@ -108,6 +108,10 @@ pub use key_provider::{
     EnvKeyProvider, FallbackKeyProvider, KeyProvider, KeyProviderError, StaticKeyProvider,
 };
 pub use secret_key::SecretKey;
+// `KeyProvider` is implemented for `ProfileStore` (the CLI's on-disk profile),
+// so callers need to be able to name it without depending on `stack-profile`.
+#[cfg(all(feature = "profile", not(target_arch = "wasm32")))]
+pub use stack_profile::ProfileStore;
 
 // Operation payloads
 pub use payload::{GenerateKeyPayload, RetrieveKeyPayload};

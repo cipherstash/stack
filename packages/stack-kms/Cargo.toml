@@ -14,6 +14,12 @@ license-file = "LICENSE"
 publish = false
 
 [features]
+default = ["profile"]
+# Loads the client key from the CLI's on-disk profile (`secretkey.json`, via
+# `stack-profile`): `SecretKey: ProfileData` and `KeyProvider for ProfileStore`.
+# Disable for consumers that only ever source the key in-memory or from the
+# environment. Never compiled on wasm32 regardless.
+profile = ["dep:stack-profile"]
 # Exposes `FakeDataKeySource`, a deterministic in-memory `DataKeySource` for
 # downstream crates (e.g. `stack-encrypt`) to unit-test encrypt/decrypt without
 # ZeroKMS credentials or network access.
@@ -54,11 +60,12 @@ serde_cbor = "0.11.2"
 serdect = { version = "0.3.0", features = ["zeroize"] }
 sha2 = "0.10.6"
 
-# Native-only: `stack-profile` is the filesystem-backed profile/config layer
-# used by `SecretKey` (the on-disk `secretkey.json`) and the `ProfileStore`
-# key provider. Wasm consumers source the client key in-memory instead.
+# Native-only and behind the `profile` feature: `stack-profile` is the
+# filesystem-backed profile/config layer used by `SecretKey` (the on-disk
+# `secretkey.json`) and the `ProfileStore` key provider. Wasm consumers source
+# the client key in-memory instead.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-stack-profile = { workspace = true }
+stack-profile = { workspace = true, optional = true }
 
 [dev-dependencies]
 async-mutex = "1.4.0"
