@@ -52,9 +52,9 @@
 		"access": "public"
 	},
 	"optionalDependencies": {
-		"@rollup/rollup-linux-x64-gnu": "4.62.2"
+		"@rollup/rollup-linux-x64-gnu": "4.62.4"
 	},
 	"dependencies": {
-		"jose": "^6.2.3"
+		"jose": "^6.2.9"
 	}
 }

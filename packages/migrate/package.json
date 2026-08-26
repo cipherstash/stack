@@ -56,9 +56,9 @@
   },
   "devDependencies": {
     "@cipherstash/stack": "workspace:*",
-    "@types/pg": "^8.20.0",
+    "@types/pg": "^8.23.1",
     "dotenv": "^17.4.2",
-    "pg": "8.22.0",
+    "pg": "8.23.0",
     "tsup": "catalog:repo",
     "typescript": "catalog:repo",
     "vitest": "catalog:repo"
