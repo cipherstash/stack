@@ -102,11 +102,13 @@ where
 #[cfg(feature = "test-support")]
 mod fake {
     use super::*;
-    use crate::errors::RetrieveKeyError;
+    use crate::errors::{GenerateKeyError, RetrieveKeyError};
     use crate::key::DataKey;
     use recipher::key::{Iv, Key};
     use sha2::{Digest, Sha256};
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use zerokms_protocol::{DecryptionPolicy, PolicyCondition, ViturRequestError};
 
     /// A deterministic, in-process [`DataKeySource`] for tests.
     ///
@@ -129,9 +131,35 @@ mod fake {
     ///   surfaces as `Err`, not as an AEAD failure downstream.
     ///
     /// `generate_keys` hands out a unique IV per payload (driven by an internal
-    /// counter) and returns the payload's `decryption_policy` on the
-    /// [`DataKeyWithTag`], as real ZeroKMS returns the resolved policy for
-    /// storage beside the ciphertext.
+    /// counter).
+    ///
+    /// # Caller identity and decryption policies
+    ///
+    /// ZeroKMS sees every request through the caller's bearer token: at
+    /// generation it fills `PolicyCondition { value: None }` from the caller's
+    /// JWT claims (`sub`, `workspace`, …) and returns the *resolved* policy for
+    /// storage beside the ciphertext; at retrieval it rejects a policy that
+    /// still carries an unresolved condition, and then checks that the caller's
+    /// claims satisfy at least one condition. A [`DataKeySource`] sits above
+    /// the token, so the fake needs to be told who is calling:
+    /// [`as_caller`](Self::as_caller) sets the claims every request to this
+    /// instance is treated as authenticated with. Key material does not
+    /// depend on the instance, so two fakes with different callers model two
+    /// principals sharing one KMS:
+    ///
+    /// ```
+    /// # use stack_kms::FakeDataKeySource;
+    /// let alice = FakeDataKeySource::new().as_caller([("sub", "alice")]);
+    /// let mallory = FakeDataKeySource::new().as_caller([("sub", "mallory")]);
+    /// // keys `alice` generates under a `sub` policy retrieve for `alice`,
+    /// // and are rejected for `mallory`.
+    /// ```
+    ///
+    /// A fake with no caller claims can still generate and retrieve keys
+    /// without a policy, or with a policy whose conditions all carry explicit
+    /// values — though retrieval of the latter is denied, since the (absent)
+    /// caller satisfies no condition, exactly as ZeroKMS would deny a token
+    /// without the claim.
     ///
     /// The derivations are plain SHA-256: deterministic and binding, but **not**
     /// a stand-in for ZeroKMS's real key derivation or HMAC tag. Use it for
@@ -140,12 +168,98 @@ mod fake {
     #[derive(Debug, Default)]
     pub struct FakeDataKeySource {
         counter: AtomicU64,
+        /// The claims of the (single) caller this fake serves — its stand-in
+        /// for the bearer token `StackKms` would send with every request.
+        caller_claims: HashMap<String, String>,
     }
+
+    /// The fake's stand-in for ZeroKMS's `UnsupportedClaim`: a policy asks for
+    /// a claim the caller's token doesn't carry.
+    #[derive(Debug, thiserror::Error)]
+    #[error("policy condition on claim `{0}` cannot be resolved: the caller has no such claim")]
+    struct UnresolvableClaim(String);
 
     impl FakeDataKeySource {
         pub fn new() -> Self {
             Self::default()
         }
+
+        /// Treat every request to this fake as authenticated with `claims`
+        /// (e.g. `[("sub", "alice"), ("workspace", "ws-1")]`). Replaces any
+        /// claims set earlier.
+        pub fn as_caller<K, V>(mut self, claims: impl IntoIterator<Item = (K, V)>) -> Self
+        where
+            K: Into<String>,
+            V: Into<String>,
+        {
+            self.caller_claims = claims
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect();
+            self
+        }
+
+        /// Fill in `value: None` conditions from the caller's claims, as ZeroKMS
+        /// does at generation time.
+        fn resolve_policy(&self, policy: DecryptionPolicy) -> Result<DecryptionPolicy, Error> {
+            let conditions = policy
+                .conditions
+                .into_iter()
+                .map(|condition| {
+                    let value = match condition.value {
+                        Some(value) => value,
+                        None => self
+                            .caller_claims
+                            .get(&condition.claim)
+                            .cloned()
+                            .ok_or_else(|| {
+                                Error::GenerateKey(GenerateKeyError::RequestFailed(
+                                    ViturRequestError::other(
+                                        "unresolvable decryption policy condition",
+                                        UnresolvableClaim(condition.claim.clone()),
+                                    ),
+                                ))
+                            })?,
+                    };
+                    Ok(PolicyCondition {
+                        claim: condition.claim,
+                        value: Some(value),
+                    })
+                })
+                .collect::<Result<Vec<_>, Error>>()?;
+            Ok(DecryptionPolicy { conditions })
+        }
+
+        /// The retrieval-side policy checks ZeroKMS performs *before* and
+        /// *after* the tag proof: the stored policy must be fully resolved,
+        /// and the caller must satisfy at least one condition (flat OR).
+        fn check_policy_is_resolved(policy: &DecryptionPolicy) -> Result<(), Error> {
+            if policy.conditions.iter().any(|c| c.value.is_none()) {
+                return Err(retrieval_denied(
+                    "unresolved policy condition: only the resolved policy returned at \
+                     generation is accepted at retrieval",
+                ));
+            }
+            Ok(())
+        }
+
+        fn check_caller_satisfies(&self, policy: &DecryptionPolicy) -> Result<(), Error> {
+            let satisfied = policy
+                .conditions
+                .iter()
+                .any(|c| self.caller_claims.get(&c.claim) == c.value.as_ref());
+            if satisfied {
+                Ok(())
+            } else {
+                Err(retrieval_denied(
+                    "policy not satisfied: none of the conditions match the caller's claims",
+                ))
+            }
+        }
+    }
+
+    fn retrieval_denied(reason: &str) -> Error {
+        Error::RetrieveKey(RetrieveKeyError::FailedRetrieval(reason.to_string()))
     }
 
     fn update_field(hasher: &mut Sha256, field: &[u8]) {
@@ -223,9 +337,15 @@ mod fake {
             keyset_id: Option<Uuid>,
             _unverified_context: Option<Cow<'_, UnverifiedContext>>,
         ) -> Result<Vec<DataKeyWithTag>, Error> {
-            Ok(payloads
+            payloads
                 .into_iter()
                 .map(|payload| {
+                    // Resolve first: the tag binds the *resolved* policy, as
+                    // `create_v1_tag` only ever sees a `ResolvedDecryptionPolicy`.
+                    let decryption_policy = payload
+                        .decryption_policy
+                        .map(|policy| self.resolve_policy(policy))
+                        .transpose()?;
                     let n = self.counter.fetch_add(1, Ordering::Relaxed);
                     let mut iv: Iv = [0u8; 16];
                     iv[..8].copy_from_slice(&n.to_le_bytes());
@@ -235,15 +355,15 @@ mod fake {
                         iv: &iv,
                         descriptor: payload.descriptor,
                         context: &payload.context,
-                        decryption_policy: payload.decryption_policy.as_ref(),
+                        decryption_policy: decryption_policy.as_ref(),
                     });
-                    DataKeyWithTag {
+                    Ok(DataKeyWithTag {
                         key: DataKey { iv, key },
                         tag,
-                        decryption_policy: payload.decryption_policy,
-                    }
+                        decryption_policy,
+                    })
                 })
-                .collect())
+                .collect()
         }
 
         async fn retrieve_keys(
@@ -255,6 +375,9 @@ mod fake {
             payloads
                 .iter()
                 .map(|p| {
+                    if let Some(policy) = &p.decryption_policy {
+                        Self::check_policy_is_resolved(policy)?;
+                    }
                     let iv: Iv = *p.iv.as_ref();
                     let expected = derive_tag(TagInputs {
                         keyset_id,
@@ -266,11 +389,15 @@ mod fake {
                     // A fake, so a plain comparison is fine; ZeroKMS compares
                     // its HMAC tags in constant time.
                     if expected != p.tag {
-                        return Err(Error::RetrieveKey(RetrieveKeyError::FailedRetrieval(
+                        return Err(retrieval_denied(
                             "tag mismatch: the iv, descriptor, keyset, context or policy \
-                             differs from what the key was generated under"
-                                .to_string(),
-                        )));
+                             differs from what the key was generated under",
+                        ));
+                    }
+                    // Tag proven, so the policy is the one written at generation;
+                    // now the caller must satisfy it.
+                    if let Some(policy) = &p.decryption_policy {
+                        self.check_caller_satisfies(policy)?;
                     }
                     Ok(DataKey {
                         iv,
@@ -300,6 +427,20 @@ mod tests {
                 value: Some(value.to_string()),
             }],
         }
+    }
+
+    /// A policy that ZeroKMS resolves from the caller's token at generation.
+    fn unresolved_policy(claim: &str) -> DecryptionPolicy {
+        DecryptionPolicy {
+            conditions: vec![PolicyCondition {
+                claim: claim.to_string(),
+                value: None,
+            }],
+        }
+    }
+
+    fn alice() -> FakeDataKeySource {
+        FakeDataKeySource::new().as_caller([("sub", "alice")])
     }
 
     async fn generate_one(
@@ -482,7 +623,7 @@ mod tests {
 
     #[tokio::test]
     async fn generate_returns_the_payloads_policy() {
-        let src = FakeDataKeySource::new();
+        let src = alice();
         let p = policy("sub", "alice");
         let dk = generate_one(
             &src,
@@ -500,7 +641,7 @@ mod tests {
 
     #[tokio::test]
     async fn policy_round_trips_and_a_stripped_or_swapped_policy_is_rejected() {
-        let src = FakeDataKeySource::new();
+        let src = alice();
         let p = policy("sub", "alice");
         let dk = generate_one(
             &src,
@@ -538,7 +679,7 @@ mod tests {
         // which sends no context, and ZeroKMS's v1 (policy) tag never reads
         // the retrieve-side context either. So with a policy present, any
         // context — matching, stripped, or different — retrieves the key.
-        let src = FakeDataKeySource::new();
+        let src = alice();
         let p = policy("sub", "alice");
         let ctx = vec![Context::Tag("tenant-1".into())];
         let dk = generate_one(
@@ -579,6 +720,148 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(dk.key.key(), with_other_context.key());
+    }
+
+    mod caller_identity {
+        use super::*;
+        use crate::errors::GenerateKeyError;
+
+        fn retrieve_payload<'a>(dk: &'a DataKeyWithTag) -> RetrieveKeyPayload<'a> {
+            RetrieveKeyPayload::new(dk.key.iv, "d", &dk.tag)
+                .with_decryption_policy(dk.decryption_policy.clone().unwrap())
+        }
+
+        #[tokio::test]
+        async fn an_unresolved_condition_is_resolved_from_the_callers_claims() {
+            let src = alice();
+            let dk = generate_one(
+                &src,
+                GenerateKeyPayload::new("d", Cow::Owned(vec![]))
+                    .with_decryption_policy(unresolved_policy("sub")),
+                None,
+            )
+            .await;
+
+            // ZeroKMS returns the resolved policy for storage beside the ciphertext.
+            assert_eq!(dk.decryption_policy, Some(policy("sub", "alice")));
+
+            let retrieved = retrieve_one(&src, retrieve_payload(&dk), None)
+                .await
+                .unwrap();
+            assert_eq!(dk.key.key(), retrieved.key());
+        }
+
+        #[tokio::test]
+        async fn an_unresolved_condition_the_caller_cannot_satisfy_fails_generation() {
+            let src = FakeDataKeySource::new().as_caller([("workspace", "ws-1")]);
+            let result = src
+                .generate_keys(
+                    vec![GenerateKeyPayload::new("d", Cow::Owned(vec![]))
+                        .with_decryption_policy(unresolved_policy("sub"))],
+                    None,
+                    None,
+                )
+                .await;
+
+            assert!(
+                matches!(
+                    result,
+                    Err(Error::GenerateKey(GenerateKeyError::RequestFailed(_)))
+                ),
+                "a policy on a claim the caller lacks must fail generation, got: {result:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn an_unresolved_policy_is_rejected_at_retrieval() {
+            // The client must store and send back the resolved policy from
+            // generation; sending the unresolved form (which the tag would
+            // *not* bind either way) is rejected up-front as ZeroKMS does.
+            let src = alice();
+            let dk = generate_one(
+                &src,
+                GenerateKeyPayload::new("d", Cow::Owned(vec![]))
+                    .with_decryption_policy(unresolved_policy("sub")),
+                None,
+            )
+            .await;
+
+            let result = retrieve_one(
+                &src,
+                RetrieveKeyPayload::new(dk.key.iv, "d", &dk.tag)
+                    .with_decryption_policy(unresolved_policy("sub")),
+                None,
+            )
+            .await;
+            assert_rejected(result, "unresolved policy at retrieval");
+        }
+
+        #[tokio::test]
+        async fn a_different_caller_is_denied_the_key() {
+            let dk = generate_one(
+                &alice(),
+                GenerateKeyPayload::new("d", Cow::Owned(vec![]))
+                    .with_decryption_policy(unresolved_policy("sub")),
+                None,
+            )
+            .await;
+
+            let mallory = FakeDataKeySource::new().as_caller([("sub", "mallory")]);
+            assert_rejected(
+                retrieve_one(&mallory, retrieve_payload(&dk), None).await,
+                "mallory retrieving alice's key",
+            );
+
+            let anonymous = FakeDataKeySource::new();
+            assert_rejected(
+                retrieve_one(&anonymous, retrieve_payload(&dk), None).await,
+                "a caller with no claims retrieving alice's key",
+            );
+        }
+
+        #[tokio::test]
+        async fn any_one_condition_satisfies_a_policy() {
+            // Flat OR, as `ResolvedDecryptionPolicy::verify`.
+            let p = DecryptionPolicy {
+                conditions: vec![
+                    PolicyCondition {
+                        claim: "sub".into(),
+                        value: Some("alice".into()),
+                    },
+                    PolicyCondition {
+                        claim: "sub".into(),
+                        value: Some("bob".into()),
+                    },
+                ],
+            };
+            let dk = generate_one(
+                &alice(),
+                GenerateKeyPayload::new("d", Cow::Owned(vec![])).with_decryption_policy(p),
+                None,
+            )
+            .await;
+
+            let bob = FakeDataKeySource::new().as_caller([("sub", "bob")]);
+            let retrieved = retrieve_one(&bob, retrieve_payload(&dk), None)
+                .await
+                .unwrap();
+            assert_eq!(dk.key.key(), retrieved.key());
+        }
+
+        #[tokio::test]
+        async fn keys_without_a_policy_need_no_caller() {
+            let src = FakeDataKeySource::new();
+            let dk =
+                generate_one(&src, GenerateKeyPayload::new("d", Cow::Owned(vec![])), None).await;
+            let retrieved = retrieve_one(
+                &FakeDataKeySource::new(),
+                RetrieveKeyPayload::new(dk.key.iv, "d", &dk.tag),
+                None,
+            )
+            .await
+            .unwrap();
+            assert_eq!(dk.key.key(), retrieved.key());
+        }
     }
 
     #[tokio::test]
