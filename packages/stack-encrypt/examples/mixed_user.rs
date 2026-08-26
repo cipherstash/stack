@@ -24,13 +24,14 @@
 //! cargo run -p stack-encrypt --example mixed_user
 //! ```
 //!
-//! Uses `FakeDataKeySource`, so no ZeroKMS credentials or network are needed.
+//! Talks to real ZeroKMS: needs `CS_CLIENT_ID` / `CS_CLIENT_KEY` and access-key
+//! or device-session credentials in the environment (see the `zerokms_auth`
+//! example for where they come from).
 
 use stack_encrypt::{
     Cipher, CipherText, Decipher, Decrypt, Encrypt, IntoAad, StackCipher, StackCipherText,
     Unspecified,
 };
-use stack_kms::FakeDataKeySource;
 use vitaminc_aead::{DecipherVisitor, MapAccess, MapCipher, Passthrough};
 
 // --- The record type ---------------------------------------------------------
@@ -142,10 +143,7 @@ fn describe(ciphertext: &StackCipherText, indent: usize) {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cipher = StackCipher::builder()
-        .kms(FakeDataKeySource::new())
-        .init()
-        .await?;
+    let cipher = StackCipher::new().await?;
 
     let users = vec![
         User {

@@ -53,12 +53,14 @@
 //!
 //! # Testing without ZeroKMS
 //!
-//! `stack_kms::FakeDataKeySource` is an in-process key source that needs no
+//! `stack_kms::FakeDataKeySource` is an in-memory stub that needs no
 //! credentials or network: it hands out a fresh random data key per request and
 //! remembers it in memory, so a `generate` followed by the matching `retrieve`
 //! round-trips within one process (the key material itself differs run to run,
-//! and nothing survives the process). It lives behind stack-kms's
-//! `test-support` feature, so add
+//! and nothing survives the process). It models none of ZeroKMS's
+//! authorization behaviour (context, identity claims, decryption policies) —
+//! those are the service's, and tests of them belong against a real ZeroKMS.
+//! It lives behind stack-kms's `test-support` feature, so add
 //! `stack-kms = { version = "..", features = ["test-support"] }` to your
 //! `[dev-dependencies]`:
 //!

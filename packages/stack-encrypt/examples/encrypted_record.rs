@@ -19,14 +19,15 @@
 //! cargo run -p stack-encrypt --example encrypted_record
 //! ```
 //!
-//! Uses `FakeDataKeySource`, so no ZeroKMS credentials or network are needed.
+//! Talks to real ZeroKMS: needs `CS_CLIENT_ID` / `CS_CLIENT_KEY` and access-key
+//! or device-session credentials in the environment (see the `zerokms_auth`
+//! example for where they come from).
 
 use stack_encrypt::sem::{EqualityTerm, OreTerm};
 use stack_encrypt::target::{
     DecryptContext, DecryptExt, DecryptedFrom, EncryptContext, EncryptExt, EncryptedFrom, Pending,
 };
 use stack_encrypt::{StackCipher, StackCipherText};
-use stack_kms::FakeDataKeySource;
 
 /// "An encrypted `u32`, stored as its ciphertext plus an equality term and an
 /// ORE term." The same shape as an EQL `integer_ord_ore` payload, minus the
@@ -88,10 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // leaf sealed under its own data key) and SEM term derivation under the
     // keyset's index key, which `init` loads. Data keys and terms are bound to
     // the same keyset by construction — there is no way to mix them up.
-    let cipher = StackCipher::builder()
-        .kms(FakeDataKeySource::new())
-        .init()
-        .await?;
+    let cipher = StackCipher::new().await?;
 
     // --- Write side: encrypt a column of ages -------------------------------
 
@@ -129,13 +127,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- Read side: decrypt only the rows a query matched -------------------
 
-    // The fake source is deterministic, so a fresh instance re-derives the
-    // same data keys (production: any client holding the same ZeroKMS
-    // credentials and keyset).
-    let decryptor = StackCipher::builder()
-        .kms(FakeDataKeySource::new())
-        .init()
-        .await?;
+    // A separate client: any process holding the same ZeroKMS credentials and
+    // keyset can decrypt what this one wrote.
+    let decryptor = StackCipher::new().await?;
 
     // Collect the matching rows and decrypt them together: one batched
     // retrieve_keys call, however many rows matched. The context must match

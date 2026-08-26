@@ -12,23 +12,19 @@
 //! cargo run -p stack-encrypt --example search_terms
 //! ```
 //!
-//! Uses `FakeDataKeySource`, so no ZeroKMS credentials or network are needed.
+//! Talks to real ZeroKMS: needs `CS_CLIENT_ID` / `CS_CLIENT_KEY` and access-key
+//! or device-session credentials in the environment (see the `zerokms_auth`
+//! example for where they come from).
 
 use stack_encrypt::sem::{EqualityTerm, MatchTerm, OreTerm};
 use stack_encrypt::target::EncryptExt;
 use stack_encrypt::StackCipher;
-use stack_kms::FakeDataKeySource;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Production: `StackCipher::new()` builds a ZeroKMS client from the
-    // environment. Here the fake source stands in, deriving a deterministic
-    // index key. Either way the cipher loads its keyset's index key once,
-    // during construction.
-    let terms = StackCipher::builder()
-        .kms(FakeDataKeySource::new())
-        .init()
-        .await?;
+    // `StackCipher::new()` builds a ZeroKMS client from the environment and
+    // loads the keyset's index key once, during construction.
+    let terms = StackCipher::new().await?;
     println!("cipher ready on keyset {}", terms.keyset_id());
 
     // One cipher serves write time and query time; terms are deterministic

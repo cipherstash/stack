@@ -1,8 +1,7 @@
 //! Wiring a cipher to real ZeroKMS, and to a custom authentication strategy.
 //!
-//! Every other example uses `FakeDataKeySource`, which needs no credentials.
-//! This one shows the production path: where the credentials come from, and
-//! how to substitute your own when the defaults do not fit.
+//! Every example talks to real ZeroKMS. This one shows where the credentials
+//! come from, and how to substitute your own when the defaults do not fit.
 //!
 //! Run with:
 //!
