@@ -131,6 +131,10 @@ pub enum Error {
     #[error(transparent)]
     ConnectionInit(#[from] crate::connection::ConnectionInitError),
 
+    /// The ZeroKMS endpoint named by the token's `services` claim is unusable.
+    #[error("Invalid ZeroKMS endpoint in the token's services claim: {0}")]
+    InvalidEndpoint(#[from] crate::endpoint::InvalidEndpoint),
+
     #[error("Unexpected error: {0}")]
     Unexpected(String),
 }

@@ -383,8 +383,13 @@ where
     async fn get_token(&self) -> Result<stack_auth::ServiceToken, Error> {
         let token = (&self.credentials).get_token().await?;
         if !self.client.connection().has_base_url() {
-            let url = token.zerokms_url()?;
-            self.client.connection().ensure_base_url(url);
+            let endpoint = crate::endpoint::ZeroKmsEndpoint::try_from(token.zerokms_url()?)?;
+            tracing::debug!(
+                target: "stack_kms",
+                %endpoint,
+                "resolved ZeroKMS endpoint from the token's services claim"
+            );
+            self.client.connection().ensure_base_url(endpoint);
         }
         Ok(token)
     }

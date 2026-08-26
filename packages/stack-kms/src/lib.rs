@@ -65,6 +65,7 @@
 mod builder;
 mod client;
 mod connection;
+mod endpoint;
 mod errors;
 mod futures;
 mod key;
@@ -89,6 +90,7 @@ pub use connection::{
     ConnectionInitError, HttpConnection, HttpConnectionOpts, ZeroKMSConnection,
     ZeroKMSConnectionInit,
 };
+pub use endpoint::{InvalidEndpoint, ZeroKmsEndpoint};
 
 // Errors
 pub use errors::{Error, GenerateKeyError, RetrieveKeyError};

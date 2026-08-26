@@ -1,3 +1,4 @@
+use crate::endpoint::ZeroKmsEndpoint;
 use crate::user_agent::get_user_agent;
 use reqwest::{header::HeaderMap, Response, StatusCode};
 use serde_json::{from_reader, to_vec};
@@ -5,7 +6,6 @@ use serde_json::{from_reader, to_vec};
 use std::time::Duration;
 use std::{collections::HashMap, future::Future, sync::OnceLock};
 use thiserror::Error;
-use url::Url;
 use zerokms_protocol::{ViturRequest, ViturRequestError, ViturRequestErrorKind};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -20,20 +20,33 @@ pub struct ConnectionInitError(#[from] reqwest::Error);
 struct BaseUrlUnresolved;
 
 pub struct HttpConnectionOpts {
-    base_url: Option<Url>,
+    base_url: Option<ZeroKmsEndpoint>,
     request_timeout: Option<u64>,
     connect_timeout: Option<u64>,
     pool_idle_timeout: Option<u64>,
 }
 
 impl HttpConnectionOpts {
-    pub fn new(base_url: Option<Url>) -> Self {
+    /// Options for a connection to `base_url`, or — when `None` — to whatever
+    /// endpoint the access token's `services` claim names (resolved on first
+    /// use via [`HttpConnection::ensure_base_url`]).
+    pub fn new(base_url: Option<ZeroKmsEndpoint>) -> Self {
         Self {
             base_url,
             request_timeout: None,
             connect_timeout: None,
             pool_idle_timeout: None,
         }
+    }
+
+    /// Pin the endpoint, replacing any earlier value.
+    pub fn with_base_url(mut self, base_url: ZeroKmsEndpoint) -> Self {
+        self.base_url = Some(base_url);
+        self
+    }
+
+    pub(crate) fn base_url(&self) -> Option<&ZeroKmsEndpoint> {
+        self.base_url.as_ref()
     }
 
     /// Set the **total request timeout** in seconds — covers connect + TLS
@@ -119,7 +132,7 @@ pub trait ZeroKMSConnection: ZeroKMSConnectionInit {
 }
 
 pub struct HttpConnection {
-    base_url: OnceLock<Url>,
+    base_url: OnceLock<ZeroKmsEndpoint>,
     client: reqwest::Client,
 }
 
@@ -173,22 +186,6 @@ fn header_map_to_hash(map: &HeaderMap) -> HashMap<String, String> {
         .collect()
 }
 
-/// Ensure the base URL's path ends with `/` so that `Url::join` with a
-/// relative endpoint *appends* to it instead of replacing the last segment.
-///
-/// Endpoint paths in `zerokms-protocol` have no leading slash, so
-/// `https://gateway.example/zerokms` + `retrieve-data-key` would otherwise
-/// resolve to `https://gateway.example/retrieve-data-key` — silently dropping
-/// the `/zerokms` prefix. A URL whose path already ends in `/` (including the
-/// bare-host form, whose path is `/`) is returned unchanged.
-fn with_trailing_slash(mut url: Url) -> Url {
-    if !url.path().ends_with('/') {
-        let path = format!("{}/", url.path());
-        url.set_path(&path);
-    }
-    url
-}
-
 /// `true` if a `content-type` header value denotes JSON, ignoring any
 /// parameters (`application/json; charset=utf-8`) and ASCII case — proxies and
 /// API gateways commonly normalise the header that way.
@@ -205,9 +202,9 @@ impl HttpConnection {
     ///
     /// This is a no-op if the URL was already provided at init time or by a
     /// previous call to this method.
-    pub fn ensure_base_url(&self, url: Url) {
+    pub fn ensure_base_url(&self, url: ZeroKmsEndpoint) {
         // OnceLock::set returns Err if already set — that's fine, we keep the first value.
-        let _ = self.base_url.set(with_trailing_slash(url));
+        let _ = self.base_url.set(url);
     }
 
     /// Returns `true` if the base URL has been resolved (either at init time
@@ -252,7 +249,7 @@ impl ZeroKMSConnectionInit for HttpConnection {
         let base_url = OnceLock::new();
         if let Some(url) = opts.base_url {
             // Pre-fill when an explicit URL was provided at build time.
-            let _ = base_url.set(with_trailing_slash(url));
+            let _ = base_url.set(url);
         }
 
         Ok(Self { base_url, client })
@@ -280,9 +277,7 @@ impl ZeroKMSConnection for HttpConnection {
             )
         })?;
 
-        let url = base_url
-            .join(Request::ENDPOINT)
-            .map_err(|e| ViturRequestError::prepare("Failed to construct request URL", e))?;
+        let url = base_url.request_url(Request::ENDPOINT);
 
         let response = self
             .client
@@ -351,12 +346,12 @@ impl ZeroKMSConnection for HttpConnection {
 mod base_url_tests {
     use super::*;
 
-    fn conn(base_url: Option<Url>) -> HttpConnection {
+    fn conn(base_url: Option<ZeroKmsEndpoint>) -> HttpConnection {
         HttpConnection::init(HttpConnectionOpts::new(base_url)).unwrap()
     }
 
-    fn url(s: &str) -> Url {
-        Url::parse(s).unwrap()
+    fn endpoint(s: &str) -> ZeroKmsEndpoint {
+        s.parse().unwrap()
     }
 
     #[test]
@@ -364,7 +359,7 @@ mod base_url_tests {
         let c = conn(None);
         assert!(!c.has_base_url());
 
-        c.ensure_base_url(url("https://a.example"));
+        c.ensure_base_url(endpoint("https://a.example"));
 
         assert!(c.has_base_url());
         assert_eq!(c.base_url.get().unwrap().as_str(), "https://a.example/");
@@ -373,59 +368,37 @@ mod base_url_tests {
     #[test]
     fn the_first_ensured_url_wins() {
         let c = conn(None);
-        c.ensure_base_url(url("https://first.example"));
-        c.ensure_base_url(url("https://second.example"));
+        c.ensure_base_url(endpoint("https://first.example"));
+        c.ensure_base_url(endpoint("https://second.example"));
 
         assert_eq!(c.base_url.get().unwrap().as_str(), "https://first.example/");
     }
 
     #[test]
-    fn a_path_prefix_gets_a_trailing_slash_so_endpoints_append_to_it() {
-        let c = conn(Some(url("https://gateway.example/zerokms")));
-        let base = c.base_url.get().unwrap();
-
-        assert_eq!(base.as_str(), "https://gateway.example/zerokms/");
-        assert_eq!(
-            base.join("retrieve-data-key").unwrap().as_str(),
-            "https://gateway.example/zerokms/retrieve-data-key"
-        );
-    }
-
-    #[test]
-    fn ensure_base_url_normalises_the_same_way() {
-        let c = conn(None);
-        c.ensure_base_url(url("https://gateway.example/zerokms?x=1"));
-
-        assert_eq!(
-            c.base_url.get().unwrap().as_str(),
-            "https://gateway.example/zerokms/?x=1"
-        );
-    }
-
-    #[test]
-    fn an_already_slash_terminated_url_is_unchanged() {
-        for s in [
-            "https://a.example",
-            "https://a.example/",
-            "https://a.example/zerokms/",
-        ] {
-            let c = conn(Some(url(s)));
-            assert_eq!(
-                c.base_url.get().unwrap().as_str(),
-                url(s).as_str(),
-                "{s} should be left as-is"
-            );
-        }
-    }
-
-    #[test]
     fn a_url_given_at_init_is_kept_over_a_later_ensure() {
-        let c = conn(Some(url("https://init.example")));
+        let c = conn(Some(endpoint("https://init.example")));
         assert!(c.has_base_url());
 
-        c.ensure_base_url(url("https://other.example"));
+        c.ensure_base_url(endpoint("https://other.example"));
 
         assert_eq!(c.base_url.get().unwrap().as_str(), "https://init.example/");
+    }
+
+    #[test]
+    fn requests_append_the_endpoint_to_a_path_prefix() {
+        // URL normalisation itself is covered in `endpoint::tests`; this pins
+        // that the connection builds request URLs through the endpoint type
+        // rather than re-joining (which would drop a path prefix).
+        let c = conn(Some(endpoint("https://gateway.example/zerokms")));
+
+        assert_eq!(
+            c.base_url
+                .get()
+                .unwrap()
+                .request_url(zerokms_protocol::RetrieveKeyRequest::ENDPOINT)
+                .as_str(),
+            "https://gateway.example/zerokms/retrieve-data-key"
+        );
     }
 
     #[tokio::test]

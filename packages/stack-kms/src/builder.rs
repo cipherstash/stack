@@ -2,11 +2,11 @@ use crate::client::{
     ClientOpts, InvalidClientOpts, StackKms, DEFAULT_CONCURRENT_REQS, DEFAULT_KEYS_PER_REQ,
 };
 use crate::connection::HttpConnectionOpts;
+use crate::endpoint::{InvalidEndpoint, ZeroKmsEndpoint};
 use crate::key::ClientKey;
 use crate::key_provider::{KeyProvider, KeyProviderError};
 use stack_auth::{AuthStrategy, AuthStrategyBounds};
 use thiserror::Error;
-use url::Url;
 
 /// Error type for [`StackKmsBuilder`] operations.
 #[derive(Debug, Error, miette::Diagnostic)]
@@ -27,6 +27,17 @@ pub enum StackKmsBuilderError {
     /// or keys-per-request limit).
     #[error(transparent)]
     InvalidConfig(#[from] InvalidClientOpts),
+
+    /// The ZeroKMS endpoint in the named environment variable is not usable.
+    /// Unlike a missing variable this is not skipped: falling through to the
+    /// token's `services` claim would silently send key operations somewhere
+    /// the operator did not configure.
+    #[error("Invalid ZeroKMS endpoint in {env_var}: {source}")]
+    InvalidEndpoint {
+        env_var: &'static str,
+        #[source]
+        source: InvalidEndpoint,
+    },
 }
 
 /// A builder for creating [`StackKms`] clients.
@@ -38,8 +49,9 @@ pub enum StackKmsBuilderError {
 /// [`with_key_provider`](Self::with_key_provider)) has been supplied.
 ///
 /// The ZeroKMS endpoint is resolved in this order:
-/// 1. Explicit URL via [`with_base_url`](Self::with_base_url)
-/// 2. `CS_ZEROKMS_HOST` (or legacy `CS_VITUR_HOST`) environment variable
+/// 1. Explicit [`ZeroKmsEndpoint`] via [`with_base_url`](Self::with_base_url)
+/// 2. `CS_ZEROKMS_HOST` (or legacy `CS_VITUR_HOST`) environment variable —
+///    the first one that is *set* is used, and an invalid value is an error
 /// 3. Automatically from the token's `services` claim
 ///
 /// # Example
@@ -62,13 +74,10 @@ pub enum StackKmsBuilderError {
 /// ```
 pub struct StackKmsBuilder<C, ClientKeyState = ()> {
     credentials: C,
-    request_timeout: Option<u64>,
-    connect_timeout: Option<u64>,
-    pool_idle_timeout: Option<u64>,
+    connection: HttpConnectionOpts,
     max_keys_per_req: usize,
     max_concurrent_reqs: usize,
     client_key: ClientKeyState,
-    base_url_override: Option<Url>,
 }
 
 impl StackKmsBuilder<stack_auth::AutoStrategy, ()> {
@@ -101,13 +110,10 @@ where
     pub fn new(credentials: C) -> Self {
         Self {
             credentials,
-            request_timeout: None,
-            connect_timeout: None,
-            pool_idle_timeout: None,
+            connection: HttpConnectionOpts::new(None),
             max_keys_per_req: DEFAULT_KEYS_PER_REQ,
             max_concurrent_reqs: DEFAULT_CONCURRENT_REQS,
             client_key: (),
-            base_url_override: None,
         }
     }
 
@@ -121,13 +127,10 @@ where
     ) -> StackKmsBuilder<C, WithKeyProvider<K>> {
         StackKmsBuilder {
             credentials: self.credentials,
-            request_timeout: self.request_timeout,
-            connect_timeout: self.connect_timeout,
-            pool_idle_timeout: self.pool_idle_timeout,
+            connection: self.connection,
             max_keys_per_req: self.max_keys_per_req,
             max_concurrent_reqs: self.max_concurrent_reqs,
             client_key: WithKeyProvider(provider),
-            base_url_override: self.base_url_override,
         }
     }
 
@@ -135,13 +138,10 @@ where
     pub fn with_client_key(self, client_key: ClientKey) -> StackKmsBuilder<C, ClientKey> {
         StackKmsBuilder {
             credentials: self.credentials,
-            request_timeout: self.request_timeout,
-            connect_timeout: self.connect_timeout,
-            pool_idle_timeout: self.pool_idle_timeout,
+            connection: self.connection,
             max_keys_per_req: self.max_keys_per_req,
             max_concurrent_reqs: self.max_concurrent_reqs,
             client_key,
-            base_url_override: self.base_url_override,
         }
     }
 }
@@ -149,22 +149,28 @@ where
 // Configuration setters live on the state-agnostic impl so they can be called
 // in any order relative to `with_client_key`/`with_key_provider` — chaining a
 // setter *after* the key would otherwise fail to compile.
+//
+// The transport knobs delegate to `HttpConnectionOpts` (which documents each
+// one, including the wasm32 caveats) rather than duplicating its fields here.
 impl<C, S> StackKmsBuilder<C, S> {
     /// Set the **total request timeout** in seconds. Defaults to 10 seconds.
+    /// See [`HttpConnectionOpts::with_request_timeout`].
     pub fn with_request_timeout(mut self, timeout_secs: u64) -> Self {
-        self.request_timeout = Some(timeout_secs);
+        self.connection = self.connection.with_request_timeout(timeout_secs);
         self
     }
 
     /// Set the **connect timeout** in seconds (TCP connect + TLS handshake only).
+    /// See [`HttpConnectionOpts::with_connect_timeout`].
     pub fn with_connect_timeout(mut self, timeout_secs: u64) -> Self {
-        self.connect_timeout = Some(timeout_secs);
+        self.connection = self.connection.with_connect_timeout(timeout_secs);
         self
     }
 
     /// Set the **pool idle timeout** in seconds.
+    /// See [`HttpConnectionOpts::with_pool_idle_timeout`].
     pub fn with_pool_idle_timeout(mut self, timeout_secs: u64) -> Self {
-        self.pool_idle_timeout = Some(timeout_secs);
+        self.connection = self.connection.with_pool_idle_timeout(timeout_secs);
         self
     }
 
@@ -182,60 +188,51 @@ impl<C, S> StackKmsBuilder<C, S> {
         self
     }
 
-    /// Override the base URL for the ZeroKMS service.
+    /// Pin the ZeroKMS endpoint, bypassing both the environment and the
+    /// token's `services` claim.
     ///
-    /// This bypasses resolving the URL from the token's `services` claim and connects
-    /// directly to the specified URL.
-    pub fn with_base_url(mut self, base_url: Url) -> Self {
-        self.base_url_override = Some(base_url);
+    /// Takes an already-validated [`ZeroKmsEndpoint`] (parse one with
+    /// `"https://…".parse()?`), so a bad URL is rejected where it is written
+    /// rather than on the first request.
+    pub fn with_base_url(mut self, base_url: ZeroKmsEndpoint) -> Self {
+        self.connection = self.connection.with_base_url(base_url);
         self
     }
 
     fn build_opts(self) -> Result<(ClientOpts<HttpConnectionOpts>, C, S), StackKmsBuilderError> {
-        let base_url = self.base_url_override.or_else(Self::base_url_from_env);
-        let mut connection_opts = HttpConnectionOpts::new(base_url);
-        if let Some(timeout) = self.request_timeout {
-            connection_opts = connection_opts.with_request_timeout(timeout);
-        }
-        if let Some(connect_timeout) = self.connect_timeout {
-            connection_opts = connection_opts.with_connect_timeout(connect_timeout);
-        }
-        if let Some(pool_idle_timeout) = self.pool_idle_timeout {
-            connection_opts = connection_opts.with_pool_idle_timeout(pool_idle_timeout);
+        let mut connection = self.connection;
+        if connection.base_url().is_none() {
+            if let Some(endpoint) = Self::base_url_from_env()? {
+                connection = connection.with_base_url(endpoint);
+            }
         }
 
         // `ClientOpts` rejects degenerate limits (0 keys-per-req would panic
         // `slice::chunks`; 0 concurrent-reqs would leave the request stream
         // pending forever) so they never reach `map_async_chunked`.
-        let opts = ClientOpts::new(connection_opts)
+        let opts = ClientOpts::new(connection)
             .with_max_keys_per_req(self.max_keys_per_req)?
             .with_max_concurrent_reqs(self.max_concurrent_reqs)?;
 
         Ok((opts, self.credentials, self.client_key))
     }
 
-    /// Resolve the ZeroKMS base URL from the `CS_ZEROKMS_HOST` environment
-    /// variable (or legacy `CS_VITUR_HOST`).
-    fn base_url_from_env() -> Option<Url> {
+    /// Resolve the ZeroKMS endpoint from the `CS_ZEROKMS_HOST` environment
+    /// variable (or legacy `CS_VITUR_HOST`). The first variable that is set
+    /// decides: an unusable value is an error, not a fall-through.
+    fn base_url_from_env() -> Result<Option<ZeroKmsEndpoint>, StackKmsBuilderError> {
         use crate::vars::CS_ZEROKMS_HOST;
 
-        for name in CS_ZEROKMS_HOST {
-            if let Ok(value) = std::env::var(name) {
-                match value.parse() {
-                    Ok(url) => return Some(url),
-                    Err(err) => {
-                        tracing::warn!(
-                            target: "stack_kms",
-                            %err,
-                            env_var = name,
-                            "Ignoring invalid URL in environment variable"
-                        );
-                    }
-                }
+        for env_var in CS_ZEROKMS_HOST {
+            if let Ok(value) = std::env::var(env_var) {
+                return value
+                    .parse()
+                    .map(Some)
+                    .map_err(|source| StackKmsBuilderError::InvalidEndpoint { env_var, source });
             }
         }
 
-        None
+        Ok(None)
     }
 }
 
@@ -347,6 +344,10 @@ mod tests {
         const PRIMARY: &str = "CS_ZEROKMS_HOST";
         const LEGACY: &str = "CS_VITUR_HOST";
 
+        fn from_env() -> Result<Option<ZeroKmsEndpoint>, StackKmsBuilderError> {
+            StackKmsBuilder::<NeverStrategy>::base_url_from_env()
+        }
+
         #[test]
         fn the_primary_variable_is_listed_first() {
             assert_eq!(crate::vars::CS_ZEROKMS_HOST, &[PRIMARY, LEGACY]);
@@ -355,7 +356,7 @@ mod tests {
         #[test]
         fn returns_none_when_neither_variable_is_set() {
             let _env = ScopedEnv::new(&[(PRIMARY, None), (LEGACY, None)]);
-            assert!(StackKmsBuilder::<NeverStrategy>::base_url_from_env().is_none());
+            assert!(from_env().unwrap().is_none());
         }
 
         #[test]
@@ -364,31 +365,74 @@ mod tests {
                 (PRIMARY, Some("https://primary.example")),
                 (LEGACY, Some("https://legacy.example")),
             ]);
-            let url = StackKmsBuilder::<NeverStrategy>::base_url_from_env().unwrap();
+            let url = from_env().unwrap().unwrap();
             assert_eq!(url.as_str(), "https://primary.example/");
         }
 
         #[test]
         fn falls_back_to_the_legacy_variable() {
             let _env = ScopedEnv::new(&[(PRIMARY, None), (LEGACY, Some("https://legacy.example"))]);
-            let url = StackKmsBuilder::<NeverStrategy>::base_url_from_env().unwrap();
+            let url = from_env().unwrap().unwrap();
             assert_eq!(url.as_str(), "https://legacy.example/");
         }
 
         #[test]
-        fn skips_an_invalid_primary_and_uses_the_legacy_variable() {
+        fn an_invalid_primary_is_an_error_even_when_the_legacy_variable_is_valid() {
             let _env = ScopedEnv::new(&[
                 (PRIMARY, Some("not a url")),
                 (LEGACY, Some("https://legacy.example")),
             ]);
-            let url = StackKmsBuilder::<NeverStrategy>::base_url_from_env().unwrap();
-            assert_eq!(url.as_str(), "https://legacy.example/");
+            let err = from_env().unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    StackKmsBuilderError::InvalidEndpoint { env_var, source: InvalidEndpoint::Parse(_) }
+                        if *env_var == PRIMARY
+                ),
+                "got: {err:?}"
+            );
+            assert!(err.to_string().contains(PRIMARY), "{err}");
         }
 
         #[test]
-        fn returns_none_when_every_candidate_is_invalid() {
-            let _env = ScopedEnv::new(&[(PRIMARY, Some("not a url")), (LEGACY, Some("also not"))]);
-            assert!(StackKmsBuilder::<NeverStrategy>::base_url_from_env().is_none());
+        fn a_scheme_less_host_and_port_is_rejected_naming_the_variable() {
+            // `Url::parse` accepts `localhost:3002` (scheme `localhost`), so
+            // without endpoint validation this would build and then fail every
+            // request with an opaque "Failed to construct request URL".
+            let _env = ScopedEnv::new(&[(PRIMARY, Some("localhost:3002")), (LEGACY, None)]);
+            let err = from_env().unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    StackKmsBuilderError::InvalidEndpoint { env_var, source: InvalidEndpoint::NoHost(_) }
+                        if *env_var == PRIMARY
+                ),
+                "got: {err:?}"
+            );
+        }
+
+        #[test]
+        fn an_invalid_endpoint_fails_build() {
+            let _env = ScopedEnv::new(&[(PRIMARY, Some("localhost:3002")), (LEGACY, None)]);
+            let err = builder()
+                .with_client_key(random_client_key())
+                .build()
+                .err()
+                .expect("an invalid env endpoint must fail build");
+            assert!(
+                matches!(err, StackKmsBuilderError::InvalidEndpoint { .. }),
+                "got: {err:?}"
+            );
+        }
+
+        #[test]
+        fn an_explicit_endpoint_takes_precedence_and_the_env_is_not_consulted() {
+            let _env = ScopedEnv::new(&[(PRIMARY, Some("not a url")), (LEGACY, None)]);
+            builder()
+                .with_base_url("https://explicit.example".parse().unwrap())
+                .with_client_key(random_client_key())
+                .build()
+                .expect("an explicit endpoint must not be overridden by a bad env value");
         }
     }
 }
