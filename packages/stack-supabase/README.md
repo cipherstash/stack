@@ -88,8 +88,8 @@ config to maintain — `select('*')` just works, inserts and updates encrypt aut
 reads decrypt automatically.
 
 Introspection needs a direct Postgres connection (`DATABASE_URL`), so `pg` is an optional peer
-dependency and the factory cannot run in an edge Worker or the browser — construct it in your
-server-side code.
+dependency and this entry runs on Node only — construct it in your server-side code. For an
+edge runtime, see the second entry point below.
 
 It runs alongside Supabase Auth and RLS, and supports
 [identity-locking encryption][identity] — binding a row's data key to the signed-in user's
@@ -97,6 +97,47 @@ JWT claim — via the same lock-context API as the rest of the Stack.
 
 > `encryptedSupabaseV3` remains as a `@deprecated`, type-identical alias of `encryptedSupabase`,
 > so existing imports keep working.
+
+## Edge runtimes: `@cipherstash/stack-supabase/wasm-inline`
+
+Deno, Supabase Edge Functions and Cloudflare Workers cannot load a native module or open a raw
+Postgres socket. The `wasm-inline` entry point has neither requirement: the encryption engine is
+a WASM blob inlined into the bundle, and you declare your tables instead of introspecting them.
+
+| Entry point | Engine | Schema | Runs on |
+| --- | --- | --- | --- |
+| `@cipherstash/stack-supabase` | native | introspected from the `public.eql_v3_*` domains | Node |
+| `@cipherstash/stack-supabase/wasm-inline` | WASM, inlined | declared — `schemas` is required | Deno, Supabase Edge Functions, Cloudflare Workers |
+
+Everything after construction is the same wrapper — `from()`, the filters, and the response
+shape are identical.
+
+```ts
+import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
+import { encryptedSupabase } from '@cipherstash/stack-supabase/wasm-inline'
+
+const users = encryptedTable('users', { email: types.TextSearch('email') })
+
+const es = await encryptedSupabase(supabaseUrl, supabaseKey, {
+  schemas: { users },
+  config: {
+    workspaceCrn: Deno.env.get('CS_WORKSPACE_CRN')!,
+    accessKey: Deno.env.get('CS_CLIENT_ACCESS_KEY')!,
+    clientId: Deno.env.get('CS_CLIENT_ID')!,
+    clientKey: Deno.env.get('CS_CLIENT_KEY')!,
+  },
+})
+```
+
+Four differences from the entry above, three of them enforced by the type checker: `schemas` is
+required, because nothing introspects here; `config` is required and must carry all four `CS_*`
+values, because there is no `~/.cipherstash` on an edge runtime; `databaseUrl` is refused; and
+`.withLockContext()` / `.audit()` throw rather than silently dropping the identity claim — the
+WASM engine does not implement them yet ([#797][issue-797]).
+
+This entry is ESM-only, and it is server-side rather than browser-safe: the WASM client requires
+a workspace `clientKey` on every authentication path, so a browser build would ship the key with
+it ([#804][issue-804]).
 
 ## How it works
 
@@ -132,3 +173,5 @@ it should, and the EQL install needs no superuser (it works on cloud-hosted Supa
 [eql]: https://github.com/cipherstash/encrypt-query-language
 [stack-drizzle]: https://www.npmjs.com/package/@cipherstash/stack-drizzle
 [stack-prisma]: https://www.npmjs.com/package/@cipherstash/stack-prisma
+[issue-797]: https://github.com/cipherstash/stack/issues/797
+[issue-804]: https://github.com/cipherstash/stack/issues/804
