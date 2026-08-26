@@ -137,7 +137,7 @@ pub trait Cipher: Sized {
     ///
     /// The value has the cipher's [`Passthrough`](Cipher::Passthrough) type,
     /// stored opaquely and returned as-is by the corresponding
-    /// [`Decipher::decrypt_passthrough`].
+    /// [`Decipher::decrypt_passthrough`](crate::Decipher::decrypt_passthrough).
     ///
     /// # ⚠️ Non-sensitive data only
     ///
@@ -297,6 +297,31 @@ pub trait MapCipher: Sized {
     /// design and must not carry secret data. Neither the value nor its key is
     /// authenticated.
     fn passthrough_entry<K>(self, key: K, value: Self::Passthrough) -> Result<Self, Self::Error>
+    where
+        K: Into<Cow<'static, str>>;
+
+    /// Insert a **type-erased** passthrough entry under `key` — the entry point
+    /// for callers that cannot name this cipher's
+    /// [`Passthrough`](Cipher::Passthrough) type at the call site.
+    ///
+    /// Stands to [`passthrough_entry`](MapCipher::passthrough_entry) exactly as
+    /// [`Cipher::passthrough_boxed`] stands to [`Cipher::passthrough`], and for
+    /// the same reason: code generic over *every* cipher — a derived
+    /// `Encrypt` impl, a self-describing tree value — has no way to construct a
+    /// specific cipher's payload type. The value arrives as
+    /// `Box<dyn Any + Send>` and each cipher decides how to absorb it: one whose
+    /// payload type *is* `Box<dyn Any + Send>` stores it directly, one with an
+    /// owned payload type downcasts (erroring on a foreign payload type).
+    ///
+    /// # ⚠️ Non-sensitive data only
+    ///
+    /// Identical contract to [`passthrough_entry`](MapCipher::passthrough_entry):
+    /// neither the value nor its key is encrypted or authenticated.
+    fn passthrough_entry_boxed<K>(
+        self,
+        key: K,
+        value: Box<dyn Any + Send + 'static>,
+    ) -> Result<Self, Self::Error>
     where
         K: Into<Cow<'static, str>>;
 

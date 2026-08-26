@@ -2,7 +2,7 @@
 //!
 //! # Why a second design?
 //!
-//! The default [`Cipher`](crate::Cipher) / [`AesCipherText`] path uses a
+//! The default [`Cipher`](crate::Cipher) / `AesCipherText` path uses a
 //! recursive enum, with a `Vec` per nested container and a
 //! `Box<dyn Any + Send>` for passthrough values. This is the right trade-off
 //! for wasm32 / JS bindings (dynamic shapes, smaller monomorphisation

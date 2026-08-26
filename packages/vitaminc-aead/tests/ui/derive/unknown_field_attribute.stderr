@@ -1,0 +1,5 @@
+error: unsupported field attribute; expected `rename = "..."` or `passthrough`
+ --> tests/ui/derive/unknown_field_attribute.rs:7:12
+  |
+7 |     #[aead(passthru)]
+  |            ^^^^^^^^

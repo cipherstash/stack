@@ -139,8 +139,9 @@ impl<'a> Aad<'a> {
     ///
     /// Like [`for_map_entry`](Aad::for_map_entry), the encoding is a
     /// labelled three-piece `PAE(domain, aad, kind)` so it can never
-    /// collide with a caller's tuple AAD (see
-    /// [`for_marker`](Aad::for_marker)).
+    /// collide with a caller's tuple AAD — the same reasoning the marker
+    /// derivations behind [`for_empty_sequence`](Aad::for_empty_sequence)
+    /// and [`for_empty_map`](Aad::for_empty_map) follow.
     ///
     /// The element *index* is deliberately not bound: records are retrieved
     /// in a different order than they were inserted, so element order is a
@@ -156,8 +157,11 @@ impl<'a> Aad<'a> {
         pae::encode(&[SEQ_ELEMENT_DOMAIN, self.as_bytes(), b"element"])
     }
 
-    /// Marker AAD for an empty sequence — see [`for_marker`](Aad::for_marker)
-    /// (private; this method and its siblings are the public surface).
+    /// Marker AAD for an empty sequence.
+    ///
+    /// Thin wrapper over the private `for_marker` derivation — this method
+    /// and its siblings are its public surface, one per marker kind, so a
+    /// stored marker can never be replayed as a different structural claim.
     pub fn for_empty_sequence(&self) -> Aad<'static> {
         self.for_marker(b"empty-sequence")
     }

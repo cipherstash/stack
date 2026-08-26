@@ -1,0 +1,5 @@
+error: `#[aead(rename = "...")]` has no effect on a newtype struct: a newtype is transparent, so its value is not stored under a map key at all and there is no key to rename. Give the struct a named field instead.
+ --> tests/ui/derive/rename_on_newtype.rs:7:8
+  |
+7 | struct Token(#[aead(rename = "token")] String);
+  |        ^^^^^

@@ -1,10 +1,17 @@
-pub mod impls;
+//! Cipher-backend traits for the decrypt direction — the mirror of
+//! [`cipher`](crate::cipher).
+//!
+//! [`Decipher`] drives decryption the way [`Cipher`](crate::Cipher) drives
+//! encryption, with [`DecipherVisitor`], [`SeqAccess`] and [`MapAccess`] as
+//! its sub-protocols. The plaintext-side trait a type implements to decode
+//! *itself* lives in [`decrypt`](crate::decrypt), mirroring how
+//! [`Encrypt`](crate::Encrypt) sits opposite [`Cipher`](crate::Cipher).
 
 use std::any::Any;
 
 use vitaminc_protected::Protected;
 
-use crate::{Aad, IntoAad, Unspecified};
+use crate::{decrypt::Decrypt, IntoAad, Unspecified};
 
 /// A trait for types that can decrypt data, driving a [`DecipherVisitor`] to produce values.
 ///
@@ -137,8 +144,9 @@ pub trait Decipher<'c>: Sized {
     /// for Rust-native ciphers, callers downcast to a concrete type themselves
     /// (concrete deciphers may offer a typed convenience for this).
     ///
-    /// See [`Cipher::passthrough`] — passthrough values are non-sensitive by
-    /// design and must not be used to carry secret data.
+    /// See [`Cipher::passthrough`](crate::Cipher::passthrough) — passthrough
+    /// values are non-sensitive by design and must not be used to carry
+    /// secret data.
     fn decrypt_passthrough(self) -> Self::Ok<Self::Passthrough>;
 
     /// Decrypt an `Option<T>`, authenticating against `aad`. The decipher inspects the
@@ -236,8 +244,43 @@ pub trait SeqAccess<'c> {
 /// Pull-style access to entries of a decrypted map.
 pub trait MapAccess<'c> {
     /// The error type returned by [`next_entry`](MapAccess::next_entry).
-    type Error;
-    /// Returns the next decrypted `(key, value)` entry, or `None` when the map is exhausted.
+    ///
+    /// The [`From<Unspecified>`](crate::Unspecified) bound is what lets
+    /// [`next_passthrough`](MapAccess::next_passthrough) carry a default that
+    /// *refuses*: an implementation whose format has no passthrough
+    /// representation inherits the rejection rather than having to write one.
+    type Error: From<Unspecified>;
+    /// Advance to the next entry and return its key, leaving the value
+    /// undecrypted until [`next_value`](MapAccess::next_value) is called.
+    ///
+    /// The split exists because a map's values are not necessarily
+    /// homogeneous: a struct decoder cannot name the type to decrypt into
+    /// until it has seen which field the key names. Reading key-first also
+    /// makes the decode order-independent, which matters because the *order*
+    /// of entries in a stored ciphertext is not authenticated.
+    ///
+    /// Returns `None` when the map is exhausted. Calling `next_key` twice
+    /// without an intervening `next_value` is a contract violation:
+    /// implementations must return an error rather than silently discarding
+    /// the skipped value, since a discarded value is an unverified one.
+    ///
+    /// # ⚠️ The key is not yet authenticated
+    ///
+    /// A key is bound into the AAD its value is sealed against, so a swapped or
+    /// renamed key does not survive — but that binding is only *checked* when
+    /// [`next_value`](MapAccess::next_value) opens the value. The key this
+    /// method returns is the raw stored one, verified by nothing.
+    ///
+    /// It is therefore safe to use for what it is for: choosing which field to
+    /// decode next, since a wrong choice fails at `next_value`. It is not safe
+    /// to act on before then. A visitor that branches on the key and returns
+    /// early, selects a code path, or records the key somewhere without
+    /// reaching `next_value` has acted on attacker-modifiable input. Where a
+    /// decision must depend on the key, make it after the value opens.
+    fn next_key(&mut self) -> Result<Option<String>, Self::Error>;
+
+    /// Decrypt the value belonging to the key most recently returned by
+    /// [`next_key`](MapAccess::next_key), consuming the pending entry.
     ///
     /// As with [`SeqAccess::next_element`], implementations **must authenticate each value
     /// against the map's associated data** — and additionally against the entry's own key.
@@ -246,27 +289,129 @@ pub trait MapAccess<'c> {
     /// the binding [`MapCipher::encrypt_value`](crate::MapCipher::encrypt_value) performs at
     /// encrypt time. An implementation that decrypts values against the bare map AAD leaves
     /// keys swappable in stored ciphertext (and will fail to decrypt conforming ciphertexts).
-    fn next_entry<T: Decrypt<'c> + 'c>(&mut self) -> Result<Option<(String, T)>, Self::Error>;
-}
-
-/// The counterpart to `Encrypt` — a type that knows how to decrypt itself using a `Decipher`.
-/// Analogous to serde's `Deserialize`.
-pub trait Decrypt<'c>: Sized + Send {
-    /// Decrypt `Self` from the given decipher with no associated data.
     ///
-    /// Convenience wrapper around [`decrypt_with_aad`](Decrypt::decrypt_with_aad), mirroring
-    /// [`Encrypt::encrypt`](crate::Encrypt::encrypt).
-    fn decrypt<D: Decipher<'c>>(decipher: D) -> D::Ok<Self> {
-        Self::decrypt_with_aad(decipher, Aad::empty())
+    /// Calling this without a pending key is a contract violation;
+    /// implementations must return an error.
+    fn next_value<T: Decrypt<'c> + 'c>(&mut self) -> Result<T, Self::Error>;
+
+    /// Take the value belonging to the key most recently returned by
+    /// [`next_key`](MapAccess::next_key) as a **passthrough** payload,
+    /// consuming the pending entry.
+    ///
+    /// The counterpart of
+    /// [`MapCipher::passthrough_entry_boxed`](crate::MapCipher::passthrough_entry_boxed),
+    /// and type-erased for the same reason: a decoder generic over every
+    /// decipher cannot name the payload type. The caller downcasts.
+    ///
+    /// Implementations must return an error when there is no pending key, and
+    /// when the pending entry is an *encrypted* value rather than a
+    /// passthrough — reading a sealed value through this method would hand back
+    /// a payload whose tag was never checked.
+    ///
+    /// # ⚠️ Unauthenticated data
+    ///
+    /// Unlike [`next_value`](MapAccess::next_value), nothing here is verified.
+    /// A passthrough entry carries no tag, and — unlike an encrypted entry's
+    /// key — its key is not bound into anything either, so a stored passthrough
+    /// entry can be edited, retargeted at another key, added, or removed with
+    /// no effect on whether the rest of the map decrypts. That independence is
+    /// the point: it is what lets a passthrough value be a plain database
+    /// column that other queries read and write on their own. Treat what comes
+    /// back as untrusted input, exactly as you would treat that column.
+    ///
+    /// # Default
+    ///
+    /// Defaults to rejecting every call with [`Unspecified`]. A format with no
+    /// passthrough representation is not obliged to invent one — leaving the
+    /// default in place means a passthrough entry cannot be read from this map
+    /// at all, which is the safe reading of "unsupported". Override it only in
+    /// a decipher that actually stores passthrough entries, alongside the
+    /// encrypt-side [`MapCipher::passthrough_entry_boxed`](crate::MapCipher::passthrough_entry_boxed)
+    /// that writes them.
+    fn next_passthrough(&mut self) -> Result<Box<dyn Any + Send + 'static>, Self::Error> {
+        Err(Unspecified.into())
     }
 
-    /// Decrypt `Self` from the given decipher, authenticating against `aad`.
+    /// Returns the next decrypted `(key, value)` entry, or `None` when the map is exhausted.
     ///
-    /// This is the method implementations provide; it mirrors
-    /// [`Encrypt::encrypt_with_aad`](crate::Encrypt::encrypt_with_aad). The `aad` must match
-    /// the associated data bound at encrypt time or decryption fails.
-    fn decrypt_with_aad<'a, D, A>(decipher: D, aad: A) -> D::Ok<Self>
-    where
-        D: Decipher<'c>,
-        A: IntoAad<'a>;
+    /// Convenience for [`next_key`](MapAccess::next_key) followed by
+    /// [`next_value`](MapAccess::next_value) — the right entry point for a
+    /// homogeneous map (e.g. `HashMap<String, T>`), where the value type is
+    /// known before the key is read.
+    fn next_entry<T: Decrypt<'c> + 'c>(&mut self) -> Result<Option<(String, T)>, Self::Error> {
+        match self.next_key()? {
+            Some(key) => self.next_value::<T>().map(|value| Some((key, value))),
+            None => Ok(None),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::MockMapAccess;
+
+    /// `next_entry` is a default method over `next_key` + `next_value`, so
+    /// nothing but this pins it down: a homogeneous consumer such as
+    /// `HashMap`'s `Decrypt` impl reaches every entry through it, and a
+    /// version that reported the map exhausted would decode silently to an
+    /// empty map rather than failing.
+    #[test]
+    fn next_entry_default_yields_every_entry_then_none() {
+        let mut map = MockMapAccess::new([("first", "a"), ("second", "b")]);
+
+        assert_eq!(
+            MapAccess::<'static>::next_entry::<String>(&mut map),
+            Ok(Some(("first".to_string(), "a".to_string())))
+        );
+        assert_eq!(
+            MapAccess::<'static>::next_entry::<String>(&mut map),
+            Ok(Some(("second".to_string(), "b".to_string())))
+        );
+        assert_eq!(
+            MapAccess::<'static>::next_entry::<String>(&mut map),
+            Ok(None)
+        );
+    }
+
+    /// The default must not paper over the contract the split imposes:
+    /// `next_value` with no pending key is an error, and it propagates.
+    #[test]
+    fn next_value_without_a_key_is_an_error() {
+        let mut map = MockMapAccess::new([("first", "a")]);
+
+        assert_eq!(
+            MapAccess::<'static>::next_value::<String>(&mut map),
+            Err(Unspecified)
+        );
+    }
+
+    /// `next_passthrough` is defaulted so that a decipher whose format has no
+    /// passthrough representation need not write one — but the default must
+    /// *refuse*, not hand back something unverified. `MockMapAccess` stores
+    /// every entry encrypted and supplies no override, so this pins the
+    /// inherited body.
+    #[test]
+    fn next_passthrough_default_rejects() {
+        let mut map = MockMapAccess::new([("first", "a")]);
+
+        assert_eq!(
+            MapAccess::<'static>::next_key(&mut map),
+            Ok(Some("first".to_string()))
+        );
+        assert!(MapAccess::<'static>::next_passthrough(&mut map).is_err());
+    }
+
+    /// Skipping a value leaves its AAD binding unverified, so a second
+    /// `next_key` must fail rather than discard the pending entry.
+    #[test]
+    fn skipping_a_value_is_an_error() {
+        let mut map = MockMapAccess::new([("first", "a"), ("second", "b")]);
+
+        assert_eq!(
+            MapAccess::<'static>::next_key(&mut map),
+            Ok(Some("first".to_string()))
+        );
+        assert_eq!(MapAccess::<'static>::next_key(&mut map), Err(Unspecified));
+    }
 }

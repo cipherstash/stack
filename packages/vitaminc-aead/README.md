@@ -139,6 +139,18 @@ impl<'c> MapCipher for MyMapCipher<'c> {
         K: Into<std::borrow::Cow<'static, str>>,
     { unimplemented!() }
 
+    // The type-erased counterpart, for callers that cannot name
+    // `Self::Passthrough` — a derived `Encrypt` impl, or a self-describing
+    // tree value. Absorb the box, or reject a payload type you don't own.
+    fn passthrough_entry_boxed<K>(
+        self,
+        _key: K,
+        _value: Box<dyn std::any::Any + Send + 'static>,
+    ) -> Result<Self, Self::Error>
+    where
+        K: Into<std::borrow::Cow<'static, str>>,
+    { unimplemented!() }
+
     fn end(self) -> Result<Self::Ok, Self::Error> { unimplemented!() }
 }
 ```
@@ -221,9 +233,39 @@ let encrypted = sensitive_data.encrypt(&cipher)?;
 
 The corresponding `Decrypt` impl for `Protected<T>` re-wraps the decrypted plaintext, so the value stays inside `Protected` end-to-end.
 
+### Deriving `Encrypt` and `Decrypt`
+
+Most structs do not need a hand-written impl:
+
+```rust
+use vitaminc_aead::{Decrypt, Encrypt};
+
+#[derive(Encrypt, Decrypt)]
+struct User {
+    name: String,
+    age: u32,
+}
+```
+
+A derived struct is encrypted as a **map keyed by field name**, which is the shape that gets each field its own AAD binding: `MapCipher` seals every value against `Aad::for_map_entry` of its key, so a stored field cannot be renamed, or moved onto another key, without decryption failing. A sequence would give no such guarantee — element AAD carries no positional component, so two same-typed fields would be freely interchangeable.
+
+What follows from that shape:
+
+- **Field names are part of the ciphertext contract.** Renaming a field breaks compatibility with data already encrypted; `#[aead(rename = "...")]` keeps the old wire key.
+- A derived struct's ciphertext is interchangeable with the equivalent `HashMap<String, _>` ciphertext.
+- A tuple struct of two or more fields is keyed by decimal index (`"0"`, `"1"`, …), so its fields are bound the same way.
+- A **newtype** struct (exactly one unnamed field) is *transparent* — it encrypts and decrypts exactly as its inner type, adding nothing to the ciphertext. Wrapping an existing type is therefore not a wire-breaking change.
+- A unit struct, or a struct with no fields, encrypts to the authenticated empty-map marker.
+
+Decoding is strict. Entry order in a stored ciphertext is not authenticated, so the derived `Decrypt` reads keys first and matches them to fields; a missing field, an unknown key, or a duplicate key is rejected rather than defaulted or skipped, because an entry whose value is never decrypted is an entry whose AAD binding is never verified.
+
+Enums are **not** supported: a ciphertext carries no authenticated variant discriminator, so any encoding the macro could pick would either leak the variant in the clear or leave it forgeable. Model the choice explicitly instead — for example as a struct of `Option` fields.
+
+Use `#[aead(crate = "...")]` on the container when `vitaminc_aead` is reached through a re-export, e.g. `#[aead(crate = "::vitaminc::aead")]`.
+
 ### Custom Types
 
-Implementing [`Encrypt`] and [`Decrypt`] for your own types lets you choose which fields are encrypted and how the ciphertext is structured.
+Where the derive's shape is not what you want — encrypting only some fields, passing others through in the clear, or producing a non-map layout — implement [`Encrypt`] and [`Decrypt`] by hand.
 
 ```rust
 use vitaminc_aead::{

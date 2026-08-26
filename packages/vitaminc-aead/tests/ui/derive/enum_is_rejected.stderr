@@ -1,0 +1,5 @@
+error: Encrypt/Decrypt cannot be derived for enums: a ciphertext carries no authenticated variant discriminator, so the variant would have to travel in the clear or be forgeable. Model the choice explicitly instead, e.g. as a struct of `Option` fields.
+ --> tests/ui/derive/enum_is_rejected.rs:6:6
+  |
+6 | enum Choice {
+  |      ^^^^^^

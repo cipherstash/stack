@@ -1,0 +1,20 @@
+[package]
+name = "vitaminc-aead-derive"
+description = "Derive macros for vitaminc-aead. Part of the VitaminC cryptographic suite."
+documentation = "https://docs.rs/vitaminc-aead-derive"
+version.workspace = true
+repository.workspace = true
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "3", features = ["full", "extra-traits"] }
