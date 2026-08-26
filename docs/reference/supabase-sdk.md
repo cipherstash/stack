@@ -4,11 +4,16 @@
 are transparently encrypted on mutations, `::jsonb`-cast on selects, encrypted
 in filter terms, and decrypted in results.
 
-One entry point, EQL v3 only:
+Two entry points, EQL v3 only:
 
-| Entry point | Schema DSL | Column storage |
-|---|---|---|
-| `encryptedSupabase` | `@cipherstash/stack/eql/v3` (EQL v3) | native `public.eql_v3_*` domains |
+| Entry point | Engine | Schema | Runtime |
+|---|---|---|---|
+| `@cipherstash/stack-supabase` | native | introspected from `public.eql_v3_*` domains | Node |
+| `@cipherstash/stack-supabase/wasm-inline` | WASM | declared — `schemas` is required | edge (Deno, Supabase Edge Functions, Cloudflare Workers) |
+
+Both author columns with `@cipherstash/stack/eql/v3` and store them in native
+`public.eql_v3_*` domains. They differ only in how the wrapper learns the
+schema, and therefore in where it can run.
 
 Rows already written as EQL v2 still decrypt through `@cipherstash/stack`; what
 is gone is the ability to author new v2 columns here.
@@ -30,8 +35,14 @@ free-text by bloom-filter containment).
 connect time**: it detects EQL v3 columns by their Postgres domain, derives
 each column's encryption config from the domain, and builds the encryption
 client internally. Introspection needs a direct Postgres connection
-(`options.databaseUrl`, defaulting to `DATABASE_URL`), so the factory cannot
-run in a Worker or the browser.
+(`options.databaseUrl`, defaulting to `DATABASE_URL`), so this entry cannot run
+in a Worker.
+
+Introspection is the only thing that needs Postgres. To run in a Worker, import
+`@cipherstash/stack-supabase/wasm-inline` and declare your tables in `schemas`
+instead — that entry carries no Postgres driver and never introspects. It is
+still server-side: it is not browser-safe, because the WASM client requires a
+workspace `clientKey` on every auth path (cipherstash/stack#804).
 
 ```typescript
 import { encryptedSupabase } from '@cipherstash/stack-supabase'
