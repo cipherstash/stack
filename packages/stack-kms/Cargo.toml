@@ -1,0 +1,79 @@
+[package]
+name = "stack-kms"
+description = "Standalone client for ZeroKMS key generation and retrieval"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license-file = "LICENSE"
+# Not yet released: keep release-plz from picking this crate up (it processes
+# any workspace crate whose Cargo.toml lacks `publish = false`).
+publish = false
+
+[features]
+default = ["profile"]
+# Loads the client key from the CLI's on-disk profile (`secretkey.json`, via
+# `stack-profile`): `SecretKey: ProfileData` and `KeyProvider for ProfileStore`.
+# Disable for consumers that only ever source the key in-memory or from the
+# environment. Never compiled on wasm32 regardless.
+profile = ["dep:stack-profile"]
+# Exposes `FakeDataKeySource`, a deterministic in-memory `DataKeySource` for
+# downstream crates (e.g. `stack-encrypt`) to unit-test encrypt/decrypt without
+# ZeroKMS credentials or network access.
+test-support = []
+# Enables HTTP/2 in the reqwest client. ZeroKMS endpoints negotiate h2 via
+# ALPN; without it reqwest is HTTP/1.1-only and opens a connection per
+# concurrent request (`max_concurrent_reqs`), which can exhaust client-side
+# ephemeral ports under load. Off by default while we validate it; intended to
+# default-on later. Mirrors the same feature on `cipherstash-client`.
+http2 = ["reqwest/http2"]
+
+[dependencies]
+recipher = { workspace = true }
+stack-auth = { workspace = true }
+zerokms-protocol = { workspace = true }
+
+vitaminc = { workspace = true, features = ["protected", "random"] }
+# Direct dep required because the `TimingSafeEq` derive macro expands to a
+# `::vitaminc_protected` path.
+vitaminc-protected = { workspace = true }
+
+lazy_static = { workspace = true }
+miette = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+zeroize = { workspace = true }
+
+base16ct = { version = "0.2.0", features = ["alloc"] }
+base64ct = { version = "1.7", features = ["alloc"] }
+futures = "0.3.25"
+opaque-debug = "0.3.1"
+serde_cbor = "0.11.2"
+serdect = { version = "0.3.0", features = ["zeroize"] }
+sha2 = "0.10.6"
+
+# Native-only and behind the `profile` feature: `stack-profile` is the
+# filesystem-backed profile/config layer used by `SecretKey` (the on-disk
+# `secretkey.json`) and the `ProfileStore` key provider. Wasm consumers source
+# the client key in-memory instead.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+stack-profile = { workspace = true, optional = true }
+
+[dev-dependencies]
+async-mutex = "1.4.0"
+recipher = { workspace = true }
+stack-auth = { workspace = true, features = ["test-utils"] }
+tempfile = "3.21.0"
+tokio = { workspace = true }
+toml = "0.8.19"
+
+[package.metadata.docs.rs]
+all-features = true
