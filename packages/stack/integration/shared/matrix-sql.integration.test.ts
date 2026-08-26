@@ -348,140 +348,146 @@ afterAll(async () => {
 }, 30000)
 
 describe('v3 matrix live Postgres coverage (all covered domains)', () => {
-  it.each(
-    eqDomains,
-  )('%s: eql_v3.eq(col, operand) selects the exact row', async (eqlType) => {
-    const col = slug(eqlType)
-    const rows = await sql.unsafe<Row[]>(
-      `SELECT id FROM ${TABLE_NAME}
+  it.each(eqDomains)(
+    '%s: eql_v3.eq(col, operand) selects the exact row',
+    async (eqlType) => {
+      const col = slug(eqlType)
+      const rows = await sql.unsafe<Row[]>(
+        `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
            AND eql_v3.eq("${col}", $2::jsonb)`,
-      [TEST_RUN_ID, sql.json(eqTerms[col] as never)],
-    )
-    expect(rows.map((r) => r.id)).toEqual([idA])
-  })
+        [TEST_RUN_ID, sql.json(eqTerms[col] as never)],
+      )
+      expect(rows.map((r) => r.id)).toEqual([idA])
+    },
+  )
 
-  it.each(
-    eqDomains,
-  )('%s: eql_v3.neq(col, operand) excludes the matching row', async (eqlType) => {
-    const col = slug(eqlType)
-    // Operand encrypts `samples[0]` (row idA). `neq` selects every row whose
-    // value differs, i.e. row idB (`samples[1]`) only — idA is excluded.
-    const rows = await sql.unsafe<Row[]>(
-      `SELECT id FROM ${TABLE_NAME}
+  it.each(eqDomains)(
+    '%s: eql_v3.neq(col, operand) excludes the matching row',
+    async (eqlType) => {
+      const col = slug(eqlType)
+      // Operand encrypts `samples[0]` (row idA). `neq` selects every row whose
+      // value differs, i.e. row idB (`samples[1]`) only — idA is excluded.
+      const rows = await sql.unsafe<Row[]>(
+        `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
            AND eql_v3.neq("${col}", $2::jsonb)`,
-      [TEST_RUN_ID, sql.json(eqTerms[col] as never)],
-    )
-    expect(rows.map((r) => r.id)).toEqual([idB])
-  })
+        [TEST_RUN_ID, sql.json(eqTerms[col] as never)],
+      )
+      expect(rows.map((r) => r.id)).toEqual([idB])
+    },
+  )
 
-  it.each(
-    ordDomains,
-  )('%s: equality-via-ORE selects the exact row', async (eqlType, spec) => {
-    const col = slug(eqlType)
-    // The proof must exercise the ORDER (`ob`) term, not equality. On text order
-    // domains (`text_ord`/`text_ord_ore`, which carry BOTH `unique` and `ore`)
-    // `eql_v3.eq` compares the `hm` term, so pin the ORE term with a degenerate
-    // range `col >= operand AND col <= operand` (both `ord_term`-based) — it
-    // selects the equal row via ORE. Pure-ORE numeric/date domains have no `hm`,
-    // so `eql_v3.eq` resolves to `ord_term`: that IS the equality-via-ORE proof.
-    const predicate = hasIndex(spec.indexes, 'unique')
-      ? `eql_v3.gte("${col}", $2::jsonb) AND eql_v3.lte("${col}", $2::jsonb)`
-      : `eql_v3.eq("${col}", $2::jsonb)`
-    const rows = await sql.unsafe<Row[]>(
-      `SELECT id FROM ${TABLE_NAME}
+  it.each(ordDomains)(
+    '%s: equality-via-ORE selects the exact row',
+    async (eqlType, spec) => {
+      const col = slug(eqlType)
+      // The proof must exercise the ORDER (`ob`) term, not equality. On text order
+      // domains (`text_ord`/`text_ord_ore`, which carry BOTH `unique` and `ore`)
+      // `eql_v3.eq` compares the `hm` term, so pin the ORE term with a degenerate
+      // range `col >= operand AND col <= operand` (both `ord_term`-based) — it
+      // selects the equal row via ORE. Pure-ORE numeric/date domains have no `hm`,
+      // so `eql_v3.eq` resolves to `ord_term`: that IS the equality-via-ORE proof.
+      const predicate = hasIndex(spec.indexes, 'unique')
+        ? `eql_v3.gte("${col}", $2::jsonb) AND eql_v3.lte("${col}", $2::jsonb)`
+        : `eql_v3.eq("${col}", $2::jsonb)`
+      const rows = await sql.unsafe<Row[]>(
+        `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
            AND ${predicate}`,
-      [TEST_RUN_ID, sql.json(ordTerms[col] as never)],
-    )
-    expect(rows.map((r) => r.id)).toEqual([idA])
-  })
+        [TEST_RUN_ID, sql.json(ordTerms[col] as never)],
+      )
+      expect(rows.map((r) => r.id)).toEqual([idA])
+    },
+  )
 
-  it.each(
-    textOreDomains,
-  )('%s: encrypted empty string is rejected by the Postgres domain', async (eqlType) => {
-    const col = slug(eqlType)
-    const column = (table as unknown as Record<string, unknown>)[col] as never
-    const encrypted = unwrapResult(
-      // The matrix table is built from a dynamic column map, so `column` is
-      // already erased above and the plaintext cannot be derived from it.
-      await client.encrypt('' as never, {
-        table: table as never,
-        column,
-      }),
-    )
+  it.each(textOreDomains)(
+    '%s: encrypted empty string is rejected by the Postgres domain',
+    async (eqlType) => {
+      const col = slug(eqlType)
+      const column = (table as unknown as Record<string, unknown>)[col] as never
+      const encrypted = unwrapResult(
+        // The matrix table is built from a dynamic column map, so `column` is
+        // already erased above and the plaintext cannot be derived from it.
+        await client.encrypt('' as never, {
+          table: table as never,
+          column,
+        }),
+      )
 
-    await expect(
-      sql.unsafe(`SELECT $1::${eqlType}`, [sql.json(encrypted as never)]),
-    ).rejects.toThrow(/violates check constraint/)
-  })
+      await expect(
+        sql.unsafe(`SELECT $1::${eqlType}`, [sql.json(encrypted as never)]),
+      ).rejects.toThrow(/violates check constraint/)
+    },
+  )
 
-  it.each(
-    textOpeDomains,
-  )('%s: encrypted empty string clears the Postgres domain (scalar op term)', async (eqlType) => {
-    const col = slug(eqlType)
-    const column = (table as unknown as Record<string, unknown>)[col] as never
-    const encrypted = unwrapResult(
-      // The matrix table is built from a dynamic column map, so `column` is
-      // already erased above and the plaintext cannot be derived from it.
-      await client.encrypt('' as never, {
-        table: table as never,
-        column,
-      }),
-    )
+  it.each(textOpeDomains)(
+    '%s: encrypted empty string clears the Postgres domain (scalar op term)',
+    async (eqlType) => {
+      const col = slug(eqlType)
+      const column = (table as unknown as Record<string, unknown>)[col] as never
+      const encrypted = unwrapResult(
+        // The matrix table is built from a dynamic column map, so `column` is
+        // already erased above and the plaintext cannot be derived from it.
+        await client.encrypt('' as never, {
+          table: table as never,
+          column,
+        }),
+      )
 
-    const rows = await sql.unsafe(`SELECT $1::${eqlType} AS v`, [
-      sql.json(encrypted as never),
-    ])
-    expect(rows).toHaveLength(1)
-  })
+      const rows = await sql.unsafe(`SELECT $1::${eqlType} AS v`, [
+        sql.json(encrypted as never),
+      ])
+      expect(rows).toHaveLength(1)
+    },
+  )
 
-  it.each(
-    matchDomains,
-  )('%s: eql_v3.matches selects the row containing "ada"', async (eqlType, spec) => {
-    const col = slug(eqlType)
-    const expectedId = String(spec.samples[0]).includes('ada') ? idA : idB
-    const rows = await sql.unsafe<Row[]>(
-      `SELECT id FROM ${TABLE_NAME}
+  it.each(matchDomains)(
+    '%s: eql_v3.matches selects the row containing "ada"',
+    async (eqlType, spec) => {
+      const col = slug(eqlType)
+      const expectedId = String(spec.samples[0]).includes('ada') ? idA : idB
+      const rows = await sql.unsafe<Row[]>(
+        `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
            AND eql_v3.matches("${col}", $2::jsonb)`,
-      [TEST_RUN_ID, sql.json(matchTerms[col] as never)],
-    )
-    expect(rows.map((r) => r.id)).toEqual([expectedId])
-  })
+        [TEST_RUN_ID, sql.json(matchTerms[col] as never)],
+      )
+      expect(rows.map((r) => r.id)).toEqual([expectedId])
+    },
+  )
 
-  it.each(
-    orderingDomains,
-  )('%s: ORE pairwise-lt reproduces plaintext order across all distinct samples', async (eqlType, spec) => {
-    // STRICT ordering proof: seed each of a domain's distinct sample values as
-    // its OWN row (orderIds[0..L-1] ↔ samples[0..L-1]) and prove the ORE
-    // comparison reproduces the FULL plaintext order (a<b<c<d where available),
-    // not just equality-via-ORE or a single 2-row range.
-    //
-    // The order is reconstructed with the boolean `eql_v3.lt` comparison
-    // operator (a self cross-join counting, per row, how many rows it is
-    // strictly-less-than → its ascending rank). This is ENVIRONMENT-INDEPENDENT:
-    // it is ORE-correct on both a superuser Postgres (CI) and a non-superuser
-    // one (typical local dev), unlike `ORDER BY eql_v3.ord_term(col)`, whose
-    // ORE-aware btree opclass is superuser-gated and silently falls back to
-    // raw-byte record order on managed installs. See
-    // docs/eql-v3-ord-term-ordering-defect.md.
-    const col = slug(eqlType)
-    const L = spec.samples.length
-    const ids = orderIds.slice(0, L)
+  it.each(orderingDomains)(
+    '%s: ORE pairwise-lt reproduces plaintext order across all distinct samples',
+    async (eqlType, spec) => {
+      // STRICT ordering proof: seed each of a domain's distinct sample values as
+      // its OWN row (orderIds[0..L-1] ↔ samples[0..L-1]) and prove the ORE
+      // comparison reproduces the FULL plaintext order (a<b<c<d where available),
+      // not just equality-via-ORE or a single 2-row range.
+      //
+      // The order is reconstructed with the boolean `eql_v3.lt` comparison
+      // operator (a self cross-join counting, per row, how many rows it is
+      // strictly-less-than → its ascending rank). This is ENVIRONMENT-INDEPENDENT:
+      // it is ORE-correct on both a superuser Postgres (CI) and a non-superuser
+      // one (typical local dev), unlike `ORDER BY eql_v3.ord_term(col)`, whose
+      // ORE-aware btree opclass is superuser-gated and silently falls back to
+      // raw-byte record order on managed installs. See
+      // docs/eql-v3-ord-term-ordering-defect.md.
+      const col = slug(eqlType)
+      const L = spec.samples.length
+      const ids = orderIds.slice(0, L)
 
-    // Expected ascending order: sort the distinct samples by plaintext, mapping
-    // each to the id of the row that carries it (samples[i] -> orderIds[i]).
-    const expectedAscending = spec.samples
-      .map((value, i) => ({ value, id: ids[i] }))
-      .sort((x, y) => comparePlaintext(x.value, y.value))
-      .map((entry) => entry.id)
+      // Expected ascending order: sort the distinct samples by plaintext, mapping
+      // each to the id of the row that carries it (samples[i] -> orderIds[i]).
+      const expectedAscending = spec.samples
+        .map((value, i) => ({ value, id: ids[i] }))
+        .sort((x, y) => comparePlaintext(x.value, y.value))
+        .map((entry) => entry.id)
 
-    const pairs = await sql.unsafe<
-      Array<{ a: number; b: number; lt: boolean }>
-    >(
-      `SELECT x.id AS a, y.id AS b, eql_v3.lt(x."${col}", y."${col}") AS lt
+      const pairs = await sql.unsafe<
+        Array<{ a: number; b: number; lt: boolean }>
+      >(
+        `SELECT x.id AS a, y.id AS b, eql_v3.lt(x."${col}", y."${col}") AS lt
          FROM ${TABLE_NAME} x
          CROSS JOIN ${TABLE_NAME} y
         WHERE x.test_run_id = $1
@@ -489,113 +495,116 @@ describe('v3 matrix live Postgres coverage (all covered domains)', () => {
           AND x.id = ANY($2)
           AND y.id = ANY($2)
           AND x.id <> y.id`,
-      [ORDER_RUN_ID, ids],
-    )
+        [ORDER_RUN_ID, ids],
+      )
 
-    const lessThanCount = new Map<number, number>(ids.map((id) => [id, 0]))
-    for (const pair of pairs) {
-      if (pair.lt) {
-        lessThanCount.set(pair.a, (lessThanCount.get(pair.a) ?? 0) + 1)
+      const lessThanCount = new Map<number, number>(ids.map((id) => [id, 0]))
+      for (const pair of pairs) {
+        if (pair.lt) {
+          lessThanCount.set(pair.a, (lessThanCount.get(pair.a) ?? 0) + 1)
+        }
       }
-    }
 
-    // Ascending rank = strictly-less-than count, descending (the smallest value
-    // is < every other row, so it has the highest count and sorts first).
-    const derivedAscending = [...ids].sort(
-      (a, b) => (lessThanCount.get(b) ?? 0) - (lessThanCount.get(a) ?? 0),
-    )
+      // Ascending rank = strictly-less-than count, descending (the smallest value
+      // is < every other row, so it has the highest count and sorts first).
+      const derivedAscending = [...ids].sort(
+        (a, b) => (lessThanCount.get(b) ?? 0) - (lessThanCount.get(a) ?? 0),
+      )
 
-    // Sanity: distinct samples must yield distinct ranks 0..L-1 (a strict total
-    // order), otherwise the ORE comparison collapsed two values together.
-    expect(new Set(lessThanCount.values()).size).toBe(L)
-    expect(derivedAscending).toEqual(expectedAscending)
-  })
+      // Sanity: distinct samples must yield distinct ranks 0..L-1 (a strict total
+      // order), otherwise the ORE comparison collapsed two values together.
+      expect(new Set(lessThanCount.values()).size).toBe(L)
+      expect(derivedAscending).toEqual(expectedAscending)
+    },
+  )
 
-  it.each(
-    orderingDomains,
-  )('%s: eql_v3.gte/lte (inclusive) and gt/lt (exclusive) bound the ORE range', async (eqlType, spec) => {
-    // Explicit two-bound ORE range over the distinct-sample rows: `[lo, hi]`
-    // spans the whole set, so gte+lte must select ALL of them and strict gt+lt
-    // must select only the interior (excluding the lo and hi rows). Bounds are
-    // the plaintext-min/max samples; membership is compared to the plaintext
-    // order. Uses the boolean comparison operators (ORE-correct on superuser AND
-    // non-superuser Postgres) — never `ORDER BY ord_term`. For L=2 domains
-    // (date/timestamp) the interior is empty: a valid exclusive-bound boundary.
-    const col = slug(eqlType)
-    const L = spec.samples.length
-    const ids = orderIds.slice(0, L)
-    const operands = orderOperands[col]
+  it.each(orderingDomains)(
+    '%s: eql_v3.gte/lte (inclusive) and gt/lt (exclusive) bound the ORE range',
+    async (eqlType, spec) => {
+      // Explicit two-bound ORE range over the distinct-sample rows: `[lo, hi]`
+      // spans the whole set, so gte+lte must select ALL of them and strict gt+lt
+      // must select only the interior (excluding the lo and hi rows). Bounds are
+      // the plaintext-min/max samples; membership is compared to the plaintext
+      // order. Uses the boolean comparison operators (ORE-correct on superuser AND
+      // non-superuser Postgres) — never `ORDER BY ord_term`. For L=2 domains
+      // (date/timestamp) the interior is empty: a valid exclusive-bound boundary.
+      const col = slug(eqlType)
+      const L = spec.samples.length
+      const ids = orderIds.slice(0, L)
+      const operands = orderOperands[col]
 
-    const sortedIdx = spec.samples
-      .map((value, i) => ({ value, i }))
-      .sort((a, b) => comparePlaintext(a.value, b.value))
-      .map((entry) => entry.i)
-    const lo = sql.json(operands[sortedIdx[0]] as never)
-    const hi = sql.json(operands[sortedIdx[L - 1]] as never)
+      const sortedIdx = spec.samples
+        .map((value, i) => ({ value, i }))
+        .sort((a, b) => comparePlaintext(a.value, b.value))
+        .map((entry) => entry.i)
+      const lo = sql.json(operands[sortedIdx[0]] as never)
+      const hi = sql.json(operands[sortedIdx[L - 1]] as never)
 
-    // Inclusive [lo, hi] → every distinct-sample row.
-    const inclusive = await sql.unsafe<Row[]>(
-      `SELECT id FROM ${TABLE_NAME}
+      // Inclusive [lo, hi] → every distinct-sample row.
+      const inclusive = await sql.unsafe<Row[]>(
+        `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
            AND id = ANY($2)
            AND eql_v3.gte("${col}", $3::jsonb)
            AND eql_v3.lte("${col}", $4::jsonb)`,
-      [ORDER_RUN_ID, ids, lo, hi],
-    )
-    expect(new Set(inclusive.map((r) => r.id))).toEqual(new Set(ids))
+        [ORDER_RUN_ID, ids, lo, hi],
+      )
+      expect(new Set(inclusive.map((r) => r.id))).toEqual(new Set(ids))
 
-    // Exclusive (lo, hi) via strict gt/lt → strictly-interior rows only.
-    const interiorIds = sortedIdx.slice(1, L - 1).map((i) => ids[i])
-    const exclusive = await sql.unsafe<Row[]>(
-      `SELECT id FROM ${TABLE_NAME}
+      // Exclusive (lo, hi) via strict gt/lt → strictly-interior rows only.
+      const interiorIds = sortedIdx.slice(1, L - 1).map((i) => ids[i])
+      const exclusive = await sql.unsafe<Row[]>(
+        `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
            AND id = ANY($2)
            AND eql_v3.gt("${col}", $3::jsonb)
            AND eql_v3.lt("${col}", $4::jsonb)`,
-      [ORDER_RUN_ID, ids, lo, hi],
-    )
-    expect(new Set(exclusive.map((r) => r.id))).toEqual(new Set(interiorIds))
+        [ORDER_RUN_ID, ids, lo, hi],
+      )
+      expect(new Set(exclusive.map((r) => r.id))).toEqual(new Set(interiorIds))
 
-    // The controls. Domains with only two distinct samples (date, timestamp)
-    // have an empty interior, so the assertion above is satisfied by a
-    // constant-false `gt`/`lt` as well as by a correct one. One-sided strict
-    // bounds are non-empty for every domain: `gt(lo)` must return everything
-    // above the minimum, `lt(hi)` everything below the maximum. Both die on a
-    // constant-false operator, and on a constant-true one (which would drag in
-    // the excluded endpoint).
-    const aboveLo = await sql.unsafe<Row[]>(
-      `SELECT id FROM ${TABLE_NAME}
+      // The controls. Domains with only two distinct samples (date, timestamp)
+      // have an empty interior, so the assertion above is satisfied by a
+      // constant-false `gt`/`lt` as well as by a correct one. One-sided strict
+      // bounds are non-empty for every domain: `gt(lo)` must return everything
+      // above the minimum, `lt(hi)` everything below the maximum. Both die on a
+      // constant-false operator, and on a constant-true one (which would drag in
+      // the excluded endpoint).
+      const aboveLo = await sql.unsafe<Row[]>(
+        `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
            AND id = ANY($2)
            AND eql_v3.gt("${col}", $3::jsonb)`,
-      [ORDER_RUN_ID, ids, lo],
-    )
-    expect(new Set(aboveLo.map((r) => r.id))).toEqual(
-      new Set(sortedIdx.slice(1).map((i) => ids[i])),
-    )
+        [ORDER_RUN_ID, ids, lo],
+      )
+      expect(new Set(aboveLo.map((r) => r.id))).toEqual(
+        new Set(sortedIdx.slice(1).map((i) => ids[i])),
+      )
 
-    const belowHi = await sql.unsafe<Row[]>(
-      `SELECT id FROM ${TABLE_NAME}
+      const belowHi = await sql.unsafe<Row[]>(
+        `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
            AND id = ANY($2)
            AND eql_v3.lt("${col}", $3::jsonb)`,
-      [ORDER_RUN_ID, ids, hi],
-    )
-    expect(new Set(belowHi.map((r) => r.id))).toEqual(
-      new Set(sortedIdx.slice(0, L - 1).map((i) => ids[i])),
-    )
-  })
+        [ORDER_RUN_ID, ids, hi],
+      )
+      expect(new Set(belowHi.map((r) => r.id))).toEqual(
+        new Set(sortedIdx.slice(0, L - 1).map((i) => ids[i])),
+      )
+    },
+  )
 
-  it.each(
-    storageDomains,
-  )('%s: ciphertext survives a real INSERT/SELECT and still decrypts', async (eqlType, spec) => {
-    const col = slug(eqlType)
-    const [row] = await sql.unsafe<Array<{ value: unknown }>>(
-      `SELECT "${col}"::jsonb AS value FROM ${TABLE_NAME} WHERE id = $1`,
-      [idA],
-    )
-    const decrypted = unwrapResult(await client.decrypt(row.value as never))
-    const expected = spec.samples[0]
-    expectDecryptedStorageValue(decrypted, expected)
-  })
+  it.each(storageDomains)(
+    '%s: ciphertext survives a real INSERT/SELECT and still decrypts',
+    async (eqlType, spec) => {
+      const col = slug(eqlType)
+      const [row] = await sql.unsafe<Array<{ value: unknown }>>(
+        `SELECT "${col}"::jsonb AS value FROM ${TABLE_NAME} WHERE id = $1`,
+        [idA],
+      )
+      const decrypted = unwrapResult(await client.decrypt(row.value as never))
+      const expected = spec.samples[0]
+      expectDecryptedStorageValue(decrypted, expected)
+    },
+  )
 })

@@ -50,25 +50,25 @@ describe('the scaffolded client fixtures match the generator', () => {
 })
 
 describe('the scaffold compiles because it declares a table', () => {
-  it.each([
-    'generic.generated.ts',
-    'drizzle.generated.ts',
-  ])('%s passes a non-empty schema set', (file) => {
-    const body = fixture(file)
-    // The empty form is a hard TS2769 against both overloads — `Encryption`
-    // requires at least one table by design (S-6), so the scaffold cannot go
-    // back to `schemas: []` without breaking every project it is written into.
-    expect(body).not.toContain('Encryption({ schemas: [] })')
-    expect(body).toContain('schemas: [placeholderTable]')
-  })
+  it.each(['generic.generated.ts', 'drizzle.generated.ts'])(
+    '%s passes a non-empty schema set',
+    (file) => {
+      const body = fixture(file)
+      // The empty form is a hard TS2769 against both overloads — `Encryption`
+      // requires at least one table by design (S-6), so the scaffold cannot go
+      // back to `schemas: []` without breaking every project it is written into.
+      expect(body).not.toContain('Encryption({ schemas: [] })')
+      expect(body).toContain('schemas: [placeholderTable]')
+    },
+  )
 
-  it.each([
-    'generic.generated.ts',
-    'drizzle.generated.ts',
-  ])('%s uses the sentinel name the config loader refuses', (file) => {
-    // `loadEncryptConfig` exits 1 when this is the only table left, so the
-    // two must agree — otherwise the user gets a confusing "table not found"
-    // from whichever command runs next instead of "you never replaced this".
-    expect(fixture(file)).toContain(`'${PLACEHOLDER_TABLE_NAME}'`)
-  })
+  it.each(['generic.generated.ts', 'drizzle.generated.ts'])(
+    '%s uses the sentinel name the config loader refuses',
+    (file) => {
+      // `loadEncryptConfig` exits 1 when this is the only table left, so the
+      // two must agree — otherwise the user gets a confusing "table not found"
+      // from whichever command runs next instead of "you never replaced this".
+      expect(fixture(file)).toContain(`'${PLACEHOLDER_TABLE_NAME}'`)
+    },
+  )
 })

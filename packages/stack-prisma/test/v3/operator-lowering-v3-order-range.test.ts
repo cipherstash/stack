@@ -41,22 +41,27 @@ describe('cipherstash v3 operator lowering — comparisons', () => {
     ['eqlGte', 'gte'],
     ['eqlLt', 'lt'],
     ['eqlLte', 'lte'],
-  ] as const)('%s lowers to eql_v3.%s(col, $1::eql_v3.query_integer_ord)', (method, fn) => {
-    const predicate = callOperator(
-      getOperator(method),
-      columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
-      10,
-    )
-    const lowered = makeV3Adapter().lower(selectWithWhere(predicate), {
-      contract: contractV3,
-    })
-    expect(lowered.sql).toBe(
-      `SELECT "user"."id" AS "id" FROM "user" WHERE eql_v3.${fn}("user"."score", $1::eql_v3.query_integer_ord)`,
-    )
-    const envelope = literalParamValue(lowered.params[0])
-    expect(envelope).toBeInstanceOf(EncryptedNumber)
-    expect(v3QueryTermTypeOf(envelope as EncryptedNumber)).toBe('orderAndRange')
-  })
+  ] as const)(
+    '%s lowers to eql_v3.%s(col, $1::eql_v3.query_integer_ord)',
+    (method, fn) => {
+      const predicate = callOperator(
+        getOperator(method),
+        columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
+        10,
+      )
+      const lowered = makeV3Adapter().lower(selectWithWhere(predicate), {
+        contract: contractV3,
+      })
+      expect(lowered.sql).toBe(
+        `SELECT "user"."id" AS "id" FROM "user" WHERE eql_v3.${fn}("user"."score", $1::eql_v3.query_integer_ord)`,
+      )
+      const envelope = literalParamValue(lowered.params[0])
+      expect(envelope).toBeInstanceOf(EncryptedNumber)
+      expect(v3QueryTermTypeOf(envelope as EncryptedNumber)).toBe(
+        'orderAndRange',
+      )
+    },
+  )
 
   it('casts to the ord_ore query domain on a block-ORE column (bigint envelope dispatch)', () => {
     const predicate = callOperator(

@@ -52,25 +52,26 @@ describe('turbo build inputs cover the skills directory', () => {
     )
   })
 
-  it.each(
-    packagesCopyingSkills().map((name) => [name]),
-  )('%s#build declares skills as an input', (name) => {
-    const task = turbo.tasks[`${name}#build`]
+  it.each(packagesCopyingSkills().map((name) => [name]))(
+    '%s#build declares skills as an input',
+    (name) => {
+      const task = turbo.tasks[`${name}#build`]
 
-    expect(
-      task,
-      `turbo.json has no "${name}#build" task, so it inherits the generic ` +
-        '`build` inputs, which do not include the repo-root skills/ directory',
-    ).toBeDefined()
+      expect(
+        task,
+        `turbo.json has no "${name}#build" task, so it inherits the generic ` +
+          '`build` inputs, which do not include the repo-root skills/ directory',
+      ).toBeDefined()
 
-    const inputs = task.inputs ?? []
-    expect(
-      inputs.some((i) => i.includes('skills')),
-      `"${name}#build".inputs must name the repo-root skills/ directory ` +
-        '(e.g. "$TURBO_ROOT$/skills/**") or a skills-only edit will not ' +
-        'invalidate the build, and `outputs: ["dist/**"]` will restore a stale copy',
-    ).toBe(true)
-  })
+      const inputs = task.inputs ?? []
+      expect(
+        inputs.some((i) => i.includes('skills')),
+        `"${name}#build".inputs must name the repo-root skills/ directory ` +
+          '(e.g. "$TURBO_ROOT$/skills/**") or a skills-only edit will not ' +
+          'invalidate the build, and `outputs: ["dist/**"]` will restore a stale copy',
+      ).toBe(true)
+    },
+  )
 
   it('keeps the generic build outputs on the overrides', () => {
     // An override replaces the generic task wholesale — dropping `outputs`

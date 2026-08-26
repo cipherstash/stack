@@ -89,19 +89,19 @@ describe('protect-ffi match bloom', () => {
   // config and ignored: the bloom is the tokenizer's trigrams, nothing more.
   // If a future ffi starts honouring the flag, THIS fails — and the v3 domains
   // already emit `false` (see `eql/v3/columns.ts`), so `contains` keeps working.
-  it.each([
-    'Ada Lovelace',
-    'ada@example.com',
-  ])('emits the same bloom for %j whether include_original is on or off', async (plaintext) => {
-    const on = await bloomOf(withOriginal, plaintext)
-    const off = await bloomOf(withoutOriginal, plaintext)
+  it.each(['Ada Lovelace', 'ada@example.com'])(
+    'emits the same bloom for %j whether include_original is on or off',
+    async (plaintext) => {
+      const on = await bloomOf(withOriginal, plaintext)
+      const off = await bloomOf(withoutOriginal, plaintext)
 
-    expect(sorted(on)).toEqual(sorted(off))
-    // A trigram-only bloom, not one carrying an extra whole-value token: 6
-    // bits (k) per DISTINCT trigram, so never more than 6 × the trigram count.
-    expect(on.length).toBeLessThanOrEqual(6 * (plaintext.length - 2))
-    expect(on.length).toBeGreaterThan(0)
-  })
+      expect(sorted(on)).toEqual(sorted(off))
+      // A trigram-only bloom, not one carrying an extra whole-value token: 6
+      // bits (k) per DISTINCT trigram, so never more than 6 × the trigram count.
+      expect(on.length).toBeLessThanOrEqual(6 * (plaintext.length - 2))
+      expect(on.length).toBeGreaterThan(0)
+    },
+  )
 
   // The corollary, and the reason `matchNeedleError` must reject short needles
   // instead of trusting `include_original` to make them matchable: below
@@ -110,11 +110,14 @@ describe('protect-ffi match bloom', () => {
   it.each([
     ['with include_original', true],
     ['without include_original', false],
-  ] as const)('blooms a sub-trigram value to nothing, %s', async (_label, on) => {
-    const bloom = await bloomOf(on ? withOriginal : withoutOriginal, 'ad')
+  ] as const)(
+    'blooms a sub-trigram value to nothing, %s',
+    async (_label, on) => {
+      const bloom = await bloomOf(on ? withOriginal : withoutOriginal, 'ad')
 
-    expect(bloom).toEqual([])
-  })
+      expect(bloom).toEqual([])
+    },
+  )
 
   // protect-ffi 0.30 closes the core fail-open path: query encryption itself
   // rejects empty-token needles, so callers that bypass every ORM guard still
@@ -122,11 +125,14 @@ describe('protect-ffi match bloom', () => {
   it.each([
     [1, 'a'],
     [2, 'ad'],
-  ] as const)('rejects the %i-character query needle in the core FFI', async (_length, needle) => {
-    await expect(queryBloomOf(withOriginal, needle)).rejects.toThrow(
-      /short|token|3|ngram/i,
-    )
-  })
+  ] as const)(
+    'rejects the %i-character query needle in the core FFI',
+    async (_length, needle) => {
+      await expect(queryBloomOf(withOriginal, needle)).rejects.toThrow(
+        /short|token|3|ngram/i,
+      )
+    },
+  )
 
   // The query needle's bloom is a subset of the STORED value's bloom — which is
   // exactly what `eql_v3.matches` (`match_term(stored) @> query_term(needle)`)

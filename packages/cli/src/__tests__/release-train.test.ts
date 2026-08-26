@@ -93,32 +93,31 @@ describe('release train coverage', () => {
       expect(skillFiles.length).toBeGreaterThan(0)
     })
 
-    it.each(
-      skillFiles,
-    )('$skill pins release-train packages at a stable version on the current major', ({
-      body,
-    }) => {
-      // Exact pins only (`pkg@1.2.3`, optionally `npm:`-prefixed and with a
-      // trailing subpath). A range spec (`^1.0.0`) carries its own semantics
-      // and is not a pin to check.
-      const PIN =
-        /(?:npm:)?(stash|@cipherstash\/[a-z0-9-]+)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/g
+    it.each(skillFiles)(
+      '$skill pins release-train packages at a stable version on the current major',
+      ({ body }) => {
+        // Exact pins only (`pkg@1.2.3`, optionally `npm:`-prefixed and with a
+        // trailing subpath). A range spec (`^1.0.0`) carries its own semantics
+        // and is not a pin to check.
+        const PIN =
+          /(?:npm:)?(stash|@cipherstash\/[a-z0-9-]+)@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/g
 
-      for (const [, pkg, pinned] of body.matchAll(PIN)) {
-        if (!isReleaseTrainPackage(pkg)) continue
-        const current = manifestVersion(pkg)
+        for (const [, pkg, pinned] of body.matchAll(PIN)) {
+          if (!isReleaseTrainPackage(pkg)) continue
+          const current = manifestVersion(pkg)
 
-        expect(
-          pinned,
-          `${pkg}@${pinned} pins a prerelease — skills ship to customers, so pin the stable release (${stableVersion(current)})`,
-        ).not.toContain('-')
+          expect(
+            pinned,
+            `${pkg}@${pinned} pins a prerelease — skills ship to customers, so pin the stable release (${stableVersion(current)})`,
+          ).not.toContain('-')
 
-        expect(
-          pinned.split('.')[0],
-          `${pkg}@${pinned} is off this release line (${current}) — update the pin and the prose around it`,
-        ).toBe(stableVersion(current).split('.')[0])
-      }
-    })
+          expect(
+            pinned.split('.')[0],
+            `${pkg}@${pinned} is off this release line (${current}) — update the pin and the prose around it`,
+          ).toBe(stableVersion(current).split('.')[0])
+        }
+      },
+    )
   })
 
   it('every train manifest exists and carries a version (what tsup will embed)', () => {

@@ -26,13 +26,12 @@ describe('classifyPhase', () => {
     expect(classifyPhase('dual-writing')).toBe('cutover')
   })
 
-  it.each([
-    'backfilling',
-    'backfilled',
-    'cut-over',
-  ] as MigrationPhase[])('%s classifies as cutover (mid-cutover work)', (phase) => {
-    expect(classifyPhase(phase)).toBe('cutover')
-  })
+  it.each(['backfilling', 'backfilled', 'cut-over'] as MigrationPhase[])(
+    '%s classifies as cutover (mid-cutover work)',
+    (phase) => {
+      expect(classifyPhase(phase)).toBe('cutover')
+    },
+  )
 
   it('dropped classifies as completed', () => {
     expect(classifyPhase('dropped')).toBe('completed')

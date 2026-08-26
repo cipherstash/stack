@@ -64,21 +64,23 @@ it.each([
   { label: 'interior substring, 7 chars', needle: 'a@examp' },
   { label: 'trailing substring, 4 chars', needle: '.com' },
   { label: 'the whole value', needle: HAYSTACK },
-])('bloom(needle) is a subset of bloom(haystack) for a $label', async ({
-  needle,
-}) => {
-  const client = await Encryption({ schemas: [docs] })
-  const haystack = await bloomOf(client, HAYSTACK)
-  const probe = await bloomOf(client, needle)
+])(
+  'bloom(needle) is a subset of bloom(haystack) for a $label',
+  async ({ needle }) => {
+    const client = await Encryption({ schemas: [docs] })
+    const haystack = await bloomOf(client, HAYSTACK)
+    const probe = await bloomOf(client, needle)
 
-  expect(HAYSTACK.includes(needle)).toBe(true)
-  expect(
-    isSubset(probe, haystack),
-    `bloom("${needle}") is not contained in bloom("${HAYSTACK}"). ` +
-      'The operand carries a token the haystack lacks — most likely the ' +
-      '`include_original` whole-value token. See the file header.',
-  ).toBe(true)
-}, 120_000)
+    expect(HAYSTACK.includes(needle)).toBe(true)
+    expect(
+      isSubset(probe, haystack),
+      `bloom("${needle}") is not contained in bloom("${HAYSTACK}"). ` +
+        'The operand carries a token the haystack lacks — most likely the ' +
+        '`include_original` whole-value token. See the file header.',
+    ).toBe(true)
+  },
+  120_000,
+)
 
 it('a needle absent from the haystack is NOT a bloom subset', async () => {
   // Without this, an implementation that blooms every needle to the empty set

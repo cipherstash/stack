@@ -238,26 +238,26 @@ describe('rewriteEncryptedAlterColumns', () => {
   // DOMAIN_RE is derived from ENCRYPTED_DOMAIN, so drift between the two can't
   // silently leave a domain unrewritten. Prove every domain the alternation
   // recognises is actually extracted into the emitted ADD COLUMN.
-  it.each([
-    ...V3_DOMAINS,
-    'eql_v2_encrypted',
-  ])('extracts the bare domain %s from a mangled ALTER', async (domain) => {
-    declarePlaintext('"t"', 'c')
-    const filePath = path.join(tmpDir, '0015_drift.sql')
-    fs.writeFileSync(
-      filePath,
-      `ALTER TABLE "t" ALTER COLUMN "c" SET DATA TYPE "undefined"."${domain}";\n`,
-    )
+  it.each([...V3_DOMAINS, 'eql_v2_encrypted'])(
+    'extracts the bare domain %s from a mangled ALTER',
+    async (domain) => {
+      declarePlaintext('"t"', 'c')
+      const filePath = path.join(tmpDir, '0015_drift.sql')
+      fs.writeFileSync(
+        filePath,
+        `ALTER TABLE "t" ALTER COLUMN "c" SET DATA TYPE "undefined"."${domain}";\n`,
+      )
 
-    const { rewritten } = await rewriteEncryptedAlterColumns(tmpDir)
+      const { rewritten } = await rewriteEncryptedAlterColumns(tmpDir)
 
-    expect(rewritten).toEqual([filePath])
-    const updated = fs.readFileSync(filePath, 'utf-8')
-    expect(updated).toContain(
-      `ALTER TABLE "t" ADD COLUMN "c_encrypted" "public"."${domain}";`,
-    )
-    expect(updated).not.toContain('SET DATA TYPE')
-  })
+      expect(rewritten).toEqual([filePath])
+      const updated = fs.readFileSync(filePath, 'utf-8')
+      expect(updated).toContain(
+        `ALTER TABLE "t" ADD COLUMN "c_encrypted" "public"."${domain}";`,
+      )
+      expect(updated).not.toContain('SET DATA TYPE')
+    },
+  )
 
   // The mangled forms are the cross product of what `dataType()` returns and
   // which drizzle-kit era renders it. Verified against drizzle-kit 0.24.2,
@@ -312,22 +312,25 @@ describe('rewriteEncryptedAlterColumns', () => {
       'dotted inside "undefined", drizzle-kit >=0.31.0',
       '"undefined"."public.eql_v2_encrypted"',
     ],
-  ])('rewrites the previously unmatched v2 %s form', async (_label, emitted) => {
-    declarePlaintext('"users"', 'email')
-    const filePath = path.join(tmpDir, '0009_v2form.sql')
-    fs.writeFileSync(
-      filePath,
-      `ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE ${emitted};\n`,
-    )
+  ])(
+    'rewrites the previously unmatched v2 %s form',
+    async (_label, emitted) => {
+      declarePlaintext('"users"', 'email')
+      const filePath = path.join(tmpDir, '0009_v2form.sql')
+      fs.writeFileSync(
+        filePath,
+        `ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE ${emitted};\n`,
+      )
 
-    await rewriteEncryptedAlterColumns(tmpDir)
+      await rewriteEncryptedAlterColumns(tmpDir)
 
-    const updated = fs.readFileSync(filePath, 'utf-8')
-    expect(updated).toContain(
-      'ALTER TABLE "users" ADD COLUMN "email_encrypted" "public"."eql_v2_encrypted";',
-    )
-    expect(updated).not.toContain('SET DATA TYPE')
-  })
+      const updated = fs.readFileSync(filePath, 'utf-8')
+      expect(updated).toContain(
+        'ALTER TABLE "users" ADD COLUMN "email_encrypted" "public"."eql_v2_encrypted";',
+      )
+      expect(updated).not.toContain('SET DATA TYPE')
+    },
+  )
 
   it('names the target domain in the guidance comment', async () => {
     declarePlaintext('"users"', 'email')
@@ -925,26 +928,30 @@ describe('rewriteEncryptedAlterColumns', () => {
     it.each([
       ['tagged', 'price$usd$cents'],
       ['untagged', 'price$$cents'],
-    ])('does not treat a %s dollar delimiter inside an unquoted identifier as a dollar-quoted body', async (_kind, identifier) => {
-      declarePlaintext('"users"', 'email')
-      const filePath = path.join(tmpDir, `0033_${_kind}-identifier.sql`)
-      fs.writeFileSync(
-        filePath,
-        [
-          `SELECT ${identifier} FROM "prices";`,
-          'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;',
-          '',
-        ].join('\n'),
-      )
+    ])(
+      'does not treat a %s dollar delimiter inside an unquoted identifier as a dollar-quoted body',
+      async (_kind, identifier) => {
+        declarePlaintext('"users"', 'email')
+        const filePath = path.join(tmpDir, `0033_${_kind}-identifier.sql`)
+        fs.writeFileSync(
+          filePath,
+          [
+            `SELECT ${identifier} FROM "prices";`,
+            'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;',
+            '',
+          ].join('\n'),
+        )
 
-      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+        const { rewritten, skipped } =
+          await rewriteEncryptedAlterColumns(tmpDir)
 
-      expect(rewritten).toEqual([filePath])
-      expect(skipped).toEqual([])
-      const updated = fs.readFileSync(filePath, 'utf-8')
-      expect(updated).toContain('ADD COLUMN "email_encrypted"')
-      expect(updated).not.toContain('SET DATA TYPE')
-    })
+        expect(rewritten).toEqual([filePath])
+        expect(skipped).toEqual([])
+        const updated = fs.readFileSync(filePath, 'utf-8')
+        expect(updated).toContain('ADD COLUMN "email_encrypted"')
+        expect(updated).not.toContain('SET DATA TYPE')
+      },
+    )
   })
 
   /**

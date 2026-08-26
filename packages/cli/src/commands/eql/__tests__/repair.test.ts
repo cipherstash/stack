@@ -548,28 +548,33 @@ describe('eqlRepairCommand — applied migrations', () => {
   it.each([
     ['undefined_table', '42P01'],
     ['invalid_schema_name', '3F000'],
-  ])('does not claim nothing is applied when the ledger (%s) is absent', async (_l, code) => {
-    const out = join(tmp, 'drizzle')
-    writeBrokenCorpus(out)
-    pgMock.query.mockRejectedValue(
-      Object.assign(new Error('relation does not exist'), { code }),
-    )
+  ])(
+    'does not claim nothing is applied when the ledger (%s) is absent',
+    async (_l, code) => {
+      const out = join(tmp, 'drizzle')
+      writeBrokenCorpus(out)
+      pgMock.query.mockRejectedValue(
+        Object.assign(new Error('relation does not exist'), { code }),
+      )
 
-    await eqlRepairCommand({
-      drizzle: true,
-      out,
-      databaseUrl: 'postgres://user:pw@localhost:5432/app',
-    })
+      await eqlRepairCommand({
+        drizzle: true,
+        out,
+        databaseUrl: 'postgres://user:pw@localhost:5432/app',
+      })
 
-    expect(clack.log.info).not.toHaveBeenCalledWith(
-      messages.eql.repairNothingApplied,
-    )
-    const warned = clack.log.warn.mock.calls.map((c) => String(c[0])).join('\n')
-    // Names where it looked, and the config key that would move it — a
-    // warning the user cannot act on is not much better than silence.
-    expect(warned).toContain('drizzle.__drizzle_migrations')
-    expect(warned).toContain('--migrations-table')
-  })
+      expect(clack.log.info).not.toHaveBeenCalledWith(
+        messages.eql.repairNothingApplied,
+      )
+      const warned = clack.log.warn.mock.calls
+        .map((c) => String(c[0]))
+        .join('\n')
+      // Names where it looked, and the config key that would move it — a
+      // warning the user cannot act on is not much better than silence.
+      expect(warned).toContain('drizzle.__drizzle_migrations')
+      expect(warned).toContain('--migrations-table')
+    },
+  )
 
   /**
    * Applied files carry TWO kinds of statement, and they need different words.
@@ -647,23 +652,26 @@ describe('eqlRepairCommand — applied migrations', () => {
     ['too many parts', 'db.drizzle.__drizzle_migrations'],
     ['an empty part', 'drizzle.'],
     ['a quoted identifier', '"drizzle"."__drizzle_migrations"'],
-  ])('rejects a --migrations-table containing %s', async (_label, migrationsTable) => {
-    const out = join(tmp, 'drizzle')
-    const broken = writeBrokenCorpus(out)
+  ])(
+    'rejects a --migrations-table containing %s',
+    async (_label, migrationsTable) => {
+      const out = join(tmp, 'drizzle')
+      const broken = writeBrokenCorpus(out)
 
-    await expect(
-      eqlRepairCommand({
-        drizzle: true,
-        out,
-        databaseUrl: 'postgres://user:pw@localhost:5432/app',
-        migrationsTable,
-      }),
-    ).rejects.toBeInstanceOf(CliExit)
+      await expect(
+        eqlRepairCommand({
+          drizzle: true,
+          out,
+          databaseUrl: 'postgres://user:pw@localhost:5432/app',
+          migrationsTable,
+        }),
+      ).rejects.toBeInstanceOf(CliExit)
 
-    // Never reached the database, and never touched the migration.
-    expect(pgMock.query).not.toHaveBeenCalled()
-    expect(readFileSync(broken, 'utf-8')).toBe(BROKEN_ALTER)
-  })
+      // Never reached the database, and never touched the migration.
+      expect(pgMock.query).not.toHaveBeenCalled()
+      expect(readFileSync(broken, 'utf-8')).toBe(BROKEN_ALTER)
+    },
+  )
 
   // A bare table name is the common case — drizzle's `migrations.table` without
   // a `migrations.schema`. It must resolve via search_path, not be forced into

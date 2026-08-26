@@ -115,16 +115,15 @@ describe('neon dist through pnpm exec', () => {
     expect(invocations.length).toBeGreaterThan(0)
   })
 
-  it.each(
-    invocations,
-  )('$file › $jobId › $name › call $nth passes the crate name', ({
-    command,
-  }) => {
-    expect(
-      crateNameFlag(command),
-      'neon dist needs -n; $npm_package_name is unset under pnpm exec',
-    ).toBe(crateName())
-  })
+  it.each(invocations)(
+    '$file › $jobId › $name › call $nth passes the crate name',
+    ({ command }) => {
+      expect(
+        crateNameFlag(command),
+        'neon dist needs -n; $npm_package_name is unset under pnpm exec',
+      ).toBe(crateName())
+    },
+  )
 
   // The scanner's own coverage. Both of these describe a workflow that does not
   // exist yet, so nothing above would notice if the splitting regressed to a

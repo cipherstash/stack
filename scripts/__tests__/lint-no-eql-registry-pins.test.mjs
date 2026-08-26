@@ -376,15 +376,14 @@ describe('npm: what counts as in-tree', () => {
     ).toMatchObject({ inTree: false, form: 'version' })
   })
 
-  it.each([
-    'devDependencies',
-    'peerDependencies',
-    'optionalDependencies',
-  ])('reads %s', (table) => {
-    expect(pkg({ [table]: { '@cipherstash/eql': '3.0.2' } })[0].table).toBe(
-      table,
-    )
-  })
+  it.each(['devDependencies', 'peerDependencies', 'optionalDependencies'])(
+    'reads %s',
+    (table) => {
+      expect(pkg({ [table]: { '@cipherstash/eql': '3.0.2' } })[0].table).toBe(
+        table,
+      )
+    },
+  )
 
   it('reads resolutions and both overrides spellings', () => {
     // The quietest way back to a registry: every `workspace:^` in the tree

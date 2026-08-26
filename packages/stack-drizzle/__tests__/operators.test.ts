@@ -139,21 +139,22 @@ const users = pgTable('users', {
 })
 
 describe('createEncryptionOperators - equality', () => {
-  it.each(
-    equalityDomains,
-  )('%s eq emits the latest two-arg eql_v3.eq with a query-term operand', async (eqlType, spec) => {
-    const { ops, encryptQuery, render } = setup()
-    const q = render(await ops.eq(matrixColumn(eqlType), sampleFor(spec)))
+  it.each(equalityDomains)(
+    '%s eq emits the latest two-arg eql_v3.eq with a query-term operand',
+    async (eqlType, spec) => {
+      const { ops, encryptQuery, render } = setup()
+      const q = render(await ops.eq(matrixColumn(eqlType), sampleFor(spec)))
 
-    expect(q.sql).toContain(
-      `eql_v3.eq("matrix_users"."${slug(eqlType)}", $1::${qcast(eqlType)})`,
-    )
-    expect(q.params).toEqual([TERM_JSON])
-    expect(encryptQuery.mock.calls[0]?.[1]?.column.getName()).toBe(
-      slug(eqlType),
-    )
-    expect(encryptQuery.mock.calls[0]?.[1]?.queryType).toBe('equality')
-  })
+      expect(q.sql).toContain(
+        `eql_v3.eq("matrix_users"."${slug(eqlType)}", $1::${qcast(eqlType)})`,
+      )
+      expect(q.params).toEqual([TERM_JSON])
+      expect(encryptQuery.mock.calls[0]?.[1]?.column.getName()).toBe(
+        slug(eqlType),
+      )
+      expect(encryptQuery.mock.calls[0]?.[1]?.queryType).toBe('equality')
+    },
+  )
 
   it.each(equalityDomains)('%s ne emits eql_v3.neq', async (eqlType, spec) => {
     const { ops, encryptQuery, render } = setup()
@@ -250,38 +251,42 @@ describe('createEncryptionOperators - comparison & range', () => {
     }
   })
 
-  it.each(
-    orderDomains,
-  )('%s between emits a bounded range with two query-term operands', async (eqlType, spec) => {
-    const { ops, render } = setup()
-    const value = sampleFor(spec)
-    const q = render(await ops.between(matrixColumn(eqlType), value, value))
+  it.each(orderDomains)(
+    '%s between emits a bounded range with two query-term operands',
+    async (eqlType, spec) => {
+      const { ops, render } = setup()
+      const value = sampleFor(spec)
+      const q = render(await ops.between(matrixColumn(eqlType), value, value))
 
-    expect(q.sql).toContain(
-      `eql_v3.gte("matrix_users"."${slug(eqlType)}", $1::${qcast(eqlType)})`,
-    )
-    expect(q.sql).toContain(
-      `eql_v3.lte("matrix_users"."${slug(eqlType)}", $2::${qcast(eqlType)})`,
-    )
-    expect(q.params).toEqual([TERM_JSON, TERM_JSON])
-  })
+      expect(q.sql).toContain(
+        `eql_v3.gte("matrix_users"."${slug(eqlType)}", $1::${qcast(eqlType)})`,
+      )
+      expect(q.sql).toContain(
+        `eql_v3.lte("matrix_users"."${slug(eqlType)}", $2::${qcast(eqlType)})`,
+      )
+      expect(q.params).toEqual([TERM_JSON, TERM_JSON])
+    },
+  )
 
-  it.each(
-    orderDomains,
-  )('%s notBetween wraps the range in NOT (...)', async (eqlType, spec) => {
-    const { ops, render } = setup()
-    const value = sampleFor(spec)
-    const q = render(await ops.notBetween(matrixColumn(eqlType), value, value))
+  it.each(orderDomains)(
+    '%s notBetween wraps the range in NOT (...)',
+    async (eqlType, spec) => {
+      const { ops, render } = setup()
+      const value = sampleFor(spec)
+      const q = render(
+        await ops.notBetween(matrixColumn(eqlType), value, value),
+      )
 
-    expect(q.sql).toMatch(/^not \(/i)
-    expect(q.sql).toContain(
-      `eql_v3.gte("matrix_users"."${slug(eqlType)}", $1::${qcast(eqlType)})`,
-    )
-    expect(q.sql).toContain(
-      `eql_v3.lte("matrix_users"."${slug(eqlType)}", $2::${qcast(eqlType)})`,
-    )
-    expect(q.params).toEqual([TERM_JSON, TERM_JSON])
-  })
+      expect(q.sql).toMatch(/^not \(/i)
+      expect(q.sql).toContain(
+        `eql_v3.gte("matrix_users"."${slug(eqlType)}", $1::${qcast(eqlType)})`,
+      )
+      expect(q.sql).toContain(
+        `eql_v3.lte("matrix_users"."${slug(eqlType)}", $2::${qcast(eqlType)})`,
+      )
+      expect(q.params).toEqual([TERM_JSON, TERM_JSON])
+    },
+  )
 
   // Every other `between` case passes identical bounds against a constant
   // encrypt stub, so the operand never reaches an assertion and a min/max
@@ -334,59 +339,64 @@ describe('createEncryptionOperators - comparison & range', () => {
     )
   })
 
-  it.each(
-    orderDomains,
-  )('%s asc / desc extract the ord term', (eqlType, spec) => {
-    const { ops, render } = setup()
-    // eql-3.0.0 splits the extractor by ordering flavour: `ord_term` for the
-    // OPE-backed `_ord` domains, `ord_term_ore` for the block-ORE `_ord_ore`.
-    const fn = spec.indexes.ore ? 'ord_term_ore' : 'ord_term'
-    const ascq = render(ops.asc(matrixColumn(eqlType)))
-    expect(ascq.sql).toContain(
-      `eql_v3.${fn}("matrix_users"."${slug(eqlType)}")`,
-    )
-    expect(ascq.sql.toLowerCase()).toContain('asc')
+  it.each(orderDomains)(
+    '%s asc / desc extract the ord term',
+    (eqlType, spec) => {
+      const { ops, render } = setup()
+      // eql-3.0.0 splits the extractor by ordering flavour: `ord_term` for the
+      // OPE-backed `_ord` domains, `ord_term_ore` for the block-ORE `_ord_ore`.
+      const fn = spec.indexes.ore ? 'ord_term_ore' : 'ord_term'
+      const ascq = render(ops.asc(matrixColumn(eqlType)))
+      expect(ascq.sql).toContain(
+        `eql_v3.${fn}("matrix_users"."${slug(eqlType)}")`,
+      )
+      expect(ascq.sql.toLowerCase()).toContain('asc')
 
-    const descq = render(ops.desc(matrixColumn(eqlType)))
-    expect(descq.sql).toContain(
-      `eql_v3.${fn}("matrix_users"."${slug(eqlType)}")`,
-    )
-    expect(descq.sql.toLowerCase()).toContain('desc')
-  })
+      const descq = render(ops.desc(matrixColumn(eqlType)))
+      expect(descq.sql).toContain(
+        `eql_v3.${fn}("matrix_users"."${slug(eqlType)}")`,
+      )
+      expect(descq.sql.toLowerCase()).toContain('desc')
+    },
+  )
 })
 
 describe('createEncryptionOperators - free-text match', () => {
-  it.each(
-    matchDomains,
-  )('%s matches emits latest eql_v3.matches with a query-term operand', async (eqlType, spec) => {
-    const { ops, encryptQuery, render } = setup()
-    const q = render(await ops.matches(matrixColumn(eqlType), needleFor(spec)))
+  it.each(matchDomains)(
+    '%s matches emits latest eql_v3.matches with a query-term operand',
+    async (eqlType, spec) => {
+      const { ops, encryptQuery, render } = setup()
+      const q = render(
+        await ops.matches(matrixColumn(eqlType), needleFor(spec)),
+      )
 
-    expect(q.sql).toContain(
-      `eql_v3.matches("matrix_users"."${slug(eqlType)}", $1::${qcast(eqlType)})`,
-    )
-    expect(q.params).toEqual([TERM_JSON])
-    expect(encryptQuery.mock.calls[0]?.[1]?.column.getName()).toBe(
-      slug(eqlType),
-    )
-    expect(encryptQuery.mock.calls[0]?.[1]?.queryType).toBe('freeTextSearch')
-  })
+      expect(q.sql).toContain(
+        `eql_v3.matches("matrix_users"."${slug(eqlType)}", $1::${qcast(eqlType)})`,
+      )
+      expect(q.params).toEqual([TERM_JSON])
+      expect(encryptQuery.mock.calls[0]?.[1]?.column.getName()).toBe(
+        slug(eqlType),
+      )
+      expect(encryptQuery.mock.calls[0]?.[1]?.queryType).toBe('freeTextSearch')
+    },
+  )
 
   // A needle shorter than the tokenizer's `token_length` produces an empty
   // bloom filter, and `stored_bf @> '{}'` is true for every row — so this must
   // throw rather than silently return the whole table.
-  it.each(
-    matchDomains,
-  )('%s matches rejects a needle shorter than token_length before encrypting', async (eqlType) => {
-    const { ops, encryptQuery } = setup()
-    await expect(ops.matches(matrixColumn(eqlType), 'ad')).rejects.toThrow(
-      /at least 3 characters/,
-    )
-    await expect(ops.matches(matrixColumn(eqlType), '')).rejects.toThrow(
-      EncryptionOperatorError,
-    )
-    expect(encryptQuery).not.toHaveBeenCalled()
-  })
+  it.each(matchDomains)(
+    '%s matches rejects a needle shorter than token_length before encrypting',
+    async (eqlType) => {
+      const { ops, encryptQuery } = setup()
+      await expect(ops.matches(matrixColumn(eqlType), 'ad')).rejects.toThrow(
+        /at least 3 characters/,
+      )
+      await expect(ops.matches(matrixColumn(eqlType), '')).rejects.toThrow(
+        EncryptionOperatorError,
+      )
+      expect(encryptQuery).not.toHaveBeenCalled()
+    },
+  )
 
   it('matches accepts a needle exactly at token_length', async () => {
     const { ops, render } = setup()

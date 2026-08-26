@@ -81,15 +81,18 @@ describe('v3Dialect', () => {
       ],
       // `$1` in a title is consumed by vitest as an index into the case tuple,
       // so it cannot be used to name the SQL placeholder here.
-    ])('%s binds a hostile operand as a positional parameter', (_name, build) => {
-      const query = renderFull(build())
+    ])(
+      '%s binds a hostile operand as a positional parameter',
+      (_name, build) => {
+        const query = renderFull(build())
 
-      expect(query.params).toEqual([hostile])
-      expect(query.sql).toContain('$1')
-      // The raw value must appear nowhere in the SQL text.
-      expect(query.sql).not.toContain('OR 1=1')
-      expect(query.sql).not.toContain('back\\slash')
-    })
+        expect(query.params).toEqual([hostile])
+        expect(query.sql).toContain('$1')
+        // The raw value must appear nowhere in the SQL text.
+        expect(query.sql).not.toContain('OR 1=1')
+        expect(query.sql).not.toContain('back\\slash')
+      },
+    )
 
     it('range binds both bounds positionally, min first', () => {
       const query = renderFull(

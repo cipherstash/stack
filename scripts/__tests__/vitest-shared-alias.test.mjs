@@ -26,9 +26,10 @@ describe('vitest.shared.ts alias targets exist on disk', () => {
     expect(existsSync(target), `missing alias target: ${target}`).toBe(true)
   })
 
-  it.each(
-    targets(stackSourceAlias),
-  )('stackSourceAlias %s', (_specifier, target) => {
-    expect(existsSync(target), `missing alias target: ${target}`).toBe(true)
-  })
+  it.each(targets(stackSourceAlias))(
+    'stackSourceAlias %s',
+    (_specifier, target) => {
+      expect(existsSync(target), `missing alias target: ${target}`).toBe(true)
+    },
+  )
 })

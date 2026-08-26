@@ -127,18 +127,19 @@ describe('wasm-inline is EQL v3 only (#614)', () => {
   // had no equivalent, so a JS/JSON caller carrying `eqlVersion: 2` got a hard
   // error on one entry and silence on the other — the exact entry-disagreement
   // #815 exists to close.
-  it.each([
-    2, 3,
-  ])('rejects config.eqlVersion (%i) the way the native entry does', async (eqlVersion) => {
-    await expect(
-      Encryption({
-        schemas: [users],
-        // A JS caller can carry this key even though the type omits it.
-        config: { ...config, eqlVersion } as unknown as typeof config,
-      }),
-    ).rejects.toThrow(/`config\.eqlVersion` has been removed/)
-    expect(vi.mocked(wasmNewClient)).not.toHaveBeenCalled()
-  })
+  it.each([2, 3])(
+    'rejects config.eqlVersion (%i) the way the native entry does',
+    async (eqlVersion) => {
+      await expect(
+        Encryption({
+          schemas: [users],
+          // A JS caller can carry this key even though the type omits it.
+          config: { ...config, eqlVersion } as unknown as typeof config,
+        }),
+      ).rejects.toThrow(/`config\.eqlVersion` has been removed/)
+      expect(vi.mocked(wasmNewClient)).not.toHaveBeenCalled()
+    },
+  )
 
   // `eqlVersion?: never` accepts `eqlVersion: undefined` without
   // `exactOptionalPropertyTypes` (not enabled in this repo) and cannot be made to

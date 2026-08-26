@@ -36,30 +36,29 @@ describe('skills — Supabase apply commands', () => {
     expect(SKILL_FILES.length).toBeGreaterThan(0)
   })
 
-  it.each(
-    SKILL_FILES,
-  )('$skill never presents a bare `supabase migration up` as the remote apply', ({
-    body,
-  }) => {
-    // Collapse wrapping and drop markdown emphasis first: the qualifier
-    // routinely lands on the next source line or arrives as `**local**`, and
-    // either would fail the match on formatting rather than content.
-    const prose = body.replace(/\s+/g, ' ').replace(/[*`_]/g, '')
+  it.each(SKILL_FILES)(
+    '$skill never presents a bare `supabase migration up` as the remote apply',
+    ({ body }) => {
+      // Collapse wrapping and drop markdown emphasis first: the qualifier
+      // routinely lands on the next source line or arrives as `**local**`, and
+      // either would fail the match on formatting rather than content.
+      const prose = body.replace(/\s+/g, ' ').replace(/[*`_]/g, '')
 
-    for (const match of prose.matchAll(/supabase migration up/g)) {
-      // Only what immediately follows the command counts. A window wide
-      // enough to find a "local database" elsewhere in the sentence accepts
-      // the very wording this guard rejects — "apply with supabase migration
-      // up (or supabase db reset locally, once the local database exists)"
-      // qualifies the other command, not this one.
-      const following = prose.slice(match.index + match[0].length)
+      for (const match of prose.matchAll(/supabase migration up/g)) {
+        // Only what immediately follows the command counts. A window wide
+        // enough to find a "local database" elsewhere in the sentence accepts
+        // the very wording this guard rejects — "apply with supabase migration
+        // up (or supabase db reset locally, once the local database exists)"
+        // qualifies the other command, not this one.
+        const following = prose.slice(match.index + match[0].length)
 
-      expect(
-        following.slice(0, 60),
-        '`supabase migration up` applies to the LOCAL database — add `--linked`, say "applies to the local database", or use `supabase db push` for remote',
-      ).toMatch(/^(?: --linked\b| applies to the local database\b)/i)
-    }
-  })
+        expect(
+          following.slice(0, 60),
+          '`supabase migration up` applies to the LOCAL database — add `--linked`, say "applies to the local database", or use `supabase db push` for remote',
+        ).toMatch(/^(?: --linked\b| applies to the local database\b)/i)
+      }
+    },
+  )
 
   /**
    * `supabase migration repair --status applied <version>` writes a ledger row
@@ -78,26 +77,30 @@ describe('skills — Supabase apply commands', () => {
    * because it is created by the bundle's closing statements and so cannot
    * resolve on a half-applied install, unlike the `eql_v3` schema itself.
    */
-  it.each(
-    SKILL_FILES,
-  )('$skill never recommends the ledger-only repair without a check above it', ({
-    body,
-  }) => {
-    // Same wrap-collapsing as above, minus the `_` strip: the marker here is
-    // `eql_v3.version()`, which that strip would turn into `eqlv3.version()`.
-    const prose = body.replace(/\s+/g, ' ').replace(/[*`]/g, '')
+  it.each(SKILL_FILES)(
+    '$skill never recommends the ledger-only repair without a check above it',
+    ({ body }) => {
+      // Same wrap-collapsing as above, minus the `_` strip: the marker here is
+      // `eql_v3.version()`, which that strip would turn into `eqlv3.version()`.
+      const prose = body.replace(/\s+/g, ' ').replace(/[*`]/g, '')
 
-    for (const match of prose.matchAll(/migration repair --status applied/g)) {
-      // A paragraph's worth of lead-in. Wide enough for the sentence that
-      // introduces the check plus the one that explains what its output means,
-      // narrow enough that an `eql_v3.version()` mention elsewhere in the
-      // document cannot stand in for one attached to this recommendation.
-      const preceding = prose.slice(Math.max(0, match.index - 700), match.index)
+      for (const match of prose.matchAll(
+        /migration repair --status applied/g,
+      )) {
+        // A paragraph's worth of lead-in. Wide enough for the sentence that
+        // introduces the check plus the one that explains what its output means,
+        // narrow enough that an `eql_v3.version()` mention elsewhere in the
+        // document cannot stand in for one attached to this recommendation.
+        const preceding = prose.slice(
+          Math.max(0, match.index - 700),
+          match.index,
+        )
 
-      expect(
-        preceding,
-        '`migration repair --status applied` writes a ledger row for SQL that may never have run — an unrecoverable state on a remote without EQL. Print the `select eql_v3.version()` check above this recommendation, not after it',
-      ).toContain('eql_v3.version()')
-    }
-  })
+        expect(
+          preceding,
+          '`migration repair --status applied` writes a ledger row for SQL that may never have run — an unrecoverable state on a remote without EQL. Print the `select eql_v3.version()` check above this recommendation, not after it',
+        ).toContain('eql_v3.version()')
+      }
+    },
+  )
 })

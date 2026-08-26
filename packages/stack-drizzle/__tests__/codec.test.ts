@@ -83,44 +83,39 @@ describe('v3 codec', () => {
   // wrong-shape payload was returned as-is — `v3FromDriver('5')` yielded `5`
   // typed as an envelope, which then reached `decrypt` as garbage.
   describe('malformed and non-envelope payloads', () => {
-    it.each([
-      '{bad',
-      '',
-      '{"v":3,',
-    ])('throws EqlV3CodecError on unparseable jsonb %j', (raw) => {
-      expect(() => v3FromDriver(raw)).toThrow(EqlV3CodecError)
-      expect(() => v3FromDriver(raw)).toThrow(/Failed to parse/)
-    })
+    it.each(['{bad', '', '{"v":3,'])(
+      'throws EqlV3CodecError on unparseable jsonb %j',
+      (raw) => {
+        expect(() => v3FromDriver(raw)).toThrow(EqlV3CodecError)
+        expect(() => v3FromDriver(raw)).toThrow(/Failed to parse/)
+      },
+    )
 
     // The parse failure is the only codec path with an upstream error to
     // preserve. Flattening it to a message string discards the SyntaxError and
     // its stack, so a caller debugging a corrupt column loses where parsing
     // actually broke.
-    it.each([
-      '{bad',
-      '',
-      '{"v":3,',
-    ])('preserves the underlying SyntaxError as `cause` for %j', (raw) => {
-      let thrown: unknown
-      try {
-        v3FromDriver(raw)
-      } catch (error) {
-        thrown = error
-      }
+    it.each(['{bad', '', '{"v":3,'])(
+      'preserves the underlying SyntaxError as `cause` for %j',
+      (raw) => {
+        let thrown: unknown
+        try {
+          v3FromDriver(raw)
+        } catch (error) {
+          thrown = error
+        }
 
-      expect(thrown).toBeInstanceOf(EqlV3CodecError)
-      expect((thrown as EqlV3CodecError).cause).toBeInstanceOf(SyntaxError)
-    })
+        expect(thrown).toBeInstanceOf(EqlV3CodecError)
+        expect((thrown as EqlV3CodecError).cause).toBeInstanceOf(SyntaxError)
+      },
+    )
 
-    it.each([
-      '5',
-      '"a string"',
-      'true',
-      '[]',
-      '[{"v":3,"c":"ct"}]',
-    ])('throws on valid JSON %j that is not an envelope', (raw) => {
-      expect(() => v3FromDriver(raw)).toThrow(EqlV3CodecError)
-    })
+    it.each(['5', '"a string"', 'true', '[]', '[{"v":3,"c":"ct"}]'])(
+      'throws on valid JSON %j that is not an envelope',
+      (raw) => {
+        expect(() => v3FromDriver(raw)).toThrow(EqlV3CodecError)
+      },
+    )
 
     it('throws on an object missing the schema version', () => {
       expect(() => v3FromDriver({ c: 'ct' })).toThrow(/missing "v"/)

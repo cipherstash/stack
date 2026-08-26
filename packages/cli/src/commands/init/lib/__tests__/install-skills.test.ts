@@ -104,22 +104,22 @@ describe('SKILL_MAP', () => {
   // `dist/*.d.ts` and the Postgres catalog. `postgresql` is that path;
   // Supabase shares it (Edge Functions are the flagship WASM-entry use, and
   // its migrations/RPC are hand-written SQL).
-  it.each([
-    'postgresql',
-    'supabase',
-  ] as const)('%s includes the raw-SQL and edge skills', (integration) => {
-    expect(SKILL_MAP[integration]).toContain('stash-postgres')
-    expect(SKILL_MAP[integration]).toContain('stash-edge')
-  })
+  it.each(['postgresql', 'supabase'] as const)(
+    '%s includes the raw-SQL and edge skills',
+    (integration) => {
+      expect(SKILL_MAP[integration]).toContain('stash-postgres')
+      expect(SKILL_MAP[integration]).toContain('stash-edge')
+    },
+  )
 
   // The ORM integrations emit correctly-typed operands themselves, so they
   // get cross-links from their own skills rather than the full install.
-  it.each([
-    'drizzle',
-    'prisma-next',
-  ] as const)('%s does not install the raw-SQL skill', (integration) => {
-    expect(SKILL_MAP[integration]).not.toContain('stash-postgres')
-  })
+  it.each(['drizzle', 'prisma-next'] as const)(
+    '%s does not install the raw-SQL skill',
+    (integration) => {
+      expect(SKILL_MAP[integration]).not.toContain('stash-postgres')
+    },
+  )
 })
 
 describe('skillsFor', () => {

@@ -78,37 +78,36 @@ function workspaceMembers(WORKSPACE) {
     .sort()
 }
 
-describe.each(WORKSPACES)('cargo publish opt-out ($root)', ({
-  root,
-  publishable,
-  expects,
-}) => {
-  const workspace = join(REPO_ROOT, root)
-  const members = workspaceMembers(workspace)
+describe.each(WORKSPACES)(
+  'cargo publish opt-out ($root)',
+  ({ root, publishable, expects }) => {
+    const workspace = join(REPO_ROOT, root)
+    const members = workspaceMembers(workspace)
 
-  // The guard on the scan: a discovery test that enumerates nothing passes
-  // while checking nothing.
-  it('finds the workspace members it means to check', () => {
-    expect(members).toContain(expects)
-  })
-
-  // The guard on the allowlist: an entry naming a member that no longer
-  // exists is an exemption excusing nothing, and it would go on reading as a
-  // deliberate decision.
-  it('allowlists only real members', () => {
-    expect([...publishable].filter((name) => !members.includes(name))).toEqual(
-      [],
-    )
-  })
-
-  for (const member of members) {
-    it(`${member} declares publish = false unless allowlisted`, () => {
-      if (publishable.has(member)) return
-      const manifest = readFileSync(
-        join(workspace, member, 'Cargo.toml'),
-        'utf8',
-      )
-      expect(manifest).toMatch(/^publish = false$/m)
+    // The guard on the scan: a discovery test that enumerates nothing passes
+    // while checking nothing.
+    it('finds the workspace members it means to check', () => {
+      expect(members).toContain(expects)
     })
-  }
-})
+
+    // The guard on the allowlist: an entry naming a member that no longer
+    // exists is an exemption excusing nothing, and it would go on reading as a
+    // deliberate decision.
+    it('allowlists only real members', () => {
+      expect(
+        [...publishable].filter((name) => !members.includes(name)),
+      ).toEqual([])
+    })
+
+    for (const member of members) {
+      it(`${member} declares publish = false unless allowlisted`, () => {
+        if (publishable.has(member)) return
+        const manifest = readFileSync(
+          join(workspace, member, 'Cargo.toml'),
+          'utf8',
+        )
+        expect(manifest).toMatch(/^publish = false$/m)
+      })
+    }
+  },
+)

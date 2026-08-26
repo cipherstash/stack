@@ -256,22 +256,25 @@ describe('@cipherstash/stack/diagnostics', () => {
   it.each([
     ['require', false],
     ['import', true],
-  ])('probes through an export the published protect-ffi has, so %s survives it', (_label, esm) => {
-    const call = `let raised = 'none'
+  ])(
+    'probes through an export the published protect-ffi has, so %s survives it',
+    (_label, esm) => {
+      const call = `let raised = 'none'
          try { d.assertNativeBindingAvailable() } catch (e) { raised = e.message }
          process.stdout.write('imported ' + raised)`
-    const script = esm
-      ? `const d = await import('@cipherstash/stack/diagnostics')\n${call}`
-      : `const d = require('@cipherstash/stack/diagnostics')\n${call}`
+      const script = esm
+        ? `const d = await import('@cipherstash/stack/diagnostics')\n${call}`
+        : `const d = require('@cipherstash/stack/diagnostics')\n${call}`
 
-    const output = runNode(script, { esm, publishedFfi: true })
+      const output = runNode(script, { esm, publishedFfi: true })
 
-    // Reaching stdout at all means the entry loaded against that surface.
-    expect(output).toMatch(/^imported /)
-    // And that the probe ran, rather than resolving to `undefined` and
-    // throwing a TypeError the CLI would report as an unknown failure.
-    expect(output).toContain(PUBLISHED_SURFACE_MARKER)
-  })
+      // Reaching stdout at all means the entry loaded against that surface.
+      expect(output).toMatch(/^imported /)
+      // And that the probe ran, rather than resolving to `undefined` and
+      // throwing a TypeError the CLI would report as an unknown failure.
+      expect(output).toContain(PUBLISHED_SURFACE_MARKER)
+    },
+  )
 
   it('is importable from both module systems', () => {
     expect(
@@ -298,28 +301,31 @@ describe('@cipherstash/stack/diagnostics', () => {
   it.each([
     ['require', false],
     ['import', true],
-  ])('with no binding installed, %s succeeds and only the call throws', (_label, esm) => {
-    const script = esm
-      ? `const d = await import('@cipherstash/stack/diagnostics')
+  ])(
+    'with no binding installed, %s succeeds and only the call throws',
+    (_label, esm) => {
+      const script = esm
+        ? `const d = await import('@cipherstash/stack/diagnostics')
          let raised = 'none'
          try { d.assertNativeBindingAvailable() } catch (e) { raised = e.code + ' ' + e.message.split('\\n')[0] }
          process.stdout.write('imported ' + raised)`
-      : `const d = require('@cipherstash/stack/diagnostics')
+        : `const d = require('@cipherstash/stack/diagnostics')
          let raised = 'none'
          try { d.assertNativeBindingAvailable() } catch (e) { raised = e.code + ' ' + e.message.split('\\n')[0] }
          process.stdout.write('imported ' + raised)`
 
-    const output = runNode(script, { esm, hideBinding: true })
+      const output = runNode(script, { esm, hideBinding: true })
 
-    // "imported" at all means the import did not throw — the property under
-    // test. A child that died during import produces no stdout and fails the
-    // execFileSync above.
-    expect(output).toMatch(/^imported /)
-    // Unwrapped: same `code` and the platform package by name, which is what
-    // `packages/cli/src/native.ts` classifies on.
-    expect(output).toContain('MODULE_NOT_FOUND')
-    expect(output).toMatch(
-      /Cannot find module '@cipherstash\/protect-ffi-(darwin|linux|win32)-/,
-    )
-  })
+      // "imported" at all means the import did not throw — the property under
+      // test. A child that died during import produces no stdout and fails the
+      // execFileSync above.
+      expect(output).toMatch(/^imported /)
+      // Unwrapped: same `code` and the platform package by name, which is what
+      // `packages/cli/src/native.ts` classifies on.
+      expect(output).toContain('MODULE_NOT_FOUND')
+      expect(output).toMatch(
+        /Cannot find module '@cipherstash\/protect-ffi-(darwin|linux|win32)-/,
+      )
+    },
+  )
 })

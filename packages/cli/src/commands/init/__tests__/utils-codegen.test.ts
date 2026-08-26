@@ -94,16 +94,16 @@ const ALL_DOMAINS: import('../types.js').V3Domain[] = [
   'Json',
 ]
 
-describe.each([
-  'postgresql',
-  'drizzle',
-] as const)('generateClientFromSchemas domain round-trip (%s)', (integration) => {
-  it.each(ALL_DOMAINS)('emits types.%s verbatim', (domain) => {
-    const s: SchemaDef[] = [
-      { tableName: 'x', columns: [{ name: 'c', domain }] },
-    ]
-    expect(generateClientFromSchemas(integration, s)).toContain(
-      `c: types.${domain}('c'),`,
-    )
-  })
-})
+describe.each(['postgresql', 'drizzle'] as const)(
+  'generateClientFromSchemas domain round-trip (%s)',
+  (integration) => {
+    it.each(ALL_DOMAINS)('emits types.%s verbatim', (domain) => {
+      const s: SchemaDef[] = [
+        { tableName: 'x', columns: [{ name: 'c', domain }] },
+      ]
+      expect(generateClientFromSchemas(integration, s)).toContain(
+        `c: types.${domain}('c'),`,
+      )
+    })
+  },
+)

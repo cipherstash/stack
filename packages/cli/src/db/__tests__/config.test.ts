@@ -73,18 +73,16 @@ describe('buildPgClientConfig', () => {
     expect(String(stderr.mock.calls[0]?.[0])).toContain('NOT authenticated')
   })
 
-  it.each([
-    'require',
-    'prefer',
-    'verify-ca',
-    'verify-full',
-  ])('sslmode=%s verifies fully and strips the param', (mode) => {
-    const config = buildPgClientConfig(
-      `postgres://u@db.example.com/app?sslmode=${mode}`,
-    )
-    expect(ssl(config).rejectUnauthorized).toBe(true)
-    expect(config.connectionString).not.toContain('sslmode')
-  })
+  it.each(['require', 'prefer', 'verify-ca', 'verify-full'])(
+    'sslmode=%s verifies fully and strips the param',
+    (mode) => {
+      const config = buildPgClientConfig(
+        `postgres://u@db.example.com/app?sslmode=${mode}`,
+      )
+      expect(ssl(config).rejectUnauthorized).toBe(true)
+      expect(config.connectionString).not.toContain('sslmode')
+    },
+  )
 
   it('honours sslrootcert=<path> as the sole trust anchor (libpq semantics)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'stash-ca-'))

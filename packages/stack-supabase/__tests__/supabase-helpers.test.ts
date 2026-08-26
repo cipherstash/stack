@@ -245,21 +245,19 @@ describe('parseOrStringWithSpans / rebuildOrString round-trip', () => {
   // The emit side must never produce a string its own parser mis-reads. A scalar
   // brace was the one character that escaped quoting, so rebuild → parse dropped
   // the condition behind it.
-  it.each([
-    'a{b',
-    'a}b',
-    'a(b',
-    'a)b',
-  ])('round-trips a scalar value containing %s', (value) => {
-    const conditions = [
-      { column: 'note', op: 'eq', negate: false, value },
-      { column: 'id', op: 'eq', negate: false, value: '7' },
-    ]
-    const s = rebuildOrString(
-      conditions.map((c) => cond(c.column, c.op, c.value)),
-    )
-    expect(parseConditions(s)).toEqual(conditions)
-  })
+  it.each(['a{b', 'a}b', 'a(b', 'a)b'])(
+    'round-trips a scalar value containing %s',
+    (value) => {
+      const conditions = [
+        { column: 'note', op: 'eq', negate: false, value },
+        { column: 'id', op: 'eq', negate: false, value: '7' },
+      ]
+      const s = rebuildOrString(
+        conditions.map((c) => cond(c.column, c.op, c.value)),
+      )
+      expect(parseConditions(s)).toEqual(conditions)
+    },
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -329,20 +327,18 @@ describe('parseOrStringWithSpans structural characters inside values', () => {
   // column ahead of the literal and a plaintext condition behind it — the shape
   // that actually reaches `rebuildOrString`, since the encrypted `email` is what
   // forces the group to be rebuilt rather than forwarded verbatim.
-  it.each([
-    '}',
-    '{',
-    ')',
-    '(',
-  ])('keeps a quoted %s inside a jsonb literal out of the depth count', (char) => {
-    expect(
-      parseConditions(`email.eq.x,meta.cs.{"a":"${char}"},note.eq.y`),
-    ).toEqual([
-      { column: 'email', op: 'eq', negate: false, value: 'x' },
-      { column: 'meta', op: 'cs', negate: false, value: `{"a":"${char}"}` },
-      { column: 'note', op: 'eq', negate: false, value: 'y' },
-    ])
-  })
+  it.each(['}', '{', ')', '('])(
+    'keeps a quoted %s inside a jsonb literal out of the depth count',
+    (char) => {
+      expect(
+        parseConditions(`email.eq.x,meta.cs.{"a":"${char}"},note.eq.y`),
+      ).toEqual([
+        { column: 'email', op: 'eq', negate: false, value: 'x' },
+        { column: 'meta', op: 'cs', negate: false, value: `{"a":"${char}"}` },
+        { column: 'note', op: 'eq', negate: false, value: 'y' },
+      ])
+    },
+  )
 
   it('keeps an escaped quote inside a jsonb value opaque', () => {
     // `\"` must not close the element, or the `}` behind it decrements depth.
@@ -718,22 +714,18 @@ describe('parseOrStringWithSpans in-list elements', () => {
   // The range operators take a paren-delimited operand too. Excluding them would
   // re-emit `period.ov.(1,10)` as a quoted scalar — a wire-format change on a
   // plaintext column that merely shares an `.or()` with an encrypted one.
-  it.each([
-    'ov',
-    'sl',
-    'sr',
-    'nxr',
-    'nxl',
-    'adj',
-  ])('round-trips a paren-delimited %s operand', (op) => {
-    const s = `period.${op}.(1,10)`
-    expect(parseConditions(s)).toEqual([
-      { column: 'period', op, negate: false, value: ['1', '10'] },
-    ])
-    expect(
-      rebuildOrString(parseOrStringWithSpans(s) as DbPendingOrCondition[]),
-    ).toBe(s)
-  })
+  it.each(['ov', 'sl', 'sr', 'nxr', 'nxl', 'adj'])(
+    'round-trips a paren-delimited %s operand',
+    (op) => {
+      const s = `period.${op}.(1,10)`
+      expect(parseConditions(s)).toEqual([
+        { column: 'period', op, negate: false, value: ['1', '10'] },
+      ])
+      expect(
+        rebuildOrString(parseOrStringWithSpans(s) as DbPendingOrCondition[]),
+      ).toBe(s)
+    },
+  )
 })
 
 // PostgREST reads a bare `null` / `true` / `false` operand as the SQL value, not

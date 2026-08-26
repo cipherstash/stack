@@ -28,68 +28,68 @@ const userProfile: UserColumn = {
 describe.each([
   { encryptConfig: jsonOpaque, description: 'opaque' },
   { encryptConfig: jsonSteVec, description: 'ste_vec' },
-])('Can round-trip encrypt & decrypt JSON', async ({
-  encryptConfig,
-  description,
-}) => {
-  describe(`using ${description} config`, () => {
-    test('object', async () => {
-      const client = await newClient({ encryptConfig })
-      const plaintexts = [
-        { foo: 'bar', baz: 123 },
-        { foo: 'baz', baz: 456 },
-      ]
+])(
+  'Can round-trip encrypt & decrypt JSON',
+  async ({ encryptConfig, description }) => {
+    describe(`using ${description} config`, () => {
+      test('object', async () => {
+        const client = await newClient({ encryptConfig })
+        const plaintexts = [
+          { foo: 'bar', baz: 123 },
+          { foo: 'baz', baz: 456 },
+        ]
 
-      const ciphertexts = await encryptBulk(client, {
-        plaintexts: plaintexts.map((plaintext) => ({
-          plaintext,
-          ...userProfile,
-        })),
+        const ciphertexts = await encryptBulk(client, {
+          plaintexts: plaintexts.map((plaintext) => ({
+            plaintext,
+            ...userProfile,
+          })),
+        })
+        const decrypted = await decryptBulk(client, {
+          ciphertexts: ciphertexts.map((ciphertext) => ({ ciphertext })),
+        })
+        expect(decrypted).toEqual(plaintexts)
       })
-      const decrypted = await decryptBulk(client, {
-        ciphertexts: ciphertexts.map((ciphertext) => ({ ciphertext })),
+
+      test('array object mixed', async () => {
+        const client = await newClient({ encryptConfig })
+        const plaintexts = [[1, 2, 3], { foo: 'baz', baz: 456 }]
+
+        const ciphertexts = await encryptBulk(client, {
+          plaintexts: plaintexts.map((plaintext) => ({
+            plaintext,
+            ...userProfile,
+          })),
+        })
+
+        const decrypted = await decryptBulk(client, {
+          ciphertexts: ciphertexts.map((ciphertext) => ({ ciphertext })),
+        })
+
+        expect(decrypted).toEqual(plaintexts)
       })
-      expect(decrypted).toEqual(plaintexts)
+
+      test('nested variants', async () => {
+        const client = await newClient({ encryptConfig })
+        const plaintexts = [
+          { foo: 'bar', baz: [1, 2, 3] },
+          { foo: 'bar', baz: [{ qux: 'quux' }] },
+          { foo: 'bar', baz: { qux: 'quux' } },
+        ]
+
+        const ciphertexts = await encryptBulk(client, {
+          plaintexts: plaintexts.map((plaintext) => ({
+            plaintext,
+            ...userProfile,
+          })),
+        })
+
+        const decrypted = await decryptBulk(client, {
+          ciphertexts: ciphertexts.map((ciphertext) => ({ ciphertext })),
+        })
+
+        expect(decrypted).toEqual(plaintexts)
+      })
     })
-
-    test('array object mixed', async () => {
-      const client = await newClient({ encryptConfig })
-      const plaintexts = [[1, 2, 3], { foo: 'baz', baz: 456 }]
-
-      const ciphertexts = await encryptBulk(client, {
-        plaintexts: plaintexts.map((plaintext) => ({
-          plaintext,
-          ...userProfile,
-        })),
-      })
-
-      const decrypted = await decryptBulk(client, {
-        ciphertexts: ciphertexts.map((ciphertext) => ({ ciphertext })),
-      })
-
-      expect(decrypted).toEqual(plaintexts)
-    })
-
-    test('nested variants', async () => {
-      const client = await newClient({ encryptConfig })
-      const plaintexts = [
-        { foo: 'bar', baz: [1, 2, 3] },
-        { foo: 'bar', baz: [{ qux: 'quux' }] },
-        { foo: 'bar', baz: { qux: 'quux' } },
-      ]
-
-      const ciphertexts = await encryptBulk(client, {
-        plaintexts: plaintexts.map((plaintext) => ({
-          plaintext,
-          ...userProfile,
-        })),
-      })
-
-      const decrypted = await decryptBulk(client, {
-        ciphertexts: ciphertexts.map((ciphertext) => ({ ciphertext })),
-      })
-
-      expect(decrypted).toEqual(plaintexts)
-    })
-  })
-})
+  },
+)
