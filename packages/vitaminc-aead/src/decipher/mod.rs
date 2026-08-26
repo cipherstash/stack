@@ -244,7 +244,12 @@ pub trait SeqAccess<'c> {
 /// Pull-style access to entries of a decrypted map.
 pub trait MapAccess<'c> {
     /// The error type returned by [`next_entry`](MapAccess::next_entry).
-    type Error;
+    ///
+    /// The [`From<Unspecified>`](crate::Unspecified) bound is what lets
+    /// [`next_passthrough`](MapAccess::next_passthrough) carry a default that
+    /// *refuses*: an implementation whose format has no passthrough
+    /// representation inherits the rejection rather than having to write one.
+    type Error: From<Unspecified>;
     /// Advance to the next entry and return its key, leaving the value
     /// undecrypted until [`next_value`](MapAccess::next_value) is called.
     ///
@@ -313,7 +318,19 @@ pub trait MapAccess<'c> {
     /// the point: it is what lets a passthrough value be a plain database
     /// column that other queries read and write on their own. Treat what comes
     /// back as untrusted input, exactly as you would treat that column.
-    fn next_passthrough(&mut self) -> Result<Box<dyn Any + Send + 'static>, Self::Error>;
+    ///
+    /// # Default
+    ///
+    /// Defaults to rejecting every call with [`Unspecified`]. A format with no
+    /// passthrough representation is not obliged to invent one — leaving the
+    /// default in place means a passthrough entry cannot be read from this map
+    /// at all, which is the safe reading of "unsupported". Override it only in
+    /// a decipher that actually stores passthrough entries, alongside the
+    /// encrypt-side [`MapCipher::passthrough_entry_boxed`](crate::MapCipher::passthrough_entry_boxed)
+    /// that writes them.
+    fn next_passthrough(&mut self) -> Result<Box<dyn Any + Send + 'static>, Self::Error> {
+        Err(Unspecified.into())
+    }
 
     /// Returns the next decrypted `(key, value)` entry, or `None` when the map is exhausted.
     ///
@@ -367,6 +384,22 @@ mod tests {
             MapAccess::<'static>::next_value::<String>(&mut map),
             Err(Unspecified)
         );
+    }
+
+    /// `next_passthrough` is defaulted so that a decipher whose format has no
+    /// passthrough representation need not write one — but the default must
+    /// *refuse*, not hand back something unverified. `MockMapAccess` stores
+    /// every entry encrypted and supplies no override, so this pins the
+    /// inherited body.
+    #[test]
+    fn next_passthrough_default_rejects() {
+        let mut map = MockMapAccess::new([("first", "a")]);
+
+        assert_eq!(
+            MapAccess::<'static>::next_key(&mut map),
+            Ok(Some("first".to_string()))
+        );
+        assert!(MapAccess::<'static>::next_passthrough(&mut map).is_err());
     }
 
     /// Skipping a value leaves its AAD binding unverified, so a second

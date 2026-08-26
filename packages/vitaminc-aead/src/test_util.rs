@@ -294,10 +294,4 @@ impl<'c> MapAccess<'c> for MockMapAccess {
         let decipher = MockDecipher::new(payload);
         T::decrypt_with_aad(&decipher, crate::Aad::empty())
     }
-
-    /// The mock stores every entry as an encrypted payload, so there is no
-    /// passthrough for it to hand back.
-    fn next_passthrough(&mut self) -> Result<Box<dyn std::any::Any + Send + 'static>, Self::Error> {
-        Err(Unspecified)
-    }
 }
