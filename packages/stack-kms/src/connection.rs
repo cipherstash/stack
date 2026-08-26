@@ -109,26 +109,16 @@ pub trait ZeroKMSConnectionInit {
         Self: Sized;
 }
 
-/// On native targets the returned future is `Send` so callers can drive it on
-/// a multi-threaded runtime. On wasm32 the bound is dropped — reqwest's
-/// fetch-backed response futures aren't `Send`, and edge runtimes are
-/// single-threaded anyway.
-#[cfg(not(target_arch = "wasm32"))]
+/// The returned future is bounded by [`MaybeSend`](crate::MaybeSend): `Send`
+/// on native targets so callers can drive it on a multi-threaded runtime,
+/// unbounded on wasm32 — reqwest's fetch-backed response futures aren't
+/// `Send`, and edge runtimes are single-threaded anyway.
 pub trait ZeroKMSConnection: ZeroKMSConnectionInit {
     fn send<Request: ViturRequest>(
         &self,
         request: Request,
         access_token: &str,
-    ) -> impl Future<Output = Result<Request::Response, ViturRequestError>> + Send;
-}
-
-#[cfg(target_arch = "wasm32")]
-pub trait ZeroKMSConnection: ZeroKMSConnectionInit {
-    fn send<Request: ViturRequest>(
-        &self,
-        request: Request,
-        access_token: &str,
-    ) -> impl Future<Output = Result<Request::Response, ViturRequestError>>;
+    ) -> impl Future<Output = Result<Request::Response, ViturRequestError>> + crate::MaybeSend;
 }
 
 pub struct HttpConnection {

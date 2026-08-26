@@ -41,6 +41,7 @@ vitaminc = { workspace = true, features = ["protected", "random"] }
 # `::vitaminc_protected` path.
 vitaminc-protected = { workspace = true }
 
+blake3 = { workspace = true }
 lazy_static = { workspace = true }
 miette = { workspace = true }
 reqwest = { workspace = true }

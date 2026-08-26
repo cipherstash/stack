@@ -1,9 +1,9 @@
 use std::borrow::Cow;
 use uuid::Uuid;
 use zerokms_protocol::{
-    GenerateKeyRequest, GenerateKeySpec, GeneratedKey, RetrieveKeyRequest,
-    RetrieveKeyRequestFallible, RetrieveKeySpec, RetrievedKey, UnverifiedContext, ViturRequest,
-    ViturRequestError,
+    GenerateKeyRequest, GenerateKeySpec, GeneratedKey, IdentifiedBy, Keyset, LoadKeysetRequest,
+    LoadKeysetResponse, RetrieveKeyRequest, RetrieveKeyRequestFallible, RetrieveKeySpec,
+    RetrievedKey, UnverifiedContext, ViturRequest, ViturRequestError,
 };
 
 use recipher::key::Iv;
@@ -11,9 +11,9 @@ use stack_auth::{AuthStrategy, AuthStrategyBounds};
 use vitaminc::random::{Generatable, SafeRand};
 
 use crate::connection::{HttpConnection, HttpConnectionOpts, ZeroKMSConnection};
-use crate::errors::{Error, GenerateKeyError, RetrieveKeyError};
+use crate::errors::{Error, GenerateKeyError, LoadKeysetError, RetrieveKeyError};
 use crate::futures::map_async_chunked;
-use crate::key::{ClientKey, DataKey, DataKeyWithTag};
+use crate::key::{ClientKey, DataKey, DataKeyWithTag, IndexKey};
 use crate::payload::{GenerateKeyPayload, RetrieveKeyPayload};
 
 /// Default [`ClientOpts::max_keys_per_req`].
@@ -147,7 +147,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         access_token: &str,
         make_request: impl Fn(&'a [Spec]) -> Req + Sync,
         response_keys: impl Fn(Req::Response) -> Vec<Item> + Sync,
-        map_key: impl Fn(&'a Spec, Item) -> Out + Sync,
+        map_key: impl Fn(&'a Spec, Item) -> Result<Out, E> + Sync,
         count_mismatch: impl Fn(usize, usize) -> E + Sync,
     ) -> Result<Vec<Out>, E>
     where
@@ -174,11 +174,11 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
 
                 tracing::trace!(target: "stack_kms::client", operation, "received {} keys - creating data keys", keys.len());
 
-                Ok(chunk
+                chunk
                     .iter()
                     .zip(keys)
                     .map(|(spec, item)| map_key(spec, item))
-                    .collect())
+                    .collect::<Result<Vec<_>, E>>()
             },
             self.max_keys_per_req,
             self.max_concurrent_reqs,
@@ -228,6 +228,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
             |res| res.keys,
             |RetrieveKeySpec { iv, .. }, RetrievedKey { key_material }| {
                 DataKey::from_key_material(key, iv.into_inner(), &key_material)
+                    .map_err(RetrieveKeyError::from)
             },
             |expected, received| RetrieveKeyError::InvalidNumberOfKeys { expected, received },
         )
@@ -265,16 +266,44 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
             },
             |res| res.keys,
             |RetrieveKeySpec { iv, .. }, result| {
-                result
-                    .map(|key| {
-                        // If the key retrieval was successful, we create a DataKey from the key material
-                        DataKey::from_key_material(client_key, iv.into_inner(), &key.key_material)
-                    })
+                // Both failure modes stay per-key so one bad entry doesn't
+                // fail the whole fallible batch: a server-side retrieval
+                // failure and invalid key material in an otherwise-successful
+                // entry.
+                Ok(result
                     .map_err(RetrieveKeyError::FailedRetrieval)
+                    .and_then(|key| {
+                        DataKey::from_key_material(client_key, iv.into_inner(), &key.key_material)
+                            .map_err(RetrieveKeyError::from)
+                    }))
             },
             |expected, received| RetrieveKeyError::InvalidNumberOfKeys { expected, received },
         )
         .await
+    }
+
+    /// Load a keyset and derive its [`IndexKey`] from the returned partial
+    /// keyset-root key material. If `keyset_id` is `None`, the client's default
+    /// keyset is loaded.
+    pub async fn load_keyset(
+        &self,
+        client_key: &ClientKey,
+        keyset_id: Option<IdentifiedBy>,
+        access_token: &str,
+    ) -> Result<(Keyset, IndexKey), LoadKeysetError> {
+        let req = LoadKeysetRequest {
+            client_id: client_key.key_id,
+            keyset_id,
+        };
+
+        let LoadKeysetResponse {
+            keyset,
+            partial_index_key,
+        } = self.connection.send(req, access_token).await?;
+
+        let index_key = IndexKey::from_key_material(client_key, &partial_index_key.key_material)?;
+
+        Ok((keyset, index_key))
     }
 
     /// Generate multiple data keys for an iterator of [`GenerateKeyPayload`].
@@ -338,6 +367,7 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
                     tag,
                     decryption_policy,
                 )
+                .map_err(GenerateKeyError::from)
             },
             |expected, received| GenerateKeyError::InvalidNumberOfKeys { expected, received },
         )
@@ -439,6 +469,26 @@ where
             )
             .await
             .map_err(Error::from)
+    }
+
+    /// Load a keyset and derive its [`IndexKey`] — the deterministic per-keyset
+    /// key used to generate index terms (Searchable Encrypted Metadata). If
+    /// `keyset_id` is `None`, the client's default keyset is loaded; the
+    /// returned [`Keyset`] carries the resolved id.
+    pub async fn load_keyset(
+        &self,
+        keyset_id: Option<IdentifiedBy>,
+    ) -> Result<(Keyset, IndexKey), Error> {
+        let token = self.get_token().await?;
+
+        let (keyset, index_key) = self
+            .client
+            .load_keyset(&self.client_key, keyset_id, token.as_str())
+            .await?;
+
+        tracing::debug!(target: "stack_kms::load_keyset", "loaded keyset: [{}]({})", keyset.id, keyset.name);
+
+        Ok((keyset, index_key))
     }
 
     /// Retrieve multiple data keys, returning a per-key result so partial
@@ -912,6 +962,51 @@ mod tests {
             .expect("retrieve should succeed");
 
         assert_eq!(generated[0].key.key(), retrieved[0].key());
+    }
+
+    #[tokio::test]
+    async fn load_keyset_derives_a_deterministic_index_key() {
+        let client_key = random_client_key();
+        let keyset_id = uuid!("11111111-1111-1111-1111-111111111111");
+        let shared_bytes = vec![7u8; 528];
+
+        let keyset = |material: Vec<u8>| {
+            build_client(|builder| {
+                builder.add_success_response::<LoadKeysetRequest>(LoadKeysetResponse {
+                    partial_index_key: RetrievedKey {
+                        key_material: ViturKeyMaterial::from(material),
+                    },
+                    keyset: Keyset {
+                        id: keyset_id,
+                        name: "default".to_string(),
+                        description: String::new(),
+                        is_disabled: false,
+                        is_default: true,
+                    },
+                })
+            })
+        };
+
+        let (loaded_a, key_a) = keyset(shared_bytes.clone())
+            .load_keyset(&client_key, None, "token")
+            .await
+            .expect("load_keyset should succeed");
+        let (_, key_b) = keyset(shared_bytes)
+            .load_keyset(&client_key, Some(keyset_id.into()), "token")
+            .await
+            .expect("load_keyset should succeed");
+
+        assert_eq!(loaded_a.id, keyset_id);
+        // Same key material derives the same index key — write-time and
+        // query-time terms must agree.
+        assert_eq!(key_a.key(), key_b.key());
+
+        // Different key material derives a different index key.
+        let (_, key_c) = keyset(vec![8u8; 528])
+            .load_keyset(&client_key, None, "token")
+            .await
+            .expect("load_keyset should succeed");
+        assert_ne!(key_a.key(), key_c.key());
     }
 
     #[tokio::test]
