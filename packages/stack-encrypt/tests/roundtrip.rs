@@ -1,5 +1,8 @@
-//! End-to-end encrypt/decrypt tests for `StackCipher` against the deterministic
-//! `FakeDataKeySource` — no ZeroKMS credentials or network required.
+//! End-to-end encrypt/decrypt tests for `StackCipher` against the in-memory
+//! `FakeDataKeySource` — no ZeroKMS credentials or network required. The fake
+//! hands out random key material and remembers it by `(iv, tag)`, so
+//! generate → retrieve round-trips within a test but nothing is reproducible
+//! across processes.
 
 use std::collections::HashMap;
 
@@ -52,7 +55,8 @@ async fn decrypt_fails_when_aad_omitted() {
         .encrypt("secret".to_string(), b"bound".as_slice())
         .await
         .expect("encrypt");
-    // The leaf bound `aad || tag`; dropping the caller AAD changes the bytes.
+    // The leaf bound the PAE-encoded tuple `(aad, tag)`; dropping the caller
+    // AAD changes the encoding.
     let result: Result<String, _> = cipher.decrypt(ct, ()).await;
     assert!(result.is_err(), "omitting the bound AAD must not decrypt");
 }

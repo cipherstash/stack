@@ -58,14 +58,21 @@
 //!
 //! # Testing without ZeroKMS
 //!
-//! `stack_kms::FakeDataKeySource` is a deterministic in-process key source that
-//! needs no credentials or network. It lives behind stack-kms's `test-support`
-//! feature, so add
+//! `stack_kms::FakeDataKeySource` is an in-process key source that needs no
+//! credentials or network: it hands out a fresh random data key per request and
+//! remembers it in memory, so a `generate` followed by the matching `retrieve`
+//! round-trips within one process (the key material itself differs run to run,
+//! and nothing survives the process). It lives behind stack-kms's
+//! `test-support` feature, so add
 //! `stack-kms = { version = "..", features = ["test-support"] }` to your
 //! `[dev-dependencies]`:
 //!
-//! ```no_run
-//! # async fn example() -> Result<(), stack_encrypt::Error> {
+//! ```
+//! # fn main() -> Result<(), stack_encrypt::Error> {
+//! # tokio::runtime::Builder::new_current_thread()
+//! #     .build()
+//! #     .expect("runtime")
+//! #     .block_on(async {
 //! use stack_encrypt::StackCipher;
 //! use stack_kms::FakeDataKeySource;
 //!
@@ -74,6 +81,7 @@
 //! let pt: Vec<String> = cipher.decrypt(ct, ()).await?;
 //! assert_eq!(pt, vec!["a", "b"]);
 //! # Ok(())
+//! # })
 //! # }
 //! ```
 //!
@@ -106,8 +114,11 @@
 //!
 //! `StackCipher` is a vitaminc [`Cipher`]; everything a vitaminc cipher can
 //! encrypt, it can encrypt, and the AEAD, AAD derivations and leaf wire format
-//! are vitaminc's (`vitaminc_encrypt::Aes256Cipher`, AES-256-GCM). The types a
-//! caller needs from vitaminc are re-exported here. The module-level docs in
+//! are vitaminc's (`vitaminc_encrypt::Aes256Cipher`, AES-256-GCM under a random
+//! per-leaf nonce vitaminc generates itself). The ZeroKMS `iv` a [`SealedValue`]
+//! carries is *not* that nonce: it identifies the data key, and is sent back to
+//! ZeroKMS with the key `tag` to re-derive it. The types a caller needs from
+//! vitaminc are re-exported here. The module-level docs in
 //! `src/cipher.rs` describe the internals (batching, AAD derivation, wire
 //! format).
 
