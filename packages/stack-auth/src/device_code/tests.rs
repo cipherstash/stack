@@ -30,6 +30,7 @@ fn test_access_token() -> String {
         "iat": now,
         "exp": now + 3600,
         "workspace": "ZVATKW3VHMFG27DY",
+        "org_id": "org_test_default",
         "scope": "",
     });
 

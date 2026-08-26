@@ -734,6 +734,7 @@ mod tests {
             "iat": now,
             "exp": now + 3600,
             "workspace": workspace,
+            "org_id": "org_test_default",
             "scope": "",
         });
 
@@ -802,6 +803,7 @@ mod tests {
             "iat": now,
             "exp": now + 3600,
             "workspace": "ZVATKW3VHMFG27DY",
+            "org_id": "org_test_default",
             "scope": "",
             "services": { "zerokms": zerokms_url },
         });

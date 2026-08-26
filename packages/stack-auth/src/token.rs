@@ -1,4 +1,4 @@
-use cts_common::claims::Claims;
+use cts_common::claims::ClientClaims;
 use cts_common::{Crn, Region, WorkspaceId};
 use url::Url;
 
@@ -178,12 +178,18 @@ impl Token {
         claims.iss.parse().map_err(AuthError::from)
     }
 
-    /// Decode the JWT payload into [`Claims`] without verifying the signature.
+    /// Decode the JWT payload into [`ClientClaims`] without verifying the
+    /// signature.
     ///
     /// This is safe because we already possess the token — we just need to read
     /// the claims it contains. See [`crate::decode_jwt_payload`] for why we parse
     /// by hand rather than through `jsonwebtoken`.
-    fn decode_claims(&self) -> Result<Claims, AuthError> {
+    ///
+    /// Decodes [`ClientClaims`], not [`cts_common::claims::Claims`]: the server's
+    /// view requires every claim it enforces (`org_id` among them), and failing
+    /// an unverified client-side read of `workspace`/`iss` over a claim we never
+    /// look at would turn a server-side rejection into a total client outage.
+    fn decode_claims(&self) -> Result<ClientClaims, AuthError> {
         crate::decode_jwt_payload(self.access_token.as_str())
     }
 
@@ -746,5 +752,34 @@ mod tests {
         token.set_region("invalid-region");
         let err = token.workspace_crn().unwrap_err();
         assert!(matches!(err, AuthError::Server(_)));
+    }
+
+    /// `org_id` is required *server-side*, where the signature is verified
+    /// first. This decode path verifies nothing and reads only `workspace` and
+    /// `iss`, so a token minted before `org_id` existed — or by a CTS rolled
+    /// back past the commit that added it — must still resolve both.
+    #[test]
+    fn workspace_id_and_issuer_resolve_without_org_id() {
+        let mut claims = valid_claims_json();
+        claims
+            .as_object_mut()
+            .expect("claims fixture is a JSON object")
+            .remove("org_id");
+        let token = jwt_token(claims);
+
+        assert_eq!(
+            token
+                .workspace_id()
+                .expect("workspace must decode without org_id")
+                .to_string(),
+            "7366ITCXSAPCH5TN"
+        );
+        assert_eq!(
+            token
+                .issuer()
+                .expect("iss must decode without org_id")
+                .as_str(),
+            "https://cts.example.com/"
+        );
     }
 }
