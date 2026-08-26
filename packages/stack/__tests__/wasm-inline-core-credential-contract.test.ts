@@ -116,17 +116,24 @@ describe('protect-ffi WASM core: credential contract under OIDC federation (#804
 
     await expect(
       newClient({
-        clientId: CLIENT_ID,
+        clientOpts: { clientId: CLIENT_ID },
         strategy,
         encryptConfig,
         eqlVersion: 3,
       }),
-    ).rejects.toThrow(/missing field `clientKey`/)
+    ).rejects.toThrow(
+      /clientOpts\.clientId and clientOpts\.clientKey are required/,
+    )
 
-    // Rejected during deserialisation of the options struct — the strategy was
+    // Rejected while the core builds its key provider — the strategy was
     // never INVOKED, so federation cannot substitute for the key. (The core
     // does look at `opts.strategy` before this point, to check it is present
     // and carries a `getToken`; what never happens is the call.)
+    //
+    // Both credential fields are named in one message: the core does not
+    // report which of the pair is missing, it requires both. So this test and
+    // the next assert the same string, and each is carried by the field it
+    // omits rather than by a distinct error.
     expect(calls.getToken).toBe(0)
   })
 
@@ -135,12 +142,14 @@ describe('protect-ffi WASM core: credential contract under OIDC federation (#804
 
     await expect(
       newClient({
-        clientKey: HEX_BUT_NOT_KEY_MATERIAL,
+        clientOpts: { clientKey: HEX_BUT_NOT_KEY_MATERIAL },
         strategy,
         encryptConfig,
         eqlVersion: 3,
       }),
-    ).rejects.toThrow(/missing field `clientId`/)
+    ).rejects.toThrow(
+      /clientOpts\.clientId and clientOpts\.clientKey are required/,
+    )
 
     expect(calls.getToken).toBe(0)
   })
@@ -151,19 +160,20 @@ describe('protect-ffi WASM core: credential contract under OIDC federation (#804
     const hexStage = federationStrategy()
     await expect(
       newClient({
-        clientId: CLIENT_ID,
-        clientKey: 'not-hex',
+        clientOpts: { clientId: CLIENT_ID, clientKey: 'not-hex' },
         strategy: hexStage.strategy,
         encryptConfig,
         eqlVersion: 3,
       }),
-    ).rejects.toThrow(/invalid clientKey: invalid hex/)
+    ).rejects.toThrow(/invalid clientKey: expected a hex-encoded key/)
 
     const providerStage = federationStrategy()
     await expect(
       newClient({
-        clientId: CLIENT_ID,
-        clientKey: HEX_BUT_NOT_KEY_MATERIAL,
+        clientOpts: {
+          clientId: CLIENT_ID,
+          clientKey: HEX_BUT_NOT_KEY_MATERIAL,
+        },
         strategy: providerStage.strategy,
         encryptConfig,
         eqlVersion: 3,
@@ -193,8 +203,7 @@ describe('protect-ffi WASM core: credential contract under OIDC federation (#804
     // #804 rather than to loosen the assertion.
     await expect(
       newClient({
-        clientId: CLIENT_ID,
-        clientKey: CBOR_KEY_WITH_BAD_P1,
+        clientOpts: { clientId: CLIENT_ID, clientKey: CBOR_KEY_WITH_BAD_P1 },
         strategy,
         encryptConfig,
         eqlVersion: 3,
@@ -207,23 +216,27 @@ describe('protect-ffi WASM core: credential contract under OIDC federation (#804
   it('reads the strategy off `opts.strategy`, before it deserialises the credentials', async () => {
     // Fixes the meaning of every test above. They all assert "even when an
     // auth strategy is supplied" — which is only worth anything if the core
-    // reads the field they supply it on. It does: omitting `strategy`
-    // entirely beats `missing field \`clientKey\`` to the punch, so the
-    // strategy is seen before the credentials are even deserialised.
+    // reads the field they supply it on. It does: with `strategy` omitted the
+    // core answers `Not authenticated` whether or not credentials are
+    // present, while credentials omitted WITH a strategy gives the credential
+    // error — so the strategy is seen first. Verified by probing all three
+    // combinations against the real core, not inferred from the source.
     //
     // This is also the drift guard. If protect-ffi renamed the option, the
     // tests above would be handing the core nothing and quietly testing the
     // no-strategy path instead. They would fail rather than pass silently
-    // (`opts.strategy is required` matches none of their regexes), and this
-    // test names the reason.
+    // (`Not authenticated` matches none of their regexes), and this test
+    // names the reason.
     await expect(
       newClient({
-        clientId: CLIENT_ID,
-        clientKey: HEX_BUT_NOT_KEY_MATERIAL,
+        clientOpts: {
+          clientId: CLIENT_ID,
+          clientKey: HEX_BUT_NOT_KEY_MATERIAL,
+        },
         encryptConfig,
         eqlVersion: 3,
       }),
-    ).rejects.toThrow(/opts\.strategy is required/)
+    ).rejects.toThrow(/Not authenticated/)
   })
 
   it('invokes `getToken` only after key loading succeeds', async () => {
@@ -241,8 +254,10 @@ describe('protect-ffi WASM core: credential contract under OIDC federation (#804
     // counter these tests rely on is live.
     await expect(
       newClient({
-        clientId: CLIENT_ID,
-        clientKey: WELL_FORMED_KEY_MATERIAL,
+        clientOpts: {
+          clientId: CLIENT_ID,
+          clientKey: WELL_FORMED_KEY_MATERIAL,
+        },
         strategy,
         encryptConfig,
         eqlVersion: 3,
