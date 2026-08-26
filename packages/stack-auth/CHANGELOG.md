@@ -1,4 +1,27 @@
 
+## [0.42.3] - 2026-08-26
+
+
+### Features
+
+- classify usage denials as typed, non-retryable errors
+
+### Fixes
+
+- address usage-denial-taxonomy code review findings
+- close out remaining PR #2120 review items
+- register Notified before dropping the state lock (PR #2120 review)
+- decode client-side claims without requiring org_id
+
+### Refactoring
+
+- remove duplication flagged by PR #2120 review
+
+### Testing
+
+- include org_id in JWT fixtures
+- include org_id in JWT fixtures
+
 ## [0.42.2] - 2026-08-17
 
 
