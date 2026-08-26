@@ -15,7 +15,11 @@ license-file = "LICENSE"
 publish = false
 
 [dependencies]
-stack-kms = { path = "../stack-kms" }
+# No default features: `stack-encrypt` only ever takes a `DataKeySource`, so
+# it has no use for stack-kms's `profile` feature (the CLI's on-disk
+# `secretkey.json` via `stack-profile`). Consumers that want it enable it on
+# their own `stack-kms` dependency.
+stack-kms = { path = "../stack-kms", default-features = false }
 
 # The revised Cipher/Decipher traits, ContextTag, Element, and the PRF crates
 # have all merged to vitaminc main but are not yet published (crates.io is 200+
