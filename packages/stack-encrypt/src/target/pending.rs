@@ -51,6 +51,13 @@ pub type PendingFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, Error>> + 
 pub struct Pending<'a, T, K> {
     cipher: &'a StackCipher<K>,
     requests: Vec<Request>,
+    /// Set when the value already failed during the synchronous build
+    /// (`ready(Err(..))`, a cipher mismatch, a failed sibling). A failed
+    /// pending carries no requests, and merging one into an assembly drops
+    /// the assembly's requests too, so settling it does no I/O: a record
+    /// with one misconfigured field never mints data keys it will throw away.
+    /// When set, `fulfil` is never called.
+    failed: Option<Error>,
     fulfil: FulfilBox<'a, T>,
 }
 
@@ -61,10 +68,32 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     where
         T: MaybeSend,
     {
+        match result {
+            Ok(value) => Self {
+                cipher,
+                requests: Vec::new(),
+                failed: None,
+                fulfil: Box::new(move |_| Ok(value)),
+            },
+            Err(error) => Self::failed(cipher, error),
+        }
+    }
+
+    /// A pending that already failed. No requests, no `T` bound (nothing of
+    /// type `T` is ever produced), and any assembly it is merged into fails
+    /// without I/O — see the `failed` field.
+    pub(crate) fn failed(cipher: &'a StackCipher<K>, error: Error) -> Self {
         Self {
             cipher,
             requests: Vec::new(),
-            fulfil: Box::new(move |_| result),
+            failed: Some(error),
+            // Unreachable: `settle` returns the stored error before any
+            // fulfilment runs. Kept honest rather than panicking.
+            fulfil: Box::new(|_| {
+                Err(Error::Other(
+                    "fulfilment invoked on an already-failed pending".into(),
+                ))
+            }),
         }
     }
 
@@ -80,6 +109,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         Self {
             cipher,
             requests,
+            failed: None,
             fulfil: Box::new(move |responses| {
                 let mut own = responses.split_front(generated, retrieved)?;
                 fulfil(&mut own)
@@ -96,31 +126,45 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         Pending {
             cipher: self.cipher,
             requests: self.requests,
+            failed: self.failed,
             fulfil: Box::new(move |responses| fulfil(responses).map(f)),
         }
     }
 
     /// Merge two pendings into one resolving to the pair. Their requests
     /// concatenate — awaiting the result is still one batched call per
-    /// request kind. Both must come from the same cipher.
-    pub fn zip<U: 'a>(mut self, other: Pending<'a, U, K>) -> Pending<'a, (T, U), K> {
-        debug_assert!(
-            std::ptr::eq(self.cipher, other.cipher),
-            "zipped pendings must be built from the same cipher"
-        );
-        self.requests.extend(other.requests);
+    /// request kind.
+    ///
+    /// Both must come from the same cipher: the merged assembly dispatches
+    /// every request through one cipher's backend and keyset, so a pending
+    /// built on another cipher would have its keys minted under the wrong
+    /// keyset. That is [`Error::CipherMismatch`], not a debug assertion. If
+    /// either side already failed, the result is that failure and carries no
+    /// requests.
+    pub fn zip<U: 'a>(self, other: Pending<'a, U, K>) -> Pending<'a, (T, U), K> {
+        if !std::ptr::eq(self.cipher, other.cipher) {
+            return Pending::failed(self.cipher, Error::CipherMismatch);
+        }
+        if let Some(error) = self.failed.or(other.failed) {
+            return Pending::failed(self.cipher, error);
+        }
+        let mut requests = self.requests;
+        requests.extend(other.requests);
         let first = self.fulfil;
         let second = other.fulfil;
         Pending {
             cipher: self.cipher,
-            requests: self.requests,
+            requests,
+            failed: None,
             fulfil: Box::new(move |responses| Ok((first(responses)?, second(responses)?))),
         }
     }
 
     /// Merge any number of same-typed pendings into one resolving to the
     /// `Vec` — [`zip`](Self::zip) at scale, used by the `Vec<T>`
-    /// implementations to make a whole column one batched call.
+    /// implementations to make a whole column one batched call. Same rules
+    /// as `zip`: every item must come from `cipher`, and the first failed
+    /// item fails the whole column with no I/O.
     pub fn all(
         cipher: &'a StackCipher<K>,
         items: Vec<Pending<'a, T, K>>,
@@ -128,16 +172,19 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         let mut requests = Vec::new();
         let mut fulfils = Vec::with_capacity(items.len());
         for item in items {
-            debug_assert!(
-                std::ptr::eq(cipher, item.cipher),
-                "merged pendings must be built from the same cipher"
-            );
+            if !std::ptr::eq(cipher, item.cipher) {
+                return Pending::failed(cipher, Error::CipherMismatch);
+            }
+            if let Some(error) = item.failed {
+                return Pending::failed(cipher, error);
+            }
             requests.extend(item.requests);
             fulfils.push(item.fulfil);
         }
         Pending {
             cipher,
             requests,
+            failed: None,
             fulfil: Box::new(move |responses| {
                 fulfils
                     .into_iter()
@@ -161,14 +208,38 @@ where
     /// Unboxed, so it carries no `Send`/`Sync` demands beyond the backend's
     /// own; the public [`IntoFuture`] impl boxes it.
     pub(crate) async fn settle(self) -> Result<T, Error> {
+        if let Some(error) = self.failed {
+            return Err(error);
+        }
         let mut responses = dispatch(self.cipher, self.requests).await?;
         (self.fulfil)(&mut responses)
     }
 }
 
+/// Awaiting a `Pending` settles it. The boxed future is `Send` on native
+/// targets (see [`PendingFuture`]), which is what requires `K: Sync` there:
+/// the future holds `&StackCipher<K>`. On wasm32 the future is not `Send`,
+/// so the `Sync` demand would only shut out the `Rc`/`RefCell`-shaped
+/// sources that are natural on that target — it is dropped, mirroring the
+/// [`MaybeSend`] split.
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a, T: 'a, K> IntoFuture for Pending<'a, T, K>
 where
     K: DataKeySource + Sync,
+{
+    type Output = Result<T, Error>;
+    type IntoFuture = PendingFuture<'a, T>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        Box::pin(self.settle())
+    }
+}
+
+/// See the native impl above; identical minus the `Sync` bound.
+#[cfg(target_arch = "wasm32")]
+impl<'a, T: 'a, K> IntoFuture for Pending<'a, T, K>
+where
+    K: DataKeySource,
 {
     type Output = Result<T, Error>;
     type IntoFuture = PendingFuture<'a, T>;

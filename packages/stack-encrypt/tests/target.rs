@@ -592,13 +592,13 @@ async fn empty_context_is_rejected_everywhere() {
     // Terms: an empty context would collapse per-field domain separation.
     // Rejected during the synchronous build — before any I/O could happen.
     let eq: Result<EqualityTerm, _> = "alice".encrypt_into(&generator, "").await;
-    assert!(matches!(eq, Err(Error::Term(TermError::EmptyContext))));
+    assert!(matches!(eq, Err(Error::EmptyContext)));
     let m: Result<MatchTerm, _> = "alice".to_string().encrypt_into(&generator, "").await;
-    assert!(matches!(m, Err(Error::Term(TermError::EmptyContext))));
+    assert!(matches!(m, Err(Error::EmptyContext)));
     let ore: Result<OreTerm<u64>, _> = 7u64.encrypt_into(&generator, "").await;
-    assert!(matches!(ore, Err(Error::Term(TermError::EmptyContext))));
+    assert!(matches!(ore, Err(Error::EmptyContext)));
     let ope: Result<OpeTerm<u64>, _> = 7u64.encrypt_into(&generator, "").await;
-    assert!(matches!(ope, Err(Error::Term(TermError::EmptyContext))));
+    assert!(matches!(ope, Err(Error::EmptyContext)));
 
     // Descriptor-string convenience methods route through the same guard.
     assert!(matches!(
@@ -619,6 +619,127 @@ async fn empty_context_is_rejected_everywhere() {
         .unwrap();
     let opened: Result<String, _> = sealed.decrypt_into(&cipher, "").await;
     assert!(matches!(opened, Err(Error::EmptyContext)));
+}
+
+#[tokio::test]
+async fn wrapped_empty_contexts_are_rejected_too() {
+    // vitaminc blanket-implements the context traits for `Option` and tuples,
+    // whose encodings of "nothing" are non-empty byte strings. The guard is
+    // structural, so none of these get through on any path.
+    let cipher = stack_cipher().await;
+
+    let eq: Result<EqualityTerm, _> = "alice".encrypt_into(&cipher, None::<&str>).await;
+    assert!(matches!(eq, Err(Error::EmptyContext)));
+    let eq: Result<EqualityTerm, _> = "alice".encrypt_into(&cipher, Some("")).await;
+    assert!(matches!(eq, Err(Error::EmptyContext)));
+    let eq: Result<EqualityTerm, _> = "alice".encrypt_into(&cipher, ("", "")).await;
+    assert!(matches!(eq, Err(Error::EmptyContext)));
+
+    let ore: Result<OreTerm<u64>, _> = 7u64.encrypt_into(&cipher, None::<&str>).await;
+    assert!(matches!(ore, Err(Error::EmptyContext)));
+
+    let ct: Result<StackCipherText, _> = "secret"
+        .to_string()
+        .encrypt_into(&cipher, None::<&str>)
+        .await;
+    assert!(matches!(ct, Err(Error::EmptyContext)));
+
+    let sealed: StackCipherText = "secret"
+        .to_string()
+        .encrypt_into(&cipher, "users/email")
+        .await
+        .unwrap();
+    let opened: Result<String, _> = sealed.decrypt_into(&cipher, None::<&str>).await;
+    assert!(matches!(opened, Err(Error::EmptyContext)));
+
+    // A wrapped context that does carry information still works, and binds.
+    let sealed: StackCipherText = "secret"
+        .to_string()
+        .encrypt_into(&cipher, Some("users/email"))
+        .await
+        .unwrap();
+    let opened: String = sealed
+        .decrypt_into(&cipher, Some("users/email"))
+        .await
+        .unwrap();
+    assert_eq!(opened, "secret");
+}
+
+#[tokio::test]
+async fn empty_context_is_rejected_even_when_there_is_nothing_to_encrypt() {
+    // An empty descriptor must fail on the fixture with no rows / an absent
+    // optional, not on the first populated value in production.
+    let cipher = stack_cipher().await;
+
+    let none: Result<Option<StackCipherText>, _> = None::<String>.encrypt_into(&cipher, "").await;
+    assert!(matches!(none, Err(Error::EmptyContext)));
+
+    let empty: Result<Vec<StackCipherText>, _> =
+        Vec::<String>::new().encrypt_into(&cipher, "").await;
+    assert!(matches!(empty, Err(Error::EmptyContext)));
+
+    let none: Result<Option<String>, _> = None::<StackCipherText>.decrypt_into(&cipher, "").await;
+    assert!(matches!(none, Err(Error::EmptyContext)));
+
+    let empty: Result<Vec<String>, _> = Vec::<StackCipherText>::new()
+        .decrypt_into(&cipher, "")
+        .await;
+    assert!(matches!(empty, Err(Error::EmptyContext)));
+}
+
+#[tokio::test]
+async fn a_failed_field_fails_the_record_before_any_kms_call() {
+    // One misconfigured field must not cause the record's other fields to
+    // mint data keys that are then thrown away.
+    let (cipher, generates, _) = counting_cipher().await;
+    let a = "a".to_string();
+    let b = "b".to_string();
+
+    let zipped = StackCipherText::encrypt_from(&a, &cipher, "")
+        .zip(StackCipherText::encrypt_from(&b, &cipher, "users/x"))
+        .await;
+    assert!(matches!(zipped, Err(Error::EmptyContext)));
+
+    let column = Pending::all(
+        &cipher,
+        vec![
+            StackCipherText::encrypt_from(&b, &cipher, "users/x"),
+            StackCipherText::encrypt_from(&a, &cipher, ""),
+        ],
+    )
+    .await;
+    assert!(matches!(column, Err(Error::EmptyContext)));
+
+    assert_eq!(
+        generates.load(AtomicOrdering::SeqCst),
+        0,
+        "a failed sibling must drop the batch, not dispatch it"
+    );
+}
+
+#[tokio::test]
+async fn pendings_from_different_ciphers_refuse_to_merge() {
+    let (cipher_a, generates, _) = counting_cipher().await;
+    let cipher_b = counting_cipher().await.0;
+    let v = "v".to_string();
+    let w = "w".to_string();
+
+    let zipped = StackCipherText::encrypt_from(&v, &cipher_a, "users/x")
+        .zip(StackCipherText::encrypt_from(&w, &cipher_b, "users/x"))
+        .await;
+    assert!(matches!(zipped, Err(Error::CipherMismatch)));
+
+    let column = Pending::all(
+        &cipher_a,
+        vec![
+            StackCipherText::encrypt_from(&v, &cipher_a, "users/x"),
+            StackCipherText::encrypt_from(&w, &cipher_b, "users/x"),
+        ],
+    )
+    .await;
+    assert!(matches!(column, Err(Error::CipherMismatch)));
+
+    assert_eq!(generates.load(AtomicOrdering::SeqCst), 0);
 }
 
 #[tokio::test]

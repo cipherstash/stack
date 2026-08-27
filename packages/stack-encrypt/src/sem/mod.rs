@@ -81,7 +81,7 @@ use vitaminc_prf::{
 };
 use zeroize::Zeroize;
 
-use crate::target::{EncryptContext, EncryptFrom, Pending};
+use crate::target::{is_degenerate_context, EncryptContext, EncryptFrom, Pending};
 use crate::{Error, StackCipher};
 
 // The `/v1` suffix versions the *derivation* (domain + input framing), not the
@@ -142,18 +142,12 @@ impl TermError {
 }
 
 /// Reject an empty context before any derivation — see
-/// [`TermError::EmptyContext`].
-///
-/// `()` (and `PrfContext::empty()`) produce literally empty context bytes; an
-/// empty string or empty byte-slice context produces vitaminc's *typed*
-/// framing around an empty payload. All are degenerate the same way — every
-/// field using one shares a single derivation domain — so all are rejected.
+/// [`TermError::EmptyContext`]. "Empty" is structural
+/// ([`is_degenerate_context`]): `()`, `""`, `None`, `Some("")`, tuples of
+/// empties and their nestings all carry no caller information, and every
+/// field using one would share a single derivation domain.
 fn require_context(context: &PrfContext<'_>) -> Result<(), TermError> {
-    let bytes = context.as_bytes();
-    if bytes.is_empty()
-        || bytes == "".into_prf_context().as_bytes()
-        || bytes == b"".as_slice().into_prf_context().as_bytes()
-    {
+    if is_degenerate_context(context.as_bytes()) {
         return Err(TermError::EmptyContext);
     }
     Ok(())

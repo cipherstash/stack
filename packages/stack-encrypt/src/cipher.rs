@@ -118,9 +118,11 @@ pub enum Error {
     /// across fields, and ciphertexts would be transplantable between them.
     #[error("the encryption context must not be empty (it domain-separates fields)")]
     EmptyContext,
-    /// An index term failed to derive.
+    /// An index term failed to derive. An empty context is *not* reported
+    /// here — it folds into [`Error::EmptyContext`] so every path spells the
+    /// same misconfiguration the same way.
     #[error(transparent)]
-    Term(#[from] crate::sem::TermError),
+    Term(crate::sem::TermError),
     /// A third-party [`EncryptFrom`](crate::target::EncryptFrom) /
     /// [`DecryptFrom`](crate::target::DecryptFrom) implementation failed
     /// for a reason of its own.
@@ -132,6 +134,22 @@ pub enum Error {
     /// never a data error.
     #[error("a pending fulfilment drew responses its requests never asked for")]
     ResponseShape,
+    /// [`Pending`](crate::target::Pending)s built on different
+    /// [`StackCipher`] instances were merged (`zip` / `all`). An assembly
+    /// settles through one cipher's backend and keyset, so the other side's
+    /// keys would be minted under the wrong keyset. Always a composition
+    /// bug, caught before any I/O.
+    #[error("merged pendings were built from different ciphers")]
+    CipherMismatch,
+}
+
+impl From<crate::sem::TermError> for Error {
+    fn from(error: crate::sem::TermError) -> Self {
+        match error {
+            crate::sem::TermError::EmptyContext => Error::EmptyContext,
+            other => Error::Term(other),
+        }
+    }
 }
 
 impl From<Unspecified> for Error {

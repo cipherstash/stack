@@ -197,8 +197,16 @@ pub use request::{Request, Responses};
 /// in different fields produce identical index terms (cross-field equality
 /// leakage), every field shares one ORE/OPE key (values become mutually
 /// order-comparable), and ciphertexts become transplantable between fields.
-/// Every built-in implementation rejects an empty context during the
-/// synchronous build — before any I/O.
+/// Every built-in implementation — leaves, columns, optionals — rejects an
+/// empty context during the synchronous build, before any I/O.
+///
+/// "Empty" means *carrying no caller-supplied information*, not merely zero
+/// bytes: `()`, `""`, `b""`, `None`, `Some("")` and `("", "")` all encode to
+/// nothing but vitaminc framing and are all rejected
+/// ([`Error::EmptyContext`]). The check is structural over the PAE encoding
+/// vitaminc uses, so a nested empty context cannot hide behind an `Option`
+/// or tuple wrapper. (An integer context whose bytes coincide with an empty
+/// encoding — `0u64` — is rejected too: it is byte-identical to `None`.)
 pub trait EncryptContext<'a>: IntoAad<'a> + IntoPrfContext<'a> + Clone {}
 
 impl<'a, T> EncryptContext<'a> for T where T: IntoAad<'a> + IntoPrfContext<'a> + Clone {}
@@ -210,6 +218,53 @@ impl<'a, T> EncryptContext<'a> for T where T: IntoAad<'a> + IntoPrfContext<'a> +
 pub trait DecryptContext<'a>: IntoAad<'a> + Clone {}
 
 impl<'a, T> DecryptContext<'a> for T where T: IntoAad<'a> + Clone {}
+
+/// Does an encoded context (AAD or PRF context bytes) carry no caller-supplied
+/// information? See [`EncryptContext`] for what that means and why it is
+/// rejected.
+///
+/// Structural over vitaminc's PAE framing (`LE64(count) || (LE64(len) ||
+/// piece)*`): a context is degenerate if it is empty, or if it parses as a
+/// PAE whose every piece is either a vitaminc framing tag (`vitaminc/…`
+/// domain or encoding label) or itself degenerate. Bytes that are not a
+/// well-formed PAE are caller content and count as information. This covers
+/// `()`, the typed `""`/`b""` encodings, `None` (`pae([])`), `Some(<empty>)`
+/// and tuples of empties, at any nesting depth.
+pub(crate) fn is_degenerate_context(bytes: &[u8]) -> bool {
+    const FRAMING_PREFIX: &[u8] = b"vitaminc/";
+    if bytes.is_empty() {
+        return true;
+    }
+    match parse_pae(bytes) {
+        Some(pieces) => pieces
+            .iter()
+            .all(|piece| piece.starts_with(FRAMING_PREFIX) || is_degenerate_context(piece)),
+        None => false,
+    }
+}
+
+/// Parse `bytes` as exactly one PAE encoding: `LE64(count)` then `count`
+/// `LE64(len) || piece` frames, consuming every byte. `None` if the bytes are
+/// not that shape.
+fn parse_pae(bytes: &[u8]) -> Option<Vec<&[u8]>> {
+    fn le64(bytes: &[u8]) -> Option<(usize, &[u8])> {
+        let (head, rest) = bytes.split_first_chunk::<8>()?;
+        let n = usize::try_from(u64::from_le_bytes(*head)).ok()?;
+        Some((n, rest))
+    }
+    let (count, mut rest) = le64(bytes)?;
+    let mut pieces = Vec::with_capacity(count.min(16));
+    for _ in 0..count {
+        let (len, after_len) = le64(rest)?;
+        if after_len.len() < len {
+            return None;
+        }
+        let (piece, tail) = after_len.split_at(len);
+        pieces.push(piece);
+        rest = tail;
+    }
+    rest.is_empty().then_some(pieces)
+}
 
 // =============================================================================
 // Cipher-owned output types
@@ -406,8 +461,8 @@ where
         // An empty context would leave the leaf AAD carrying only the key
         // tag, making ciphertexts transplantable between ()-context fields —
         // see `EncryptContext`.
-        if aad.as_bytes().is_empty() {
-            return Pending::ready(cipher, Err(Error::EmptyContext));
+        if is_degenerate_context(aad.as_bytes()) {
+            return Pending::failed(cipher, Error::EmptyContext);
         }
         match source.clone().encrypt_with_aad(cipher, aad) {
             Ok(tree) => seal_pending(cipher, tree),
@@ -489,8 +544,8 @@ where
         let aad = context.into_aad().into_owned();
         // Symmetric with the encrypt side: the target layer never encrypts
         // under an empty context, so it never decrypts under one either.
-        if aad.as_bytes().is_empty() {
-            return Pending::ready(cipher, Err(Error::EmptyContext));
+        if is_degenerate_context(aad.as_bytes()) {
+            return Pending::failed(cipher, Error::EmptyContext);
         }
         let requests = retrieve_requests(&source);
         Pending::request(cipher, requests, move |responses| {
@@ -552,6 +607,11 @@ where
         Ctx: EncryptContext<'c>,
         Self: 'a,
     {
+        // Validate the context even for an empty column: an empty descriptor
+        // must fail on the fixture with no rows, not on the first real one.
+        if is_degenerate_context(context.clone().into_aad().as_bytes()) {
+            return Pending::failed(cipher, Error::EmptyContext);
+        }
         let items = source
             .iter()
             .map(|item| T::encrypt_from(item, cipher, context.clone()))
@@ -575,6 +635,9 @@ where
         S: 'a,
         Self: 'a,
     {
+        if is_degenerate_context(context.clone().into_aad().as_bytes()) {
+            return Pending::failed(cipher, Error::EmptyContext);
+        }
         let items = source
             .into_iter()
             .map(|item| T::decrypt_from(item, cipher, context.clone()))
@@ -600,6 +663,11 @@ where
         Ctx: EncryptContext<'c>,
         Self: 'a,
     {
+        // `None` derives nothing, but the field's context is still checked so
+        // a misconfigured optional field fails whether or not it is present.
+        if is_degenerate_context(context.clone().into_aad().as_bytes()) {
+            return Pending::failed(cipher, Error::EmptyContext);
+        }
         match source {
             Some(value) => T::encrypt_from(value, cipher, context).map(Some),
             None => Pending::ready(cipher, Ok(None)),
@@ -622,9 +690,91 @@ where
         S: 'a,
         Self: 'a,
     {
+        if is_degenerate_context(context.clone().into_aad().as_bytes()) {
+            return Pending::failed(cipher, Error::EmptyContext);
+        }
         match source {
             Some(value) => T::decrypt_from(value, cipher, context).map(Some),
             None => Pending::ready(cipher, Ok(None)),
         }
+    }
+}
+
+#[cfg(test)]
+mod context_tests {
+    use vitaminc_aead::{Aad, IntoAad};
+    use vitaminc_prf::{IntoPrfContext, PrfContext};
+
+    use super::is_degenerate_context;
+
+    fn aad<'a>(ctx: impl IntoAad<'a>) -> bool {
+        is_degenerate_context(ctx.into_aad().as_bytes())
+    }
+
+    fn prf<'a>(ctx: impl IntoPrfContext<'a>) -> bool {
+        is_degenerate_context(ctx.into_prf_context().as_bytes())
+    }
+
+    #[test]
+    fn empty_encodings_are_degenerate_on_both_channels() {
+        assert!(aad(()));
+        assert!(aad(""));
+        assert!(aad(b"".as_slice()));
+        assert!(aad(None::<&str>));
+        assert!(aad(Some("")));
+        assert!(aad(("", "")));
+        assert!(aad(Some(None::<&str>)));
+        assert!(aad((None::<&str>, Some(""))));
+
+        assert!(prf(()));
+        assert!(prf(""));
+        assert!(prf(b"".as_slice()));
+        assert!(prf(None::<&str>));
+        assert!(prf(Some("")));
+        assert!(prf(("", "")));
+        assert!(prf(Some(None::<&str>)));
+        assert!(prf(PrfContext::empty()));
+        assert!(prf(PrfContext::pae(&[])));
+    }
+
+    #[test]
+    fn contexts_carrying_information_are_not() {
+        assert!(!aad("users/email"));
+        assert!(!aad("x"));
+        assert!(!aad(Some("users/email")));
+        assert!(!aad(("users", "email")));
+        assert!(!aad(("", "email")));
+        assert!(!aad(Aad::from_slice(b"raw")));
+        assert!(!aad(7u64));
+
+        assert!(!prf("users/email"));
+        assert!(!prf("x"));
+        assert!(!prf(Some("users/email")));
+        assert!(!prf(("users", "email")));
+        assert!(!prf(("", "email")));
+        assert!(!prf(7u64));
+        assert!(!prf(PrfContext::from_slice(b"raw")));
+    }
+
+    #[test]
+    fn a_zero_u64_is_byte_identical_to_none_and_rejected_with_it() {
+        assert_eq!(
+            0u64.into_aad().as_bytes(),
+            None::<&str>.into_aad().as_bytes()
+        );
+        assert!(aad(0u64));
+    }
+
+    #[test]
+    fn a_truncated_or_overlong_pae_is_caller_content() {
+        // Looks like a count of two but carries only one frame.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&2u64.to_le_bytes());
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        assert!(!is_degenerate_context(&bytes));
+        // A well-formed empty PAE followed by a trailing byte.
+        let mut bytes = 0u64.to_le_bytes().to_vec();
+        bytes.push(0);
+        assert!(!is_degenerate_context(&bytes));
     }
 }
