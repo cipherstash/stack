@@ -1,0 +1,65 @@
+name: "WASI check (Go/wazero target)"
+on:
+  push:
+    branches:
+      - main
+    paths:
+      # Every crate wasm:wasi-check gates must trigger the gate, or a crate
+      # can reintroduce a wasm-incompatible dep and merge green.
+      - packages/zerokms-protocol/**
+      - packages/cipherstash-core/**
+      - packages/recipher/**
+      - packages/cts-common/**
+      - packages/cllw-ore/**
+      - Cargo.lock
+      - mise.toml
+      - .github/workflows/test-wasi.yml
+      # Ordering matters, this needs to stay at the end if we want to include the above, but exclude all .md files.
+      - "!**.md"
+      - "!**.example"
+
+  pull_request:
+    paths:
+      - packages/zerokms-protocol/**
+      - packages/cipherstash-core/**
+      - packages/recipher/**
+      - packages/cts-common/**
+      - packages/cllw-ore/**
+      - Cargo.lock
+      - mise.toml
+      - .github/workflows/test-wasi.yml
+      # Ordering matters, this needs to stay at the end if we want to include the above, but exclude all .md files.
+      - "!**.md"
+      - "!**.example"
+
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: full
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+
+jobs:
+  wasi-check:
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-rust
+
+      - name: Fix permissions on target directory
+        run: |
+          mkdir -p ./target
+          sudo chown -R "$(id -u):$(id -g)" ./target
+
+      # The HTTP-free core compiles for wasm32-wasip1 with no JS-host backend
+      # and no native HTTP/TLS stack in its dependency tree — the invariant
+      # the Go/wazero binding of stack-encrypt is built on. See
+      # docs/stack-encrypt-go-bindings.md and wasm-analysis.md Layer 6.
+      - name: WASI core check
+        run: mise run wasm:wasi-check
