@@ -1,0 +1,22 @@
+[package]
+name = "stack-encrypt-derive"
+description = "Derive macros for stack-encrypt's target-directed encryption"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license-file = "LICENSE"
+# Not yet released, like stack-encrypt (which is the only crate that should
+# depend on this one: the macros are re-exported from there).
+publish = false
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "3", features = ["full", "extra-traits"] }

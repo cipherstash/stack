@@ -280,7 +280,8 @@ impl<K> EncryptFrom<u32, StackCipher<K>> for EncryptedInt {
 
 No `tokio::try_join!`, no `Box::pin(async move ..)`, no error-conversion
 where-clauses. This is roughly half the size of the current impl and is
-directly emittable by `#[derive(Encrypted)]`.
+directly emittable by `#[derive(Encrypted)]` (which is what the derive does —
+see §7).
 
 Then the missing piece from §2.2:
 
@@ -516,10 +517,37 @@ claims:
   `Pending` now records a build-time failure and `zip`/`all` drop the
   assembly's requests when one side has failed, so a misconfigured field
   never mints keys for its siblings; the empty-context guard is structural
-  over PAE (so `None` / `Some("")` / tuples of empties are caught) and runs
-  on columns and optionals even when there is nothing to encrypt; and merging
-  pendings from different ciphers is `Error::CipherMismatch` rather than a
-  `debug_assert`.
+  over PAE (so `None` / `Some("")` / tuples of empties are caught); and
+  merging pendings from different ciphers is `Error::CipherMismatch` rather
+  than a `debug_assert`.
+
+### `#[derive(Encrypted)]` / `#[derive(Decrypted)]` (follow-up PR)
+
+The derive emits exactly the §4.4 shape — one impl over `StackCipher<K>`,
+field pendings zipped and mapped, never awaited — for a struct of leaves, and
+one level up for a *row*: a struct whose fields are each derived from a
+field of the source (`from = ..`) under a literal context of their own
+(`context = ".."`). Field contexts **replace** the record's rather than
+composing with it, so a query site builds a term under the same literal the
+row stored it under; the row's own context is then unused and the caller
+passes `()`.
+
+That last point reversed one of the final-review guards above: `Vec` and
+`Option` no longer validate the context themselves. They pass it through
+untouched, and the leaves reject an empty one synchronously as before. What
+was lost is the "fail on the fixture with no rows" property — an empty
+column under an empty context now succeeds, and the misconfiguration is
+caught by the first real value instead — which is a small price for
+containers of self-describing records being expressible at all.
+
+The derive is bound to `StackCipher<K>` rather than generic over
+`EncryptTarget`, because combining outputs needs `zip`/`map` and only
+`Pending` has them; a generic derive would need those as `EncryptTarget`
+methods, and that extension does not change the attribute surface. `from`
+fields carry no where clause (the source field's type is not visible to the
+macro), so their obligations are checked in the impl body — which is also why
+`Decrypted` requires a named `source`: a blanket impl over every plaintext
+type would violate the orphan rule outside this crate.
 
 ## 8. Where findings get recorded
 

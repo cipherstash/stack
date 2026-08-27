@@ -20,11 +20,15 @@
 //!   implementations exist for [`StackCipherText`] (the AEAD ciphertext, via
 //!   vitaminc's [`Encrypt`]) and for the SEM term types in [`sem`]
 //!   ([`EqualityTerm`], [`MatchTerm`], [`OreTerm`], [`OpeTerm`]). Composite
-//!   record types implement it by combining their fields' pendings with
-//!   [`Pending::zip`] / [`Pending::map`].
+//!   record types — a struct of leaves, or a row of records — get theirs from
+//!   [`#[derive(Encrypted)]`](Encrypted), which combines the fields' pendings
+//!   with [`Pending::zip`] / [`Pending::map`] exactly as a hand-written impl
+//!   would.
 //! * [`DecryptFrom<S, C>`] — the mirror, implemented by the *plaintext*
 //!   type: "`Self` is recoverable from the encrypted `S`". Only ciphertext
 //!   fields participate — index terms are one-way by construction.
+//!   [`#[derive(Decrypted)]`](Decrypted) on the record emits it for the
+//!   record's named source type(s).
 //! * [`EncryptExt::encrypt_into`] / [`DecryptExt::decrypt_into`] — blanket
 //!   call-site sugar, the `Into` to the `From` above. Never implemented by
 //!   hand.
@@ -153,6 +157,66 @@
 //! different construction; the block scheme lands as a third-party term type
 //! in `eql-bindings`, built with exactly the recipe above.
 //!
+//! # Records and rows: `#[derive(Encrypted)]`
+//!
+//! A struct of leaves is a *record*; a struct of records, each derived from
+//! one field of the source under its own column context, is a *row*. Both
+//! are the same derive, and both settle as one batched call:
+//!
+//! ```
+//! use stack_encrypt::sem::{EqualityTerm, OreTerm};
+//! use stack_encrypt::target::{DecryptExt, EncryptExt};
+//! use stack_encrypt::{Decrypted, Encrypted, StackCipher, StackCipherText};
+//! use stack_kms::FakeDataKeySource;
+//!
+//! /// An encrypted `u32`, queryable by equality and range.
+//! #[derive(Encrypted, Decrypted)]
+//! #[encrypted(source = u32)]
+//! struct EncryptedAge {
+//!     #[encrypted(decrypt)]
+//!     c: StackCipherText,
+//!     hm: EqualityTerm,
+//!     ob: OreTerm<u32>,
+//! }
+//!
+//! #[derive(Debug, PartialEq)]
+//! struct User {
+//!     age: u32,
+//!     email: String,
+//! }
+//!
+//! #[derive(Encrypted, Decrypted)]
+//! #[encrypted(source = User)]
+//! struct EncryptedUser {
+//!     #[encrypted(from = age, context = "users/age", decrypt)]
+//!     age: EncryptedAge,
+//!     #[encrypted(from = email, context = "users/email", decrypt)]
+//!     email: StackCipherText,
+//! }
+//!
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+//! let cipher = StackCipher::builder()
+//!     .kms(FakeDataKeySource::new())
+//!     .init()
+//!     .await
+//!     .unwrap();
+//!
+//! let user = User { age: 42, email: "alice@example.com".into() };
+//! // Every field names its own context, so the row has none: `()`.
+//! let row: EncryptedUser = user.encrypt_into(&cipher, ()).await?;
+//! // A query site derives the same term under the same literal.
+//! let probe: EqualityTerm = 42u32.encrypt_into(&cipher, "users/age").await?;
+//! assert_eq!(row.age.hm, probe);
+//!
+//! let recovered: User = row.decrypt_into(&cipher, ()).await?;
+//! assert_eq!(recovered, user);
+//! # Ok::<(), stack_encrypt::Error>(())
+//! # }).unwrap();
+//! ```
+//!
+//! The attributes, and what the derive commits to, are documented on
+//! [`Encrypted`].
+//!
 //! # Plaintext fan-out
 //!
 //! One source value reaches every field implementation, so encrypting a
@@ -180,6 +244,7 @@ mod request;
 
 pub use pending::{Pending, PendingFuture};
 pub use request::{Request, Responses};
+pub use stack_encrypt_derive::{Decrypted, Encrypted};
 
 // =============================================================================
 // Contexts
@@ -197,8 +262,12 @@ pub use request::{Request, Responses};
 /// in different fields produce identical index terms (cross-field equality
 /// leakage), every field shares one ORE/OPE key (values become mutually
 /// order-comparable), and ciphertexts become transplantable between fields.
-/// Every built-in implementation — leaves, columns, optionals — rejects an
-/// empty context during the synchronous build, before any I/O.
+/// Every leaf implementation rejects an empty context during the synchronous
+/// build, before any I/O. Containers (`Vec`, `Option`) and derived records
+/// pass the context through to their elements and fields untouched, so a
+/// container of records whose fields carry their own contexts — a
+/// [`Encrypted`]-derived row — is given `()`, and an empty context still
+/// fails the moment a value reaches a leaf.
 ///
 /// "Empty" means *carrying no caller-supplied information*, not merely zero
 /// bytes: `()`, `""`, `b""`, `None`, `Some("")` and `("", "")` all encode to
@@ -710,11 +779,10 @@ where
         Ctx: EncryptContext<'c>,
         Self: 'a,
     {
-        // Validate the context even for an empty column: an empty descriptor
-        // must fail on the fixture with no rows, not on the first real one.
-        if is_degenerate_aad(context.clone().into_aad().as_bytes()) {
-            return Pending::failed(cipher, Error::EmptyContext);
-        }
+        // The context is passed through untouched, not validated here: a
+        // column of records whose fields carry their own contexts (a derived
+        // row) has none of its own, and the leaves reject an empty one the
+        // moment a value reaches them.
         let items = source
             .iter()
             .map(|item| T::encrypt_from(item, cipher, context.clone()))
@@ -738,9 +806,6 @@ where
         S: 'a,
         Self: 'a,
     {
-        if is_degenerate_aad(context.clone().into_aad().as_bytes()) {
-            return Pending::failed(cipher, Error::EmptyContext);
-        }
         let items = source
             .into_iter()
             .map(|item| T::decrypt_from(item, cipher, context.clone()))
@@ -766,11 +831,8 @@ where
         Ctx: EncryptContext<'c>,
         Self: 'a,
     {
-        // `None` derives nothing, but the field's context is still checked so
-        // a misconfigured optional field fails whether or not it is present.
-        if is_degenerate_aad(context.clone().into_aad().as_bytes()) {
-            return Pending::failed(cipher, Error::EmptyContext);
-        }
+        // `None` derives nothing and checks nothing: the context is the
+        // leaf's to validate (see the `Vec` implementation above).
         match source {
             Some(value) => T::encrypt_from(value, cipher, context).map(Some),
             None => Pending::ready(cipher, Ok(None)),
@@ -793,9 +855,6 @@ where
         S: 'a,
         Self: 'a,
     {
-        if is_degenerate_aad(context.clone().into_aad().as_bytes()) {
-            return Pending::failed(cipher, Error::EmptyContext);
-        }
         match source {
             Some(value) => T::decrypt_from(value, cipher, context).map(Some),
             None => Pending::ready(cipher, Ok(None)),
