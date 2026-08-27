@@ -128,11 +128,12 @@ pub enum Error {
     /// for a reason of its own.
     #[error(transparent)]
     Other(Box<dyn std::error::Error + Send + Sync + 'static>),
-    /// A [`Pending`](crate::target::Pending) fulfilment drew more responses —
-    /// or a different kind of response — than its requests asked for. Always a
-    /// composition bug in an `EncryptFrom`/`DecryptFrom` implementation,
-    /// never a data error.
-    #[error("a pending fulfilment drew responses its requests never asked for")]
+    /// A [`Pending`](crate::target::Pending) fulfilment's requests and
+    /// responses did not line up: it drew more responses — or a different
+    /// kind — than its requests asked for, or left some of them unconsumed.
+    /// Always a composition bug in an `EncryptFrom`/`DecryptFrom`
+    /// implementation, never a data error.
+    #[error("a pending fulfilment's responses did not match its requests")]
     ResponseShape,
     /// [`Pending`](crate::target::Pending)s built on different
     /// [`StackCipher`] instances were merged (`zip` / `all`). An assembly

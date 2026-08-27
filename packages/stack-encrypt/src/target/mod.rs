@@ -513,11 +513,13 @@ fn decipher_from_responses(
     responses: &mut Responses,
 ) -> Result<StackDecipher, Error> {
     let mut keys = responses.drain_retrieved();
-    let keyed = bind_keys(ciphertext, &mut keys)?;
-    // Every key must have been consumed; leftovers mean the tree shape and
-    // the request collection disagreed.
+    // Too few keys for the tree, or keys left over once it is bound, both
+    // mean `retrieve_requests` and `bind_keys` disagreed about the tree's
+    // shape: a composition bug in this module, not a data error — so
+    // `ResponseShape`, never `Aead`, which would read as tampering.
+    let keyed = bind_keys(ciphertext, &mut keys).map_err(|_| Error::ResponseShape)?;
     if keys.next().is_some() {
-        return Err(Error::Aead);
+        return Err(Error::ResponseShape);
     }
     Ok(StackDecipher::over(keyed))
 }
