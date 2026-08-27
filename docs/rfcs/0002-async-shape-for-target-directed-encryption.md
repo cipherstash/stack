@@ -502,6 +502,25 @@ Review of #2146/#2147 then corrected three more:
   key-returning visitor cannot survive the two-party backend. Wire format
   unchanged (`tests/term_bytes.rs`).
 
+The final review then held the implementation to two of this RFC's own
+claims:
+
+- **"`dispatch` is the one place that changes" was not yet true.** The
+  cipher-directed `seal` and `decipher` carried their own copies of the
+  ZeroKMS plumbing. They now build a `Pending` through the same
+  `seal_pending` / `decipher_pending` builders the target impls use and
+  settle it via a crate-private, unboxed `Pending::settle`; there is one
+  walker, one wire convention, one dispatch, and a test that ciphertext from
+  either API opens under the other.
+- **"Rejected during the synchronous build, before any I/O" had gaps.**
+  `Pending` now records a build-time failure and `zip`/`all` drop the
+  assembly's requests when one side has failed, so a misconfigured field
+  never mints keys for its siblings; the empty-context guard is structural
+  over PAE (so `None` / `Some("")` / tuples of empties are caught) and runs
+  on columns and optionals even when there is nothing to encrypt; and merging
+  pendings from different ciphers is `Error::CipherMismatch` rather than a
+  `debug_assert`.
+
 ## 8. Where findings get recorded
 
 Three homes, by durability:
