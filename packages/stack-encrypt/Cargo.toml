@@ -15,11 +15,11 @@ license-file = "LICENSE"
 publish = false
 
 [dependencies]
-# No default features: `stack-encrypt` only ever takes a `DataKeySource`, so
-# it has no use for stack-kms's `profile` feature (the CLI's on-disk
-# `secretkey.json` via `stack-profile`). Consumers that want it enable it on
-# their own `stack-kms` dependency.
-stack-kms = { path = "../stack-kms", default-features = false }
+# `profile` (native only; stack-kms gates it off wasm32 itself) lets
+# `StackCipher::new()` fall back to the client key `stash auth login` writes
+# to the profile directory (`secretkey.json`) when CS_CLIENT_ID /
+# CS_CLIENT_KEY are not set — the same place `AutoStrategy` finds the token.
+stack-kms = { path = "../stack-kms", default-features = false, features = ["profile"] }
 # `StackCipher::new()` builds a ZeroKMS client from the environment, so its
 # return type names the auto-detected auth strategy.
 stack-auth = { workspace = true }

@@ -72,6 +72,8 @@ use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, EnvKeyProvider, GenerateKeyPayload, IdentifiedBy,
     IndexKeySource, RetrieveKeyPayload, StackKms, StackKmsBuilder,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use stack_kms::{FallbackKeyProvider, KeyProvider, KeyProviderError, ProfileStore};
 use uuid::Uuid;
 use vitaminc_aead::{
     Aad, Cipher, CipherText, Decipher, DecipherVisitor, Decrypt, Encrypt, IntoAad, LocalCipherText,
@@ -222,8 +224,46 @@ impl<K> StackCipher<K> {
 
 /// The state of a [`StackCipherBuilder`] that has not been given a data-key
 /// source: [`init`](StackCipherBuilder::init) will build a ZeroKMS client from
-/// the environment.
+/// the environment (and, on native targets, the CLI's profile directory).
 pub struct FromEnv;
+
+/// The client key, looked up the way [`stack_auth::AutoStrategy`] looks up the
+/// access token: `CS_CLIENT_ID` / `CS_CLIENT_KEY` first, then the current
+/// workspace's `secretkey.json` in the profile directory. A profile directory
+/// that cannot be resolved is not an error here — env-only setups (CI) have
+/// none — it just leaves the environment as the only source.
+#[cfg(not(target_arch = "wasm32"))]
+fn client_key_provider() -> FallbackKeyProvider<EnvKeyProvider, ProfileClientKey> {
+    FallbackKeyProvider::new(
+        EnvKeyProvider,
+        ProfileClientKey(ProfileStore::resolve(None).ok()),
+    )
+}
+
+/// wasm32 has no filesystem, so no profile: the environment is the only source.
+#[cfg(target_arch = "wasm32")]
+fn client_key_provider() -> EnvKeyProvider {
+    EnvKeyProvider
+}
+
+/// [`ProfileStore`] as a [`KeyProvider`], tolerating an unresolvable profile
+/// directory so the "not configured" message can say what to do about it
+/// rather than only that `CS_CLIENT_ID` is unset.
+#[cfg(not(target_arch = "wasm32"))]
+struct ProfileClientKey(Option<ProfileStore>);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl KeyProvider for ProfileClientKey {
+    async fn client_key(&self) -> Result<stack_kms::ClientKey, KeyProviderError> {
+        match &self.0 {
+            Some(store) => store.client_key().await,
+            None => Err(KeyProviderError::NotConfigured(
+                "no client key: set CS_CLIENT_ID / CS_CLIENT_KEY, or run `npx stash auth login`"
+                    .into(),
+            )),
+        }
+    }
+}
 
 /// Builder for a [`StackCipher`]. See [`StackCipher::builder`].
 pub struct StackCipherBuilder<K = FromEnv> {
@@ -256,9 +296,21 @@ impl StackCipherBuilder<FromEnv> {
 
     /// Build a ZeroKMS client from the environment, then resolve the keyset
     /// and load its index key.
+    ///
+    /// Credentials come from the same two places for both halves of the
+    /// client — the access token and the client key:
+    ///
+    /// 1. the environment (`CS_CLIENT_ACCESS_KEY` + `CS_WORKSPACE_CRN`;
+    ///    `CS_CLIENT_ID` + `CS_CLIENT_KEY`), then
+    /// 2. the current workspace in the CLI's profile directory
+    ///    (`auth.json`; `secretkey.json`), which `npx stash auth login`
+    ///    writes.
+    ///
+    /// So on a developer machine, logging in with the CLI is sufficient; in
+    /// CI, the four variables are.
     pub async fn init(self) -> Result<StackCipher<StackKms<stack_auth::AutoStrategy>>, Error> {
         let kms = StackKmsBuilder::auto()?
-            .with_key_provider(EnvKeyProvider)
+            .with_key_provider(client_key_provider())
             .build()
             .await?;
         StackCipherBuilder {

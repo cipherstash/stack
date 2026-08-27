@@ -26,8 +26,8 @@
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! use stack_encrypt::StackCipher;
 //!
-//! // Credentials and the client key come from the environment
-//! // (CS_CLIENT_ID / CS_CLIENT_KEY, plus an access token strategy).
+//! // Credentials: `npx stash auth login` on a developer machine, or
+//! // CS_CLIENT_ID / CS_CLIENT_KEY + CS_CLIENT_ACCESS_KEY / CS_WORKSPACE_CRN in CI.
 //! let cipher = StackCipher::new().await?;
 //!
 //! let ciphertext = cipher.encrypt("secret message".to_string(), ()).await?;
