@@ -683,3 +683,60 @@ async fn pending_futures_are_send() {
 
     let _term = handle.await.unwrap();
 }
+
+// --- The cipher-directed API is the same path ------------------------------
+
+#[tokio::test]
+async fn cipher_directed_encrypt_and_decrypt_are_one_batched_call_each() {
+    let (cipher, generates, retrieves) = counting_cipher().await;
+
+    let names: Vec<String> = ["ada", "grace", "edsger", "barbara"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    let ct = cipher.encrypt(names.clone(), "users/name").await.unwrap();
+    assert_eq!(
+        generates.load(AtomicOrdering::SeqCst),
+        1,
+        "cipher.encrypt of a four-leaf value must be ONE generate_keys call"
+    );
+
+    let roundtrip: Vec<String> = cipher.decrypt(ct, "users/name").await.unwrap();
+    assert_eq!(roundtrip, names);
+    assert_eq!(
+        retrieves.load(AtomicOrdering::SeqCst),
+        1,
+        "cipher.decrypt of a four-leaf value must be ONE retrieve_keys call"
+    );
+}
+
+#[tokio::test]
+async fn cipher_directed_and_target_directed_ciphertexts_are_interchangeable() {
+    let cipher = stack_cipher().await;
+    let value = vec!["one".to_string(), "two".to_string(), "three".to_string()];
+
+    // Sealed by the cipher-directed API, opened by the target-directed one.
+    let ct = cipher.encrypt(value.clone(), "users/tags").await.unwrap();
+    let via_target: Vec<String> = ct.decrypt_into(&cipher, "users/tags").await.unwrap();
+    assert_eq!(via_target, value);
+
+    // Sealed by the target-directed API, opened by the cipher-directed one.
+    let ct: StackCipherText = value.encrypt_into(&cipher, "users/tags").await.unwrap();
+    let via_cipher: Vec<String> = cipher.decrypt(ct, "users/tags").await.unwrap();
+    assert_eq!(via_cipher, value);
+}
+
+#[tokio::test]
+async fn cipher_directed_decrypt_rejects_a_transplanted_ciphertext() {
+    let cipher = stack_cipher().await;
+    let ct: StackCipherText = "secret"
+        .to_string()
+        .encrypt_into(&cipher, "users/email")
+        .await
+        .unwrap();
+    let result: Result<String, Error> = cipher.decrypt(ct, "users/name").await;
+    assert!(
+        matches!(result, Err(Error::Aead)),
+        "a target-sealed leaf must not open under another context via the cipher API"
+    );
+}

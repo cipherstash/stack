@@ -69,8 +69,8 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 use stack_kms::{
-    DataKey, DataKeySource, DataKeyWithTag, EnvKeyProvider, GenerateKeyPayload, IdentifiedBy,
-    IndexKeySource, RetrieveKeyPayload, StackKms, StackKmsBuilder,
+    DataKey, DataKeySource, DataKeyWithTag, EnvKeyProvider, IdentifiedBy, IndexKeySource, StackKms,
+    StackKmsBuilder,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use stack_kms::{FallbackKeyProvider, KeyProvider, KeyProviderError, ProfileStore};
@@ -406,38 +406,15 @@ impl<K: DataKeySource> StackCipher<K> {
     /// is front-loaded here, and the AAD is supplied per call by
     /// [`Decrypt::decrypt_with_aad`], so `Decrypt` impls that derive their own
     /// AAD (e.g. `vitaminc_aead::Element`) behave identically to `AesDecipher`.
+    ///
+    /// Settles through the target layer's request carrier
+    /// ([`decipher_pending`](crate::target)), so this and
+    /// `decrypt_into` share one definition of how leaves map to retrieve
+    /// requests and one path to ZeroKMS.
     pub async fn decipher(&self, ciphertext: StackCipherText) -> Result<StackDecipher, Error> {
-        // Collect every leaf's retrieve payload (borrowing the ciphertext), make
-        // one batched call, then drop the borrow before consuming the tree.
-        let keys = {
-            let mut payloads = Vec::new();
-            collect_retrieve_payloads(&ciphertext, &mut payloads);
-            if payloads.is_empty() {
-                Vec::new()
-            } else {
-                let expected = payloads.len();
-                let keys = self
-                    .kms
-                    .retrieve_keys(payloads, Some(self.keyset_id), None)
-                    .await?;
-                if keys.len() != expected {
-                    return Err(Error::KeyCountMismatch {
-                        expected,
-                        received: keys.len(),
-                    });
-                }
-                keys
-            }
-        };
-
-        let mut keys = keys.into_iter();
-        let ciphertext = bind_keys(ciphertext, &mut keys)?;
-        // Every key must have been consumed; leftovers mean the tree shape and
-        // the payload collection disagreed.
-        if keys.next().is_some() {
-            return Err(Error::Aead);
-        }
-        Ok(StackDecipher { ciphertext })
+        crate::target::decipher_pending(self, ciphertext)
+            .settle()
+            .await
     }
 }
 
@@ -503,35 +480,6 @@ impl Clone for SealedValue {
     }
 }
 
-/// Walk the tree in depth-first order, pushing one retrieve payload per keyed
-/// leaf (markers included). Must match [`bind_keys`]'s traversal so payloads
-/// and returned keys line up.
-fn collect_retrieve_payloads<'b>(
-    ciphertext: &'b StackCipherText,
-    out: &mut Vec<RetrieveKeyPayload<'b>>,
-) {
-    match ciphertext {
-        CipherText::Single(leaf)
-        | CipherText::None(leaf)
-        | CipherText::EmptySequence(leaf)
-        | CipherText::EmptyMap(leaf) => {
-            // Empty descriptor — see the module-level wire-format note.
-            out.push(RetrieveKeyPayload::new(leaf.iv, "", &leaf.tag));
-        }
-        CipherText::Sequence(items) => {
-            for item in items {
-                collect_retrieve_payloads(item, out);
-            }
-        }
-        CipherText::Map(entries) => {
-            for (_, value) in entries {
-                collect_retrieve_payloads(value, out);
-            }
-        }
-        CipherText::Passthrough(_) => {}
-    }
-}
-
 /// A leaf with its retrieved data key bound alongside. Produced by
 /// [`bind_keys`] once the batched `retrieve_keys` call has returned; consumed by
 /// [`StackDecipher`], which opens it under whatever AAD the driving
@@ -544,9 +492,10 @@ pub(crate) struct KeyedLeaf {
 /// [`StackCipherText`] with a [`DataKey`] zipped onto every keyed leaf.
 pub(crate) type KeyedCipherText = CipherText<KeyedLeaf, BoxedPassthrough>;
 
-/// Zip retrieved keys onto the tree in the same depth-first order
-/// [`collect_retrieve_payloads`] requested them, so each leaf carries its own
-/// key and the subsequent [`Decipher`] drive is free of ordering assumptions.
+/// Zip retrieved keys onto the tree in the same depth-first order the
+/// target layer requested them (`retrieve_requests`), so each leaf carries its
+/// own key and the subsequent [`Decipher`] drive is free of ordering
+/// assumptions.
 pub(crate) fn bind_keys(
     ciphertext: StackCipherText,
     keys: &mut impl Iterator<Item = DataKey>,
@@ -630,37 +579,18 @@ impl PendingStackCipherText {
         }
     }
 
-    /// Generate one data key per keyed leaf (one batched ZeroKMS call) and seal
-    /// the whole tree.
+    /// Generate one data key per keyed leaf (one batched ZeroKMS call — none
+    /// for a passthrough-only tree) and seal the whole tree.
+    ///
+    /// Settles through the target layer's request carrier
+    /// ([`seal_pending`](crate::target)), so this and
+    /// `encrypt_into::<StackCipherText>` share one definition of how a tree
+    /// is sealed and one path to ZeroKMS.
     pub async fn seal<K: DataKeySource>(
         self,
         cipher: &StackCipher<K>,
     ) -> Result<StackCipherText, Error> {
-        let count = self.key_count();
-        if count == 0 {
-            // Passthrough-only tree: no keys, no ZeroKMS call.
-            return Ok(self.seal_with(&mut std::iter::empty())?);
-        }
-
-        // Empty descriptor + empty context for every leaf (see wire-format note).
-        let payloads: Vec<GenerateKeyPayload<'_>> = (0..count)
-            .map(|_| GenerateKeyPayload::new("", Cow::Owned(Vec::new())))
-            .collect();
-
-        let keys = cipher
-            .kms
-            .generate_keys(payloads, Some(cipher.keyset_id), None)
-            .await?;
-
-        if keys.len() != count {
-            return Err(Error::KeyCountMismatch {
-                expected: count,
-                received: keys.len(),
-            });
-        }
-
-        let mut keys = keys.into_iter();
-        Ok(self.seal_with(&mut keys)?)
+        crate::target::seal_pending(cipher, self).settle().await
     }
 
     /// Recursively seal, drawing one key per leaf from `keys` in traversal order.

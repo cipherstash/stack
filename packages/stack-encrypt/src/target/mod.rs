@@ -172,7 +172,7 @@ use stack_kms::MaybeSend;
 use vitaminc_aead::{CipherText, Decrypt, Encrypt, IntoAad};
 use vitaminc_prf::IntoPrfContext;
 
-use crate::cipher::{bind_keys, StackDecipher};
+use crate::cipher::{bind_keys, PendingStackCipherText, StackDecipher};
 use crate::{Error, StackCipher, StackCipherText};
 
 mod pending;
@@ -409,19 +409,62 @@ where
         if aad.as_bytes().is_empty() {
             return Pending::ready(cipher, Err(Error::EmptyContext));
         }
-        let tree = match source.clone().encrypt_with_aad(cipher, aad) {
-            Ok(tree) => tree,
-            Err(_) => return Pending::ready(cipher, Err(Error::Aead)),
-        };
-        let count = tree.key_count();
-        let requests = std::iter::repeat_with(Request::generate_data_key)
-            .take(count)
-            .collect();
-        Pending::request(cipher, requests, move |responses| {
-            let mut keys = responses.drain_generated();
-            tree.seal_with(&mut keys).map_err(|_| Error::Aead)
-        })
+        match source.clone().encrypt_with_aad(cipher, aad) {
+            Ok(tree) => seal_pending(cipher, tree),
+            Err(_) => Pending::ready(cipher, Err(Error::Aead)),
+        }
     }
+}
+
+/// Seal a pending tree: one [`Request::generate_data_key`] per keyed leaf,
+/// keys drawn back in the same traversal order the tree was built in.
+///
+/// Both ways of encrypting go through here — the target-directed
+/// `encrypt_into::<StackCipherText>` above and the cipher-directed
+/// [`PendingStackCipherText::seal`] behind [`StackCipher::encrypt`] — so
+/// there is one definition of how a tree is sealed and one path to ZeroKMS.
+pub(crate) fn seal_pending<'a, K>(
+    cipher: &'a StackCipher<K>,
+    tree: PendingStackCipherText,
+) -> Pending<'a, StackCipherText, K> {
+    let requests = std::iter::repeat_with(Request::generate_data_key)
+        .take(tree.key_count())
+        .collect();
+    Pending::request(cipher, requests, move |responses| {
+        let mut keys = responses.drain_generated();
+        tree.seal_with(&mut keys).map_err(Error::from)
+    })
+}
+
+/// Bind retrieved keys onto a ciphertext: one [`Request::retrieve_data_key`]
+/// per keyed leaf, keys zipped back on in the same depth-first order. The
+/// decrypt twin of [`seal_pending`], and likewise the single path for both
+/// `decrypt_into` and the cipher-directed [`StackCipher::decipher`].
+pub(crate) fn decipher_pending<'a, K>(
+    cipher: &'a StackCipher<K>,
+    ciphertext: StackCipherText,
+) -> Pending<'a, StackDecipher, K> {
+    let requests = retrieve_requests(&ciphertext);
+    Pending::request(cipher, requests, move |responses| {
+        decipher_from_responses(ciphertext, responses)
+    })
+}
+
+/// The fulfilment half of [`decipher_pending`], shared with `decrypt_into`
+/// (which runs the value's `Decrypt` impl over the result in the same
+/// fulfilment rather than composing two pendings).
+fn decipher_from_responses(
+    ciphertext: StackCipherText,
+    responses: &mut Responses,
+) -> Result<StackDecipher, Error> {
+    let mut keys = responses.drain_retrieved();
+    let keyed = bind_keys(ciphertext, &mut keys)?;
+    // Every key must have been consumed; leftovers mean the tree shape and
+    // the request collection disagreed.
+    if keys.next().is_some() {
+        return Err(Error::Aead);
+    }
+    Ok(StackDecipher::over(keyed))
 }
 
 /// The decrypt mirror: any vitaminc [`Decrypt`] value recovers from a
@@ -449,19 +492,22 @@ where
         if aad.as_bytes().is_empty() {
             return Pending::ready(cipher, Err(Error::EmptyContext));
         }
-        let mut requests = Vec::new();
-        collect_retrieve_requests(&source, &mut requests);
+        let requests = retrieve_requests(&source);
         Pending::request(cipher, requests, move |responses| {
-            let mut keys = responses.drain_retrieved();
-            let keyed = bind_keys(source, &mut keys).map_err(|_| Error::Aead)?;
-            drop(keys);
-            T::decrypt_with_aad(StackDecipher::over(keyed), aad).map_err(Error::from)
+            let decipher = decipher_from_responses(source, responses)?;
+            T::decrypt_with_aad(decipher, aad).map_err(Error::from)
         })
     }
 }
 
 /// One [`Request::retrieve_data_key`] per keyed leaf, in the same depth-first
 /// order `bind_keys` will consume the responses.
+fn retrieve_requests(ciphertext: &StackCipherText) -> Vec<Request> {
+    let mut out = Vec::new();
+    collect_retrieve_requests(ciphertext, &mut out);
+    out
+}
+
 fn collect_retrieve_requests(ciphertext: &StackCipherText, out: &mut Vec<Request>) {
     match ciphertext {
         CipherText::Single(leaf)

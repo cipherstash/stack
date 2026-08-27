@@ -148,6 +148,24 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     }
 }
 
+impl<'a, T: 'a, K> Pending<'a, T, K>
+where
+    K: DataKeySource,
+{
+    /// Settle: one batched ZeroKMS call per request kind (none at all for an
+    /// all-[`ready`](Pending::ready) assembly), then the fulfilments shape the
+    /// responses. This is the only place I/O happens — the cipher-directed
+    /// API ([`StackCipher::encrypt`] / [`StackCipher::decipher`]) settles
+    /// through here too, so there is exactly one path to ZeroKMS.
+    ///
+    /// Unboxed, so it carries no `Send`/`Sync` demands beyond the backend's
+    /// own; the public [`IntoFuture`] impl boxes it.
+    pub(crate) async fn settle(self) -> Result<T, Error> {
+        let mut responses = dispatch(self.cipher, self.requests).await?;
+        (self.fulfil)(&mut responses)
+    }
+}
+
 impl<'a, T: 'a, K> IntoFuture for Pending<'a, T, K>
 where
     K: DataKeySource + Sync,
@@ -155,14 +173,8 @@ where
     type Output = Result<T, Error>;
     type IntoFuture = PendingFuture<'a, T>;
 
-    /// The only place I/O happens: one batched ZeroKMS call per request kind
-    /// (none at all for an all-[`ready`](Pending::ready) assembly), then the
-    /// fulfilments shape the responses.
     fn into_future(self) -> Self::IntoFuture {
-        Box::pin(async move {
-            let mut responses = dispatch(self.cipher, self.requests).await?;
-            (self.fulfil)(&mut responses)
-        })
+        Box::pin(self.settle())
     }
 }
 
