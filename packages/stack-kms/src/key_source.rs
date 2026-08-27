@@ -72,10 +72,11 @@ pub trait IndexKeySource {
     ) -> impl Future<Output = Result<(Uuid, IndexKey), Error>> + MaybeSend;
 }
 
-impl<C> DataKeySource for crate::StackKms<C>
+impl<C, Conn> DataKeySource for crate::StackKms<C, Conn>
 where
     C: stack_auth::AuthStrategyBounds,
     for<'a> &'a C: stack_auth::AuthStrategy,
+    Conn: crate::ZeroKMSConnection + Send + Sync,
 {
     async fn generate_keys(
         &self,
@@ -98,10 +99,11 @@ where
     }
 }
 
-impl<C> IndexKeySource for crate::StackKms<C>
+impl<C, Conn> IndexKeySource for crate::StackKms<C, Conn>
 where
     C: stack_auth::AuthStrategyBounds,
     for<'a> &'a C: stack_auth::AuthStrategy,
+    Conn: crate::ZeroKMSConnection + Send + Sync,
 {
     async fn load_index_key(
         &self,

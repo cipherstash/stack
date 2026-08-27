@@ -18,7 +18,7 @@ aquamarine = "0.6"
 base64 = { workspace = true }
 cts-common = { workspace = true }
 miette = { workspace = true }
-reqwest = { workspace = true }
+reqwest = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -54,6 +54,14 @@ tokio = { workspace = true }
 tokio = { version = "1.47.1", default-features = false, features = ["sync"] }
 
 [features]
+default = ["http"]
+# Everything that talks HTTP: the access-key, device-session, OIDC-federation
+# and auto strategies, device binding and the device-code flow, and `Token::
+# refresh`. Off, the crate is the token model plus the `AuthStrategy` trait
+# (with `AuthStrategyFn` / `StaticTokenStrategy` to implement it), and reqwest
+# and its native TLS stack are not in the dependency graph at all — the shape
+# a host with its own transport (the WASI/wazero guest) builds against.
+http = ["dep:reqwest"]
 test-utils = []
 # Exposes fuzz-only entry points (e.g. `fuzz_decode_claims`) for the cargo-fuzz
 # harnesses in `fuzz/`. A Cargo feature (not `#[cfg(fuzzing)]`) so it is a known
@@ -62,10 +70,11 @@ fuzz = []
 
 [[example]]
 name = "auto_strategy"
+required-features = ["http"]
 
 [[example]]
 name = "device_code"
-required-features = ["test-utils"]
+required-features = ["http", "test-utils"]
 
 [dev-dependencies]
 axum = "0.8"

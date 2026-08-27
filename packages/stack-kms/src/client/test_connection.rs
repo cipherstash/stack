@@ -92,6 +92,15 @@ impl ZeroKMSConnectionInit for TestConnection {
 }
 
 impl ZeroKMSConnection for TestConnection {
+    // The stub has no URL to resolve: it dispatches on the request's endpoint
+    // name. Report the base URL as always known so `StackKms` never tries to
+    // resolve one from a token.
+    fn ensure_base_url(&self, _url: crate::endpoint::ZeroKmsEndpoint) {}
+
+    fn has_base_url(&self) -> bool {
+        true
+    }
+
     async fn send<Request: ViturRequest>(
         &self,
         request: Request,

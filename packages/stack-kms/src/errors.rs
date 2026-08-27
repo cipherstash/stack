@@ -289,8 +289,11 @@ pub enum Error {
     #[diagnostic(transparent)]
     Auth(#[from] stack_auth::AuthError),
 
-    #[error(transparent)]
-    ConnectionInit(#[from] crate::connection::ConnectionInitError),
+    /// The [`ZeroKMSConnection`](crate::ZeroKMSConnection) failed to
+    /// initialise. Boxed because the error type belongs to whichever
+    /// connection the client was built over.
+    #[error("Failed to initialize the ZeroKMS connection: {0}")]
+    ConnectionInit(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
 
     /// The ZeroKMS endpoint named by the token's `services` claim is unusable.
     #[error("Invalid ZeroKMS endpoint in the token's services claim: {0}")]
@@ -298,4 +301,11 @@ pub enum Error {
 
     #[error("Unexpected error: {0}")]
     Unexpected(String),
+}
+
+#[cfg(feature = "http")]
+impl From<crate::connection::ConnectionInitError> for Error {
+    fn from(e: crate::connection::ConnectionInitError) -> Self {
+        Self::ConnectionInit(Box::new(e))
+    }
 }

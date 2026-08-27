@@ -68,11 +68,10 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
-use stack_kms::{
-    DataKey, DataKeySource, DataKeyWithTag, EnvKeyProvider, IdentifiedBy, IndexKeySource, StackKms,
-    StackKmsBuilder,
-};
-#[cfg(not(target_arch = "wasm32"))]
+use stack_kms::{DataKey, DataKeySource, DataKeyWithTag, IdentifiedBy, IndexKeySource};
+#[cfg(feature = "http")]
+use stack_kms::{EnvKeyProvider, StackKms, StackKmsBuilder};
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 use stack_kms::{FallbackKeyProvider, KeyProvider, KeyProviderError, ProfileStore};
 use uuid::Uuid;
 use vitaminc_aead::{
@@ -110,6 +109,7 @@ pub enum Error {
     KeyCountMismatch { expected: usize, received: usize },
     /// Building a ZeroKMS client from the environment failed: credentials or
     /// client key missing or malformed.
+    #[cfg(feature = "http")]
     #[error("could not build a ZeroKMS client from the environment: {0}")]
     Config(#[from] stack_kms::StackKmsBuilderError),
     /// The per-field encryption context was empty. An empty context defeats
@@ -226,18 +226,25 @@ pub struct StackCipher<K> {
     prf: vitaminc_hmac::HmacSha256Prf,
 }
 
+#[cfg(feature = "http")]
 impl StackCipher<StackKms<stack_auth::AutoStrategy>> {
     /// Build a cipher over a ZeroKMS client configured from the environment,
     /// on that client's default keyset.
     ///
     /// Equivalent to `StackCipher::builder().init()`. For a different keyset
-    /// or a different data-key source, use [`builder`](Self::builder).
+    /// or a different data-key source, use [`builder`](StackCipher::builder).
     pub async fn new() -> Result<Self, Error> {
-        Self::builder().init().await
+        StackCipher::builder().init().await
     }
+}
 
+impl StackCipher<FromEnv> {
     /// Start building a cipher: pick a keyset, or supply a data-key source
     /// other than the environment's ZeroKMS client.
+    ///
+    /// (Defined on `StackCipher<FromEnv>` — a type that is never
+    /// constructed — so that `StackCipher::builder()` resolves without a
+    /// type annotation whether or not the `http` feature is on.)
     pub fn builder() -> StackCipherBuilder {
         StackCipherBuilder {
             kms: FromEnv,
@@ -277,7 +284,7 @@ pub struct FromEnv;
 /// workspace's `secretkey.json` in the profile directory. A profile directory
 /// that cannot be resolved is not an error here — env-only setups (CI) have
 /// none — it just leaves the environment as the only source.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 fn client_key_provider() -> FallbackKeyProvider<EnvKeyProvider, ProfileClientKey> {
     FallbackKeyProvider::new(
         EnvKeyProvider,
@@ -286,7 +293,7 @@ fn client_key_provider() -> FallbackKeyProvider<EnvKeyProvider, ProfileClientKey
 }
 
 /// wasm32 has no filesystem, so no profile: the environment is the only source.
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(feature = "http", target_arch = "wasm32"))]
 fn client_key_provider() -> EnvKeyProvider {
     EnvKeyProvider
 }
@@ -294,10 +301,10 @@ fn client_key_provider() -> EnvKeyProvider {
 /// [`ProfileStore`] as a [`KeyProvider`], tolerating an unresolvable profile
 /// directory so the "not configured" message can say what to do about it
 /// rather than only that `CS_CLIENT_ID` is unset.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 struct ProfileClientKey(Option<ProfileStore>);
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 impl KeyProvider for ProfileClientKey {
     async fn client_key(&self) -> Result<stack_kms::ClientKey, KeyProviderError> {
         match &self.0 {
@@ -353,6 +360,7 @@ impl StackCipherBuilder<FromEnv> {
     ///
     /// So on a developer machine, logging in with the CLI is sufficient; in
     /// CI, the four variables are.
+    #[cfg(feature = "http")]
     pub async fn init(self) -> Result<StackCipher<StackKms<stack_auth::AutoStrategy>>, Error> {
         let kms = StackKmsBuilder::auto()?
             .with_key_provider(client_key_provider())

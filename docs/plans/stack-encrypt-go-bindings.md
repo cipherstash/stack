@@ -154,6 +154,11 @@ memory once at `init`; derived data keys and the index key never leave.
 
 ### Phase 0 — salvage #2099 onto `stack-kms`
 
+**Landed** as the first stacked PR: the gate, the CI workflow, Layer 6, and
+this document. `WasiHostConnection`, the `bridge.go` host function and the
+integration harness are ported in Phase 3 with the guest they serve; #2099
+is left open with a pointer here for its author to close.
+
 #2099 targets `cipherstash-client`, which is being replaced by `stack-kms`
 (no parity fixes go into the old crate). Rebase the reusable pieces rather
 than the branch:
@@ -175,8 +180,20 @@ than the branch:
 
 ### Phase 1 — `stack-kms` and `stack-auth` build for WASI without HTTP
 
-Smallest change that makes the guest link, with the seam in the right place
-for the later `stack-transport` refactor:
+**Landed (stacked PR on Phase 0).** What shipped, against the plan below: a
+default-on `http` feature in all three crates (`stack-encrypt/http` →
+`stack-kms/http` → `stack-auth/http` → `dep:reqwest`); `StackKms<C, Conn>`
+with `StackKms::connect(opts, credentials, client_key)` as the
+transport-injecting constructor; `ZeroKMSConnection` grew
+`ensure_base_url` / `has_base_url` so endpoint discovery from the token's
+`services` claim works over any connection; `StackCipher::builder()` moved
+to `impl StackCipher<FromEnv>` so it resolves without `http`;
+`wasm:wasi-check` gates all eight crates. A unit test drives `StackKms`
+end to end over the in-memory `TestConnection`. Verified:
+`cargo check --target wasm32-wasip1 -p stack-encrypt --no-default-features`
+passes with no `reqwest`/`hyper`/`aws-lc-sys` in the tree.
+
+The plan as written before the work:
 
 **stack-kms**
 

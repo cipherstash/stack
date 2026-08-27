@@ -16,6 +16,12 @@
 #![warn(unused_results)]
 #![warn(clippy::todo)]
 #![warn(clippy::unimplemented)]
+// Without `http` the crate is the token model plus the `AuthStrategy` trait;
+// the crate-internal helpers that only the HTTP strategies call (refusal
+// classification, clock sharing, URL massaging, token setters) are then
+// unreferenced. They are still the same code — a feature subset, not dead
+// code — so don't make every one of them carry its own gate.
+#![cfg_attr(not(feature = "http"), allow(dead_code))]
 // Relax in tests
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 #![cfg_attr(test, allow(clippy::expect_used))]
@@ -23,29 +29,48 @@
 #![cfg_attr(test, allow(unused_results))]
 
 use std::future::Future;
-#[cfg(all(not(any(test, feature = "test-utils")), not(target_arch = "wasm32")))]
+#[cfg(all(
+    feature = "http",
+    not(any(test, feature = "test-utils")),
+    not(target_arch = "wasm32")
+))]
 use std::time::Duration;
 
 use vitaminc::protected::OpaqueDebug;
 use zeroize::ZeroizeOnDrop;
 
 mod access_key;
-mod access_key_refresher;
-mod access_key_strategy;
 mod auth_strategy_fn;
-mod authorize_dto;
-mod auto_refresh;
-mod auto_strategy;
 mod clock;
-mod device_session_refresher;
-mod device_session_strategy;
 mod error;
-mod oidc_federation_strategy;
-mod oidc_refresher;
-mod refresher;
 mod service_token;
 mod token;
 mod token_store;
+
+// The strategies that acquire and refresh tokens over HTTP, and the refresh
+// engine they share. Behind the `http` feature: without it the crate is the
+// token model plus the `AuthStrategy` trait, for hosts that source tokens
+// through their own transport.
+#[cfg(feature = "http")]
+mod access_key_refresher;
+#[cfg(feature = "http")]
+mod access_key_strategy;
+#[cfg(feature = "http")]
+mod authorize_dto;
+#[cfg(feature = "http")]
+mod auto_refresh;
+#[cfg(feature = "http")]
+mod auto_strategy;
+#[cfg(feature = "http")]
+mod device_session_refresher;
+#[cfg(feature = "http")]
+mod device_session_strategy;
+#[cfg(feature = "http")]
+mod oidc_federation_strategy;
+#[cfg(feature = "http")]
+mod oidc_refresher;
+#[cfg(feature = "http")]
+mod refresher;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use error::StoreError;
@@ -60,9 +85,9 @@ pub use error::{
 // native-only — both pull `stack-profile` (which uses `dirs` + `gethostname`)
 // and the device-code flow launches a browser via `open::that`. Wasm consumers
 // use `DeviceSessionStrategy::with_token` or `AccessKeyStrategy`.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 mod device_client;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 mod device_code;
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -72,11 +97,16 @@ mod static_token_strategy;
 mod test_support;
 
 pub use access_key::{AccessKey, InvalidAccessKey};
+#[cfg(feature = "http")]
 pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
 pub use auth_strategy_fn::AuthStrategyFn;
+#[cfg(feature = "http")]
 pub use auto_strategy::{AutoStrategy, AutoStrategyBuilder};
+#[cfg(feature = "http")]
 pub use device_session_strategy::{DeviceSessionStrategy, DeviceSessionStrategyBuilder};
+#[cfg(feature = "http")]
 pub use oidc_federation_strategy::{OidcFederationStrategy, OidcFederationStrategyBuilder};
+#[cfg(feature = "http")]
 pub use oidc_refresher::{OidcProvider, OidcProviderFn};
 pub use service_token::ServiceToken;
 #[cfg(any(test, feature = "test-utils"))]
@@ -90,16 +120,18 @@ pub use token_store::{InMemoryTokenStore, NoStore, TokenStore, TokenStoreFn};
 /// ([`OidcFederationStrategy`]) distinction explicit. The old name still
 /// resolves so existing code keeps compiling; it will be removed in a future
 /// major release.
+#[cfg(feature = "http")]
 #[deprecated(since = "0.36.0", note = "renamed to `DeviceSessionStrategy`")]
 pub type OAuthStrategy = DeviceSessionStrategy;
 
 /// Deprecated alias for [`DeviceSessionStrategyBuilder`].
+#[cfg(feature = "http")]
 #[deprecated(since = "0.36.0", note = "renamed to `DeviceSessionStrategyBuilder`")]
 pub type OAuthStrategyBuilder = DeviceSessionStrategyBuilder;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 pub use device_client::{bind_client_device, DeviceClientError};
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 pub use device_code::{DeviceCodeStrategy, DeviceCodeStrategyBuilder, PendingDeviceCode};
 
 // Re-exports from stack-profile for backward compatibility.
@@ -119,17 +151,24 @@ pub use stack_profile::DeviceIdentity;
 /// All items in this module are also re-exported at the crate root.
 pub mod auth {
     pub use crate::{
-        AccessKey, AccessKeyStrategy, AccessKeyStrategyBuilder, AuthError, AuthStrategy,
-        AuthStrategyBounds, AuthStrategyFn, AutoStrategy, AutoStrategyBuilder,
-        DeviceSessionStrategy, DeviceSessionStrategyBuilder, InvalidAccessKey,
-        OidcFederationStrategy, OidcFederationStrategyBuilder, OidcProvider, OidcProviderFn,
+        AccessKey, AuthError, AuthStrategy, AuthStrategyBounds, AuthStrategyFn, InvalidAccessKey,
         SecretToken, ServiceToken,
     };
 
+    #[cfg(feature = "http")]
+    pub use crate::{
+        AccessKeyStrategy, AccessKeyStrategyBuilder, AutoStrategy, AutoStrategyBuilder,
+        DeviceSessionStrategy, DeviceSessionStrategyBuilder, OidcFederationStrategy,
+        OidcFederationStrategyBuilder, OidcProvider, OidcProviderFn,
+    };
+
     #[cfg(not(target_arch = "wasm32"))]
+    pub use crate::DeviceIdentity;
+
+    #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
     pub use crate::{
         bind_client_device, DeviceClientError, DeviceCodeStrategy, DeviceCodeStrategyBuilder,
-        DeviceIdentity, PendingDeviceCode,
+        PendingDeviceCode,
     };
 
     #[cfg(any(test, feature = "test-utils"))]
@@ -138,6 +177,7 @@ pub mod auth {
     // Deprecated aliases, re-exported here too so `stack_auth::auth::OAuthStrategy`
     // consumers keep compiling alongside the crate-root aliases. See the
     // `OAuthStrategy` / `OAuthStrategyBuilder` definitions at the crate root.
+    #[cfg(feature = "http")]
     #[allow(deprecated)]
     pub use crate::{OAuthStrategy, OAuthStrategyBuilder};
 }
@@ -364,14 +404,18 @@ where
 /// does not auto-advance time past the connect timeout before the mock server
 /// can respond. On wasm32, reqwest's fetch backend doesn't expose
 /// `connect_timeout`/`pool_*` — the host runtime owns those concerns.
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(all(feature = "http", any(test, feature = "test-utils")))]
 pub(crate) fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
 }
 
-#[cfg(all(not(any(test, feature = "test-utils")), not(target_arch = "wasm32")))]
+#[cfg(all(
+    feature = "http",
+    not(any(test, feature = "test-utils")),
+    not(target_arch = "wasm32")
+))]
 pub(crate) fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
@@ -382,7 +426,11 @@ pub(crate) fn http_client() -> reqwest::Client {
         .unwrap_or_else(|_| reqwest::Client::new())
 }
 
-#[cfg(all(not(any(test, feature = "test-utils")), target_arch = "wasm32"))]
+#[cfg(all(
+    feature = "http",
+    not(any(test, feature = "test-utils")),
+    target_arch = "wasm32"
+))]
 pub(crate) fn http_client() -> reqwest::Client {
     // Wasm32 reqwest uses the host's `fetch`; timeouts and pooling are owned
     // by the runtime, so `ClientBuilder` doesn't expose them here.

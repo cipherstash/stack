@@ -2,7 +2,9 @@ use cts_common::claims::ClientClaims;
 use cts_common::{Crn, Region, WorkspaceId};
 use url::Url;
 
-use crate::{http_client, AuthError, SecretToken};
+#[cfg(feature = "http")]
+use crate::http_client;
+use crate::{AuthError, SecretToken};
 
 #[cfg(not(target_arch = "wasm32"))]
 impl stack_profile::ProfileData for Token {
@@ -231,6 +233,7 @@ impl Token {
     /// - [`AuthError::InvalidGrant`] — the refresh token was revoked or expired.
     /// - [`AuthError::InvalidClient`] — the client ID is not recognized.
     /// - [`AuthError::Request`] — a network error occurred.
+    #[cfg(feature = "http")]
     pub async fn refresh(
         refresh_token: &SecretToken,
         base_url: &Url,
@@ -300,6 +303,7 @@ impl Token {
     }
 }
 
+#[cfg(feature = "http")]
 #[derive(serde::Serialize)]
 struct RefreshRequest<'a> {
     grant_type: &'a str,
@@ -309,6 +313,7 @@ struct RefreshRequest<'a> {
     device_instance_id: Option<&'a str>,
 }
 
+#[cfg(feature = "http")]
 #[derive(serde::Deserialize)]
 struct RefreshResponse {
     access_token: SecretToken,
@@ -323,6 +328,7 @@ struct RefreshResponse {
 /// `cs_code` is deliberately absent: `classify_issuance_failure` inspects it
 /// on the raw body before this type is ever constructed, so duplicating the
 /// field here would create a second place for the two to disagree.
+#[cfg(feature = "http")]
 #[derive(serde::Deserialize)]
 struct RefreshErrorResponse {
     error: String,
@@ -335,6 +341,7 @@ mod tests {
     use super::*;
     use crate::test_support::{claims_with_workspace, jwt_token, raw_token};
     use crate::AuthError;
+    #[cfg(feature = "http")]
     use mocktail::prelude::*;
 
     fn make_token(expires_in: u64, refresh: bool) -> Token {
@@ -353,6 +360,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "http")]
     fn refresh_response_json() -> serde_json::Value {
         serde_json::json!({
             "access_token": "new-access-token",
@@ -362,6 +370,7 @@ mod tests {
         })
     }
 
+    #[cfg(feature = "http")]
     fn error_json(error: &str) -> serde_json::Value {
         serde_json::json!({
             "error": error,
@@ -369,6 +378,7 @@ mod tests {
         })
     }
 
+    #[cfg(feature = "http")]
     async fn start_server(mocks: MockSet) -> MockServer {
         let server = MockServer::new_http("token-refresh-test").with_mocks(mocks);
         server.start().await.unwrap();
@@ -443,6 +453,7 @@ mod tests {
 
     // ---- refresh() tests ----
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_refresh_success() {
         let mut mocks = MockSet::new();
@@ -468,6 +479,7 @@ mod tests {
         assert!((3598..=3600).contains(&refreshed.expires_in()));
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_refresh_invalid_grant() {
         let mut mocks = MockSet::new();
@@ -486,6 +498,7 @@ mod tests {
         assert!(matches!(err, AuthError::InvalidGrant(_)));
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_refresh_invalid_client() {
         let mut mocks = MockSet::new();
@@ -504,6 +517,7 @@ mod tests {
         assert!(matches!(err, AuthError::InvalidClient(_)));
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_refresh_access_denied() {
         let mut mocks = MockSet::new();
@@ -531,6 +545,7 @@ mod tests {
     // server response cannot mean different things depending on which
     // refresher the caller happened to use.
 
+    #[cfg(feature = "http")]
     async fn refresh_against(status: reqwest::StatusCode, body: serde_json::Value) -> AuthError {
         let mut mocks = MockSet::new();
         mocks.mock(move |when, then| {
@@ -544,6 +559,7 @@ mod tests {
             .expect_err("a non-2xx refresh must fail")
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn refresh_402_with_cs_code_is_usage_limit() {
         let err = refresh_against(
@@ -568,6 +584,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn refresh_402_access_denied_without_cs_code_is_usage_limit() {
         let err = refresh_against(
@@ -584,6 +601,7 @@ mod tests {
     }
 
     /// Guards arm ORDER: `access_denied` only means "usage limit" at 402.
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn refresh_403_access_denied_is_still_access_denied() {
         let err = refresh_against(
@@ -602,6 +620,7 @@ mod tests {
     /// the status, so a bodyless 402 surfaced as a reqwest decode error while
     /// the other two issuance paths classified it as a usage limit. Same server
     /// response, two different client errors.
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn refresh_402_with_empty_body_is_usage_limit() {
         let mut mocks = MockSet::new();
@@ -625,6 +644,7 @@ mod tests {
 
     /// A 402 whose `cs_code` we cannot read must not claim a usage limit —
     /// mirrors `unreadable_cs_code_declines_to_classify` on the shared path.
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn refresh_402_with_unknown_cs_code_does_not_claim_usage_limit() {
         let err = refresh_against(
@@ -640,6 +660,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_refresh_unknown_error() {
         let mut mocks = MockSet::new();
@@ -660,6 +681,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_refresh_response_without_new_refresh_token() {
         let mut mocks = MockSet::new();
@@ -683,6 +705,7 @@ mod tests {
         assert!(refreshed.refresh_token().is_none());
     }
 
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_refresh_debug_does_not_leak_tokens() {
         let token = make_token(3600, true);

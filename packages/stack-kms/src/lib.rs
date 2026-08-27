@@ -64,6 +64,7 @@
 #![cfg_attr(test, allow(clippy::panic))]
 #![cfg_attr(test, allow(unused_results))]
 
+#[cfg(feature = "http")]
 mod builder;
 mod client;
 mod connection;
@@ -76,10 +77,12 @@ mod key_source;
 mod maybe_send;
 mod payload;
 mod secret_key;
+#[cfg(feature = "http")]
 mod user_agent;
 pub mod vars;
 
-// Builder
+// Builder (configures the default HTTP transport)
+#[cfg(feature = "http")]
 pub use builder::{StackKmsBuilder, StackKmsBuilderError, WithKeyProvider};
 
 // Clients
@@ -89,10 +92,9 @@ pub use client::{
 };
 
 // Transport
-pub use connection::{
-    ConnectionInitError, HttpConnection, HttpConnectionOpts, ZeroKMSConnection,
-    ZeroKMSConnectionInit,
-};
+#[cfg(feature = "http")]
+pub use connection::{ConnectionInitError, HttpConnection, HttpConnectionOpts};
+pub use connection::{ZeroKMSConnection, ZeroKMSConnectionInit};
 pub use endpoint::{InvalidEndpoint, ZeroKmsEndpoint};
 
 // The native/wasm32 Send split for the async traits' returned futures

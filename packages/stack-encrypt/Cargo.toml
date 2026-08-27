@@ -21,8 +21,8 @@ publish = false
 # CS_CLIENT_KEY are not set — the same place `AutoStrategy` finds the token.
 stack-kms = { path = "../stack-kms", default-features = false, features = ["profile"] }
 # `StackCipher::new()` builds a ZeroKMS client from the environment, so its
-# return type names the auto-detected auth strategy.
-stack-auth = { workspace = true }
+# return type names the auto-detected auth strategy. Only needed with `http`.
+stack-auth = { path = "../stack-auth", version = "0.42.3", optional = true, default-features = false }
 # `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`, re-exported from `target`.
 stack-encrypt-derive = { path = "../stack-encrypt-derive" }
 
@@ -49,6 +49,15 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true }
 
+[features]
+default = ["http"]
+# `StackCipher::new()` / `StackCipher::builder().init()` from the environment:
+# the default HTTP transport in stack-kms and the auto-detected auth strategy
+# in stack-auth. Off, a cipher is built over an explicit `DataKeySource`
+# (`StackCipher::builder().kms(..)`) and no HTTP client or TLS stack is in
+# the dependency graph — the shape the WASI/wazero guest builds against.
+http = ["dep:stack-auth", "stack-auth/http", "stack-kms/http"]
+
 [dev-dependencies]
 serde_json = { workspace = true }
 stack-kms = { path = "../stack-kms", features = ["test-support"] }
@@ -58,6 +67,22 @@ trybuild = "1"
 vitaminc-hmac = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
 vitaminc-prf = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
 vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
+
+[[example]]
+name = "encrypted_record"
+required-features = ["http"]
+
+[[example]]
+name = "mixed_user"
+required-features = ["http"]
+
+[[example]]
+name = "search_terms"
+required-features = ["http"]
+
+[[example]]
+name = "zerokms_auth"
+required-features = ["http"]
 
 [package.metadata.docs.rs]
 all-features = true

@@ -76,9 +76,19 @@ pub(crate) mod codes {
 // ---------------------------------------------------------------------------
 
 /// The HTTP request to the auth server failed (network error, timeout, etc.).
+#[cfg(feature = "http")]
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("HTTP request failed: {0}")]
 pub struct RequestError(pub reqwest::Error);
+
+/// The request to the auth server failed (network error, timeout, etc.).
+///
+/// Without the `http` feature the crate makes no requests of its own, so the
+/// payload is whatever the host's transport reports.
+#[cfg(not(feature = "http"))]
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+#[error("HTTP request failed: {0}")]
+pub struct RequestError(pub Box<dyn std::error::Error + Send + Sync + 'static>);
 impl AuthErrorKind for RequestError {
     fn error_code(&self) -> &'static str {
         codes::REQUEST_ERROR
@@ -837,6 +847,7 @@ impl serde::Serialize for AuthError {
 // foreign error straight into `AuthError` (the per-struct wrapping is internal).
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "http")]
 impl From<reqwest::Error> for AuthError {
     fn from(e: reqwest::Error) -> Self {
         Self::Request(RequestError(e))
@@ -880,7 +891,7 @@ impl From<stack_profile::ProfileError> for AuthError {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 impl From<crate::DeviceClientError> for AuthError {
     fn from(e: crate::DeviceClientError) -> Self {
         use crate::DeviceClientError as E;
@@ -1390,7 +1401,7 @@ mod tests {
     /// path. (`Request` wraps a `reqwest::Error`, which has no public
     /// constructor, so it can't be built here — the same gap the exhaustive
     /// `error_code` test documents.)
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
     #[test]
     fn device_client_error_maps_to_canonical_auth_error() {
         use crate::DeviceClientError as E;
