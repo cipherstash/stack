@@ -228,6 +228,13 @@ impl MatchOptions {
 /// A [`PrfVisitor`] that folds a sequence of per-token PRF blocks into
 /// Bloom-filter bit positions: `k` little-endian 2-byte slices of each block,
 /// masked to the filter size.
+///
+/// The PRF input for a match term is the *sequence* of tokens the text was
+/// cut into (n-grams or words — see [`Tokenizer`]), and the backend evaluates
+/// the PRF once per token. The resolved output therefore arrives as a
+/// sequence of blocks, one per token, which is why this visitor implements
+/// `visit_seq` rather than `visit_block`: it walks the per-token blocks and
+/// turns each one into that token's `k` Bloom-filter bits.
 struct BloomVisitor {
     k: usize,
     mask: u16,
@@ -237,14 +244,23 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for BloomVisitor {
     type Value = MatchTerm;
 
     fn visit_seq(self, seq: SeqAccess<[u8; 32], P>) -> Result<Self::Value, PrfVisitorError> {
+        // One node per token, in token order. Each node is the PRF output for
+        // that token alone; `BlockVisitor` unwraps it to the raw 32-byte block.
         let mut positions: Vec<u16> = Vec::with_capacity(seq.len() * self.k);
         for node in seq {
             let block = node.visit(BlockVisitor)?;
+            // A token sets `k` bits of the filter. The block is 32 bytes and
+            // `k <= 16` (checked in `MatchOptions::validate`), so the `k`
+            // 2-byte slices are disjoint; masking to `m - 1` maps each u16 into
+            // the filter's `m` positions. The same token in a query text hits
+            // the same `k` positions, which is what `MatchTerm::contains` tests.
             for i in 0..self.k {
                 let chunk = [block[2 * i], block[2 * i + 1]];
                 positions.push(u16::from_le_bytes(chunk) & self.mask);
             }
         }
+        // The stored term is a set of positions: order and multiplicity carry
+        // no information, and sorting makes `contains` a binary search.
         positions.sort_unstable();
         positions.dedup();
         Ok(MatchTerm { positions })
