@@ -274,10 +274,11 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for BloomVisitor {
 
 /// A [`PrfVisitor`] that carries the plaintext in and hands the CLLW ORE
 /// ciphertext out. The PRF block becomes the CLLW [`Key`](cllw_ore::Key)
-/// *inside* `visit_block` and dies there: the block arrives by value, is moved
-/// into the `ZeroizeOnDrop` key, the stack copy left behind (`[u8; 32]` is
-/// `Copy`) is wiped, the value is encrypted, and only the ciphertext leaves.
-/// No key is ever returned to the caller.
+/// *inside* `visit_block` and dies there: the block arrives by value and is
+/// copied into the `ZeroizeOnDrop` key (`[u8; 32]` is `Copy`, so `Key::from`
+/// wipes its copy and this visitor wipes the one it still holds), the value
+/// is encrypted, and only the ciphertext leaves. No key is ever returned to
+/// the caller.
 ///
 /// This is the shape a 2-party PRF needs: the caller supplies a PRF input
 /// (the descriptor) and receives a term, and where the key comes from — or
