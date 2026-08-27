@@ -316,14 +316,25 @@ that shapes the block:
 | -- | -- | -- |
 | `EqualityTerm` | `EqualityVisitor` | block → term |
 | `MatchTerm<O>` | `BloomVisitor { k, mask }` | already correct; keep |
-| `OreTerm<S>` | `CllwOreVisitor { value }` | block → CLLW key → encrypt → term |
-| `OpeTerm<S>` | `CllwOpeVisitor { value }` | as above |
+| `OreTerm<S>` | `OreVisitor(value)` | block → CLLW key → encrypt → term, all inside the visitor; the key never leaves |
+| `OpeTerm<S>` | `OpeVisitor(value)` | as above, under the OPE domain |
 
 `require_context`, `MatchOptions::validate` and the empty-token check move
 ahead of the request, where they fail without a round-trip. The visitor owns
 the plaintext it needs, which removes the clone-into-async-fn each term does
 today and narrows the plaintext fan-out the module docs warn about — only the
 ciphertext branch still needs an owned copy held until seal.
+
+Owning the plaintext is not incidental for ORE/OPE, and it has a cost. The
+cost: a visitor is `'static`, so ORE/OPE sources are `Send + 'static` —
+literals still work, borrowed text becomes a `String` (`cllw-ore` gained
+`CllwOreEncrypt`/`CllwOpeEncrypt` for `String` and `Vec<u8>`, byte-identical
+to the borrowed impls). The reason: under the two-party PRF no CLLW key exists
+on either side, so a visitor that *returns* a key — which is what the first
+implementation did (`CllwKeyVisitor`, encrypting after the visitor) — has
+nothing to return. The visitor has to be the whole ORE operation: PRF input
+in, ciphertext out. Callers then see the surface the two-party backend will
+have, and the key is a private detail of the local backend's visitor.
 
 **How the value comes out synchronously.** No `SyncPrf` marker trait is
 needed, but the mechanism deserves stating, because it is concrete-type
@@ -345,9 +356,13 @@ ZeroKMS PRF backend replaces the local HMAC inside `StackCipher`, a term's
 `encrypt_from` changes in exactly one way: instead of invoking the visitor
 inline over a `ReadyPrf`, it pushes `Request::Prf { input, context }` and
 invokes the **same visitor** inside `fulfil`, over the blocks that came back
-in the batch response. The shaping code — Bloom positions, CLLW key
-derivation, all of it — does not change, because the visitor never knew which
-side of the round-trip it ran on. That swap is also what fuses terms and data
+in the batch response. The shaping code — Bloom positions, equality blocks —
+does not change, because the visitor never knew which side of the round-trip
+it ran on. ORE/OPE are the one place the visitor *internals* change, and they
+prove the seam rather than break it: CLLW under a two-party PRF has no key,
+so `OreVisitor` moves from `visit_block` (block → key → encrypt) to
+`visit_seq` over per-prefix PRF outputs (one per plaintext bit), while
+`OreTerm`'s `encrypt_from` and every call site stay exactly as they are. That swap is also what fuses terms and data
 keys into the single combined 0KMS call: both are then rows in one
 `requests` vector settled by one `dispatch`.
 
@@ -421,8 +436,9 @@ outputs — is a future `Prf` trait extension, and should be designed with the
 
 | file | change |
 | -- | -- |
-| `src/target.rs` | `EncryptTarget` + GAT; `PendingEncrypted` (with the wasm32 `Send` cfg-split carried over from `PendingEncrypt`); drop `PendingEncrypt` alias, `EncryptFrom::Error`, `TargetError` |
-| `src/sem/mod.rs` | four visitors in, four `derive_*` out; validation moves ahead of the request |
+| `src/target/{mod,pending,request}.rs` | `EncryptTarget` + GAT; `Pending` (with the wasm32 `Send` cfg-split carried over from `PendingEncrypt`); drop `PendingEncrypt` alias, `EncryptFrom::Error`, `TargetError`. Split in review so `Pending` and `Request`/`Responses` carry their own unit tests |
+| `src/sem/mod.rs` | four visitors in, four `derive_*` out; validation moves ahead of the request; ORE/OPE encrypt inside the visitor (`Send + 'static` sources) |
+| `packages/cllw-ore` | `CllwOreEncrypt`/`CllwOpeEncrypt` for `String` and `Vec<u8>`, delegating to the borrowed impls |
 | `src/cipher.rs` | `StackCipher: EncryptTarget`; `dispatch`; `Error::Term`/`Error::Other`/`Error::ResponseShape` |
 | `examples/`, `tests/` | column encrypted as a `Vec`, not a loop; `try_join!` gone; tokio dev-dep drops out of the record shape |
 
@@ -472,6 +488,19 @@ The implementation kept the design and changed three names/details:
   `generate_keys` + one `retrieve_keys`, sequentially — a mixed batch is rare
   today). When ZeroKMS grows the combined keys-plus-PRF operation, `dispatch`
   is the one function that changes.
+
+Review of #2146/#2147 then corrected three more:
+
+- **`EncryptFrom` / `DecryptFrom`** — first shipped as `EncryptedFrom` /
+  `DecryptedFrom`; renamed to the names this RFC uses.
+- **`target.rs` became `target/{mod,pending,request}.rs`** so the request
+  carrier and the response handle have unit tests of their own (call counts
+  per batch, per-kind response scoping, over-draw, zero-I/O `ready`).
+- **ORE/OPE first shipped as `CllwKeyVisitor`** — a visitor that returned the
+  CLLW key, with encryption after it. Reverted to the §4.5 shape
+  (`OreVisitor(value)` / `OpeVisitor(value)`); §4.5 records why a
+  key-returning visitor cannot survive the two-party backend. Wire format
+  unchanged (`tests/term_bytes.rs`).
 
 ## 8. Where findings get recorded
 
