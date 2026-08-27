@@ -3,7 +3,7 @@
 //! the exact derivation a wrapper binds, without any real cryptography.
 
 use std::any::Any;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use vitaminc_protected::{Controlled, Protected};
 
@@ -20,17 +20,26 @@ use crate::{
 /// driven.
 pub(crate) struct MockCipher {
     captured_aad: RefCell<Vec<u8>>,
+    /// How many times `encrypt_bytes_array` was called directly, as opposed
+    /// to the trait's default forwarding through `encrypt_bytes_vec`. Lets a
+    /// test prove a wrapped array reached the cipher still wrapped.
+    array_entry_hits: Cell<usize>,
 }
 
 impl MockCipher {
     pub(crate) fn new() -> Self {
         MockCipher {
             captured_aad: RefCell::new(Vec::new()),
+            array_entry_hits: Cell::new(0),
         }
     }
 
     pub(crate) fn captured_aad(&self) -> Vec<u8> {
         self.captured_aad.borrow().clone()
+    }
+
+    pub(crate) fn array_entry_hits(&self) -> usize {
+        self.array_entry_hits.get()
     }
 }
 
@@ -54,6 +63,19 @@ impl Cipher for &MockCipher {
     {
         *self.captured_aad.borrow_mut() = aad.into_aad().as_bytes().to_vec();
         Ok(data.risky_unwrap())
+    }
+
+    fn encrypt_bytes_array<'a, const N: usize, A>(
+        self,
+        data: Protected<[u8; N]>,
+        aad: A,
+    ) -> Result<Self::Ok, Self::Error>
+    where
+        A: IntoAad<'a>,
+    {
+        self.array_entry_hits.set(self.array_entry_hits.get() + 1);
+        *self.captured_aad.borrow_mut() = aad.into_aad().as_bytes().to_vec();
+        Ok(data.risky_ref().to_vec())
     }
 
     fn encrypt_seq<'a, A>(self, _size_hint: Option<usize>, _aad: A) -> Self::SeqCipher

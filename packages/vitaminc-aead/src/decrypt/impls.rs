@@ -22,6 +22,23 @@ impl<'c> Decrypt<'c> for Vec<u8> {
         }
         decipher.decrypt_bytes(BytesVisitor, aad)
     }
+
+    /// The decipher already hands the plaintext over as `Protected<Vec<u8>>`;
+    /// a caller who wants it wrapped gets that value as-is, never unwrapped.
+    fn decrypt_protected<'a, D, A>(decipher: D, aad: A) -> D::Ok<Protected<Self>>
+    where
+        D: Decipher<'c>,
+        A: IntoAad<'a>,
+    {
+        struct ProtectedBytesVisitor;
+        impl<'c> DecipherVisitor<'c> for ProtectedBytesVisitor {
+            type Value = Protected<Vec<u8>>;
+            fn visit_bytes_vec(self, data: Protected<Vec<u8>>) -> Result<Self::Value, Unspecified> {
+                Ok(data)
+            }
+        }
+        decipher.decrypt_bytes(ProtectedBytesVisitor, aad)
+    }
 }
 
 impl<'c> Decrypt<'c> for String {
@@ -41,6 +58,19 @@ impl<'c> Decrypt<'c> for String {
     }
 }
 
+/// Copy a decrypted buffer into a fixed-size array, leaving the buffer
+/// inside its `Protected` so it is wiped on drop. (`Vec<u8>: TryInto<[u8; N]>`
+/// would drop the vector unwiped.)
+fn array_from_protected<const N: usize>(data: &Protected<Vec<u8>>) -> Result<[u8; N], Unspecified> {
+    let bytes = data.risky_ref();
+    if bytes.len() != N {
+        return Err(Unspecified);
+    }
+    let mut out = [0u8; N];
+    out.copy_from_slice(bytes);
+    Ok(out)
+}
+
 impl<'c, const N: usize> Decrypt<'c> for [u8; N] {
     fn decrypt_with_aad<'a, D, A>(decipher: D, aad: A) -> D::Ok<Self>
     where
@@ -51,10 +81,29 @@ impl<'c, const N: usize> Decrypt<'c> for [u8; N] {
         impl<'c, const N: usize> DecipherVisitor<'c> for ArrayVisitor<N> {
             type Value = [u8; N];
             fn visit_bytes_vec(self, data: Protected<Vec<u8>>) -> Result<Self::Value, Unspecified> {
-                data.risky_unwrap().try_into().map_err(|_| Unspecified)
+                // The caller asked for a bare array — the extraction boundary.
+                // `data` drops (and wipes) here.
+                array_from_protected(&data)
             }
         }
         decipher.decrypt_bytes(ArrayVisitor::<N>, aad)
+    }
+
+    /// The array is built directly inside a fresh `Protected` from the
+    /// wrapped buffer; no bare copy sits on the stack between the two.
+    fn decrypt_protected<'a, D, A>(decipher: D, aad: A) -> D::Ok<Protected<Self>>
+    where
+        D: Decipher<'c>,
+        A: IntoAad<'a>,
+    {
+        struct ProtectedArrayVisitor<const N: usize>;
+        impl<'c, const N: usize> DecipherVisitor<'c> for ProtectedArrayVisitor<N> {
+            type Value = Protected<[u8; N]>;
+            fn visit_bytes_vec(self, data: Protected<Vec<u8>>) -> Result<Self::Value, Unspecified> {
+                Protected::generate_ok(|| array_from_protected(&data))
+            }
+        }
+        decipher.decrypt_bytes(ProtectedArrayVisitor::<N>, aad)
     }
 }
 
@@ -139,10 +188,10 @@ where
         D: Decipher<'c>,
         A: IntoAad<'a>,
     {
-        D::map_ok(
-            T::decrypt_with_aad(decipher, aad),
-            Protected::init_from_inner,
-        )
+        // Mirrors the `Encrypt` side: `T` decides how to arrive wrapped.
+        // Byte leaves keep the decipher's `Protected<Vec<u8>>` intact;
+        // everything else decrypts bare and is wrapped by the default.
+        T::decrypt_protected(decipher, aad)
     }
 }
 

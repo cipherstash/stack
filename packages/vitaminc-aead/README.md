@@ -174,6 +174,9 @@ let encrypted_with_aad = "secret".encrypt_with_aad(&cipher, "context data")?;
 
 // Encrypt a byte array
 let encrypted_bytes = [1u8, 2, 3, 4, 5].encrypt(&cipher)?;
+
+// Encrypt a byte vector — a byte leaf, the same wire shape as the array
+let encrypted_vec = vec![1u8, 2, 3, 4, 5].encrypt(&cipher)?;
 ```
 
 Note that `Encrypt::encrypt` consumes the cipher value. Implementing `Cipher` for `&MyCipher` (rather than `MyCipher`) means you can pass `&cipher` for each call and reuse the underlying state.
@@ -233,6 +236,10 @@ let encrypted = sensitive_data.encrypt(&cipher)?;
 
 The corresponding `Decrypt` impl for `Protected<T>` re-wraps the decrypted plaintext, so the value stays inside `Protected` end-to-end.
 
+For the byte leaves — `[u8; N]` and `Vec<u8>` — "end-to-end" is literal. `Protected<T>`'s impls go through [`Encrypt::encrypt_protected`] and [`Decrypt::decrypt_protected`], and the byte leaves override those to hand the still-wrapped value straight to the cipher's `Protected`-taking entry points (`Cipher::encrypt_bytes_array`, `Cipher::encrypt_bytes_vec`, `DecipherVisitor::visit_bytes_vec`). A `Protected<[u8; 32]>` key is therefore never copied onto the stack as a bare array on its way in or out. Other types take the defaults, which unwrap to `T` and rely on each leaf re-wrapping its own payload before it reaches the cipher.
+
+Because a derived newtype is transparent, `#[derive(Encrypt)] struct Key(Protected<[u8; 32]>);` gets exactly that path — no hand-written impl is needed to keep key material wrapped.
+
 ### Deriving `Encrypt` and `Decrypt`
 
 Most structs do not need a hand-written impl:
@@ -261,11 +268,35 @@ Decoding is strict. Entry order in a stored ciphertext is not authenticated, so 
 
 Enums are **not** supported: a ciphertext carries no authenticated variant discriminator, so any encoding the macro could pick would either leak the variant in the clear or leave it forgeable. Model the choice explicitly instead — for example as a struct of `Option` fields.
 
+A field that should be stored **in the clear** — a plain database column other queries can read without the key — takes `#[aead(passthrough)]`. Such a field is neither encrypted nor authenticated; the derive's documentation spells out exactly what that gives up.
+
 Use `#[aead(crate = "...")]` on the container when `vitaminc_aead` is reached through a re-export, e.g. `#[aead(crate = "::vitaminc::aead")]`.
 
 ### Custom Types
 
-Where the derive's shape is not what you want — encrypting only some fields, passing others through in the clear, or producing a non-map layout — implement [`Encrypt`] and [`Decrypt`] by hand.
+Where the derive's shape is not what you want, implement [`Encrypt`] and [`Decrypt`] by hand. The cases that call for it:
+
+- **Leaving fields out of the ciphertext entirely** (as opposed to storing them in the clear, which is `#[aead(passthrough)]`).
+- **A non-map layout** — a sequence, or a single leaf built from several fields.
+- **Transforming the AAD** on the way through, as [`ContextTag`] and [`Element`] do.
+- **Enums**, which the derive rejects.
+
+For example, a `User` whose `id` and `email` live in ordinary columns and whose `password_hash` is encrypted is a derive with two passthrough fields:
+
+```rust
+use vitaminc_aead::{Decrypt, Encrypt};
+
+#[derive(Encrypt, Decrypt)]
+struct User {
+    #[aead(passthrough)]
+    id: u64,
+    #[aead(passthrough)]
+    email: String,
+    password_hash: String, // encrypted
+}
+```
+
+But if `id` and `email` are not to be stored in this ciphertext at all, that is a hand-written impl:
 
 ```rust
 use vitaminc_aead::{
@@ -285,10 +316,9 @@ impl Encrypt for User {
         C: Cipher,
         A: IntoAad<'a>,
     {
-        // Encrypt the user as a map of named fields, encrypting only the
-        // password hash. id and email are not stored here for brevity —
-        // a real implementation would also encrypt or pass them through.
-        // The AAD is supplied once, to `encrypt_map`.
+        // Encrypt the user as a map of named fields, storing only the
+        // password hash — id and email are deliberately left out of this
+        // ciphertext. The AAD is supplied once, to `encrypt_map`.
         cipher
             .encrypt_map(aad)
             .encrypt_entry("password_hash", self.password_hash)?
