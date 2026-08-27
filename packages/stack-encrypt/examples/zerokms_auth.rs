@@ -36,6 +36,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("set CS_CLIENT_ID / CS_CLIENT_KEY and access-key credentials to run this.");
             return Ok(());
         }
+        // Configured but not accepted — typically a stale device session in
+        // ~/.cipherstash or an access key for another workspace. `auto()` only
+        // checks that a strategy *exists*; ZeroKMS is the first to say no.
+        Err(stack_encrypt::Error::Kms(why)) => {
+            println!("could not reach or authenticate with ZeroKMS: {why}");
+            println!("check the credentials `auto()` detected (CS_* variables, ~/.cipherstash).");
+            return Ok(());
+        }
         Err(other) => return Err(other.into()),
     };
     println!("connected; keyset {}", cipher.keyset_id());
@@ -64,7 +72,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The same seam takes `AccessKeyStrategy`, `DeviceSessionStrategy`, or an
     // OIDC federation strategy when you want to name one explicitly rather
     // than let `auto()` detect it.
-    let token = std::env::var("MY_SERVICE_TOKEN").unwrap_or_default();
+    // This section needs a real token: building the cipher resolves the keyset
+    // and loads its index key, which is a round-trip that must authenticate.
+    let Ok(token) = std::env::var("MY_SERVICE_TOKEN") else {
+        println!("MY_SERVICE_TOKEN not set; skipping the custom-strategy section.");
+        return Ok(());
+    };
     let strategy = AuthStrategyFn::new(move || {
         // Your token source: a broker, a sidecar, a cached credential. Called
         // whenever ZeroKMS needs a fresh token, so refresh belongs in here.
