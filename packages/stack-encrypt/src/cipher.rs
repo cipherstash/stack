@@ -121,14 +121,14 @@ pub enum Error {
     /// An index term failed to derive.
     #[error(transparent)]
     Term(#[from] crate::sem::TermError),
-    /// A third-party [`EncryptedFrom`](crate::target::EncryptedFrom) /
-    /// [`DecryptedFrom`](crate::target::DecryptedFrom) implementation failed
+    /// A third-party [`EncryptFrom`](crate::target::EncryptFrom) /
+    /// [`DecryptFrom`](crate::target::DecryptFrom) implementation failed
     /// for a reason of its own.
     #[error(transparent)]
     Other(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// A [`Pending`](crate::target::Pending) fulfilment drew more responses —
     /// or a different kind of response — than its requests asked for. Always a
-    /// composition bug in an `EncryptedFrom`/`DecryptedFrom` implementation,
+    /// composition bug in an `EncryptFrom`/`DecryptFrom` implementation,
     /// never a data error.
     #[error("a pending fulfilment drew responses its requests never asked for")]
     ResponseShape,

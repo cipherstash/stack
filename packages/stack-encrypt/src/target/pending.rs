@@ -1,5 +1,5 @@
 //! [`Pending`]: the request carrier [`StackCipher`] hands back from
-//! [`EncryptedFrom`](super::EncryptedFrom) / [`DecryptedFrom`](super::DecryptedFrom),
+//! [`EncryptFrom`](super::EncryptFrom) / [`DecryptFrom`](super::DecryptFrom),
 //! and the single place the target layer talks to ZeroKMS.
 //!
 //! A `Pending` is built synchronously and settled once. Combining pendings

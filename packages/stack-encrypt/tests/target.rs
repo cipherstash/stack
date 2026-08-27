@@ -1,4 +1,4 @@
-//! Target-directed encryption tests: leaf `EncryptedFrom`/`DecryptedFrom`
+//! Target-directed encryption tests: leaf `EncryptFrom`/`DecryptFrom`
 //! implementations, a hand-written composite record (the shape a future
 //! derive will emit), a "third-party" term type built on the public extension
 //! surface only, and — the point of the design — proof that however large the
@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerm, OreTerm};
 use stack_encrypt::target::{
-    DecryptContext, DecryptExt, DecryptedFrom, EncryptContext, EncryptExt, EncryptedFrom, Pending,
+    DecryptContext, DecryptExt, DecryptFrom, EncryptContext, EncryptExt, EncryptFrom, Pending,
     Request,
 };
 use stack_encrypt::{Error, StackCipher, StackCipherText};
@@ -367,7 +367,7 @@ struct EncryptedAge {
     ob: OreTerm<u32>,
 }
 
-impl<K> EncryptedFrom<u32, StackCipher<K>> for EncryptedAge {
+impl<K> EncryptFrom<u32, StackCipher<K>> for EncryptedAge {
     fn encrypt_from<'a, 'c, Ctx>(
         source: &'a u32,
         cipher: &'a StackCipher<K>,
@@ -386,7 +386,7 @@ impl<K> EncryptedFrom<u32, StackCipher<K>> for EncryptedAge {
 
 /// The decrypt mirror a derive would emit: only the ciphertext field
 /// participates — terms are one-way.
-impl<K> DecryptedFrom<EncryptedAge, StackCipher<K>> for u32 {
+impl<K> DecryptFrom<EncryptedAge, StackCipher<K>> for u32 {
     fn decrypt_from<'a, 'c, Ctx>(
         source: EncryptedAge,
         cipher: &'a StackCipher<K>,
@@ -455,7 +455,7 @@ async fn composite_record_terms_preserve_order() {
 
 // --- A "third-party" term type ----------------------------------------------
 //
-// Defined here using only the public extension surface: `EncryptedFrom`,
+// Defined here using only the public extension surface: `EncryptFrom`,
 // `Pending::ready`, and the cipher's public PRF. This is the proof that the
 // set of SEM types is open — a separate crate can do exactly this.
 
@@ -464,7 +464,7 @@ async fn composite_record_terms_preserve_order() {
 #[derive(Debug, PartialEq, Eq)]
 struct PrefixTerm<const N: usize>([u8; 32]);
 
-impl<S, K, const N: usize> EncryptedFrom<S, StackCipher<K>> for PrefixTerm<N>
+impl<S, K, const N: usize> EncryptFrom<S, StackCipher<K>> for PrefixTerm<N>
 where
     S: AsRef<str>,
 {
@@ -515,7 +515,7 @@ async fn third_party_term_type_works_on_the_public_surface() {
         prefix: PrefixTerm<3>,
     }
 
-    impl<K> EncryptedFrom<String, StackCipher<K>> for NameRecord {
+    impl<K> EncryptFrom<String, StackCipher<K>> for NameRecord {
         fn encrypt_from<'a, 'c, Ctx>(
             source: &'a String,
             cipher: &'a StackCipher<K>,

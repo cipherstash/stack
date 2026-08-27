@@ -2,7 +2,7 @@
 //!
 //! The point of target-directed encryption: define a record type that *is*
 //! "the ciphertext plus the index terms this field needs", implement
-//! `EncryptedFrom` once (the shape a future `#[derive(Encrypted)]` will
+//! `EncryptFrom` once (the shape a future `#[derive(Encrypted)]` will
 //! emit), and every insert is one `encrypt_into(..).await`. A tiny in-memory
 //! "table" then answers equality and range queries purely by comparing terms
 //! — decrypting only the rows that match.
@@ -25,7 +25,7 @@
 
 use stack_encrypt::sem::{EqualityTerm, OreTerm};
 use stack_encrypt::target::{
-    DecryptContext, DecryptExt, DecryptedFrom, EncryptContext, EncryptExt, EncryptedFrom, Pending,
+    DecryptContext, DecryptExt, DecryptFrom, EncryptContext, EncryptExt, EncryptFrom, Pending,
 };
 use stack_encrypt::{StackCipher, StackCipherText};
 
@@ -42,7 +42,7 @@ struct EncryptedInt {
 // pending (no I/O — the terms derive locally, the ciphertext queues its
 // data-key requests), merge them with `zip`, shape with `map`. Errors are the
 // cipher's; there is nothing to unify.
-impl<K> EncryptedFrom<u32, StackCipher<K>> for EncryptedInt {
+impl<K> EncryptFrom<u32, StackCipher<K>> for EncryptedInt {
     fn encrypt_from<'a, 'c, Ctx>(
         source: &'a u32,
         cipher: &'a StackCipher<K>,
@@ -68,7 +68,7 @@ impl<K> EncryptedFrom<u32, StackCipher<K>> for EncryptedInt {
 // The decrypt mirror the derive will also write: only the ciphertext field
 // participates (terms are one-way), so it delegates to the ciphertext's own
 // implementation.
-impl<K> DecryptedFrom<EncryptedInt, StackCipher<K>> for u32 {
+impl<K> DecryptFrom<EncryptedInt, StackCipher<K>> for u32 {
     fn decrypt_from<'a, 'c, Ctx>(
         source: EncryptedInt,
         cipher: &'a StackCipher<K>,

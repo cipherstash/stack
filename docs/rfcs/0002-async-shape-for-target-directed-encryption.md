@@ -15,7 +15,7 @@
 
 ## 1. Summary
 
-`EncryptedFrom` as implemented in #2147 hardcodes a boxed future as its return
+`EncryptFrom` as implemented in #2147 hardcodes a boxed future as its return
 type. Three consequences:
 
 1. Every cipher is forced to be async, including ones that do no I/O.
@@ -44,14 +44,14 @@ fn encrypt_from<'a, 'c, Ctx>(source: &'a S, cipher: &'a C, context: Ctx)
     -> PendingEncrypt<'a, Self, Self::Error>;
 ```
 
-`EncryptedFrom` is the only trait in the stack that does this. Its two
+`EncryptFrom` is the only trait in the stack that does this. Its two
 neighbours both hand the choice to the implementation:
 
 | trait | output | who decides |
 | -- | -- | -- |
 | `Cipher::Ok` | `PendingStackCipherText` for `StackCipher`; a finished ciphertext for a local cipher | the cipher |
 | `Prf::Ok<T>` | `ReadyPrf<T, Infallible>` for `HmacSha256Prf`; a real future for a future 2-party backend | the backend |
-| `EncryptedFrom` | `Pin<Box<dyn Future>>`, always | **the trait** |
+| `EncryptFrom` | `Pin<Box<dyn Future>>`, always | **the trait** |
 
 A cipher that does no I/O still returns a future the caller must `.await`.
 
@@ -137,7 +137,7 @@ after a round-trip rather than before one.
 
 vitaminc obeys this: `Encrypt` drives a `Cipher` with no I/O and yields
 `Cipher::Ok`; whoever holds the `Ok` decides when — and how many at a time —
-to settle. `EncryptedFrom` must obey it too.
+to settle. `EncryptFrom` must obey it too.
 
 ## 4. Design
 
@@ -150,7 +150,7 @@ pub trait EncryptTarget {
     type Output<'a, T: 'a>: 'a where Self: 'a;
 }
 
-pub trait EncryptedFrom<S, C: EncryptTarget>: Sized {
+pub trait EncryptFrom<S, C: EncryptTarget>: Sized {
     fn encrypt_from<'a, 'c, Ctx>(source: &'a S, cipher: &'a C, ctx: Ctx) -> C::Output<'a, Self>
     where
         Ctx: EncryptContext<'c>;
@@ -176,7 +176,7 @@ is *where* the type is chosen.)
 The implementation notes record that an associated `Pending` type was tried
 and defeated `let term: EqualityTerm = v.encrypt_into(..).await?`. That is
 correct **for an associated type on the target**: normalizing `T::Pending`
-requires selecting the `EncryptedFrom` impl, which requires knowing `T` — the
+requires selecting the `EncryptFrom` impl, which requires knowing `T` — the
 very thing being inferred.
 
 `C::Output<'a, T>` has no such cycle. Normalizing it requires only `C`, and
@@ -266,7 +266,7 @@ up.
 Composites combine pendings **without awaiting them**, so requests merge:
 
 ```rust
-impl<K> EncryptedFrom<u32, StackCipher<K>> for EncryptedInt {
+impl<K> EncryptFrom<u32, StackCipher<K>> for EncryptedInt {
     fn encrypt_from<'a, 'c, Ctx>(source: &'a u32, cipher: &'a StackCipher<K>, ctx: Ctx)
         -> PendingEncrypted<'a, Self, K>
     {
@@ -285,8 +285,8 @@ directly emittable by `#[derive(Encrypted)]`.
 Then the missing piece from §2.2:
 
 ```rust
-impl<S, T, K> EncryptedFrom<Vec<S>, StackCipher<K>> for Vec<T> where T: EncryptedFrom<S, StackCipher<K>>
-impl<S, T, K> EncryptedFrom<Option<S>, StackCipher<K>> for Option<T>
+impl<S, T, K> EncryptFrom<Vec<S>, StackCipher<K>> for Vec<T> where T: EncryptFrom<S, StackCipher<K>>
+impl<S, T, K> EncryptFrom<Option<S>, StackCipher<K>> for Option<T>
 ```
 
 which makes the column one operation, one await, one round-trip:
@@ -354,7 +354,7 @@ keys into the single combined 0KMS call: both are then rows in one
 ### 4.6 Errors belong to the cipher
 
 `C::Output<'a, T>` has no error slot, so the error is `C::Error`, and
-`EncryptedFrom::Error` is dropped. `TargetError` and the six-line
+`EncryptFrom::Error` is dropped. `TargetError` and the six-line
 error-conversion where-clauses on every composite go with it. Term errors
 reach the cipher's error through `Error::Term(#[from] TermError)`; third-party
 terms get an `Error::Other(Box<dyn std::error::Error + Send + Sync>)` escape;
@@ -367,7 +367,7 @@ The current module docs teach external term authors to return
 all until a deferred PRF exists:
 
 ```rust
-impl<S, K> EncryptedFrom<S, StackCipher<K>> for MyTerm
+impl<S, K> EncryptFrom<S, StackCipher<K>> for MyTerm
 where
     S: PrfValue + Clone,
 {
@@ -421,7 +421,7 @@ outputs — is a future `Prf` trait extension, and should be designed with the
 
 | file | change |
 | -- | -- |
-| `src/target.rs` | `EncryptTarget` + GAT; `PendingEncrypted` (with the wasm32 `Send` cfg-split carried over from `PendingEncrypt`); drop `PendingEncrypt` alias, `EncryptedFrom::Error`, `TargetError` |
+| `src/target.rs` | `EncryptTarget` + GAT; `PendingEncrypted` (with the wasm32 `Send` cfg-split carried over from `PendingEncrypt`); drop `PendingEncrypt` alias, `EncryptFrom::Error`, `TargetError` |
 | `src/sem/mod.rs` | four visitors in, four `derive_*` out; validation moves ahead of the request |
 | `src/cipher.rs` | `StackCipher: EncryptTarget`; `dispatch`; `Error::Term`/`Error::Other`/`Error::ResponseShape` |
 | `examples/`, `tests/` | column encrypted as a `Vec`, not a loop; `try_join!` gone; tokio dev-dep drops out of the record shape |
@@ -437,7 +437,7 @@ derivations must produce identical bytes before and after.
    `Pending`; they lift onto `EncryptTarget` if a second async cipher ever
    appears.
 2. **Decrypt landed with this change** (decided): `DecryptTarget`,
-   `DecryptedFrom`, `DecryptExt` and `DecryptContext` mirror the encrypt side;
+   `DecryptFrom`, `DecryptExt` and `DecryptContext` mirror the encrypt side;
    the `Vec` implementation batches a column of rows into one
    `retrieve_keys`. The derive will emit both directions from day one.
 3. **`Request` is public but opaque** (decided): constructors only

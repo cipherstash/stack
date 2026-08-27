@@ -3,7 +3,7 @@
 //! Index terms are stored alongside a
 //! [`StackCipherText`](crate::StackCipherText) so encrypted values can be
 //! queried without decryption. Each term type implements
-//! [`EncryptedFrom`], so the usual entry point is
+//! [`EncryptFrom`], so the usual entry point is
 //! target-directed:
 //!
 //! ```text
@@ -43,7 +43,7 @@
 //! [`HmacSha256Prf`] — keyed by the
 //! deterministic per-keyset [`IndexKey`](stack_kms::IndexKey) from
 //! [`stack_kms::IndexKeySource`] — so every derivation completes with no I/O
-//! and an [`EncryptedFrom`] term carries **no requests** in its
+//! and an [`EncryptFrom`] term carries **no requests** in its
 //! [`Pending`]. The next ZeroKMS release adds 2-party PRF generation; under
 //! that backend a term's `encrypt_from` pushes a PRF *request* instead and
 //! runs the **same visitor** over the blocks the server returns — the shaping
@@ -81,7 +81,7 @@ use vitaminc_prf::{
 };
 use zeroize::Zeroize;
 
-use crate::target::{EncryptContext, EncryptedFrom, Pending};
+use crate::target::{EncryptContext, EncryptFrom, Pending};
 use crate::{Error, StackCipher};
 
 // The `/v1` suffix versions the *derivation* (domain + input framing), not the
@@ -224,7 +224,7 @@ where
 
 /// An equality term of any [`PrfValue`] source. Derived locally during the
 /// synchronous build — the returned [`Pending`] carries no requests.
-impl<S, K> EncryptedFrom<S, StackCipher<K>> for EqualityTerm
+impl<S, K> EncryptFrom<S, StackCipher<K>> for EqualityTerm
 where
     S: PrfValue + Clone,
 {
@@ -465,7 +465,7 @@ fn match_term<O>(
 /// A match term of any text source, generated under `O`'s options. Derived
 /// locally during the synchronous build — the returned [`Pending`] carries no
 /// requests (tokenize makes the one necessary copy of the text).
-impl<S, K, O> EncryptedFrom<S, StackCipher<K>> for MatchTerm<O>
+impl<S, K, O> EncryptFrom<S, StackCipher<K>> for MatchTerm<O>
 where
     S: AsRef<str>,
     O: MatchConfig,
@@ -677,7 +677,7 @@ where
 
 /// An ORE term of any [`CllwOreEncrypt`] source. Derived locally during the
 /// synchronous build — the returned [`Pending`] carries no requests.
-impl<S, K> EncryptedFrom<S, StackCipher<K>> for OreTerm<S>
+impl<S, K> EncryptFrom<S, StackCipher<K>> for OreTerm<S>
 where
     S: CllwOreEncrypt + Clone + Send + 'static,
     S::Output: Send + 'static,
@@ -699,7 +699,7 @@ where
 
 /// An OPE term of any [`CllwOpeEncrypt`] source. Derived locally during the
 /// synchronous build — the returned [`Pending`] carries no requests.
-impl<S, K> EncryptedFrom<S, StackCipher<K>> for OpeTerm<S>
+impl<S, K> EncryptFrom<S, StackCipher<K>> for OpeTerm<S>
 where
     S: CllwOpeEncrypt + Clone + Send + 'static,
     S::Output: Send + 'static,
