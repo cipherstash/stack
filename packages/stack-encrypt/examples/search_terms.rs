@@ -12,9 +12,11 @@
 //! cargo run -p stack-encrypt --example search_terms
 //! ```
 //!
-//! Talks to real ZeroKMS: needs `CS_CLIENT_ID` / `CS_CLIENT_KEY` and access-key
-//! or device-session credentials in the environment (see the `zerokms_auth`
-//! example for where they come from).
+//! Talks to real ZeroKMS. On a developer machine, `npx stash auth login` is
+//! sufficient: the cipher finds both the access token and the client key in
+//! the CLI's profile directory. In CI, set `CS_CLIENT_ACCESS_KEY` /
+//! `CS_WORKSPACE_CRN` and `CS_CLIENT_ID` / `CS_CLIENT_KEY` instead (see the
+//! `zerokms_auth` example for the lookup order).
 
 use stack_encrypt::sem::{EqualityTerm, MatchTerm, OreTerm};
 use stack_encrypt::target::EncryptExt;

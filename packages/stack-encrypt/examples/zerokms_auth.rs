@@ -9,8 +9,9 @@
 //! cargo run -p stack-encrypt --example zerokms_auth
 //! ```
 //!
-//! Without ZeroKMS credentials in the environment it prints what it *would*
-//! do and exits — so it is safe to run anywhere, and CI builds it either way.
+//! On a developer machine, `npx stash auth login` is sufficient. Without any
+//! credentials it prints what it *would* do and exits — so it is safe to run
+//! anywhere, and CI builds it either way.
 
 use stack_auth::{AuthError, AuthStrategyFn, SecretToken, ServiceToken};
 use stack_encrypt::StackCipher;
@@ -20,20 +21,26 @@ use stack_kms::{EnvKeyProvider, StackKmsBuilder};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- The default: credentials from the environment ----------------------
     //
-    // `StackCipher::new()` is `StackKmsBuilder::auto()` plus the environment's
-    // client key, plus a keyset resolution. `auto()` detects whichever
-    // strategy the environment is configured for (an access key in CI, a
-    // device session on a developer machine).
+    // `StackCipher::new()` is `StackKmsBuilder::auto()` plus a client key,
+    // plus a keyset resolution. Both credentials are looked up the same way —
+    // environment first, then the current workspace in the CLI's profile
+    // directory (`~/.cipherstash`, written by `npx stash auth login`):
     //
-    // CS_WORKSPACE_CRN + CS_CLIENT_ACCESS_KEY authenticate; CS_CLIENT_ID +
-    // CS_CLIENT_KEY are the client key that unwraps data keys.
+    //   access token:  CS_CLIENT_ACCESS_KEY + CS_WORKSPACE_CRN, else auth.json
+    //   client key:    CS_CLIENT_ID + CS_CLIENT_KEY,            else secretkey.json
+    //
+    // So a logged-in developer machine needs nothing else; CI sets the four
+    // variables.
     let cipher = match StackCipher::new().await {
         Ok(cipher) => cipher,
         // Nothing to connect to: say so and exit cleanly, so the example is
         // safe to run anywhere.
         Err(stack_encrypt::Error::Config(why)) => {
             println!("not configured for ZeroKMS: {why}");
-            println!("set CS_CLIENT_ID / CS_CLIENT_KEY and access-key credentials to run this.");
+            println!(
+                "run `npx stash auth login`, or set CS_CLIENT_ACCESS_KEY / CS_WORKSPACE_CRN \
+                 and CS_CLIENT_ID / CS_CLIENT_KEY, to run this."
+            );
             return Ok(());
         }
         // Configured but not accepted — typically a stale device session in
