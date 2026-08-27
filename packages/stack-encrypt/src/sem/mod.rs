@@ -11,13 +11,13 @@
 //!   positions; supports full-text match queries.
 //! * **ORE / OPE terms** ([`StackCipher::ore_term`] /
 //!   [`StackCipher::ope_term`]) — CLLW order-revealing / order-preserving
-//!   ciphertexts under a per-descriptor key derived *through the PRF*; support
-//!   range queries.
+//!   ciphertexts produced *inside the PRF visitor* from a per-descriptor key
+//!   derived through the PRF; support range queries.
 //!
 //! # PRF backends, visitors, and the 2-party future
 //!
 //! The PRF backend produces **blocks**; a [`PrfVisitor`] shapes blocks into
-//! the term ([`EqualityVisitor`], [`BloomVisitor`], [`CllwKeyVisitor`] —
+//! the term (`EqualityVisitor`, `BloomVisitor`, `OreVisitor`, `OpeVisitor` —
 //! all private). The shaping is pure and synchronous by construction: only
 //! the block production can involve I/O, so a visitor never knows which side
 //! of a round-trip it runs on. All pure work — option validation,
@@ -256,19 +256,56 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for BloomVisitor {
     }
 }
 
-/// A [`PrfVisitor`] that turns one PRF block into a self-wiping CLLW
-/// [`Key`](cllw_ore::Key). Key material never leaves the visitor unwrapped:
-/// the block arrives by value, is moved into the `ZeroizeOnDrop` key, and the
-/// stack copy left behind (`[u8; 32]` is `Copy`) is wiped before returning.
-struct CllwKeyVisitor;
+/// A [`PrfVisitor`] that carries the plaintext in and hands the CLLW ORE
+/// ciphertext out. The PRF block becomes the CLLW [`Key`](cllw_ore::Key)
+/// *inside* `visit_block` and dies there: the block arrives by value, is moved
+/// into the `ZeroizeOnDrop` key, the stack copy left behind (`[u8; 32]` is
+/// `Copy`) is wiped, the value is encrypted, and only the ciphertext leaves.
+/// No key is ever returned to the caller.
+///
+/// This is the shape a 2-party PRF needs: the caller supplies a PRF input
+/// (the descriptor) and receives a term, and where the key comes from — or
+/// whether one exists at all — is the visitor's business. Swapping the
+/// backend for one that returns per-prefix PRF outputs instead of a key
+/// changes this visitor, not its callers.
+///
+/// The plaintext is owned (`T: 'static`) because the visitor outlives the
+/// call under an asynchronous backend; `Send` for the same reason. CLLW
+/// failures surface through the visitor's `Value` rather than
+/// [`PrfVisitorError`] so they keep their own error type.
+struct OreVisitor<T>(T);
 
-impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for CllwKeyVisitor {
-    type Value = cllw_ore::Key;
+impl<T, P> PrfVisitor<[u8; 32], P> for OreVisitor<T>
+where
+    T: CllwOreEncrypt + Send + 'static,
+    T::Output: Send + 'static,
+    P: Send + 'static,
+{
+    type Value = Result<T::Output, cllw_ore::Error>;
 
     fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
         let key = cllw_ore::Key::from(block);
         block.zeroize();
-        Ok(key)
+        Ok(self.0.encrypt(&key))
+    }
+}
+
+/// The OPE twin of [`OreVisitor`]: same key handling, produces a CLLW OPE
+/// ciphertext (byte order is plaintext order).
+struct OpeVisitor<T>(T);
+
+impl<T, P> PrfVisitor<[u8; 32], P> for OpeVisitor<T>
+where
+    T: CllwOpeEncrypt + Send + 'static,
+    T::Output: Send + 'static,
+    P: Send + 'static,
+{
+    type Value = Result<T::Output, cllw_ore::Error>;
+
+    fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
+        let key = cllw_ore::Key::from(block);
+        block.zeroize();
+        Ok(self.0.encrypt_ope(&key))
     }
 }
 
@@ -333,45 +370,50 @@ impl<K> StackCipher<K> {
     }
 
     /// Generate an order-revealing (CLLW ORE) term for a range-queryable value
-    /// under the field `descriptor`. The ORE key is derived through the PRF
-    /// from the descriptor alone — the plaintext never enters the PRF.
+    /// under the field `descriptor`. The PRF input is the descriptor alone —
+    /// the plaintext never enters the PRF; it travels in the visitor, which
+    /// derives the per-descriptor CLLW key from the PRF block and encrypts
+    /// under it in one step (`OreVisitor`). The key never leaves the
+    /// visitor.
     ///
-    /// Supported inputs: `u16`/`u32`/`u64`/`u128`, `&str`, `&[u8]` (via
-    /// [`CllwOreEncrypt`]).
+    /// The derivation is deterministic, so write-time and query-time terms
+    /// agree; under a 2-party PRF backend it is a visible ZeroKMS event. The
+    /// PRF context is PAE-encoded `[domain, descriptor]` — the same framing
+    /// every other term kind uses (see the module docs), so no reimplementation
+    /// of this derivation can collide with an equality or match derivation.
+    ///
+    /// Supported inputs: `u16`/`u32`/`u64`/`u128`, `&'static str`, `String`,
+    /// `Vec<u8>` (via [`CllwOreEncrypt`]). The value must be owned
+    /// (`'static`) because the visitor carries it; pass a `String` for
+    /// borrowed text.
     pub async fn ore_term<T>(&self, value: T, descriptor: &str) -> Result<T::Output, TermError>
     where
-        T: CllwOreEncrypt,
+        T: CllwOreEncrypt + Send + 'static,
+        T::Output: Send + 'static,
     {
-        let key = self.derive_cllw_key(ORE_KEY_DOMAIN, descriptor).await?;
-        value.encrypt(&key).map_err(TermError::Ore)
+        let context = PrfContext::pae(&[ORE_KEY_DOMAIN, descriptor.as_bytes()]);
+        descriptor
+            .prf_visit_with_context(self.prf().clone(), context, OreVisitor(value))
+            .await
+            .map_err(TermError::from_prf)?
+            .map_err(TermError::Ore)
     }
 
     /// Generate an order-preserving (CLLW OPE) term: ciphertexts compare with
     /// plain lexicographic byte order, no custom comparator required.
-    /// Encrypt-only — pair with the record ciphertext for round-trips.
+    /// Encrypt-only — pair with the record ciphertext for round-trips. Key
+    /// handling and input bounds as for [`ore_term`](Self::ore_term); the OPE
+    /// key derives under its own domain so the two schemes never share one.
     pub async fn ope_term<T>(&self, value: T, descriptor: &str) -> Result<T::Output, TermError>
     where
-        T: CllwOpeEncrypt,
+        T: CllwOpeEncrypt + Send + 'static,
+        T::Output: Send + 'static,
     {
-        let key = self.derive_cllw_key(OPE_KEY_DOMAIN, descriptor).await?;
-        value.encrypt_ope(&key).map_err(TermError::Ore)
-    }
-
-    /// Derive a per-descriptor CLLW key: PRF of the descriptor under a
-    /// PAE-encoded `[domain, descriptor]` context — the same framing every
-    /// other term kind uses (see the module docs), so no reimplementation of
-    /// this derivation can collide with an equality or match derivation.
-    /// Deterministic, so write-time and query-time terms agree; under a
-    /// 2-party PRF backend this derivation is a visible ZeroKMS event.
-    async fn derive_cllw_key(
-        &self,
-        domain: &'static [u8],
-        descriptor: &str,
-    ) -> Result<cllw_ore::Key, TermError> {
-        let context = PrfContext::pae(&[domain, descriptor.as_bytes()]);
+        let context = PrfContext::pae(&[OPE_KEY_DOMAIN, descriptor.as_bytes()]);
         descriptor
-            .prf_visit_with_context(self.prf().clone(), context, CllwKeyVisitor)
+            .prf_visit_with_context(self.prf().clone(), context, OpeVisitor(value))
             .await
-            .map_err(TermError::from_prf)
+            .map_err(TermError::from_prf)?
+            .map_err(TermError::Ore)
     }
 }

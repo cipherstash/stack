@@ -255,3 +255,21 @@ async fn ore_and_ope_keys_are_domain_separated() {
     let ope = gen.ope_term(42u64, "users/age").await.unwrap();
     assert_ne!(ore.as_ref(), ope.as_ref());
 }
+
+#[tokio::test]
+async fn owned_and_borrowed_text_yield_identical_ore_and_ope_terms() {
+    let gen = generator().await;
+    let borrowed = gen.ore_term("apple", "users/name").await.unwrap();
+    let owned = gen
+        .ore_term(String::from("apple"), "users/name")
+        .await
+        .unwrap();
+    assert_eq!(borrowed.as_ref(), owned.as_ref());
+
+    let borrowed = gen.ope_term("apple", "users/name").await.unwrap();
+    let owned = gen
+        .ope_term(String::from("apple"), "users/name")
+        .await
+        .unwrap();
+    assert_eq!(borrowed.as_ref(), owned.as_ref());
+}
