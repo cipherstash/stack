@@ -8,7 +8,7 @@
 | **Supersedes** | The "Batching and async" section of `target-directed-encryption.md` |
 | **Prompted by** | Review of PR #2147 |
 
-> **Companion:** [`target-directed-encryption.md`](../../target-directed-encryption.md) —
+> **Companion:** [`target-directed-encryption.md`](../target-directed-encryption.md) —
 > the original design. Everything it says about *what* the target type decides
 > stands. This RFC replaces only *how the async is shaped*, which the
 > implementation got wrong.
