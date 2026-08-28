@@ -1,26 +1,16 @@
 # Target-directed encryption
 
-**Status:** design record. The *decisions* stand; the *code sketches* are superseded — see the next section before reading any snippet as the API.
-**Date:** 2026-08-21 (design); implementation notes 2026-08-28
+**Status:** design record, reconciled with the shipped API on 2026-08-28. The snippets below are the API as it ships in `stack-encrypt` (cipherstash-suite #2146, #2147); the async shape is specified by [RFC 0002](rfcs/0002-async-shape-for-target-directed-encryption.md).
+**Date:** 2026-08-21
 **Scope:** vitaminc (primitives), stack-encrypt (the new trait + batching), eql-bindings (one class of targets)
 
-## What the implementation changed
+## Implementation notes
 
-This is the document that decided *what the target type decides*: one trait on the output type, leaves handwritten, composites assembled from leaves, context threaded per value rather than baked into the cipher, ORE held as a capability rather than grown into vitaminc. All of that shipped as designed on cipherstash-suite #2146 and #2147.
+Everything this document decides shipped as designed: one trait on the output type, leaves handwritten, composites assembled from leaves, context threaded per value, ORE held rather than grown into vitaminc. Three things differ from the original sketches and are marked inline where they appear:
 
-The snippets below predate the implementation and are kept as the record of what was proposed. Where they differ from the shipped API, the shipped API wins. The differences, so no snippet here is mistaken for something that compiles:
-
-| Sketch here | Shipped | Why |
-|---|---|---|
-| `EncryptedFrom` / `DecryptedFrom` | `EncryptFrom` / `DecryptFrom` | Review rename; pairs with `encrypt_into` / `decrypt_into` as `From` pairs with `Into`. |
-| Associated `type Pending` and `type Error` on the trait | Neither. The **cipher** owns both: `EncryptTarget::Output<'a, T>` and `EncryptTarget::Error`. `encrypt_from` returns `C::Output<'a, Self>`. | [RFC 0002](rfcs/0002-async-shape-for-target-directed-encryption.md) §2–§4. A trait-level future forces every cipher async and makes batching unreachable. `StackCipher` sets `Output = Pending<'a, T, K>`, a request carrier; a sync cipher can set `Output = Result<T, E>`. |
-| `encrypt_into(&cipher)` | `encrypt_into(&cipher, context)` — context is a required argument at every call site. | The design's own "Context, not cipher scoping" section; the sketches simply abbreviated it. |
-| Context is `Context<'_>` | Any `Ctx: EncryptContext<'c>`, blanket over `IntoAad + IntoPrfContext + Clone`; `&str` and `String` qualify. | One value reaches both the AEAD associated data and the PRF context. |
-| "non-EQL callers pass whatever context they like or `Aad::empty()`" | **Withdrawn.** An empty context is rejected during the synchronous build (`Error::EmptyContext`), before any I/O. | With an empty context, equal plaintexts in different fields produce identical terms, every field shares one ORE/OPE key, and ciphertexts transplant between fields. The check is structural over the encoding (`""`, `None`, `Some("")`, `("", "")` are all empty); cipherstash/vitaminc#291 tracks moving it into the type. |
-| `#[derive(Encrypted)]` | Not built. Composites are hand-written `EncryptFrom` impls that call each field's `encrypt_from`, merge the outputs with `zip` / `Pending::all`, and shape with `map` — see `packages/stack-encrypt/examples/encrypted_record.rs`. | The derive is still the intended end state; it is future work, not a dropped decision. |
-| `ProvidesOre` over `ore_rs::OreCipher` | Not adopted. ORE/OPE are `OreTerm<T>` / `OpeTerm<T>` over `cllw-ore`, and the per-field CLLW key is derived through the PRF *inside* the term's visitor — no key is ever handed back. | #2146. The capability-accessor idea stands; the concrete scheme and where the key lives changed. |
-
-Of the open decisions at the end: **1** resolved as option (1), `S: Encrypt + Clone` at the bridge; **4** dissolved — errors belong to the cipher, so there is no per-target error to unify; **5** implemented as `DecryptFrom` + `decrypt_into`, with a `DecryptContext` bound (`IntoAad` only, since decryption derives nothing); **6** resolved as stack-encrypt. **2** and **3** stand as written.
+- **The derive is not built yet.** Composites are hand-written `EncryptFrom` impls today (`packages/stack-encrypt/examples/encrypted_record.rs`); `#[derive(Encrypted)]` remains the intended end state.
+- **ORE/OPE use `cllw-ore`, not `ore-rs`,** and the per-field key is derived through the PRF *inside* the term — there is no `ProvidesOre` accessor and no key is ever handed back.
+- **An empty context is rejected**, not permitted. `Aad::empty()` was proposed for non-EQL callers; the implementation refuses it (`Error::EmptyContext`).
 
 ## Problem
 
@@ -70,48 +60,71 @@ Invert it. One trait, on the output type, describing what that type is:
 
 ```rust
 /// `Self` is an encrypted representation of `S`, producible by a cipher `C`.
-pub trait EncryptedFrom<S, C>: Sized {
-    type Error;
-    type Pending: IntoFuture<Output = Result<Self, Self::Error>>;
+pub trait EncryptFrom<S, C: EncryptTarget>: Sized {
+    fn encrypt_from<'a, 'c, Ctx>(source: &'a S, cipher: &'a C, context: Ctx) -> C::Output<'a, Self>
+    where
+        Ctx: EncryptContext<'c>,
+        Self: 'a;
+}
 
-    fn encrypt_from(source: &S, cipher: &C, context: Context<'_>) -> Self::Pending;
+/// Implemented by ciphers: decides what an `EncryptFrom` implementation hands back.
+pub trait EncryptTarget {
+    type Error;
+    type Output<'a, T> where Self: 'a, T: 'a;
 }
 ```
 
-> **Superseded sketch.** The shipped trait is `EncryptFrom<S, C: EncryptTarget>` with
-> `fn encrypt_from<'a, 'c, Ctx: EncryptContext<'c>>(source: &'a S, cipher: &'a C, context: Ctx) -> C::Output<'a, Self>`.
-> There is no associated `Pending` or `Error`; the cipher owns both. RFC 0002 explains why.
+Reads as a noun: *`EqualityTerm` is an encrypted form of `&str`*.
 
-Reads as a noun: *`Hmac256` is an encrypted form of `i64`*.
-
-`Pending` is deliberately not a future. It is a handle that resolves to one — the same trick `vitaminc-prf` already uses (`Prf::Ok<T>: IntoFuture`, with `ReadyPrf` for sync backends). A local ORE term resolves immediately; a ZeroKMS term joins an open batch and resolves when the batch flushes. Callers see one uniform `.await`.
+The output shape belongs to the **cipher**, not the trait — the same rule vitaminc follows for `Cipher::Ok` and `Prf::Ok<T>`. A cipher that does no I/O sets `Output<'a, T> = Result<T, Self::Error>`: no future, no `.await`. `StackCipher` sets `Output<'a, T> = Pending<'a, T, K>`, a request carrier: a local term resolves immediately, a ciphertext queues its data-key request, and merged pendings settle in one batched ZeroKMS call when awaited. The trait fixes neither a future nor an error type; RFC 0002 records why it must not.
 
 The call-site sugar is `Into` over `From` — blanket, never implemented by hand:
 
 ```rust
-pub trait EncryptExt: Sized {
-    fn encrypt_into<T, C>(self, cipher: &C) -> T::Pending
+pub trait EncryptExt {
+    fn encrypt_into<'a, 'c, T, C, Ctx>(&'a self, cipher: &'a C, context: Ctx) -> C::Output<'a, T>
     where
-        T: EncryptedFrom<Self, C>;
+        C: EncryptTarget,
+        T: EncryptFrom<Self, C> + 'a,
+        Ctx: EncryptContext<'c>,
+        Self: Sized;
 }
-impl<S> EncryptExt for S {}
+impl<S> EncryptExt for S { /* delegates to T::encrypt_from */ }
 ```
 
-> **Superseded sketch.** Shipped as `fn encrypt_into<'a, 'c, T, C, Ctx>(&'a self, cipher: &'a C, context: Ctx) -> C::Output<'a, T>` — borrows `self`, takes the context, returns the cipher's output.
+### Leaves are handwritten; composites are assembled
 
-### Leaves are handwritten; composites are derived
-
-**Leaves** are the single-primitive types. Each names exactly one capability, and that is the *only* place in the design where a primitive is named:
+**Leaves** are the single-primitive types. Each names exactly one primitive, and that is the *only* place in the design where a primitive is named. As shipped in `stack-encrypt`:
 
 ```rust
-impl<S, C> EncryptedFrom<S, C> for Ciphertext   where S: Encrypt,           C: Cipher      { ... }
-impl<S, C> EncryptedFrom<S, C> for Hmac256      where S: PrfValue,          C: Prf         { ... }
-impl<S, C> EncryptedFrom<S, C> for OreBlock256  where S: ToOrderableBytes,  C: ProvidesOre { ... }
+impl<S, K>    EncryptFrom<S, StackCipher<K>> for StackCipherText where S: Encrypt + Clone                     { ... }
+impl<S, K>    EncryptFrom<S, StackCipher<K>> for EqualityTerm    where S: PrfValue + Clone                    { ... }
+impl<S, K, O> EncryptFrom<S, StackCipher<K>> for MatchTerm<O>    where S: AsRef<str>, O: MatchConfig          { ... }
+impl<S, K>    EncryptFrom<S, StackCipher<K>> for OreTerm<S>      where S: CllwOreEncrypt + Clone + Send + 'static { ... }
 ```
 
-These live wherever the field type lives — for EQL, in `eql-bindings`, which already owns `Ciphertext`, `Hmac256`, `OreBlock256` as wire newtypes. Encoding decisions (base85, block width) belong there, not in vitaminc.
+EQL's wire newtypes (`Ciphertext`, `Hmac256`, `OreBlock256`) get the same treatment in `eql-bindings`, which owns them; encoding decisions (base85, block width) belong there, not in vitaminc or stack-encrypt.
 
-**Composites** are derived. The macro fans out to each field's impl, joins the pending handles, and assembles:
+> The leaf impls currently name `StackCipher<K>` rather than a capability bound. CIP-3897 tracks lifting each term into its own module with its own input trait and a capability-shaped cipher bound.
+
+**Composites** fan out to each field's impl, merge the outputs, and assemble. Today that is written by hand — one impl, in the shape the derive will eventually generate:
+
+```rust
+impl<K> EncryptFrom<u32, StackCipher<K>> for EncryptedInt {
+    fn encrypt_from<'a, 'c, Ctx>(source: &'a u32, cipher: &'a StackCipher<K>, context: Ctx) -> Pending<'a, Self, K>
+    where Ctx: EncryptContext<'c>, Self: 'a,
+    {
+        StackCipherText::encrypt_from(source, cipher, context.clone())
+            .zip(EqualityTerm::encrypt_from(source, cipher, context.clone()))
+            .zip(OreTerm::<u32>::encrypt_from(source, cipher, context))
+            .map(|((ciphertext, eq), ord)| Self { ciphertext, eq, ord })
+    }
+}
+```
+
+One context fans out to every field. `zip` concatenates the fields' requests, so the whole record is still one batched call when awaited.
+
+**The derive** (not yet built) writes exactly that impl from the struct:
 
 ```rust
 #[derive(Encrypted)]
@@ -127,10 +140,10 @@ struct IntegerOrdOre {
 generating, per listed source:
 
 ```rust
-impl<C> EncryptedFrom<i64, C> for IntegerOrdOre
+impl<C> EncryptFrom<i64, C> for IntegerOrdOre
 where
-    Ciphertext:  EncryptedFrom<i64, C>,
-    OreBlock256: EncryptedFrom<i64, C>,
+    Ciphertext:  EncryptFrom<i64, C>,
+    OreBlock256: EncryptFrom<i64, C>,
 { /* join both, assemble */ }
 ```
 
@@ -138,7 +151,7 @@ The capability bounds (`C: Cipher`, `C: ProvidesOre`) arrive **transitively from
 
 ### Which sources a target accepts
 
-`EncryptedFrom<S, C>` is generic over `S`; only the `source` attribute pins it. Two modes:
+`EncryptFrom<S, C>` is generic over `S`; only the derive's `source` attribute pins it. Two modes:
 
 - **Omit `source`** — the derive emits a single impl generic over `S`. The accepted sources are then exactly the intersection of what the field types accept. Nothing to maintain.
 - **List sources** — one impl per listed type, restricting the target.
@@ -147,7 +160,7 @@ Use the list for EQL types. `eql_v3_integer_ord_ore` is a schema statement that 
 
 ### Rows are the same mechanism
 
-One level up, unchanged:
+One level up, unchanged (derive syntax, future):
 
 ```rust
 #[derive(Encrypted)]
@@ -160,21 +173,32 @@ struct EncryptedUser {
 let row: EncryptedUser = user.encrypt_into(&cipher, "users").await?;   // one batch
 ```
 
-Leaf, payload and row are the same trait and the same derive; recursion does the rest. Earlier sketches of this design had a separate input-side derive for rows — that was a second mechanism the naming was hiding.
+Leaf, payload and row are the same trait, and a column of rows is `Vec<T>`'s structural impl over the same trait — `ages.encrypt_into(&cipher, ctx)` for a `Vec<u32>` is one batched call. Recursion does the rest. Earlier sketches of this design had a separate input-side derive for rows — that was a second mechanism the naming was hiding.
 
 ### Relationship to `Encrypt`
 
 `Encrypt` is not bypassed or superseded. It **is** the source-ciphertext field. The `Ciphertext` leaf impl is a bridge:
 
 ```rust
-impl<S, C> EncryptedFrom<S, C> for Ciphertext
-where S: Encrypt, C: Cipher
+impl<S, K> EncryptFrom<S, StackCipher<K>> for StackCipherText
+where S: Encrypt + Clone
 {
-    fn encrypt_from(source: &S, cipher: &C, context: Context<'_>) -> Self::Pending {
-        source.encrypt_with_aad(cipher, context)   // vitaminc Encrypt, untouched
+    fn encrypt_from<'a, 'c, Ctx>(source: &'a S, cipher: &'a StackCipher<K>, context: Ctx) -> Pending<'a, Self, K>
+    where Ctx: EncryptContext<'c>, Self: 'a,
+    {
+        let aad = context.into_aad().into_owned();
+        if is_degenerate_aad(aad.as_bytes()) {
+            return Pending::failed(cipher, Error::EmptyContext);
+        }
+        match source.clone().encrypt_with_aad(cipher, aad) {   // vitaminc Encrypt, untouched
+            Ok(tree) => seal_pending(cipher, tree),              // one data-key request per leaf
+            Err(_) => Pending::ready(cipher, Err(Error::Aead)),
+        }
     }
 }
 ```
+
+(`Clone` because a composite hands the same borrowed source to several fields — open decision 1, resolved as the simple option.)
 
 Every existing impl — `String`, `u32`, `Vec<T>`, `HashMap<K, V>`, `Protected<T>`, `Option<T>`, `Element<T>` — is therefore a valid source for free, and `#[derive(Encrypt)]` (PR #287) is what makes a nested struct usable as one.
 
@@ -183,33 +207,17 @@ Two layers, cleanly split:
 | | drives | produces |
 |---|---|---|
 | `Encrypt` / `Cipher` | the cipher | one ciphertext |
-| `EncryptedFrom` | the target type | a record of derived outputs, ciphertext being one field |
+| `EncryptFrom` | the target type | a record of derived outputs, ciphertext being one field |
 
 ## Capabilities
 
 A cipher advertises what it can do by implementing traits. Stack-encrypt's cipher implements `Cipher` and `Prf` directly — both are vitaminc's own.
 
-**ORE is different, and vitaminc should not grow an ORE trait.** `ore-rs` already has one, already shaped the way we would have shaped it:
+**ORE is different, and vitaminc should not grow an ORE trait.** The scheme lives in its own crate and the cipher *holds* what it needs rather than implementing the scheme.
 
-```rust
-pub trait OreCipher: Sized {
-    fn init(k1: &[u8; 16], k2: &[u8; 16]) -> Result<Self, OreError>;
-    fn encrypt<const N: usize>(&self, input: &PlainText<N>) -> Result<CipherText<Self, N>, OreError>;
-}
-```
+The original proposal was `ore-rs` behind a `ProvidesOre` accessor on the cipher. What shipped is `cllw-ore`, and the key never surfaces at all: `OreTerm<T>` / `OpeTerm<T>` derive the per-field CLLW key through the PRF (from the field context, never the plaintext) *inside* the term's PRF visitor, encrypt there, and hand back only the ciphertext. Under the 2-party PRF backend that means per-field key derivation is an auditable ZeroKMS event and no key exists on either side to be leaked.
 
-with `orderable-bytes::ToOrderableBytes` supplying canonical order-preserving fixed-width encodings for the scalars, chrono and decimal types, carrying documented equality-and-order guarantees. That is exactly the reusable primitive vitaminc would otherwise have had to invent.
-
-Note the shape: `init` from two raw 16-byte keys means `OreCipher` **is the scheme**, not a keyset holder. Stack-encrypt's cipher therefore *holds* one rather than implementing it:
-
-```rust
-pub trait ProvidesOre {
-    type Ore: ore_rs::OreCipher;
-    fn ore(&self) -> &Self::Ore;
-}
-```
-
-Capability accessors, not one god trait. The same shape absorbs any future primitive whose trait is owned elsewhere (CLLW-OPE for the `op` wire key).
+The principle stands: capability accessors, not one god trait. `StackCipher` implements vitaminc's `Cipher` and exposes its `Prf`; any future primitive whose trait is owned elsewhere is absorbed the same way.
 
 ## Context, not cipher scoping
 
@@ -230,7 +238,7 @@ A scoped cipher (`cipher.for_column("users", "age")`) was considered and rejecte
 
 EQL's `i` field is currently unauthenticated metadata. A ciphertext from `users.email` can be transplanted into `users.name` and still decrypts. Passing the identifier as context — which reaches both `Aad` and `PrfContext` — closes that class of attack.
 
-This stays a caller decision at the call site, not cipher state: non-EQL callers pass whatever context describes the field. What they may **not** pass is an empty one — the implementation rejects it (`Error::EmptyContext`), for the reasons in the table above. This sentence originally offered `Aad::empty()` as an option; that was wrong, and the code says so.
+This stays a caller decision at the call site, not cipher state: non-EQL callers pass whatever context describes the field. What they may **not** pass is an empty one. With an empty context, equal plaintexts in different fields produce identical terms, every field shares one ORE/OPE key, and ciphertexts transplant between fields — so every built-in impl rejects it during the synchronous build (`Error::EmptyContext`), before any I/O. "Empty" is structural over the encoding: `()`, `""`, `None`, `Some("")` and `("", "")` are all empty. (cipherstash/vitaminc#291 tracks carrying non-emptiness in the type instead.)
 
 ## Batching and async
 
@@ -242,18 +250,18 @@ The row-level derive above is the entry point that makes this pay: one `.await` 
 
 Worth preserving from the spike: `ExactIndex::analyze() -> AnalyzedExactIndex`.
 
-Splitting **analysis** (tokenise, normalise, extract n-grams — pure, sync, keyless) from **derivation** (keyed, possibly async) is right, and text-match indexes cannot skip it. Under this design, analysis is a private stage inside a leaf impl (`BloomFilter: EncryptedFrom<String, C>` tokenises before it derives), exposed as a public trait only if a custom analyser is needed.
+Splitting **analysis** (tokenise, normalise, extract n-grams — pure, sync, keyless) from **derivation** (keyed, possibly async) is right, and text-match indexes cannot skip it. Under this design, analysis is a private stage inside a leaf impl (`MatchTerm<O>` tokenises before it derives; the tokenizer, `k` and `m` are type-level via `MatchConfig`), exposed as a public trait only if a custom analyser is needed.
 
 ## Naming
 
-- **`EncryptedFrom`** for the trait. Spelling the direction keeps bounds unambiguous, and it pairs with `encrypt_into` exactly as `From` pairs with `Into`.
+- **`EncryptFrom`** for the trait (first shipped as `EncryptedFrom`, renamed in review). Spelling the direction keeps bounds unambiguous, and it pairs with `encrypt_into` exactly as `From` pairs with `Into`; `DecryptFrom` / `decrypt_into` mirror it.
 - **`#[derive(Encrypted)]`** for the macro. Reads as a noun on the struct.
 - Matching both to `Encrypted`, the way `Serialize` matches `derive(Serialize)`, is a defensible alternative.
 - **Avoid `CipherText` / `EncryptedValue`.** `CipherText` collides with vitaminc's `AesCipherText` container and with eql-bindings' `Ciphertext` newtype — which is a *field inside* these types, not the type itself.
 
 An earlier iteration had two traits, `EncryptInto<T, C>` on the source and `DeriveFrom<S, C>` on the field type. They are the same relation written in opposite directions; the split was the main source of confusion and is gone.
 
-## Decisions still open
+## Decisions, as resolved
 
 **1. Ownership at the bridge.** `Encrypt::encrypt_with_aad(self, ...)` takes ownership; `encrypt_from(source: &S, ...)` borrows, because k fields share one source. The `Ciphertext` bridge above does not compile as written. Options:
 
@@ -261,17 +269,17 @@ An earlier iteration had two traits, `EncryptInto<T, C>` on the source and `Deri
 2. Blanket `impl<T> Encrypt for &T where T: Encrypt`. vitaminc already has `impl Encrypt for &str`, so the shape exists but is not systematic.
 3. Derive hands ownership to the ciphertext field and borrows to the term fields. Cheapest; puts field-ordering knowledge into the macro.
 
-Recommend (1) now, (2) later if the copies show up in a profile.
+**Resolved:** (1). `S: Encrypt + Clone` on the bridge; (2) later if the copies show up in a profile.
 
 **2. Fan-out and zeroize.** Either way the source reaches k consumers, so there are k `Protected` copies, each wiped on drop. Bounded and acceptable for scalars and short strings, but it is a real widening of the custody window and should be stated in the crate docs rather than discovered.
 
-**3. Orphan rule.** `impl<C> EncryptedFrom<i64, C> for IntegerOrdOre` in eql-bindings is legal — `Self` is local. The reverse-direction sugar (`EncryptExt::encrypt_into` on `i64`) is a blanket impl over a local trait, also fine. Worth a compile test pinning both, since the layout puts the trait, the source type and the target type in three different crates.
+**3. Orphan rule.** `impl<C> EncryptFrom<i64, C> for IntegerOrdOre` in eql-bindings is legal — `Self` is local. The reverse-direction sugar (`EncryptExt::encrypt_into` on `i64`) is a blanket impl over a local trait, also fine. Worth a compile test pinning both, since the layout puts the trait, the source type and the target type in three different crates.
 
-**4. Error unification.** `Cipher::Error` and `PrfError<BackendError>` meet inside one `encrypt_from`. `EncryptedFrom::Error` needs a `From` for both, plus `OreError`.
+**4. Error unification.** **Dissolved.** There is no per-target error: `EncryptTarget::Error` belongs to the cipher, and `StackCipher`'s `Error` already covers AEAD, PRF, ORE and ZeroKMS failures.
 
-**5. Decrypt.** The mirror is `DecryptedFrom<T, C>` on the plaintext type, with only the source-ciphertext field participating and `decrypt_into` as the blanket sugar. Not specified here.
+**5. Decrypt.** **Implemented** as `DecryptFrom<S, C: DecryptTarget>` on the plaintext type with `decrypt_into` as the blanket sugar. Only the source-ciphertext field participates (terms are one-way). The context bound is `DecryptContext` — `IntoAad` only, since decryption derives nothing.
 
-**6. Where `EncryptedFrom` lives.** Argued here as stack-encrypt's, since target-directed assembly is the thing stack-encrypt adds and vitaminc's `Encrypt` already covers cipher-directed encryption. If it turns out to be useful to vitaminc consumers who never touch stack-encrypt, it could move down — but not before there is a second consumer.
+**6. Where `EncryptFrom` lives.** **Resolved:** stack-encrypt. Argued here as stack-encrypt's, since target-directed assembly is the thing stack-encrypt adds and vitaminc's `Encrypt` already covers cipher-directed encryption. If it turns out to be useful to vitaminc consumers who never touch stack-encrypt, it could move down — but not before there is a second consumer.
 
 ## Non-goals
 
