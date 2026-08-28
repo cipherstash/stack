@@ -302,10 +302,3 @@ pub enum Error {
     #[error("Unexpected error: {0}")]
     Unexpected(String),
 }
-
-#[cfg(feature = "http")]
-impl From<crate::connection::ConnectionInitError> for Error {
-    fn from(e: crate::connection::ConnectionInitError) -> Self {
-        Self::ConnectionInit(Box::new(e))
-    }
-}

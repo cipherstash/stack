@@ -75,17 +75,13 @@ pub(crate) mod codes {
 // Per-error structs
 // ---------------------------------------------------------------------------
 
-/// The HTTP request to the auth server failed (network error, timeout, etc.).
-#[cfg(feature = "http")]
-#[derive(Debug, thiserror::Error, miette::Diagnostic)]
-#[error("HTTP request failed: {0}")]
-pub struct RequestError(pub reqwest::Error);
-
 /// The request to the auth server failed (network error, timeout, etc.).
 ///
-/// Without the `http` feature the crate makes no requests of its own, so the
-/// payload is whatever the host's transport reports.
-#[cfg(not(feature = "http"))]
+/// The payload is always boxed, never a concrete `reqwest::Error`: Cargo
+/// features are additive, so a type whose shape changes with `http` breaks any
+/// no-http consumer the moment something else in the graph turns the feature
+/// on. With `http` the box holds the `reqwest::Error`; without it, whatever
+/// the host's own transport reports.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("HTTP request failed: {0}")]
 pub struct RequestError(pub Box<dyn std::error::Error + Send + Sync + 'static>);
@@ -851,9 +847,16 @@ impl serde::Serialize for AuthError {
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "http")]
+impl From<reqwest::Error> for RequestError {
+    fn from(e: reqwest::Error) -> Self {
+        Self(Box::new(e))
+    }
+}
+
+#[cfg(feature = "http")]
 impl From<reqwest::Error> for AuthError {
     fn from(e: reqwest::Error) -> Self {
-        Self::Request(RequestError(e))
+        Self::Request(e.into())
     }
 }
 

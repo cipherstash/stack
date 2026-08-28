@@ -43,13 +43,25 @@ pub trait ZeroKMSConnection: ZeroKMSConnectionInit {
     /// Record the ZeroKMS endpoint if none is known yet.
     ///
     /// [`StackKms`](crate::StackKms) calls this with the endpoint named by the
-    /// access token's `services` claim the first time it holds a token. A
-    /// connection that was pinned to an endpoint at init keeps it — the first
-    /// value wins — so callers can override discovery without racing it.
-    fn ensure_base_url(&self, url: ZeroKmsEndpoint);
+    /// access token's `services` claim the first time it holds a token.
+    ///
+    /// Endpoint discovery is `StackKms` policy, not something every transport
+    /// needs: the default is a no-op, paired with a `has_base_url` of `true`,
+    /// which is correct for a transport that does not build URLs from a base
+    /// (it dispatches on the request's endpoint name) or that was pinned at
+    /// init. A transport that *does* want discovery must override **both**,
+    /// and its `ensure_base_url` must keep the first value it is given — an
+    /// endpoint pinned at init must not be overridden by a later token.
+    fn ensure_base_url(&self, _url: ZeroKmsEndpoint) {}
 
     /// Whether an endpoint is known, either from init or from a previous
     /// [`ensure_base_url`](Self::ensure_base_url). While this is `false`,
     /// [`send`](Self::send) cannot build a request URL.
-    fn has_base_url(&self) -> bool;
+    ///
+    /// Defaults to `true`: a transport that needs no base URL always has
+    /// everything it needs, so `StackKms` never tries to resolve one from a
+    /// token. Override alongside [`ensure_base_url`](Self::ensure_base_url).
+    fn has_base_url(&self) -> bool {
+        true
+    }
 }

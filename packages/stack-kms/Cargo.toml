@@ -39,10 +39,10 @@ http2 = ["http", "reqwest/http2"]
 
 [dependencies]
 recipher = { workspace = true }
-# Path rather than workspace dep so `default-features = false` takes effect
-# (a workspace dep's defaults cannot be turned off by a member): stack-auth's
-# `http` feature rides on this crate's `http` feature.
-stack-auth = { path = "../stack-auth", version = "0.42.3", default-features = false }
+# The workspace entry is already `default-features = false`, so stack-auth's
+# `http` feature rides on this crate's `http` feature rather than arriving by
+# default.
+stack-auth = { workspace = true }
 zerokms-protocol = { workspace = true }
 
 vitaminc = { workspace = true, features = ["protected", "random"] }

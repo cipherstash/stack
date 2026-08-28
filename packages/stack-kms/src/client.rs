@@ -31,8 +31,12 @@ pub struct InvalidClientOpts(&'static str);
 
 /// Options for configuring certain behaviours of the [`Client`].
 ///
-/// You should generally use the [`StackKmsBuilder`](crate::StackKmsBuilder) to
-/// create a configured instance rather than instantiating this struct directly.
+// The builder is the `http` feature's entry point; without it the host
+// constructs `ClientOpts` for its own transport directly.
+#[cfg_attr(
+    feature = "http",
+    doc = "You should generally use the [`StackKmsBuilder`](crate::StackKmsBuilder) to create a configured instance rather than instantiating this struct directly.\n"
+)]
 ///
 /// The limits are validated by the `with_*` setters, so a `ClientOpts` value
 /// is always usable: a zero `max_keys_per_req` would panic in `slice::chunks`
@@ -427,8 +431,11 @@ where
     /// This is the seam for hosts that provide their own transport (the
     /// WASI/wazero guest implements [`ZeroKMSConnection`] over a host-imported
     /// function) and the only constructor available without the `http`
-    /// feature. With it, [`StackKmsBuilder`](crate::StackKmsBuilder) is the
-    /// usual way to configure the default [`HttpConnection`].
+    /// feature.
+    #[cfg_attr(
+        feature = "http",
+        doc = "With it, [`StackKmsBuilder`](crate::StackKmsBuilder) is the usual way to configure the default [`HttpConnection`].\n"
+    )]
     ///
     /// The connection is initialised from `opts`'s connection options; the
     /// ZeroKMS endpoint is taken from the access token's `services` claim on

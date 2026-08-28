@@ -22,7 +22,7 @@ publish = false
 stack-kms = { path = "../stack-kms", default-features = false, features = ["profile"] }
 # `StackCipher::new()` builds a ZeroKMS client from the environment, so its
 # return type names the auto-detected auth strategy. Only needed with `http`.
-stack-auth = { path = "../stack-auth", version = "0.42.3", optional = true, default-features = false }
+stack-auth = { workspace = true, optional = true }
 # `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`, re-exported from `target`.
 stack-encrypt-derive = { path = "../stack-encrypt-derive" }
 

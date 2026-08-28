@@ -344,8 +344,6 @@ mod tests {
     use super::*;
     use crate::test_support::{claims_with_workspace, jwt_token, raw_token};
     use crate::AuthError;
-    #[cfg(feature = "http")]
-    use mocktail::prelude::*;
 
     fn make_token(expires_in: u64, refresh: bool) -> Token {
         Token {
@@ -361,31 +359,6 @@ mod tests {
             client_id: None,
             device_instance_id: None,
         }
-    }
-
-    #[cfg(feature = "http")]
-    fn refresh_response_json() -> serde_json::Value {
-        serde_json::json!({
-            "access_token": "new-access-token",
-            "token_type": "Bearer",
-            "expires_in": 3600,
-            "refresh_token": "new-refresh-token"
-        })
-    }
-
-    #[cfg(feature = "http")]
-    fn error_json(error: &str) -> serde_json::Value {
-        serde_json::json!({
-            "error": error,
-            "error_description": format!("{error} occurred")
-        })
-    }
-
-    #[cfg(feature = "http")]
-    async fn start_server(mocks: MockSet) -> MockServer {
-        let server = MockServer::new_http("token-refresh-test").with_mocks(mocks);
-        server.start().await.unwrap();
-        server
     }
 
     #[test]
@@ -455,257 +428,281 @@ mod tests {
     }
 
     // ---- refresh() tests ----
-
-    #[cfg(feature = "http")]
-    #[tokio::test]
-    async fn test_refresh_success() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.json(refresh_response_json());
-        });
-        let server = start_server(mocks).await;
-        let base_url = server.url("");
-
-        let refresh_token = SecretToken::new("test-refresh-token");
-        let refreshed = Token::refresh(&refresh_token, &base_url, "cli", None)
-            .await
-            .unwrap();
-
-        assert_eq!(refreshed.access_token().as_str(), "new-access-token");
-        assert_eq!(refreshed.token_type(), "Bearer");
-        assert_eq!(
-            refreshed.refresh_token().unwrap().as_str(),
-            "new-refresh-token"
-        );
-        assert!(!refreshed.is_expired());
-        assert!((3598..=3600).contains(&refreshed.expires_in()));
-    }
-
-    #[cfg(feature = "http")]
-    #[tokio::test]
-    async fn test_refresh_invalid_grant() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.bad_request().json(error_json("invalid_grant"));
-        });
-        let server = start_server(mocks).await;
-        let base_url = server.url("");
-
-        let refresh_token = SecretToken::new("test-refresh-token");
-        let err = Token::refresh(&refresh_token, &base_url, "cli", None)
-            .await
-            .unwrap_err();
-
-        assert!(matches!(err, AuthError::InvalidGrant(_)));
-    }
-
-    #[cfg(feature = "http")]
-    #[tokio::test]
-    async fn test_refresh_invalid_client() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.bad_request().json(error_json("invalid_client"));
-        });
-        let server = start_server(mocks).await;
-        let base_url = server.url("");
-
-        let refresh_token = SecretToken::new("test-refresh-token");
-        let err = Token::refresh(&refresh_token, &base_url, "cli", None)
-            .await
-            .unwrap_err();
-
-        assert!(matches!(err, AuthError::InvalidClient(_)));
-    }
-
-    #[cfg(feature = "http")]
-    #[tokio::test]
-    async fn test_refresh_access_denied() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.bad_request().json(error_json("access_denied"));
-        });
-        let server = start_server(mocks).await;
-        let base_url = server.url("");
-
-        let refresh_token = SecretToken::new("test-refresh-token");
-        let err = Token::refresh(&refresh_token, &base_url, "cli", None)
-            .await
-            .unwrap_err();
-
-        assert!(matches!(err, AuthError::AccessDenied(_)));
-    }
-
-    // ---- Usage-limit classification on the refresh path ----
     //
-    // `/oauth/token` is the path `DeviceSessionRefresher` delegates to, so
-    // these cases cover CLI login and dashboard refresh as well. They must
-    // agree with `classify_issuance_failure`, which the other two issuance
-    // paths use — the whole point of a shared classifier is that the same
-    // server response cannot mean different things depending on which
-    // refresher the caller happened to use.
-
+    // Grouped under one feature gate rather than one per item: every helper
+    // and test below drives `Token::refresh` against a mock server, and both
+    // only exist with `http`. `make_token` and
+    // `test_refresh_debug_does_not_leak_tokens` deliberately stay outside —
+    // `Debug` must not leak secrets in any build.
     #[cfg(feature = "http")]
-    async fn refresh_against(status: reqwest::StatusCode, body: serde_json::Value) -> AuthError {
-        let mut mocks = MockSet::new();
-        mocks.mock(move |when, then| {
-            when.post().path("/oauth/token");
-            then.status(status).json(body.clone());
-        });
-        let server = start_server(mocks).await;
-        let refresh_token = SecretToken::new("test-refresh-token");
-        Token::refresh(&refresh_token, &server.url(""), "cli", None)
-            .await
-            .expect_err("a non-2xx refresh must fail")
-    }
+    mod refresh_tests {
+        use super::*;
+        use mocktail::prelude::*;
 
-    #[cfg(feature = "http")]
-    #[tokio::test]
-    async fn refresh_402_with_cs_code_is_usage_limit() {
-        let err = refresh_against(
-            reqwest::StatusCode::PAYMENT_REQUIRED,
+        fn refresh_response_json() -> serde_json::Value {
             serde_json::json!({
-                "error": "access_denied",
-                "error_description": "Workspace has exceeded its usage limit",
-                "cs_code": "USAGE_LIMIT_EXCEEDED",
-            }),
-        )
-        .await;
-
-        assert_eq!(
-            err.error_code(),
-            crate::error::codes::USAGE_LIMIT_EXCEEDED,
-            "cs_code must win over the registered access_denied code, or a usage \
-             limit reads as a permissions failure the user cannot act on",
-        );
-        assert!(
-            err.to_string().contains("exceeded its usage limit"),
-            "the server's description should survive verbatim, got {err}",
-        );
-    }
-
-    #[cfg(feature = "http")]
-    #[tokio::test]
-    async fn refresh_402_access_denied_without_cs_code_is_usage_limit() {
-        let err = refresh_against(
-            reqwest::StatusCode::PAYMENT_REQUIRED,
-            serde_json::json!({"error": "access_denied"}),
-        )
-        .await;
-
-        assert_eq!(
-            err.error_code(),
-            crate::error::codes::USAGE_LIMIT_EXCEEDED,
-            "a CTS deployment predating cs_code still means usage limit at 402",
-        );
-    }
-
-    /// Guards arm ORDER: `access_denied` only means "usage limit" at 402.
-    #[cfg(feature = "http")]
-    #[tokio::test]
-    async fn refresh_403_access_denied_is_still_access_denied() {
-        let err = refresh_against(
-            reqwest::StatusCode::FORBIDDEN,
-            serde_json::json!({"error": "access_denied"}),
-        )
-        .await;
-
-        assert!(
-            matches!(err, AuthError::AccessDenied(_)),
-            "a non-402 access_denied is a real authorization refusal, got {err:?}",
-        );
-    }
-
-    /// Regression: this path used to parse the body as JSON *before* looking at
-    /// the status, so a bodyless 402 surfaced as a reqwest decode error while
-    /// the other two issuance paths classified it as a usage limit. Same server
-    /// response, two different client errors.
-    #[cfg(feature = "http")]
-    #[tokio::test]
-    async fn refresh_402_with_empty_body_is_usage_limit() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.status(reqwest::StatusCode::PAYMENT_REQUIRED);
-        });
-        let server = start_server(mocks).await;
-        let refresh_token = SecretToken::new("test-refresh-token");
-
-        let err = Token::refresh(&refresh_token, &server.url(""), "cli", None)
-            .await
-            .expect_err("a 402 must fail");
-
-        assert_eq!(
-            err.error_code(),
-            crate::error::codes::USAGE_LIMIT_EXCEEDED,
-            "must agree with classify_issuance_failure's bare-402 handling, got {err:?}",
-        );
-    }
-
-    /// A 402 whose `cs_code` we cannot read must not claim a usage limit —
-    /// mirrors `unreadable_cs_code_declines_to_classify` on the shared path.
-    #[cfg(feature = "http")]
-    #[tokio::test]
-    async fn refresh_402_with_unknown_cs_code_does_not_claim_usage_limit() {
-        let err = refresh_against(
-            reqwest::StatusCode::PAYMENT_REQUIRED,
-            serde_json::json!({"error": "access_denied", "cs_code": "SOMETHING_ELSE"}),
-        )
-        .await;
-
-        assert_ne!(
-            err.error_code(),
-            crate::error::codes::USAGE_LIMIT_EXCEEDED,
-            "an unrecognised cs_code must not inherit the usage-limit classification",
-        );
-    }
-
-    #[cfg(feature = "http")]
-    #[tokio::test]
-    async fn test_refresh_unknown_error() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.bad_request().json(error_json("something_unexpected"));
-        });
-        let server = start_server(mocks).await;
-        let base_url = server.url("");
-
-        let refresh_token = SecretToken::new("test-refresh-token");
-        let err = Token::refresh(&refresh_token, &base_url, "cli", None)
-            .await
-            .unwrap_err();
-
-        assert!(
-            matches!(&err, AuthError::Server(crate::error::ServerError(desc)) if desc == "something_unexpected occurred")
-        );
-    }
-
-    #[cfg(feature = "http")]
-    #[tokio::test]
-    async fn test_refresh_response_without_new_refresh_token() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.json(serde_json::json!({
                 "access_token": "new-access-token",
                 "token_type": "Bearer",
-                "expires_in": 3600
-            }));
-        });
-        let server = start_server(mocks).await;
-        let base_url = server.url("");
+                "expires_in": 3600,
+                "refresh_token": "new-refresh-token"
+            })
+        }
 
-        let refresh_token = SecretToken::new("test-refresh-token");
-        let refreshed = Token::refresh(&refresh_token, &base_url, "cli", None)
-            .await
-            .unwrap();
+        fn error_json(error: &str) -> serde_json::Value {
+            serde_json::json!({
+                "error": error,
+                "error_description": format!("{error} occurred")
+            })
+        }
 
-        assert_eq!(refreshed.access_token().as_str(), "new-access-token");
-        assert!(refreshed.refresh_token().is_none());
+        async fn start_server(mocks: MockSet) -> MockServer {
+            let server = MockServer::new_http("token-refresh-test").with_mocks(mocks);
+            server.start().await.unwrap();
+            server
+        }
+
+        #[tokio::test]
+        async fn test_refresh_success() {
+            let mut mocks = MockSet::new();
+            mocks.mock(|when, then| {
+                when.post().path("/oauth/token");
+                then.json(refresh_response_json());
+            });
+            let server = start_server(mocks).await;
+            let base_url = server.url("");
+
+            let refresh_token = SecretToken::new("test-refresh-token");
+            let refreshed = Token::refresh(&refresh_token, &base_url, "cli", None)
+                .await
+                .unwrap();
+
+            assert_eq!(refreshed.access_token().as_str(), "new-access-token");
+            assert_eq!(refreshed.token_type(), "Bearer");
+            assert_eq!(
+                refreshed.refresh_token().unwrap().as_str(),
+                "new-refresh-token"
+            );
+            assert!(!refreshed.is_expired());
+            assert!((3598..=3600).contains(&refreshed.expires_in()));
+        }
+
+        #[tokio::test]
+        async fn test_refresh_invalid_grant() {
+            let mut mocks = MockSet::new();
+            mocks.mock(|when, then| {
+                when.post().path("/oauth/token");
+                then.bad_request().json(error_json("invalid_grant"));
+            });
+            let server = start_server(mocks).await;
+            let base_url = server.url("");
+
+            let refresh_token = SecretToken::new("test-refresh-token");
+            let err = Token::refresh(&refresh_token, &base_url, "cli", None)
+                .await
+                .unwrap_err();
+
+            assert!(matches!(err, AuthError::InvalidGrant(_)));
+        }
+
+        #[tokio::test]
+        async fn test_refresh_invalid_client() {
+            let mut mocks = MockSet::new();
+            mocks.mock(|when, then| {
+                when.post().path("/oauth/token");
+                then.bad_request().json(error_json("invalid_client"));
+            });
+            let server = start_server(mocks).await;
+            let base_url = server.url("");
+
+            let refresh_token = SecretToken::new("test-refresh-token");
+            let err = Token::refresh(&refresh_token, &base_url, "cli", None)
+                .await
+                .unwrap_err();
+
+            assert!(matches!(err, AuthError::InvalidClient(_)));
+        }
+
+        #[tokio::test]
+        async fn test_refresh_access_denied() {
+            let mut mocks = MockSet::new();
+            mocks.mock(|when, then| {
+                when.post().path("/oauth/token");
+                then.bad_request().json(error_json("access_denied"));
+            });
+            let server = start_server(mocks).await;
+            let base_url = server.url("");
+
+            let refresh_token = SecretToken::new("test-refresh-token");
+            let err = Token::refresh(&refresh_token, &base_url, "cli", None)
+                .await
+                .unwrap_err();
+
+            assert!(matches!(err, AuthError::AccessDenied(_)));
+        }
+
+        // ---- Usage-limit classification on the refresh path ----
+        //
+        // `/oauth/token` is the path `DeviceSessionRefresher` delegates to, so
+        // these cases cover CLI login and dashboard refresh as well. They must
+        // agree with `classify_issuance_failure`, which the other two issuance
+        // paths use — the whole point of a shared classifier is that the same
+        // server response cannot mean different things depending on which
+        // refresher the caller happened to use.
+
+        async fn refresh_against(
+            status: reqwest::StatusCode,
+            body: serde_json::Value,
+        ) -> AuthError {
+            let mut mocks = MockSet::new();
+            mocks.mock(move |when, then| {
+                when.post().path("/oauth/token");
+                then.status(status).json(body.clone());
+            });
+            let server = start_server(mocks).await;
+            let refresh_token = SecretToken::new("test-refresh-token");
+            Token::refresh(&refresh_token, &server.url(""), "cli", None)
+                .await
+                .expect_err("a non-2xx refresh must fail")
+        }
+
+        #[tokio::test]
+        async fn refresh_402_with_cs_code_is_usage_limit() {
+            let err = refresh_against(
+                reqwest::StatusCode::PAYMENT_REQUIRED,
+                serde_json::json!({
+                    "error": "access_denied",
+                    "error_description": "Workspace has exceeded its usage limit",
+                    "cs_code": "USAGE_LIMIT_EXCEEDED",
+                }),
+            )
+            .await;
+
+            assert_eq!(
+                err.error_code(),
+                crate::error::codes::USAGE_LIMIT_EXCEEDED,
+                "cs_code must win over the registered access_denied code, or a usage \
+                 limit reads as a permissions failure the user cannot act on",
+            );
+            assert!(
+                err.to_string().contains("exceeded its usage limit"),
+                "the server's description should survive verbatim, got {err}",
+            );
+        }
+
+        #[tokio::test]
+        async fn refresh_402_access_denied_without_cs_code_is_usage_limit() {
+            let err = refresh_against(
+                reqwest::StatusCode::PAYMENT_REQUIRED,
+                serde_json::json!({"error": "access_denied"}),
+            )
+            .await;
+
+            assert_eq!(
+                err.error_code(),
+                crate::error::codes::USAGE_LIMIT_EXCEEDED,
+                "a CTS deployment predating cs_code still means usage limit at 402",
+            );
+        }
+
+        /// Guards arm ORDER: `access_denied` only means "usage limit" at 402.
+        #[tokio::test]
+        async fn refresh_403_access_denied_is_still_access_denied() {
+            let err = refresh_against(
+                reqwest::StatusCode::FORBIDDEN,
+                serde_json::json!({"error": "access_denied"}),
+            )
+            .await;
+
+            assert!(
+                matches!(err, AuthError::AccessDenied(_)),
+                "a non-402 access_denied is a real authorization refusal, got {err:?}",
+            );
+        }
+
+        /// Regression: this path used to parse the body as JSON *before* looking at
+        /// the status, so a bodyless 402 surfaced as a reqwest decode error while
+        /// the other two issuance paths classified it as a usage limit. Same server
+        /// response, two different client errors.
+        #[tokio::test]
+        async fn refresh_402_with_empty_body_is_usage_limit() {
+            let mut mocks = MockSet::new();
+            mocks.mock(|when, then| {
+                when.post().path("/oauth/token");
+                then.status(reqwest::StatusCode::PAYMENT_REQUIRED);
+            });
+            let server = start_server(mocks).await;
+            let refresh_token = SecretToken::new("test-refresh-token");
+
+            let err = Token::refresh(&refresh_token, &server.url(""), "cli", None)
+                .await
+                .expect_err("a 402 must fail");
+
+            assert_eq!(
+                err.error_code(),
+                crate::error::codes::USAGE_LIMIT_EXCEEDED,
+                "must agree with classify_issuance_failure's bare-402 handling, got {err:?}",
+            );
+        }
+
+        /// A 402 whose `cs_code` we cannot read must not claim a usage limit —
+        /// mirrors `unreadable_cs_code_declines_to_classify` on the shared path.
+        #[tokio::test]
+        async fn refresh_402_with_unknown_cs_code_does_not_claim_usage_limit() {
+            let err = refresh_against(
+                reqwest::StatusCode::PAYMENT_REQUIRED,
+                serde_json::json!({"error": "access_denied", "cs_code": "SOMETHING_ELSE"}),
+            )
+            .await;
+
+            assert_ne!(
+                err.error_code(),
+                crate::error::codes::USAGE_LIMIT_EXCEEDED,
+                "an unrecognised cs_code must not inherit the usage-limit classification",
+            );
+        }
+
+        #[tokio::test]
+        async fn test_refresh_unknown_error() {
+            let mut mocks = MockSet::new();
+            mocks.mock(|when, then| {
+                when.post().path("/oauth/token");
+                then.bad_request().json(error_json("something_unexpected"));
+            });
+            let server = start_server(mocks).await;
+            let base_url = server.url("");
+
+            let refresh_token = SecretToken::new("test-refresh-token");
+            let err = Token::refresh(&refresh_token, &base_url, "cli", None)
+                .await
+                .unwrap_err();
+
+            assert!(
+                matches!(&err, AuthError::Server(crate::error::ServerError(desc)) if desc == "something_unexpected occurred")
+            );
+        }
+
+        #[tokio::test]
+        async fn test_refresh_response_without_new_refresh_token() {
+            let mut mocks = MockSet::new();
+            mocks.mock(|when, then| {
+                when.post().path("/oauth/token");
+                then.json(serde_json::json!({
+                    "access_token": "new-access-token",
+                    "token_type": "Bearer",
+                    "expires_in": 3600
+                }));
+            });
+            let server = start_server(mocks).await;
+            let base_url = server.url("");
+
+            let refresh_token = SecretToken::new("test-refresh-token");
+            let refreshed = Token::refresh(&refresh_token, &base_url, "cli", None)
+                .await
+                .unwrap();
+
+            assert_eq!(refreshed.access_token().as_str(), "new-access-token");
+            assert!(refreshed.refresh_token().is_none());
+        }
     }
 
     // Deliberately not http-gated: `Debug` must not leak the secrets in any

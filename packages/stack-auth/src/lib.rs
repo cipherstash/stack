@@ -1,5 +1,22 @@
 #![doc(html_favicon_url = "https://cipherstash.com/favicon.ico")]
-#![doc = include_str!("../README.md")]
+// The README is the crate's front page, but nearly all of it — the strategy
+// table, the quick-start examples, the links — is about the bundled HTTP
+// strategies, which only exist with `http`. Including it unconditionally would
+// leave a no-http build documenting (and doctesting) an API it does not have.
+#![cfg_attr(feature = "http", doc = include_str!("../README.md"))]
+#![cfg_attr(
+    not(feature = "http"),
+    doc = "Authentication strategies for [CipherStash](https://cipherstash.com) services."
+)]
+#![cfg_attr(
+    not(feature = "http"),
+    doc = "\nWithout the `http` feature this crate is the token model plus the\
+ [`AuthStrategy`] trait — [`AuthStrategyFn`] and [`TokenStoreFn`] are how a host\
+ with its own transport plugs in acquisition and persistence. Enable the `http`\
+ feature for the bundled strategies (`AutoStrategy`, `AccessKeyStrategy`,\
+ `DeviceSessionStrategy`, `DeviceCodeStrategy`), the refresh engine, and the\
+ crate's full documentation."
+)]
 // Security lints
 #![deny(unsafe_code)]
 #![warn(clippy::unwrap_used)]
@@ -190,11 +207,14 @@ pub mod auth {
 /// for ready-made implementations.
 ///
 /// A `TokenStore` plugs into a concrete strategy via that strategy's
-/// builder (e.g.
-/// [`AccessKeyStrategyBuilder::with_token_store`](crate::AccessKeyStrategyBuilder::with_token_store))
-/// — it does *not* replace the strategy. For full token acquisition (custom
-/// fetcher, FFI-hosted strategy), see [`crate::auth`].
+/// builder — it does *not* replace the strategy. For full token acquisition
+/// (custom fetcher, FFI-hosted strategy), see [`crate::auth`].
 ///
+// The example names a strategy builder, which only exists with `http`.
+#[cfg_attr(
+    feature = "http",
+    doc = "For example, [`AccessKeyStrategyBuilder::with_token_store`](crate::AccessKeyStrategyBuilder::with_token_store).\n"
+)]
 /// All items in this module are also re-exported at the crate root.
 pub mod store {
     pub use crate::{InMemoryTokenStore, NoStore, Token, TokenStore, TokenStoreFn};

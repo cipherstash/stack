@@ -17,31 +17,43 @@
 //!
 //! # Quick start
 //!
-//! ```no_run
-//! use stack_kms::{StackKmsBuilder, GenerateKeyPayload};
-//! use std::borrow::Cow;
-//!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! // Credentials + client key are discovered from the environment:
-//! //   CS_CLIENT_ID / CS_CLIENT_KEY for the key, AutoStrategy for the token.
-//! let kms = StackKmsBuilder::auto()?
-//!     .with_key_provider(stack_kms::EnvKeyProvider)
-//!     .build()
-//!     .await?;
-//!
-//! let keys = kms
-//!     .generate_keys(
-//!         [GenerateKeyPayload::new("users/email", Cow::Owned(vec![]))],
-//!         None,
-//!         None,
-//!     )
-//!     .await?;
-//!
-//! assert_eq!(keys.len(), 1);
-//! # Ok(())
-//! # }
-//! ```
+// The quick start goes through `StackKmsBuilder`, which configures the default
+// reqwest transport and so only exists with `http`. Without the feature the
+// entry point is `StackKms::connect` over the host's own `ZeroKMSConnection`.
+#![cfg_attr(
+    feature = "http",
+    doc = r#"```no_run
+use stack_kms::{StackKmsBuilder, GenerateKeyPayload};
+use std::borrow::Cow;
 
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+// Credentials + client key are discovered from the environment:
+//   CS_CLIENT_ID / CS_CLIENT_KEY for the key, AutoStrategy for the token.
+let kms = StackKmsBuilder::auto()?
+    .with_key_provider(stack_kms::EnvKeyProvider)
+    .build()
+    .await?;
+
+let keys = kms
+    .generate_keys(
+        [GenerateKeyPayload::new("users/email", Cow::Owned(vec![]))],
+        None,
+        None,
+    )
+    .await?;
+
+assert_eq!(keys.len(), 1);
+# Ok(())
+# }
+```"#
+)]
+#![cfg_attr(
+    not(feature = "http"),
+    doc = "Without the `http` feature the crate ships no transport: implement\
+ [`ZeroKMSConnection`] over the host's own HTTP and build the client with\
+ [`StackKms::connect`]. Enable `http` for the bundled reqwest transport and its\
+ `StackKmsBuilder`."
+)]
 // Security lints — see `.claude/skills/rust-security`. This crate handles
 // ZeroKMS key material, so `mem::forget` (which would bypass `ZeroizeOnDrop`)
 // and any accidental console output are denied/warned against.

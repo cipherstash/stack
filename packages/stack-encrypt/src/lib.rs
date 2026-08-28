@@ -22,20 +22,35 @@
 //!
 //! # Quick start
 //!
-//! ```no_run
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! use stack_encrypt::StackCipher;
-//!
-//! // Credentials: `npx stash auth login` on a developer machine, or
-//! // CS_CLIENT_ID / CS_CLIENT_KEY + CS_CLIENT_ACCESS_KEY / CS_WORKSPACE_CRN in CI.
-//! let cipher = StackCipher::new().await?;
-//!
-//! let ciphertext = cipher.encrypt("secret message".to_string(), ()).await?;
-//! let plaintext: String = cipher.decrypt(ciphertext, ()).await?;
-//! assert_eq!(plaintext, "secret message");
-//! # Ok(())
-//! # }
-//! ```
+// `StackCipher::new()` builds a ZeroKMS client from the environment, so it
+// only exists with `http`. Without it the entry point is
+// `StackCipher::builder().kms(..)` over an explicit data-key source — the
+// shape the WASI/wazero guest builds against; see "Testing without ZeroKMS"
+// below for the same call over the in-memory stub.
+#![cfg_attr(
+    feature = "http",
+    doc = r#"```no_run
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+use stack_encrypt::StackCipher;
+
+// Credentials: `npx stash auth login` on a developer machine, or
+// CS_CLIENT_ID / CS_CLIENT_KEY + CS_CLIENT_ACCESS_KEY / CS_WORKSPACE_CRN in CI.
+let cipher = StackCipher::new().await?;
+
+let ciphertext = cipher.encrypt("secret message".to_string(), ()).await?;
+let plaintext: String = cipher.decrypt(ciphertext, ()).await?;
+assert_eq!(plaintext, "secret message");
+# Ok(())
+# }
+```"#
+)]
+#![cfg_attr(
+    not(feature = "http"),
+    doc = "Without the `http` feature a cipher is built over an explicit\
+ data-key source — `StackCipher::builder().kms(..).init()` — rather than from\
+ the environment. Enable `http` for `StackCipher::new()`, which discovers\
+ ZeroKMS credentials itself."
+)]
 //!
 //! The second argument is the *associated data* (AAD): anything that implements
 //! [`IntoAad`] — `()`, `&[u8]`, `&str`, a tuple, or a derived [`Aad`]. It is

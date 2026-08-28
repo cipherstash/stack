@@ -109,9 +109,13 @@ pub enum Error {
     KeyCountMismatch { expected: usize, received: usize },
     /// Building a ZeroKMS client from the environment failed: credentials or
     /// client key missing or malformed.
-    #[cfg(feature = "http")]
+    ///
+    /// Boxed rather than naming `stack_kms::StackKmsBuilderError` directly:
+    /// that type only exists with `http`, and a variant whose presence tracks
+    /// a feature is not additive — feature unification elsewhere in the graph
+    /// would then change this enum's shape under a downstream match.
     #[error("could not build a ZeroKMS client from the environment: {0}")]
-    Config(#[from] stack_kms::StackKmsBuilderError),
+    Config(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
     /// The per-field encryption context was empty. An empty context defeats
     /// per-field domain separation: equal plaintexts in different fields
     /// would produce identical index terms, ORE/OPE keys would be shared
@@ -150,6 +154,13 @@ pub enum Error {
     NotOpened,
 }
 
+#[cfg(feature = "http")]
+impl From<stack_kms::StackKmsBuilderError> for Error {
+    fn from(error: stack_kms::StackKmsBuilderError) -> Self {
+        Error::Config(Box::new(error))
+    }
+}
+
 impl From<crate::sem::TermError> for Error {
     fn from(error: crate::sem::TermError) -> Self {
         match error {
@@ -167,9 +178,9 @@ impl From<Unspecified> for Error {
 
 /// The CipherStash cipher: a vitaminc [`Cipher`] whose per-leaf keys are ZeroKMS
 /// data keys, sourced through a [`DataKeySource`] (production:
-/// [`StackKms`]; tests: `stack_kms::FakeDataKeySource`), carrying the
-/// per-keyset PRF that [Searchable Encrypted Metadata](crate::sem) terms are
-/// derived from.
+/// [`StackKms`](stack_kms::StackKms); tests: `stack_kms::FakeDataKeySource`),
+/// carrying the per-keyset PRF that
+/// [Searchable Encrypted Metadata](crate::sem) terms are derived from.
 ///
 /// Per-leaf keying is deliberate: every value access requires its own data-key
 /// retrieval, so individual value accesses are visible (and auditable) as
@@ -182,20 +193,29 @@ impl From<Unspecified> for Error {
 ///
 /// # Construction
 ///
-/// [`new`](Self::new) is the default path — a ZeroKMS client from the
-/// environment, on that client's default keyset:
-///
-/// ```no_run
-/// # async fn example() -> Result<(), stack_encrypt::Error> {
-/// use stack_encrypt::StackCipher;
-///
-/// let cipher = StackCipher::new().await?;
-/// # Ok(())
-/// # }
-/// ```
-///
-/// Override with [`builder`](Self::builder) — a different keyset, or a
-/// different data-key source entirely:
+// `new()` builds the ZeroKMS client from the environment, so it exists only
+// with `http`; the builder path below works in either shape.
+#[cfg_attr(
+    feature = "http",
+    doc = r#"[`new`](Self::new) is the default path — a ZeroKMS client from the
+environment, on that client's default keyset:
+
+```no_run
+# async fn example() -> Result<(), stack_encrypt::Error> {
+use stack_encrypt::StackCipher;
+
+let cipher = StackCipher::new().await?;
+# Ok(())
+# }
+```
+
+Override with [`builder`](Self::builder) — a different keyset, or a
+different data-key source entirely:"#
+)]
+#[cfg_attr(
+    not(feature = "http"),
+    doc = "Build with [`builder`](Self::builder), over an explicit data-key source:"
+)]
 ///
 /// ```
 /// # async fn example() -> Result<(), stack_encrypt::Error> {
@@ -242,14 +262,13 @@ impl StackCipher<FromEnv> {
     /// Start building a cipher: pick a keyset, or supply a data-key source
     /// other than the environment's ZeroKMS client.
     ///
-    /// (Defined on `StackCipher<FromEnv>` — a type that is never
-    /// constructed — so that `StackCipher::builder()` resolves without a
-    /// type annotation whether or not the `http` feature is on.)
+    /// A convenience alias for [`StackCipherBuilder::new`], which is the
+    /// canonical entry point. This one is anchored on `StackCipher<FromEnv>`
+    /// purely so `StackCipher::builder()` names a single concrete `K` and
+    /// resolves without a type annotation; `StackCipher<FromEnv>` is never
+    /// constructed.
     pub fn builder() -> StackCipherBuilder {
-        StackCipherBuilder {
-            kms: FromEnv,
-            keyset: None,
-        }
+        StackCipherBuilder::new()
     }
 }
 
@@ -317,10 +336,31 @@ impl KeyProvider for ProfileClientKey {
     }
 }
 
-/// Builder for a [`StackCipher`]. See [`StackCipher::builder`].
+/// Builder for a [`StackCipher`]. Start with [`StackCipherBuilder::new`] (or
+/// its alias [`StackCipher::builder`]).
 pub struct StackCipherBuilder<K = FromEnv> {
     kms: K,
     keyset: Option<IdentifiedBy>,
+}
+
+impl StackCipherBuilder<FromEnv> {
+    /// Start building a cipher: pick a keyset, or supply a data-key source
+    /// other than the environment's ZeroKMS client.
+    ///
+    /// The `K = FromEnv` type default makes this resolve without a type
+    /// annotation whether or not the `http` feature is on.
+    pub fn new() -> Self {
+        Self {
+            kms: FromEnv,
+            keyset: None,
+        }
+    }
+}
+
+impl Default for StackCipherBuilder<FromEnv> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<K> StackCipherBuilder<K> {
@@ -337,7 +377,8 @@ impl StackCipherBuilder<FromEnv> {
     /// from the environment.
     ///
     /// This is the seam for a custom authentication strategy: build a
-    /// [`StackKms`] with [`StackKmsBuilder`] and hand it over. It is also how
+    /// [`StackKms`](stack_kms::StackKms) — with `stack_kms::StackKmsBuilder`,
+    /// or over the host's own transport — and hand it over. It is also how
     /// tests inject `stack_kms::FakeDataKeySource`.
     pub fn kms<K>(self, kms: K) -> StackCipherBuilder<K> {
         StackCipherBuilder {
