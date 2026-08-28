@@ -856,7 +856,25 @@ impl PendingStackCipherText {
         self,
         cipher: &StackCipher<K>,
     ) -> Result<StackCipherText, Error> {
-        crate::target::seal_pending(cipher, self).settle().await
+        self.into_pending(cipher).settle().await
+    }
+
+    /// Turn this tree into a [`Pending`](crate::target::Pending) request
+    /// carrier without settling it.
+    ///
+    /// [`seal`](Self::seal) is this plus an immediate settle — one ZeroKMS
+    /// call per tree. `into_pending` exists for callers that hold *several*
+    /// independently built trees (each from its own [`Encrypt`] drive, e.g.
+    /// one per record field in a language binding) and want them merged with
+    /// [`Pending::zip`](crate::target::Pending::zip) /
+    /// [`Pending::all`](crate::target::Pending::all) so the whole assembly
+    /// seals in **one** batched `generate_keys` call. Same sealing path
+    /// either way.
+    pub fn into_pending<K>(
+        self,
+        cipher: &StackCipher<K>,
+    ) -> crate::target::Pending<'_, StackCipherText, K> {
+        crate::target::seal_pending(cipher, self)
     }
 
     /// Recursively seal, drawing one key per leaf from `keys` in traversal order.
