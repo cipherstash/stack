@@ -60,6 +60,6 @@ jobs:
       # The HTTP-free core compiles for wasm32-wasip1 with no JS-host backend
       # and no native HTTP/TLS stack in its dependency tree — the invariant
       # the Go/wazero binding of stack-encrypt is built on. See
-      # docs/stack-encrypt-go-bindings.md and wasm-analysis.md Layer 6.
+      # docs/plans/stack-encrypt-go-bindings.md and wasm-analysis.md Layer 6.
       - name: WASI core check
         run: mise run wasm:wasi-check

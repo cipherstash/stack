@@ -113,7 +113,7 @@ But wazero is **not** a JS host. It targets `wasm32-wasip1` (WASI preview 1) —
 
 **Architecture: host-provided transport.** HTTP stays out of the wasm and is satisfied by a function the Go host provides; control stays in Rust (the "host orchestrates each step" shape was considered and rejected in #2099 because it smears the protocol state machine across the FFI). Why not HTTP inside the guest: wasip1 has no `sock_connect` (receive/accept only), so outbound TCP needs a host import regardless; TLS in the guest would mean rustls on a pure-Rust provider with embedded roots and no AES-NI, strictly worse than Go's `crypto/tls` with system roots; and `wasi:http` — the right long-term answer — is component model, which wazero does not run. The host can already read guest memory, so routing HTTP through it weakens nothing: what crosses the boundary is exactly what crosses TLS (URL, bearer token, protocol JSON). Data keys, the client key and the index key never do.
 
-**The plan** lives in [`docs/stack-encrypt-go-bindings.md`](docs/stack-encrypt-go-bindings.md): phases, the vitaminc `bindings/go` layering (`vcvalue` value model + FFI codec are reused; the stack-encrypt side is the cipher/KMS side), the frozen byte formats stack-encrypt owns, and the open decisions. Terminology fixed there: *storage format* (sealed leaf, into a database), *FFI codec* (host ↔ guest marshalling, throwaway), *transport* (HTTP, out of the process).
+**The plan** lives in [`docs/plans/stack-encrypt-go-bindings.md`](docs/plans/stack-encrypt-go-bindings.md): phases, the vitaminc `bindings/go` layering (`vcvalue` value model + FFI codec are reused; the stack-encrypt side is the cipher/KMS side), the frozen byte formats stack-encrypt owns, and the open decisions. Terminology fixed there: *storage format* (sealed leaf, into a database), *FFI codec* (host ↔ guest marshalling, throwaway), *transport* (HTTP, out of the process).
 
 **Gate.** `mise run wasm:wasi-check` compiles the HTTP-free core for `wasm32-wasip1` and fails if any crate's normal-dependency tree contains a JS-host backend (`wasm-bindgen`/`web-sys`/`js-sys`) **or** the native HTTP/TLS stack (`reqwest`/`hyper`/`aws-lc-sys`). Phase 0 gates `zerokms-protocol`, `cipherstash-core`, `recipher`, `cts-common`, `cllw-ore`; Phase 1 adds `stack-auth`, `stack-kms`, `stack-encrypt` once reqwest is behind a feature in each.
 
@@ -158,7 +158,7 @@ Pending decision. The rest of this doc assumes Layer 4 happens for now, but ever
 - [~] Layer 3.5 — `stack-auth-wasm` bindings crate (#1952) + npm unification (stacked follow-up)
 - [ ] Layer 4 — wasm bindings for encrypt — **likely superseded by stack-encrypt; pending decision**
 - [ ] Layer 5 — Supabase Edge validation
-- [~] Layer 6 — WASI / wazero for the Go SDK: Phase 0 (gate + plan) landed; Phase 1 (`stack-auth`/`stack-kms`/`stack-encrypt` build for wasip1 without reqwest) stacked on it. Plan: `docs/stack-encrypt-go-bindings.md`
+- [~] Layer 6 — WASI / wazero for the Go SDK: Phase 0 (gate + plan) landed; Phase 1 (`stack-auth`/`stack-kms`/`stack-encrypt` build for wasip1 without reqwest) stacked on it. Plan: `docs/plans/stack-encrypt-go-bindings.md`
 
 ## Layer 1 — what shipped
 
