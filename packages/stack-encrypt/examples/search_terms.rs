@@ -40,17 +40,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // value indexed under another field can never produce a colliding term.
 
     let stored: EqualityTerm = "alice@example.com"
-        .encrypt_into(&terms, "users/email")
+        .encrypt_into_with_context(&terms, "users/email")
         .await?;
 
     let hit: EqualityTerm = "alice@example.com"
-        .encrypt_into(&terms, "users/email")
+        .encrypt_into_with_context(&terms, "users/email")
         .await?;
     let miss: EqualityTerm = "bob@example.com"
-        .encrypt_into(&terms, "users/email")
+        .encrypt_into_with_context(&terms, "users/email")
         .await?;
     let wrong_field: EqualityTerm = "alice@example.com"
-        .encrypt_into(&terms, "users/name")
+        .encrypt_into_with_context(&terms, "users/name")
         .await?;
 
     println!("\nequality:");
@@ -70,11 +70,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bio: MatchTerm = "alice, senior cryptography engineer"
         .to_string()
-        .encrypt_into(&terms, "users/bio")
+        .encrypt_into_with_context(&terms, "users/bio")
         .await?;
 
     for query in ["crypto", "engineer", "plumber"] {
-        let probe: MatchTerm = query.to_string().encrypt_into(&terms, "users/bio").await?;
+        let probe: MatchTerm = query
+            .to_string()
+            .encrypt_into_with_context(&terms, "users/bio")
+            .await?;
         println!("match: bio contains {query:?} => {}", bio.contains(&probe));
     }
     println!(
@@ -90,17 +93,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the key derivation becomes an auditable server event while values stay
     // local.
 
-    let age_30: OreTerm<u32> = 30u32.encrypt_into(&terms, "users/age").await?;
-    let age_45: OreTerm<u32> = 45u32.encrypt_into(&terms, "users/age").await?;
-    let query_40: OreTerm<u32> = 40u32.encrypt_into(&terms, "users/age").await?;
+    let age_30: OreTerm<u32> = 30u32.encrypt_into_with_context(&terms, "users/age").await?;
+    let age_45: OreTerm<u32> = 45u32.encrypt_into_with_context(&terms, "users/age").await?;
+    let query_40: OreTerm<u32> = 40u32.encrypt_into_with_context(&terms, "users/age").await?;
 
     println!("\nore (WHERE age > 40):");
     println!("  age 30 > 40 => {}", age_30 > query_40);
     println!("  age 45 > 40 => {}", age_45 > query_40);
 
     // Strings order lexicographically.
-    let apple: OreTerm<&str> = "apple".encrypt_into(&terms, "users/name").await?;
-    let banana: OreTerm<&str> = "banana".encrypt_into(&terms, "users/name").await?;
+    let apple: OreTerm<&str> = "apple"
+        .encrypt_into_with_context(&terms, "users/name")
+        .await?;
+    let banana: OreTerm<&str> = "banana"
+        .encrypt_into_with_context(&terms, "users/name")
+        .await?;
     println!("  \"apple\" < \"banana\" => {}", apple < banana);
 
     Ok(())

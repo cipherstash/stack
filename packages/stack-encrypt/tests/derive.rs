@@ -11,10 +11,10 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 use cllw_ore::CllwOreEncrypt;
 use common::{counting_cipher, stack_cipher};
 use stack_encrypt::sem::{EqualityTerm, MatchTerm, OreTerm};
-use stack_encrypt::target::EncryptInto;
+use stack_encrypt::target::{DecryptFrom, EncryptInto};
 use stack_encrypt::{
-    DecryptContext, DecryptField, DecryptInto, DecryptTarget, Decryptable, EncryptContext,
-    EncryptFrom, Error, Pending, StackCipher, StackCipherText,
+    DecryptField, DecryptInto, DecryptTarget, Decryptable, EncryptFrom, Error, Pending,
+    StackCipher, StackCipherText,
 };
 
 // --- Records: every field from one plaintext, under one context -------------
@@ -34,12 +34,21 @@ async fn a_derived_record_is_the_hand_written_one() {
     let cipher = stack_cipher().await;
     let generator = stack_cipher().await;
 
-    let record: EncryptedAge = 42u32.encrypt_into(&cipher, "users/age").await.unwrap();
+    let record: EncryptedAge = 42u32
+        .encrypt_into_with_context(&cipher, "users/age")
+        .await
+        .unwrap();
 
     // Each term is what the leaf derives on its own, so query terms built
     // leaf-by-leaf find records encrypted as composites.
-    let hm: EqualityTerm = 42u32.encrypt_into(&generator, "users/age").await.unwrap();
-    let ob: OreTerm<u32> = 42u32.encrypt_into(&generator, "users/age").await.unwrap();
+    let hm: EqualityTerm = 42u32
+        .encrypt_into_with_context(&generator, "users/age")
+        .await
+        .unwrap();
+    let ob: OreTerm<u32> = 42u32
+        .encrypt_into_with_context(&generator, "users/age")
+        .await
+        .unwrap();
     assert_eq!(record.hm, hm);
     assert_eq!(record.ob, ob);
 
@@ -79,17 +88,17 @@ async fn a_generic_plaintext_record_accepts_what_its_leaves_accept() {
 
     let record: SearchableText = "alice"
         .to_string()
-        .encrypt_into(&cipher, "users/name")
+        .encrypt_into_with_context(&cipher, "users/name")
         .await
         .unwrap();
     let hm: EqualityTerm = "alice"
         .to_string()
-        .encrypt_into(&generator, "users/name")
+        .encrypt_into_with_context(&generator, "users/name")
         .await
         .unwrap();
     let m: MatchTerm = "alice"
         .to_string()
-        .encrypt_into(&generator, "users/name")
+        .encrypt_into_with_context(&generator, "users/name")
         .await
         .unwrap();
     assert_eq!(record.hm, hm);
@@ -97,14 +106,26 @@ async fn a_generic_plaintext_record_accepts_what_its_leaves_accept() {
     let name: String = record.decrypt_into(&cipher, "users/name").await.unwrap();
     assert_eq!(name, "alice");
 
-    let pair: Pair = "bob".encrypt_into(&cipher, "users/name").await.unwrap();
-    let hm: EqualityTerm = "bob".encrypt_into(&generator, "users/name").await.unwrap();
+    let pair: Pair = "bob"
+        .encrypt_into_with_context(&cipher, "users/name")
+        .await
+        .unwrap();
+    let hm: EqualityTerm = "bob"
+        .encrypt_into_with_context(&generator, "users/name")
+        .await
+        .unwrap();
     assert_eq!(pair.1, hm);
     let name: String = pair.0.decrypt_into(&cipher, "users/name").await.unwrap();
     assert_eq!(name, "bob");
 
-    let tagged: Tagged<u32> = 7u32.encrypt_into(&cipher, "users/score").await.unwrap();
-    let ob: OreTerm<u32> = 7u32.encrypt_into(&generator, "users/score").await.unwrap();
+    let tagged: Tagged<u32> = 7u32
+        .encrypt_into_with_context(&cipher, "users/score")
+        .await
+        .unwrap();
+    let ob: OreTerm<u32> = 7u32
+        .encrypt_into_with_context(&generator, "users/score")
+        .await
+        .unwrap();
     assert_eq!(tagged.ob, ob);
     let score: u32 = tagged.decrypt_into(&cipher, "users/score").await.unwrap();
     assert_eq!(score, 7);
@@ -135,11 +156,17 @@ struct Numbers {
 async fn decrypt_marks_the_field_when_the_types_cannot_choose() {
     let cipher = stack_cipher().await;
 
-    let doubled: Doubled = 9u32.encrypt_into(&cipher, "doubled").await.unwrap();
+    let doubled: Doubled = 9u32
+        .encrypt_into_with_context(&cipher, "doubled")
+        .await
+        .unwrap();
     let opened: u32 = doubled.decrypt_into(&cipher, "doubled").await.unwrap();
     assert_eq!(opened, 9);
     // The unmarked ciphertext is still a ciphertext, just not the record's.
-    let doubled: Doubled = 9u32.encrypt_into(&cipher, "doubled").await.unwrap();
+    let doubled: Doubled = 9u32
+        .encrypt_into_with_context(&cipher, "doubled")
+        .await
+        .unwrap();
     let shadow: u32 = doubled
         .shadow
         .decrypt_into(&cipher, "doubled/shadow")
@@ -148,7 +175,7 @@ async fn decrypt_marks_the_field_when_the_types_cannot_choose() {
     assert_eq!(shadow, 9);
 
     let numbers: Numbers = vec![1u32, 2, 3]
-        .encrypt_into(&cipher, "numbers")
+        .encrypt_into_with_context(&cipher, "numbers")
         .await
         .unwrap();
     assert_eq!(numbers.hm.len(), 3);
@@ -161,17 +188,16 @@ async fn decrypt_marks_the_field_when_the_types_cannot_choose() {
 #[derive(PartialEq)]
 struct OpaqueTerm(EqualityTerm);
 
-impl<S, K> EncryptFrom<S, StackCipher<K>> for OpaqueTerm
+impl<S, K, Ctx> EncryptFrom<S, StackCipher<K>, Ctx> for OpaqueTerm
 where
-    EqualityTerm: EncryptFrom<S, StackCipher<K>>,
+    EqualityTerm: EncryptFrom<S, StackCipher<K>, Ctx>,
 {
-    fn encrypt_from<'a, 'c, Ctx>(
+    fn encrypt_from<'a>(
         source: &'a S,
         cipher: &'a StackCipher<K>,
         context: Ctx,
     ) -> Pending<'a, Self, K>
     where
-        Ctx: EncryptContext<'c>,
         Self: 'a,
     {
         EqualityTerm::encrypt_from(source, cipher, context).map(OpaqueTerm)
@@ -198,8 +224,11 @@ async fn explicit_mode_supports_opaque_fields_in_the_paired_derive() {
     let cipher = stack_cipher().await;
     let generator = stack_cipher().await;
 
-    let record: WithOpaque = 5u32.encrypt_into(&cipher, "opaque").await.unwrap();
-    let hm: EqualityTerm = 5u32.encrypt_into(&generator, "opaque").await.unwrap();
+    let record: WithOpaque = 5u32.encrypt_into_with_context(&cipher, "opaque").await.unwrap();
+    let hm: EqualityTerm = 5u32
+        .encrypt_into_with_context(&generator, "opaque")
+        .await
+        .unwrap();
     assert!(record.o == OpaqueTerm(hm));
 
     let opened: u32 = record.decrypt_into(&cipher, "opaque").await.unwrap();
@@ -215,10 +244,9 @@ impl Decryptable for Lying {
     const DECRYPTABLE: bool = true;
 }
 
-impl<P, C: DecryptTarget> DecryptField<P, C> for Lying {
-    fn decrypt_field<'a, 'c, Ctx>(self, _cipher: &'a C, _context: Ctx) -> Option<C::Output<'a, P>>
+impl<P, C: DecryptTarget, Ctx> DecryptField<P, C, Ctx> for Lying {
+    fn decrypt_field<'a>(self, _cipher: &'a C, _context: Ctx) -> Option<C::Output<'a, P>>
     where
-        Ctx: DecryptContext<'c>,
         Self: 'a,
         P: 'a,
     {
@@ -269,13 +297,19 @@ struct EncryptedValue {
 async fn listed_plaintexts_each_get_their_own_impl() {
     let cipher = stack_cipher().await;
 
-    let number: EncryptedValue = 7u32.encrypt_into(&cipher, "t/n").await.unwrap();
-    let text: EncryptedValue = "seven"
-        .to_string()
-        .encrypt_into(&cipher, "t/t")
+    let number: EncryptedValue = 7u32
+        .encrypt_into_with_context(&cipher, "t/n")
         .await
         .unwrap();
-    let hm: EqualityTerm = 7u32.encrypt_into(&cipher, "t/n").await.unwrap();
+    let text: EncryptedValue = "seven"
+        .to_string()
+        .encrypt_into_with_context(&cipher, "t/t")
+        .await
+        .unwrap();
+    let hm: EqualityTerm = 7u32
+        .encrypt_into_with_context(&cipher, "t/n")
+        .await
+        .unwrap();
     assert_eq!(number.hm, hm);
 
     let number: u32 = number.decrypt_into(&cipher, "t/n").await.unwrap();
@@ -290,7 +324,10 @@ async fn a_failed_field_fails_the_derived_record_before_any_io() {
     // An empty context fails every leaf during the synchronous build; the
     // derived record is the zip of those, so it fails the same way and never
     // mints the data key its ciphertext field would have wanted.
-    let result: Result<SearchableText, _> = "alice".to_string().encrypt_into(&cipher, "").await;
+    let result: Result<SearchableText, _> = "alice"
+        .to_string()
+        .encrypt_into_with_context(&cipher, "")
+        .await;
     assert!(matches!(result, Err(Error::EmptyContext)));
     assert_eq!(generates.load(AtomicOrdering::SeqCst), 0);
 }
@@ -332,8 +369,9 @@ async fn a_row_is_one_batched_call_and_rebuilds_its_plaintext() {
     let (cipher, generates, retrieves) = counting_cipher().await;
     let generator = stack_cipher().await;
 
-    // Every field has its own context, so the row's is unused: `()` is fine.
-    let row: EncryptedUser = user().encrypt_into(&cipher, ()).await.unwrap();
+    // Every field has its own context, so the row needs none from the
+    // caller: the context-free forms are the whole call, both ways.
+    let row: EncryptedUser = user().encrypt_into(&cipher).await.unwrap();
     assert_eq!(
         generates.load(AtomicOrdering::SeqCst),
         1,
@@ -343,17 +381,20 @@ async fn a_row_is_one_batched_call_and_rebuilds_its_plaintext() {
 
     // Each field's terms are what a query site derives under the column's
     // literal context.
-    let age_hm: EqualityTerm = 42u32.encrypt_into(&generator, "users/age").await.unwrap();
+    let age_hm: EqualityTerm = 42u32
+        .encrypt_into_with_context(&generator, "users/age")
+        .await
+        .unwrap();
     assert_eq!(row.age.hm, age_hm);
     let email_hm: EqualityTerm = user()
         .email
-        .encrypt_into(&generator, "users/email")
+        .encrypt_into_with_context(&generator, "users/email")
         .await
         .unwrap();
     assert_eq!(row.email_eq, email_hm);
 
     // Decryption rebuilds the plaintext field by field: one batched call.
-    let recovered: User = row.decrypt_into(&cipher, ()).await.unwrap();
+    let recovered = User::decrypt_from(row, &cipher).await.unwrap();
     assert_eq!(recovered, user());
     assert_eq!(
         retrieves.load(AtomicOrdering::SeqCst),
@@ -373,11 +414,11 @@ async fn a_column_of_rows_is_still_one_call_each_way() {
         })
         .collect();
 
-    let rows: Vec<EncryptedUser> = users.encrypt_into(&cipher, ()).await.unwrap();
+    let rows: Vec<EncryptedUser> = users.encrypt_into(&cipher).await.unwrap();
     assert_eq!(rows.len(), 4);
     assert_eq!(generates.load(AtomicOrdering::SeqCst), 1);
 
-    let recovered: Vec<User> = rows.decrypt_into(&cipher, ()).await.unwrap();
+    let recovered = Vec::<User>::decrypt_from(rows, &cipher).await.unwrap();
     assert_eq!(recovered, users);
     assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 1);
 }
@@ -386,7 +427,7 @@ async fn a_column_of_rows_is_still_one_call_each_way() {
 async fn a_row_field_opened_under_the_wrong_context_fails() {
     let cipher = stack_cipher().await;
 
-    let row: EncryptedUser = user().encrypt_into(&cipher, ()).await.unwrap();
+    let row: EncryptedUser = user().encrypt_into(&cipher).await.unwrap();
     // The literal contexts are baked into the impl, so a transplanted field
     // is caught by the AAD exactly as for a leaf.
     let transplanted: Result<u32, _> = row.age.c.decrypt_into(&cipher, "users/height").await;
@@ -412,14 +453,14 @@ async fn a_tuple_plaintext_row_is_reached_and_rebuilt_by_index() {
     let generator = stack_cipher().await;
 
     let reading = Reading(21, "celsius".into());
-    let row: EncryptedReading = reading.encrypt_into(&cipher, ()).await.unwrap();
+    let row: EncryptedReading = reading.encrypt_into(&cipher).await.unwrap();
 
     let hm: EqualityTerm = 21u32
-        .encrypt_into(&generator, "readings/value")
+        .encrypt_into_with_context(&generator, "readings/value")
         .await
         .unwrap();
     assert_eq!(row.value.hm, hm);
 
-    let recovered: Reading = row.decrypt_into(&cipher, ()).await.unwrap();
+    let recovered = Reading::decrypt_from(row, &cipher).await.unwrap();
     assert_eq!(recovered, reading);
 }

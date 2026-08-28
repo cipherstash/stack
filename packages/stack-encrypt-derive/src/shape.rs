@@ -3,7 +3,10 @@
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
-use syn::{Data, DeriveInput, Expr, Fields, Ident, LitStr, Member, Path, Result, Type};
+use syn::{
+    parse_quote, Data, DeriveInput, Expr, Fields, Generics, Ident, LitStr, Member, Path, Result,
+    Type,
+};
 
 use crate::attrs::{ContainerAttrs, FieldAttrs};
 
@@ -114,6 +117,48 @@ impl Record {
             plaintexts: attrs.plaintexts,
             fields,
         })
+    }
+}
+
+/// The context type a field is derived or opened under: its literal's, or
+/// the impl's `__Ctx` when it takes the caller's.
+pub(crate) fn context_type(field: &Field) -> Type {
+    match field.context() {
+        Some(_) => parse_quote!(&'static str),
+        None => parse_quote!(__Ctx),
+    }
+}
+
+/// Adds the impl's context parameter `__Ctx`, bounded by what `fields` do
+/// with the caller's context.
+///
+/// A field with a literal context never sees it, so a record whose fields
+/// all have one leaves `__Ctx` unbounded and accepts `()`: that is what makes
+/// `row.encrypt_into(&cipher)` compile. A field that takes it (no literal)
+/// needs it usable — `EncryptContext` / `DecryptContext`, with the context's
+/// own lifetime `'__c` as an impl parameter — and a `from` field that takes
+/// it needs it *supplied*: its obligation is checked in the body against a
+/// source field type the derive cannot name in a where clause, so the where
+/// clause states the leaf's demand instead.
+pub(crate) fn push_context_generics(
+    generics: &mut Generics,
+    krate: &Path,
+    fields: &[&Field],
+    bound: &Ident,
+) {
+    generics.params.push(parse_quote!(__Ctx));
+    let passthrough: Vec<&&Field> = fields.iter().filter(|f| f.context().is_none()).collect();
+    if passthrough.is_empty() {
+        return;
+    }
+    generics.params.insert(0, parse_quote!('__c));
+    let predicates = &mut generics.make_where_clause().predicates;
+    if passthrough.iter().any(|f| f.from().is_some()) {
+        predicates.push(parse_quote! {
+            __Ctx: #krate::target::#bound<'__c> + #krate::target::SuppliedContext<'__c>
+        });
+    } else {
+        predicates.push(parse_quote!(__Ctx: #krate::target::#bound<'__c>));
     }
 }
 

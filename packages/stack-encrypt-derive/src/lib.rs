@@ -32,7 +32,9 @@
 //!     .kms(FakeDataKeySource::new())
 //!     .init()
 //!     .await?;
-//! let record: EncryptedAge = 42u32.encrypt_into(&cipher, "users/age").await?;
+//! let record: EncryptedAge = 42u32
+//!     .encrypt_into_with_context(&cipher, "users/age")
+//!     .await?;
 //! let age: u32 = record.decrypt_into(&cipher, "users/age").await?;
 //! assert_eq!(age, 42);
 //! # Ok::<(), stack_encrypt::Error>(())
@@ -47,6 +49,13 @@
 //! awaited, so however many fields a record has, awaiting it is **one**
 //! batched ZeroKMS call.
 //!
+//! The record takes the caller's context because its fields do: the derive
+//! bounds the impl's context parameter by what each field accepts, so a
+//! record of leaves — which accept only a `SuppliedContext` — is encrypted
+//! with `encrypt_into_with_context`, and the context-free `encrypt_into`
+//! does not compile against it. That is decided by the field types, not by
+//! an attribute.
+//!
 //! Decryption opens the ciphertext field and passes over the terms, and no
 //! attribute says which is which: each field type does, through
 //! `Decryptable`, and the derive checks at compile time that exactly one
@@ -60,7 +69,7 @@
 //!
 //! ```
 //! # use stack_encrypt::sem::{EqualityTerm, OreTerm};
-//! # use stack_encrypt::target::EncryptInto;
+//! # use stack_encrypt::target::{DecryptFrom, EncryptInto};
 //! # use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
 //! # use stack_kms::FakeDataKeySource;
 //! # #[derive(EncryptFrom, DecryptInto)]
@@ -88,10 +97,10 @@
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 //! # let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 //! let user = User { age: 42, email: "alice@example.com".into() };
-//! let row: EncryptedUser = user.encrypt_into(&cipher, ()).await?; // one batch
+//! let row: EncryptedUser = user.encrypt_into(&cipher).await?; // one batch
 //! let users = vec![User { age: 1, email: "a".into() }, User { age: 2, email: "b".into() }];
-//! let rows: Vec<EncryptedUser> = users.encrypt_into(&cipher, ()).await?; // still one
-//! let user: User = row.decrypt_into(&cipher, ()).await?;
+//! let rows: Vec<EncryptedUser> = users.encrypt_into(&cipher).await?; // still one
+//! let user = User::decrypt_from(row, &cipher).await?;
 //! assert_eq!(user, User { age: 42, email: "alice@example.com".into() });
 //! assert_eq!(rows.len(), 2);
 //! # Ok::<(), stack_encrypt::Error>(())
@@ -100,8 +109,11 @@
 //!
 //! A `from` field's context is the *column's* identity, which is why it is a
 //! literal on the field rather than something composed from the row's
-//! context: the row's context is simply not used by fields that have their
-//! own (pass `()`), and stays available for any field that has none.
+//! context. A row whose fields all have one takes no context from the caller
+//! at all — its impl leaves the context parameter unbounded, which is what
+//! makes the context-free `encrypt_into` / `decrypt_from` compile against
+//! it — while a field without one takes the caller's, and pulls the row back
+//! to `encrypt_into_with_context`.
 //!
 //! # What the derive commits to
 //!

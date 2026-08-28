@@ -7,16 +7,25 @@
 //! record shape in charge:
 //!
 //! ```text
-//! let term: EqualityTerm = value.encrypt_into(&cipher, "users/email").await?;
+//! let term: EqualityTerm = value.encrypt_into_with_context(&cipher, "users/email").await?;
+//! let row: EncryptedUser = user.encrypt_into(&cipher).await?;
 //! ```
 //!
-//! compiles only when `EqualityTerm` declares itself an encrypted form of the
-//! value's type, producible by that cipher.
+//! compiles only when the output type declares itself an encrypted form of
+//! the value's type, producible by that cipher, under that context — and a
+//! context is something the output type may already have. A leaf takes the
+//! caller's; a row whose fields each name their own column needs none, and
+//! the second line is the whole call.
 //!
 //! # The pieces
 //!
-//! * [`EncryptFrom<S, C>`] — implemented by an *output* type: "`Self` is an
-//!   encrypted representation of `S`, producible by a cipher `C`". Leaf
+//! * [`EncryptFrom<S, C, Ctx>`] — implemented by an *output* type: "`Self` is
+//!   an encrypted representation of `S`, producible by a cipher `C`, under a
+//!   context `Ctx`". The context is a parameter of the *trait* so that an
+//!   implementation can say which contexts it accepts: the leaves accept
+//!   only a [`SuppliedContext`], a record passes the obligation through to
+//!   its fields, and a row whose fields carry their own contexts accepts
+//!   anything — `()` included. Leaf
 //!   implementations exist for [`StackCipherText`] (the AEAD ciphertext, via
 //!   vitaminc's [`Encrypt`]) and for the SEM term types in [`sem`]
 //!   ([`EqualityTerm`], [`MatchTerm`], [`OreTerm`], [`OpeTerm`]). Composite
@@ -24,25 +33,32 @@
 //!   [`#[derive(EncryptFrom)]`](macro@EncryptFrom), which combines the
 //!   fields' pendings with [`Pending::zip`] / [`Pending::map`] exactly as a
 //!   hand-written impl would.
-//! * [`DecryptInto<P, C>`] — the mirror, implemented by the *encrypted* type:
-//!   "`Self` decrypts to the plaintext `P`". Only ciphertext fields
+//! * [`DecryptInto<P, C, Ctx>`] — the mirror, implemented by the *encrypted*
+//!   type: "`Self` decrypts to the plaintext `P`". Only ciphertext fields
 //!   participate — index terms are one-way by construction.
 //!   [`#[derive(DecryptInto)]`](macro@DecryptInto) on the record emits it.
 //!   `Self` is the record in both traits — the output of encryption, the
 //!   input of decryption — because that is the type a downstream crate can
 //!   implement on; the halves whose `Self` is the plaintext are blanket:
-//! * [`EncryptInto::encrypt_into`] / [`DecryptFrom::decrypt_from`] — call-site
-//!   sugar, the `Into` to `EncryptFrom` and the `From` to `DecryptInto`.
-//!   Never implemented by hand.
+//! * [`EncryptInto`] / [`DecryptFrom`] — call-site sugar, the `Into` to
+//!   `EncryptFrom` and the `From` to `DecryptInto`, each in two forms:
+//!   [`encrypt_into(&cipher)`](EncryptInto::encrypt_into) for an output that
+//!   needs no context from the caller, and
+//!   [`encrypt_into_with_context(&cipher, ctx)`](EncryptInto::encrypt_into_with_context)
+//!   for one that does — the split of vitaminc's `encrypt` /
+//!   `encrypt_with_aad`, decided by the output type at compile time. Never
+//!   implemented by hand.
 //! * [`EncryptTarget`] / [`DecryptTarget`] — implemented by ciphers; their
 //!   `Output` type decides what a call site gets back. A synchronous cipher
 //!   returns `Result<T, E>` directly; [`StackCipher`] returns a [`Pending`],
 //!   which does its ZeroKMS I/O — **one batched call** — when awaited.
 //! * [`EncryptContext`] — one context value per field, convertible to both an
-//!   AEAD [`Aad`](vitaminc_aead::Aad) and a
+//!   AEAD [`Aad`] and a
 //!   [`PrfContext`](vitaminc_prf::PrfContext), so the same identifier that
 //!   domain-separates the index terms also *authenticates* the ciphertext.
-//!   `&str` and `String` qualify. The context must be **non-empty**.
+//!   `&str` and `String` qualify. [`SuppliedContext`] marks the ones a
+//!   caller actually passed — everything but `()` — and is what a leaf
+//!   demands; the context must also be **non-empty**.
 //!
 //! # Build synchronously, settle once
 //!
@@ -69,7 +85,9 @@
 //! let ages: Vec<u32> = vec![29, 34, 41];
 //!
 //! // A column of independently sealed ciphertexts: ONE generate_keys call.
-//! let sealed: Vec<StackCipherText> = ages.encrypt_into(&cipher, "users/age").await?;
+//! let sealed: Vec<StackCipherText> = ages
+//!     .encrypt_into_with_context(&cipher, "users/age")
+//!     .await?;
 //!
 //! // And back: ONE retrieve_keys call for the whole column.
 //! let roundtrip: Vec<u32> = sealed.decrypt_into(&cipher, "users/age").await?;
@@ -105,8 +123,8 @@
 //!
 //! ```
 //! use stack_encrypt::target::{
-//!     DecryptContext, DecryptField, DecryptTarget, Decryptable, EncryptContext, EncryptFrom,
-//!     Pending,
+//!     DecryptField, DecryptTarget, Decryptable, EncryptContext, EncryptFrom, Pending,
+//!     SuppliedContext,
 //! };
 //! use stack_encrypt::{Error, StackCipher};
 //! use vitaminc_prf::{IntoPrfContext, PrfContext, PrfValue, PrfVisitor, PrfVisitorError};
@@ -124,24 +142,27 @@
 //!     }
 //! }
 //!
-//! impl<S, K> EncryptFrom<S, StackCipher<K>> for MyTerm
+//! // A leaf owns the context policy, and states it in the impl header:
+//! // `SuppliedContext` refuses `()` at compile time (nothing above a leaf
+//! // checks, since a column of rows has no context of its own). The
+//! // lifetime is the context's own, as in the `IntoAad<'c>` it implements.
+//! impl<'c, S, K, Ctx> EncryptFrom<S, StackCipher<K>, Ctx> for MyTerm
 //! where
 //!     S: PrfValue + Clone,
+//!     Ctx: EncryptContext<'c> + SuppliedContext<'c>,
 //! {
-//!     fn encrypt_from<'a, 'c, Ctx>(
+//!     fn encrypt_from<'a>(
 //!         source: &'a S,
 //!         cipher: &'a StackCipher<K>,
 //!         context: Ctx,
 //!     ) -> Pending<'a, Self, K>
 //!     where
-//!         Ctx: EncryptContext<'c>,
 //!         Self: 'a,
 //!     {
-//!         // The leaf owns the context policy: the built-in leaves refuse
-//!         // an empty context (nothing above them checks, since a column
-//!         // of rows has no context of its own), and yours should too.
-//!         // Then domain-separate under your own label so your terms can
-//!         // never collide with another scheme's under the same context.
+//!         // The type rules out an absent context; an empty one is still a
+//!         // runtime check, as for the built-in leaves. Then domain-separate
+//!         // under your own label so your terms can never collide with
+//!         // another scheme's under the same context.
 //!         let context = context.into_prf_context().into_owned();
 //!         if context.as_bytes().is_empty() {
 //!             return Pending::ready(cipher, Err(Error::EmptyContext));
@@ -162,10 +183,9 @@
 //!     const DECRYPTABLE: bool = false;
 //! }
 //!
-//! impl<P, C: DecryptTarget> DecryptField<P, C> for MyTerm {
-//!     fn decrypt_field<'a, 'c, Ctx>(self, _: &'a C, _: Ctx) -> Option<C::Output<'a, P>>
+//! impl<P, C: DecryptTarget, Ctx> DecryptField<P, C, Ctx> for MyTerm {
+//!     fn decrypt_field<'a>(self, _: &'a C, _: Ctx) -> Option<C::Output<'a, P>>
 //!     where
-//!         Ctx: DecryptContext<'c>,
 //!         Self: 'a,
 //!         P: 'a,
 //!     {
@@ -197,7 +217,7 @@
 //!
 //! ```
 //! use stack_encrypt::sem::{EqualityTerm, OreTerm};
-//! use stack_encrypt::target::EncryptInto;
+//! use stack_encrypt::target::{DecryptFrom, EncryptInto};
 //! use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
 //! use stack_kms::FakeDataKeySource;
 //!
@@ -233,13 +253,16 @@
 //!     .unwrap();
 //!
 //! let user = User { age: 42, email: "alice@example.com".into() };
-//! // Every field names its own context, so the row has none: `()`.
-//! let row: EncryptedUser = user.encrypt_into(&cipher, ()).await?;
+//! // Every field names its own context, so the row needs none from the
+//! // caller — and the context-free forms are the only ones that apply.
+//! let row: EncryptedUser = user.encrypt_into(&cipher).await?;
 //! // A query site derives the same term under the same literal.
-//! let probe: EqualityTerm = 42u32.encrypt_into(&cipher, "users/age").await?;
+//! let probe: EqualityTerm = 42u32
+//!     .encrypt_into_with_context(&cipher, "users/age")
+//!     .await?;
 //! assert_eq!(row.age.hm, probe);
 //!
-//! let recovered: User = row.decrypt_into(&cipher, ()).await?;
+//! let recovered = User::decrypt_from(row, &cipher).await?;
 //! assert_eq!(recovered, user);
 //! # Ok::<(), stack_encrypt::Error>(())
 //! # }).unwrap();
@@ -263,8 +286,10 @@
 //! [`OreTerm`]: crate::sem::OreTerm
 //! [`OpeTerm`]: crate::sem::OpeTerm
 
+use std::borrow::Cow;
+
 use stack_kms::MaybeSend;
-use vitaminc_aead::{CipherText, Decrypt, Encrypt, IntoAad};
+use vitaminc_aead::{Aad, CipherText, Decrypt, Encrypt, IntoAad};
 use vitaminc_prf::IntoPrfContext;
 
 use crate::cipher::{bind_keys, PendingStackCipherText, StackDecipher};
@@ -293,17 +318,16 @@ pub use stack_encrypt_derive::{DecryptInto, EncryptFrom};
 /// in different fields produce identical index terms (cross-field equality
 /// leakage), every field shares one ORE/OPE key (values become mutually
 /// order-comparable), and ciphertexts become transplantable between fields.
-/// Every leaf implementation rejects an empty context during the synchronous
-/// build, before any I/O. Containers (`Vec`, `Option`) and derived records
-/// pass the context through to their elements and fields untouched, so a
-/// container of records whose fields carry their own contexts — a
-/// [`#[derive(EncryptFrom)]`](macro@EncryptFrom) row — is given `()`, and an
-/// empty context still fails the moment a value reaches a leaf.
-///
-/// "Empty" means *carrying no caller-supplied information*, not merely zero
-/// bytes: `()`, `""`, `b""`, `None`, `Some("")` and `("", "")` all encode to
-/// nothing but vitaminc framing and are all rejected
-/// ([`Error::EmptyContext`]). The check is structural over the PAE encoding
+/// That is enforced in two layers. An *absent* context — `()`, what
+/// [`encrypt_into`](EncryptInto::encrypt_into) passes — is refused by the
+/// type: every leaf demands a [`SuppliedContext`], and containers (`Vec`,
+/// `Option`) and derived records pass that demand through to their elements
+/// and fields untouched, so only a record whose fields all carry contexts of
+/// their own — a [`#[derive(EncryptFrom)]`](macro@EncryptFrom) row — accepts
+/// `()`. An *empty* one — `""`, `b""`, `None`, `Some("")`, `("", "")`,
+/// anything that encodes to nothing but vitaminc framing — is refused by
+/// every built-in leaf during the synchronous build, before any I/O
+/// ([`Error::EmptyContext`]). That check is structural over the PAE encoding
 /// vitaminc uses, so a nested empty context cannot hide behind an `Option`
 /// or tuple wrapper. (An integer context whose bytes coincide with an empty
 /// encoding — `0u64` — is rejected too: it is byte-identical to `None`.)
@@ -313,11 +337,53 @@ impl<'a, T> EncryptContext<'a> for T where T: IntoAad<'a> + IntoPrfContext<'a> +
 
 /// Per-field decryption context: must convert to the AEAD associated data the
 /// value was encrypted under. Decryption derives nothing, so no PRF bound.
-/// Blanket-implemented; `&str`, `String` and [`Aad`](vitaminc_aead::Aad)
+/// Blanket-implemented; `&str`, `String` and [`Aad`]
 /// qualify.
 pub trait DecryptContext<'a>: IntoAad<'a> + Clone {}
 
 impl<'a, T> DecryptContext<'a> for T where T: IntoAad<'a> + Clone {}
+
+/// A context the caller actually passed, as opposed to `()` — the absence of
+/// one.
+///
+/// This is what lets an output type decide, at compile time, whether the
+/// call site owes it a context. The leaves ([`StackCipherText`], the
+/// [`sem`](crate::sem) terms) implement [`EncryptFrom`] and [`DecryptInto`]
+/// only for a `SuppliedContext`, so `value.encrypt_into(&cipher)` — which
+/// passes `()` — does not compile against them, nor against a record that
+/// hands its context on to one of them. A row whose fields each carry a
+/// context of their own never passes the caller's anywhere, accepts `()`,
+/// and is encrypted with no context at all.
+///
+/// Implemented for every context type vitaminc provides except `()`: `&str`,
+/// `String`, byte strings, [`Aad`], `u64`, and `Option`s
+/// and pairs of those. Implement it for a context type of your own alongside
+/// its `IntoAad` / `IntoPrfContext`.
+///
+/// The marker is about the *type*: `""` is a `&str` and therefore supplied.
+/// Whether what was supplied is non-empty stays a runtime check at the leaf
+/// ([`Error::EmptyContext`]) until vitaminc carries non-emptiness in the
+/// type itself (cipherstash/vitaminc#291), at which point the bound tightens
+/// to that.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a context the caller supplied",
+    label = "this leaf needs a context",
+    note = "`()` is what `encrypt_into` / `decrypt_from` pass: an output type that reaches a \
+            leaf needs `encrypt_into_with_context` / `decrypt_from_with_context` instead"
+)]
+pub trait SuppliedContext<'a>: IntoAad<'a> + Clone {}
+
+impl<'a> SuppliedContext<'a> for &'a str {}
+impl SuppliedContext<'_> for String {}
+impl<'a> SuppliedContext<'a> for &'a [u8] {}
+impl<'a, const N: usize> SuppliedContext<'a> for &'a [u8; N] {}
+impl<const N: usize> SuppliedContext<'_> for [u8; N] {}
+impl SuppliedContext<'_> for Vec<u8> {}
+impl<'a> SuppliedContext<'a> for Cow<'a, [u8]> {}
+impl<'a> SuppliedContext<'a> for Aad<'a> {}
+impl SuppliedContext<'_> for u64 {}
+impl<'a, T: SuppliedContext<'a>> SuppliedContext<'a> for Option<T> {}
+impl<'a, A: SuppliedContext<'a>, B: SuppliedContext<'a>> SuppliedContext<'a> for (A, B) {}
 
 // The two checks below reconstruct, at runtime and from the outside, an
 // invariant that should be carried by the type: "this context was built
@@ -534,7 +600,31 @@ impl<K> DecryptTarget for StackCipher<K> {
 /// There is no associated error type: errors belong to the cipher
 /// ([`EncryptTarget::Error`]), and implementations with failure modes of
 /// their own use [`Error::Term`] or [`Error::Other`].
-pub trait EncryptFrom<S, C: EncryptTarget>: Sized {
+///
+/// # The context parameter
+///
+/// `Ctx` is a parameter of the trait, not of the method, so that each
+/// implementation can bound it: a leaf demands a [`SuppliedContext`] (it has
+/// nothing else to authenticate under), a record passes whatever it is given
+/// on to its fields and inherits their demands through its where clause, and
+/// a row whose fields carry their own contexts leaves `Ctx` unbounded. The
+/// call site then gets one of two answers from the compiler:
+/// [`encrypt_into(&cipher)`](EncryptInto::encrypt_into) resolves against
+/// `EncryptFrom<S, C, ()>` and exists exactly for the outputs that need no
+/// context; everything else takes
+/// [`encrypt_into_with_context`](EncryptInto::encrypt_into_with_context).
+///
+/// The trait itself places no bound on `Ctx`; an implementation that uses the
+/// context bounds it as [`EncryptContext<'c>`] with the context's own
+/// lifetime as an impl parameter (see the
+/// [module docs](self#extending-with-your-own-sem-type)).
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not an encrypted form of `{S}` under a `{Ctx}` context",
+    label = "not `EncryptFrom<{S}, _, {Ctx}>`",
+    note = "if `{Ctx}` is `()`, no context was supplied: an output that reaches a leaf needs \
+            one — use `encrypt_into_with_context(&cipher, context)`"
+)]
+pub trait EncryptFrom<S, C: EncryptTarget, Ctx>: Sized {
     /// Encrypt `source` into `Self` under `context`, returning the cipher's
     /// [`Output`](EncryptTarget::Output). No I/O happens here; work needing
     /// ZeroKMS is carried as requests and settles when the output is awaited.
@@ -542,9 +632,8 @@ pub trait EncryptFrom<S, C: EncryptTarget>: Sized {
     /// Borrows the source because a composite record hands the same source to
     /// several field implementations; each takes what it needs (typically one
     /// clone).
-    fn encrypt_from<'a, 'c, Ctx>(source: &'a S, cipher: &'a C, context: Ctx) -> C::Output<'a, Self>
+    fn encrypt_from<'a>(source: &'a S, cipher: &'a C, context: Ctx) -> C::Output<'a, Self>
     where
-        Ctx: EncryptContext<'c>,
         Self: 'a;
 }
 
@@ -560,21 +649,37 @@ pub trait EncryptFrom<S, C: EncryptTarget>: Sized {
 ///
 /// Takes `self` by value: decryption consumes the ciphertext, and index
 /// terms (which have no plaintext to recover) simply do not participate.
-pub trait DecryptInto<P, C: DecryptTarget>: Sized {
+///
+/// `Ctx` is a trait parameter for the reason it is on [`EncryptFrom`]: the
+/// leaves accept only a [`SuppliedContext`], so an encrypted type that needs
+/// no context from the caller is exactly one that implements
+/// `DecryptInto<P, C, ()>` — what [`DecryptFrom::decrypt_from`] asks for.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not decrypt to `{P}` under a `{Ctx}` context",
+    label = "not `DecryptInto<{P}, _, {Ctx}>`",
+    note = "if `{Ctx}` is `()`, no context was supplied: a value that reaches a leaf needs the \
+            one it was encrypted under — use `decrypt_into(&cipher, context)` or \
+            `decrypt_from_with_context`"
+)]
+pub trait DecryptInto<P, C: DecryptTarget, Ctx>: Sized {
     /// Decrypt `self` into `P`, authenticating against `context` — which
     /// must match the context the value was encrypted under.
-    fn decrypt_into<'a, 'c, Ctx>(self, cipher: &'a C, context: Ctx) -> C::Output<'a, P>
+    fn decrypt_into<'a>(self, cipher: &'a C, context: Ctx) -> C::Output<'a, P>
     where
-        Ctx: DecryptContext<'c>,
         Self: 'a,
         P: 'a;
 }
 
-/// Call-site sugar: `value.encrypt_into::<Target>(&cipher, context)`.
+/// Call-site sugar: `value.encrypt_into(&cipher)` and
+/// `value.encrypt_into_with_context(&cipher, context)`.
 ///
 /// The `Into` to [`EncryptFrom`]'s `From` — blanket-implemented for every
 /// type, never implemented by hand. The target type is usually inferred from
-/// the binding:
+/// the binding. Which of the two methods applies is not a choice: a leaf, or
+/// a record that hands the caller's context to one, exists only under a
+/// [`SuppliedContext`] and takes the second; a row whose fields name their
+/// own contexts needs nothing from the caller and takes the first. The
+/// split is vitaminc's `encrypt` / `encrypt_with_aad`, decided by the type.
 ///
 /// ```
 /// use stack_encrypt::sem::EqualityTerm;
@@ -589,54 +694,107 @@ pub trait DecryptInto<P, C: DecryptTarget>: Sized {
 ///     .await
 ///     .unwrap();
 ///
-/// let term: EqualityTerm = "alice".encrypt_into(&cipher, "users/email").await?;
+/// let term: EqualityTerm = "alice"
+///     .encrypt_into_with_context(&cipher, "users/email")
+///     .await?;
 /// # Ok::<(), stack_encrypt::Error>(())
 /// # }).unwrap();
 /// ```
 pub trait EncryptInto {
-    /// Encrypt `self` into `T` under `context`. See [`EncryptFrom`].
-    fn encrypt_into<'a, 'c, T, C, Ctx>(&'a self, cipher: &'a C, context: Ctx) -> C::Output<'a, T>
+    /// Encrypt `self` into a `T` that needs no context from the caller —
+    /// a row whose fields carry their own. See [`EncryptFrom`].
+    ///
+    /// Passes `()`, so this exists only for `T: EncryptFrom<Self, C, ()>`:
+    /// against a leaf the compiler says to use
+    /// [`encrypt_into_with_context`](Self::encrypt_into_with_context).
+    fn encrypt_into<'a, T, C>(&'a self, cipher: &'a C) -> C::Output<'a, T>
     where
         C: EncryptTarget,
-        T: EncryptFrom<Self, C> + 'a,
-        Ctx: EncryptContext<'c>,
+        T: EncryptFrom<Self, C, ()> + 'a,
+        Self: Sized;
+
+    /// Encrypt `self` into `T` under `context`. See [`EncryptFrom`].
+    fn encrypt_into_with_context<'a, T, C, Ctx>(
+        &'a self,
+        cipher: &'a C,
+        context: Ctx,
+    ) -> C::Output<'a, T>
+    where
+        C: EncryptTarget,
+        T: EncryptFrom<Self, C, Ctx> + 'a,
         Self: Sized;
 }
 
 impl<S> EncryptInto for S {
-    fn encrypt_into<'a, 'c, T, C, Ctx>(&'a self, cipher: &'a C, context: Ctx) -> C::Output<'a, T>
+    fn encrypt_into<'a, T, C>(&'a self, cipher: &'a C) -> C::Output<'a, T>
     where
         C: EncryptTarget,
-        T: EncryptFrom<Self, C> + 'a,
-        Ctx: EncryptContext<'c>,
+        T: EncryptFrom<Self, C, ()> + 'a,
+    {
+        T::encrypt_from(self, cipher, ())
+    }
+
+    fn encrypt_into_with_context<'a, T, C, Ctx>(
+        &'a self,
+        cipher: &'a C,
+        context: Ctx,
+    ) -> C::Output<'a, T>
+    where
+        C: EncryptTarget,
+        T: EncryptFrom<Self, C, Ctx> + 'a,
     {
         T::encrypt_from(self, cipher, context)
     }
 }
 
-/// Call-site sugar: `Plaintext::decrypt_from(encrypted, &cipher, context)` —
-/// the `From` to [`DecryptInto`]'s `Into`, and the decrypt-side
-/// [`EncryptInto`]. Blanket-implemented for every plaintext; never
-/// implemented by hand.
+/// Call-site sugar: `Plaintext::decrypt_from(encrypted, &cipher)` and
+/// `Plaintext::decrypt_from_with_context(encrypted, &cipher, context)` — the
+/// `From` to [`DecryptInto`]'s `Into`, and the decrypt-side [`EncryptInto`],
+/// with the same two forms for the same reason. Blanket-implemented for every
+/// plaintext; never implemented by hand.
+///
+/// (The implemented trait, [`DecryptInto`], always takes a context:
+/// `encrypted.decrypt_into(&cipher, "users/age")` is the method-call form
+/// for a value that needs one.)
 pub trait DecryptFrom<S, C: DecryptTarget>: Sized {
+    /// Decrypt `source` — an encrypted type that needs no context from the
+    /// caller — into `Self`. See [`DecryptInto`].
+    fn decrypt_from<'a>(source: S, cipher: &'a C) -> C::Output<'a, Self>
+    where
+        S: DecryptInto<Self, C, ()> + 'a,
+        Self: 'a;
+
     /// Decrypt `source` into `Self`, authenticating against `context`. See
     /// [`DecryptInto`].
-    fn decrypt_from<'a, 'c, Ctx>(source: S, cipher: &'a C, context: Ctx) -> C::Output<'a, Self>
+    fn decrypt_from_with_context<'a, Ctx>(
+        source: S,
+        cipher: &'a C,
+        context: Ctx,
+    ) -> C::Output<'a, Self>
     where
-        Ctx: DecryptContext<'c>,
-        S: 'a,
+        S: DecryptInto<Self, C, Ctx> + 'a,
         Self: 'a;
 }
 
 impl<S, P, C> DecryptFrom<S, C> for P
 where
     C: DecryptTarget,
-    S: DecryptInto<P, C>,
 {
-    fn decrypt_from<'a, 'c, Ctx>(source: S, cipher: &'a C, context: Ctx) -> C::Output<'a, Self>
+    fn decrypt_from<'a>(source: S, cipher: &'a C) -> C::Output<'a, Self>
     where
-        Ctx: DecryptContext<'c>,
-        S: 'a,
+        S: DecryptInto<Self, C, ()> + 'a,
+        Self: 'a,
+    {
+        source.decrypt_into(cipher, ())
+    }
+
+    fn decrypt_from_with_context<'a, Ctx>(
+        source: S,
+        cipher: &'a C,
+        context: Ctx,
+    ) -> C::Output<'a, Self>
+    where
+        S: DecryptInto<Self, C, Ctx> + 'a,
         Self: 'a,
     {
         source.decrypt_into(cipher, context)
@@ -676,11 +834,10 @@ pub trait Decryptable {
 /// record, and a record that only decrypts — no `EncryptFrom` derive to
 /// emit its `Decryptable` — must still be a field of a row in the explicit
 /// mode.)
-pub trait DecryptField<P, C: DecryptTarget> {
+pub trait DecryptField<P, C: DecryptTarget, Ctx> {
     /// [`DecryptInto::decrypt_into`] if `Self` is decryptable, `None` if not.
-    fn decrypt_field<'a, 'c, Ctx>(self, cipher: &'a C, context: Ctx) -> Option<C::Output<'a, P>>
+    fn decrypt_field<'a>(self, cipher: &'a C, context: Ctx) -> Option<C::Output<'a, P>>
     where
-        Ctx: DecryptContext<'c>,
         Self: 'a,
         P: 'a;
 }
@@ -689,14 +846,13 @@ impl Decryptable for StackCipherText {
     const DECRYPTABLE: bool = true;
 }
 
-impl<P, C> DecryptField<P, C> for StackCipherText
+impl<P, C, Ctx> DecryptField<P, C, Ctx> for StackCipherText
 where
     C: DecryptTarget,
-    Self: DecryptInto<P, C>,
+    Self: DecryptInto<P, C, Ctx>,
 {
-    fn decrypt_field<'a, 'c, Ctx>(self, cipher: &'a C, context: Ctx) -> Option<C::Output<'a, P>>
+    fn decrypt_field<'a>(self, cipher: &'a C, context: Ctx) -> Option<C::Output<'a, P>>
     where
-        Ctx: DecryptContext<'c>,
         Self: 'a,
         P: 'a,
     {
@@ -709,17 +865,17 @@ impl<S: Decryptable> Decryptable for Vec<S> {
     const DECRYPTABLE: bool = S::DECRYPTABLE;
 }
 
-impl<S, T, K> DecryptField<Vec<T>, StackCipher<K>> for Vec<S>
+impl<S, T, K, Ctx> DecryptField<Vec<T>, StackCipher<K>, Ctx> for Vec<S>
 where
-    S: Decryptable + DecryptField<T, StackCipher<K>>,
+    S: Decryptable + DecryptField<T, StackCipher<K>, Ctx>,
+    Ctx: Clone,
 {
-    fn decrypt_field<'a, 'c, Ctx>(
+    fn decrypt_field<'a>(
         self,
         cipher: &'a StackCipher<K>,
         context: Ctx,
     ) -> Option<Pending<'a, Vec<T>, K>>
     where
-        Ctx: DecryptContext<'c>,
         Self: 'a,
         Vec<T>: 'a,
     {
@@ -742,18 +898,17 @@ impl<S: Decryptable> Decryptable for Option<S> {
     const DECRYPTABLE: bool = S::DECRYPTABLE;
 }
 
-impl<S, T, K> DecryptField<Option<T>, StackCipher<K>> for Option<S>
+impl<S, T, K, Ctx> DecryptField<Option<T>, StackCipher<K>, Ctx> for Option<S>
 where
-    S: Decryptable + DecryptField<T, StackCipher<K>>,
+    S: Decryptable + DecryptField<T, StackCipher<K>, Ctx>,
     T: MaybeSend,
 {
-    fn decrypt_field<'a, 'c, Ctx>(
+    fn decrypt_field<'a>(
         self,
         cipher: &'a StackCipher<K>,
         context: Ctx,
     ) -> Option<Pending<'a, Option<T>, K>>
     where
-        Ctx: DecryptContext<'c>,
         Self: 'a,
         Option<T>: 'a,
     {
@@ -783,23 +938,26 @@ where
 /// a pending tree (no I/O), and the returned [`Pending`] carries one
 /// data-key request per leaf. Sealing happens in the fulfilment, key material
 /// drawn in the same traversal order the tree was built in.
-impl<S, K> EncryptFrom<S, StackCipher<K>> for StackCipherText
+///
+/// A leaf has nothing of its own to authenticate under, so it exists only
+/// for a [`SuppliedContext`]: `()` is a compile error here.
+impl<'c, S, K, Ctx> EncryptFrom<S, StackCipher<K>, Ctx> for StackCipherText
 where
     S: Encrypt + Clone,
+    Ctx: EncryptContext<'c> + SuppliedContext<'c>,
 {
-    fn encrypt_from<'a, 'c, Ctx>(
+    fn encrypt_from<'a>(
         source: &'a S,
         cipher: &'a StackCipher<K>,
         context: Ctx,
     ) -> Pending<'a, Self, K>
     where
-        Ctx: EncryptContext<'c>,
         Self: 'a,
     {
         let aad = context.into_aad().into_owned();
         // An empty context would leave the leaf AAD carrying only the key
-        // tag, making ciphertexts transplantable between ()-context fields —
-        // see `EncryptContext`.
+        // tag, making ciphertexts transplantable between empty-context
+        // fields — see `EncryptContext`.
         if is_degenerate_aad(aad.as_bytes()) {
             return Pending::failed(cipher, Error::EmptyContext);
         }
@@ -868,17 +1026,13 @@ fn decipher_from_responses(
 /// (`iv` + `tag` are lifted out of the tree during the synchronous build);
 /// the fulfilment binds the retrieved keys back onto the leaves and lets the
 /// value's `Decrypt` impl drive the opening.
-impl<T, K> DecryptInto<T, StackCipher<K>> for StackCipherText
+impl<'c, T, K, Ctx> DecryptInto<T, StackCipher<K>, Ctx> for StackCipherText
 where
     T: Decrypt<'static> + 'static,
+    Ctx: DecryptContext<'c> + SuppliedContext<'c>,
 {
-    fn decrypt_into<'a, 'c, Ctx>(
-        self,
-        cipher: &'a StackCipher<K>,
-        context: Ctx,
-    ) -> Pending<'a, T, K>
+    fn decrypt_into<'a>(self, cipher: &'a StackCipher<K>, context: Ctx) -> Pending<'a, T, K>
     where
-        Ctx: DecryptContext<'c>,
         Self: 'a,
         T: 'a,
     {
@@ -935,23 +1089,25 @@ fn collect_retrieve_requests(ciphertext: &StackCipherText, out: &mut Vec<Request
 ///
 /// Distinct from `Vec<S> → StackCipherText` (via [`Encrypt`]), which is one
 /// record whose value is a list — see the [module docs](self).
-impl<S, T, K> EncryptFrom<Vec<S>, StackCipher<K>> for Vec<T>
+///
+/// The context is passed through untouched, and so is the obligation: a
+/// column of leaves needs a [`SuppliedContext`] because its leaves do, a
+/// column of rows accepts `()` because its rows do. Neither is decided here,
+/// and neither is an empty context, which the leaves reject the moment a
+/// value reaches them.
+impl<S, T, K, Ctx> EncryptFrom<Vec<S>, StackCipher<K>, Ctx> for Vec<T>
 where
-    T: EncryptFrom<S, StackCipher<K>>,
+    T: EncryptFrom<S, StackCipher<K>, Ctx>,
+    Ctx: Clone,
 {
-    fn encrypt_from<'a, 'c, Ctx>(
+    fn encrypt_from<'a>(
         source: &'a Vec<S>,
         cipher: &'a StackCipher<K>,
         context: Ctx,
     ) -> Pending<'a, Self, K>
     where
-        Ctx: EncryptContext<'c>,
         Self: 'a,
     {
-        // The context is passed through untouched, not validated here: a
-        // column of records whose fields carry their own contexts (a derived
-        // row) has none of its own, and the leaves reject an empty one the
-        // moment a value reaches them.
         let items = source
             .iter()
             .map(|item| T::encrypt_from(item, cipher, context.clone()))
@@ -961,17 +1117,13 @@ where
 }
 
 /// The column decrypt mirror: one batched retrieve for every row.
-impl<S, T, K> DecryptInto<Vec<T>, StackCipher<K>> for Vec<S>
+impl<S, T, K, Ctx> DecryptInto<Vec<T>, StackCipher<K>, Ctx> for Vec<S>
 where
-    S: DecryptInto<T, StackCipher<K>>,
+    S: DecryptInto<T, StackCipher<K>, Ctx>,
+    Ctx: Clone,
 {
-    fn decrypt_into<'a, 'c, Ctx>(
-        self,
-        cipher: &'a StackCipher<K>,
-        context: Ctx,
-    ) -> Pending<'a, Vec<T>, K>
+    fn decrypt_into<'a>(self, cipher: &'a StackCipher<K>, context: Ctx) -> Pending<'a, Vec<T>, K>
     where
-        Ctx: DecryptContext<'c>,
         Self: 'a,
         Vec<T>: 'a,
     {
@@ -987,17 +1139,16 @@ where
 /// absent *record field*, carrying no requests). This is distinct from
 /// `Option<S> → StackCipherText` via [`Encrypt`], which produces an
 /// *authenticated* absence marker inside one ciphertext.
-impl<S, T, K> EncryptFrom<Option<S>, StackCipher<K>> for Option<T>
+impl<S, T, K, Ctx> EncryptFrom<Option<S>, StackCipher<K>, Ctx> for Option<T>
 where
-    T: EncryptFrom<S, StackCipher<K>> + MaybeSend,
+    T: EncryptFrom<S, StackCipher<K>, Ctx> + MaybeSend,
 {
-    fn encrypt_from<'a, 'c, Ctx>(
+    fn encrypt_from<'a>(
         source: &'a Option<S>,
         cipher: &'a StackCipher<K>,
         context: Ctx,
     ) -> Pending<'a, Self, K>
     where
-        Ctx: EncryptContext<'c>,
         Self: 'a,
     {
         // `None` derives nothing and checks nothing: the context is the
@@ -1010,18 +1161,13 @@ where
 }
 
 /// The optional decrypt mirror of the [`Option`] encrypt implementation.
-impl<S, T, K> DecryptInto<Option<T>, StackCipher<K>> for Option<S>
+impl<S, T, K, Ctx> DecryptInto<Option<T>, StackCipher<K>, Ctx> for Option<S>
 where
-    S: DecryptInto<T, StackCipher<K>>,
+    S: DecryptInto<T, StackCipher<K>, Ctx>,
     T: MaybeSend,
 {
-    fn decrypt_into<'a, 'c, Ctx>(
-        self,
-        cipher: &'a StackCipher<K>,
-        context: Ctx,
-    ) -> Pending<'a, Option<T>, K>
+    fn decrypt_into<'a>(self, cipher: &'a StackCipher<K>, context: Ctx) -> Pending<'a, Option<T>, K>
     where
-        Ctx: DecryptContext<'c>,
         Self: 'a,
         Option<T>: 'a,
     {

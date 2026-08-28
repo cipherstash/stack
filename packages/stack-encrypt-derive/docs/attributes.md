@@ -22,14 +22,19 @@ must name it: the plaintext is rebuilt with a struct literal.
 
 | Attribute | Effect |
 |---|---|
-| `context = "..."` | Derive this field under exactly this context rather than the one the caller passed for the record. A query-side term built under the same literal matches it. Must not be empty. |
+| `context = "..."` | Derive this field under exactly this context rather than the one the caller passes for the record. A query-side term built under the same literal matches it. Must not be empty. |
 | `from = field` / `from = 0` | Derive this field from `plaintext.field` (or `plaintext.0` for a tuple struct) rather than from the whole plaintext. Needs `plaintext = ..` on the struct. |
 | `default` / `default = expr` | Not derived: filled with `Default::default()` or `expr`. Never encrypted, never authenticated. |
 | `decrypt` | Decryption opens this field (`DecryptInto` only). Needed only when the field types cannot decide it — see below. |
 
-The record's own context reaches every derived field that has no `context`
-of its own; if every field has one, the record's context is unused and the
-caller may pass `()`.
+The caller's context reaches every derived field that has no `context` of
+its own, and the impl's context parameter is bounded by what those fields
+accept — a leaf accepts only a `SuppliedContext`, so a record that hands the
+caller's context to one is encrypted with `encrypt_into_with_context`. If
+every field has a `context`, the caller's is never used, the parameter is
+unbounded, and the record is encrypted with the context-free `encrypt_into`
+(decrypted with `Plaintext::decrypt_from(record, &cipher)`); the compiler
+turns the other form away.
 
 Every attribute except `plaintext` is singular, and repeating one is a
 compile error rather than a silent overwrite (`plaintext` is repeatable,

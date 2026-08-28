@@ -128,7 +128,7 @@ pub use cipher::{
 pub use target::{
     DecryptContext, DecryptField, DecryptFrom, DecryptInto, DecryptTarget, Decryptable,
     EncryptContext, EncryptFrom, EncryptInto, EncryptTarget, Pending, PendingFuture, Request,
-    Responses,
+    Responses, SuppliedContext,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they

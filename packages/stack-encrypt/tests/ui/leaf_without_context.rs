@@ -1,0 +1,26 @@
+//! A leaf, a record that hands the caller's context to one, and a column of
+//! either all need a supplied context: the context-free `encrypt_into` /
+//! `decrypt_from` exist only for outputs that carry their own.
+use stack_encrypt::sem::EqualityTerm;
+use stack_encrypt::target::{DecryptFrom, EncryptInto};
+use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
+use stack_kms::FakeDataKeySource;
+
+#[derive(EncryptFrom, DecryptInto)]
+#[stash(plaintext = u32)]
+struct EncryptedAge {
+    c: StackCipherText,
+    hm: EqualityTerm,
+}
+
+async fn encrypt(cipher: &StackCipher<FakeDataKeySource>) {
+    let _term: EqualityTerm = "alice".encrypt_into(cipher).await.unwrap();
+    let _record: EncryptedAge = 42u32.encrypt_into(cipher).await.unwrap();
+    let _column: Vec<StackCipherText> = vec![1u32].encrypt_into(cipher).await.unwrap();
+}
+
+async fn decrypt(cipher: &StackCipher<FakeDataKeySource>, record: EncryptedAge) {
+    let _age = u32::decrypt_from(record, cipher).await.unwrap();
+}
+
+fn main() {}

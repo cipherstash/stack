@@ -1,11 +1,11 @@
 //! Expansion of `#[derive(EncryptFrom)]`.
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
 use syn::{parse_quote, DeriveInput, Ident, Path, Result, Type};
 
-use crate::shape::{zip_fields, Field, Kind, Record};
+use crate::shape::{context_type, push_context_generics, zip_fields, Field, Kind, Record};
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let record = Record::parse(&input)?;
@@ -24,6 +24,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         generics.params.push(parse_quote!(__S));
         generics.params.push(parse_quote!(__K));
         push_field_bounds(&mut generics, krate, &record, &source);
+        push_context_generics(&mut generics, krate, &derived(&record), &encrypt_context());
         let (impl_generics, _, where_clause) = generics.split_for_impl();
         let body = body(krate, &record, &source);
         let block = impl_block(
@@ -45,6 +46,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         let mut generics = input.generics.clone();
         generics.params.push(parse_quote!(__K));
         push_field_bounds(&mut generics, krate, &record, source);
+        push_context_generics(&mut generics, krate, &derived(&record), &encrypt_context());
         let (impl_generics, _, where_clause) = generics.split_for_impl();
         let body = body(krate, &record, source);
         impl_block(
@@ -62,7 +64,16 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     Ok(quote!(#(#impls)* #decryptable))
 }
 
-/// `impl EncryptFrom<Source, StackCipher<__K>> for Record` around `body`.
+fn derived(record: &Record) -> Vec<&Field> {
+    record.fields.iter().filter(|f| f.is_derived()).collect()
+}
+
+fn encrypt_context() -> Ident {
+    Ident::new("EncryptContext", Span::call_site())
+}
+
+/// `impl EncryptFrom<Source, StackCipher<__K>, __Ctx> for Record` around
+/// `body`.
 fn impl_block(
     krate: &Path,
     name: &Ident,
@@ -74,16 +85,15 @@ fn impl_block(
 ) -> TokenStream {
     quote! {
         #[automatically_derived]
-        impl #impl_generics #krate::target::EncryptFrom<#source, #krate::StackCipher<__K>>
+        impl #impl_generics #krate::target::EncryptFrom<#source, #krate::StackCipher<__K>, __Ctx>
             for #name #ty_generics #where_clause
         {
-            fn encrypt_from<'__a, '__c, __Ctx>(
+            fn encrypt_from<'__a>(
                 __source: &'__a #source,
                 __cipher: &'__a #krate::StackCipher<__K>,
                 __context: __Ctx,
             ) -> #krate::target::Pending<'__a, Self, __K>
             where
-                __Ctx: #krate::target::EncryptContext<'__c>,
                 Self: '__a,
             {
                 #body
@@ -128,8 +138,10 @@ fn decryptable_impl(input: &DeriveInput, record: &Record) -> TokenStream {
     }
 }
 
-/// `FieldTy: EncryptFrom<Source, StackCipher<__K>>` for every field derived
-/// from the whole source.
+/// `FieldTy: EncryptFrom<Source, StackCipher<__K>, Ctx>` for every field
+/// derived from the whole source, under the context it is derived under —
+/// its literal's, or the caller's `__Ctx`, which is how a record inherits
+/// its leaves' demand for a supplied context.
 fn push_field_bounds(generics: &mut syn::Generics, krate: &Path, record: &Record, source: &Type) {
     let predicates = &mut generics.make_where_clause().predicates;
     for field in record
@@ -138,8 +150,9 @@ fn push_field_bounds(generics: &mut syn::Generics, krate: &Path, record: &Record
         .filter(|f| f.is_derived() && f.from().is_none())
     {
         let ty = &field.ty;
+        let context = context_type(field);
         predicates.push(parse_quote! {
-            #ty: #krate::target::EncryptFrom<#source, #krate::StackCipher<__K>>
+            #ty: #krate::target::EncryptFrom<#source, #krate::StackCipher<__K>, #context>
         });
     }
 }
@@ -172,7 +185,7 @@ fn body(krate: &Path, record: &Record, source: &Type) -> TokenStream {
                 None => (quote!(__source), quote!(#source)),
             };
             quote! {
-                <#ty as #krate::target::EncryptFrom<#source_ty, #krate::StackCipher<__K>>>::encrypt_from(
+                <#ty as #krate::target::EncryptFrom<#source_ty, #krate::StackCipher<__K>, _>>::encrypt_from(
                     #source_expr,
                     __cipher,
                     #context,
@@ -245,12 +258,16 @@ mod tests {
                 hm: EqualityTerm,
             }
         });
+        // Both fields take the caller's context, so the impl is bounded by
+        // what they do with it — and inherits their demand for a supplied
+        // one through the field bounds.
         assert_contains(&expansion, quote! {
-            impl<__S, __K> ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::StackCipher<__K>>
+            impl<'__c, __S, __K, __Ctx> ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::StackCipher<__K>, __Ctx>
                 for EncryptedAge
             where
-                StackCipherText: ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::StackCipher<__K>>,
-                EqualityTerm: ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::StackCipher<__K>>
+                StackCipherText: ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::StackCipher<__K>, __Ctx>,
+                EqualityTerm: ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::StackCipher<__K>, __Ctx>,
+                __Ctx: ::stack_encrypt::target::EncryptContext<'__c>
         });
         // The first field clones the record context, the last takes it.
         assert_contains(&expansion, quote!(__source, __cipher, ::core::clone::Clone::clone(&__context),));
@@ -270,10 +287,10 @@ mod tests {
             }
         });
         assert_contains(&expansion, quote! {
-            impl<__K> ::stack_encrypt::target::EncryptFrom<i32, ::stack_encrypt::StackCipher<__K>> for IntegerOrdOre
+            impl<'__c, __K, __Ctx> ::stack_encrypt::target::EncryptFrom<i32, ::stack_encrypt::StackCipher<__K>, __Ctx> for IntegerOrdOre
         });
         assert_contains(&expansion, quote! {
-            impl<__K> ::stack_encrypt::target::EncryptFrom<i64, ::stack_encrypt::StackCipher<__K>> for IntegerOrdOre
+            impl<'__c, __K, __Ctx> ::stack_encrypt::target::EncryptFrom<i64, ::stack_encrypt::StackCipher<__K>, __Ctx> for IntegerOrdOre
         });
         assert_contains(&expansion, quote!(Self { c: __field_0, v: SchemaVersion::V3 }));
         assert_lacks(&expansion, quote!(__S));
@@ -292,18 +309,58 @@ mod tests {
             }
         });
         assert_contains(&expansion, quote! {
-            <EncryptedAge as ::stack_encrypt::target::EncryptFrom<_, ::stack_encrypt::StackCipher<__K>>>::encrypt_from(
+            <EncryptedAge as ::stack_encrypt::target::EncryptFrom<_, ::stack_encrypt::StackCipher<__K>, _>>::encrypt_from(
                 &__source.age, __cipher, "users/age",
             )
         });
-        // No field takes the record's context.
+        // No field takes the record's context, so `__Ctx` is unbounded: the
+        // row accepts `()`, and `encrypt_into(&cipher)` compiles.
         assert_lacks(&expansion, quote!(&__context));
+        assert_contains(&expansion, quote! {
+            impl<__K, __Ctx> ::stack_encrypt::target::EncryptFrom<User, ::stack_encrypt::StackCipher<__K>, __Ctx> for EncryptedUser
+        });
+        assert_lacks(&expansion, quote!('__c));
         // `from` fields carry no where clause: the source field's type is
         // unknown here, so the obligation is checked in the body instead.
         assert!(
             expansion.replace(' ', "").contains("forEncryptedUser{fnencrypt_from"),
             "unexpected where clause on the impl:\n{expansion}"
         );
+    }
+
+    #[test]
+    #[rustfmt::skip]
+    fn a_from_field_taking_the_callers_context_demands_a_supplied_one() {
+        let expansion = expand(parse_quote! {
+            #[stash(plaintext = User)]
+            struct EncryptedUser {
+                #[stash(from = age)]
+                age: EncryptedAge,
+            }
+        });
+        // The obligation is checked in the body against a source field type
+        // the derive cannot name, so the where clause states the demand.
+        assert_contains(&expansion, quote! {
+            where
+                __Ctx: ::stack_encrypt::target::EncryptContext<'__c> + ::stack_encrypt::target::SuppliedContext<'__c>
+        });
+    }
+
+    #[test]
+    #[rustfmt::skip]
+    fn a_whole_source_field_with_a_literal_is_bounded_under_it() {
+        let expansion = expand(parse_quote! {
+            #[stash(plaintext = u32)]
+            struct Rec {
+                #[stash(context = "rec/c")]
+                c: StackCipherText,
+            }
+        });
+        assert_contains(&expansion, quote! {
+            where
+                StackCipherText: ::stack_encrypt::target::EncryptFrom<u32, ::stack_encrypt::StackCipher<__K>, &'static str>
+        });
+        assert_lacks(&expansion, quote!(EncryptContext));
     }
 
     #[test]
