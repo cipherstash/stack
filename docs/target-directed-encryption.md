@@ -1,8 +1,26 @@
 # Target-directed encryption
 
-**Status:** draft, for discussion
-**Date:** 2026-08-21
+**Status:** design record. The *decisions* stand; the *code sketches* are superseded — see the next section before reading any snippet as the API.
+**Date:** 2026-08-21 (design); implementation notes 2026-08-28
 **Scope:** vitaminc (primitives), stack-encrypt (the new trait + batching), eql-bindings (one class of targets)
+
+## What the implementation changed
+
+This is the document that decided *what the target type decides*: one trait on the output type, leaves handwritten, composites assembled from leaves, context threaded per value rather than baked into the cipher, ORE held as a capability rather than grown into vitaminc. All of that shipped as designed on cipherstash-suite #2146 and #2147.
+
+The snippets below predate the implementation and are kept as the record of what was proposed. Where they differ from the shipped API, the shipped API wins. The differences, so no snippet here is mistaken for something that compiles:
+
+| Sketch here | Shipped | Why |
+|---|---|---|
+| `EncryptedFrom` / `DecryptedFrom` | `EncryptFrom` / `DecryptFrom` | Review rename; pairs with `encrypt_into` / `decrypt_into` as `From` pairs with `Into`. |
+| Associated `type Pending` and `type Error` on the trait | Neither. The **cipher** owns both: `EncryptTarget::Output<'a, T>` and `EncryptTarget::Error`. `encrypt_from` returns `C::Output<'a, Self>`. | [RFC 0002](rfcs/0002-async-shape-for-target-directed-encryption.md) §2–§4. A trait-level future forces every cipher async and makes batching unreachable. `StackCipher` sets `Output = Pending<'a, T, K>`, a request carrier; a sync cipher can set `Output = Result<T, E>`. |
+| `encrypt_into(&cipher)` | `encrypt_into(&cipher, context)` — context is a required argument at every call site. | The design's own "Context, not cipher scoping" section; the sketches simply abbreviated it. |
+| Context is `Context<'_>` | Any `Ctx: EncryptContext<'c>`, blanket over `IntoAad + IntoPrfContext + Clone`; `&str` and `String` qualify. | One value reaches both the AEAD associated data and the PRF context. |
+| "non-EQL callers pass whatever context they like or `Aad::empty()`" | **Withdrawn.** An empty context is rejected during the synchronous build (`Error::EmptyContext`), before any I/O. | With an empty context, equal plaintexts in different fields produce identical terms, every field shares one ORE/OPE key, and ciphertexts transplant between fields. The check is structural over the encoding (`""`, `None`, `Some("")`, `("", "")` are all empty); cipherstash/vitaminc#291 tracks moving it into the type. |
+| `#[derive(Encrypted)]` | Not built. Composites are hand-written `EncryptFrom` impls that call each field's `encrypt_from`, merge the outputs with `zip` / `Pending::all`, and shape with `map` — see `packages/stack-encrypt/examples/encrypted_record.rs`. | The derive is still the intended end state; it is future work, not a dropped decision. |
+| `ProvidesOre` over `ore_rs::OreCipher` | Not adopted. ORE/OPE are `OreTerm<T>` / `OpeTerm<T>` over `cllw-ore`, and the per-field CLLW key is derived through the PRF *inside* the term's visitor — no key is ever handed back. | #2146. The capability-accessor idea stands; the concrete scheme and where the key lives changed. |
+
+Of the open decisions at the end: **1** resolved as option (1), `S: Encrypt + Clone` at the bridge; **4** dissolved — errors belong to the cipher, so there is no per-target error to unify; **5** implemented as `DecryptFrom` + `decrypt_into`, with a `DecryptContext` bound (`IntoAad` only, since decryption derives nothing); **6** resolved as stack-encrypt. **2** and **3** stand as written.
 
 ## Problem
 
@@ -19,7 +37,7 @@ vitaminc today gives us the ciphertext (`Encrypt` / `Cipher`) and a PRF (`PrfVal
 We want the target type to answer all three questions, so that this compiles only when the pieces line up:
 
 ```rust
-let x: IntegerOrdOre = 10.encrypt_into(&cipher).await?;
+let x: IntegerOrdOre = 10.encrypt_into(&cipher, "users/age").await?;
 ```
 
 **This must not be EQL-specific.** EQL payloads are one class of output. Nothing in the mechanism should know what a table or a column is.
@@ -60,6 +78,10 @@ pub trait EncryptedFrom<S, C>: Sized {
 }
 ```
 
+> **Superseded sketch.** The shipped trait is `EncryptFrom<S, C: EncryptTarget>` with
+> `fn encrypt_from<'a, 'c, Ctx: EncryptContext<'c>>(source: &'a S, cipher: &'a C, context: Ctx) -> C::Output<'a, Self>`.
+> There is no associated `Pending` or `Error`; the cipher owns both. RFC 0002 explains why.
+
 Reads as a noun: *`Hmac256` is an encrypted form of `i64`*.
 
 `Pending` is deliberately not a future. It is a handle that resolves to one — the same trick `vitaminc-prf` already uses (`Prf::Ok<T>: IntoFuture`, with `ReadyPrf` for sync backends). A local ORE term resolves immediately; a ZeroKMS term joins an open batch and resolves when the batch flushes. Callers see one uniform `.await`.
@@ -74,6 +96,8 @@ pub trait EncryptExt: Sized {
 }
 impl<S> EncryptExt for S {}
 ```
+
+> **Superseded sketch.** Shipped as `fn encrypt_into<'a, 'c, T, C, Ctx>(&'a self, cipher: &'a C, context: Ctx) -> C::Output<'a, T>` — borrows `self`, takes the context, returns the cipher's output.
 
 ### Leaves are handwritten; composites are derived
 
@@ -133,7 +157,7 @@ struct EncryptedUser {
     #[encrypted(context = "users/email")] email: TextEq,
 }
 
-let row: EncryptedUser = user.encrypt_into(&cipher).await?;   // one batch
+let row: EncryptedUser = user.encrypt_into(&cipher, "users").await?;   // one batch
 ```
 
 Leaf, payload and row are the same trait and the same derive; recursion does the rest. Earlier sketches of this design had a separate input-side derive for rows — that was a second mechanism the naming was hiding.
@@ -206,7 +230,7 @@ A scoped cipher (`cipher.for_column("users", "age")`) was considered and rejecte
 
 EQL's `i` field is currently unauthenticated metadata. A ciphertext from `users.email` can be transplanted into `users.name` and still decrypts. Passing the identifier as context — which reaches both `Aad` and `PrfContext` — closes that class of attack.
 
-This stays a caller decision at the call site, not cipher state, so non-EQL callers pass whatever context they like or `Aad::empty()`.
+This stays a caller decision at the call site, not cipher state: non-EQL callers pass whatever context describes the field. What they may **not** pass is an empty one — the implementation rejects it (`Error::EmptyContext`), for the reasons in the table above. This sentence originally offered `Aad::empty()` as an option; that was wrong, and the code says so.
 
 ## Batching and async
 

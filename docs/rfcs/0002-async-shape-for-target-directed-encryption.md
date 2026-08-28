@@ -5,13 +5,16 @@
 | **Status** | Accepted — implemented on PR #2146 (sem visitors) and #2147 (target layer) |
 | **Author** | Dan Draper |
 | **Area** | `packages/stack-encrypt` (`target`, `sem`, `cipher`), `vitaminc` (`prf`) |
-| **Supersedes** | The "Batching and async" section of `target-directed-encryption.md` |
+| **Supersedes** | In `target-directed-encryption.md`: the "Batching and async" section, and every code sketch — the trait shape (associated `Pending`/`Error`), the context-less `encrypt_into` call sites, and the `Aad::empty()` recommendation. Its *decisions* stand; its *snippets* do not. |
 | **Prompted by** | Review of PR #2147 |
 
 > **Companion:** [`target-directed-encryption.md`](../target-directed-encryption.md) —
-> the original design. Everything it says about *what* the target type decides
-> stands. This RFC replaces only *how the async is shaped*, which the
-> implementation got wrong.
+> the original design. Everything it *decides* about what the target type
+> decides stands. Its code sketches are historical: they predate this RFC and
+> the review of #2146/#2147, and the document's own header lists exactly how
+> the shipped API differs. This RFC replaces *how the async is shaped*, which
+> the implementation got wrong; the rustdoc on `stack_encrypt::target` is the
+> reference for the API as shipped.
 
 ## 1. Summary
 
@@ -536,8 +539,8 @@ Three homes, by durability:
 
 ## 9. Non-goals
 
-- Changing what the target type decides. `target-directed-encryption.md`
-  stands.
+- Changing what the target type decides. `target-directed-encryption.md`'s
+  decisions stand (its sketches do not — see its header).
 - Wire format changes.
 - A flush handle, an ambient batch registry, or timing-window coalescing.
   Batching is expressed by the source shape and is visible at the call site.
