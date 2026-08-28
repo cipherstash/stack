@@ -21,6 +21,11 @@ proc-macro2 = "1"
 quote = "1"
 syn = { version = "3", features = ["full", "extra-traits"] }
 
+# The dev-dependencies below are used only by the crate-level doctests.
+# `cargo-udeps` cannot see into rustdoc, so it reports them as unused.
+[package.metadata.cargo-udeps.ignore]
+development = ["stack-encrypt", "stack-kms", "tokio"]
+
 [dev-dependencies]
 # The crate-level examples are real doctests, run against the fake key
 # source. A dev-dependency cycle back to `stack-encrypt` is the usual shape
