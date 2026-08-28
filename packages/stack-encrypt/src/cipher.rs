@@ -50,10 +50,14 @@
 //! to retrieve the data key — plus a vitaminc [`LocalCipherText`] sealed under
 //! that key by [`vitaminc_encrypt::Aes256Cipher`] (AES-256-GCM via vitaminc's
 //! backend: `aws-lc-rs` on native, RustCrypto on wasm32; vitaminc's own random
-//! nonce and versioned leaf layout). The leaf AAD is the tuple
-//! `(derived_aad, tag)`, which vitaminc PAE-encodes so distinct pairs never
-//! collide. The `tag` is always bound, so the ciphertext is cryptographically
-//! tied to its ZeroKMS data key (key binding); a caller AAD (e.g. a
+//! nonce and versioned leaf layout). The leaf AAD is the labelled derivation
+//! [`leaf_aad`]: `PAE("stack-encrypt/leaf", version, derived_aad, tag)`, with
+//! [`SealedValue::FORMAT_VERSION`] — the version byte that prefixes the
+//! leaf's frozen byte encoding ([`SealedValue::to_bytes`]) — bound under the
+//! tag, so a stored leaf relabelled with a different version byte fails
+//! verification instead of selecting different parsing rules. The `tag` is
+//! always bound, so the ciphertext is cryptographically tied to its ZeroKMS
+//! data key (key binding); a caller AAD (e.g. a
 //! [`ContextTag`](vitaminc_aead::ContextTag)) adds a further binding layer.
 //! Every data key is requested with an empty descriptor: stack-encrypt does
 //! not use descriptors.
@@ -497,9 +501,34 @@ impl<K: DataKeySource> StackCipher<K> {
 ///
 /// This is the only byte-format commitment the crate makes — the container
 /// tree ([`StackCipherText`]) has no canonical encoding, so callers that
-/// persist or transmit ciphertext serialise leaves (it derives `serde`
-/// `Serialize`/`Deserialize`, or use [`into_parts`](Self::into_parts) /
-/// [`from_parts`](Self::from_parts)) and rebuild the tree around them.
+/// persist or transmit ciphertext serialise leaves and rebuild the tree
+/// around them.
+///
+/// # Frozen byte encoding
+///
+/// [`to_bytes`](Self::to_bytes) / [`from_bytes`](Self::from_bytes) are the
+/// canonical encoding — the one storage format every consumer (this crate,
+/// the language bindings, anything reading a database column) agrees on:
+///
+/// ```text
+/// version(1) ‖ iv(16) ‖ tag_len(u16 LE) ‖ tag ‖ local_ciphertext
+/// ```
+///
+/// where `version` is [`FORMAT_VERSION`](Self::FORMAT_VERSION) and
+/// `local_ciphertext` is the vitaminc leaf (itself framed as
+/// `version ‖ nonce ‖ ciphertext ‖ gcm_tag`) and runs to the end of the
+/// buffer. The version byte is bound into the leaf's AAD at seal time (the
+/// private `leaf_aad` derivation — see the module docs in `src/cipher.rs`),
+/// so a leaf relabelled with a future version byte fails
+/// authentication rather than parsing under the wrong rules. Parsing is
+/// structural only — nothing about a decoded leaf is trusted until it
+/// decrypts.
+///
+/// The `serde` `Serialize`/`Deserialize` derives and
+/// [`into_parts`](Self::into_parts) / [`from_parts`](Self::from_parts)
+/// remain for callers that manage their own storage format; they carry the
+/// same fields, but their wire form is the serialiser's, not a commitment
+/// of this crate.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SealedValue {
     /// ZeroKMS IV: identifies the data key for retrieval.
@@ -512,7 +541,84 @@ pub struct SealedValue {
     ciphertext: LocalCipherText,
 }
 
+/// A [`SealedValue`] byte encoding failed to encode or decode. Purely
+/// structural — a leaf that *decodes* has proven nothing about integrity
+/// (that is the AEAD open's job); a leaf that fails here was never a valid
+/// v1 encoding at all.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+pub enum LeafBytesError {
+    /// The leading version byte is not one this build knows how to parse.
+    /// (A version this build *does* know, stamped on bytes sealed under a
+    /// different version, passes here and fails authentication instead —
+    /// the version byte is bound into the leaf AAD.)
+    #[error("unknown sealed-leaf format version {0}")]
+    UnknownVersion(u8),
+    /// The buffer ends before the fixed-width fields, or before the key tag
+    /// the `tag_len` field promises.
+    #[error("sealed-leaf bytes are truncated")]
+    Truncated,
+    /// The key tag does not fit the format's `u16` length field. Never
+    /// produced by sealing (ZeroKMS tags are tens of bytes); only reachable
+    /// through [`SealedValue::from_parts`] with an oversized tag.
+    #[error("key tag of {0} bytes exceeds the format's u16 length field")]
+    TagTooLong(usize),
+}
+
 impl SealedValue {
+    /// The version byte prefixing the frozen byte encoding
+    /// ([`to_bytes`](Self::to_bytes)). Also bound into every leaf's AAD (the
+    /// private `leaf_aad` derivation): bumping it re-keys authentication, so
+    /// old leaves can never be relabelled as the new version (nor new as
+    /// old).
+    pub const FORMAT_VERSION: u8 = 1;
+
+    /// Encode into the frozen v1 byte layout — see the type-level docs for
+    /// the format. The inverse of [`from_bytes`](Self::from_bytes).
+    ///
+    /// Fails only with [`LeafBytesError::TagTooLong`], which no leaf this
+    /// crate sealed can trigger.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, LeafBytesError> {
+        let tag_len = u16::try_from(self.tag.len())
+            .map_err(|_| LeafBytesError::TagTooLong(self.tag.len()))?;
+        let ciphertext = self.ciphertext.as_ref();
+        let mut out = Vec::with_capacity(1 + self.iv.len() + 2 + self.tag.len() + ciphertext.len());
+        out.push(Self::FORMAT_VERSION);
+        out.extend_from_slice(&self.iv);
+        out.extend_from_slice(&tag_len.to_le_bytes());
+        out.extend_from_slice(&self.tag);
+        out.extend_from_slice(ciphertext);
+        Ok(out)
+    }
+
+    /// Decode the frozen v1 byte layout — the inverse of
+    /// [`to_bytes`](Self::to_bytes). Structural only: a decoded leaf is
+    /// untrusted bytes until it decrypts.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, LeafBytesError> {
+        const IV_LEN: usize = 16;
+
+        let (&version, rest) = bytes.split_first().ok_or(LeafBytesError::Truncated)?;
+        if version != Self::FORMAT_VERSION {
+            return Err(LeafBytesError::UnknownVersion(version));
+        }
+        if rest.len() < IV_LEN + 2 {
+            return Err(LeafBytesError::Truncated);
+        }
+        let (iv_bytes, rest) = rest.split_at(IV_LEN);
+        let mut iv: stack_kms::Iv = [0; IV_LEN];
+        iv.copy_from_slice(iv_bytes);
+        let (tag_len_bytes, rest) = rest.split_at(2);
+        let tag_len = usize::from(u16::from_le_bytes([tag_len_bytes[0], tag_len_bytes[1]]));
+        if rest.len() < tag_len {
+            return Err(LeafBytesError::Truncated);
+        }
+        let (tag, ciphertext) = rest.split_at(tag_len);
+        Ok(Self {
+            iv,
+            tag: tag.to_vec(),
+            ciphertext: LocalCipherText::from(ciphertext.to_vec()),
+        })
+    }
+
     /// Rebuild a leaf from its persisted parts — the inverse of
     /// [`into_parts`](Self::into_parts).
     pub fn from_parts(iv: stack_kms::Iv, tag: Vec<u8>, ciphertext: Vec<u8>) -> Self {
@@ -551,6 +657,16 @@ impl Clone for SealedValue {
             tag: self.tag.clone(),
             ciphertext: LocalCipherText::from(self.ciphertext.as_ref().to_vec()),
         }
+    }
+}
+
+/// [`SealedValue::from_bytes`] as a std conversion, for generic codecs
+/// bounded on `TryFrom`.
+impl TryFrom<&[u8]> for SealedValue {
+    type Error = LeafBytesError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        Self::from_bytes(bytes)
     }
 }
 
@@ -728,11 +844,37 @@ fn leaf_cipher(key: &DataKey) -> Result<Aes256Cipher, Unspecified> {
     Aes256Cipher::new(&AesKey::from(*key.key()))
 }
 
+/// Derives the effective AAD every leaf is sealed against — and opened
+/// under — binding the caller's derived AAD, the ZeroKMS key `tag`, and the
+/// [`SealedValue::FORMAT_VERSION`] byte that prefixes the leaf's frozen byte
+/// encoding.
+///
+/// The labelled four-piece PAE can never collide with a caller's own
+/// composite AAD (a tuple encodes with no leading domain label) or with
+/// vitaminc's internal derivations (different labels). Binding the format
+/// version under the tag is what makes the byte in
+/// [`SealedValue::to_bytes`] more than a parse hint: bytes relabelled with a
+/// different version fail verification instead of selecting different
+/// parsing and derivation rules — mirroring vitaminc's `Aad::for_leaf`,
+/// which binds the *inner* [`LocalCipherText`] wire version the same way.
+///
+/// The domain label deliberately carries no `/v1` suffix: the version is a
+/// *parameter* here, not part of the label.
+fn leaf_aad(aad: &Aad<'_>, tag: &[u8]) -> Aad<'static> {
+    const LEAF_AAD_DOMAIN: &[u8] = b"stack-encrypt/leaf";
+    Aad::pae(&[
+        LEAF_AAD_DOMAIN,
+        &[SealedValue::FORMAT_VERSION],
+        aad.as_bytes(),
+        tag,
+    ])
+}
+
 /// Seal one plaintext leaf under a freshly generated data key.
 ///
-/// The AAD is the tuple `(derived_aad, tag)` — vitaminc PAE-encodes tuples,
-/// so distinct pairs never collide, and `tag` is always bound: the leaf is
-/// cryptographically tied to its ZeroKMS data key.
+/// The AAD is the [`leaf_aad`] derivation of the caller's (derived) AAD and
+/// the key `tag` — `tag` is always bound, so the leaf is cryptographically
+/// tied to its ZeroKMS data key.
 fn seal_leaf(
     plaintext: Protected<Vec<u8>>,
     aad: &Aad<'_>,
@@ -740,7 +882,7 @@ fn seal_leaf(
 ) -> Result<SealedValue, Unspecified> {
     let iv = key.key.iv;
     let cipher = leaf_cipher(&key.key)?;
-    match (&cipher).encrypt_bytes_vec(plaintext, (aad.as_bytes(), key.tag.as_slice()))? {
+    match (&cipher).encrypt_bytes_vec(plaintext, leaf_aad(aad, &key.tag))? {
         AesCipherText::Single(ciphertext) => Ok(SealedValue {
             iv,
             tag: key.tag,
@@ -766,7 +908,7 @@ fn open_leaf(keyed: KeyedLeaf, aad: &Aad<'_>) -> Result<Protected<Vec<u8>>, Unsp
     let cipher = leaf_cipher(&key)?;
     cipher
         .decipher(AesCipherText::Single(leaf.ciphertext))
-        .decrypt_bytes(ProtectedBytes, (aad.as_bytes(), leaf.tag.as_slice()))
+        .decrypt_bytes(ProtectedBytes, leaf_aad(aad, &leaf.tag))
 }
 
 /// Open one marker leaf (absent / empty-sequence / empty-map) and require the
@@ -1254,5 +1396,28 @@ impl<'c, 'a> MapAccess<'c> for StackMapAccess<'a> {
             }
             None => Ok(None),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Byte-level pin for the [`leaf_aad`] derivation. This is part of the
+    /// frozen leaf format: a change to the domain label, the version byte,
+    /// the piece order, or the PAE framing makes every stored leaf fail
+    /// authentication, so it must be deliberate — and must come with a
+    /// [`SealedValue::FORMAT_VERSION`] bump, which this pin forces into view.
+    #[test]
+    fn leaf_aad_bytes_are_pinned() {
+        let aad = leaf_aad(&Aad::from_slice(b"caller-aad"), b"key-tag");
+        let hex: String = aad.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        // PAE: LE64 count (4) ‖ per piece LE64 length ‖ piece, the pieces
+        // being "stack-encrypt/leaf", [FORMAT_VERSION], the caller AAD, and
+        // the key tag.
+        assert_eq!(
+            hex,
+            "04000000000000001200000000000000737461636b2d656e63727970742f6c6561660100000000000000010a0000000000000063616c6c65722d61616407000000000000006b65792d746167"
+        );
     }
 }

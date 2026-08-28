@@ -100,11 +100,16 @@ assert_eq!(plaintext, "secret message");
 //! [`encrypt`](StackCipher::encrypt) returns a [`StackCipherText`]: a tree whose
 //! shape mirrors the value (a scalar is a single leaf, a `Vec` a sequence of
 //! leaves, a map a set of named leaves) and whose leaves are [`SealedValue`]s.
-//! A `SealedValue` is the persistable unit — it implements `serde`
-//! `Serialize`/`Deserialize` and offers [`into_parts`](SealedValue::into_parts)
-//! / [`from_parts`](SealedValue::from_parts) for callers that manage their own
-//! storage format. Map keys are stored in the clear (and authenticated);
-//! nothing else about a value is visible without its data keys.
+//! A `SealedValue` is the persistable unit: its canonical, frozen byte
+//! encoding is [`to_bytes`](SealedValue::to_bytes) /
+//! [`from_bytes`](SealedValue::from_bytes) — the format a database column
+//! holds and every language binding reads. For callers that manage their own
+//! storage format it also implements `serde` `Serialize`/`Deserialize` and
+//! offers [`into_parts`](SealedValue::into_parts) /
+//! [`from_parts`](SealedValue::from_parts). Map keys are stored in the clear
+//! (and authenticated); nothing else about a value is visible without its
+//! data keys. Index terms have their own frozen encodings — see
+//! [`sem`](crate::sem#byte-encodings).
 //!
 //! # What is authenticated
 //!
@@ -137,8 +142,8 @@ pub mod sem;
 pub mod target;
 
 pub use cipher::{
-    BoxedPassthrough, Error, FromEnv, PendingStackCipherText, SealedValue, StackCipher,
-    StackCipherBuilder, StackCipherText, StackDecipher,
+    BoxedPassthrough, Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue,
+    StackCipher, StackCipherBuilder, StackCipherText, StackDecipher,
 };
 pub use target::{
     DecryptContext, DecryptField, DecryptFrom, DecryptInto, DecryptTarget, Decryptable,

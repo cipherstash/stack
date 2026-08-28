@@ -65,6 +65,31 @@
 //! This is a fresh (v2) term format: PRF inputs are framed with vitaminc's PAE
 //! context encoding, so terms are intentionally **not** byte-compatible with
 //! `cipherstash-client`'s existing `IndexTerm` values.
+//!
+//! # Byte encodings
+//!
+//! Terms are stored server-side and compared across languages, so each term
+//! kind commits to one frozen byte encoding — the bytes a language binding
+//! writes and a database column holds:
+//!
+//! * [`EqualityTerm`] — the 32 PRF bytes as-is
+//!   ([`as_bytes`](EqualityTerm::as_bytes) /
+//!   [`from_bytes`](EqualityTerm::from_bytes)).
+//! * [`MatchTerm`] — the sorted, de-duplicated bit positions, each a
+//!   little-endian `u16` ([`to_bytes`](MatchTerm::to_bytes) /
+//!   [`from_bytes`](MatchTerm::from_bytes)).
+//! * [`OreTerm`] / [`OpeTerm`] — the raw CLLW ciphertext bytes, unframed
+//!   ([`as_bytes`](OreTerm::as_bytes) / [`from_bytes`](OreTerm::from_bytes)).
+//!
+//! The equality and ORE/OPE encodings are byte-identical to what the EQL
+//! layer hex-encodes into its `hm` / `oc` / `op` payload fields (EQL's
+//! hex and JSON framing sit *above* these bytes), so terms written through a
+//! language binding compare against rows the Rust/EQL path wrote. There is
+//! deliberately no version byte or framing here: a term is an opaque
+//! comparand, its derivation is already versioned by the PAE domain labels
+//! above, and Postgres compares these columns byte-wise. The pins in
+//! `tests/term_bytes.rs` and `tests/frozen_bytes.rs` hold both the
+//! derivations and the encodings in place.
 
 mod tokenize;
 
@@ -133,6 +158,12 @@ pub enum TermError {
     /// [`EncryptContext`].
     #[error("the encryption context must not be empty (it domain-separates fields)")]
     EmptyContext,
+    /// Stored term bytes do not decode under the term kind's frozen byte
+    /// encoding (see the [module docs](self#byte-encodings)) — wrong length,
+    /// or a length the CLLW ciphertext shape cannot have. Structural only:
+    /// bytes that *decode* are not thereby proven to be a genuine term.
+    #[error("malformed term bytes: {0}")]
+    MalformedTermBytes(&'static str),
 }
 
 impl TermError {
@@ -186,6 +217,14 @@ impl EqualityTerm {
 impl From<EqualityTerm> for Vec<u8> {
     fn from(term: EqualityTerm) -> Self {
         term.0.to_vec()
+    }
+}
+
+/// The frozen byte encoding — the 32 PRF bytes as-is (see the
+/// [module docs](self#byte-encodings)).
+impl AsRef<[u8]> for EqualityTerm {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
     }
 }
 
@@ -336,6 +375,37 @@ impl<O> MatchTerm<O> {
             positions,
             _config: PhantomData,
         }
+    }
+
+    /// The frozen byte encoding: each position as a little-endian `u16`, in
+    /// the canonical order [`positions`](Self::positions) holds them (sorted
+    /// ascending, no duplicates). See the
+    /// [module docs](self#byte-encodings). The inverse of
+    /// [`from_bytes`](Self::from_bytes).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.positions
+            .iter()
+            .flat_map(|p| p.to_le_bytes())
+            .collect()
+    }
+
+    /// Decode the frozen byte encoding — little-endian `u16` positions — the
+    /// inverse of [`to_bytes`](Self::to_bytes). Like
+    /// [`from_positions`](Self::from_positions), any ordering is accepted
+    /// and normalised, and the caller asserts (via `O`) the generating
+    /// [`MatchConfig`]. Rejects an odd-length buffer.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, TermError> {
+        if !bytes.len().is_multiple_of(2) {
+            return Err(TermError::MalformedTermBytes(
+                "match-term bytes must be a sequence of u16 positions (even length)",
+            ));
+        }
+        Ok(Self::from_positions(
+            bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect(),
+        ))
     }
 
     /// The set Bloom-filter bit positions, sorted ascending, no duplicates.
@@ -548,6 +618,50 @@ macro_rules! term_wrapper {
             /// Unwrap into the CLLW ciphertext.
             pub fn into_inner(self) -> T::Output {
                 self.0
+            }
+
+            /// Decode a term from its frozen byte encoding — the raw CLLW
+            /// ciphertext bytes, the inverse of [`as_bytes`](Self::as_bytes)
+            /// — for terms persisted server-side. Structural only (length
+            /// checks); the caller asserts the bytes were generated for this
+            /// source type `T` and under the same context.
+            pub fn from_bytes(bytes: &[u8]) -> Result<Self, TermError>
+            where
+                for<'a> T::Output: TryFrom<&'a [u8]>,
+            {
+                T::Output::try_from(bytes).map(Self).map_err(|_| {
+                    TermError::MalformedTermBytes(
+                        "byte length does not fit this CLLW ciphertext shape",
+                    )
+                })
+            }
+        }
+
+        impl<T: $bound> $name<T>
+        where
+            T::Output: AsRef<[u8]>,
+        {
+            /// The frozen byte encoding: the raw CLLW ciphertext bytes,
+            /// unframed — byte-identical to what the EQL layer hex-encodes
+            /// (see the [module docs](self#byte-encodings)).
+            pub fn as_bytes(&self) -> &[u8] {
+                self.0.as_ref()
+            }
+
+            /// Owned copy of [`as_bytes`](Self::as_bytes).
+            pub fn to_bytes(&self) -> Vec<u8> {
+                self.0.as_ref().to_vec()
+            }
+        }
+
+        /// The frozen byte encoding — the same bytes as the inherent
+        /// `as_bytes`.
+        impl<T: $bound> AsRef<[u8]> for $name<T>
+        where
+            T::Output: AsRef<[u8]>,
+        {
+            fn as_ref(&self) -> &[u8] {
+                self.0.as_ref()
             }
         }
 

@@ -7,7 +7,7 @@
 > rustdoc and the tests are the source of truth. Where the two disagree, the
 > code wins and this document is simply out of date.
 
-**Status:** in progress — Phase 0 and Phase 1 are open as stacked draft PRs on #2156
+**Status:** in progress — Phases 0, 1 and 2 are open as stacked draft PRs on #2156
 **Date:** 2026-08-27
 **Builds on:** #2099 (WASI/wazero beachhead), #2156 (`#[derive(EncryptFrom, DecryptInto)]`), vitaminc `bindings/go` (`vcvalue` + `vcencrypt`)
 
@@ -233,8 +233,23 @@ The plan as written before the work:
 
 ### Phase 2 — frozen byte formats stack-encrypt owns
 
-These are storage commitments, so they get decided and documented before the
-guest is written, independently of Go:
+**Landed (stacked PR on Phase 1).** What shipped, against the plan below:
+`SealedValue::to_bytes`/`from_bytes` with the layout
+`version(1) ‖ iv(16) ‖ tag_len(u16 LE) ‖ tag ‖ local_ciphertext`, the
+version byte bound into the leaf AAD via a new labelled derivation
+(`PAE("stack-encrypt/leaf", version, derived_aad, tag)` — replacing the
+unlabelled `(aad, tag)` tuple, with the derivation bytes pinned by a unit
+test); term encodings frozen as raw-bytes (equality: the 32 PRF bytes;
+ORE/OPE: the raw CLLW ciphertext, byte-identical to what EQL hex-encodes
+into `hm`/`oc`/`op`; match: LE `u16` positions — EQL sends `bf` as a JSON
+integer array, so the byte-string form is stack-encrypt's own) with
+`as_bytes`/`to_bytes`/`from_bytes` on every term type; length-validating
+`TryFrom<&[u8]>` added to cllw-ore's variable-width ciphertext types; and
+golden vectors in `tests/frozen_bytes.rs` for the Go decoder to test
+against.
+
+The plan as written before the work — these are storage commitments, so they
+get decided and documented before the guest is written, independently of Go:
 
 - **`SealedValue` leaf**: `to_bytes()` / `from_bytes()` with a canonical
   layout, e.g. `version(1) ‖ iv ‖ u16 tag_len ‖ tag ‖ local_ciphertext`
