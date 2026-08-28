@@ -2,6 +2,8 @@ mod pae;
 
 use std::borrow::Cow;
 
+use vitaminc_protected::{IsEmpty, NonEmpty};
+
 /// Associated Authenticated Data passed to an AEAD cipher.
 ///
 /// `Aad` is authenticated but not encrypted: tampering with it (or with the
@@ -195,6 +197,27 @@ pub trait IntoAad<'a> {
         Self: Sized;
 }
 
+/// An already-encoded AAD is judged on its bytes. Leaf AAD is unframed, so
+/// `"".into_aad()` really is empty, but a composite built from empty parts
+/// (`Some("")`, `("", "")`) carries PAE framing and is not. Check the value
+/// *before* encoding (see [`NonEmpty`]) when that distinction matters.
+impl IsEmpty for Aad<'_> {
+    fn is_empty(&self) -> bool {
+        Aad::is_empty(self)
+    }
+}
+
+/// `NonEmpty<T>` is transparent: it encodes exactly as `T` does. The wrapper
+/// changes what the type promises, never the bytes authenticated.
+impl<'a, T> IntoAad<'a> for NonEmpty<T>
+where
+    T: IntoAad<'a>,
+{
+    fn into_aad(self) -> Aad<'a> {
+        self.into_inner().into_aad()
+    }
+}
+
 /// Self type is already an Aad
 impl<'a> IntoAad<'a> for Aad<'a> {
     fn into_aad(self) -> Aad<'a> {
@@ -286,6 +309,48 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn non_empty_is_transparent_to_the_encoding() {
+        assert_eq!(
+            NonEmpty::new("users/email")
+                .expect("non-empty")
+                .into_aad()
+                .as_bytes(),
+            "users/email".into_aad().as_bytes()
+        );
+        assert_eq!(
+            Some(NonEmpty::new("users/email").expect("non-empty"))
+                .into_aad()
+                .as_bytes(),
+            Some("users/email").into_aad().as_bytes()
+        );
+        assert_eq!(
+            NonEmpty::new(("users", "email"))
+                .expect("non-empty")
+                .into_aad()
+                .as_bytes(),
+            ("users", "email").into_aad().as_bytes()
+        );
+        assert_eq!(
+            vitaminc_protected::nonempty!("users/email")
+                .into_aad()
+                .as_bytes(),
+            b"users/email"
+        );
+    }
+
+    #[test]
+    fn encoded_aad_is_judged_on_its_bytes() {
+        assert!(IsEmpty::is_empty(&Aad::empty()));
+        assert!(IsEmpty::is_empty(&"".into_aad()));
+        assert!(!IsEmpty::is_empty(&Aad::from_slice(b"raw")));
+        // Composite framing makes an encoded empty value non-empty as bytes;
+        // the structural check belongs before encoding.
+        assert!(!IsEmpty::is_empty(&Some("").into_aad()));
+        assert!(NonEmpty::new(Aad::empty()).is_err());
+        assert!(NonEmpty::new(Aad::from_slice(b"raw")).is_ok());
+    }
 
     #[test]
     fn test_aad() {
