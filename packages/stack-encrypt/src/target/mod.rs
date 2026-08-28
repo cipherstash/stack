@@ -219,27 +219,87 @@ pub trait DecryptContext<'a>: IntoAad<'a> + Clone {}
 
 impl<'a, T> DecryptContext<'a> for T where T: IntoAad<'a> + Clone {}
 
-/// Does an encoded context (AAD or PRF context bytes) carry no caller-supplied
-/// information? See [`EncryptContext`] for what that means and why it is
-/// rejected.
+/// The framing tags vitaminc's PRF context encoding inserts, each of which
+/// occupies **piece 0** of the PAE node it labels. Matched exactly and only
+/// in that position — a prefix test would classify any caller string
+/// beginning `vitaminc/` as framing (`Some("vitaminc/customer")` would read
+/// as empty), which is the opposite of what this check is for.
 ///
-/// Structural over vitaminc's PAE framing (`LE64(count) || (LE64(len) ||
-/// piece)*`): a context is degenerate if it is empty, or if it parses as a
-/// PAE whose every piece is either a vitaminc framing tag (`vitaminc/…`
-/// domain or encoding label) or itself degenerate. Bytes that are not a
-/// well-formed PAE are caller content and count as information. This covers
-/// `()`, the typed `""`/`b""` encodings, `None` (`pae([])`), `Some(<empty>)`
-/// and tuples of empties, at any nesting depth.
-pub(crate) fn is_degenerate_context(bytes: &[u8]) -> bool {
-    const FRAMING_PREFIX: &[u8] = b"vitaminc/";
+/// Mirrored from `vitaminc_prf::context`, where they are private. Pinned by
+/// the `context_tests` below, which build every shape through the public API
+/// rather than asserting the literals.
+mod prf_framing {
+    /// `pae([CONTEXT_VALUE, <encoding label>, value])` — a typed leaf.
+    pub(super) const CONTEXT_VALUE: &[u8] = b"vitaminc/prf/context-value/v1";
+    /// `pae([OPTION_SOME, inner])`.
+    pub(super) const OPTION_SOME: &[u8] = b"vitaminc/prf/option-some/v1";
+    /// `pae([MAP_ENTRY, base, key])` — `key` is raw caller bytes.
+    pub(super) const MAP_ENTRY: &[u8] = b"vitaminc/prf/map-entry/v1";
+    /// `pae([REFINE, base, component])` — both are encoded contexts.
+    pub(super) const REFINE: &[u8] = b"vitaminc/prf/refine/v1";
+}
+
+/// Do encoded **AAD** bytes carry no caller-supplied information? See
+/// [`EncryptContext`] for what that means and why it is rejected.
+///
+/// The AAD channel carries no framing tags of its own: a leaf is its own raw
+/// bytes (`"x".into_aad() == b"x"`), and `None`, `Some(_)` and tuples are
+/// bare PAE nodes. So the rule is purely structural — degenerate if empty, or
+/// if it parses as a PAE (`LE64(count) || (LE64(len) || piece)*`) whose every
+/// piece is itself degenerate. Bytes that are not a well-formed PAE are
+/// caller content and count as information.
+///
+/// Covers `()`, `""`, `b""`, `None` (`pae([])`), `Some(<empty>)` and tuples
+/// of empties at any nesting depth — and `0u64`, whose eight zero bytes are
+/// byte-identical to `pae([])`.
+///
+/// (The tags vitaminc applies *inside* the cipher — `Aad::for_leaf`,
+/// `for_map_entry`, the markers — are derived after this check runs, from
+/// the caller-visible AAD this sees.)
+pub(crate) fn is_degenerate_aad(bytes: &[u8]) -> bool {
     if bytes.is_empty() {
         return true;
     }
     match parse_pae(bytes) {
-        Some(pieces) => pieces
-            .iter()
-            .all(|piece| piece.starts_with(FRAMING_PREFIX) || is_degenerate_context(piece)),
+        Some(pieces) => pieces.iter().all(|piece| is_degenerate_aad(piece)),
         None => false,
+    }
+}
+
+/// Do encoded **PRF context** bytes carry no caller-supplied information?
+///
+/// Unlike the AAD channel, every caller value here is wrapped in a framing
+/// node — `"x".into_prf_context()` is `pae([CONTEXT_VALUE, <utf8 label>,
+/// b"x"])` — so the check has to see past the framing to reach the value.
+/// Framing is recognised by exact tag *and* arity at piece 0, and the
+/// recursion descends only into the positions that actually hold caller
+/// data. That is what keeps caller bytes from ever being mistaken for a tag:
+/// caller data never lands at piece 0 of a framing node, because it is always
+/// wrapped one level deeper.
+///
+/// A node that is not framing (a tuple, or a `PrfContext` the caller built by
+/// hand) is degenerate only if every one of its pieces is. Bytes that are not
+/// a well-formed PAE are caller content.
+pub(crate) fn is_degenerate_prf_context(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return true;
+    }
+    let Some(pieces) = parse_pae(bytes) else {
+        return false;
+    };
+    match (pieces.first(), pieces.len()) {
+        // The value is raw caller bytes, not a nested context: judge it
+        // structurally. This is what still rejects `0u64` — eight zero bytes
+        // are byte-identical to `pae([])`.
+        (Some(&tag), 3) if tag == prf_framing::CONTEXT_VALUE => is_degenerate_aad(pieces[2]),
+        (Some(&tag), 2) if tag == prf_framing::OPTION_SOME => is_degenerate_prf_context(pieces[1]),
+        (Some(&tag), 3) if tag == prf_framing::MAP_ENTRY => {
+            is_degenerate_prf_context(pieces[1]) && pieces[2].is_empty()
+        }
+        (Some(&tag), 3) if tag == prf_framing::REFINE => {
+            is_degenerate_prf_context(pieces[1]) && is_degenerate_prf_context(pieces[2])
+        }
+        _ => pieces.iter().all(|piece| is_degenerate_prf_context(piece)),
     }
 }
 
@@ -461,7 +521,7 @@ where
         // An empty context would leave the leaf AAD carrying only the key
         // tag, making ciphertexts transplantable between ()-context fields —
         // see `EncryptContext`.
-        if is_degenerate_context(aad.as_bytes()) {
+        if is_degenerate_aad(aad.as_bytes()) {
             return Pending::failed(cipher, Error::EmptyContext);
         }
         match source.clone().encrypt_with_aad(cipher, aad) {
@@ -546,7 +606,7 @@ where
         let aad = context.into_aad().into_owned();
         // Symmetric with the encrypt side: the target layer never encrypts
         // under an empty context, so it never decrypts under one either.
-        if is_degenerate_context(aad.as_bytes()) {
+        if is_degenerate_aad(aad.as_bytes()) {
             return Pending::failed(cipher, Error::EmptyContext);
         }
         let requests = retrieve_requests(&source);
@@ -611,7 +671,7 @@ where
     {
         // Validate the context even for an empty column: an empty descriptor
         // must fail on the fixture with no rows, not on the first real one.
-        if is_degenerate_context(context.clone().into_aad().as_bytes()) {
+        if is_degenerate_aad(context.clone().into_aad().as_bytes()) {
             return Pending::failed(cipher, Error::EmptyContext);
         }
         let items = source
@@ -637,7 +697,7 @@ where
         S: 'a,
         Self: 'a,
     {
-        if is_degenerate_context(context.clone().into_aad().as_bytes()) {
+        if is_degenerate_aad(context.clone().into_aad().as_bytes()) {
             return Pending::failed(cipher, Error::EmptyContext);
         }
         let items = source
@@ -667,7 +727,7 @@ where
     {
         // `None` derives nothing, but the field's context is still checked so
         // a misconfigured optional field fails whether or not it is present.
-        if is_degenerate_context(context.clone().into_aad().as_bytes()) {
+        if is_degenerate_aad(context.clone().into_aad().as_bytes()) {
             return Pending::failed(cipher, Error::EmptyContext);
         }
         match source {
@@ -692,7 +752,7 @@ where
         S: 'a,
         Self: 'a,
     {
-        if is_degenerate_context(context.clone().into_aad().as_bytes()) {
+        if is_degenerate_aad(context.clone().into_aad().as_bytes()) {
             return Pending::failed(cipher, Error::EmptyContext);
         }
         match source {
@@ -707,14 +767,14 @@ mod context_tests {
     use vitaminc_aead::{Aad, IntoAad};
     use vitaminc_prf::{IntoPrfContext, PrfContext};
 
-    use super::is_degenerate_context;
+    use super::{is_degenerate_aad, is_degenerate_prf_context};
 
     fn aad<'a>(ctx: impl IntoAad<'a>) -> bool {
-        is_degenerate_context(ctx.into_aad().as_bytes())
+        is_degenerate_aad(ctx.into_aad().as_bytes())
     }
 
     fn prf<'a>(ctx: impl IntoPrfContext<'a>) -> bool {
-        is_degenerate_context(ctx.into_prf_context().as_bytes())
+        is_degenerate_prf_context(ctx.into_prf_context().as_bytes())
     }
 
     #[test]
@@ -758,6 +818,62 @@ mod context_tests {
         assert!(!prf(PrfContext::from_slice(b"raw")));
     }
 
+    /// Caller data that *looks* like vitaminc framing is still caller data.
+    ///
+    /// The tags are matched by exact value at piece 0 of a framing node, and
+    /// caller data never lands there — on the PRF channel it is wrapped a
+    /// level deeper by `CONTEXT_VALUE`, and the AAD channel has no tags at
+    /// all. A prefix test over every piece got all of these wrong, rejecting
+    /// a legitimate context as empty.
+    #[test]
+    fn caller_data_shaped_like_framing_still_carries_information() {
+        for tag in [
+            "vitaminc/customer",
+            "vitaminc/",
+            "vitaminc/prf/context-value/v1",
+            "vitaminc/prf/option-some/v1",
+            "vitaminc/prf/map-entry/v1",
+            "vitaminc/prf/refine/v1",
+            "vitaminc/prf/encoding/utf8/v1",
+            "vitaminc/aead/leaf",
+        ] {
+            assert!(!aad(tag), "aad({tag:?})");
+            assert!(!aad(Some(tag)), "aad(Some({tag:?}))");
+            assert!(!aad((tag, "")), "aad(({tag:?}, \"\"))");
+            assert!(!prf(tag), "prf({tag:?})");
+            assert!(!prf(Some(tag)), "prf(Some({tag:?}))");
+            assert!(!prf((tag, "")), "prf(({tag:?}, \"\"))");
+        }
+    }
+
+    /// A hand-built `PrfContext` that impersonates a framing node is judged
+    /// on the data it actually frames — the tag alone buys nothing.
+    #[test]
+    fn a_hand_built_framing_node_is_judged_on_its_payload() {
+        let some =
+            |inner: &[u8]| PrfContext::pae(&[b"vitaminc/prf/option-some/v1", inner]).into_owned();
+        // Framing a real value: information.
+        assert!(!prf(some("users/email".into_prf_context().as_bytes())));
+        // Framing an empty value: still empty, and still rejected.
+        assert!(prf(some("".into_prf_context().as_bytes())));
+        // A bare tag with nothing under it is not a well-formed framing node
+        // and is read as a one-piece PAE of caller bytes.
+        assert!(!prf(PrfContext::pae(&[b"vitaminc/prf/option-some/v1"])));
+    }
+
+    /// The arity check matters: a node carrying the right tag but the wrong
+    /// number of pieces is not that framing shape and is judged piecewise.
+    #[test]
+    fn a_framing_tag_with_the_wrong_arity_is_not_framing() {
+        let wrong = PrfContext::pae(&[
+            b"vitaminc/prf/context-value/v1",
+            b"vitaminc/prf/encoding/utf8/v1",
+            b"users",
+            b"email",
+        ]);
+        assert!(!prf(wrong));
+    }
+
     #[test]
     fn a_zero_u64_is_byte_identical_to_none_and_rejected_with_it() {
         assert_eq!(
@@ -773,10 +889,10 @@ mod context_tests {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&2u64.to_le_bytes());
         bytes.extend_from_slice(&0u64.to_le_bytes());
-        assert!(!is_degenerate_context(&bytes));
+        assert!(!is_degenerate_aad(&bytes));
         // A well-formed empty PAE followed by a trailing byte.
         let mut bytes = 0u64.to_le_bytes().to_vec();
         bytes.push(0);
-        assert!(!is_degenerate_context(&bytes));
+        assert!(!is_degenerate_aad(&bytes));
     }
 }

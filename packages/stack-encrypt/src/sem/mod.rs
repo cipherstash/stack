@@ -81,7 +81,7 @@ use vitaminc_prf::{
 };
 use zeroize::Zeroize;
 
-use crate::target::{is_degenerate_context, EncryptContext, EncryptFrom, Pending};
+use crate::target::{is_degenerate_prf_context, EncryptContext, EncryptFrom, Pending};
 use crate::{Error, StackCipher};
 
 // The `/v1` suffix versions the *derivation* (domain + input framing), not the
@@ -143,11 +143,11 @@ impl TermError {
 
 /// Reject an empty context before any derivation — see
 /// [`TermError::EmptyContext`]. "Empty" is structural
-/// ([`is_degenerate_context`]): `()`, `""`, `None`, `Some("")`, tuples of
+/// ([`is_degenerate_prf_context`]): `()`, `""`, `None`, `Some("")`, tuples of
 /// empties and their nestings all carry no caller information, and every
 /// field using one would share a single derivation domain.
 fn require_context(context: &PrfContext<'_>) -> Result<(), TermError> {
-    if is_degenerate_context(context.as_bytes()) {
+    if is_degenerate_prf_context(context.as_bytes()) {
         return Err(TermError::EmptyContext);
     }
     Ok(())
