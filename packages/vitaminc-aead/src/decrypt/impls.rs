@@ -235,3 +235,68 @@ where
         decipher.decrypt_option::<T, _>(aad)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::MockDecipher;
+    use crate::Aad;
+
+    // `array_from_protected` is the one length check between the decipher's
+    // variable-length buffer and a fixed-size array. These pin both halves of
+    // it — the copy and the rejection — through the bare and wrapped `[u8; N]`
+    // paths, in this crate, so a mutation here is caught without depending on
+    // the real-cipher tests in `vitaminc-encrypt`.
+
+    #[test]
+    fn array_from_protected_copies_the_bytes_exactly() {
+        let data = Protected::new(vec![7u8, 42, 0, 255]);
+        let out: [u8; 4] = array_from_protected(&data).expect("length matches");
+        assert_eq!(out, [7, 42, 0, 255]);
+    }
+
+    #[test]
+    fn array_from_protected_rejects_short_and_long_buffers() {
+        let short = Protected::new(vec![1u8, 2, 3]);
+        assert_eq!(array_from_protected::<4>(&short), Err(Unspecified));
+
+        let long = Protected::new(vec![1u8, 2, 3, 4, 5]);
+        assert_eq!(array_from_protected::<4>(&long), Err(Unspecified));
+    }
+
+    #[test]
+    fn bare_array_decrypts_the_payload_bytes() {
+        let decipher = MockDecipher::new(vec![9u8, 8, 7]);
+        let out: [u8; 3] = <[u8; 3]>::decrypt_with_aad(&decipher, Aad::empty()).expect("decrypt");
+        assert_eq!(out, [9, 8, 7]);
+    }
+
+    #[test]
+    fn bare_array_rejects_a_length_mismatch() {
+        let decipher = MockDecipher::new(vec![9u8, 8, 7]);
+        assert_eq!(
+            <[u8; 2]>::decrypt_with_aad(&decipher, Aad::empty()),
+            Err(Unspecified)
+        );
+    }
+
+    #[test]
+    fn protected_array_decrypts_the_payload_bytes_wrapped() {
+        let decipher = MockDecipher::new(vec![3u8, 2, 1, 0]);
+        let out = <[u8; 4]>::decrypt_protected(&decipher, Aad::empty()).expect("decrypt");
+        assert_eq!(out.risky_ref(), &[3, 2, 1, 0]);
+    }
+
+    #[test]
+    fn protected_array_rejects_a_length_mismatch() {
+        let decipher = MockDecipher::new(vec![3u8, 2, 1, 0]);
+        assert!(<[u8; 8]>::decrypt_protected(&decipher, Aad::empty()).is_err());
+    }
+
+    #[test]
+    fn protected_vec_decrypts_the_payload_bytes_wrapped() {
+        let decipher = MockDecipher::new(vec![5u8, 6]);
+        let out = <Vec<u8>>::decrypt_protected(&decipher, Aad::empty()).expect("decrypt");
+        assert_eq!(out.risky_ref(), &[5, 6]);
+    }
+}
