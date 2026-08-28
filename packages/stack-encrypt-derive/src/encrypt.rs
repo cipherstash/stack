@@ -1,7 +1,8 @@
 //! Expansion of `#[derive(EncryptFrom)]`.
 
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{quote, quote_spanned};
+use syn::spanned::Spanned;
 use syn::{parse_quote, DeriveInput, Ident, Path, Result, Type};
 
 use crate::shape::{zip_fields, Field, Kind, Record};
@@ -11,6 +12,8 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let krate = &record.krate;
     let name = &input.ident;
     let (_, ty_generics, _) = input.generics.split_for_impl();
+
+    let decryptable = decryptable_impl(&input, &record);
 
     if record.plaintexts.is_empty() {
         // One impl, generic over the source: the record accepts exactly the
@@ -23,7 +26,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         push_field_bounds(&mut generics, krate, &record, &source);
         let (impl_generics, _, where_clause) = generics.split_for_impl();
         let body = body(krate, &record, &source);
-        return Ok(impl_block(
+        let block = impl_block(
             krate,
             name,
             &ty_generics,
@@ -31,7 +34,8 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
             where_clause,
             &source,
             body,
-        ));
+        );
+        return Ok(quote!(#block #decryptable));
     }
 
     // One impl per listed source. Fields derived from the whole source get a
@@ -54,7 +58,8 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         )
     });
 
-    Ok(quote!(#(#impls)*))
+    let decryptable = decryptable_impl(&input, &record);
+    Ok(quote!(#(#impls)* #decryptable))
 }
 
 /// `impl EncryptFrom<Source, StackCipher<__K>> for Record` around `body`.
@@ -83,6 +88,31 @@ fn impl_block(
             {
                 #body
             }
+        }
+    }
+}
+
+/// `impl Decryptable for Record`: a record is decryptable if any derived
+/// field is. This is what lets a record sit inside a row whose
+/// `DecryptInto` derive finds its ciphertext fields on its own.
+fn decryptable_impl(input: &DeriveInput, record: &Record) -> TokenStream {
+    let krate = &record.krate;
+    let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let terms = record
+        .fields
+        .iter()
+        .filter(|f| f.is_derived())
+        .map(|field| {
+            let ty = &field.ty;
+            // Spanned at the field type: a type that is not `Decryptable` is
+            // reported there, not at the derive.
+            quote_spanned!(ty.span()=> || <#ty as #krate::target::Decryptable>::DECRYPTABLE)
+        });
+    quote! {
+        #[automatically_derived]
+        impl #impl_generics #krate::target::Decryptable for #name #ty_generics #where_clause {
+            const DECRYPTABLE: bool = false #(#terms)*;
         }
     }
 }
@@ -149,6 +179,27 @@ mod tests {
 
     fn expand(input: DeriveInput) -> String {
         derive(input).unwrap().to_string()
+    }
+
+    #[test]
+    #[rustfmt::skip]
+    fn a_record_is_decryptable_if_any_derived_field_is() {
+        let expansion = expand(parse_quote! {
+            struct EncryptedAge {
+                c: StackCipherText,
+                hm: EqualityTerm,
+                #[stash(default)]
+                v: u8,
+            }
+        });
+        assert_contains(&expansion, quote! {
+            impl ::stack_encrypt::target::Decryptable for EncryptedAge {
+                const DECRYPTABLE: bool = false
+                    || <StackCipherText as ::stack_encrypt::target::Decryptable>::DECRYPTABLE
+                    || <EqualityTerm as ::stack_encrypt::target::Decryptable>::DECRYPTABLE;
+            }
+        });
+        assert_lacks(&expansion, quote!(<u8 as ::stack_encrypt::target::Decryptable>));
     }
 
     #[test]

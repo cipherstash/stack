@@ -142,6 +142,12 @@ pub enum Error {
     /// bug, caught before any I/O.
     #[error("merged pendings were built from different ciphers")]
     CipherMismatch,
+    /// A [`DecryptField`](crate::target::DecryptField) implementation
+    /// declared its type [`DECRYPTABLE`](crate::target::Decryptable::DECRYPTABLE)
+    /// but passed the field over. Always a bug in a third-party
+    /// `DecryptField`, never a data error.
+    #[error("a field declared decryptable was not opened by its DecryptField implementation")]
+    NotOpened,
 }
 
 impl From<crate::sem::TermError> for Error {

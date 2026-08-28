@@ -22,7 +22,6 @@
 //! #[derive(EncryptFrom, DecryptInto)]
 //! #[stash(plaintext = u32)]
 //! struct EncryptedAge {
-//!     #[stash(decrypt)]
 //!     c: StackCipherText,
 //!     hm: EqualityTerm,
 //!     ob: OreTerm<u32>,
@@ -48,6 +47,12 @@
 //! awaited, so however many fields a record has, awaiting it is **one**
 //! batched ZeroKMS call.
 //!
+//! Decryption opens the ciphertext field and passes over the terms, and no
+//! attribute says which is which: each field type does, through
+//! `Decryptable`, and the derive checks at compile time that exactly one
+//! field is a ciphertext. `#[stash(decrypt)]` names the field only when the
+//! types cannot — two ciphertexts, say.
+//!
 //! # Rows
 //!
 //! One level up, the same derive: a struct whose fields are each derived from
@@ -61,7 +66,6 @@
 //! # #[derive(EncryptFrom, DecryptInto)]
 //! # #[stash(plaintext = u32)]
 //! # struct EncryptedAge {
-//! #     #[stash(decrypt)]
 //! #     c: StackCipherText,
 //! #     hm: EqualityTerm,
 //! #     ob: OreTerm<u32>,
@@ -75,9 +79,9 @@
 //! #[derive(EncryptFrom, DecryptInto)]
 //! #[stash(plaintext = User)]
 //! struct EncryptedUser {
-//!     #[stash(from = age, context = "users/age", decrypt)]
+//!     #[stash(from = age, context = "users/age")]
 //!     age: EncryptedAge,
-//!     #[stash(from = email, context = "users/email", decrypt)]
+//!     #[stash(from = email, context = "users/email")]
 //!     email: StackCipherText,
 //! }
 //!
@@ -108,8 +112,9 @@
 //! attribute surface.
 //!
 //! Field-by-field decryption rebuilds the plaintext with a struct literal, so
-//! every field of the plaintext must be recovered by some `decrypt` field, and
-//! the plaintext must be a struct visible where the derive expands.
+//! every field of the plaintext must be recovered by exactly one ciphertext
+//! field derived from it, and the plaintext must be a struct visible where
+//! the derive expands.
 //!
 //! # Enums
 //!

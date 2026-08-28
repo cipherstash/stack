@@ -21,7 +21,6 @@ use stack_encrypt::{DecryptInto, EncryptFrom, Error, StackCipherText};
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(plaintext = u32)]
 struct EncryptedAge {
-    #[stash(decrypt)]
     c: StackCipherText,
     hm: EqualityTerm,
     ob: OreTerm<u32>,
@@ -51,7 +50,6 @@ async fn a_derived_record_is_the_hand_written_one() {
 /// decrypting to whatever the ciphertext field opens to.
 #[derive(EncryptFrom, DecryptInto)]
 struct SearchableText {
-    #[stash(decrypt)]
     c: StackCipherText,
     hm: EqualityTerm,
     m: MatchTerm,
@@ -63,8 +61,9 @@ struct Pair(StackCipherText, EqualityTerm);
 
 /// The record's own generics (and their bounds) are carried through, and the
 /// where clause makes `Tagged<T>` accept exactly `T` — the ORE term is typed
-/// by its source.
-#[derive(EncryptFrom)]
+/// by its source. A generic record's one-ciphertext check runs when the
+/// record is first used rather than where it is defined.
+#[derive(EncryptFrom, DecryptInto)]
 struct Tagged<T: CllwOreEncrypt> {
     c: StackCipherText,
     ob: OreTerm<T>,
@@ -104,15 +103,60 @@ async fn a_generic_plaintext_record_accepts_what_its_leaves_accept() {
     let tagged: Tagged<u32> = 7u32.encrypt_into(&cipher, "users/score").await.unwrap();
     let ob: OreTerm<u32> = 7u32.encrypt_into(&generator, "users/score").await.unwrap();
     assert_eq!(tagged.ob, ob);
-    let score: u32 = tagged.c.decrypt_into(&cipher, "users/score").await.unwrap();
+    let score: u32 = tagged.decrypt_into(&cipher, "users/score").await.unwrap();
     assert_eq!(score, 7);
+}
+
+/// Two ciphertexts in one record: the type system cannot pick, so
+/// `#[stash(decrypt)]` does. Only marked fields are considered, and the
+/// others need not be `Decryptable` at all.
+#[derive(EncryptFrom, DecryptInto)]
+#[stash(plaintext = u32)]
+struct Doubled {
+    #[stash(decrypt)]
+    c: StackCipherText,
+    #[stash(context = "doubled/shadow")]
+    shadow: StackCipherText,
+}
+
+/// Fields that are collections or optional follow their content: a record
+/// of a `Vec<u32>` has one decryptable field, its `Vec<StackCipherText>`.
+#[derive(EncryptFrom, DecryptInto)]
+#[stash(plaintext = Vec<u32>)]
+struct Numbers {
+    c: Vec<StackCipherText>,
+    hm: Vec<EqualityTerm>,
+}
+
+#[tokio::test]
+async fn decrypt_marks_the_field_when_the_types_cannot_choose() {
+    let cipher = stack_cipher().await;
+
+    let doubled: Doubled = 9u32.encrypt_into(&cipher, "doubled").await.unwrap();
+    let opened: u32 = doubled.decrypt_into(&cipher, "doubled").await.unwrap();
+    assert_eq!(opened, 9);
+    // The unmarked ciphertext is still a ciphertext, just not the record's.
+    let doubled: Doubled = 9u32.encrypt_into(&cipher, "doubled").await.unwrap();
+    let shadow: u32 = doubled
+        .shadow
+        .decrypt_into(&cipher, "doubled/shadow")
+        .await
+        .unwrap();
+    assert_eq!(shadow, 9);
+
+    let numbers: Numbers = vec![1u32, 2, 3]
+        .encrypt_into(&cipher, "numbers")
+        .await
+        .unwrap();
+    assert_eq!(numbers.hm.len(), 3);
+    let opened: Vec<u32> = numbers.decrypt_into(&cipher, "numbers").await.unwrap();
+    assert_eq!(opened, vec![1, 2, 3]);
 }
 
 /// Listed plaintexts: one impl each, and nothing else is accepted.
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(plaintext = u32, plaintext = String)]
 struct EncryptedValue {
-    #[stash(decrypt)]
     c: StackCipherText,
     hm: EqualityTerm,
 }
@@ -159,9 +203,9 @@ struct User {
 #[stash(plaintext = User)]
 struct EncryptedUser {
     /// A record inside a row: recursion, not a second mechanism.
-    #[stash(from = age, context = "users/age", decrypt)]
+    #[stash(from = age, context = "users/age")]
     age: EncryptedAge,
-    #[stash(from = email, context = "users/email", decrypt)]
+    #[stash(from = email, context = "users/email")]
     email: StackCipherText,
     /// A second field from the same plaintext field — a term alongside the
     /// ciphertext, not opened on decrypt.
@@ -252,9 +296,9 @@ struct Reading(u32, String);
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(plaintext = Reading)]
 struct EncryptedReading {
-    #[stash(from = 0, context = "readings/value", decrypt)]
+    #[stash(from = 0, context = "readings/value")]
     value: EncryptedAge,
-    #[stash(from = 1, context = "readings/unit", decrypt)]
+    #[stash(from = 1, context = "readings/unit")]
     unit: StackCipherText,
 }
 

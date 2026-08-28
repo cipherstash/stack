@@ -104,7 +104,10 @@
 //! behind a PRF request instead, joining the record's one batched call.
 //!
 //! ```
-//! use stack_encrypt::target::{EncryptContext, EncryptFrom, Pending};
+//! use stack_encrypt::target::{
+//!     DecryptContext, DecryptField, DecryptTarget, Decryptable, EncryptContext, EncryptFrom,
+//!     Pending,
+//! };
 //! use stack_encrypt::{Error, StackCipher};
 //! use vitaminc_prf::{IntoPrfContext, PrfContext, PrfValue, PrfVisitor, PrfVisitorError};
 //!
@@ -152,7 +155,28 @@
 //!         Pending::ready(cipher, term)
 //!     }
 //! }
+//!
+//! // A term is one-way. Saying so is what lets `#[derive(DecryptInto)]`
+//! // pass over a `MyTerm` field and open the ciphertext beside it.
+//! impl Decryptable for MyTerm {
+//!     const DECRYPTABLE: bool = false;
+//! }
+//!
+//! impl<P, C: DecryptTarget> DecryptField<P, C> for MyTerm {
+//!     fn decrypt_field<'a, 'c, Ctx>(self, _: &'a C, _: Ctx) -> Option<C::Output<'a, P>>
+//!     where
+//!         Ctx: DecryptContext<'c>,
+//!         Self: 'a,
+//!         P: 'a,
+//!     {
+//!         None
+//!     }
+//! }
 //! ```
+//!
+//! A third-party *ciphertext* type implements `DecryptInto` as well, sets
+//! `DECRYPTABLE` to `true`, and has `decrypt_field` return
+//! `Some(self.decrypt_into(cipher, context))`.
 //!
 //! A scheme needing state the cipher does not carry defines its own
 //! capability trait and implements it for [`StackCipher`] (a local trait on a
@@ -179,9 +203,8 @@
 //!
 //! /// An encrypted `u32`, queryable by equality and range.
 //! #[derive(EncryptFrom, DecryptInto)]
-//! #[stack_encrypt(plaintext = u32)]
+//! #[stash(plaintext = u32)]
 //! struct EncryptedAge {
-//!     #[stack_encrypt(decrypt)]
 //!     c: StackCipherText,
 //!     hm: EqualityTerm,
 //!     ob: OreTerm<u32>,
@@ -194,11 +217,11 @@
 //! }
 //!
 //! #[derive(EncryptFrom, DecryptInto)]
-//! #[stack_encrypt(plaintext = User)]
+//! #[stash(plaintext = User)]
 //! struct EncryptedUser {
-//!     #[stack_encrypt(from = age, context = "users/age", decrypt)]
+//!     #[stash(from = age, context = "users/age")]
 //!     age: EncryptedAge,
-//!     #[stack_encrypt(from = email, context = "users/email", decrypt)]
+//!     #[stash(from = email, context = "users/email")]
 //!     email: StackCipherText,
 //! }
 //!
@@ -617,6 +640,132 @@ where
         Self: 'a,
     {
         source.decrypt_into(cipher, context)
+    }
+}
+
+/// Whether a type is a ciphertext that decryption opens, or an index term
+/// that it passes over.
+///
+/// Every type that can be a field of a derived record implements this —
+/// it is what lets `#[derive(DecryptInto)]` find the ciphertext field on its
+/// own, with no attribute: the derive counts the fields whose
+/// [`DECRYPTABLE`](Self::DECRYPTABLE) is `true` and requires exactly one
+/// (per plaintext field, for a row). `#[derive(EncryptFrom)]` emits it for
+/// a record — a record is decryptable if any of its fields is — and the
+/// built-in leaves implement it by hand: [`StackCipherText`] is, the
+/// [`sem`](crate::sem) terms are not.
+///
+/// A third-party leaf implements it alongside [`EncryptFrom`], together
+/// with [`DecryptField`]; see the
+/// [module docs](self#extending-with-your-own-sem-type).
+pub trait Decryptable {
+    /// `true` if decryption opens a value of this type, `false` if it is a
+    /// one-way term with no plaintext to recover.
+    const DECRYPTABLE: bool;
+}
+
+/// Decryption of one field of a derived record, which either opens the field
+/// (`Some`) or passes over it (`None`, for an index term).
+///
+/// The derive calls this on every candidate field and takes the one `Some`;
+/// [`Decryptable`] has already established, at compile time, that there is
+/// exactly one. Implemented alongside `Decryptable`: decryptable types wrap
+/// their [`DecryptInto`], terms return `None` for every `P`. (Not a
+/// supertrait relationship: `#[derive(DecryptInto)]` emits this for every
+/// record, and a record that only decrypts — no `EncryptFrom` derive to
+/// emit its `Decryptable` — must still be a field of a row in the explicit
+/// mode.)
+pub trait DecryptField<P, C: DecryptTarget> {
+    /// [`DecryptInto::decrypt_into`] if `Self` is decryptable, `None` if not.
+    fn decrypt_field<'a, 'c, Ctx>(self, cipher: &'a C, context: Ctx) -> Option<C::Output<'a, P>>
+    where
+        Ctx: DecryptContext<'c>,
+        Self: 'a,
+        P: 'a;
+}
+
+impl Decryptable for StackCipherText {
+    const DECRYPTABLE: bool = true;
+}
+
+impl<P, C> DecryptField<P, C> for StackCipherText
+where
+    C: DecryptTarget,
+    Self: DecryptInto<P, C>,
+{
+    fn decrypt_field<'a, 'c, Ctx>(self, cipher: &'a C, context: Ctx) -> Option<C::Output<'a, P>>
+    where
+        Ctx: DecryptContext<'c>,
+        Self: 'a,
+        P: 'a,
+    {
+        Some(self.decrypt_into(cipher, context))
+    }
+}
+
+/// A collection is decryptable if its elements are.
+impl<S: Decryptable> Decryptable for Vec<S> {
+    const DECRYPTABLE: bool = S::DECRYPTABLE;
+}
+
+impl<S, T, K> DecryptField<Vec<T>, StackCipher<K>> for Vec<S>
+where
+    S: Decryptable + DecryptField<T, StackCipher<K>>,
+{
+    fn decrypt_field<'a, 'c, Ctx>(
+        self,
+        cipher: &'a StackCipher<K>,
+        context: Ctx,
+    ) -> Option<Pending<'a, Vec<T>, K>>
+    where
+        Ctx: DecryptContext<'c>,
+        Self: 'a,
+        Vec<T>: 'a,
+    {
+        if !S::DECRYPTABLE {
+            return None;
+        }
+        let items = self
+            .into_iter()
+            .map(|item| {
+                item.decrypt_field(cipher, context.clone())
+                    .unwrap_or_else(|| Pending::failed(cipher, Error::NotOpened))
+            })
+            .collect();
+        Some(Pending::all(cipher, items))
+    }
+}
+
+/// An optional value is decryptable if its content is.
+impl<S: Decryptable> Decryptable for Option<S> {
+    const DECRYPTABLE: bool = S::DECRYPTABLE;
+}
+
+impl<S, T, K> DecryptField<Option<T>, StackCipher<K>> for Option<S>
+where
+    S: Decryptable + DecryptField<T, StackCipher<K>>,
+    T: MaybeSend,
+{
+    fn decrypt_field<'a, 'c, Ctx>(
+        self,
+        cipher: &'a StackCipher<K>,
+        context: Ctx,
+    ) -> Option<Pending<'a, Option<T>, K>>
+    where
+        Ctx: DecryptContext<'c>,
+        Self: 'a,
+        Option<T>: 'a,
+    {
+        if !S::DECRYPTABLE {
+            return None;
+        }
+        Some(match self {
+            Some(value) => value
+                .decrypt_field(cipher, context)
+                .unwrap_or_else(|| Pending::failed(cipher, Error::NotOpened))
+                .map(Some),
+            None => Pending::ready(cipher, Ok(None)),
+        })
     }
 }
 
