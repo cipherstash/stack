@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 
 use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerm, OreTerm};
 use stack_encrypt::target::{
-    DecryptContext, DecryptExt, DecryptFrom, EncryptContext, EncryptExt, EncryptFrom, Pending,
+    DecryptContext, DecryptFrom, DecryptInto, EncryptContext, EncryptFrom, EncryptInto, Pending,
     Request,
 };
 use stack_encrypt::{Error, StackCipher, StackCipherText};

@@ -1,4 +1,4 @@
-//! `#[derive(Encrypted)]` / `#[derive(Decrypted)]`: the derived impls are the
+//! `#[derive(Encrypted)]` / `#[derive(DecryptFrom)]`: the derived impls are the
 //! hand-written composite in `target.rs`, emitted — same terms, same decrypt
 //! mirror, same one-batched-call settlement — plus what only a derive makes
 //! cheap: sources listed or left generic, rows derived field by field, and
@@ -11,14 +11,14 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 use cllw_ore::CllwOreEncrypt;
 use common::{counting_cipher, stack_cipher};
 use stack_encrypt::sem::{EqualityTerm, MatchTerm, OreTerm};
-use stack_encrypt::target::{DecryptExt, EncryptExt};
-use stack_encrypt::{Decrypted, Encrypted, Error, StackCipherText};
+use stack_encrypt::target::{DecryptInto, EncryptInto};
+use stack_encrypt::{DecryptFrom, Encrypted, Error, StackCipherText};
 
 // --- Records: every field from one source, under one context ----------------
 
 /// The hand-written record in `target.rs`, derived: an encrypted `u32`
 /// stored as its ciphertext plus an equality term and an ORE term.
-#[derive(Encrypted, Decrypted)]
+#[derive(Encrypted, DecryptFrom)]
 #[encrypted(source = u32)]
 struct EncryptedAge {
     #[encrypted(decrypt)]
@@ -107,7 +107,7 @@ async fn a_generic_source_record_accepts_what_its_leaves_accept() {
 }
 
 /// Listed sources: one impl each, and nothing else is accepted.
-#[derive(Encrypted, Decrypted)]
+#[derive(Encrypted, DecryptFrom)]
 #[encrypted(source = u32, source = String)]
 struct EncryptedValue {
     #[encrypted(decrypt)]
@@ -153,7 +153,7 @@ struct User {
     email: String,
 }
 
-#[derive(Encrypted, Decrypted)]
+#[derive(Encrypted, DecryptFrom)]
 #[encrypted(source = User)]
 struct EncryptedUser {
     /// A record inside a row: recursion, not a second mechanism.

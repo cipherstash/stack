@@ -27,7 +27,7 @@
 
 use stack_encrypt::sem::{EqualityTerm, OreTerm};
 use stack_encrypt::target::{
-    DecryptContext, DecryptExt, DecryptFrom, EncryptContext, EncryptExt, EncryptFrom, Pending,
+    DecryptContext, DecryptFrom, DecryptInto, EncryptContext, EncryptFrom, EncryptInto, Pending,
 };
 use stack_encrypt::{StackCipher, StackCipherText};
 

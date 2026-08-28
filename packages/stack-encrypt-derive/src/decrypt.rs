@@ -1,4 +1,4 @@
-//! Expansion of `#[derive(Decrypted)]`.
+//! Expansion of `#[derive(DecryptFrom)]`.
 
 use std::collections::HashSet;
 
@@ -17,7 +17,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     if record.sources.is_empty() {
         return Err(syn::Error::new_spanned(
             name,
-            "Decrypted needs `#[encrypted(source = ..)]`: the plaintext type must be named. (An \
+            "DecryptFrom needs `#[encrypted(source = ..)]`: the plaintext type must be named. (An \
              impl for every type that can be decrypted from the ciphertext field would be a \
              blanket impl of a foreign trait, which the orphan rule forbids outside \
              stack-encrypt.)",
@@ -28,7 +28,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     if opened.is_empty() {
         return Err(syn::Error::new_spanned(
             name,
-            "Decrypted needs to know which field decryption opens: mark it \
+            "DecryptFrom needs to know which field decryption opens: mark it \
              `#[encrypted(decrypt)]` (index terms are one-way and cannot be)",
         ));
     }

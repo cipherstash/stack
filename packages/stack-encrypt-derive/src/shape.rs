@@ -71,23 +71,22 @@ impl Record {
     pub(crate) fn parse(input: &DeriveInput) -> Result<Self> {
         let attrs = ContainerAttrs::parse(&input.attrs)?;
 
-        let data =
-            match &input.data {
-                Data::Struct(data) => data,
-                Data::Enum(_) => return Err(syn::Error::new_spanned(
-                    &input.ident,
-                    "Encrypted/Decrypted cannot be derived for enums: a record is a fixed set of \
+        let data = match &input.data {
+            Data::Struct(data) => data,
+            Data::Enum(_) => return Err(syn::Error::new_spanned(
+                &input.ident,
+                "Encrypted/DecryptFrom cannot be derived for enums: a record is a fixed set of \
                      fields derived from one source, and a variant choice has no field to be \
                      derived into. Model the choice explicitly instead, e.g. as a struct of \
                      `Option` fields.",
-                )),
-                Data::Union(_) => {
-                    return Err(syn::Error::new_spanned(
-                        &input.ident,
-                        "Encrypted/Decrypted cannot be derived for unions",
-                    ))
-                }
-            };
+            )),
+            Data::Union(_) => {
+                return Err(syn::Error::new_spanned(
+                    &input.ident,
+                    "Encrypted/DecryptFrom cannot be derived for unions",
+                ))
+            }
+        };
 
         let fields = collect(&data.fields)?;
 

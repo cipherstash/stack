@@ -14,10 +14,10 @@
 //!
 //! ```ignore
 //! use stack_encrypt::sem::{EqualityTerm, OreTerm};
-//! use stack_encrypt::{Decrypted, Encrypted, StackCipherText};
+//! use stack_encrypt::{DecryptFrom, Encrypted, StackCipherText};
 //!
 //! /// An encrypted integer, queryable by equality and range.
-//! #[derive(Encrypted, Decrypted)]
+//! #[derive(Encrypted, DecryptFrom)]
 //! #[encrypted(source = u32)]
 //! struct EncryptedAge {
 //!     #[encrypted(decrypt)]
@@ -49,7 +49,7 @@
 //!     email: String,
 //! }
 //!
-//! #[derive(Encrypted, Decrypted)]
+//! #[derive(Encrypted, DecryptFrom)]
 //! #[encrypted(source = User)]
 //! struct EncryptedUser {
 //!     #[encrypted(from = age, context = "users/age", decrypt)]
@@ -129,8 +129,8 @@ pub fn derive_encrypted(input: TokenStream) -> TokenStream {
 /// the [crate documentation](crate); the attributes it accepts are reproduced
 /// below.
 #[doc = include_str!("../docs/attributes.md")]
-#[proc_macro_derive(Decrypted, attributes(encrypted))]
-pub fn derive_decrypted(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(DecryptFrom, attributes(encrypted))]
+pub fn derive_decrypt_from(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     decrypt::derive(input)
         .unwrap_or_else(syn::Error::into_compile_error)

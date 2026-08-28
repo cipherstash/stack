@@ -27,9 +27,9 @@
 //! * [`DecryptFrom<S, C>`] — the mirror, implemented by the *plaintext*
 //!   type: "`Self` is recoverable from the encrypted `S`". Only ciphertext
 //!   fields participate — index terms are one-way by construction.
-//!   [`#[derive(Decrypted)]`](Decrypted) on the record emits it for the
+//!   [`#[derive(DecryptFrom)]`](macro@DecryptFrom) on the record emits it for the
 //!   record's named source type(s).
-//! * [`EncryptExt::encrypt_into`] / [`DecryptExt::decrypt_into`] — blanket
+//! * [`EncryptInto::encrypt_into`] / [`DecryptInto::decrypt_into`] — blanket
 //!   call-site sugar, the `Into` to the `From` above. Never implemented by
 //!   hand.
 //! * [`EncryptTarget`] / [`DecryptTarget`] — implemented by ciphers; their
@@ -53,7 +53,7 @@
 //! kind:
 //!
 //! ```
-//! use stack_encrypt::target::{DecryptExt, EncryptExt};
+//! use stack_encrypt::target::{DecryptInto, EncryptInto};
 //! use stack_encrypt::{StackCipher, StackCipherText};
 //! use stack_kms::FakeDataKeySource;
 //!
@@ -165,12 +165,12 @@
 //!
 //! ```
 //! use stack_encrypt::sem::{EqualityTerm, OreTerm};
-//! use stack_encrypt::target::{DecryptExt, EncryptExt};
-//! use stack_encrypt::{Decrypted, Encrypted, StackCipher, StackCipherText};
+//! use stack_encrypt::target::{DecryptInto, EncryptInto};
+//! use stack_encrypt::{DecryptFrom, Encrypted, StackCipher, StackCipherText};
 //! use stack_kms::FakeDataKeySource;
 //!
 //! /// An encrypted `u32`, queryable by equality and range.
-//! #[derive(Encrypted, Decrypted)]
+//! #[derive(Encrypted, DecryptFrom)]
 //! #[encrypted(source = u32)]
 //! struct EncryptedAge {
 //!     #[encrypted(decrypt)]
@@ -185,7 +185,7 @@
 //!     email: String,
 //! }
 //!
-//! #[derive(Encrypted, Decrypted)]
+//! #[derive(Encrypted, DecryptFrom)]
 //! #[encrypted(source = User)]
 //! struct EncryptedUser {
 //!     #[encrypted(from = age, context = "users/age", decrypt)]
@@ -244,7 +244,7 @@ mod request;
 
 pub use pending::{Pending, PendingFuture};
 pub use request::{Request, Responses};
-pub use stack_encrypt_derive::{Decrypted, Encrypted};
+pub use stack_encrypt_derive::{DecryptFrom, Encrypted};
 
 // =============================================================================
 // Contexts
@@ -540,7 +540,7 @@ pub trait DecryptFrom<S, C: DecryptTarget>: Sized {
 ///
 /// ```
 /// use stack_encrypt::sem::EqualityTerm;
-/// use stack_encrypt::target::EncryptExt;
+/// use stack_encrypt::target::EncryptInto;
 /// use stack_encrypt::StackCipher;
 /// use stack_kms::FakeDataKeySource;
 ///
@@ -555,7 +555,7 @@ pub trait DecryptFrom<S, C: DecryptTarget>: Sized {
 /// # Ok::<(), stack_encrypt::Error>(())
 /// # }).unwrap();
 /// ```
-pub trait EncryptExt {
+pub trait EncryptInto {
     /// Encrypt `self` into `T` under `context`. See [`EncryptFrom`].
     fn encrypt_into<'a, 'c, T, C, Ctx>(&'a self, cipher: &'a C, context: Ctx) -> C::Output<'a, T>
     where
@@ -565,7 +565,7 @@ pub trait EncryptExt {
         Self: Sized;
 }
 
-impl<S> EncryptExt for S {
+impl<S> EncryptInto for S {
     fn encrypt_into<'a, 'c, T, C, Ctx>(&'a self, cipher: &'a C, context: Ctx) -> C::Output<'a, T>
     where
         C: EncryptTarget,
@@ -577,9 +577,9 @@ impl<S> EncryptExt for S {
 }
 
 /// Call-site sugar: `encrypted.decrypt_into::<T>(&cipher, context)` — the
-/// decrypt-side [`EncryptExt`]. Blanket-implemented; never implemented by
+/// decrypt-side [`EncryptInto`]. Blanket-implemented; never implemented by
 /// hand.
-pub trait DecryptExt: Sized {
+pub trait DecryptInto: Sized {
     /// Decrypt `self` into `T`, authenticating against `context`. See
     /// [`DecryptFrom`].
     fn decrypt_into<'a, 'c, T, C, Ctx>(self, cipher: &'a C, context: Ctx) -> C::Output<'a, T>
@@ -590,7 +590,7 @@ pub trait DecryptExt: Sized {
         Self: 'a;
 }
 
-impl<S> DecryptExt for S {
+impl<S> DecryptInto for S {
     fn decrypt_into<'a, 'c, T, C, Ctx>(self, cipher: &'a C, context: Ctx) -> C::Output<'a, T>
     where
         C: DecryptTarget,

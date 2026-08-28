@@ -454,7 +454,7 @@ derivations must produce identical bytes before and after.
    `Pending`; they lift onto `EncryptTarget` if a second async cipher ever
    appears.
 2. **Decrypt landed with this change** (decided): `DecryptTarget`,
-   `DecryptFrom`, `DecryptExt` and `DecryptContext` mirror the encrypt side;
+   `DecryptFrom`, `DecryptInto` and `DecryptContext` mirror the encrypt side;
    the `Vec` implementation batches a column of rows into one
    `retrieve_keys`. The derive will emit both directions from day one.
 3. **`Request` is public but opaque** (decided): constructors only
@@ -521,7 +521,7 @@ claims:
   merging pendings from different ciphers is `Error::CipherMismatch` rather
   than a `debug_assert`.
 
-### `#[derive(Encrypted)]` / `#[derive(Decrypted)]` (follow-up PR)
+### `#[derive(Encrypted)]` / `#[derive(DecryptFrom)]` (follow-up PR)
 
 The derive emits exactly the §4.4 shape — one impl over `StackCipher<K>`,
 field pendings zipped and mapped, never awaited — for a struct of leaves, and
@@ -546,7 +546,7 @@ The derive is bound to `StackCipher<K>` rather than generic over
 methods, and that extension does not change the attribute surface. `from`
 fields carry no where clause (the source field's type is not visible to the
 macro), so their obligations are checked in the impl body — which is also why
-`Decrypted` requires a named `source`: a blanket impl over every plaintext
+`DecryptFrom` requires a named `source`: a blanket impl over every plaintext
 type would violate the orphan rule outside this crate.
 
 ## 8. Where findings get recorded
