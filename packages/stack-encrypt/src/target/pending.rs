@@ -101,6 +101,12 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// batched call, scoped to exactly the responses `requests` asked for —
     /// drawing more (or another kind) is [`Error::ResponseShape`], and can
     /// never consume a sibling pending's responses.
+    ///
+    /// The scope is exact in both directions: a fulfilment must also consume
+    /// *every* response it asked for. Leaving one behind is
+    /// [`Error::ResponseShape`] too — the key was minted at ZeroKMS, and
+    /// silently discarding it means the pending's declared requests do not
+    /// describe what it actually does.
     pub fn request<F>(cipher: &'a StackCipher<K>, requests: Vec<Request>, fulfil: F) -> Self
     where
         F: FnOnce(&mut Responses) -> Result<T, Error> + MaybeSend + 'a,
@@ -112,7 +118,11 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
             failed: None,
             fulfil: Box::new(move |responses| {
                 let mut own = responses.split_front(generated, retrieved)?;
-                fulfil(&mut own)
+                let value = fulfil(&mut own)?;
+                if !own.is_exhausted() {
+                    return Err(Error::ResponseShape);
+                }
+                Ok(value)
             }),
         }
     }
@@ -567,17 +577,60 @@ mod tests {
         ));
     }
 
-    /// A pending that under-draws leaves its unused responses behind rather
-    /// than shifting every sibling's slice.
+    /// Under-drawing is an error for the same reason over-drawing is: the
+    /// pending's declared requests must describe what it actually consumes.
+    /// A key was minted at ZeroKMS; leaving it behind is a composition bug,
+    /// not a cheaper request.
+    ///
+    /// (That it does not *shift* a sibling's slice is a separate guarantee,
+    /// covered by `Responses::split_front`'s own tests.)
     #[tokio::test]
-    async fn under_drawing_does_not_shift_a_siblings_responses() {
+    async fn under_drawing_responses_is_a_response_shape_error() {
         let cipher = cipher().await;
         let lazy: Pending<'_, (), _> =
             Pending::request(&cipher, vec![Request::generate_data_key()], |_| Ok(()));
-        let ((), tags) = lazy.zip(generating(&cipher, 1)).await.unwrap();
+        let result = lazy.zip(generating(&cipher, 1)).await;
 
-        assert_eq!(tags.len(), 1);
-        assert_eq!(cipher.kms().generate_calls(), 1);
+        assert!(matches!(
+            result,
+            Err::<((), Vec<Vec<u8>>), _>(Error::ResponseShape)
+        ));
+    }
+
+    /// Partial consumption counts too: two requested, one drawn.
+    #[tokio::test]
+    async fn drawing_fewer_responses_than_requested_is_a_response_shape_error() {
+        let cipher = cipher().await;
+        let requests = vec![Request::generate_data_key(), Request::generate_data_key()];
+        let lazy: Pending<'_, Vec<u8>, _> = Pending::request(&cipher, requests, |responses| {
+            responses.next_generated_key().map(|key| key.tag)
+        });
+
+        assert!(matches!(
+            lazy.await,
+            Err::<Vec<u8>, _>(Error::ResponseShape)
+        ));
+    }
+
+    /// The two kinds are tracked separately: consuming every generated key
+    /// but none of the retrieved ones is still an under-draw.
+    #[tokio::test]
+    async fn leaving_the_other_kind_unconsumed_is_a_response_shape_error() {
+        let cipher = cipher().await;
+        let mut pairs = generating_pairs(&cipher, 1).await.unwrap();
+        let (iv, tag) = pairs.remove(0);
+        let requests = vec![
+            Request::generate_data_key(),
+            Request::retrieve_data_key(iv, tag),
+        ];
+        let lazy: Pending<'_, Vec<u8>, _> = Pending::request(&cipher, requests, |responses| {
+            responses.next_generated_key().map(|key| key.tag)
+        });
+
+        assert!(matches!(
+            lazy.await,
+            Err::<Vec<u8>, _>(Error::ResponseShape)
+        ));
     }
 
     #[tokio::test]

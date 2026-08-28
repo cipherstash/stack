@@ -108,6 +108,13 @@ impl Responses {
         })
     }
 
+    /// Whether every response in this view has been drawn. Checked after a
+    /// fulfilment returns: a fulfilment that asked for a key and left it
+    /// behind is a composition bug, not a cheaper request.
+    pub(super) fn is_exhausted(&self) -> bool {
+        self.generated.is_empty() && self.retrieved.is_empty()
+    }
+
     pub(crate) fn drain_generated(&mut self) -> impl Iterator<Item = DataKeyWithTag> + '_ {
         self.generated.drain(..)
     }
