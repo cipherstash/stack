@@ -100,7 +100,7 @@ impl<S> EncryptExt for S { /* delegates to T::encrypt_from */ }
 impl<S, K>    EncryptFrom<S, StackCipher<K>> for StackCipherText where S: Encrypt + Clone                     { ... }
 impl<S, K>    EncryptFrom<S, StackCipher<K>> for EqualityTerm    where S: PrfValue + Clone                    { ... }
 impl<S, K, O> EncryptFrom<S, StackCipher<K>> for MatchTerm<O>    where S: AsRef<str>, O: MatchConfig          { ... }
-impl<S, K>    EncryptFrom<S, StackCipher<K>> for OreTerm<S>      where S: CllwOreEncrypt + Clone + Send + 'static { ... }
+impl<S, K>    EncryptFrom<S, StackCipher<K>> for OreTerm<S>      where S: CllwOreEncrypt + Clone + Send + 'static, S::Output: Send + 'static { ... }
 ```
 
 EQL's wire newtypes (`Ciphertext`, `Hmac256`, `OreBlock256`) get the same treatment in `eql-bindings`, which owns them; encoding decisions (base85, block width) belong there, not in vitaminc or stack-encrypt.
@@ -211,13 +211,13 @@ Two layers, cleanly split:
 
 ## Capabilities
 
-A cipher advertises what it can do by implementing traits. Stack-encrypt's cipher implements `Cipher` and `Prf` directly — both are vitaminc's own.
+A cipher advertises what it can do by implementing traits. `StackCipher` implements vitaminc's `Cipher` directly. It does **not** implement `Prf`: it *holds* a `vitaminc_hmac::HmacSha256Prf`, keyed by the keyset's index key at construction, and exposes it through `prf()`. Term impls read the accessor.
 
 **ORE is different, and vitaminc should not grow an ORE trait.** The scheme lives in its own crate and the cipher *holds* what it needs rather than implementing the scheme.
 
 The original proposal was `ore-rs` behind a `ProvidesOre` accessor on the cipher. What shipped is `cllw-ore`, and the key never surfaces at all: `OreTerm<T>` / `OpeTerm<T>` derive the per-field CLLW key through the PRF (from the field context, never the plaintext) *inside* the term's PRF visitor, encrypt there, and hand back only the ciphertext. Under the 2-party PRF backend that means per-field key derivation is an auditable ZeroKMS event and no key exists on either side to be leaked.
 
-The principle stands: capability accessors, not one god trait. `StackCipher` implements vitaminc's `Cipher` and exposes its `Prf`; any future primitive whose trait is owned elsewhere is absorbed the same way.
+The principle stands: capability accessors, not one god trait. The PRF is already held this way (`prf()`); any future primitive whose trait is owned elsewhere is absorbed the same way.
 
 ## Context, not cipher scoping
 
@@ -226,9 +226,11 @@ An EQL payload carries an identifier (`i`: table, column). Identifiers are an EQ
 vitaminc already has the generic notion, twice — `Aad<'a>` (aead) and `PrfContext<'a>` (prf), both PAE-framed domain separators, neither aware of tables. EQL's `Identifier` is just a value that converts into both:
 
 ```rust
-pub trait EncryptContext<'a>: IntoAad<'a> + IntoPrfContext<'a> {}
-impl<'a, T> EncryptContext<'a> for T where T: IntoAad<'a> + IntoPrfContext<'a> {}
+pub trait EncryptContext<'a>: IntoAad<'a> + IntoPrfContext<'a> + Clone {}
+impl<'a, T> EncryptContext<'a> for T where T: IntoAad<'a> + IntoPrfContext<'a> + Clone {}
 ```
+
+`Clone` because one context fans out to every field of a record.
 
 Context is threaded **per value**, as an argument. It is not baked into the cipher.
 
@@ -271,7 +273,7 @@ An earlier iteration had two traits, `EncryptInto<T, C>` on the source and `Deri
 
 **Resolved:** (1). `S: Encrypt + Clone` on the bridge; (2) later if the copies show up in a profile.
 
-**2. Fan-out and zeroize.** Either way the source reaches k consumers, so there are k `Protected` copies, each wiped on drop. Bounded and acceptable for scalars and short strings, but it is a real widening of the custody window and should be stated in the crate docs rather than discovered.
+**2. Fan-out and zeroize.** **Resolved, and narrower than proposed.** The source reaches k consumers, but only the ciphertext's copy lives in `Protected` — it is held inside the pending and wiped as it seals. Term clones are ordinary values consumed during the synchronous build and dropped before any I/O; they are not wrapped. So the custody widening is bounded to the build phase for terms and to the pending's lifetime for the ciphertext. Stated in the `stack_encrypt::target` rustdoc ("Plaintext fan-out"), as this section asked.
 
 **3. Orphan rule.** `impl<C> EncryptFrom<i64, C> for IntegerOrdOre` in eql-bindings is legal — `Self` is local. The reverse-direction sugar (`EncryptExt::encrypt_into` on `i64`) is a blanket impl over a local trait, also fine. Worth a compile test pinning both, since the layout puts the trait, the source type and the target type in three different crates.
 
