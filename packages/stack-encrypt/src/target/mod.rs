@@ -219,6 +219,23 @@ pub trait DecryptContext<'a>: IntoAad<'a> + Clone {}
 
 impl<'a, T> DecryptContext<'a> for T where T: IntoAad<'a> + Clone {}
 
+// The two checks below reconstruct, at runtime and from the outside, an
+// invariant that should be carried by the type: "this context was built
+// from something the caller supplied". Doing it this way means parsing an
+// encoding we do not own, mirroring constants that are private upstream,
+// and re-deriving the answer on every encrypt.
+//
+// It works, and the tests pin it — but the shape of it is a symptom, not a
+// design. cipherstash/vitaminc#291 tracks the type-level replacement (a
+// non-empty context that checks once at construction, without giving up the
+// plain-string call site). When that lands, this module, both predicates and
+// `Error::EmptyContext` all go away, and the `EncryptContext` bound tightens
+// to the upstream marker instead.
+//
+// This code stays as it is until then: the check is correct, just weaker and
+// more fragile than an invariant would be. The prefix-versus-position bug the
+// review found here is exactly the fragility being described.
+
 /// The framing tags vitaminc's PRF context encoding inserts, each of which
 /// occupies **piece 0** of the PAE node it labels. Matched exactly and only
 /// in that position — a prefix test would classify any caller string
