@@ -242,9 +242,33 @@ impl<'a, T> DecryptContext<'a> for T where T: IntoAad<'a> + Clone {}
 /// beginning `vitaminc/` as framing (`Some("vitaminc/customer")` would read
 /// as empty), which is the opposite of what this check is for.
 ///
-/// Mirrored from `vitaminc_prf::context`, where they are private. Pinned by
-/// the `context_tests` below, which build every shape through the public API
-/// rather than asserting the literals.
+/// # Why these exist at all
+///
+/// They are mirrored from `vitaminc_prf::context`, where they are private,
+/// and nothing about the *check* requires them. They are a consequence of
+/// *where* the check runs:
+///
+/// 1. [`EncryptContext`] is a blanket bound over vitaminc's `IntoAad +
+///    IntoPrfContext`, so inside `encrypt_from` the context is an opaque
+///    generic. The only thing this crate can do with it is encode it.
+/// 2. The encoding is framed: `"".into_prf_context()` is
+///    `pae([context-value, utf8-label, ""])`, not zero bytes. Seeing whether
+///    the *value* is empty means parsing past the tags.
+/// 3. Parsing past the tags means knowing which pieces are tags.
+///
+/// So the crate ends up parsing an encoding it does not own, restating
+/// constants it cannot import, and re-deriving on every encrypt an answer
+/// that was knowable once, at construction. If vitaminc renames a domain
+/// these literals drift silently: the byte pins still pass and the check
+/// quietly starts admitting empties.
+///
+/// That is the case for <https://github.com/cipherstash/vitaminc/issues/291>:
+/// a context that carries non-emptiness in its type, checked once where it
+/// is built. When it lands, this module, both predicates below and
+/// [`Error::EmptyContext`] are deleted and the [`EncryptContext`] bound
+/// tightens to the upstream marker. Until then the literals are pinned by
+/// `context_tests`, which build every shape through the public API rather
+/// than asserting the strings.
 mod prf_framing {
     /// `pae([CONTEXT_VALUE, <encoding label>, value])` — a typed leaf.
     pub(super) const CONTEXT_VALUE: &[u8] = b"vitaminc/prf/context-value/v1";
