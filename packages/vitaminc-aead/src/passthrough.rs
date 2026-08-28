@@ -5,19 +5,21 @@
 //!
 //! # Why carry a field in the clear
 //!
-//! An encrypted record still has to work as a record. The identifier a row is
-//! fetched by, the tenant it is scoped to, the schema version that says how to
-//! read the rest — the storage layer needs those without holding a decryption
-//! key. Encrypt them and the system responsible for the record can no longer
-//! route, index, or interpret it.
+//! Not every column of a table needs encrypting. A record usually has a few
+//! fields that other queries select, filter, or update without holding the
+//! key — a display name, a schema version, a plain `id` column — beside the
+//! ones that must be sealed. Encrypt those too and the storage layer can no
+//! longer index, filter, or interpret the row without a decryption key.
 //!
-//! Passthrough keeps such a field inside the *same* ciphertext container as
-//! the encrypted ones, so the record still seals, moves, and round-trips as a
-//! single unit, while the clear fields stay readable along the way. The
-//! alternative — storing them beside the ciphertext — splits one record into
-//! two things that can drift apart.
+//! Passthrough stores such a field as a cleartext entry of the *same*
+//! ciphertext container as the encrypted ones, so the record still seals,
+//! moves, and round-trips as a single unit while that field stays an ordinary
+//! column. The alternative — storing it beside the ciphertext — splits one
+//! record into two things that can drift apart.
 //!
-//! Only non-sensitive data qualifies; see the warning below.
+//! This is exactly what [`#[aead(passthrough)]`](crate::Encrypt#aeadpassthrough)
+//! does for a derived impl; `Passthrough<T>` is its hand-written equivalent,
+//! and carries the same contract — see the warning below.
 //!
 //! # Why this type rather than the cipher's own hooks
 //!
@@ -49,14 +51,22 @@
 //! On decrypt, the visitor downcasts the erased payload back to `T`; a
 //! foreign payload type is an [`Unspecified`] error, never a panic.
 //!
-//! # ⚠️ Non-sensitive data only
+//! # ⚠️ No security guarantees whatsoever
 //!
-//! Identical contract to [`Cipher::passthrough`](crate::Cipher::passthrough):
-//! the value travels **in the clear** and is **not authenticated** — a stored
-//! passthrough value (and, for map entries, its key) can be altered
-//! undetectably. Use it for non-sensitive routing/display data (identifiers,
-//! schema versions, display names); never route secret-bearing data through
-//! it. Wrap in [`Protected`](vitaminc_protected::Protected) instead.
+//! Identical contract to [`Cipher::passthrough`](crate::Cipher::passthrough)
+//! and to [`#[aead(passthrough)]`](crate::Encrypt#aeadpassthrough), which
+//! documents it in full. In short: the value travels **in the clear** and is
+//! **not authenticated** — a stored passthrough value (and, for map entries,
+//! its key) can be read, edited, added, or removed undetectably, and every
+//! encrypted field beside it still decrypts. Treat what comes back as
+//! untrusted input.
+//!
+//! So: non-sensitive, non-security-deciding data only. Never a field the
+//! program then trusts to make an authorization choice — a tenant, a role, a
+//! scope — nor one used to select which encrypted record to trust. Anything
+//! secret-bearing belongs in [`Protected`](vitaminc_protected::Protected) and
+//! gets encrypted; anything that must be tamper-evident but readable belongs
+//! in the AAD, not in a passthrough.
 //!
 //! This is the dynamic-path counterpart of `hlist::Passthrough` (behind the
 //! `hlist` feature), which serves the opt-in statically-shaped encoding.

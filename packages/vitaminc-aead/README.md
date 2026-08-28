@@ -335,7 +335,11 @@ The visitor pattern keeps the cipher and the type independent: the cipher decide
 
 ### Passing fields through in the clear
 
-Not every field of a record is sensitive. Wrap a field in [`Passthrough`] to carry it through the ciphertext container **unencrypted and unauthenticated** — routing or display data such as identifiers and schema versions. Because a custom type's impl is generic over every cipher, it cannot name a particular cipher's passthrough payload type; `Passthrough<T>` drives the type-erased channel for it, through the same `encrypt_entry` / `next_entry` calls as any encrypted field:
+Not every column of a table needs encrypting. A record usually has a few fields that other queries select, filter, or update without holding the key — a display name, a schema version, a plain `id` column — beside the ones that must be sealed. Wrap such a field in [`Passthrough`] and it is stored as a cleartext entry of the same ciphertext container, so the record still round-trips as one unit while that field stays an ordinary column.
+
+**Passthrough provides no security guarantees whatsoever.** The value is not encrypted and not authenticated — it, and for map entries its key, can be read, edited, added, or removed in storage and every encrypted field beside it still decrypts. Treat what comes back as untrusted input: non-sensitive, non-security-deciding data only, never a field the program then trusts for authorization, tenancy, access control, or for choosing which encrypted record to trust. The full contract is documented once, under [`#[aead(passthrough)]`](Encrypt#aeadpassthrough); `Passthrough<T>` is the hand-written equivalent of that attribute.
+
+Because a custom type's impl is generic over every cipher, it cannot name a particular cipher's passthrough payload type; `Passthrough<T>` drives the type-erased channel for it, through the same `encrypt_entry` / `next_value` calls as any encrypted field:
 
 ```rust
 use vitaminc_aead::{
@@ -373,16 +377,28 @@ impl<'c> Decrypt<'c> for User {
             type Value = User;
 
             fn visit_map<A: MapAccess<'c>>(self, mut map: A) -> Result<Self::Value, Unspecified> {
-                // Entries come back in encryption order; pull each with its type.
-                let (_, Passthrough(id)) = map
-                    .next_entry::<Passthrough<u32>>()
-                    .map_err(|_| Unspecified)?
-                    .ok_or(Unspecified)?;
-                let (_, email) = map
-                    .next_entry::<String>()
-                    .map_err(|_| Unspecified)?
-                    .ok_or(Unspecified)?;
-                Ok(User { id, email })
+                // Entry order in a stored ciphertext is not authenticated, so
+                // read key-first and let the key choose the type — never the
+                // position. A duplicate, unknown, or missing key is an error:
+                // a skipped value is one whose binding was never verified.
+                let (mut id, mut email) = (None, None);
+                while let Some(key) = map.next_key().map_err(|_| Unspecified)? {
+                    match key.as_str() {
+                        "id" if id.is_none() => {
+                            let Passthrough(value) =
+                                map.next_value::<Passthrough<u32>>().map_err(|_| Unspecified)?;
+                            id = Some(value);
+                        }
+                        "email" if email.is_none() => {
+                            email = Some(map.next_value::<String>().map_err(|_| Unspecified)?);
+                        }
+                        _ => return Err(Unspecified),
+                    }
+                }
+                Ok(User {
+                    id: id.ok_or(Unspecified)?,
+                    email: email.ok_or(Unspecified)?,
+                })
             }
         }
         decipher.decrypt_map(UserVisitor, aad)
@@ -390,7 +406,7 @@ impl<'c> Decrypt<'c> for User {
 }
 ```
 
-A passthrough value — and, for map entries, its key — can be altered in the stored ciphertext without detection. Never route secret-bearing data through it; wrap it in `Protected` and encrypt it instead.
+Anything secret-bearing belongs in `Protected` and gets encrypted; anything that must be tamper-evident but readable belongs in the AAD, not in a passthrough.
 
 ### Nonce Generation
 
