@@ -12,6 +12,7 @@ mod encrypt;
 #[cfg(feature = "hlist")]
 pub mod hlist;
 mod nonce;
+mod passthrough;
 #[cfg(test)]
 mod test_util;
 
@@ -40,3 +41,6 @@ pub use nonce::{Nonce, NonceGenerator, RandomNonceGenerator};
 // reader to another crate. There is still only one copy of that text.
 #[doc(inline)]
 pub use vitaminc_aead_derive::{Decrypt, Encrypt};
+
+#[doc(inline)]
+pub use passthrough::Passthrough;

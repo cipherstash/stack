@@ -333,6 +333,81 @@ impl<'c> Decrypt<'c> for User {
 
 The visitor pattern keeps the cipher and the type independent: the cipher decides how the ciphertext is laid out and how AAD is enforced, while the type decides how its fields are reassembled.
 
+### Passing fields through in the clear
+
+Not every column of a table needs encrypting. A record usually has a few fields that other queries select, filter, or update without holding the key — a display name, a schema version, a plain `id` column — beside the ones that must be sealed. Wrap such a field in [`Passthrough`] and it is stored as a cleartext entry of the same ciphertext container, so the record still round-trips as one unit while that field stays an ordinary column.
+
+**Passthrough provides no security guarantees whatsoever.** The value is not encrypted and not authenticated — it, and for map entries its key, can be read, edited, added, or removed in storage and every encrypted field beside it still decrypts. Treat what comes back as untrusted input: non-sensitive, non-security-deciding data only, never a field the program then trusts for authorization, tenancy, access control, or for choosing which encrypted record to trust. The full contract is documented once, under [`#[aead(passthrough)]`](Encrypt#aeadpassthrough); `Passthrough<T>` is the hand-written equivalent of that attribute.
+
+Because a custom type's impl is generic over every cipher, it cannot name a particular cipher's passthrough payload type; `Passthrough<T>` drives the type-erased channel for it, through the same `encrypt_entry` / `next_value` calls as any encrypted field:
+
+```rust
+use vitaminc_aead::{
+    Cipher, Decipher, DecipherVisitor, Decrypt, Encrypt, IntoAad, MapAccess, MapCipher,
+    Passthrough, Unspecified,
+};
+
+struct User {
+    id: u32,       // stored in the clear
+    email: String, // encrypted
+}
+
+impl Encrypt for User {
+    fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
+    where
+        C: Cipher,
+        A: IntoAad<'a>,
+    {
+        cipher
+            .encrypt_map(aad)
+            .encrypt_entry("id", Passthrough(self.id))?
+            .encrypt_entry("email", self.email)?
+            .end()
+    }
+}
+
+impl<'c> Decrypt<'c> for User {
+    fn decrypt_with_aad<'a, D, A>(decipher: D, aad: A) -> D::Ok<Self>
+    where
+        D: Decipher<'c>,
+        A: IntoAad<'a>,
+    {
+        struct UserVisitor;
+        impl<'c> DecipherVisitor<'c> for UserVisitor {
+            type Value = User;
+
+            fn visit_map<A: MapAccess<'c>>(self, mut map: A) -> Result<Self::Value, Unspecified> {
+                // Entry order in a stored ciphertext is not authenticated, so
+                // read key-first and let the key choose the type — never the
+                // position. A duplicate, unknown, or missing key is an error:
+                // a skipped value is one whose binding was never verified.
+                let (mut id, mut email) = (None, None);
+                while let Some(key) = map.next_key().map_err(|_| Unspecified)? {
+                    match key.as_str() {
+                        "id" if id.is_none() => {
+                            let Passthrough(value) =
+                                map.next_value::<Passthrough<u32>>().map_err(|_| Unspecified)?;
+                            id = Some(value);
+                        }
+                        "email" if email.is_none() => {
+                            email = Some(map.next_value::<String>().map_err(|_| Unspecified)?);
+                        }
+                        _ => return Err(Unspecified),
+                    }
+                }
+                Ok(User {
+                    id: id.ok_or(Unspecified)?,
+                    email: email.ok_or(Unspecified)?,
+                })
+            }
+        }
+        decipher.decrypt_map(UserVisitor, aad)
+    }
+}
+```
+
+Anything secret-bearing belongs in `Protected` and gets encrypted; anything that must be tamper-evident but readable belongs in the AAD, not in a passthrough.
+
 ### Nonce Generation
 
 The crate provides nonce generation utilities for AEAD operations:
