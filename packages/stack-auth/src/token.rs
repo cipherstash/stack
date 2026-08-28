@@ -128,11 +128,13 @@ impl Token {
     }
 
     /// Set the region identifier on this token.
+    #[cfg(feature = "http")]
     pub(crate) fn set_region(&mut self, region: impl Into<String>) {
         self.region = Some(region.into());
     }
 
     /// Set the client ID on this token.
+    #[cfg(feature = "http")]
     pub(crate) fn set_client_id(&mut self, client_id: impl Into<String>) {
         self.client_id = Some(client_id.into());
     }
@@ -143,6 +145,7 @@ impl Token {
     }
 
     /// Set the device instance ID on this token.
+    #[cfg(feature = "http")]
     pub(crate) fn set_device_instance_id(&mut self, id: impl Into<String>) {
         self.device_instance_id = Some(id.into());
     }
@@ -705,7 +708,8 @@ mod tests {
         assert!(refreshed.refresh_token().is_none());
     }
 
-    #[cfg(feature = "http")]
+    // Deliberately not http-gated: `Debug` must not leak the secrets in any
+    // build, including the no-default-features shape the WASI guest ships.
     #[tokio::test]
     async fn test_refresh_debug_does_not_leak_tokens() {
         let token = make_token(3600, true);
@@ -757,7 +761,9 @@ mod tests {
     #[test]
     fn test_workspace_crn_derives_from_region_and_workspace() {
         let mut token = jwt_token(valid_claims_json());
-        token.set_region("ap-southeast-2.aws");
+        // Assign the field directly: `set_region` is http-only (the device-code
+        // flow), but `workspace_crn` itself must stay covered without `http`.
+        token.region = Some("ap-southeast-2.aws".into());
         let crn = token.workspace_crn().expect("should derive workspace CRN");
         assert_eq!(crn.to_string(), "crn:ap-southeast-2.aws:7366ITCXSAPCH5TN");
     }
@@ -772,7 +778,7 @@ mod tests {
     #[test]
     fn test_workspace_crn_fails_with_invalid_region() {
         let mut token = jwt_token(valid_claims_json());
-        token.set_region("invalid-region");
+        token.region = Some("invalid-region".into());
         let err = token.workspace_crn().unwrap_err();
         assert!(matches!(err, AuthError::Server(_)));
     }

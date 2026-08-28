@@ -16,12 +16,13 @@
 #![warn(unused_results)]
 #![warn(clippy::todo)]
 #![warn(clippy::unimplemented)]
-// Without `http` the crate is the token model plus the `AuthStrategy` trait;
-// the crate-internal helpers that only the HTTP strategies call (refusal
-// classification, clock sharing, URL massaging, token setters) are then
-// unreferenced. They are still the same code — a feature subset, not dead
-// code — so don't make every one of them carry its own gate.
-#![cfg_attr(not(feature = "http"), allow(dead_code))]
+// Without `http` the crate is the token model plus the `AuthStrategy` trait.
+// The crate-internal helpers that only the HTTP strategies call (refusal
+// classification, clock sharing, URL massaging, token setters) each carry
+// their own `#[cfg(feature = "http")]` gate rather than a crate-wide
+// `allow(dead_code)`: the compiler then verifies the partition in both
+// directions — no-http code reaching an http helper fails to compile, and
+// code that goes dead in the no-http build warns instead of being silenced.
 // Relax in tests
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 #![cfg_attr(test, allow(clippy::expect_used))]
@@ -351,6 +352,7 @@ impl SecretToken {
 /// Returns `Ok(None)` if the variable is not set or empty.
 /// Returns `Ok(Some(url))` if the variable is set and valid.
 /// Returns `Err(_)` if the variable is set but not a valid URL.
+#[cfg(feature = "http")]
 pub(crate) fn cts_base_url_from_env() -> Result<Option<url::Url>, AuthError> {
     match std::env::var("CS_CTS_HOST") {
         Ok(val) if !val.is_empty() => Ok(Some(val.parse()?)),
@@ -360,6 +362,7 @@ pub(crate) fn cts_base_url_from_env() -> Result<Option<url::Url>, AuthError> {
 
 /// Ensure a URL has a trailing slash so that `Url::join` with relative paths
 /// appends to the path rather than replacing the last segment.
+#[cfg(feature = "http")]
 pub(crate) fn ensure_trailing_slash(mut url: url::Url) -> url::Url {
     if !url.path().ends_with('/') {
         url.set_path(&format!("{}/", url.path()));

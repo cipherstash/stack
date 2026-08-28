@@ -107,6 +107,7 @@ impl ServiceToken {
     ///   different workspace than `expected`.
     /// - [`AuthError::InvalidToken`] if the token is not a valid JWT or its
     ///   `workspace` claim could not be decoded, so verification can't run.
+    #[cfg(feature = "http")]
     pub(crate) fn verify_workspace(self, expected: WorkspaceId) -> Result<Self, AuthError> {
         let token_workspace = *self.workspace_id()?;
         if token_workspace != expected {
@@ -414,6 +415,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "http")]
     #[test]
     fn verify_workspace_returns_token_when_workspace_matches() {
         let jwt = make_jwt(
@@ -433,6 +435,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "http")]
     #[test]
     fn verify_workspace_errors_with_mismatch_when_workspace_differs() {
         // make_jwt mints a token for workspace ZVATKW3VHMFG27DY.
@@ -458,6 +461,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "http")]
     #[test]
     fn verify_workspace_errors_with_invalid_token_for_non_jwt() {
         // A non-JWT can't be decoded, so verification can't run.

@@ -5,6 +5,7 @@
 //! the fixture drift that comes from copy-pasting the `Token { .. }` literal and
 //! the unsigned-JWT mint into every test module.
 
+#[cfg(feature = "http")]
 use cts_common::Crn;
 
 use crate::{SecretToken, Token};
@@ -56,6 +57,9 @@ pub(crate) fn claims_with_workspace(workspace: &str) -> serde_json::Value {
 
 /// A workspace [`Crn`] in the standard test region (`ap-southeast-2.aws`)
 /// carrying the given `workspace` ID.
+///
+/// Only the http-gated CRN-bound strategies have tests that need one.
+#[cfg(feature = "http")]
 pub(crate) fn crn_with_workspace(workspace: &str) -> Crn {
     format!("crn:ap-southeast-2.aws:{workspace}")
         .parse()
@@ -67,6 +71,7 @@ pub(crate) fn crn_with_workspace(workspace: &str) -> Crn {
 /// workspace verification that CRN-bound strategies run. Unlike
 /// [`claims_with_workspace`], whose `exp` is a fixed past epoch, the token this
 /// mints reads as valid.
+#[cfg(feature = "http")]
 pub(crate) fn jwt_with_workspace(workspace: &str) -> String {
     use jsonwebtoken::{encode, EncodingKey, Header};
     use std::time::{SystemTime, UNIX_EPOCH};
