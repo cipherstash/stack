@@ -5,9 +5,9 @@ struct User {
 }
 
 #[derive(EncryptFrom)]
-#[stack_encrypt(plaintext = User)]
+#[stash(plaintext = User)]
 struct EncryptedUser {
-    #[stack_encrypt(from = email, context = "")]
+    #[stash(from = email, context = "")]
     email: StackCipherText,
 }
 

@@ -1,15 +1,15 @@
-//! Parsing of the `#[stack_encrypt(...)]` container and field attributes.
+//! Parsing of the `#[stash(...)]` container and field attributes.
 
 use syn::{Attribute, Expr, LitStr, Member, Path, Result, Type};
 
-/// Container-level options, from `#[stack_encrypt(...)]` on the struct itself.
+/// Container-level options, from `#[stash(...)]` on the struct itself.
 pub(crate) struct ContainerAttrs {
     /// Path to the `stack_encrypt` crate in the generated code. Defaults to
-    /// `::stack_encrypt`; overridden by `#[stack_encrypt(crate = "...")]` so the
+    /// `::stack_encrypt`; overridden by `#[stash(crate = "...")]` so the
     /// macros work through a re-export.
     pub(crate) krate: Path,
     /// The plaintext types this record is an encrypted form of, one impl
-    /// each, from repeated `#[stack_encrypt(plaintext = Type)]`. Empty means
+    /// each, from repeated `#[stash(plaintext = Type)]`. Empty means
     /// a single impl generic over the plaintext.
     pub(crate) plaintexts: Vec<Type>,
 }
@@ -19,7 +19,7 @@ impl ContainerAttrs {
         let mut krate: Option<Path> = None;
         let mut plaintexts: Vec<Type> = Vec::new();
 
-        for attr in attrs.iter().filter(|a| a.path().is_ident("stack_encrypt")) {
+        for attr in attrs.iter().filter(|a| a.path().is_ident("stash")) {
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("crate") {
                     let lit: LitStr = meta.value()?.parse()?;
@@ -63,20 +63,20 @@ impl ContainerAttrs {
     }
 }
 
-/// Field-level options, from `#[stack_encrypt(...)]` on a field.
+/// Field-level options, from `#[stash(...)]` on a field.
 #[derive(Default)]
 pub(crate) struct FieldAttrs {
-    /// `#[stack_encrypt(context = "...")]`: derive this field under exactly this
+    /// `#[stash(context = "...")]`: derive this field under exactly this
     /// context instead of the one the caller passed for the record.
     pub(crate) context: Option<LitStr>,
-    /// `#[stack_encrypt(from = field)]` / `#[stack_encrypt(from = 0)]`: derive
+    /// `#[stash(from = field)]` / `#[stash(from = 0)]`: derive
     /// this field from one field of the plaintext rather than from the whole
     /// plaintext.
     pub(crate) from: Option<Member>,
-    /// `#[stack_encrypt(default)]` / `#[stack_encrypt(default = expr)]`: not derived;
+    /// `#[stash(default)]` / `#[stash(default = expr)]`: not derived;
     /// filled with `Default::default()` or the expression.
     pub(crate) default: Option<Option<Expr>>,
-    /// `#[stack_encrypt(decrypt)]`: decryption opens this field.
+    /// `#[stash(decrypt)]`: decryption opens this field.
     pub(crate) decrypt: bool,
 }
 
@@ -84,7 +84,7 @@ impl FieldAttrs {
     pub(crate) fn parse(attrs: &[Attribute]) -> Result<Self> {
         let mut parsed = Self::default();
 
-        for attr in attrs.iter().filter(|a| a.path().is_ident("stack_encrypt")) {
+        for attr in attrs.iter().filter(|a| a.path().is_ident("stash")) {
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("context") {
                     let context: LitStr = meta.value()?.parse()?;

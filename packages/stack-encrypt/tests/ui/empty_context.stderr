@@ -1,5 +1,5 @@
 error: an empty `context` is rejected when a value is encrypted: name the field (e.g. "users/email"), or drop the attribute to use the record's context
-  --> tests/ui/empty_context.rs:10:45
+  --> tests/ui/empty_context.rs:10:37
    |
-10 |     #[stack_encrypt(from = email, context = "")]
-   |                                             ^^
+10 |     #[stash(from = email, context = "")]
+   |                                     ^^

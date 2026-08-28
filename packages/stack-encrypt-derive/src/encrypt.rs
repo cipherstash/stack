@@ -177,10 +177,10 @@ mod tests {
     #[rustfmt::skip]
     fn listed_sources_get_one_impl_each() {
         let expansion = expand(parse_quote! {
-            #[stack_encrypt(plaintext = i32, plaintext = i64)]
+            #[stash(plaintext = i32, plaintext = i64)]
             struct IntegerOrdOre {
                 c: StackCipherText,
-                #[stack_encrypt(default = SchemaVersion::V3)]
+                #[stash(default = SchemaVersion::V3)]
                 v: SchemaVersion,
             }
         });
@@ -198,11 +198,11 @@ mod tests {
     #[rustfmt::skip]
     fn row_fields_reach_into_the_source_under_their_own_context() {
         let expansion = expand(parse_quote! {
-            #[stack_encrypt(plaintext = User)]
+            #[stash(plaintext = User)]
             struct EncryptedUser {
-                #[stack_encrypt(from = age, context = "users/age")]
+                #[stash(from = age, context = "users/age")]
                 age: EncryptedAge,
-                #[stack_encrypt(from = email, context = "users/email")]
+                #[stash(from = email, context = "users/email")]
                 email: StackCipherText,
             }
         });
@@ -224,9 +224,9 @@ mod tests {
     #[test]
     fn tuple_plaintexts_are_reached_by_index() {
         let expansion = expand(parse_quote! {
-            #[stack_encrypt(plaintext = Pair)]
+            #[stash(plaintext = Pair)]
             struct EncryptedPair {
-                #[stack_encrypt(from = 1, context = "pair/1")]
+                #[stash(from = 1, context = "pair/1")]
                 b: StackCipherText,
             }
         });

@@ -17,7 +17,7 @@ pub(crate) struct Field {
     pub(crate) local: Ident,
     pub(crate) ty: Type,
     pub(crate) kind: Kind,
-    /// `#[stack_encrypt(decrypt)]`: decryption opens this field.
+    /// `#[stash(decrypt)]`: decryption opens this field.
     pub(crate) decrypt: bool,
 }
 
@@ -26,10 +26,10 @@ pub(crate) struct Field {
 pub(crate) enum Kind {
     /// Derived from the source through the field type's own `EncryptFrom`.
     Derived {
-        /// `#[stack_encrypt(context = "...")]`: this field's context, overriding
+        /// `#[stash(context = "...")]`: this field's context, overriding
         /// the record's.
         context: Option<LitStr>,
-        /// `#[stack_encrypt(from = field)]` / `from = 0`: derived from one
+        /// `#[stash(from = field)]` / `from = 0`: derived from one
         /// field of the plaintext rather than the whole plaintext.
         from: Option<Member>,
     },
@@ -104,7 +104,7 @@ impl Record {
                 return Err(syn::Error::new(
                     field.from().map_or_else(Span::call_site, Spanned::span),
                     "`from = ..` reaches into a field of the plaintext, so the plaintext type must \
-                     be named: add `#[stack_encrypt(plaintext = ..)]` to the struct",
+                     be named: add `#[stash(plaintext = ..)]` to the struct",
                 ));
             }
         }
@@ -218,7 +218,7 @@ mod tests {
     fn all_default_is_rejected() {
         let err = parse(parse_quote! {
             struct Empty {
-                #[stack_encrypt(default)]
+                #[stash(default)]
                 v: u8,
             }
         })
@@ -230,7 +230,7 @@ mod tests {
     fn from_needs_a_named_plaintext() {
         let err = parse(parse_quote! {
             struct Row {
-                #[stack_encrypt(from = age)]
+                #[stash(from = age)]
                 age: EncryptedAge,
             }
         })
@@ -243,7 +243,7 @@ mod tests {
         let err = parse(parse_quote! {
             struct Rec {
                 c: StackCipherText,
-                #[stack_encrypt(default, context = "x")]
+                #[stash(default, context = "x")]
                 v: u8,
             }
         })
@@ -255,7 +255,7 @@ mod tests {
     fn unknown_attributes_are_rejected() {
         let err = parse(parse_quote! {
             struct Rec {
-                #[stack_encrypt(rename = "x")]
+                #[stash(rename = "x")]
                 c: StackCipherText,
             }
         })
@@ -263,7 +263,7 @@ mod tests {
         assert!(err.to_string().contains("unsupported field attribute"));
 
         let err = parse(parse_quote! {
-            #[stack_encrypt(source = i32)]
+            #[stash(source = i32)]
             struct Rec {
                 c: StackCipherText,
             }
@@ -276,7 +276,7 @@ mod tests {
     fn a_literal_empty_context_is_rejected() {
         let err = parse(parse_quote! {
             struct Rec {
-                #[stack_encrypt(context = "")]
+                #[stash(context = "")]
                 c: StackCipherText,
             }
         })
@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn a_reference_plaintext_is_rejected() {
         let err = parse(parse_quote! {
-            #[stack_encrypt(plaintext = &str)]
+            #[stash(plaintext = &str)]
             struct Rec {
                 c: StackCipherText,
             }
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn a_repeated_plaintext_is_rejected() {
         let err = parse(parse_quote! {
-            #[stack_encrypt(plaintext = u32, plaintext = u32)]
+            #[stash(plaintext = u32, plaintext = u32)]
             struct Rec {
                 c: StackCipherText,
             }
@@ -311,11 +311,11 @@ mod tests {
     #[test]
     fn from_addresses_tuple_plaintexts_by_index() {
         let record = parse(parse_quote! {
-            #[stack_encrypt(plaintext = Pair)]
+            #[stash(plaintext = Pair)]
             struct Rec {
-                #[stack_encrypt(from = 0, context = "pair/0")]
+                #[stash(from = 0, context = "pair/0")]
                 a: StackCipherText,
-                #[stack_encrypt(from = 1, context = "pair/1")]
+                #[stash(from = 1, context = "pair/1")]
                 b: StackCipherText,
             }
         })
@@ -327,12 +327,12 @@ mod tests {
     #[test]
     fn fields_classify() {
         let record = parse(parse_quote! {
-            #[stack_encrypt(plaintext = User, plaintext = Admin)]
+            #[stash(plaintext = User, plaintext = Admin)]
             struct Row {
-                #[stack_encrypt(from = age, context = "users/age", decrypt)]
+                #[stash(from = age, context = "users/age", decrypt)]
                 age: EncryptedAge,
                 whole: RowTerm,
-                #[stack_encrypt(default = SchemaVersion::V3)]
+                #[stash(default = SchemaVersion::V3)]
                 v: SchemaVersion,
             }
         })

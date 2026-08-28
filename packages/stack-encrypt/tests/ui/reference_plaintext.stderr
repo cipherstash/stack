@@ -1,5 +1,5 @@
 error: `plaintext` must be an owned type: a reference plaintext has no lifetime the generated impl can name. Omit `plaintext` for an impl generic over the source, which accepts references too.
- --> tests/ui/reference_plaintext.rs:4:29
+ --> tests/ui/reference_plaintext.rs:4:21
   |
-4 | #[stack_encrypt(plaintext = &str)]
-  |                             ^^^^
+4 | #[stash(plaintext = &str)]
+  |                     ^^^^

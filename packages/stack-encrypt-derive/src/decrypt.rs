@@ -20,7 +20,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         return Err(syn::Error::new_spanned(
             name,
             "DecryptInto needs to know which field decryption opens: mark it \
-             `#[stack_encrypt(decrypt)]` (index terms are one-way and cannot be)",
+             `#[stash(decrypt)]` (index terms are one-way and cannot be)",
         ));
     }
 
@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn an_opened_field_is_required() {
         let err = expand(parse_quote! {
-            #[stack_encrypt(plaintext = u32)]
+            #[stash(plaintext = u32)]
             struct Rec {
                 c: StackCipherText,
                 hm: EqualityTerm,
@@ -268,11 +268,11 @@ mod tests {
     #[test]
     fn two_whole_fields_are_ambiguous() {
         let err = expand(parse_quote! {
-            #[stack_encrypt(plaintext = u32)]
+            #[stash(plaintext = u32)]
             struct Rec {
-                #[stack_encrypt(decrypt)]
+                #[stash(decrypt)]
                 a: StackCipherText,
-                #[stack_encrypt(decrypt)]
+                #[stash(decrypt)]
                 b: StackCipherText,
             }
         })
@@ -285,11 +285,11 @@ mod tests {
     #[test]
     fn mixed_modes_are_rejected() {
         let err = expand(parse_quote! {
-            #[stack_encrypt(plaintext = User)]
+            #[stash(plaintext = User)]
             struct Rec {
-                #[stack_encrypt(decrypt, from = a)]
+                #[stash(decrypt, from = a)]
                 a: StackCipherText,
-                #[stack_encrypt(decrypt)]
+                #[stash(decrypt)]
                 b: StackCipherText,
             }
         })
@@ -300,11 +300,11 @@ mod tests {
     #[test]
     fn duplicate_recovery_targets_are_rejected() {
         let err = expand(parse_quote! {
-            #[stack_encrypt(plaintext = User)]
+            #[stash(plaintext = User)]
             struct Rec {
-                #[stack_encrypt(decrypt, from = a)]
+                #[stash(decrypt, from = a)]
                 a: StackCipherText,
-                #[stack_encrypt(decrypt, from = a)]
+                #[stash(decrypt, from = a)]
                 b: StackCipherText,
             }
         })
@@ -317,7 +317,7 @@ mod tests {
     fn a_generic_plaintext_opens_the_one_field() {
         let expansion = expand(parse_quote! {
             struct Wrapped {
-                #[stack_encrypt(decrypt)]
+                #[stash(decrypt)]
                 c: StackCipherText,
                 hm: EqualityTerm,
             }
@@ -340,7 +340,7 @@ mod tests {
     fn a_generic_plaintext_cannot_be_rebuilt_field_by_field() {
         let err = expand(parse_quote! {
             struct Row {
-                #[stack_encrypt(decrypt, from = age)]
+                #[stash(decrypt, from = age)]
                 age: EncryptedAge,
             }
         })
@@ -354,9 +354,9 @@ mod tests {
     #[rustfmt::skip]
     fn whole_mode_opens_the_one_field() {
         let expansion = expand(parse_quote! {
-            #[stack_encrypt(plaintext = u32, plaintext = u64)]
+            #[stash(plaintext = u32, plaintext = u64)]
             struct EncryptedAge {
-                #[stack_encrypt(decrypt)]
+                #[stash(decrypt)]
                 c: StackCipherText,
                 hm: EqualityTerm,
             }
@@ -380,13 +380,13 @@ mod tests {
     #[rustfmt::skip]
     fn by_field_mode_rebuilds_the_plaintext() {
         let expansion = expand(parse_quote! {
-            #[stack_encrypt(plaintext = User<T>)]
+            #[stash(plaintext = User<T>)]
             struct EncryptedUser {
-                #[stack_encrypt(decrypt, from = age, context = "users/age")]
+                #[stash(decrypt, from = age, context = "users/age")]
                 age: EncryptedAge,
-                #[stack_encrypt(decrypt, from = email)]
+                #[stash(decrypt, from = email)]
                 email: StackCipherText,
-                #[stack_encrypt(from = email, context = "users/email")]
+                #[stash(from = email, context = "users/email")]
                 email_eq: EqualityTerm,
             }
         })
@@ -404,11 +404,11 @@ mod tests {
     #[test]
     fn tuple_plaintexts_are_rebuilt_by_index() {
         let expansion = expand(parse_quote! {
-            #[stack_encrypt(plaintext = Pair)]
+            #[stash(plaintext = Pair)]
             struct EncryptedPair {
-                #[stack_encrypt(decrypt, from = 0, context = "pair/0")]
+                #[stash(decrypt, from = 0, context = "pair/0")]
                 a: StackCipherText,
-                #[stack_encrypt(decrypt, from = 1, context = "pair/1")]
+                #[stash(decrypt, from = 1, context = "pair/1")]
                 b: StackCipherText,
             }
         })
@@ -425,11 +425,11 @@ mod tests {
     #[test]
     fn duplicate_recovery_targets_by_index_are_rejected() {
         let err = expand(parse_quote! {
-            #[stack_encrypt(plaintext = Pair)]
+            #[stash(plaintext = Pair)]
             struct Rec {
-                #[stack_encrypt(decrypt, from = 0)]
+                #[stash(decrypt, from = 0)]
                 a: StackCipherText,
-                #[stack_encrypt(decrypt, from = 0)]
+                #[stash(decrypt, from = 0)]
                 b: StackCipherText,
             }
         })

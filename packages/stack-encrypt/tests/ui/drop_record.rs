@@ -5,9 +5,9 @@ use stack_encrypt::{DecryptInto, EncryptFrom, StackCipherText};
 // (including `ZeroizeOnDrop`) forbids. The restriction is documented; this
 // pins what the user sees.
 #[derive(EncryptFrom, DecryptInto)]
-#[stack_encrypt(plaintext = u32)]
+#[stash(plaintext = u32)]
 struct Rec {
-    #[stack_encrypt(decrypt)]
+    #[stash(decrypt)]
     c: StackCipherText,
     hm: EqualityTerm,
 }

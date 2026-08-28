@@ -1,6 +1,6 @@
 # Attributes
 
-All attributes live under `#[stack_encrypt(...)]`.
+All attributes live under `#[stash(...)]`.
 
 ## On the struct
 

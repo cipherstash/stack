@@ -20,9 +20,9 @@
 //!
 //! /// An encrypted integer, queryable by equality and range.
 //! #[derive(EncryptFrom, DecryptInto)]
-//! #[stack_encrypt(plaintext = u32)]
+//! #[stash(plaintext = u32)]
 //! struct EncryptedAge {
-//!     #[stack_encrypt(decrypt)]
+//!     #[stash(decrypt)]
 //!     c: StackCipherText,
 //!     hm: EqualityTerm,
 //!     ob: OreTerm<u32>,
@@ -59,9 +59,9 @@
 //! # use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
 //! # use stack_kms::FakeDataKeySource;
 //! # #[derive(EncryptFrom, DecryptInto)]
-//! # #[stack_encrypt(plaintext = u32)]
+//! # #[stash(plaintext = u32)]
 //! # struct EncryptedAge {
-//! #     #[stack_encrypt(decrypt)]
+//! #     #[stash(decrypt)]
 //! #     c: StackCipherText,
 //! #     hm: EqualityTerm,
 //! #     ob: OreTerm<u32>,
@@ -73,11 +73,11 @@
 //! }
 //!
 //! #[derive(EncryptFrom, DecryptInto)]
-//! #[stack_encrypt(plaintext = User)]
+//! #[stash(plaintext = User)]
 //! struct EncryptedUser {
-//!     #[stack_encrypt(from = age, context = "users/age", decrypt)]
+//!     #[stash(from = age, context = "users/age", decrypt)]
 //!     age: EncryptedAge,
-//!     #[stack_encrypt(from = email, context = "users/email", decrypt)]
+//!     #[stash(from = email, context = "users/email", decrypt)]
 //!     email: StackCipherText,
 //! }
 //!
@@ -148,7 +148,7 @@ mod test_support;
 /// documentation](crate) for what the derive emits; the attributes it accepts
 /// are reproduced below.
 #[doc = include_str!("../docs/attributes.md")]
-#[proc_macro_derive(EncryptFrom, attributes(stack_encrypt))]
+#[proc_macro_derive(EncryptFrom, attributes(stash))]
 pub fn derive_encrypt_from(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     encrypt::derive(input)
@@ -160,7 +160,7 @@ pub fn derive_encrypt_from(input: TokenStream) -> TokenStream {
 /// `plaintext` type. See the [crate documentation](crate); the attributes it
 /// accepts are reproduced below.
 #[doc = include_str!("../docs/attributes.md")]
-#[proc_macro_derive(DecryptInto, attributes(stack_encrypt))]
+#[proc_macro_derive(DecryptInto, attributes(stash))]
 pub fn derive_decrypt_into(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     decrypt::derive(input)

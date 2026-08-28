@@ -1,4 +1,4 @@
-error: DecryptInto needs to know which field decryption opens: mark it `#[stack_encrypt(decrypt)]` (index terms are one-way and cannot be)
+error: DecryptInto needs to know which field decryption opens: mark it `#[stash(decrypt)]` (index terms are one-way and cannot be)
  --> tests/ui/decrypt_without_opened_field.rs:6:8
   |
 6 | struct Rec {

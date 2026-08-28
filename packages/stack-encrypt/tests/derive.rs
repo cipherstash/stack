@@ -19,9 +19,9 @@ use stack_encrypt::{DecryptInto, EncryptFrom, Error, StackCipherText};
 /// The hand-written record in `target.rs`, derived: an encrypted `u32`
 /// stored as its ciphertext plus an equality term and an ORE term.
 #[derive(EncryptFrom, DecryptInto)]
-#[stack_encrypt(plaintext = u32)]
+#[stash(plaintext = u32)]
 struct EncryptedAge {
-    #[stack_encrypt(decrypt)]
+    #[stash(decrypt)]
     c: StackCipherText,
     hm: EqualityTerm,
     ob: OreTerm<u32>,
@@ -51,7 +51,7 @@ async fn a_derived_record_is_the_hand_written_one() {
 /// decrypting to whatever the ciphertext field opens to.
 #[derive(EncryptFrom, DecryptInto)]
 struct SearchableText {
-    #[stack_encrypt(decrypt)]
+    #[stash(decrypt)]
     c: StackCipherText,
     hm: EqualityTerm,
     m: MatchTerm,
@@ -110,9 +110,9 @@ async fn a_generic_plaintext_record_accepts_what_its_leaves_accept() {
 
 /// Listed plaintexts: one impl each, and nothing else is accepted.
 #[derive(EncryptFrom, DecryptInto)]
-#[stack_encrypt(plaintext = u32, plaintext = String)]
+#[stash(plaintext = u32, plaintext = String)]
 struct EncryptedValue {
-    #[stack_encrypt(decrypt)]
+    #[stash(decrypt)]
     c: StackCipherText,
     hm: EqualityTerm,
 }
@@ -156,19 +156,19 @@ struct User {
 }
 
 #[derive(EncryptFrom, DecryptInto)]
-#[stack_encrypt(plaintext = User)]
+#[stash(plaintext = User)]
 struct EncryptedUser {
     /// A record inside a row: recursion, not a second mechanism.
-    #[stack_encrypt(from = age, context = "users/age", decrypt)]
+    #[stash(from = age, context = "users/age", decrypt)]
     age: EncryptedAge,
-    #[stack_encrypt(from = email, context = "users/email", decrypt)]
+    #[stash(from = email, context = "users/email", decrypt)]
     email: StackCipherText,
     /// A second field from the same plaintext field — a term alongside the
     /// ciphertext, not opened on decrypt.
-    #[stack_encrypt(from = email, context = "users/email")]
+    #[stash(from = email, context = "users/email")]
     email_eq: EqualityTerm,
     /// Not derived: filled in, never encrypted.
-    #[stack_encrypt(default = 3)]
+    #[stash(default = 3)]
     version: u8,
 }
 
@@ -250,11 +250,11 @@ async fn a_row_field_opened_under_the_wrong_context_fails() {
 struct Reading(u32, String);
 
 #[derive(EncryptFrom, DecryptInto)]
-#[stack_encrypt(plaintext = Reading)]
+#[stash(plaintext = Reading)]
 struct EncryptedReading {
-    #[stack_encrypt(from = 0, context = "readings/value", decrypt)]
+    #[stash(from = 0, context = "readings/value", decrypt)]
     value: EncryptedAge,
-    #[stack_encrypt(from = 1, context = "readings/unit", decrypt)]
+    #[stash(from = 1, context = "readings/unit", decrypt)]
     unit: StackCipherText,
 }
 

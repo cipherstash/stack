@@ -1,5 +1,5 @@
-error: `from = ..` reaches into a field of the plaintext, so the plaintext type must be named: add `#[stack_encrypt(plaintext = ..)]` to the struct
- --> tests/ui/from_without_plaintext.rs:5:28
+error: `from = ..` reaches into a field of the plaintext, so the plaintext type must be named: add `#[stash(plaintext = ..)]` to the struct
+ --> tests/ui/from_without_plaintext.rs:5:20
   |
-5 |     #[stack_encrypt(from = age, context = "users/age")]
-  |                            ^^^
+5 |     #[stash(from = age, context = "users/age")]
+  |                    ^^^

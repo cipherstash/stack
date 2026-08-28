@@ -6,11 +6,11 @@ struct User {
 }
 
 #[derive(DecryptInto)]
-#[stack_encrypt(plaintext = User)]
+#[stash(plaintext = User)]
 struct Rec {
-    #[stack_encrypt(decrypt, from = a)]
+    #[stash(decrypt, from = a)]
     a: StackCipherText,
-    #[stack_encrypt(decrypt)]
+    #[stash(decrypt)]
     b: StackCipherText,
 }
 

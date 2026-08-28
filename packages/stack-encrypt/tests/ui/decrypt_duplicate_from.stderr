@@ -1,5 +1,5 @@
 error: two `decrypt` fields would recover the same plaintext field `a`
-  --> tests/ui/decrypt_duplicate_from.rs:12:37
+  --> tests/ui/decrypt_duplicate_from.rs:12:29
    |
-12 |     #[stack_encrypt(decrypt, from = a)]
-   |                                     ^
+12 |     #[stash(decrypt, from = a)]
+   |                             ^
