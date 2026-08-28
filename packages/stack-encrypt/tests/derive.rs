@@ -244,3 +244,34 @@ async fn a_row_field_opened_under_the_wrong_context_fails() {
     let transplanted: Result<u32, _> = row.age.c.decrypt_into(&cipher, "users/height").await;
     assert!(matches!(transplanted, Err(Error::Aead)));
 }
+
+/// A tuple-struct plaintext is reached by index: `from = 0`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Reading(u32, String);
+
+#[derive(EncryptFrom, DecryptInto)]
+#[stack_encrypt(plaintext = Reading)]
+struct EncryptedReading {
+    #[stack_encrypt(from = 0, context = "readings/value", decrypt)]
+    value: EncryptedAge,
+    #[stack_encrypt(from = 1, context = "readings/unit", decrypt)]
+    unit: StackCipherText,
+}
+
+#[tokio::test]
+async fn a_tuple_plaintext_row_is_reached_and_rebuilt_by_index() {
+    let cipher = stack_cipher().await;
+    let generator = stack_cipher().await;
+
+    let reading = Reading(21, "celsius".into());
+    let row: EncryptedReading = reading.encrypt_into(&cipher, ()).await.unwrap();
+
+    let hm: EqualityTerm = 21u32
+        .encrypt_into(&generator, "readings/value")
+        .await
+        .unwrap();
+    assert_eq!(row.value.hm, hm);
+
+    let recovered: Reading = row.decrypt_into(&cipher, ()).await.unwrap();
+    assert_eq!(recovered, reading);
+}

@@ -9,7 +9,8 @@ All attributes live under `#[stack_encrypt(...)]`.
 | `plaintext = Type` | The record is an encrypted form of `Type`. Repeatable: one impl per listed type. Omit it for an impl generic over the plaintext (see below). |
 | `crate = "path"` | Where to find `stack_encrypt` in the generated code (default `::stack_encrypt`), for use through a re-export. |
 
-Without `plaintext`, each derive emits one impl generic over the plaintext,
+`plaintext` must be an owned type: the generated impl has no lifetime to give
+a reference. Without `plaintext`, each derive emits one impl generic over the plaintext,
 bounded by what the fields accept: `EncryptedAge` below is `EncryptFrom<P, _>`
 for any `P` that both `StackCipherText` and `EqualityTerm` accept, and
 `DecryptInto<P, _>` for any `P` its `decrypt` field opens to. With
@@ -21,11 +22,15 @@ must name it: the plaintext is rebuilt with a struct literal.
 
 | Attribute | Effect |
 |---|---|
-| `context = "..."` | Derive this field under exactly this context rather than the one the caller passed for the record. A query-side term built under the same literal matches it. |
-| `from = field` | Derive this field from `plaintext.field` rather than from the whole plaintext. Needs `plaintext = ..` on the struct. |
+| `context = "..."` | Derive this field under exactly this context rather than the one the caller passed for the record. A query-side term built under the same literal matches it. Must not be empty. |
+| `from = field` / `from = 0` | Derive this field from `plaintext.field` (or `plaintext.0` for a tuple struct) rather than from the whole plaintext. Needs `plaintext = ..` on the struct. |
 | `default` / `default = expr` | Not derived: filled with `Default::default()` or `expr`. Never encrypted, never authenticated. |
 | `decrypt` | Decryption opens this field (`DecryptInto` only). One field opened as the whole plaintext, or several with `from = ..` rebuilding the plaintext field by field. |
 
 The record's own context reaches every derived field that has no `context`
 of its own; if every field has one, the record's context is unused and the
 caller may pass `()`.
+
+`DecryptInto` consumes the record, moving each opened field out of `self`, so
+the record must not implement `Drop` (including via `ZeroizeOnDrop`); wrap the
+fields that need zeroizing instead.

@@ -1,6 +1,6 @@
 //! Parsing of the `#[stack_encrypt(...)]` container and field attributes.
 
-use syn::{Attribute, Expr, Ident, LitStr, Path, Result, Type};
+use syn::{Attribute, Expr, LitStr, Member, Path, Result, Type};
 
 /// Container-level options, from `#[stack_encrypt(...)]` on the struct itself.
 pub(crate) struct ContainerAttrs {
@@ -17,7 +17,7 @@ pub(crate) struct ContainerAttrs {
 impl ContainerAttrs {
     pub(crate) fn parse(attrs: &[Attribute]) -> Result<Self> {
         let mut krate: Option<Path> = None;
-        let mut plaintexts = Vec::new();
+        let mut plaintexts: Vec<Type> = Vec::new();
 
         for attr in attrs.iter().filter(|a| a.path().is_ident("stack_encrypt")) {
             attr.parse_nested_meta(|meta| {
@@ -27,7 +27,27 @@ impl ContainerAttrs {
                     return Ok(());
                 }
                 if meta.path.is_ident("plaintext") {
-                    plaintexts.push(meta.value()?.parse()?);
+                    let plaintext: Type = meta.value()?.parse()?;
+                    // The type is spliced into the impl header as written,
+                    // where a reference has no lifetime to name. The generic
+                    // impl (no `plaintext` at all) already accepts `&str` and
+                    // friends; a listed one is only needed for `from = ..`,
+                    // which reaches into a struct.
+                    if let Type::Reference(_) = plaintext {
+                        return Err(syn::Error::new_spanned(
+                            &plaintext,
+                            "`plaintext` must be an owned type: a reference plaintext has no \
+                             lifetime the generated impl can name. Omit `plaintext` for an impl \
+                             generic over the source, which accepts references too.",
+                        ));
+                    }
+                    if plaintexts.contains(&plaintext) {
+                        return Err(syn::Error::new_spanned(
+                            &plaintext,
+                            "this `plaintext` is listed twice; each listed type gets one impl",
+                        ));
+                    }
+                    plaintexts.push(plaintext);
                     return Ok(());
                 }
                 Err(meta.error(
@@ -49,9 +69,10 @@ pub(crate) struct FieldAttrs {
     /// `#[stack_encrypt(context = "...")]`: derive this field under exactly this
     /// context instead of the one the caller passed for the record.
     pub(crate) context: Option<LitStr>,
-    /// `#[stack_encrypt(from = field)]`: derive this field from one field of
-    /// the plaintext rather than from the whole plaintext.
-    pub(crate) from: Option<Ident>,
+    /// `#[stack_encrypt(from = field)]` / `#[stack_encrypt(from = 0)]`: derive
+    /// this field from one field of the plaintext rather than from the whole
+    /// plaintext.
+    pub(crate) from: Option<Member>,
     /// `#[stack_encrypt(default)]` / `#[stack_encrypt(default = expr)]`: not derived;
     /// filled with `Default::default()` or the expression.
     pub(crate) default: Option<Option<Expr>>,
@@ -66,7 +87,18 @@ impl FieldAttrs {
         for attr in attrs.iter().filter(|a| a.path().is_ident("stack_encrypt")) {
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("context") {
-                    parsed.context = Some(meta.value()?.parse()?);
+                    let context: LitStr = meta.value()?.parse()?;
+                    // The leaves reject an empty context at runtime; a
+                    // literal one is known here, so say so at the literal.
+                    if context.value().is_empty() {
+                        return Err(syn::Error::new(
+                            context.span(),
+                            "an empty `context` is rejected when a value is encrypted: name the \
+                             field (e.g. \"users/email\"), or drop the attribute to use the \
+                             record's context",
+                        ));
+                    }
+                    parsed.context = Some(context);
                     return Ok(());
                 }
                 if meta.path.is_ident("from") {

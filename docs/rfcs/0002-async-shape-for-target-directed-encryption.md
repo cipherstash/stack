@@ -280,7 +280,7 @@ impl<K> EncryptFrom<u32, StackCipher<K>> for EncryptedInt {
 
 No `tokio::try_join!`, no `Box::pin(async move ..)`, no error-conversion
 where-clauses. This is roughly half the size of the current impl and is
-directly emittable by `#[derive(Encrypted)]` (which is what the derive does —
+directly emittable by `#[derive(EncryptFrom)]` (which is what the derive does —
 see §7).
 
 Then the missing piece from §2.2:

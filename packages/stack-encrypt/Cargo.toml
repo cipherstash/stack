@@ -53,6 +53,8 @@ zeroize = { workspace = true }
 serde_json = { workspace = true }
 stack-kms = { path = "../stack-kms", features = ["test-support"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
+# Compile-fail tests for the derive diagnostics (`tests/ui`).
+trybuild = "1"
 vitaminc-hmac = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
 vitaminc-prf = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
 vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }

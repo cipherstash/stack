@@ -20,3 +20,11 @@ proc-macro = true
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "3", features = ["full", "extra-traits"] }
+
+[dev-dependencies]
+# The crate-level examples are real doctests, run against the fake key
+# source. A dev-dependency cycle back to `stack-encrypt` is the usual shape
+# for a derive crate (cf. serde_derive -> serde).
+stack-encrypt = { path = "../stack-encrypt" }
+stack-kms = { path = "../stack-kms", features = ["test-support"] }
+tokio = { workspace = true, features = ["rt", "macros"] }

@@ -17,22 +17,14 @@ use uuid::Uuid;
 use vitaminc_prf::{BlockVisitor, PrfContext, PrfValue};
 
 mod common;
-use common::counting_cipher;
+use common::{counting_cipher, stack_cipher};
 
-/// A cipher over the deterministic fake source. Built independently of
-/// [`stack_cipher`] below: the fake index key is deterministic per keyset, so
-/// two separately built ciphers stand in for the write path and a query path
-/// in another process.
+/// A cipher over the deterministic fake source. Built independently of the
+/// test's own [`stack_cipher`]: the fake index key is deterministic per
+/// keyset, so two separately built ciphers stand in for the write path and a
+/// query path in another process.
 async fn generator() -> StackCipher<FakeDataKeySource> {
     stack_cipher().await
-}
-
-async fn stack_cipher() -> StackCipher<FakeDataKeySource> {
-    StackCipher::builder()
-        .kms(FakeDataKeySource::new())
-        .init()
-        .await
-        .expect("build cipher")
 }
 
 // --- Leaf implementations ---------------------------------------------------

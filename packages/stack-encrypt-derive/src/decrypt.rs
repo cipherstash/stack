@@ -4,9 +4,10 @@ use std::collections::HashSet;
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{parse_quote, DeriveInput, Ident, Path, PathArguments, Result, Type};
+use syn::spanned::Spanned;
+use syn::{parse_quote, DeriveInput, Ident, Member, Path, PathArguments, Result, Type};
 
-use crate::shape::{Field, Record};
+use crate::shape::{zip_fields, Field, Record};
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let record = Record::parse(&input)?;
@@ -23,55 +24,16 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         ));
     }
 
-    let by_field = opened.iter().filter(|f| f.from().is_some()).count();
-    let mode = match by_field {
-        0 if opened.len() == 1 => Mode::Whole(opened[0]),
-        0 => {
-            return Err(syn::Error::new_spanned(
-                name,
-                "several fields are marked `decrypt` but none names a plaintext field: one \
-                 plaintext cannot be recovered from two fields. Either mark only the ciphertext \
-                 field, or give each a `from = ..` so decryption rebuilds the plaintext field by \
-                 field.",
-            ))
-        }
-        n if n == opened.len() => {
-            let mut seen: HashSet<&Ident> = HashSet::with_capacity(opened.len());
-            for field in &opened {
-                let from = field
-                    .from()
-                    .unwrap_or_else(|| unreachable!("counted above"));
-                if !seen.insert(from) {
-                    return Err(syn::Error::new(
-                        from.span(),
-                        format!(
-                            "two `decrypt` fields would recover the same plaintext field `{from}`"
-                        ),
-                    ));
-                }
-            }
-            Mode::ByField(opened)
-        }
-        _ => {
-            return Err(syn::Error::new_spanned(
-                name,
-                "`decrypt` fields must either all name a plaintext field (`from = ..`) or be a \
-                 single field opened as the whole plaintext; this record mixes the two",
-            ))
-        }
-    };
+    let mode = Mode::classify(opened, name)?;
 
     if record.plaintexts.is_empty() {
         // One impl, generic over the plaintext: the record decrypts to
         // whatever its opened field decrypts to. Only the whole-plaintext
         // mode can be generic — rebuilding field by field needs a struct
-        // literal, and therefore a name.
+        // literal, and therefore a name — and `Record::parse` has already
+        // rejected `from` without one.
         let Mode::Whole(field) = &mode else {
-            return Err(syn::Error::new_spanned(
-                name,
-                "field-by-field decryption rebuilds the plaintext as a struct literal, so the \
-                 plaintext type must be named: add `#[stack_encrypt(plaintext = ..)]` to the struct",
-            ));
+            unreachable!("`from` without a named plaintext is rejected by `Record::parse`")
         };
         let plaintext: Type = parse_quote!(__P);
         let ty = &field.ty;
@@ -166,6 +128,48 @@ enum Mode<'a> {
     ByField(Vec<&'a Field>),
 }
 
+impl<'a> Mode<'a> {
+    /// Which of the two shapes the `decrypt` fields describe; an error if
+    /// they describe neither.
+    fn classify(opened: Vec<&'a Field>, name: &Ident) -> Result<Self> {
+        let by_field = opened.iter().filter(|f| f.from().is_some()).count();
+        if by_field == 0 {
+            if opened.len() == 1 {
+                return Ok(Mode::Whole(opened[0]));
+            }
+            return Err(syn::Error::new_spanned(
+                name,
+                "several fields are marked `decrypt` but none names a plaintext field: one \
+                 plaintext cannot be recovered from two fields. Either mark only the ciphertext \
+                 field, or give each a `from = ..` so decryption rebuilds the plaintext field by \
+                 field.",
+            ));
+        }
+        if by_field != opened.len() {
+            return Err(syn::Error::new_spanned(
+                name,
+                "`decrypt` fields must either all name a plaintext field (`from = ..`) or be a \
+                 single field opened as the whole plaintext; this record mixes the two",
+            ));
+        }
+
+        let mut seen: HashSet<&Member> = HashSet::with_capacity(opened.len());
+        for field in &opened {
+            let from = field
+                .from()
+                .unwrap_or_else(|| unreachable!("counted above"));
+            if !seen.insert(from) {
+                let name = quote!(#from);
+                return Err(syn::Error::new(
+                    from.span(),
+                    format!("two `decrypt` fields would recover the same plaintext field `{name}`"),
+                ));
+            }
+        }
+        Ok(Mode::ByField(opened))
+    }
+}
+
 fn context_for(field: &Field) -> TokenStream {
     match field.context() {
         Some(literal) => quote!(#literal),
@@ -189,56 +193,29 @@ fn whole_body(krate: &Path, field: &Field, plaintext: &Type) -> TokenStream {
 fn by_field_body(krate: &Path, fields: &[&Field], plaintext: &Type) -> Result<TokenStream> {
     let literal = struct_literal_path(plaintext)?;
 
-    // The record's context goes to every opened field without its own; the
-    // last such field takes it by move.
-    let mut remaining = fields.iter().filter(|f| f.context().is_none()).count();
-    let unused_context = (remaining == 0).then(|| quote!(let _ = __context;));
-
-    let mut chain = TokenStream::new();
-    let mut pattern = TokenStream::new();
-    for (index, field) in fields.iter().enumerate() {
-        let ty = &field.ty;
-        let member = &field.member;
-        let local = &field.local;
-        let context = match field.context() {
-            Some(literal) => quote!(#literal),
-            None => {
-                remaining -= 1;
-                if remaining == 0 {
-                    quote!(__context)
-                } else {
-                    quote!(::core::clone::Clone::clone(&__context))
-                }
-            }
-        };
-        // The plaintext field's type is not known here; it is inferred from
-        // the struct literal below, and the obligation checked against it.
-        let call = quote! {
-            <#ty as #krate::target::DecryptInto<_, #krate::StackCipher<__K>>>::decrypt_into(
-                self.#member,
-                __cipher,
-                #context,
-            )
-        };
-        if index == 0 {
-            chain = call;
-            pattern = quote!(#local);
-        } else {
-            chain = quote!(#chain.zip(#call));
-            pattern = quote!((#pattern, #local));
-        }
-    }
-
     let assign = fields.iter().map(|field| {
         let from = field.from();
         let local = &field.local;
         quote!(#from: #local)
     });
 
-    Ok(quote! {
-        #unused_context
-        #chain.map(|#pattern| #literal { #(#assign),* })
-    })
+    Ok(zip_fields(
+        fields,
+        |field, context| {
+            let ty = &field.ty;
+            let member = &field.member;
+            // The plaintext field's type is not known here; it is inferred
+            // from the struct literal, and the obligation checked against it.
+            quote! {
+                <#ty as #krate::target::DecryptInto<_, #krate::StackCipher<__K>>>::decrypt_into(
+                    self.#member,
+                    __cipher,
+                    #context,
+                )
+            }
+        },
+        quote!(#literal { #(#assign),* }),
+    ))
 }
 
 /// The plaintext type as a struct-literal path: `User<T>` becomes `User::<T>`.
@@ -422,6 +399,41 @@ mod tests {
         assert_contains(&expansion, quote!(self.email, __cipher, __context,));
         assert_contains(&expansion, quote!(.map(|(__field_0, __field_1)| User::<T> { age: __field_0, email: __field_1 })));
         assert_lacks(&expansion, quote!(email_eq));
-        assert_lacks(&expansion, quote!(let _ = __context;));
+    }
+
+    #[test]
+    fn tuple_plaintexts_are_rebuilt_by_index() {
+        let expansion = expand(parse_quote! {
+            #[stack_encrypt(plaintext = Pair)]
+            struct EncryptedPair {
+                #[stack_encrypt(decrypt, from = 0, context = "pair/0")]
+                a: StackCipherText,
+                #[stack_encrypt(decrypt, from = 1, context = "pair/1")]
+                b: StackCipherText,
+            }
+        })
+        .unwrap();
+        assert_contains(
+            &expansion,
+            quote!(Pair {
+                0: __field_0,
+                1: __field_1
+            }),
+        );
+    }
+
+    #[test]
+    fn duplicate_recovery_targets_by_index_are_rejected() {
+        let err = expand(parse_quote! {
+            #[stack_encrypt(plaintext = Pair)]
+            struct Rec {
+                #[stack_encrypt(decrypt, from = 0)]
+                a: StackCipherText,
+                #[stack_encrypt(decrypt, from = 0)]
+                b: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("same plaintext field `0`"));
     }
 }

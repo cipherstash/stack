@@ -1,6 +1,8 @@
 //! Classification of the derive input into the record it describes.
 
-use proc_macro2::Span;
+use proc_macro2::{Span, TokenStream};
+use quote::quote;
+use syn::spanned::Spanned;
 use syn::{Data, DeriveInput, Expr, Fields, Ident, LitStr, Member, Path, Result, Type};
 
 use crate::attrs::{ContainerAttrs, FieldAttrs};
@@ -27,9 +29,9 @@ pub(crate) enum Kind {
         /// `#[stack_encrypt(context = "...")]`: this field's context, overriding
         /// the record's.
         context: Option<LitStr>,
-        /// `#[stack_encrypt(from = field)]`: derived from one field of the
-        /// plaintext rather than the whole plaintext.
-        from: Option<Ident>,
+        /// `#[stack_encrypt(from = field)]` / `from = 0`: derived from one
+        /// field of the plaintext rather than the whole plaintext.
+        from: Option<Member>,
     },
     /// Not derived: `Default::default()` or the given expression.
     Default(Option<Expr>),
@@ -40,8 +42,8 @@ impl Field {
         matches!(self.kind, Kind::Derived { .. })
     }
 
-    /// The `from` field, if this is a derived field with one.
-    pub(crate) fn from(&self) -> Option<&Ident> {
+    /// The `from` member, if this is a derived field with one.
+    pub(crate) fn from(&self) -> Option<&Member> {
         match &self.kind {
             Kind::Derived { from, .. } => from.as_ref(),
             Kind::Default(_) => None,
@@ -100,7 +102,7 @@ impl Record {
         if attrs.plaintexts.is_empty() {
             if let Some(field) = fields.iter().find(|f| f.from().is_some()) {
                 return Err(syn::Error::new(
-                    field.from().map_or_else(Span::call_site, Ident::span),
+                    field.from().map_or_else(Span::call_site, Spanned::span),
                     "`from = ..` reaches into a field of the plaintext, so the plaintext type must \
                      be named: add `#[stack_encrypt(plaintext = ..)]` to the struct",
                 ));
@@ -113,6 +115,48 @@ impl Record {
             fields,
         })
     }
+}
+
+/// The pendings of `fields`, zipped into one and mapped into `build` (a
+/// struct literal over the fields' locals). Nothing is awaited, so the record
+/// settles as one batched call.
+///
+/// `call(field, context)` renders one field's pending under `context`. The
+/// record's context (`__context`) goes to every field without a literal of
+/// its own; the last such field takes it by move, the rest clone it.
+pub(crate) fn zip_fields(
+    fields: &[&Field],
+    mut call: impl FnMut(&Field, TokenStream) -> TokenStream,
+    build: TokenStream,
+) -> TokenStream {
+    let mut remaining = fields.iter().filter(|f| f.context().is_none()).count();
+
+    let mut chain = TokenStream::new();
+    let mut pattern = TokenStream::new();
+    for (index, field) in fields.iter().enumerate() {
+        let context = match field.context() {
+            Some(literal) => quote!(#literal),
+            None => {
+                remaining -= 1;
+                if remaining == 0 {
+                    quote!(__context)
+                } else {
+                    quote!(::core::clone::Clone::clone(&__context))
+                }
+            }
+        };
+        let call = call(field, context);
+        let local = &field.local;
+        if index == 0 {
+            chain = call;
+            pattern = quote!(#local);
+        } else {
+            chain = quote!(#chain.zip(#call));
+            pattern = quote!((#pattern, #local));
+        }
+    }
+
+    quote!(#chain.map(|#pattern| #build))
 }
 
 fn collect(fields: &Fields) -> Result<Vec<Field>> {
@@ -229,6 +273,58 @@ mod tests {
     }
 
     #[test]
+    fn a_literal_empty_context_is_rejected() {
+        let err = parse(parse_quote! {
+            struct Rec {
+                #[stack_encrypt(context = "")]
+                c: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("empty `context`"));
+    }
+
+    #[test]
+    fn a_reference_plaintext_is_rejected() {
+        let err = parse(parse_quote! {
+            #[stack_encrypt(plaintext = &str)]
+            struct Rec {
+                c: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("must be an owned type"));
+    }
+
+    #[test]
+    fn a_repeated_plaintext_is_rejected() {
+        let err = parse(parse_quote! {
+            #[stack_encrypt(plaintext = u32, plaintext = u32)]
+            struct Rec {
+                c: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("listed twice"));
+    }
+
+    #[test]
+    fn from_addresses_tuple_plaintexts_by_index() {
+        let record = parse(parse_quote! {
+            #[stack_encrypt(plaintext = Pair)]
+            struct Rec {
+                #[stack_encrypt(from = 0, context = "pair/0")]
+                a: StackCipherText,
+                #[stack_encrypt(from = 1, context = "pair/1")]
+                b: StackCipherText,
+            }
+        })
+        .unwrap();
+        assert!(matches!(record.fields[0].from(), Some(Member::Unnamed(i)) if i.index == 0));
+        assert!(matches!(record.fields[1].from(), Some(Member::Unnamed(i)) if i.index == 1));
+    }
+
+    #[test]
     fn fields_classify() {
         let record = parse(parse_quote! {
             #[stack_encrypt(plaintext = User, plaintext = Admin)]
@@ -243,7 +339,7 @@ mod tests {
         .unwrap();
         assert_eq!(record.plaintexts.len(), 2);
         assert_eq!(record.fields.len(), 3);
-        assert_eq!(record.fields[0].from().unwrap(), "age");
+        assert!(matches!(record.fields[0].from(), Some(Member::Named(name)) if name == "age"));
         assert_eq!(record.fields[0].context().unwrap().value(), "users/age");
         assert!(record.fields[0].decrypt);
         assert!(record.fields[1].is_derived());

@@ -134,9 +134,15 @@
 //!         Ctx: EncryptContext<'c>,
 //!         Self: 'a,
 //!     {
-//!         // Domain-separate under your own label so your terms can never
-//!         // collide with another scheme's under the same context.
+//!         // The leaf owns the context policy: the built-in leaves refuse
+//!         // an empty context (nothing above them checks, since a column
+//!         // of rows has no context of its own), and yours should too.
+//!         // Then domain-separate under your own label so your terms can
+//!         // never collide with another scheme's under the same context.
 //!         let context = context.into_prf_context().into_owned();
+//!         if context.as_bytes().is_empty() {
+//!             return Pending::ready(cipher, Err(Error::EmptyContext));
+//!         }
 //!         let context = PrfContext::pae(&[b"my-crate/my-term/v1".as_slice(), context.as_bytes()]);
 //!         let term = source
 //!             .clone()

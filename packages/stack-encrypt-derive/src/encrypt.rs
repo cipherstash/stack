@@ -2,9 +2,9 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{parse_quote, DeriveInput, Result, Type};
+use syn::{parse_quote, DeriveInput, Ident, Path, Result, Type};
 
-use crate::shape::{Field, Kind, Record};
+use crate::shape::{zip_fields, Field, Kind, Record};
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let record = Record::parse(&input)?;
@@ -23,25 +23,15 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         push_field_bounds(&mut generics, krate, &record, &source);
         let (impl_generics, _, where_clause) = generics.split_for_impl();
         let body = body(krate, &record, &source);
-
-        return Ok(quote! {
-            #[automatically_derived]
-            impl #impl_generics #krate::target::EncryptFrom<__S, #krate::StackCipher<__K>>
-                for #name #ty_generics #where_clause
-            {
-                fn encrypt_from<'__a, '__c, __Ctx>(
-                    __source: &'__a __S,
-                    __cipher: &'__a #krate::StackCipher<__K>,
-                    __context: __Ctx,
-                ) -> #krate::target::Pending<'__a, Self, __K>
-                where
-                    __Ctx: #krate::target::EncryptContext<'__c>,
-                    Self: '__a,
-                {
-                    #body
-                }
-            }
-        });
+        return Ok(impl_block(
+            krate,
+            name,
+            &ty_generics,
+            &impl_generics,
+            where_clause,
+            &source,
+            body,
+        ));
     }
 
     // One impl per listed source. Fields derived from the whole source get a
@@ -53,38 +43,53 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         push_field_bounds(&mut generics, krate, &record, source);
         let (impl_generics, _, where_clause) = generics.split_for_impl();
         let body = body(krate, &record, source);
-
-        quote! {
-            #[automatically_derived]
-            impl #impl_generics #krate::target::EncryptFrom<#source, #krate::StackCipher<__K>>
-                for #name #ty_generics #where_clause
-            {
-                fn encrypt_from<'__a, '__c, __Ctx>(
-                    __source: &'__a #source,
-                    __cipher: &'__a #krate::StackCipher<__K>,
-                    __context: __Ctx,
-                ) -> #krate::target::Pending<'__a, Self, __K>
-                where
-                    __Ctx: #krate::target::EncryptContext<'__c>,
-                    Self: '__a,
-                {
-                    #body
-                }
-            }
-        }
+        impl_block(
+            krate,
+            name,
+            &ty_generics,
+            &impl_generics,
+            where_clause,
+            source,
+            body,
+        )
     });
 
     Ok(quote!(#(#impls)*))
 }
 
+/// `impl EncryptFrom<Source, StackCipher<__K>> for Record` around `body`.
+fn impl_block(
+    krate: &Path,
+    name: &Ident,
+    ty_generics: &syn::TypeGenerics<'_>,
+    impl_generics: &syn::ImplGenerics<'_>,
+    where_clause: Option<&syn::WhereClause>,
+    source: &Type,
+    body: TokenStream,
+) -> TokenStream {
+    quote! {
+        #[automatically_derived]
+        impl #impl_generics #krate::target::EncryptFrom<#source, #krate::StackCipher<__K>>
+            for #name #ty_generics #where_clause
+        {
+            fn encrypt_from<'__a, '__c, __Ctx>(
+                __source: &'__a #source,
+                __cipher: &'__a #krate::StackCipher<__K>,
+                __context: __Ctx,
+            ) -> #krate::target::Pending<'__a, Self, __K>
+            where
+                __Ctx: #krate::target::EncryptContext<'__c>,
+                Self: '__a,
+            {
+                #body
+            }
+        }
+    }
+}
+
 /// `FieldTy: EncryptFrom<Source, StackCipher<__K>>` for every field derived
 /// from the whole source.
-fn push_field_bounds(
-    generics: &mut syn::Generics,
-    krate: &syn::Path,
-    record: &Record,
-    source: &Type,
-) {
+fn push_field_bounds(generics: &mut syn::Generics, krate: &Path, record: &Record, source: &Type) {
     let predicates = &mut generics.make_where_clause().predicates;
     for field in record
         .fields
@@ -99,51 +104,9 @@ fn push_field_bounds(
 }
 
 /// The method body: every derived field's pending, zipped into one, mapped
-/// into `Self`. Nothing is awaited, so the record settles as one batched
-/// call.
-fn body(krate: &syn::Path, record: &Record, source: &Type) -> TokenStream {
+/// into `Self`.
+fn body(krate: &Path, record: &Record, source: &Type) -> TokenStream {
     let derived: Vec<&Field> = record.fields.iter().filter(|f| f.is_derived()).collect();
-
-    // The record's context goes to every derived field without its own; the
-    // last such field takes it by move.
-    let mut remaining = derived.iter().filter(|f| f.context().is_none()).count();
-    let unused_context = (remaining == 0).then(|| quote!(let _ = __context;));
-
-    let mut chain = TokenStream::new();
-    let mut pattern = TokenStream::new();
-    for (index, field) in derived.iter().enumerate() {
-        let ty = &field.ty;
-        let local = &field.local;
-        let (source_expr, source_ty): (TokenStream, TokenStream) = match field.from() {
-            Some(from) => (quote!(&__source.#from), quote!(_)),
-            None => (quote!(__source), quote!(#source)),
-        };
-        let context = match field.context() {
-            Some(literal) => quote!(#literal),
-            None => {
-                remaining -= 1;
-                if remaining == 0 {
-                    quote!(__context)
-                } else {
-                    quote!(::core::clone::Clone::clone(&__context))
-                }
-            }
-        };
-        let call = quote! {
-            <#ty as #krate::target::EncryptFrom<#source_ty, #krate::StackCipher<__K>>>::encrypt_from(
-                #source_expr,
-                __cipher,
-                #context,
-            )
-        };
-        if index == 0 {
-            chain = call;
-            pattern = quote!(#local);
-        } else {
-            chain = quote!(#chain.zip(#call));
-            pattern = quote!((#pattern, #local));
-        }
-    }
 
     let assign = record.fields.iter().map(|field| {
         let member = &field.member;
@@ -157,10 +120,26 @@ fn body(krate: &syn::Path, record: &Record, source: &Type) -> TokenStream {
         }
     });
 
-    quote! {
-        #unused_context
-        #chain.map(|#pattern| Self { #(#assign),* })
-    }
+    zip_fields(
+        &derived,
+        |field, context| {
+            let ty = &field.ty;
+            // A `from` field's source type is not known here; it is inferred
+            // from the field expression, and the obligation checked there.
+            let (source_expr, source_ty): (TokenStream, TokenStream) = match field.from() {
+                Some(from) => (quote!(&__source.#from), quote!(_)),
+                None => (quote!(__source), quote!(#source)),
+            };
+            quote! {
+                <#ty as #krate::target::EncryptFrom<#source_ty, #krate::StackCipher<__K>>>::encrypt_from(
+                    #source_expr,
+                    __cipher,
+                    #context,
+                )
+            }
+        },
+        quote!(Self { #(#assign),* }),
+    )
 }
 
 #[cfg(test)]
@@ -232,15 +211,26 @@ mod tests {
                 &__source.age, __cipher, "users/age",
             )
         });
-        // No field takes the record's context, so it is explicitly dropped
-        // rather than left as an unused-variable warning in user code.
-        assert_contains(&expansion, quote!(let _ = __context;));
+        // No field takes the record's context.
+        assert_lacks(&expansion, quote!(&__context));
         // `from` fields carry no where clause: the source field's type is
         // unknown here, so the obligation is checked in the body instead.
         assert!(
             expansion.replace(' ', "").contains("forEncryptedUser{fnencrypt_from"),
             "unexpected where clause on the impl:\n{expansion}"
         );
+    }
+
+    #[test]
+    fn tuple_plaintexts_are_reached_by_index() {
+        let expansion = expand(parse_quote! {
+            #[stack_encrypt(plaintext = Pair)]
+            struct EncryptedPair {
+                #[stack_encrypt(from = 1, context = "pair/1")]
+                b: StackCipherText,
+            }
+        });
+        assert_contains(&expansion, quote!(&__source.1, __cipher, "pair/1",));
     }
 
     #[test]

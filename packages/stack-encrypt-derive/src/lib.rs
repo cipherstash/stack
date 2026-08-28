@@ -12,9 +12,11 @@
 //! types (`StackCipherText`, the `sem` terms) implement `EncryptFrom` by
 //! hand; a record is a struct of leaves, and this derive writes its impl:
 //!
-//! ```ignore
+//! ```
 //! use stack_encrypt::sem::{EqualityTerm, OreTerm};
-//! use stack_encrypt::{DecryptInto, EncryptFrom, StackCipherText};
+//! use stack_encrypt::target::EncryptInto;
+//! use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
+//! use stack_kms::FakeDataKeySource;
 //!
 //! /// An encrypted integer, queryable by equality and range.
 //! #[derive(EncryptFrom, DecryptInto)]
@@ -26,8 +28,16 @@
 //!     ob: OreTerm<u32>,
 //! }
 //!
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+//! let cipher = StackCipher::builder()
+//!     .kms(FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
 //! let record: EncryptedAge = 42u32.encrypt_into(&cipher, "users/age").await?;
 //! let age: u32 = record.decrypt_into(&cipher, "users/age").await?;
+//! assert_eq!(age, 42);
+//! # Ok::<(), stack_encrypt::Error>(())
+//! # }).unwrap();
 //! ```
 //!
 //! Every derived field is fed the **same source** under the **same
@@ -43,7 +53,20 @@
 //! One level up, the same derive: a struct whose fields are each derived from
 //! a *field* of the plaintext, under a context of their own.
 //!
-//! ```ignore
+//! ```
+//! # use stack_encrypt::sem::{EqualityTerm, OreTerm};
+//! # use stack_encrypt::target::EncryptInto;
+//! # use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
+//! # use stack_kms::FakeDataKeySource;
+//! # #[derive(EncryptFrom, DecryptInto)]
+//! # #[stack_encrypt(plaintext = u32)]
+//! # struct EncryptedAge {
+//! #     #[stack_encrypt(decrypt)]
+//! #     c: StackCipherText,
+//! #     hm: EqualityTerm,
+//! #     ob: OreTerm<u32>,
+//! # }
+//! #[derive(Debug, PartialEq)]
 //! struct User {
 //!     age: u32,
 //!     email: String,
@@ -58,9 +81,17 @@
 //!     email: StackCipherText,
 //! }
 //!
-//! let row: EncryptedUser = user.encrypt_into(&cipher, ()).await?;   // one batch
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+//! # let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! let user = User { age: 42, email: "alice@example.com".into() };
+//! let row: EncryptedUser = user.encrypt_into(&cipher, ()).await?; // one batch
+//! let users = vec![User { age: 1, email: "a".into() }, User { age: 2, email: "b".into() }];
 //! let rows: Vec<EncryptedUser> = users.encrypt_into(&cipher, ()).await?; // still one
 //! let user: User = row.decrypt_into(&cipher, ()).await?;
+//! assert_eq!(user, User { age: 42, email: "alice@example.com".into() });
+//! assert_eq!(rows.len(), 2);
+//! # Ok::<(), stack_encrypt::Error>(())
+//! # }).unwrap();
 //! ```
 //!
 //! A `from` field's context is the *column's* identity, which is why it is a
