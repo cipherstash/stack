@@ -81,7 +81,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // than let `auto()` detect it.
     // This section needs a real token: building the cipher resolves the keyset
     // and loads its index key, which is a round-trip that must authenticate.
-    let Ok(token) = std::env::var("MY_SERVICE_TOKEN") else {
+    //
+    // Note what the token is held in: `SecretToken` wraps it the moment it is
+    // read, and that wrapper — not a bare `String` — is what the closure
+    // captures and clones. `SecretToken` is zeroized on drop and prints as
+    // `***`, so a long-lived credential neither lingers in freed memory nor
+    // lands in a log line.
+    let Ok(token) = std::env::var("MY_SERVICE_TOKEN").map(SecretToken::new) else {
         println!("MY_SERVICE_TOKEN not set; skipping the custom-strategy section.");
         return Ok(());
     };
@@ -89,7 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Your token source: a broker, a sidecar, a cached credential. Called
         // whenever ZeroKMS needs a fresh token, so refresh belongs in here.
         let token = token.clone();
-        async move { Ok::<_, AuthError>(ServiceToken::new(SecretToken::new(token))) }
+        async move { Ok::<_, AuthError>(ServiceToken::new(token)) }
     });
 
     let kms = StackKmsBuilder::new(strategy)
