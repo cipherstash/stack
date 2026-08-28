@@ -68,7 +68,12 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
-use stack_kms::{DataKey, DataKeySource, DataKeyWithTag, GenerateKeyPayload, RetrieveKeyPayload};
+use stack_kms::{
+    DataKey, DataKeySource, DataKeyWithTag, EnvKeyProvider, IdentifiedBy, IndexKeySource, StackKms,
+    StackKmsBuilder,
+};
+#[cfg(not(target_arch = "wasm32"))]
+use stack_kms::{FallbackKeyProvider, KeyProvider, KeyProviderError, ProfileStore};
 use uuid::Uuid;
 use vitaminc_aead::{
     Aad, Cipher, CipherText, Decipher, DecipherVisitor, Decrypt, Encrypt, IntoAad, LocalCipherText,
@@ -103,6 +108,49 @@ pub enum Error {
     /// ZeroKMS returned a different number of keys than were requested.
     #[error("expected {expected} data keys from ZeroKMS but received {received}")]
     KeyCountMismatch { expected: usize, received: usize },
+    /// Building a ZeroKMS client from the environment failed: credentials or
+    /// client key missing or malformed.
+    #[error("could not build a ZeroKMS client from the environment: {0}")]
+    Config(#[from] stack_kms::StackKmsBuilderError),
+    /// The per-field encryption context was empty. An empty context defeats
+    /// per-field domain separation: equal plaintexts in different fields
+    /// would produce identical index terms, ORE/OPE keys would be shared
+    /// across fields, and ciphertexts would be transplantable between them.
+    #[error("the encryption context must not be empty (it domain-separates fields)")]
+    EmptyContext,
+    /// An index term failed to derive. An empty context is *not* reported
+    /// here — it folds into [`Error::EmptyContext`] so every path spells the
+    /// same misconfiguration the same way.
+    #[error(transparent)]
+    Term(crate::sem::TermError),
+    /// A third-party [`EncryptFrom`](crate::target::EncryptFrom) /
+    /// [`DecryptFrom`](crate::target::DecryptFrom) implementation failed
+    /// for a reason of its own.
+    #[error(transparent)]
+    Other(Box<dyn std::error::Error + Send + Sync + 'static>),
+    /// A [`Pending`](crate::target::Pending) fulfilment's requests and
+    /// responses did not line up: it drew more responses — or a different
+    /// kind — than its requests asked for, or left some of them unconsumed.
+    /// Always a composition bug in an `EncryptFrom`/`DecryptFrom`
+    /// implementation, never a data error.
+    #[error("a pending fulfilment's responses did not match its requests")]
+    ResponseShape,
+    /// [`Pending`](crate::target::Pending)s built on different
+    /// [`StackCipher`] instances were merged (`zip` / `all`). An assembly
+    /// settles through one cipher's backend and keyset, so the other side's
+    /// keys would be minted under the wrong keyset. Always a composition
+    /// bug, caught before any I/O.
+    #[error("merged pendings were built from different ciphers")]
+    CipherMismatch,
+}
+
+impl From<crate::sem::TermError> for Error {
+    fn from(error: crate::sem::TermError) -> Self {
+        match error {
+            crate::sem::TermError::EmptyContext => Error::EmptyContext,
+            other => Error::Term(other),
+        }
+    }
 }
 
 impl From<Unspecified> for Error {
@@ -111,33 +159,234 @@ impl From<Unspecified> for Error {
     }
 }
 
-/// A vitaminc cipher whose per-leaf keys are ZeroKMS data keys, sourced through
-/// a [`DataKeySource`] (production: `stack_kms::StackKms`; tests:
-/// `stack_kms::FakeDataKeySource`).
+/// The CipherStash cipher: a vitaminc [`Cipher`] whose per-leaf keys are ZeroKMS
+/// data keys, sourced through a [`DataKeySource`] (production:
+/// [`StackKms`]; tests: `stack_kms::FakeDataKeySource`), carrying the
+/// per-keyset PRF that [Searchable Encrypted Metadata](crate::sem) terms are
+/// derived from.
 ///
 /// Per-leaf keying is deliberate: every value access requires its own data-key
 /// retrieval, so individual value accesses are visible (and auditable) as
 /// ZeroKMS key-retrieval events.
+///
+/// A cipher is always able to derive index terms: its keyset's
+/// [`IndexKey`](stack_kms::IndexKey) is loaded during construction, so a
+/// backend that cannot supply one is not a Stack Encrypt backend. Plain AEAD
+/// with no indexing is what `vitaminc` alone provides.
+///
+/// # Construction
+///
+/// [`new`](Self::new) is the default path — a ZeroKMS client from the
+/// environment, on that client's default keyset:
+///
+/// ```no_run
+/// # async fn example() -> Result<(), stack_encrypt::Error> {
+/// use stack_encrypt::StackCipher;
+///
+/// let cipher = StackCipher::new().await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// Override with [`builder`](Self::builder) — a different keyset, or a
+/// different data-key source entirely:
+///
+/// ```
+/// # async fn example() -> Result<(), stack_encrypt::Error> {
+/// use stack_encrypt::StackCipher;
+/// use stack_kms::FakeDataKeySource;
+///
+/// let cipher = StackCipher::builder()
+///     .kms(FakeDataKeySource::new())
+///     .init()
+///     .await?;
+/// # Ok(())
+/// # }
+/// # tokio_test_block_on(example()).unwrap();
+/// # fn tokio_test_block_on<F: std::future::Future>(f: F) -> F::Output {
+/// #     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(f)
+/// # }
+/// ```
+///
+/// Construction is async because it resolves the keyset and loads its index
+/// key — one ZeroKMS round-trip, paid once.
 pub struct StackCipher<K> {
     kms: K,
-    keyset_id: Option<Uuid>,
+    /// The resolved keyset. Every generate/retrieve call is pinned to it, and
+    /// the PRF below is keyed by *this* keyset's index key: sealing data keys
+    /// under one keyset while deriving terms under another's index key would
+    /// make every query silently match nothing.
+    keyset_id: Uuid,
+    prf: vitaminc_hmac::HmacSha256Prf,
+}
+
+impl StackCipher<StackKms<stack_auth::AutoStrategy>> {
+    /// Build a cipher over a ZeroKMS client configured from the environment,
+    /// on that client's default keyset.
+    ///
+    /// Equivalent to `StackCipher::builder().init()`. For a different keyset
+    /// or a different data-key source, use [`builder`](Self::builder).
+    pub async fn new() -> Result<Self, Error> {
+        Self::builder().init().await
+    }
+
+    /// Start building a cipher: pick a keyset, or supply a data-key source
+    /// other than the environment's ZeroKMS client.
+    pub fn builder() -> StackCipherBuilder {
+        StackCipherBuilder {
+            kms: FromEnv,
+            keyset: None,
+        }
+    }
 }
 
 impl<K> StackCipher<K> {
-    /// Create a cipher over the given data-key source, using the source's
-    /// default keyset.
-    pub fn new(kms: K) -> Self {
-        Self {
+    /// The keyset every generate/retrieve call is pinned to, and whose index
+    /// key keys [`prf`](Self::prf).
+    pub fn keyset_id(&self) -> Uuid {
+        self.keyset_id
+    }
+
+    /// The PRF index terms are derived from, keyed by this cipher's keyset.
+    ///
+    /// Public so that other crates can implement their own term types against
+    /// this cipher (see [`crate::sem`]).
+    pub fn prf(&self) -> &vitaminc_hmac::HmacSha256Prf {
+        &self.prf
+    }
+
+    /// The underlying data-key source.
+    pub fn kms(&self) -> &K {
+        &self.kms
+    }
+}
+
+/// The state of a [`StackCipherBuilder`] that has not been given a data-key
+/// source: [`init`](StackCipherBuilder::init) will build a ZeroKMS client from
+/// the environment (and, on native targets, the CLI's profile directory).
+pub struct FromEnv;
+
+/// The client key, looked up the way [`stack_auth::AutoStrategy`] looks up the
+/// access token: `CS_CLIENT_ID` / `CS_CLIENT_KEY` first, then the current
+/// workspace's `secretkey.json` in the profile directory. A profile directory
+/// that cannot be resolved is not an error here — env-only setups (CI) have
+/// none — it just leaves the environment as the only source.
+#[cfg(not(target_arch = "wasm32"))]
+fn client_key_provider() -> FallbackKeyProvider<EnvKeyProvider, ProfileClientKey> {
+    FallbackKeyProvider::new(
+        EnvKeyProvider,
+        ProfileClientKey(ProfileStore::resolve(None).ok()),
+    )
+}
+
+/// wasm32 has no filesystem, so no profile: the environment is the only source.
+#[cfg(target_arch = "wasm32")]
+fn client_key_provider() -> EnvKeyProvider {
+    EnvKeyProvider
+}
+
+/// [`ProfileStore`] as a [`KeyProvider`], tolerating an unresolvable profile
+/// directory so the "not configured" message can say what to do about it
+/// rather than only that `CS_CLIENT_ID` is unset.
+#[cfg(not(target_arch = "wasm32"))]
+struct ProfileClientKey(Option<ProfileStore>);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl KeyProvider for ProfileClientKey {
+    async fn client_key(&self) -> Result<stack_kms::ClientKey, KeyProviderError> {
+        match &self.0 {
+            Some(store) => store.client_key().await,
+            None => Err(KeyProviderError::NotConfigured(
+                "no client key: set CS_CLIENT_ID / CS_CLIENT_KEY, or run `npx stash auth login`"
+                    .into(),
+            )),
+        }
+    }
+}
+
+/// Builder for a [`StackCipher`]. See [`StackCipher::builder`].
+pub struct StackCipherBuilder<K = FromEnv> {
+    kms: K,
+    keyset: Option<IdentifiedBy>,
+}
+
+impl<K> StackCipherBuilder<K> {
+    /// Pin the cipher to a specific keyset, by id or by name, instead of the
+    /// data-key source's default.
+    pub fn keyset(mut self, keyset: IdentifiedBy) -> Self {
+        self.keyset = Some(keyset);
+        self
+    }
+}
+
+impl StackCipherBuilder<FromEnv> {
+    /// Use an explicit data-key source rather than building a ZeroKMS client
+    /// from the environment.
+    ///
+    /// This is the seam for a custom authentication strategy: build a
+    /// [`StackKms`] with [`StackKmsBuilder`] and hand it over. It is also how
+    /// tests inject `stack_kms::FakeDataKeySource`.
+    pub fn kms<K>(self, kms: K) -> StackCipherBuilder<K> {
+        StackCipherBuilder {
             kms,
-            keyset_id: None,
+            keyset: self.keyset,
         }
     }
 
-    /// Pin generate/retrieve operations to a specific ZeroKMS keyset.
-    pub fn with_keyset_id(mut self, keyset_id: Uuid) -> Self {
-        self.keyset_id = Some(keyset_id);
-        self
+    /// Build a ZeroKMS client from the environment, then resolve the keyset
+    /// and load its index key.
+    ///
+    /// Credentials come from the same two places for both halves of the
+    /// client — the access token and the client key:
+    ///
+    /// 1. the environment (`CS_CLIENT_ACCESS_KEY` + `CS_WORKSPACE_CRN`;
+    ///    `CS_CLIENT_ID` + `CS_CLIENT_KEY`), then
+    /// 2. the current workspace in the CLI's profile directory
+    ///    (`auth.json`; `secretkey.json`), which `npx stash auth login`
+    ///    writes.
+    ///
+    /// So on a developer machine, logging in with the CLI is sufficient; in
+    /// CI, the four variables are.
+    pub async fn init(self) -> Result<StackCipher<StackKms<stack_auth::AutoStrategy>>, Error> {
+        let kms = StackKmsBuilder::auto()?
+            .with_key_provider(client_key_provider())
+            .build()
+            .await?;
+        StackCipherBuilder {
+            kms,
+            keyset: self.keyset,
+        }
+        .init()
+        .await
     }
+}
+
+impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
+    /// Resolve the keyset and load its index key, producing a cipher that can
+    /// both seal values and derive index terms.
+    pub async fn init(self) -> Result<StackCipher<K>, Error> {
+        let (keyset_id, index_key) = self.kms.load_index_key(self.keyset).await?;
+        let prf = hmac_prf_from_index_key(&index_key);
+        Ok(StackCipher {
+            kms: self.kms,
+            keyset_id,
+            prf,
+        })
+    }
+}
+
+/// Build the local HMAC-SHA256 PRF from a per-keyset
+/// [`IndexKey`](stack_kms::IndexKey), wiping the intermediate stack copy of the
+/// raw key bytes.
+fn hmac_prf_from_index_key(index_key: &stack_kms::IndexKey) -> vitaminc_hmac::HmacSha256Prf {
+    use zeroize::Zeroize;
+
+    // `[u8; 32]` is `Copy`: the move into `Protected` leaves this stack copy
+    // behind, so wipe it before returning.
+    let mut key = *index_key.key();
+    let prf = vitaminc_hmac::HmacSha256Prf::new(Protected::new(key));
+    key.zeroize();
+    prf
 }
 
 impl<K: DataKeySource> StackCipher<K> {
@@ -176,38 +425,15 @@ impl<K: DataKeySource> StackCipher<K> {
     /// is front-loaded here, and the AAD is supplied per call by
     /// [`Decrypt::decrypt_with_aad`], so `Decrypt` impls that derive their own
     /// AAD (e.g. `vitaminc_aead::Element`) behave identically to `AesDecipher`.
+    ///
+    /// Settles through the target layer's request carrier
+    /// ([`decipher_pending`](crate::target)), so this and
+    /// `decrypt_into` share one definition of how leaves map to retrieve
+    /// requests and one path to ZeroKMS.
     pub async fn decipher(&self, ciphertext: StackCipherText) -> Result<StackDecipher, Error> {
-        // Collect every leaf's retrieve payload (borrowing the ciphertext), make
-        // one batched call, then drop the borrow before consuming the tree.
-        let keys = {
-            let mut payloads = Vec::new();
-            collect_retrieve_payloads(&ciphertext, &mut payloads);
-            if payloads.is_empty() {
-                Vec::new()
-            } else {
-                let expected = payloads.len();
-                let keys = self
-                    .kms
-                    .retrieve_keys(payloads, self.keyset_id, None)
-                    .await?;
-                if keys.len() != expected {
-                    return Err(Error::KeyCountMismatch {
-                        expected,
-                        received: keys.len(),
-                    });
-                }
-                keys
-            }
-        };
-
-        let mut keys = keys.into_iter();
-        let ciphertext = bind_keys(ciphertext, &mut keys)?;
-        // Every key must have been consumed; leftovers mean the tree shape and
-        // the payload collection disagreed.
-        if keys.next().is_some() {
-            return Err(Error::Aead);
-        }
-        Ok(StackDecipher { ciphertext })
+        crate::target::decipher_pending(self, ciphertext)
+            .settle()
+            .await
     }
 }
 
@@ -273,51 +499,23 @@ impl Clone for SealedValue {
     }
 }
 
-/// Walk the tree in depth-first order, pushing one retrieve payload per keyed
-/// leaf (markers included). Must match [`bind_keys`]'s traversal so payloads
-/// and returned keys line up.
-fn collect_retrieve_payloads<'b>(
-    ciphertext: &'b StackCipherText,
-    out: &mut Vec<RetrieveKeyPayload<'b>>,
-) {
-    match ciphertext {
-        CipherText::Single(leaf)
-        | CipherText::None(leaf)
-        | CipherText::EmptySequence(leaf)
-        | CipherText::EmptyMap(leaf) => {
-            // Empty descriptor — see the module-level wire-format note.
-            out.push(RetrieveKeyPayload::new(leaf.iv, "", &leaf.tag));
-        }
-        CipherText::Sequence(items) => {
-            for item in items {
-                collect_retrieve_payloads(item, out);
-            }
-        }
-        CipherText::Map(entries) => {
-            for (_, value) in entries {
-                collect_retrieve_payloads(value, out);
-            }
-        }
-        CipherText::Passthrough(_) => {}
-    }
-}
-
 /// A leaf with its retrieved data key bound alongside. Produced by
 /// [`bind_keys`] once the batched `retrieve_keys` call has returned; consumed by
 /// [`StackDecipher`], which opens it under whatever AAD the driving
 /// [`Decrypt`] impl supplies.
-struct KeyedLeaf {
+pub(crate) struct KeyedLeaf {
     leaf: SealedValue,
     key: DataKey,
 }
 
 /// [`StackCipherText`] with a [`DataKey`] zipped onto every keyed leaf.
-type KeyedCipherText = CipherText<KeyedLeaf, BoxedPassthrough>;
+pub(crate) type KeyedCipherText = CipherText<KeyedLeaf, BoxedPassthrough>;
 
-/// Zip retrieved keys onto the tree in the same depth-first order
-/// [`collect_retrieve_payloads`] requested them, so each leaf carries its own
-/// key and the subsequent [`Decipher`] drive is free of ordering assumptions.
-fn bind_keys(
+/// Zip retrieved keys onto the tree in the same depth-first order the
+/// target layer requested them (`retrieve_requests`), so each leaf carries its
+/// own key and the subsequent [`Decipher`] drive is free of ordering
+/// assumptions.
+pub(crate) fn bind_keys(
     ciphertext: StackCipherText,
     keys: &mut impl Iterator<Item = DataKey>,
 ) -> Result<KeyedCipherText, Unspecified> {
@@ -386,7 +584,7 @@ pub enum PendingStackCipherText {
 impl PendingStackCipherText {
     /// Number of leaves that need a ZeroKMS data key (everything but
     /// passthrough — markers are sealed leaves too).
-    fn key_count(&self) -> usize {
+    pub(crate) fn key_count(&self) -> usize {
         match self {
             PendingStackCipherText::Single { .. }
             | PendingStackCipherText::None { .. }
@@ -400,41 +598,22 @@ impl PendingStackCipherText {
         }
     }
 
-    /// Generate one data key per keyed leaf (one batched ZeroKMS call) and seal
-    /// the whole tree.
+    /// Generate one data key per keyed leaf (one batched ZeroKMS call — none
+    /// for a passthrough-only tree) and seal the whole tree.
+    ///
+    /// Settles through the target layer's request carrier
+    /// ([`seal_pending`](crate::target)), so this and
+    /// `encrypt_into::<StackCipherText>` share one definition of how a tree
+    /// is sealed and one path to ZeroKMS.
     pub async fn seal<K: DataKeySource>(
         self,
         cipher: &StackCipher<K>,
     ) -> Result<StackCipherText, Error> {
-        let count = self.key_count();
-        if count == 0 {
-            // Passthrough-only tree: no keys, no ZeroKMS call.
-            return Ok(self.seal_with(&mut std::iter::empty())?);
-        }
-
-        // Empty descriptor + empty context for every leaf (see wire-format note).
-        let payloads: Vec<GenerateKeyPayload<'_>> = (0..count)
-            .map(|_| GenerateKeyPayload::new("", Cow::Owned(Vec::new())))
-            .collect();
-
-        let keys = cipher
-            .kms
-            .generate_keys(payloads, cipher.keyset_id, None)
-            .await?;
-
-        if keys.len() != count {
-            return Err(Error::KeyCountMismatch {
-                expected: count,
-                received: keys.len(),
-            });
-        }
-
-        let mut keys = keys.into_iter();
-        Ok(self.seal_with(&mut keys)?)
+        crate::target::seal_pending(cipher, self).settle().await
     }
 
     /// Recursively seal, drawing one key per leaf from `keys` in traversal order.
-    fn seal_with(
+    pub(crate) fn seal_with(
         self,
         keys: &mut impl Iterator<Item = DataKeyWithTag>,
     ) -> Result<StackCipherText, Unspecified> {
@@ -792,7 +971,7 @@ pub struct StackDecipher {
 }
 
 impl StackDecipher {
-    fn over(ciphertext: KeyedCipherText) -> Self {
+    pub(crate) fn over(ciphertext: KeyedCipherText) -> Self {
         Self { ciphertext }
     }
 

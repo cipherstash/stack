@@ -25,15 +25,10 @@
 //! ```no_run
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! use stack_encrypt::StackCipher;
-//! use stack_kms::StackKmsBuilder;
 //!
-//! // Credentials and the client key come from the environment
-//! // (CS_CLIENT_ID / CS_CLIENT_KEY, plus an access token strategy).
-//! let kms = StackKmsBuilder::auto()?
-//!     .with_key_provider(stack_kms::EnvKeyProvider)
-//!     .build()
-//!     .await?;
-//! let cipher = StackCipher::new(kms);
+//! // Credentials: `npx stash auth login` on a developer machine, or
+//! // CS_CLIENT_ID / CS_CLIENT_KEY + CS_CLIENT_ACCESS_KEY / CS_WORKSPACE_CRN in CI.
+//! let cipher = StackCipher::new().await?;
 //!
 //! let ciphertext = cipher.encrypt("secret message".to_string(), ()).await?;
 //! let plaintext: String = cipher.decrypt(ciphertext, ()).await?;
@@ -58,31 +53,31 @@
 //!
 //! # Testing without ZeroKMS
 //!
-//! `stack_kms::FakeDataKeySource` is an in-process key source that needs no
+//! `stack_kms::FakeDataKeySource` is an in-memory stub that needs no
 //! credentials or network: it hands out a fresh random data key per request and
 //! remembers it in memory, so a `generate` followed by the matching `retrieve`
 //! round-trips within one process (the key material itself differs run to run,
-//! and nothing survives the process). It lives behind stack-kms's
-//! `test-support` feature, so add
+//! and nothing survives the process). It models none of ZeroKMS's
+//! authorization behaviour (context, identity claims, decryption policies) —
+//! those are the service's, and tests of them belong against a real ZeroKMS.
+//! It lives behind stack-kms's `test-support` feature, so add
 //! `stack-kms = { version = "..", features = ["test-support"] }` to your
 //! `[dev-dependencies]`:
 //!
 //! ```
-//! # fn main() -> Result<(), stack_encrypt::Error> {
-//! # tokio::runtime::Builder::new_current_thread()
-//! #     .build()
-//! #     .expect("runtime")
-//! #     .block_on(async {
 //! use stack_encrypt::StackCipher;
 //! use stack_kms::FakeDataKeySource;
 //!
-//! let cipher = StackCipher::new(FakeDataKeySource::new());
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+//! let cipher = StackCipher::builder()
+//!     .kms(FakeDataKeySource::new())
+//!     .init()
+//!     .await?;
 //! let ct = cipher.encrypt(vec!["a".to_string(), "b".to_string()], ()).await?;
 //! let pt: Vec<String> = cipher.decrypt(ct, ()).await?;
 //! assert_eq!(pt, vec!["a", "b"]);
-//! # Ok(())
-//! # })
-//! # }
+//! # Ok::<(), stack_encrypt::Error>(())
+//! # }).unwrap();
 //! ```
 //!
 //! # Storing ciphertext
@@ -123,10 +118,16 @@
 //! format).
 
 mod cipher;
+pub mod sem;
+pub mod target;
 
 pub use cipher::{
-    BoxedPassthrough, Error, PendingStackCipherText, SealedValue, StackCipher, StackCipherText,
-    StackDecipher,
+    BoxedPassthrough, Error, FromEnv, PendingStackCipherText, SealedValue, StackCipher,
+    StackCipherBuilder, StackCipherText, StackDecipher,
+};
+pub use target::{
+    DecryptContext, DecryptExt, DecryptFrom, DecryptTarget, EncryptContext, EncryptExt,
+    EncryptFrom, EncryptTarget, Pending, PendingFuture, Request, Responses,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they

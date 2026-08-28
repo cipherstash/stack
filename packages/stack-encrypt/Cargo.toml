@@ -15,11 +15,14 @@ license-file = "LICENSE"
 publish = false
 
 [dependencies]
-# No default features: `stack-encrypt` only ever takes a `DataKeySource`, so
-# it has no use for stack-kms's `profile` feature (the CLI's on-disk
-# `secretkey.json` via `stack-profile`). Consumers that want it enable it on
-# their own `stack-kms` dependency.
-stack-kms = { path = "../stack-kms", default-features = false }
+# `profile` (native only; stack-kms gates it off wasm32 itself) lets
+# `StackCipher::new()` fall back to the client key `stash auth login` writes
+# to the profile directory (`secretkey.json`) when CS_CLIENT_ID /
+# CS_CLIENT_KEY are not set — the same place `AutoStrategy` finds the token.
+stack-kms = { path = "../stack-kms", default-features = false, features = ["profile"] }
+# `StackCipher::new()` builds a ZeroKMS client from the environment, so its
+# return type names the auto-detected auth strategy.
+stack-auth = { workspace = true }
 
 # The revised Cipher/Decipher traits, ContextTag, Element, and the PRF crates
 # have all merged to vitaminc main but are not yet published (crates.io is 200+
@@ -27,18 +30,30 @@ stack-kms = { path = "../stack-kms", default-features = false }
 # `cargo update` cannot silently move the trait definitions under this crate,
 # and declared here rather than via the workspace dep so the rest of the suite
 # stays on the published 0.2.0-pre until the next vitaminc release.
-vitaminc-aead = { git = "https://github.com/cipherstash/vitaminc", rev = "06fc3eaf8e39eab4aa9c6107c0ff2fc2952bebc3" }
-vitaminc-encrypt = { git = "https://github.com/cipherstash/vitaminc", rev = "06fc3eaf8e39eab4aa9c6107c0ff2fc2952bebc3" }
-vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "06fc3eaf8e39eab4aa9c6107c0ff2fc2952bebc3" }
+#
+# Temporarily pinned to the commit of cipherstash/vitaminc#289 (main + the
+# `vitaminc_aead::Passthrough` wrapper); move the pin back to a main commit
+# once it merges. All five must share one source or the aead crate is
+# duplicated.
+vitaminc-aead = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
+vitaminc-encrypt = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
+vitaminc-hmac = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
+vitaminc-prf = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
+vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
 serde = { workspace = true }
+
+cllw-ore = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
+zeroize = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
 stack-kms = { path = "../stack-kms", features = ["test-support"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
-vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "06fc3eaf8e39eab4aa9c6107c0ff2fc2952bebc3" }
+vitaminc-hmac = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
+vitaminc-prf = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
+vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
 
 [package.metadata.docs.rs]
 all-features = true
