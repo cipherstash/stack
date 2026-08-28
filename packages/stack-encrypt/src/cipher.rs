@@ -508,18 +508,36 @@ impl<K: DataKeySource> StackCipher<K> {
 ///
 /// [`to_bytes`](Self::to_bytes) / [`from_bytes`](Self::from_bytes) are the
 /// canonical encoding — the one storage format every consumer (this crate,
-/// the language bindings, anything reading a database column) agrees on:
+/// the language bindings, anything reading a database column) agrees on.
+/// The v1 layout:
+///
+/// | offset          | field              | size            | value |
+/// |-----------------|--------------------|-----------------|-------|
+/// | 0               | envelope version   | 1               | [`FORMAT_VERSION`](Self::FORMAT_VERSION) (`0x01`) |
+/// | 1               | ZeroKMS `iv`       | 16              | identifies the data key for retrieval |
+/// | 17              | `tag_len`          | 2               | length of `tag`, `u16` little-endian |
+/// | 19              | ZeroKMS key `tag`  | `tag_len`       | required to retrieve the key |
+/// | 19 + `tag_len`  | local ciphertext   | rest of buffer  | the vitaminc [`LocalCipherText`] |
+///
+/// The local ciphertext is itself a framed value — vitaminc's leaf wire
+/// format, versioned and owned by vitaminc — so the full stored byte string
+/// nests two framings, each led by its own version byte:
 ///
 /// ```text
-/// version(1) ‖ iv(16) ‖ tag_len(u16 LE) ‖ tag ‖ local_ciphertext
+/// ┌─ envelope (stack-encrypt, this table) ─────────────────────────────────────┐
+/// │ version ‖ iv ‖ tag_len ‖ tag ‖ ┌─ local ciphertext (vitaminc) ───────────┐ │
+/// │   0x01                         │ version ‖ nonce ‖ ciphertext ‖ gcm_tag  │ │
+/// │                                └─────────────────────────────────────────┘ │
+/// └────────────────────────────────────────────────────────────────────────────┘
 /// ```
 ///
-/// where `version` is [`FORMAT_VERSION`](Self::FORMAT_VERSION) and
-/// `local_ciphertext` is the vitaminc leaf (itself framed as
-/// `version ‖ nonce ‖ ciphertext ‖ gcm_tag`) and runs to the end of the
-/// buffer. The version byte is bound into the leaf's AAD at seal time (the
-/// private `leaf_aad` derivation — see the module docs in `src/cipher.rs`),
-/// so a leaf relabelled with a future version byte fails
+/// Both version bytes are authenticated under the one GCM tag, each bound by
+/// the layer that owns its framing: the envelope version through this
+/// crate's leaf-AAD derivation (the private `leaf_aad` —
+/// `PAE("stack-encrypt/leaf", version, derived_aad, tag)`; see the module
+/// docs in `src/cipher.rs`), and the inner version through vitaminc's
+/// `Aad::for_leaf`, applied inside [`Aes256Cipher`] to the AAD this crate
+/// hands it. Relabel either version byte in storage and the leaf fails
 /// authentication rather than parsing under the wrong rules. Parsing is
 /// structural only — nothing about a decoded leaf is trusted until it
 /// decrypts.
