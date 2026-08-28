@@ -1,4 +1,4 @@
-//! Target-directed encryption tests: leaf `EncryptFrom`/`DecryptFrom`
+//! Target-directed encryption tests: leaf `EncryptFrom`/`DecryptInto`
 //! implementations, a hand-written composite record (the shape a future
 //! derive will emit), a "third-party" term type built on the public extension
 //! surface only, and — the point of the design — proof that however large the
@@ -9,8 +9,7 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 
 use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerm, OreTerm};
 use stack_encrypt::target::{
-    DecryptContext, DecryptFrom, DecryptInto, EncryptContext, EncryptFrom, EncryptInto, Pending,
-    Request,
+    DecryptContext, DecryptInto, EncryptContext, EncryptFrom, EncryptInto, Pending, Request,
 };
 use stack_encrypt::{Error, StackCipher, StackCipherText};
 use stack_kms::{FakeDataKeySource, IdentifiedBy, IndexKeySource};
@@ -280,7 +279,7 @@ async fn optional_fields_encrypt_and_decrypt_structurally() {
 
 // --- A hand-written composite record ----------------------------------------
 //
-// The shape a `#[derive(Encrypted)]` will emit: one impl, pendings combined
+// The shape a `#[derive(EncryptFrom)]` will emit: one impl, pendings combined
 // with zip/map (never awaited), one context fanning out to every field, the
 // caller seeing a single await — and a single batched call.
 
@@ -311,18 +310,18 @@ impl<K> EncryptFrom<u32, StackCipher<K>> for EncryptedAge {
 
 /// The decrypt mirror a derive would emit: only the ciphertext field
 /// participates — terms are one-way.
-impl<K> DecryptFrom<EncryptedAge, StackCipher<K>> for u32 {
-    fn decrypt_from<'a, 'c, Ctx>(
-        source: EncryptedAge,
+impl<K> DecryptInto<u32, StackCipher<K>> for EncryptedAge {
+    fn decrypt_into<'a, 'c, Ctx>(
+        self,
         cipher: &'a StackCipher<K>,
         context: Ctx,
-    ) -> Pending<'a, Self, K>
+    ) -> Pending<'a, u32, K>
     where
         Ctx: DecryptContext<'c>,
-        EncryptedAge: 'a,
         Self: 'a,
+        u32: 'a,
     {
-        source.c.decrypt_into(cipher, context)
+        self.c.decrypt_into(cipher, context)
     }
 }
 

@@ -1,4 +1,4 @@
-//! `#[derive(Encrypted)]` / `#[derive(DecryptFrom)]`: the derived impls are the
+//! `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`: the derived impls are the
 //! hand-written composite in `target.rs`, emitted — same terms, same decrypt
 //! mirror, same one-batched-call settlement — plus what only a derive makes
 //! cheap: sources listed or left generic, rows derived field by field, and
@@ -11,17 +11,17 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 use cllw_ore::CllwOreEncrypt;
 use common::{counting_cipher, stack_cipher};
 use stack_encrypt::sem::{EqualityTerm, MatchTerm, OreTerm};
-use stack_encrypt::target::{DecryptInto, EncryptInto};
-use stack_encrypt::{DecryptFrom, Encrypted, Error, StackCipherText};
+use stack_encrypt::target::EncryptInto;
+use stack_encrypt::{DecryptInto, EncryptFrom, Error, StackCipherText};
 
-// --- Records: every field from one source, under one context ----------------
+// --- Records: every field from one plaintext, under one context -------------
 
 /// The hand-written record in `target.rs`, derived: an encrypted `u32`
 /// stored as its ciphertext plus an equality term and an ORE term.
-#[derive(Encrypted, DecryptFrom)]
-#[encrypted(source = u32)]
+#[derive(EncryptFrom, DecryptInto)]
+#[stack_encrypt(plaintext = u32)]
 struct EncryptedAge {
-    #[encrypted(decrypt)]
+    #[stack_encrypt(decrypt)]
     c: StackCipherText,
     hm: EqualityTerm,
     ob: OreTerm<u32>,
@@ -46,30 +46,32 @@ async fn a_derived_record_is_the_hand_written_one() {
     assert_eq!(age, 42);
 }
 
-/// No `source`: one impl generic over it, accepting whatever every leaf
-/// accepts — here any text type, since `MatchTerm` wants `AsRef<str>`.
-#[derive(Encrypted)]
+/// No `plaintext`: one impl generic over it, accepting whatever every leaf
+/// accepts — here any text type, since `MatchTerm` wants `AsRef<str>` — and
+/// decrypting to whatever the ciphertext field opens to.
+#[derive(EncryptFrom, DecryptInto)]
 struct SearchableText {
+    #[stack_encrypt(decrypt)]
     c: StackCipherText,
     hm: EqualityTerm,
     m: MatchTerm,
 }
 
 /// Tuple structs assign by index.
-#[derive(Encrypted)]
+#[derive(EncryptFrom)]
 struct Pair(StackCipherText, EqualityTerm);
 
 /// The record's own generics (and their bounds) are carried through, and the
 /// where clause makes `Tagged<T>` accept exactly `T` — the ORE term is typed
 /// by its source.
-#[derive(Encrypted)]
+#[derive(EncryptFrom)]
 struct Tagged<T: CllwOreEncrypt> {
     c: StackCipherText,
     ob: OreTerm<T>,
 }
 
 #[tokio::test]
-async fn a_generic_source_record_accepts_what_its_leaves_accept() {
+async fn a_generic_plaintext_record_accepts_what_its_leaves_accept() {
     let cipher = stack_cipher().await;
     let generator = stack_cipher().await;
 
@@ -90,7 +92,7 @@ async fn a_generic_source_record_accepts_what_its_leaves_accept() {
         .unwrap();
     assert_eq!(record.hm, hm);
     assert_eq!(record.m, m);
-    let name: String = record.c.decrypt_into(&cipher, "users/name").await.unwrap();
+    let name: String = record.decrypt_into(&cipher, "users/name").await.unwrap();
     assert_eq!(name, "alice");
 
     let pair: Pair = "bob".encrypt_into(&cipher, "users/name").await.unwrap();
@@ -106,17 +108,17 @@ async fn a_generic_source_record_accepts_what_its_leaves_accept() {
     assert_eq!(score, 7);
 }
 
-/// Listed sources: one impl each, and nothing else is accepted.
-#[derive(Encrypted, DecryptFrom)]
-#[encrypted(source = u32, source = String)]
+/// Listed plaintexts: one impl each, and nothing else is accepted.
+#[derive(EncryptFrom, DecryptInto)]
+#[stack_encrypt(plaintext = u32, plaintext = String)]
 struct EncryptedValue {
-    #[encrypted(decrypt)]
+    #[stack_encrypt(decrypt)]
     c: StackCipherText,
     hm: EqualityTerm,
 }
 
 #[tokio::test]
-async fn listed_sources_each_get_their_own_impl() {
+async fn listed_plaintexts_each_get_their_own_impl() {
     let cipher = stack_cipher().await;
 
     let number: EncryptedValue = 7u32.encrypt_into(&cipher, "t/n").await.unwrap();
@@ -145,7 +147,7 @@ async fn a_failed_field_fails_the_derived_record_before_any_io() {
     assert_eq!(generates.load(AtomicOrdering::SeqCst), 0);
 }
 
-// --- Rows: each field from one field of the source, under its own context ---
+// --- Rows: each field from one field of the plaintext, under its own context
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct User {
@@ -153,20 +155,20 @@ struct User {
     email: String,
 }
 
-#[derive(Encrypted, DecryptFrom)]
-#[encrypted(source = User)]
+#[derive(EncryptFrom, DecryptInto)]
+#[stack_encrypt(plaintext = User)]
 struct EncryptedUser {
     /// A record inside a row: recursion, not a second mechanism.
-    #[encrypted(from = age, context = "users/age", decrypt)]
+    #[stack_encrypt(from = age, context = "users/age", decrypt)]
     age: EncryptedAge,
-    #[encrypted(from = email, context = "users/email", decrypt)]
+    #[stack_encrypt(from = email, context = "users/email", decrypt)]
     email: StackCipherText,
-    /// A second field from the same source field — a term alongside the
+    /// A second field from the same plaintext field — a term alongside the
     /// ciphertext, not opened on decrypt.
-    #[encrypted(from = email, context = "users/email")]
+    #[stack_encrypt(from = email, context = "users/email")]
     email_eq: EqualityTerm,
     /// Not derived: filled in, never encrypted.
-    #[encrypted(default = 3)]
+    #[stack_encrypt(default = 3)]
     version: u8,
 }
 
@@ -178,7 +180,7 @@ fn user() -> User {
 }
 
 #[tokio::test]
-async fn a_row_is_one_batched_call_and_rebuilds_its_source() {
+async fn a_row_is_one_batched_call_and_rebuilds_its_plaintext() {
     let (cipher, generates, retrieves) = counting_cipher().await;
     let generator = stack_cipher().await;
 
@@ -202,7 +204,7 @@ async fn a_row_is_one_batched_call_and_rebuilds_its_source() {
         .unwrap();
     assert_eq!(row.email_eq, email_hm);
 
-    // Decryption rebuilds the source field by field: one batched call.
+    // Decryption rebuilds the plaintext field by field: one batched call.
     let recovered: User = row.decrypt_into(&cipher, ()).await.unwrap();
     assert_eq!(recovered, user());
     assert_eq!(

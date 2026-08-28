@@ -23,7 +23,7 @@ stack-kms = { path = "../stack-kms", default-features = false, features = ["prof
 # `StackCipher::new()` builds a ZeroKMS client from the environment, so its
 # return type names the auto-detected auth strategy.
 stack-auth = { workspace = true }
-# `#[derive(Encrypted)]` / `#[derive(DecryptFrom)]`, re-exported from `target`.
+# `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`, re-exported from `target`.
 stack-encrypt-derive = { path = "../stack-encrypt-derive" }
 
 # The revised Cipher/Decipher traits, ContextTag, Element, and the PRF crates

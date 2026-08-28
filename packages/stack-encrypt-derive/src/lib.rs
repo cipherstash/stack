@@ -1,5 +1,5 @@
 //! Derive macros for [`stack-encrypt`](https://docs.rs/stack-encrypt)'s
-//! target-directed encryption: `EncryptFrom` and `DecryptFrom` for composite
+//! target-directed encryption: `EncryptFrom` and `DecryptInto` for composite
 //! records.
 //!
 //! Both macros are re-exported from `stack_encrypt`, so depend on that crate
@@ -14,13 +14,13 @@
 //!
 //! ```ignore
 //! use stack_encrypt::sem::{EqualityTerm, OreTerm};
-//! use stack_encrypt::{DecryptFrom, Encrypted, StackCipherText};
+//! use stack_encrypt::{DecryptInto, EncryptFrom, StackCipherText};
 //!
 //! /// An encrypted integer, queryable by equality and range.
-//! #[derive(Encrypted, DecryptFrom)]
-//! #[encrypted(source = u32)]
+//! #[derive(EncryptFrom, DecryptInto)]
+//! #[stack_encrypt(plaintext = u32)]
 //! struct EncryptedAge {
-//!     #[encrypted(decrypt)]
+//!     #[stack_encrypt(decrypt)]
 //!     c: StackCipherText,
 //!     hm: EqualityTerm,
 //!     ob: OreTerm<u32>,
@@ -41,7 +41,7 @@
 //! # Rows
 //!
 //! One level up, the same derive: a struct whose fields are each derived from
-//! a *field* of the source, under a context of their own.
+//! a *field* of the plaintext, under a context of their own.
 //!
 //! ```ignore
 //! struct User {
@@ -49,12 +49,12 @@
 //!     email: String,
 //! }
 //!
-//! #[derive(Encrypted, DecryptFrom)]
-//! #[encrypted(source = User)]
+//! #[derive(EncryptFrom, DecryptInto)]
+//! #[stack_encrypt(plaintext = User)]
 //! struct EncryptedUser {
-//!     #[encrypted(from = age, context = "users/age", decrypt)]
+//!     #[stack_encrypt(from = age, context = "users/age", decrypt)]
 //!     age: EncryptedAge,
-//!     #[encrypted(from = email, context = "users/email", decrypt)]
+//!     #[stack_encrypt(from = email, context = "users/email", decrypt)]
 //!     email: StackCipherText,
 //! }
 //!
@@ -76,9 +76,9 @@
 //! combinators on that trait and can replace this one without changing the
 //! attribute surface.
 //!
-//! Field-by-field decryption rebuilds the source with a struct literal, so
-//! every field of the source must be recovered by some `decrypt` field, and
-//! the source must be a struct visible where the derive expands.
+//! Field-by-field decryption rebuilds the plaintext with a struct literal, so
+//! every field of the plaintext must be recovered by some `decrypt` field, and
+//! the plaintext must be a struct visible where the derive expands.
 //!
 //! # Enums
 //!
@@ -117,20 +117,20 @@ mod test_support;
 /// documentation](crate) for what the derive emits; the attributes it accepts
 /// are reproduced below.
 #[doc = include_str!("../docs/attributes.md")]
-#[proc_macro_derive(Encrypted, attributes(encrypted))]
-pub fn derive_encrypted(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(EncryptFrom, attributes(stack_encrypt))]
+pub fn derive_encrypt_from(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     encrypt::derive(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
 
-/// Derive `DecryptFrom<ThisRecord, _>` for the record's `source` type(s). See
-/// the [crate documentation](crate); the attributes it accepts are reproduced
-/// below.
+/// Derive `DecryptInto<Plaintext, _>` for a record struct, one impl per
+/// `plaintext` type. See the [crate documentation](crate); the attributes it
+/// accepts are reproduced below.
 #[doc = include_str!("../docs/attributes.md")]
-#[proc_macro_derive(DecryptFrom, attributes(encrypted))]
-pub fn derive_decrypt_from(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(DecryptInto, attributes(stack_encrypt))]
+pub fn derive_decrypt_into(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     decrypt::derive(input)
         .unwrap_or_else(syn::Error::into_compile_error)

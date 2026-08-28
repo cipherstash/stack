@@ -454,9 +454,19 @@ derivations must produce identical bytes before and after.
    `Pending`; they lift onto `EncryptTarget` if a second async cipher ever
    appears.
 2. **Decrypt landed with this change** (decided): `DecryptTarget`,
-   `DecryptFrom`, `DecryptInto` and `DecryptContext` mirror the encrypt side;
+   `DecryptInto`, `DecryptFrom` and `DecryptContext` mirror the encrypt side;
    the `Vec` implementation batches a column of rows into one
    `retrieve_keys`. The derive will emit both directions from day one.
+   Which half of each `From`/`Into` pair is the implementable one follows
+   from where `Self` lands: the record is the *output* of encryption and the
+   *input* of decryption, and it is the only type a downstream crate can
+   implement on, so `EncryptFrom<P>` and `DecryptInto<P>` are implemented
+   (and derived) on the record while `EncryptInto` and `DecryptFrom` are
+   blanket call-site sugar. An encrypted type may decrypt to several
+   plaintexts and several encrypted types (the EQL integer payloads, say) to
+   one plaintext; each owns its own opening. vitaminc's `Decrypt` — the
+   plaintext's *bytes → value* step, the same for every ciphertext shape —
+   stays underneath as the leaf.
 3. **`Request` is public but opaque** (decided): constructors only
    (`Request::generate_data_key()`, `Request::retrieve_data_key(iv, tag)`,
    later a PRF request and a keyset override), internals private. `Responses`
@@ -521,7 +531,7 @@ claims:
   merging pendings from different ciphers is `Error::CipherMismatch` rather
   than a `debug_assert`.
 
-### `#[derive(Encrypted)]` / `#[derive(DecryptFrom)]` (follow-up PR)
+### `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]` (follow-up PR)
 
 The derive emits exactly the §4.4 shape — one impl over `StackCipher<K>`,
 field pendings zipped and mapped, never awaited — for a struct of leaves, and
@@ -544,10 +554,20 @@ The derive is bound to `StackCipher<K>` rather than generic over
 `EncryptTarget`, because combining outputs needs `zip`/`map` and only
 `Pending` has them; a generic derive would need those as `EncryptTarget`
 methods, and that extension does not change the attribute surface. `from`
-fields carry no where clause (the source field's type is not visible to the
-macro), so their obligations are checked in the impl body — which is also why
-`DecryptFrom` requires a named `source`: a blanket impl over every plaintext
-type would violate the orphan rule outside this crate.
+fields carry no where clause (the plaintext field's type is not visible to
+the macro), so their obligations are checked in the impl body. Rows —
+decrypted field by field — must name their `plaintext`, because the derive
+rebuilds it with a struct literal; a record opened as a whole may leave it
+off and decrypt to whatever its ciphertext field opens to.
+
+The derives are named after the trait they emit, as serde's are, and the
+attribute after the crate: `#[stack_encrypt(plaintext = ..)]`,
+`#[stack_encrypt(from = .., context = "..", decrypt)]`. First shipped as
+`#[derive(Encrypted, Decrypted)]` with `#[encrypted(source = ..)]`: the
+decrypt macro sat on the record but emitted `DecryptFrom<Record> for
+Plaintext`, a trait whose `Self` was not the annotated type, and the
+attribute name lined up with neither derive. Flipping the decrypt trait (item
+2 in §7) is what let the macro be named honestly.
 
 ## 8. Where findings get recorded
 

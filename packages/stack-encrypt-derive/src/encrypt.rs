@@ -1,4 +1,4 @@
-//! Expansion of `#[derive(Encrypted)]`.
+//! Expansion of `#[derive(EncryptFrom)]`.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -12,7 +12,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let name = &input.ident;
     let (_, ty_generics, _) = input.generics.split_for_impl();
 
-    if record.sources.is_empty() {
+    if record.plaintexts.is_empty() {
         // One impl, generic over the source: the record accepts exactly the
         // sources every derived field accepts, which the where clause spells
         // out so a mismatch is reported against the field type.
@@ -47,7 +47,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     // One impl per listed source. Fields derived from the whole source get a
     // where clause as above; `from = ..` fields reach into the source, so
     // their obligations are checked in the body against the actual field.
-    let impls = record.sources.iter().map(|source| {
+    let impls = record.plaintexts.iter().map(|source| {
         let mut generics = input.generics.clone();
         generics.params.push(parse_quote!(__K));
         push_field_bounds(&mut generics, krate, &record, source);
@@ -198,10 +198,10 @@ mod tests {
     #[rustfmt::skip]
     fn listed_sources_get_one_impl_each() {
         let expansion = expand(parse_quote! {
-            #[encrypted(source = i32, source = i64)]
+            #[stack_encrypt(plaintext = i32, plaintext = i64)]
             struct IntegerOrdOre {
                 c: StackCipherText,
-                #[encrypted(default = SchemaVersion::V3)]
+                #[stack_encrypt(default = SchemaVersion::V3)]
                 v: SchemaVersion,
             }
         });
@@ -219,11 +219,11 @@ mod tests {
     #[rustfmt::skip]
     fn row_fields_reach_into_the_source_under_their_own_context() {
         let expansion = expand(parse_quote! {
-            #[encrypted(source = User)]
+            #[stack_encrypt(plaintext = User)]
             struct EncryptedUser {
-                #[encrypted(from = age, context = "users/age")]
+                #[stack_encrypt(from = age, context = "users/age")]
                 age: EncryptedAge,
-                #[encrypted(from = email, context = "users/email")]
+                #[stack_encrypt(from = email, context = "users/email")]
                 email: StackCipherText,
             }
         });

@@ -21,17 +21,19 @@
 //!   vitaminc's [`Encrypt`]) and for the SEM term types in [`sem`]
 //!   ([`EqualityTerm`], [`MatchTerm`], [`OreTerm`], [`OpeTerm`]). Composite
 //!   record types — a struct of leaves, or a row of records — get theirs from
-//!   [`#[derive(Encrypted)]`](Encrypted), which combines the fields' pendings
-//!   with [`Pending::zip`] / [`Pending::map`] exactly as a hand-written impl
-//!   would.
-//! * [`DecryptFrom<S, C>`] — the mirror, implemented by the *plaintext*
-//!   type: "`Self` is recoverable from the encrypted `S`". Only ciphertext
-//!   fields participate — index terms are one-way by construction.
-//!   [`#[derive(DecryptFrom)]`](macro@DecryptFrom) on the record emits it for the
-//!   record's named source type(s).
-//! * [`EncryptInto::encrypt_into`] / [`DecryptInto::decrypt_into`] — blanket
-//!   call-site sugar, the `Into` to the `From` above. Never implemented by
-//!   hand.
+//!   [`#[derive(EncryptFrom)]`](macro@EncryptFrom), which combines the
+//!   fields' pendings with [`Pending::zip`] / [`Pending::map`] exactly as a
+//!   hand-written impl would.
+//! * [`DecryptInto<P, C>`] — the mirror, implemented by the *encrypted* type:
+//!   "`Self` decrypts to the plaintext `P`". Only ciphertext fields
+//!   participate — index terms are one-way by construction.
+//!   [`#[derive(DecryptInto)]`](macro@DecryptInto) on the record emits it.
+//!   `Self` is the record in both traits — the output of encryption, the
+//!   input of decryption — because that is the type a downstream crate can
+//!   implement on; the halves whose `Self` is the plaintext are blanket:
+//! * [`EncryptInto::encrypt_into`] / [`DecryptFrom::decrypt_from`] — call-site
+//!   sugar, the `Into` to `EncryptFrom` and the `From` to `DecryptInto`.
+//!   Never implemented by hand.
 //! * [`EncryptTarget`] / [`DecryptTarget`] — implemented by ciphers; their
 //!   `Output` type decides what a call site gets back. A synchronous cipher
 //!   returns `Result<T, E>` directly; [`StackCipher`] returns a [`Pending`],
@@ -157,7 +159,7 @@
 //! different construction; the block scheme lands as a third-party term type
 //! in `eql-bindings`, built with exactly the recipe above.
 //!
-//! # Records and rows: `#[derive(Encrypted)]`
+//! # Records and rows: `#[derive(EncryptFrom)]`
 //!
 //! A struct of leaves is a *record*; a struct of records, each derived from
 //! one field of the source under its own column context, is a *row*. Both
@@ -165,15 +167,15 @@
 //!
 //! ```
 //! use stack_encrypt::sem::{EqualityTerm, OreTerm};
-//! use stack_encrypt::target::{DecryptInto, EncryptInto};
-//! use stack_encrypt::{DecryptFrom, Encrypted, StackCipher, StackCipherText};
+//! use stack_encrypt::target::EncryptInto;
+//! use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
 //! use stack_kms::FakeDataKeySource;
 //!
 //! /// An encrypted `u32`, queryable by equality and range.
-//! #[derive(Encrypted, DecryptFrom)]
-//! #[encrypted(source = u32)]
+//! #[derive(EncryptFrom, DecryptInto)]
+//! #[stack_encrypt(plaintext = u32)]
 //! struct EncryptedAge {
-//!     #[encrypted(decrypt)]
+//!     #[stack_encrypt(decrypt)]
 //!     c: StackCipherText,
 //!     hm: EqualityTerm,
 //!     ob: OreTerm<u32>,
@@ -185,12 +187,12 @@
 //!     email: String,
 //! }
 //!
-//! #[derive(Encrypted, DecryptFrom)]
-//! #[encrypted(source = User)]
+//! #[derive(EncryptFrom, DecryptInto)]
+//! #[stack_encrypt(plaintext = User)]
 //! struct EncryptedUser {
-//!     #[encrypted(from = age, context = "users/age", decrypt)]
+//!     #[stack_encrypt(from = age, context = "users/age", decrypt)]
 //!     age: EncryptedAge,
-//!     #[encrypted(from = email, context = "users/email", decrypt)]
+//!     #[stack_encrypt(from = email, context = "users/email", decrypt)]
 //!     email: StackCipherText,
 //! }
 //!
@@ -215,7 +217,7 @@
 //! ```
 //!
 //! The attributes, and what the derive commits to, are documented on
-//! [`Encrypted`].
+//! [`EncryptFrom`](macro@EncryptFrom).
 //!
 //! # Plaintext fan-out
 //!
@@ -244,7 +246,7 @@ mod request;
 
 pub use pending::{Pending, PendingFuture};
 pub use request::{Request, Responses};
-pub use stack_encrypt_derive::{DecryptFrom, Encrypted};
+pub use stack_encrypt_derive::{DecryptInto, EncryptFrom};
 
 // =============================================================================
 // Contexts
@@ -266,8 +268,8 @@ pub use stack_encrypt_derive::{DecryptFrom, Encrypted};
 /// build, before any I/O. Containers (`Vec`, `Option`) and derived records
 /// pass the context through to their elements and fields untouched, so a
 /// container of records whose fields carry their own contexts — a
-/// [`Encrypted`]-derived row — is given `()`, and an empty context still
-/// fails the moment a value reaches a leaf.
+/// [`#[derive(EncryptFrom)]`](macro@EncryptFrom) row — is given `()`, and an
+/// empty context still fails the moment a value reaches a leaf.
 ///
 /// "Empty" means *carrying no caller-supplied information*, not merely zero
 /// bytes: `()`, `""`, `b""`, `None`, `Some("")` and `("", "")` all encode to
@@ -517,19 +519,26 @@ pub trait EncryptFrom<S, C: EncryptTarget>: Sized {
         Self: 'a;
 }
 
-/// `Self` is recoverable from the encrypted `S` by a cipher `C` — the mirror
-/// of [`EncryptFrom`], implemented on the *plaintext* type.
+/// `Self` is an encrypted representation that decrypts to `P` by a cipher
+/// `C` — the mirror of [`EncryptFrom`], implemented on the *encrypted* type.
 ///
-/// Takes the source by value: decryption consumes the ciphertext, and index
+/// Both traits put `Self` on the type that is local to the crate defining
+/// the record: it is the *output* of encryption (`EncryptFrom`) and the
+/// *input* of decryption (`DecryptInto`). One encrypted type may decrypt to
+/// several plaintext types (`impl DecryptInto<u32, _>` and
+/// `impl DecryptInto<u64, _>` coexist), and several encrypted types may
+/// decrypt to the same plaintext — each owns its own opening.
+///
+/// Takes `self` by value: decryption consumes the ciphertext, and index
 /// terms (which have no plaintext to recover) simply do not participate.
-pub trait DecryptFrom<S, C: DecryptTarget>: Sized {
-    /// Decrypt `source` into `Self`, authenticating against `context` — which
+pub trait DecryptInto<P, C: DecryptTarget>: Sized {
+    /// Decrypt `self` into `P`, authenticating against `context` — which
     /// must match the context the value was encrypted under.
-    fn decrypt_from<'a, 'c, Ctx>(source: S, cipher: &'a C, context: Ctx) -> C::Output<'a, Self>
+    fn decrypt_into<'a, 'c, Ctx>(self, cipher: &'a C, context: Ctx) -> C::Output<'a, P>
     where
         Ctx: DecryptContext<'c>,
-        S: 'a,
-        Self: 'a;
+        Self: 'a,
+        P: 'a;
 }
 
 /// Call-site sugar: `value.encrypt_into::<Target>(&cipher, context)`.
@@ -576,31 +585,35 @@ impl<S> EncryptInto for S {
     }
 }
 
-/// Call-site sugar: `encrypted.decrypt_into::<T>(&cipher, context)` — the
-/// decrypt-side [`EncryptInto`]. Blanket-implemented; never implemented by
-/// hand.
-pub trait DecryptInto: Sized {
-    /// Decrypt `self` into `T`, authenticating against `context`. See
-    /// [`DecryptFrom`].
-    fn decrypt_into<'a, 'c, T, C, Ctx>(self, cipher: &'a C, context: Ctx) -> C::Output<'a, T>
+/// Call-site sugar: `Plaintext::decrypt_from(encrypted, &cipher, context)` —
+/// the `From` to [`DecryptInto`]'s `Into`, and the decrypt-side
+/// [`EncryptInto`]. Blanket-implemented for every plaintext; never
+/// implemented by hand.
+pub trait DecryptFrom<S, C: DecryptTarget>: Sized {
+    /// Decrypt `source` into `Self`, authenticating against `context`. See
+    /// [`DecryptInto`].
+    fn decrypt_from<'a, 'c, Ctx>(source: S, cipher: &'a C, context: Ctx) -> C::Output<'a, Self>
     where
-        C: DecryptTarget,
-        T: DecryptFrom<Self, C> + 'a,
         Ctx: DecryptContext<'c>,
+        S: 'a,
         Self: 'a;
 }
 
-impl<S> DecryptInto for S {
-    fn decrypt_into<'a, 'c, T, C, Ctx>(self, cipher: &'a C, context: Ctx) -> C::Output<'a, T>
+impl<S, P, C> DecryptFrom<S, C> for P
+where
+    C: DecryptTarget,
+    S: DecryptInto<P, C>,
+{
+    fn decrypt_from<'a, 'c, Ctx>(source: S, cipher: &'a C, context: Ctx) -> C::Output<'a, Self>
     where
-        C: DecryptTarget,
-        T: DecryptFrom<Self, C> + 'a,
         Ctx: DecryptContext<'c>,
+        S: 'a,
         Self: 'a,
     {
-        T::decrypt_from(self, cipher, context)
+        source.decrypt_into(cipher, context)
     }
 }
+
 // =============================================================================
 // Leaf implementations: the record ciphertext
 // =============================================================================
@@ -699,19 +712,19 @@ fn decipher_from_responses(
 /// (`iv` + `tag` are lifted out of the tree during the synchronous build);
 /// the fulfilment binds the retrieved keys back onto the leaves and lets the
 /// value's `Decrypt` impl drive the opening.
-impl<T, K> DecryptFrom<StackCipherText, StackCipher<K>> for T
+impl<T, K> DecryptInto<T, StackCipher<K>> for StackCipherText
 where
     T: Decrypt<'static> + 'static,
 {
-    fn decrypt_from<'a, 'c, Ctx>(
-        source: StackCipherText,
+    fn decrypt_into<'a, 'c, Ctx>(
+        self,
         cipher: &'a StackCipher<K>,
         context: Ctx,
     ) -> Pending<'a, T, K>
     where
         Ctx: DecryptContext<'c>,
-        StackCipherText: 'a,
         Self: 'a,
+        T: 'a,
     {
         let aad = context.into_aad().into_owned();
         // Symmetric with the encrypt side: the target layer never encrypts
@@ -719,9 +732,9 @@ where
         if is_degenerate_aad(aad.as_bytes()) {
             return Pending::failed(cipher, Error::EmptyContext);
         }
-        let requests = retrieve_requests(&source);
+        let requests = retrieve_requests(&self);
         Pending::request(cipher, requests, move |responses| {
-            let decipher = decipher_from_responses(source, responses)?;
+            let decipher = decipher_from_responses(self, responses)?;
             T::decrypt_with_aad(decipher, aad).map_err(Error::from)
         })
     }
@@ -792,23 +805,23 @@ where
 }
 
 /// The column decrypt mirror: one batched retrieve for every row.
-impl<S, T, K> DecryptFrom<Vec<S>, StackCipher<K>> for Vec<T>
+impl<S, T, K> DecryptInto<Vec<T>, StackCipher<K>> for Vec<S>
 where
-    T: DecryptFrom<S, StackCipher<K>>,
+    S: DecryptInto<T, StackCipher<K>>,
 {
-    fn decrypt_from<'a, 'c, Ctx>(
-        source: Vec<S>,
+    fn decrypt_into<'a, 'c, Ctx>(
+        self,
         cipher: &'a StackCipher<K>,
         context: Ctx,
-    ) -> Pending<'a, Self, K>
+    ) -> Pending<'a, Vec<T>, K>
     where
         Ctx: DecryptContext<'c>,
-        S: 'a,
         Self: 'a,
+        Vec<T>: 'a,
     {
-        let items = source
+        let items = self
             .into_iter()
-            .map(|item| T::decrypt_from(item, cipher, context.clone()))
+            .map(|item| item.decrypt_into(cipher, context.clone()))
             .collect();
         Pending::all(cipher, items)
     }
@@ -841,22 +854,23 @@ where
 }
 
 /// The optional decrypt mirror of the [`Option`] encrypt implementation.
-impl<S, T, K> DecryptFrom<Option<S>, StackCipher<K>> for Option<T>
+impl<S, T, K> DecryptInto<Option<T>, StackCipher<K>> for Option<S>
 where
-    T: DecryptFrom<S, StackCipher<K>> + MaybeSend,
+    S: DecryptInto<T, StackCipher<K>>,
+    T: MaybeSend,
 {
-    fn decrypt_from<'a, 'c, Ctx>(
-        source: Option<S>,
+    fn decrypt_into<'a, 'c, Ctx>(
+        self,
         cipher: &'a StackCipher<K>,
         context: Ctx,
-    ) -> Pending<'a, Self, K>
+    ) -> Pending<'a, Option<T>, K>
     where
         Ctx: DecryptContext<'c>,
-        S: 'a,
         Self: 'a,
+        Option<T>: 'a,
     {
-        match source {
-            Some(value) => T::decrypt_from(value, cipher, context).map(Some),
+        match self {
+            Some(value) => value.decrypt_into(cipher, context).map(Some),
             None => Pending::ready(cipher, Ok(None)),
         }
     }

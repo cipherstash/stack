@@ -15,7 +15,7 @@ pub(crate) struct Field {
     pub(crate) local: Ident,
     pub(crate) ty: Type,
     pub(crate) kind: Kind,
-    /// `#[encrypted(decrypt)]`: decryption opens this field.
+    /// `#[stack_encrypt(decrypt)]`: decryption opens this field.
     pub(crate) decrypt: bool,
 }
 
@@ -24,11 +24,11 @@ pub(crate) struct Field {
 pub(crate) enum Kind {
     /// Derived from the source through the field type's own `EncryptFrom`.
     Derived {
-        /// `#[encrypted(context = "...")]`: this field's context, overriding
+        /// `#[stack_encrypt(context = "...")]`: this field's context, overriding
         /// the record's.
         context: Option<LitStr>,
-        /// `#[encrypted(from = field)]`: derived from one field of the source
-        /// rather than the whole source.
+        /// `#[stack_encrypt(from = field)]`: derived from one field of the
+        /// plaintext rather than the whole plaintext.
         from: Option<Ident>,
     },
     /// Not derived: `Default::default()` or the given expression.
@@ -61,9 +61,9 @@ impl Field {
 #[cfg_attr(test, derive(Debug))]
 pub(crate) struct Record {
     pub(crate) krate: Path,
-    /// The source types, one impl each; empty means one impl generic over
-    /// the source.
-    pub(crate) sources: Vec<Type>,
+    /// The plaintext types, one impl each; empty means one impl generic over
+    /// the plaintext.
+    pub(crate) plaintexts: Vec<Type>,
     pub(crate) fields: Vec<Field>,
 }
 
@@ -75,7 +75,7 @@ impl Record {
             Data::Struct(data) => data,
             Data::Enum(_) => return Err(syn::Error::new_spanned(
                 &input.ident,
-                "Encrypted/DecryptFrom cannot be derived for enums: a record is a fixed set of \
+                "EncryptFrom/DecryptInto cannot be derived for enums: a record is a fixed set of \
                      fields derived from one source, and a variant choice has no field to be \
                      derived into. Model the choice explicitly instead, e.g. as a struct of \
                      `Option` fields.",
@@ -83,7 +83,7 @@ impl Record {
             Data::Union(_) => {
                 return Err(syn::Error::new_spanned(
                     &input.ident,
-                    "Encrypted/DecryptFrom cannot be derived for unions",
+                    "EncryptFrom/DecryptInto cannot be derived for unions",
                 ))
             }
         };
@@ -97,19 +97,19 @@ impl Record {
             ));
         }
 
-        if attrs.sources.is_empty() {
+        if attrs.plaintexts.is_empty() {
             if let Some(field) = fields.iter().find(|f| f.from().is_some()) {
                 return Err(syn::Error::new(
                     field.from().map_or_else(Span::call_site, Ident::span),
-                    "`from = ..` reaches into a field of the source, so the source type must be \
-                     named: add `#[encrypted(source = ..)]` to the struct",
+                    "`from = ..` reaches into a field of the plaintext, so the plaintext type must \
+                     be named: add `#[stack_encrypt(plaintext = ..)]` to the struct",
                 ));
             }
         }
 
         Ok(Self {
             krate: attrs.krate,
-            sources: attrs.sources,
+            plaintexts: attrs.plaintexts,
             fields,
         })
     }
@@ -174,7 +174,7 @@ mod tests {
     fn all_default_is_rejected() {
         let err = parse(parse_quote! {
             struct Empty {
-                #[encrypted(default)]
+                #[stack_encrypt(default)]
                 v: u8,
             }
         })
@@ -183,15 +183,15 @@ mod tests {
     }
 
     #[test]
-    fn from_needs_a_named_source() {
+    fn from_needs_a_named_plaintext() {
         let err = parse(parse_quote! {
             struct Row {
-                #[encrypted(from = age)]
+                #[stack_encrypt(from = age)]
                 age: EncryptedAge,
             }
         })
         .unwrap_err();
-        assert!(err.to_string().contains("source type must be named"));
+        assert!(err.to_string().contains("plaintext type must be named"));
     }
 
     #[test]
@@ -199,7 +199,7 @@ mod tests {
         let err = parse(parse_quote! {
             struct Rec {
                 c: StackCipherText,
-                #[encrypted(default, context = "x")]
+                #[stack_encrypt(default, context = "x")]
                 v: u8,
             }
         })
@@ -211,7 +211,7 @@ mod tests {
     fn unknown_attributes_are_rejected() {
         let err = parse(parse_quote! {
             struct Rec {
-                #[encrypted(rename = "x")]
+                #[stack_encrypt(rename = "x")]
                 c: StackCipherText,
             }
         })
@@ -219,7 +219,7 @@ mod tests {
         assert!(err.to_string().contains("unsupported field attribute"));
 
         let err = parse(parse_quote! {
-            #[encrypted(sources = i32)]
+            #[stack_encrypt(source = i32)]
             struct Rec {
                 c: StackCipherText,
             }
@@ -231,17 +231,17 @@ mod tests {
     #[test]
     fn fields_classify() {
         let record = parse(parse_quote! {
-            #[encrypted(source = User, source = Admin)]
+            #[stack_encrypt(plaintext = User, plaintext = Admin)]
             struct Row {
-                #[encrypted(from = age, context = "users/age", decrypt)]
+                #[stack_encrypt(from = age, context = "users/age", decrypt)]
                 age: EncryptedAge,
                 whole: RowTerm,
-                #[encrypted(default = SchemaVersion::V3)]
+                #[stack_encrypt(default = SchemaVersion::V3)]
                 v: SchemaVersion,
             }
         })
         .unwrap();
-        assert_eq!(record.sources.len(), 2);
+        assert_eq!(record.plaintexts.len(), 2);
         assert_eq!(record.fields.len(), 3);
         assert_eq!(record.fields[0].from().unwrap(), "age");
         assert_eq!(record.fields[0].context().unwrap().value(), "users/age");

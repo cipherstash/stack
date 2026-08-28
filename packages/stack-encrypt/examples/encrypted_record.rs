@@ -2,7 +2,7 @@
 //!
 //! The point of target-directed encryption: define a record type that *is*
 //! "the ciphertext plus the index terms this field needs", implement
-//! `EncryptFrom` once (the shape a future `#[derive(Encrypted)]` will
+//! `EncryptFrom` once (the shape `#[derive(EncryptFrom)]` would
 //! emit), and every insert is one `encrypt_into(..).await`. A tiny in-memory
 //! "table" then answers equality and range queries purely by comparing terms
 //! — decrypting only the rows that match.
@@ -27,7 +27,7 @@
 
 use stack_encrypt::sem::{EqualityTerm, OreTerm};
 use stack_encrypt::target::{
-    DecryptContext, DecryptFrom, DecryptInto, EncryptContext, EncryptFrom, EncryptInto, Pending,
+    DecryptContext, DecryptInto, EncryptContext, EncryptFrom, EncryptInto, Pending,
 };
 use stack_encrypt::{StackCipher, StackCipherText};
 
@@ -67,21 +67,21 @@ impl<K> EncryptFrom<u32, StackCipher<K>> for EncryptedInt {
     }
 }
 
-// The decrypt mirror the derive will also write: only the ciphertext field
-// participates (terms are one-way), so it delegates to the ciphertext's own
-// implementation.
-impl<K> DecryptFrom<EncryptedInt, StackCipher<K>> for u32 {
-    fn decrypt_from<'a, 'c, Ctx>(
-        source: EncryptedInt,
+// The decrypt mirror `#[derive(DecryptInto)]` would write: the record owns
+// its opening, and only the ciphertext field participates (terms are
+// one-way), so it delegates to the ciphertext's own implementation.
+impl<K> DecryptInto<u32, StackCipher<K>> for EncryptedInt {
+    fn decrypt_into<'a, 'c, Ctx>(
+        self,
         cipher: &'a StackCipher<K>,
         context: Ctx,
-    ) -> Pending<'a, Self, K>
+    ) -> Pending<'a, u32, K>
     where
         Ctx: DecryptContext<'c>,
-        EncryptedInt: 'a,
         Self: 'a,
+        u32: 'a,
     {
-        source.ciphertext.decrypt_into(cipher, context)
+        self.ciphertext.decrypt_into(cipher, context)
     }
 }
 

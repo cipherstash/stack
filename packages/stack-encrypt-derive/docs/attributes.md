@@ -1,30 +1,30 @@
 # Attributes
 
-All attributes live under `#[encrypted(...)]`.
+All attributes live under `#[stack_encrypt(...)]`.
 
 ## On the struct
 
 | Attribute | Effect |
 |---|---|
-| `source = Type` | The record is an encrypted form of `Type`. Repeatable: one impl per listed type. Omit it for an impl generic over the source (see below). |
+| `plaintext = Type` | The record is an encrypted form of `Type`. Repeatable: one impl per listed type. Omit it for an impl generic over the plaintext (see below). |
 | `crate = "path"` | Where to find `stack_encrypt` in the generated code (default `::stack_encrypt`), for use through a re-export. |
 
-Without `source`, `Encrypted` emits one impl generic over the source, bounded
-so the record accepts exactly the sources *every* derived field accepts —
-`EncryptedAge` below is `EncryptFrom<S, _>` for any `S` that both
-`StackCipherText` and `EqualityTerm` accept. With `source`, the record accepts
-only the listed types (a column that holds integers should not accept a
-`String`), and `DecryptFrom` — which must name the plaintext type — becomes
-possible.
+Without `plaintext`, each derive emits one impl generic over the plaintext,
+bounded by what the fields accept: `EncryptedAge` below is `EncryptFrom<P, _>`
+for any `P` that both `StackCipherText` and `EqualityTerm` accept, and
+`DecryptInto<P, _>` for any `P` its `decrypt` field opens to. With
+`plaintext`, the record accepts only the listed types (a column that holds
+integers should not accept a `String`). Rows — decrypted field by field —
+must name it: the plaintext is rebuilt with a struct literal.
 
 ## On a field
 
 | Attribute | Effect |
 |---|---|
 | `context = "..."` | Derive this field under exactly this context rather than the one the caller passed for the record. A query-side term built under the same literal matches it. |
-| `from = field` | Derive this field from `source.field` rather than from the whole source. Needs `source = ..` on the struct. |
+| `from = field` | Derive this field from `plaintext.field` rather than from the whole plaintext. Needs `plaintext = ..` on the struct. |
 | `default` / `default = expr` | Not derived: filled with `Default::default()` or `expr`. Never encrypted, never authenticated. |
-| `decrypt` | Decryption opens this field (`DecryptFrom` only). One field opened as the whole plaintext, or several with `from = ..` rebuilding the source field by field. |
+| `decrypt` | Decryption opens this field (`DecryptInto` only). One field opened as the whole plaintext, or several with `from = ..` rebuilding the plaintext field by field. |
 
 The record's own context reaches every derived field that has no `context`
 of its own; if every field has one, the record's context is unused and the
