@@ -40,11 +40,12 @@ fn hex(bytes: &[u8]) -> String {
 fn fixture_leaf() -> SealedValue {
     let iv: stack_kms::Iv = *b"0123456789abcdef";
     SealedValue::from_parts(iv, vec![0xAA, 0xBB, 0xCC], vec![0xDE, 0xAD, 0xBE, 0xEF])
+        .expect("fixture tag fits the length field")
 }
 
 #[test]
 fn sealed_value_layout_is_pinned() {
-    let bytes = fixture_leaf().to_bytes().expect("encode leaf");
+    let bytes = fixture_leaf().to_bytes();
 
     // version(01) ‖ iv(16 bytes: ASCII "0123456789abcdef") ‖
     // tag_len(0300 — 3, u16 LE) ‖ tag(aabbcc) ‖ local_ciphertext(deadbeef)
@@ -57,7 +58,7 @@ fn sealed_value_layout_is_pinned() {
 #[test]
 fn sealed_value_from_bytes_inverts_to_bytes() {
     let original = fixture_leaf();
-    let bytes = original.to_bytes().expect("encode leaf");
+    let bytes = original.to_bytes();
     let decoded = SealedValue::from_bytes(&bytes).expect("decode leaf");
 
     assert_eq!(decoded.iv(), original.iv());
@@ -71,7 +72,7 @@ fn sealed_value_from_bytes_inverts_to_bytes() {
 
 #[test]
 fn sealed_value_rejects_unknown_version() {
-    let mut bytes = fixture_leaf().to_bytes().expect("encode leaf");
+    let mut bytes = fixture_leaf().to_bytes();
     bytes[0] = 2;
     assert!(matches!(
         SealedValue::from_bytes(&bytes),
@@ -81,7 +82,7 @@ fn sealed_value_rejects_unknown_version() {
 
 #[test]
 fn sealed_value_rejects_truncation() {
-    let bytes = fixture_leaf().to_bytes().expect("encode leaf");
+    let bytes = fixture_leaf().to_bytes();
 
     // Every prefix shorter than the tag's end is truncated: empty, mid-iv,
     // mid-length-field, and mid-tag. (Anything at or past the tag's end
@@ -101,14 +102,16 @@ fn sealed_value_rejects_truncation() {
 }
 
 #[test]
-fn sealed_value_rejects_oversized_tag_on_encode() {
-    let leaf = SealedValue::from_parts(
+fn sealed_value_rejects_oversized_tag_on_construction() {
+    // `to_bytes` is infallible because the tag can never outgrow the `u16`
+    // length field: the only constructor that could admit one rejects it.
+    let result = SealedValue::from_parts(
         [0; 16],
         vec![0; usize::from(u16::MAX) + 1],
         vec![0xDE, 0xAD],
     );
     assert!(matches!(
-        leaf.to_bytes(),
+        result,
         Err(LeafBytesError::TagTooLong(len)) if len == usize::from(u16::MAX) + 1
     ));
 }
@@ -125,7 +128,7 @@ async fn sealed_leaf_survives_persistence_via_bytes() {
         CipherText::Single(leaf) => leaf,
         other => panic!("expected a Single leaf, got {other:?}"),
     };
-    let bytes = leaf.to_bytes().expect("encode leaf");
+    let bytes = leaf.to_bytes();
     let restored = SealedValue::from_bytes(&bytes).expect("decode leaf");
 
     let pt: String = cipher
@@ -188,8 +191,9 @@ async fn ore_term_encoding_is_the_raw_cllw_bytes() {
         .expect("ore term");
 
     // Byte-identical to the raw CLLW output pinned in term_bytes.rs — the
-    // wrapper adds no framing, so these bytes compare against columns the
-    // EQL path wrote.
+    // wrapper adds no framing. Same *shape* as the CLLW bytes EQL stores, but
+    // not comparable with rows cipherstash-client wrote: the key derivations
+    // differ (see the `sem` module docs).
     assert_eq!(
         hex(term.as_bytes()),
         "d757854cffc68e9f3dfa9dba7ec400a30c80dd57122ebbc064eeff5a81069fc7"

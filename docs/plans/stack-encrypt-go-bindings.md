@@ -239,7 +239,10 @@ The plan as written before the work:
 version byte bound into the leaf AAD via a new labelled derivation
 (`PAE("stack-encrypt/leaf", version, derived_aad, tag)` — replacing the
 unlabelled `(aad, tag)` tuple, with the derivation bytes pinned by a unit
-test); term encodings frozen as raw-bytes (equality: the 32 PRF bytes;
+test; **breaking**: leaves sealed under the phase-1 AAD carry no version byte,
+so they cannot be opened and fail with a plain AEAD error rather than an
+`UnknownVersion` — acceptable because the crate is `publish = false` and only
+dev-persisted data exists); term encodings frozen as raw-bytes (equality: the 32 PRF bytes;
 ORE/OPE: the raw CLLW ciphertext, byte-identical to what EQL hex-encodes
 into `hm`/`oc`/`op`; match: LE `u16` positions — EQL sends `bf` as a JSON
 integer array, so the byte-string form is stack-encrypt's own) with

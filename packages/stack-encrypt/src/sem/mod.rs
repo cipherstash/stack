@@ -81,15 +81,20 @@
 //! * [`OreTerm`] / [`OpeTerm`] — the raw CLLW ciphertext bytes, unframed
 //!   ([`as_bytes`](OreTerm::as_bytes) / [`from_bytes`](OreTerm::from_bytes)).
 //!
-//! The equality and ORE/OPE encodings are byte-identical to what the EQL
-//! layer hex-encodes into its `hm` / `oc` / `op` payload fields (EQL's
-//! hex and JSON framing sit *above* these bytes), so terms written through a
-//! language binding compare against rows the Rust/EQL path wrote. There is
-//! deliberately no version byte or framing here: a term is an opaque
-//! comparand, its derivation is already versioned by the PAE domain labels
-//! above, and Postgres compares these columns byte-wise. The pins in
-//! `tests/term_bytes.rs` and `tests/frozen_bytes.rs` hold both the
-//! derivations and the encodings in place.
+//! These share the *shape* of the v1 / `cipherstash-client` encodings — a
+//! 32-byte HMAC for equality, raw CLLW bytes for ORE/OPE, the same bytes EQL
+//! hex-encodes into its `hm` / `oc` / `op` fields with its hex and JSON
+//! framing sitting *above* them. The **values are not comparable**: as noted
+//! above the derivations differ, and stack-encrypt has no EQL integration of
+//! its own. A term compares only against terms produced by the same
+//! stack-encrypt keyset — never against a row `cipherstash-client` or EQL v1
+//! wrote. What the shared shape buys is a decoder: a language binding reading
+//! these bytes needs no framing of its own. There is deliberately no version
+//! byte or framing here: a term is an opaque comparand, its derivation is
+//! already versioned by the PAE domain labels above, and Postgres compares
+//! these columns byte-wise. The pins in `tests/term_bytes.rs` and
+//! `tests/frozen_bytes.rs` hold both the derivations and the encodings in
+//! place.
 
 mod tokenize;
 
@@ -642,8 +647,9 @@ macro_rules! term_wrapper {
             T::Output: AsRef<[u8]>,
         {
             /// The frozen byte encoding: the raw CLLW ciphertext bytes,
-            /// unframed — byte-identical to what the EQL layer hex-encodes
-            /// (see the [module docs](self#byte-encodings)).
+            /// unframed — the same *shape* the EQL layer hex-encodes, but
+            /// not comparable with rows it wrote (see the
+            /// [module docs](self#byte-encodings)).
             pub fn as_bytes(&self) -> &[u8] {
                 self.0.as_ref()
             }

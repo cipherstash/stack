@@ -547,7 +547,20 @@ impl<K: DataKeySource> StackCipher<K> {
 /// remain for callers that manage their own storage format; they carry the
 /// same fields, but their wire form is the serialiser's, not a commitment
 /// of this crate.
+///
+/// # Breaking change
+///
+/// Leaves sealed *before* this format landed used an unlabelled
+/// `PAE(aad, tag)` leaf AAD with no version byte. They cannot be opened by
+/// this build — however they were persisted (serde, `into_parts`, or raw
+/// bytes) they fail AEAD verification with a plain authentication error,
+/// indistinguishable from tampering, because there is no version byte in the
+/// old form to raise [`LeafBytesError::UnknownVersion`] against. Acceptable
+/// only because the crate is `publish = false` and only dev-persisted data
+/// exists; from `FORMAT_VERSION` onwards a format move is signalled by the
+/// version byte instead.
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(try_from = "SealedValueRepr")]
 pub struct SealedValue {
     /// ZeroKMS IV: identifies the data key for retrieval.
     iv: stack_kms::Iv,
@@ -577,7 +590,8 @@ pub enum LeafBytesError {
     Truncated,
     /// The key tag does not fit the format's `u16` length field. Never
     /// produced by sealing (ZeroKMS tags are tens of bytes); only reachable
-    /// through [`SealedValue::from_parts`] with an oversized tag.
+    /// through [`SealedValue::from_parts`] or `serde` deserialisation with an
+    /// oversized tag — both reject it, so a live `SealedValue` always encodes.
     #[error("key tag of {0} bytes exceeds the format's u16 length field")]
     TagTooLong(usize),
 }
@@ -593,11 +607,15 @@ impl SealedValue {
     /// Encode into the frozen v1 byte layout — see the type-level docs for
     /// the format. The inverse of [`from_bytes`](Self::from_bytes).
     ///
-    /// Fails only with [`LeafBytesError::TagTooLong`], which no leaf this
-    /// crate sealed can trigger.
-    pub fn to_bytes(&self) -> Result<Vec<u8>, LeafBytesError> {
-        let tag_len = u16::try_from(self.tag.len())
-            .map_err(|_| LeafBytesError::TagTooLong(self.tag.len()))?;
+    /// Infallible: every way of building a `SealedValue` rejects a tag too
+    /// long for the `u16` length field ([`LeafBytesError::TagTooLong`]), so a
+    /// value that exists always encodes.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        // Exact by the `tag_fits_length_field` check every constructor
+        // applies; sealing never comes close (ZeroKMS tags are tens of bytes).
+        // The saturating fallback is unreachable, and asserted so in tests.
+        let tag_len = u16::try_from(self.tag.len()).unwrap_or(u16::MAX);
+        debug_assert_eq!(usize::from(tag_len), self.tag.len());
         let ciphertext = self.ciphertext.as_ref();
         let mut out = Vec::with_capacity(1 + self.iv.len() + 2 + self.tag.len() + ciphertext.len());
         out.push(Self::FORMAT_VERSION);
@@ -605,7 +623,7 @@ impl SealedValue {
         out.extend_from_slice(&tag_len.to_le_bytes());
         out.extend_from_slice(&self.tag);
         out.extend_from_slice(ciphertext);
-        Ok(out)
+        out
     }
 
     /// Decode the frozen v1 byte layout — the inverse of
@@ -637,14 +655,32 @@ impl SealedValue {
         })
     }
 
+    /// The one invariant that makes [`to_bytes`](Self::to_bytes) infallible:
+    /// the key tag must fit the format's `u16` length field.
+    fn tag_fits_length_field(tag: &[u8]) -> Result<(), LeafBytesError> {
+        if tag.len() > usize::from(u16::MAX) {
+            return Err(LeafBytesError::TagTooLong(tag.len()));
+        }
+        Ok(())
+    }
+
     /// Rebuild a leaf from its persisted parts — the inverse of
     /// [`into_parts`](Self::into_parts).
-    pub fn from_parts(iv: stack_kms::Iv, tag: Vec<u8>, ciphertext: Vec<u8>) -> Self {
-        Self {
+    ///
+    /// Fails with [`LeafBytesError::TagTooLong`] if `tag` does not fit the
+    /// byte format's `u16` length field. Structural only: nothing about the
+    /// parts is trusted until the leaf decrypts.
+    pub fn from_parts(
+        iv: stack_kms::Iv,
+        tag: Vec<u8>,
+        ciphertext: Vec<u8>,
+    ) -> Result<Self, LeafBytesError> {
+        Self::tag_fits_length_field(&tag)?;
+        Ok(Self {
             iv,
             tag,
             ciphertext: LocalCipherText::from(ciphertext),
-        }
+        })
     }
 
     /// Decompose into `(iv, tag, ciphertext)` for persistence.
@@ -678,13 +714,43 @@ impl Clone for SealedValue {
     }
 }
 
-/// [`SealedValue::from_bytes`] as a std conversion, for generic codecs
-/// bounded on `TryFrom`.
+/// [`SealedValue::from_bytes`] as a std conversion — the same decoder, for
+/// callers who prefer the std trait.
 impl TryFrom<&[u8]> for SealedValue {
     type Error = LeafBytesError;
 
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         Self::from_bytes(bytes)
+    }
+}
+
+/// Deserialisation shadow for [`SealedValue`]: `serde` bypasses
+/// [`SealedValue::from_parts`], so the tag-length invariant
+/// [`to_bytes`](SealedValue::to_bytes) relies on is re-checked here. Same
+/// field names as the derive, so the wire form is unchanged.
+#[derive(Deserialize)]
+#[serde(rename = "SealedValue")]
+struct SealedValueRepr {
+    iv: stack_kms::Iv,
+    tag: Vec<u8>,
+    ciphertext: LocalCipherText,
+}
+
+impl TryFrom<SealedValueRepr> for SealedValue {
+    type Error = LeafBytesError;
+
+    fn try_from(repr: SealedValueRepr) -> Result<Self, Self::Error> {
+        let SealedValueRepr {
+            iv,
+            tag,
+            ciphertext,
+        } = repr;
+        Self::tag_fits_length_field(&tag)?;
+        Ok(Self {
+            iv,
+            tag,
+            ciphertext,
+        })
     }
 }
 
@@ -878,6 +944,17 @@ fn leaf_cipher(key: &DataKey) -> Result<Aes256Cipher, Unspecified> {
 ///
 /// The domain label deliberately carries no `/v1` suffix: the version is a
 /// *parameter* here, not part of the label.
+///
+/// # Breaking change
+///
+/// This labelled four-piece derivation replaced an unlabelled `PAE(aad, tag)`
+/// tuple. A leaf sealed under the old AAD and persisted (via serde or
+/// [`SealedValue::into_parts`]) can no longer be opened: it fails
+/// authentication in `open_leaf` with a plain AEAD error, indistinguishable
+/// from tampering. There is deliberately no `UnknownVersion` signal for it —
+/// the old form carried no version byte to detect. This is acceptable
+/// because the crate is `publish = false` and only dev-persisted data
+/// exists; re-encrypt anything that matters.
 fn leaf_aad(aad: &Aad<'_>, tag: &[u8]) -> Aad<'static> {
     const LEAF_AAD_DOMAIN: &[u8] = b"stack-encrypt/leaf";
     Aad::pae(&[
