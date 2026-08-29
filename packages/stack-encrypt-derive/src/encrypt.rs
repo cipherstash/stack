@@ -357,6 +357,27 @@ mod tests {
     }
 
     #[test]
+    #[rustfmt::skip]
+    fn a_row_needs_no_attributes_on_its_fields() {
+        let expansion = expand(parse_quote! {
+            #[stash(row = User)]
+            struct EncryptedUser {
+                age: EncryptedAge,
+                email: StackCipherText,
+            }
+        });
+        assert_contains(&expansion, quote! {
+            <EncryptedAge as ::stack_encrypt::target::EncryptFrom<_, ::stack_encrypt::StackCipher<__K>, _>>::encrypt_from(
+                &__source.age, __cipher, "user/age",
+            )
+        });
+        assert_contains(&expansion, quote!(&__source.email, __cipher, "user/email",));
+        assert_contains(&expansion, quote! {
+            impl<__K> ::stack_encrypt::target::EncryptFrom<User, ::stack_encrypt::StackCipher<__K>, ()> for EncryptedUser
+        });
+    }
+
+    #[test]
     fn tuple_plaintexts_are_reached_by_index() {
         let expansion = expand(parse_quote! {
             #[stash(plaintext = Pair)]

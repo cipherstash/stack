@@ -1,0 +1,11 @@
+error: `row` and `plaintext` are two ways of naming the plaintext: a row *is* a record of its struct's fields, so give `row = ..` alone
+ --> tests/ui/row_with_plaintext.rs:8:15
+  |
+8 | #[stash(row = User, plaintext = User)]
+  |               ^^^^
+
+error: `plaintext` given here
+ --> tests/ui/row_with_plaintext.rs:8:33
+  |
+8 | #[stash(row = User, plaintext = User)]
+  |                                 ^^^^

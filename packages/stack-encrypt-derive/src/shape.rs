@@ -5,7 +5,7 @@ use quote::quote;
 use syn::spanned::Spanned;
 use syn::{
     parse_quote, Data, DeriveInput, Expr, Fields, Generics, Ident, LitStr, Member, Path, Result,
-    Type,
+    Type, TypePath,
 };
 
 use crate::attrs::{ContainerAttrs, FieldAttrs};
@@ -168,7 +168,12 @@ impl Record {
             }
         };
 
-        let fields = collect(&data.fields)?;
+        let row = attrs.row.as_ref().map(row_name).transpose()?;
+        let fields = collect(&data.fields, row.as_deref())?;
+        let plaintexts = match attrs.row {
+            Some(row) => vec![row],
+            None => attrs.plaintexts,
+        };
 
         if !fields.iter().any(Field::is_derived) {
             return Err(syn::Error::new_spanned(
@@ -177,7 +182,7 @@ impl Record {
             ));
         }
 
-        if attrs.plaintexts.is_empty() {
+        if plaintexts.is_empty() {
             if let Some(field) = fields.iter().find(|f| f.from().is_some()) {
                 return Err(syn::Error::new(
                     field.from().map_or_else(Span::call_site, Spanned::span),
@@ -189,10 +194,43 @@ impl Record {
 
         Ok(Self {
             krate: attrs.krate,
-            plaintexts: attrs.plaintexts,
+            plaintexts,
             fields,
         })
     }
+}
+
+/// The first half of a row field's inferred context: the row struct's own
+/// name, in `snake_case` (`UserProfile` becomes `user_profile`). Generic
+/// arguments and the path to the type are not part of it.
+fn row_name(ty: &Type) -> Result<String> {
+    let Type::Path(TypePath { path, .. }) = ty else {
+        unreachable!("`ContainerAttrs::parse` accepts only a path type for `row`")
+    };
+    let segment = path
+        .segments
+        .last()
+        .ok_or_else(|| syn::Error::new_spanned(ty, "`row` must name a struct"))?;
+    Ok(snake_case(&segment.ident.to_string()))
+}
+
+/// `UserProfile` → `user_profile`, `HTTPHeader` → `http_header`, `user` →
+/// `user`. Boundaries are a lower-to-upper step and the last capital of a
+/// run followed by a lowercase letter.
+fn snake_case(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut out = String::with_capacity(name.len() + 4);
+    for (i, &c) in chars.iter().enumerate() {
+        if c.is_uppercase() && i > 0 {
+            let prev = chars[i - 1];
+            let next_lower = chars.get(i + 1).is_some_and(|n| n.is_lowercase());
+            if prev.is_lowercase() || prev.is_ascii_digit() || (prev.is_uppercase() && next_lower) {
+                out.push('_');
+            }
+        }
+        out.extend(c.to_lowercase());
+    }
+    out
 }
 
 /// The demand a derive places on the impl's context parameter, beyond what
@@ -308,7 +346,10 @@ pub(crate) fn zip_fields(
     quote!(#chain.map(|#pattern| #build))
 }
 
-fn collect(fields: &Fields) -> Result<Vec<Field>> {
+/// The fields, with what a row (`row` is its snake-cased name) fills in:
+/// `from` is the field's own name and `context` is `"<row>/<from>"`, each
+/// unless the field gives its own.
+fn collect(fields: &Fields, row: Option<&str>) -> Result<Vec<Field>> {
     fields
         .iter()
         .enumerate()
@@ -329,9 +370,25 @@ fn collect(fields: &Fields) -> Result<Vec<Field>> {
                     }
                     Kind::Default(default)
                 }
-                None => Kind::Derived {
-                    context: attrs.context,
-                    from: attrs.from,
+                None => match row {
+                    Some(row) => {
+                        let from = attrs.from.unwrap_or_else(|| member.clone());
+                        let context = attrs.context.unwrap_or_else(|| {
+                            let column = match &from {
+                                Member::Named(ident) => ident.to_string(),
+                                Member::Unnamed(index) => index.index.to_string(),
+                            };
+                            LitStr::new(&format!("{row}/{column}"), member.span())
+                        });
+                        Kind::Derived {
+                            context: Some(context),
+                            from: Some(from),
+                        }
+                    }
+                    None => Kind::Derived {
+                        context: attrs.context,
+                        from: attrs.from,
+                    },
                 },
             };
             Ok(Field {
@@ -352,6 +409,14 @@ mod tests {
 
     fn parse(input: DeriveInput) -> Result<Record> {
         Record::parse(&input)
+    }
+
+    /// The field's literal context, for assertions.
+    fn literal(field: &Field) -> String {
+        match field.field_context() {
+            FieldContext::Literal(lit) => lit.value(),
+            other => panic!("expected a literal context, got {other:?}"),
+        }
     }
 
     #[test]
@@ -568,6 +633,99 @@ mod tests {
         .unwrap();
         assert!(matches!(record.fields[0].from(), Some(Member::Unnamed(i)) if i.index == 0));
         assert!(matches!(record.fields[1].from(), Some(Member::Unnamed(i)) if i.index == 1));
+    }
+
+    #[test]
+    fn a_row_fills_in_from_and_context() {
+        let record = parse(parse_quote! {
+            #[stash(row = crate::model::UserProfile<T>)]
+            struct EncryptedUser {
+                age: EncryptedAge,
+                #[stash(from = email_address)]
+                email: StackCipherText,
+                #[stash(context = "legacy/name")]
+                name: StackCipherText,
+                #[stash(default)]
+                version: u8,
+            }
+        })
+        .unwrap();
+        assert_eq!(record.plaintexts.len(), 1);
+        let (age, email, name, version) = (
+            &record.fields[0],
+            &record.fields[1],
+            &record.fields[2],
+            &record.fields[3],
+        );
+        // Own name, and both names in the context — the type's snake-cased.
+        assert!(matches!(age.from(), Some(Member::Named(m)) if m == "age"));
+        assert_eq!(literal(age), "user_profile/age");
+        // `from` overrides the field; the context follows the plaintext field.
+        assert!(matches!(email.from(), Some(Member::Named(m)) if m == "email_address"));
+        assert_eq!(literal(email), "user_profile/email_address");
+        // `context` is taken verbatim.
+        assert!(matches!(name.from(), Some(Member::Named(m)) if m == "name"));
+        assert_eq!(literal(name), "legacy/name");
+        assert!(!version.is_derived());
+    }
+
+    #[test]
+    fn a_tuple_row_is_reached_and_named_by_index() {
+        let record = parse(parse_quote! {
+            #[stash(row = Reading)]
+            struct EncryptedReading(EncryptedAge, StackCipherText);
+        })
+        .unwrap();
+        assert!(matches!(record.fields[1].from(), Some(Member::Unnamed(i)) if i.index == 1));
+        assert_eq!(literal(&record.fields[0]), "reading/0");
+        assert_eq!(literal(&record.fields[1]), "reading/1");
+    }
+
+    #[test]
+    fn row_and_plaintext_are_exclusive() {
+        let err = parse(parse_quote! {
+            #[stash(row = User, plaintext = User)]
+            struct Rec {
+                age: EncryptedAge,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("give `row = ..` alone"));
+    }
+
+    #[test]
+    fn a_row_must_name_a_struct_directly() {
+        let err = parse(parse_quote! {
+            #[stash(row = &User)]
+            struct Rec {
+                age: EncryptedAge,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("must name a struct directly"));
+
+        let err = parse(parse_quote! {
+            #[stash(row = <T as Trait>::Row)]
+            struct Rec {
+                age: EncryptedAge,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("must name a struct directly"));
+    }
+
+    #[test]
+    fn type_names_snake_case_by_word_boundary() {
+        for (name, expected) in [
+            ("User", "user"),
+            ("UserProfile", "user_profile"),
+            ("HTTPHeader", "http_header"),
+            ("Address2Line", "address2_line"),
+            ("user", "user"),
+            ("ABC", "abc"),
+        ] {
+            assert_eq!(snake_case(name), expected, "{name}");
+        }
     }
 
     #[test]

@@ -65,7 +65,12 @@
 //! # Rows
 //!
 //! One level up, the same derive: a struct whose fields are each derived from
-//! a *field* of the plaintext, under a context of their own.
+//! a *field* of the plaintext, under a context of their own. `row = User`
+//! says so once, for every field: `age` is derived from `user.age` under
+//! `"user/age"`, `email` from `user.email` under `"user/email"` — the
+//! struct's name and the field's, nothing invented. Attributes on the fields
+//! are for the exceptions: `from = ..` when the names differ, `context =
+//! ".."` to pin a context by hand.
 //!
 //! ```
 //! # use stack_encrypt::sem::{EqualityTerm, OreTerm};
@@ -86,11 +91,9 @@
 //! }
 //!
 //! #[derive(EncryptFrom, DecryptInto)]
-//! #[stash(plaintext = User)]
+//! #[stash(row = User)]
 //! struct EncryptedUser {
-//!     #[stash(from = age, context = "users/age")]
 //!     age: EncryptedAge,
-//!     #[stash(from = email, context = "users/email")]
 //!     email: StackCipherText,
 //! }
 //!
@@ -107,14 +110,21 @@
 //! # }).unwrap();
 //! ```
 //!
-//! A `from` field's context is the *column's* identity, which is why it is a
-//! literal on the field rather than something composed from the row's
-//! context. A row takes no context from the caller at all — its impls are
-//! for `()` exactly, which is what makes the context-free `encrypt_into` /
-//! `decrypt_from` the forms that compile against it. A `from` field without
-//! a literal is handed `()` too, and its type decides whether that will do:
-//! a nested row accepts it; a leaf refuses it, at the field, until it is
-//! given a `context`.
+//! A row field's context is the *column's* identity — `"user/age"` is what a
+//! query site derives a probe under — which is why it is a literal per field
+//! rather than something composed from a context the caller passes. A row
+//! takes no context from the caller at all: its impls are for `()` exactly,
+//! which is what makes the context-free `encrypt_into` / `decrypt_from` the
+//! forms that compile against it. A `plaintext = ..` record's `from` field
+//! with no `context` is handed `()` too, and its type decides whether that
+//! will do: a nested row accepts it; a leaf refuses it, at the field, until
+//! it is given a `context`.
+//!
+//! Because the inferred context is derived from Rust names, renaming the
+//! plaintext struct or one of its fields changes the AAD every stored
+//! ciphertext in that column was sealed under, and they stop decrypting.
+//! Pin the old value with `context = ".."` before such a rename; the
+//! [attributes](#rows) section says more.
 //!
 //! # What the derive commits to
 //!

@@ -579,11 +579,13 @@ rebuilds it with a struct literal; a record opened as a whole may leave it
 off and decrypt to whatever its ciphertext field opens to.
 
 The derives are named after the trait they emit, as serde's are, and the
-attribute after the crate: `#[stash(plaintext = ..)]`,
-`#[stash(from = .., context = "..")]`. Which field decryption opens is not
-an attribute but a property of the field types (`Decryptable`), checked at
-compile time to be exactly one; `decrypt` is the override for records the
-types cannot settle. First shipped as
+attribute after the crate: `#[stash(plaintext = ..)]` for a record,
+`#[stash(row = ..)]` for a row — which infers every field's `from` (its own
+name) and context (`"<snake_case type>/<plaintext field>"`), with
+`#[stash(from = .., context = "..")]` as the per-field overrides. Which
+field decryption opens is not an attribute either but a property of the
+field types (`Decryptable`), checked at compile time to be exactly one;
+`decrypt` is the override for records the types cannot settle. First shipped as
 `#[derive(Encrypted, Decrypted)]` with `#[encrypted(source = ..)]`: the
 decrypt macro sat on the record but emitted `DecryptFrom<Record> for
 Plaintext`, a trait whose `Self` was not the annotated type, and the

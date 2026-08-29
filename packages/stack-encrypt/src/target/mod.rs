@@ -214,7 +214,10 @@
 //!
 //! A struct of leaves is a *record*; a struct of records, each derived from
 //! one field of the source under its own column context, is a *row*. Both
-//! are the same derive, and both settle as one batched call:
+//! are the same derive, and both settle as one batched call. A row's
+//! contexts are inferred from the names — `#[stash(row = User)]` derives
+//! `age` from `user.age` under `"user/age"` — and overridden per field where
+//! that is not wanted:
 //!
 //! ```
 //! use stack_encrypt::sem::{EqualityTerm, OreTerm};
@@ -237,12 +240,12 @@
 //!     email: String,
 //! }
 //!
+//! /// A row of `User`: each field from the plaintext field of its own name,
+//! /// under the context `"user/<field>"` — no attribute needed.
 //! #[derive(EncryptFrom, DecryptInto)]
-//! #[stash(plaintext = User)]
+//! #[stash(row = User)]
 //! struct EncryptedUser {
-//!     #[stash(from = age, context = "users/age")]
 //!     age: EncryptedAge,
-//!     #[stash(from = email, context = "users/email")]
 //!     email: StackCipherText,
 //! }
 //!
@@ -257,9 +260,9 @@
 //! // Every field names its own context, so the row needs none from the
 //! // caller — and the context-free forms are the only ones that apply.
 //! let row: EncryptedUser = user.encrypt_into(&cipher).await?;
-//! // A query site derives the same term under the same literal.
+//! // A query site derives the same term under the column's context.
 //! let probe: EqualityTerm = 42u32
-//!     .encrypt_into_with_context(&cipher, "users/age")
+//!     .encrypt_into_with_context(&cipher, "user/age")
 //!     .await?;
 //! assert_eq!(row.age.hm, probe);
 //!

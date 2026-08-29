@@ -12,12 +12,18 @@ pub(crate) struct ContainerAttrs {
     /// each, from repeated `#[stash(plaintext = Type)]`. Empty means
     /// a single impl generic over the plaintext.
     pub(crate) plaintexts: Vec<Type>,
+    /// `#[stash(row = Type)]`: the record is a row of the struct `Type`.
+    /// Every derived field is derived from the plaintext field of its own
+    /// name (`from`), under a context made of both names, unless the field
+    /// says otherwise. Exclusive with `plaintext`.
+    pub(crate) row: Option<Type>,
 }
 
 impl ContainerAttrs {
     pub(crate) fn parse(attrs: &[Attribute]) -> Result<Self> {
         let mut krate: Option<Path> = None;
         let mut plaintexts: Vec<Type> = Vec::new();
+        let mut row: Option<Type> = None;
 
         for attr in attrs.iter().filter(|a| a.path().is_ident("stash")) {
             attr.parse_nested_meta(|meta| {
@@ -27,6 +33,32 @@ impl ContainerAttrs {
                     }
                     let lit: LitStr = meta.value()?.parse()?;
                     krate = Some(lit.parse()?);
+                    return Ok(());
+                }
+                if meta.path.is_ident("row") {
+                    let ty: Type = meta.value()?.parse()?;
+                    // A row reaches into the plaintext by field name and
+                    // rebuilds it with a struct literal, so the type must be
+                    // a struct named directly; its last segment also names
+                    // the fields' contexts.
+                    let named_struct = match &ty {
+                        Type::Path(path) => path.qself.is_none(),
+                        _ => false,
+                    };
+                    if !named_struct {
+                        return Err(syn::Error::new_spanned(
+                            &ty,
+                            "`row` must name a struct directly (`row = User`): its fields are \
+                             reached by name and its name is part of every field's context",
+                        ));
+                    }
+                    if row.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            &ty,
+                            "`row` is given twice; a row has one plaintext struct",
+                        ));
+                    }
+                    row = Some(ty);
                     return Ok(());
                 }
                 if meta.path.is_ident("plaintext") {
@@ -54,14 +86,26 @@ impl ContainerAttrs {
                     return Ok(());
                 }
                 Err(meta.error(
-                    "unsupported container attribute; expected `plaintext = Type` or `crate = \"...\"`",
+                    "unsupported container attribute; expected `plaintext = Type`, `row = Type` \
+                     or `crate = \"...\"`",
                 ))
             })?;
+        }
+
+        if let (Some(row), Some(plaintext)) = (&row, plaintexts.first()) {
+            let mut err = syn::Error::new_spanned(
+                row,
+                "`row` and `plaintext` are two ways of naming the plaintext: a row *is* a record \
+                 of its struct's fields, so give `row = ..` alone",
+            );
+            err.combine(syn::Error::new_spanned(plaintext, "`plaintext` given here"));
+            return Err(err);
         }
 
         Ok(Self {
             krate: krate.unwrap_or_else(|| syn::parse_quote!(::stack_encrypt)),
             plaintexts,
+            row,
         })
     }
 }
@@ -74,7 +118,8 @@ pub(crate) struct FieldAttrs {
     pub(crate) context: Option<LitStr>,
     /// `#[stash(from = field)]` / `#[stash(from = 0)]`: derive
     /// this field from one field of the plaintext rather than from the whole
-    /// plaintext.
+    /// plaintext. In a row, the override for a field whose name differs
+    /// from its plaintext field's.
     pub(crate) from: Option<Member>,
     /// `#[stash(default)]` / `#[stash(default = expr)]`: not derived;
     /// filled with `Default::default()` or the expression.

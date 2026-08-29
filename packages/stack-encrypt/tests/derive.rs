@@ -343,17 +343,19 @@ struct User {
     email: String,
 }
 
+/// A row: every field is derived from the plaintext field of its own name,
+/// under the context `"<row>/<field>"` — `"user/age"`, `"user/email"` — with
+/// no attribute on the field. `from` is the override for a name that
+/// differs; the context then follows the plaintext field.
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(plaintext = User)]
+#[stash(row = User)]
 struct EncryptedUser {
     /// A record inside a row: recursion, not a second mechanism.
-    #[stash(from = age, context = "users/age")]
     age: EncryptedAge,
-    #[stash(from = email, context = "users/email")]
     email: StackCipherText,
     /// A second field from the same plaintext field — a term alongside the
     /// ciphertext, not opened on decrypt.
-    #[stash(from = email, context = "users/email")]
+    #[stash(from = email)]
     email_eq: EqualityTerm,
     /// Not derived: filled in, never encrypted.
     #[stash(default = 3)]
@@ -383,15 +385,15 @@ async fn a_row_is_one_batched_call_and_rebuilds_its_plaintext() {
     assert_eq!(row.version, 3);
 
     // Each field's terms are what a query site derives under the column's
-    // literal context.
+    // inferred context: the row's name and the plaintext field's.
     let age_hm: EqualityTerm = 42u32
-        .encrypt_into_with_context(&generator, "users/age")
+        .encrypt_into_with_context(&generator, "user/age")
         .await
         .unwrap();
     assert_eq!(row.age.hm, age_hm);
     let email_hm: EqualityTerm = user()
         .email
-        .encrypt_into_with_context(&generator, "users/email")
+        .encrypt_into_with_context(&generator, "user/email")
         .await
         .unwrap();
     assert_eq!(row.email_eq, email_hm);
@@ -433,7 +435,7 @@ async fn a_row_field_opened_under_the_wrong_context_fails() {
     let row: EncryptedUser = user().encrypt_into(&cipher).await.unwrap();
     // The literal contexts are baked into the impl, so a transplanted field
     // is caught by the AAD exactly as for a leaf.
-    let transplanted: Result<u32, _> = row.age.c.decrypt_into(&cipher, "users/height").await;
+    let transplanted: Result<u32, _> = row.age.c.decrypt_into(&cipher, "user/height").await;
     assert!(matches!(transplanted, Err(Error::Aead)));
 }
 
@@ -470,7 +472,7 @@ async fn a_row_nests_in_a_row_without_a_context() {
 
     // The inner row's fields are still under their own literals.
     let age_hm: EqualityTerm = 42u32
-        .encrypt_into_with_context(&generator, "users/age")
+        .encrypt_into_with_context(&generator, "user/age")
         .await
         .unwrap();
     assert_eq!(row.user.age.hm, age_hm);
@@ -480,14 +482,22 @@ async fn a_row_nests_in_a_row_without_a_context() {
     assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 1);
 }
 
-/// A tuple-struct plaintext is reached by index: `from = 0`.
+/// A tuple-struct plaintext is reached by index — inferred for a tuple row,
+/// `from = 0` when the row has named fields — and named by it in the
+/// context: `"reading/0"`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Reading(u32, String);
 
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(plaintext = Reading)]
-struct EncryptedReading {
-    #[stash(from = 0, context = "readings/value")]
+#[stash(row = Reading)]
+struct EncryptedReading(EncryptedAge, StackCipherText);
+
+/// The same row with named fields: `from` by index, and the context follows
+/// the index too unless given.
+#[derive(EncryptFrom, DecryptInto)]
+#[stash(row = Reading)]
+struct NamedReading {
+    #[stash(from = 0)]
     value: EncryptedAge,
     #[stash(from = 1, context = "readings/unit")]
     unit: StackCipherText,
@@ -502,11 +512,20 @@ async fn a_tuple_plaintext_row_is_reached_and_rebuilt_by_index() {
     let row: EncryptedReading = reading.encrypt_into(&cipher).await.unwrap();
 
     let hm: EqualityTerm = 21u32
-        .encrypt_into_with_context(&generator, "readings/value")
+        .encrypt_into_with_context(&generator, "reading/0")
         .await
         .unwrap();
-    assert_eq!(row.value.hm, hm);
+    assert_eq!(row.0.hm, hm);
 
     let recovered = Reading::decrypt_from(row, &cipher).await.unwrap();
     assert_eq!(recovered, reading);
+
+    let named: NamedReading = reading.encrypt_into(&cipher).await.unwrap();
+    assert_eq!(named.value.hm, hm, "from = 0 infers the same context");
+    let unit: String = named
+        .unit
+        .decrypt_into(&cipher, "readings/unit")
+        .await
+        .unwrap();
+    assert_eq!(unit, "celsius");
 }
