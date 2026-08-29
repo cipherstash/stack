@@ -11,9 +11,9 @@ All attributes live under `#[stash(...)]`.
 
 `plaintext` must be an owned type: the generated impl has no lifetime to give
 a reference. Without `plaintext`, each derive emits one impl generic over the plaintext,
-bounded by what the fields accept: `EncryptedAge` below is `EncryptFrom<P, _>`
+bounded by what the fields accept: `EncryptedAge` below is `EncryptFrom<P, _, _>`
 for any `P` that both `StackCipherText` and `EqualityTerm` accept, and
-`DecryptInto<P, _>` for any `P` its `decrypt` field opens to. With
+`DecryptInto<P, _, _>` for any `P` its `decrypt` field opens to. With
 `plaintext`, the record accepts only the listed types (a column that holds
 integers should not accept a `String`). Rows — decrypted field by field —
 must name it: the plaintext is rebuilt with a struct literal.
@@ -27,14 +27,18 @@ must name it: the plaintext is rebuilt with a struct literal.
 | `default` / `default = expr` | Not derived: filled with `Default::default()` or `expr`. Never encrypted, never authenticated. |
 | `decrypt` | Decryption opens this field (`DecryptInto` only). Needed only when the field types cannot decide it — see below. |
 
-The caller's context reaches every derived field that has no `context` of
-its own, and the impl's context parameter is bounded by what those fields
-accept — a leaf accepts only a `SuppliedContext`, so a record that hands the
-caller's context to one is encrypted with `encrypt_into_with_context`. If
-every field has a `context`, the caller's is never used, the parameter is
-unbounded, and the record is encrypted with the context-free `encrypt_into`
-(decrypted with `Plaintext::decrypt_from(record, &cipher)`); the compiler
-turns the other form away.
+The caller's context reaches every field derived from the whole plaintext
+that has no `context` of its own, and the impl's context parameter is bounded
+by what those fields accept — a leaf accepts only a `SuppliedContext`, so a
+record that hands the caller's context to one is encrypted with
+`encrypt_into_with_context`. A `from` field never receives the caller's
+context: it is derived under its `context`, or under `()` if it has none,
+which a nested row accepts and a leaf refuses (at the field, until it is
+given a `context`). A record none of whose fields takes the caller's context
+— every row — is implemented for `()` exactly, and is encrypted with the
+context-free `encrypt_into` (decrypted with
+`Plaintext::decrypt_from(record, &cipher)`); the compiler turns the other
+form away, since the context would go nowhere.
 
 Every attribute except `plaintext` is singular, and repeating one is a
 compile error rather than a silent overwrite (`plaintext` is repeatable,

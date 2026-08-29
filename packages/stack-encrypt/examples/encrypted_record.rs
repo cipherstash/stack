@@ -27,7 +27,7 @@
 
 use stack_encrypt::sem::{EqualityTerm, OreTerm};
 use stack_encrypt::target::{
-    DecryptContext, DecryptInto, EncryptContext, EncryptFrom, EncryptInto, Pending, SuppliedContext,
+    DecryptInto, EncryptContext, EncryptFrom, EncryptInto, Pending, SuppliedContext,
 };
 use stack_encrypt::{StackCipher, StackCipherText};
 
@@ -76,7 +76,7 @@ where
 // one-way), so it delegates to the ciphertext's own implementation.
 impl<'c, K, Ctx> DecryptInto<u32, StackCipher<K>, Ctx> for EncryptedInt
 where
-    Ctx: DecryptContext<'c> + SuppliedContext<'c>,
+    Ctx: SuppliedContext<'c>,
 {
     fn decrypt_into<'a>(self, cipher: &'a StackCipher<K>, context: Ctx) -> Pending<'a, u32, K>
     where

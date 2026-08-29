@@ -224,7 +224,10 @@ async fn explicit_mode_supports_opaque_fields_in_the_paired_derive() {
     let cipher = stack_cipher().await;
     let generator = stack_cipher().await;
 
-    let record: WithOpaque = 5u32.encrypt_into_with_context(&cipher, "opaque").await.unwrap();
+    let record: WithOpaque = 5u32
+        .encrypt_into_with_context(&cipher, "opaque")
+        .await
+        .unwrap();
     let hm: EqualityTerm = 5u32
         .encrypt_into_with_context(&generator, "opaque")
         .await
@@ -432,6 +435,49 @@ async fn a_row_field_opened_under_the_wrong_context_fails() {
     // is caught by the AAD exactly as for a leaf.
     let transplanted: Result<u32, _> = row.age.c.decrypt_into(&cipher, "users/height").await;
     assert!(matches!(transplanted, Err(Error::Aead)));
+}
+
+/// A row inside a row. The inner row carries its own contexts, so the outer
+/// field needs no `context` of its own: a `from` field with none is handed
+/// `()`, which is exactly what a row accepts — and the outer row stays
+/// context-free too.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Account {
+    user: User,
+    plan: String,
+}
+
+#[derive(EncryptFrom, DecryptInto)]
+#[stash(plaintext = Account)]
+struct EncryptedAccount {
+    #[stash(from = user)]
+    user: EncryptedUser,
+    #[stash(from = plan, context = "accounts/plan")]
+    plan: StackCipherText,
+}
+
+#[tokio::test]
+async fn a_row_nests_in_a_row_without_a_context() {
+    let (cipher, generates, retrieves) = counting_cipher().await;
+    let generator = stack_cipher().await;
+
+    let account = Account {
+        user: user(),
+        plan: "pro".to_string(),
+    };
+    let row: EncryptedAccount = account.encrypt_into(&cipher).await.unwrap();
+    assert_eq!(generates.load(AtomicOrdering::SeqCst), 1);
+
+    // The inner row's fields are still under their own literals.
+    let age_hm: EqualityTerm = 42u32
+        .encrypt_into_with_context(&generator, "users/age")
+        .await
+        .unwrap();
+    assert_eq!(row.user.age.hm, age_hm);
+
+    let recovered = Account::decrypt_from(row, &cipher).await.unwrap();
+    assert_eq!(recovered, account);
+    assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 1);
 }
 
 /// A tuple-struct plaintext is reached by index: `from = 0`.

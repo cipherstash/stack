@@ -1,0 +1,26 @@
+error[E0277]: `()` is not a context the caller supplied
+  --> tests/ui/from_leaf_without_context.rs:14:12
+   |
+14 |     email: StackCipherText,
+   |            ^^^^^^^^^^^^^^^ this leaf needs a context
+   |
+   = note: `()` is what `encrypt_into` / `decrypt_from` pass, and what a derived row hands a `from` field with no `context = ".."` of its own: an output that reaches a leaf needs `encrypt_into_with_context` / `decrypt_from_with_context`, or the literal
+   = note: a context type of your own opts in with an empty `impl SuppliedContext<'_> for MyContext {}`
+   = help: the trait `SuppliedContext<'_>` is not implemented for `()`
+           but it is implemented for `(_, _)`
+   = help: for that trait implementation, expected `(_, _)`, found `()`
+   = note: required for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` to implement `EncryptFrom<String, StackCipher<__K>, ()>`
+
+error[E0277]: `()` is not a context the caller supplied
+  --> tests/ui/from_leaf_without_context.rs:14:12
+   |
+14 |     email: StackCipherText,
+   |            ^^^^^^^^^^^^^^^ this leaf needs a context
+   |
+   = note: `()` is what `encrypt_into` / `decrypt_from` pass, and what a derived row hands a `from` field with no `context = ".."` of its own: an output that reaches a leaf needs `encrypt_into_with_context` / `decrypt_from_with_context`, or the literal
+   = note: a context type of your own opts in with an empty `impl SuppliedContext<'_> for MyContext {}`
+   = help: the trait `SuppliedContext<'_>` is not implemented for `()`
+           but it is implemented for `(_, _)`
+   = help: for that trait implementation, expected `(_, _)`, found `()`
+   = note: required for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` to implement `DecryptInto<_, StackCipher<__K>, ()>`
+   = note: required for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` to implement `DecryptField<_, StackCipher<__K>, ()>`

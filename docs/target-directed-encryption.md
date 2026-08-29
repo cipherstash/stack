@@ -133,26 +133,26 @@ where Ctx: EncryptContext<'c> + SuppliedContext<'c>,   // what the leaves below 
 
 One context fans out to every field. `zip` concatenates the fields' requests, so the whole record is still one batched call when awaited. The derive writes the same bound, transitively — one `FieldTy: EncryptFrom<S, C, Ctx>` per field — so a record inherits its leaves' demand for a supplied context without naming it.
 
-**The derive** (not yet built) writes exactly that impl from the struct:
+**The derive** writes exactly that impl from the struct:
 
 ```rust
-#[derive(Encrypted)]
-#[encrypted(source = i16, source = i32, source = i64)]
+#[derive(EncryptFrom)]
+#[stash(plaintext = i16, plaintext = i32, plaintext = i64)]
 struct IntegerOrdOre {
-    #[encrypted(const = SchemaVersion::V3)] v: SchemaVersion,
-    #[encrypted(context)]                   i: Identifier,
-                                            c: Ciphertext,
-                                            ob: OreBlock256,
+    #[stash(default = SchemaVersion::V3)] v: SchemaVersion,
+                                          c: Ciphertext,
+                                          ob: OreBlock256,
 }
 ```
 
-generating, per listed source:
+generating, per listed plaintext:
 
 ```rust
-impl<C> EncryptFrom<i64, C> for IntegerOrdOre
+impl<K, Ctx> EncryptFrom<i64, StackCipher<K>, Ctx> for IntegerOrdOre
 where
-    Ciphertext:  EncryptFrom<i64, C>,
-    OreBlock256: EncryptFrom<i64, C>,
+    Ciphertext:  EncryptFrom<i64, StackCipher<K>, Ctx>,
+    OreBlock256: EncryptFrom<i64, StackCipher<K>, Ctx>,
+    Ctx: Clone,
 { /* join both, assemble */ }
 ```
 
@@ -162,10 +162,10 @@ The capability bounds (`C: Cipher`, `C: ProvidesOre`) arrive **transitively from
 
 `EncryptFrom<S, C, Ctx>` is generic over `S`; only the derive's `plaintext` attribute pins it. Two modes:
 
-- **Omit `source`** — the derive emits a single impl generic over `S`. The accepted sources are then exactly the intersection of what the field types accept. Nothing to maintain.
-- **List sources** — one impl per listed type, restricting the target.
+- **Omit `plaintext`** — the derive emits a single impl generic over `S`. The accepted sources are then exactly the intersection of what the field types accept. Nothing to maintain.
+- **List plaintexts** — one impl per listed type, restricting the target.
 
-Use the list for EQL types. `eql_v3_integer_ord_ore` is a schema statement that the column holds an integer, and `OreBlock256` is width-agnostic on the wire, so the generic form would accept a `String` and hand Postgres a payload it rejects. That restriction is EQL's, declared by EQL. The mechanism stays open: non-EQL targets omit `source`.
+Use the list for EQL types. `eql_v3_integer_ord_ore` is a schema statement that the column holds an integer, and `OreBlock256` is width-agnostic on the wire, so the generic form would accept a `String` and hand Postgres a payload it rejects. That restriction is EQL's, declared by EQL. The mechanism stays open: non-EQL targets omit `plaintext`.
 
 ### Rows are the same mechanism
 
@@ -243,7 +243,7 @@ impl<'a, T> EncryptContext<'a> for T where T: IntoAad<'a> + IntoPrfContext<'a> +
 
 Context is threaded **per value**, as an argument. It is not baked into the cipher.
 
-Whether the *caller* owes one is decided by the target type, at compile time. `Ctx` is a parameter of `EncryptFrom` so that each impl can bound it: a leaf demands `SuppliedContext` — every context type vitaminc provides except `()` — because it has nothing else to authenticate under; a record passes the caller's context to its fields and inherits their demand through its where clause; a row whose fields all name their own context never uses the caller's and leaves `Ctx` unbounded. `encrypt_into(&cipher)` passes `()` and therefore resolves only against the last kind; everything else takes `encrypt_into_with_context`. This is vitaminc's `encrypt` / `encrypt_with_aad` split, with the choice made by the type rather than at every call site. Whether a supplied context is also *non-empty* remains a runtime check at the leaf (`Error::EmptyContext`) until vitaminc carries non-emptiness in the type ([vitaminc#291](https://github.com/cipherstash/vitaminc/issues/291)).
+Whether the *caller* owes one is decided by the target type, at compile time. `Ctx` is a parameter of `EncryptFrom` so that each impl can bound it: a leaf demands `SuppliedContext` — every context type vitaminc provides except `()` — because it has nothing else to authenticate under; a record passes the caller's context to its fields and inherits their demand through its where clause; a row whose fields all name their own context never uses the caller's and is implemented for `()` alone. `encrypt_into(&cipher)` passes `()` and therefore resolves only against the last kind; everything else takes `encrypt_into_with_context` — and against a row, only `encrypt_into` does, since a supplied context would go nowhere. This is vitaminc's `encrypt` / `encrypt_with_aad` split, with the choice made by the type rather than at every call site. Whether a supplied context is also *non-empty* remains a runtime check at the leaf (`Error::EmptyContext`) until vitaminc carries non-emptiness in the type ([vitaminc#291](https://github.com/cipherstash/vitaminc/issues/291)).
 
 A scoped cipher (`cipher.for_column("users", "age")`) was considered and rejected: it makes encrypting one row — several columns, several identifiers — into several scoped ciphers, which fights batching for no gain. With context as an argument, a row is one shared `&cipher`, many contexts, one flush.
 

@@ -60,6 +60,19 @@ impl Field {
             Kind::Default(_) => None,
         }
     }
+
+    /// Is this field derived under the context the caller passes for the
+    /// record? Only a field derived from the whole plaintext with no literal
+    /// of its own is; see [`push_context_generics`].
+    pub(crate) fn takes_callers_context(&self) -> bool {
+        matches!(
+            &self.kind,
+            Kind::Derived {
+                context: None,
+                from: None
+            }
+        )
+    }
 }
 
 /// The record a derive input describes.
@@ -73,6 +86,11 @@ pub(crate) struct Record {
 }
 
 impl Record {
+    /// The fields that are derived from the plaintext, in declaration order.
+    pub(crate) fn derived(&self) -> Vec<&Field> {
+        self.fields.iter().filter(|f| f.is_derived()).collect()
+    }
+
     pub(crate) fn parse(input: &DeriveInput) -> Result<Self> {
         let attrs = ContainerAttrs::parse(&input.attrs)?;
 
@@ -120,46 +138,58 @@ impl Record {
     }
 }
 
-/// The context type a field is derived or opened under: its literal's, or
+/// The context type a field is derived or opened under, as it appears in a
+/// where clause: its literal's, `()` for a `from` field with no literal, or
 /// the impl's `__Ctx` when it takes the caller's.
 pub(crate) fn context_type(field: &Field) -> Type {
-    match field.context() {
-        Some(_) => parse_quote!(&'static str),
+    match own_context(field) {
+        Some(_) if field.context().is_some() => parse_quote!(&'static str),
+        Some(_) => parse_quote!(()),
         None => parse_quote!(__Ctx),
     }
 }
 
-/// Adds the impl's context parameter `__Ctx`, bounded by what `fields` do
-/// with the caller's context.
+/// The context a field is derived or opened under when it is not the
+/// caller's: its literal, or `()` for a `from` field with no literal. `None`
+/// for a field that takes the caller's.
 ///
-/// A field with a literal context never sees it, so a record whose fields
-/// all have one leaves `__Ctx` unbounded and accepts `()`: that is what makes
-/// `row.encrypt_into(&cipher)` compile. A field that takes it (no literal)
-/// needs it usable — `EncryptContext` / `DecryptContext`, with the context's
-/// own lifetime `'__c` as an impl parameter — and a `from` field that takes
-/// it needs it *supplied*: its obligation is checked in the body against a
-/// source field type the derive cannot name in a where clause, so the where
-/// clause states the leaf's demand instead.
-pub(crate) fn push_context_generics(
-    generics: &mut Generics,
-    krate: &Path,
-    fields: &[&Field],
-    bound: &Ident,
-) {
+/// A `from` field reaches into one field of the plaintext, and its type
+/// says what that field needs: a leaf refuses `()` (the derive cannot name
+/// the plaintext field's type in a where clause, so the obligation is
+/// checked in the body and reported at the field type), and a nested row
+/// carrying its own contexts accepts nothing else. Handing such a field the
+/// caller's context instead would encrypt every column of the row under one
+/// context, which is the cross-column transplant the per-field contexts
+/// exist to prevent.
+pub(crate) fn own_context(field: &Field) -> Option<TokenStream> {
+    match field.context() {
+        Some(literal) => Some(quote!(#literal)),
+        None if field.from().is_some() => Some(quote!(())),
+        None => None,
+    }
+}
+
+/// Adds the impl's context parameter, if `fields` give it a use, and returns
+/// the type the impl is for.
+///
+/// A field with a context of its own ([`own_context`]) never sees the
+/// caller's. A record whose fields all have one — every row does — is
+/// therefore encrypted with no context at all, and its impl is for `()`
+/// exactly: `row.encrypt_into(&cipher)` compiles and
+/// `encrypt_into_with_context` does not, since the context would go nowhere.
+/// Otherwise the impl is generic over `__Ctx`, cloned to each field that
+/// takes it; what the context must *be* — usable, supplied — comes from the
+/// field bounds, not from here.
+pub(crate) fn push_context_generics(generics: &mut Generics, fields: &[&Field]) -> Type {
+    if !fields.iter().any(|f| f.takes_callers_context()) {
+        return parse_quote!(());
+    }
     generics.params.push(parse_quote!(__Ctx));
-    let passthrough: Vec<&&Field> = fields.iter().filter(|f| f.context().is_none()).collect();
-    if passthrough.is_empty() {
-        return;
-    }
-    generics.params.insert(0, parse_quote!('__c));
-    let predicates = &mut generics.make_where_clause().predicates;
-    if passthrough.iter().any(|f| f.from().is_some()) {
-        predicates.push(parse_quote! {
-            __Ctx: #krate::target::#bound<'__c> + #krate::target::SuppliedContext<'__c>
-        });
-    } else {
-        predicates.push(parse_quote!(__Ctx: #krate::target::#bound<'__c>));
-    }
+    generics
+        .make_where_clause()
+        .predicates
+        .push(parse_quote!(__Ctx: ::core::clone::Clone));
+    parse_quote!(__Ctx)
 }
 
 /// The pendings of `fields`, zipped into one and mapped into `build` (a
@@ -167,20 +197,20 @@ pub(crate) fn push_context_generics(
 /// settles as one batched call.
 ///
 /// `call(field, context)` renders one field's pending under `context`. The
-/// record's context (`__context`) goes to every field without a literal of
+/// record's context (`__context`) goes to every field without a context of
 /// its own; the last such field takes it by move, the rest clone it.
 pub(crate) fn zip_fields(
     fields: &[&Field],
     mut call: impl FnMut(&Field, TokenStream) -> TokenStream,
     build: TokenStream,
 ) -> TokenStream {
-    let mut remaining = fields.iter().filter(|f| f.context().is_none()).count();
+    let mut remaining = fields.iter().filter(|f| f.takes_callers_context()).count();
 
     let mut chain = TokenStream::new();
     let mut pattern = TokenStream::new();
     for (index, field) in fields.iter().enumerate() {
-        let context = match field.context() {
-            Some(literal) => quote!(#literal),
+        let context = match own_context(field) {
+            Some(own) => own,
             None => {
                 remaining -= 1;
                 if remaining == 0 {

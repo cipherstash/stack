@@ -109,11 +109,12 @@
 //!
 //! A `from` field's context is the *column's* identity, which is why it is a
 //! literal on the field rather than something composed from the row's
-//! context. A row whose fields all have one takes no context from the caller
-//! at all — its impl leaves the context parameter unbounded, which is what
-//! makes the context-free `encrypt_into` / `decrypt_from` compile against
-//! it — while a field without one takes the caller's, and pulls the row back
-//! to `encrypt_into_with_context`.
+//! context. A row takes no context from the caller at all — its impls are
+//! for `()` exactly, which is what makes the context-free `encrypt_into` /
+//! `decrypt_from` the forms that compile against it. A `from` field without
+//! a literal is handed `()` too, and its type decides whether that will do:
+//! a nested row accepts it; a leaf refuses it, at the field, until it is
+//! given a `context`.
 //!
 //! # What the derive commits to
 //!
@@ -173,7 +174,7 @@ pub fn derive_encrypt_from(input: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Derive `DecryptInto<Plaintext, _>` for a record struct, one impl per
+/// Derive `DecryptInto<Plaintext, _, _>` for a record struct, one impl per
 /// `plaintext` type. See the [crate documentation](crate); the attributes it
 /// accepts are reproduced below.
 #[doc = include_str!("../docs/attributes.md")]

@@ -4,7 +4,8 @@ error[E0277]: `()` is not a context the caller supplied
 17 |     let _term: EqualityTerm = "alice".encrypt_into(cipher).await.unwrap();
    |                                       ^^^^^^^^^^^^ this leaf needs a context
    |
-   = note: `()` is what `encrypt_into` / `decrypt_from` pass: an output type that reaches a leaf needs `encrypt_into_with_context` / `decrypt_from_with_context` instead
+   = note: `()` is what `encrypt_into` / `decrypt_from` pass, and what a derived row hands a `from` field with no `context = ".."` of its own: an output that reaches a leaf needs `encrypt_into_with_context` / `decrypt_from_with_context`, or the literal
+   = note: a context type of your own opts in with an empty `impl SuppliedContext<'_> for MyContext {}`
    = help: the trait `SuppliedContext<'_>` is not implemented for `()`
            but it is implemented for `(_, _)`
    = help: for that trait implementation, expected `(_, _)`, found `()`
@@ -24,7 +25,8 @@ error[E0277]: `()` is not a context the caller supplied
 18 |     let _record: EncryptedAge = 42u32.encrypt_into(cipher).await.unwrap();
    |                                       ^^^^^^^^^^^^ this leaf needs a context
    |
-   = note: `()` is what `encrypt_into` / `decrypt_from` pass: an output type that reaches a leaf needs `encrypt_into_with_context` / `decrypt_from_with_context` instead
+   = note: `()` is what `encrypt_into` / `decrypt_from` pass, and what a derived row hands a `from` field with no `context = ".."` of its own: an output that reaches a leaf needs `encrypt_into_with_context` / `decrypt_from_with_context`, or the literal
+   = note: a context type of your own opts in with an empty `impl SuppliedContext<'_> for MyContext {}`
    = help: the trait `SuppliedContext<'_>` is not implemented for `()`
            but it is implemented for `(_, _)`
    = help: for that trait implementation, expected `(_, _)`, found `()`
@@ -48,7 +50,8 @@ error[E0277]: `()` is not a context the caller supplied
    |                                         |
    |                                         this leaf needs a context
    |
-   = note: `()` is what `encrypt_into` / `decrypt_from` pass: an output type that reaches a leaf needs `encrypt_into_with_context` / `decrypt_from_with_context` instead
+   = note: `()` is what `encrypt_into` / `decrypt_from` pass, and what a derived row hands a `from` field with no `context = ".."` of its own: an output that reaches a leaf needs `encrypt_into_with_context` / `decrypt_from_with_context`, or the literal
+   = note: a context type of your own opts in with an empty `impl SuppliedContext<'_> for MyContext {}`
    = help: the trait `SuppliedContext<'_>` is not implemented for `()`
            but it is implemented for `(_, _)`
    = help: for that trait implementation, expected `(_, _)`, found `()`
@@ -72,7 +75,8 @@ error[E0277]: `()` is not a context the caller supplied
    |                |
    |                required by a bound introduced by this call
    |
-   = note: `()` is what `encrypt_into` / `decrypt_from` pass: an output type that reaches a leaf needs `encrypt_into_with_context` / `decrypt_from_with_context` instead
+   = note: `()` is what `encrypt_into` / `decrypt_from` pass, and what a derived row hands a `from` field with no `context = ".."` of its own: an output that reaches a leaf needs `encrypt_into_with_context` / `decrypt_from_with_context`, or the literal
+   = note: a context type of your own opts in with an empty `impl SuppliedContext<'_> for MyContext {}`
    = help: the trait `SuppliedContext<'_>` is not implemented for `()`
            but it is implemented for `(_, _)`
    = help: for that trait implementation, expected `(_, _)`, found `()`
@@ -83,8 +87,8 @@ error[E0277]: `()` is not a context the caller supplied
 note: required by a bound in `decrypt_from`
   --> src/target/mod.rs
    |
-   |     fn decrypt_from<'a>(source: S, cipher: &'a C) -> C::Output<'a, Self>
+   |     fn decrypt_from<'a, S, C>(source: S, cipher: &'a C) -> C::Output<'a, Self>
    |        ------------ required by a bound in this associated function
-   |     where
+...
    |         S: DecryptInto<Self, C, ()> + 'a,
    |            ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `DecryptFrom::decrypt_from`

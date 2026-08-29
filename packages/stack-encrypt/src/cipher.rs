@@ -609,7 +609,7 @@ impl PendingStackCipherText {
     ///
     /// Settles through the target layer's request carrier
     /// ([`seal_pending`](crate::target)), so this and
-    /// `encrypt_into::<StackCipherText>` share one definition of how a tree
+    /// `encrypt_into_with_context` into a `StackCipherText` share one definition of how a tree
     /// is sealed and one path to ZeroKMS.
     pub async fn seal<K: DataKeySource>(
         self,
