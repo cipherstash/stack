@@ -245,8 +245,16 @@ so they cannot be opened and fail with a plain AEAD error rather than an
 dev-persisted data exists); term encodings frozen as raw-bytes (equality: the 32 PRF bytes;
 ORE/OPE: the raw CLLW ciphertext, byte-identical to what EQL hex-encodes
 into `hm`/`oc`/`op`; match: LE `u16` positions — EQL sends `bf` as a JSON
-integer array, so the byte-string form is stack-encrypt's own) with
-`as_bytes`/`to_bytes`/`from_bytes` on every term type; length-validating
+integer array, so the byte-string form is stack-encrypt's own *transport*
+encoding across the wasm/FFI boundary, not a storage commitment — what is
+stored and queried is the position list). The surface per type:
+`to_bytes` and a fallible `TryFrom<&[u8]>` on all four; `from_bytes` on all
+four (infallible over `[u8; 32]` for `EqualityTerm`, fallible over a slice
+for the rest); `as_bytes` only where the term is a contiguous buffer
+(`EqualityTerm`, `OreTerm`, `OpeTerm`) — a `MatchTerm` is canonically a
+position list, so it has none, and its decoders range-check every position
+against the `MatchConfig`'s filter size. Decode failures are the structured,
+`PartialEq` `TermBytesError`. Also: length-validating
 `TryFrom<&[u8]>` added to cllw-ore's variable-width ciphertext types; and
 golden vectors in `tests/frozen_bytes.rs` for the Go decoder to test
 against.

@@ -1,19 +1,24 @@
-//! Byte-level pins for the frozen storage encodings — the byte formats
-//! stack-encrypt commits to across languages and database columns:
+//! Byte-level pins for the frozen encodings stack-encrypt commits to across
+//! languages:
 //!
 //! * the [`SealedValue`] leaf layout
-//!   (`version ‖ iv ‖ tag_len ‖ tag ‖ local_ciphertext`), and
+//!   (`version ‖ iv ‖ tag_len ‖ tag ‖ local_ciphertext`) — the storage
+//!   format a database column holds, and
 //! * the index-term encodings (equality: raw 32 bytes; match: LE `u16`
 //!   positions; ORE/OPE: raw CLLW ciphertext bytes).
 //!
 //! These are the vectors a language binding's decoder tests against — the
 //! Go side decodes exactly these hex strings. `tests/term_bytes.rs` pins the
 //! *derivations* (PRF domains and framing); this file pins the *encodings*
-//! of the results. Breaking a pin here means the storage format moved: for
-//! the leaf that demands a `SealedValue::FORMAT_VERSION` bump, for terms it
-//! means stored rows silently stop comparing.
+//! of the results. Breaking a pin here breaks a consumer: for the leaf it
+//! moves the storage format and demands a `SealedValue::FORMAT_VERSION` bump;
+//! for the equality and ORE/OPE terms it moves the bytes a column holds; for
+//! the match term it moves the wasm/FFI transport shape (no column holds
+//! that byte string — the stored and queried contract is the position list,
+//! which maps to an integer-array column), and every binding decoding it
+//! silently stops agreeing.
 
-use stack_encrypt::sem::{DefaultMatch, EqualityTerm, MatchTerm, OpeTerm, OreTerm};
+use stack_encrypt::sem::{DefaultMatch, EqualityTerm, MatchTerm, OpeTerm, OreTerm, TermBytesError};
 use stack_encrypt::target::EncryptInto;
 use stack_encrypt::{CipherText, LeafBytesError, SealedValue, StackCipher};
 use stack_kms::FakeDataKeySource;
@@ -153,7 +158,26 @@ async fn equality_term_encoding_is_the_raw_prf_bytes() {
     // The derivation is pinned in term_bytes.rs; here: encoding = identity
     // over those 32 bytes, and from_bytes is its inverse.
     assert_eq!(term.as_ref(), term.as_bytes());
+    assert_eq!(term.to_bytes(), term.as_bytes());
     assert_eq!(EqualityTerm::from_bytes(*term.as_bytes()), term);
+
+    // The std conversion is the same decoder, over a slice of unknown length.
+    assert_eq!(
+        EqualityTerm::try_from(term.to_bytes().as_slice()).expect("TryFrom decode"),
+        term
+    );
+}
+
+#[test]
+fn equality_term_try_from_rejects_wrong_length() {
+    assert_eq!(
+        EqualityTerm::try_from([0u8; 31].as_slice()),
+        Err(TermBytesError::WrongEqualityTermLength(31))
+    );
+    assert_eq!(
+        EqualityTerm::try_from([0u8; 33].as_slice()),
+        Err(TermBytesError::WrongEqualityTermLength(33))
+    );
 }
 
 #[tokio::test]
@@ -175,11 +199,63 @@ async fn match_term_bytes_are_pinned() {
         MatchTerm::<DefaultMatch>::from_bytes(&bytes).expect("decode match term"),
         term
     );
+    // The std conversion is the same decoder.
+    assert_eq!(
+        MatchTerm::<DefaultMatch>::try_from(bytes.as_slice()).expect("TryFrom decode"),
+        term
+    );
 }
 
 #[test]
 fn match_term_from_bytes_rejects_odd_length() {
-    assert!(MatchTerm::<DefaultMatch>::from_bytes(&[0x21]).is_err());
+    assert_eq!(
+        MatchTerm::<DefaultMatch>::from_bytes(&[0x21]),
+        Err(TermBytesError::OddMatchTermLength(1))
+    );
+}
+
+#[test]
+fn match_term_from_bytes_rejects_positions_outside_the_filter() {
+    // `DefaultMatch` is a 256-bit filter, so genuine positions are 0..256 and
+    // the high byte of every LE u16 is zero. A position at the filter size,
+    // and the 0xffff a wrong-endian decoder produces, are both rejected —
+    // they would otherwise decode cleanly and then silently never match.
+    assert_eq!(
+        MatchTerm::<DefaultMatch>::from_bytes(&[0x00, 0x01]),
+        Err(TermBytesError::MatchPositionOutOfRange {
+            position: 256,
+            filter_size: 256,
+        })
+    );
+    assert_eq!(
+        MatchTerm::<DefaultMatch>::from_bytes(&[0xff, 0xff]),
+        Err(TermBytesError::MatchPositionOutOfRange {
+            position: 0xffff,
+            filter_size: 256,
+        })
+    );
+    // Byte-swapping a genuine term is exactly that failure: position 0x21
+    // becomes 0x2100.
+    assert!(matches!(
+        MatchTerm::<DefaultMatch>::from_bytes(&[0x00, 0x21]),
+        Err(TermBytesError::MatchPositionOutOfRange { .. })
+    ));
+
+    // In-range positions round-trip, through both constructors.
+    let positions = vec![0u16, 1, 255];
+    let term = MatchTerm::<DefaultMatch>::from_positions(positions.clone()).expect("in range");
+    assert_eq!(term.positions(), positions.as_slice());
+    assert_eq!(
+        MatchTerm::<DefaultMatch>::from_bytes(&term.to_bytes()).expect("decode"),
+        term
+    );
+    assert_eq!(
+        MatchTerm::<DefaultMatch>::from_positions(vec![256]),
+        Err(TermBytesError::MatchPositionOutOfRange {
+            position: 256,
+            filter_size: 256,
+        })
+    );
 }
 
 #[tokio::test]
@@ -204,6 +280,11 @@ async fn ore_term_encoding_is_the_raw_cllw_bytes() {
         OreTerm::<u32>::from_bytes(term.as_bytes()).expect("decode ore term"),
         term
     );
+    // The std conversion is the same decoder.
+    assert_eq!(
+        OreTerm::<u32>::try_from(term.as_bytes()).expect("TryFrom decode"),
+        term
+    );
 }
 
 #[tokio::test]
@@ -222,15 +303,28 @@ async fn ope_term_encoding_is_the_raw_cllw_bytes() {
         OpeTerm::<u32>::from_bytes(term.as_bytes()).expect("decode ope term"),
         term
     );
+    assert_eq!(
+        OpeTerm::<u32>::try_from(term.as_bytes()).expect("TryFrom decode"),
+        term
+    );
 }
 
 #[test]
 fn ore_term_from_bytes_rejects_wrong_length() {
     // u32 → OreCllw8V1<32>: exactly 32 bytes.
-    assert!(OreTerm::<u32>::from_bytes(&[0u8; 31]).is_err());
-    assert!(OreTerm::<u32>::from_bytes(&[0u8; 33]).is_err());
+    assert_eq!(
+        OreTerm::<u32>::from_bytes(&[0u8; 31]),
+        Err(TermBytesError::MalformedCllwCiphertext(31))
+    );
+    assert_eq!(
+        OreTerm::<u32>::from_bytes(&[0u8; 33]),
+        Err(TermBytesError::MalformedCllwCiphertext(33))
+    );
     // u32 → OpeCllw8V1<33>: exactly 33 bytes.
-    assert!(OpeTerm::<u32>::from_bytes(&[0u8; 32]).is_err());
+    assert_eq!(
+        OpeTerm::<u32>::from_bytes(&[0u8; 32]),
+        Err(TermBytesError::MalformedCllwCiphertext(32))
+    );
 }
 
 #[tokio::test]
@@ -249,7 +343,10 @@ async fn variable_length_ore_and_ope_terms_decode() {
         OreTerm::<String>::from_bytes(ore.as_bytes()).expect("decode"),
         ore
     );
-    assert!(OreTerm::<String>::from_bytes(&ore.as_bytes()[1..]).is_err());
+    assert_eq!(
+        OreTerm::<String>::from_bytes(&ore.as_bytes()[1..]),
+        Err(TermBytesError::MalformedCllwCiphertext(5 * 8 - 1))
+    );
 
     let ope: OpeTerm<String> = "alice"
         .to_string()
@@ -261,5 +358,8 @@ async fn variable_length_ore_and_ope_terms_decode() {
         OpeTerm::<String>::from_bytes(ope.as_bytes()).expect("decode"),
         ope
     );
-    assert!(OpeTerm::<String>::from_bytes(&ope.as_bytes()[1..]).is_err());
+    assert_eq!(
+        OpeTerm::<String>::from_bytes(&ope.as_bytes()[1..]),
+        Err(TermBytesError::MalformedCllwCiphertext(5 * 8))
+    );
 }

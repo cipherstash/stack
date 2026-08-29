@@ -499,10 +499,12 @@ impl<K: DataKeySource> StackCipher<K> {
 /// A single sealed leaf: the ZeroKMS metadata needed to retrieve its data key
 /// (`iv`, `tag`) plus the vitaminc [`LocalCipherText`] sealed under that key.
 ///
-/// This is the only byte-format commitment the crate makes — the container
-/// tree ([`StackCipherText`]) has no canonical encoding, so callers that
-/// persist or transmit ciphertext serialise leaves and rebuild the tree
-/// around them.
+/// This is the only byte-format commitment the crate makes for *ciphertext* —
+/// the container tree ([`StackCipherText`]) has no canonical encoding, so
+/// callers that persist or transmit ciphertext serialise leaves and rebuild
+/// the tree around them. Index terms are a separate commitment with their own
+/// frozen encodings (see the
+/// [index-term encodings](crate::sem#byte-encodings)).
 ///
 /// # Frozen byte encoding
 ///

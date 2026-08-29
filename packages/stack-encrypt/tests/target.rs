@@ -804,10 +804,11 @@ async fn terms_rehydrate_from_persisted_parts() {
         .encrypt_into_with_context(&generator, "users/bio")
         .await
         .unwrap();
-    // Rehydrate from unsorted positions: from_positions normalises.
+    // Rehydrate from unsorted positions: from_positions normalises (and
+    // range-checks against the config's filter size).
     let mut positions = stored.clone().into_positions();
     positions.reverse();
-    let rehydrated: MatchTerm = MatchTerm::from_positions(positions);
+    let rehydrated: MatchTerm = MatchTerm::from_positions(positions).unwrap();
     assert_eq!(stored, rehydrated);
     assert!(rehydrated.contains(&query));
 }
