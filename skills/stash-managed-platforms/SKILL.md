@@ -156,7 +156,10 @@ By default `encryptedSupabase` derives every column's encryption config by intro
 
 ```typescript
 import { encryptedSupabase } from '@cipherstash/stack-supabase/wasm-inline'
-import { encryptedTable, types } from '@cipherstash/stack/wasm-inline'
+// Schemas come from `eql/v3`, NOT `@cipherstash/stack/wasm-inline` — the
+// adapter types `schemas` from that entry and the two entries' column classes
+// do not cross. The engine is still WASM.
+import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
 
 const users = encryptedTable('users', {
   email: types.TextSearch('email'),
@@ -169,10 +172,11 @@ const supabase = await encryptedSupabase(supabaseClient, {
 })
 ```
 
-**Two things must both be right**, and each fails independently:
+**Three things must all be right**, and each fails independently:
 
 1. **The entry.** Import from `@cipherstash/stack-supabase/wasm-inline`, not the package root. The root statically imports the native engine, which loads on import whether or not you encrypt anything.
 2. **The schemas.** Without them the wrapper still wants a connection.
+3. **Where the schemas come from.** `encryptedTable` and `types` for the adapter come from `@cipherstash/stack/eql/v3` on **both** its entries — the adapter types `schemas` from that entry, and `@cipherstash/stack/wasm-inline` re-declares the same column classes with private fields TypeScript compares nominally. Author them from the WASM entry and `tsc` rejects the `schemas` object ("separate declarations of a private property `columnName`") while the code runs fine, so nothing but a typecheck tells you. Only a **raw** `Encryption` client from `@cipherstash/stack/wasm-inline` wants tables authored from that entry.
 
 What declared mode gives up, it gives up loudly rather than silently:
 

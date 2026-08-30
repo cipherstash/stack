@@ -2,6 +2,12 @@ import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeEncryptedSupabase } from '../src/create'
 import type { SupabaseClientLike } from '../src/types'
+import {
+  createMockEncryptionClient,
+  createMockSupabase,
+  fakeEnvelope,
+  isFakeEnvelope,
+} from './helpers/supabase-mock'
 
 /**
  * Declared-schemas mode (#708).
@@ -346,5 +352,142 @@ describe('constructing where there is no `process` global', () => {
     } finally {
       globalThis.process = original
     }
+  })
+})
+
+/**
+ * The hazard declared mode actually carries: an undeclared COLUMN on a
+ * DECLARED table is silently treated as plaintext.
+ *
+ * The two loud failures are already pinned above — an undeclared TABLE throws
+ * (`from()`, line ~148) and `select('*')` is refused (line ~115, which is what
+ * keeps this from being a blanket read leak: you cannot fetch a column you did
+ * not name). What is NOT loud, and is the real risk, is a table you declared
+ * but declared incompletely. Nothing in the client can detect it: with no
+ * introspection there is no column list to compare the declaration against, so
+ * an `eql_v3_*` column missing from `schemas` never enters the encrypt config
+ * and never gets a `::jsonb` cast. `schema-builder.ts` says it plainly —
+ * "Undeclared columns stay synthesized" — and in declared mode nothing was
+ * synthesized.
+ *
+ * The one warning that names this (`create.ts`, "any encrypted column missing
+ * from the declaration is treated as plaintext") is gated on `introspector`,
+ * so it NEVER fires on the edge entry — where declared mode is the only mode
+ * and this is therefore the only failure shape available. The shipped
+ * `stash-supabase` skill described a different hazard entirely (#812), so
+ * these assertions exist to keep the corrected wording honest.
+ *
+ * Asserted on the observable wire payload via the same doubles the builder
+ * suites use, not on internals: what the request body carries, what the select
+ * string casts, and what comes back to the caller.
+ */
+describe('an undeclared column on a declared table', () => {
+  /**
+   * `users` above declares `email` and `age`. This one declares `email` only —
+   * standing in for a table whose `secret` column really is a
+   * `public.eql_v3_text_eq` in the database, and whose author forgot it.
+   */
+  const partial = encryptedTable('users', {
+    email: types.TextSearch('email'),
+  })
+
+  type UntypedRow = Record<string, unknown>
+  type LooseBuilder = {
+    select(columns?: string): LooseBuilder
+    insert(data: UntypedRow): LooseBuilder
+    update(data: UntypedRow): LooseBuilder
+    eq(column: string, value: unknown): LooseBuilder
+  } & PromiseLike<{ data: UntypedRow[] | null }>
+
+  /** The decrypt entry point, typed to the two arguments this test reads. */
+  type DecryptSpyTarget = {
+    bulkDecryptModels(
+      rows: UntypedRow[],
+      table: { buildColumnKeyMap(): Record<string, string> },
+    ): unknown
+  }
+
+  async function declaredWireClient(rows: UntypedRow[] = []) {
+    const supabase = createMockSupabase(rows)
+    const encryption =
+      createMockEncryptionClient() as unknown as DecryptSpyTarget
+    encryptionMock.mockResolvedValue(encryption)
+    const { encryptedSupabase } = await import('../src/index')
+    const client = await encryptedSupabase(
+      supabase.client as unknown as SupabaseClientLike,
+      { schemas: { users: partial } },
+    )
+    const from = (table: string) =>
+      (client as unknown as { from(t: string): LooseBuilder }).from(table)
+    return { from, supabase, encryption }
+  }
+
+  it('is written to the database IN THE CLEAR on insert', async () => {
+    const { from, supabase } = await declaredWireClient()
+
+    await from('users').insert({ email: 'ada@example.com', secret: 'hunter2' })
+
+    const body = supabase.callsFor('insert')[0].args[0] as UntypedRow
+    // The declared column is encrypted...
+    expect(isFakeEnvelope(body.email)).toBe(true)
+    // ...and the undeclared one is not. It leaves the process as plaintext.
+    expect(body.secret).toBe('hunter2')
+    expect(isFakeEnvelope(body.secret)).toBe(false)
+  })
+
+  it('is written in the clear on update too', async () => {
+    const { from, supabase } = await declaredWireClient()
+
+    await from('users').update({ secret: 'hunter2' }).eq('id', 1)
+
+    const body = supabase.callsFor('update')[0].args[0] as UntypedRow
+    expect(body.secret).toBe('hunter2')
+    expect(isFakeEnvelope(body.secret)).toBe(false)
+  })
+
+  it('is filtered on in the clear, so the search term leaks too', async () => {
+    const { from, supabase } = await declaredWireClient()
+
+    await from('users').select('id').eq('secret', 'hunter2')
+
+    // The operand reaches PostgREST unencrypted — which also means it can only
+    // ever match plaintext rows, so the query silently returns nothing.
+    expect(supabase.callsFor('eq')[0].args).toEqual(['secret', 'hunter2'])
+  })
+
+  it('gets no ::jsonb cast on select, so nothing can decrypt it', async () => {
+    const { from, supabase } = await declaredWireClient()
+
+    await from('users').select('id, email, secret')
+
+    const emitted = supabase.callsFor('select')[0].args[0] as string
+    expect(emitted).toContain('email::jsonb')
+    expect(emitted).not.toContain('secret::jsonb')
+  })
+
+  /**
+   * The other half of "never decrypted": the table the adapter hands to the
+   * decrypt call is the MERGED one, and in declared mode that is the
+   * declaration verbatim. A column absent from it is a column nothing looks
+   * for, so the stored ciphertext is returned to the caller untouched — no
+   * error, no warning, and a row type that still claims `string`.
+   *
+   * Asserted on the decrypt call rather than on the returned row because the
+   * shared encryption double decrypts by envelope SHAPE, which the real client
+   * cannot do here: without the `::jsonb` cast asserted above, PostgREST sends
+   * the domain's text rendering and there is no envelope to recognise.
+   */
+  it('is absent from the table handed to the decrypt call', async () => {
+    const { from, encryption } = await declaredWireClient([
+      { id: 1, email: fakeEnvelope('ada@example.com', 'email'), secret: 'x' },
+    ])
+    const decrypt = vi.spyOn(encryption, 'bulkDecryptModels')
+
+    await from('users').select('id, email, secret')
+
+    const table = decrypt.mock.calls[0][1]
+    const known = Object.keys(table.buildColumnKeyMap())
+    expect(known).toContain('email')
+    expect(known).not.toContain('secret')
   })
 })

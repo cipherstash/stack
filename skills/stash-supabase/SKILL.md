@@ -287,8 +287,8 @@ capabilities come from the introspected domains.
 ### 4. Optional declared schemas (compile-time types)
 
 Declaring tables is optional. Passing `schemas` — a record whose keys must
-equal each table's name — adds compile-time types and verifies the declared
-tables against the database at construction:
+equal each table's name — adds compile-time types, and, when introspection
+also runs, verifies the declared tables against the database at construction:
 
 ```typescript
 import { encryptedTable, types } from "@cipherstash/stack/eql/v3"
@@ -311,9 +311,18 @@ A declared table gets a typed builder: rows infer each column's plaintext
 type (`types.IntegerOrd` → `number`, `types.TimestampOrd` → `Date`),
 storage-only columns are excluded from every filter method, and `order()` is
 narrowed to orderable columns.
-Undeclared tables behave exactly as with no `schemas` at all. Every v3 column
-is fully described by its `types.*` factory — there are no capability or
-tuning chains on v3 columns.
+
+Whether undeclared tables still work turns on `databaseUrl`, **not** on the
+absence of `schemas`. Introspection is gated on a resolved database URL, so
+passing `databaseUrl` alongside `schemas` gets you both — declared tables keep
+their types and are drift-checked, undeclared ones behave exactly as with no
+`schemas` at all. Pass `schemas` on their own, as above, and even the native
+entry is in declared mode: an ambient `DATABASE_URL` is deliberately ignored,
+because declaring your tables says this client needs no connection, and
+`from("orders")` on an undeclared table throws.
+
+Every v3 column is fully described by its `types.*` factory — there are no
+capability or tuning chains on v3 columns.
 
 A JS property may map to a different DB column name
 (`joined: types.TimestampOrd("joined_at")`) — filters, selects, and results
@@ -360,13 +369,32 @@ await es.from("users").select("id, email").eq("email", "a@b.com")
 Four differences from the native entry, three of them enforced by the type
 checker:
 
-- **`schemas` is required.** Nothing introspects here, so a client built
-  without a declaration has no columns and encrypts nothing. Declare every
-  table you touch — undeclared tables pass through unencrypted.
-- **`config` is required, and must carry all four `CS_*` values.** There is no
-  `~/.cipherstash` on an edge runtime to discover credentials from. Mint them
-  with `stash env --name <name>` and set them with `supabase secrets set`, or
-  pass `--env-file` for `supabase functions serve`.
+- **`schemas` is required** — by the type, and by a construction-time throw
+  for callers who reach it from plain JS. Nothing introspects here, so there
+  is no other way to discover your encrypted columns, and `from()` on an
+  undeclared table throws for the same reason. The real hazard is one level
+  down: an undeclared **column** on a declared table never enters the encrypt
+  config and is treated as plaintext, so a filter on it sends your plaintext
+  value to PostgREST and a select on it hands back the raw EQL payload. Two
+  things limit the blast radius — `select('*')` is refused in declared mode,
+  so ciphertext only comes back if you name the column yourself, and a
+  plaintext write to a real `eql_v3_*` column fails that domain's CHECK
+  constraint. Do not wait for a warning: the native entry logs one about
+  unverified declarations, but it is gated on the introspector, so on this
+  entry it never fires. Declare every encrypted column of every table you
+  query.
+- **`config` is required.** There is no `~/.cipherstash` on an edge runtime to
+  discover credentials from, so authentication is passed in. `clientId` and
+  `clientKey` are always needed; past those the type is a union of two paths.
+  The **access-key path** adds `workspaceCrn` + `accessKey` — the four `CS_*`
+  values shown above. Mint them with `stash env --name <name>` and set them
+  with `supabase secrets set`, or pass `--env-file` for `supabase functions
+  serve`. The **strategy path** takes a pre-built `config.authStrategy`
+  instead — `AccessKeyStrategy` or `OidcFederationStrategy`, both re-exported
+  from `@cipherstash/stack/wasm-inline` — and makes `workspaceCrn` optional,
+  since a built strategy already carries the CRN. So authenticating *as the
+  end user* over OIDC federation does work on the edge; what does not is
+  binding data to that user, two bullets below.
 - **`databaseUrl` is not accepted.** It is refused at runtime and absent from
   the type.
 - **`.withLockContext()` and `.audit()` throw.** Identity-bound encryption is

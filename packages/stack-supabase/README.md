@@ -130,10 +130,17 @@ const es = await encryptedSupabase(supabaseUrl, supabaseKey, {
 ```
 
 Four differences from the entry above, three of them enforced by the type checker: `schemas` is
-required, because nothing introspects here; `config` is required and must carry all four `CS_*`
-values, because there is no `~/.cipherstash` on an edge runtime; `databaseUrl` is refused; and
+required, because nothing introspects here; `config` is required, because there is no
+`~/.cipherstash` on an edge runtime to discover credentials from; `databaseUrl` is refused; and
 `.withLockContext()` / `.audit()` throw rather than silently dropping the identity claim — the
 WASM engine does not implement them yet ([#797][issue-797]).
+
+`config` always needs `clientId` and `clientKey`. Past those it is a union of two paths: pass
+`workspaceCrn` + `accessKey` for the access-key path shown above, or a pre-built
+`config.authStrategy` — `AccessKeyStrategy` or `OidcFederationStrategy`, both re-exported from
+`@cipherstash/stack/wasm-inline` — which already carries the CRN and so makes `workspaceCrn`
+optional. Authenticating as the end user over OIDC federation therefore works on the edge; what
+does not is binding data to that user with `.withLockContext()`.
 
 This entry is ESM-only, and it is server-side rather than browser-safe: the WASM client requires
 a workspace `clientKey` on every authentication path, so a browser build would ship the key with

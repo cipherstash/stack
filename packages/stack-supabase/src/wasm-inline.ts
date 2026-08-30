@@ -14,11 +14,15 @@ import { adaptWasmEncryption } from './wasm-client-adapter'
  * Three differences from the default entry's options, each one a runtime
  * requirement made visible to the type checker (#708 review):
  *
- * - **`schemas` is required.** This entry cannot introspect, so a client built
- *   without a declaration has no columns and nothing to encrypt.
+ * - **`schemas` is required.** This entry cannot introspect, so a declaration is
+ *   the only way to discover the encrypted columns. Omitting it is a type
+ *   error, and a construction-time throw for callers arriving from plain JS —
+ *   not a client that quietly encrypts nothing.
  * - **`config` is required, and is a `WasmClientConfig`.** There is no
- *   `~/.cipherstash` to discover credentials from on an edge runtime, so all
- *   four `CS_*` values must be passed. Typing it as the native (optional)
+ *   `~/.cipherstash` to discover credentials from on an edge runtime, so
+ *   authentication is passed in: `clientId` and `clientKey` always, then
+ *   either `workspaceCrn` + `accessKey` or a pre-built `authStrategy` (which
+ *   carries the CRN itself). Typing it as the native (optional)
  *   `ClientConfig` let a caller omit it and reach a `TypeError` from inside the
  *   engine, and let native-only fields such as `keyset` type-check while being
  *   silently ignored.
