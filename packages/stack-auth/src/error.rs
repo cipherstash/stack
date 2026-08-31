@@ -83,7 +83,7 @@ pub(crate) mod codes {
 /// on. With `http` the box holds the `reqwest::Error`; without it, whatever
 /// the host's own transport reports.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
-#[error("HTTP request failed: {0}")]
+#[error("Request to the auth server failed: {0}")]
 pub struct RequestError(pub Box<dyn std::error::Error + Send + Sync + 'static>);
 impl AuthErrorKind for RequestError {
     fn error_code(&self) -> &'static str {

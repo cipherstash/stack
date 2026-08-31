@@ -112,7 +112,7 @@ pub struct HttpConnection {
 }
 
 #[derive(Debug, Error)]
-#[error("Received '{received:?}', expected '{expected}', Body: {body:?}, Headers: {headers:?}")]
+#[error("Received '{received:?}', expected '{expected}'")]
 struct UnexpectedError {
     received: Option<String>,
     expected: &'static str,
@@ -121,7 +121,7 @@ struct UnexpectedError {
 }
 
 #[derive(Debug, Error)]
-#[error("Status: {status}, Body: {body:?}, Headers: {headers:?}")]
+#[error("Status: {status}")]
 struct FailureResponse {
     status: StatusCode,
     body: Option<String>,
