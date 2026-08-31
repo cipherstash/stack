@@ -511,10 +511,11 @@ jobs:
       # Not the only suite that loads the real core, and this is not the only
       # job that builds it for one — `integration-drizzle.yml` runs
       # `packages/stack`'s `integration/wasm/**` the same way. It is here
-      # because it is the only one of them that needs NOTHING else: no
-      # credentials, no database, no PostgREST. The integration job has all
-      # three and is path-filtered and fork-skipped besides, so hosting a core
-      # contract there would leave it unchecked on most diffs. See
+      # because it needs NOTHING else: no credentials, no database. Those
+      # suites' `globalSetup` requires both unconditionally and throws rather
+      # than skipping, and that job is path-filtered and fork-skipped besides,
+      # so hosting a core contract there would leave it unchecked on every diff
+      # those paths do not select. See
       # `packages/stack/vitest.wasm-core.config.ts` for the long form.
       #
       # Before `Build stack` deliberately — it reads protect-ffi's output

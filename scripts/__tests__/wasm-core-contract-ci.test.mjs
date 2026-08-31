@@ -6,6 +6,7 @@ import wasmCoreVitestConfig, {
   WASM_CORE_SUITE,
 } from '../../packages/stack/vitest.wasm-core.config.ts'
 import supabaseVitestConfig from '../../packages/stack-supabase/vitest.config.ts'
+import { requireIntegrationEnv } from '../../packages/test-kit/src/env.ts'
 import { readJsonc } from './lib/read-jsonc.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
@@ -15,11 +16,17 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  * the REAL protect-ffi WASM core. It is NOT the only suite that does —
  * `packages/stack/integration/wasm/**`, protect-ffi's own `wasm-round-trip` /
  * `wasm-error-codes`, and the Deno smoke tests in `e2e/wasm/` all do, and three
- * CI jobs build `dist/wasm/**` for them. It is the only one that needs the core
- * and NOTHING ELSE — no credentials, no database — which is what put it in its
- * own config rather than into the integration suites, whose `globalSetup`
- * requires both unconditionally. This docblock claimed the stronger thing until
- * review caught it; the arrangement below never depended on it.
+ * CI jobs build `dist/wasm/**` for them. Nor is it the only one that needs the
+ * core and NOTHING ELSE — protect-ffi's `wasm-error-codes` is deliberately
+ * credential-free too, but it lives in `integration-tests/`, whose other files
+ * need Docker and credentials and whose workflow is path-filtered and
+ * fork-skipped: the fate this arrangement declines. What put THIS suite in its
+ * own config is that its alternative, `packages/stack/integration/**`, has a
+ * `globalSetup` requiring credentials AND a database unconditionally, throwing
+ * rather than skipping — pinned by the last case in the first block below,
+ * because until then that fact lived in prose alone. This docblock claimed the
+ * stronger thing until review caught it; the arrangement below never depended
+ * on it.
  *
  * What the arrangement does depend on is FOUR pieces, and losing any one leaves
  * the contract unchecked:
@@ -221,6 +228,43 @@ describe('the WASM core credential contract runs somewhere (#804)', () => {
         `${file} / ${jobId} runs ${SCRIPT} but does not build protect-ffi's dist/wasm.\n` +
           `The suite resolves \`@cipherstash/protect-ffi/wasm-inline\` for real; without \`wasm: 'true'\` on ${BUILD_FFI} it fails to collect.`,
       ).toBe(true)
+    }
+  })
+
+  it('the integration harness it declined to join still refuses to run unconfigured', () => {
+    // The one fact the whole arrangement rests on, and the only one of them
+    // that lived in prose alone. If `globalSetup` ever became conditional —
+    // skip when unconfigured, the obvious "make integration tests easier to
+    // run locally" change — then `integration/wasm/**` WOULD host this
+    // contract, every docblock explaining why it does not would be quietly
+    // wrong, and nothing would say so. The reviewer who next proposes the
+    // move should find this red rather than find prose.
+    const globalSetup = readFileSync(
+      join(REPO_ROOT, 'packages/test-kit/src/integration/global-setup.ts'),
+      'utf8',
+    )
+    // Both requirements in the UNCONDITIONAL base literal. `pgrest` is the one
+    // pushed under an `if`, and that asymmetry is exactly the claim.
+    expect(
+      globalSetup,
+      'packages/test-kit/src/integration/global-setup.ts no longer requires BOTH `cipherstash` and `database` unconditionally.\n' +
+        `If that is deliberate, ${WASM_CORE_SUITE} can move into packages/stack/integration/wasm/ and this whole arrangement (config, script, turbo task, CI step) can go with it — see the docblocks in vitest.wasm-core.config.ts and tests.yml, which argue from this fact.`,
+    ).toMatch(
+      /const requirements: Requirement\[\] = \[\s*'cipherstash',\s*'database',?\s*\]/,
+    )
+
+    // ...and it is enforced by a THROW, not a skip. `DATABASE_URL` is the
+    // requirement with no `~/.cipherstash` fallback, so clearing it is
+    // deterministic on a developer machine and in CI alike.
+    const saved = process.env['DATABASE_URL']
+    delete process.env['DATABASE_URL']
+    try {
+      expect(
+        () => requireIntegrationEnv(['cipherstash', 'database']),
+        '`requireIntegrationEnv` no longer throws on a missing requirement. A skip here is what would let the integration suites run unconfigured, which is the premise this arrangement denies.',
+      ).toThrow(/Integration suite cannot run/)
+    } finally {
+      if (saved !== undefined) process.env['DATABASE_URL'] = saved
     }
   })
 })

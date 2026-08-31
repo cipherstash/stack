@@ -1,11 +1,15 @@
 import { defineConfig } from 'vitest/config'
 
 /**
- * The one suite in stack's DEFAULT test run that loads the REAL protect-ffi
- * WASM core — NOT the only one in the repo that loads it. `integration/wasm/**`
- * does (its config restores the genuine module over the stub alias), as do
- * protect-ffi's own `wasm-round-trip` / `wasm-error-codes` suites and the Deno
- * smoke tests in `e2e/wasm/`. Three CI jobs build `dist/wasm/**` for them.
+ * The one suite in `packages/stack` that loads the REAL protect-ffi WASM core
+ * outside the integration harness. It is in neither of the package's other two
+ * configs — excluded from `vitest.config.ts` (see WHERE IT RUNS below) and not
+ * joined to `integration/vitest.config.ts` — which is what this third one is
+ * for. And it is NOT the only suite in the repo that loads the core:
+ * `integration/wasm/**` does (its config restores the genuine module over the
+ * stub alias), as do protect-ffi's own `wasm-round-trip` / `wasm-error-codes`
+ * suites and the Deno smoke tests in `e2e/wasm/`. Three CI jobs build
+ * `dist/wasm/**` for them.
  *
  * What is unusual here is the COMBINATION: this file needs the real core and
  * nothing else — no credentials, no database, no PostgREST — because every
