@@ -14,20 +14,45 @@ import { adaptWasmEncryption } from './wasm-client-adapter'
  * Three differences from the default entry's options, each one a runtime
  * requirement made visible to the type checker (#708 review):
  *
- * - **`schemas` is required.** This entry cannot introspect, so a client built
- *   without a declaration has no columns and nothing to encrypt.
+ * - **`schemas` is required.** This entry cannot introspect, so a declaration is
+ *   the only way to discover the encrypted columns. Omitting it is a type
+ *   error, and a construction-time throw for callers arriving from plain JS —
+ *   not a client that quietly encrypts nothing.
  * - **`config` is required, and is a `WasmClientConfig`.** There is no
- *   `~/.cipherstash` to discover credentials from on an edge runtime, so all
- *   four `CS_*` values must be passed. Typing it as the native (optional)
+ *   `~/.cipherstash` to discover credentials from on an edge runtime, so
+ *   authentication is passed in: `clientId` and `clientKey` always, then
+ *   either `workspaceCrn` + `accessKey` or a pre-built `authStrategy` (which
+ *   carries the CRN itself). Typing it as the native (optional)
  *   `ClientConfig` let a caller omit it and reach a `TypeError` from inside the
  *   engine, and let native-only fields such as `keyset` type-check while being
  *   silently ignored.
- * - **`databaseUrl` is absent.** Introspection is the thing this entry cannot
- *   do; the option is refused at runtime, and this stops it being written.
+ * - **`databaseUrl` is refused, and refused by the type.** Introspection is the
+ *   thing this entry cannot do — it carries no Postgres driver — so the field
+ *   is declared `never` rather than merely left out. Omission is policed by
+ *   excess-property checking alone, which fires on FRESH object literals: an
+ *   options object assembled as a `const` and passed by variable, which is what
+ *   a Node → edge port actually holds, type-checked clean and then hit the
+ *   runtime throw in `makeEncryptedSupabase`. Mirrors
+ *   `WasmClientConfig.eqlVersion?: never` in `packages/stack/src/wasm-inline.ts`
+ *   — same gap, same fix, one package along.
  */
 export interface EncryptedSupabaseWasmOptions<S extends V3Schemas> {
   schemas: S
   config: WasmClientConfig
+  /**
+   * Declared only to be refused: this entry has no introspector to hand a
+   * connection string to. The type is defence in depth, not a replacement for
+   * the throw in `makeEncryptedSupabase` (`./create`), which is still the only
+   * thing a plain JS caller meets — see the third bullet above for why both
+   * are needed.
+   *
+   * As with `eqlVersion` on `WasmClientConfig`, `?: never` still admits an
+   * explicit `databaseUrl: undefined` without `exactOptionalPropertyTypes` (not
+   * enabled in this repo) and cannot be made to reject it. That is harmless
+   * here: the runtime guard tests the VALUE, so `undefined` is exactly the case
+   * it means to let through.
+   */
+  databaseUrl?: never
 }
 
 /**

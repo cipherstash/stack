@@ -1,6 +1,6 @@
 ---
 name: stash-edge
-description: Run CipherStash encryption on edge and non-Node runtimes with the `@cipherstash/stack/wasm-inline` entry — Deno, Supabase Edge Functions, Cloudflare Workers, and Bun. Covers the import specifier per runtime, the four mandatory `CS_*` variables and minting them with `stash env`, how keysets and credentials interact on the edge (what must match is the keyset — `stash-zerokms` is canonical), how the WASM client surface differs from the native typed client, why the entry is server-side only and never belongs in a browser bundle, and why an EQL v3 schema module cannot be shared across the two entries. Use when adding encryption to a Supabase Edge Function, a Worker, or a Deno service; when a native module fails to load in a deployed runtime; when wiring `CS_*` secrets into an edge deploy; or when encrypted search returns zero rows on the edge but works locally.
+description: Run CipherStash encryption on edge and non-Node runtimes with the `@cipherstash/stack/wasm-inline` entry — Deno, Supabase Edge Functions, Cloudflare Workers, and Bun. Covers the import specifier per runtime, which `CS_*` variables are mandatory and minting them with `stash env`, how keysets and credentials interact on the edge (what must match is the keyset — `stash-zerokms` is canonical), how the WASM client surface differs from the native typed client, why the entry is server-side only and never belongs in a browser bundle, and why an EQL v3 schema module cannot be shared across the two entries. Use when adding encryption to a Supabase Edge Function, a Worker, or a Deno service; when a native module fails to load in a deployed runtime; when wiring `CS_*` secrets into an edge deploy; or when encrypted search returns zero rows on the edge but works locally.
 ---
 
 # Encryption on the Edge (WASM entry)
@@ -46,8 +46,11 @@ together.
 `@cipherstash/stack-supabase/wasm-inline` (not the package root, which pulls
 the native engine) and **declare your `schemas`** — the adapter's default
 behaviour is to introspect the database for its column config, which needs a
-Postgres connection. Declaring skips it. See `stash-supabase` and
-`stash-managed-platforms`.
+Postgres connection. Declaring skips it. Those `schemas` are authored from
+`@cipherstash/stack/eql/v3`, not from `@cipherstash/stack/wasm-inline` — the
+one place the "use the edge entry for everything" reflex is wrong, and it
+fails at `tsc`, not at runtime. See "Schema Modules Do Not Cross Entries"
+below, plus `stash-supabase` and `stash-managed-platforms`.
 
 **`@cipherstash/protect` is not one of the options.** It is the deprecated
 predecessor of `@cipherstash/stack`; its native `@cipherstash/protect-ffi`
@@ -118,9 +121,15 @@ that config does not apply here and can be left alone.
 
 ## Credentials
 
-The edge client takes **all four** `CS_*` values explicitly. There is no
-credential discovery: `~/.cipherstash` does not exist in a Worker or an Edge
-Function container, and there is no device-code login to fall back on.
+The edge client is passed its credentials explicitly. There is no credential
+discovery: `~/.cipherstash` does not exist in a Worker or an Edge Function
+container, and there is no device-code login to fall back on.
+
+`clientId` and `clientKey` are always required. Past those, `config` is a
+union: the **access-key path** below adds `workspaceCrn` +
+`accessKey` — the four `CS_*` values `stash env` mints — or you pass a
+pre-built `config.authStrategy`, which already carries the CRN and so needs
+neither `workspaceCrn` nor `accessKey` (see `config.authStrategy` below).
 
 > [!IMPORTANT]
 > **Server-side only — this entry never goes in a browser bundle.**
@@ -253,7 +262,7 @@ Available: `encrypt`, `decrypt`, `isEncrypted`, `encryptQuery`,
 |---|---|---|
 | Factory | `Encryption({ schemas })` | `Encryption({ schemas, config })` — same name, different module |
 | Schema authoring | `encryptedTable` / `types` from `@cipherstash/stack/v3` | the entry's own re-exports (see below) |
-| Config | discovered from env / `~/.cipherstash` | all four `CS_*` passed explicitly |
+| Config | discovered from env / `~/.cipherstash` | passed explicitly — `clientId` + `clientKey`, then either `workspaceCrn` + `accessKey` or a pre-built `authStrategy` (see below) |
 | Typing | signatures derived from the schema | schema-aware, but not the full typed client |
 | `.audit()` | chainable on operations | **not available** |
 | `.withLockContext()` | chainable on operations | **not available** — see below |
@@ -391,10 +400,11 @@ It works fine at runtime, which is the trap: the tempting fix is
 `as never` / `as any` on the schema, which silences a real signal and will
 keep silencing it after a genuine schema mismatch appears.
 
-**Author the schema module against exactly one entry, and use that entry's
-client with it.** For a project whose encryption runs on the edge, that means
-importing `encryptedTable` and `types` from `@cipherstash/stack/wasm-inline`
-in the shared schema module:
+**Author the schema module against the entry whose CLIENT TYPE consumes it.**
+Not "the entry your runtime uses" — the WASM engine is not what decides this,
+the type of the thing you hand the schema to is. For a project that builds a
+raw `Encryption` client from `@cipherstash/stack/wasm-inline`, that entry is
+also where `encryptedTable` and `types` come from:
 
 ```ts
 // schema.ts — the single source of truth for this project's schema
@@ -415,6 +425,26 @@ client on the edge, keep two schema modules and treat their agreement as
 something to test, not something the type system will enforce for you. Column
 names and domains must match exactly — they are what the database and the
 stored payload's `i` identifier are keyed by.
+
+### The exception: `@cipherstash/stack-supabase/wasm-inline`
+
+The Supabase adapter's edge entry runs the WASM engine but types its `schemas`
+option from `@cipherstash/stack/eql/v3` — the same declaration its native
+entry uses. So a Supabase edge project authors its schema module from
+`eql/v3`, **not** from `@cipherstash/stack/wasm-inline`:
+
+```ts
+// The engine is still WASM. Only the schema's declaration site differs.
+import { encryptedSupabase } from '@cipherstash/stack-supabase/wasm-inline'
+import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
+```
+
+Get this one backwards and you hit the same nominal-private-field rejection,
+reported one level up — `schemas` not assignable to `AnyV3Table`, because the
+column classes inside it carry a private `columnName` from the other entry's
+declarations. Which way round it goes is a property of the client type, so
+check what consumes the schema before you pick the import. `stash-supabase`
+and `stash-managed-platforms` carry the full edge call shape.
 
 ## Querying from the Edge
 
@@ -451,7 +481,7 @@ shared modules.
 entry is ESM-only. Move the consumer to ESM.
 
 **Missing `CS_*` at runtime** — the secret store was never populated, or the
-function was served without `--env-file`. Validate all four at handler entry
+function was served without `--env-file`. Validate the ones you pass at handler entry
 and return an actionable error rather than letting client construction fail
 opaquely; the example in `examples/supabase-worker` does exactly this.
 

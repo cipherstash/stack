@@ -26,7 +26,7 @@ selects, with support for equality, range, and ordering.
 - Using identity-aware encryption (lock contexts) with Supabase
 - Building applications where sensitive columns need encryption at rest and in transit
 
-> **On a managed AI platform — Lovable, v0, Bolt, Replit — read `stash-managed-platforms` first.** Two things there are decided before anything on this page applies: server code runs on an edge runtime, so it needs `@cipherstash/stack/wasm-inline` (`@cipherstash/protect` is the deprecated predecessor and its native module will not load — that dead end has cost an agent a whole turn), and the database role is not `postgres`, which changes how EQL gets installed. `encryptedSupabase` can be constructed inside a Worker, but only from the `@cipherstash/stack-supabase/wasm-inline` entry and only with declared `schemas` — introspection is what needs a Postgres connection, and declaring your tables is what skips it.
+> **On a managed AI platform — Lovable, v0, Bolt, Replit — read `stash-managed-platforms` first.** Two things there are decided before anything on this page applies: server code runs on an edge runtime, so it needs `@cipherstash/stack/wasm-inline` (`@cipherstash/protect` is the deprecated predecessor and its native module will not load — that dead end has cost an agent a whole turn), and the database role is not `postgres`, which changes how EQL gets installed. `encryptedSupabase` can be constructed inside an edge runtime, but only from the `@cipherstash/stack-supabase/wasm-inline` entry and only with declared `schemas` — introspection is what needs a Postgres connection, and declaring your tables is what skips it. Step 5 of Setup has the call shape.
 
 > **What survives PostgREST, in one line** (the full treatment is under [Query behaviour on encrypted columns](#query-behaviour-on-encrypted-columns), a long way down): `eq` / `neq` / `in` / `match()` and the range filters `gt` / `gte` / `lt` / `lte` **do** work on capable domains, and so does `order()` on OPE-backed ordering columns. Encrypted free-text `matches()` and encrypted-JSON `contains()` / `selectorEq()` / `selectorNe()` **do not** — they need `eql_v3.query_*` casts PostgREST cannot emit, and the wrapper fails fast rather than returning wrong rows. Agents guess wrong in both directions on this, so don't infer it; for the predicates that don't survive, use Drizzle, Prisma Next, or SQL in an RPC.
 
@@ -67,10 +67,12 @@ this is also how **Supabase Edge Functions** get credentials in local dev —
 > needs only a grant — so a reader granted the writer's keyset but bound to
 > a different one decrypts fine while its searches silently return zero
 > rows. `stash-zerokms` is canonical for keyset scoping, `stash-auth` for
-> credentials. Encryption *inside* an
-> Edge Function (Deno, no native modules) uses the
-> `@cipherstash/stack/wasm-inline` entry — see the `stash-edge` skill; SQL
-> written by hand in a migration or RPC is covered by `stash-postgres`.
+> credentials. Inside an
+> Edge Function (Deno, no native modules) the wrapper comes from
+> `@cipherstash/stack-supabase/wasm-inline` — step 5 below. For encryption
+> without the Supabase wrapper it is `@cipherstash/stack/wasm-inline`, see the
+> `stash-edge` skill; SQL written by hand in a migration or RPC is covered by
+> `stash-postgres`.
 
 ### 1. Install EQL v3 on the database
 
@@ -266,13 +268,16 @@ detects EQL v3 columns by their Postgres domain, derives each column's
 encryption config from the domain, and builds the encryption client
 internally — there is no client-side schema to hand-maintain. Introspection
 needs a direct Postgres connection (`options.databaseUrl`, defaulting to
-`DATABASE_URL`), so the factory cannot run in a Worker or the browser.
+`DATABASE_URL`). The engine is a native module, so **this entry runs on
+Node only**. On an edge runtime, import the `wasm-inline` entry instead —
+step 5 below.
 
-Introspection is not the only thing keeping this out of a browser. On the
-WASM entry, `config.clientKey` is a workspace secret and is required on
-*every* auth path — supplying a per-user `config.authStrategy` does not
-remove it ([#804](https://github.com/cipherstash/stack/issues/804)). Removing
-the `pg` dependency would unblock Workers, not browsers.
+The native engine and `pg` are not the only things keeping this out of a
+browser. On the WASM entry, `config.clientKey` is a workspace secret and is
+required on *every* auth path — supplying a per-user `config.authStrategy`
+does not remove it ([#804](https://github.com/cipherstash/stack/issues/804)).
+Dropping the native engine and the `pg` dependency is what unblocks Deno,
+Supabase Edge Functions and Cloudflare Workers; nothing unblocks a browser.
 
 Options: `{ schemas?, databaseUrl?, config? }` — `config` is the encryption
 client config (e.g. `config.authStrategy`, see Authentication below).
@@ -283,8 +288,8 @@ capabilities come from the introspected domains.
 ### 4. Optional declared schemas (compile-time types)
 
 Declaring tables is optional. Passing `schemas` — a record whose keys must
-equal each table's name — adds compile-time types and verifies the declared
-tables against the database at construction:
+equal each table's name — adds compile-time types, and, when introspection
+also runs, verifies the declared tables against the database at construction:
 
 ```typescript
 import { encryptedTable, types } from "@cipherstash/stack/eql/v3"
@@ -307,14 +312,112 @@ A declared table gets a typed builder: rows infer each column's plaintext
 type (`types.IntegerOrd` → `number`, `types.TimestampOrd` → `Date`),
 storage-only columns are excluded from every filter method, and `order()` is
 narrowed to orderable columns.
-Undeclared tables behave exactly as with no `schemas` at all. Every v3 column
-is fully described by its `types.*` factory — there are no capability or
-tuning chains on v3 columns.
+
+Whether undeclared tables still work turns on `databaseUrl`, **not** on the
+absence of `schemas`. Introspection is gated on a resolved database URL, so
+passing `databaseUrl` alongside `schemas` gets you both — declared tables keep
+their types and are drift-checked, undeclared ones behave exactly as with no
+`schemas` at all. Pass `schemas` on their own, as above, and even the native
+entry is in declared mode: an ambient `DATABASE_URL` is deliberately ignored,
+because declaring your tables says this client needs no connection, and
+`from("orders")` on an undeclared table throws.
+
+Every v3 column is fully described by its `types.*` factory — there are no
+capability or tuning chains on v3 columns.
 
 A JS property may map to a different DB column name
 (`joined: types.TimestampOrd("joined_at")`) — filters, selects, and results
 are translated automatically, and `date`/`timestamp` columns decrypt to real
 `Date` objects.
+
+### 5. Edge runtimes — the `wasm-inline` entry
+
+Deno, Supabase Edge Functions and Cloudflare Workers cannot load a native
+module and cannot open a raw Postgres socket. Both of those are properties of
+the entry above, not of the wrapper, so the package ships a second entry that
+has neither:
+
+| Entry | Engine | Schema | Runs on |
+|---|---|---|---|
+| `@cipherstash/stack-supabase` | native | introspected | Node |
+| `@cipherstash/stack-supabase/wasm-inline` | WASM, inlined into the bundle | declared — `schemas` is required | Deno, Supabase Edge Functions, Cloudflare Workers |
+
+After construction the wrapper behaves the same — the filters, the transforms
+and the response shape are identical — with two exceptions, both of them
+declared mode rather than the engine. `select('*')` and bare `select()` are
+refused, so name the columns you want; that refusal is not a read backstop,
+because a query awaited with no `.select()` at all still returns every column
+undecrypted. And `from()` on a table you did not declare throws, because there
+is no introspected table list to fall back on. Both are expanded in the bullets
+below.
+
+```typescript
+import { encryptedTable, types } from "@cipherstash/stack/eql/v3"
+import { encryptedSupabase } from "@cipherstash/stack-supabase/wasm-inline"
+
+const users = encryptedTable("users", {
+  email:  types.TextSearch("email"),
+  amount: types.IntegerOrd("amount"),
+})
+
+const es = await encryptedSupabase(supabaseUrl, supabaseKey, {
+  schemas: { users },
+  config: {
+    workspaceCrn: Deno.env.get("CS_WORKSPACE_CRN")!,
+    accessKey:    Deno.env.get("CS_CLIENT_ACCESS_KEY")!,
+    clientId:     Deno.env.get("CS_CLIENT_ID")!,
+    clientKey:    Deno.env.get("CS_CLIENT_KEY")!,
+  },
+})
+
+await es.from("users").select("id, email").eq("email", "a@b.com")
+```
+
+Four differences from the native entry, three of them enforced by the type
+checker:
+
+- **`schemas` is required** — by the type, and by a construction-time throw
+  for callers who reach it from plain JS. Nothing introspects here, so there
+  is no other way to discover your encrypted columns, and `from()` on an
+  undeclared table throws for the same reason. The real hazard is one level
+  down: an undeclared **column** on a declared table never enters the encrypt
+  config and is treated as plaintext, so a filter on it sends your plaintext
+  value to PostgREST and a select on it hands back the raw EQL payload. Writes
+  have a backstop — a plaintext write to a real `eql_v3_*` column fails that
+  domain's CHECK constraint, though a NULL still passes. **Reads have none.**
+  `select('*')` is refused in declared mode, but that is not a safety net: a
+  query awaited with no `.select()` call at all sends a raw `*`, and every
+  column comes back undecrypted, declared or not. Name the columns you want.
+  Do not wait for a warning: the native entry logs one about
+  unverified declarations, but it is gated on the introspector, so on this
+  entry it never fires. Declare every encrypted column of every table you
+  query.
+- **`config` is required.** There is no `~/.cipherstash` on an edge runtime to
+  discover credentials from, so authentication is passed in. `clientId` and
+  `clientKey` are always needed; past those the type is a union, with two
+  supported paths.
+  The **access-key path** adds `workspaceCrn` + `accessKey` — the four `CS_*`
+  values shown above. Mint them with `stash env --name <name>` and set them
+  with `supabase secrets set`, or pass `--env-file` for `supabase functions
+  serve`. The **strategy path** takes a pre-built `config.authStrategy`
+  instead — `AccessKeyStrategy` or `OidcFederationStrategy`, both re-exported
+  from `@cipherstash/stack/wasm-inline` — and makes `workspaceCrn` optional,
+  since a built strategy already carries the CRN. So authenticating *as the
+  end user* over OIDC federation does work on the edge; what does not is
+  binding data to that user, two bullets below.
+- **`databaseUrl` is not accepted.** The options type declares it
+  `databaseUrl?: never`, so passing one is a type error whether you write the
+  options inline or build them as a `const` first, and a construction-time
+  throw for callers arriving from plain JS.
+- **`.withLockContext()` and `.audit()` throw.** Identity-bound encryption is
+  not implemented on the WASM engine (cipherstash/stack#797); the entry fails
+  loudly rather than dropping the identity claim and writing a value any
+  keyset holder could decrypt. If you need lock contexts, that path stays on
+  Node.
+
+The entry is ESM-only. It is server-side, not browser-safe — the WASM client
+requires a workspace `clientKey` on every authentication path, so shipping one
+to a browser would ship the key with it (cipherstash/stack#804).
 
 ## Insert (Encrypted Automatically)
 
