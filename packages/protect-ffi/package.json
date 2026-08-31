@@ -91,7 +91,7 @@
     "prefix": "protect-ffi-"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.9",
+    "@biomejs/biome": "^2.5.10",
     "@neon-rs/cli": "^0.2.6",
     "@tsconfig/node22": "^22.0.6",
     "@types/node": "^22.20.1",
