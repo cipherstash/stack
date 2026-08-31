@@ -99,6 +99,24 @@ Deploy a real edge function that calls `protect-wasm`, encrypt/decrypt against Z
 - Round-trip correctness against a server-side native client
 - Cross-backend ciphertext compatibility — encrypt on wasm (RustCrypto), decrypt on native (aws-lc-rs), and vice versa. This is the cross-backend compat test deferred from earlier.
 
+### Layer 6 — WASI / wazero for the Go SDK [IN PROGRESS]
+
+Everything above targets `wasm32-unknown-unknown` for a **JavaScript host** (Supabase Edge, browsers, Deno): outbound HTTP rides the host's `fetch`, and reqwest's wasm backend, `getrandom`'s `wasm_js` backend, and `web_time` all lean on JS APIs the host provides.
+
+The Go Encryption SDK (`goencryption`, formerly `protectgo`) has a different motivation and a different target. It ships six per-platform C static libraries linked via cgo, which forces `CGO_ENABLED=1`, a C toolchain, and a build/commit matrix per OS/arch. Compiling the client to wasm and running it under a pure-Go WebAssembly runtime — **wazero** — removes cgo entirely: one `.wasm` in the module, `CGO_ENABLED=0`, and ordinary `GOOS/GOARCH` cross-compilation.
+
+But wazero is **not** a JS host. It targets `wasm32-wasip1` (WASI preview 1) — `target_os = "wasi"`, not `"unknown"` — and provides no `fetch`, no `web-sys`, no wasm-bindgen imports. So the JS-oriented Layers 1–5 do not transfer as-is; this is a distinct target with a distinct blocker.
+
+**History.** PR #2099 was the beachhead: it proved the `ZeroKMSConnection` seam could be satisfied by a single host-imported function (`cipherstash_transport::transport_send`, backed by Go's `net/http`) with request assembly, error mapping, chunked concurrency and client-side key derivation all running unmodified inside the guest, and validated it end to end against a real ZeroKMS. It was written against `cipherstash-client`, which `stack-kms` / `stack-encrypt` replace, so it is not merged as-is; the reusable pieces are re-targeted by the plan below.
+
+**The measured blocker (2026-08).** `cargo check --target wasm32-wasip1 -p stack-encrypt --no-default-features` fails on exactly two things — tokio (`Only features sync,macros,io-util,rt,time are supported on wasm`) and the `aws-lc-sys` build script — and both are pulled solely by `reqwest 0.13.4` via `stack-auth` and `stack-kms`. On wasip1 reqwest ≥ 0.13.4 selects its *native* backend (hyper / tokio-full / hickory / rustls / aws-lc-sys), where 0.13.2 selected the fetch/wasm-bindgen backend #2099 fought. There is **no** `wasm-bindgen` / `web-sys` / `js-sys` in the wasip1 tree any more. The `aws-lc-sys` failure is rustls's TLS provider inside reqwest, not the AEAD — `vitaminc-encrypt` already selects its pure-Rust `aes-gcm` backend on `cfg(target_arch = "wasm32")`, which covers wasip1. Only the network stack is missing, and it has to be out of the WASI build *by construction*, not by dead-code elimination or version pinning.
+
+**Architecture: host-provided transport.** HTTP stays out of the wasm and is satisfied by a function the Go host provides; control stays in Rust (the "host orchestrates each step" shape was considered and rejected in #2099 because it smears the protocol state machine across the FFI). Why not HTTP inside the guest: wasip1 has no `sock_connect` (receive/accept only), so outbound TCP needs a host import regardless; TLS in the guest would mean rustls on a pure-Rust provider with embedded roots and no AES-NI, strictly worse than Go's `crypto/tls` with system roots; and `wasi:http` — the right long-term answer — is component model, which wazero does not run. The host can already read guest memory, so routing HTTP through it weakens nothing: what crosses the boundary is exactly what crosses TLS (URL, bearer token, protocol JSON). Data keys, the client key and the index key never do.
+
+**The plan** lives in [`docs/plans/stack-encrypt-go-bindings.md`](docs/plans/stack-encrypt-go-bindings.md): phases, the vitaminc `bindings/go` layering (`vcvalue` value model + FFI codec are reused; the stack-encrypt side is the cipher/KMS side), the frozen byte formats stack-encrypt owns, and the open decisions. Terminology fixed there: *storage format* (sealed leaf, into a database), *FFI codec* (host ↔ guest marshalling, throwaway), *transport* (HTTP, out of the process).
+
+**Gate.** `mise run wasm:wasi-check` compiles the HTTP-free core for `wasm32-wasip1` and fails if any crate's normal-dependency tree contains a JS-host backend (`wasm-bindgen`/`web-sys`/`js-sys`) **or** the native HTTP/TLS stack (`reqwest`/`hyper`/`aws-lc-sys`). Phase 0 gates `zerokms-protocol`, `cipherstash-core`, `recipher`, `cts-common`, `cllw-ore`; Phase 1 adds `stack-auth`, `stack-kms`, `stack-encrypt` once reqwest is behind a feature in each.
+
 ## Medium-term direction — `stack-encrypt` replaces `cipherstash-client`
 
 Layer 4 as scoped above ports the existing `protect-ffi` neon bindings to wasm. That works, but it's strictly a tactical move — the underlying `cipherstash-client` crate is the long-pole heavy dependency (full reqwest stack, EQL types, config sources, etc.), and `protect-ffi` is a thin async wrapper over it.
@@ -140,6 +158,7 @@ Pending decision. The rest of this doc assumes Layer 4 happens for now, but ever
 - [~] Layer 3.5 — `stack-auth-wasm` bindings crate (#1952) + npm unification (stacked follow-up)
 - [ ] Layer 4 — wasm bindings for encrypt — **likely superseded by stack-encrypt; pending decision**
 - [ ] Layer 5 — Supabase Edge validation
+- [~] Layer 6 — WASI / wazero for the Go SDK: Phase 0 (gate + plan) landed; Phase 1 (`stack-auth`/`stack-kms`/`stack-encrypt` build for wasip1 without reqwest) stacked on it. Plan: `docs/plans/stack-encrypt-go-bindings.md`
 
 ## Layer 1 — what shipped
 
