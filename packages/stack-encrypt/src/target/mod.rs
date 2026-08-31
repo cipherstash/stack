@@ -519,10 +519,16 @@ mod prf_framing {
 /// `for_map_entry`, the markers — are derived after this check runs, from
 /// the caller-visible AAD this sees.)
 ///
-/// Crate-private: third-party leaves go through [`supplied_aad`] /
+/// In-crate, third-party leaves go through [`supplied_aad`] /
 /// [`supplied_prf_context`], the one choke point whose signature survives
-/// the vitaminc#291 migration.
-pub(crate) fn is_degenerate_aad(bytes: &[u8]) -> bool {
+/// the vitaminc#291 migration. Public so that runtime front-ends which build
+/// contexts from untrusted input — the WASI guest's record plans, where a
+/// context is bytes off the FFI boundary rather than a Rust literal — can
+/// run the *same* predicate at parse time. Without it a degenerate context
+/// could seal through a path that bypasses the leaf checks and then never
+/// open, because [`DecryptInto`] does run them. It disappears with the rest
+/// of this scaffolding when vitaminc#291 lands.
+pub fn is_degenerate_aad(bytes: &[u8]) -> bool {
     if bytes.is_empty() {
         return true;
     }
