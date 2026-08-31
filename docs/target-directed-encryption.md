@@ -117,8 +117,12 @@ EQL's wire newtypes (`Ciphertext`, `Hmac256`, `OreBlock256`) get the same treatm
 **Composites** fan out to each field's impl, merge the outputs, and assemble. Today that is written by hand — one impl, in the shape the derive will eventually generate:
 
 ```rust
-impl<'c, K, Ctx> EncryptFrom<u32, StackCipher<K>, Ctx> for EncryptedInt
-where Ctx: EncryptContext<'c> + SuppliedContext<'c>,   // what the leaves below demand
+impl<K, Ctx> EncryptFrom<u32, StackCipher<K>, Ctx> for EncryptedInt
+where
+    Ctx: Clone,                                              // fans out to every field
+    StackCipherText: EncryptFrom<u32, StackCipher<K>, Ctx>,  // what each leaf demands,
+    EqualityTerm: EncryptFrom<u32, StackCipher<K>, Ctx>,     //   inherited, not restated
+    OreTerm<u32>: EncryptFrom<u32, StackCipher<K>, Ctx>,
 {
     fn encrypt_from<'a>(source: &'a u32, cipher: &'a StackCipher<K>, context: Ctx) -> Pending<'a, Self, K>
     where Self: 'a,
@@ -131,7 +135,7 @@ where Ctx: EncryptContext<'c> + SuppliedContext<'c>,   // what the leaves below 
 }
 ```
 
-One context fans out to every field. `zip` concatenates the fields' requests, so the whole record is still one batched call when awaited. The derive writes the same bound, transitively — one `FieldTy: EncryptFrom<S, C, Ctx>` per field — so a record inherits its leaves' demand for a supplied context without naming it.
+One context fans out to every field. `zip` concatenates the fields' requests, so the whole record is still one batched call when awaited. The where clauses are exactly the ones the derive writes — one `FieldTy: EncryptFrom<S, C, Ctx>` per field — so a record inherits its leaves' demand for a supplied context without naming it, and a hand-written composite that copies this shape rides along when the leaf bound tightens (vitaminc#291) instead of restating today's policy.
 
 **The derive** writes exactly that impl from the struct:
 

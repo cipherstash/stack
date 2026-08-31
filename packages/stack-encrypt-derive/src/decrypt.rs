@@ -15,11 +15,11 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens};
 use syn::spanned::Spanned;
 use syn::{
-    parse_quote, parse_quote_spanned, DeriveInput, Ident, LitStr, Member, Path, PathArguments,
-    Result, Type,
+    parse_quote, parse_quote_spanned, DeriveInput, Generics, Ident, LitStr, Member, Path,
+    PathArguments, Result, Type,
 };
 
-use crate::shape::{context_type, own_context, push_context_generics, zip_fields, Field, Record};
+use crate::shape::{push_context_generics, trait_impl, zip_fields, CallerContext, Field, Record};
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let record = Record::parse(&input)?;
@@ -41,22 +41,19 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
 
 /// `impl DecryptInto<Plaintext, StackCipher<__K>, Ctx> for Record` around
 /// `body`; `ctx` is `__Ctx` or `()` ([`push_context_generics`]).
-#[allow(clippy::too_many_arguments)]
 fn impl_block(
+    input: &DeriveInput,
     krate: &Path,
-    name: &Ident,
-    ty_generics: &syn::TypeGenerics<'_>,
-    impl_generics: &syn::ImplGenerics<'_>,
-    where_clause: Option<&syn::WhereClause>,
+    generics: &Generics,
     plaintext: &Type,
     ctx: &Type,
     body: TokenStream,
 ) -> TokenStream {
-    quote! {
-        #[automatically_derived]
-        impl #impl_generics #krate::target::DecryptInto<#plaintext, #krate::StackCipher<__K>, #ctx>
-            for #name #ty_generics #where_clause
-        {
+    trait_impl(
+        input,
+        generics,
+        quote!(#krate::target::DecryptInto<#plaintext, #krate::StackCipher<__K>, #ctx>),
+        quote! {
             fn decrypt_into<'__a>(
                 self,
                 __cipher: &'__a #krate::StackCipher<__K>,
@@ -68,8 +65,8 @@ fn impl_block(
             {
                 #body
             }
-        }
-    }
+        },
+    )
 }
 
 /// `impl DecryptField<__P, __C, __Ctx> for Record`: a derived record is a
@@ -114,7 +111,10 @@ fn decrypt_field_impl(input: &DeriveInput, krate: &Path) -> TokenStream {
 
 /// The context one opened field is handed, by move: its own, or the caller's.
 fn context_for(field: &Field) -> TokenStream {
-    own_context(field).unwrap_or_else(|| quote!(__context))
+    field
+        .field_context()
+        .own_expr()
+        .unwrap_or_else(|| quote!(__context))
 }
 
 /// The plaintext type as a struct-literal path: `User<T>` becomes `User::<T>`.
@@ -198,7 +198,6 @@ impl<'a> Auto<'a> {
 fn automatic(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
     let krate = &record.krate;
     let name = &input.ident;
-    let (_, ty_generics, _) = input.generics.split_for_impl();
     let auto = Auto::classify(record, name)?;
 
     // The one-ciphertext check: at the definition for a concrete record, at
@@ -251,20 +250,10 @@ fn automatic(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
         generics.params.push(parse_quote!(__P));
         generics.params.push(parse_quote!(__K));
         push_field_bounds(&mut generics, krate, fields, &plaintext);
-        let ctx = push_context_generics(&mut generics, fields);
-        let (impl_generics, _, where_clause) = generics.split_for_impl();
+        let ctx = push_context_generics(&mut generics, CallerContext::Decrypt(krate), fields);
         let open = open_one(krate, fields, &plaintext);
         let body = quote!(#body_check #destructure #open);
-        let block = impl_block(
-            krate,
-            name,
-            &ty_generics,
-            &impl_generics,
-            where_clause,
-            &plaintext,
-            &ctx,
-            body,
-        );
+        let block = impl_block(input, krate, &generics, &plaintext, &ctx, body);
         return Ok(quote!(#block #definition_check));
     }
 
@@ -281,19 +270,10 @@ fn automatic(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
                 }
                 Auto::ByField(groups) => by_group_body(krate, groups, plaintext)?,
             };
-            let ctx = push_context_generics(&mut generics, &candidates);
-            let (impl_generics, _, where_clause) = generics.split_for_impl();
+            let ctx =
+                push_context_generics(&mut generics, CallerContext::Decrypt(krate), &candidates);
             let body = quote!(#body_check #destructure #open);
-            Ok(impl_block(
-                krate,
-                name,
-                &ty_generics,
-                &impl_generics,
-                where_clause,
-                plaintext,
-                &ctx,
-                body,
-            ))
+            Ok(impl_block(input, krate, &generics, plaintext, &ctx, body))
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -304,16 +284,11 @@ fn automatic(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
 /// candidate field, under the context it is opened under, so a record's impl
 /// exists for exactly the plaintexts its ciphertext field opens to — and
 /// only under a supplied context if that field needs one.
-fn push_field_bounds(
-    generics: &mut syn::Generics,
-    krate: &Path,
-    fields: &[&Field],
-    plaintext: &Type,
-) {
+fn push_field_bounds(generics: &mut Generics, krate: &Path, fields: &[&Field], plaintext: &Type) {
     let predicates = &mut generics.make_where_clause().predicates;
     for field in fields {
         let ty = &field.ty;
-        let context = context_type(field);
+        let context = field.field_context().ty();
         // Spanned at the field type, so a type that cannot be a field of an
         // automatically decrypted record is reported there.
         predicates.push(parse_quote_spanned! {ty.span()=>
@@ -375,8 +350,10 @@ fn open_one(krate: &Path, fields: &[&Field], plaintext: &Type) -> TokenStream {
     let mut calls = fields.iter().map(|field| {
         let ty = &field.ty;
         let local = &field.local;
-        let context =
-            own_context(field).unwrap_or_else(|| quote!(::core::clone::Clone::clone(__context)));
+        let context = field
+            .field_context()
+            .own_expr()
+            .unwrap_or_else(|| quote!(::core::clone::Clone::clone(__context)));
         quote! {
             <#ty as #krate::target::DecryptField<#plaintext, #krate::StackCipher<__K>, _>>::decrypt_field(
                 #local, __cipher, #context,
@@ -446,7 +423,6 @@ fn by_group_body(krate: &Path, groups: &[Group<'_>], plaintext: &Type) -> Result
 fn explicit(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
     let krate = &record.krate;
     let name = &input.ident;
-    let (_, ty_generics, _) = input.generics.split_for_impl();
 
     let opened: Vec<&Field> = record.fields.iter().filter(|f| f.decrypt).collect();
     let mode = Mode::classify(opened, name)?;
@@ -462,26 +438,16 @@ fn explicit(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
         };
         let plaintext: Type = parse_quote!(__P);
         let ty = &field.ty;
-        let context = context_type(field);
+        let context = field.field_context().ty();
         let mut generics = input.generics.clone();
         generics.params.push(parse_quote!(__P));
         generics.params.push(parse_quote!(__K));
         generics.make_where_clause().predicates.push(parse_quote! {
             #ty: #krate::target::DecryptInto<__P, #krate::StackCipher<__K>, #context>
         });
-        let ctx = push_context_generics(&mut generics, &[field]);
-        let (impl_generics, _, where_clause) = generics.split_for_impl();
+        let ctx = push_context_generics(&mut generics, CallerContext::Decrypt(krate), &[field]);
         let body = whole_body(krate, field, &plaintext);
-        return Ok(impl_block(
-            krate,
-            name,
-            &ty_generics,
-            &impl_generics,
-            where_clause,
-            &plaintext,
-            &ctx,
-            body,
-        ));
+        return Ok(impl_block(input, krate, &generics, &plaintext, &ctx, body));
     }
 
     let impls = record
@@ -493,29 +459,21 @@ fn explicit(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
             let (body, ctx) = match &mode {
                 Mode::Whole(field) => {
                     let ty = &field.ty;
-                    let context = context_type(field);
+                    let context = field.field_context().ty();
                     generics.make_where_clause().predicates.push(parse_quote! {
                         #ty: #krate::target::DecryptInto<#plaintext, #krate::StackCipher<__K>, #context>
                     });
-                    let ctx = push_context_generics(&mut generics, &[field]);
+                    let ctx =
+                        push_context_generics(&mut generics, CallerContext::Decrypt(krate), &[field]);
                     (whole_body(krate, field, plaintext), ctx)
                 }
                 Mode::ByField(fields) => {
-                    let ctx = push_context_generics(&mut generics, fields);
+                    let ctx =
+                        push_context_generics(&mut generics, CallerContext::Decrypt(krate), fields);
                     (by_field_body(krate, fields, plaintext)?, ctx)
                 }
             };
-            let (impl_generics, _, where_clause) = generics.split_for_impl();
-            Ok(impl_block(
-                krate,
-                name,
-                &ty_generics,
-                &impl_generics,
-                where_clause,
-                plaintext,
-                &ctx,
-                body,
-            ))
+            Ok(impl_block(input, krate, &generics, plaintext, &ctx, body))
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -641,7 +599,7 @@ mod tests {
             where
                 StackCipherText: ::stack_encrypt::target::DecryptField<u32, ::stack_encrypt::StackCipher<__K>, __Ctx>,
                 EqualityTerm: ::stack_encrypt::target::DecryptField<u32, ::stack_encrypt::StackCipher<__K>, __Ctx>,
-                __Ctx: ::core::clone::Clone
+                __Ctx: ::stack_encrypt::target::DecryptContext<'__ctx>
         });
         assert_contains(&expansion, quote!(let Self { c: __field_0, hm: __field_1, .. } = self;));
         assert_contains(&expansion, quote! {
@@ -668,6 +626,31 @@ mod tests {
         });
         assert_lacks(&expansion, quote!(let () = const));
         assert_lacks(&expansion, quote!(<u8 as ::stack_encrypt::target::Decryptable>));
+    }
+
+    #[test]
+    #[rustfmt::skip]
+    fn a_caller_context_must_be_a_decrypt_context() {
+        // The regression shape: the ciphertext field carries a literal, so
+        // only the term fields see the caller's context — and a term's
+        // `DecryptField` accepts anything (it opens nothing). The impl-level
+        // bound is what keeps `decrypt_into` from accepting, and silently
+        // discarding, a value that is not a context at all.
+        let expansion = expand(parse_quote! {
+            #[stash(plaintext = u32)]
+            struct Rec {
+                #[stash(context = "rec/c")]
+                c: StackCipherText,
+                hm: EqualityTerm,
+            }
+        })
+        .unwrap();
+        assert_contains(&expansion, quote! {
+            impl<'__ctx, __K, __Ctx> ::stack_encrypt::target::DecryptInto<u32, ::stack_encrypt::StackCipher<__K>, __Ctx> for Rec
+        });
+        assert_contains(&expansion, quote! {
+            __Ctx: ::stack_encrypt::target::DecryptContext<'__ctx>
+        });
     }
 
     #[test]
@@ -835,10 +818,10 @@ mod tests {
         })
         .unwrap();
         assert_contains(&expansion, quote! {
-            impl<__P, __K, __Ctx> ::stack_encrypt::target::DecryptInto<__P, ::stack_encrypt::StackCipher<__K>, __Ctx> for Wrapped
+            impl<'__ctx, __P, __K, __Ctx> ::stack_encrypt::target::DecryptInto<__P, ::stack_encrypt::StackCipher<__K>, __Ctx> for Wrapped
             where
                 StackCipherText: ::stack_encrypt::target::DecryptInto<__P, ::stack_encrypt::StackCipher<__K>, __Ctx>,
-                __Ctx: ::core::clone::Clone
+                __Ctx: ::stack_encrypt::target::DecryptContext<'__ctx>
         });
         assert_contains(&expansion, quote! {
             <StackCipherText as ::stack_encrypt::target::DecryptInto<__P, ::stack_encrypt::StackCipher<__K>, _>>::decrypt_into(
@@ -875,7 +858,7 @@ mod tests {
         })
         .unwrap();
         assert_contains(&expansion, quote! {
-            impl<__K, __Ctx> ::stack_encrypt::target::DecryptInto<u32, ::stack_encrypt::StackCipher<__K>, __Ctx> for EncryptedAge
+            impl<'__ctx, __K, __Ctx> ::stack_encrypt::target::DecryptInto<u32, ::stack_encrypt::StackCipher<__K>, __Ctx> for EncryptedAge
             where
                 StackCipherText: ::stack_encrypt::target::DecryptInto<u32, ::stack_encrypt::StackCipher<__K>, __Ctx>
         });

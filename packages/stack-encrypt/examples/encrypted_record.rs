@@ -26,9 +26,7 @@
 //! `zerokms_auth` example for the lookup order).
 
 use stack_encrypt::sem::{EqualityTerm, OreTerm};
-use stack_encrypt::target::{
-    DecryptInto, EncryptContext, EncryptFrom, EncryptInto, Pending, SuppliedContext,
-};
+use stack_encrypt::target::{DecryptInto, EncryptFrom, EncryptInto, Pending};
 use stack_encrypt::{StackCipher, StackCipherText};
 
 /// "An encrypted `u32`, stored as its ciphertext plus an equality term and an
@@ -43,12 +41,18 @@ struct EncryptedInt {
 // One impl, written the way the derive will write it: build every field's
 // pending (no I/O — the terms derive locally, the ciphertext queues its
 // data-key requests), merge them with `zip`, shape with `map`. Errors are the
-// cipher's; there is nothing to unify. The context is the caller's, handed
-// to leaves that need a supplied one — so the record needs one too, and
-// says so: `EncryptedInt` is encrypted with `encrypt_into_with_context`.
-impl<'c, K, Ctx> EncryptFrom<u32, StackCipher<K>, Ctx> for EncryptedInt
+// cipher's; there is nothing to unify. The context bounds are per field —
+// the same clauses the derive emits — so the record *inherits* the leaves'
+// context policy (a supplied, non-empty context) instead of restating it:
+// `EncryptedInt` is encrypted with `encrypt_into_with_context` because its
+// leaves demand a supplied context, and when the leaf bound tightens
+// (vitaminc#291) the record rides along untouched.
+impl<K, Ctx> EncryptFrom<u32, StackCipher<K>, Ctx> for EncryptedInt
 where
-    Ctx: EncryptContext<'c> + SuppliedContext<'c>,
+    Ctx: Clone,
+    StackCipherText: EncryptFrom<u32, StackCipher<K>, Ctx>,
+    EqualityTerm: EncryptFrom<u32, StackCipher<K>, Ctx>,
+    OreTerm<u32>: EncryptFrom<u32, StackCipher<K>, Ctx>,
 {
     fn encrypt_from<'a>(
         source: &'a u32,
@@ -73,10 +77,11 @@ where
 
 // The decrypt mirror `#[derive(DecryptInto)]` would write: the record owns
 // its opening, and only the ciphertext field participates (terms are
-// one-way), so it delegates to the ciphertext's own implementation.
-impl<'c, K, Ctx> DecryptInto<u32, StackCipher<K>, Ctx> for EncryptedInt
+// one-way), so it delegates to the ciphertext's own implementation — and
+// inherits its context demand the same per-field way.
+impl<K, Ctx> DecryptInto<u32, StackCipher<K>, Ctx> for EncryptedInt
 where
-    Ctx: SuppliedContext<'c>,
+    StackCipherText: DecryptInto<u32, StackCipher<K>, Ctx>,
 {
     fn decrypt_into<'a>(self, cipher: &'a StackCipher<K>, context: Ctx) -> Pending<'a, u32, K>
     where

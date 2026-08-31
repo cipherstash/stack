@@ -505,7 +505,8 @@ The implementation kept the design and changed three names/details:
   use; as a trait parameter each impl bounds it. The leaves demand
   `SuppliedContext` (every vitaminc context type but `()`), records inherit
   that through their field bounds, and a row whose fields carry their own
-  contexts leaves it unbounded. The sugar splits accordingly, after
+  contexts is implemented for `()` alone — a context handed to it would go
+  nowhere. The sugar splits accordingly, after
   vitaminc's `encrypt` / `encrypt_with_aad`: `encrypt_into(&cipher)` passes
   `()` and exists only for outputs that need nothing from the caller;
   `encrypt_into_with_context(&cipher, ctx)` for the rest (`decrypt_from` /

@@ -321,10 +321,15 @@ struct EncryptedAge {
 }
 
 // The record hands the caller's context to its leaves, so it needs what
-// they need: a supplied one. (The derive gets this from the field bounds.)
-impl<'c, K, Ctx> EncryptFrom<u32, StackCipher<K>, Ctx> for EncryptedAge
+// they need — inherited through per-field bounds, the same clauses the
+// derive emits, rather than restated as a leaf-policy bound of the record's
+// own (which would need editing every time the leaves' policy tightens).
+impl<K, Ctx> EncryptFrom<u32, StackCipher<K>, Ctx> for EncryptedAge
 where
-    Ctx: EncryptContext<'c> + SuppliedContext<'c>,
+    Ctx: Clone,
+    StackCipherText: EncryptFrom<u32, StackCipher<K>, Ctx>,
+    EqualityTerm: EncryptFrom<u32, StackCipher<K>, Ctx>,
+    OreTerm<u32>: EncryptFrom<u32, StackCipher<K>, Ctx>,
 {
     fn encrypt_from<'a>(
         source: &'a u32,
@@ -342,10 +347,11 @@ where
 }
 
 /// The decrypt mirror a derive would emit: only the ciphertext field
-/// participates — terms are one-way.
-impl<'c, K, Ctx> DecryptInto<u32, StackCipher<K>, Ctx> for EncryptedAge
+/// participates — terms are one-way — and its context demand is inherited
+/// through the field bound, as on the encrypt side.
+impl<K, Ctx> DecryptInto<u32, StackCipher<K>, Ctx> for EncryptedAge
 where
-    Ctx: SuppliedContext<'c>,
+    StackCipherText: DecryptInto<u32, StackCipher<K>, Ctx>,
 {
     fn decrypt_into<'a>(self, cipher: &'a StackCipher<K>, context: Ctx) -> Pending<'a, u32, K>
     where

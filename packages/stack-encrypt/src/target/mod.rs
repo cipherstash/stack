@@ -340,6 +340,33 @@ impl<'a, T> EncryptContext<'a> for T where T: IntoAad<'a> + IntoPrfContext<'a> +
 /// value was encrypted under. Decryption derives nothing, so no PRF bound.
 /// Blanket-implemented; `&str`, `String` and [`Aad`]
 /// qualify.
+///
+/// This is the bound [`#[derive(DecryptInto)]`](macro@DecryptInto) places on
+/// a record's caller-supplied decrypt context, and the supertrait of
+/// [`SuppliedContext`]. It holds even when only term fields would see the
+/// caller's context — a term opens nothing and would accept anything, so
+/// without it a record whose ciphertext field carries a literal would take,
+/// and silently discard, a value that is not a context at all:
+///
+/// ```compile_fail,E0277
+/// use stack_encrypt::sem::EqualityTerm;
+/// use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
+/// use stack_kms::FakeDataKeySource;
+///
+/// #[derive(EncryptFrom, DecryptInto)]
+/// #[stash(plaintext = u32)]
+/// struct Rec {
+///     #[stash(context = "rec/c")]
+///     c: StackCipherText,
+///     hm: EqualityTerm,
+/// }
+///
+/// async fn decrypt(cipher: &StackCipher<FakeDataKeySource>, rec: Rec) {
+///     // `42u8` is not a context (no `IntoAad`): a compile error, not a
+///     // value the term fields quietly swallow.
+///     let _: u32 = rec.decrypt_into(cipher, 42u8).await.unwrap();
+/// }
+/// ```
 pub trait DecryptContext<'a>: IntoAad<'a> + Clone {}
 
 impl<'a, T> DecryptContext<'a> for T where T: IntoAad<'a> + Clone {}
@@ -368,8 +395,9 @@ impl<'a, T> DecryptContext<'a> for T where T: IntoAad<'a> + Clone {}
 /// type itself (cipherstash/vitaminc#291), at which point the bound tightens
 /// to that.
 ///
-/// It implies [`DecryptContext`] (the same `IntoAad + Clone`), so a decrypt
-/// leaf bounds its context by this marker alone.
+/// [`DecryptContext`] (the same `IntoAad + Clone`) is a supertrait, so the
+/// implication holds by construction and a decrypt leaf bounds its context
+/// by this marker alone.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a context the caller supplied",
     label = "this leaf needs a context",
@@ -378,7 +406,7 @@ impl<'a, T> DecryptContext<'a> for T where T: IntoAad<'a> + Clone {}
             needs `encrypt_into_with_context` / `decrypt_from_with_context`, or the literal",
     note = "a context type of your own opts in with an empty `impl SuppliedContext<'_> for MyContext {{}}`"
 )]
-pub trait SuppliedContext<'a>: IntoAad<'a> + Clone {}
+pub trait SuppliedContext<'a>: DecryptContext<'a> {}
 
 impl<'a> SuppliedContext<'a> for &'a str {}
 impl SuppliedContext<'_> for String {}
@@ -470,6 +498,14 @@ mod prf_framing {
 /// (The tags vitaminc applies *inside* the cipher — `Aad::for_leaf`,
 /// `for_map_entry`, the markers — are derived after this check runs, from
 /// the caller-visible AAD this sees.)
+///
+/// **Transitional.** Public only so a third-party leaf can make the same
+/// runtime check the built-ins make (the recipe in the
+/// [module docs](self#extending-with-your-own-sem-type)). When
+/// [vitaminc#291](https://github.com/cipherstash/vitaminc/issues/291) carries
+/// non-emptiness in the context type, both predicates and
+/// [`Error::EmptyContext`] are **deleted**, not deprecated — do not build on
+/// them beyond that recipe.
 pub fn is_degenerate_aad(bytes: &[u8]) -> bool {
     if bytes.is_empty() {
         return true;
@@ -494,6 +530,10 @@ pub fn is_degenerate_aad(bytes: &[u8]) -> bool {
 /// A node that is not framing (a tuple, or a `PrfContext` the caller built by
 /// hand) is degenerate only if every one of its pieces is. Bytes that are not
 /// a well-formed PAE are caller content.
+///
+/// **Transitional**, on the same terms as [`is_degenerate_aad`]: deleted,
+/// not deprecated, when
+/// [vitaminc#291](https://github.com/cipherstash/vitaminc/issues/291) lands.
 pub fn is_degenerate_prf_context(bytes: &[u8]) -> bool {
     if bytes.is_empty() {
         return true;
@@ -723,7 +763,12 @@ pub trait EncryptInto {
         Self: Sized;
 
     /// Encrypt `self` into `T` under `context`. See [`EncryptFrom`].
-    fn encrypt_into_with_context<'a, T, C, Ctx>(
+    ///
+    /// The context must be one the caller actually supplies
+    /// ([`SuppliedContext`]): passing `()` here, or a supplied context to an
+    /// output that takes none — a row — is a compile error either way, with
+    /// [`encrypt_into`](Self::encrypt_into) as the answer to both.
+    fn encrypt_into_with_context<'a, 'c, T, C, Ctx>(
         &'a self,
         cipher: &'a C,
         context: Ctx,
@@ -731,6 +776,7 @@ pub trait EncryptInto {
     where
         C: EncryptTarget,
         T: EncryptFrom<Self, C, Ctx> + 'a,
+        Ctx: SuppliedContext<'c>,
         Self: Sized;
 }
 
@@ -743,7 +789,7 @@ impl<S> EncryptInto for S {
         T::encrypt_from(self, cipher, ())
     }
 
-    fn encrypt_into_with_context<'a, T, C, Ctx>(
+    fn encrypt_into_with_context<'a, 'c, T, C, Ctx>(
         &'a self,
         cipher: &'a C,
         context: Ctx,
@@ -751,6 +797,7 @@ impl<S> EncryptInto for S {
     where
         C: EncryptTarget,
         T: EncryptFrom<Self, C, Ctx> + 'a,
+        Ctx: SuppliedContext<'c>,
     {
         T::encrypt_from(self, cipher, context)
     }
@@ -776,7 +823,12 @@ pub trait DecryptFrom: Sized {
 
     /// Decrypt `source` into `Self`, authenticating against `context`. See
     /// [`DecryptInto`].
-    fn decrypt_from_with_context<'a, S, C, Ctx>(
+    ///
+    /// The context must be one the caller actually supplies
+    /// ([`SuppliedContext`]): passing `()` here, or a supplied context to an
+    /// encrypted type that takes none — a row — is a compile error either
+    /// way, with [`decrypt_from`](Self::decrypt_from) as the answer to both.
+    fn decrypt_from_with_context<'a, 'c, S, C, Ctx>(
         source: S,
         cipher: &'a C,
         context: Ctx,
@@ -784,6 +836,7 @@ pub trait DecryptFrom: Sized {
     where
         C: DecryptTarget,
         S: DecryptInto<Self, C, Ctx> + 'a,
+        Ctx: SuppliedContext<'c>,
         Self: 'a;
 }
 
@@ -797,7 +850,7 @@ impl<P> DecryptFrom for P {
         source.decrypt_into(cipher, ())
     }
 
-    fn decrypt_from_with_context<'a, S, C, Ctx>(
+    fn decrypt_from_with_context<'a, 'c, S, C, Ctx>(
         source: S,
         cipher: &'a C,
         context: Ctx,
@@ -805,6 +858,7 @@ impl<P> DecryptFrom for P {
     where
         C: DecryptTarget,
         S: DecryptInto<Self, C, Ctx> + 'a,
+        Ctx: SuppliedContext<'c>,
         Self: 'a,
     {
         source.decrypt_into(cipher, context)

@@ -98,18 +98,7 @@ impl FieldAttrs {
                     if parsed.context.is_some() {
                         return Err(meta.error("`context` is given twice; a field has one context"));
                     }
-                    let context: LitStr = meta.value()?.parse()?;
-                    // The leaves reject an empty context at runtime; a
-                    // literal one is known here, so say so at the literal.
-                    if context.value().is_empty() {
-                        return Err(syn::Error::new(
-                            context.span(),
-                            "an empty `context` is rejected when a value is encrypted: name the \
-                             field (e.g. \"users/email\"), or drop the attribute to use the \
-                             record's context",
-                        ));
-                    }
-                    parsed.context = Some(context);
+                    parsed.context = Some(meta.value()?.parse()?);
                     return Ok(());
                 }
                 if meta.path.is_ident("from") {
@@ -144,6 +133,25 @@ impl FieldAttrs {
                      `default`, `default = expr` or `decrypt`",
                 ))
             })?;
+        }
+
+        // The leaves reject an empty context at runtime; a literal one is
+        // known here, so say so at the literal. Checked after the loop, once
+        // `from` is known whatever order the attributes were written in: the
+        // advice depends on it, because a `from` field is never handed the
+        // record's context, so "drop the attribute" is a dead end there.
+        if let Some(context) = &parsed.context {
+            if context.value().is_empty() {
+                let message = if parsed.from.is_some() {
+                    "an empty `context` is rejected when a value is encrypted: name the column \
+                     this field encrypts (e.g. \"users/email\"). A `from` field is never handed \
+                     the record's context, so the literal is the only context this field can have."
+                } else {
+                    "an empty `context` is rejected when a value is encrypted: name the field \
+                     (e.g. \"users/email\"), or drop the attribute to use the record's context"
+                };
+                return Err(syn::Error::new(context.span(), message));
+            }
         }
 
         Ok(parsed)

@@ -3,17 +3,18 @@
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
-use syn::{parse_quote, DeriveInput, Ident, Path, Result, Type};
+use syn::{parse_quote, parse_quote_spanned, DeriveInput, Generics, Path, Result, Type};
 
-use crate::shape::{context_type, push_context_generics, zip_fields, Kind, Record};
+use crate::shape::{
+    push_context_generics, trait_impl, zip_fields, CallerContext, Field, Kind, Record,
+};
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let record = Record::parse(&input)?;
     let krate = &record.krate;
-    let name = &input.ident;
-    let (_, ty_generics, _) = input.generics.split_for_impl();
+    let derived = record.derived();
 
-    let decryptable = decryptable_impl(&input, &record);
+    let decryptable = decryptable_impl(&input, &record, &derived);
 
     if record.plaintexts.is_empty() {
         // One impl, generic over the source: the record accepts exactly the
@@ -23,20 +24,10 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         let mut generics = input.generics.clone();
         generics.params.push(parse_quote!(__S));
         generics.params.push(parse_quote!(__K));
-        push_field_bounds(&mut generics, krate, &record, &source);
-        let ctx = push_context_generics(&mut generics, &record.derived());
-        let (impl_generics, _, where_clause) = generics.split_for_impl();
-        let body = body(krate, &record, &source);
-        let block = impl_block(
-            krate,
-            name,
-            &ty_generics,
-            &impl_generics,
-            where_clause,
-            &source,
-            &ctx,
-            body,
-        );
+        push_field_bounds(&mut generics, krate, &derived, &source);
+        let ctx = push_context_generics(&mut generics, CallerContext::Encrypt, &derived);
+        let body = body(krate, &record, &derived, &source);
+        let block = impl_block(&input, krate, &generics, &source, &ctx, body);
         return Ok(quote!(#block #decryptable));
     }
 
@@ -46,20 +37,10 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let impls = record.plaintexts.iter().map(|source| {
         let mut generics = input.generics.clone();
         generics.params.push(parse_quote!(__K));
-        push_field_bounds(&mut generics, krate, &record, source);
-        let ctx = push_context_generics(&mut generics, &record.derived());
-        let (impl_generics, _, where_clause) = generics.split_for_impl();
-        let body = body(krate, &record, source);
-        impl_block(
-            krate,
-            name,
-            &ty_generics,
-            &impl_generics,
-            where_clause,
-            source,
-            &ctx,
-            body,
-        )
+        push_field_bounds(&mut generics, krate, &derived, source);
+        let ctx = push_context_generics(&mut generics, CallerContext::Encrypt, &derived);
+        let body = body(krate, &record, &derived, source);
+        impl_block(&input, krate, &generics, source, &ctx, body)
     });
 
     Ok(quote!(#(#impls)* #decryptable))
@@ -67,22 +48,19 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
 
 /// `impl EncryptFrom<Source, StackCipher<__K>, Ctx> for Record` around
 /// `body`; `ctx` is `__Ctx` or `()` ([`push_context_generics`]).
-#[allow(clippy::too_many_arguments)]
 fn impl_block(
+    input: &DeriveInput,
     krate: &Path,
-    name: &Ident,
-    ty_generics: &syn::TypeGenerics<'_>,
-    impl_generics: &syn::ImplGenerics<'_>,
-    where_clause: Option<&syn::WhereClause>,
+    generics: &Generics,
     source: &Type,
     ctx: &Type,
     body: TokenStream,
 ) -> TokenStream {
-    quote! {
-        #[automatically_derived]
-        impl #impl_generics #krate::target::EncryptFrom<#source, #krate::StackCipher<__K>, #ctx>
-            for #name #ty_generics #where_clause
-        {
+    trait_impl(
+        input,
+        generics,
+        quote!(#krate::target::EncryptFrom<#source, #krate::StackCipher<__K>, #ctx>),
+        quote! {
             fn encrypt_from<'__a>(
                 __source: &'__a #source,
                 __cipher: &'__a #krate::StackCipher<__K>,
@@ -93,8 +71,8 @@ fn impl_block(
             {
                 #body
             }
-        }
-    }
+        },
+    )
 }
 
 /// `impl Decryptable for Record`: a record is decryptable if any derived
@@ -106,14 +84,14 @@ fn impl_block(
 /// types need not be `Decryptable`, so probing them here would reintroduce
 /// the bound the marker removes (and fail to compile for the documented
 /// opaque-field shape).
-fn decryptable_impl(input: &DeriveInput, record: &Record) -> TokenStream {
+fn decryptable_impl(input: &DeriveInput, record: &Record, derived: &[&Field]) -> TokenStream {
     let krate = &record.krate;
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let value = if record.fields.iter().any(|f| f.decrypt) {
         quote!(true)
     } else {
-        let terms = record.derived().into_iter().map(|field| {
+        let terms = derived.iter().map(|field| {
             let ty = &field.ty;
             // Spanned at the field type: a type that is not `Decryptable`
             // is reported there, not at the derive.
@@ -133,16 +111,14 @@ fn decryptable_impl(input: &DeriveInput, record: &Record) -> TokenStream {
 /// derived from the whole source, under the context it is derived under —
 /// its literal's, or the caller's `__Ctx`, which is how a record inherits
 /// its leaves' demand for a supplied context.
-fn push_field_bounds(generics: &mut syn::Generics, krate: &Path, record: &Record, source: &Type) {
+fn push_field_bounds(generics: &mut Generics, krate: &Path, derived: &[&Field], source: &Type) {
     let predicates = &mut generics.make_where_clause().predicates;
-    for field in record
-        .fields
-        .iter()
-        .filter(|f| f.is_derived() && f.from().is_none())
-    {
+    for field in derived.iter().filter(|f| f.from().is_none()) {
         let ty = &field.ty;
-        let context = context_type(field);
-        predicates.push(parse_quote! {
+        let context = field.field_context().ty();
+        // Spanned at the field type, so a type that is not an encrypted form
+        // of the source is reported there, not at the derive.
+        predicates.push(parse_quote_spanned! {ty.span()=>
             #ty: #krate::target::EncryptFrom<#source, #krate::StackCipher<__K>, #context>
         });
     }
@@ -150,9 +126,7 @@ fn push_field_bounds(generics: &mut syn::Generics, krate: &Path, record: &Record
 
 /// The method body: every derived field's pending, zipped into one, mapped
 /// into `Self`.
-fn body(krate: &Path, record: &Record, source: &Type) -> TokenStream {
-    let derived = record.derived();
-
+fn body(krate: &Path, record: &Record, derived: &[&Field], source: &Type) -> TokenStream {
     let assign = record.fields.iter().map(|field| {
         let member = &field.member;
         match &field.kind {
@@ -166,7 +140,7 @@ fn body(krate: &Path, record: &Record, source: &Type) -> TokenStream {
     });
 
     zip_fields(
-        &derived,
+        derived,
         |field, context| {
             let ty = &field.ty;
             // A `from` field's source type is not known here; it is inferred
