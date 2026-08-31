@@ -159,7 +159,7 @@ describe('getCtsToken(): a CTS refusal reaches the caller as one', () => {
     expect(result.error).toContain('Nope.')
   })
 
-  it('reads a pre-cs_code 402 off `error` when the key is absent', async () => {
+  it('defaults a pre-cs_code 402 to the usage limit', async () => {
     vi.stubGlobal(
       'fetch',
       ctsResponds(

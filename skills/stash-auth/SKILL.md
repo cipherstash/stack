@@ -146,6 +146,9 @@ On the CLI, `stash env` reports these under their own codes rather than
 `session_invalid` — `usage_limit_exceeded` and `org_not_provisioned` — and points
 at the dashboard or at support instead of telling you to log in again. On
 `--json` the remedy arrives in a `hint` field, not in `message`.
+`stash auth login --json` retains the upstream uppercase spellings
+`USAGE_LIMIT_EXCEEDED` and `ORG_NOT_PROVISIONED`; consumers of both command
+streams should normalize that casing difference.
 
 ## The strategies
 

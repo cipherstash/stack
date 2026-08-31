@@ -143,10 +143,10 @@ describe('identify(): a CTS refusal reaches the caller as one', () => {
     expect(result.failure?.message).not.toContain('cipherstash.com')
   })
 
-  it('reads a pre-cs_code 402 off `error` when the key is absent', async () => {
-    // Deployments predating `cs_code` send the body without it. `error` is a
-    // different namespace, so only the two codes that predate `cs_code` are
-    // read from it.
+  it('defaults a pre-cs_code 402 to the usage limit', async () => {
+    // Deployments predating `cs_code` send a valid JSON body without it. The
+    // status and absent key select the legacy default; `error` is not a
+    // CipherStash taxonomy field and is deliberately ignored.
     vi.stubGlobal(
       'fetch',
       ctsResponds(

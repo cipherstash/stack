@@ -106,12 +106,12 @@ function readCtsRefusal(
  * `Failed to fetch CTS token: ` and nothing else — no status, no reason, no
  * code.
  *
- * No remedy text is attached here. `@cipherstash/stack` owns the fallback
- * remedy copy for these codes and it is not on a public subpath, and the
- * authoritative copy now travels on the failure itself as `help`/`url` for
- * anything that goes through the Rust client. This package reaches CTS over
- * plain HTTP, so it has neither — it propagates the code and lets a caller look
- * up its own guidance.
+ * No remedy text is attached here. The authoritative guidance travels as
+ * `help`/`url` on failures produced by stack-auth, but this package reaches CTS
+ * over plain HTTP. Depending on `@cipherstash/auth` solely for its lookup would
+ * also pull platform binaries into middleware that otherwise has no
+ * CipherStash runtime dependency. Preserve that boundary: propagate the code
+ * and let the caller choose its own guidance.
  */
 async function ctsRefusalError(
   response: Response,

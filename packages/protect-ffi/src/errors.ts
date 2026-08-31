@@ -68,9 +68,10 @@ const KNOWN_CODES: ReadonlySet<string> = new Set(PROTECT_ERROR_CODES)
  * whichever the failure has is set, and a field with no value is absent rather
  * than empty.
  *
- * For a failure raised by a `config.authStrategy`, all three are the ones the
- * strategy's own rejection carried, verbatim — not values re-derived from the
- * `stack-auth` enum, which cannot name a code newer than the pinned crate.
+ * A failure raised by `config.authStrategy` is reconstructed as a typed
+ * `stack-auth` error from its `type`, message, and structured variant payload.
+ * Known codes therefore receive that variant's diagnostic guidance; unknown
+ * codes become `CUSTOM`. Caller-supplied `help` and `url` are not forwarded.
  */
 export type ProtectAuthErrorCode =
   | 'USAGE_LIMIT_EXCEEDED'

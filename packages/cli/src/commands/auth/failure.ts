@@ -63,11 +63,8 @@ const TERMINAL_CLI_CODES: ReadonlyMap<string, string> = new Map([
  * raised it, and `'Upgrade now!'` came out as `'Upgrade now!. See the
  * dashboard.'` A question mark has the same problem.
  *
- * Byte-identical to `TERMINAL_PUNCTUATION` in
- * `packages/stack/src/encryption/helpers/auth-failure.ts`, deliberately: the
- * two modules render the same CTS refusal for different audiences, and a caller
- * who sees both should not be able to tell they were joined by different code.
- * The guard named above pins that.
+ * This is local presentation logic for the CLI. Stack preserves diagnostic
+ * fields separately and does not join its message with help text.
  */
 const TERMINAL_PUNCTUATION = /[.!?]$/
 

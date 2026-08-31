@@ -692,6 +692,11 @@ Things to know:
   withheld on billing grounds. Same for `stash auth login` itself, which fails
   with `USAGE_LIMIT_EXCEEDED` on the `--json` stream.
 
+  The spelling follows each command's existing JSON convention: `auth login`
+  emits the upstream uppercase `USAGE_LIMIT_EXCEEDED`, while `env` emits the
+  lowercase CLI code `usage_limit_exceeded`. Treat them as the same condition
+  when consuming both streams.
+
   **`org_not_provisioned` is the sibling case**, and equally terminal: the
   organisation is not registered with the usage system at all, so there is no
   plan to upgrade and it goes to [support](https://cipherstash.com/support). `stash env` reports it

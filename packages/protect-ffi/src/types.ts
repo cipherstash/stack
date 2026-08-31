@@ -393,12 +393,10 @@ export type TokenResultEnvelope =
        * plus any per-variant payload (`WORKSPACE_MISMATCH`'s
        * `expected`/`actual`).
        *
-       * All four named fields are read at both seams. `type` selects the
-       * `AuthError` the failure is reconstructed into, and `type`/`help`/`url`
-       * are carried verbatim onto the thrown error as `authCode`/`help`/`url`
-       * — see `AuthDiagnosticRelay` in `crates/protect-ffi/src/lib.rs`. They
-       * are declared here because a strategy written in TypeScript has to be
-       * able to supply them.
+       * `type` and `error.message` select and populate the `AuthError` this is
+       * reconstructed into. `help` and `url` are accepted because they are
+       * fields on `@cipherstash/auth`'s public failure shape, but the resulting
+       * diagnostic guidance comes from the selected `stack-auth` variant.
        */
       failure: {
         type?: string

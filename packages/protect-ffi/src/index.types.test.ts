@@ -122,10 +122,10 @@ describe('AuthStrategy', () => {
   })
 
   it('accepts the remedy fields an AuthFailure carries', () => {
-    // Both seams read `help` and `url` off the failure object — see
-    // `AuthDiagnosticRelay` in crates/protect-ffi/src/lib.rs — so a strategy
-    // written in TypeScript has to be able to supply them. `@cipherstash/auth`
-    // declares both on every member of its `AuthFailure` union.
+    // A strategy written in TypeScript must accept the complete public
+    // `@cipherstash/auth` failure shape, which declares `help` and `url` on
+    // every member of its `AuthFailure` union. Rust reconstructs the matching
+    // stack-auth variant rather than forwarding those two values verbatim.
     //
     // Typed as the envelope rather than through `AuthStrategy`: a union return
     // type relaxes excess-property checking, so the same literal inside a
