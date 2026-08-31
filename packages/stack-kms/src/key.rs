@@ -50,6 +50,33 @@ impl ClientKey {
             keyset: V1KeySet::from_hex(hex)?,
         })
     }
+
+    /// Build a v1 client key from encoded material in whichever form the
+    /// caller happens to hold it: **lowercase or mixed-case hex** (the
+    /// historical `CS_CLIENT_KEY` format, and what [`to_hex_v1`] emits) **or
+    /// standard padded base64** (what `secretkey.json` serialises).
+    ///
+    /// [`from_hex_v1`] is the strict lowercase-hex decoder; this is the
+    /// lenient one, matching [`SecretKey::from_hex`] and
+    /// `EnvKeyProvider`. Front-ends that take key material from an
+    /// untyped boundary — an environment variable, a config file, the WASI
+    /// guest's FFI config object — should use this, so a user pasting the
+    /// value out of `secretkey.json` is not rejected for the encoding.
+    ///
+    /// Decoding is constant-time (`base16ct` / `base64ct`); the intermediate
+    /// bytes are wiped before returning either way.
+    ///
+    /// [`to_hex_v1`]: ClientKey::to_hex_v1
+    /// [`from_hex_v1`]: ClientKey::from_hex_v1
+    /// [`SecretKey::from_hex`]: crate::SecretKey::from_hex
+    pub fn from_encoded_v1(key_id: Uuid, encoded: &str) -> serde_cbor::Result<Self> {
+        let mut bytes = crate::secret_key::decode_client_key_material(encoded).map_err(|e| {
+            <serde_cbor::Error as serde::de::Error>::custom(format!("invalid encoding: {e}"))
+        })?;
+        let result = Self::from_bytes(key_id, &bytes);
+        bytes.zeroize();
+        result
+    }
 }
 
 // FIXME: This shouldn't be Clone but it is needed right now for the JSONB indexer.
@@ -323,6 +350,58 @@ mod tests {
             assert!(
                 !err.to_string().contains("invalid hex"),
                 "valid hex of the wrong shape must fail at keyset decoding, got: {err}"
+            );
+        }
+    }
+
+    mod from_encoded_v1 {
+        use super::*;
+        use base64ct::Encoding;
+
+        /// The three encodings a user can plausibly be holding: what
+        /// `to_hex_v1` emits, the same value shouted, and what
+        /// `secretkey.json` serialises.
+        #[test]
+        fn accepts_lowercase_hex_uppercase_hex_and_base64() {
+            let id = uuid::Uuid::new_v4();
+            let key = ClientKey::new_v1(id, random_keyset());
+            let hex = key.to_hex_v1().unwrap();
+            let bytes = base16ct::lower::decode_vec(&hex).unwrap();
+            let base64 = base64ct::Base64::encode_string(&bytes);
+
+            for (label, encoded) in [
+                ("lowercase hex", hex.clone()),
+                ("uppercase hex", hex.to_uppercase()),
+                ("base64", base64),
+            ] {
+                let restored = ClientKey::from_encoded_v1(id, &encoded)
+                    .unwrap_or_else(|e| panic!("{label} must decode: {e}"));
+                assert_eq!(restored.key_id, id, "{label}");
+                assert_eq!(
+                    restored.to_hex_v1().unwrap(),
+                    hex,
+                    "{label} must recover the same keyset"
+                );
+            }
+        }
+
+        #[test]
+        fn rejects_material_that_is_neither_hex_nor_base64() {
+            let err = ClientKey::from_encoded_v1(uuid::Uuid::nil(), "not hex or base64 !!")
+                .expect_err("must reject");
+            assert!(
+                err.to_string().contains("invalid encoding"),
+                "expected the encoding message, got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_well_encoded_material_that_is_not_a_keyset() {
+            let err =
+                ClientKey::from_encoded_v1(uuid::Uuid::nil(), "deadbeef").expect_err("must reject");
+            assert!(
+                !err.to_string().contains("invalid encoding"),
+                "well-encoded bytes of the wrong shape must fail at keyset decoding, got: {err}"
             );
         }
     }
