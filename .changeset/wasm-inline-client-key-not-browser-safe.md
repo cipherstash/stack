@@ -17,9 +17,9 @@ which is why this entry has no `browser` export condition, and will not get one
 until the core changes.
 
 No behaviour change. The types and runtime are unchanged; what changes is that
-the constraint is now stated where callers meet it (`WasmClientConfig`, the
-auth-strategy re-export, the `stash-encryption` entry-point table, the
-`stash-edge` and `stash-supabase` skills, and the `supabase-worker` example,
-which had all described this entry as browser-capable) and enforced by contract
-tests that run against the real WASM core instead of the mocks and stub the rest
-of the wasm suite uses.
+the constraint is now stated where callers meet it — `WasmClientConfig`, the
+`stash-edge` skill, the `stash-encryption` entry-point table, and, where this
+entry had been described as browser-capable, the `stash-supabase` skill and
+the `supabase-worker` example — and enforced by contract tests that run
+against the real WASM core instead of the mocks and stubs the rest of the wasm
+suite uses.

@@ -1,6 +1,6 @@
 ---
 name: stash-edge
-description: Run CipherStash encryption on edge and non-Node runtimes with the `@cipherstash/stack/wasm-inline` entry — Deno, Supabase Edge Functions, Cloudflare Workers, and Bun. Covers the import specifier per runtime, the four mandatory `CS_*` variables and minting them with `stash env`, how keysets and credentials interact on the edge (what must match is the keyset — `stash-zerokms` is canonical), how the WASM client surface differs from the native typed client, and why an EQL v3 schema module cannot be shared across the two entries. Use when adding encryption to a Supabase Edge Function, a Worker, or a Deno service; when a native module fails to load in a deployed runtime; when wiring `CS_*` secrets into an edge deploy; or when encrypted search returns zero rows on the edge but works locally.
+description: Run CipherStash encryption on edge and non-Node runtimes with the `@cipherstash/stack/wasm-inline` entry — Deno, Supabase Edge Functions, Cloudflare Workers, and Bun. Covers the import specifier per runtime, the four mandatory `CS_*` variables and minting them with `stash env`, how keysets and credentials interact on the edge (what must match is the keyset — `stash-zerokms` is canonical), how the WASM client surface differs from the native typed client, why the entry is server-side only and never belongs in a browser bundle, and why an EQL v3 schema module cannot be shared across the two entries. Use when adding encryption to a Supabase Edge Function, a Worker, or a Deno service; when a native module fails to load in a deployed runtime; when wiring `CS_*` secrets into an edge deploy; or when encrypted search returns zero rows on the edge but works locally.
 ---
 
 # Encryption on the Edge (WASM entry)
@@ -121,6 +121,16 @@ that config does not apply here and can be left alone.
 The edge client takes **all four** `CS_*` values explicitly. There is no
 credential discovery: `~/.cipherstash` does not exist in a Worker or an Edge
 Function container, and there is no device-code login to fall back on.
+
+> [!IMPORTANT]
+> **Server-side only — this entry never goes in a browser bundle.**
+> `clientKey` is a workspace secret, and it is required on *every* auth path,
+> including `authStrategy` (OIDC federation): the core loads it as encryption
+> key material *before* it ever calls the strategy, so per-user federation
+> does not stand in for it. That is why there is no `browser` export
+> condition, and there will not be one until the core changes
+> ([#804](https://github.com/cipherstash/stack/issues/804)). Every runtime
+> this entry targets is a server — Deno, a Worker, Bun — not a page.
 
 ```ts
 const client = await Encryption({
