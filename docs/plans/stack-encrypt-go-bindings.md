@@ -106,8 +106,9 @@ Structural blockers on top of that:
 2. **`stack-auth` uses reqwest unconditionally** in `device_client.rs`,
    `access_key_refresher.rs`, `oidc_refresher.rs`, `token.rs`, and
    `error.rs` (`RequestError(pub reqwest::Error)`, `From<reqwest::Error>
-   for AuthError`). `StaticTokenStrategy`, `ServiceToken`, `AuthStrategy`
-   and the error enum are HTTP-free and are all a first guest needs.
+   for AuthError`). `AuthStrategyFn`, `ServiceToken`, `AuthStrategy`
+   and the error enum are HTTP-free and are all a first guest needs
+   (`StaticTokenStrategy` is test-utils-only and stays that way).
 3. **`cfg(target_arch = "wasm32")` currently means "JS host"** in
    `stack-auth`/`stack-kms` (fetch semantics, no timeouts, `MaybeSend`
    drops `Send`). WASI under wazero is single-threaded too, so the `Send`
@@ -213,8 +214,12 @@ The plan as written before the work:
   `device_client`, `access_key_refresher`, `oidc_refresher`, the
   `AutoStrategy`/`AccessKeyStrategy`/`DeviceSession`/`OidcFederation`
   strategies, `RequestError`, `From<reqwest::Error>`. Left unconditional:
-  `AuthStrategy`, `AuthStrategyBounds`, `ServiceToken`, `StaticTokenStrategy`,
+  `AuthStrategy`, `AuthStrategyBounds`, `AuthStrategyFn`, `ServiceToken`,
   `Token`, `AuthError` (minus the `Request` variant's payload), `SecretToken`.
+  `AuthStrategyFn` is the supported production path for a no-`http` consumer
+  that sources tokens externally; `StaticTokenStrategy` stays behind
+  `cfg(any(test, feature = "test-utils"))` — it is a test double, not part of
+  the no-`http` production surface.
 - The guest's `HostTokenStrategy` (below) implements `AuthStrategy` over a
   host import, so nothing else is required for the proof.
 

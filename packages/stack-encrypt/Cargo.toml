@@ -60,7 +60,12 @@ http = ["dep:stack-auth", "stack-auth/http", "stack-kms/http"]
 
 [dev-dependencies]
 serde_json = { workspace = true }
-stack-kms = { path = "../stack-kms", features = ["test-support"] }
+# `default-features = false` here too: dev-dependency features unify into the
+# `cargo test -p stack-encrypt --no-default-features` graph, so leaving the
+# default on would silently pull `stack-kms/http` -> `stack-auth/http` ->
+# reqwest back into the "no HTTP" gate (`wasm:no-http-test`). The tests only
+# need `FakeDataKeySource` (`test-support`).
+stack-kms = { path = "../stack-kms", default-features = false, features = ["test-support"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
 # Compile-fail tests for the derive diagnostics (`tests/ui`).
 trybuild = "1"
