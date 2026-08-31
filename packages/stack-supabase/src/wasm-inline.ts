@@ -56,9 +56,11 @@ export interface EncryptedSupabaseWasmFactory {
  * binary, so the module graph loads on Deno, Supabase Edge Functions and
  * Cloudflare Workers.
  *
- * The engine is only half of what made the default entry Node-only; the other
- * half is introspection, which opens a Postgres connection. This entry cannot
- * introspect at all, so `schemas` is required rather than optional.
+ * The engine is what made the default entry Node-only, and this entry does not
+ * carry it. Introspection is a separate axis: this one cannot introspect at
+ * all — it has no Postgres driver — so `schemas` is required rather than
+ * optional. Declaring them on the DEFAULT entry drops introspection too, and
+ * leaves that entry exactly as Node-bound as it was.
  *
  * The client is not passed through as-is: `adaptWasmEncryption` reconciles the
  * two engines' protocols, which differ in ways that are silent at construction
