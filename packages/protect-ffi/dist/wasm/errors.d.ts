@@ -16,6 +16,53 @@
 export declare const PROTECT_ERROR_CODES: readonly ["INVARIANT_VIOLATION", "UNKNOWN_QUERY_OP", "UNKNOWN_COLUMN", "MISSING_INDEX", "INVALID_QUERY_INPUT", "SHORT_MATCH_NEEDLE", "INVALID_JSON_PATH", "STE_VEC_REQUIRES_JSON_CAST_AS", "MATCH_REQUIRES_TEXT", "UNSUPPORTED_CONFIG_VERSION", "INVALID_EQL_VERSION", "EQL_V3_UNSUPPORTED_COLUMN", "EQL_V3_CONVERSION_FAILED", "INVALID_CIPHERTEXT", "UNKNOWN"];
 export type ProtectErrorCode = (typeof PROTECT_ERROR_CODES)[number];
 /**
+ * The auth taxonomy code on a failure that came from `stack-auth` — CTS
+ * refused to issue or renew the service token every ZeroKMS request carries.
+ *
+ * Deliberately a separate field from {@link ProtectErrorCode} rather than more
+ * members of it. That set is closed and owned HERE: `errorCodes.test.ts` pins
+ * it against the `#[diagnostic(code(..))]` attributes in
+ * `crates/protect-ffi/src/lib.rs`, and every member has one. The auth set is
+ * owned by `stack-auth` and versioned on its own release train, so folding the
+ * two together would either break that test or force this package to re-declare
+ * a taxonomy it does not decide.
+ *
+ * So the type is open on purpose — `(string & {})` keeps editor completion for
+ * the named members without rejecting a code from a newer `stack-auth` than the
+ * one this build pinned. Narrow with a `===` against a literal; do not
+ * `switch` exhaustively.
+ *
+ * Only the two that carry a caller-actionable remedy are named. The rest of the
+ * set (`NOT_AUTHENTICATED`, `WORKSPACE_MISMATCH`, `EXPIRED_TOKEN`, …) still
+ * arrives, and is documented in `@cipherstash/auth`'s `AuthFailure` union.
+ *
+ * - `USAGE_LIMIT_EXCEEDED` — the organisation has used its allowance for the
+ *   current billing period. **Not** retryable and **not** a credentials
+ *   problem: nothing clears it until the plan is upgraded.
+ * - `ORG_NOT_PROVISIONED` — the organisation is not registered with the usage
+ *   system at all. There is no plan to upgrade; it needs support.
+ *
+ * Both arrive alongside `help` — the remedy text — and `url`, the link that
+ * goes with it, when the failure carries one. The two are one remedy split
+ * across two fields, on the same error and on a `decryptBulkFallible` item;
+ * whichever the failure has is set, and a field with no value is absent rather
+ * than empty.
+ *
+ * A failure raised by `config.authStrategy` is reconstructed as a typed
+ * `stack-auth` error from its `type`, message, and structured variant payload.
+ * Known codes therefore receive that variant's diagnostic guidance; unknown
+ * codes become `CUSTOM`. Caller-supplied `help` and `url` are not forwarded.
+ */
+export type ProtectAuthErrorCode = 'USAGE_LIMIT_EXCEEDED' | 'ORG_NOT_PROVISIONED' | (string & {});
+/**
+ * Read the auth taxonomy code off a thrown FFI error, if it has one.
+ *
+ * Present only when the failure came from `stack-auth`; every other failure
+ * leaves the field unset, so `undefined` means "not an auth failure" rather
+ * than "an auth failure with no code".
+ */
+export declare function getAuthErrorCode(error: unknown): ProtectAuthErrorCode | undefined;
+/**
  * True when `value` is one of this library's error codes.
  *
  * This is the whole of the error API. Both bindings throw an ordinary JS

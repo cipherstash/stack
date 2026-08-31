@@ -1,5 +1,9 @@
 import { type Result, withResult } from '@byteslice/result'
 import { encryptBulk, type JsPlaintext } from '@cipherstash/protect-ffi'
+import {
+  failureDiagnostics,
+  failureMessage,
+} from '@/encryption/helpers/auth-failure'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { assertValidNumericValue } from '@/encryption/helpers/validation'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
@@ -142,8 +146,8 @@ export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData>
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
         return {
           type: EncryptionErrorTypes.EncryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
+          message: failureMessage(error),
+          ...failureDiagnostics(error, getErrorCode),
         }
       },
     )
@@ -227,8 +231,8 @@ export class BulkEncryptOperationWithLockContext extends EncryptionOperation<Bul
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
         return {
           type: EncryptionErrorTypes.EncryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
+          message: failureMessage(error),
+          ...failureDiagnostics(error, getErrorCode),
         }
       },
     )

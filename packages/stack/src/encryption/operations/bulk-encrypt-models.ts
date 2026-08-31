@@ -1,4 +1,8 @@
 import { type Result, withResult } from '@byteslice/result'
+import {
+  failureDiagnostics,
+  failureMessage,
+} from '@/encryption/helpers/auth-failure'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import { type LockContextInput, resolveLockContext } from '@/identity'
@@ -63,8 +67,8 @@ export class BulkEncryptModelsOperation<
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
         return {
           type: EncryptionErrorTypes.EncryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
+          message: failureMessage(error),
+          ...failureDiagnostics(error, getErrorCode),
         }
       },
     )
@@ -137,8 +141,8 @@ export class BulkEncryptModelsOperationWithLockContext<
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
         return {
           type: EncryptionErrorTypes.EncryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
+          message: failureMessage(error),
+          ...failureDiagnostics(error, getErrorCode),
         }
       },
     )

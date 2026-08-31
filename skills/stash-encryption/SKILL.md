@@ -861,6 +861,8 @@ if (result.failure) {
 
 `StackError` is a discriminated union of all the error types above, enabling exhaustive `switch` handling. `EncryptionErrorTypes` provides runtime constants for each error type string. Use `getErrorMessage(error: unknown): string` to safely extract a message from any thrown value.
 
+**Don't retry on `authCode`.** A failure whose cause was CipherStash's token service also carries `authCode` — and two of its values mean no retry can ever succeed: `USAGE_LIMIT_EXCEEDED` (the organisation is over its billing allowance) and `ORG_NOT_PROVISIONED`. The `message` names the remedy and `url` carries the link; `authCode` is there so a retry loop can stop. `type` cannot express this — a billing refusal surfaces as `ClientInitError` or `EncryptionError` like any other failure. See the `stash-auth` skill, which is canonical for the auth failure taxonomy.
+
 ```typescript
 import { EncryptionErrorTypes, type StackError, getErrorMessage } from "@cipherstash/stack/errors"
 

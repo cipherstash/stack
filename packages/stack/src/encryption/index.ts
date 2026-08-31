@@ -1,9 +1,18 @@
 import { type Result, withResult } from '@byteslice/result'
 import { newClient } from '@cipherstash/protect-ffi'
 import { validate as uuidValidate } from 'uuid'
+import {
+  failureDiagnostics,
+  failureMessage,
+} from '@/encryption/helpers/auth-failure'
+import { getErrorCode } from '@/encryption/helpers/error-code'
 import type { AnyV3Table } from '@/eql/v3'
 import { buildEncryptConfig } from '@/eql/v3'
-import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
+import {
+  type ClientInitError,
+  type EncryptionError,
+  EncryptionErrorTypes,
+} from '@/errors'
 // `LockContext` is imported type-only so the TSDoc {@link} references in the
 // comments below resolve; it is erased at compile time.
 import type { LockContext } from '@/identity'
@@ -64,6 +73,30 @@ export {
 export const noClientError = () =>
   new Error('The Encryption client has not been initialized.')
 
+/**
+ * Everything a client-init failure carries besides its message.
+ *
+ * `message` stays the source diagnostic text. These are what a program acts
+ * on, and none of them
+ * survived initialization before: the mapper kept `authCode` alone, so an init
+ * failure could not be triaged the way an operation failure could — even though
+ * it is the FIRST place a caller meets a CTS refusal, since `newClient`
+ * resolves a service token before any operation exists to fail.
+ *
+ * This was a second implementation of the shared reader for a while, and drifted
+ * within a day: it wrote `help: ''` where the shared one omits the key. "Absent,
+ * never empty" is asserted by protect-ffi at the boundary, by
+ * `failureDiagnostics`, and by the tests on both entries — three statements of
+ * one rule, so there is no room for a fourth implementation of it here.
+ *
+ * `getErrorCode` is this entry's closed-set `code` reader; `wasm-inline.ts`
+ * passes its own. See {@link failureDiagnostics} for why that is a parameter.
+ */
+const initDiagnostics = (
+  error: unknown,
+): Omit<ClientInitError, 'type' | 'message'> =>
+  failureDiagnostics(error, getErrorCode)
+
 /** Reject legacy or structurally invalid schemas at the runtime boundary. */
 function assertV3Schemas(schemas: readonly AnyV3Table[]): void {
   for (const table of schemas) {
@@ -97,7 +130,7 @@ class NativeEncryptionClient {
    * Initializes the NativeEncryptionClient with the provided configuration.
    * @internal
    * @param config - The configuration object for initializing the client.
-   * @returns A promise that resolves to a {@link Result} containing the initialized NativeEncryptionClient or an {@link EncryptionError}.
+   * @returns A promise that resolves to a {@link Result} containing the initialized NativeEncryptionClient or a {@link ClientInitError}.
    **/
   async initialize(config: {
     encryptConfig: EncryptConfig
@@ -107,7 +140,11 @@ class NativeEncryptionClient {
     clientKey?: string
     keyset?: KeysetIdentifier
     authStrategy?: AuthStrategy
-  }): Promise<Result<NativeEncryptionClient, EncryptionError>> {
+    // `ClientInitError`, not the `EncryptionError` base: this only ever
+    // produces the one member, and the base declares no `help` / `url`, so
+    // widening here would hide from the compiler two fields the failure really
+    // carries — and `Encryption()` below re-throws whatever this holds.
+  }): Promise<Result<NativeEncryptionClient, ClientInitError>> {
     return await withResult(
       async () => {
         const validated: EncryptConfig = encryptConfigSchema.parse(
@@ -149,9 +186,13 @@ class NativeEncryptionClient {
         logger.debug('Successfully initialized the Encryption client.')
         return this
       },
+      // The first place a caller meets a CTS refusal: `newClient` resolves a
+      // service token, so an organisation over its usage limit fails here
+      // rather than on the first encrypt.
       (error: unknown) => ({
         type: EncryptionErrorTypes.ClientInitError,
-        message: (error as Error).message,
+        message: failureMessage(error),
+        ...initDiagnostics(error),
       }),
     )
   }
@@ -933,7 +974,19 @@ export async function Encryption(config: {
   })
 
   if (result.failure) {
-    throw new Error(`[encryption]: ${result.failure.message}`)
+    // `Encryption()` throws rather than returning a `Result`, so the whole
+    // diagnostic has to ride on the thrown error or it is lost on the one path
+    // a caller is most likely to meet a CTS refusal on — a usage-limit failure
+    // surfaces at init, before any operation exists to return a `{ failure }`
+    // from. The remedy stays structured on `.help` / `.url`; this makes a thrown init failure
+    // classifiable the same way a returned operation failure is.
+    //
+    // Everything except the two fields the `Error` already expresses is
+    // carried, rather than a named subset: `initDiagnostics` decides what a
+    // failure holds, and enumerating it a second time here is how a field
+    // added to one and not the other goes missing.
+    const { type: _type, message, ...diagnostics } = result.failure
+    throw Object.assign(new Error(`[encryption]: ${message}`), diagnostics)
   }
 
   return createEncryptionClient(result.data, ...schemas)

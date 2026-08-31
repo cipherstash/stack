@@ -27,8 +27,13 @@ if (!exportMatch) {
   )
 }
 const exportList = exportMatch[1].trim()
+// Must stay in step with the errors.js re-export block in the
+// `typescript_custom_section` in `crates/protect-ffi/src/wasm.rs` — that block
+// is what declares these to a consumer, and a name declared there but missing
+// here is a type that promises a runtime export the bundle does not have.
+// `errorCodes.test.ts` compares the two.
 const errorHelperExport =
-  'export { PROTECT_ERROR_CODES, isProtectErrorCode } from "./errors.js";'
+  'export { PROTECT_ERROR_CODES, getAuthErrorCode, isProtectErrorCode } from "./errors.js";'
 
 // wasm-bindgen owns the main stub and cannot re-export arbitrary JavaScript
 // values from a TypeScript custom section. Add the runtime half of the error

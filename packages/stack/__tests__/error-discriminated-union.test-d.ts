@@ -36,11 +36,18 @@ describe('StackError discriminated union (errors as const)', () => {
         }
         case EncryptionErrorTypes.EncryptionError:
         case EncryptionErrorTypes.DecryptionError:
-          // `code` exists only on these branches — proves narrowing works.
+          // `code` reaches these branches from protect-ffi — proves narrowing
+          // works. (`ClientInitError` carries it too, for the same reason;
+          // `LockContextError` and `CtsTokenError` do not, because neither
+          // comes from protect-ffi.)
           return error.code ?? error.message
         case EncryptionErrorTypes.LockContextError:
-        case EncryptionErrorTypes.CtsTokenError:
           return error.message
+        case EncryptionErrorTypes.CtsTokenError:
+          // Narrowing here reaches `authCode`: `LockContext.identify()` calls
+          // CTS over HTTP itself, so a billing refusal surfaces on this branch
+          // rather than through protect-ffi.
+          return error.authCode ?? error.message
         default: {
           const _exhaustive: never = error
           return _exhaustive

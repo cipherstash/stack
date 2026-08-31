@@ -100,3 +100,49 @@ describe('error codes', () => {
     }
   })
 })
+
+/**
+ * The wasm bundle declares its error-helper exports in one place and produces
+ * them in another, and neither knows about the other.
+ *
+ * `crates/protect-ffi/src/wasm.rs` carries a `typescript_custom_section` whose
+ * errors.js re-export block is what a consumer's TypeScript sees.
+ * The runtime half is appended to wasm-pack's output by
+ * `scripts/inline-wasm.mjs`, because wasm-bindgen cannot re-export arbitrary
+ * JavaScript values from a custom section.
+ *
+ * A name in the first and not the second is a declared export that does not
+ * exist at runtime — a `TypeError` in an edge function, with a green build.
+ */
+describe('wasm error-helper exports', () => {
+  // Anchored per file rather than one loose pattern over both, for the reason
+  // CODE_ATTRIBUTE above is anchored: a doc comment that quotes the statement
+  // it is describing would otherwise be scraped as the statement, and the test
+  // would compare prose to code. In `wasm.rs` the block starts a line; in
+  // `inline-wasm.mjs` it is a single-quoted JavaScript string.
+  const declared = /^export \{([^}]*)\} from "\.\/errors\.js";$/m.exec(
+    read('crates/protect-ffi/src/wasm.rs'),
+  )
+  const emitted = /'export \{([^}]*)\} from "\.\/errors\.js";'/.exec(
+    read('scripts/inline-wasm.mjs'),
+  )
+
+  /** Value exports only — a `type` specifier has no runtime counterpart. */
+  const names = (block: RegExpExecArray | null) =>
+    (block?.[1] ?? '')
+      .split(',')
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0 && !name.startsWith('type '))
+      .sort()
+
+  it('finds both re-export blocks', () => {
+    // Without this the comparison below passes vacuously — two empty sets are
+    // equal, and a regex that stopped matching would read as agreement.
+    expect(names(declared).length).toBeGreaterThan(0)
+    expect(names(emitted).length).toBeGreaterThan(0)
+  })
+
+  it('declares exactly the names the inline bundle re-exports', () => {
+    expect(names(declared)).toEqual(names(emitted))
+  })
+})

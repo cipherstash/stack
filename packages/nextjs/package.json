@@ -35,7 +35,8 @@
 		"build": "tsup",
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"dev": "tsup --watch",
-		"release": "tsup"
+		"release": "tsup",
+		"test": "vitest run"
 	},
 	"devDependencies": {
 		"@clerk/nextjs": "catalog:security",

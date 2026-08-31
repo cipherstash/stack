@@ -18,7 +18,15 @@ const ffi = vi.hoisted(() => ({
       queries.map((_, n) => ({ v: 3, n })),
   ),
 }))
-vi.mock('@cipherstash/protect-ffi/wasm-inline', () => ffi)
+vi.mock('@cipherstash/protect-ffi/wasm-inline', async (importOriginal) => ({
+  // Partial, not total: `readErrorCode` validates `failure.code` against the
+  // closed `ProtectErrorCode` set with the real `isProtectErrorCode`, and a
+  // hand-written stand-in would let a wrong answer through.
+  ...(await importOriginal<
+    typeof import('@cipherstash/protect-ffi/wasm-inline')
+  >()),
+  ...ffi,
+}))
 vi.mock('@cipherstash/auth/wasm-inline', () => ({
   AccessKeyStrategy: {
     create: vi.fn(() => ({

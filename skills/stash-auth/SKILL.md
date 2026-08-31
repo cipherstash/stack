@@ -91,6 +91,65 @@ X is not a member of workspace Y", "No OIDC provider found for issuer: …",
 organisation is over its usage limit. A 402 is a billing problem, not a
 credentials problem — don't rotate keys over it.
 
+### The billing refusal, and why it needs its own handling
+
+A token failure is normally transient (network, an expired token about to be
+renewed) or a credentials problem (wrong key, wrong workspace) — both worth
+retrying or re-authenticating. A 402 is neither: **nothing the process can do
+clears it.** A retry loop that treats every token failure alike will hammer a
+condition only a human with a billing page can resolve.
+
+So it is separately identifiable. A failure that came from CTS carries
+`authCode` alongside the usual `type` and `code`, with instructions on `help`
+and the link that goes with them on `url`:
+
+```typescript
+const result = await client.encrypt(value, { column, table })
+if (result.failure?.authCode === 'USAGE_LIMIT_EXCEEDED') {
+  // Stop retrying. `result.failure.help` says what to do,
+  // `result.failure.url` is where to do it.
+}
+```
+
+The remedy and link remain structured on `help` and `url`; `message` stays the
+original diagnosis owned by stack-auth.
+
+Two codes mean "stop", and they need different remedies:
+
+| `authCode` | What it means | What clears it |
+|---|---|---|
+| `USAGE_LIMIT_EXCEEDED` | The organisation has used its allowance for the current billing period | Upgrade the plan at [dashboard.cipherstash.com/billing](https://dashboard.cipherstash.com/billing) |
+| `ORG_NOT_PROVISIONED` | The organisation isn't registered with the usage system at all | Nothing you can buy — [contact support](https://cipherstash.com/support) |
+
+`authCode` is set for every other CTS failure too (`NOT_AUTHENTICATED`,
+`WORKSPACE_MISMATCH`, `EXPIRED_TOKEN`, …), and where one of those carries
+remedy text — `MISSING_WORKSPACE_CRN` naming `CS_WORKSPACE_CRN`, say — it now
+reaches `help` rather than being dropped. Treat the set as **open** — it
+belongs to `@cipherstash/auth` and grows on its own release train, so compare
+with `===` rather than switching exhaustively over it.
+
+`Encryption()` throws rather than returning a `Result`, so at client init the
+same code rides on the thrown error: `(err as { authCode?: string }).authCode`.
+
+Two of those fields are new alongside `authCode`. `help` is the remedy text and
+`url` is its destination; both come directly from the upstream diagnostic.
+
+**For the two terminal codes, read both.** As of `stack-auth` 0.42.3 CipherStash
+attaches a `help` *and* a `url` to each. Render both when presenting guidance.
+
+One shape to know: a refusal met by `LockContext.identify()` is an HTTP response
+rather than a thrown error, so its failure carries `type` and `authCode` but no
+`code` — the closed protect-ffi code set does not apply to a direct HTTP call.
+Branch on `authCode` there, not `code`.
+
+On the CLI, `stash env` reports these under their own codes rather than
+`session_invalid` — `usage_limit_exceeded` and `org_not_provisioned` — and points
+at the dashboard or at support instead of telling you to log in again. On
+`--json` the remedy arrives in a `hint` field, not in `message`.
+`stash auth login --json` retains the upstream uppercase spellings
+`USAGE_LIMIT_EXCEEDED` and `ORG_NOT_PROVISIONED`; consumers of both command
+streams should normalize that casing difference.
+
 ## The strategies
 
 From `@cipherstash/auth`, re-exported by `@cipherstash/stack` so no separate

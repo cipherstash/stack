@@ -82,7 +82,7 @@ npx stash auth login --json --region us-east-1
 | `{ status: "authorization_required", userCode, verificationUri, verificationUriComplete, expiresIn }` | Emitted immediately. **Show `verificationUriComplete` to the user and wait.** |
 | `{ status: "authorized", expiresAt, expiresAtIso }` | The human approved. |
 | `{ status: "device_bound" }` | Device bound to the default keyset. Done. |
-| `{ status: "error", code, message }` | Failure. Exit code 1. |
+| `{ status: "error", code, message, hint? }` | Failure. Exit code 1. `hint` is present only when the failure has a remedy; `{cli}` in it is already resolved. |
 
 Operationally: after printing `authorization_required` the command **blocks,
 polling, until the human approves or the code expires** (`expiresIn` is
@@ -142,7 +142,7 @@ When a required value is missing in a non-TTY context, the command exits non-zer
 
 **`plan` and `impl` need `--target` in a non-TTY.** Their agent-target picker reads from `/dev/tty`. Without `--target` they print a "no agent selected" hint and exit 0 *without performing the handoff*. `init` and `status` adapt automatically and are safe anywhere.
 
-**Exit codes.** `1` on failure; `0` when a user cancels a prompt. In `--json` mode an `{ "status": "error", "code", "message" }` line is emitted before exiting 1.
+**Exit codes.** `1` on failure; `0` when a user cancels a prompt. In `--json` mode an `{ "status": "error", "code", "message", "hint"? }` line is emitted before exiting 1. `hint` appears only when the failure carries a remedy — read it, because for a terminal failure it is the part that says retrying cannot help.
 
 **`stash status --json` has a stable shape** — `{ initialized, planExists, observedFromDb, active[], completed[] }`, each quest carrying `{ table, column, path, title, progress, complete, nextMove, objectives[] }`. It will not change without a major version bump. Prefer it over parsing `--plain`.
 
@@ -681,8 +681,31 @@ Things to know:
 - **Non-interactive runs require `--name`** — without it the command exits 1
   with an actionable message before touching the network, and `--write`
   refuses to overwrite an existing file (also before anything is minted).
-  In `--json` mode failures arrive as `{ status: "error", code, message }`
+  In `--json` mode failures arrive as `{ status: "error", code, message, hint? }`
   on stdout.
+- **`usage_limit_exceeded` is not a session problem.** The command renews the
+  device session before minting anything, and CipherStash refuses that renewal
+  with a 402 when the organisation is over its billing allowance. That case
+  reports `usage_limit_exceeded` rather than `session_invalid`, and points at
+  [dashboard.cipherstash.com/billing](https://dashboard.cipherstash.com/billing) rather than at
+  `stash auth login` — logging in again cannot mint a credential that is being
+  withheld on billing grounds. Same for `stash auth login` itself, which fails
+  with `USAGE_LIMIT_EXCEEDED` on the `--json` stream.
+
+  The spelling follows each command's existing JSON convention: `auth login`
+  emits the upstream uppercase `USAGE_LIMIT_EXCEEDED`, while `env` emits the
+  lowercase CLI code `usage_limit_exceeded`. Treat them as the same condition
+  when consuming both streams.
+
+  **`org_not_provisioned` is the sibling case**, and equally terminal: the
+  organisation is not registered with the usage system at all, so there is no
+  plan to upgrade and it goes to [support](https://cipherstash.com/support). `stash env` reports it
+  under its own code rather than `session_invalid`, for the same reason —
+  branching on `code` is how an agent decides whether a re-login is worth
+  attempting, and both of these answer no.
+
+  On `--json`, the remedy for either arrives in `hint`, not in `message`. See
+  the `stash-auth` skill for the full taxonomy.
 - **`--json` + `--write` compose**: the file is written and the JSON
   confirmation (`{ status: "written", path, … }`) is deliberately
   secret-free, so captured CI logs never contain the key.

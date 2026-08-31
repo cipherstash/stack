@@ -19,7 +19,15 @@ const ffi = vi.hoisted(() => ({
   encryptBulk: vi.fn(async () => [{ v: 3, i: {}, c: 'ct' }]),
   decryptBulkFallible: vi.fn(async () => [{ data: 'plain' }]),
 }))
-vi.mock('@cipherstash/protect-ffi/wasm-inline', () => ffi)
+vi.mock('@cipherstash/protect-ffi/wasm-inline', async (importOriginal) => ({
+  // Partial, not total: `readErrorCode` validates `failure.code` against the
+  // closed `ProtectErrorCode` set with the real `isProtectErrorCode`, and a
+  // hand-written stand-in would let a wrong answer through.
+  ...(await importOriginal<
+    typeof import('@cipherstash/protect-ffi/wasm-inline')
+  >()),
+  ...ffi,
+}))
 vi.mock('@cipherstash/auth/wasm-inline', () => ({
   AccessKeyStrategy: {
     create: vi.fn(() => ({
@@ -172,5 +180,83 @@ describe('wasm-inline Result contract — failure path', () => {
 
     expect(result.failure?.type).toBe('EncryptionError')
     expect(result.failure?.message).toBe('[object Object]')
+  })
+})
+
+/**
+ * `failure.code` is typed `ProtectErrorCode` — a CLOSED set, owned by
+ * protect-ffi and pinned there by `errorCodes.test.ts`. Both entries have to
+ * honour that or the field means one thing on Node and another on Workers.
+ *
+ * The native entry validates (`getErrorCode` in
+ * `src/encryption/helpers/error-code.ts`) precisely because a `code` property
+ * on a thrown object is not evidence of anything: Node stamps `ECONNRESET`,
+ * `ENOTFOUND` and `MODULE_NOT_FOUND` onto its own errors, and on this entry a
+ * rejection is whatever wasm-bindgen was handed. Reading the property without
+ * checking the value republished those as encryption error codes.
+ *
+ * `authCode` is deliberately NOT validated, on either entry: that set belongs
+ * to `@cipherstash/auth`, ships on its own release train, and is typed open so
+ * a code newer than the pinned build still reaches the caller.
+ */
+describe('wasm-inline failure.code is the closed protect-ffi set', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  async function codeFrom(rejection: unknown) {
+    ffi.encrypt.mockRejectedValueOnce(rejection)
+    const c = await client()
+    const result = await c.encrypt('a@b.com', {
+      table: users,
+      column: users.email,
+    })
+    return result.failure?.code
+  }
+
+  it.each([
+    ['a real protect-ffi code', 'UNKNOWN_COLUMN'],
+    ['another one', 'INVALID_CIPHERTEXT'],
+  ])('keeps %s', async (_label, code) => {
+    expect(await codeFrom(Object.assign(new Error('boom'), { code }))).toBe(
+      code,
+    )
+  })
+
+  it.each([
+    ["Node's socket errors", 'ECONNRESET'],
+    ['a module resolution failure', 'MODULE_NOT_FOUND'],
+    ['anything else wearing a code', 'EQL_X'],
+  ])('drops %s, exactly as the native entry does', async (_label, code) => {
+    expect(
+      await codeFrom(Object.assign(new Error('boom'), { code })),
+    ).toBeUndefined()
+  })
+
+  it('drops an unrecognised code off a bare-object rejection too', async () => {
+    // The path `carryDiagnostics` widened: every own key of an arbitrary
+    // rejection now reaches the failure mapper, so more foreign `code`
+    // properties arrive here than before.
+    expect(
+      await codeFrom({ error: 'boom', code: 'ECONNRESET' }),
+    ).toBeUndefined()
+  })
+
+  it('leaves authCode open — a code newer than this build still lands', async () => {
+    ffi.encrypt.mockRejectedValueOnce(
+      Object.assign(new Error('boom'), {
+        code: 'ECONNRESET',
+        authCode: 'SOME_FUTURE_AUTH_CODE',
+      }),
+    )
+
+    const c = await client()
+    const result = await c.encrypt('a@b.com', {
+      table: users,
+      column: users.email,
+    })
+
+    expect(result.failure?.code).toBeUndefined()
+    expect(result.failure?.authCode).toBe('SOME_FUTURE_AUTH_CODE')
   })
 })

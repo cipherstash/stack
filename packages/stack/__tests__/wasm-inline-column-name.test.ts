@@ -10,7 +10,13 @@ vi.mock('@cipherstash/auth/wasm-inline', () => ({
   },
 }))
 
-vi.mock('@cipherstash/protect-ffi/wasm-inline', () => ({
+vi.mock('@cipherstash/protect-ffi/wasm-inline', async (importOriginal) => ({
+  // Partial, not total: `readErrorCode` validates `failure.code` against the
+  // closed `ProtectErrorCode` set with the real `isProtectErrorCode`, and a
+  // hand-written stand-in would let a wrong answer through.
+  ...(await importOriginal<
+    typeof import('@cipherstash/protect-ffi/wasm-inline')
+  >()),
   decrypt: vi.fn(),
   encrypt: vi.fn(),
   isEncrypted: vi.fn(),
