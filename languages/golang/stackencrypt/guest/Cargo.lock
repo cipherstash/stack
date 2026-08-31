@@ -1979,6 +1979,8 @@ dependencies = [
 name = "stack-encrypt-guest"
 version = "0.0.0"
 dependencies = [
+ "base16ct",
+ "base64ct",
  "futures",
  "recipher",
  "serde",

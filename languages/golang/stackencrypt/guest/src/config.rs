@@ -7,7 +7,7 @@
 //! | key           | required | meaning |
 //! |---------------|----------|---------|
 //! | `client_id`   | yes      | ZeroKMS client id (UUID) |
-//! | `client_key`  | yes      | the client key, hex-encoded (the v1 `to_hex_v1` encoding) |
+//! | `client_key`  | yes      | the v1 client key material, hex-encoded (upper or lower case — the `to_hex_v1` / `CS_CLIENT_KEY` form) or standard padded base64 (the form `secretkey.json` serialises) |
 //! | `keyset`      | no       | keyset *name* to pin the cipher to |
 //! | `keyset_id`   | no       | keyset *id* (UUID) to pin the cipher to |
 //! | `zerokms_url` | no       | pins the ZeroKMS endpoint at init; when absent the endpoint is resolved from the access token's `services` claim on first use |
@@ -23,6 +23,7 @@
 use stack_kms::{ClientKey, IdentifiedBy, ZeroKmsEndpoint};
 use uuid::Uuid;
 use vitaminc_aead_value::FfiValue;
+use zeroize::Zeroizing;
 
 /// A parse failure, carrying which key was at fault. Maps to
 /// `STATUS_ENCODING` at the ABI; the detail exists for the native tests and
@@ -57,16 +58,21 @@ pub fn parse_config(value: FfiValue) -> Result<CipherConfig, ConfigError> {
         return Err(ConfigError::NotAnObject);
     };
 
-    let mut client_id: Option<String> = None;
-    let mut client_key_hex: Option<String> = None;
-    let mut keyset_name: Option<String> = None;
-    let mut keyset_id: Option<String> = None;
-    let mut url: Option<String> = None;
+    // Every slot is a `Zeroizing<String>`, not just the key one: the
+    // client-key slot *must* wipe on every exit path (any of the `?`s below
+    // can fire while it holds a full encoding of the client root key), and
+    // making one slot special invites the next edit to add an early return
+    // above the wipe. Uniform is cheaper than remembering.
+    let mut client_id: Option<Zeroizing<String>> = None;
+    let mut client_key_encoded: Option<Zeroizing<String>> = None;
+    let mut keyset_name: Option<Zeroizing<String>> = None;
+    let mut keyset_id: Option<Zeroizing<String>> = None;
+    let mut url: Option<Zeroizing<String>> = None;
 
     for (key, value) in entries {
         let slot = match key.as_str() {
             "client_id" => &mut client_id,
-            "client_key" => &mut client_key_hex,
+            "client_key" => &mut client_key_encoded,
             "keyset" => &mut keyset_name,
             "keyset_id" => &mut keyset_id,
             "zerokms_url" => &mut url,
@@ -77,22 +83,25 @@ pub fn parse_config(value: FfiValue) -> Result<CipherConfig, ConfigError> {
         let FfiValue::String(s) = value else {
             return Err(ConfigError::NotAString(name_of(&key)));
         };
-        let text = std::str::from_utf8(s.risky_ref())
-            .map_err(|_| ConfigError::NotAString(name_of(&key)))?
-            .to_string();
+        let text = Zeroizing::new(
+            std::str::from_utf8(s.risky_ref())
+                .map_err(|_| ConfigError::NotAString(name_of(&key)))?
+                .to_string(),
+        );
         *slot = Some(text);
     }
 
     let client_id = client_id.ok_or(ConfigError::Missing("client_id"))?;
     let client_id = Uuid::parse_str(&client_id).map_err(|_| ConfigError::Invalid("client_id"))?;
 
-    let mut hex = client_key_hex.ok_or(ConfigError::Missing("client_key"))?;
-    let client_key = ClientKey::from_hex_v1(client_id, &hex);
-    // The hex string is a full encoding of the client root key: wipe this
-    // copy whatever the parse outcome (the decoded FfiValue's own copy was
-    // consumed above; the raw input buffer is the ABI layer's to wipe).
-    zeroize::Zeroize::zeroize(&mut hex);
-    let client_key = client_key.map_err(|_| ConfigError::Invalid("client_key"))?;
+    // Lenient by design: `from_encoded_v1` takes hex in either case *or* the
+    // base64 `secretkey.json` holds, matching every native loader. The
+    // `Zeroizing` slot wipes the encoded copy however this returns — the
+    // decoded `FfiValue`'s own copy was consumed above, and the raw input
+    // buffer is the ABI layer's to wipe.
+    let client_key_encoded = client_key_encoded.ok_or(ConfigError::Missing("client_key"))?;
+    let client_key = ClientKey::from_encoded_v1(client_id, &client_key_encoded)
+        .map_err(|_| ConfigError::Invalid("client_key"))?;
 
     let keyset = match (keyset_name, keyset_id) {
         (Some(_), Some(_)) => return Err(ConfigError::ConflictingKeysets),
@@ -189,6 +198,34 @@ mod tests {
         ]))
         .expect("config parses");
         assert!(matches!(cfg.keyset, Some(IdentifiedBy::Uuid(k)) if k == keyset_id));
+    }
+
+    /// The config table promises hex in either case *or* base64 — the form
+    /// `secretkey.json` actually serialises. A user pasting the value out of
+    /// their profile must not be told their key is invalid.
+    #[test]
+    fn accepts_the_encodings_every_native_loader_accepts() {
+        use base64ct::Encoding;
+
+        let (id, hex) = client_key_hex();
+        let id_s = id.to_string();
+        let bytes = base16ct::lower::decode_vec(&hex).expect("fixture hex");
+        let base64 = base64ct::Base64::encode_string(&bytes);
+
+        for (label, encoded) in [
+            ("lowercase hex", hex.clone()),
+            ("uppercase hex", hex.to_uppercase()),
+            ("base64", base64),
+        ] {
+            let cfg = parse_config(obj(vec![("client_id", &id_s), ("client_key", &encoded)]))
+                .unwrap_or_else(|e| panic!("{label} must parse, got {e:?}"));
+            assert_eq!(cfg.client_key.key_id, id, "{label}");
+            assert_eq!(
+                cfg.client_key.to_hex_v1().expect("re-encode"),
+                hex,
+                "{label} must recover the same keyset"
+            );
+        }
     }
 
     #[test]

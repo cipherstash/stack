@@ -45,6 +45,10 @@ zeroize = "1"
 stack-kms = { path = "../../../../packages/stack-kms", default-features = false, features = ["test-support"] }
 # For minting a valid client-key fixture in the config tests.
 recipher = { path = "../../../../packages/recipher" }
+# Re-encoding that fixture into the other forms the config table promises
+# (upper-case hex, base64) so the lenient decode is actually exercised.
+base16ct = { version = "0.2.0", features = ["alloc"] }
+base64ct = { version = "1.7", features = ["alloc"] }
 
 [profile.release]
 # Smaller .wasm; the guest is IO-bound on the FFI copy and the ZeroKMS round
