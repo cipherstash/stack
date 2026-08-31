@@ -3,16 +3,17 @@
 //! provide their own transport (the WASI/wazero guest) can build the crate
 //! without reqwest — and its native TLS stack — in the graph at all.
 
+use super::classify::{classify_response, is_json_content_type, BaseUrlUnresolved};
 use super::{ZeroKMSConnection, ZeroKMSConnectionInit};
 use crate::endpoint::ZeroKmsEndpoint;
 use crate::user_agent::get_user_agent;
-use reqwest::{header::HeaderMap, Response, StatusCode};
-use serde_json::{from_reader, to_vec};
+use reqwest::header::HeaderMap;
+use serde_json::to_vec;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 use std::{collections::HashMap, sync::OnceLock};
 use thiserror::Error;
-use zerokms_protocol::{ViturRequest, ViturRequestError, ViturRequestErrorKind};
+use zerokms_protocol::{ViturRequest, ViturRequestError};
 
 #[cfg(not(target_arch = "wasm32"))]
 const REQUEST_TIMEOUT_SECS: u64 = 10;
@@ -20,10 +21,6 @@ const REQUEST_TIMEOUT_SECS: u64 = 10;
 #[derive(Debug, Error)]
 #[error("Failed to initialize HTTP connection: {0}")]
 pub struct ConnectionInitError(#[from] reqwest::Error);
-
-#[derive(Debug, Error)]
-#[error("ZeroKMS base URL was not resolved from the token's `services` claim")]
-struct BaseUrlUnresolved;
 
 pub struct HttpConnectionOpts {
     base_url: Option<ZeroKmsEndpoint>,
@@ -111,45 +108,6 @@ pub struct HttpConnection {
     client: reqwest::Client,
 }
 
-#[derive(Debug, Error)]
-#[error("Received '{received:?}', expected '{expected}'")]
-struct UnexpectedError {
-    received: Option<String>,
-    expected: &'static str,
-    body: Option<String>,
-    headers: HashMap<String, String>,
-}
-
-#[derive(Debug, Error)]
-#[error("Status: {status}")]
-struct FailureResponse {
-    status: StatusCode,
-    body: Option<String>,
-    headers: HashMap<String, String>,
-}
-
-impl FailureResponse {
-    async fn from_response(response: Response) -> Self {
-        let status = response.status();
-        let headers = header_map_to_hash(response.headers());
-        let body = response.text().await.ok();
-
-        Self {
-            status,
-            body,
-            headers,
-        }
-    }
-
-    fn into_vitur_error(
-        self,
-        error_kind: ViturRequestErrorKind,
-        message: &'static str,
-    ) -> ViturRequestError {
-        ViturRequestError::new(error_kind, message, self)
-    }
-}
-
 fn header_map_to_hash(map: &HeaderMap) -> HashMap<String, String> {
     map.iter()
         .filter_map(|(k, v)| {
@@ -159,17 +117,6 @@ fn header_map_to_hash(map: &HeaderMap) -> HashMap<String, String> {
                 .map(|v| (k.to_string(), v))
         })
         .collect()
-}
-
-/// `true` if a `content-type` header value denotes JSON, ignoring any
-/// parameters (`application/json; charset=utf-8`) and ASCII case — proxies and
-/// API gateways commonly normalise the header that way.
-fn is_json_content_type(value: &str) -> bool {
-    value
-        .split(';')
-        .next()
-        .map(str::trim)
-        .is_some_and(|media_type| media_type.eq_ignore_ascii_case("application/json"))
 }
 
 impl ZeroKMSConnectionInit for HttpConnection {
@@ -257,55 +204,34 @@ impl ZeroKMSConnection for HttpConnection {
             .map_err(|e| ViturRequestError::send("Failed to send request", e))?;
 
         let status = response.status();
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|x| x.to_str().ok())
+            .map(str::to_owned);
+        let headers = header_map_to_hash(response.headers());
 
-        if status.is_success() {
-            // Ok response
-            let content_type = response
-                .headers()
-                .get("content-type")
-                .and_then(|x| x.to_str().ok());
-
-            let expected = "application/json";
-
-            if !content_type.is_some_and(is_json_content_type) {
-                return Err(ViturRequestError::parse(
-                    "Invalid content type header",
-                    UnexpectedError {
-                        received: content_type.map(|x| x.into()),
-                        expected,
-                        headers: header_map_to_hash(response.headers()),
-                        body: response.text().await.ok(),
-                    },
-                ));
-            }
-
-            let response_bytes = response.bytes().await.map_err(|e| {
+        // Only the one path that actually needs the bytes — a 2xx already
+        // known to be JSON — reports an unreadable body as its own error;
+        // every other path classifies with whatever it could read, exactly as
+        // the pre-shared-classifier code did.
+        let deserializing =
+            status.is_success() && content_type.as_deref().is_some_and(is_json_content_type);
+        let body = response.bytes().await;
+        let body = if deserializing {
+            Some(body.map_err(|e| {
                 ViturRequestError::parse("Failed to read response body as bytes", e)
-            })?;
-
-            from_reader(&response_bytes[..])
-                .map_err(|e| ViturRequestError::parse("Failed to deserialize response body", e))
+            })?)
         } else {
-            // Error handling
-            let failure = FailureResponse::from_response(response).await;
+            body.ok()
+        };
 
-            let err = match status {
-                StatusCode::NOT_FOUND => {
-                    failure.into_vitur_error(ViturRequestErrorKind::NotFound, "Resource not found")
-                }
-                StatusCode::UNAUTHORIZED => failure
-                    .into_vitur_error(ViturRequestErrorKind::Unauthorized, "Request unauthorized"),
-                StatusCode::FORBIDDEN => {
-                    failure.into_vitur_error(ViturRequestErrorKind::Forbidden, "Request forbidden")
-                }
-                StatusCode::CONFLICT => {
-                    failure.into_vitur_error(ViturRequestErrorKind::Conflict, "Resource conflict")
-                }
-                _ => ViturRequestError::other("Server returned failure response", failure),
-            };
-
-            Err(err)
-        }
+        classify_response(
+            status.as_u16(),
+            content_type.as_deref(),
+            body.as_deref(),
+            headers,
+        )
     }
 }
 
@@ -386,35 +312,5 @@ mod base_url_tests {
             matches!(err.kind, ViturRequestErrorKind::PrepareRequest),
             "a missing base URL must not look like a 401 (and trigger a reauth loop), got: {err:?}"
         );
-    }
-}
-
-#[cfg(test)]
-mod content_type_tests {
-    use super::is_json_content_type;
-
-    #[test]
-    fn accepts_json_with_or_without_parameters_and_ignoring_case() {
-        for value in [
-            "application/json",
-            "application/json; charset=utf-8",
-            "application/json;charset=UTF-8",
-            "  Application/JSON ; charset=utf-8",
-        ] {
-            assert!(is_json_content_type(value), "{value:?} should be accepted");
-        }
-    }
-
-    #[test]
-    fn rejects_other_media_types() {
-        for value in [
-            "text/html",
-            "application/jsonx",
-            "text/json",
-            "",
-            "; charset=utf-8",
-        ] {
-            assert!(!is_json_content_type(value), "{value:?} should be rejected");
-        }
     }
 }
