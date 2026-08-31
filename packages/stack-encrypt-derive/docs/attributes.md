@@ -7,7 +7,8 @@ All attributes live under `#[stash(...)]`.
 | Attribute | Effect |
 |---|---|
 | `plaintext = Type` | The record is an encrypted form of `Type`. Repeatable: one impl per listed type. Omit it for an impl generic over the plaintext (see below). |
-| `row = Type` | The record is a row of the struct `Type`: every derived field is derived from the plaintext field of its own name, under the context `"<type>/<field>"` (see [Rows](#rows)). Exclusive with `plaintext`. |
+| `row = Type` | The record is a row of the struct `Type`: every derived field is derived from the plaintext field of its own name, under the context `"<context>/<field>"` (see [Rows](#rows)). Exclusive with `plaintext`; requires `context`. |
+| `context = "..."` | With `row` only: the first half of every field's inferred context — the table's name. Required, never inferred from the type's name, and must not be empty. |
 | `crate = "path"` | Where to find `stack_encrypt` in the generated code (default `::stack_encrypt`), for use through a re-export. |
 
 `plaintext` must be an owned type: the generated impl has no lifetime to give
@@ -27,6 +28,7 @@ must name it: the plaintext is rebuilt with a struct literal.
 | `from = field` / `from = 0` | Derive this field from `plaintext.field` (or `plaintext.0` for a tuple struct) rather than from the whole plaintext. Needs `plaintext = ..` or `row = ..` on the struct; in a row, only for a field whose name differs from its plaintext field's. |
 | `default` / `default = expr` | Not derived: filled with `Default::default()` or `expr`. Never encrypted, never authenticated. |
 | `decrypt` | Decryption opens this field (`DecryptInto` only). Needed only when the field types cannot decide it — see below. |
+| `nested` | In a row only: infer no context for this field — it is handed `()`, which its type (a nested row carrying its own contexts) accepts and a leaf refuses. Excludes `context`. |
 
 The caller's context reaches every field derived from the whole plaintext
 that has no `context` of its own, and the impl's context parameter is bounded
@@ -47,23 +49,30 @@ but each listed type only once).
 
 ## Rows
 
-A row needs no attribute on its fields. With `row = User`, a field `age` is
-derived from `user.age` under the context `"user/age"`; a field `email` from
-`user.email` under `"user/email"`; a tuple row's `.0` under `"user/0"`. The
-context is the plaintext type's last path segment in `snake_case`
-(`UserProfile` → `"user_profile/age"`) and the *plaintext* field's name, so
+A row needs no attribute on its fields. With
+`#[stash(row = User, context = "users")]`, a field `age` is derived from
+`user.age` under the context `"users/age"`; a field `email` from `user.email`
+under `"users/email"`; a tuple row's `.0` under `"users/0"`. The first half
+is the container's `context` and the second the *plaintext* field's name, so
 `#[stash(from = email_address)] email: ..` is derived under
-`"user_profile/email_address"`: both halves name the column, not the encrypted
+`"users/email_address"`: both halves name the column, not the encrypted
 struct. Nothing is pluralised or otherwise guessed. `context = ".."` on a
-field is taken verbatim and replaces the inferred one.
+field is taken verbatim and replaces the inferred one; `nested` on a field
+infers none — the field is handed `()`, which is what a nested row (its own
+`row = ..` derive, carrying its own contexts) accepts and a leaf refuses.
 
-The inferred context is part of the stored data's identity: it is the AAD of
-every ciphertext in the column and the domain of every term. Renaming the
-plaintext struct or a plaintext field therefore changes it, and rows already
-stored stop decrypting (`Error::Aead`) — silently at the call site, with no
-compile-time signal. Before renaming either, pin the old value with
-`context = ".."` on the fields it reaches; or pin every context from the
-start if the type's name is likely to move.
+The context is part of the stored data's identity: it is the AAD of every
+ciphertext in the column and the domain of every term. That is why the prefix
+is required and explicit rather than inferred from the Rust type's name: two
+plaintext types with the same name in different modules would otherwise
+silently share every column context — equal plaintexts would produce
+identical index terms across their tables, and ciphertexts would be
+transplantable between them — and a rename would silently change the AAD of
+every stored row. The field half *is* inferred from the plaintext field's
+name, so renaming a plaintext field still changes that column's context and
+stored rows stop decrypting (`Error::Aead`) — silently at the call site, with
+no compile-time signal. Before such a rename, pin the old value with
+`context = ".."` on the fields it reaches.
 
 A row has no field derived from the whole plaintext; every derived field has
 a `from`. Use `plaintext = ..` with explicit `from`s for a record that mixes
@@ -92,3 +101,12 @@ decryption opens the record — so a marked record still nests in rows.
 `DecryptInto` consumes the record, moving each opened field out of `self`, so
 the record must not implement `Drop` (including via `ZeroizeOnDrop`); wrap the
 fields that need zeroizing instead.
+
+One asymmetry to know about: when the ciphertext field carries a `context`
+literal, the record's `decrypt_into` still takes a caller context — the term
+fields nominally receive it — but no field actually uses it: terms open
+nothing, and the ciphertext authenticates under its literal. Decryption then
+succeeds under *any* well-typed context, so a wrong caller context is not the
+`Error::Aead` it would be against a leaf. Do not use the decrypt context as a
+tenancy or sanity check on such a record; the authenticated context is the
+field's literal.

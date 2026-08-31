@@ -123,11 +123,11 @@
 //!
 //! ```
 //! use stack_encrypt::target::{
-//!     is_degenerate_prf_context, DecryptField, DecryptTarget, Decryptable, EncryptContext,
+//!     supplied_prf_context, DecryptField, DecryptTarget, Decryptable, EncryptContext,
 //!     EncryptFrom, Pending, SuppliedContext,
 //! };
 //! use stack_encrypt::{Error, StackCipher};
-//! use vitaminc_prf::{IntoPrfContext, PrfContext, PrfValue, PrfVisitor, PrfVisitorError};
+//! use vitaminc_prf::{PrfContext, PrfValue, PrfVisitor, PrfVisitorError};
 //!
 //! /// A third-party term type: one PRF block under its own domain.
 //! pub struct MyTerm([u8; 32]);
@@ -160,14 +160,15 @@
 //!         Self: 'a,
 //!     {
 //!         // The type rules out an absent context; an empty one is still a
-//!         // runtime check, the same one the built-in leaves make (the
-//!         // encoding is framed, so `as_bytes().is_empty()` would never be
-//!         // true). Then domain-separate under your own label so your terms
-//!         // can never collide with another scheme's under the same context.
-//!         let context = context.into_prf_context().into_owned();
-//!         if is_degenerate_prf_context(context.as_bytes()) {
-//!             return Pending::ready(cipher, Err(Error::EmptyContext));
-//!         }
+//!         // runtime check, made by the same choke point the built-in
+//!         // leaves use — validation and encoding are one call, so a leaf
+//!         // cannot encode one value and check another. Then
+//!         // domain-separate under your own label so your terms can never
+//!         // collide with another scheme's under the same context.
+//!         let context = match supplied_prf_context(context) {
+//!             Ok(context) => context,
+//!             Err(error) => return Pending::ready(cipher, Err(error)),
+//!         };
 //!         let context = PrfContext::pae(&[b"my-crate/my-term/v1".as_slice(), context.as_bytes()]);
 //!         let term = source
 //!             .clone()
@@ -214,10 +215,11 @@
 //!
 //! A struct of leaves is a *record*; a struct of records, each derived from
 //! one field of the source under its own column context, is a *row*. Both
-//! are the same derive, and both settle as one batched call. A row's
-//! contexts are inferred from the names — `#[stash(row = User)]` derives
-//! `age` from `user.age` under `"user/age"` — and overridden per field where
-//! that is not wanted:
+//! are the same derive, and both settle as one batched call. A row names its
+//! table once and its fields' contexts follow —
+//! `#[stash(row = User, context = "users")]` derives `age` from `user.age`
+//! under `"users/age"` — and are overridden per field where that is not
+//! wanted:
 //!
 //! ```
 //! use stack_encrypt::sem::{EqualityTerm, OreTerm};
@@ -241,9 +243,9 @@
 //! }
 //!
 //! /// A row of `User`: each field from the plaintext field of its own name,
-//! /// under the context `"user/<field>"` — no attribute needed.
+//! /// under the context `"users/<field>"` — no attribute on the fields.
 //! #[derive(EncryptFrom, DecryptInto)]
-//! #[stash(row = User)]
+//! #[stash(row = User, context = "users")]
 //! struct EncryptedUser {
 //!     age: EncryptedAge,
 //!     email: StackCipherText,
@@ -262,7 +264,7 @@
 //! let row: EncryptedUser = user.encrypt_into(&cipher).await?;
 //! // A query site derives the same term under the column's context.
 //! let probe: EqualityTerm = 42u32
-//!     .encrypt_into_with_context(&cipher, "user/age")
+//!     .encrypt_into_with_context(&cipher, "users/age")
 //!     .await?;
 //! assert_eq!(row.age.hm, probe);
 //!
@@ -351,6 +353,12 @@ impl<'a, T> EncryptContext<'a> for T where T: IntoAad<'a> + IntoPrfContext<'a> +
 /// without it a record whose ciphertext field carries a literal would take,
 /// and silently discard, a value that is not a context at all:
 ///
+/// Note the flip side: for such a record the bound is all the caller's
+/// context does. The terms discard its *value* and the ciphertext
+/// authenticates under its literal, so decryption succeeds under any
+/// well-typed context — a wrong one is not the [`Error::Aead`] it would be
+/// against a leaf, and the decrypt context is not a tenancy check there.
+///
 /// ```compile_fail,E0277
 /// use stack_encrypt::sem::EqualityTerm;
 /// use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
@@ -413,6 +421,13 @@ impl<'a, T> DecryptContext<'a> for T where T: IntoAad<'a> + Clone {}
 )]
 pub trait SuppliedContext<'a>: DecryptContext<'a> {}
 
+// This roster hand-mirrors vitaminc's `IntoAad` implementor list (minus `()`)
+// at the pinned rev, and the orphan rule means a *future* vitaminc-owned
+// context type cannot opt itself in from user code — it waits for a release
+// of this crate. That coupling is a conscious interim choice: when bumping
+// the vitaminc pin, diff its `IntoAad` implementors against this list; at
+// vitaminc#291 the bound moves to an upstream marker and the roster goes
+// away.
 impl<'a> SuppliedContext<'a> for &'a str {}
 impl SuppliedContext<'_> for String {}
 impl<'a> SuppliedContext<'a> for &'a [u8] {}
@@ -504,14 +519,10 @@ mod prf_framing {
 /// `for_map_entry`, the markers — are derived after this check runs, from
 /// the caller-visible AAD this sees.)
 ///
-/// **Transitional.** Public only so a third-party leaf can make the same
-/// runtime check the built-ins make (the recipe in the
-/// [module docs](self#extending-with-your-own-sem-type)). When
-/// [vitaminc#291](https://github.com/cipherstash/vitaminc/issues/291) carries
-/// non-emptiness in the context type, both predicates and
-/// [`Error::EmptyContext`] are **deleted**, not deprecated — do not build on
-/// them beyond that recipe.
-pub fn is_degenerate_aad(bytes: &[u8]) -> bool {
+/// Crate-private: third-party leaves go through [`supplied_aad`] /
+/// [`supplied_prf_context`], the one choke point whose signature survives
+/// the vitaminc#291 migration.
+pub(crate) fn is_degenerate_aad(bytes: &[u8]) -> bool {
     if bytes.is_empty() {
         return true;
     }
@@ -536,10 +547,9 @@ pub fn is_degenerate_aad(bytes: &[u8]) -> bool {
 /// hand) is degenerate only if every one of its pieces is. Bytes that are not
 /// a well-formed PAE are caller content.
 ///
-/// **Transitional**, on the same terms as [`is_degenerate_aad`]: deleted,
-/// not deprecated, when
-/// [vitaminc#291](https://github.com/cipherstash/vitaminc/issues/291) lands.
-pub fn is_degenerate_prf_context(bytes: &[u8]) -> bool {
+/// Crate-private, on the same terms as [`is_degenerate_aad`]: the public
+/// surface is [`supplied_prf_context`].
+pub(crate) fn is_degenerate_prf_context(bytes: &[u8]) -> bool {
     if bytes.is_empty() {
         return true;
     }
@@ -560,6 +570,46 @@ pub fn is_degenerate_prf_context(bytes: &[u8]) -> bool {
         }
         _ => pieces.iter().all(|piece| is_degenerate_prf_context(piece)),
     }
+}
+
+/// Validate and encode a supplied **AAD** context in one step: the encoded
+/// bytes if the context carries caller information, [`Error::EmptyContext`]
+/// if it is degenerate (`""`, `None`, `Some("")`, `0u64`, nested empties —
+/// see [`EncryptContext`]).
+///
+/// This is the choke point every built-in leaf goes through on the AEAD
+/// channel, and the one a third-party ciphertext-like leaf should call too
+/// (see the [module docs](self#extending-with-your-own-sem-type)): there is
+/// deliberately no public way to make the underlying degeneracy check
+/// without also obtaining the encoded context, so a leaf cannot encode one
+/// value and check another. The *signature* is stable across the
+/// [vitaminc#291](https://github.com/cipherstash/vitaminc/issues/291)
+/// migration: when non-emptiness moves into the context type, the runtime
+/// check here collapses to a conversion, and callers do not change.
+pub fn supplied_aad<'c>(context: impl IntoAad<'c>) -> Result<Aad<'static>, Error> {
+    let aad = context.into_aad().into_owned();
+    if is_degenerate_aad(aad.as_bytes()) {
+        return Err(Error::EmptyContext);
+    }
+    Ok(aad)
+}
+
+/// Validate and encode a supplied **PRF** context in one step — the
+/// derivation-channel twin of [`supplied_aad`], for index-term leaves.
+/// Returns the encoded context, or [`Error::EmptyContext`] for one that
+/// carries no caller information.
+///
+/// Domain-separate the result under your own label before deriving from it,
+/// as the recipe in the
+/// [module docs](self#extending-with-your-own-sem-type) shows.
+pub fn supplied_prf_context<'c>(
+    context: impl IntoPrfContext<'c>,
+) -> Result<vitaminc_prf::PrfContext<'static>, Error> {
+    let context = context.into_prf_context().into_owned();
+    if is_degenerate_prf_context(context.as_bytes()) {
+        return Err(Error::EmptyContext);
+    }
+    Ok(context)
 }
 
 /// Parse `bytes` as exactly one PAE encoding: `LE64(count)` then `count`
@@ -886,6 +936,45 @@ impl<P> DecryptFrom for P {
 /// A third-party leaf implements it alongside [`EncryptFrom`], together
 /// with [`DecryptField`]; see the
 /// [module docs](self#extending-with-your-own-sem-type).
+///
+/// For a *generic* record the exactly-one count cannot be checked at the
+/// definition (a `const _` item cannot name the record's generic
+/// parameters), so the derive defers it to an inline `const` evaluated per
+/// instantiation: the record compiles where it is defined and the error
+/// fires at the first *use* that is actually codegenned — possibly in a
+/// downstream crate. The message is the same one a concrete record gets at
+/// its definition:
+///
+/// ```compile_fail
+/// use stack_encrypt::target::Pending;
+/// use stack_encrypt::{DecryptInto, StackCipher, StackCipherText};
+/// use stack_kms::FakeDataKeySource;
+///
+/// #[derive(DecryptInto)]
+/// struct Doubled<T> {
+///     a: StackCipherText,
+///     b: StackCipherText,
+///     #[stash(default)]
+///     tag: T,
+/// }
+///
+/// // Compiles fine: the two-ciphertext mistake is not yet instantiated.
+/// fn open<'a>(
+///     cipher: &'a StackCipher<FakeDataKeySource>,
+///     doubled: Doubled<u8>,
+/// ) -> Pending<'a, u32, FakeDataKeySource> {
+///     doubled.decrypt_into(cipher, "d")
+/// }
+///
+/// // The first reachable instantiation trips the deferred check:
+/// // "`Doubled` has several decryptable fields: mark the one decryption
+/// // opens `#[stash(decrypt)]`".
+/// let _ = open
+///     as for<'a> fn(
+///         &'a StackCipher<FakeDataKeySource>,
+///         Doubled<u8>,
+///     ) -> Pending<'a, u32, FakeDataKeySource>;
+/// ```
 pub trait Decryptable {
     /// `true` if decryption opens a value of this type, `false` if it is a
     /// one-way term with no plaintext to recover.
@@ -903,6 +992,15 @@ pub trait Decryptable {
 /// record, and a record that only decrypts — no `EncryptFrom` derive to
 /// emit its `Decryptable` — must still be a field of a row in the explicit
 /// mode.)
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be a field of an automatically decrypted record",
+    label = "no `DecryptField<{P}, ..>` implementation",
+    note = "a term-only bundle — `#[derive(EncryptFrom)]` alone, nothing to open — has no \
+            `DecryptField`: mark the outer record's real ciphertext `#[stash(decrypt)]` so only \
+            the marked fields are considered",
+    note = "a hand-written term type implements `DecryptField` (returning `None`) alongside \
+            `Decryptable`; a hand-written ciphertext type wraps its `DecryptInto`"
+)]
 pub trait DecryptField<P, C: DecryptTarget, Ctx> {
     /// [`DecryptInto::decrypt_into`] if `Self` is decryptable, `None` if not.
     fn decrypt_field<'a>(self, cipher: &'a C, context: Ctx) -> Option<C::Output<'a, P>>
@@ -1023,13 +1121,13 @@ where
     where
         Self: 'a,
     {
-        let aad = context.into_aad().into_owned();
         // An empty context would leave the leaf AAD carrying only the key
         // tag, making ciphertexts transplantable between empty-context
         // fields — see `EncryptContext`.
-        if is_degenerate_aad(aad.as_bytes()) {
-            return Pending::failed(cipher, Error::EmptyContext);
-        }
+        let aad = match supplied_aad(context) {
+            Ok(aad) => aad,
+            Err(error) => return Pending::failed(cipher, error),
+        };
         match source.clone().encrypt_with_aad(cipher, aad) {
             Ok(tree) => seal_pending(cipher, tree),
             Err(_) => Pending::ready(cipher, Err(Error::Aead)),
@@ -1106,12 +1204,12 @@ where
         Self: 'a,
         T: 'a,
     {
-        let aad = context.into_aad().into_owned();
         // Symmetric with the encrypt side: the target layer never encrypts
         // under an empty context, so it never decrypts under one either.
-        if is_degenerate_aad(aad.as_bytes()) {
-            return Pending::failed(cipher, Error::EmptyContext);
-        }
+        let aad = match supplied_aad(context) {
+            Ok(aad) => aad,
+            Err(error) => return Pending::failed(cipher, error),
+        };
         let requests = retrieve_requests(&self);
         Pending::request(cipher, requests, move |responses| {
             let decipher = decipher_from_responses(self, responses)?;
@@ -1165,6 +1263,17 @@ fn collect_retrieve_requests(ciphertext: &StackCipherText, out: &mut Vec<Request
 /// column of rows accepts `()` because its rows do. Neither is decided here,
 /// and neither is an empty context, which the leaves reject the moment a
 /// value reaches them.
+///
+/// A consequence, accepted knowingly: an *empty* container performs no
+/// check at all, so a degenerate supplied context (`""` from a
+/// runtime-resolved descriptor, say) succeeds against a table with no rows
+/// and first fails on the first populated value. The container cannot
+/// pre-check — its `Ctx` is legitimately `()` for a column of rows, and
+/// only the element type knows whether a context is even owed. Fail-fast
+/// returns for free at
+/// [vitaminc#291](https://github.com/cipherstash/vitaminc/issues/291), when
+/// a supplied context validates non-emptiness at construction, before any
+/// container is reached.
 impl<S, T, K, Ctx> EncryptFrom<Vec<S>, StackCipher<K>, Ctx> for Vec<T>
 where
     T: EncryptFrom<S, StackCipher<K>, Ctx>,

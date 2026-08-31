@@ -3,41 +3,39 @@
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
-use syn::{parse_quote, parse_quote_spanned, DeriveInput, Generics, Path, Result, Type};
+use syn::{parse_quote, DeriveInput, Generics, Path, Result, Type};
 
 use crate::shape::{
-    push_context_generics, trait_impl, zip_fields, CallerContext, Field, Kind, Record,
+    impl_sources, push_context_generics, push_field_bounds, trait_impl, zip_fields, CallerContext,
+    Field, FieldBound, Kind, Record,
 };
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let record = Record::parse(&input)?;
     let krate = &record.krate;
     let derived = record.derived();
+    // Fields derived from the whole source get a where clause; `from = ..`
+    // fields reach into the source, so their obligations are checked in the
+    // body against the actual field.
+    let whole: Vec<&Field> = derived
+        .iter()
+        .filter(|f| f.from().is_none())
+        .copied()
+        .collect();
 
     let decryptable = decryptable_impl(&input, &record, &derived);
 
-    if record.plaintexts.is_empty() {
-        // One impl, generic over the source: the record accepts exactly the
-        // sources every derived field accepts, which the where clause spells
-        // out so a mismatch is reported against the field type.
-        let source: Type = parse_quote!(__S);
+    // One impl per listed source, or one generic over it: the record accepts
+    // exactly the sources every derived field accepts, which the where clause
+    // spells out so a mismatch is reported against the field type.
+    let (sources, generic) = impl_sources(&record, parse_quote!(__S));
+    let impls = sources.iter().map(|source| {
         let mut generics = input.generics.clone();
-        generics.params.push(parse_quote!(__S));
+        if generic {
+            generics.params.push(parse_quote!(__S));
+        }
         generics.params.push(parse_quote!(__K));
-        push_field_bounds(&mut generics, krate, &derived, &source);
-        let ctx = push_context_generics(&mut generics, CallerContext::Encrypt(krate), &derived);
-        let body = body(krate, &record, &derived, &source);
-        let block = impl_block(&input, krate, &generics, &source, &ctx, body);
-        return Ok(quote!(#block #decryptable));
-    }
-
-    // One impl per listed source. Fields derived from the whole source get a
-    // where clause as above; `from = ..` fields reach into the source, so
-    // their obligations are checked in the body against the actual field.
-    let impls = record.plaintexts.iter().map(|source| {
-        let mut generics = input.generics.clone();
-        generics.params.push(parse_quote!(__K));
-        push_field_bounds(&mut generics, krate, &derived, source);
+        push_field_bounds(&mut generics, krate, &whole, source, FieldBound::Encrypt);
         let ctx = push_context_generics(&mut generics, CallerContext::Encrypt(krate), &derived);
         let body = body(krate, &record, &derived, source);
         impl_block(&input, krate, &generics, source, &ctx, body)
@@ -104,23 +102,6 @@ fn decryptable_impl(input: &DeriveInput, record: &Record, derived: &[&Field]) ->
         impl #impl_generics #krate::target::Decryptable for #name #ty_generics #where_clause {
             const DECRYPTABLE: bool = #value;
         }
-    }
-}
-
-/// `FieldTy: EncryptFrom<Source, StackCipher<__K>, Ctx>` for every field
-/// derived from the whole source, under the context it is derived under —
-/// its literal's, or the caller's `__Ctx`, which is how a record inherits
-/// its leaves' demand for a supplied context.
-fn push_field_bounds(generics: &mut Generics, krate: &Path, derived: &[&Field], source: &Type) {
-    let predicates = &mut generics.make_where_clause().predicates;
-    for field in derived.iter().filter(|f| f.from().is_none()) {
-        let ty = &field.ty;
-        let context = field.field_context().ty();
-        // Spanned at the field type, so a type that is not an encrypted form
-        // of the source is reported there, not at the derive.
-        predicates.push(parse_quote_spanned! {ty.span()=>
-            #ty: #krate::target::EncryptFrom<#source, #krate::StackCipher<__K>, #context>
-        });
     }
 }
 
@@ -360,7 +341,7 @@ mod tests {
     #[rustfmt::skip]
     fn a_row_needs_no_attributes_on_its_fields() {
         let expansion = expand(parse_quote! {
-            #[stash(row = User)]
+            #[stash(row = User, context = "user")]
             struct EncryptedUser {
                 age: EncryptedAge,
                 email: StackCipherText,

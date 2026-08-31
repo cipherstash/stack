@@ -4,8 +4,8 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
 use syn::{
-    parse_quote, Data, DeriveInput, Expr, Fields, Generics, Ident, LitStr, Member, Path, Result,
-    Type, TypePath,
+    parse_quote, parse_quote_spanned, Data, DeriveInput, Expr, Fields, Generics, Ident, LitStr,
+    Member, Path, Result, Type,
 };
 
 use crate::attrs::{ContainerAttrs, FieldAttrs};
@@ -168,8 +168,9 @@ impl Record {
             }
         };
 
-        let row = attrs.row.as_ref().map(row_name).transpose()?;
-        let fields = collect(&data.fields, row.as_deref())?;
+        // `ContainerAttrs::parse` has established that `context` is present
+        // exactly when `row` is.
+        let fields = collect(&data.fields, attrs.context.as_ref())?;
         let plaintexts = match attrs.row {
             Some(row) => vec![row],
             None => attrs.plaintexts,
@@ -198,39 +199,6 @@ impl Record {
             fields,
         })
     }
-}
-
-/// The first half of a row field's inferred context: the row struct's own
-/// name, in `snake_case` (`UserProfile` becomes `user_profile`). Generic
-/// arguments and the path to the type are not part of it.
-fn row_name(ty: &Type) -> Result<String> {
-    let Type::Path(TypePath { path, .. }) = ty else {
-        unreachable!("`ContainerAttrs::parse` accepts only a path type for `row`")
-    };
-    let segment = path
-        .segments
-        .last()
-        .ok_or_else(|| syn::Error::new_spanned(ty, "`row` must name a struct"))?;
-    Ok(snake_case(&segment.ident.to_string()))
-}
-
-/// `UserProfile` → `user_profile`, `HTTPHeader` → `http_header`, `user` →
-/// `user`. Boundaries are a lower-to-upper step and the last capital of a
-/// run followed by a lowercase letter.
-fn snake_case(name: &str) -> String {
-    let chars: Vec<char> = name.chars().collect();
-    let mut out = String::with_capacity(name.len() + 4);
-    for (i, &c) in chars.iter().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            let prev = chars[i - 1];
-            let next_lower = chars.get(i + 1).is_some_and(|n| n.is_lowercase());
-            if prev.is_lowercase() || prev.is_ascii_digit() || (prev.is_uppercase() && next_lower) {
-                out.push('_');
-            }
-        }
-        out.extend(c.to_lowercase());
-    }
-    out
 }
 
 /// The demand a derive places on the impl's context parameter, beyond what
@@ -304,6 +272,56 @@ pub(crate) fn trait_impl(
     }
 }
 
+/// Which trait a field bound names; the bound is otherwise identical between
+/// the two derives, and built in one place so the where-clause logic that
+/// carries the per-field contexts cannot diverge between them.
+pub(crate) enum FieldBound {
+    /// `EncryptFrom<Source, ..>` — for encrypt, on fields derived from the
+    /// whole source (the caller filters; a `from` field's obligation is
+    /// checked in the body instead, where the source field's type is known).
+    Encrypt,
+    /// `DecryptField<Plaintext, ..>` — for decrypt, on every candidate field.
+    DecryptField,
+}
+
+/// `FieldTy: Trait<Target, StackCipher<__K>, Ctx>` for each of `fields`,
+/// under the context it is derived or opened under — its literal's, `()`,
+/// or the caller's `__Ctx`, which is how a record inherits its leaves'
+/// demand for a supplied context.
+pub(crate) fn push_field_bounds(
+    generics: &mut Generics,
+    krate: &Path,
+    fields: &[&Field],
+    target: &Type,
+    bound: FieldBound,
+) {
+    let trait_name: Ident = match bound {
+        FieldBound::Encrypt => parse_quote!(EncryptFrom),
+        FieldBound::DecryptField => parse_quote!(DecryptField),
+    };
+    let predicates = &mut generics.make_where_clause().predicates;
+    for field in fields {
+        let ty = &field.ty;
+        let context = field.field_context().ty();
+        // Spanned at the field type, so a type that cannot be a field of the
+        // record is reported there, not at the derive.
+        predicates.push(parse_quote_spanned! {ty.span()=>
+            #ty: #krate::target::#trait_name<#target, #krate::StackCipher<__K>, #context>
+        });
+    }
+}
+
+/// The source (or plaintext) types a derive emits one impl each for: the
+/// listed ones, or — when none are listed — the given generic parameter,
+/// with `true` saying it must be pushed onto the impl's generics.
+pub(crate) fn impl_sources(record: &Record, generic: Ident) -> (Vec<Type>, bool) {
+    if record.plaintexts.is_empty() {
+        (vec![parse_quote!(#generic)], true)
+    } else {
+        (record.plaintexts.clone(), false)
+    }
+}
+
 /// The pendings of `fields`, zipped into one and mapped into `build` (a
 /// struct literal over the fields' locals). Nothing is awaited, so the record
 /// settles as one batched call.
@@ -346,10 +364,13 @@ pub(crate) fn zip_fields(
     quote!(#chain.map(|#pattern| #build))
 }
 
-/// The fields, with what a row (`row` is its snake-cased name) fills in:
-/// `from` is the field's own name and `context` is `"<row>/<from>"`, each
-/// unless the field gives its own.
-fn collect(fields: &Fields, row: Option<&str>) -> Result<Vec<Field>> {
+/// The fields, with what a row (`row_context` is the container's `context`
+/// prefix) fills in: `from` is the field's own name and `context` is
+/// `"<row_context>/<from>"`, each unless the field gives its own.
+/// `#[stash(nested)]` opts a field out of the inferred context — it is handed
+/// `()`, which a nested row (a type carrying its own contexts) accepts and a
+/// leaf refuses.
+fn collect(fields: &Fields, row_context: Option<&LitStr>) -> Result<Vec<Field>> {
     fields
         .iter()
         .enumerate()
@@ -359,29 +380,48 @@ fn collect(fields: &Fields, row: Option<&str>) -> Result<Vec<Field>> {
                 Some(ident) => Member::Named(ident.clone()),
                 None => Member::Unnamed(syn::Index::from(index)),
             };
+            if attrs.nested && row_context.is_none() {
+                return Err(syn::Error::new_spanned(
+                    &field.ty,
+                    "`nested` opts a row field out of its inferred context, so it applies only \
+                     with `row = ..` on the struct; a `plaintext` record's `from` field with no \
+                     `context` is already handed `()`",
+                ));
+            }
             let kind = match attrs.default {
                 Some(default) => {
-                    if attrs.context.is_some() || attrs.from.is_some() || attrs.decrypt {
+                    if attrs.context.is_some()
+                        || attrs.from.is_some()
+                        || attrs.decrypt
+                        || attrs.nested
+                    {
                         return Err(syn::Error::new_spanned(
                             &field.ty,
                             "a `default` field is not derived from the source, so `context`, \
-                             `from` and `decrypt` do not apply to it",
+                             `from`, `decrypt` and `nested` do not apply to it",
                         ));
                     }
                     Kind::Default(default)
                 }
-                None => match row {
-                    Some(row) => {
+                None => match row_context {
+                    Some(row_context) => {
                         let from = attrs.from.unwrap_or_else(|| member.clone());
-                        let context = attrs.context.unwrap_or_else(|| {
-                            let column = match &from {
-                                Member::Named(ident) => ident.to_string(),
-                                Member::Unnamed(index) => index.index.to_string(),
-                            };
-                            LitStr::new(&format!("{row}/{column}"), member.span())
-                        });
+                        let context = if attrs.nested {
+                            // The field's type carries its own contexts; it
+                            // is handed `()` (`FieldContext::Unit`).
+                            None
+                        } else {
+                            Some(attrs.context.unwrap_or_else(|| {
+                                let column = match &from {
+                                    Member::Named(ident) => ident.to_string(),
+                                    Member::Unnamed(index) => index.index.to_string(),
+                                };
+                                let prefix = row_context.value();
+                                LitStr::new(&format!("{prefix}/{column}"), member.span())
+                            }))
+                        };
                         Kind::Derived {
-                            context: Some(context),
+                            context,
                             from: Some(from),
                         }
                     }
@@ -638,47 +678,129 @@ mod tests {
     #[test]
     fn a_row_fills_in_from_and_context() {
         let record = parse(parse_quote! {
-            #[stash(row = crate::model::UserProfile<T>)]
+            #[stash(row = crate::model::UserProfile<T>, context = "user_profiles")]
             struct EncryptedUser {
                 age: EncryptedAge,
                 #[stash(from = email_address)]
                 email: StackCipherText,
                 #[stash(context = "legacy/name")]
                 name: StackCipherText,
+                #[stash(nested)]
+                address: EncryptedAddress,
                 #[stash(default)]
                 version: u8,
             }
         })
         .unwrap();
         assert_eq!(record.plaintexts.len(), 1);
-        let (age, email, name, version) = (
+        let (age, email, name, address, version) = (
             &record.fields[0],
             &record.fields[1],
             &record.fields[2],
             &record.fields[3],
+            &record.fields[4],
         );
-        // Own name, and both names in the context — the type's snake-cased.
+        // Own name under the container's prefix.
         assert!(matches!(age.from(), Some(Member::Named(m)) if m == "age"));
-        assert_eq!(literal(age), "user_profile/age");
+        assert_eq!(literal(age), "user_profiles/age");
         // `from` overrides the field; the context follows the plaintext field.
         assert!(matches!(email.from(), Some(Member::Named(m)) if m == "email_address"));
-        assert_eq!(literal(email), "user_profile/email_address");
+        assert_eq!(literal(email), "user_profiles/email_address");
         // `context` is taken verbatim.
         assert!(matches!(name.from(), Some(Member::Named(m)) if m == "name"));
         assert_eq!(literal(name), "legacy/name");
+        // `nested`: no inferred context — the field is handed `()`.
+        assert!(matches!(address.from(), Some(Member::Named(m)) if m == "address"));
+        assert!(matches!(address.field_context(), FieldContext::Unit));
         assert!(!version.is_derived());
     }
 
     #[test]
     fn a_tuple_row_is_reached_and_named_by_index() {
         let record = parse(parse_quote! {
-            #[stash(row = Reading)]
+            #[stash(row = Reading, context = "readings")]
             struct EncryptedReading(EncryptedAge, StackCipherText);
         })
         .unwrap();
         assert!(matches!(record.fields[1].from(), Some(Member::Unnamed(i)) if i.index == 1));
-        assert_eq!(literal(&record.fields[0]), "reading/0");
-        assert_eq!(literal(&record.fields[1]), "reading/1");
+        assert_eq!(literal(&record.fields[0]), "readings/0");
+        assert_eq!(literal(&record.fields[1]), "readings/1");
+    }
+
+    #[test]
+    fn a_row_requires_a_container_context() {
+        // The prefix is part of the stored data's identity, so it is never
+        // inferred from the Rust type's name: two types named `Account` in
+        // different modules would otherwise silently share every column
+        // context.
+        let err = parse(parse_quote! {
+            #[stash(row = User)]
+            struct EncryptedUser {
+                age: EncryptedAge,
+            }
+        })
+        .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("needs a `context = \"..\"`"), "{message}");
+        assert!(message.contains("naming the table"), "{message}");
+    }
+
+    #[test]
+    fn a_container_context_requires_a_row() {
+        let err = parse(parse_quote! {
+            #[stash(plaintext = User, context = "users")]
+            struct Rec {
+                c: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("applies only with `row = ..`"));
+
+        let err = parse(parse_quote! {
+            #[stash(context = "users")]
+            struct Rec {
+                c: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("applies only with `row = ..`"));
+    }
+
+    #[test]
+    fn an_empty_container_context_is_rejected() {
+        let err = parse(parse_quote! {
+            #[stash(row = User, context = "")]
+            struct EncryptedUser {
+                age: EncryptedAge,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("name the table"));
+    }
+
+    #[test]
+    fn nested_applies_only_in_a_row_and_excludes_context() {
+        // Outside a row it is at best redundant (`from` with no `context` is
+        // already handed `()`), so it is rejected rather than ignored.
+        let err = parse(parse_quote! {
+            #[stash(plaintext = User)]
+            struct Rec {
+                #[stash(nested, from = user)]
+                user: EncryptedUser,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("applies only with `row = ..`"));
+
+        let err = parse(parse_quote! {
+            #[stash(row = Account, context = "accounts")]
+            struct Rec {
+                #[stash(nested, context = "accounts/user")]
+                user: EncryptedUser,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("`context` does not apply"));
     }
 
     #[test]
@@ -712,20 +834,6 @@ mod tests {
         })
         .unwrap_err();
         assert!(err.to_string().contains("must name a struct directly"));
-    }
-
-    #[test]
-    fn type_names_snake_case_by_word_boundary() {
-        for (name, expected) in [
-            ("User", "user"),
-            ("UserProfile", "user_profile"),
-            ("HTTPHeader", "http_header"),
-            ("Address2Line", "address2_line"),
-            ("user", "user"),
-            ("ABC", "abc"),
-        ] {
-            assert_eq!(snake_case(name), expected, "{name}");
-        }
     }
 
     #[test]

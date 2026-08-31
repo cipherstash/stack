@@ -9,8 +9,8 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 
 use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerm, OreTerm};
 use stack_encrypt::target::{
-    is_degenerate_prf_context, DecryptInto, EncryptContext, EncryptFrom, EncryptInto, Pending,
-    Request, SuppliedContext,
+    supplied_prf_context, DecryptInto, EncryptContext, EncryptFrom, EncryptInto, Pending, Request,
+    SuppliedContext,
 };
 use stack_encrypt::{Error, StackCipher, StackCipherText};
 use stack_kms::{FakeDataKeySource, IdentifiedBy, IndexKeySource};
@@ -462,13 +462,14 @@ where
     where
         Self: 'a,
     {
-        // The same non-emptiness check the built-in leaves make, then an own
-        // domain label: can never collide with a built-in term under the
-        // same context.
-        let context = context.into_prf_context().into_owned();
-        if is_degenerate_prf_context(context.as_bytes()) {
-            return Pending::ready(cipher, Err(Error::EmptyContext));
-        }
+        // The same non-emptiness check the built-in leaves make — validation
+        // and encoding through the one choke point — then an own domain
+        // label: can never collide with a built-in term under the same
+        // context.
+        let context = match supplied_prf_context(context) {
+            Ok(context) => context,
+            Err(error) => return Pending::ready(cipher, Err(error)),
+        };
         let context = PrfContext::pae(&[
             b"example/prefix-term/v1",
             &(N as u64).to_le_bytes(),

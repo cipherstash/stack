@@ -65,12 +65,13 @@
 //! # Rows
 //!
 //! One level up, the same derive: a struct whose fields are each derived from
-//! a *field* of the plaintext, under a context of their own. `row = User`
-//! says so once, for every field: `age` is derived from `user.age` under
-//! `"user/age"`, `email` from `user.email` under `"user/email"` — the
-//! struct's name and the field's, nothing invented. Attributes on the fields
-//! are for the exceptions: `from = ..` when the names differ, `context =
-//! ".."` to pin a context by hand.
+//! a *field* of the plaintext, under a context of their own. `row = User,
+//! context = "users"` says so once, for every field: `age` is derived from
+//! `user.age` under `"users/age"`, `email` from `user.email` under
+//! `"users/email"` — the table you name and the field, nothing invented.
+//! Attributes on the fields are for the exceptions: `from = ..` when the
+//! names differ, `context = ".."` to pin a whole context by hand, `nested`
+//! for a field whose type is itself a row carrying its own contexts.
 //!
 //! ```
 //! # use stack_encrypt::sem::{EqualityTerm, OreTerm};
@@ -91,7 +92,7 @@
 //! }
 //!
 //! #[derive(EncryptFrom, DecryptInto)]
-//! #[stash(row = User)]
+//! #[stash(row = User, context = "users")]
 //! struct EncryptedUser {
 //!     age: EncryptedAge,
 //!     email: StackCipherText,
@@ -110,7 +111,7 @@
 //! # }).unwrap();
 //! ```
 //!
-//! A row field's context is the *column's* identity — `"user/age"` is what a
+//! A row field's context is the *column's* identity — `"users/age"` is what a
 //! query site derives a probe under — which is why it is a literal per field
 //! rather than something composed from a context the caller passes. A row
 //! takes no context from the caller at all: its impls are for `()` exactly,
@@ -118,13 +119,18 @@
 //! forms that compile against it. A `plaintext = ..` record's `from` field
 //! with no `context` is handed `()` too, and its type decides whether that
 //! will do: a nested row accepts it; a leaf refuses it, at the field, until
-//! it is given a `context`.
+//! it is given a `context`. In a row, `#[stash(nested)]` is the same
+//! hand-off: it marks the fields whose types carry their own contexts, so no
+//! context is inferred for them.
 //!
-//! Because the inferred context is derived from Rust names, renaming the
-//! plaintext struct or one of its fields changes the AAD every stored
-//! ciphertext in that column was sealed under, and they stop decrypting.
-//! Pin the old value with `context = ".."` before such a rename; the
-//! [attributes](#rows) section says more.
+//! The prefix is given explicitly (`context = "users"`), never inferred from
+//! the Rust type's name: it is part of the stored data's identity — the AAD
+//! of every ciphertext in the row and the domain of every term — and a name
+//! two types share, or a refactor changes, must not be able to move it
+//! silently. The field half is still inferred from the plaintext field's
+//! name, so renaming a plaintext field changes that column's context and
+//! stored rows stop decrypting; pin the old value with `context = ".."` on
+//! the field before such a rename. The [attributes](#rows) section says more.
 //!
 //! # What the derive commits to
 //!

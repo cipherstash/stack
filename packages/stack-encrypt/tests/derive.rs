@@ -344,11 +344,13 @@ struct User {
 }
 
 /// A row: every field is derived from the plaintext field of its own name,
-/// under the context `"<row>/<field>"` — `"user/age"`, `"user/email"` — with
-/// no attribute on the field. `from` is the override for a name that
-/// differs; the context then follows the plaintext field.
+/// under the context `"<context>/<field>"` — `"user/age"`, `"user/email"` —
+/// with no attribute on the field. The prefix names the table, explicitly:
+/// it is part of the stored data's identity, so it is never inferred from
+/// the type's name. `from` is the override for a field name that differs;
+/// the context then follows the plaintext field.
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(row = User)]
+#[stash(row = User, context = "user")]
 struct EncryptedUser {
     /// A record inside a row: recursion, not a second mechanism.
     age: EncryptedAge,
@@ -482,6 +484,50 @@ async fn a_row_nests_in_a_row_without_a_context() {
     assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 1);
 }
 
+/// A row nesting a row, in row mode: `#[stash(nested)]` opts the field out
+/// of the inferred context — the inner row carries its own — so it is handed
+/// `()`, exactly as a `plaintext = ..` record's bare `from` field is. The
+/// outer row stays context-free.
+#[derive(EncryptFrom, DecryptInto)]
+#[stash(row = Account, context = "accounts")]
+struct EncryptedAccountRow {
+    #[stash(nested)]
+    user: EncryptedUser,
+    plan: StackCipherText,
+}
+
+#[tokio::test]
+async fn a_row_nests_in_a_row_in_row_mode_via_nested() {
+    let (cipher, generates, retrieves) = counting_cipher().await;
+    let generator = stack_cipher().await;
+
+    let account = Account {
+        user: user(),
+        plan: "pro".to_string(),
+    };
+    let row: EncryptedAccountRow = account.encrypt_into(&cipher).await.unwrap();
+    assert_eq!(generates.load(AtomicOrdering::SeqCst), 1);
+
+    // The inner row's fields are under their own literals; the outer's plan
+    // is under the inferred `"accounts/plan"`.
+    let age_hm: EqualityTerm = 42u32
+        .encrypt_into_with_context(&generator, "user/age")
+        .await
+        .unwrap();
+    assert_eq!(row.user.age.hm, age_hm);
+    let plan: String = row
+        .plan
+        .decrypt_into(&cipher, "accounts/plan")
+        .await
+        .unwrap();
+    assert_eq!(plan, "pro");
+
+    let row: EncryptedAccountRow = account.encrypt_into(&cipher).await.unwrap();
+    let recovered = Account::decrypt_from(row, &cipher).await.unwrap();
+    assert_eq!(recovered, account);
+    assert!(retrieves.load(AtomicOrdering::SeqCst) >= 1);
+}
+
 /// A tuple-struct plaintext is reached by index — inferred for a tuple row,
 /// `from = 0` when the row has named fields — and named by it in the
 /// context: `"reading/0"`.
@@ -489,13 +535,13 @@ async fn a_row_nests_in_a_row_without_a_context() {
 struct Reading(u32, String);
 
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(row = Reading)]
+#[stash(row = Reading, context = "reading")]
 struct EncryptedReading(EncryptedAge, StackCipherText);
 
 /// The same row with named fields: `from` by index, and the context follows
 /// the index too unless given.
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(row = Reading)]
+#[stash(row = Reading, context = "reading")]
 struct NamedReading {
     #[stash(from = 0)]
     value: EncryptedAge,

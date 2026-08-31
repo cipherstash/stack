@@ -15,11 +15,13 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens};
 use syn::spanned::Spanned;
 use syn::{
-    parse_quote, parse_quote_spanned, DeriveInput, Generics, Ident, LitStr, Member, Path,
-    PathArguments, Result, Type,
+    parse_quote, DeriveInput, Generics, Ident, LitStr, Member, Path, PathArguments, Result, Type,
 };
 
-use crate::shape::{push_context_generics, trait_impl, zip_fields, CallerContext, Field, Record};
+use crate::shape::{
+    impl_sources, push_context_generics, push_field_bounds, trait_impl, zip_fields, CallerContext,
+    Field, FieldBound, Record,
+};
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let record = Record::parse(&input)?;
@@ -238,34 +240,31 @@ fn automatic(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
         }
     };
 
-    if record.plaintexts.is_empty() {
-        // One impl, generic over the plaintext: the record decrypts to
-        // whatever its one ciphertext field decrypts to. `Record::parse` has
-        // rejected `from` without a named plaintext, so this is whole mode.
-        let Auto::Whole(fields) = &auto else {
-            unreachable!("`from` without a named plaintext is rejected by `Record::parse`")
-        };
-        let plaintext: Type = parse_quote!(__P);
-        let mut generics = input.generics.clone();
-        generics.params.push(parse_quote!(__P));
-        generics.params.push(parse_quote!(__K));
-        push_field_bounds(&mut generics, krate, fields, &plaintext);
-        let ctx = push_context_generics(&mut generics, CallerContext::Decrypt(krate), fields);
-        let open = open_one(krate, fields, &plaintext);
-        let body = quote!(#body_check #destructure #open);
-        let block = impl_block(input, krate, &generics, &plaintext, &ctx, body);
-        return Ok(quote!(#block #definition_check));
-    }
-
-    let impls = record
-        .plaintexts
+    // One impl per listed plaintext, or one generic over it (whole mode
+    // only: rebuilding field by field needs a struct literal, and
+    // `Record::parse` has rejected `from` without a named plaintext). Each
+    // candidate field is bounded by `DecryptField` under the context it is
+    // opened under, so a record's impl exists for exactly the plaintexts its
+    // ciphertext field opens to — and only under a supplied context if that
+    // field needs one.
+    let (plaintexts, generic) = impl_sources(record, parse_quote!(__P));
+    let impls = plaintexts
         .iter()
         .map(|plaintext| {
             let mut generics = input.generics.clone();
+            if generic {
+                generics.params.push(parse_quote!(__P));
+            }
             generics.params.push(parse_quote!(__K));
             let open = match &auto {
                 Auto::Whole(fields) => {
-                    push_field_bounds(&mut generics, krate, fields, plaintext);
+                    push_field_bounds(
+                        &mut generics,
+                        krate,
+                        fields,
+                        plaintext,
+                        FieldBound::DecryptField,
+                    );
                     open_one(krate, fields, plaintext)
                 }
                 Auto::ByField(groups) => by_group_body(krate, groups, plaintext)?,
@@ -278,23 +277,6 @@ fn automatic(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
         .collect::<Result<Vec<_>>>()?;
 
     Ok(quote!(#(#impls)* #definition_check))
-}
-
-/// `FieldTy: DecryptField<Plaintext, StackCipher<__K>, Ctx>` for every
-/// candidate field, under the context it is opened under, so a record's impl
-/// exists for exactly the plaintexts its ciphertext field opens to — and
-/// only under a supplied context if that field needs one.
-fn push_field_bounds(generics: &mut Generics, krate: &Path, fields: &[&Field], plaintext: &Type) {
-    let predicates = &mut generics.make_where_clause().predicates;
-    for field in fields {
-        let ty = &field.ty;
-        let context = field.field_context().ty();
-        // Spanned at the field type, so a type that cannot be a field of an
-        // automatically decrypted record is reported there.
-        predicates.push(parse_quote_spanned! {ty.span()=>
-            #ty: #krate::target::DecryptField<#plaintext, #krate::StackCipher<__K>, #context>
-        });
-    }
 }
 
 /// The `const` assertion that exactly one of `fields` is `Decryptable`;
@@ -427,34 +409,18 @@ fn explicit(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
     let opened: Vec<&Field> = record.fields.iter().filter(|f| f.decrypt).collect();
     let mode = Mode::classify(opened, name)?;
 
-    if record.plaintexts.is_empty() {
-        // One impl, generic over the plaintext: the record decrypts to
-        // whatever its opened field decrypts to. Only the whole-plaintext
-        // mode can be generic — rebuilding field by field needs a struct
-        // literal, and therefore a name — and `Record::parse` has already
-        // rejected `from` without one.
-        let Mode::Whole(field) = &mode else {
-            unreachable!("`from` without a named plaintext is rejected by `Record::parse`")
-        };
-        let plaintext: Type = parse_quote!(__P);
-        let ty = &field.ty;
-        let context = field.field_context().ty();
-        let mut generics = input.generics.clone();
-        generics.params.push(parse_quote!(__P));
-        generics.params.push(parse_quote!(__K));
-        generics.make_where_clause().predicates.push(parse_quote! {
-            #ty: #krate::target::DecryptInto<__P, #krate::StackCipher<__K>, #context>
-        });
-        let ctx = push_context_generics(&mut generics, CallerContext::Decrypt(krate), &[field]);
-        let body = whole_body(krate, field, &plaintext);
-        return Ok(impl_block(input, krate, &generics, &plaintext, &ctx, body));
-    }
-
-    let impls = record
-        .plaintexts
+    // One impl per listed plaintext, or one generic over it. Only the
+    // whole-plaintext mode can be generic — rebuilding field by field needs
+    // a struct literal, and therefore a name — and `Record::parse` has
+    // already rejected `from` without one.
+    let (plaintexts, generic) = impl_sources(record, parse_quote!(__P));
+    let impls = plaintexts
         .iter()
         .map(|plaintext| {
             let mut generics = input.generics.clone();
+            if generic {
+                generics.params.push(parse_quote!(__P));
+            }
             generics.params.push(parse_quote!(__K));
             let (body, ctx) = match &mode {
                 Mode::Whole(field) => {

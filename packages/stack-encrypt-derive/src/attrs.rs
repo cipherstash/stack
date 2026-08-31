@@ -14,9 +14,16 @@ pub(crate) struct ContainerAttrs {
     pub(crate) plaintexts: Vec<Type>,
     /// `#[stash(row = Type)]`: the record is a row of the struct `Type`.
     /// Every derived field is derived from the plaintext field of its own
-    /// name (`from`), under a context made of both names, unless the field
-    /// says otherwise. Exclusive with `plaintext`.
+    /// name (`from`), under a context made of the container's `context` and
+    /// the plaintext field's name, unless the field says otherwise.
+    /// Exclusive with `plaintext`; requires `context`.
     pub(crate) row: Option<Type>,
+    /// `#[stash(context = "...")]` on the container: the first half of every
+    /// row field's context — `"<context>/<field>"`. Names the table, not the
+    /// Rust type: it is part of the stored data's identity, so it is given
+    /// explicitly rather than inferred from a name a refactor can change.
+    /// Only meaningful with `row`.
+    pub(crate) context: Option<LitStr>,
 }
 
 impl ContainerAttrs {
@@ -24,6 +31,7 @@ impl ContainerAttrs {
         let mut krate: Option<Path> = None;
         let mut plaintexts: Vec<Type> = Vec::new();
         let mut row: Option<Type> = None;
+        let mut context: Option<LitStr> = None;
 
         for attr in attrs.iter().filter(|a| a.path().is_ident("stash")) {
             attr.parse_nested_meta(|meta| {
@@ -35,12 +43,18 @@ impl ContainerAttrs {
                     krate = Some(lit.parse()?);
                     return Ok(());
                 }
+                if meta.path.is_ident("context") {
+                    if context.is_some() {
+                        return Err(meta.error("`context` is given twice; a row has one prefix"));
+                    }
+                    context = Some(meta.value()?.parse()?);
+                    return Ok(());
+                }
                 if meta.path.is_ident("row") {
                     let ty: Type = meta.value()?.parse()?;
                     // A row reaches into the plaintext by field name and
                     // rebuilds it with a struct literal, so the type must be
-                    // a struct named directly; its last segment also names
-                    // the fields' contexts.
+                    // a struct named directly.
                     let named_struct = match &ty {
                         Type::Path(path) => path.qself.is_none(),
                         _ => false,
@@ -49,7 +63,7 @@ impl ContainerAttrs {
                         return Err(syn::Error::new_spanned(
                             &ty,
                             "`row` must name a struct directly (`row = User`): its fields are \
-                             reached by name and its name is part of every field's context",
+                             reached by name and the plaintext is rebuilt with a struct literal",
                         ));
                     }
                     if row.is_some() {
@@ -86,8 +100,8 @@ impl ContainerAttrs {
                     return Ok(());
                 }
                 Err(meta.error(
-                    "unsupported container attribute; expected `plaintext = Type`, `row = Type` \
-                     or `crate = \"...\"`",
+                    "unsupported container attribute; expected `plaintext = Type`, `row = Type`, \
+                     `context = \"...\"` (with `row`) or `crate = \"...\"`",
                 ))
             })?;
         }
@@ -102,10 +116,48 @@ impl ContainerAttrs {
             return Err(err);
         }
 
+        // The prefix is part of the stored data's identity — the AAD of every
+        // ciphertext in the row and the domain of every term — so it is never
+        // inferred from the Rust type's name: two types named `Account` in
+        // different modules would silently share every column context, making
+        // ciphertexts transplantable between their tables and index terms
+        // comparable across them.
+        match (&row, &context) {
+            (Some(row), None) => {
+                return Err(syn::Error::new_spanned(
+                    row,
+                    "`row = ..` needs a `context = \"..\"` beside it naming the table (e.g. \
+                     `#[stash(row = User, context = \"users\")]`): each field is derived under \
+                     `\"<context>/<field>\"`, and the prefix is part of the stored data's \
+                     identity, so it is given explicitly rather than inferred from the Rust \
+                     type's name",
+                ));
+            }
+            (None, Some(context)) => {
+                return Err(syn::Error::new(
+                    context.span(),
+                    "a container `context` is the prefix of a row's per-field contexts and \
+                     applies only with `row = ..`; a `plaintext` record's fields take the \
+                     caller's context, or a `context = \"..\"` of their own",
+                ));
+            }
+            _ => {}
+        }
+        if let Some(context) = &context {
+            if context.value().is_empty() {
+                return Err(syn::Error::new(
+                    context.span(),
+                    "an empty `context` is rejected when a value is encrypted: name the table \
+                     (e.g. \"users\")",
+                ));
+            }
+        }
+
         Ok(Self {
             krate: krate.unwrap_or_else(|| syn::parse_quote!(::stack_encrypt)),
             plaintexts,
             row,
+            context,
         })
     }
 }
@@ -126,6 +178,10 @@ pub(crate) struct FieldAttrs {
     pub(crate) default: Option<Option<Expr>>,
     /// `#[stash(decrypt)]`: decryption opens this field.
     pub(crate) decrypt: bool,
+    /// `#[stash(nested)]`: in a row, do not infer a context for this field —
+    /// hand it `()`, because its type (a nested row) carries its own
+    /// contexts.
+    pub(crate) nested: bool,
 }
 
 impl FieldAttrs {
@@ -173,9 +229,16 @@ impl FieldAttrs {
                     parsed.decrypt = true;
                     return Ok(());
                 }
+                if meta.path.is_ident("nested") {
+                    if parsed.nested {
+                        return Err(meta.error("`nested` is given twice"));
+                    }
+                    parsed.nested = true;
+                    return Ok(());
+                }
                 Err(meta.error(
                     "unsupported field attribute; expected `context = \"...\"`, `from = field`, \
-                     `default`, `default = expr` or `decrypt`",
+                     `default`, `default = expr`, `decrypt` or `nested`",
                 ))
             })?;
         }
@@ -185,6 +248,16 @@ impl FieldAttrs {
         // `from` is known whatever order the attributes were written in: the
         // advice depends on it, because a `from` field is never handed the
         // record's context, so "drop the attribute" is a dead end there.
+        if parsed.nested {
+            if let Some(context) = &parsed.context {
+                return Err(syn::Error::new(
+                    context.span(),
+                    "`nested` hands this field `()` because its type carries its own contexts, \
+                     so `context` does not apply: give one or the other",
+                ));
+            }
+        }
+
         if let Some(context) = &parsed.context {
             if context.value().is_empty() {
                 let message = if parsed.from.is_some() {
