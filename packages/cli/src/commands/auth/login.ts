@@ -1,8 +1,43 @@
 import auth from '@cipherstash/auth'
 import * as p from '@clack/prompts'
 import { emitJsonError, emitJsonEvent } from './events.js'
+import { authFailureHint, authFailureMessage } from './failure.js'
 
 const { beginDeviceCodeFlow, bindClientDevice } = auth
+
+/**
+ * Report a CTS failure and exit non-zero, on whichever stream this run uses.
+ *
+ * One function for all three unwrap sites so the `help` text and the
+ * terminal-condition hint (see `./failure.js`) cannot be attached to two of
+ * them and forgotten on the third — which is how they came to be missing from
+ * all three.
+ *
+ * Both streams get the same three things: the diagnosis, the machine-readable
+ * `code`, and — for a refusal no retry can clear — the remedy. The remedy is on
+ * the JSON stream too because `--json` exists for consumers that never see the
+ * clack output, and the dashboard URL lives in the hint rather than in CTS's
+ * own prose; emitting `code` alone would leave the one field that names where
+ * to go visible only to the humans who did not ask for JSON.
+ */
+function reportAuthFailure(
+  failure: { type?: string; error: { message: string }; help?: string },
+  fallbackCode: string,
+  json: boolean,
+): never {
+  const hint = authFailureHint(failure)
+  if (json) {
+    emitJsonError(
+      failure.type ?? fallbackCode,
+      authFailureMessage(failure),
+      hint,
+    )
+  } else {
+    p.log.error(authFailureMessage(failure))
+    if (hint) p.log.info(hint)
+  }
+  process.exit(1)
+}
 
 export interface LoginOptions {
   /**
@@ -12,7 +47,9 @@ export interface LoginOptions {
    *   { status: 'authorization_required', userCode, verificationUri,
    *     verificationUriComplete, expiresIn }   — emitted immediately
    *   { status: 'authorized', expiresAt, expiresAtIso }  — on success
-   *   { status: 'error', code?, message }                — on failure
+   *   { status: 'error', code?, message, hint? }         — on failure
+   *     (`hint` is present only when the failure carries a remedy — e.g. a
+   *      terminal CTS refusal naming dashboard.cipherstash.com)
    */
   json?: boolean
   /**
@@ -45,15 +82,7 @@ export async function login(
   // surface the failure `type` (machine-readable) + message on the JSON stream.
   const pending = await beginDeviceCodeFlow(region, 'cli')
   if (pending.failure) {
-    if (json) {
-      emitJsonError(
-        pending.failure.type ?? 'begin_failed',
-        pending.failure.error.message,
-      )
-    } else {
-      p.log.error(pending.failure.error.message)
-    }
-    process.exit(1)
+    reportAuthFailure(pending.failure, 'begin_failed', json)
   }
   const flow = pending.data
 
@@ -86,15 +115,7 @@ export async function login(
   const authResult = await flow.pollForToken()
   if (authResult.failure) {
     s?.stop('Authorization failed.')
-    if (json) {
-      emitJsonError(
-        authResult.failure.type ?? 'poll_failed',
-        authResult.failure.error.message,
-      )
-    } else {
-      p.log.error(authResult.failure.error.message)
-    }
-    process.exit(1)
+    reportAuthFailure(authResult.failure, 'poll_failed', json)
   }
   s?.stop('Authenticated!')
 
@@ -124,16 +145,8 @@ export async function bindDevice(opts: BindDeviceOptions = {}) {
   // `@cipherstash/auth` `0.41` — a failure no longer throws.
   const result = await bindClientDevice()
   if (result.failure) {
-    if (json) {
-      emitJsonError(
-        result.failure.type ?? 'bind_failed',
-        result.failure.error.message,
-      )
-    } else {
-      s?.stop('Failed to bind your device to the default Keyset!')
-      p.log.error(result.failure.error.message)
-    }
-    process.exit(1)
+    if (!json) s?.stop('Failed to bind your device to the default Keyset!')
+    reportAuthFailure(result.failure, 'bind_failed', json)
   }
 
   if (json) {

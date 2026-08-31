@@ -14,9 +14,24 @@ export function emitJsonEvent(event: Record<string, unknown>): void {
 }
 
 /**
- * Emit the shared `{ status: 'error', code, message }` envelope. The single
- * source of truth for how a failure surfaces on the NDJSON stream.
+ * Emit the shared `{ status: 'error', code, message }` envelope, plus `hint`
+ * when the failure carries one. The single source of truth for how a failure
+ * surfaces on the NDJSON stream.
+ *
+ * `hint` is the same remedy the interactive path prints as a follow-up line —
+ * "upgrade the plan at dashboard.cipherstash.com", "contact support" — and it
+ * belongs here because `--json` exists FOR consumers that never see the clack
+ * output. Omitting the key entirely when there is no hint keeps the envelope
+ * byte-identical for every failure that had none, so this is additive: an
+ * existing parser sees `status`/`code`/`message` exactly as before.
+ *
+ * Any `{cli}` placeholder must be resolved by the caller — an unsubstituted
+ * token is not machine-readable guidance.
  */
-export function emitJsonError(code: string, message: string): void {
-  emitJsonEvent({ status: 'error', code, message })
+export function emitJsonError(
+  code: string,
+  message: string,
+  hint?: string,
+): void {
+  emitJsonEvent({ status: 'error', code, message, ...(hint ? { hint } : {}) })
 }

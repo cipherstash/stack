@@ -7,6 +7,11 @@ import { CliExit } from '../../cli/exit.js'
 import { isInteractive } from '../../config/tty.js'
 import { messages } from '../../messages.js'
 import { emitJsonError, emitJsonEvent } from '../auth/events.js'
+import {
+  authFailureCliCode,
+  authFailureHint,
+  authFailureMessage,
+} from '../auth/failure.js'
 import { detectPackageManager, runnerCommand } from '../init/utils.js'
 
 const { DeviceSessionStrategy } = auth
@@ -82,13 +87,16 @@ export async function envCommand(options: EnvOptions = {}): Promise<void> {
             'mint_failed',
             err instanceof Error ? err.message : String(err),
           )
+    // The hint reaches BOTH streams. It is the field that names the remedy —
+    // the dashboard, support, `auth login` — and `--json` is read by agents,
+    // who are exactly the consumers that never see the clack line. `{cli}` is
+    // resolved first: a placeholder is not machine-readable guidance.
+    const hint = failure.hint?.replaceAll('{cli}', cliRef)
     if (json) {
-      emitJsonError(failure.code, failure.message)
+      emitJsonError(failure.code, failure.message, hint)
     } else {
       p.log.error(failure.message, CHROME)
-      if (failure.hint) {
-        p.log.info(failure.hint.replaceAll('{cli}', cliRef), CHROME)
-      }
+      if (hint) p.log.info(hint, CHROME)
     }
     throw new CliExit(1)
   }
@@ -334,18 +342,32 @@ async function mintCredentials(keyName: string): Promise<MintedCredentials> {
   // 1. Device session from ~/.cipherstash (written by `stash auth login`).
   const strategyResult = DeviceSessionStrategy.fromProfile()
   if (strategyResult.failure) {
+    // `authFailureCliCode` for the same reason as the renewal arm below: this
+    // arm already calls `authFailureHint`, so it can print "logging in again
+    // will not clear this" — and pairing that with a hardcoded
+    // `not_logged_in` is the exact code/prose disagreement the two tables
+    // exist to prevent. An agent reads `code`, runs `stash auth login`, and
+    // arrives back here.
     throw new MintError(
-      'not_logged_in',
-      `Not logged in: ${strategyResult.failure.error.message}`,
-      LOGIN_HINT,
+      authFailureCliCode(strategyResult.failure, 'not_logged_in'),
+      `Not logged in: ${authFailureMessage(strategyResult.failure)}`,
+      authFailureHint(strategyResult.failure, LOGIN_HINT),
     )
   }
   const tokenResult = await strategyResult.data.getToken()
   if (tokenResult.failure) {
+    // The renewal CTS can refuse on billing grounds rather than credential
+    // ones. `LOGIN_HINT` is wrong advice for that: a fresh login mints nothing
+    // an organisation over its usage limit is allowed to have, so
+    // `authFailureHint` sends the user to the dashboard instead — and
+    // `authFailureCliCode` moves the machine-readable code off `session_invalid`
+    // in lockstep, for every terminal refusal rather than just the billing one.
+    // An agent branching on `session_invalid` runs `stash auth login` and comes
+    // straight back here.
     throw new MintError(
-      'session_invalid',
-      `Could not refresh your session: ${tokenResult.failure.error.message}`,
-      LOGIN_HINT,
+      authFailureCliCode(tokenResult.failure, 'session_invalid'),
+      `Could not refresh your session: ${authFailureMessage(tokenResult.failure)}`,
+      authFailureHint(tokenResult.failure, LOGIN_HINT),
     )
   }
   const { token, workspaceId, issuer, services } = tokenResult.data

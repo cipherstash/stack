@@ -41,13 +41,13 @@ catalogs:
     # "Failed to load native binding" (the 1.0.0-rc.2 B1 bug). Enforced by
     # e2e/tests/supply-chain.e2e.test.ts; Dependabot ignores all seven
     # names — bump them together, manually.
-    '@cipherstash/auth': 0.42.0
-    '@cipherstash/auth-darwin-arm64': 0.42.0
-    '@cipherstash/auth-darwin-x64': 0.42.0
-    '@cipherstash/auth-linux-arm64-gnu': 0.42.0
-    '@cipherstash/auth-linux-x64-gnu': 0.42.0
-    '@cipherstash/auth-linux-x64-musl': 0.42.0
-    '@cipherstash/auth-win32-x64-msvc': 0.42.0
+    '@cipherstash/auth': 0.44.0
+    '@cipherstash/auth-darwin-arm64': 0.44.0
+    '@cipherstash/auth-darwin-x64': 0.44.0
+    '@cipherstash/auth-linux-arm64-gnu': 0.44.0
+    '@cipherstash/auth-linux-x64-gnu': 0.44.0
+    '@cipherstash/auth-linux-x64-musl': 0.44.0
+    '@cipherstash/auth-win32-x64-msvc': 0.44.0
     '@types/node': 22.20.1
     tsup: 8.5.1
     tsx: 4.23.12

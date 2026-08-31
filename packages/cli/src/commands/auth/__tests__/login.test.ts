@@ -274,3 +274,111 @@ describe('login — interactive (non-json) failure handling', () => {
     expect(clack.log.error).toHaveBeenCalledWith('poll boom')
   })
 })
+
+describe('login — a CTS usage-limit refusal', () => {
+  /** The 402 CTS answers with when the organisation is over its allowance. */
+  const usageLimit = () => ({
+    failure: {
+      type: 'USAGE_LIMIT_EXCEEDED',
+      error: new Error('Insufficient balance. Please upgrade your plan.'),
+      help: 'The organisation has used its allowance for the current billing period. Upgrade the plan from the CipherStash dashboard, then retry.',
+      url: 'https://dashboard.cipherstash.com/billing',
+    },
+  })
+
+  /** The other 402: the org isn't registered with the usage system at all. */
+  const notProvisioned = () => ({
+    failure: {
+      type: 'ORG_NOT_PROVISIONED',
+      error: new Error('Organization is not provisioned.'),
+      help: 'The organisation is not registered with the usage system.',
+      url: 'https://cipherstash.com/support',
+    },
+  })
+
+  it('points the user at the dashboard rather than at another login', async () => {
+    // Logging in again cannot mint a credential CTS is withholding on billing
+    // grounds, so the default "run `stash auth login`" hint would send the
+    // user round a loop that has no exit.
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce(usageLimit())
+    spyExit()
+
+    await expect(
+      login('us-east-1.aws', undefined, { json: false }),
+    ).rejects.toThrow('process.exit')
+
+    expect(clack.log.info).toHaveBeenCalledWith(
+      expect.stringContaining('https://dashboard.cipherstash.com'),
+    )
+  })
+
+  it("carries stack-auth's remedy into the message", async () => {
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce(usageLimit())
+    spyExit()
+
+    await expect(
+      login('us-east-1.aws', undefined, { json: false }),
+    ).rejects.toThrow('process.exit')
+
+    expect(clack.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('used its allowance'),
+    )
+  })
+
+  it('gives an agent the code to branch on', async () => {
+    // The JSON stream carries `code` separately, so a consumer can stop
+    // retrying without parsing English.
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce(usageLimit())
+    spyExit()
+    const out = captureJsonLines()
+
+    await expect(
+      login('us-east-1.aws', undefined, { json: true }),
+    ).rejects.toThrow('process.exit')
+
+    expect(out.lines()[0]).toMatchObject({
+      status: 'error',
+      code: 'USAGE_LIMIT_EXCEEDED',
+    })
+  })
+
+  // `--json` exists FOR agent consumers, and they are the ones who cannot see
+  // the clack `log.info` line. Leaving the remedy off this stream puts the
+  // dashboard URL exactly where nobody reading the stream can find it.
+  it.each([
+    ['USAGE_LIMIT_EXCEEDED', usageLimit, 'https://dashboard.cipherstash.com'],
+    ['ORG_NOT_PROVISIONED', notProvisioned, 'https://cipherstash.com/support'],
+  ])('carries the %s remedy on the --json stream', async (code, mk, remedy) => {
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce(mk())
+    spyExit()
+    const out = captureJsonLines()
+
+    await expect(
+      login('us-east-1.aws', undefined, { json: true }),
+    ).rejects.toThrow('process.exit')
+
+    const event = out.lines()[0]
+    expect(event).toMatchObject({ status: 'error', code })
+    expect(event.hint).toEqual(expect.stringContaining(remedy))
+  })
+
+  it('leaves the --json error envelope hint-free for an ordinary failure', async () => {
+    // Additive means additive: an auth failure with no terminal remedy emits
+    // the same three-key envelope it always did.
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce(
+      failure('EXPIRED_TOKEN', 'Token expired'),
+    )
+    spyExit()
+    const out = captureJsonLines()
+
+    await expect(
+      login('us-east-1.aws', undefined, { json: true }),
+    ).rejects.toThrow('process.exit')
+
+    expect(Object.keys(out.lines()[0] as object).sort()).toEqual([
+      'code',
+      'message',
+      'status',
+    ])
+  })
+})

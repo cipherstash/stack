@@ -168,6 +168,188 @@ function lastError(): string {
   return String(clack.log.error.mock.calls.at(-1)?.[0])
 }
 
+/** The most recent p.log.info message — where the hint is rendered. */
+function lastInfo(): string {
+  return String(clack.log.info.mock.calls.at(-1)?.[0])
+}
+
+/** The last NDJSON line the command wrote, parsed. */
+function lastJson(): Record<string, unknown> {
+  return JSON.parse(logSpy.mock.calls.at(-1)?.[0] as string)
+}
+
+describe('envCommand — a terminal refusal at profile load', () => {
+  /**
+   * `fromProfile()` itself fails — no session on disk, or one CTS will not
+   * honour.
+   */
+  function stubStrategyFailure(type: string, message: string) {
+    authMock.DeviceSessionStrategy.fromProfile.mockReturnValue({
+      failure: { type, error: new Error(message) },
+    })
+  }
+
+  // The profile-load arm renders a terminal hint too, so its `code` has to
+  // agree with it. It used to report `not_logged_in` while the hint said
+  // logging in again would not help.
+  it('reports the refusal code rather than not_logged_in', async () => {
+    stubStrategyFailure('USAGE_LIMIT_EXCEEDED', 'Over the limit.')
+
+    await expectExit(envCommand({ name: 'x', json: true }), 1)
+
+    expect(lastJson()).toMatchObject({
+      status: 'error',
+      code: 'usage_limit_exceeded',
+    })
+  })
+
+  it('still reports not_logged_in for an ordinary profile failure', async () => {
+    stubStrategyFailure('NOT_AUTHENTICATED', 'No profile.')
+
+    await expectExit(envCommand({ name: 'x', json: true }), 1)
+
+    expect(lastJson()).toMatchObject({ status: 'error', code: 'not_logged_in' })
+  })
+})
+
+describe('envCommand — a CTS refusal at session renewal', () => {
+  /**
+   * `fromProfile()` succeeds (there IS a session on disk) and the renewal is
+   * what CTS refuses — the shape a 402 actually takes here.
+   */
+  function stubTokenFailure(
+    type: string,
+    message: string,
+    help?: string,
+    url?: string,
+  ) {
+    authMock.DeviceSessionStrategy.fromProfile.mockReturnValue({
+      data: {
+        getToken: vi.fn(async () => ({
+          failure: {
+            type,
+            error: new Error(message),
+            ...(help ? { help } : {}),
+            ...(url ? { url } : {}),
+          },
+        })),
+      },
+    })
+  }
+
+  const TERMINAL = [
+    {
+      type: 'USAGE_LIMIT_EXCEEDED',
+      message: 'Insufficient balance. Please upgrade your plan.',
+      code: 'usage_limit_exceeded',
+      remedy: 'https://dashboard.cipherstash.com',
+      help: 'Upgrade the plan from the CipherStash dashboard, then retry.',
+      url: 'https://dashboard.cipherstash.com/billing',
+    },
+    {
+      type: 'ORG_NOT_PROVISIONED',
+      message: 'Organization is not provisioned.',
+      code: 'org_not_provisioned',
+      remedy: 'https://cipherstash.com/support',
+      help: 'Contact CipherStash support.',
+      url: 'https://cipherstash.com/support',
+    },
+  ] as const
+
+  // `code` is the only machine-readable field on the stream. An agent that
+  // reads `session_invalid` runs `stash auth login` and comes straight back
+  // here — a loop with no exit, for BOTH of these.
+  it.each(TERMINAL)(
+    '$type reports $code on the --json stream, not session_invalid',
+    async ({ type, message, code }) => {
+      stubTokenFailure(type, message)
+
+      await expectExit(envCommand({ name: 'x', json: true }), 1)
+
+      expect(lastJson()).toMatchObject({ status: 'error', code })
+    },
+  )
+
+  // `--json` exists for agent consumers, and they are exactly the ones who
+  // never see the clack `log.info` line the hint was being printed on.
+  it.each(TERMINAL)(
+    '$type carries its remedy on the --json stream',
+    async ({ type, message, remedy, help, url }) => {
+      stubTokenFailure(type, message, help, url)
+
+      await expectExit(envCommand({ name: 'x', json: true }), 1)
+
+      const hint = String(lastJson().hint)
+      expect(hint).toContain(remedy)
+    },
+  )
+
+  it.each(TERMINAL)(
+    '$type still prints its remedy interactively',
+    async ({ type, message, remedy, help, url }) => {
+      stubTokenFailure(type, message, help, url)
+
+      await expectExit(envCommand({ name: 'x' }), 1)
+
+      expect(lastError()).toContain('Could not refresh your session')
+      expect(lastInfo()).toContain(remedy)
+      expect(lastInfo()).not.toContain('auth login')
+    },
+  )
+
+  it("folds stack-auth's help into the message on both streams", async () => {
+    stubTokenFailure(
+      'USAGE_LIMIT_EXCEEDED',
+      'Insufficient balance. Please upgrade your plan.',
+      'Upgrade the plan from the CipherStash dashboard, then retry.',
+    )
+
+    await expectExit(envCommand({ name: 'x', json: true }), 1)
+
+    expect(String(lastJson().message)).toContain(
+      'Upgrade the plan from the CipherStash dashboard',
+    )
+  })
+
+  it('leaves an ordinary session failure on session_invalid, with the login hint', async () => {
+    stubTokenFailure('EXPIRED_TOKEN', 'Token expired')
+
+    await expectExit(envCommand({ name: 'x', json: true }), 1)
+
+    const event = lastJson()
+    expect(event).toMatchObject({ status: 'error', code: 'session_invalid' })
+    // `{cli}` is resolved before it reaches the stream — a placeholder is not
+    // machine-readable guidance.
+    expect(event.hint).toBe('Run `npx stash auth login` and try again.')
+  })
+
+  it('keeps the login hint when there is no session at all', async () => {
+    // The `fromProfile` arm: `authFailureHint(failure, LOGIN_HINT)` must reach
+    // the fallback here rather than returning the empty string an `''` type
+    // used to produce.
+    authMock.DeviceSessionStrategy.fromProfile.mockReturnValue({
+      failure: { type: '', error: new Error('No profile found') },
+    })
+
+    await expectExit(envCommand({ name: 'x' }), 1)
+
+    expect(lastError()).toContain('Not logged in')
+    expect(lastInfo()).toContain('npx stash auth login')
+  })
+
+  it('emits no hint key for a failure that has no hint', async () => {
+    // Additive means additive — `unexpected_argument` carries no hint and its
+    // envelope keeps the three keys it always had.
+    await expectExit(envCommand({ unexpectedArg: 'oops', json: true }), 1)
+
+    expect(Object.keys(lastJson()).sort()).toEqual([
+      'code',
+      'message',
+      'status',
+    ])
+  })
+})
+
 describe('envCommand — pre-mint argv failures (all credential-free)', () => {
   it('fails non-interactively without --name, before touching the profile', async () => {
     await expectExit(envCommand({}), 1)
