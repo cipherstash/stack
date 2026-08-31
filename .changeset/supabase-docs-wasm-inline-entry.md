@@ -147,7 +147,12 @@ Review found four more, one of them a change to a published type:
   unverified" — in a section whose subject is `wasm-inline`. Both the ambient
   read and the warning are gated on the introspector, which that build does not
   have, so nothing there ever tells you a declaration is incomplete. Now scoped
-  to Node, with the edge case stated.
+  to Node, with the edge case stated. The sentence immediately above it had the
+  same fault and is fixed with it: the ⚠️ callout on undeclared columns offered
+  "pass `databaseUrl` so introspection fills the gaps" as the remedy, inside a
+  section about the entry that refuses `databaseUrl` — and it is the remedy a
+  Lovable or Replit agent, which has only the edge entry, would have reached
+  for. It now says introspection is unavailable there and what to do instead.
 
 `@cipherstash/wizard` is bumped alongside `stash` because `skills/` ships in
 both tarballs — `packages/wizard/tsup.config.ts` copies it into `dist/skills`
