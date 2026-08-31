@@ -4,6 +4,7 @@ import type {
   EncryptedPayload as CipherStashEncryptedPayload,
   EncryptedQuery as CipherStashEncryptedQuery,
   EncryptedV3Query as CipherStashEncryptedV3Query,
+  DecryptResult as FfiDecryptResult,
   JsPlaintext,
   newClient,
   QueryOpName,
@@ -435,7 +436,28 @@ export type BulkDecryptPayload = Array<{ id?: string; data: Encrypted | null }>
 export type BulkDecryptedData = Array<DecryptionResult<JsPlaintext | null>>
 
 type DecryptionSuccess<T> = { error?: never; data: T; id?: string }
-type DecryptionError<T> = { error: T; id?: string; data?: never }
+
+/**
+ * Everything protect-ffi reports about a failed row BESIDES the message:
+ * `code`, plus the `authCode` / `help` it sets when CipherStash's token
+ * service refused the token behind the request.
+ *
+ * Derived from the FFI's own `DecryptResult` rather than restated, so a field
+ * added there (a `url` alongside `help`, say) arrives here without an edit.
+ * `bulkDecrypt` returns `{ data }` when only some rows failed — the call
+ * succeeded — so the row is the only surface these fields have, and a mapping
+ * that named the keys it knew would drop the next one silently.
+ */
+type FfiDecryptDiagnostic = Omit<
+  Extract<FfiDecryptResult, { error: string }>,
+  'error'
+>
+
+type DecryptionError<T> = {
+  error: T
+  id?: string
+  data?: never
+} & FfiDecryptDiagnostic
 
 /**
  * Result type for individual items in bulk decrypt operations.

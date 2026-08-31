@@ -5,6 +5,10 @@ import {
   type QueryPayload,
 } from '@cipherstash/protect-ffi'
 import { formatEncryptedResult } from '@/encryption/helpers'
+import {
+  failureDiagnostics,
+  failureMessage,
+} from '@/encryption/helpers/auth-failure'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import {
@@ -159,8 +163,8 @@ export class BatchEncryptQueryOperation extends EncryptionOperation<
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
         return {
           type: EncryptionErrorTypes.EncryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
+          message: failureMessage(error),
+          ...failureDiagnostics(error, getErrorCode),
         }
       },
     )
@@ -227,8 +231,8 @@ export class BatchEncryptQueryOperationWithLockContext extends EncryptionOperati
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
         return {
           type: EncryptionErrorTypes.EncryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
+          message: failureMessage(error),
+          ...failureDiagnostics(error, getErrorCode),
         }
       },
     )

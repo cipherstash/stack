@@ -4,6 +4,10 @@ import {
   type DecryptResult,
   decryptBulkFallible,
 } from '@cipherstash/protect-ffi'
+import {
+  failureDiagnostics,
+  failureMessage,
+} from '@/encryption/helpers/auth-failure'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import {
@@ -52,7 +56,12 @@ const mapDecryptedDataToResult = (
     } else {
       const decryptResult = decryptedData[decryptedIndex]
       if ('error' in decryptResult) {
-        result[i] = { id: encryptedPayloads[i].id, error: decryptResult.error }
+        // Spread, not `{ error: decryptResult.error }`: a failed row carries
+        // `code` and — since CTS refusals are propagated — `authCode` / `help`
+        // too, and the batch call itself resolved, so this row is the ONLY
+        // place they can reach the caller. Naming the keys would drop whatever
+        // protect-ffi adds next (a `url` beside `help` is already coming).
+        result[i] = { ...decryptResult, id: encryptedPayloads[i].id }
       } else {
         result[i] = { id: encryptedPayloads[i].id, data: decryptResult.data }
       }
@@ -111,8 +120,8 @@ export class BulkDecryptOperation extends EncryptionOperation<BulkDecryptedData>
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
         return {
           type: EncryptionErrorTypes.DecryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
+          message: failureMessage(error),
+          ...failureDiagnostics(error, getErrorCode),
         }
       },
     )
@@ -184,8 +193,8 @@ export class BulkDecryptOperationWithLockContext extends EncryptionOperation<Bul
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
         return {
           type: EncryptionErrorTypes.DecryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
+          message: failureMessage(error),
+          ...failureDiagnostics(error, getErrorCode),
         }
       },
     )

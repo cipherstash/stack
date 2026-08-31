@@ -90,6 +90,7 @@ import {
   type OidcFederationStrategy,
 } from '@cipherstash/auth/wasm-inline'
 import {
+  isProtectErrorCode,
   decrypt as wasmDecrypt,
   decryptBulkFallible as wasmDecryptBulkFallible,
   encrypt as wasmEncrypt,
@@ -99,6 +100,13 @@ import {
   isEncrypted as wasmIsEncrypted,
   newClient as wasmNewClient,
 } from '@cipherstash/protect-ffi/wasm-inline'
+// Type-only against protect-ffi, so it is safe to bundle here — which is also
+// why `failureDiagnostics` takes this entry's own `code` reader as an argument
+// rather than importing one. See {@link readErrorCode} below.
+import {
+  failureDiagnostics,
+  failureMessage,
+} from '@/encryption/helpers/auth-failure'
 import { resolveIndexType } from '@/encryption/helpers/infer-index-type'
 import {
   prepareBulkModelsForOperation,
@@ -465,26 +473,50 @@ export type WasmResult<T> =
   | { data?: never; failure: EncryptionError }
 
 /**
- * Read an FFI error code STRUCTURALLY.
+ * Read an FFI error code STRUCTURALLY, and validate it.
  *
- * Deliberately not `@/encryption/helpers/error-code`: that narrows with
- * `instanceof` against the native `ProtectError`, which is a runtime VALUE
- * import of `@cipherstash/protect-ffi`. protect-ffi is not in tsup's
- * `noExternal`, so importing it here put a bare `@cipherstash/protect-ffi`
- * specifier into `dist/wasm-inline.js` — the native NAPI entry, in the one
- * bundle that exists to avoid it. On Workers / Edge the non-`node` condition
- * resolves that specifier to a module exporting no `ProtectError` at all.
+ * Deliberately not `@/encryption/helpers/error-code`: that module imports
+ * `@cipherstash/protect-ffi` — the native NAPI specifier — as a runtime value,
+ * and protect-ffi is not in tsup's `noExternal`, so importing it here put that
+ * bare specifier into `dist/wasm-inline.js`, the one bundle that exists to
+ * avoid it. On Workers / Edge the non-`node` condition resolves it to a module
+ * with none of the exports this file wants.
  *
- * A structural read is also the only thing that could ever work here: the WASM
- * build ships no error class, so `instanceof` never matches on this path
- * regardless. A `code` string is all there is to find.
+ * A structural READ is also the only thing that could work here: the WASM build
+ * ships no error class, so `instanceof` never matches on this path regardless.
+ *
+ * The CHECK, though, is the same one the native entry makes, against the same
+ * list — `isProtectErrorCode` comes from `@cipherstash/protect-ffi/wasm-inline`,
+ * the module this file already imports every FFI call from, so it adds no
+ * specifier to the bundle. (`scripts/inline-wasm.mjs` appends the runtime
+ * `export { PROTECT_ERROR_CODES, getAuthErrorCode, isProtectErrorCode } from
+ * "./errors.js"` to the inlined build for exactly this kind of use, and
+ * protect-ffi's `errorCodes.test.ts` holds it in step with the declarations.)
+ *
+ * It has to be checked, not merely read: `code` is typed `ProtectErrorCode`, a
+ * CLOSED set, and the presence of a `code` property is evidence of nothing.
+ * Node stamps `ECONNRESET` / `MODULE_NOT_FOUND` onto its own errors, a
+ * wasm-bindgen rejection is whatever Rust threw, and {@link carryDiagnostics}
+ * now copies every own key off an arbitrary rejection — so without this the
+ * edge entry republished foreign strings wearing a type that promises one of
+ * fifteen known values. An unrecognised code is DROPPED rather than mapped to
+ * `UNKNOWN`, matching `getErrorCode`: `UNKNOWN` is a real member of the set and
+ * means protect-ffi itself could not classify the failure, which is a different
+ * statement from "this did not come from protect-ffi".
+ *
+ * `authCode` gets the opposite treatment on purpose — see `authFailureCode` in
+ * `@/encryption/helpers/auth-failure`. That set is `@cipherstash/auth`'s, ships
+ * on its own release train, and is typed open, so a code newer than this build
+ * must still reach the caller.
+ *
+ * Passed BY REFERENCE to `failureDiagnostics`, which is the only reason that
+ * helper takes a reader instead of calling one: the check has to happen inside
+ * the entry that can resolve `isProtectErrorCode` at runtime.
  */
 function readErrorCode(error: unknown): EncryptionError['code'] {
   if (typeof error !== 'object' || error === null) return undefined
   const { code } = error as { code?: unknown }
-  return typeof code === 'string'
-    ? (code as EncryptionError['code'])
-    : undefined
+  return isProtectErrorCode(code) ? code : undefined
 }
 
 function toFailure(
@@ -492,8 +524,17 @@ function toFailure(
 ): (error: unknown) => EncryptionError {
   return (error: unknown) => ({
     type,
-    message: error instanceof Error ? error.message : String(error),
-    code: readErrorCode(error),
+    // Keep the upstream diagnostic message intact on both entries; structured
+    // guidance is carried by `help` and `url` below.
+    message: failureMessage(error),
+    // Spread the whole diagnostic rather than naming fields: this mapper listed
+    // `code` and `authCode`, so `help` reached a caller only as prose and `url`
+    // by no path at all — while the thrown init error carried both. `readCode`
+    // is passed in because the closed-set check needs protect-ffi's
+    // `isProtectErrorCode` AT RUNTIME, and this entry has to reach it through
+    // `@cipherstash/protect-ffi/wasm-inline`; a direct import inside the helper
+    // would put a specifier into both bundles.
+    ...failureDiagnostics(error, readErrorCode),
   })
 }
 
@@ -531,14 +572,73 @@ function toError(ex: unknown): Error {
     message = safeString(ex)
   }
 
-  // Carry a structural `code` onto the synthesized Error so `toFailure` can
-  // still surface it. Without this the conversion loses it: `withResult` runs
-  // `onException` FIRST, so the mapper only ever sees this fresh Error, and
-  // `failure.code` could never be populated on this entry at all.
-  const error = new Error(message) as Error & { code?: string }
-  const code = readErrorCode(ex)
-  if (code) error.code = code
-  return error
+  // Carry the rejection's diagnostic fields onto the synthesized Error so
+  // `toFailure` can still surface them. Without this the conversion loses
+  // them: `withResult` runs `onException` FIRST, so the mapper only ever sees
+  // this fresh Error, and `failure.code` / `failure.authCode` could never be
+  // populated on this entry at all.
+  return carryDiagnostics(ex, new Error(message))
+}
+
+/**
+ * Field names that describe the Error itself rather than the failure, and so
+ * must not be copied off a rejection by {@link carryDiagnostics}. `message` in
+ * particular: {@link toError} has already decided what the message is, and on
+ * the object path that decision (the serialized rejection) shows the reader
+ * every field, which a bare `message` would hide.
+ */
+const NOT_DIAGNOSTIC = new Set(['message', 'name', 'stack'])
+
+/**
+ * Copy a rejection's diagnostic fields onto `target`.
+ *
+ * Deliberately NOT an enumerated list of known keys. protect-ffi sets `code`,
+ * `authCode`, `help` and `url` on a thrown error (`error_to_js` in
+ * `crates/protect-ffi/src/wasm.rs`) — and `url` is the proof this has to be
+ * structural rather than a field list: it is live today, because
+ * `@cipherstash/auth` declares `help?` / `url?` on `FailureBase` and a JS
+ * strategy's own values are relayed verbatim, yet both seams here were
+ * discarding it. A mapper that names the fields it knows drops the next one
+ * silently, which is exactly how `authCode` and `help` were lost after `code`
+ * was handled.
+ *
+ * Reads are individually guarded: `withResult` invokes `onException` bare
+ * inside its catch, so a throwing getter on a rejection would escape the
+ * Result contract entirely and reject the call — the same hazard
+ * {@link safeString} exists for.
+ */
+function carryDiagnostics<T extends object>(source: unknown, target: T): T {
+  if (typeof source !== 'object' || source === null) return target
+  const fields = source as Record<string, unknown>
+  for (const key of Object.keys(fields)) {
+    if (NOT_DIAGNOSTIC.has(key)) continue
+    try {
+      const value = fields[key]
+      if (value !== undefined) Object.assign(target, { [key]: value })
+    } catch {
+      // A field that cannot be read is a field that cannot be carried; losing
+      // it beats turning a failure into a rejection.
+    }
+  }
+
+  // `code` is the one copied key with a CLOSED type, so it is the one key the
+  // structural copy above cannot be trusted with. Everything else is either
+  // open (`authCode`) or untyped prose (`help`, `url`), but `code` is declared
+  // `ProtectErrorCode`, and Node stamps `ECONNRESET` / `MODULE_NOT_FOUND` onto
+  // its own errors — so a rejection from a fetch inside a JS auth strategy
+  // would otherwise republish a foreign string wearing that type.
+  //
+  // `toFailure` has always run `readErrorCode` for exactly this reason; the
+  // thrown-init path reached the caller through `carryDiagnostics` alone and
+  // did not, which left the two seams of this entry disagreeing about a check
+  // the native entry applies to both. Dropping an unrecognised code (rather
+  // than mapping it to `UNKNOWN`) matches `readErrorCode` — see its docblock
+  // for why those two are different statements.
+  if ('code' in target && readErrorCode(target) === undefined) {
+    delete (target as { code?: unknown }).code
+  }
+
+  return target
 }
 
 /**
@@ -572,6 +672,30 @@ function wasmResult<T>(
   type: EncryptionError['type'],
 ): Promise<WasmResult<T>> {
   return withResult(operation, toFailure(type), { onException: toError })
+}
+
+/**
+ * The error {@link Encryption} throws when the FFI refuses to build a client.
+ *
+ * Client construction is the one operation on this entry that is NOT a Result:
+ * `Encryption()` throws, on both entries, so the diagnostic has to ride on an
+ * `Error` instead of a `{ failure }`. This gives it the same three things the
+ * native factory gives it — the `[encryption]:` prefix every throw from these
+ * factories carries, plus the FFI's fields (`code`, `authCode`, `help`, …)
+ * copied across so a caller can branch
+ * on a billing refusal rather than parse prose.
+ *
+ * {@link toError} first, so an object- or string-shaped rejection still yields
+ * a readable `Error`; `cause` keeps the original for anything not carried.
+ */
+function clientInitError(ex: unknown): Error {
+  const coerced = toError(ex)
+  return carryDiagnostics(
+    coerced,
+    new Error(`[encryption]: ${failureMessage(coerced)}`, {
+      cause: coerced,
+    }),
+  )
 }
 
 /**
@@ -648,10 +772,48 @@ function assertBatchLength(op: string, received: number, sent: number): void {
  * One item of a `decryptBulkFallible` response: the decrypted plaintext, or
  * this item's own failure (the batch call itself still resolves). Shared by
  * {@link WasmEncryptionClient.bulkDecrypt} and the model decrypt engine.
+ *
+ * The failure arm mirrors protect-ffi's `DecryptResult`. Declared locally for
+ * the same reason {@link WasmPlaintext} is — protect-ffi is not in tsup's
+ * `noExternal`, so a type imported from it here is fine but a runtime one is
+ * not — which means it has to be kept in step by hand.
+ *
+ * `authCode` is on the wire (`DecryptResult::Error` in
+ * `crates/protect-ffi/src/lib.rs` carries it, and both serializers write it) so
+ * it is declared here, but NOTHING should branch on it: no per-item failure can
+ * be an auth one. `DecryptResult::from_error` is the arm's only constructor,
+ * and it populates `authCode` only for `Error::Auth` / `Error::ZeroKMS(Auth)`,
+ * which cannot reach it — the three per-item sources are a ciphertext parse
+ * failure, a `Plaintext`/`JsPlaintext` conversion, and a `RecordDecryptError`,
+ * each its own variant. A token refusal is resolved once for the whole call and
+ * leaves via `?` on `decrypt_fallible`, failing the batch outright, which
+ * arrives here as a rejection and is handled by {@link toFailure} like any
+ * other. Both engines are written this way; they do not diverge.
+ *
+ * `help` and `url` are a different matter — a parse or type error CAN carry
+ * miette help, so those are reachable per item. Nothing renders them yet; see
+ * the note at the bulk-decrypt aggregate.
  */
-type FallibleDecryptItem =
-  | { data: WasmPlaintext }
-  | { error: string; code?: string }
+type FallibleDecryptFailure = {
+  error: string
+  code?: string
+  authCode?: string
+  help?: string
+  url?: string
+}
+
+type FallibleDecryptItem = { data: WasmPlaintext } | FallibleDecryptFailure
+
+/**
+ * The code to print for one failed item. Shared by the two aggregate builders
+ * so they cannot render the same thing two ways.
+ *
+ * `code` only: see {@link FallibleDecryptFailure} for why `authCode` is never
+ * there to print.
+ */
+function failureCode(item: FallibleDecryptFailure): string {
+  return item.code ? ` (${item.code})` : ''
+}
 
 /**
  * The JS property paths of `table`'s date-like columns (`cast_as: 'date' |
@@ -1158,11 +1320,18 @@ export class WasmEncryptionClient {
       // on `failure.code` — a batch has no single code, and inventing one from
       // the first failure would be wrong — but dropping it entirely would lose
       // the only machine-meaningful part of a row's error.
+      //
+      // Nothing auth-shaped is hoisted onto the aggregate, because a per-item
+      // failure is never an auth one — see `FallibleDecryptFailure`. A billing
+      // refusal fails this whole call and arrives as a rejection instead, where
+      // `toFailure` gives it the code and the remedy.
+      //
+      // A row's `help` / `url` ARE reachable and are not rendered yet; that
+      // belongs with the shared failure-diagnostics work, not here.
       const failures: string[] = []
       for (const { result, at } of placed) {
         if ('error' in result) {
-          const code = result.code ? ` (${result.code})` : ''
-          failures.push(`  [${at}]${code}: ${result.error}`)
+          failures.push(`  [${at}]${failureCode(result)}: ${result.error}`)
           continue
         }
         out[at] = result.data
@@ -1427,10 +1596,9 @@ export class WasmEncryptionClient {
     const failures: string[] = []
     results.forEach((result, i) => {
       if ('error' in result) {
-        const code = result.code ? ` (${result.code})` : ''
         const field = fields[i]
         failures.push(
-          `  ${label(field.modelIndex, field.fieldKey)}${code}: ${result.error}`,
+          `  ${label(field.modelIndex, field.fieldKey)}${failureCode(result)}: ${result.error}`,
         )
       }
     })
@@ -1569,15 +1737,28 @@ export async function Encryption(
   // asks you to build. Verified against the 0.31 wasm build: `cast_as: 'string'`
   // and `cast_as: 'text'` both get past config parsing to authentication, where
   // 0.30 rejected the former with ``unknown variant `string` ``.
-  const client = await wasmNewClient({
-    authStrategy: strategy,
-    encryptConfig,
-    clientOpts: {
-      clientId: clientConfig.clientId,
-      clientKey: clientConfig.clientKey,
-    },
-    eqlVersion: 3,
-  })
+  //
+  // The rejection is NOT allowed to propagate raw. `newClient` resolves a
+  // service token, so this is where an organisation over its usage allowance
+  // meets CipherStash's refusal — the same failure, on the same line, as the
+  // native entry's `initialize`, which preserves the upstream diagnostic
+  // fields. Leaving it bare here gave a Workers/Deno caller no structured
+  // guidance and — for the object-shaped rejections this entry has to expect —
+  // a thrown value with no `.message` at all.
+  let client: Awaited<ReturnType<typeof wasmNewClient>>
+  try {
+    client = await wasmNewClient({
+      authStrategy: strategy,
+      encryptConfig,
+      clientOpts: {
+        clientId: clientConfig.clientId,
+        clientKey: clientConfig.clientKey,
+      },
+      eqlVersion: 3,
+    })
+  } catch (ex) {
+    throw clientInitError(ex)
+  }
 
   // `INTERNAL_CONSTRUCT` is module-scoped, so this factory is the only
   // code that can build a `WasmEncryptionClient` — external callers hit

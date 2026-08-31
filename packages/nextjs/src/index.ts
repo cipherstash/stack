@@ -27,11 +27,24 @@ export type GetCtsTokenResponse = Promise<
   | {
       success: boolean
       error: string
+      /**
+       * The refusal code CTS attached, when it refused for a reason the caller
+       * can branch on — `USAGE_LIMIT_EXCEEDED` for a billing refusal, for
+       * example. Parsed out of the `/api/authorize` error body; `undefined` for
+       * every failure that did not carry one, which includes every failure that
+       * never reached CTS.
+       *
+       * NOT validated against a known set: the taxonomy belongs to CipherStash
+       * token service and ships on its own release train, so a code newer than
+       * this build must still reach you.
+       */
+      authCode?: string
       ctsToken?: never
     }
   | {
       success: boolean
       error?: never
+      authCode?: never
       ctsToken: CtsToken
     }
 >
