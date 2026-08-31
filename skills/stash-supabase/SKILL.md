@@ -341,8 +341,14 @@ has neither:
 | `@cipherstash/stack-supabase` | native | introspected | Node |
 | `@cipherstash/stack-supabase/wasm-inline` | WASM, inlined into the bundle | declared — `schemas` is required | Deno, Supabase Edge Functions, Cloudflare Workers |
 
-Everything after construction is the same wrapper: `from()`, the filters, the
-transforms, and the response shape are identical.
+After construction the wrapper behaves the same — the filters, the transforms
+and the response shape are identical — with two exceptions, both of them
+declared mode rather than the engine. `select('*')` and bare `select()` are
+refused, so name the columns you want; that refusal is not a read backstop,
+because a query awaited with no `.select()` at all still returns every column
+undecrypted. And `from()` on a table you did not declare throws, because there
+is no introspected table list to fall back on. Both are expanded in the bullets
+below.
 
 ```typescript
 import { encryptedTable, types } from "@cipherstash/stack/eql/v3"
@@ -398,8 +404,10 @@ checker:
   since a built strategy already carries the CRN. So authenticating *as the
   end user* over OIDC federation does work on the edge; what does not is
   binding data to that user, two bullets below.
-- **`databaseUrl` is not accepted.** It is refused at runtime and absent from
-  the type.
+- **`databaseUrl` is not accepted.** The options type declares it
+  `databaseUrl?: never`, so passing one is a type error whether you write the
+  options inline or build them as a `const` first, and a construction-time
+  throw for callers arriving from plain JS.
 - **`.withLockContext()` and `.audit()` throw.** Identity-bound encryption is
   not implemented on the WASM engine (cipherstash/stack#797); the entry fails
   loudly rather than dropping the identity claim and writing a value any

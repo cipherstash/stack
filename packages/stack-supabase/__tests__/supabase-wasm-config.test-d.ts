@@ -22,6 +22,10 @@
  * The negative is the floor the docs SHOULD describe: `clientId` + `clientKey`
  * with neither an access key nor a strategy satisfies no arm.
  *
+ * The file has since grown a second claim about the same options object — that
+ * `databaseUrl` cannot be passed at all. See the second `describe` for why
+ * leaving the field out was not, on its own, enough to enforce that.
+ *
  * Runs under `pnpm --filter @cipherstash/stack-supabase test:types`.
  * `@cipherstash/stack/wasm-inline` has no `paths` entry in
  * `tsconfig.json`, so it resolves through the workspace `exports` map to
@@ -136,5 +140,123 @@ describe('the edge entry `config` accepts either auth arm', () => {
     expectTypeOf<
       Parameters<typeof encryptedSupabase<{ users: typeof users }>>[1]['config']
     >().toEqualTypeOf<WasmClientConfig>()
+  })
+})
+
+/**
+ * `databaseUrl` is not merely ABSENT from the edge entry's options — it is
+ * declared `?: never` (`src/wasm-inline.ts`), and the difference between those
+ * two is the whole reason this block exists.
+ *
+ * Absence is enforced by excess-property checking alone, which fires on FRESH
+ * object literals only. An options object assembled as a `const` and passed by
+ * variable — which is what a Node → edge port actually holds, since the native
+ * entry's options are typically built once and reused — loses freshness at the
+ * declaration, carries no excess-property check at the call, and so
+ * type-checked clean before reaching the runtime throw in
+ * `makeEncryptedSupabase` (`src/create.ts`). The docs meanwhile claimed the
+ * type checker enforced it.
+ *
+ * Same failure mode and same fix as `WasmClientConfig.eqlVersion?: never` in
+ * `packages/stack/src/wasm-inline.ts`, whose comment describes exactly this
+ * shared-config-const path; this is its sibling one package along.
+ *
+ * The runtime throw stays regardless — it is the backstop for plain JS, where
+ * there is no type to consult. What is pinned here is the half a type CAN
+ * enforce, in both the shapes a caller writes it in.
+ */
+describe('the edge entry refuses `databaseUrl`', () => {
+  it('rejects it on a fresh object literal — the excess-property case', async () => {
+    await encryptedSupabase(supabaseClient, {
+      schemas: { users },
+      config: {
+        workspaceCrn: 'crn:ap-southeast-2.aws:my-workspace-id',
+        accessKey: 'CS_CLIENT_ACCESS_KEY',
+        clientId: 'CS_CLIENT_ID',
+        clientKey: 'CS_CLIENT_KEY',
+      },
+      // @ts-expect-error — this entry carries no Postgres driver and cannot introspect
+      databaseUrl: 'postgres://user:pass@localhost:5432/postgres',
+    })
+  })
+
+  it('rejects it on a fresh object literal in the (url, key, options) form', async () => {
+    await encryptedSupabase(
+      'https://project.supabase.co',
+      'SUPABASE_ANON_KEY',
+      {
+        schemas: { users },
+        config: {
+          workspaceCrn: 'crn:ap-southeast-2.aws:my-workspace-id',
+          accessKey: 'CS_CLIENT_ACCESS_KEY',
+          clientId: 'CS_CLIENT_ID',
+          clientKey: 'CS_CLIENT_KEY',
+        },
+        // @ts-expect-error — this entry carries no Postgres driver and cannot introspect
+        databaseUrl: 'postgres://user:pass@localhost:5432/postgres',
+      },
+    )
+  })
+
+  it('rejects it when the options are passed by variable, not as a literal', async () => {
+    // Declared, not inlined: the literal's freshness is spent here, so the call
+    // below gets no excess-property check. This is the shape the `?: never` is
+    // for — without it this call type-checks and fails at run time instead.
+    const options = {
+      schemas: { users },
+      config: {
+        workspaceCrn: 'crn:ap-southeast-2.aws:my-workspace-id',
+        accessKey: 'CS_CLIENT_ACCESS_KEY',
+        clientId: 'CS_CLIENT_ID',
+        clientKey: 'CS_CLIENT_KEY',
+      },
+      databaseUrl: 'postgres://user:pass@localhost:5432/postgres',
+    }
+
+    await encryptedSupabase(
+      supabaseClient,
+      // @ts-expect-error — `databaseUrl?: never` is what rejects this; absence would not
+      options,
+    )
+  })
+
+  it('rejects it by variable in the (url, key, options) form too', async () => {
+    const options = {
+      schemas: { users },
+      config: {
+        workspaceCrn: 'crn:ap-southeast-2.aws:my-workspace-id',
+        accessKey: 'CS_CLIENT_ACCESS_KEY',
+        clientId: 'CS_CLIENT_ID',
+        clientKey: 'CS_CLIENT_KEY',
+      },
+      databaseUrl: 'postgres://user:pass@localhost:5432/postgres',
+    }
+
+    await encryptedSupabase(
+      'https://project.supabase.co',
+      'SUPABASE_ANON_KEY',
+      // @ts-expect-error — `databaseUrl?: never` is what rejects this; absence would not
+      options,
+    )
+  })
+
+  /**
+   * The positive control for the four `@ts-expect-error`s above: the same
+   * by-variable call, with the offending field removed, must still compile. A
+   * `?: never` that accidentally poisoned the whole options type would make
+   * every call above fail for the wrong reason and this one fail outright.
+   */
+  it('still accepts the same options object once `databaseUrl` is dropped', async () => {
+    const options = {
+      schemas: { users },
+      config: {
+        workspaceCrn: 'crn:ap-southeast-2.aws:my-workspace-id',
+        accessKey: 'CS_CLIENT_ACCESS_KEY',
+        clientId: 'CS_CLIENT_ID',
+        clientKey: 'CS_CLIENT_KEY',
+      },
+    }
+
+    await encryptedSupabase(supabaseClient, options)
   })
 })

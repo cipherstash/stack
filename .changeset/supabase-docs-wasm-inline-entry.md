@@ -1,6 +1,7 @@
 ---
 '@cipherstash/stack-supabase': patch
 'stash': patch
+'@cipherstash/wizard': patch
 ---
 
 Stop telling customers the Supabase wrapper cannot run in a Worker.
@@ -97,7 +98,7 @@ from `@cipherstash/stack/wasm-inline`, so authenticating as the end user works
 on the edge; what does not work is binding data to that user, which stays
 called out in its own `.withLockContext()` bullet.
 
-Two tests now anchor the corrected claims against the code rather than against
+Tests now anchor the corrected claims against the code rather than against
 prose. `packages/stack-supabase/__tests__/supabase-wasm-config.test-d.ts` asserts
 at the type level that the edge `config` accepts both the access-key arm and a
 strategy-only arm without `workspaceCrn`, and rejects `clientId` + `clientKey`
@@ -105,4 +106,56 @@ alone. `supabase-declared-mode.test.ts` gains a case pinning the real hazard: an
 undeclared column on a declared table reaches PostgREST as plaintext on insert,
 update and filter, and is absent from the decrypt call.
 
-Documentation and tests only — no runtime behaviour changes.
+Review found four more, one of them a change to a published type:
+
+- **`databaseUrl` was only refused for callers who wrote the options inline.**
+  `EncryptedSupabaseWasmOptions` left the field out, and omission is policed by
+  excess-property checking, which fires on fresh object literals alone. An
+  options object assembled as a `const` and passed by variable — which is what
+  a Node-to-edge port actually holds — type-checked clean and reached the
+  construction-time throw instead, from documents saying the type checker
+  enforced it. The field is now declared `databaseUrl?: never`, mirroring
+  `WasmClientConfig.eqlVersion?: never` in `@cipherstash/stack`, which exists
+  for the identical reason one package along. The runtime throw stays as the
+  backstop for plain JS. New type tests cover the inline and by-variable
+  shapes on both call forms, plus a positive control that the same options
+  object still compiles once `databaseUrl` is dropped.
+- **The `select('*')` correction had landed in only one of its two shipped
+  copies.** `skills/stash-supabase/SKILL.md` carried it;
+  `skills/stash-managed-platforms/SKILL.md`, edited in the same change, still
+  framed declared mode as giving things up "loudly rather than silently" over a
+  bullet naming the refusal — precisely the inference the correction exists to
+  kill. That skill is read as instruction by an agent on Lovable, v0, Bolt or
+  Replit, and the failure it mispromised is silent: raw EQL payloads returned
+  as `data`, no error. The wording is carried across, and a new guard
+  (`scripts/__tests__/skills-select-star-not-a-read-backstop.test.mjs`) fails
+  if any shipped document states the refusal without the caveat in the same
+  section. Two copies of one fact drift the moment one of them is edited, and
+  no reviewer diff shows the copy nobody touched.
+- **"Everything after construction is the same wrapper" was false in the first
+  way a reader hits it.** Both `packages/stack-supabase/README.md` and
+  `skills/stash-supabase/SKILL.md` said `from()`, the filters and the response
+  shape are identical across the two entries — the README saying so twenty-five
+  lines under a paragraph telling the same reader `select('*')` just works. The
+  edge entry is always in declared mode, where `select('*')` is refused and
+  `from()` on an undeclared table throws. Both sentences now name the two
+  exceptions, so the quick-start snippet the section tells you to port no
+  longer arrives with a promise it breaks.
+- **The ambient-`DATABASE_URL` warning cannot fire on the edge entry.**
+  `skills/stash-managed-platforms/SKILL.md` said an ambient `DATABASE_URL` is
+  ignored when `schemas` are passed, "with a warning that the declaration is
+  unverified" — in a section whose subject is `wasm-inline`. Both the ambient
+  read and the warning are gated on the introspector, which that build does not
+  have, so nothing there ever tells you a declaration is incomplete. Now scoped
+  to Node, with the edge case stated.
+
+`@cipherstash/wizard` is bumped alongside `stash` because `skills/` ships in
+both tarballs — `packages/wizard/tsup.config.ts` copies it into `dist/skills`
+and `package.json` lists that under `files`. Without the bump the published
+wizard keeps shipping the old text until some unrelated change moves its
+version.
+
+No runtime behaviour changes. The one non-documentation change is the
+`databaseUrl?: never` field on `EncryptedSupabaseWasmOptions`, which is
+type-level: it rejects at compile time a call that already threw at
+construction.

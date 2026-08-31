@@ -109,8 +109,11 @@ a WASM blob inlined into the bundle, and you declare your tables instead of intr
 | `@cipherstash/stack-supabase` | native | introspected from the `public.eql_v3_*` domains | Node |
 | `@cipherstash/stack-supabase/wasm-inline` | WASM, inlined | declared — `schemas` is required | Deno, Supabase Edge Functions, Cloudflare Workers |
 
-Everything after construction is the same wrapper — `from()`, the filters, and the response
-shape are identical.
+After construction the wrapper behaves the same — the filters and the response shape are
+identical — with two exceptions. Declared mode refuses `select('*')` and bare `select()`, so name
+the columns you want; that refusal is not a read backstop, because a query awaited with no
+`.select()` at all still returns every column undecrypted. And `from()` on a table you did not
+declare throws, because there is no introspected table list to fall back on.
 
 ```ts
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
