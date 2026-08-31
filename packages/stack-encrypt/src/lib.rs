@@ -133,11 +133,10 @@ assert_eq!(plaintext, "secret message");
 //! per-leaf nonce vitaminc generates itself). The ZeroKMS `iv` a [`SealedValue`]
 //! carries is *not* that nonce: it identifies the data key, and is sent back to
 //! ZeroKMS with the key `tag` to re-derive it. The types a caller needs from
-//! vitaminc are re-exported here. The module-level docs in
-//! `src/cipher.rs` describe the internals (batching, AAD derivation, wire
-//! format).
+//! vitaminc are re-exported here. The [`cipher`] module docs describe the
+//! internals (batching, AAD derivation, wire format).
 
-mod cipher;
+pub mod cipher;
 pub mod sem;
 pub mod target;
 
