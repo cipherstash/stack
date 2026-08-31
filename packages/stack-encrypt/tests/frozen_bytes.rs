@@ -18,10 +18,16 @@
 //! which maps to an integer-array column), and every binding decoding it
 //! silently stops agreeing.
 
+use std::borrow::Cow;
+
 use stack_encrypt::sem::{DefaultMatch, EqualityTerm, MatchTerm, OpeTerm, OreTerm, TermBytesError};
 use stack_encrypt::target::EncryptInto;
-use stack_encrypt::{CipherText, LeafBytesError, SealedValue, StackCipher};
-use stack_kms::FakeDataKeySource;
+use stack_encrypt::{CipherText, Error, LeafBytesError, SealedValue, StackCipher};
+use stack_kms::{
+    DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,
+    IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
+};
+use uuid::Uuid;
 
 async fn cipher() -> StackCipher<FakeDataKeySource> {
     StackCipher::builder()
@@ -141,6 +147,67 @@ async fn sealed_leaf_survives_persistence_via_bytes() {
         .await
         .expect("decoded leaf must decrypt");
     assert_eq!(pt, "durable");
+}
+
+/// Delegates to [`FakeDataKeySource`] but inflates every generated key tag
+/// past the `u16` length field — the misbehaving custom [`DataKeySource`] the
+/// seal path must reject, rather than build a leaf whose `to_bytes` writes a
+/// saturated length field that `from_bytes` no longer inverts.
+struct OversizedTagSource(FakeDataKeySource);
+
+impl DataKeySource for OversizedTagSource {
+    async fn generate_keys(
+        &self,
+        payloads: Vec<GenerateKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<Cow<'_, UnverifiedContext>>,
+    ) -> Result<Vec<DataKeyWithTag>, stack_kms::Error> {
+        let mut keys = self
+            .0
+            .generate_keys(payloads, keyset_id, unverified_context)
+            .await?;
+        for key in &mut keys {
+            key.tag = vec![0; usize::from(u16::MAX) + 1];
+        }
+        Ok(keys)
+    }
+
+    async fn retrieve_keys(
+        &self,
+        payloads: Vec<RetrieveKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<&UnverifiedContext>,
+    ) -> Result<Vec<DataKey>, stack_kms::Error> {
+        self.0
+            .retrieve_keys(payloads, keyset_id, unverified_context)
+            .await
+    }
+}
+
+impl IndexKeySource for OversizedTagSource {
+    async fn load_index_key(
+        &self,
+        keyset_id: Option<IdentifiedBy>,
+    ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
+        self.0.load_index_key(keyset_id).await
+    }
+}
+
+#[tokio::test]
+async fn seal_rejects_a_key_tag_the_length_field_cannot_frame() {
+    let cipher = StackCipher::builder()
+        .kms(OversizedTagSource(FakeDataKeySource::new()))
+        .init()
+        .await
+        .expect("build cipher");
+
+    let result = cipher
+        .encrypt("boundary".to_string(), b"ctx".as_slice())
+        .await;
+    assert!(
+        matches!(result, Err(Error::Aead)),
+        "an oversized key tag must fail the seal, not mis-encode: {result:?}"
+    );
 }
 
 // =============================================================================

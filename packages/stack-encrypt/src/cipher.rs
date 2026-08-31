@@ -51,7 +51,7 @@
 //! that key by [`vitaminc_encrypt::Aes256Cipher`] (AES-256-GCM via vitaminc's
 //! backend: `aws-lc-rs` on native, RustCrypto on wasm32; vitaminc's own random
 //! nonce and versioned leaf layout). The leaf AAD is the labelled derivation
-//! [`leaf_aad`]: `PAE("stack-encrypt/leaf", version, derived_aad, tag)`, with
+//! `leaf_aad` (private): `PAE("stack-encrypt/leaf", version, derived_aad, tag)`, with
 //! [`SealedValue::FORMAT_VERSION`] — the version byte that prefixes the
 //! leaf's frozen byte encoding ([`SealedValue::to_bytes`]) — bound under the
 //! tag, so a stored leaf relabelled with a different version byte fails
@@ -182,7 +182,7 @@ impl From<Unspecified> for Error {
 
 /// The CipherStash cipher: a vitaminc [`Cipher`] whose per-leaf keys are ZeroKMS
 /// data keys, sourced through a [`DataKeySource`] (production:
-/// [`StackKms`](stack_kms::StackKms); tests: `stack_kms::FakeDataKeySource`),
+/// [`stack_kms::StackKms`]; tests: `stack_kms::FakeDataKeySource`),
 /// carrying the per-keyset PRF that
 /// [Searchable Encrypted Metadata](crate::sem) terms are derived from.
 ///
@@ -381,7 +381,7 @@ impl StackCipherBuilder<FromEnv> {
     /// from the environment.
     ///
     /// This is the seam for a custom authentication strategy: build a
-    /// [`StackKms`](stack_kms::StackKms) — with `stack_kms::StackKmsBuilder`,
+    /// [`stack_kms::StackKms`] — with `stack_kms::StackKmsBuilder`,
     /// or over the host's own transport — and hand it over. It is also how
     /// tests inject `stack_kms::FakeDataKeySource`.
     pub fn kms<K>(self, kms: K) -> StackCipherBuilder<K> {
@@ -577,10 +577,12 @@ pub enum LeafBytesError {
     /// the `tag_len` field promises.
     #[error("sealed-leaf bytes are truncated")]
     Truncated,
-    /// The key tag does not fit the format's `u16` length field. Never
-    /// produced by sealing (ZeroKMS tags are tens of bytes); only reachable
-    /// through [`SealedValue::from_parts`] or `serde` deserialisation with an
-    /// oversized tag — both reject it, so a live `SealedValue` always encodes.
+    /// The key tag does not fit the format's `u16` length field. Every
+    /// construction site rejects an oversized tag — [`SealedValue::from_parts`]
+    /// and `serde` deserialisation with this error, and the seal path (where a
+    /// custom [`DataKeySource`] could return one; real ZeroKMS tags are tens
+    /// of bytes) by failing the encrypt — so a live `SealedValue` always
+    /// encodes.
     #[error("key tag of {0} bytes exceeds the format's u16 length field")]
     TagTooLong(usize),
 }
@@ -600,8 +602,9 @@ impl SealedValue {
     /// long for the `u16` length field ([`LeafBytesError::TagTooLong`]), so a
     /// value that exists always encodes.
     pub fn to_bytes(&self) -> Vec<u8> {
-        // Exact by the `tag_fits_length_field` check every constructor
-        // applies; sealing never comes close (ZeroKMS tags are tens of bytes).
+        // Exact by the `tag_fits_length_field` check every construction site
+        // applies — `from_parts`, serde deserialisation, and the seal path
+        // (which guards against a `DataKeySource` returning an oversized tag).
         // The saturating fallback is unreachable, and asserted so in tests.
         let tag_len = u16::try_from(self.tag.len()).unwrap_or(u16::MAX);
         debug_assert_eq!(usize::from(tag_len), self.tag.len());
@@ -964,6 +967,12 @@ fn seal_leaf(
     aad: &Aad<'_>,
     key: DataKeyWithTag,
 ) -> Result<SealedValue, Unspecified> {
+    // The `DataKeySource` is caller-supplied, so the key tag is not trusted
+    // to fit the frozen byte format's `u16` length field: an oversized tag
+    // must fail here — the last construction site — or `to_bytes` would emit
+    // a length field that no longer frames the tag and `from_bytes` would
+    // stop inverting it.
+    SealedValue::tag_fits_length_field(&key.tag).map_err(|_| Unspecified)?;
     let iv = key.key.iv;
     let cipher = leaf_cipher(&key.key)?;
     match (&cipher).encrypt_bytes_vec(plaintext, leaf_aad(aad, &key.tag))? {
