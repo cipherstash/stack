@@ -5,24 +5,45 @@ import stackVitestConfig from '../../packages/stack/vitest.config.ts'
 import wasmCoreVitestConfig, {
   WASM_CORE_SUITE,
 } from '../../packages/stack/vitest.wasm-core.config.ts'
+import { readJsonc } from './lib/read-jsonc.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 
 /**
- * `packages/stack/__tests__/wasm-inline-core-credential-contract.test.ts` is
- * the only suite in the repo that loads the REAL protect-ffi WASM core, and it
- * is therefore the only one that cannot run where the rest of stack's tests do.
+ * `packages/stack/__tests__/wasm-inline-core-credential-contract.test.ts` loads
+ * the REAL protect-ffi WASM core. It is NOT the only suite that does —
+ * `packages/stack/integration/wasm/**`, protect-ffi's own `wasm-round-trip` /
+ * `wasm-error-codes`, and the Deno smoke tests in `e2e/wasm/` all do, and three
+ * CI jobs build `dist/wasm/**` for them. It is the only one that needs the core
+ * and NOTHING ELSE — no credentials, no database — which is what put it in its
+ * own config rather than into the integration suites, whose `globalSetup`
+ * requires both unconditionally. This docblock claimed the stronger thing until
+ * review caught it; the arrangement below never depended on it.
  *
- * That leaves it held up by three separate pieces — an exclusion in stack's
- * default vitest config, a `test:wasm-core` script pointing at its own config,
- * and one step in the single CI job that builds `dist/wasm/**` — and removing
- * ANY of them leaves a green tree. Delete the workflow step and the suite runs
- * nowhere; the exclusion keeps `pnpm test` passing and nothing says the
- * contract stopped being checked. That is the failure this file exists for,
- * and it is the same shape as `packages/protect-ffi/src/integrationSuiteCi.test.ts`
- * (a suite whose workflow was deposited where GitHub never reads it) and
- * `lintWiring.test.ts`'s "a check nothing invokes reads exactly like a check
- * that passes".
+ * What the arrangement does depend on is FOUR pieces, and losing any one leaves
+ * the contract unchecked:
+ *
+ *   1. the exclusion in `packages/stack/vitest.config.ts`
+ *   2. the `test:wasm-core` script in `packages/stack/package.json`
+ *   3. the step in the CI job that builds `dist/wasm/**`
+ *   4. the `test:wasm-core` task in `turbo.json`
+ *
+ * Piece 3 is the quiet one: delete the step and the suite runs nowhere while
+ * the exclusion keeps `pnpm test` green, so nothing says the contract stopped
+ * being checked. Same shape as
+ * `packages/protect-ffi/src/integrationSuiteCi.test.ts` (a suite whose workflow
+ * was deposited where GitHub never reads it) and `lintWiring.test.ts`'s "a
+ * check nothing invokes reads exactly like a check that passes".
+ *
+ * Piece 4 is quiet in a narrower way, and the assertions below say exactly
+ * which way. DELETING the task is loud — turbo 2.x refuses to run a task the
+ * project does not declare, so the step exits 1 — but EDITING it is not.
+ * Dry-run measured: strip `dependsOn` and flip `cache` to true and the build
+ * graph collapses from nine tasks to one (`@cipherstash/eql#build` and
+ * `@cipherstash/protect-ffi#build` stop running) while the suite becomes
+ * cacheable against a hash that cannot see the core it tests. Every other turbo
+ * guard in this directory stayed green through that mutation, which is why the
+ * check lives here.
  *
  * The opposite direction is already loud, which is why it is not asserted here:
  * put the file back in the default config and `run-tests` fails to COLLECT it
@@ -42,6 +63,9 @@ const PACKAGE = '@cipherstash/stack'
 const stackPackageJson = JSON.parse(
   readFileSync(join(REPO_ROOT, 'packages/stack/package.json'), 'utf8'),
 )
+
+/** `turbo.json` carries comments, so it needs the jsonc reader. */
+const turboJson = readJsonc(join(REPO_ROOT, 'turbo.json'))
 
 /** Every `run:` line in the workflow graph, tagged with its job. */
 function runStepsByJob() {
@@ -86,6 +110,32 @@ describe('the WASM core credential contract runs somewhere (#804)', () => {
     const command = stackPackageJson.scripts?.[SCRIPT]
     expect(command, `packages/stack has no \`${SCRIPT}\` script`).toBeDefined()
     expect(command).toContain('vitest.wasm-core.config.ts')
+  })
+
+  it('is a turbo task that builds its deps and never caches', () => {
+    const task = turboJson.tasks?.[SCRIPT]
+    expect(
+      task,
+      `turbo.json declares no \`${SCRIPT}\` task. The workflow step runs it through turbo, and turbo 2.x refuses a task the project does not declare — so this one fails loudly rather than silently. Re-add it.`,
+    ).toBeDefined()
+
+    // The two fields, and the two different damages. Without `^build` the
+    // graph collapses to this task alone and the workspace packages it
+    // resolves are never built; with caching on, the suite's real input —
+    // protect-ffi's gitignored `dist/wasm/**`, in another package — is
+    // invisible to the hash, so a rebuilt core over unchanged stack sources
+    // is a cache hit reporting a pass over the previous core.
+    // `?? []` so an ABSENT `dependsOn` — the likelier edit of the two — fails
+    // on the message below rather than on `toContain(undefined)`, which
+    // reports an argument-type complaint and buries the reason.
+    expect(
+      task.dependsOn ?? [],
+      `${SCRIPT} must depend on \`^build\`: without it turbo runs the task alone and stack's workspace dependencies go unbuilt.`,
+    ).toContain('^build')
+    expect(
+      task.cache,
+      `${SCRIPT} must set \`cache: false\`. Its real input is protect-ffi's dist/wasm, which turbo cannot hash — a cached run would report a pass over a core it never loaded.`,
+    ).toBe(false)
   })
 
   it('is run by a CI job that builds the WASM output', () => {

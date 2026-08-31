@@ -13,12 +13,18 @@
  * browser-safe. That is why there is no `browser` export condition and no
  * browser smoke test.
  *
- * Nothing else in the suite could have caught this: every wasm test that
- * constructs a client mocks `newClient`, and `vitest.shared.ts` aliases the
- * whole `@cipherstash/protect-ffi/wasm-inline` specifier to a stub whose
- * `newClient` throws. So this file resolves the REAL module through Node —
- * which the Vite alias does not intercept — and asserts against the actual
- * core.
+ * Nothing else could have caught this, for two different reasons. Every wasm
+ * test in stack's DEFAULT suite that constructs a client mocks `newClient`,
+ * and `vitest.shared.ts` aliases the whole
+ * `@cipherstash/protect-ffi/wasm-inline` specifier to a stub whose `newClient`
+ * throws — so none of them reaches the core at all. The suites that DO reach
+ * it — `integration/wasm/**` here, protect-ffi's own `wasm-round-trip` and
+ * `wasm-error-codes`, the Deno smoke tests in `e2e/wasm/` — all hand it a
+ * complete, real credential, because their point is a round trip. A
+ * requirement is invisible to a caller that always satisfies it. This file is
+ * the one that OMITS the credential, so it resolves the REAL module through
+ * Node — which the Vite alias does not intercept — and asserts against the
+ * actual core.
  *
  * IF THIS TEST FAILS, THAT IS GOOD NEWS. It means the core relaxed the
  * requirement and browser support should be re-examined: the `browser` export

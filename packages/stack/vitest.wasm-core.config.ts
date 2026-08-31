@@ -1,12 +1,28 @@
 import { defineConfig } from 'vitest/config'
 
 /**
- * The one suite that loads the REAL protect-ffi WASM core.
+ * The one suite in stack's DEFAULT test run that loads the REAL protect-ffi
+ * WASM core — NOT the only one in the repo that loads it. `integration/wasm/**`
+ * does (its config restores the genuine module over the stub alias), as do
+ * protect-ffi's own `wasm-round-trip` / `wasm-error-codes` suites and the Deno
+ * smoke tests in `e2e/wasm/`. Three CI jobs build `dist/wasm/**` for them.
  *
- * Deliberately a SEPARATE config from `packages/stack/vitest.config.ts`, for
- * the same reason `integration/vitest.config.ts` is one: the default suite has
- * to run with nothing but a checkout and `pnpm install`, and this file needs a
- * build that neither of those produces.
+ * What is unusual here is the COMBINATION: this file needs the real core and
+ * nothing else — no credentials, no database, no PostgREST — because every
+ * assertion lands before the first network call. That is what puts it in an
+ * awkward middle. It cannot stay with the unit suites, and joining the
+ * integration suites would give it dependencies it does not have:
+ * `packages/test-kit/src/integration/global-setup.ts` requires credentials AND
+ * a database unconditionally (it throws rather than skips, then runs a real
+ * `stash eql install`), and `integration-drizzle.yml`, the workflow that runs
+ * them, is path-filtered, fork-skipped and matrixed over two databases. A
+ * contract about the core would then go unchecked on any diff those paths do
+ * not select.
+ *
+ * So: a SEPARATE config from `packages/stack/vitest.config.ts`, for the same
+ * reason `integration/vitest.config.ts` is one — the default suite has to run
+ * with nothing but a checkout and `pnpm install`, and this file needs a build
+ * that neither of those produces.
  *
  * `@cipherstash/protect-ffi` is a workspace package now, so its `./wasm-inline`
  * entry resolves to `dist/wasm/protect_ffi_inline.js` — wasm-pack output, and

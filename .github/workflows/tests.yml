@@ -501,13 +501,21 @@ jobs:
       - name: Typecheck the generated WASM declarations
         run: pnpm --filter @cipherstash/protect-ffi run test:typecheck:wasm
 
-      # The `clientKey` contract test (#804), and the only suite in
-      # `packages/stack` that loads the REAL WASM core instead of the stub in
-      # `vitest.shared.ts` — so this is the only job that can run it, for the
-      # same reason as the step above. It is excluded from stack's default
-      # vitest config, which runs in `run-tests`, where the binding is built
-      # without `wasm: 'true'` and `dist/wasm/protect_ffi_inline.js` therefore
-      # does not exist: the file failed to COLLECT there, which is not a skip.
+      # The `clientKey` contract test (#804). It loads the REAL WASM core
+      # instead of the stub in `vitest.shared.ts`, so it needs the step above:
+      # excluded from stack's default vitest config, which runs in
+      # `run-tests`, where the binding is built without `wasm: 'true'` and
+      # `dist/wasm/protect_ffi_inline.js` therefore does not exist — there the
+      # file failed to COLLECT, which is not a skip.
+      #
+      # Not the only suite that loads the real core, and this is not the only
+      # job that builds it for one — `integration-drizzle.yml` runs
+      # `packages/stack`'s `integration/wasm/**` the same way. It is here
+      # because it is the only one of them that needs NOTHING else: no
+      # credentials, no database, no PostgREST. The integration job has all
+      # three and is path-filtered and fork-skipped besides, so hosting a core
+      # contract there would leave it unchecked on most diffs. See
+      # `packages/stack/vitest.wasm-core.config.ts` for the long form.
       #
       # Before `Build stack` deliberately — it reads protect-ffi's output
       # directly and none of stack's, so a core that changed its credential

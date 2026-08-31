@@ -98,14 +98,27 @@
     // stack depends on workspace packages that emit build output, so a bare
     // invocation resolves `dist/` that nothing in the command builds.
     //
-    // `cache: false`, and not for the reason `test` is. The input this suite
-    // actually reads — protect-ffi's `dist/wasm/protect_ffi_inline.js` — is a
-    // gitignored build output in ANOTHER package, so `$TURBO_DEFAULT$` cannot
-    // see it: a rebuilt core with unchanged stack sources would otherwise be a
-    // cache hit reporting a pass over the previous core.
+    // `cache: false` is the load-bearing half. The input this suite actually
+    // reads — protect-ffi's `dist/wasm/protect_ffi_inline.js` — is a gitignored
+    // build output in ANOTHER package, so nothing turbo hashes can see it: with
+    // caching on, a rebuilt core over unchanged stack sources is a cache hit
+    // reporting a pass over the PREVIOUS core.
+    //
+    // No `inputs` key, deliberately. `["$TURBO_DEFAULT$"]` is the sentinel for
+    // the default set, so writing it alone resolves to exactly what omitting
+    // the key does — byte-identical dry-run output, same hash. (It is NOT
+    // inert because the task is uncached: turbo computes a full input set and
+    // hash either way, and a narrowed `inputs` under `cache: false` really does
+    // change both. Five cached tasks above carry the same no-op line; this one
+    // is dropped rather than copied because the comment beside it would read
+    // as though input tracking were doing work here.)
+    //
+    // `scripts/__tests__/wasm-core-contract-ci.test.mjs` asserts both halves.
+    // Deleting this task is loud — turbo 2.x refuses an undeclared task and the
+    // step exits 1 — but editing it is not: strip `dependsOn` and flip the
+    // cache and the build graph collapses from nine tasks to one, silently.
     "test:wasm-core": {
       "dependsOn": ["^build"],
-      "inputs": ["$TURBO_DEFAULT$"],
       "cache": false
     }
   }
