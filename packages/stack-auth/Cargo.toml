@@ -58,9 +58,10 @@ default = ["http"]
 # Everything that talks HTTP: the access-key, device-session, OIDC-federation
 # and auto strategies, device binding and the device-code flow, and `Token::
 # refresh`. Off, the crate is the token model plus the `AuthStrategy` trait
-# (with `AuthStrategyFn` / `StaticTokenStrategy` to implement it), and reqwest
-# and its native TLS stack are not in the dependency graph at all — the shape
-# a host with its own transport (the WASI/wazero guest) builds against.
+# (with `AuthStrategyFn` to implement it), and reqwest and its native TLS
+# stack are not in the dependency graph at all — the shape a host with its own
+# transport (the WASI/wazero guest) builds against. `StaticTokenStrategy` is a
+# test double behind `test-utils`, not part of that production surface.
 http = ["dep:reqwest"]
 test-utils = []
 # Exposes fuzz-only entry points (e.g. `fuzz_decode_claims`) for the cargo-fuzz
