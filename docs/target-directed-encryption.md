@@ -178,16 +178,24 @@ One level up, unchanged — same trait, now written by the derive:
 
 ```rust
 #[derive(EncryptFrom)]
-#[stash(row = User)]
+#[stash(row = User, context = "users")]
 struct EncryptedUser {
-    age:   IntegerOrdOre,   // from user.age,   under "user/age"
-    email: TextEq,          // from user.email, under "user/email"
+    age:   IntegerOrdOre,   // from user.age,   under "users/age"
+    email: TextEq,          // from user.email, under "users/email"
 }
 
 let row: EncryptedUser = user.encrypt_into(&cipher).await?;   // one batch, no context: the fields carry theirs
 ```
 
-`row = User` infers each field's `from` (its own name) and context (`"<snake_case type>/<plaintext field>"`); `#[stash(from = ..)]` and `#[stash(context = "..")]` on a field are the overrides. The inferred context is derived from Rust identifiers and is the AAD of every stored ciphertext in the column, so renaming the type or a field is a data migration: pin the old literal with `context = ".."` first.
+`row = User` infers each field's `from` (its own name) and the field half of
+its context (`"<context>/<plaintext field>"`); the prefix is the required
+container `context`, named explicitly — never inferred from the Rust type's
+name, which two types can share and a refactor can change. `#[stash(from = ..)]`
+and `#[stash(context = "..")]` on a field are the overrides, and
+`#[stash(nested)]` marks a field whose type is itself a row carrying its own
+contexts (it is handed `()`). The context is the AAD of every stored
+ciphertext in the column, so renaming a plaintext *field* is still a data
+migration: pin the old literal with `context = ".."` first.
 
 Leaf, payload and row are the same trait, and a column of rows is `Vec<T>`'s structural impl over the same trait — `ages.encrypt_into_with_context(&cipher, ctx)` for a `Vec<u32>` is one batched call, and `users.encrypt_into(&cipher)` for a `Vec<User>` likewise. Recursion does the rest. Earlier sketches of this design had a separate input-side derive for rows — that was a second mechanism the naming was hiding.
 

@@ -580,9 +580,12 @@ off and decrypt to whatever its ciphertext field opens to.
 
 The derives are named after the trait they emit, as serde's are, and the
 attribute after the crate: `#[stash(plaintext = ..)]` for a record,
-`#[stash(row = ..)]` for a row — which infers every field's `from` (its own
-name) and context (`"<snake_case type>/<plaintext field>"`), with
-`#[stash(from = .., context = "..")]` as the per-field overrides. Which
+`#[stash(row = .., context = "..")]` for a row — which infers every field's
+`from` (its own name) and the field half of its context
+(`"<context>/<plaintext field>"`; the prefix is the required container
+`context`, given explicitly because it is stored-data identity and must not
+follow a Rust type's name), with `#[stash(from = .., context = "..")]` and
+`#[stash(nested)]` as the per-field overrides. Which
 field decryption opens is not an attribute either but a property of the
 field types (`Decryptable`), checked at compile time to be exactly one;
 `decrypt` is the override for records the types cannot settle. First shipped as
