@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.44.0
+
+### Minor Changes
+
+- 2f75eca: Add `USAGE_LIMIT_EXCEEDED` and `ORG_NOT_PROVISIONED` to the `AuthFailure`
+  union. Authentication and token refresh now report CTS usage denials as typed,
+  non-retryable failures instead of misclassifying them as transient server,
+  access-denied, or expired-token errors. The failure message is preserved and
+  the `help` field identifies whether to upgrade the plan or contact support.
+
 ## 0.43.0
 
 ### Minor Changes
