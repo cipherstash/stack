@@ -31,6 +31,10 @@ The record's own context reaches every derived field that has no `context`
 of its own; if every field has one, the record's context is unused and the
 caller may pass `()`.
 
+Every attribute except `plaintext` is singular, and repeating one is a
+compile error rather than a silent overwrite (`plaintext` is repeatable,
+but each listed type only once).
+
 ## Which field decryption opens
 
 `DecryptInto` does not need to be told: every field type says whether it is a
@@ -47,7 +51,9 @@ ciphertexts of which one is to be opened, or a field type that is not
 `Decryptable`. Once any field is marked, only the marked fields are
 considered — one opened as the whole plaintext, or several with `from = ..`
 rebuilding the plaintext field by field — and the field types need not be
-`Decryptable`.
+`Decryptable`. The record's own `Decryptable` impl (emitted by
+`#[derive(EncryptFrom)]`) is then `true` outright — the marker says
+decryption opens the record — so a marked record still nests in rows.
 
 `DecryptInto` consumes the record, moving each opened field out of `self`, so
 the record must not implement `Drop` (including via `ZeroizeOnDrop`); wrap the

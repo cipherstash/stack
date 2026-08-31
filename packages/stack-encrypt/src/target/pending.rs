@@ -82,7 +82,13 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// A pending that already failed. No requests, no `T` bound (nothing of
     /// type `T` is ever produced), and any assembly it is merged into fails
     /// without I/O — see the `failed` field.
-    pub(crate) fn failed(cipher: &'a StackCipher<K>, error: Error) -> Self {
+    ///
+    /// Public because a [`DecryptField`](super::DecryptField) implementation
+    /// (including the derive's generated code) reaches for it when a
+    /// contract is broken at decrypt time — e.g.
+    /// [`Error::NotOpened`] for a field whose type declared
+    /// [`DECRYPTABLE`](super::Decryptable::DECRYPTABLE) but was passed over.
+    pub fn failed(cipher: &'a StackCipher<K>, error: Error) -> Self {
         Self {
             cipher,
             requests: Vec::new(),

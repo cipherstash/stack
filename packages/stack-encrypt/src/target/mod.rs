@@ -651,7 +651,8 @@ where
 /// own, with no attribute: the derive counts the fields whose
 /// [`DECRYPTABLE`](Self::DECRYPTABLE) is `true` and requires exactly one
 /// (per plaintext field, for a row). `#[derive(EncryptFrom)]` emits it for
-/// a record — a record is decryptable if any of its fields is — and the
+/// a record — a record is decryptable if any of its fields is, or outright
+/// when `#[stash(decrypt)]` names the opened fields — and the
 /// built-in leaves implement it by hand: [`StackCipherText`] is, the
 /// [`sem`](crate::sem) terms are not.
 ///

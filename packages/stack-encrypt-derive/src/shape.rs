@@ -273,6 +273,70 @@ mod tests {
     }
 
     #[test]
+    fn repeated_singleton_attributes_are_rejected() {
+        // A silently-winning second `from` would encrypt the wrong (same-
+        // typed) plaintext field — the crossed-field failure the derive
+        // exists to prevent — so every singular attribute rejects a repeat.
+        let err = parse(parse_quote! {
+            #[stash(plaintext = User)]
+            struct Rec {
+                #[stash(from = expected, from = other)]
+                c: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("`from` is given twice"));
+
+        let err = parse(parse_quote! {
+            struct Rec {
+                #[stash(context = "users/email", context = "users/name")]
+                c: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("`context` is given twice"));
+
+        // Also across two `#[stash(..)]` attributes on the same field.
+        let err = parse(parse_quote! {
+            struct Rec {
+                #[stash(context = "users/email")]
+                #[stash(context = "users/name")]
+                c: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("`context` is given twice"));
+
+        let err = parse(parse_quote! {
+            struct Rec {
+                c: StackCipherText,
+                #[stash(default, default = 3)]
+                v: u8,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("`default` is given twice"));
+
+        let err = parse(parse_quote! {
+            struct Rec {
+                #[stash(decrypt, decrypt)]
+                c: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("`decrypt` is given twice"));
+
+        let err = parse(parse_quote! {
+            #[stash(crate = "stack_encrypt", crate = "stack_encrypt")]
+            struct Rec {
+                c: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("`crate` is given twice"));
+    }
+
+    #[test]
     fn a_literal_empty_context_is_rejected() {
         let err = parse(parse_quote! {
             struct Rec {

@@ -22,6 +22,9 @@ impl ContainerAttrs {
         for attr in attrs.iter().filter(|a| a.path().is_ident("stash")) {
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("crate") {
+                    if krate.is_some() {
+                        return Err(meta.error("`crate` is given twice"));
+                    }
                     let lit: LitStr = meta.value()?.parse()?;
                     krate = Some(lit.parse()?);
                     return Ok(());
@@ -87,6 +90,14 @@ impl FieldAttrs {
         for attr in attrs.iter().filter(|a| a.path().is_ident("stash")) {
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("context") {
+                    // Each of these is singular by meaning, so a repeat is a
+                    // mistake: rejected rather than silently overwritten. A
+                    // silently-winning second `from` would be the worst of
+                    // them — it crosses fields, which is exactly the failure
+                    // the derive exists to prevent.
+                    if parsed.context.is_some() {
+                        return Err(meta.error("`context` is given twice; a field has one context"));
+                    }
                     let context: LitStr = meta.value()?.parse()?;
                     // The leaves reject an empty context at runtime; a
                     // literal one is known here, so say so at the literal.
@@ -102,10 +113,18 @@ impl FieldAttrs {
                     return Ok(());
                 }
                 if meta.path.is_ident("from") {
+                    if parsed.from.is_some() {
+                        return Err(meta.error(
+                            "`from` is given twice; a field is derived from one plaintext field",
+                        ));
+                    }
                     parsed.from = Some(meta.value()?.parse()?);
                     return Ok(());
                 }
                 if meta.path.is_ident("default") {
+                    if parsed.default.is_some() {
+                        return Err(meta.error("`default` is given twice"));
+                    }
                     parsed.default = Some(if meta.input.peek(syn::Token![=]) {
                         Some(meta.value()?.parse()?)
                     } else {
@@ -114,6 +133,9 @@ impl FieldAttrs {
                     return Ok(());
                 }
                 if meta.path.is_ident("decrypt") {
+                    if parsed.decrypt {
+                        return Err(meta.error("`decrypt` is given twice"));
+                    }
                     parsed.decrypt = true;
                     return Ok(());
                 }

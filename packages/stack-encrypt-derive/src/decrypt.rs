@@ -251,7 +251,7 @@ fn automatic(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
         generics.params.push(parse_quote!(__K));
         push_field_bounds(&mut generics, krate, fields, &plaintext);
         let (impl_generics, _, where_clause) = generics.split_for_impl();
-        let open = open_one(krate, name, None, fields, &plaintext);
+        let open = open_one(krate, fields, &plaintext);
         let body = quote!(#body_check #destructure #open);
         let block = impl_block(
             krate,
@@ -274,9 +274,9 @@ fn automatic(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
             let open = match &auto {
                 Auto::Whole(fields) => {
                     push_field_bounds(&mut generics, krate, fields, plaintext);
-                    open_one(krate, name, None, fields, plaintext)
+                    open_one(krate, fields, plaintext)
                 }
-                Auto::ByField(groups) => by_group_body(krate, name, groups, plaintext)?,
+                Auto::ByField(groups) => by_group_body(krate, groups, plaintext)?,
             };
             let (impl_generics, _, where_clause) = generics.split_for_impl();
             let body = quote!(#body_check #destructure #open);
@@ -364,13 +364,7 @@ fn check(krate: &Path, name: &Ident, from: Option<&Member>, fields: &[&Field]) -
 
 /// The one `Some` among the fields' `decrypt_field`s, as a pending of
 /// `plaintext` (`_` when it is inferred from a struct literal).
-fn open_one(
-    krate: &Path,
-    name: &Ident,
-    from: Option<&Member>,
-    fields: &[&Field],
-    plaintext: &Type,
-) -> TokenStream {
+fn open_one(krate: &Path, fields: &[&Field], plaintext: &Type) -> TokenStream {
     let mut calls = fields.iter().map(|field| {
         let ty = &field.ty;
         let local = &field.local;
@@ -391,28 +385,22 @@ fn open_one(
         first,
         |chain, call| quote!(::core::option::Option::or_else(#chain, move || #call)),
     );
-    let what = match from {
-        None => format!("`{name}`"),
-        Some(from) => format!(
-            "the plaintext field `{}` of `{name}`",
-            from.to_token_stream()
-        ),
-    };
-    let message = LitStr::new(
-        &format!("exactly one field of {what} is decryptable, checked at compile time"),
-        Span::call_site(),
-    );
-    quote!(::core::option::Option::expect(#chain, #message))
+    // The const assertion has established that exactly one field's type is
+    // `Decryptable`, but a third-party `DecryptField` can still break its
+    // contract and return `None` for a type whose `DECRYPTABLE` is `true`.
+    // That is `Error::NotOpened` — a failed pending that settles without
+    // I/O — never a panic.
+    quote! {
+        ::core::option::Option::unwrap_or_else(#chain, || #krate::target::Pending::failed(
+            __cipher,
+            #krate::Error::NotOpened,
+        ))
+    }
 }
 
 /// Each group's opened pending, zipped into one and mapped into a struct
 /// literal of the plaintext.
-fn by_group_body(
-    krate: &Path,
-    name: &Ident,
-    groups: &[Group<'_>],
-    plaintext: &Type,
-) -> Result<TokenStream> {
+fn by_group_body(krate: &Path, groups: &[Group<'_>], plaintext: &Type) -> Result<TokenStream> {
     let literal = struct_literal_path(plaintext)?;
     let inferred: Type = parse_quote!(_);
 
@@ -420,7 +408,7 @@ fn by_group_body(
         .map(|index| Ident::new(&format!("__group_{index}"), Span::call_site()))
         .collect();
     let opens = groups.iter().zip(&locals).map(|(group, local)| {
-        let open = open_one(krate, name, Some(group.from), &group.fields, &inferred);
+        let open = open_one(krate, &group.fields, &inferred);
         quote!(let #local = #open;)
     });
 
@@ -701,7 +689,7 @@ mod tests {
         assert_contains(&expansion, quote!("no field of `Row` can recover the plaintext field `age`: every field derived from it is a one-way index term"));
         assert_contains(&expansion, quote!("several fields of `Row` are derived from the plaintext field `email` and decryptable: mark the one decryption opens `#[stash(decrypt)]`"));
         assert_contains(&expansion, quote! {
-            let __group_1 = ::core::option::Option::expect(
+            let __group_1 = ::core::option::Option::unwrap_or_else(
                 ::core::option::Option::or_else(
                     <StackCipherText as ::stack_encrypt::target::DecryptField<_, ::stack_encrypt::StackCipher<__K>>>::decrypt_field(
                         __field_1, __cipher, "users/email",
@@ -710,7 +698,7 @@ mod tests {
                         __field_2, __cipher, "users/email",
                     )
                 ),
-                "exactly one field of the plaintext field `email` of `Row` is decryptable, checked at compile time"
+                || ::stack_encrypt::target::Pending::failed(__cipher, ::stack_encrypt::Error::NotOpened,)
             );
         });
         assert_contains(&expansion, quote!(__group_0.zip(__group_1).map(|(__group_0, __group_1)| User { age: __group_0, email: __group_1 })));

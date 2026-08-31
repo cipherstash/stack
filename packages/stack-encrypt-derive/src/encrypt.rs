@@ -95,24 +95,35 @@ fn impl_block(
 /// `impl Decryptable for Record`: a record is decryptable if any derived
 /// field is. This is what lets a record sit inside a row whose
 /// `DecryptInto` derive finds its ciphertext fields on its own.
+///
+/// In the explicit mode — any field marked `#[stash(decrypt)]` — the record
+/// is decryptable outright: the marker exists precisely so the other field
+/// types need not be `Decryptable`, so probing them here would reintroduce
+/// the bound the marker removes (and fail to compile for the documented
+/// opaque-field shape).
 fn decryptable_impl(input: &DeriveInput, record: &Record) -> TokenStream {
     let krate = &record.krate;
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
-    let terms = record
-        .fields
-        .iter()
-        .filter(|f| f.is_derived())
-        .map(|field| {
-            let ty = &field.ty;
-            // Spanned at the field type: a type that is not `Decryptable` is
-            // reported there, not at the derive.
-            quote_spanned!(ty.span()=> || <#ty as #krate::target::Decryptable>::DECRYPTABLE)
-        });
+    let value = if record.fields.iter().any(|f| f.decrypt) {
+        quote!(true)
+    } else {
+        let terms = record
+            .fields
+            .iter()
+            .filter(|f| f.is_derived())
+            .map(|field| {
+                let ty = &field.ty;
+                // Spanned at the field type: a type that is not `Decryptable`
+                // is reported there, not at the derive.
+                quote_spanned!(ty.span()=> || <#ty as #krate::target::Decryptable>::DECRYPTABLE)
+            });
+        quote!(false #(#terms)*)
+    };
     quote! {
         #[automatically_derived]
         impl #impl_generics #krate::target::Decryptable for #name #ty_generics #where_clause {
-            const DECRYPTABLE: bool = false #(#terms)*;
+            const DECRYPTABLE: bool = #value;
         }
     }
 }
@@ -200,6 +211,29 @@ mod tests {
             }
         });
         assert_lacks(&expansion, quote!(<u8 as ::stack_encrypt::target::Decryptable>));
+    }
+
+    #[test]
+    #[rustfmt::skip]
+    fn an_explicit_decrypt_marker_makes_the_record_decryptable_outright() {
+        // The documented explicit-mode shape: the marker frees the other
+        // field types from `Decryptable`, so the emitted impl must not
+        // probe them.
+        let expansion = expand(parse_quote! {
+            #[stash(plaintext = u32)]
+            struct Rec {
+                #[stash(decrypt)]
+                c: StackCipherText,
+                opaque: OpaqueTerm,
+            }
+        });
+        assert_contains(&expansion, quote! {
+            impl ::stack_encrypt::target::Decryptable for Rec {
+                const DECRYPTABLE: bool = true;
+            }
+        });
+        assert_lacks(&expansion, quote!(<OpaqueTerm as ::stack_encrypt::target::Decryptable>));
+        assert_lacks(&expansion, quote!(<StackCipherText as ::stack_encrypt::target::Decryptable>));
     }
 
     #[test]

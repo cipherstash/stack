@@ -12,7 +12,10 @@ use cllw_ore::CllwOreEncrypt;
 use common::{counting_cipher, stack_cipher};
 use stack_encrypt::sem::{EqualityTerm, MatchTerm, OreTerm};
 use stack_encrypt::target::EncryptInto;
-use stack_encrypt::{DecryptInto, EncryptFrom, Error, StackCipherText};
+use stack_encrypt::{
+    DecryptContext, DecryptField, DecryptInto, DecryptTarget, Decryptable, EncryptContext,
+    EncryptFrom, Error, Pending, StackCipher, StackCipherText,
+};
 
 // --- Records: every field from one plaintext, under one context -------------
 
@@ -151,6 +154,107 @@ async fn decrypt_marks_the_field_when_the_types_cannot_choose() {
     assert_eq!(numbers.hm.len(), 3);
     let opened: Vec<u32> = numbers.decrypt_into(&cipher, "numbers").await.unwrap();
     assert_eq!(opened, vec![1, 2, 3]);
+}
+
+/// An index term type from outside this crate that predates `Decryptable`:
+/// it implements `EncryptFrom` only, wrapping a term of ours.
+#[derive(PartialEq)]
+struct OpaqueTerm(EqualityTerm);
+
+impl<S, K> EncryptFrom<S, StackCipher<K>> for OpaqueTerm
+where
+    EqualityTerm: EncryptFrom<S, StackCipher<K>>,
+{
+    fn encrypt_from<'a, 'c, Ctx>(
+        source: &'a S,
+        cipher: &'a StackCipher<K>,
+        context: Ctx,
+    ) -> Pending<'a, Self, K>
+    where
+        Ctx: EncryptContext<'c>,
+        Self: 'a,
+    {
+        EqualityTerm::encrypt_from(source, cipher, context).map(OpaqueTerm)
+    }
+}
+
+/// The documented explicit-mode shape: `#[stash(decrypt)]` frees the *other*
+/// field types from `Decryptable`, so the paired derive must compile with an
+/// opaque field — including the `Decryptable` impl `EncryptFrom` emits.
+#[derive(EncryptFrom, DecryptInto)]
+#[stash(plaintext = u32)]
+struct WithOpaque {
+    #[stash(decrypt)]
+    c: StackCipherText,
+    o: OpaqueTerm,
+}
+
+/// And the marked record is decryptable outright, so it still nests in rows.
+#[allow(clippy::assertions_on_constants)] // the constant is the point
+const _: () = assert!(<WithOpaque as Decryptable>::DECRYPTABLE);
+
+#[tokio::test]
+async fn explicit_mode_supports_opaque_fields_in_the_paired_derive() {
+    let cipher = stack_cipher().await;
+    let generator = stack_cipher().await;
+
+    let record: WithOpaque = 5u32.encrypt_into(&cipher, "opaque").await.unwrap();
+    let hm: EqualityTerm = 5u32.encrypt_into(&generator, "opaque").await.unwrap();
+    assert!(record.o == OpaqueTerm(hm));
+
+    let opened: u32 = record.decrypt_into(&cipher, "opaque").await.unwrap();
+    assert_eq!(opened, 5);
+}
+
+/// A third-party field type that breaks the `DecryptField` contract:
+/// `DECRYPTABLE` says decryption opens it, but `decrypt_field` passes it
+/// over anyway.
+struct Lying;
+
+impl Decryptable for Lying {
+    const DECRYPTABLE: bool = true;
+}
+
+impl<P, C: DecryptTarget> DecryptField<P, C> for Lying {
+    fn decrypt_field<'a, 'c, Ctx>(self, _cipher: &'a C, _context: Ctx) -> Option<C::Output<'a, P>>
+    where
+        Ctx: DecryptContext<'c>,
+        Self: 'a,
+        P: 'a,
+    {
+        None
+    }
+}
+
+#[derive(DecryptInto)]
+struct LyingRecord {
+    l: Lying,
+}
+
+#[derive(Debug, PartialEq)]
+struct Held {
+    value: u32,
+}
+
+#[derive(DecryptInto)]
+#[stash(plaintext = Held)]
+struct LyingRow {
+    #[stash(from = value, context = "held/value")]
+    value: Lying,
+}
+
+#[tokio::test]
+async fn a_broken_decrypt_field_contract_is_not_opened_never_a_panic() {
+    let cipher = stack_cipher().await;
+
+    // The compile-time check accepted `Lying` (its `DECRYPTABLE` is `true`),
+    // so the broken contract only shows at decrypt time: `Error::NotOpened`
+    // as a failed pending, for the record and for the row alike.
+    let result: Result<u32, _> = LyingRecord { l: Lying }.decrypt_into(&cipher, "l").await;
+    assert!(matches!(result, Err(Error::NotOpened)));
+
+    let result: Result<Held, _> = LyingRow { value: Lying }.decrypt_into(&cipher, ()).await;
+    assert!(matches!(result, Err(Error::NotOpened)));
 }
 
 /// Listed plaintexts: one impl each, and nothing else is accepted.
