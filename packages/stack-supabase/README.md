@@ -135,7 +135,7 @@ required, because nothing introspects here; `config` is required, because there 
 `.withLockContext()` / `.audit()` throw rather than silently dropping the identity claim — the
 WASM engine does not implement them yet ([#797][issue-797]).
 
-`config` always needs `clientId` and `clientKey`. Past those it is a union of two paths: pass
+`config` always needs `clientId` and `clientKey`. Past those it is a union: pass
 `workspaceCrn` + `accessKey` for the access-key path shown above, or a pre-built
 `config.authStrategy` — `AccessKeyStrategy` or `OidcFederationStrategy`, both re-exported from
 `@cipherstash/stack/wasm-inline` — which already carries the CRN and so makes `workspaceCrn`

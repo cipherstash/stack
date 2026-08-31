@@ -360,9 +360,10 @@ describe('constructing where there is no `process` global', () => {
  * DECLARED table is silently treated as plaintext.
  *
  * The two loud failures are already pinned above — an undeclared TABLE throws
- * (`from()`, line ~148) and `select('*')` is refused (line ~115, which is what
- * keeps this from being a blanket read leak: you cannot fetch a column you did
- * not name). What is NOT loud, and is the real risk, is a table you declared
+ * (`from()`, line ~148) and `select('*')` is refused (line ~115). Neither is a
+ * blanket-read backstop: a query awaited with no `.select()` at all takes
+ * `query-builder.ts`'s raw-`*` branch and returns every column undecrypted.
+ * What is NOT loud, and is the real risk, is a table you declared
  * but declared incompletely. Nothing in the client can detect it: with no
  * introspection there is no column list to compare the declaration against, so
  * an `eql_v3_*` column missing from `schemas` never enters the encrypt config

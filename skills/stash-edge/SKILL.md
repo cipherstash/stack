@@ -126,7 +126,7 @@ discovery: `~/.cipherstash` does not exist in a Worker or an Edge Function
 container, and there is no device-code login to fall back on.
 
 `clientId` and `clientKey` are always required. Past those, `config` is a
-union of two paths: the **access-key path** below adds `workspaceCrn` +
+union: the **access-key path** below adds `workspaceCrn` +
 `accessKey` — the four `CS_*` values `stash env` mints — or you pass a
 pre-built `config.authStrategy`, which already carries the CRN and so needs
 neither `workspaceCrn` nor `accessKey` (see `config.authStrategy` below).
@@ -439,9 +439,10 @@ import { encryptedSupabase } from '@cipherstash/stack-supabase/wasm-inline'
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
 ```
 
-Get this one backwards and you get the same nominal-private-field error as
-above, from the other direction — `schemas` rejected as not assignable to
-`AnyV3Table`. Which way round it goes is a property of the client type, so
+Get this one backwards and you hit the same nominal-private-field rejection,
+reported one level up — `schemas` not assignable to `AnyV3Table`, because the
+column classes inside it carry a private `columnName` from the other entry's
+declarations. Which way round it goes is a property of the client type, so
 check what consumes the schema before you pick the import. `stash-supabase`
 and `stash-managed-platforms` carry the full edge call shape.
 

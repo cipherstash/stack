@@ -68,11 +68,14 @@ are here, three of them pre-dating this change:
   no-column client — it is non-optional on the type and throws at construction —
   and an undeclared *table* throws rather than passing through unencrypted. The
   hazard is an undeclared **column** on a declared table, which is treated as
-  plaintext; the bullet now says that, along with the two things that limit it
-  (`select('*')` is refused in declared mode, and a plaintext write to an
-  `eql_v3_*` column fails the domain CHECK) and the fact that the native
-  entry's warning about unverified declarations is gated on the introspector
-  and so never fires there.
+  plaintext; the bullet now says that, along with the one thing that limits it
+  (a plaintext write to an `eql_v3_*` column fails the domain CHECK, though a
+  NULL still passes) and the fact that the native entry's warning about
+  unverified declarations is gated on the introspector and so never fires
+  there. Reads get no equivalent backstop, and the bullet now says so: the
+  `select('*')` refusal looks like one, but a query awaited with no
+  `.select()` at all takes the raw-`*` branch in `query-builder.ts` and
+  returns every column undecrypted.
 - **"Undeclared tables behave exactly as with no `schemas` at all" was false on
   the native entry too.** Introspection is gated on a resolved database URL,
   not on the absence of `schemas`, and an ambient `DATABASE_URL` is

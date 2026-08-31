@@ -375,17 +375,20 @@ checker:
   undeclared table throws for the same reason. The real hazard is one level
   down: an undeclared **column** on a declared table never enters the encrypt
   config and is treated as plaintext, so a filter on it sends your plaintext
-  value to PostgREST and a select on it hands back the raw EQL payload. Two
-  things limit the blast radius — `select('*')` is refused in declared mode,
-  so ciphertext only comes back if you name the column yourself, and a
-  plaintext write to a real `eql_v3_*` column fails that domain's CHECK
-  constraint. Do not wait for a warning: the native entry logs one about
+  value to PostgREST and a select on it hands back the raw EQL payload. Writes
+  have a backstop — a plaintext write to a real `eql_v3_*` column fails that
+  domain's CHECK constraint, though a NULL still passes. **Reads have none.**
+  `select('*')` is refused in declared mode, but that is not a safety net: a
+  query awaited with no `.select()` call at all sends a raw `*`, and every
+  column comes back undecrypted, declared or not. Name the columns you want.
+  Do not wait for a warning: the native entry logs one about
   unverified declarations, but it is gated on the introspector, so on this
   entry it never fires. Declare every encrypted column of every table you
   query.
 - **`config` is required.** There is no `~/.cipherstash` on an edge runtime to
   discover credentials from, so authentication is passed in. `clientId` and
-  `clientKey` are always needed; past those the type is a union of two paths.
+  `clientKey` are always needed; past those the type is a union, with two
+  supported paths.
   The **access-key path** adds `workspaceCrn` + `accessKey` — the four `CS_*`
   values shown above. Mint them with `stash env --name <name>` and set them
   with `supabase secrets set`, or pass `--env-file` for `supabase functions
