@@ -129,6 +129,39 @@ describe('supply chain — pnpm configuration', () => {
     ).toBe(1)
   })
 
+  it('vitest and @vitest/coverage-v8 are catalog-pinned in lockstep', () => {
+    // The same shape as the auth set above, one dependency along, and it needs
+    // its own assertion because that one filters on the `@cipherstash/auth`
+    // prefix and cannot see this pair.
+    //
+    // `@vitest/coverage-v8` is versioned against the runner, not
+    // independently: vitest refuses to start against a mismatched provider
+    // ("Vitest failed to load @vitest/coverage-v8"). Both are in the
+    // `dev-dependencies` Dependabot group, which is free to move one and not
+    // the other, and the only consumer of the provider is the protect-ffi
+    // integration suite's `vitest:live:coverage` — a developer tool nothing in
+    // CI runs. So a skew would sit in the catalog looking deliberate until
+    // someone reached for coverage and got a startup error.
+    const ws = readYaml('pnpm-workspace.yaml') as {
+      catalogs?: Record<string, Record<string, string>>
+    }
+    const repo = ws.catalogs?.repo ?? {}
+    const runner = repo.vitest
+    const provider = repo['@vitest/coverage-v8']
+
+    // Floor on the lookup: two undefineds compare equal, so a renamed or
+    // removed entry would pass the comparison below silently.
+    expect(runner, 'no `vitest` entry in the repo catalog').toBeTruthy()
+    expect(
+      provider,
+      'no `@vitest/coverage-v8` entry in the repo catalog',
+    ).toBeTruthy()
+    expect(
+      provider,
+      `@vitest/coverage-v8@${provider} does not match vitest@${runner}; the coverage provider is versioned in lockstep with the runner`,
+    ).toBe(runner)
+  })
+
   it('security overrides stay range-scoped and remain a small allowlist (≤12 entries)', () => {
     // Every override must be scoped to the advisory's vulnerable range
     // (`pkg@<range>`), never a blanket `pkg` pin — a blanket pin silently
@@ -728,11 +761,12 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
     // routine version bumps.
     //
     // Coverage is asserted per ECOSYSTEM, not per directory. Dependabot's npm
-    // entry at `/` follows the pnpm workspace, which does not include
-    // packages/protect-ffi/integration-tests — that lockfile therefore sits
-    // under a monitored ecosystem but is not itself updated. Deliberate: it is
-    // a standalone `npm install` harness with no published surface, and its
-    // advisories are still visible via osv-scanner.
+    // entry at `/` follows the pnpm workspace, so it reaches every member's
+    // manifest through the single root `pnpm-lock.yaml`. The one lockfile that
+    // sat outside that — packages/protect-ffi/integration-tests's own
+    // `package-lock.json`, a standalone `npm ci` harness — is gone as of
+    // CIP-3744, and the suite now resolves from the repo lockfile like
+    // everything else.
     const ecosystems = new Set(db.updates.map((u) => u['package-ecosystem']))
     const unmonitored: string[] = []
     const unrecognised: string[] = []

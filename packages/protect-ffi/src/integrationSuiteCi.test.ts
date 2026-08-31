@@ -27,6 +27,45 @@ const packageRoot = process.cwd()
 const workflowDir = join(packageRoot, '../../.github/workflows')
 
 /**
+ * `//` line comments removed, so `JSON.parse` accepts `turbo.json`.
+ *
+ * String-aware, and that is not defensive coding: `turbo.json`'s second line is
+ * `"$schema": "https://turbo.build/schema.json"`, so a regex for `//` truncates
+ * the file at its first key and every task lookup below goes quietly empty.
+ * Same reasoning, and the same character scan, as `readJsonc` in
+ * `scripts/lint-typecheck-scope.mjs` — reproduced rather than imported because
+ * that is an untyped `.mjs` outside this package's tsconfig.
+ */
+function stripJsonComments(raw: string): string {
+  let out = ''
+  let inString = false
+  let escaped = false
+
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]
+    if (inString) {
+      out += ch
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+      out += ch
+      continue
+    }
+    if (ch === '/' && raw[i + 1] === '/') {
+      while (i < raw.length && raw[i] !== '\n') i++
+      out += '\n'
+      continue
+    }
+    out += ch
+  }
+  return out
+}
+
+/**
  * The part of a workflow that actually does something: `jobs:` and everything
  * under it, with comment lines stripped.
  *
@@ -114,6 +153,96 @@ describe('integration-tests suite runs in CI', () => {
     expect(testFiles.length).toBeGreaterThanOrEqual(15)
   })
 
+  it('names no script after a turbo task, so `pnpm test` stays credential-free', () => {
+    // The cost of workspace membership, and it is not hypothetical. Root
+    // `pnpm test` is `turbo test --filter './packages/**'`, which now REACHES
+    // this package — turbo already lists `#test` in the graph and skips it only
+    // because no script answers to that name. Give one that name and the repo's
+    // ordinary unit-test command starts demanding Docker, a Postgres on 5436
+    // with both EQL versions installed, and live CipherStash credentials. The
+    // suites throw rather than skip when unconfigured, so the failure is loud,
+    // universal, and nowhere near the change that caused it.
+    //
+    // Derived from `turbo.json` rather than a list of names to avoid, because
+    // the list was wrong the first time it was written: this guard originally
+    // forbade `test` alone, while the suite's own live script was called
+    // `test:integration` — which is ALSO a turbo task, invoked by four
+    // integration workflows. Every one of them passes `--filter`, so nothing
+    // reached the suite in practice; an unfiltered `turbo run test:integration`
+    // (the shape of the root `"test:e2e": "turbo run test:e2e"` script) would
+    // have. Reading the task keys means a task added to `turbo.json` tomorrow is
+    // covered without anyone remembering this file.
+    //
+    // `typecheck` is the deliberate exception, and the reason the rule is
+    // "no LIVE script named after a task" rather than "no script named after a
+    // task": the suite's `tsc` gate is *meant* to run under
+    // `turbo run typecheck`, from tests.yml, on every PR. It needs no
+    // credentials and no database. The live entry points are `vitest:live` /
+    // `vitest:live:coverage`, which turbo knows nothing about.
+    const turboTasks = new Set(
+      Object.keys(
+        (
+          JSON.parse(
+            stripJsonComments(
+              readFileSync(join(packageRoot, '../../turbo.json'), 'utf8'),
+            ),
+          ) as { tasks?: Record<string, unknown> }
+        ).tasks ?? {},
+      ),
+    )
+    const suiteManifest = JSON.parse(
+      readFileSync(join(packageRoot, 'integration-tests/package.json'), 'utf8'),
+    ) as { scripts?: Record<string, string> }
+
+    // The floor on the derivation. An empty or mis-parsed `turbo.json` makes
+    // every assertion below vacuous, and it is read through a hand-rolled
+    // comment stripper, so it is exactly the kind of thing that fails silently.
+    expect(turboTasks).toContain('test')
+    expect(turboTasks).toContain('test:integration')
+
+    const live = Object.keys(suiteManifest.scripts ?? {}).filter(
+      (name) => name !== 'typecheck',
+    )
+    expect(live.length).toBeGreaterThan(0)
+    expect(live.filter((name) => turboTasks.has(name))).toEqual([])
+  })
+
+  it('installs the suite from the workspace, not a second npm tree', () => {
+    // `integration-tests` became a pnpm workspace member in CIP-3744: its
+    // dependencies come from the repo lockfile, `@cipherstash/eql` resolves
+    // `workspace:^` and `@cipherstash/protect-ffi` `workspace:*`. The failure
+    // mode worth guarding is a half-revert that reinstates the npm install
+    // alongside the workspace one and re-resolves `@cipherstash/eql` from the
+    // registry — the emit/store skew the absorption existed to make
+    // unrepresentable, and one that would run GREEN in the credentialed job.
+    //
+    // Asserted against `tasks.toml`, which is where the `npm ci` actually was —
+    // step 1 of `[setup]`. An earlier draft of this test scanned the workflow
+    // body instead, which never contained the string: the workflow says
+    // `run: mise run setup` and delegates, so the guard would have stayed green
+    // through exactly the revert it names. That is the same defect
+    // `executablePart` exists to prevent one file over — a check pointed at
+    // prose rather than at the thing.
+    //
+    // And COMMENTS ARE STRIPPED, for the other half of that same lesson: this
+    // assertion failed on its first run against the file's own comments
+    // explaining why `npm ci` is gone. A substring search cannot tell a
+    // reinstated command from a sentence about one. Whole-line `#` only, which
+    // is how every comment in this file is written; a shell comment inside a
+    // `"""` block would be stripped too, and none of these tasks has one.
+    const tasks = readFileSync(
+      join(packageRoot, 'integration-tests/tasks.toml'),
+      'utf8',
+    ).replace(/^[ \t]*#.*$/gm, '')
+
+    // Floor on the read: a renamed or moved file, or a strip that ate the whole
+    // file, would make the assertions below vacuous. `[setup]` is the table the
+    // install lives in.
+    expect(tasks).toContain('[setup]')
+    expect(tasks).not.toMatch(/npm ci/)
+    expect(tasks).toMatch(/pnpm install --frozen-lockfile/)
+  })
+
   it('is invoked by at least one root workflow', () => {
     expect(
       suiteRunners.map((workflow) => workflow.name),
@@ -136,10 +265,9 @@ describe('integration-tests suite runs in CI', () => {
     })
 
     it(`${name} provisions the database and both EQL versions`, () => {
-      // `mise setup` is the whole preamble: `npm ci` (the suite is not a pnpm
-      // workspace member, so it has no node_modules otherwise), docker compose
-      // up, the EQL **v2** bundle from a GitHub release, and EQL **v3** from
-      // the pinned `@cipherstash/eql`. Both versions matter —
+      // `mise setup` is the whole preamble: the workspace install, docker
+      // compose up, the EQL **v2** bundle from a GitHub release, and EQL **v3**
+      // built from the in-tree `@cipherstash/eql`. Both versions matter —
       // `tests/postgres.test.ts` needs `eql_v2_encrypted`, and
       // `tests/postgres-v3.test.ts` needs the `eql_v3_*` domains. Nothing
       // else in this repo installs v2, so dropping this step fails half the

@@ -10,6 +10,7 @@
 require('dotenv/config')
 const { newClient, encrypt, decrypt } = require('@cipherstash/protect-ffi')
 
+/** @type {import('@cipherstash/protect-ffi').EncryptConfig} */
 const encryptConfig = {
   v: 1,
   tables: {

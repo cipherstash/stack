@@ -14,17 +14,17 @@ name: Integration — protect-ffi (native + WASM)
 # `packages/protect-ffi/src/integrationSuiteCi.test.ts` asserts this file (or a
 # successor) still invokes it.
 #
-# WHY THERE IS npm IN A pnpm REPO. `integration-tests/` is deliberately NOT a
-# pnpm workspace member: it pins `@cipherstash/auth ^0.39.0`, `vitest ^3.1.3`
-# and `@cipherstash/eql 3.0.2` independently of the repo catalog, which is part
-# of what it tests — the suite proves the published FFI surface works for a
-# consumer resolving its own dependency tree, not the one the monorepo happens
-# to hoist. So it keeps its own `package-lock.json` and `mise run setup` installs
-# it with `npm ci`. That is not a supply-chain regression: `npm ci` installs the
-# lockfile exactly (it fails rather than resolving anything new) and verifies
-# every tarball against the `integrity` hash recorded there, and the registry is
-# npmjs. Absorbing the suite into the pnpm workspace is a follow-up that changes
-# those pins, and changed pins can only be validated by a credentialed run.
+# WHERE THE SUITE'S DEPENDENCIES COME FROM. `integration-tests/` is a pnpm
+# workspace member (CIP-3744) and installs with the repo's own
+# `pnpm install --frozen-lockfile`, like everything else here. It used to sit
+# outside the workspace with its own `package-lock.json` and an `npm ci`, pinning
+# `@cipherstash/auth ^0.39.0`, `vitest ^3.1.3` and `@cipherstash/eql 3.0.2`
+# against the repo catalog. That last pin was the point: `tests/postgres-v3.test.ts`
+# queried SQL installed from the PUBLISHED EQL bundle while the payloads under
+# test were emitted by the in-tree `eql-bindings`, so the two halves of EQL could
+# disagree — and would have disagreed in a database, not in CI. `@cipherstash/eql`
+# now resolves `workspace:^`, and `@cipherstash/auth` and `vitest` take
+# `catalog:repo`.
 #
 # Separate from `tests.yml` on purpose, and separate from `tests-rust.yml`: this
 # needs CipherStash credentials AND Docker, and the suites THROW rather than
@@ -36,8 +36,24 @@ on:
     branches: [main]
     paths:
       # The suite itself: tests, fixtures, its compose file, its `tasks.toml`
-      # and its lockfile.
+      # and its manifest.
       - 'packages/protect-ffi/integration-tests/**'
+      # The suite's dependency versions, now that it is a pnpm workspace member:
+      # `@cipherstash/auth`, `vitest` and `typescript` reach it through
+      # `catalog:repo`, so a catalog bump changes what this job runs while
+      # editing no file under the suite. Same entry, same reason, as the other
+      # integration workflows — and like them, `pnpm-lock.yaml` is deliberately
+      # NOT listed: it moves on roughly every dependency bump in the monorepo,
+      # and a catalog version cannot reach it without this file changing first.
+      - 'pnpm-workspace.yaml'
+      # The EQL v3 SQL this suite installs into its database, which
+      # `tests/postgres-v3.test.ts` then queries. It came from a published
+      # tarball until the suite joined the workspace; it now resolves
+      # `workspace:^`, which is what makes it an input to this job rather than a
+      # pinned external. Not narrowed to `sql/` — `tasks.toml` reads the bundle
+      # through `@cipherstash/eql/sql`, i.e. through the package's tsup build,
+      # so the build config and its asset copier are inputs too.
+      - 'packages/eql/packages/eql/**'
       # The Rust the suite round-trips every payload through, and the manifests
       # that change what cargo builds without touching a .rs file. Matching the
       # filter in tests-rust.yml.
@@ -81,6 +97,8 @@ on:
     # on `main` — the exact inversion of what you want.
     paths:
       - 'packages/protect-ffi/integration-tests/**'
+      - 'pnpm-workspace.yaml'
+      - 'packages/eql/packages/eql/**'
       - 'packages/protect-ffi/crates/**'
       - 'packages/protect-ffi/Cargo.toml'
       - 'packages/protect-ffi/Cargo.lock'
@@ -185,11 +203,9 @@ jobs:
       # Not `./.github/actions/integration-setup`, and the difference is
       # deliberate: that action builds the `stash` CLI because the stack
       # integration harness installs EQL v3 by shelling out to it. This suite
-      # installs EQL from its own pinned `@cipherstash/eql` instead (see
-      # `eql:v3:install` in integration-tests/tasks.toml), so the CLI build
-      # would be minutes of runner time for nothing — and it pins Node 24,
-      # where this suite's `npm ci` is verified against the npm that ships with
-      # 22 (see the Node step below).
+      # reads the SQL straight out of the workspace `@cipherstash/eql` instead
+      # (see `eql:v3:install` in integration-tests/tasks.toml), so the CLI build
+      # would be minutes of runner time for nothing.
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
@@ -198,14 +214,14 @@ jobs:
         with:
           run_install: false
 
-      # Node 22, not the 24 the other integration jobs use. `integration-tests`
-      # is installed with `npm ci` against a lockfile whose `".."` entry
-      # records an OLDER manifest of this very package (protect-ffi 0.29.0, and
-      # different devDependencies) — a link entry npm re-reads from disk. That
-      # resolves cleanly under npm 10, which ships with Node 22 and is what the
-      # lockfile was last verified against; npm 11's stricter
-      # manifest-vs-lockfile agreement check is an unforced risk for a job whose
-      # point is the encryption coverage, not the installer.
+      # Node 22, not the 24 `.github/actions/integration-setup` defaults to.
+      # This used to be an npm-version argument — the suite installed with
+      # `npm ci` against a lockfile npm 11 reads more strictly than npm 10 — and
+      # that argument died with the lockfile. What is left is the plainer one:
+      # 22 is `engines`' floor and what every other workflow in this repo pins,
+      # so it is the version this job's Rust binding and WASM artifacts are
+      # built and cached against everywhere else. 24 is covered for the JS
+      # surface by `tests.yml`'s matrix.
       - uses: actions/setup-node@v6.5.0
         with:
           node-version: 22
@@ -226,12 +242,18 @@ jobs:
       - name: Install node-gyp
         run: npm install -g node-gyp
 
-      # The workspace install, needed before the binding build: `build-ffi-binding`
-      # runs `pnpm --filter @cipherstash/protect-ffi run build`, i.e. the repo's
-      # tsc and neon. It is also what puts `@neon-rs/load` in
-      # packages/protect-ffi/node_modules — the suite reaches the package by
-      # symlink, so the parent's own dependencies come from pnpm, not from
-      # `npm ci`.
+      # The one install for this job, and it now covers the suite too: since
+      # CIP-3744 `integration-tests` is a pnpm workspace member, so this is what
+      # puts its `vitest`, `pg` and `dotenv` on disk and symlinks
+      # `@cipherstash/protect-ffi` and `@cipherstash/eql` to the packages in
+      # this tree. It is also required before the binding build —
+      # `build-ffi-binding` runs `pnpm --filter @cipherstash/protect-ffi run
+      # build` — and is what puts `@neon-rs/load` in
+      # packages/protect-ffi/node_modules.
+      #
+      # `mise run setup` below runs the same command again, deliberately: the
+      # task has to stand on its own for a contributor running it locally. On
+      # the runner it is a no-op.
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -295,9 +317,10 @@ jobs:
           working_directory: packages/protect-ffi
 
       # One task, four things the suite cannot run without (see
-      # integration-tests/tasks.toml): `npm ci` for the suite's own dependency
-      # tree, `docker compose up` for Postgres, the EQL **v2** bundle from a
-      # GitHub release, and EQL **v3** from the pinned `@cipherstash/eql`.
+      # integration-tests/tasks.toml): `pnpm install --frozen-lockfile` (a
+      # no-op here — the step above already ran it), `docker compose up` for
+      # Postgres, the EQL **v2** bundle from a GitHub release, and EQL **v3**
+      # built from the in-tree `@cipherstash/eql`.
       #
       # BOTH EQL versions are required and nothing else in this repo installs
       # v2: `tests/postgres.test.ts` creates `eql_v2_encrypted` columns and
@@ -313,23 +336,24 @@ jobs:
       # `integration-db`'s per-job project names deliberately do not produce.
       # The fixed host port (5436) that comes with it cannot collide with the
       # shared stacks, which publish on ephemeral ports.
-      - name: Provision the suite (npm ci, Postgres, EQL v2 + v3)
+      - name: Provision the suite (Postgres, EQL v2 + v3)
         working-directory: packages/protect-ffi
         run: mise run setup
 
       # vitest directly rather than `mise run test:integration:all`, because
       # that task's first two steps are the debug cargo build and a wasm-pack
       # rebuild that `build-ffi-binding` has already done (above). What it runs
-      # after those is exactly this: `npx vitest`, the whole directory, INCLUDING
+      # after those is exactly this: vitest over the whole directory, INCLUDING
       # `tests/lock-context.test.ts`. Its sibling `test:integration` excludes
       # that file; upstream CI ran `:all` for a reason, and an invocation that
       # inherits the exclusion silently drops the identity-aware coverage.
       #
-      # `npx` resolves the vitest 3 pinned in integration-tests/package-lock.json,
-      # not the workspace catalog's — that pin is part of what the suite fixes.
+      # `pnpm exec`, which resolves the catalog `vitest` the workspace install
+      # put in this package's `node_modules/.bin`. It was `npx` against the
+      # suite's own `package-lock.json` until CIP-3744 retired that lockfile.
       - name: Integration suite (live ZeroKMS + Postgres, native and WASM)
         working-directory: packages/protect-ffi/integration-tests
-        run: npx vitest run
+        run: pnpm exec vitest run
 
       # `-v` drops the volume too. The runner is ephemeral, so this is not about
       # reclaiming it: it is so a re-run on a warm runner cannot inherit a

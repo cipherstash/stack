@@ -45,20 +45,30 @@ import { describe, expect, test } from 'vitest'
 describe('OidcFederation strategy contract', () => {
   test('the published strategy constructs and exposes getToken', () => {
     // Exercises the real `@cipherstash/auth` factory + signature, not a stand-in.
-    // `OidcFederationStrategy.create(region, workspaceId, getJwt)` takes the
-    // region (`<region>.<provider>`) and workspace id as separate args. Both are
-    // arbitrary here — `.create` does no I/O, so this stays offline; the
-    // federation call would only happen on `getToken()`.
-    const strategy = OidcFederationStrategy.create(
-      'ap-southeast-2.aws',
-      'ZVATKW3VHMFG27DY',
+    // `OidcFederationStrategy.create(workspaceCrn, getJwt)` takes the whole CRN
+    // and parses the region and workspace id out of it — 0.39 and earlier took
+    // those two as separate arguments. The CRN is arbitrary here: `.create` does
+    // no I/O, so this stays offline; the federation call would only happen on
+    // `getToken()`.
+    const created = OidcFederationStrategy.create(
+      'crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY',
       () => 'third-party.oidc.jwt',
     )
+
+    // Since 0.41 `create` returns a `Result<OidcFederationStrategy, AuthFailure>`.
+    // Asserted rather than unwrapped blind: a CRN this factory rejects would
+    // otherwise surface as "`getToken` is not a function" below, which reads as
+    // a broken contract rather than a bad argument.
+    if (created.failure) {
+      throw new Error(
+        `OidcFederationStrategy.create failed (${created.failure.type}): ${created.failure.error.message}`,
+      )
+    }
 
     // Compile-time: the wasm strategy is structurally assignable to the FFI's
     // `AuthStrategy`. Runtime: `getToken` — the only member the FFI calls — is
     // callable on that contract-typed handle.
-    const asStrategy: AuthStrategy = strategy
+    const asStrategy: AuthStrategy = created.data
     expect(typeof asStrategy.getToken).toBe('function')
   })
 })

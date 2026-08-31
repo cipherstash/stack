@@ -1,7 +1,20 @@
 {
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    // The suite's two `.cjs` fixtures are real call sites of the same APIs the
+    // `.ts` tests use — `event-loop-exit-jsbacked.cjs` constructs an
+    // `AccessKeyStrategy` and hands it to `newClient`, and it was one of the
+    // four sites the `@cipherstash/auth` 0.42 bump broke. Without `checkJs` it
+    // is parsed and ignored, so the only thing that would have caught the break
+    // is a live run of the credentialed, path-filtered integration job.
+    //
+    // The fixtures need one JSDoc annotation each for this to pass: a plain
+    // object literal widens `cast_as: 'string'` to `string`, which does not
+    // satisfy `EncryptConfig`'s `CastAs` union. That is the annotation at the
+    // top of each file, not a workaround to remove.
+    "allowJs": true,
+    "checkJs": true
   },
-  "include": ["tests/**/*.ts"]
+  "include": ["tests/**/*.ts", "tests/**/*.cjs"]
 }

@@ -116,15 +116,24 @@ describe('frozen-publisher runtime pins', () => {
   })
 
   it('does not fault a devDependency, which no consumer installs', () => {
-    // `packages/stack` declares `@cipherstash/eql` under `devDependencies`. It
-    // is the case that proves the narrowing above is a decision rather than an
-    // oversight: if this ever appears in the finding list, RUNTIME_TABLES has
-    // drifted from release-gate's INSTALLED_TABLES.
+    // `packages/stack` and the protect-ffi integration suite both declare
+    // `@cipherstash/eql` under `devDependencies`. They are the cases that prove
+    // the narrowing above is a decision rather than an oversight: if either
+    // appears in the finding list, RUNTIME_TABLES has drifted from
+    // release-gate's INSTALLED_TABLES.
+    //
+    // The two are exempt for DIFFERENT reasons, and the list is spelled out so
+    // adding a third forces someone to say which applies. `@cipherstash/stack`
+    // is published, and `devDependencies` simply are not installed by a
+    // consumer. `@cipherstash/ffi-integration-tests` is private and packs into
+    // no tarball at all — `consumerPrivate` already excuses it one filter up,
+    // so it would not be a finding even in a runtime table.
     const dev = frozenDeclarations().filter(
       (d) =>
         d.dependency === '@cipherstash/eql' && d.table === 'devDependencies',
     )
-    expect(dev.map(declarationId)).toEqual([
+    expect(dev.map(declarationId).sort()).toEqual([
+      '@cipherstash/ffi-integration-tests [devDependencies] :: @cipherstash/eql',
       '@cipherstash/stack [devDependencies] :: @cipherstash/eql',
     ])
     expect(RUNTIME_TABLES.has('devDependencies')).toBe(false)

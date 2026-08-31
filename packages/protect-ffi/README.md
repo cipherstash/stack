@@ -325,6 +325,8 @@ protect-ffi/
 Integration tests live in the `./integration-tests` directory.
 These tests use the local build of Rust and JavaScript artifacts to test `@cipherstash/protect-ffi` as API consumers would.
 
+The directory is its own private pnpm workspace member (`@cipherstash/ffi-integration-tests`), so `pnpm install` at the repo root installs it, and both `@cipherstash/protect-ffi` and `@cipherstash/eql` resolve to the packages in this tree rather than to published tarballs. It has **no `test` script** on purpose — root `pnpm test` would otherwise try to run a suite that needs Docker and live credentials. Use the `mise` tasks below.
+
 These tests rely on:
 
 - CipherStash to be configured (via `.toml` config or environment variables), and

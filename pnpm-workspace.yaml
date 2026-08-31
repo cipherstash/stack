@@ -11,6 +11,19 @@ packages:
   # package.json by design — the private @cipherstash/eql-workspace manifest was
   # deleted so this glob contributes exactly one member.
   - packages/eql/packages/*
+  # The protect-ffi live integration suite. Nested a level deeper than
+  # `packages/*` reaches, like the two entries above, and named literally
+  # rather than globbed because `packages/protect-ffi/*` would also select
+  # `crates/`, `docs/`, `lib/`, `scripts/` and `src/` — directories with no
+  # package.json, which pnpm rejects rather than skips.
+  #
+  # It kept its own `package-lock.json` and installed with `npm ci` until
+  # CIP-3744. That was the last registry pin of `@cipherstash/eql` in the tree:
+  # the suite's `tests/postgres-v3.test.ts` queried SQL installed from the
+  # published bundle while the payloads under test came from the in-tree
+  # `eql-bindings` — exactly the skew the subtree import exists to make
+  # unrepresentable.
+  - packages/protect-ffi/integration-tests
   - examples/*
   - e2e
 
@@ -40,6 +53,13 @@ catalogs:
     tsx: 4.23.12
     typescript: 5.9.3
     vitest: 3.2.7
+    # Must track `vitest` exactly: the coverage provider is versioned in
+    # lockstep with the runner, and vitest refuses to start against a mismatched
+    # one ("Vitest failed to load @vitest/coverage-v8"). Catalogued for the same
+    # reason the auth bindings are, and enforced the same way — by a test rather
+    # than by this comment: see `e2e/tests/supply-chain.e2e.test.ts`. Dependabot
+    # groups both under `dev-dependencies` and will otherwise move one alone.
+    '@vitest/coverage-v8': 3.2.7
   security:
     '@clerk/nextjs': 7.7.7
     next: 15.5.23
@@ -157,10 +177,11 @@ blockExoticSubdeps: true
 #
 # @cipherstash/eql was listed here until the encrypt-query-language subtree
 # landed. It is now a workspace package, so no pnpm install ever resolves it
-# from the registry and the entry became dead config. Note this stays true even
-# though packages/protect-ffi/integration-tests still pins it by version:
-# that directory is not a workspace member and installs with `npm ci`, and
-# minimumReleaseAge is a pnpm setting that never applied to it.
+# from the registry and the entry became dead config. The last holdout was
+# packages/protect-ffi/integration-tests, which pinned it by version and
+# installed with `npm ci` — outside pnpm entirely, so minimumReleaseAge never
+# applied there either. That directory is a workspace member as of CIP-3744 and
+# resolves `workspace:^`, so there is now nothing in the tree that could.
 minimumReleaseAgeExclude:
   - '@prisma-next/*'
   - '@prisma/orm-*'

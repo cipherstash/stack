@@ -82,7 +82,7 @@ If these variables are missing, tests that require live encryption will fail or 
 - `packages/nextjs`: Next.js helpers and Clerk integration (`./clerk` export)
 - `packages/utils`: Shared config (`utils/config`) and logger (`utils/logger`)
 - `packages/bench`: Performance / index-engagement benchmarks (private, not published)
-- `packages/protect-ffi`: Native FFI bindings to the CipherStash Client SDK (`@cipherstash/protect-ffi`) — the Rust core that `packages/stack` encrypts and decrypts through, absorbed from `cipherstash/protectjs-ffi`. Contains a **nested Cargo workspace** (`crates/`) and six per-platform binary packages under `platforms/*`, each published as `@cipherstash/protect-ffi-<platform>` and linked here via `workspace:*`. See the "Working on protect-ffi" notes below before touching it — its default `test` and `build` are deliberately Rust-free.
+- `packages/protect-ffi`: Native FFI bindings to the CipherStash Client SDK (`@cipherstash/protect-ffi`) — the Rust core that `packages/stack` encrypts and decrypts through, absorbed from `cipherstash/protectjs-ffi`. Contains a **nested Cargo workspace** (`crates/`) and six per-platform binary packages under `platforms/*`, each published as `@cipherstash/protect-ffi-<platform>` and linked here via `workspace:*`. Also holds the repo's live FFI integration suite at `integration-tests/` — a private workspace member (`@cipherstash/ffi-integration-tests`) enrolled by its own literal entry in `pnpm-workspace.yaml`, needing Docker and credentials, and deliberately carrying **no `test` script** so `pnpm test` cannot reach it. See the "Working on protect-ffi" notes below before touching it — its default `test` and `build` are deliberately Rust-free.
 - `packages/eql`: The Encrypt Query Language subtree — the SQL bundle that stores and queries encrypted payloads — absorbed from `cipherstash/encrypt-query-language`. **The directory is the subtree root, not the package.** It was imported at a *verbatim prefix* so its repo-root-relative paths (mise tasks, `Doxyfile`, `sync-generated.mjs`) keep resolving, which puts the npm package `@cipherstash/eql` two levels down at `packages/eql/packages/eql` — the same shape as `packages/protect-ffi/platforms/*`, and enrolled the same way, by an explicit `packages/eql/packages/*` glob in `pnpm-workspace.yaml`. The subtree root deliberately carries no `package.json`. Also contains a **nested Cargo workspace** at `packages/eql/crates/` (`eql-bindings`, published in lockstep with the npm package, plus `eql-domains` / `eql-codegen` / `eql-tests-macros`, which are not), a SQLx test crate at `packages/eql/tests/sqlx`, an ~900-line `mise.toml` task surface, its own `AGENTS.md`, and `docs/`. See the "Working on EQL" notes below before touching it.
 - `e2e/*`: Cross-package end-to-end tests (package managers, supply chain, Prisma example README)
 - `examples/*`: Working apps (basic, prisma, supabase-worker)
@@ -213,17 +213,36 @@ several of those paths are exercised at all. It needs three things a normal
 `pnpm test` does not have: **Docker**, **CipherStash credentials**, and **both
 EQL versions installed** in the database.
 
-- **It is not a pnpm workspace member.** `pnpm-workspace.yaml` globs
-  `packages/*` (one level) plus `packages/protect-ffi/platforms/*`, so this
-  directory is invisible to pnpm and has its own `package-lock.json` with pins
-  that deliberately differ from the repo catalog (`@cipherstash/auth ^0.39.0`,
-  `vitest ^3.1.3`, `@cipherstash/eql 3.0.2`). `npm ci` installs it. Absorbing it
-  into the workspace is a follow-up, not a tidy-up: it changes those pins, and
-  only a credentialed run can prove the change is neutral.
+- **It is a pnpm workspace member, and `pnpm test` must never reach it.** Named
+  literally in `pnpm-workspace.yaml` (the `packages/*` glob is one level deep and
+  stops short of it), so its dependencies come from the repo lockfile:
+  `@cipherstash/eql` at `workspace:^`, `@cipherstash/protect-ffi` at
+  `workspace:*`, `@cipherstash/auth` / `vitest` / `typescript` from
+  `catalog:repo`. It had its own `package-lock.json` and an `npm ci` until
+  CIP-3744; the pin that mattered was `@cipherstash/eql 3.0.2`, the last place in
+  the tree where the SQL that STORES a payload could disagree with the Rust that
+  EMITS it — and it would have disagreed in a database, not in CI.
+
+  The cost of membership: root `pnpm test` is `turbo test --filter
+  './packages/**'`, which now reaches this package. It is kept out by **naming no
+  live script after a turbo task** — the suite's runners are `vitest:live` and
+  `vitest:live:coverage`, which `turbo.json` knows nothing about. `test` is the
+  obvious trap and `test:integration` is the less obvious one (a real turbo task,
+  invoked by four integration workflows — all `--filter`ed today, so an
+  unfiltered `turbo run test:integration` is what would bite).
+  `src/integrationSuiteCi.test.ts` derives the forbidden set from `turbo.json`
+  rather than listing it, so a task added there tomorrow is covered.
+
+  `typecheck` is the deliberate exception: it *should* run under `turbo run
+  typecheck`, and does, from `tests.yml`, on every PR. It needs no credentials
+  and no database, and its tsconfig sets `checkJs` so the suite's two `.cjs`
+  fixtures are compiled too — one of them is a real `AccessKeyStrategy` call
+  site, and a `tests/**/*.ts` scope would leave it checked by nothing but the
+  path-filtered credentialed job.
 - **Run it locally** from `packages/protect-ffi`:
 
   ```bash
-  mise run setup                 # npm ci, docker compose up, EQL v2 + v3
+  mise run setup                 # pnpm install, docker compose up, EQL v2 + v3
   mise run test:integration:all  # includes tests/lock-context.test.ts
   ```
 
@@ -252,6 +271,12 @@ EQL versions installed** in the database.
   `eql_v2.add_encrypted_constraint`) while `tests/postgres-v3.test.ts` needs the
   `eql_v3_*` domains. Skip either and half the suite fails on missing SQL
   functions.
+- **`eql:v3:install` builds `@cipherstash/eql` first, and has to.** The task
+  reads the bundle through `@cipherstash/eql/sql`, which the package's `exports`
+  map resolves to `dist/sql.js` — a tsup output. That was free while `npm ci`
+  unpacked a published tarball with `dist/` already in it; from the workspace it
+  is a build. Without it the task dies on `ERR_MODULE_NOT_FOUND`, which reads as
+  a broken dependency rather than an unbuilt one.
 - **`src/integrationSuiteCi.test.ts` asserts a root workflow still runs it.**
   The suite ran on every upstream PR and then ran *nowhere* for the whole
   absorption, because the workflow that drove it was deposited under
@@ -457,10 +482,13 @@ monorepo, which is where the silent failures are.
   ignored, so it is the one place a workspace-wide pin can be written and take
   effect). It exits **2**, not 0, when its own configuration has gone stale —
   a source it could not read, a declaration it expected and no longer sees, or
-  an exemption excusing nothing. There is one exemption today
-  (`packages/protect-ffi/integration-tests`, which installs with `npm ci` and
-  cannot take a `workspace:` specifier); adding another means writing the reason
-  down.
+  an exemption excusing nothing. There are **no exemptions today**: the only one
+  there had ever been (`packages/protect-ffi/integration-tests`, which installed
+  with `npm ci` and could not take a `workspace:` specifier) was retired when
+  that directory joined the pnpm workspace, and the guard's own staleness rule —
+  keyed on "excuses nothing", not "names nothing" — is what forced it out in the
+  same commit rather than leaving a standing permission behind. Adding one means
+  writing the reason down.
   It also reads the Cargo redirect tables — `[patch.*]` (including
   `[patch."https://…"]` and the dotted `[patch.crates-io.eql-bindings]` form)
   and `[replace]` — plus **`.cargo/config.toml`**, because cargo honours a

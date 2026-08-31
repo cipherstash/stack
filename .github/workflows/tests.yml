@@ -217,6 +217,26 @@ jobs:
       - name: Typecheck (e2e)
         run: pnpm exec turbo run typecheck --filter @cipherstash/e2e
 
+      # The protect-ffi live integration suite, compiled but NOT run here — it
+      # needs Docker and CipherStash credentials, so it runs in
+      # integration-protect-ffi.yml behind a `paths:` filter.
+      #
+      # Which is exactly why this step exists. The suite's `tsc` used to ride
+      # along on its own `npm test`; CI invoked vitest directly, so it compiled
+      # nowhere, and the credentialed job is path-filtered — a repo-wide change
+      # that broke the suite's types (an `@cipherstash/auth` catalog bump moving
+      # `AccessKeyStrategy.create` to a `Result`, say) would not have started
+      # anything that noticed. Cheap: `tsc --noEmit` over the suite, no
+      # credentials, no database.
+      #
+      # That includes the two `.cjs` fixtures — the tsconfig sets `checkJs` and
+      # globs them deliberately. One of them is a real `AccessKeyStrategy` call
+      # site and was among the four the auth bump broke, so a `tests/**/*.ts`
+      # scope would have left this step green over it.
+      - name: Typecheck (protect-ffi integration suite)
+        run: >
+          pnpm exec turbo run typecheck --filter @cipherstash/ffi-integration-tests
+
       # Everything else typechecks against SOURCE. This one reads the emitted
       # `.d.ts`, which is what customers consume — and where typed `encryptQuery`
       # sat broken for every column through the whole rc series, because `tsc`
