@@ -61,9 +61,9 @@ catalogs:
     # groups both under `dev-dependencies` and will otherwise move one alone.
     '@vitest/coverage-v8': 3.2.7
   security:
-    '@clerk/nextjs': 7.7.7
+    '@clerk/nextjs': 7.8.0
     next: 15.5.23
-    vite: 8.2.1
+    vite: 8.2.2
 
 # Security overrides for Dependabot alerts on transitive deps that Dependabot
 # cannot PR against (it only PRs direct dependencies). Each selector is scoped
