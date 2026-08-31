@@ -44,6 +44,23 @@
 //! unwind build — wasm32-wasip1 aborts on panic. Statuses are the only
 //! detail leaked.
 //!
+//! A null *or empty* AAD is rejected on every path — value, record and term
+//! alike — with `STATUS_ENCODING`: sealing under no context makes
+//! ciphertexts transplantable between fields, so it is never a default the
+//! guest supplies for a caller who omitted one. "Empty" is
+//! [`stack_encrypt::is_degenerate_aad`], so shapes that are not literally
+//! zero-length (the PAE of an empty list, for instance) are rejected too.
+//!
+//! One difference from the vitaminc guest, deliberate: where `vc_encrypt`
+//! decodes its input *before* looking up the handle — so garbage bytes read
+//! as `STATUS_ENCODING` even for an unknown handle — the exports here look
+//! up the handle first, because decoding lives inside [`crate::ops`] so that
+//! the ops can be driven (and natively tested) as whole operations. The
+//! observable difference is which status an unknown handle *and* malformed
+//! input reports; `STATUS_BAD_HANDLE` is the more actionable of the two, and
+//! the ordering leaks nothing either way — the handle table is consulted
+//! with a value the caller already supplied.
+//!
 //! Wasm modules are single-threaded; the host must serialize calls into one
 //! instance.
 
@@ -199,6 +216,14 @@ fn cipher_init(decoded: vitaminc_aead_value::FfiValue) -> Result<u32, u32> {
 
     // One request at a time: the host import is synchronous, so concurrency
     // would only interleave nothing; keep the executor honest about it.
+    //
+    // `max_keys_per_req` stays at the client default (500). That is what
+    // bounds "one ZeroKMS call": a batch is assembled once, then
+    // `Client::send_chunked` splits it into sequential requests of at most
+    // that many keys — so a 1200-leaf record batch is three calls, not one.
+    // Raising it here would trade a documented, server-friendly request size
+    // for a claim the server need not honour, so the bound is kept and the
+    // docs say 500 rather than "one".
     let opts = ClientOpts::new(config.endpoint)
         .with_max_concurrent_reqs(1)
         .map_err(|_| STATUS_INTERNAL)?;
@@ -230,9 +255,14 @@ pub extern "C" fn se_cipher_free(handle: u32) {
 }
 
 /// Encrypt an FFI-codec-encoded value tree under the handle's cipher,
-/// binding `aad`; one batched `generate-data-key` call however many leaves.
-/// Output: packed pointer to a codec-encoded ciphertext tree whose leaves
-/// are the frozen `SealedValue` byte encoding.
+/// binding `aad`; every leaf is sealed from one batched key request,
+/// dispatched as one `generate-data-key` call per 500 keyed leaves (see
+/// [`cipher_init`] for where that bound comes from). Output: packed pointer
+/// to a codec-encoded ciphertext tree whose leaves are the frozen
+/// `SealedValue` byte encoding.
+///
+/// `aad` must be non-empty (`STATUS_ENCODING` otherwise) — see this module's
+/// hostile-input notes.
 ///
 /// # Safety
 ///
@@ -269,9 +299,13 @@ pub unsafe extern "C" fn se_encrypt_element(
 }
 
 /// Decrypt a codec-encoded ciphertext tree back into a codec-encoded value
-/// tree; one batched `retrieve-data-key` call. The output buffer contains
-/// **plaintext** — the host must copy it out and immediately release it
-/// with [`se_dealloc`] (which wipes it).
+/// tree; one batched key request, dispatched as one `retrieve-data-key` call
+/// per 500 keyed leaves. The output buffer contains **plaintext** — the host
+/// must copy it out and immediately release it with [`se_dealloc`] (which
+/// wipes it).
+///
+/// `aad` must be non-empty, and must be the one the ciphertext was sealed
+/// under.
 ///
 /// # Safety
 ///
@@ -375,8 +409,10 @@ pub unsafe extern "C" fn se_term(
 
 /// Encrypt a record (or a batch) per a plan — the runtime form of
 /// `#[derive(EncryptFrom)]`; see [`ops::encrypt_record`] for the source,
-/// plan, and result encodings. One `generate-data-key` call per invocation
-/// regardless of row count; terms derive locally.
+/// plan, and result encodings. All rows and fields seal from **one** batched
+/// key request regardless of row count — dispatched as one
+/// `generate-data-key` call per 500 keyed leaves, sequentially — and terms
+/// derive locally with no ZeroKMS traffic at all.
 ///
 /// # Safety
 ///
@@ -401,9 +437,10 @@ pub unsafe extern "C" fn se_encrypt_record(
 }
 
 /// Decrypt a record (or a batch) produced by [`se_encrypt_record`] under
-/// the same plan; only the `"c"` outputs participate. One
-/// `retrieve-data-key` call per invocation. The output buffer contains
-/// **plaintext** — same host obligations as [`se_decrypt`].
+/// the same plan; only the `"c"` outputs participate. One batched key
+/// request per invocation, dispatched as one `retrieve-data-key` call per
+/// 500 keyed leaves. The output buffer contains **plaintext** — same host
+/// obligations as [`se_decrypt`].
 ///
 /// # Safety
 ///

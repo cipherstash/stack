@@ -309,6 +309,25 @@ key source proving one ZeroKMS call per record batch), and the release
 `.wasm` builds with an import surface of exactly WASI +
 `cipherstash_transport` (`mise run wasm:guest:build` / `wasm:guest:test`).
 
+Two things worth stating plainly, because they are easy to read the wrong
+way:
+
+- **Batching is one *batch*, not always one *call*.** All rows and fields
+  of an invocation are merged into a single pending batch, which the client
+  then splits into one ZeroKMS request per `ClientOpts::max_keys_per_req`
+  keyed leaves — 500 by default, sent sequentially (the guest pins
+  `max_concurrent_reqs` to 1). So "one `generate_keys` call per batch" is
+  exact up to 500 leaves and "one call per 500" past it. The default is
+  kept rather than raised: it is the server-friendly request size, and a
+  larger one is a promise ZeroKMS need not honour.
+- **Record `"c"` leaves carry the aead-value *tagged* plaintext encoding**
+  (`[type tag] ++ payload`), because that tag table is the cross-language
+  contract Go, Node and this guest share. A Rust `#[derive(EncryptFrom)]`
+  over a plain primitive seals untagged bytes instead, so a plain-primitive
+  Rust derive and a Go plan do **not** interchange ciphertexts for the same
+  field until the Rust side uses aead-value's tagged types. By design; a
+  separate follow-up, not a defect in either side.
+
 The plan as written before the work:
 
 Location: `bindings/go/stackencrypt/guest/` (mirrors vitaminc's layout;

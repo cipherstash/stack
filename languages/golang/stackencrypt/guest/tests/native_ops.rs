@@ -283,6 +283,47 @@ fn wrong_aad_and_malformed_inputs_map_to_statuses() {
     );
 }
 
+/// The AAD is what makes a ciphertext belong to a field. Sealing under
+/// nothing would make ciphertexts transplantable between fields, so the value
+/// paths refuse it exactly as the record and term paths do — and refuse it
+/// *before* minting a key, so a caller that omitted the AAD cannot spend a
+/// ZeroKMS call discovering it.
+#[test]
+fn an_empty_or_degenerate_aad_is_refused_on_the_value_paths() {
+    let cipher = cipher();
+    let value = encode(s("x"));
+
+    // A real ciphertext to try to open with a missing AAD.
+    let ct = block_on(ops::encrypt_value(&cipher, &value, b"ctx", false)).expect("encrypt");
+    let before = cipher.kms().generate_calls.load(Ordering::SeqCst);
+
+    // `pae([])` — eight zero bytes — is not byte-empty but carries nothing,
+    // and is what `None` and `0u64` encode to. Both forms must be refused.
+    for (label, aad) in [
+        ("empty", b"".as_slice()),
+        ("pae of an empty list", &[0u8; 8][..]),
+    ] {
+        for as_element in [false, true] {
+            assert_eq!(
+                block_on(ops::encrypt_value(&cipher, &value, aad, as_element)),
+                Err(STATUS_ENCODING),
+                "encrypt with a {label} aad (element: {as_element})"
+            );
+            assert_eq!(
+                block_on(ops::decrypt_value(&cipher, &ct, aad, as_element)),
+                Err(STATUS_ENCODING),
+                "decrypt with a {label} aad (element: {as_element})"
+            );
+        }
+    }
+
+    assert_eq!(
+        cipher.kms().generate_calls.load(Ordering::SeqCst),
+        before,
+        "no data key may be minted for a rejected call"
+    );
+}
+
 // =============================================================================
 // Terms
 // =============================================================================
@@ -345,6 +386,8 @@ fn guest_terms_match_the_native_sem_derivations() {
     ))
     .expect("bytes term");
     assert_ne!(eq_text, eq_bytes);
+    let native_text = block_on(cipher.equality_term("ab".to_string(), "f")).expect("native");
+    assert_eq!(eq_text, native_text.as_bytes());
     let native_bytes =
         block_on(cipher.equality_term(Protected::new(b"ab".to_vec()), "f")).expect("native");
     assert_eq!(eq_bytes, native_bytes.as_bytes());
@@ -561,4 +604,43 @@ fn record_shape_violations_are_encoding_errors() {
 
     // No data keys were minted for any rejected call.
     assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 0);
+}
+
+/// A context that is not byte-empty but still carries nothing — the PAE of an
+/// empty list, i.e. eight zero bytes, which is what `None` and `0u64` encode
+/// to — must be rejected at plan-parse time.
+///
+/// Without the check the two record paths disagree: `encrypt_record` seals
+/// through the cipher-directed path, which does not run stack-encrypt's
+/// context predicate, while `decrypt_record` opens through `decrypt_into`,
+/// which does. The row would encrypt and then never decrypt.
+#[test]
+fn a_degenerate_plan_context_is_refused_before_anything_is_sealed() {
+    let cipher = cipher();
+    let degenerate = String::from_utf8(vec![0u8; 8]).expect("nul bytes are valid utf-8");
+    let bad_plan = encode(obj(vec![(
+        "f",
+        obj(vec![
+            ("context", s(&degenerate)),
+            ("outputs", FfiValue::Array(vec![s("c")])),
+        ]),
+    )]));
+    let source = encode(obj(vec![("f", FfiValue::UInt32(1))]));
+
+    assert_eq!(
+        block_on(ops::encrypt_record(&cipher, &source, &bad_plan)),
+        Err(STATUS_ENCODING)
+    );
+    assert_eq!(
+        cipher.kms().generate_calls.load(Ordering::SeqCst),
+        0,
+        "a context that could never be decrypted under must not seal"
+    );
+
+    // And the decrypt side agrees, so neither half can drift into accepting
+    // what the other refuses.
+    assert_eq!(
+        block_on(ops::decrypt_record(&cipher, &source, &bad_plan)),
+        Err(STATUS_ENCODING)
+    );
 }
