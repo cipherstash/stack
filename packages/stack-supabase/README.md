@@ -87,8 +87,9 @@ Full guide: [Supabase quickstart →][supabase-docs]
 config to maintain — `select('*')` just works, inserts and updates encrypt automatically, and
 reads decrypt automatically.
 
-Introspection needs a direct Postgres connection (`DATABASE_URL`), so `pg` is an optional peer
-dependency and this entry runs on Node only — construct it in your server-side code. For an
+Introspection needs a direct Postgres connection (`DATABASE_URL`), which is why `pg` is an
+optional peer dependency. This entry runs on Node only either way — it binds the native engine,
+and declaring `schemas` doesn't move that — so construct it in your server-side code. For an
 edge runtime, see the second entry point below.
 
 It runs alongside Supabase Auth and RLS, and supports

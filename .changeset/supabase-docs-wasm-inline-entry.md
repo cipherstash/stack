@@ -155,6 +155,17 @@ and `package.json` lists that under `files`. Without the bump the published
 wizard keeps shipping the old text until some unrelated change moves its
 version.
 
+One more wording correction, of the kind #952 fixed in this package's `.d.ts`:
+`packages/stack-supabase/README.md` and `skills/stash-supabase/SKILL.md` both
+derived "runs on Node only" from introspection — "introspection needs a direct
+Postgres connection, **so** … this entry runs on Node only". Introspection is
+not the cause. The entry binds the native engine, so it is Node-only whether or
+not you declare `schemas`; a reader who took the stated cause at face value
+would conclude that declaring tables makes the root entry edge-capable, which is
+the exact wrong turn the `wasm-inline` entry exists to prevent. Both sentences
+now attribute the restriction to the engine and say that declaring `schemas`
+does not move it.
+
 No runtime behaviour changes. The one non-documentation change is the
 `databaseUrl?: never` field on `EncryptedSupabaseWasmOptions`, which is
 type-level: it rejects at compile time a call that already threw at
