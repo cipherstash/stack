@@ -48,19 +48,32 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  */
 
 /**
- * The reference doc, plus the three sources whose TSDoc ships in `.d.ts`.
+ * The reference doc, the two shipped documents, and the three sources whose
+ * TSDoc ships in `.d.ts`.
  *
- * `packages/stack-supabase/README.md` belongs on this list and is NOT on it
- * yet. It ships in the tarball and carries defect 1 verbatim — "Introspection
- * needs a direct Postgres connection (`DATABASE_URL`), so `pg` is an optional
- * peer dependency and the factory cannot run in an edge Worker or the browser"
- * — but the same lines are being rewritten on the branch behind #951, which
- * keeps the false `so` while dropping the browser half. Editing them from two
- * branches is a conflict for no gain. **Add the path here when #951 lands**;
- * the guard will name whatever survives the merge.
+ * `packages/stack-supabase/README.md` and `skills/stash-supabase/SKILL.md`
+ * were both held off this list while #951 rewrote the same lines — the README
+ * carried defect 1 verbatim, and #951's first draft kept the false `so` while
+ * dropping the browser half. This comment is part of #951: both sentences now
+ * attribute the restriction to the engine, so both files are enrolled. They
+ * are the two that reach a customer — the README is the npm package page, and
+ * `stash init` copies the skill into the customer's own repository, where
+ * their coding agent reads it as instruction.
+ *
+ * `skills/stash-managed-platforms/SKILL.md` is deliberately NOT enrolled. Its
+ * causal claims are correct, but it trips the unqualified-"Worker" detector
+ * four times: twice in its YAML frontmatter `description`, once in a section
+ * heading (`## encryptedSupabase in a Worker`), and once on "**An edge /
+ * Workers runtime** for server code" — the last a false positive, since the
+ * qualifier is there and only the slash keeps it out of the context pattern.
+ * The frontmatter is load-bearing for skill selection, so rewording it is its
+ * own change with its own review rather than a rider on this one. Enrol the
+ * file then.
  */
 const GUARDED = [
   'docs/reference/supabase-sdk.md',
+  'packages/stack-supabase/README.md',
+  'skills/stash-supabase/SKILL.md',
   'packages/stack-supabase/src/index.ts',
   'packages/stack-supabase/src/create.ts',
   'packages/stack-supabase/src/wasm-inline.ts',

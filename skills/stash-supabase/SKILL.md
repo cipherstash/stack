@@ -272,11 +272,12 @@ needs a direct Postgres connection (`options.databaseUrl`, defaulting to
 Node only**. On an edge runtime, import the `wasm-inline` entry instead —
 step 5 below.
 
-Introspection is not the only thing keeping this out of a browser. On the
-WASM entry, `config.clientKey` is a workspace secret and is required on
-*every* auth path — supplying a per-user `config.authStrategy` does not
-remove it ([#804](https://github.com/cipherstash/stack/issues/804)). Removing
-the `pg` dependency would unblock Workers, not browsers.
+The native engine and `pg` are not the only things keeping this out of a
+browser. On the WASM entry, `config.clientKey` is a workspace secret and is
+required on *every* auth path — supplying a per-user `config.authStrategy`
+does not remove it ([#804](https://github.com/cipherstash/stack/issues/804)).
+Dropping the native engine and the `pg` dependency is what unblocks Deno,
+Supabase Edge Functions and Cloudflare Workers; nothing unblocks a browser.
 
 Options: `{ schemas?, databaseUrl?, config? }` — `config` is the encryption
 client config (e.g. `config.authStrategy`, see Authentication below).

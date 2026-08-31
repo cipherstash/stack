@@ -164,7 +164,14 @@ not you declare `schemas`; a reader who took the stated cause at face value
 would conclude that declaring tables makes the root entry edge-capable, which is
 the exact wrong turn the `wasm-inline` entry exists to prevent. Both sentences
 now attribute the restriction to the engine and say that declaring `schemas`
-does not move it.
+does not move it. Both files are enrolled in #952's
+`scripts/__tests__/supabase-runtime-claims.test.mjs`, which is what its own
+comment said to do once this branch stopped rewriting the same lines — the
+README and this skill are the two copies that reach a customer, and the guard
+now fails if either grows the claim back. `skills/stash-managed-platforms/SKILL.md`
+stays out, with the reason written down: its causal claims are correct, but
+rewording the unqualified "Worker" in its frontmatter `description` changes
+what the skill matches on, which is not a rider on a documentation fix.
 
 No runtime behaviour changes. The one non-documentation change is the
 `databaseUrl?: never` field on `EncryptedSupabaseWasmOptions`, which is
