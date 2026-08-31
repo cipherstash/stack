@@ -1,15 +1,22 @@
-//! Pure response-mapping logic for the host transport, mirroring the
-//! reference `HttpConnection` in `stack-kms/src/connection/http.rs`:
-//! status-code → [`ViturRequestErrorKind`] mapping and the content-type
-//! validation performed before deserializing a success body. Kept free of
-//! any wasm ABI concerns so it compiles — and its unit tests run — on the
-//! native host target. (Ported from the #2099 spike's `response.rs`,
-//! re-based on stack-kms's connection rather than `cipherstash-client`'s.)
+//! The host transport's one piece of response logic that is *not* shared with
+//! the reference `HttpConnection`: turning the import's `i32` return into
+//! either a transport failure or an HTTP status.
+//!
+//! Everything past that — the 2xx content-type check, JSON deserialization,
+//! and the 404/401/403/409 → [`ViturRequestErrorKind`] table — is
+//! [`stack_kms::classify_response`], which lives outside the `http` feature
+//! gate precisely so this guest and `HttpConnection` cannot drift apart. Kept
+//! free of any wasm ABI concerns so it compiles — and its unit tests run — on
+//! the native host target.
+//!
+//! [`ViturRequestErrorKind`]: zerokms_protocol::ViturRequestErrorKind
 
+use std::collections::HashMap;
 use std::fmt;
 
 use serde::de::DeserializeOwned;
-use zerokms_protocol::{ViturRequestError, ViturRequestErrorKind};
+use stack_kms::classify_response;
+use zerokms_protocol::ViturRequestError;
 
 /// The host reported it could not perform the HTTP call at all (negative
 /// status). The body carries the host's error text.
@@ -24,125 +31,37 @@ impl fmt::Display for TransportFailure {
 
 impl std::error::Error for TransportFailure {}
 
-/// A non-2xx ZeroKMS response.
-#[derive(Debug)]
-pub struct FailureResponse {
-    pub status: i32,
-    pub body: String,
-}
-
-impl fmt::Display for FailureResponse {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Status: {}, Body: {}", self.status, self.body)
-    }
-}
-
-impl std::error::Error for FailureResponse {}
-
-/// A 2xx response whose Content-Type is not JSON — typically a proxy or load
-/// balancer answering with an HTML error page.
-#[derive(Debug)]
-pub struct UnexpectedContentType {
-    pub received: Option<String>,
-    pub expected: &'static str,
-    pub body: String,
-}
-
-impl fmt::Display for UnexpectedContentType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Received '{:?}', expected '{}', Body: {}",
-            self.received, self.expected, self.body
-        )
-    }
-}
-
-impl std::error::Error for UnexpectedContentType {}
-
-/// `true` if a `content-type` header value denotes JSON, ignoring any
-/// parameters (`application/json; charset=utf-8`) and ASCII case — the same
-/// tolerance as the reference `HttpConnection` (proxies and API gateways
-/// commonly normalise the header that way).
-fn is_json_content_type(value: &str) -> bool {
-    value
-        .split(';')
-        .next()
-        .map(str::trim)
-        .is_some_and(|media_type| media_type.eq_ignore_ascii_case("application/json"))
-}
-
 /// Map a host transport result onto the ZeroKMS protocol contract.
 ///
 /// `status` is the HTTP status code, or negative for a transport-level
 /// failure (in which case `body` carries the host's error text).
 /// `content_type` is the response Content-Type header, if any.
 ///
-/// The error bodies captured into [`FailureResponse`] /
-/// [`UnexpectedContentType`] are non-2xx (or non-JSON) server error text,
-/// not key material — the only payload that carries wrapped keys is a 2xx
-/// JSON body, which is consumed by deserialization and wiped by the caller.
+/// A status outside the `u16` range is a host that is not honouring the
+/// import contract; it is treated as a transport failure rather than being
+/// truncated into some unrelated code.
 pub fn map_response<T: DeserializeOwned>(
     status: i32,
     content_type: Option<&str>,
     body: &[u8],
 ) -> Result<T, ViturRequestError> {
-    match status {
-        s if s < 0 => Err(ViturRequestError::send(
+    let Ok(status) = u16::try_from(status) else {
+        return Err(ViturRequestError::send(
             "Host transport reported a failure",
             TransportFailure(String::from_utf8_lossy(body).into_owned()),
-        )),
-        200..=299 => {
-            let expected = "application/json";
-            if !content_type.is_some_and(is_json_content_type) {
-                return Err(ViturRequestError::parse(
-                    "Invalid content type header",
-                    UnexpectedContentType {
-                        received: content_type.map(|ct| ct.to_owned()),
-                        expected,
-                        body: String::from_utf8_lossy(body).into_owned(),
-                    },
-                ));
-            }
-            serde_json::from_slice(body)
-                .map_err(|e| ViturRequestError::parse("Failed to deserialize response body", e))
-        }
-        status => {
-            let failure = FailureResponse {
-                status,
-                body: String::from_utf8_lossy(body).into_owned(),
-            };
-            Err(match status {
-                404 => ViturRequestError::new(
-                    ViturRequestErrorKind::NotFound,
-                    "Resource not found",
-                    failure,
-                ),
-                401 => ViturRequestError::new(
-                    ViturRequestErrorKind::Unauthorized,
-                    "Request unauthorized",
-                    failure,
-                ),
-                403 => ViturRequestError::new(
-                    ViturRequestErrorKind::Forbidden,
-                    "Request forbidden",
-                    failure,
-                ),
-                409 => ViturRequestError::new(
-                    ViturRequestErrorKind::Conflict,
-                    "Resource conflict",
-                    failure,
-                ),
-                _ => ViturRequestError::other("Server returned failure response", failure),
-            })
-        }
-    }
+        ));
+    };
+    // The guest does not carry the response headers into the error payloads:
+    // it has already read the only one it needs (content-type), and the rest
+    // would be an extra copy of attacker-influenced bytes for a Display
+    // string nothing reads.
+    classify_response(status, content_type, Some(body), HashMap::new())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zerokms_protocol::Keyset;
+    use zerokms_protocol::{Keyset, ViturRequestErrorKind};
 
     fn kind_of(result: Result<Vec<Keyset>, ViturRequestError>) -> ViturRequestErrorKind {
         result.expect_err("expected an error").kind
@@ -162,7 +81,8 @@ mod tests {
 
     #[test]
     fn json_content_type_tolerates_parameters_and_case() {
-        // Same tolerance as the reference `HttpConnection`.
+        // Same tolerance as the reference `HttpConnection` — literally the
+        // same predicate now.
         let keysets: Vec<Keyset> =
             map_response(200, Some("Application/JSON; charset=utf-8"), KEYSETS_JSON)
                 .expect("deserializes");
@@ -198,6 +118,12 @@ mod tests {
     fn transport_failure_is_send_error() {
         assert!(matches!(
             kind_of(map_response(-1, None, b"connection refused")),
+            ViturRequestErrorKind::SendRequest
+        ));
+        // A status the import contract cannot mean is a transport failure
+        // too, never a truncated code.
+        assert!(matches!(
+            kind_of(map_response(70_000, None, b"nonsense")),
             ViturRequestErrorKind::SendRequest
         ));
     }

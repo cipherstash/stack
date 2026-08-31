@@ -13,6 +13,7 @@
 //! term-derivation failure (a caller-input condition, e.g. match text that
 //! yields no tokens).
 
+use stack_auth::AuthError;
 use stack_kms::{GenerateKeyError, LoadKeysetError, RetrieveKeyError};
 use zerokms_protocol::ViturRequestErrorKind;
 
@@ -27,20 +28,31 @@ pub const STATUS_BAD_HANDLE: u32 = 3;
 /// A caught panic, handle-id exhaustion, a response that did not match its
 /// requests, or any other unexpected internal failure.
 pub const STATUS_INTERNAL: u32 = 4;
-/// ZeroKMS (or the auth strategy) rejected the request as unauthenticated:
-/// a missing, expired, or invalid access token.
+/// ZeroKMS (or the auth strategy) rejected the *credential*: an expired or
+/// rejected access token, or a credential exchange the server refused.
+///
+/// The one status a host should answer by refreshing the token and retrying.
+/// Deliberately narrow for that reason: a configuration fault that merely
+/// *arrives* through the auth strategy — a token with no ZeroKMS `services`
+/// claim, a host `token_get` that failed — is [`STATUS_KMS_TRANSPORT`], since
+/// no number of refreshes can fix it.
 pub const STATUS_KMS_UNAUTHORIZED: u32 = 5;
 /// ZeroKMS rejected the request as forbidden: the token is valid but lacks
-/// permission (or the keyset is disabled).
+/// permission (or the keyset is disabled, or the organisation is over its
+/// usage allowance).
 pub const STATUS_KMS_FORBIDDEN: u32 = 6;
 /// ZeroKMS could not find the resource: an unknown keyset (or client), or a
 /// data key that does not exist for the presented `iv`/`tag`.
 pub const STATUS_KMS_NOT_FOUND: u32 = 7;
 /// ZeroKMS reported a resource conflict.
 pub const STATUS_KMS_CONFLICT: u32 = 8;
-/// The transport failed before a ZeroKMS verdict: the host's HTTP call
-/// errored, the endpoint is unknown or invalid, or the request could not be
-/// prepared.
+/// No ZeroKMS verdict was reached: the host's `transport_send` errored, the
+/// host's `token_get` errored, the endpoint is unknown or invalid (no
+/// `zerokms_url` in the config *and* no ZeroKMS entry in the token's
+/// `services` claim), or the request could not be prepared.
+///
+/// Not retryable by refreshing a token — these are configuration or host
+/// faults. See [`STATUS_KMS_UNAUTHORIZED`] for the one that is.
 pub const STATUS_KMS_TRANSPORT: u32 = 9;
 /// ZeroKMS failed in a way none of the codes above capture: a malformed
 /// response, invalid key material, or an unclassified server error.
@@ -96,12 +108,47 @@ fn status_for_kms(error: &stack_kms::Error) -> u32 {
             LoadKeysetError::RequestFailed(e) => status_for_kind(&e.kind),
             _ => STATUS_KMS_OTHER,
         },
-        // No token means no authenticated request could even be attempted.
-        stack_kms::Error::Auth(_) => STATUS_KMS_UNAUTHORIZED,
+        stack_kms::Error::Auth(auth) => status_for_auth(auth),
         stack_kms::Error::ConnectionInit(_) | stack_kms::Error::InvalidEndpoint(_) => {
             STATUS_KMS_TRANSPORT
         }
         _ => STATUS_KMS_OTHER,
+    }
+}
+
+/// Split the auth strategy's failures into "the credential was refused"
+/// (retry after a refresh) and "the client is misconfigured" (retrying is a
+/// spin).
+///
+/// This split matters because `StackKms::get_token` runs *before* any request
+/// leaves the guest and folds two very different things into
+/// [`stack_kms::Error::Auth`]: a genuinely refused credential, and
+/// `token.zerokms_url()` failing because the config named no `zerokms_url`
+/// and the host's token carries no ZeroKMS `services` claim — an
+/// `AuthError::InvalidToken`. Mapping the latter to
+/// [`STATUS_KMS_UNAUTHORIZED`] would tell a Go host to refresh its token and
+/// try again, forever, over a config problem no token can fix.
+fn status_for_auth(error: &AuthError) -> u32 {
+    match error {
+        // The server (or the strategy) refused the credential itself: a new
+        // token is the fix.
+        AuthError::NotAuthenticated(_)
+        | AuthError::TokenExpired(_)
+        | AuthError::InvalidGrant(_)
+        | AuthError::InvalidClient(_)
+        | AuthError::InvalidAccessKey(_)
+        | AuthError::AlreadyConsumed(_) => STATUS_KMS_UNAUTHORIZED,
+        // Authenticated, but not allowed.
+        AuthError::AccessDenied(_) | AuthError::UsageLimitExceeded(_) => STATUS_KMS_FORBIDDEN,
+        // Server-side faults with no client-side remedy.
+        AuthError::Server(_) | AuthError::Internal(_) => STATUS_KMS_OTHER,
+        // Everything else is configuration or host transport: a malformed or
+        // claim-less token (`InvalidToken` — the unresolved-endpoint case), a
+        // bad URL/CRN/region/workspace, a failed request to the token issuer,
+        // or `Custom`, which is what `HostTokenStrategy` reports when the
+        // host's `token_get` import returns non-zero or hands back bytes that
+        // are not a token.
+        _ => STATUS_KMS_TRANSPORT,
     }
 }
 
@@ -164,6 +211,55 @@ mod tests {
             RetrieveKeyError::FailedRetrieval("no key".into()),
         ));
         assert_eq!(status_for_error(&err), STATUS_KMS_NOT_FOUND);
+    }
+
+    /// The exact configuration the guest hits when `se_cipher_init` is given
+    /// no `zerokms_url` and the host hands over a token with no ZeroKMS
+    /// `services` claim: `StackKms::get_token` fails *before* sending
+    /// anything, with the real error this produces. It must not read as "your
+    /// token was rejected".
+    #[test]
+    fn an_unresolvable_endpoint_is_transport_not_unauthorized() {
+        use stack_auth::{SecretToken, ServiceToken};
+
+        // A token that is not a CTS-minted JWT, so it carries no services
+        // claim at all — the error comes from `zerokms_url()` itself, not a
+        // hand-built variant.
+        let token = ServiceToken::new(SecretToken::new("not-a-cts-jwt"));
+        let err = token
+            .zerokms_url()
+            .expect_err("a non-JWT has no services claim");
+        assert!(
+            matches!(err, stack_auth::AuthError::InvalidToken(_)),
+            "expected InvalidToken, got: {err:?}"
+        );
+
+        let status = status_for_error(&stack_encrypt::Error::Kms(stack_kms::Error::Auth(err)));
+        assert_eq!(
+            status, STATUS_KMS_TRANSPORT,
+            "a config fault must not tell the host to refresh and retry"
+        );
+    }
+
+    #[test]
+    fn a_failed_host_token_import_is_transport_not_unauthorized() {
+        // What `HostTokenStrategy` reports when `token_get` returns non-zero.
+        let err = stack_auth::AuthError::Custom(stack_auth::CustomError(
+            "host token_get failed with status 7".to_string(),
+        ));
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::Kms(stack_kms::Error::Auth(err))),
+            STATUS_KMS_TRANSPORT
+        );
+    }
+
+    #[test]
+    fn a_refused_credential_is_still_unauthorized() {
+        let err = stack_auth::AuthError::TokenExpired(stack_auth::TokenExpired);
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::Kms(stack_kms::Error::Auth(err))),
+            STATUS_KMS_UNAUTHORIZED
+        );
     }
 
     #[test]

@@ -40,7 +40,7 @@ use std::fmt;
 use std::sync::Mutex;
 
 use stack_auth::{AuthError, AuthStrategy, CustomError, SecretToken, ServiceToken};
-use stack_kms::{ZeroKMSConnection, ZeroKMSConnectionInit, ZeroKmsEndpoint};
+use stack_kms::{BaseUrlUnresolved, ZeroKMSConnection, ZeroKMSConnectionInit, ZeroKmsEndpoint};
 use zeroize::Zeroizing;
 use zerokms_protocol::{ViturRequest, ViturRequestError};
 
@@ -67,21 +67,6 @@ extern "C" {
 
     fn token_get(token_ptr_out: *mut u32, token_len_out: *mut u32) -> i32;
 }
-
-/// The ZeroKMS base URL is not known yet (no `zerokms_url` in the cipher
-/// config, and the first token carried no usable `services` claim).
-/// Mirrors the reference `HttpConnection`: a request-preparation error, not
-/// an authentication failure, so callers don't trigger a refresh loop.
-#[derive(Debug)]
-struct BaseUrlUnresolved;
-
-impl fmt::Display for BaseUrlUnresolved {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "no ZeroKMS base URL is configured or resolved")
-    }
-}
-
-impl std::error::Error for BaseUrlUnresolved {}
 
 /// The host stored an out-slot pointer the guest's buffer registry does not
 /// know (or with a mismatched length) — a host-side bookkeeping bug.
@@ -147,6 +132,14 @@ impl ZeroKMSConnection for WasiHostConnection {
         request: Request,
         access_token: &str,
     ) -> Result<Request::Response, ViturRequestError> {
+        // Defence in depth, shared verbatim with `HttpConnection`:
+        // `StackKms::get_token` resolves the endpoint (or fails with
+        // `AuthError::InvalidToken`, which the status layer reports as
+        // `STATUS_KMS_TRANSPORT`) before any caller reaches here, so on the
+        // client's own paths this is unreachable. `send` is public trait API
+        // though, and a *prepare* error is the answer that keeps a direct
+        // caller from mistaking a missing endpoint for a 401 and refreshing
+        // in a loop.
         let url = self
             .base()
             .as_ref()
@@ -195,18 +188,23 @@ impl ZeroKMSConnection for WasiHostConnection {
             )
         };
 
-        let unregistered =
-            || ViturRequestError::parse("Host response buffer failed validation", HostBufferError);
+        // Reclaim *both* slots before judging either. A `?` on the headers
+        // slot would otherwise strand the body buffer — a 2xx JSON body full
+        // of wrapped data keys — registered, unfreed and unwiped for the life
+        // of the instance.
+        //
         // SAFETY: pointers come from the host's `se_alloc` calls; the
         // registry validates them before any Vec is rebuilt.
         let resp_headers =
-            unsafe { buffers::take(resp_headers_ptr as *mut u8, resp_headers_len as usize) }
-                .ok_or_else(unregistered)?;
+            unsafe { buffers::take(resp_headers_ptr as *mut u8, resp_headers_len as usize) };
         // Response bodies carry wrapped key material — wipe on drop.
-        let resp_body = Zeroizing::new(
-            unsafe { buffers::take(resp_body_ptr as *mut u8, resp_body_len as usize) }
-                .ok_or_else(unregistered)?,
-        );
+        let resp_body = unsafe { buffers::take(resp_body_ptr as *mut u8, resp_body_len as usize) }
+            .map(Zeroizing::new);
+
+        let unregistered =
+            || ViturRequestError::parse("Host response buffer failed validation", HostBufferError);
+        let resp_headers = resp_headers.ok_or_else(unregistered)?;
+        let resp_body = resp_body.ok_or_else(unregistered)?;
 
         let content_type = header_value(&resp_headers, "content-type");
         map_response(status, content_type, &resp_body)
@@ -225,24 +223,36 @@ impl AuthStrategy for &HostTokenStrategy {
         let mut token_len: u32 = 0;
         // SAFETY: the out-slots are stack locals the host writes once.
         let status = unsafe { token_get(&mut token_ptr, &mut token_len) };
+        // Reclaim before judging the status: a host that allocated the token
+        // buffer *and then* reported a failure would otherwise leave a live
+        // credential registered, unfreed and unwiped.
+        //
+        // SAFETY: the pointer comes from the host's `se_alloc` call; the
+        // registry validates it before any Vec is rebuilt.
+        let bytes =
+            unsafe { buffers::take(token_ptr as *mut u8, token_len as usize) }.map(Zeroizing::new);
         if status != 0 {
             return Err(AuthError::Custom(CustomError(format!(
                 "host token_get failed with status {status}"
             ))));
         }
-        // SAFETY: the pointer comes from the host's `se_alloc` call; the
-        // registry validates it before any Vec is rebuilt.
-        let bytes = Zeroizing::new(
-            unsafe { buffers::take(token_ptr as *mut u8, token_len as usize) }.ok_or_else(
-                || {
-                    AuthError::Custom(CustomError(
-                        "host token buffer failed validation".to_string(),
-                    ))
-                },
-            )?,
-        );
+        let bytes = bytes.ok_or_else(|| {
+            AuthError::Custom(CustomError(
+                "host token buffer failed validation".to_string(),
+            ))
+        })?;
         let text = std::str::from_utf8(&bytes)
-            .map_err(|_| AuthError::Custom(CustomError("host token is not UTF-8".to_string())))?;
+            .map_err(|_| AuthError::Custom(CustomError("host token is not UTF-8".to_string())))?
+            // A host that read the token from a file or a subprocess hands it
+            // over with the trailing newline still attached; left in place it
+            // would break the `name: value\n` header buffer in `send`, and no
+            // bearer token has meaningful surrounding whitespace anyway.
+            .trim();
+        if text.is_empty() {
+            return Err(AuthError::Custom(CustomError(
+                "host token is empty".to_string(),
+            )));
+        }
         // `SecretToken` wipes on drop; `bytes` (the only other copy) wipes
         // via its `Zeroizing` wrapper above.
         Ok(ServiceToken::new(SecretToken::new(text)))
