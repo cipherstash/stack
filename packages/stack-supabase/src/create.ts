@@ -23,9 +23,12 @@ import { verifyDeclaredSchemas } from './verify'
  * `@cipherstash/stack` entry, and `./wasm-inline` supplies it from
  * `@cipherstash/stack/wasm-inline`. Everything else about the wrapper is
  * identical, so it lives here once. The split exists because the native entry
- * statically imports `@cipherstash/protect-ffi` — a Node-API binary that
- * cannot load on an edge runtime — and a static import loads whether or not
- * the code path is taken.
+ * statically imports the native engine, whose module graph reaches
+ * `@cipherstash/auth` — a Node-API module whose Node entry resolves its
+ * platform binding at module evaluation — and a static import evaluates
+ * whether or not the code path is taken. (`@cipherstash/protect-ffi` is the
+ * graph's other Node-API package, and deliberately resolves nothing until
+ * first use.)
  *
  * Every `@cipherstash/stack` import in this module is either type-only or on a
  * native-free subpath (`adapter-kit`, `eql/v3`, `encryption` types). A value
@@ -127,12 +130,16 @@ export function makeEncryptedSupabase(
  * legacy payloads still decrypt through the core client (`decrypt` /
  * `decryptModel`). Handle mixed-generation data explicitly on the caller side.
  *
- * **Declare your schemas and it runs anywhere; omit them and we discover them
- * for you, which needs a database connection and is therefore Node-only.**
- * Passing `schemas` skips introspection entirely — no Postgres connection, no
- * `pg`, no `databaseUrl` — at the cost of the drift check and of `select('*')`,
- * which is refused because nothing enumerated the table's plaintext columns.
- * Pass `databaseUrl` alongside `schemas` to keep both.
+ * **The entry point decides where this runs; `schemas` decides only whether
+ * Postgres is involved.** The default entry binds the native engine and is
+ * Node-only; `./wasm-inline` binds the WASM engine and runs on Deno, Supabase
+ * Edge Functions and Cloudflare Workers. Neither of those moves when you
+ * declare your tables. Passing `schemas` skips introspection entirely — no
+ * Postgres connection, no `pg`, no `databaseUrl` — at the cost of the drift
+ * check and of `select('*')`, which is refused because nothing enumerated the
+ * table's plaintext columns. Pass `databaseUrl` alongside `schemas` to keep
+ * both. Omitting `schemas` needs a connection, which only the default entry
+ * can open.
  *
  * A column is an EQL v3 column when its type is one of the `public` domains the
  * EQL v3 bundle installs. The domain names the capabilities, and introspection

@@ -7,11 +7,21 @@ import { eqlRequiresQueryDomains, introspect } from './introspect'
  * The default (Node) entry.
  *
  * Binds the factory to `Encryption` from the native `@cipherstash/stack`
- * entry, which loads `@cipherstash/protect-ffi` — a Node-API binary. That
- * import is static and top-level, so it happens on import of this module
- * whether or not any encryption runs; on an edge runtime it fails there,
- * before any of this package's own code. Import
- * `@cipherstash/stack-supabase/wasm-inline` instead on those runtimes (#708).
+ * entry. That import is static and top-level, so the engine's whole module
+ * graph evaluates on import of this module whether or not any encryption runs
+ * — and that graph statically imports `@cipherstash/auth`, whose Node entry
+ * resolves its platform binding at module evaluation. On Deno, Supabase Edge
+ * Functions or Cloudflare Workers it fails there, before any of this package's
+ * own code. Import `@cipherstash/stack-supabase/wasm-inline` instead on those
+ * runtimes (#708).
+ *
+ * Not `@cipherstash/protect-ffi`, the graph's other Node-API package: it
+ * deliberately resolves nothing until first use — see
+ * `packages/protect-ffi/src/index.cts` and the `nativeLoading.test.ts` beside
+ * it. And the engine is not the only thing pinning this entry to Node: its own
+ * emitted bundle carries an `import("pg")` specifier for introspection, which
+ * a bundler resolves at build time. `__tests__/wasm-entry-edge-safety.test.ts`
+ * asserts both against the emitted files.
  */
 export const encryptedSupabase = makeEncryptedSupabase(
   // biome-ignore lint/plugin: `EncryptionFactory` names only the shape `construct` uses; the native factory's real signature is a generic tuple overload that cannot be expressed as a plain function type without re-declaring it here.

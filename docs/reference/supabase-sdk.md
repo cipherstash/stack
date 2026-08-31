@@ -12,8 +12,11 @@ Two entry points, EQL v3 only:
 | `@cipherstash/stack-supabase/wasm-inline` | WASM | declared — `schemas` is required | edge (Deno, Supabase Edge Functions, Cloudflare Workers) |
 
 Both author columns with `@cipherstash/stack/eql/v3` and store them in native
-`public.eql_v3_*` domains. They differ only in how the wrapper learns the
-schema, and therefore in where it can run.
+`public.eql_v3_*` domains. The entry point you import selects the encryption
+engine, and the engine is what fixes the runtime. Schema mode splits the same
+way — only the native entry carries a Postgres driver, so only it can
+introspect — but it is a separate axis: declaring `schemas` on the native entry
+removes its need for Postgres and leaves it on Node.
 
 Rows already written as EQL v2 still decrypt through `@cipherstash/stack`; what
 is gone is the ability to author new v2 columns here.
@@ -35,13 +38,24 @@ free-text by bloom-filter containment).
 connect time**: it detects EQL v3 columns by their Postgres domain, derives
 each column's encryption config from the domain, and builds the encryption
 client internally. Introspection needs a direct Postgres connection
-(`options.databaseUrl`, defaulting to `DATABASE_URL`), so this entry cannot run
-in a Worker.
+(`options.databaseUrl`, defaulting to `DATABASE_URL`).
 
-Introspection is the only thing that needs Postgres. To run in a Worker, import
-`@cipherstash/stack-supabase/wasm-inline` and declare your tables in `schemas`
-instead — that entry carries no Postgres driver and never introspects. It is
-still server-side: it is not browser-safe, because the WASM client requires a
+This entry is Node-only. That is a property of the engine it binds, not of
+introspection: it takes `Encryption` from `@cipherstash/stack`, whose module
+graph statically imports `@cipherstash/auth` — a Node-API module whose Node
+entry resolves its platform binding at module evaluation — and its own emitted
+bundle carries an `import("pg")` specifier that a bundler resolves at build
+time. Both are properties of the import, so they hold on a client that never
+issues a query, and declaring `schemas` moves neither. It is not browser-safe
+either: it wants a `databaseUrl` and the workspace credentials behind it, and
+neither belongs in a browser.
+
+Declaring `schemas` buys the Postgres half only — no introspection, no
+connection, no `databaseUrl` — and the drift check goes with it. For Deno,
+Supabase Edge Functions, or Cloudflare Workers, import
+`@cipherstash/stack-supabase/wasm-inline`: it binds the WASM engine, carries no
+Postgres driver, and requires `schemas` because it cannot introspect. It is
+still server-side — not browser-safe, because the WASM client requires a
 workspace `clientKey` on every auth path (cipherstash/stack#804).
 
 ```typescript
