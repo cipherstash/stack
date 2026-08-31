@@ -497,7 +497,7 @@ impl<K: DataKeySource> StackCipher<K> {
 }
 
 /// A single sealed leaf: the ZeroKMS metadata needed to retrieve its data key
-/// (`iv`, `tag`) plus the vitaminc [`LocalCipherText`] sealed under that key.
+/// (`iv`, `tag`) plus the vitaminc `LocalCipherText` sealed under that key.
 ///
 /// This is the only byte-format commitment the crate makes for *ciphertext* —
 /// the container tree ([`StackCipherText`]) has no canonical encoding, so
@@ -519,7 +519,7 @@ impl<K: DataKeySource> StackCipher<K> {
 /// | 1               | ZeroKMS `iv`       | 16              | identifies the data key for retrieval |
 /// | 17              | `tag_len`          | 2               | length of `tag`, `u16` little-endian |
 /// | 19              | ZeroKMS key `tag`  | `tag_len`       | required to retrieve the key |
-/// | 19 + `tag_len`  | local ciphertext   | rest of buffer  | the vitaminc [`LocalCipherText`] |
+/// | 19 + `tag_len`  | local ciphertext   | rest of buffer  | the vitaminc `LocalCipherText` |
 ///
 /// The local ciphertext is itself a framed value — vitaminc's leaf wire
 /// format, versioned and owned by vitaminc — so the full stored byte string
@@ -534,12 +534,10 @@ impl<K: DataKeySource> StackCipher<K> {
 /// ```
 ///
 /// Both version bytes are authenticated under the one GCM tag, each bound by
-/// the layer that owns its framing: the envelope version through this
-/// crate's leaf-AAD derivation (the private `leaf_aad` —
-/// `PAE("stack-encrypt/leaf", version, derived_aad, tag)`; see the module
-/// docs in `src/cipher.rs`), and the inner version through vitaminc's
-/// `Aad::for_leaf`, applied inside [`Aes256Cipher`] to the AAD this crate
-/// hands it. Relabel either version byte in storage and the leaf fails
+/// the layer that owns its framing: the envelope version through this crate's
+/// leaf-AAD derivation, `PAE("stack-encrypt/leaf", version, derived_aad,
+/// tag)`, and the inner version through vitaminc's `Aad::for_leaf`, applied
+/// inside `Aes256Cipher` to the AAD this crate hands it. Relabel either version byte in storage and the leaf fails
 /// authentication rather than parsing under the wrong rules. Parsing is
 /// structural only — nothing about a decoded leaf is trusted until it
 /// decrypts.
@@ -549,18 +547,6 @@ impl<K: DataKeySource> StackCipher<K> {
 /// remain for callers that manage their own storage format; they carry the
 /// same fields, but their wire form is the serialiser's, not a commitment
 /// of this crate.
-///
-/// # Breaking change
-///
-/// Leaves sealed *before* this format landed used an unlabelled
-/// `PAE(aad, tag)` leaf AAD with no version byte. They cannot be opened by
-/// this build — however they were persisted (serde, `into_parts`, or raw
-/// bytes) they fail AEAD verification with a plain authentication error,
-/// indistinguishable from tampering, because there is no version byte in the
-/// old form to raise [`LeafBytesError::UnknownVersion`] against. Acceptable
-/// only because the crate is `publish = false` and only dev-persisted data
-/// exists; from `FORMAT_VERSION` onwards a format move is signalled by the
-/// version byte instead.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(try_from = "SealedValueRepr")]
 pub struct SealedValue {
@@ -579,6 +565,7 @@ pub struct SealedValue {
 /// (that is the AEAD open's job); a leaf that fails here was never a valid
 /// v1 encoding at all.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum LeafBytesError {
     /// The leading version byte is not one this build knows how to parse.
     /// (A version this build *does* know, stamped on bytes sealed under a

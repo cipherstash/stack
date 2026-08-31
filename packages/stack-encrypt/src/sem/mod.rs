@@ -152,6 +152,7 @@ const OPE_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ope-key/v1";
 
 /// Errors from SEM term generation.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum TermError {
     /// The PRF backend failed (for a remote 2-party backend this includes
     /// transport errors).
@@ -196,6 +197,7 @@ pub enum TermError {
 /// decoding has an error a caller can compare: the generation variants carry
 /// boxed and opaque sources that are not [`PartialEq`].
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum TermBytesError {
     /// Equality-term bytes are not the 32 PRF bytes.
     #[error("equality-term bytes must be exactly 32 bytes, got {0}")]
