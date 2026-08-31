@@ -32,6 +32,17 @@
  * `e2e/wasm/roundtrip.test.ts` (Deno) — note that it exercises the
  * `accessKey` arm, so the federation arm reasoned about here has no live
  * coverage anywhere.
+ *
+ * WHERE IT RUNS, and why not with the rest of the suite. Loading the real
+ * module means loading `dist/wasm/protect_ffi_inline.js`, which wasm-pack
+ * emits and `pnpm install` does not — only the three `.d.ts` beside it are
+ * tracked. So this file is excluded from `packages/stack/vitest.config.ts` and
+ * collected by `vitest.wasm-core.config.ts` instead, run by `test:wasm-core`
+ * from `tests.yml`'s `wasm-e2e-tests` job, the one job that builds it. Left in
+ * the default config it does not skip — it fails to COLLECT, which is what it
+ * did in `run-tests` (#953). To run it locally, build the WASM output first:
+ * `pnpm --filter @cipherstash/protect-ffi run build:wasm` (needs cargo, the
+ * wasm32 target and wasm-pack).
  */
 
 import { readFileSync } from 'node:fs'

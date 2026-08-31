@@ -90,6 +90,23 @@
       "dependsOn": ["^build", "build"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "cache": false
+    },
+    // `packages/stack`'s WASM-core contract suite — see
+    // `packages/stack/vitest.wasm-core.config.ts` for why it is not part of
+    // `test`. A task rather than a bare `pnpm --filter` because
+    // `scripts/__tests__/workflow-turbo-build-deps.test.mjs` requires one:
+    // stack depends on workspace packages that emit build output, so a bare
+    // invocation resolves `dist/` that nothing in the command builds.
+    //
+    // `cache: false`, and not for the reason `test` is. The input this suite
+    // actually reads — protect-ffi's `dist/wasm/protect_ffi_inline.js` — is a
+    // gitignored build output in ANOTHER package, so `$TURBO_DEFAULT$` cannot
+    // see it: a rebuilt core with unchanged stack sources would otherwise be a
+    // cache hit reporting a pass over the previous core.
+    "test:wasm-core": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$"],
+      "cache": false
     }
   }
 }

@@ -1,5 +1,6 @@
 import { configDefaults, defineConfig } from 'vitest/config'
 import { sharedAlias, stackSourceAlias } from '../../vitest.shared'
+import { WASM_CORE_SUITE } from './vitest.wasm-core.config'
 
 export default defineConfig({
   resolve: {
@@ -16,7 +17,14 @@ export default defineConfig({
     // database and PostgREST. They THROW rather than skip when unconfigured, so
     // they must never be picked up by `pnpm test` — that is the whole reason
     // they are a separate config and a separate CI job.
-    exclude: [...configDefaults.exclude, 'integration/**'],
+    //
+    // `WASM_CORE_SUITE` is excluded for a narrower reason: it loads the real
+    // protect-ffi WASM core, which is wasm-pack output that `pnpm install`
+    // does not produce, so here it would fail to COLLECT rather than skip. It
+    // runs from `tests.yml`'s `wasm-e2e-tests` job under
+    // `vitest.wasm-core.config.ts` — imported rather than spelled twice, so
+    // the exclusion and the include cannot drift apart.
+    exclude: [...configDefaults.exclude, 'integration/**', WASM_CORE_SUITE],
     // Live suites make real ZeroKMS / CTS network round-trips. The vast
     // majority of these tests already pass an explicit `, 30000)` per-test
     // timeout (300+ call sites); a handful were written without one and so
