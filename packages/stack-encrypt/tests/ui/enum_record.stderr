@@ -1,0 +1,5 @@
+error: EncryptFrom/DecryptInto cannot be derived for enums: a record is a fixed set of fields derived from one source, and a variant choice has no field to be derived into. Model the choice explicitly instead, e.g. as a struct of `Option` fields.
+ --> tests/ui/enum_record.rs:4:6
+  |
+4 | enum Choice {
+  |      ^^^^^^

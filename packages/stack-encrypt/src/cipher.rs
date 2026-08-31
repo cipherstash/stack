@@ -124,14 +124,14 @@ pub enum Error {
     #[error(transparent)]
     Term(crate::sem::TermError),
     /// A third-party [`EncryptFrom`](crate::target::EncryptFrom) /
-    /// [`DecryptFrom`](crate::target::DecryptFrom) implementation failed
+    /// [`DecryptInto`](crate::target::DecryptInto) implementation failed
     /// for a reason of its own.
     #[error(transparent)]
     Other(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// A [`Pending`](crate::target::Pending) fulfilment's requests and
     /// responses did not line up: it drew more responses — or a different
     /// kind — than its requests asked for, or left some of them unconsumed.
-    /// Always a composition bug in an `EncryptFrom`/`DecryptFrom`
+    /// Always a composition bug in an `EncryptFrom`/`DecryptInto`
     /// implementation, never a data error.
     #[error("a pending fulfilment's responses did not match its requests")]
     ResponseShape,
@@ -142,6 +142,12 @@ pub enum Error {
     /// bug, caught before any I/O.
     #[error("merged pendings were built from different ciphers")]
     CipherMismatch,
+    /// A [`DecryptField`](crate::target::DecryptField) implementation
+    /// declared its type [`DECRYPTABLE`](crate::target::Decryptable::DECRYPTABLE)
+    /// but passed the field over. Always a bug in a third-party
+    /// `DecryptField`, never a data error.
+    #[error("a field declared decryptable was not opened by its DecryptField implementation")]
+    NotOpened,
 }
 
 impl From<crate::sem::TermError> for Error {

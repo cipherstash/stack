@@ -23,6 +23,8 @@ stack-kms = { path = "../stack-kms", default-features = false, features = ["prof
 # `StackCipher::new()` builds a ZeroKMS client from the environment, so its
 # return type names the auto-detected auth strategy.
 stack-auth = { workspace = true }
+# `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`, re-exported from `target`.
+stack-encrypt-derive = { path = "../stack-encrypt-derive" }
 
 # The revised Cipher/Decipher traits, ContextTag, Element, and the PRF crates
 # have all merged to vitaminc main but are not yet published (crates.io is 200+
@@ -51,6 +53,8 @@ zeroize = { workspace = true }
 serde_json = { workspace = true }
 stack-kms = { path = "../stack-kms", features = ["test-support"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
+# Compile-fail tests for the derive diagnostics (`tests/ui`).
+trybuild = "1"
 vitaminc-hmac = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
 vitaminc-prf = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
 vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }

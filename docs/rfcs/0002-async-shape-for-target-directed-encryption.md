@@ -280,7 +280,8 @@ impl<K> EncryptFrom<u32, StackCipher<K>> for EncryptedInt {
 
 No `tokio::try_join!`, no `Box::pin(async move ..)`, no error-conversion
 where-clauses. This is roughly half the size of the current impl and is
-directly emittable by `#[derive(Encrypted)]`.
+directly emittable by `#[derive(EncryptFrom)]` (which is what the derive does —
+see §7).
 
 Then the missing piece from §2.2:
 
@@ -453,9 +454,19 @@ derivations must produce identical bytes before and after.
    `Pending`; they lift onto `EncryptTarget` if a second async cipher ever
    appears.
 2. **Decrypt landed with this change** (decided): `DecryptTarget`,
-   `DecryptFrom`, `DecryptExt` and `DecryptContext` mirror the encrypt side;
+   `DecryptInto`, `DecryptFrom` and `DecryptContext` mirror the encrypt side;
    the `Vec` implementation batches a column of rows into one
    `retrieve_keys`. The derive will emit both directions from day one.
+   Which half of each `From`/`Into` pair is the implementable one follows
+   from where `Self` lands: the record is the *output* of encryption and the
+   *input* of decryption, and it is the only type a downstream crate can
+   implement on, so `EncryptFrom<P>` and `DecryptInto<P>` are implemented
+   (and derived) on the record while `EncryptInto` and `DecryptFrom` are
+   blanket call-site sugar. An encrypted type may decrypt to several
+   plaintexts and several encrypted types (the EQL integer payloads, say) to
+   one plaintext; each owns its own opening. vitaminc's `Decrypt` — the
+   plaintext's *bytes → value* step, the same for every ciphertext shape —
+   stays underneath as the leaf.
 3. **`Request` is public but opaque** (decided): constructors only
    (`Request::generate_data_key()`, `Request::retrieve_data_key(iv, tag)`,
    later a PRF request and a keyset override), internals private. `Responses`
@@ -516,10 +527,50 @@ claims:
   `Pending` now records a build-time failure and `zip`/`all` drop the
   assembly's requests when one side has failed, so a misconfigured field
   never mints keys for its siblings; the empty-context guard is structural
-  over PAE (so `None` / `Some("")` / tuples of empties are caught) and runs
-  on columns and optionals even when there is nothing to encrypt; and merging
-  pendings from different ciphers is `Error::CipherMismatch` rather than a
-  `debug_assert`.
+  over PAE (so `None` / `Some("")` / tuples of empties are caught); and
+  merging pendings from different ciphers is `Error::CipherMismatch` rather
+  than a `debug_assert`.
+
+### `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]` (follow-up PR)
+
+The derive emits exactly the §4.4 shape — one impl over `StackCipher<K>`,
+field pendings zipped and mapped, never awaited — for a struct of leaves, and
+one level up for a *row*: a struct whose fields are each derived from a
+field of the source (`from = ..`) under a literal context of their own
+(`context = ".."`). Field contexts **replace** the record's rather than
+composing with it, so a query site builds a term under the same literal the
+row stored it under; the row's own context is then unused and the caller
+passes `()`.
+
+That last point reversed one of the final-review guards above: `Vec` and
+`Option` no longer validate the context themselves. They pass it through
+untouched, and the leaves reject an empty one synchronously as before. What
+was lost is the "fail on the fixture with no rows" property — an empty
+column under an empty context now succeeds, and the misconfiguration is
+caught by the first real value instead — which is a small price for
+containers of self-describing records being expressible at all.
+
+The derive is bound to `StackCipher<K>` rather than generic over
+`EncryptTarget`, because combining outputs needs `zip`/`map` and only
+`Pending` has them; a generic derive would need those as `EncryptTarget`
+methods, and that extension does not change the attribute surface. `from`
+fields carry no where clause (the plaintext field's type is not visible to
+the macro), so their obligations are checked in the impl body. Rows —
+decrypted field by field — must name their `plaintext`, because the derive
+rebuilds it with a struct literal; a record opened as a whole may leave it
+off and decrypt to whatever its ciphertext field opens to.
+
+The derives are named after the trait they emit, as serde's are, and the
+attribute after the crate: `#[stash(plaintext = ..)]`,
+`#[stash(from = .., context = "..")]`. Which field decryption opens is not
+an attribute but a property of the field types (`Decryptable`), checked at
+compile time to be exactly one; `decrypt` is the override for records the
+types cannot settle. First shipped as
+`#[derive(Encrypted, Decrypted)]` with `#[encrypted(source = ..)]`: the
+decrypt macro sat on the record but emitted `DecryptFrom<Record> for
+Plaintext`, a trait whose `Self` was not the annotated type, and the
+attribute name lined up with neither derive. Flipping the decrypt trait (item
+2 in §7) is what let the macro be named honestly.
 
 ## 8. Where findings get recorded
 

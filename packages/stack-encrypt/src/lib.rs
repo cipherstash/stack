@@ -126,8 +126,9 @@ pub use cipher::{
     StackCipherBuilder, StackCipherText, StackDecipher,
 };
 pub use target::{
-    DecryptContext, DecryptExt, DecryptFrom, DecryptTarget, EncryptContext, EncryptExt,
-    EncryptFrom, EncryptTarget, Pending, PendingFuture, Request, Responses,
+    DecryptContext, DecryptField, DecryptFrom, DecryptInto, DecryptTarget, Decryptable,
+    EncryptContext, EncryptFrom, EncryptInto, EncryptTarget, Pending, PendingFuture, Request,
+    Responses,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they

@@ -1,114 +1,30 @@
-//! Target-directed encryption tests: leaf `EncryptFrom`/`DecryptFrom`
+//! Target-directed encryption tests: leaf `EncryptFrom`/`DecryptInto`
 //! implementations, a hand-written composite record (the shape a future
 //! derive will emit), a "third-party" term type built on the public extension
 //! surface only, and — the point of the design — proof that however large the
 //! assembly, settling it is one batched ZeroKMS call per request kind.
 
-use std::borrow::Cow;
 use std::cmp::Ordering;
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::Arc;
+use std::sync::atomic::Ordering as AtomicOrdering;
 
 use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerm, OreTerm};
 use stack_encrypt::target::{
-    DecryptContext, DecryptExt, DecryptFrom, EncryptContext, EncryptExt, EncryptFrom, Pending,
-    Request,
+    DecryptContext, DecryptInto, EncryptContext, EncryptFrom, EncryptInto, Pending, Request,
 };
 use stack_encrypt::{Error, StackCipher, StackCipherText};
-use stack_kms::{
-    DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,
-    IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
-};
+use stack_kms::{FakeDataKeySource, IdentifiedBy, IndexKeySource};
 use uuid::Uuid;
 use vitaminc_prf::{BlockVisitor, PrfContext, PrfValue};
 
-/// A cipher over the deterministic fake source. Built independently of
-/// [`stack_cipher`] below: the fake index key is deterministic per keyset, so
-/// two separately built ciphers stand in for the write path and a query path
-/// in another process.
+mod common;
+use common::{counting_cipher, stack_cipher};
+
+/// A cipher over the deterministic fake source. Built independently of the
+/// test's own [`stack_cipher`]: the fake index key is deterministic per
+/// keyset, so two separately built ciphers stand in for the write path and a
+/// query path in another process.
 async fn generator() -> StackCipher<FakeDataKeySource> {
     stack_cipher().await
-}
-
-async fn stack_cipher() -> StackCipher<FakeDataKeySource> {
-    StackCipher::builder()
-        .kms(FakeDataKeySource::new())
-        .init()
-        .await
-        .expect("build cipher")
-}
-
-/// The fake source with ZeroKMS *call* counters (not key counters): the
-/// design's whole claim is that an assembly of any size settles in one
-/// batched call per request kind, and these tests hold it to that.
-struct CountingSource {
-    inner: FakeDataKeySource,
-    generate_calls: Arc<AtomicUsize>,
-    retrieve_calls: Arc<AtomicUsize>,
-}
-
-impl CountingSource {
-    fn new() -> Self {
-        Self {
-            inner: FakeDataKeySource::new(),
-            generate_calls: Arc::new(AtomicUsize::new(0)),
-            retrieve_calls: Arc::new(AtomicUsize::new(0)),
-        }
-    }
-
-    fn counters(&self) -> (Arc<AtomicUsize>, Arc<AtomicUsize>) {
-        (self.generate_calls.clone(), self.retrieve_calls.clone())
-    }
-}
-
-impl DataKeySource for CountingSource {
-    async fn generate_keys(
-        &self,
-        payloads: Vec<GenerateKeyPayload<'_>>,
-        keyset_id: Option<Uuid>,
-        unverified_context: Option<Cow<'_, UnverifiedContext>>,
-    ) -> Result<Vec<DataKeyWithTag>, stack_kms::Error> {
-        self.generate_calls.fetch_add(1, AtomicOrdering::SeqCst);
-        self.inner
-            .generate_keys(payloads, keyset_id, unverified_context)
-            .await
-    }
-
-    async fn retrieve_keys(
-        &self,
-        payloads: Vec<RetrieveKeyPayload<'_>>,
-        keyset_id: Option<Uuid>,
-        unverified_context: Option<&UnverifiedContext>,
-    ) -> Result<Vec<DataKey>, stack_kms::Error> {
-        self.retrieve_calls.fetch_add(1, AtomicOrdering::SeqCst);
-        self.inner
-            .retrieve_keys(payloads, keyset_id, unverified_context)
-            .await
-    }
-}
-
-impl IndexKeySource for CountingSource {
-    async fn load_index_key(
-        &self,
-        keyset_id: Option<IdentifiedBy>,
-    ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
-        self.inner.load_index_key(keyset_id).await
-    }
-}
-
-async fn counting_cipher() -> (
-    StackCipher<CountingSource>,
-    Arc<AtomicUsize>,
-    Arc<AtomicUsize>,
-) {
-    let source = CountingSource::new();
-    let (generates, retrieves) = source.counters();
-    let cipher = StackCipher::builder()
-        .kms(source)
-        .init()
-        .await
-        .expect("build cipher");
-    (cipher, generates, retrieves)
 }
 
 // --- Leaf implementations ---------------------------------------------------
@@ -355,7 +271,7 @@ async fn optional_fields_encrypt_and_decrypt_structurally() {
 
 // --- A hand-written composite record ----------------------------------------
 //
-// The shape a `#[derive(Encrypted)]` will emit: one impl, pendings combined
+// The shape a `#[derive(EncryptFrom)]` will emit: one impl, pendings combined
 // with zip/map (never awaited), one context fanning out to every field, the
 // caller seeing a single await — and a single batched call.
 
@@ -386,18 +302,18 @@ impl<K> EncryptFrom<u32, StackCipher<K>> for EncryptedAge {
 
 /// The decrypt mirror a derive would emit: only the ciphertext field
 /// participates — terms are one-way.
-impl<K> DecryptFrom<EncryptedAge, StackCipher<K>> for u32 {
-    fn decrypt_from<'a, 'c, Ctx>(
-        source: EncryptedAge,
+impl<K> DecryptInto<u32, StackCipher<K>> for EncryptedAge {
+    fn decrypt_into<'a, 'c, Ctx>(
+        self,
         cipher: &'a StackCipher<K>,
         context: Ctx,
-    ) -> Pending<'a, Self, K>
+    ) -> Pending<'a, u32, K>
     where
         Ctx: DecryptContext<'c>,
-        EncryptedAge: 'a,
         Self: 'a,
+        u32: 'a,
     {
-        source.c.decrypt_into(cipher, context)
+        self.c.decrypt_into(cipher, context)
     }
 }
 
@@ -666,25 +582,34 @@ async fn wrapped_empty_contexts_are_rejected_too() {
 }
 
 #[tokio::test]
-async fn empty_context_is_rejected_even_when_there_is_nothing_to_encrypt() {
-    // An empty descriptor must fail on the fixture with no rows / an absent
-    // optional, not on the first populated value in production.
-    let cipher = stack_cipher().await;
+async fn containers_pass_the_context_through_to_their_leaves() {
+    // `Vec` and `Option` validate nothing themselves: a populated container
+    // under an empty context fails at the first leaf (synchronously, before
+    // any I/O), and an empty one has no leaf to fail at. That is what lets a
+    // column of derived rows — records whose fields carry their own contexts
+    // — be given `()`.
+    let (cipher, generates, _) = counting_cipher().await;
 
-    let none: Result<Option<StackCipherText>, _> = None::<String>.encrypt_into(&cipher, "").await;
-    assert!(matches!(none, Err(Error::EmptyContext)));
+    let some: Result<Option<StackCipherText>, _> =
+        Some("x".to_string()).encrypt_into(&cipher, "").await;
+    assert!(matches!(some, Err(Error::EmptyContext)));
+    let populated: Result<Vec<StackCipherText>, _> =
+        vec!["x".to_string()].encrypt_into(&cipher, "").await;
+    assert!(matches!(populated, Err(Error::EmptyContext)));
+    assert_eq!(generates.load(AtomicOrdering::SeqCst), 0);
 
-    let empty: Result<Vec<StackCipherText>, _> =
-        Vec::<String>::new().encrypt_into(&cipher, "").await;
-    assert!(matches!(empty, Err(Error::EmptyContext)));
-
-    let none: Result<Option<String>, _> = None::<StackCipherText>.decrypt_into(&cipher, "").await;
-    assert!(matches!(none, Err(Error::EmptyContext)));
-
-    let empty: Result<Vec<String>, _> = Vec::<StackCipherText>::new()
-        .decrypt_into(&cipher, "")
-        .await;
-    assert!(matches!(empty, Err(Error::EmptyContext)));
+    let none: Option<StackCipherText> = None::<String>.encrypt_into(&cipher, ()).await.unwrap();
+    assert!(none.is_none());
+    let empty: Vec<StackCipherText> = Vec::<String>::new()
+        .encrypt_into(&cipher, ())
+        .await
+        .unwrap();
+    assert!(empty.is_empty());
+    let empty: Vec<String> = Vec::<StackCipherText>::new()
+        .decrypt_into(&cipher, ())
+        .await
+        .unwrap();
+    assert!(empty.is_empty());
 }
 
 #[tokio::test]

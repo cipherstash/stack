@@ -1,0 +1,14 @@
+error[E0277]: the trait bound `Opaque: Decryptable` is not satisfied
+  --> tests/ui/decrypt_field_not_decryptable.rs:10:8
+   |
+10 |     o: Opaque,
+   |        ^^^^^^ the trait `Decryptable` is not implemented for `Opaque`
+   |
+   = help: the following other types implement trait `Decryptable`:
+             CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>
+             EqualityTerm
+             MatchTerm<O>
+             OpeTerm<T>
+             Option<S>
+             OreTerm<T>
+             Vec<S>

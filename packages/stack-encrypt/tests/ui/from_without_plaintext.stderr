@@ -1,0 +1,5 @@
+error: `from = ..` reaches into a field of the plaintext, so the plaintext type must be named: add `#[stash(plaintext = ..)]` to the struct
+ --> tests/ui/from_without_plaintext.rs:5:20
+  |
+5 |     #[stash(from = age, context = "users/age")]
+  |                    ^^^

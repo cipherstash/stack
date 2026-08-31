@@ -81,7 +81,10 @@ use vitaminc_prf::{
 };
 use zeroize::Zeroize;
 
-use crate::target::{is_degenerate_prf_context, EncryptContext, EncryptFrom, Pending};
+use crate::target::{
+    is_degenerate_prf_context, DecryptContext, DecryptField, DecryptTarget, Decryptable,
+    EncryptContext, EncryptFrom, Pending,
+};
 use crate::{Error, StackCipher};
 
 // The `/v1` suffix versions the *derivation* (domain + input framing), not the
@@ -496,6 +499,37 @@ pub struct OreTerm<T: CllwOreEncrypt>(T::Output);
 /// (see [`OreTerm`]). The wrapped ciphertext compares with plain
 /// lexicographic byte order.
 pub struct OpeTerm<T: CllwOpeEncrypt>(T::Output);
+
+/// Index terms are one-way: decryption passes over them. `Decryptable` and
+/// `DecryptField` say so, which is how a derived record finds its ciphertext
+/// field among them without being told.
+macro_rules! index_term {
+    ($ty:ty $(, $param:ident: $bound:path)?) => {
+        impl<$($param: $bound)?> Decryptable for $ty {
+            const DECRYPTABLE: bool = false;
+        }
+
+        impl<__P, __C: DecryptTarget $(, $param: $bound)?> DecryptField<__P, __C> for $ty {
+            fn decrypt_field<'a, 'c, Ctx>(
+                self,
+                _cipher: &'a __C,
+                _context: Ctx,
+            ) -> Option<__C::Output<'a, __P>>
+            where
+                Ctx: DecryptContext<'c>,
+                Self: 'a,
+                __P: 'a,
+            {
+                None
+            }
+        }
+    };
+}
+
+index_term!(EqualityTerm);
+index_term!(MatchTerm<O>, O: MatchConfig);
+index_term!(OreTerm<T>, T: CllwOreEncrypt);
+index_term!(OpeTerm<T>, T: CllwOpeEncrypt);
 
 macro_rules! term_wrapper {
     ($name:ident, $bound:ident) => {
