@@ -170,7 +170,9 @@ export type {
 export type { EncryptedV3, EncryptedV3Query } from "../../lib/eql-v3.js";
 export {
   PROTECT_ERROR_CODES,
+  getAuthErrorCode,
   isProtectErrorCode,
+  type ProtectAuthErrorCode,
   type ProtectErrorCode,
 } from "./errors.js";
 "#;
@@ -683,12 +685,25 @@ pub async fn decrypt_bulk_fallible(
             DecryptResult::Success { data } => {
                 set_prop(&obj, "data", &plaintext_to_js(data)?)?;
             }
-            DecryptResult::Error { error, code } => {
+            DecryptResult::Error {
+                error,
+                code,
+                auth_code,
+                help,
+                url,
+            } => {
                 set_prop(&obj, "error", &JsValue::from_str(error))?;
                 // Left unset rather than set to null when absent, so the item
                 // matches the declared `code?: ProtectErrorCode`.
-                if let Some(code) = code {
-                    set_prop(&obj, "code", &JsValue::from_str(code))?;
+                for (key, value) in [
+                    ("code", code),
+                    ("authCode", auth_code),
+                    ("help", help),
+                    ("url", url),
+                ] {
+                    if let Some(value) = value {
+                        set_prop(&obj, key, &JsValue::from_str(value))?;
+                    }
                 }
             }
         }
@@ -1084,13 +1099,20 @@ fn js_error(msg: &str) -> JsValue {
 /// `src/errors.ts` used to do — and could only do for the Neon entry, since
 /// this build's thrown errors never reached that wrapper (#146).
 fn error_to_js(e: Error) -> JsValue {
-    let (message, code) = e.diagnostic_parts();
-    let err = js_sys::Error::new(&message);
-    if let Some(code) = code {
-        // Infallible in practice: `err` is a fresh, extensible JS object. A
-        // failure here still yields a correct error, just without the code,
-        // which beats masking the original failure with a `Reflect` one.
-        let _ = js_sys::Reflect::set(&err, &JsValue::from_str("code"), &JsValue::from_str(&code));
+    let diagnostic = e.diagnostic_parts();
+    let err = js_sys::Error::new(&diagnostic.message);
+    for (key, value) in [
+        ("code", diagnostic.code),
+        ("authCode", diagnostic.auth_code),
+        ("help", diagnostic.help),
+        ("url", diagnostic.url),
+    ] {
+        if let Some(value) = value {
+            // Infallible in practice: `err` is a fresh, extensible JS object. A
+            // failure here still yields a correct error, just without the code,
+            // which beats masking the original failure with a `Reflect` one.
+            let _ = js_sys::Reflect::set(&err, &JsValue::from_str(key), &JsValue::from_str(&value));
+        }
     }
     err.into()
 }

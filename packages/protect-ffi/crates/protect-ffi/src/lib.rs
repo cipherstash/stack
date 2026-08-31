@@ -292,8 +292,10 @@ pub enum Error {
     #[error(transparent)]
     ZeroKMSBuilder(#[from] ZeroKMSBuilderError),
     #[error(transparent)]
+    #[diagnostic(transparent)]
     Auth(#[from] AuthError),
     #[error(transparent)]
+    #[diagnostic(transparent)]
     ZeroKMS(#[from] zerokms::Error),
     #[error(transparent)]
     TypeParse(#[from] TypeParseError),
@@ -401,6 +403,14 @@ pub enum Error {
     InvalidSteVecSelector,
 }
 
+pub(crate) struct Diagnostic {
+    pub(crate) message: String,
+    pub(crate) code: Option<String>,
+    pub(crate) auth_code: Option<String>,
+    pub(crate) help: Option<String>,
+    pub(crate) url: Option<String>,
+}
+
 impl Error {
     /// `Some` when a deserialization failure is an unknown `queryOp`.
     ///
@@ -465,8 +475,16 @@ impl Error {
     /// implementation as its primary message; the code comes from the
     /// variant's `#[diagnostic(code(..))]`. Keeping the extraction together
     /// makes the Neon, wasm, and fallible-bulk representations agree.
-    pub(crate) fn diagnostic_parts(&self) -> (String, Option<String>) {
-        (self.to_string(), self.error_code())
+    pub(crate) fn diagnostic_parts(&self) -> Diagnostic {
+        Diagnostic {
+            message: self.to_string(),
+            code: self.error_code(),
+            auth_code: self
+                .auth_error()
+                .map(|error| error.error_code().to_string()),
+            help: miette::Diagnostic::help(self).map(|help| help.to_string()),
+            url: miette::Diagnostic::url(self).map(|url| url.to_string()),
+        }
     }
 
     /// The `ProtectErrorCode` this error crosses the boundary with, if it has
@@ -477,6 +495,13 @@ impl Error {
     /// where the value actually comes from.
     pub(crate) fn error_code(&self) -> Option<String> {
         miette::Diagnostic::code(self).map(|code| code.to_string())
+    }
+
+    fn auth_error(&self) -> Option<&AuthError> {
+        match self {
+            Self::Auth(error) | Self::ZeroKMS(zerokms::Error::Auth(error)) => Some(error),
+            _ => None,
+        }
     }
 }
 
@@ -939,6 +964,12 @@ enum DecryptResult {
         /// matches the declared `code?: ProtectErrorCode`.
         #[serde(skip_serializing_if = "Option::is_none")]
         code: Option<String>,
+        #[serde(rename = "authCode", skip_serializing_if = "Option::is_none")]
+        auth_code: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        help: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        url: Option<String>,
     },
 }
 
@@ -947,10 +978,13 @@ impl DecryptResult {
     /// step — the two are read off the same value here rather than one being
     /// re-derived from the other later.
     fn from_error(err: &Error) -> Self {
-        let (message, code) = err.diagnostic_parts();
+        let diagnostic = err.diagnostic_parts();
         Self::Error {
-            error: message,
-            code,
+            error: diagnostic.message,
+            code: diagnostic.code,
+            auth_code: diagnostic.auth_code,
+            help: diagnostic.help,
+            url: diagnostic.url,
         }
     }
 }
@@ -2017,14 +2051,21 @@ async fn do_encrypt_query_bulk(
 /// shape `wasm.rs` already uses — and maps once on the way out.
 #[cfg(not(target_arch = "wasm32"))]
 fn into_js_error(err: Error) -> impl for<'cx> TryIntoJs<'cx, Value = JsError> {
-    let (message, code) = err.diagnostic_parts();
+    let diagnostic = err.diagnostic_parts();
     extract::with(move |cx: &mut Cx| -> JsResult<JsError> {
-        let error = cx.error(message)?;
+        let error = cx.error(diagnostic.message)?;
         // Left unset rather than set to null when absent, so `'code' in err`
         // answers the question a caller is actually asking.
-        if let Some(code) = code {
-            let code = cx.string(code);
-            error.set(cx, "code", code)?;
+        for (key, value) in [
+            ("code", diagnostic.code),
+            ("authCode", diagnostic.auth_code),
+            ("help", diagnostic.help),
+            ("url", diagnostic.url),
+        ] {
+            if let Some(value) = value {
+                let value = cx.string(value);
+                error.set(cx, key, value)?;
+            }
         }
         Ok(error)
     })
@@ -2144,15 +2185,28 @@ async fn decrypt_bulk_fallible(
                         let value = js_plaintext_into_js(cx, data)?;
                         obj.set(cx, "data", value)?;
                     }
-                    DecryptResult::Error { error, code } => {
+                    DecryptResult::Error {
+                        error,
+                        code,
+                        auth_code,
+                        help,
+                        url,
+                    } => {
                         let message = cx.string(error);
                         obj.set(cx, "error", message)?;
                         // Left unset rather than set to null when absent, so
                         // the item matches the declared
                         // `code?: ProtectErrorCode`.
-                        if let Some(code) = code {
-                            let code = cx.string(code);
-                            obj.set(cx, "code", code)?;
+                        for (key, value) in [
+                            ("code", code),
+                            ("authCode", auth_code),
+                            ("help", help),
+                            ("url", url),
+                        ] {
+                            if let Some(value) = value {
+                                let value = cx.string(value);
+                                obj.set(cx, key, value)?;
+                            }
                         }
                     }
                 }
@@ -2315,6 +2369,50 @@ mod tests {
     /// arms wrong is invisible to the compiler.
     mod error_codes {
         use super::*;
+
+        #[test]
+        fn auth_diagnostics_are_transparent() {
+            let err =
+                Error::Auth(stack_auth::UsageLimitExceeded("Over the limit".to_string()).into());
+
+            let diagnostic = err.diagnostic_parts();
+            assert_eq!(
+                diagnostic.auth_code.as_deref(),
+                Some("USAGE_LIMIT_EXCEEDED")
+            );
+            assert_eq!(diagnostic.message, "Over the limit");
+            assert_eq!(
+                diagnostic.help.as_deref(),
+                Some("The organisation has used its allowance for the current billing period. Upgrade the plan from the CipherStash dashboard, then retry.")
+            );
+            assert_eq!(
+                diagnostic.url.as_deref(),
+                Some("https://dashboard.cipherstash.com/billing")
+            );
+
+            assert_eq!(
+                miette::Diagnostic::help(&err).map(|help| help.to_string()),
+                Some("The organisation has used its allowance for the current billing period. Upgrade the plan from the CipherStash dashboard, then retry.".to_string())
+            );
+            assert_eq!(
+                miette::Diagnostic::url(&err).map(|url| url.to_string()),
+                Some("https://dashboard.cipherstash.com/billing".to_string())
+            );
+        }
+
+        #[test]
+        fn zerokms_auth_diagnostics_are_transparent() {
+            let err = Error::ZeroKMS(zerokms::Error::Auth(
+                stack_auth::OrgNotProvisioned("Not provisioned".to_string()).into(),
+            ));
+
+            let diagnostic = err.diagnostic_parts();
+            assert_eq!(diagnostic.auth_code.as_deref(), Some("ORG_NOT_PROVISIONED"));
+            assert_eq!(
+                diagnostic.url.as_deref(),
+                Some("https://cipherstash.com/support")
+            );
+        }
 
         fn config(err: ConfigError) -> Option<String> {
             Error::from(err).error_code()

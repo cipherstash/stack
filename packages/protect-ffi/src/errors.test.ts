@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { isProtectErrorCode, PROTECT_ERROR_CODES } from './errors.js'
+import {
+  getAuthErrorCode,
+  isProtectErrorCode,
+  PROTECT_ERROR_CODES,
+} from './errors.js'
 
 describe('isProtectErrorCode', () => {
   it('accepts every declared code', () => {
@@ -83,5 +87,57 @@ describe('no message-shape routing', () => {
     const err: unknown = new Error(message)
 
     expect(isProtectErrorCode((err as { code?: unknown }).code)).toBe(false)
+  })
+})
+
+describe('getAuthErrorCode', () => {
+  /**
+   * What both bindings throw for a stack-auth failure: the ordinary Error,
+   * plus `authCode` and the remedy text stack-auth wrote — see
+   * `Error::auth_error` in `crates/protect-ffi/src/lib.rs`.
+   */
+  const authThrown = (message: string, authCode: string) =>
+    Object.assign(new Error(message), { authCode })
+
+  it('reads the code off an auth failure', () => {
+    const err: unknown = authThrown(
+      'Insufficient balance. Please upgrade your plan.',
+      'USAGE_LIMIT_EXCEEDED',
+    )
+
+    expect(getAuthErrorCode(err)).toBe('USAGE_LIMIT_EXCEEDED')
+  })
+
+  it('is undefined for a failure that did not come from auth', () => {
+    // The distinction the field exists to make: absent means "not an auth
+    // failure", which is why it is unset rather than null.
+    const err: unknown = Object.assign(new Error('column not found'), {
+      code: 'UNKNOWN_COLUMN',
+    })
+
+    expect(getAuthErrorCode(err)).toBeUndefined()
+  })
+
+  it('does not confuse `code` for `authCode`', () => {
+    // The two taxonomies are separate on purpose — see `ProtectAuthErrorCode`.
+    const err: unknown = Object.assign(new Error('boom'), { code: 'UNKNOWN' })
+
+    expect(getAuthErrorCode(err)).toBeUndefined()
+  })
+
+  it('survives non-objects and non-string codes', () => {
+    expect(getAuthErrorCode(undefined)).toBeUndefined()
+    expect(getAuthErrorCode(null)).toBeUndefined()
+    expect(getAuthErrorCode('USAGE_LIMIT_EXCEEDED')).toBeUndefined()
+    expect(getAuthErrorCode({ authCode: 42 })).toBeUndefined()
+  })
+
+  it('accepts a code this build has never heard of', () => {
+    // The set is stack-auth's and moves on its own release train, so a newer
+    // code than the pinned crate must still reach the caller rather than
+    // being filtered to undefined.
+    expect(getAuthErrorCode({ authCode: 'SOME_FUTURE_CODE' })).toBe(
+      'SOME_FUTURE_CODE',
+    )
   })
 })

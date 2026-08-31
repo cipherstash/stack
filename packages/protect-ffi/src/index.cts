@@ -28,8 +28,10 @@ export * from './eql-v3.js'
 import type { EncryptedV3Query } from './eql-v3.js'
 
 export {
+  getAuthErrorCode,
   isProtectErrorCode,
   PROTECT_ERROR_CODES,
+  type ProtectAuthErrorCode,
   type ProtectErrorCode,
 } from './errors.js'
 

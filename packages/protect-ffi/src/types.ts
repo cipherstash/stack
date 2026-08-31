@@ -26,11 +26,32 @@
 
 import type { CredentialOpts } from './credentials.js'
 import type { EncryptedV3 } from './eql-v3.js'
-import type { ProtectErrorCode } from './errors.js'
+import type { ProtectAuthErrorCode, ProtectErrorCode } from './errors.js'
 
 export type DecryptResult =
   | { data: JsPlaintext }
-  | { error: string; code?: ProtectErrorCode }
+  | {
+      error: string
+      code?: ProtectErrorCode
+      /** @see {@link ProtectAuthErrorCode} */
+      authCode?: ProtectAuthErrorCode
+      /**
+       * What to do about the failure, when it carries a remedy — the `miette`
+       * help of the auth error underneath, or the `help` the JS auth strategy
+       * supplied with its rejection.
+       *
+       * @see {@link ProtectAuthErrorCode}
+       */
+      help?: string
+      /**
+       * Where to go to do it: the other half of {@link help}, carried
+       * separately because that is how both the `miette` diagnostic surface and
+       * `@cipherstash/auth`'s `AuthFailure` carry it.
+       *
+       * @see {@link ProtectAuthErrorCode}
+       */
+      url?: string
+    }
 
 export type EncryptPayload = {
   plaintext: JsPlaintext
@@ -366,7 +387,27 @@ export type TokenResult = { token: string }
  */
 export type TokenResultEnvelope =
   | { data: TokenResult; failure?: undefined }
-  | { failure: { type?: string; error?: Error }; data?: undefined }
+  | {
+      /**
+       * An `@cipherstash/auth` `AuthFailure`: `{ type, error, help?, url? }`
+       * plus any per-variant payload (`WORKSPACE_MISMATCH`'s
+       * `expected`/`actual`).
+       *
+       * All four named fields are read at both seams. `type` selects the
+       * `AuthError` the failure is reconstructed into, and `type`/`help`/`url`
+       * are carried verbatim onto the thrown error as `authCode`/`help`/`url`
+       * — see `AuthDiagnosticRelay` in `crates/protect-ffi/src/lib.rs`. They
+       * are declared here because a strategy written in TypeScript has to be
+       * able to supply them.
+       */
+      failure: {
+        type?: string
+        error?: Error
+        help?: string
+        url?: string
+      }
+      data?: undefined
+    }
 
 /**
  * Auth strategy shape compatible with `@cipherstash/auth` strategies (e.g.

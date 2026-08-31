@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type {
   AuthStrategy,
+  DecryptResult,
   EncryptedV3Query,
   EncryptQueryOptions,
   Indexes,
@@ -8,6 +9,7 @@ import type {
   QueryPayload,
   TextSearchOreQuery,
   TextSearchQuery,
+  TokenResultEnvelope,
 } from './index.cjs'
 
 // Every index that can be configured via `Indexes` must also be targetable
@@ -117,5 +119,54 @@ describe('AuthStrategy', () => {
 
     expect(typeof success.getToken).toBe('function')
     expect(typeof failure.getToken).toBe('function')
+  })
+
+  it('accepts the remedy fields an AuthFailure carries', () => {
+    // Both seams read `help` and `url` off the failure object — see
+    // `AuthDiagnosticRelay` in crates/protect-ffi/src/lib.rs — so a strategy
+    // written in TypeScript has to be able to supply them. `@cipherstash/auth`
+    // declares both on every member of its `AuthFailure` union.
+    //
+    // Typed as the envelope rather than through `AuthStrategy`: a union return
+    // type relaxes excess-property checking, so the same literal inside a
+    // `getToken` passes whether or not the fields are declared, and the test
+    // would pin nothing.
+    const failure: TokenResultEnvelope = {
+      failure: {
+        type: 'USAGE_LIMIT_EXCEEDED',
+        error: new Error('Insufficient balance. Please upgrade your plan.'),
+        help: 'Upgrade the plan at https://dashboard.cipherstash.com',
+        url: 'https://dashboard.cipherstash.com',
+      },
+    }
+    const strategy: AuthStrategy = { getToken: async () => failure }
+
+    expect(typeof strategy.getToken).toBe('function')
+  })
+})
+
+// The failure arm of a per-item `decryptBulkFallible` result is built from the
+// same Rust `Diagnostic` as a thrown error (`DecryptResult::from_error`), so it
+// carries the same fields. A field the Rust can set and the type does not name
+// is a value a caller cannot read without an assertion.
+describe('DecryptResult', () => {
+  it('names every field the Rust failure arm can set', () => {
+    const failure: DecryptResult = {
+      error: 'Insufficient balance. Please upgrade your plan.',
+      code: 'UNKNOWN',
+      authCode: 'USAGE_LIMIT_EXCEEDED',
+      help: 'Upgrade the plan at https://dashboard.cipherstash.com',
+      url: 'https://dashboard.cipherstash.com',
+    }
+
+    expect(failure).toBeDefined()
+  })
+
+  it('keeps every diagnostic field optional', () => {
+    // Absent, not null: both bindings omit a field the error has no value for,
+    // so `error` alone must remain a complete failure item.
+    const failure: DecryptResult = { error: 'invalid ciphertext' }
+
+    expect(failure).toBeDefined()
   })
 })

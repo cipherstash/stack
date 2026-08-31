@@ -85,7 +85,9 @@ export type {
 export type { EncryptedV3, EncryptedV3Query } from "../../lib/eql-v3.js";
 export {
     PROTECT_ERROR_CODES,
+    getAuthErrorCode,
     isProtectErrorCode,
+    type ProtectAuthErrorCode,
     type ProtectErrorCode,
 } from "./errors.js";
 
