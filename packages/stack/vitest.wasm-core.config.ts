@@ -58,5 +58,18 @@ export default defineConfig({
     // fail rather than report a green run of zero files — the one failure mode
     // a single-file `include` invites.
     passWithNoTests: false,
+    // Not left at vitest's 5000ms, for the same reason the sibling
+    // `vitest.config.ts` does not leave it there: 5000ms was intermittently
+    // short for this package. Nothing here talks to the network — every
+    // assertion lands before the first ZeroKMS / CTS call — but every case
+    // instantiates the REAL inlined core, and the last one loads a key and
+    // runs `getToken`. A separate config inherits none of the sibling's
+    // settings, so this has to be said twice; 30s matches it, and is still
+    // low enough to surface a genuine hang.
+    testTimeout: 30000,
+    // Raised with it rather than considered separately: this suite has no
+    // hooks today, and the failure mode of a config whose two timeouts
+    // disagree is that adding one later inherits the number nobody chose.
+    hookTimeout: 30000,
   },
 })

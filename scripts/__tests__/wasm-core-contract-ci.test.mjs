@@ -5,6 +5,7 @@ import stackVitestConfig from '../../packages/stack/vitest.config.ts'
 import wasmCoreVitestConfig, {
   WASM_CORE_SUITE,
 } from '../../packages/stack/vitest.wasm-core.config.ts'
+import supabaseVitestConfig from '../../packages/stack-supabase/vitest.config.ts'
 import { readJsonc } from './lib/read-jsonc.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
@@ -54,11 +55,33 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  * future job that also builds the WASM output can host the step without
  * editing this file — and naming the wrong job cannot pass, since a job that
  * does not build wasm cannot run the suite at all.
+ *
+ * Two further checks live here, both about what the arrangement COSTS rather
+ * than about where the suite runs:
+ *
+ *   5. the WASM-core config raises Vitest's 5000ms default timeout. That
+ *      default was already intermittently too short for this package — the
+ *      sibling `vitest.config.ts` says so and raises it — and every case in
+ *      the WASM-core suite instantiates the real inlined core.
+ *   6. the `browser` export-condition guard sits in a file the DEFAULT stack
+ *      suite collects. It reads a manifest and needs no WASM build, so it has
+ *      no business paying this arrangement's price: hosted in the WASM-core
+ *      file it ran in exactly one CI job and in nobody's local `pnpm test`.
  */
 
 const BUILD_FFI = './.github/actions/build-ffi-binding'
 const SCRIPT = 'test:wasm-core'
 const PACKAGE = '@cipherstash/stack'
+
+/** Vitest's own default, which both stack configs deliberately exceed. */
+const VITEST_DEFAULT_TIMEOUT_MS = 5000
+
+/**
+ * Where the `browser` export-condition guards live, one per package that
+ * ships a `wasm-inline` entry (#804). Relative to each package root, because
+ * that is what a vitest `exclude` pattern is relative to.
+ */
+const BROWSER_GUARD_SUITE = '__tests__/browser-export-condition.test.ts'
 
 const stackPackageJson = JSON.parse(
   readFileSync(join(REPO_ROOT, 'packages/stack/package.json'), 'utf8'),
@@ -88,6 +111,29 @@ function buildsWasm(job) {
   )
 }
 
+/**
+ * Which of a vitest config's `exclude` patterns select `relPath`.
+ *
+ * Deliberately not a glob engine. The patterns in play are literal paths, a
+ * literal directory prefix (`integration/**`) and vitest's own
+ * anywhere-under-a-directory defaults (node_modules, dist, cypress), and
+ * those three shapes are what this handles. A real matcher would be a
+ * dependency for no extra coverage, and a pattern shape it does not
+ * understand is reported as "not excluded" — the safe direction here only
+ * because the exclusion this guards against is written by hand, in one of
+ * those shapes, by someone moving the file back.
+ */
+function excludedBy(patterns, relPath) {
+  const segments = relPath.split('/')
+  return (patterns ?? []).filter((pattern) => {
+    if (pattern === relPath) return true
+    const literal = pattern.split('*')[0].replace(/\/$/, '')
+    if (literal && relPath.startsWith(`${literal}/`)) return true
+    const anywhere = /^\*\*\/([^*/]+)\/\*\*$/.exec(pattern)
+    return anywhere ? segments.includes(anywhere[1]) : false
+  })
+}
+
 describe('the WASM core credential contract runs somewhere (#804)', () => {
   it('the suite the whole arrangement is about still exists', () => {
     expect(existsSync(join(REPO_ROOT, 'packages/stack', WASM_CORE_SUITE))).toBe(
@@ -104,6 +150,22 @@ describe('the WASM core credential contract runs somewhere (#804)', () => {
 
   it('is excluded from the default suite, which has no WASM build', () => {
     expect(stackVitestConfig.test.exclude).toContain(WASM_CORE_SUITE)
+  })
+
+  it("gives each case more than vitest's 5s default to run in", () => {
+    // A separate config inherits none of the sibling's settings, and the one
+    // most easily lost is the one nothing references: `vitest.config.ts`
+    // raises this exact default for this exact package, because 5000ms was
+    // intermittently short there. Every case in the WASM-core suite
+    // instantiates the real inlined core — the last one gets through key
+    // loading into `getToken` — so the same risk applies, and it would
+    // present as a flake in the one job that runs it rather than as a
+    // failure anyone can reproduce.
+    expect(
+      wasmCoreVitestConfig.test.testTimeout,
+      `vitest.wasm-core.config.ts must set an explicit \`testTimeout\` above vitest's ${VITEST_DEFAULT_TIMEOUT_MS}ms default.\n` +
+        `Every case there instantiates the REAL inlined WASM core, and the sibling vitest.config.ts already raises this default for this package because ${VITEST_DEFAULT_TIMEOUT_MS}ms was intermittently flaky.`,
+    ).toBeGreaterThan(VITEST_DEFAULT_TIMEOUT_MS)
   })
 
   it(`is invoked by \`${SCRIPT}\`, pointed at that config`, () => {
@@ -161,4 +223,40 @@ describe('the WASM core credential contract runs somewhere (#804)', () => {
       ).toBe(true)
     }
   })
+})
+
+describe('the `browser` export-condition guard runs everywhere (#804)', () => {
+  // The guard asserts that neither package declares a `browser` export
+  // condition, because `wasm-inline` needs a `clientKey` — a workspace secret
+  // — on every auth path. It is a manifest read: no WASM build, no
+  // credentials, no database.
+  //
+  // It lived in the WASM-core contract file, which the default stack config
+  // excludes, so it ran ONLY in `tests.yml`'s `wasm-e2e-tests` job — the one
+  // job that builds WASM output this assertion does not need. It ran in no
+  // local `pnpm test`, and on a fork PR in nothing at all (`wasm-e2e-tests`
+  // and `run-tests` both hard-fail at `require-cs-secrets` there, and `lint`
+  // runs only Biome). Moving it into each package's default suite is what
+  // these two cases hold in place.
+  const guards = [
+    { pkg: 'packages/stack', config: stackVitestConfig },
+    { pkg: 'packages/stack-supabase', config: supabaseVitestConfig },
+  ]
+
+  for (const { pkg, config } of guards) {
+    it(`${pkg} keeps its guard in the default suite`, () => {
+      const relative = BROWSER_GUARD_SUITE
+      expect(
+        existsSync(join(REPO_ROOT, pkg, relative)),
+        `${pkg}/${relative} is missing.\n` +
+          `That file is the only thing stopping a \`browser\` export condition being added to quiet a bundler, which would ship a workspace secret to the browser. If it moved, move this expectation with it — and keep it somewhere \`pnpm --filter ${pkg.replace('packages/', '@cipherstash/')} test\` collects.`,
+      ).toBe(true)
+
+      expect(
+        excludedBy(config.test.exclude, relative),
+        `${pkg}/${relative} is excluded from that package's default vitest config.\n` +
+          `Excluded, it runs only where something invokes a second config — which is exactly the arrangement that kept it out of every local test run and every fork PR before #804.`,
+      ).toEqual([])
+    })
+  }
 })
