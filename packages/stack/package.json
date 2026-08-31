@@ -200,7 +200,8 @@
 		"test:types": "vitest --run --typecheck.only",
 		"test:types:dist": "tsc --noEmit -p dist-types/tsconfig.json && tsc --noEmit -p dist-types/node16/tsconfig.json",
 		"release": "tsup",
-		"test:integration": "vitest run --config integration/vitest.config.ts"
+		"test:integration": "vitest run --config integration/vitest.config.ts",
+		"test:wasm-core": "vitest run --config vitest.wasm-core.config.ts"
 	},
 	"devDependencies": {
 		"@cipherstash/eql": "workspace:^",

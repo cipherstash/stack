@@ -19,6 +19,12 @@ import { describe, expect, it } from 'vitest'
  * So this asserts on the emitted file. It is a build-output gate, and it skips
  * when `dist/` is absent so `pnpm test` stays green without a prior build —
  * the same shape as the adapter-kit edge-safety gate added in #799.
+ *
+ * Edge-safe is not browser-safe: the WASM engine this entry binds still needs
+ * a `clientKey`, which is a workspace secret. That half is asserted in
+ * `browser-export-condition.test.ts`, a sibling rather than a case here
+ * because it reads the manifest and so must NOT skip on an unbuilt tree
+ * (#804).
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url))

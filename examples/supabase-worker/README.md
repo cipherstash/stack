@@ -2,7 +2,9 @@
 
 A minimal demo of using [`@cipherstash/stack`](https://www.npmjs.com/package/@cipherstash/stack) inside a Supabase Edge Function. The function encrypts a hardcoded plaintext value with CipherStash Protect, decrypts it back, and returns the round-trip result as JSON.
 
-The function imports from the `@cipherstash/stack/wasm-inline` subpath — the WASM build of Protect, with the WASM module inlined into the JS bundle. No native bindings are loaded, so it works in Supabase Edge (Deno) and any other V8-only runtime (Cloudflare Workers, Bun, modern browsers).
+The function imports from the `@cipherstash/stack/wasm-inline` subpath — the WASM build of Protect, with the WASM module inlined into the JS bundle. No native bindings are loaded, so it works in Supabase Edge (Deno) and any other V8-only runtime (Cloudflare Workers, Bun).
+
+**Server-side only.** That list is deliberately server-side: the entry requires `CS_CLIENT_KEY`, a workspace secret, on every auth path — including when you supply a per-user `authStrategy` — so it must not be bundled into a browser ([#804](https://github.com/cipherstash/stack/issues/804)).
 
 ## Prerequisites
 

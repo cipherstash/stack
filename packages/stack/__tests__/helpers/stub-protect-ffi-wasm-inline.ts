@@ -1,12 +1,16 @@
 /**
  * Test stub for `@cipherstash/protect-ffi/wasm-inline`.
  *
- * The installed `@cipherstash/protect-ffi` only exports `.` — the `/wasm-inline`
- * subpath does not exist, so Vitest cannot resolve `src/wasm-inline` (which
- * imports it). These no-op stubs let the unit tests that only exercise pure
- * helpers (`getColumnName`, `normalizeCastAs`) load the module. Aliased in via
- * `vitest.config.ts`. Any test that actually needs WASM behaviour must mock it
- * explicitly (see `wasm-inline-column-name.test.ts`).
+ * These no-op stubs let the unit tests that only exercise pure helpers
+ * (`getColumnName`, `normalizeCastAs`) load `src/wasm-inline` without paying
+ * for the real 4MB inlined-WASM module. Aliased in via `vitest.shared.ts`
+ * (`stackSourceAlias`). Any test that actually needs WASM behaviour must mock
+ * it explicitly (see `wasm-inline-column-name.test.ts`).
+ *
+ * The alias is a convenience, not a necessity: `@cipherstash/protect-ffi`
+ * does export `./wasm-inline` as of 0.30.0, and
+ * `wasm-inline-core-credential-contract.test.ts` deliberately bypasses this
+ * stub to assert against the real core.
  */
 export const decrypt = (): never => {
   throw new Error(

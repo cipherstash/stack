@@ -4,8 +4,9 @@
  * and decrypt it back, all via WASM (no native bindings).
  *
  * Imports `@cipherstash/stack/wasm-inline` — the WASM-inline subpath
- * works in any V8-only runtime (Supabase Edge, Cloudflare Workers, Bun,
- * Deno, modern browsers).
+ * works in any V8-only SERVER runtime (Supabase Edge, Cloudflare Workers,
+ * Bun, Deno). Not the browser: the entry requires `CS_CLIENT_KEY`, a
+ * workspace secret, on every auth path (#804).
  *
  * Usage:
  *   cp ../../.env.example ../../.env.local   # fill in your CS_* values

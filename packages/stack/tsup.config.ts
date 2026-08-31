@@ -36,9 +36,10 @@ export default defineConfig([
   // an ESM module that dynamically imports the inlined base64 WASM blob;
   // it cannot be loaded via Node CJS `require()` (ERR_REQUIRE_ESM), and
   // the only runtimes that need wasm-inline (Deno, Bun, Workers,
-  // Supabase Edge, browsers) are ESM-first anyway. `package.json`'s
-  // `./wasm-inline` export deliberately omits the `require` branch to
-  // match.
+  // Supabase Edge — all server-side; the entry requires a workspace
+  // secret, so it is not browser-safe, see #804) are ESM-first anyway.
+  // `package.json`'s `./wasm-inline` export deliberately omits the
+  // `require` branch to match.
   {
     entry: { 'wasm-inline': 'src/wasm-inline.ts' },
     format: ['esm'],

@@ -521,6 +521,37 @@ jobs:
       - name: Typecheck the generated WASM declarations
         run: pnpm --filter @cipherstash/protect-ffi run test:typecheck:wasm
 
+      # The `clientKey` contract test (#804). It loads the REAL WASM core
+      # instead of the stub in `vitest.shared.ts`, so it needs the step above:
+      # excluded from stack's default vitest config, which runs in
+      # `run-tests`, where the binding is built without `wasm: 'true'` and
+      # `dist/wasm/protect_ffi_inline.js` therefore does not exist — there the
+      # file failed to COLLECT, which is not a skip.
+      #
+      # Not the only suite that loads the real core, and this is not the only
+      # job that builds it for one — `integration-drizzle.yml` runs
+      # `packages/stack`'s `integration/wasm/**` the same way. It is here
+      # because it needs NOTHING else: no credentials, no database. Those
+      # suites' `globalSetup` requires both unconditionally and throws rather
+      # than skipping, and that job is path-filtered and fork-skipped besides,
+      # so hosting a core contract there would leave it unchecked on every diff
+      # those paths do not select. See
+      # `packages/stack/vitest.wasm-core.config.ts` for the long form.
+      #
+      # Before `Build stack` deliberately — it reads protect-ffi's output
+      # directly and none of stack's, so a core that changed its credential
+      # contract fails here rather than after another build.
+      #
+      # Offline despite the credentials in this job's env: every assertion
+      # lands during argument deserialisation or key loading, before any
+      # ZeroKMS / CTS call. It is here for the WASM build, not the secrets.
+      #
+      # `scripts/__tests__/wasm-core-contract-ci.test.mjs` fails if this step
+      # goes away while the exclusion stays — a suite that no job runs reads
+      # exactly like a suite that passes.
+      - name: Test the WASM core credential contract (stack)
+        run: pnpm exec turbo run test:wasm-core --filter @cipherstash/stack
+
       # The Deno smoke tests import the locally-built dist/wasm-inline.js of
       # BOTH packages via file URLs in e2e/wasm/deno.json — they need fresh
       # builds. stack-supabase is here for `supabase-declared.test.ts`, which
