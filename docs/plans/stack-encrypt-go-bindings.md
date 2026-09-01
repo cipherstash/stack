@@ -135,7 +135,7 @@ Go application
        ├─ imports vcvalue (value model) + the FFI codec
        ├─ embeds stack_encrypt_guest.wasm
        ├─ host import  cipherstash_transport::transport_send  → net/http → ZeroKMS
-       └─ host import  cipherstash_auth::token_get            → token source (phase 1: static)
+       └─ host import  cipherstash_transport::token_get       → token source (phase 1: static)
              │
              ▼  wazero (wasm32-wasip1)
        stack-encrypt guest (Rust cdylib)
