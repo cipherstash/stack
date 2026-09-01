@@ -210,10 +210,10 @@ where S: Encrypt + Clone, Ctx: EncryptContext<'c> + SuppliedContext<'c>,
     fn encrypt_from<'a>(source: &'a S, cipher: &'a StackCipher<K>, context: Ctx) -> Pending<'a, Self, K>
     where Self: 'a,
     {
-        let aad = context.into_aad().into_owned();
-        if is_degenerate_aad(aad.as_bytes()) {
-            return Pending::failed(cipher, Error::EmptyContext);
-        }
+        let aad = match supplied_aad(context) {   // validates and encodes; Error::EmptyContext on a degenerate one
+            Ok(aad) => aad,
+            Err(error) => return Pending::failed(cipher, error),
+        };
         match source.clone().encrypt_with_aad(cipher, aad) {   // vitaminc Encrypt, untouched
             Ok(tree) => seal_pending(cipher, tree),              // one data-key request per leaf
             Err(_) => Pending::ready(cipher, Err(Error::Aead)),
