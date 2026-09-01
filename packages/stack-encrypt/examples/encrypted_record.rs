@@ -26,9 +26,7 @@
 //! `zerokms_auth` example for the lookup order).
 
 use stack_encrypt::sem::{EqualityTerm, OreTerm};
-use stack_encrypt::target::{
-    DecryptContext, DecryptInto, EncryptContext, EncryptFrom, EncryptInto, Pending,
-};
+use stack_encrypt::target::{DecryptInto, EncryptFrom, EncryptInto, Pending};
 use stack_encrypt::{StackCipher, StackCipherText};
 
 /// "An encrypted `u32`, stored as its ciphertext plus an equality term and an
@@ -43,15 +41,25 @@ struct EncryptedInt {
 // One impl, written the way the derive will write it: build every field's
 // pending (no I/O — the terms derive locally, the ciphertext queues its
 // data-key requests), merge them with `zip`, shape with `map`. Errors are the
-// cipher's; there is nothing to unify.
-impl<K> EncryptFrom<u32, StackCipher<K>> for EncryptedInt {
-    fn encrypt_from<'a, 'c, Ctx>(
+// cipher's; there is nothing to unify. The context bounds are per field —
+// the same clauses the derive emits — so the record *inherits* the leaves'
+// context policy (a supplied, non-empty context) instead of restating it:
+// `EncryptedInt` is encrypted with `encrypt_into_with_context` because its
+// leaves demand a supplied context, and when the leaf bound tightens
+// (vitaminc#291) the record rides along untouched.
+impl<K, Ctx> EncryptFrom<u32, StackCipher<K>, Ctx> for EncryptedInt
+where
+    Ctx: Clone,
+    StackCipherText: EncryptFrom<u32, StackCipher<K>, Ctx>,
+    EqualityTerm: EncryptFrom<u32, StackCipher<K>, Ctx>,
+    OreTerm<u32>: EncryptFrom<u32, StackCipher<K>, Ctx>,
+{
+    fn encrypt_from<'a>(
         source: &'a u32,
         cipher: &'a StackCipher<K>,
         context: Ctx,
     ) -> Pending<'a, Self, K>
     where
-        Ctx: EncryptContext<'c>,
         Self: 'a,
     {
         // One context fans out to every field: it authenticates the
@@ -69,15 +77,14 @@ impl<K> EncryptFrom<u32, StackCipher<K>> for EncryptedInt {
 
 // The decrypt mirror `#[derive(DecryptInto)]` would write: the record owns
 // its opening, and only the ciphertext field participates (terms are
-// one-way), so it delegates to the ciphertext's own implementation.
-impl<K> DecryptInto<u32, StackCipher<K>> for EncryptedInt {
-    fn decrypt_into<'a, 'c, Ctx>(
-        self,
-        cipher: &'a StackCipher<K>,
-        context: Ctx,
-    ) -> Pending<'a, u32, K>
+// one-way), so it delegates to the ciphertext's own implementation — and
+// inherits its context demand the same per-field way.
+impl<K, Ctx> DecryptInto<u32, StackCipher<K>, Ctx> for EncryptedInt
+where
+    StackCipherText: DecryptInto<u32, StackCipher<K>, Ctx>,
+{
+    fn decrypt_into<'a>(self, cipher: &'a StackCipher<K>, context: Ctx) -> Pending<'a, u32, K>
     where
-        Ctx: DecryptContext<'c>,
         Self: 'a,
         u32: 'a,
     {
@@ -101,7 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // One await for the whole column: the Vec implementation merges every
     // record's pending, so five records (ciphertext + two terms each) settle
     // in a single batched generate_keys call.
-    let table: Vec<EncryptedInt> = ages.encrypt_into(&cipher, CONTEXT).await?;
+    let table: Vec<EncryptedInt> = ages.encrypt_into_with_context(&cipher, CONTEXT).await?;
     println!(
         "stored {} encrypted records in one ZeroKMS call",
         table.len()
@@ -113,12 +120,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // building a query never calls ZeroKMS at all.
 
     // WHERE age = 34: compare equality terms.
-    let probe: EqualityTerm = 34u32.encrypt_into(&cipher, CONTEXT).await?;
+    let probe: EqualityTerm = 34u32.encrypt_into_with_context(&cipher, CONTEXT).await?;
     let equal: Vec<usize> = (0..table.len()).filter(|&i| table[i].eq == probe).collect();
     println!("WHERE age = 34  => rows {equal:?}");
 
     // WHERE age > 40: compare ORE terms.
-    let bound: OreTerm<u32> = 40u32.encrypt_into(&cipher, CONTEXT).await?;
+    let bound: OreTerm<u32> = 40u32.encrypt_into_with_context(&cipher, CONTEXT).await?;
     let over_40: Vec<usize> = (0..table.len()).filter(|&i| table[i].ord > bound).collect();
     println!("WHERE age > 40  => rows {over_40:?}");
 

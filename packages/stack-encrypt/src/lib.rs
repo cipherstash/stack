@@ -128,7 +128,7 @@ pub use cipher::{
 pub use target::{
     DecryptContext, DecryptField, DecryptFrom, DecryptInto, DecryptTarget, Decryptable,
     EncryptContext, EncryptFrom, EncryptInto, EncryptTarget, Pending, PendingFuture, Request,
-    Responses,
+    Responses, SuppliedContext,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they
@@ -136,3 +136,8 @@ pub use target::{
 pub use vitaminc_aead::{
     Aad, Cipher, CipherText, ContextTag, Decipher, Decrypt, Element, Encrypt, IntoAad, Unspecified,
 };
+
+// Likewise the PRF context surface: a context newtype (the `SuppliedContext`
+// opt-in recipe) needs `IntoPrfContext` alongside `IntoAad`, and should not
+// need a direct `vitaminc-prf` dependency for it.
+pub use vitaminc_prf::{IntoPrfContext, PrfContext};

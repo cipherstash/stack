@@ -150,12 +150,15 @@ pub trait EncryptTarget {
     type Output<'a, T: 'a>: 'a where Self: 'a;
 }
 
-pub trait EncryptFrom<S, C: EncryptTarget>: Sized {
-    fn encrypt_from<'a, 'c, Ctx>(source: &'a S, cipher: &'a C, ctx: Ctx) -> C::Output<'a, Self>
+pub trait EncryptFrom<S, C: EncryptTarget, Ctx>: Sized {
+    fn encrypt_from<'a>(source: &'a S, cipher: &'a C, ctx: Ctx) -> C::Output<'a, Self>
     where
-        Ctx: EncryptContext<'c>;
+        Self: 'a;
 }
 ```
+
+(`Ctx` became a trait parameter after this RFC was accepted — see the
+deviations in §7. The shape argued for here is unchanged by it.)
 
 - A synchronous cipher sets `Output<'a, T> = Result<T, Self::Error>`. No
   future, no `.await`.
@@ -163,8 +166,8 @@ pub trait EncryptFrom<S, C: EncryptTarget>: Sized {
   which implements `IntoFuture`.
 
 ```rust
-let t: EqualityTerm = "alice".encrypt_into(&stack_cipher, "users/email").await?;  // async backend
-let t: LocalTerm    = "alice".encrypt_into(&local_cipher, "users/email")?;        // sync backend
+let t: EqualityTerm = "alice".encrypt_into_with_context(&stack_cipher, "users/email").await?;  // async backend
+let t: LocalTerm    = "alice".encrypt_into_with_context(&local_cipher, "users/email")?;        // sync backend
 ```
 
 (The bounds above are the shape, not the final spelling — `K: 'a` and the
@@ -266,8 +269,8 @@ up.
 Composites combine pendings **without awaiting them**, so requests merge:
 
 ```rust
-impl<K> EncryptFrom<u32, StackCipher<K>> for EncryptedInt {
-    fn encrypt_from<'a, 'c, Ctx>(source: &'a u32, cipher: &'a StackCipher<K>, ctx: Ctx)
+impl<'c, K, Ctx: EncryptContext<'c> + SuppliedContext<'c>> EncryptFrom<u32, StackCipher<K>, Ctx> for EncryptedInt {
+    fn encrypt_from<'a>(source: &'a u32, cipher: &'a StackCipher<K>, ctx: Ctx)
         -> PendingEncrypted<'a, Self, K>
     {
         StackCipherText::encrypt_from(source, cipher, ctx.clone())
@@ -286,14 +289,14 @@ see §7).
 Then the missing piece from §2.2:
 
 ```rust
-impl<S, T, K> EncryptFrom<Vec<S>, StackCipher<K>> for Vec<T> where T: EncryptFrom<S, StackCipher<K>>
-impl<S, T, K> EncryptFrom<Option<S>, StackCipher<K>> for Option<T>
+impl<S, T, K, Ctx> EncryptFrom<Vec<S>, StackCipher<K>, Ctx> for Vec<T> where T: EncryptFrom<S, StackCipher<K>, Ctx>, Ctx: Clone
+impl<S, T, K, Ctx> EncryptFrom<Option<S>, StackCipher<K>, Ctx> for Option<T>
 ```
 
 which makes the column one operation, one await, one round-trip:
 
 ```rust
-let table: Vec<EncryptedInt> = ages.encrypt_into(&cipher, CONTEXT).await?;
+let table: Vec<EncryptedInt> = ages.encrypt_into_with_context(&cipher, CONTEXT).await?;
 ```
 
 Batching comes from the **source shape**, exactly as it does for `Encrypt`.
@@ -383,17 +386,18 @@ The current module docs teach external term authors to return
 all until a deferred PRF exists:
 
 ```rust
-impl<S, K> EncryptFrom<S, StackCipher<K>> for MyTerm
+impl<'c, S, K, Ctx> EncryptFrom<S, StackCipher<K>, Ctx> for MyTerm
 where
     S: PrfValue + Clone,
+    Ctx: EncryptContext<'c> + SuppliedContext<'c>,
 {
-    fn encrypt_from<'a, 'c, Ctx>(
+    fn encrypt_from<'a>(
         source: &'a S,
         cipher: &'a StackCipher<K>,
         context: Ctx,
     ) -> PendingEncrypted<'a, Self, K>
     where
-        Ctx: EncryptContext<'c>,
+        Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
         let context = PrfContext::pae(&[b"my-crate/my-term/v1".as_slice(), context.as_bytes()]);
@@ -495,6 +499,20 @@ The implementation kept the design and changed three names/details:
   its name.
 - **`DecryptContext`** (`IntoAad + Clone`) joined `EncryptContext`: decryption
   derives nothing, so it must not demand a PRF conversion.
+- **The context is a trait parameter** — `EncryptFrom<S, C, Ctx>`,
+  `DecryptInto<P, C, Ctx>` — not a method generic. A method generic is bound
+  once, by the trait, so no implementation could refuse a context it cannot
+  use; as a trait parameter each impl bounds it. The leaves demand
+  `SuppliedContext` (every vitaminc context type but `()`), records inherit
+  that through their field bounds, and a row whose fields carry their own
+  contexts is implemented for `()` alone — a context handed to it would go
+  nowhere. The sugar splits accordingly, after
+  vitaminc's `encrypt` / `encrypt_with_aad`: `encrypt_into(&cipher)` passes
+  `()` and exists only for outputs that need nothing from the caller;
+  `encrypt_into_with_context(&cipher, ctx)` for the rest (`decrypt_from` /
+  `decrypt_from_with_context` mirror it). Which applies is the type's
+  decision, made at compile time; runtime rejection is left to what the
+  type cannot see — an empty string — pending vitaminc#291.
 - **`dispatch` issues one call per request *kind*** (at most one
   `generate_keys` + one `retrieve_keys`, sequentially — a mixed batch is rare
   today). When ZeroKMS grows the combined keys-plus-PRF operation, `dispatch`
@@ -561,11 +579,16 @@ rebuilds it with a struct literal; a record opened as a whole may leave it
 off and decrypt to whatever its ciphertext field opens to.
 
 The derives are named after the trait they emit, as serde's are, and the
-attribute after the crate: `#[stash(plaintext = ..)]`,
-`#[stash(from = .., context = "..")]`. Which field decryption opens is not
-an attribute but a property of the field types (`Decryptable`), checked at
-compile time to be exactly one; `decrypt` is the override for records the
-types cannot settle. First shipped as
+attribute after the crate: `#[stash(plaintext = ..)]` for a record,
+`#[stash(row = .., context = "..")]` for a row — which infers every field's
+`from` (its own name) and the field half of its context
+(`"<context>/<plaintext field>"`; the prefix is the required container
+`context`, given explicitly because it is stored-data identity and must not
+follow a Rust type's name), with `#[stash(from = .., context = "..")]` and
+`#[stash(nested)]` as the per-field overrides. Which
+field decryption opens is not an attribute either but a property of the
+field types (`Decryptable`), checked at compile time to be exactly one;
+`decrypt` is the override for records the types cannot settle. First shipped as
 `#[derive(Encrypted, Decrypted)]` with `#[encrypted(source = ..)]`: the
 decrypt macro sat on the record but emitted `DecryptFrom<Record> for
 Plaintext`, a trait whose `Self` was not the annotated type, and the
