@@ -742,6 +742,43 @@ export async function readObservedState(
   }
 }
 
+export interface DeclaredSchemaAssessment {
+  columns: DeclaredColumn[]
+  tableCount: number
+  fidelity: 'complete' | 'config-only'
+  database:
+    | { status: 'observed' }
+    | {
+        status: 'skipped'
+        reason: 'not-configured' | 'unreachable'
+        detail?: string
+      }
+  issues: ValidationIssue[]
+}
+
+/**
+ * Assess the declared encryption schema through one result-oriented interface.
+ * Declaration normalization, catalogue observation, index parsing, and rule
+ * classification remain implementation details behind this seam.
+ */
+export async function assessDeclaredSchema(options: {
+  encryptConfig: EncryptConfig
+  schemas?: readonly AnyV3Table[]
+  databaseUrl?: string
+}): Promise<DeclaredSchemaAssessment> {
+  const columns = options.schemas
+    ? collectDeclaredColumns(options.schemas)
+    : collectDeclaredColumnsFromConfig(options.encryptConfig)
+  const observation = await tryReadObservedState(options.databaseUrl, columns)
+  return {
+    columns,
+    tableCount: new Set(columns.map((column) => column.table)).size,
+    fidelity: options.schemas ? 'complete' : 'config-only',
+    database: observation.database,
+    issues: validateSchemas(columns, observation.observed),
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Reporting
 // ---------------------------------------------------------------------------
@@ -815,32 +852,37 @@ export async function validateCommand(options: {
   )
   s.stop('Encrypt client loaded.')
 
-  const columns = schemas
-    ? collectDeclaredColumns(schemas)
-    : collectDeclaredColumnsFromConfig(encryptConfig)
+  const assessment = await assessDeclaredSchema({
+    encryptConfig,
+    schemas,
+    databaseUrl: config.databaseUrl,
+  })
 
-  if (!schemas) {
+  if (assessment.fidelity === 'config-only') {
     p.log.warn(
       'Your installed @cipherstash/stack does not expose `getSchemas()`, so the concrete EQL domain of each column is unavailable. Domain checks (ORE portability, database drift) were skipped — upgrade @cipherstash/stack to run them.',
     )
   }
 
-  const tableCount = new Set(columns.map((column) => column.table)).size
   p.log.success(
-    `Schema loaded: ${tableCount} table${tableCount !== 1 ? 's' : ''}, ${columns.length} encrypted column${columns.length !== 1 ? 's' : ''}`,
+    `Schema loaded: ${assessment.tableCount} table${assessment.tableCount !== 1 ? 's' : ''}, ${assessment.columns.length} encrypted column${assessment.columns.length !== 1 ? 's' : ''}`,
   )
 
-  const observed = await tryReadObservedState(config.databaseUrl, columns)
+  if (assessment.database.status === 'skipped') {
+    p.log.info(
+      assessment.database.reason === 'not-configured'
+        ? 'No database URL resolved — skipping the database checks (drift, ORE availability, functional indexes). Pass --database-url or set DATABASE_URL to run them.'
+        : `Could not read the database (${assessment.database.detail}) — skipping the database checks (drift, ORE availability, functional indexes). The schema checks below still ran.`,
+    )
+  }
 
-  const issues = validateSchemas(columns, observed)
-
-  if (issues.length === 0) {
+  if (assessment.issues.length === 0) {
     p.outro('No issues found.')
     return
   }
 
   console.log() // blank line before issues
-  const hasErrors = reportIssues(issues)
+  const hasErrors = reportIssues(assessment.issues)
 
   if (hasErrors) {
     process.exit(1)
@@ -857,12 +899,12 @@ export async function validateCommand(options: {
 async function tryReadObservedState(
   databaseUrl: string | undefined,
   columns: DeclaredColumn[],
-): Promise<ObservedState | undefined> {
+): Promise<{
+  observed?: ObservedState
+  database: DeclaredSchemaAssessment['database']
+}> {
   if (!databaseUrl) {
-    p.log.info(
-      'No database URL resolved — skipping the database checks (drift, ORE availability, functional indexes). Pass --database-url or set DATABASE_URL to run them.',
-    )
-    return undefined
+    return { database: { status: 'skipped', reason: 'not-configured' } }
   }
 
   const tables = [...new Set(columns.map((column) => column.table))]
@@ -870,13 +912,19 @@ async function tryReadObservedState(
 
   try {
     await client.connect()
-    return await readObservedState(client, tables)
+    return {
+      observed: await readObservedState(client, tables),
+      database: { status: 'observed' },
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    p.log.info(
-      `Could not read the database (${message}) — skipping the database checks (drift, ORE availability, functional indexes). The schema checks below still ran.`,
-    )
-    return undefined
+    return {
+      database: {
+        status: 'skipped',
+        reason: 'unreachable',
+        detail: message,
+      },
+    }
   } finally {
     await client.end().catch(() => {})
   }
