@@ -86,6 +86,13 @@ pub fn status_for_term_error(error: &stack_encrypt::sem::TermError) -> u32 {
     }
 }
 
+// These matches are deliberately exhaustive — no `_` arms. None of the
+// stack-kms error enums is `#[non_exhaustive]`, so exhaustiveness is free
+// compiler coverage: `GenerateKeyError` already grew `Unauthorized` /
+// `Forbidden` out of the shared `From<ViturRequestError>` pattern, and a
+// variant added tomorrow must be classified here before this crate builds,
+// instead of silently falling through a catch-all to [`STATUS_KMS_OTHER`]
+// and costing a Go host its refresh signal.
 fn status_for_kms(error: &stack_kms::Error) -> u32 {
     match error {
         stack_kms::Error::GenerateKey(e) => match e {
@@ -93,26 +100,30 @@ fn status_for_kms(error: &stack_kms::Error) -> u32 {
             GenerateKeyError::Forbidden => STATUS_KMS_FORBIDDEN,
             GenerateKeyError::RequestFailed(e) => status_for_kind(&e.kind),
             GenerateKeyError::GenerateIv(_) => STATUS_INTERNAL,
-            _ => STATUS_KMS_OTHER,
+            // A response that did not line up with the request, or key
+            // material the client could not use: server-side malformations.
+            GenerateKeyError::InvalidNumberOfKeys { .. }
+            | GenerateKeyError::InvalidKeyMaterial(_) => STATUS_KMS_OTHER,
         },
         stack_kms::Error::RetrieveKey(e) => match e {
             RetrieveKeyError::RequestFailed(e) => status_for_kind(&e.kind),
             // A per-key server-side "no key for this iv/tag".
             RetrieveKeyError::FailedRetrieval(_) => STATUS_KMS_NOT_FOUND,
-            _ => STATUS_KMS_OTHER,
+            RetrieveKeyError::InvalidNumberOfKeys { .. }
+            | RetrieveKeyError::InvalidKeyMaterial(_) => STATUS_KMS_OTHER,
         },
         stack_kms::Error::LoadKeyset(e) => match e {
             LoadKeysetError::Unauthorized(_) => STATUS_KMS_UNAUTHORIZED,
             LoadKeysetError::Forbidden(_) => STATUS_KMS_FORBIDDEN,
             LoadKeysetError::KeysetNotFound(_) => STATUS_KMS_NOT_FOUND,
             LoadKeysetError::RequestFailed(e) => status_for_kind(&e.kind),
-            _ => STATUS_KMS_OTHER,
+            LoadKeysetError::InvalidKeyMaterial(_) => STATUS_KMS_OTHER,
         },
         stack_kms::Error::Auth(auth) => status_for_auth(auth),
         stack_kms::Error::ConnectionInit(_) | stack_kms::Error::InvalidEndpoint(_) => {
             STATUS_KMS_TRANSPORT
         }
-        _ => STATUS_KMS_OTHER,
+        stack_kms::Error::Unexpected(_) => STATUS_KMS_OTHER,
     }
 }
 
@@ -131,13 +142,14 @@ fn status_for_kms(error: &stack_kms::Error) -> u32 {
 fn status_for_auth(error: &AuthError) -> u32 {
     match error {
         // The server (or the strategy) refused the credential itself: a new
-        // token is the fix.
-        AuthError::NotAuthenticated(_)
-        | AuthError::TokenExpired(_)
-        | AuthError::InvalidGrant(_)
-        | AuthError::InvalidClient(_)
-        | AuthError::InvalidAccessKey(_)
-        | AuthError::AlreadyConsumed(_) => STATUS_KMS_UNAUTHORIZED,
+        // token is the fix. `AuthError` is `#[non_exhaustive]`, so the arms
+        // below need the `_` catch-all and a variant added upstream would
+        // silently classify as TRANSPORT ("do not refresh") — which is why
+        // the refresh signal keys off `is_credential_rejection()`, whose
+        // match *is* exhaustive inside stack-auth: new refused-credential
+        // variants are classified there, at compile time, and picked up here
+        // with no change.
+        e if e.is_credential_rejection() => STATUS_KMS_UNAUTHORIZED,
         // Authenticated, but not allowed.
         AuthError::AccessDenied(_) | AuthError::UsageLimitExceeded(_) => STATUS_KMS_FORBIDDEN,
         // Server-side faults with no client-side remedy.
