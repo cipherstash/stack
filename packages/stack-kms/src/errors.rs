@@ -292,7 +292,7 @@ pub enum Error {
     /// The [`ZeroKMSConnection`](crate::ZeroKMSConnection) failed to
     /// initialise. Boxed because the error type belongs to whichever
     /// connection the client was built over.
-    #[error("Failed to initialize the ZeroKMS connection: {0}")]
+    #[error("Failed to initialize the ZeroKMS connection")]
     ConnectionInit(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
 
     /// The ZeroKMS endpoint named by the token's `services` claim is unusable.
