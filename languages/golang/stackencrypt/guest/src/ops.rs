@@ -438,6 +438,47 @@ fn parse_plan(value: FfiValue) -> Result<Vec<FieldPlan>, u32> {
 /// in build order.
 type RowSkeleton = Vec<(String, Vec<(&'static str, Option<Vec<u8>>)>)>;
 
+/// Reject a source field value that contains a passthrough anywhere, before
+/// it reaches a `"c"` slot. A passthrough node is *unauthenticated by
+/// definition* — on decrypt it hands its payload back with no AEAD opened —
+/// so admitting one under a plan field the plan declares ciphertext-bearing
+/// would quietly produce a slot whose bytes verify nothing. Rejecting it
+/// here is what makes [`decrypt_record`]'s mirror-image rejection a
+/// round-trip invariant rather than data loss.
+fn reject_passthrough_value(value: &FfiValue) -> Result<(), u32> {
+    match value {
+        FfiValue::Passthrough(_) => Err(STATUS_ENCODING),
+        FfiValue::Array(items) => items.iter().try_for_each(reject_passthrough_value),
+        FfiValue::Object(entries) => entries
+            .iter()
+            .try_for_each(|(_, v)| reject_passthrough_value(v)),
+        _ => Ok(()),
+    }
+}
+
+/// Reject a `"c"` subtree that contains a passthrough anywhere. This is the
+/// decrypt-side half of [`reject_passthrough_value`], and it is
+/// load-bearing: `decrypt_into` collects **zero** retrieve-requests for a
+/// passthrough and returns its payload with no AEAD opened, so an attacker
+/// with write access to the stored tree could replace a field's `"c"`
+/// subtree with a passthrough carrying forged plaintext and this function's
+/// absence would report it as a successful decrypt. [`encrypt_record`] never
+/// produces a passthrough under `"c"`, so the shape is unconditionally
+/// [`STATUS_ENCODING`].
+fn reject_passthrough_tree(tree: &StackCipherText) -> Result<(), u32> {
+    match tree {
+        CipherText::Passthrough(_) => Err(STATUS_ENCODING),
+        CipherText::Sequence(items) => items.iter().try_for_each(reject_passthrough_tree),
+        CipherText::Map(entries) => entries
+            .iter()
+            .try_for_each(|(_, v)| reject_passthrough_tree(v)),
+        CipherText::Single(_)
+        | CipherText::None(_)
+        | CipherText::EmptySequence(_)
+        | CipherText::EmptyMap(_) => Ok(()),
+    }
+}
+
 /// Encrypt a record — or a batch of records — per a plan.
 ///
 /// `source` is a codec-encoded [`FfiValue::Object`] of `{ field: scalar }`
@@ -580,6 +621,7 @@ where
         }
 
         if field.outputs.contains(&Output::Ciphertext) {
+            reject_passthrough_value(&value)?;
             let tree = value
                 .encrypt_with_aad(cipher, field.context.as_str())
                 .map_err(|_| STATUS_INTERNAL)?;
@@ -648,6 +690,7 @@ where
                 .into_iter()
                 .find_map(|(key, node)| (key == "c").then_some(node))
                 .ok_or(STATUS_ENCODING)?;
+            reject_passthrough_tree(&ct)?;
             pendings.push(ct.decrypt_into(cipher, field.context.as_str()));
             row_names.push(name);
         }
@@ -819,4 +862,87 @@ fn text_of(s: &vitaminc_aead_value::Utf8String) -> Result<&str, u32> {
     // Valid UTF-8 by `Utf8String`'s construction invariant; checked rather
     // than assumed because this is boundary code.
     std::str::from_utf8(s.risky_ref()).map_err(|_| STATUS_ENCODING)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `value_encoded_len` / `tree_encoded_len` re-derive the codec's framing
+    // arithmetic; the codec exports no `encoded_len` of its own, so these
+    // pins are the only thing that fails if the two drift. Drift is not a
+    // cosmetic bug: an undersized reservation makes `encode_value`
+    // reallocate mid-encode, leaving unwiped partial plaintext in the
+    // abandoned allocation — silently.
+
+    fn every_value_shape() -> Vec<FfiValue> {
+        vec![
+            FfiValue::Null,
+            FfiValue::Undefined,
+            FfiValue::Bool(true),
+            FfiValue::Int32(-5),
+            FfiValue::UInt32(5),
+            FfiValue::Float32(1.5),
+            FfiValue::Int64(-9),
+            FfiValue::UInt64(9),
+            FfiValue::Float64(2.5),
+            FfiValue::String("".into()),
+            FfiValue::String("héllo".into()),
+            FfiValue::Bytes(Protected::new(Vec::new())),
+            FfiValue::Bytes(Protected::new(vec![0u8; 300])),
+            FfiValue::Array(Vec::new()),
+            FfiValue::Array(vec![FfiValue::Bool(false), FfiValue::String("x".into())]),
+            FfiValue::Object(Vec::new()),
+            FfiValue::Object(vec![
+                ("a".to_string(), FfiValue::Int32(1)),
+                (
+                    "nested".to_string(),
+                    FfiValue::Object(vec![("b".to_string(), FfiValue::Null)]),
+                ),
+            ]),
+            FfiValue::Passthrough(Box::new(FfiValue::Int64(7))),
+            FfiValue::Passthrough(Box::new(FfiValue::Array(vec![FfiValue::String(
+                "deep".into(),
+            )]))),
+        ]
+    }
+
+    #[test]
+    fn value_encoded_len_matches_the_codec_exactly() {
+        for (i, value) in every_value_shape().into_iter().enumerate() {
+            let expected = value_encoded_len(&value).expect("encodable shape");
+            let mut out = Vec::new();
+            codec::encode_value(value, &mut out).expect("codec encode");
+            assert_eq!(out.len(), expected, "shape {i}");
+        }
+    }
+
+    #[test]
+    fn tree_encoded_len_matches_the_codec_exactly() {
+        let leaf = |bytes: &[u8]| -> BytesTree { CipherText::Single(bytes.to_vec()) };
+        let trees: Vec<BytesTree> = vec![
+            leaf(b""),
+            leaf(&[7u8; 40]),
+            CipherText::None(vec![1, 2]),
+            CipherText::EmptySequence(vec![3]),
+            CipherText::EmptyMap(Vec::new()),
+            CipherText::Sequence(vec![leaf(b"a"), CipherText::None(vec![9])]),
+            CipherText::Map(vec![
+                ("name".to_string(), leaf(b"ct")),
+                (
+                    "inner".to_string(),
+                    CipherText::Map(vec![("x".to_string(), leaf(b"y"))]),
+                ),
+            ]),
+            CipherText::Passthrough(
+                Box::new(FfiValue::Bytes(Protected::new(vec![1, 2, 3]))) as BoxedPassthrough
+            ),
+        ];
+        for (i, tree) in trees.into_iter().enumerate() {
+            let expected = tree_encoded_len(&tree).expect("encodable shape");
+            let mut out = Vec::new();
+            codec::encode_ciphertext_boxed(tree, &mut out).expect("codec encode");
+            assert_eq!(out.len(), expected, "tree {i}");
+        }
+    }
 }

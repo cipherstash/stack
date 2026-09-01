@@ -474,6 +474,70 @@ fn a_record_batch_encrypts_in_one_call_and_round_trips() {
     assert_eq!(text(&fields[1].1), "bob jones");
 }
 
+/// The forgery that motivates `reject_passthrough_tree`: an attacker with
+/// write access to the stored tree swaps a field's `"c"` subtree for a
+/// passthrough carrying chosen plaintext. `decrypt_into` opens no AEAD for a
+/// passthrough, so without the rejection this would come back as a
+/// *successful* decrypt of attacker-chosen bytes.
+#[test]
+fn a_forged_passthrough_ciphertext_slot_is_rejected_not_decrypted() {
+    let cipher = cipher();
+    let source = encode(row(29, "alice smith"));
+    let record = block_on(ops::encrypt_record(&cipher, &source, &plan())).expect("encrypt record");
+
+    let CipherText::Map(mut fields) = decode_tree(&record) else {
+        panic!("expected a field map");
+    };
+    for (field, node) in &mut fields {
+        if field != "age" {
+            continue;
+        }
+        let CipherText::Map(outputs) = node else {
+            panic!("expected an output map");
+        };
+        for (key, slot) in outputs.iter_mut() {
+            if key == "c" {
+                *slot = CipherText::Passthrough(FfiValue::UInt32(99));
+            }
+        }
+    }
+    let mut forged = Vec::new();
+    codec::encode_ciphertext(&CipherText::Map(fields), &mut forged).expect("re-encode");
+
+    assert_eq!(
+        block_on(ops::decrypt_record(&cipher, &forged, &plan())),
+        Err(STATUS_ENCODING),
+        "a passthrough in a ciphertext slot must be a hard error, never plaintext"
+    );
+}
+
+/// The encrypt-side half of the same invariant: a source value containing a
+/// passthrough must not reach a `"c"` slot (it would seal nothing for those
+/// bytes), even nested inside a container.
+#[test]
+fn a_passthrough_source_value_is_refused_a_ciphertext_slot() {
+    let cipher = cipher();
+    for age in [
+        FfiValue::Passthrough(Box::new(FfiValue::UInt32(29))),
+        FfiValue::Array(vec![FfiValue::Passthrough(Box::new(FfiValue::UInt32(29)))]),
+    ] {
+        // A ciphertext-only plan, so the term path's own scalar rejection
+        // cannot mask the one under test.
+        let plan = encode(obj(vec![(
+            "age",
+            obj(vec![
+                ("context", s("users/age")),
+                ("outputs", FfiValue::Array(vec![s("c")])),
+            ]),
+        )]));
+        let source = encode(obj(vec![("age", age)]));
+        assert_eq!(
+            block_on(ops::encrypt_record(&cipher, &source, &plan)),
+            Err(STATUS_ENCODING)
+        );
+    }
+}
+
 #[test]
 fn record_terms_equal_the_native_derivations_and_probe_them() {
     let cipher = cipher();
