@@ -175,6 +175,80 @@ impl MapCipher for UnusedMap {
     }
 }
 
+/// A cipher that deliberately does **not** override
+/// [`Cipher::encrypt_bytes_array`], so tests can drive the trait's default
+/// forwarding body — the issue-#170 discipline of borrowing the wrapped array
+/// and copying inside `Protected` rather than `risky_unwrap`ping it. Both
+/// [`MockCipher`] and the real ciphers override the method, so without this
+/// double the default body would be unexercised in the crate.
+pub(crate) struct MockDefaultCipher {
+    captured_aad: RefCell<Vec<u8>>,
+}
+
+impl MockDefaultCipher {
+    pub(crate) fn new() -> Self {
+        MockDefaultCipher {
+            captured_aad: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+impl Cipher for &MockDefaultCipher {
+    type Ok = Vec<u8>;
+    type Error = Unspecified;
+    type Passthrough = ();
+    type SeqCipher = UnusedSeq;
+    type MapCipher = UnusedMap;
+
+    fn encrypt_bytes_vec<'a, A>(
+        self,
+        data: Protected<Vec<u8>>,
+        aad: A,
+    ) -> Result<Self::Ok, Self::Error>
+    where
+        A: IntoAad<'a>,
+    {
+        *self.captured_aad.borrow_mut() = aad.into_aad().as_bytes().to_vec();
+        Ok(data.risky_unwrap())
+    }
+
+    // No `encrypt_bytes_array`: the trait default forwards here through
+    // `encrypt_bytes_vec` — that forwarding is what this double exists to test.
+
+    fn encrypt_seq<'a, A>(self, _size_hint: Option<usize>, _aad: A) -> Self::SeqCipher
+    where
+        A: IntoAad<'a>,
+    {
+        UnusedSeq
+    }
+
+    fn encrypt_map<'a, A>(self, _aad: A) -> Self::MapCipher
+    where
+        A: IntoAad<'a>,
+    {
+        UnusedMap
+    }
+
+    fn encrypt_none<'a, A>(self, aad: A) -> Result<Self::Ok, Self::Error>
+    where
+        A: IntoAad<'a>,
+    {
+        *self.captured_aad.borrow_mut() = aad.into_aad().as_bytes().to_vec();
+        Ok(Vec::new())
+    }
+
+    fn passthrough(self, _value: Self::Passthrough) -> Result<Self::Ok, Self::Error> {
+        Ok(Vec::new())
+    }
+
+    fn passthrough_boxed(
+        self,
+        _value: Box<dyn Any + Send + 'static>,
+    ) -> Result<Self::Ok, Self::Error> {
+        Ok(Vec::new())
+    }
+}
+
 /// The decrypt-side counterpart to [`MockCipher`]: records the AAD bytes a
 /// `Decrypt` impl presents and delivers a fixed byte payload to the visitor's
 /// byte path. Only `decrypt_bytes` is live; the other shapes reject, which is
