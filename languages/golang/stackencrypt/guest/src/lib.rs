@@ -52,7 +52,10 @@ pub(crate) mod sessions;
 // truncate a 64-bit pointer).
 #[cfg(target_arch = "wasm32")]
 pub mod abi;
-#[cfg(target_arch = "wasm32")]
+// Target-independent (plain `Vec`s and raw pointers, no linear-memory
+// reads), so like `sessions` it exists natively for its unit tests — the
+// empty-buffer accounting in particular is pinned there.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) mod buffers;
 #[cfg(target_arch = "wasm32")]
 pub mod host;
