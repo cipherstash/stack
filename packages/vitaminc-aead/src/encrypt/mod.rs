@@ -35,11 +35,13 @@ pub trait Encrypt {
     /// composite types: each field re-wraps itself before it reaches the
     /// cipher, so the only bare value is the container being taken apart.
     ///
-    /// Byte leaves — `[u8; N]` and `Vec<u8>` — override it to hand the
-    /// still-wrapped value straight to the cipher's `Protected`-taking entry
-    /// point ([`Cipher::encrypt_bytes_array`] / [`Cipher::encrypt_bytes_vec`]),
-    /// so a `Protected<[u8; 32]>` key, or a newtype deriving `Encrypt` around
-    /// one, is never copied onto the stack as a bare array on its way in.
+    /// Byte leaves — `[u8; N]`, `Vec<u8>`, and `String` — override it to hand
+    /// the still-wrapped value straight to the cipher's `Protected`-taking
+    /// entry point ([`Cipher::encrypt_bytes_array`] /
+    /// [`Cipher::encrypt_bytes_vec`]; `String` maps to its byte buffer inside
+    /// the wrapper first), so a `Protected<[u8; 32]>` key or a
+    /// `Protected<String>` password, or a newtype deriving `Encrypt` around
+    /// one, is never unwrapped on its way in.
     /// Override it whenever `Self` has a way to reach the cipher that keeps
     /// the plaintext wrapped end-to-end.
     fn encrypt_protected<'a, C, A>(
