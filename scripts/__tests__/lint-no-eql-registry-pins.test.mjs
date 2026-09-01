@@ -802,6 +802,30 @@ describe('the scan reports what it finds', () => {
       'b/package.json :: @cipherstash/eql',
     ])
   })
+
+  it('exempts a test alias without exempting the runtime dependency beside it', () => {
+    const root = tree({
+      'a/package.json': JSON.stringify({
+        dependencies: { '@cipherstash/eql': '3.0.4' },
+        devDependencies: {
+          '@cipherstash/eql-upgrade-baseline': 'npm:@cipherstash/eql@3.0.2',
+        },
+      }),
+    })
+    const result = lint({
+      root,
+      expected: [],
+      exemptions: new Map([
+        ['a/package.json :: @cipherstash/eql-upgrade-baseline', 'test fixture'],
+      ]),
+    })
+    expect(result.exempted.map((entry) => entry.key)).toEqual([
+      '@cipherstash/eql-upgrade-baseline',
+    ])
+    expect(result.offenders.map((entry) => entry.key)).toEqual([
+      '@cipherstash/eql',
+    ])
+  })
 })
 
 describe('the linter fails when its own configuration goes stale', () => {
