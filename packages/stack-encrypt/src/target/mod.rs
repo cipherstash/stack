@@ -383,7 +383,9 @@ impl<'a, T> DecryptContext<'a> for T where T: IntoAad<'a> + Clone {}
 /// context of their own never passes the caller's anywhere: it implements
 /// the traits for `()` alone, and is encrypted with no context at all.
 ///
-/// Implemented for every context type vitaminc provides except `()`: `&str`,
+/// Implemented for every context type vitaminc provides except `()` — and
+/// except a composite that contains `()`, such as `("users/email", ())` or
+/// `Option<()>`, whose `()` half adds no domain separation: `&str`,
 /// `String`, byte strings, [`Aad`], `u64`, and `Option`s
 /// and pairs of those. A context type of your own opts in with an empty
 /// `impl SuppliedContext<'_> for MyContext {}` alongside its `IntoAad` /
@@ -1036,7 +1038,8 @@ where
 /// keys drawn back in the same traversal order the tree was built in.
 ///
 /// Both ways of encrypting go through here — the target-directed
-/// `encrypt_into::<StackCipherText>` above and the cipher-directed
+/// `encrypt_into_with_context` into a [`StackCipherText`] above and the
+/// cipher-directed
 /// [`PendingStackCipherText::seal`] behind [`StackCipher::encrypt`] — so
 /// there is one definition of how a tree is sealed and one path to ZeroKMS.
 pub(crate) fn seal_pending<'a, K>(

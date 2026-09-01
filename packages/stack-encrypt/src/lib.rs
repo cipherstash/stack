@@ -136,3 +136,8 @@ pub use target::{
 pub use vitaminc_aead::{
     Aad, Cipher, CipherText, ContextTag, Decipher, Decrypt, Element, Encrypt, IntoAad, Unspecified,
 };
+
+// Likewise the PRF context surface: a context newtype (the `SuppliedContext`
+// opt-in recipe) needs `IntoPrfContext` alongside `IntoAad`, and should not
+// need a direct `vitaminc-prf` dependency for it.
+pub use vitaminc_prf::{IntoPrfContext, PrfContext};

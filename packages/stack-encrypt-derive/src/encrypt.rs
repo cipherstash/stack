@@ -25,7 +25,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         generics.params.push(parse_quote!(__S));
         generics.params.push(parse_quote!(__K));
         push_field_bounds(&mut generics, krate, &derived, &source);
-        let ctx = push_context_generics(&mut generics, CallerContext::Encrypt, &derived);
+        let ctx = push_context_generics(&mut generics, CallerContext::Encrypt(krate), &derived);
         let body = body(krate, &record, &derived, &source);
         let block = impl_block(&input, krate, &generics, &source, &ctx, body);
         return Ok(quote!(#block #decryptable));
@@ -38,7 +38,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         let mut generics = input.generics.clone();
         generics.params.push(parse_quote!(__K));
         push_field_bounds(&mut generics, krate, &derived, source);
-        let ctx = push_context_generics(&mut generics, CallerContext::Encrypt, &derived);
+        let ctx = push_context_generics(&mut generics, CallerContext::Encrypt(krate), &derived);
         let body = body(krate, &record, &derived, source);
         impl_block(&input, krate, &generics, source, &ctx, body)
     });
@@ -223,21 +223,46 @@ mod tests {
             }
         });
         // Both fields take the caller's context: the impl is generic over
-        // it, and inherits the fields' demand for a supplied one through
-        // their bounds — `Clone` is all the body itself needs.
+        // it, bounded `EncryptContext` so a third-party leaf that is generic
+        // over its context cannot smuggle a non-context value through the
+        // record ([`CallerContext::Encrypt`]).
         assert_contains(&expansion, quote! {
-            impl<__S, __K, __Ctx> ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::StackCipher<__K>, __Ctx>
+            impl<'__ctx, __S, __K, __Ctx> ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::StackCipher<__K>, __Ctx>
                 for EncryptedAge
             where
                 StackCipherText: ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::StackCipher<__K>, __Ctx>,
                 EqualityTerm: ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::StackCipher<__K>, __Ctx>,
-                __Ctx: ::core::clone::Clone
+                __Ctx: ::stack_encrypt::target::EncryptContext<'__ctx>
         });
-        assert_lacks(&expansion, quote!(EncryptContext));
         // The first field clones the record context, the last takes it.
         assert_contains(&expansion, quote!(__source, __cipher, ::core::clone::Clone::clone(&__context),));
         assert_contains(&expansion, quote!(__source, __cipher, __context,));
         assert_contains(&expansion, quote!(.map(|(__field_0, __field_1)| Self { c: __field_0, hm: __field_1 })));
+    }
+
+    #[test]
+    #[rustfmt::skip]
+    fn a_caller_context_must_be_an_encrypt_context() {
+        // The regression shape, mirroring the decrypt-side test: the
+        // ciphertext field carries a literal, so only the term field sees
+        // the caller's context — and a third-party leaf generic over its
+        // context demands nothing of it. The impl-level bound is what keeps
+        // `EncryptFrom::encrypt_from` from accepting, and silently
+        // discarding, a value that is not a context at all.
+        let expansion = expand(parse_quote! {
+            #[stash(plaintext = u32)]
+            struct Rec {
+                #[stash(context = "rec/c")]
+                c: StackCipherText,
+                hm: EqualityTerm,
+            }
+        });
+        assert_contains(&expansion, quote! {
+            impl<'__ctx, __K, __Ctx> ::stack_encrypt::target::EncryptFrom<u32, ::stack_encrypt::StackCipher<__K>, __Ctx> for Rec
+        });
+        assert_contains(&expansion, quote! {
+            __Ctx: ::stack_encrypt::target::EncryptContext<'__ctx>
+        });
     }
 
     #[test]
@@ -252,10 +277,10 @@ mod tests {
             }
         });
         assert_contains(&expansion, quote! {
-            impl<__K, __Ctx> ::stack_encrypt::target::EncryptFrom<i32, ::stack_encrypt::StackCipher<__K>, __Ctx> for IntegerOrdOre
+            impl<'__ctx, __K, __Ctx> ::stack_encrypt::target::EncryptFrom<i32, ::stack_encrypt::StackCipher<__K>, __Ctx> for IntegerOrdOre
         });
         assert_contains(&expansion, quote! {
-            impl<__K, __Ctx> ::stack_encrypt::target::EncryptFrom<i64, ::stack_encrypt::StackCipher<__K>, __Ctx> for IntegerOrdOre
+            impl<'__ctx, __K, __Ctx> ::stack_encrypt::target::EncryptFrom<i64, ::stack_encrypt::StackCipher<__K>, __Ctx> for IntegerOrdOre
         });
         assert_contains(&expansion, quote!(Self { c: __field_0, v: SchemaVersion::V3 }));
         assert_lacks(&expansion, quote!(__S));

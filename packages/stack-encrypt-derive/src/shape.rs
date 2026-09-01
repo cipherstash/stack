@@ -198,11 +198,12 @@ impl Record {
 /// The demand a derive places on the impl's context parameter, beyond what
 /// the field bounds already say.
 pub(crate) enum CallerContext<'a> {
-    /// Encrypt: `Clone` is all the generated body itself needs (the context
-    /// fans out to every field); everything else — supplied, convertible —
-    /// is inherited through the field bounds, because every encrypt leaf
-    /// states its own demand.
-    Encrypt,
+    /// Encrypt: `EncryptContext` — convertible to AAD and to a PRF context.
+    /// The leaves in this crate state that demand through the field bounds
+    /// already, but a third-party leaf generic over its context would not,
+    /// and without this bound such a leaf lets `EncryptFrom::encrypt_from`
+    /// accept — and silently discard — any `Clone` value as its context.
+    Encrypt(&'a Path),
     /// Decrypt: `DecryptContext` — convertible to the AAD the value was
     /// encrypted under. A term field's `DecryptField` accepts *any* context
     /// (it opens nothing), so field bounds alone would let a record whose
@@ -232,15 +233,15 @@ pub(crate) fn push_context_generics(
     generics.params.push(parse_quote!(__Ctx));
     let predicates = &mut generics.make_where_clause().predicates;
     match bound {
-        CallerContext::Encrypt => {
-            predicates.push(parse_quote!(__Ctx: ::core::clone::Clone));
+        CallerContext::Encrypt(krate) => {
+            predicates.push(parse_quote!(__Ctx: #krate::target::EncryptContext<'__ctx>));
         }
         CallerContext::Decrypt(krate) => {
             predicates.push(parse_quote!(__Ctx: #krate::target::DecryptContext<'__ctx>));
-            // A lifetime parameter must precede the type parameters.
-            generics.params.insert(0, parse_quote!('__ctx));
         }
     }
+    // A lifetime parameter must precede the type parameters.
+    generics.params.insert(0, parse_quote!('__ctx));
     parse_quote!(__Ctx)
 }
 

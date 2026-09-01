@@ -89,10 +89,11 @@ pub trait EncryptInto {
         T: EncryptFrom<Self, C, ()> + 'a,
         Self: Sized;
 
-    fn encrypt_into_with_context<'a, T, C, Ctx>(&'a self, cipher: &'a C, context: Ctx) -> C::Output<'a, T>
+    fn encrypt_into_with_context<'a, 'c, T, C, Ctx>(&'a self, cipher: &'a C, context: Ctx) -> C::Output<'a, T>
     where
         C: EncryptTarget,
         T: EncryptFrom<Self, C, Ctx> + 'a,
+        Ctx: SuppliedContext<'c>,
         Self: Sized;
 }
 impl<S> EncryptInto for S { /* delegates to T::encrypt_from */ }
