@@ -253,6 +253,17 @@ impl AuthStrategy for &HostTokenStrategy {
                 "host token is empty".to_string(),
             )));
         }
+        // Trim handles the *surrounding* whitespace case above; an *interior*
+        // control character would survive it and land in the `name: value\n`
+        // header buffer, where a newline splits the authorization line in
+        // two — header injection into the host transport (or a silently
+        // truncated credential and a confusing 401). No bearer token contains
+        // control characters, so reject rather than sanitise.
+        if text.chars().any(char::is_control) {
+            return Err(AuthError::Custom(CustomError(
+                "host token contains control characters".to_string(),
+            )));
+        }
         // `SecretToken` wipes on drop; `bytes` (the only other copy) wipes
         // via its `Zeroizing` wrapper above.
         Ok(ServiceToken::new(SecretToken::new(text)))

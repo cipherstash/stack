@@ -40,6 +40,11 @@ pub enum ConfigError {
     Invalid(&'static str),
     /// `keyset` and `keyset_id` were both given.
     ConflictingKeysets,
+    /// A key appeared twice. The codec rejects duplicate object keys before
+    /// this parser runs, but `parse_config` is `pub` and takes any
+    /// [`FfiValue`] — last-write-wins on, say, `client_key` must never be
+    /// silent.
+    Duplicate(&'static str),
     /// A key this version does not recognise.
     UnknownKey(String),
 }
@@ -78,8 +83,12 @@ pub fn parse_config(value: FfiValue) -> Result<CipherConfig, ConfigError> {
             "zerokms_url" => &mut url,
             _ => return Err(ConfigError::UnknownKey(key)),
         };
-        // The codec already rejects duplicate object keys, so the slot is
-        // vacant; still, last-write-wins here would be silent, so require it.
+        // The codec already rejects duplicate object keys, so on the ABI
+        // path the slot is always vacant — but this function accepts any
+        // `FfiValue`, so enforce it rather than assume it.
+        if slot.is_some() {
+            return Err(ConfigError::Duplicate(name_of(&key)));
+        }
         let FfiValue::String(s) = value else {
             return Err(ConfigError::NotAString(name_of(&key)));
         };
@@ -268,6 +277,18 @@ mod tests {
                 ("zerokms_urk", "https://typo.example.com"),
             ])),
             Err(ConfigError::UnknownKey(_))
+        ));
+        // The codec refuses duplicate keys on the ABI path, but this
+        // function is `pub` over any `FfiValue`: a repeated `client_key`
+        // must be an error, never a silent last-write-wins on root key
+        // material.
+        assert!(matches!(
+            parse_config(obj(vec![
+                ("client_id", &id_s),
+                ("client_key", &hex),
+                ("client_key", &hex),
+            ])),
+            Err(ConfigError::Duplicate("client_key"))
         ));
         assert!(matches!(
             parse_config(obj(vec![
