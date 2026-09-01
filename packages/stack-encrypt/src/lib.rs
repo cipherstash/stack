@@ -1,16 +1,25 @@
 #![doc(html_favicon_url = "https://cipherstash.com/favicon.ico")]
+// Security lints
 #![deny(unsafe_code)]
-#![warn(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::mem_forget,
-    clippy::print_stdout,
-    clippy::print_stderr,
-    clippy::dbg_macro,
-    clippy::todo,
-    clippy::unimplemented
-)]
+#![warn(clippy::unwrap_used)]
+#![warn(clippy::expect_used)]
+#![warn(clippy::panic)]
+// Prevent mem::forget from bypassing ZeroizeOnDrop
+#![warn(clippy::mem_forget)]
+// Prevent accidental data leaks via output
+#![warn(clippy::print_stdout)]
+#![warn(clippy::print_stderr)]
+#![warn(clippy::dbg_macro)]
+// Code quality
+#![warn(unreachable_pub)]
+#![warn(unused_results)]
+#![warn(clippy::todo)]
+#![warn(clippy::unimplemented)]
+// Relax in tests
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+#![cfg_attr(test, allow(clippy::expect_used))]
+#![cfg_attr(test, allow(clippy::panic))]
+#![cfg_attr(test, allow(unused_results))]
 //! Encrypt Rust values under per-value ZeroKMS data keys.
 //!
 //! [`StackCipher`] encrypts any value that implements [`Encrypt`] (`String`,
