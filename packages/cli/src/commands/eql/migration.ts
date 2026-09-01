@@ -27,8 +27,8 @@ import {
   tryResolveDatabaseUrl,
 } from '@/config/database-url.js'
 import {
+  emitSupabaseEqlAccessMigration,
   loadBundledEqlSql,
-  SUPABASE_MIGRATION_GRANTS_SQL_V3,
 } from '@/installer/index.js'
 import { messages } from '@/messages.js'
 
@@ -227,7 +227,7 @@ export interface EqlMigrationOptions {
 export function buildEqlV3MigrationSql(opts: { supabase: boolean }): string {
   const eqlSql = loadBundledEqlSql()
   const grants = opts.supabase
-    ? `\n\n-- Supabase role grants: let anon/authenticated/service_role use the\n-- eql_v3 + eql_v3_internal schemas (required when tables are reached via\n-- PostgREST/RLS; harmless otherwise).\n${SUPABASE_MIGRATION_GRANTS_SQL_V3.trim()}`
+    ? `\n\n-- Supabase role grants: let anon/authenticated/service_role use the\n-- eql_v3 + eql_v3_internal schemas (required when tables are reached via\n-- PostgREST/RLS; harmless otherwise).\n${emitSupabaseEqlAccessMigration().trim()}`
     : ''
   return `${eqlSql.trim()}${grants}\n\n-- CipherStash encryption-migration tracking schema.\n-- Tracks per-column phase + backfill progress for \`stash encrypt\`.\n${MIGRATIONS_SCHEMA_SQL.trim()}\n`
 }

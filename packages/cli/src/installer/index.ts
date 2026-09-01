@@ -1,4 +1,3 @@
-import type pg from 'pg'
 import { createPgClient, TlsVerificationError } from '@/db/client.js'
 import {
   EqlReinstallConnectionError,
@@ -6,9 +5,7 @@ import {
   restoreDerivedSearchIndexesAroundEqlReplacement,
 } from './derived-search-index-restoration.js'
 import {
-  DEFERRED_GRANTS_HEADER,
-  SUPABASE_DEFAULT_PRIVILEGES_SQL_V3,
-  SUPABASE_IMMEDIATE_GRANTS_SQL_V3,
+  applySupabaseEqlAccess,
   SUPABASE_PERMISSIONS_SQL_V3,
 } from './grants.js'
 import {
@@ -23,9 +20,11 @@ export {
 } from './eql-bundle.js'
 
 export {
+  applySupabaseEqlAccess,
   DEFERRED_GRANTS_HEADER,
   EQL_V3_INTERNAL_SCHEMA_NAME,
   EQL_V3_SCHEMA_NAME,
+  emitSupabaseEqlAccessMigration,
   SUPABASE_DEFAULT_PRIVILEGES_SQL_V3,
   SUPABASE_GUARDED_DEFAULT_PRIVILEGES_SQL_V3,
   SUPABASE_IMMEDIATE_GRANTS_SQL_V3,
@@ -223,7 +222,11 @@ export class EQLInstaller {
       })
     }
     try {
-      return await this.runSupabaseGrants(client)
+      const outcome = await applySupabaseEqlAccess(client)
+      return {
+        deferredGrantsSql:
+          outcome.status === 'applied' ? null : outcome.deferredSql,
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`Failed to apply the Supabase role grants: ${detail}`, {
@@ -231,24 +234,6 @@ export class EQLInstaller {
       })
     } finally {
       await client.end()
-    }
-  }
-
-  /** The shared grants phase: full block for members, immediate half + deferred tail otherwise. */
-  private async runSupabaseGrants(client: pg.Client): Promise<InstallResult> {
-    const memberResult = await client.query(`
-      SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres')
-             THEN pg_has_role(current_user, 'postgres', 'MEMBER')
-      END AS member_of_postgres
-    `)
-    if (memberResult.rows[0]?.member_of_postgres === true) {
-      await client.query(SUPABASE_PERMISSIONS_SQL_V3)
-      return { deferredGrantsSql: null }
-    }
-    await client.query(SUPABASE_IMMEDIATE_GRANTS_SQL_V3)
-    return {
-      deferredGrantsSql:
-        DEFERRED_GRANTS_HEADER + SUPABASE_DEFAULT_PRIVILEGES_SQL_V3,
     }
   }
 }

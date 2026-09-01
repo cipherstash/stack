@@ -189,3 +189,41 @@ export const SUPABASE_MIGRATION_GRANTS_SQL_V3 = `${SUPABASE_IMMEDIATE_GRANTS_SQL
 -- runs as a member of \`postgres\` (they cover EQL objects \`postgres\` might
 -- later create outside stash tooling; stash re-grants on every install).
 ${SUPABASE_GUARDED_DEFAULT_PRIVILEGES_SQL_V3}`
+
+export type SupabaseEqlAccessOutcome =
+  | { status: 'applied' }
+  | { status: 'applied-with-deferred-defaults'; deferredSql: string }
+
+interface SqlExecutor {
+  query(sql: string): Promise<{ rows: Record<string, unknown>[] }>
+}
+
+/**
+ * Apply the Supabase EQL access policy through a PostgreSQL adapter.
+ *
+ * Role membership, the immediate/default split, statement ordering, and the
+ * operator-facing deferred SQL are implementation details of this module.
+ */
+export async function applySupabaseEqlAccess(
+  database: SqlExecutor,
+): Promise<SupabaseEqlAccessOutcome> {
+  const membership = await database.query(`
+    SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres')
+           THEN pg_has_role(current_user, 'postgres', 'MEMBER')
+    END AS member_of_postgres
+  `)
+  if (membership.rows[0]?.member_of_postgres === true) {
+    await database.query(SUPABASE_PERMISSIONS_SQL_V3)
+    return { status: 'applied' }
+  }
+  await database.query(SUPABASE_IMMEDIATE_GRANTS_SQL_V3)
+  return {
+    status: 'applied-with-deferred-defaults',
+    deferredSql: DEFERRED_GRANTS_HEADER + SUPABASE_DEFAULT_PRIVILEGES_SQL_V3,
+  }
+}
+
+/** Emit the same access policy through a migration-file adapter. */
+export function emitSupabaseEqlAccessMigration(): string {
+  return SUPABASE_MIGRATION_GRANTS_SQL_V3
+}
