@@ -963,6 +963,32 @@ export type OreStateReading =
       installedVersion: string | null
     }
 
+export type EqlSurfaceAssessment =
+  | { depth: 'summary'; ore: OreStateReading }
+  | { depth: 'exhaustive'; report: VerifyReport }
+
+/**
+ * The report-oriented verification interface used by installation assessment.
+ * Parsing, catalogue observation, version gating, ORE classification, and
+ * surface diffing remain implementation details behind this seam.
+ *
+ * The caller owns the connection and transaction so installation presence,
+ * versions, and this result can describe one database snapshot.
+ */
+export async function assessEqlSurface(
+  client: pg.ClientBase,
+  depth: 'summary' | 'exhaustive',
+): Promise<EqlSurfaceAssessment> {
+  const expected = bundledExpectedSurface()
+  if (depth === 'summary') {
+    return { depth, ore: await readOreStateAgainst(client, expected) }
+  }
+  const installed = await readInstalledSurface(client, expected, {
+    manageTransaction: false,
+  })
+  return { depth, report: diffSurface(expected, installed) }
+}
+
 /**
  * Read just the ORE half of an install — the two catalogue values and the
  * state they classify to (#891).
@@ -985,6 +1011,13 @@ export async function readOreState(
   client: pg.ClientBase,
 ): Promise<OreStateReading> {
   const expected = bundledExpectedSurface()
+  return readOreStateAgainst(client, expected)
+}
+
+async function readOreStateAgainst(
+  client: pg.ClientBase,
+  expected: ExpectedSurface,
+): Promise<OreStateReading> {
   const installedVersion = await readInstalledEqlVersion(client)
   if (installedVersion !== expected.eqlVersion) {
     return {

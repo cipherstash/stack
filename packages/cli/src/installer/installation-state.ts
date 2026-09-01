@@ -3,10 +3,8 @@ import { createPgClient, TlsVerificationError } from '@/db/client.js'
 import { SUPPORTED_PGCRYPTO_SCHEMAS } from './eql-bundle.js'
 import { EQL_V3_INTERNAL_SCHEMA_NAME, EQL_V3_SCHEMA_NAME } from './grants.js'
 import {
-  bundledExpectedSurface,
-  diffSurface,
-  readInstalledSurface,
-  readOreState,
+  assessEqlSurface,
+  type OreStateReading,
   type VerifyReport,
 } from './verify.js'
 
@@ -121,18 +119,27 @@ export async function assessEqlInstallation(options: {
       ? { status: 'installed' as const, version: await readVersion(client, 3) }
       : { status: 'absent' as const }
 
-    const ore = v3Present
-      ? await assessOre(client)
-      : { status: 'absent' as const }
+    const verification = v3Present
+      ? await assessEqlSurface(
+          client,
+          options.depth === 'exhaustive' ? 'exhaustive' : 'summary',
+        )
+      : null
+    const ore =
+      verification?.depth === 'summary'
+        ? assessOre(verification.ore)
+        : verification?.report.ore
+          ? { status: 'observed' as const, ...verification.report.ore }
+          : v3Present && verification?.report.status === 'version-mismatch'
+            ? {
+                status: 'not-comparable' as const,
+                bundleVersion: verification.report.bundleVersion,
+                installedVersion: verification.report.installedVersion,
+              }
+            : { status: 'absent' as const }
     let surface: AssessedEqlSurface = { status: 'not-requested' }
-    if (options.depth === 'exhaustive') {
-      const expected = bundledExpectedSurface()
-      const report = diffSurface(
-        expected,
-        await readInstalledSurface(client, expected, {
-          manageTransaction: false,
-        }),
-      )
+    if (verification?.depth === 'exhaustive') {
+      const report = verification.report
       surface =
         report.status === 'version-mismatch'
           ? { status: 'not-comparable', report }
@@ -259,10 +266,7 @@ async function readVersion(
   }
 }
 
-async function assessOre(
-  client: Parameters<typeof readOreState>[0],
-): Promise<AssessedOreState> {
-  const ore = await readOreState(client)
+function assessOre(ore: OreStateReading): AssessedOreState {
   return ore.comparable
     ? { status: 'observed', ...ore }
     : { status: 'not-comparable', ...ore }
