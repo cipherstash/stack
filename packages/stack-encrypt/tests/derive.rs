@@ -508,24 +508,26 @@ async fn a_row_nests_in_a_row_in_row_mode_via_nested() {
     let row: EncryptedAccountRow = account.encrypt_into(&cipher).await.unwrap();
     assert_eq!(generates.load(AtomicOrdering::SeqCst), 1);
 
-    // The inner row's fields are under their own literals; the outer's plan
-    // is under the inferred `"accounts/plan"`.
+    // The inner row's fields are still under their own literals.
     let age_hm: EqualityTerm = 42u32
         .encrypt_into_with_context(&generator, "user/age")
         .await
         .unwrap();
     assert_eq!(row.user.age.hm, age_hm);
+
+    let recovered = Account::decrypt_from(row, &cipher).await.unwrap();
+    assert_eq!(recovered, account);
+    assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 1);
+
+    // The outer's plan is under the inferred `"accounts/plan"`. Decrypting
+    // the row consumed it, so mint a fresh one to open the field alone.
+    let row: EncryptedAccountRow = account.encrypt_into(&cipher).await.unwrap();
     let plan: String = row
         .plan
         .decrypt_into(&cipher, "accounts/plan")
         .await
         .unwrap();
     assert_eq!(plan, "pro");
-
-    let row: EncryptedAccountRow = account.encrypt_into(&cipher).await.unwrap();
-    let recovered = Account::decrypt_from(row, &cipher).await.unwrap();
-    assert_eq!(recovered, account);
-    assert!(retrieves.load(AtomicOrdering::SeqCst) >= 1);
 }
 
 /// A tuple-struct plaintext is reached by index — inferred for a tuple row,
