@@ -37,6 +37,7 @@ pub struct BaseUrlUnresolved;
 /// logs. They stay available through `Debug` for structured inspection.
 #[derive(Debug, Error)]
 #[error("Received '{received:?}', expected '{expected}'")]
+#[non_exhaustive]
 pub struct UnexpectedContentType {
     pub received: Option<String>,
     pub expected: &'static str,
@@ -51,6 +52,7 @@ pub struct UnexpectedContentType {
 /// must not be pulled into a log line. `Debug` still carries them.
 #[derive(Debug, Error)]
 #[error("Status: {status}")]
+#[non_exhaustive]
 pub struct FailureResponse {
     pub status: u16,
     pub body: Option<String>,
