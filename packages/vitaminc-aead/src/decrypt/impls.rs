@@ -321,4 +321,20 @@ mod tests {
         let out = <Vec<u8>>::decrypt_protected(&decipher, Aad::empty()).expect("decrypt");
         assert_eq!(out.risky_ref(), &[5, 6]);
     }
+
+    // The `u32` visitor's body is the only place the little-endian read and
+    // the length gate live; assert the decoded value (not just success) so a
+    // body replaced with `Ok(Default::default())` fails here.
+    #[test]
+    fn u32_decrypts_the_little_endian_payload() {
+        let decipher = MockDecipher::new(vec![1u8, 2, 3, 4]);
+        let out = u32::decrypt_with_aad(&decipher, Aad::empty()).expect("decrypt");
+        assert_eq!(out, 0x04030201);
+    }
+
+    #[test]
+    fn u32_rejects_a_length_mismatch() {
+        let decipher = MockDecipher::new(vec![1u8, 2, 3]);
+        assert!(u32::decrypt_with_aad(&decipher, Aad::empty()).is_err());
+    }
 }
