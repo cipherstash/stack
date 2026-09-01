@@ -250,25 +250,75 @@ describe('EQLInstaller', () => {
     const { EQLInstaller } = await import('@/installer/index.ts')
     const installer = new EQLInstaller({ databaseUrl: 'postgres://test' })
 
-    mockQuery.mockResolvedValue({ rows: [{ found: 2 }], rowCount: 1 })
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes("to_regnamespace('eql_v2')")) {
+        return Promise.resolve({
+          rows: [
+            {
+              eql_v2_present: false,
+              eql_v3_present: true,
+              eql_v3_internal_present: true,
+            },
+          ],
+          rowCount: 1,
+        })
+      }
+      if (sql.includes('eql_v3.version()')) {
+        return Promise.resolve({ rows: [{ version: '3.0.5' }], rowCount: 1 })
+      }
+      return Promise.resolve({
+        rows: [{ ore_opclass_present: true, poisoned_domains: 0 }],
+        rowCount: 1,
+      })
+    })
     await expect(installer.isInstalled()).resolves.toBe(true)
-    expect(mockQuery).toHaveBeenCalledWith(expect.any(String), [
-      ['eql_v3', 'eql_v3_internal'],
-    ])
 
-    mockQuery.mockResolvedValue({ rows: [{ found: 1 }], rowCount: 1 })
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes("to_regnamespace('eql_v2')")) {
+        return Promise.resolve({
+          rows: [
+            {
+              eql_v2_present: false,
+              eql_v3_present: true,
+              eql_v3_internal_present: false,
+            },
+          ],
+          rowCount: 1,
+        })
+      }
+      return Promise.resolve({ rows: [], rowCount: 0 })
+    })
     await expect(installer.isInstalled()).resolves.toBe(false)
   })
 
   it('retains read-only EQL v2 installation detection for status', async () => {
     mockConnect.mockResolvedValue(undefined)
     mockEnd.mockResolvedValue(undefined)
-    mockQuery.mockResolvedValue({ rows: [{ found: 1 }], rowCount: 1 })
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes("to_regnamespace('eql_v2')")) {
+        return Promise.resolve({
+          rows: [
+            {
+              eql_v2_present: true,
+              eql_v3_present: false,
+              eql_v3_internal_present: false,
+            },
+          ],
+          rowCount: 1,
+        })
+      }
+      if (sql.includes('eql_v2.version()')) {
+        return Promise.resolve({ rows: [{ version: '2.3.1' }], rowCount: 1 })
+      }
+      return Promise.resolve({ rows: [], rowCount: 0 })
+    })
     const { EQLInstaller } = await import('@/installer/index.ts')
     const installer = new EQLInstaller({ databaseUrl: 'postgres://test' })
 
     await expect(installer.isInstalled({ eqlVersion: 2 })).resolves.toBe(true)
-    expect(mockQuery).toHaveBeenCalledWith(expect.any(String), [['eql_v2']])
+    expect(mockQuery).toHaveBeenCalledWith(
+      expect.stringContaining("to_regnamespace('eql_v2')"),
+    )
   })
 
   it('installs only the pinned EQL v3 bundle', async () => {

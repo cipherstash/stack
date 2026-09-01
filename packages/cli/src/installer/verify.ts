@@ -557,6 +557,7 @@ async function readInstalledEqlVersion(
 export async function readInstalledSurface(
   client: pg.ClientBase,
   expected: ExpectedSurface,
+  options: { manageTransaction?: boolean } = {},
 ): Promise<InstalledSurface> {
   // Sequential on purpose: a single pg.Client serialises concurrent query()
   // calls anyway (and deprecates them); these are six fast catalogue reads.
@@ -573,7 +574,7 @@ export async function readInstalledSurface(
   // session is untouched (the version() probe below runs after COMMIT and
   // needs the default path restored — `eql_v3.version` is qualified, but its
   // body's search_path is its own SET clause either way).
-  await client.query('BEGIN READ ONLY')
+  if (options.manageTransaction !== false) await client.query('BEGIN READ ONLY')
   await client.query(`SET LOCAL search_path = ''`)
   const schemas = await client.query<{
     eql_v3_present: boolean
@@ -600,14 +601,13 @@ export async function readInstalledSurface(
     ore_opclass_present: boolean
     poisoned_domains: number
   }>(ORE_STATE_SQL, [expected.oreDomains])
-  // Ends the SET LOCAL scope. On a mid-transaction error the caller's
-  // client.end() discards the aborted transaction with the connection.
-  await client.query('COMMIT')
-
   const eqlV3SchemaPresent = schemas.rows[0]?.eql_v3_present === true
   const installedVersion = eqlV3SchemaPresent
     ? await readInstalledEqlVersion(client)
     : null
+  // Ends the SET LOCAL scope. On a mid-transaction error the caller's
+  // client.end() discards the aborted transaction with the connection.
+  if (options.manageTransaction !== false) await client.query('COMMIT')
 
   const functionSignatures = new Map<string, Set<string>>()
   for (const row of functions.rows) {

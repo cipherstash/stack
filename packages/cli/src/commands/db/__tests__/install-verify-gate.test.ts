@@ -41,10 +41,27 @@ vi.mock('@clack/prompts', () => ({
   outro: clack.outro,
 }))
 
-const verifier = vi.hoisted(() => ({ verifyEqlSurface: vi.fn() }))
-vi.mock('@/installer/verify.js', () => ({
-  verifyEqlSurface: verifier.verifyEqlSurface,
+const assessment = vi.hoisted(() => ({ assessEqlInstallation: vi.fn() }))
+vi.mock('@/installer/installation-state.js', () => ({
+  assessEqlInstallation: assessment.assessEqlInstallation,
 }))
+
+function assessed(report: VerifyReport) {
+  return {
+    v2: { status: 'absent' },
+    v3: { status: 'installed', version: report.installedVersion ?? 'unknown' },
+    ore: { status: 'absent' },
+    surface: {
+      status:
+        report.status === 'version-mismatch'
+          ? 'not-comparable'
+          : report.ok
+            ? 'complete'
+            : 'damaged',
+      report,
+    },
+  }
+}
 
 // Imported dynamically by the damage path for its findings renderer.
 const findingsReporter = vi.hoisted(() => ({ reportVerifyFindings: vi.fn() }))
@@ -77,21 +94,23 @@ describe('verifySurfaceOrExit', () => {
   })
 
   it('returns without exiting on a complete surface', async () => {
-    verifier.verifyEqlSurface.mockResolvedValueOnce(report({}))
+    assessment.assessEqlInstallation.mockResolvedValueOnce(assessed(report({})))
     await expect(
       verifySurfaceOrExit('postgres://db', spinner(), { remedy: 'r' }),
     ).resolves.toBeUndefined()
   })
 
   it('exits 1 on damage, after reporting the findings and the remedy', async () => {
-    verifier.verifyEqlSurface.mockResolvedValueOnce(
-      report({
-        status: 'incomplete',
-        ok: false,
-        findings: [
-          { severity: 'damage', kind: 'operator', message: 'op missing' },
-        ],
-      }),
+    assessment.assessEqlInstallation.mockResolvedValueOnce(
+      assessed(
+        report({
+          status: 'incomplete',
+          ok: false,
+          findings: [
+            { severity: 'damage', kind: 'operator', message: 'op missing' },
+          ],
+        }),
+      ),
     )
     const exit = vi
       .spyOn(process, 'exit')
@@ -125,7 +144,7 @@ describe('verifySurfaceOrExit', () => {
         },
       ],
     })
-    verifier.verifyEqlSurface.mockResolvedValueOnce(mismatch)
+    assessment.assessEqlInstallation.mockResolvedValueOnce(assessed(mismatch))
     const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
       throw new Error('exit called')
     })
@@ -142,7 +161,7 @@ describe('verifySurfaceOrExit', () => {
   })
 
   it('warns and continues when verification itself errors', async () => {
-    verifier.verifyEqlSurface.mockRejectedValueOnce(
+    assessment.assessEqlInstallation.mockRejectedValueOnce(
       new Error('connection terminated'),
     )
     await expect(

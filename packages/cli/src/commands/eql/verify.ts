@@ -2,9 +2,9 @@ import * as p from '@clack/prompts'
 import { emitJsonError, emitJsonEvent } from '@/commands/auth/events.js'
 import { resolveDiagnosticDatabaseUrl } from '@/commands/db/resolve-diagnostic-url.js'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
+import { assessEqlInstallation } from '@/installer/installation-state.js'
 import { describeOreState } from '@/installer/ore.js'
 import type { SurfaceFinding, VerifyReport } from '@/installer/verify.js'
-import { verifyEqlSurface } from '@/installer/verify.js'
 
 /**
  * `stash eql verify` — assert the installed EQL surface is complete and
@@ -46,7 +46,14 @@ export async function verifyCommand(
   s?.start('Comparing the installed EQL surface with the pinned bundle...')
   let report: VerifyReport
   try {
-    report = await verifyEqlSurface(databaseUrl)
+    const installation = await assessEqlInstallation({
+      databaseUrl,
+      depth: 'exhaustive',
+    })
+    if (installation.surface.status === 'not-requested') {
+      throw new Error('EQL surface was not assessed')
+    }
+    report = installation.surface.report
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (json) {
