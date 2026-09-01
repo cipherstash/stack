@@ -26,6 +26,7 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
     installation = await assessEqlInstallation({
       databaseUrl: config.databaseUrl,
       includeCapabilities: true,
+      includeOre: true,
     })
   } catch (error) {
     s.stop('Failed.')
@@ -116,6 +117,8 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
           ore.installedVersion ?? 'unknown'
         } is installed and this CLI pins EQL ${ore.bundleVersion}, so the ORE state cannot be read against the pinned bundle. Run \`${runnerCommand(pm, 'stash eql upgrade')}\`, then check status again.`,
       )
+    } else if (ore.status === 'unavailable') {
+      p.log.warn(`Could not read the ORE operator class state: ${ore.message}`)
     }
   }
 

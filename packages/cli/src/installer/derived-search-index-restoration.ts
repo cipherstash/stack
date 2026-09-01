@@ -54,6 +54,10 @@ export interface ReinstallIndex {
   ready: boolean
   clustered: boolean
   clusterSql: string | null
+  replicaIdentity: boolean
+  replicaIdentitySql: string | null
+  comment: string | null
+  commentSql: string | null
 }
 
 interface DependencyRow {
@@ -65,6 +69,10 @@ interface DependencyRow {
   ready?: unknown
   clustered?: unknown
   cluster_sql?: unknown
+  replica_identity?: unknown
+  replica_identity_sql?: unknown
+  comment?: unknown
+  comment_sql?: unknown
 }
 
 const LIFECYCLE_DEPENDENCIES_SQL = `
@@ -379,6 +387,17 @@ SELECT DISTINCT
   CASE
     WHEN e.classid = 'pg_catalog.pg_class'::regclass
      AND index_class.relkind = 'i'
+     AND index_partition.inhrelid IS NULL THEN index_meta.indisreplident
+  END AS replica_identity,
+  CASE
+    WHEN e.classid = 'pg_catalog.pg_class'::regclass
+     AND index_class.relkind = 'i'
+     AND index_partition.inhrelid IS NULL
+      THEN pg_catalog.obj_description(index_class.oid, 'pg_class')
+  END AS comment,
+  CASE
+    WHEN e.classid = 'pg_catalog.pg_class'::regclass
+     AND index_class.relkind = 'i'
      AND index_partition.inhrelid IS NULL
      AND index_meta.indisclustered
       THEN pg_catalog.format(
@@ -387,7 +406,31 @@ SELECT DISTINCT
         table_class.relname,
         index_class.relname
       )
-  END AS cluster_sql
+  END AS cluster_sql,
+  CASE
+    WHEN e.classid = 'pg_catalog.pg_class'::regclass
+     AND index_class.relkind = 'i'
+     AND index_partition.inhrelid IS NULL
+     AND index_meta.indisreplident
+      THEN pg_catalog.format(
+        'ALTER TABLE %I.%I REPLICA IDENTITY USING INDEX %I',
+        table_namespace.nspname,
+        table_class.relname,
+        index_class.relname
+      )
+  END AS replica_identity_sql,
+  CASE
+    WHEN e.classid = 'pg_catalog.pg_class'::regclass
+     AND index_class.relkind = 'i'
+     AND index_partition.inhrelid IS NULL
+     AND pg_catalog.obj_description(index_class.oid, 'pg_class') IS NOT NULL
+      THEN pg_catalog.format(
+        'COMMENT ON INDEX %I.%I IS %L',
+        index_namespace.nspname,
+        index_class.relname,
+        pg_catalog.obj_description(index_class.oid, 'pg_class')
+      )
+  END AS comment_sql
 FROM external_dependants e
 LEFT JOIN pg_catalog.pg_class index_class
   ON e.classid = 'pg_catalog.pg_class'::regclass AND index_class.oid = e.objid
@@ -406,6 +449,8 @@ SELECT pg_catalog.format('%I.%I', n.nspname, c.relname) AS identity,
        i.indisvalid AS valid,
        i.indisready AS ready,
        i.indisclustered AS clustered,
+       i.indisreplident AS replica_identity,
+       pg_catalog.obj_description(c.oid, 'pg_class') AS comment,
        pg_catalog.pg_get_indexdef(i.indexrelid) AS definition
 FROM pg_catalog.pg_index i
 JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
@@ -475,8 +520,15 @@ async function inspectReinstallDependencies(
       typeof row.valid !== 'boolean' ||
       typeof row.ready !== 'boolean' ||
       typeof row.clustered !== 'boolean' ||
+      typeof row.replica_identity !== 'boolean' ||
       (row.cluster_sql !== null && typeof row.cluster_sql !== 'string') ||
-      (row.clustered && typeof row.cluster_sql !== 'string')
+      (row.clustered && typeof row.cluster_sql !== 'string') ||
+      (row.replica_identity_sql !== null &&
+        typeof row.replica_identity_sql !== 'string') ||
+      (row.replica_identity && typeof row.replica_identity_sql !== 'string') ||
+      (row.comment !== null && typeof row.comment !== 'string') ||
+      (row.comment_sql !== null && typeof row.comment_sql !== 'string') ||
+      (typeof row.comment === 'string' && typeof row.comment_sql !== 'string')
     ) {
       unsafe.push(
         String(row.identity ?? 'index with incomplete catalog metadata'),
@@ -491,6 +543,10 @@ async function inspectReinstallDependencies(
       ready: row.ready,
       clustered: row.clustered,
       clusterSql: row.cluster_sql,
+      replicaIdentity: row.replica_identity,
+      replicaIdentitySql: row.replica_identity_sql,
+      comment: row.comment,
+      commentSql: row.comment_sql,
     })
   }
   if (unsafe.length > 0) {
@@ -529,6 +585,9 @@ async function rebuildIndexes(
   }
   for (const index of indexes) {
     if (index.clusterSql !== null) await client.query(index.clusterSql)
+    if (index.replicaIdentitySql !== null)
+      await client.query(index.replicaIdentitySql)
+    if (index.commentSql !== null) await client.query(index.commentSql)
   }
   const tableIdentities = new Set(indexes.map((index) => index.tableIdentity))
   for (const tableIdentity of tableIdentities) {
@@ -562,7 +621,9 @@ async function rebuildIndexes(
           expected.definition === row.definition &&
           (row.valid === true || expected.valid === false) &&
           (row.ready === true || expected.ready === false) &&
-          row.clustered === expected.clustered
+          row.clustered === expected.clustered &&
+          row.replica_identity === expected.replicaIdentity &&
+          (row.comment ?? null) === expected.comment
         )
       })
       .map((row) => String(row.identity)),

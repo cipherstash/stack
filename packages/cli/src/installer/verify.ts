@@ -528,17 +528,28 @@ const ORE_STATE_SQL = `
  */
 async function readInstalledEqlVersion(
   client: pg.ClientBase,
+  insideCallerTransaction = false,
 ): Promise<string | null> {
+  if (insideCallerTransaction) {
+    await client.query('SAVEPOINT installed_eql_version_probe')
+  }
   try {
     const version = await client.query<{ version: string }>(
       `SELECT ${EQL_V3_SCHEMA_NAME}.version() AS version`,
     )
+    if (insideCallerTransaction) {
+      await client.query('RELEASE SAVEPOINT installed_eql_version_probe')
+    }
     return version.rows[0]?.version ?? null
   } catch (error) {
     const code =
       error !== null && typeof error === 'object' && 'code' in error
         ? (error as { code?: string }).code
         : undefined
+    if (insideCallerTransaction) {
+      await client.query('ROLLBACK TO SAVEPOINT installed_eql_version_probe')
+      await client.query('RELEASE SAVEPOINT installed_eql_version_probe')
+    }
     if (code === '42883') return null
     const detail = error instanceof Error ? error.message : String(error)
     throw new Error(
@@ -560,7 +571,7 @@ export async function readInstalledSurface(
   options: { manageTransaction?: boolean } = {},
 ): Promise<InstalledSurface> {
   // Sequential on purpose: a single pg.Client serialises concurrent query()
-  // calls anyway (and deprecates them); these are six fast catalogue reads.
+  // calls anyway (and deprecates them); these are seven fast catalogue reads.
   //
   // The read-only transaction exists for `SET LOCAL search_path = ''`:
   // `format_type` qualifies a name exactly when the type is not visible on
@@ -571,9 +582,8 @@ export async function readInstalledSurface(
   // (`integer`, `text[]`). That is precisely the spelling the bundle parser
   // produces; without the pin the output would vary with the connection's
   // search_path. SET LOCAL dies with the transaction, so the caller's
-  // session is untouched (the version() probe below runs after COMMIT and
-  // needs the default path restored — `eql_v3.version` is qualified, but its
-  // body's search_path is its own SET clause either way).
+  // session is untouched. The qualified version() probe is protected by a
+  // savepoint because a missing function must not abort the caller's snapshot.
   if (options.manageTransaction !== false) await client.query('BEGIN READ ONLY')
   await client.query(`SET LOCAL search_path = ''`)
   const schemas = await client.query<{
@@ -603,7 +613,7 @@ export async function readInstalledSurface(
   }>(ORE_STATE_SQL, [expected.oreDomains])
   const eqlV3SchemaPresent = schemas.rows[0]?.eql_v3_present === true
   const installedVersion = eqlV3SchemaPresent
-    ? await readInstalledEqlVersion(client)
+    ? await readInstalledEqlVersion(client, true)
     : null
   // Ends the SET LOCAL scope. On a mid-transaction error the caller's
   // client.end() discards the aborted transaction with the connection.
@@ -981,7 +991,7 @@ export async function assessEqlSurface(
 ): Promise<EqlSurfaceAssessment> {
   const expected = bundledExpectedSurface()
   if (depth === 'summary') {
-    return { depth, ore: await readOreStateAgainst(client, expected) }
+    return { depth, ore: await readOreStateAgainst(client, expected, true) }
   }
   const installed = await readInstalledSurface(client, expected, {
     manageTransaction: false,
@@ -1017,8 +1027,12 @@ export async function readOreState(
 async function readOreStateAgainst(
   client: pg.ClientBase,
   expected: ExpectedSurface,
+  insideCallerTransaction = false,
 ): Promise<OreStateReading> {
-  const installedVersion = await readInstalledEqlVersion(client)
+  const installedVersion = await readInstalledEqlVersion(
+    client,
+    insideCallerTransaction,
+  )
   if (installedVersion !== expected.eqlVersion) {
     return {
       comparable: false,

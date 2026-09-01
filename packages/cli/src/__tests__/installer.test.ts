@@ -251,15 +251,9 @@ describe('EQLInstaller', () => {
     const installer = new EQLInstaller({ databaseUrl: 'postgres://test' })
 
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes("to_regnamespace('eql_v2')")) {
+      if (sql.includes("to_regnamespace('eql_v3')")) {
         return Promise.resolve({
-          rows: [
-            {
-              eql_v2_present: false,
-              eql_v3_present: true,
-              eql_v3_internal_present: true,
-            },
-          ],
+          rows: [{ installed: true }],
           rowCount: 1,
         })
       }
@@ -272,19 +266,11 @@ describe('EQLInstaller', () => {
       })
     })
     await expect(installer.isInstalled()).resolves.toBe(true)
+    expect(mockQuery).toHaveBeenCalledTimes(1)
 
     mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes("to_regnamespace('eql_v2')")) {
-        return Promise.resolve({
-          rows: [
-            {
-              eql_v2_present: false,
-              eql_v3_present: true,
-              eql_v3_internal_present: false,
-            },
-          ],
-          rowCount: 1,
-        })
+      if (sql.includes("to_regnamespace('eql_v3')")) {
+        return Promise.resolve({ rows: [{ installed: false }], rowCount: 1 })
       }
       return Promise.resolve({ rows: [], rowCount: 0 })
     })
@@ -296,16 +282,7 @@ describe('EQLInstaller', () => {
     mockEnd.mockResolvedValue(undefined)
     mockQuery.mockImplementation((sql: string) => {
       if (sql.includes("to_regnamespace('eql_v2')")) {
-        return Promise.resolve({
-          rows: [
-            {
-              eql_v2_present: true,
-              eql_v3_present: false,
-              eql_v3_internal_present: false,
-            },
-          ],
-          rowCount: 1,
-        })
+        return Promise.resolve({ rows: [{ installed: true }], rowCount: 1 })
       }
       if (sql.includes('eql_v2.version()')) {
         return Promise.resolve({ rows: [{ version: '2.3.1' }], rowCount: 1 })
@@ -316,9 +293,22 @@ describe('EQLInstaller', () => {
     const installer = new EQLInstaller({ databaseUrl: 'postgres://test' })
 
     await expect(installer.isInstalled({ eqlVersion: 2 })).resolves.toBe(true)
+    expect(mockQuery).toHaveBeenCalledTimes(1)
     expect(mockQuery).toHaveBeenCalledWith(
       expect.stringContaining("to_regnamespace('eql_v2')"),
     )
+  })
+
+  it('reads a legacy installed version with one query', async () => {
+    mockConnect.mockResolvedValue(undefined)
+    mockEnd.mockResolvedValue(undefined)
+    mockQuery.mockResolvedValue({ rows: [{ version: '3.0.5' }], rowCount: 1 })
+    const { EQLInstaller } = await import('@/installer/index.ts')
+    const installer = new EQLInstaller({ databaseUrl: 'postgres://test' })
+
+    await expect(installer.getInstalledVersion()).resolves.toBe('3.0.5')
+    expect(mockQuery).toHaveBeenCalledTimes(1)
+    expect(mockQuery).toHaveBeenCalledWith('SELECT eql_v3.version() AS version')
   })
 
   it('installs only the pinned EQL v3 bundle', async () => {
@@ -384,6 +374,27 @@ describe('EQLInstaller', () => {
       new EQLInstaller({ databaseUrl: 'postgres://test' }).install(),
     ).resolves.toEqual({ deferredGrantsSql: null })
     expect(database.events).toContain('cluster')
+  })
+
+  it('restores catalog state attached to a functional index', async () => {
+    mockConnect.mockResolvedValue(undefined)
+    mockEnd.mockResolvedValue(undefined)
+    const database = new RecordingRestorationDatabase(
+      searchIndexRestorationScenario({
+        comment: 'Supports encrypted email equality searches',
+        commentSql:
+          "COMMENT ON INDEX app.users_email_idx IS 'Supports encrypted email equality searches'",
+      }),
+    )
+    mockQuery.mockImplementation(database.query)
+    const { EQLInstaller } = await import('@/installer/index.ts')
+
+    await new EQLInstaller({ databaseUrl: 'postgres://test' }).install()
+
+    expect(database.events).toContain('comment')
+    expect(database.events.indexOf('comment')).toBeLessThan(
+      database.events.indexOf('verify'),
+    )
   })
 
   it('captures dependencies before destructive SQL in the protected transaction', async () => {

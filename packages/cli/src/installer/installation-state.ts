@@ -14,6 +14,8 @@ export type InstalledEqlGeneration =
 
 export type AssessedOreState =
   | { status: 'absent' }
+  | { status: 'not-requested' }
+  | { status: 'unavailable'; message: string }
   | {
       status: 'not-comparable'
       bundleVersion: string
@@ -83,6 +85,7 @@ export async function assessEqlInstallation(options: {
   databaseUrl: string
   depth?: 'summary' | 'exhaustive'
   includeCapabilities?: boolean
+  includeOre?: boolean
 }): Promise<EqlInstallationState> {
   const client = createPgClient(options.databaseUrl)
   try {
@@ -119,12 +122,24 @@ export async function assessEqlInstallation(options: {
       ? { status: 'installed' as const, version: await readVersion(client, 3) }
       : { status: 'absent' as const }
 
-    const verification = v3Present
-      ? await assessEqlSurface(
-          client,
-          options.depth === 'exhaustive' ? 'exhaustive' : 'summary',
-        )
-      : null
+    let verification = null
+    let unavailableOre: AssessedOreState | null = null
+    if (v3Present && options.depth === 'exhaustive') {
+      verification = await assessEqlSurface(client, 'exhaustive')
+    } else if (v3Present && options.includeOre === true) {
+      await client.query('SAVEPOINT eql_ore_assessment')
+      try {
+        verification = await assessEqlSurface(client, 'summary')
+        await client.query('RELEASE SAVEPOINT eql_ore_assessment')
+      } catch (error) {
+        await client.query('ROLLBACK TO SAVEPOINT eql_ore_assessment')
+        await client.query('RELEASE SAVEPOINT eql_ore_assessment')
+        unavailableOre = {
+          status: 'unavailable',
+          message: error instanceof Error ? error.message : String(error),
+        }
+      }
+    }
     const ore =
       verification?.depth === 'summary'
         ? assessOre(verification.ore)
@@ -136,7 +151,10 @@ export async function assessEqlInstallation(options: {
                 bundleVersion: verification.report.bundleVersion,
                 installedVersion: verification.report.installedVersion,
               }
-            : { status: 'absent' as const }
+            : (unavailableOre ??
+              (v3Present
+                ? { status: 'not-requested' as const }
+                : { status: 'absent' as const }))
     let surface: AssessedEqlSurface = { status: 'not-requested' }
     if (verification?.depth === 'exhaustive') {
       const report = verification.report
@@ -256,12 +274,16 @@ async function readVersion(
   },
   generation: 2 | 3,
 ): Promise<string | 'unknown'> {
+  await client.query('SAVEPOINT eql_version_probe')
   try {
     const result = await client.query(
       `SELECT eql_v${generation}.version() AS version`,
     )
+    await client.query('RELEASE SAVEPOINT eql_version_probe')
     return result.rows[0]?.version ? String(result.rows[0].version) : 'unknown'
   } catch {
+    await client.query('ROLLBACK TO SAVEPOINT eql_version_probe')
+    await client.query('RELEASE SAVEPOINT eql_version_probe')
     return 'unknown'
   }
 }

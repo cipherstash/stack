@@ -37,20 +37,6 @@ export {
 /** EQL generations recognised by read-only installation diagnostics. */
 export type EqlVersion = 2 | 3
 
-/**
- * The pinned EQL v3 install SQL, verified against the resolved release's
- * `installSqlSha256` before it is handed to anything that executes or emits it.
- *
- * This is the CLI's single choke point for the bundle — `install()`,
- * `stash eql migration`'s emitter and `bundledExpectedSurface()` all come
- * through here — which is why the digest check lives in the wrapper rather than
- * at each call site. `readInstallSql()` itself is in the frozen
- * `@cipherstash/eql` subtree, published from another repository, so a check
- * added there would be dead code for every consumer installing from npm.
- *
- * @throws if the bundle cannot be read, or if its bytes are not the ones the
- * resolved release attests to (see {@link assertBundledEqlSqlDigest}).
- */
 /** Supabase grants for the sole installable generation, EQL v3. */
 export function supabaseGrantsFor(): string {
   return SUPABASE_PERMISSIONS_SQL_V3
@@ -127,21 +113,43 @@ export class EQLInstaller {
 
   /** Generation-aware read-only detection retained for legacy diagnostics. */
   async isInstalled(options?: { eqlVersion?: EqlVersion }): Promise<boolean> {
-    const installation = await assessEqlInstallation({
-      databaseUrl: this.databaseUrl,
-    })
-    return installation[`v${options?.eqlVersion ?? 3}`].status === 'installed'
+    const generation = options?.eqlVersion ?? 3
+    const client = createPgClient(this.databaseUrl)
+    try {
+      await client.connect()
+      const result = await client.query<{ installed: boolean }>(
+        generation === 2
+          ? "SELECT to_regnamespace('eql_v2') IS NOT NULL AS installed"
+          : "SELECT to_regnamespace('eql_v3') IS NOT NULL AND to_regnamespace('eql_v3_internal') IS NOT NULL AS installed",
+      )
+      return result.rows[0]?.installed === true
+    } finally {
+      await client.end()
+    }
   }
 
   /** Read-only version diagnostics for current and legacy installs. */
   async getInstalledVersion(options?: {
     eqlVersion?: EqlVersion
   }): Promise<string | null> {
-    const installation = await assessEqlInstallation({
-      databaseUrl: this.databaseUrl,
-    })
-    const generation = installation[`v${options?.eqlVersion ?? 3}`]
-    return generation.status === 'installed' ? generation.version : null
+    const generation = options?.eqlVersion ?? 3
+    const client = createPgClient(this.databaseUrl)
+    try {
+      await client.connect()
+      const result = await client.query<{ version: string }>(
+        `SELECT eql_v${generation}.version() AS version`,
+      )
+      return result.rows[0]?.version ?? null
+    } catch (error) {
+      const code =
+        typeof error === 'object' && error !== null && 'code' in error
+          ? String((error as { code?: unknown }).code)
+          : undefined
+      if (code === '42883' || code === '3F000') return null
+      throw error
+    } finally {
+      await client.end()
+    }
   }
 
   /**

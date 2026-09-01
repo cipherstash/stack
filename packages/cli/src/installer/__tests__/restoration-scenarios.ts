@@ -6,6 +6,10 @@ export interface SearchIndexRestorationScenario {
   ready: boolean
   clustered: boolean
   clusterSql: string | null
+  replicaIdentity: boolean
+  replicaIdentitySql: string | null
+  comment: string | null
+  commentSql: string | null
 }
 
 export type RestorationEvent =
@@ -16,6 +20,8 @@ export type RestorationEvent =
   | 'replace'
   | 'reconstruct'
   | 'cluster'
+  | 'replica-identity'
+  | 'comment'
   | 'analyze'
   | 'verify'
   | 'commit'
@@ -33,6 +39,10 @@ export function searchIndexRestorationScenario(
     ready: true,
     clustered: false,
     clusterSql: null,
+    replicaIdentity: false,
+    replicaIdentitySql: null,
+    comment: null,
+    commentSql: null,
     ...overrides,
   }
 }
@@ -128,6 +138,10 @@ function captureRow(scenario: SearchIndexRestorationScenario) {
     ready: scenario.ready,
     clustered: scenario.clustered,
     cluster_sql: scenario.clusterSql,
+    replica_identity: scenario.replicaIdentity,
+    replica_identity_sql: scenario.replicaIdentitySql,
+    comment: scenario.comment,
+    comment_sql: scenario.commentSql,
   }
 }
 
@@ -138,6 +152,8 @@ function verificationRow(scenario: SearchIndexRestorationScenario) {
     valid: scenario.valid,
     ready: scenario.ready,
     clustered: scenario.clustered,
+    replica_identity: scenario.replicaIdentity,
+    comment: scenario.comment,
   }
 }
 
@@ -152,6 +168,9 @@ function restorationEvent(
   if (sql.includes('CREATE SCHEMA eql_v3')) return 'replace'
   if (scenario && sql === scenario.definition) return 'reconstruct'
   if (scenario?.clusterSql && sql === scenario.clusterSql) return 'cluster'
+  if (scenario?.replicaIdentitySql && sql === scenario.replicaIdentitySql)
+    return 'replica-identity'
+  if (scenario?.commentSql && sql === scenario.commentSql) return 'comment'
   if (sql.startsWith('ANALYZE ')) return 'analyze'
   if (sql.includes('stash_eql_verify_rebuilt_indexes')) return 'verify'
   if (sql === 'COMMIT') return 'commit'
