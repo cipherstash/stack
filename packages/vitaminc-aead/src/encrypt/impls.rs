@@ -25,7 +25,24 @@ impl Encrypt for String {
         C: Cipher,
         A: IntoAad<'a>,
     {
-        cipher.encrypt_bytes_vec(Protected::new(self.into_bytes()), aad)
+        Self::encrypt_protected(Protected::new(self), cipher, aad)
+    }
+
+    /// A wrapped `String` is converted to its byte buffer via
+    /// [`Controlled::map`] — the same heap allocation moves into the
+    /// `Protected<Vec<u8>>` — and handed straight to
+    /// [`Cipher::encrypt_bytes_vec`]. A `Protected<String>` (e.g. a password)
+    /// is never unwrapped on its way to the cipher.
+    fn encrypt_protected<'a, C, A>(
+        this: Protected<Self>,
+        cipher: C,
+        aad: A,
+    ) -> Result<C::Ok, C::Error>
+    where
+        C: Cipher,
+        A: IntoAad<'a>,
+    {
+        cipher.encrypt_bytes_vec(this.map(String::into_bytes), aad)
     }
 }
 
@@ -66,7 +83,9 @@ impl<const N: usize> Encrypt for [u8; N] {
         C: Cipher,
         A: IntoAad<'a>,
     {
-        cipher.encrypt_bytes_array(Protected::new(self), aad)
+        // One wrap, then the wrapped path — so the cipher entry point is
+        // named exactly once, in `encrypt_protected`.
+        Self::encrypt_protected(Protected::new(self), cipher, aad)
     }
 
     /// An already-wrapped array goes straight to the cipher's array entry
@@ -96,7 +115,7 @@ impl Encrypt for Vec<u8> {
         C: Cipher,
         A: IntoAad<'a>,
     {
-        cipher.encrypt_bytes_vec(Protected::new(self), aad)
+        Self::encrypt_protected(Protected::new(self), cipher, aad)
     }
 
     /// An already-wrapped buffer goes straight to
@@ -259,16 +278,29 @@ mod tests {
         assert_eq!(wrapped_aad, cipher.captured_aad());
     }
 
-    // A type without an override takes the default `encrypt_protected`: it is
-    // unwrapped and its own `encrypt_with_aad` runs — here `String`, which
-    // re-wraps its bytes and seals through the vec entry point.
+    // A wrapped `String` takes its own `encrypt_protected` override: the heap
+    // buffer moves into a `Protected<Vec<u8>>` and reaches the vec entry
+    // point without ever being unwrapped.
     #[test]
-    fn protected_value_without_an_override_takes_the_default_path() {
+    fn protected_string_seals_as_a_byte_leaf() {
         let cipher = MockCipher::new();
         let ct = Protected::new(String::from("hi"))
             .encrypt(&cipher)
             .expect("encrypt");
         assert_eq!(ct, b"hi".to_vec());
         assert_eq!(cipher.array_entry_hits(), 0);
+    }
+
+    // A type without an override takes the default `encrypt_protected`: it is
+    // unwrapped and its own `encrypt_with_aad` runs — here `u32`, which
+    // wraps its little-endian bytes and seals through the array entry point.
+    #[test]
+    fn protected_value_without_an_override_takes_the_default_path() {
+        let cipher = MockCipher::new();
+        let ct = Protected::new(0x04030201u32)
+            .encrypt(&cipher)
+            .expect("encrypt");
+        assert_eq!(ct, vec![1, 2, 3, 4]);
+        assert_eq!(cipher.array_entry_hits(), 1);
     }
 }
