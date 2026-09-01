@@ -8,7 +8,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-stack-auth = { workspace = true }
+stack-auth = { workspace = true, features = ["http"] }
 stack-profile = { workspace = true }
 cts-common = { workspace = true }
 vitaminc-protected = { workspace = true }
@@ -22,7 +22,7 @@ zeroize = { workspace = true }
 # `http_client`; the mock server itself is now a JS helper (see
 # __tests__/helpers/), so the napi crate no longer ships a `test-utils` feature
 # or the heavy mocktail/jsonwebtoken/reqwest deps in its published artifact.
-stack-auth = { workspace = true, features = ["test-utils"] }
+stack-auth = { workspace = true, features = ["http", "test-utils"] }
 jsonwebtoken = { workspace = true }
 mocktail = "0.3.0"
 serde_json = "1"

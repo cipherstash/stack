@@ -7,7 +7,7 @@
 > rustdoc and the tests are the source of truth. Where the two disagree, the
 > code wins and this document is simply out of date.
 
-**Status:** in progress — Phase 0 and Phase 1 are open as stacked draft PRs on #2156
+**Status:** in progress — Phases 0, 1 and 2 are open as stacked draft PRs on #2156
 **Date:** 2026-08-27
 **Builds on:** #2099 (WASI/wazero beachhead), #2156 (`#[derive(EncryptFrom, DecryptInto)]`), vitaminc `bindings/go` (`vcvalue` + `vcencrypt`)
 
@@ -106,8 +106,9 @@ Structural blockers on top of that:
 2. **`stack-auth` uses reqwest unconditionally** in `device_client.rs`,
    `access_key_refresher.rs`, `oidc_refresher.rs`, `token.rs`, and
    `error.rs` (`RequestError(pub reqwest::Error)`, `From<reqwest::Error>
-   for AuthError`). `StaticTokenStrategy`, `ServiceToken`, `AuthStrategy`
-   and the error enum are HTTP-free and are all a first guest needs.
+   for AuthError`). `AuthStrategyFn`, `ServiceToken`, `AuthStrategy`
+   and the error enum are HTTP-free and are all a first guest needs
+   (`StaticTokenStrategy` is test-utils-only and stays that way).
 3. **`cfg(target_arch = "wasm32")` currently means "JS host"** in
    `stack-auth`/`stack-kms` (fetch semantics, no timeouts, `MaybeSend`
    drops `Send`). WASI under wazero is single-threaded too, so the `Send`
@@ -154,6 +155,11 @@ memory once at `init`; derived data keys and the index key never leave.
 
 ### Phase 0 — salvage #2099 onto `stack-kms`
 
+**Landed** as the first stacked PR: the gate, the CI workflow, Layer 6, and
+this document. `WasiHostConnection`, the `bridge.go` host function and the
+integration harness are ported in Phase 3 with the guest they serve; #2099
+is left open with a pointer here for its author to close.
+
 #2099 targets `cipherstash-client`, which is being replaced by `stack-kms`
 (no parity fixes go into the old crate). Rebase the reusable pieces rather
 than the branch:
@@ -175,8 +181,20 @@ than the branch:
 
 ### Phase 1 — `stack-kms` and `stack-auth` build for WASI without HTTP
 
-Smallest change that makes the guest link, with the seam in the right place
-for the later `stack-transport` refactor:
+**Landed (stacked PR on Phase 0).** What shipped, against the plan below: a
+default-on `http` feature in all three crates (`stack-encrypt/http` →
+`stack-kms/http` → `stack-auth/http` → `dep:reqwest`); `StackKms<C, Conn>`
+with `StackKms::connect(opts, credentials, client_key)` as the
+transport-injecting constructor; `ZeroKMSConnection` grew
+`ensure_base_url` / `has_base_url` so endpoint discovery from the token's
+`services` claim works over any connection; `StackCipher::builder()` moved
+to `impl StackCipher<FromEnv>` so it resolves without `http`;
+`wasm:wasi-check` gates all eight crates. A unit test drives `StackKms`
+end to end over the in-memory `TestConnection`. Verified:
+`cargo check --target wasm32-wasip1 -p stack-encrypt --no-default-features`
+passes with no `reqwest`/`hyper`/`aws-lc-sys` in the tree.
+
+The plan as written before the work:
 
 **stack-kms**
 
@@ -196,8 +214,12 @@ for the later `stack-transport` refactor:
   `device_client`, `access_key_refresher`, `oidc_refresher`, the
   `AutoStrategy`/`AccessKeyStrategy`/`DeviceSession`/`OidcFederation`
   strategies, `RequestError`, `From<reqwest::Error>`. Left unconditional:
-  `AuthStrategy`, `AuthStrategyBounds`, `ServiceToken`, `StaticTokenStrategy`,
+  `AuthStrategy`, `AuthStrategyBounds`, `AuthStrategyFn`, `ServiceToken`,
   `Token`, `AuthError` (minus the `Request` variant's payload), `SecretToken`.
+  `AuthStrategyFn` is the supported production path for a no-`http` consumer
+  that sources tokens externally; `StaticTokenStrategy` stays behind
+  `cfg(any(test, feature = "test-utils"))` — it is a test double, not part of
+  the no-`http` production surface.
 - The guest's `HostTokenStrategy` (below) implements `AuthStrategy` over a
   host import, so nothing else is required for the proof.
 
@@ -211,8 +233,34 @@ for the later `stack-transport` refactor:
 
 ### Phase 2 — frozen byte formats stack-encrypt owns
 
-These are storage commitments, so they get decided and documented before the
-guest is written, independently of Go:
+**Landed (stacked PR on Phase 1).** What shipped, against the plan below:
+`SealedValue::to_bytes`/`from_bytes` with the layout
+`version(1) ‖ iv(16) ‖ tag_len(u16 LE) ‖ tag ‖ local_ciphertext`, the
+version byte bound into the leaf AAD via a new labelled derivation
+(`PAE("stack-encrypt/leaf", version, derived_aad, tag)` — replacing the
+unlabelled `(aad, tag)` tuple, with the derivation bytes pinned by a unit
+test; **breaking**: leaves sealed under the phase-1 AAD carry no version byte,
+so they cannot be opened and fail with a plain AEAD error rather than an
+`UnknownVersion` — acceptable because the crate is `publish = false` and only
+dev-persisted data exists); term encodings frozen as raw-bytes (equality: the 32 PRF bytes;
+ORE/OPE: the raw CLLW ciphertext, byte-identical to what EQL hex-encodes
+into `hm`/`oc`/`op`; match: LE `u16` positions — EQL sends `bf` as a JSON
+integer array, so the byte-string form is stack-encrypt's own *transport*
+encoding across the wasm/FFI boundary, not a storage commitment — what is
+stored and queried is the position list). The surface per type:
+`to_bytes` and a fallible `TryFrom<&[u8]>` on all four; `from_bytes` on all
+four (infallible over `[u8; 32]` for `EqualityTerm`, fallible over a slice
+for the rest); `as_bytes` only where the term is a contiguous buffer
+(`EqualityTerm`, `OreTerm`, `OpeTerm`) — a `MatchTerm` is canonically a
+position list, so it has none, and its decoders range-check every position
+against the `MatchConfig`'s filter size. Decode failures are the structured,
+`PartialEq` `TermBytesError`. Also: length-validating
+`TryFrom<&[u8]>` added to cllw-ore's variable-width ciphertext types; and
+golden vectors in `tests/frozen_bytes.rs` for the Go decoder to test
+against.
+
+The plan as written before the work — these are storage commitments, so they
+get decided and documented before the guest is written, independently of Go:
 
 - **`SealedValue` leaf**: `to_bytes()` / `from_bytes()` with a canonical
   layout, e.g. `version(1) ‖ iv ‖ u16 tag_len ‖ tag ‖ local_ciphertext`

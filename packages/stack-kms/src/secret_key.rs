@@ -155,7 +155,13 @@ impl ProfileData for SecretKey {
     const MODE: Option<u32> = Some(0o600);
 }
 
-/// Implement [KeyProvider] for [SecretKey] to allow it to be used directly as a key source when initializing with a [super::StackKmsBuilder].
+/// Implement [KeyProvider] for [SecretKey] to allow it to be used directly as
+/// a key source when initializing a client.
+// The builder it names only exists with `http`.
+#[cfg_attr(
+    feature = "http",
+    doc = "See [`StackKmsBuilder`](super::StackKmsBuilder).\n"
+)]
 impl KeyProvider for SecretKey {
     async fn client_key(&self) -> Result<ClientKey, KeyProviderError> {
         ClientKey::from_bytes(self.client_id, &self.client_key)

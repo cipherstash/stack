@@ -65,6 +65,53 @@
 //! This is a fresh (v2) term format: PRF inputs are framed with vitaminc's PAE
 //! context encoding, so terms are intentionally **not** byte-compatible with
 //! `cipherstash-client`'s existing `IndexTerm` values.
+//!
+//! # Byte encodings
+//!
+//! Terms cross the wasm/FFI boundary into other languages, so each term kind
+//! commits to one frozen **transport** encoding — the bytes a language
+//! binding decodes:
+//!
+//! * [`EqualityTerm`] — the 32 PRF bytes as-is
+//!   ([`as_bytes`](EqualityTerm::as_bytes) /
+//!   [`to_bytes`](EqualityTerm::to_bytes) /
+//!   [`from_bytes`](EqualityTerm::from_bytes)).
+//! * [`MatchTerm`] — the sorted, de-duplicated bit positions, each a
+//!   little-endian `u16` ([`to_bytes`](MatchTerm::to_bytes) /
+//!   [`from_bytes`](MatchTerm::from_bytes)).
+//! * [`OreTerm`] / [`OpeTerm`] — the raw CLLW ciphertext bytes, unframed
+//!   ([`as_bytes`](OreTerm::as_bytes) / [`to_bytes`](OreTerm::to_bytes) /
+//!   [`from_bytes`](OreTerm::from_bytes)).
+//!
+//! Every kind decodes through `TryFrom<&[u8]>` as well, failing with a
+//! [`TermBytesError`]; [`EqualityTerm`] additionally keeps an infallible
+//! [`from_bytes`](EqualityTerm::from_bytes) over a `[u8; 32]`. `as_bytes`
+//! exists only where the term *is* a contiguous buffer (equality, ORE, OPE);
+//! a [`MatchTerm`] is canonically a position list, so it has none.
+//!
+//! For equality and ORE/OPE the transport bytes are also the stored form,
+//! and they share the *shape* of the v1 / `cipherstash-client` encodings — a
+//! 32-byte HMAC for equality, raw CLLW bytes for ORE/OPE, the same bytes EQL
+//! hex-encodes into its `hm` / `oc` / `op` fields with its hex and JSON
+//! framing sitting *above* them. A match term is the exception: what is
+//! stored and queried is the position list
+//! ([`positions`](MatchTerm::positions)), which maps to an integer-array
+//! column (EQL sends `bf` as a JSON integer array) — no column holds the
+//! `u16` byte string, which is stack-encrypt's own shape and exists so a
+//! binding can carry the term across the boundary without inventing a
+//! framing.
+//!
+//! The **values are not comparable**: as noted above the derivations differ,
+//! and stack-encrypt has no EQL integration of its own. A term compares only
+//! against terms produced by the same stack-encrypt keyset — never against a
+//! row `cipherstash-client` or EQL v1 wrote. What the shared shape buys is a
+//! decoder: a language binding reading these bytes needs no framing of its
+//! own. There is deliberately no version byte or framing here: a term is an
+//! opaque comparand and its derivation is already versioned by the PAE domain
+//! labels above. The pins in `tests/term_bytes.rs` and
+//! `tests/frozen_bytes.rs` hold both the derivations and the encodings in
+//! place: a binding depends on the transport bytes, so they are frozen even
+//! where no column holds them.
 
 mod tokenize;
 
@@ -105,6 +152,7 @@ const OPE_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ope-key/v1";
 
 /// Errors from SEM term generation.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum TermError {
     /// The PRF backend failed (for a remote 2-party backend this includes
     /// transport errors).
@@ -133,6 +181,48 @@ pub enum TermError {
     /// [`EncryptContext`].
     #[error("the encryption context must not be empty (it domain-separates fields)")]
     EmptyContext,
+    /// Term bytes do not decode under the term kind's frozen encoding — see
+    /// [`TermBytesError`].
+    #[error(transparent)]
+    Bytes(#[from] TermBytesError),
+}
+
+/// A term's frozen byte encoding failed to decode (see the
+/// [module docs](self#byte-encodings)). Purely structural — a term that
+/// *decodes* has proven nothing about being a genuine term derived under any
+/// particular keyset; bytes that fail here were never a valid encoding of
+/// that term kind at all.
+///
+/// Kept separate from the rest of [`TermError`] (which it converts into) so
+/// decoding has an error a caller can compare: the generation variants carry
+/// boxed and opaque sources that are not [`PartialEq`].
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum TermBytesError {
+    /// Equality-term bytes are not the 32 PRF bytes.
+    #[error("equality-term bytes must be exactly 32 bytes, got {0}")]
+    WrongEqualityTermLength(usize),
+    /// Match-term bytes are not a whole number of little-endian `u16`
+    /// positions.
+    #[error("match-term bytes must be little-endian u16 positions, got an odd length of {0}")]
+    OddMatchTermLength(usize),
+    /// A decoded position lies outside the Bloom filter the term's
+    /// [`MatchConfig`] fixes. Genuine positions are always masked into
+    /// `0..m`, so an out-of-range one means the bytes were not written by
+    /// this encoding — a wrong-endian decoder, most often, which would
+    /// otherwise decode cleanly and then silently never match.
+    #[error("match position {position} is outside the {filter_size}-bit filter")]
+    MatchPositionOutOfRange {
+        /// The offending position.
+        position: u16,
+        /// The filter size (`m`) the [`MatchConfig`] fixes.
+        filter_size: u32,
+    },
+    /// The buffer's length is not one this CLLW ciphertext shape can have.
+    /// (The length is all there is to report: `cllw_ore::Error` is
+    /// deliberately contentless, so its message would say strictly less.)
+    #[error("{0} bytes do not fit this CLLW ciphertext shape")]
+    MalformedCllwCiphertext(usize),
 }
 
 impl TermError {
@@ -170,6 +260,8 @@ pub struct EqualityTerm([u8; 32]);
 impl EqualityTerm {
     /// Rebuild a term from stored bytes — the inverse of
     /// [`into_bytes`](Self::into_bytes), for terms persisted server-side.
+    /// Infallible: the width is in the type. For a slice of unknown length
+    /// use `TryFrom<&[u8]>`.
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
@@ -178,14 +270,41 @@ impl EqualityTerm {
         &self.0
     }
 
+    /// Owned copy of [`as_bytes`](Self::as_bytes) — the same `to_bytes` every
+    /// other term kind offers (see the [module docs](self#byte-encodings)).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.0.to_vec()
+    }
+
     pub fn into_bytes(self) -> [u8; 32] {
         self.0
+    }
+}
+
+/// Decode a slice of unknown length — the fallible counterpart of
+/// [`EqualityTerm::from_bytes`], and the same `TryFrom<&[u8]>` every other
+/// term kind offers.
+impl TryFrom<&[u8]> for EqualityTerm {
+    type Error = TermBytesError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        <[u8; 32]>::try_from(bytes)
+            .map(Self)
+            .map_err(|_| TermBytesError::WrongEqualityTermLength(bytes.len()))
     }
 }
 
 impl From<EqualityTerm> for Vec<u8> {
     fn from(term: EqualityTerm) -> Self {
         term.0.to_vec()
+    }
+}
+
+/// The frozen byte encoding — the 32 PRF bytes as-is (see the
+/// [module docs](self#byte-encodings)).
+impl AsRef<[u8]> for EqualityTerm {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
     }
 }
 
@@ -323,19 +442,32 @@ pub struct MatchTerm<O = DefaultMatch> {
 }
 
 impl<O> MatchTerm<O> {
-    /// Rebuild a term from stored positions — the inverse of
-    /// [`positions`](Self::positions) /
-    /// [`into_positions`](Self::into_positions), for terms persisted
-    /// server-side. Sorts and de-duplicates, so any ordering is accepted;
-    /// the caller asserts (via `O`) that the positions were generated under
-    /// the same [`MatchConfig`].
-    pub fn from_positions(mut positions: Vec<u16>) -> Self {
+    /// Wrap positions that are already known to be in range — sorting and
+    /// de-duplicating them into the canonical order. Private because nothing
+    /// outside can know the range holds: the generator's positions are masked
+    /// into `0..m` by construction, and every caller-supplied list goes
+    /// through [`from_positions`](Self::from_positions) instead.
+    fn normalised(mut positions: Vec<u16>) -> Self {
         positions.sort_unstable();
         positions.dedup();
         Self {
             positions,
             _config: PhantomData,
         }
+    }
+
+    /// The transport byte encoding: each position as a little-endian `u16`,
+    /// in the canonical order [`positions`](Self::positions) holds them
+    /// (sorted ascending, no duplicates). See the
+    /// [module docs](self#byte-encodings) — what is stored and queried is the
+    /// position list; this is the frozen form a language binding carries
+    /// across the wasm/FFI boundary. The inverse of
+    /// [`from_bytes`](Self::from_bytes).
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.positions
+            .iter()
+            .flat_map(|p| p.to_le_bytes())
+            .collect()
     }
 
     /// The set Bloom-filter bit positions, sorted ascending, no duplicates.
@@ -367,6 +499,60 @@ impl<O> MatchTerm<O> {
     }
 }
 
+/// Rebuilding a term needs the [`MatchConfig`]: it fixes the filter size `m`
+/// every genuine position is below, and a position outside it is a decoding
+/// bug rather than a term.
+impl<O: MatchConfig> MatchTerm<O> {
+    /// Rebuild a term from stored positions — the inverse of
+    /// [`positions`](Self::positions) /
+    /// [`into_positions`](Self::into_positions), for terms persisted
+    /// server-side. Sorts and de-duplicates, so any ordering is accepted;
+    /// the caller asserts (via `O`) that the positions were generated under
+    /// the same [`MatchConfig`], and that much is checked: a position at or
+    /// beyond `O`'s filter size `m` is rejected with
+    /// [`TermBytesError::MatchPositionOutOfRange`].
+    pub fn from_positions(positions: Vec<u16>) -> Result<Self, TermBytesError> {
+        let filter_size = O::options().m;
+        for &position in &positions {
+            if u32::from(position) >= filter_size {
+                return Err(TermBytesError::MatchPositionOutOfRange {
+                    position,
+                    filter_size,
+                });
+            }
+        }
+        Ok(Self::normalised(positions))
+    }
+
+    /// Decode the transport byte encoding — little-endian `u16` positions —
+    /// the inverse of [`to_bytes`](Self::to_bytes). Like
+    /// [`from_positions`](Self::from_positions), any ordering is accepted and
+    /// normalised, and positions outside `O`'s filter are rejected: without
+    /// that check a wrong-endian decoder on the other side of the FFI
+    /// boundary would produce a term that decodes cleanly and then silently
+    /// never matches. Rejects an odd-length buffer.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, TermBytesError> {
+        if !bytes.len().is_multiple_of(2) {
+            return Err(TermBytesError::OddMatchTermLength(bytes.len()));
+        }
+        Self::from_positions(
+            bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect(),
+        )
+    }
+}
+
+/// [`MatchTerm::from_bytes`] as a std conversion — the same decoder.
+impl<O: MatchConfig> TryFrom<&[u8]> for MatchTerm<O> {
+    type Error = TermBytesError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        Self::from_bytes(bytes)
+    }
+}
+
 impl<O> fmt::Debug for MatchTerm<O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MatchTerm")
@@ -377,7 +563,7 @@ impl<O> fmt::Debug for MatchTerm<O> {
 
 impl<O> Clone for MatchTerm<O> {
     fn clone(&self) -> Self {
-        Self::from_positions(self.positions.clone())
+        Self::normalised(self.positions.clone())
     }
 }
 
@@ -456,7 +642,9 @@ fn match_term<O>(
         .prf_visit_with_context(prf, context, BloomVisitor { k: options.k, mask })
         .into_result()
         .map_err(TermError::from_prf)?;
-    Ok(MatchTerm::from_positions(positions))
+    // Every position came out of the visitor masked to `m - 1`, so the range
+    // check `from_positions` applies is already satisfied by construction.
+    Ok(MatchTerm::normalised(positions))
 }
 
 /// A match term of any text source, generated under `O`'s options. Derived
@@ -548,6 +736,61 @@ macro_rules! term_wrapper {
             /// Unwrap into the CLLW ciphertext.
             pub fn into_inner(self) -> T::Output {
                 self.0
+            }
+
+            /// Decode a term from its frozen byte encoding — the raw CLLW
+            /// ciphertext bytes, the inverse of [`as_bytes`](Self::as_bytes)
+            /// — for terms persisted server-side. Structural only (length
+            /// checks); the caller asserts the bytes were generated for this
+            /// source type `T` and under the same context.
+            pub fn from_bytes(bytes: &[u8]) -> Result<Self, TermBytesError>
+            where
+                for<'a> T::Output: TryFrom<&'a [u8]>,
+            {
+                T::Output::try_from(bytes)
+                    .map(Self)
+                    .map_err(|_| TermBytesError::MalformedCllwCiphertext(bytes.len()))
+            }
+        }
+
+        /// The inherent `from_bytes` as a std conversion — the same decoder.
+        impl<T: $bound> TryFrom<&[u8]> for $name<T>
+        where
+            for<'a> T::Output: TryFrom<&'a [u8]>,
+        {
+            type Error = TermBytesError;
+
+            fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+                Self::from_bytes(bytes)
+            }
+        }
+
+        impl<T: $bound> $name<T>
+        where
+            T::Output: AsRef<[u8]>,
+        {
+            /// The frozen byte encoding: the raw CLLW ciphertext bytes,
+            /// unframed — the same *shape* the EQL layer hex-encodes, but
+            /// not comparable with rows it wrote (see the
+            /// [module docs](self#byte-encodings)).
+            pub fn as_bytes(&self) -> &[u8] {
+                self.0.as_ref()
+            }
+
+            /// Owned copy of [`as_bytes`](Self::as_bytes).
+            pub fn to_bytes(&self) -> Vec<u8> {
+                self.0.as_ref().to_vec()
+            }
+        }
+
+        /// The frozen byte encoding — the same bytes as the inherent
+        /// `as_bytes`.
+        impl<T: $bound> AsRef<[u8]> for $name<T>
+        where
+            T::Output: AsRef<[u8]>,
+        {
+            fn as_ref(&self) -> &[u8] {
+                self.0.as_ref()
             }
         }
 

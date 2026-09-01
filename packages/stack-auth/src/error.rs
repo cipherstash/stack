@@ -75,10 +75,16 @@ pub(crate) mod codes {
 // Per-error structs
 // ---------------------------------------------------------------------------
 
-/// The HTTP request to the auth server failed (network error, timeout, etc.).
+/// The request to the auth server failed (network error, timeout, etc.).
+///
+/// The payload is always boxed, never a concrete `reqwest::Error`: Cargo
+/// features are additive, so a type whose shape changes with `http` breaks any
+/// no-http consumer the moment something else in the graph turns the feature
+/// on. With `http` the box holds the `reqwest::Error`; without it, whatever
+/// the host's own transport reports.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
-#[error("HTTP request failed: {0}")]
-pub struct RequestError(pub reqwest::Error);
+#[error("Request to the auth server failed: {0}")]
+pub struct RequestError(pub Box<dyn std::error::Error + Send + Sync + 'static>);
 impl AuthErrorKind for RequestError {
     fn error_code(&self) -> &'static str {
         codes::REQUEST_ERROR
@@ -584,6 +590,7 @@ impl AuthError {
     /// Matched exhaustively, like `is_retryable`, so a new variant has to
     /// declare which side of this boundary it's on rather than silently not
     /// being cached.
+    #[cfg(feature = "http")]
     pub(crate) fn is_account_refusal(&self) -> bool {
         match self {
             Self::UsageLimitExceeded(_) | Self::OrgNotProvisioned(_) => true,
@@ -710,6 +717,7 @@ fn workspace_mismatch_from_payload(
 /// indistinguishable from a genuine authorization refusal — so the status, not
 /// the body, decides. `cs_code` is checked when present so that a future 402
 /// with a different meaning does not silently inherit this classification.
+#[cfg(feature = "http")]
 pub(crate) fn classify_issuance_failure(status: u16, body: &str) -> Option<AuthError> {
     if status != 402 {
         return None;
@@ -790,6 +798,7 @@ pub(crate) fn classify_issuance_failure(status: u16, body: &str) -> Option<AuthE
 }
 
 /// Which account-level refusal a 402 body describes.
+#[cfg(feature = "http")]
 enum Refusal {
     UsageLimit,
     NotProvisioned,
@@ -837,9 +846,17 @@ impl serde::Serialize for AuthError {
 // foreign error straight into `AuthError` (the per-struct wrapping is internal).
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "http")]
+impl From<reqwest::Error> for RequestError {
+    fn from(e: reqwest::Error) -> Self {
+        Self(Box::new(e))
+    }
+}
+
+#[cfg(feature = "http")]
 impl From<reqwest::Error> for AuthError {
     fn from(e: reqwest::Error) -> Self {
-        Self::Request(RequestError(e))
+        Self::Request(e.into())
     }
 }
 
@@ -880,7 +897,7 @@ impl From<stack_profile::ProfileError> for AuthError {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 impl From<crate::DeviceClientError> for AuthError {
     fn from(e: crate::DeviceClientError) -> Self {
         use crate::DeviceClientError as E;
@@ -905,7 +922,7 @@ impl From<Infallible> for AuthError {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "http"))]
 mod classify_issuance_failure_tests {
     use super::*;
 
@@ -1390,7 +1407,7 @@ mod tests {
     /// path. (`Request` wraps a `reqwest::Error`, which has no public
     /// constructor, so it can't be built here — the same gap the exhaustive
     /// `error_code` test documents.)
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
     #[test]
     fn device_client_error_maps_to_canonical_auth_error() {
         use crate::DeviceClientError as E;

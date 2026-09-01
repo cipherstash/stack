@@ -10,7 +10,9 @@ use recipher::key::Iv;
 use stack_auth::{AuthStrategy, AuthStrategyBounds};
 use vitaminc::random::{Generatable, SafeRand};
 
-use crate::connection::{HttpConnection, HttpConnectionOpts, ZeroKMSConnection};
+#[cfg(feature = "http")]
+use crate::connection::HttpConnection;
+use crate::connection::ZeroKMSConnection;
 use crate::errors::{Error, GenerateKeyError, LoadKeysetError, RetrieveKeyError};
 use crate::futures::map_async_chunked;
 use crate::key::{ClientKey, DataKey, DataKeyWithTag, IndexKey};
@@ -29,8 +31,12 @@ pub struct InvalidClientOpts(&'static str);
 
 /// Options for configuring certain behaviours of the [`Client`].
 ///
-/// You should generally use the [`StackKmsBuilder`](crate::StackKmsBuilder) to
-/// create a configured instance rather than instantiating this struct directly.
+// The builder is the `http` feature's entry point; without it the host
+// constructs `ClientOpts` for its own transport directly.
+#[cfg_attr(
+    feature = "http",
+    doc = "You should generally use the [`StackKmsBuilder`](crate::StackKmsBuilder) to create a configured instance rather than instantiating this struct directly.\n"
+)]
 ///
 /// The limits are validated by the `with_*` setters, so a `ClientOpts` value
 /// is always usable: a zero `max_keys_per_req` would panic in `slice::chunks`
@@ -101,7 +107,18 @@ impl<CONNOPTS> ClientOpts<CONNOPTS> {
 /// [`HttpConnection`] talks to a real ZeroKMS endpoint. Each method takes an
 /// access token directly — see [`StackKms`] for the high-level wrapper that
 /// fetches and refreshes tokens via [`stack_auth`].
+#[cfg(feature = "http")]
 pub struct Client<C = HttpConnection> {
+    connection: C,
+    max_keys_per_req: usize,
+    max_concurrent_reqs: usize,
+}
+
+/// Low-level client for ZeroKMS key generation and retrieval, generic over
+/// the transport [`ZeroKMSConnection`]. (Without the `http` feature there is
+/// no default connection: the host supplies one.)
+#[cfg(not(feature = "http"))]
+pub struct Client<C> {
     connection: C,
     max_keys_per_req: usize,
     max_concurrent_reqs: usize,
@@ -382,24 +399,53 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
 /// (refreshing as needed), resolves the ZeroKMS endpoint from the token's
 /// `services` claim on first use, and delegates to the low-level client.
 ///
-/// Build one with [`StackKmsBuilder`](crate::StackKmsBuilder).
-pub struct StackKms<C> {
-    client: Client<HttpConnection>,
+/// Build one with [`StackKmsBuilder`](crate::StackKmsBuilder) (the default
+/// HTTP transport, `http` feature), or with [`connect`](Self::connect) over
+/// any [`ZeroKMSConnection`].
+#[cfg(feature = "http")]
+pub struct StackKms<C, Conn = HttpConnection> {
+    client: Client<Conn>,
     credentials: C,
     client_key: ClientKey,
 }
 
-impl<C> StackKms<C>
+/// `StackKms` owns the transport [`Client`], a [`stack_auth`] credential
+/// provider, and a [`ClientKey`]. Without the `http` feature there is no
+/// default connection: build one with [`connect`](Self::connect) over the
+/// host's [`ZeroKMSConnection`].
+#[cfg(not(feature = "http"))]
+pub struct StackKms<C, Conn> {
+    client: Client<Conn>,
+    credentials: C,
+    client_key: ClientKey,
+}
+
+impl<C, Conn> StackKms<C, Conn>
 where
     C: AuthStrategyBounds,
     for<'a> &'a C: AuthStrategy,
+    Conn: ZeroKMSConnection + Send + Sync,
 {
-    pub(crate) fn connect(
-        opts: ClientOpts<HttpConnectionOpts>,
+    /// Build a client over an explicit transport.
+    ///
+    /// This is the seam for hosts that provide their own transport (the
+    /// WASI/wazero guest implements [`ZeroKMSConnection`] over a host-imported
+    /// function) and the only constructor available without the `http`
+    /// feature.
+    #[cfg_attr(
+        feature = "http",
+        doc = "With it, [`StackKmsBuilder`](crate::StackKmsBuilder) is the usual way to configure the default [`HttpConnection`].\n"
+    )]
+    ///
+    /// The connection is initialised from `opts`'s connection options; the
+    /// ZeroKMS endpoint is taken from the access token's `services` claim on
+    /// first use unless the connection already knows one.
+    pub fn connect(
+        opts: ClientOpts<Conn::ConnectionOpts>,
         credentials: C,
         client_key: ClientKey,
     ) -> Result<Self, Error> {
-        let client = Client::init_opts(opts)?;
+        let client = Client::init_opts(opts).map_err(|e| Error::ConnectionInit(Box::new(e)))?;
         Ok(Self {
             client,
             credentials,
@@ -613,6 +659,49 @@ mod tests {
                 .unwrap();
             assert_eq!(opts.max_keys_per_req(), 1);
             assert_eq!(opts.max_concurrent_reqs(), 1);
+        }
+    }
+
+    /// `StackKms` over an injected connection — the seam a host with its own
+    /// transport (the WASI/wazero guest) builds through, and the only
+    /// constructor without the `http` feature.
+    mod connect_over_any_connection {
+        use super::*;
+        use stack_auth::StaticTokenStrategy;
+
+        #[tokio::test]
+        async fn generate_keys_round_trips_through_the_injected_connection() {
+            let builder = TestConnectionBuilder::new()
+                .add_effect::<GenerateKeyRequest, _>(|req| {
+                    assert_eq!(req.keys.len(), 2, "both specs go to the connection");
+                })
+                .add_success_response::<GenerateKeyRequest>(GenerateKeyResponse {
+                    keys: vec![generated_key(vec![1]), generated_key(vec![2])],
+                });
+            let opts = ClientOpts::new(builder);
+
+            let kms = StackKms::<_, TestConnection>::connect(
+                opts,
+                StaticTokenStrategy::new("static-token"),
+                random_client_key(),
+            )
+            .expect("connect over a test connection");
+
+            let keys = kms
+                .generate_keys(
+                    vec![
+                        GenerateKeyPayload::new("a", Cow::Owned(vec![])),
+                        GenerateKeyPayload::new("b", Cow::Owned(vec![])),
+                    ],
+                    None,
+                    None,
+                )
+                .await
+                .expect("keys come back through the injected connection");
+
+            assert_eq!(keys.len(), 2);
+            assert_eq!(keys[0].tag, vec![1]);
+            assert_eq!(keys[1].tag, vec![2]);
         }
     }
 

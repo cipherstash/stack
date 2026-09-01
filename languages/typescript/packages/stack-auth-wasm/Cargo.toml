@@ -13,7 +13,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-stack-auth = { workspace = true }
+stack-auth = { workspace = true, features = ["http"] }
 cts-common = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

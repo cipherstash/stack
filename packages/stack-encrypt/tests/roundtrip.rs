@@ -362,7 +362,7 @@ async fn leaf_survives_persistence_via_parts() {
         other => panic!("expected a Single leaf, got {other:?}"),
     };
     let (iv, tag, bytes) = leaf.into_parts();
-    let rebuilt = SealedValue::from_parts(iv, tag, bytes);
+    let rebuilt = SealedValue::from_parts(iv, tag, bytes).expect("rebuild leaf");
 
     let pt: String = cipher
         .decrypt(CipherText::Single(rebuilt), b"ctx".as_slice())
@@ -409,7 +409,7 @@ async fn tampered_leaf_bytes_fail() {
     let (iv, tag, mut bytes) = leaf.into_parts();
     let last = bytes.len() - 1;
     bytes[last] ^= 0x01;
-    let tampered = SealedValue::from_parts(iv, tag, bytes);
+    let tampered = SealedValue::from_parts(iv, tag, bytes).expect("rebuild leaf");
 
     let result: Result<String, _> = cipher.decrypt(CipherText::Single(tampered), ()).await;
     assert!(result.is_err(), "a flipped ciphertext bit must not decrypt");

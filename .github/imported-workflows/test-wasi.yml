@@ -64,3 +64,9 @@ jobs:
       # docs/plans/stack-encrypt-go-bindings.md and wasm-analysis.md Layer 6.
       - name: WASI core check
         run: mise run wasm:wasi-check
+
+      # The same no-http shape, exercised on the host: unit tests, doctests,
+      # and rustdoc (-D warnings) must hold with default features off — the
+      # compile gate above cannot see doc examples or intra-doc links.
+      - name: No-http tests and docs
+        run: mise run wasm:no-http-test

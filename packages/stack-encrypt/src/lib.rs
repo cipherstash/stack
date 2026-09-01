@@ -22,20 +22,35 @@
 //!
 //! # Quick start
 //!
-//! ```no_run
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! use stack_encrypt::StackCipher;
-//!
-//! // Credentials: `npx stash auth login` on a developer machine, or
-//! // CS_CLIENT_ID / CS_CLIENT_KEY + CS_CLIENT_ACCESS_KEY / CS_WORKSPACE_CRN in CI.
-//! let cipher = StackCipher::new().await?;
-//!
-//! let ciphertext = cipher.encrypt("secret message".to_string(), ()).await?;
-//! let plaintext: String = cipher.decrypt(ciphertext, ()).await?;
-//! assert_eq!(plaintext, "secret message");
-//! # Ok(())
-//! # }
-//! ```
+// `StackCipher::new()` builds a ZeroKMS client from the environment, so it
+// only exists with `http`. Without it the entry point is
+// `StackCipher::builder().kms(..)` over an explicit data-key source — the
+// shape the WASI/wazero guest builds against; see "Testing without ZeroKMS"
+// below for the same call over the in-memory stub.
+#![cfg_attr(
+    feature = "http",
+    doc = r#"```no_run
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+use stack_encrypt::StackCipher;
+
+// Credentials: `npx stash auth login` on a developer machine, or
+// CS_CLIENT_ID / CS_CLIENT_KEY + CS_CLIENT_ACCESS_KEY / CS_WORKSPACE_CRN in CI.
+let cipher = StackCipher::new().await?;
+
+let ciphertext = cipher.encrypt("secret message".to_string(), ()).await?;
+let plaintext: String = cipher.decrypt(ciphertext, ()).await?;
+assert_eq!(plaintext, "secret message");
+# Ok(())
+# }
+```"#
+)]
+#![cfg_attr(
+    not(feature = "http"),
+    doc = "Without the `http` feature a cipher is built over an explicit\
+ data-key source — `StackCipher::builder().kms(..).init()` — rather than from\
+ the environment. Enable `http` for `StackCipher::new()`, which discovers\
+ ZeroKMS credentials itself."
+)]
 //!
 //! The second argument is the *associated data* (AAD): anything that implements
 //! [`IntoAad`] — `()`, `&[u8]`, `&str`, a tuple, or a derived [`Aad`]. It is
@@ -85,11 +100,16 @@
 //! [`encrypt`](StackCipher::encrypt) returns a [`StackCipherText`]: a tree whose
 //! shape mirrors the value (a scalar is a single leaf, a `Vec` a sequence of
 //! leaves, a map a set of named leaves) and whose leaves are [`SealedValue`]s.
-//! A `SealedValue` is the persistable unit — it implements `serde`
-//! `Serialize`/`Deserialize` and offers [`into_parts`](SealedValue::into_parts)
-//! / [`from_parts`](SealedValue::from_parts) for callers that manage their own
-//! storage format. Map keys are stored in the clear (and authenticated);
-//! nothing else about a value is visible without its data keys.
+//! A `SealedValue` is the persistable unit: its canonical, frozen byte
+//! encoding is [`to_bytes`](SealedValue::to_bytes) /
+//! [`from_bytes`](SealedValue::from_bytes) — the format a database column
+//! holds and every language binding reads. For callers that manage their own
+//! storage format it also implements `serde` `Serialize`/`Deserialize` and
+//! offers [`into_parts`](SealedValue::into_parts) /
+//! [`from_parts`](SealedValue::from_parts). Map keys are stored in the clear
+//! (and authenticated); nothing else about a value is visible without its
+//! data keys. Index terms have their own frozen encodings — see
+//! [`sem`](crate::sem#byte-encodings).
 //!
 //! # What is authenticated
 //!
@@ -113,17 +133,16 @@
 //! per-leaf nonce vitaminc generates itself). The ZeroKMS `iv` a [`SealedValue`]
 //! carries is *not* that nonce: it identifies the data key, and is sent back to
 //! ZeroKMS with the key `tag` to re-derive it. The types a caller needs from
-//! vitaminc are re-exported here. The module-level docs in
-//! `src/cipher.rs` describe the internals (batching, AAD derivation, wire
-//! format).
+//! vitaminc are re-exported here. The [`cipher`] module docs describe the
+//! internals (batching, AAD derivation, wire format).
 
-mod cipher;
+pub mod cipher;
 pub mod sem;
 pub mod target;
 
 pub use cipher::{
-    BoxedPassthrough, Error, FromEnv, PendingStackCipherText, SealedValue, StackCipher,
-    StackCipherBuilder, StackCipherText, StackDecipher,
+    BoxedPassthrough, Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue,
+    StackCipher, StackCipherBuilder, StackCipherText, StackDecipher,
 };
 pub use target::{
     DecryptContext, DecryptField, DecryptFrom, DecryptInto, DecryptTarget, Decryptable,

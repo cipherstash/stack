@@ -92,6 +92,9 @@ impl ZeroKMSConnectionInit for TestConnection {
 }
 
 impl ZeroKMSConnection for TestConnection {
+    // The stub has no URL to resolve — it dispatches on the request's endpoint
+    // name — so the trait's defaults (no-op `ensure_base_url`, `has_base_url`
+    // of `true`) are exactly right here.
     async fn send<Request: ViturRequest>(
         &self,
         request: Request,

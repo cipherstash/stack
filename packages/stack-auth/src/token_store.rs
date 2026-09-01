@@ -9,19 +9,28 @@
 //!
 //! Wire a store onto a strategy via the builder:
 //!
-//! ```no_run
-//! use std::sync::Arc;
-//! use stack_auth::{AccessKey, AccessKeyStrategy, InMemoryTokenStore};
-//! use cts_common::Crn;
-//!
-//! let crn: Crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse().unwrap();
-//! let key: AccessKey = "CSAKmyKeyId.myKeySecret".parse().unwrap();
-//! let store = Arc::new(InMemoryTokenStore::new());
-//! let strategy = AccessKeyStrategy::builder(crn, key)
-//!     .with_token_store(store)
-//!     .build()
-//!     .unwrap();
-//! ```
+// The worked example builds an `AccessKeyStrategy`, which only exists with the
+// `http` feature; without it a host brings its own strategy.
+#![cfg_attr(
+    feature = "http",
+    doc = r#"```no_run
+use std::sync::Arc;
+use stack_auth::{AccessKey, AccessKeyStrategy, InMemoryTokenStore};
+use cts_common::Crn;
+
+let crn: Crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse().unwrap();
+let key: AccessKey = "CSAKmyKeyId.myKeySecret".parse().unwrap();
+let store = Arc::new(InMemoryTokenStore::new());
+let strategy = AccessKeyStrategy::builder(crn, key)
+    .with_token_store(store)
+    .build()
+    .unwrap();
+```"#
+)]
+#![cfg_attr(
+    not(feature = "http"),
+    doc = "(The bundled strategies and their builders live behind the `http` feature.)"
+)]
 //!
 //! For cookie-style storage where the load/save logic lives in the calling
 //! request handler, use [`TokenStoreFn::new`] with two async closures
@@ -168,8 +177,14 @@ impl TokenStore for InMemoryTokenStore {
 /// [`TokenStore`] backed by user-supplied `load` and `save` async closures.
 ///
 /// This is the *persistence layer* primitive — it plugs into an existing
-/// strategy (e.g. [`AccessKeyStrategy`](crate::AccessKeyStrategy)) so that
-/// strategy can share its service-token cache across processes. For wiring
+/// strategy so that strategy can share its service-token cache across
+/// processes.
+// The named example only exists with `http`.
+#[cfg_attr(
+    feature = "http",
+    doc = "(For example [`AccessKeyStrategy`](crate::AccessKeyStrategy).)\n"
+)]
+/// For wiring
 /// in a complete *acquisition pipeline* (e.g. a JS-defined strategy across
 /// an FFI boundary), use [`AuthStrategyFn`](crate::AuthStrategyFn) instead.
 ///

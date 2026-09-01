@@ -50,10 +50,14 @@
 //! to retrieve the data key — plus a vitaminc [`LocalCipherText`] sealed under
 //! that key by [`vitaminc_encrypt::Aes256Cipher`] (AES-256-GCM via vitaminc's
 //! backend: `aws-lc-rs` on native, RustCrypto on wasm32; vitaminc's own random
-//! nonce and versioned leaf layout). The leaf AAD is the tuple
-//! `(derived_aad, tag)`, which vitaminc PAE-encodes so distinct pairs never
-//! collide. The `tag` is always bound, so the ciphertext is cryptographically
-//! tied to its ZeroKMS data key (key binding); a caller AAD (e.g. a
+//! nonce and versioned leaf layout). The leaf AAD is the labelled derivation
+//! `leaf_aad` (private): `PAE("stack-encrypt/leaf", version, derived_aad, tag)`, with
+//! [`SealedValue::FORMAT_VERSION`] — the version byte that prefixes the
+//! leaf's frozen byte encoding ([`SealedValue::to_bytes`]) — bound under the
+//! tag, so a stored leaf relabelled with a different version byte fails
+//! verification instead of selecting different parsing rules. The `tag` is
+//! always bound, so the ciphertext is cryptographically tied to its ZeroKMS
+//! data key (key binding); a caller AAD (e.g. a
 //! [`ContextTag`](vitaminc_aead::ContextTag)) adds a further binding layer.
 //! Every data key is requested with an empty descriptor: stack-encrypt does
 //! not use descriptors.
@@ -68,11 +72,10 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
-use stack_kms::{
-    DataKey, DataKeySource, DataKeyWithTag, EnvKeyProvider, IdentifiedBy, IndexKeySource, StackKms,
-    StackKmsBuilder,
-};
-#[cfg(not(target_arch = "wasm32"))]
+use stack_kms::{DataKey, DataKeySource, DataKeyWithTag, IdentifiedBy, IndexKeySource};
+#[cfg(feature = "http")]
+use stack_kms::{EnvKeyProvider, StackKms, StackKmsBuilder};
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 use stack_kms::{FallbackKeyProvider, KeyProvider, KeyProviderError, ProfileStore};
 use uuid::Uuid;
 use vitaminc_aead::{
@@ -110,8 +113,13 @@ pub enum Error {
     KeyCountMismatch { expected: usize, received: usize },
     /// Building a ZeroKMS client from the environment failed: credentials or
     /// client key missing or malformed.
+    ///
+    /// Boxed rather than naming `stack_kms::StackKmsBuilderError` directly:
+    /// that type only exists with `http`, and a variant whose presence tracks
+    /// a feature is not additive — feature unification elsewhere in the graph
+    /// would then change this enum's shape under a downstream match.
     #[error("could not build a ZeroKMS client from the environment: {0}")]
-    Config(#[from] stack_kms::StackKmsBuilderError),
+    Config(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
     /// The per-field encryption context was empty. An empty context defeats
     /// per-field domain separation: equal plaintexts in different fields
     /// would produce identical index terms, ORE/OPE keys would be shared
@@ -150,6 +158,13 @@ pub enum Error {
     NotOpened,
 }
 
+#[cfg(feature = "http")]
+impl From<stack_kms::StackKmsBuilderError> for Error {
+    fn from(error: stack_kms::StackKmsBuilderError) -> Self {
+        Error::Config(Box::new(error))
+    }
+}
+
 impl From<crate::sem::TermError> for Error {
     fn from(error: crate::sem::TermError) -> Self {
         match error {
@@ -167,9 +182,9 @@ impl From<Unspecified> for Error {
 
 /// The CipherStash cipher: a vitaminc [`Cipher`] whose per-leaf keys are ZeroKMS
 /// data keys, sourced through a [`DataKeySource`] (production:
-/// [`StackKms`]; tests: `stack_kms::FakeDataKeySource`), carrying the
-/// per-keyset PRF that [Searchable Encrypted Metadata](crate::sem) terms are
-/// derived from.
+/// [`stack_kms::StackKms`]; tests: `stack_kms::FakeDataKeySource`),
+/// carrying the per-keyset PRF that
+/// [Searchable Encrypted Metadata](crate::sem) terms are derived from.
 ///
 /// Per-leaf keying is deliberate: every value access requires its own data-key
 /// retrieval, so individual value accesses are visible (and auditable) as
@@ -182,20 +197,29 @@ impl From<Unspecified> for Error {
 ///
 /// # Construction
 ///
-/// [`new`](Self::new) is the default path — a ZeroKMS client from the
-/// environment, on that client's default keyset:
-///
-/// ```no_run
-/// # async fn example() -> Result<(), stack_encrypt::Error> {
-/// use stack_encrypt::StackCipher;
-///
-/// let cipher = StackCipher::new().await?;
-/// # Ok(())
-/// # }
-/// ```
-///
-/// Override with [`builder`](Self::builder) — a different keyset, or a
-/// different data-key source entirely:
+// `new()` builds the ZeroKMS client from the environment, so it exists only
+// with `http`; the builder path below works in either shape.
+#[cfg_attr(
+    feature = "http",
+    doc = r#"[`new`](Self::new) is the default path — a ZeroKMS client from the
+environment, on that client's default keyset:
+
+```no_run
+# async fn example() -> Result<(), stack_encrypt::Error> {
+use stack_encrypt::StackCipher;
+
+let cipher = StackCipher::new().await?;
+# Ok(())
+# }
+```
+
+Override with [`builder`](Self::builder) — a different keyset, or a
+different data-key source entirely:"#
+)]
+#[cfg_attr(
+    not(feature = "http"),
+    doc = "Build with [`builder`](Self::builder), over an explicit data-key source:"
+)]
 ///
 /// ```
 /// # async fn example() -> Result<(), stack_encrypt::Error> {
@@ -226,23 +250,29 @@ pub struct StackCipher<K> {
     prf: vitaminc_hmac::HmacSha256Prf,
 }
 
+#[cfg(feature = "http")]
 impl StackCipher<StackKms<stack_auth::AutoStrategy>> {
     /// Build a cipher over a ZeroKMS client configured from the environment,
     /// on that client's default keyset.
     ///
     /// Equivalent to `StackCipher::builder().init()`. For a different keyset
-    /// or a different data-key source, use [`builder`](Self::builder).
+    /// or a different data-key source, use [`builder`](StackCipher::builder).
     pub async fn new() -> Result<Self, Error> {
-        Self::builder().init().await
+        StackCipher::builder().init().await
     }
+}
 
+impl StackCipher<FromEnv> {
     /// Start building a cipher: pick a keyset, or supply a data-key source
     /// other than the environment's ZeroKMS client.
+    ///
+    /// A convenience alias for [`StackCipherBuilder::new`], which is the
+    /// canonical entry point. This one is anchored on `StackCipher<FromEnv>`
+    /// purely so `StackCipher::builder()` names a single concrete `K` and
+    /// resolves without a type annotation; `StackCipher<FromEnv>` is never
+    /// constructed.
     pub fn builder() -> StackCipherBuilder {
-        StackCipherBuilder {
-            kms: FromEnv,
-            keyset: None,
-        }
+        StackCipherBuilder::new()
     }
 }
 
@@ -277,7 +307,7 @@ pub struct FromEnv;
 /// workspace's `secretkey.json` in the profile directory. A profile directory
 /// that cannot be resolved is not an error here — env-only setups (CI) have
 /// none — it just leaves the environment as the only source.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 fn client_key_provider() -> FallbackKeyProvider<EnvKeyProvider, ProfileClientKey> {
     FallbackKeyProvider::new(
         EnvKeyProvider,
@@ -286,7 +316,7 @@ fn client_key_provider() -> FallbackKeyProvider<EnvKeyProvider, ProfileClientKey
 }
 
 /// wasm32 has no filesystem, so no profile: the environment is the only source.
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(feature = "http", target_arch = "wasm32"))]
 fn client_key_provider() -> EnvKeyProvider {
     EnvKeyProvider
 }
@@ -294,10 +324,10 @@ fn client_key_provider() -> EnvKeyProvider {
 /// [`ProfileStore`] as a [`KeyProvider`], tolerating an unresolvable profile
 /// directory so the "not configured" message can say what to do about it
 /// rather than only that `CS_CLIENT_ID` is unset.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 struct ProfileClientKey(Option<ProfileStore>);
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 impl KeyProvider for ProfileClientKey {
     async fn client_key(&self) -> Result<stack_kms::ClientKey, KeyProviderError> {
         match &self.0 {
@@ -310,10 +340,31 @@ impl KeyProvider for ProfileClientKey {
     }
 }
 
-/// Builder for a [`StackCipher`]. See [`StackCipher::builder`].
+/// Builder for a [`StackCipher`]. Start with [`StackCipherBuilder::new`] (or
+/// its alias [`StackCipher::builder`]).
 pub struct StackCipherBuilder<K = FromEnv> {
     kms: K,
     keyset: Option<IdentifiedBy>,
+}
+
+impl StackCipherBuilder<FromEnv> {
+    /// Start building a cipher: pick a keyset, or supply a data-key source
+    /// other than the environment's ZeroKMS client.
+    ///
+    /// The `K = FromEnv` type default makes this resolve without a type
+    /// annotation whether or not the `http` feature is on.
+    pub fn new() -> Self {
+        Self {
+            kms: FromEnv,
+            keyset: None,
+        }
+    }
+}
+
+impl Default for StackCipherBuilder<FromEnv> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<K> StackCipherBuilder<K> {
@@ -330,7 +381,8 @@ impl StackCipherBuilder<FromEnv> {
     /// from the environment.
     ///
     /// This is the seam for a custom authentication strategy: build a
-    /// [`StackKms`] with [`StackKmsBuilder`] and hand it over. It is also how
+    /// [`stack_kms::StackKms`] — with `stack_kms::StackKmsBuilder`,
+    /// or over the host's own transport — and hand it over. It is also how
     /// tests inject `stack_kms::FakeDataKeySource`.
     pub fn kms<K>(self, kms: K) -> StackCipherBuilder<K> {
         StackCipherBuilder {
@@ -353,6 +405,7 @@ impl StackCipherBuilder<FromEnv> {
     ///
     /// So on a developer machine, logging in with the CLI is sufficient; in
     /// CI, the four variables are.
+    #[cfg(feature = "http")]
     pub async fn init(self) -> Result<StackCipher<StackKms<stack_auth::AutoStrategy>>, Error> {
         let kms = StackKmsBuilder::auto()?
             .with_key_provider(client_key_provider())
@@ -444,14 +497,58 @@ impl<K: DataKeySource> StackCipher<K> {
 }
 
 /// A single sealed leaf: the ZeroKMS metadata needed to retrieve its data key
-/// (`iv`, `tag`) plus the vitaminc [`LocalCipherText`] sealed under that key.
+/// (`iv`, `tag`) plus the vitaminc `LocalCipherText` sealed under that key.
 ///
-/// This is the only byte-format commitment the crate makes — the container
-/// tree ([`StackCipherText`]) has no canonical encoding, so callers that
-/// persist or transmit ciphertext serialise leaves (it derives `serde`
-/// `Serialize`/`Deserialize`, or use [`into_parts`](Self::into_parts) /
-/// [`from_parts`](Self::from_parts)) and rebuild the tree around them.
+/// This is the only byte-format commitment the crate makes for *ciphertext* —
+/// the container tree ([`StackCipherText`]) has no canonical encoding, so
+/// callers that persist or transmit ciphertext serialise leaves and rebuild
+/// the tree around them. Index terms are a separate commitment with their own
+/// frozen encodings (see the
+/// [index-term encodings](crate::sem#byte-encodings)).
+///
+/// # Frozen byte encoding
+///
+/// [`to_bytes`](Self::to_bytes) / [`from_bytes`](Self::from_bytes) are the
+/// canonical encoding — the one storage format every consumer (this crate,
+/// the language bindings, anything reading a database column) agrees on.
+/// The v1 layout:
+///
+/// | offset          | field              | size            | value |
+/// |-----------------|--------------------|-----------------|-------|
+/// | 0               | envelope version   | 1               | [`FORMAT_VERSION`](Self::FORMAT_VERSION) (`0x01`) |
+/// | 1               | ZeroKMS `iv`       | 16              | identifies the data key for retrieval |
+/// | 17              | `tag_len`          | 2               | length of `tag`, `u16` little-endian |
+/// | 19              | ZeroKMS key `tag`  | `tag_len`       | required to retrieve the key |
+/// | 19 + `tag_len`  | local ciphertext   | rest of buffer  | the vitaminc `LocalCipherText` |
+///
+/// The local ciphertext is itself a framed value — vitaminc's leaf wire
+/// format, versioned and owned by vitaminc — so the full stored byte string
+/// nests two framings, each led by its own version byte:
+///
+/// ```text
+/// ┌─ envelope (stack-encrypt, this table) ─────────────────────────────────────┐
+/// │ version ‖ iv ‖ tag_len ‖ tag ‖ ┌─ local ciphertext (vitaminc) ───────────┐ │
+/// │   0x01                         │ version ‖ nonce ‖ ciphertext ‖ gcm_tag  │ │
+/// │                                └─────────────────────────────────────────┘ │
+/// └────────────────────────────────────────────────────────────────────────────┘
+/// ```
+///
+/// Both version bytes are authenticated under the one GCM tag, each bound by
+/// the layer that owns its framing: the envelope version through this crate's
+/// leaf-AAD derivation, `PAE("stack-encrypt/leaf", version, derived_aad,
+/// tag)`, and the inner version through vitaminc's `Aad::for_leaf`, applied
+/// inside `Aes256Cipher` to the AAD this crate hands it. Relabel either version byte in storage and the leaf fails
+/// authentication rather than parsing under the wrong rules. Parsing is
+/// structural only — nothing about a decoded leaf is trusted until it
+/// decrypts.
+///
+/// The `serde` `Serialize`/`Deserialize` derives and
+/// [`into_parts`](Self::into_parts) / [`from_parts`](Self::from_parts)
+/// remain for callers that manage their own storage format; they carry the
+/// same fields, but their wire form is the serialiser's, not a commitment
+/// of this crate.
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(try_from = "SealedValueRepr")]
 pub struct SealedValue {
     /// ZeroKMS IV: identifies the data key for retrieval.
     iv: stack_kms::Iv,
@@ -463,15 +560,119 @@ pub struct SealedValue {
     ciphertext: LocalCipherText,
 }
 
+/// A [`SealedValue`] byte encoding failed to encode or decode. Purely
+/// structural — a leaf that *decodes* has proven nothing about integrity
+/// (that is the AEAD open's job); a leaf that fails here was never a valid
+/// v1 encoding at all.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum LeafBytesError {
+    /// The leading version byte is not one this build knows how to parse.
+    /// (A version this build *does* know, stamped on bytes sealed under a
+    /// different version, passes here and fails authentication instead —
+    /// the version byte is bound into the leaf AAD.)
+    #[error("unknown sealed-leaf format version {0}")]
+    UnknownVersion(u8),
+    /// The buffer ends before the fixed-width fields, or before the key tag
+    /// the `tag_len` field promises.
+    #[error("sealed-leaf bytes are truncated")]
+    Truncated,
+    /// The key tag does not fit the format's `u16` length field. Every
+    /// construction site rejects an oversized tag — [`SealedValue::from_parts`]
+    /// and `serde` deserialisation with this error, and the seal path (where a
+    /// custom [`DataKeySource`] could return one; real ZeroKMS tags are tens
+    /// of bytes) by failing the encrypt — so a live `SealedValue` always
+    /// encodes.
+    #[error("key tag of {0} bytes exceeds the format's u16 length field")]
+    TagTooLong(usize),
+}
+
 impl SealedValue {
+    /// The version byte prefixing the frozen byte encoding
+    /// ([`to_bytes`](Self::to_bytes)). Also bound into every leaf's AAD (the
+    /// private `leaf_aad` derivation): bumping it re-keys authentication, so
+    /// old leaves can never be relabelled as the new version (nor new as
+    /// old).
+    pub const FORMAT_VERSION: u8 = 1;
+
+    /// Encode into the frozen v1 byte layout — see the type-level docs for
+    /// the format. The inverse of [`from_bytes`](Self::from_bytes).
+    ///
+    /// Infallible: every way of building a `SealedValue` rejects a tag too
+    /// long for the `u16` length field ([`LeafBytesError::TagTooLong`]), so a
+    /// value that exists always encodes.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        // Exact by the `tag_fits_length_field` check every construction site
+        // applies — `from_parts`, serde deserialisation, and the seal path
+        // (which guards against a `DataKeySource` returning an oversized tag).
+        // The saturating fallback is unreachable, and asserted so in tests.
+        let tag_len = u16::try_from(self.tag.len()).unwrap_or(u16::MAX);
+        debug_assert_eq!(usize::from(tag_len), self.tag.len());
+        let ciphertext = self.ciphertext.as_ref();
+        let mut out = Vec::with_capacity(1 + self.iv.len() + 2 + self.tag.len() + ciphertext.len());
+        out.push(Self::FORMAT_VERSION);
+        out.extend_from_slice(&self.iv);
+        out.extend_from_slice(&tag_len.to_le_bytes());
+        out.extend_from_slice(&self.tag);
+        out.extend_from_slice(ciphertext);
+        out
+    }
+
+    /// Decode the frozen v1 byte layout — the inverse of
+    /// [`to_bytes`](Self::to_bytes). Structural only: a decoded leaf is
+    /// untrusted bytes until it decrypts.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, LeafBytesError> {
+        const IV_LEN: usize = 16;
+
+        let (&version, rest) = bytes.split_first().ok_or(LeafBytesError::Truncated)?;
+        if version != Self::FORMAT_VERSION {
+            return Err(LeafBytesError::UnknownVersion(version));
+        }
+        if rest.len() < IV_LEN + 2 {
+            return Err(LeafBytesError::Truncated);
+        }
+        let (iv_bytes, rest) = rest.split_at(IV_LEN);
+        let mut iv: stack_kms::Iv = [0; IV_LEN];
+        iv.copy_from_slice(iv_bytes);
+        let (tag_len_bytes, rest) = rest.split_at(2);
+        let tag_len = usize::from(u16::from_le_bytes([tag_len_bytes[0], tag_len_bytes[1]]));
+        if rest.len() < tag_len {
+            return Err(LeafBytesError::Truncated);
+        }
+        let (tag, ciphertext) = rest.split_at(tag_len);
+        Ok(Self {
+            iv,
+            tag: tag.to_vec(),
+            ciphertext: LocalCipherText::from(ciphertext.to_vec()),
+        })
+    }
+
+    /// The one invariant that makes [`to_bytes`](Self::to_bytes) infallible:
+    /// the key tag must fit the format's `u16` length field.
+    fn tag_fits_length_field(tag: &[u8]) -> Result<(), LeafBytesError> {
+        if tag.len() > usize::from(u16::MAX) {
+            return Err(LeafBytesError::TagTooLong(tag.len()));
+        }
+        Ok(())
+    }
+
     /// Rebuild a leaf from its persisted parts — the inverse of
     /// [`into_parts`](Self::into_parts).
-    pub fn from_parts(iv: stack_kms::Iv, tag: Vec<u8>, ciphertext: Vec<u8>) -> Self {
-        Self {
+    ///
+    /// Fails with [`LeafBytesError::TagTooLong`] if `tag` does not fit the
+    /// byte format's `u16` length field. Structural only: nothing about the
+    /// parts is trusted until the leaf decrypts.
+    pub fn from_parts(
+        iv: stack_kms::Iv,
+        tag: Vec<u8>,
+        ciphertext: Vec<u8>,
+    ) -> Result<Self, LeafBytesError> {
+        Self::tag_fits_length_field(&tag)?;
+        Ok(Self {
             iv,
             tag,
             ciphertext: LocalCipherText::from(ciphertext),
-        }
+        })
     }
 
     /// Decompose into `(iv, tag, ciphertext)` for persistence.
@@ -502,6 +703,46 @@ impl Clone for SealedValue {
             tag: self.tag.clone(),
             ciphertext: LocalCipherText::from(self.ciphertext.as_ref().to_vec()),
         }
+    }
+}
+
+/// [`SealedValue::from_bytes`] as a std conversion — the same decoder, for
+/// callers who prefer the std trait.
+impl TryFrom<&[u8]> for SealedValue {
+    type Error = LeafBytesError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        Self::from_bytes(bytes)
+    }
+}
+
+/// Deserialisation shadow for [`SealedValue`]: `serde` bypasses
+/// [`SealedValue::from_parts`], so the tag-length invariant
+/// [`to_bytes`](SealedValue::to_bytes) relies on is re-checked here. Same
+/// field names as the derive, so the wire form is unchanged.
+#[derive(Deserialize)]
+#[serde(rename = "SealedValue")]
+struct SealedValueRepr {
+    iv: stack_kms::Iv,
+    tag: Vec<u8>,
+    ciphertext: LocalCipherText,
+}
+
+impl TryFrom<SealedValueRepr> for SealedValue {
+    type Error = LeafBytesError;
+
+    fn try_from(repr: SealedValueRepr) -> Result<Self, Self::Error> {
+        let SealedValueRepr {
+            iv,
+            tag,
+            ciphertext,
+        } = repr;
+        Self::tag_fits_length_field(&tag)?;
+        Ok(Self {
+            iv,
+            tag,
+            ciphertext,
+        })
     }
 }
 
@@ -679,19 +920,62 @@ fn leaf_cipher(key: &DataKey) -> Result<Aes256Cipher, Unspecified> {
     Aes256Cipher::new(&AesKey::from(*key.key()))
 }
 
+/// Derives the effective AAD every leaf is sealed against — and opened
+/// under — binding the caller's derived AAD, the ZeroKMS key `tag`, and the
+/// [`SealedValue::FORMAT_VERSION`] byte that prefixes the leaf's frozen byte
+/// encoding.
+///
+/// The labelled four-piece PAE can never collide with a caller's own
+/// composite AAD (a tuple encodes with no leading domain label) or with
+/// vitaminc's internal derivations (different labels). Binding the format
+/// version under the tag is what makes the byte in
+/// [`SealedValue::to_bytes`] more than a parse hint: bytes relabelled with a
+/// different version fail verification instead of selecting different
+/// parsing and derivation rules — mirroring vitaminc's `Aad::for_leaf`,
+/// which binds the *inner* [`LocalCipherText`] wire version the same way.
+///
+/// The domain label deliberately carries no `/v1` suffix: the version is a
+/// *parameter* here, not part of the label.
+///
+/// # Breaking change
+///
+/// This labelled four-piece derivation replaced an unlabelled `PAE(aad, tag)`
+/// tuple. A leaf sealed under the old AAD and persisted (via serde or
+/// [`SealedValue::into_parts`]) can no longer be opened: it fails
+/// authentication in `open_leaf` with a plain AEAD error, indistinguishable
+/// from tampering. There is deliberately no `UnknownVersion` signal for it —
+/// the old form carried no version byte to detect. This is acceptable
+/// because the crate is `publish = false` and only dev-persisted data
+/// exists; re-encrypt anything that matters.
+fn leaf_aad(aad: &Aad<'_>, tag: &[u8]) -> Aad<'static> {
+    const LEAF_AAD_DOMAIN: &[u8] = b"stack-encrypt/leaf";
+    Aad::pae(&[
+        LEAF_AAD_DOMAIN,
+        &[SealedValue::FORMAT_VERSION],
+        aad.as_bytes(),
+        tag,
+    ])
+}
+
 /// Seal one plaintext leaf under a freshly generated data key.
 ///
-/// The AAD is the tuple `(derived_aad, tag)` — vitaminc PAE-encodes tuples,
-/// so distinct pairs never collide, and `tag` is always bound: the leaf is
-/// cryptographically tied to its ZeroKMS data key.
+/// The AAD is the [`leaf_aad`] derivation of the caller's (derived) AAD and
+/// the key `tag` — `tag` is always bound, so the leaf is cryptographically
+/// tied to its ZeroKMS data key.
 fn seal_leaf(
     plaintext: Protected<Vec<u8>>,
     aad: &Aad<'_>,
     key: DataKeyWithTag,
 ) -> Result<SealedValue, Unspecified> {
+    // The `DataKeySource` is caller-supplied, so the key tag is not trusted
+    // to fit the frozen byte format's `u16` length field: an oversized tag
+    // must fail here — the last construction site — or `to_bytes` would emit
+    // a length field that no longer frames the tag and `from_bytes` would
+    // stop inverting it.
+    SealedValue::tag_fits_length_field(&key.tag).map_err(|_| Unspecified)?;
     let iv = key.key.iv;
     let cipher = leaf_cipher(&key.key)?;
-    match (&cipher).encrypt_bytes_vec(plaintext, (aad.as_bytes(), key.tag.as_slice()))? {
+    match (&cipher).encrypt_bytes_vec(plaintext, leaf_aad(aad, &key.tag))? {
         AesCipherText::Single(ciphertext) => Ok(SealedValue {
             iv,
             tag: key.tag,
@@ -717,7 +1001,7 @@ fn open_leaf(keyed: KeyedLeaf, aad: &Aad<'_>) -> Result<Protected<Vec<u8>>, Unsp
     let cipher = leaf_cipher(&key)?;
     cipher
         .decipher(AesCipherText::Single(leaf.ciphertext))
-        .decrypt_bytes(ProtectedBytes, (aad.as_bytes(), leaf.tag.as_slice()))
+        .decrypt_bytes(ProtectedBytes, leaf_aad(aad, &leaf.tag))
 }
 
 /// Open one marker leaf (absent / empty-sequence / empty-map) and require the
@@ -1205,5 +1489,28 @@ impl<'c, 'a> MapAccess<'c> for StackMapAccess<'a> {
             }
             None => Ok(None),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Byte-level pin for the [`leaf_aad`] derivation. This is part of the
+    /// frozen leaf format: a change to the domain label, the version byte,
+    /// the piece order, or the PAE framing makes every stored leaf fail
+    /// authentication, so it must be deliberate — and must come with a
+    /// [`SealedValue::FORMAT_VERSION`] bump, which this pin forces into view.
+    #[test]
+    fn leaf_aad_bytes_are_pinned() {
+        let aad = leaf_aad(&Aad::from_slice(b"caller-aad"), b"key-tag");
+        let hex: String = aad.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        // PAE: LE64 count (4) ‖ per piece LE64 length ‖ piece, the pieces
+        // being "stack-encrypt/leaf", [FORMAT_VERSION], the caller AAD, and
+        // the key tag.
+        assert_eq!(
+            hex,
+            "04000000000000001200000000000000737461636b2d656e63727970742f6c6561660100000000000000010a0000000000000063616c6c65722d61616407000000000000006b65792d746167"
+        );
     }
 }

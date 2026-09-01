@@ -14,7 +14,13 @@ license-file = "LICENSE"
 publish = false
 
 [features]
-default = ["profile"]
+default = ["profile", "http"]
+# The default transport: `HttpConnection`, speaking HTTPS via reqwest, and the
+# `StackKmsBuilder` that configures it. Off, the crate has no HTTP client and
+# no TLS stack in its graph; a host that provides its own transport (the
+# WASI/wazero guest, where HTTP is a host import) implements
+# `ZeroKMSConnection` itself and builds the client with `StackKms::connect`.
+http = ["dep:reqwest", "dep:lazy_static", "stack-auth/http"]
 # Loads the client key from the CLI's on-disk profile (`secretkey.json`, via
 # `stack-profile`): `SecretKey: ProfileData` and `KeyProvider for ProfileStore`.
 # Disable for consumers that only ever source the key in-memory or from the
@@ -29,10 +35,13 @@ test-support = []
 # concurrent request (`max_concurrent_reqs`), which can exhaust client-side
 # ephemeral ports under load. Off by default while we validate it; intended to
 # default-on later. Mirrors the same feature on `cipherstash-client`.
-http2 = ["reqwest/http2"]
+http2 = ["http", "reqwest/http2"]
 
 [dependencies]
 recipher = { workspace = true }
+# The workspace entry is already `default-features = false`, so stack-auth's
+# `http` feature rides on this crate's `http` feature rather than arriving by
+# default.
 stack-auth = { workspace = true }
 zerokms-protocol = { workspace = true }
 
@@ -42,9 +51,9 @@ vitaminc = { workspace = true, features = ["protected", "random"] }
 vitaminc-protected = { workspace = true }
 
 blake3 = { workspace = true }
-lazy_static = { workspace = true }
+lazy_static = { workspace = true, optional = true }
 miette = { workspace = true }
-reqwest = { workspace = true }
+reqwest = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
