@@ -210,7 +210,19 @@ npx stash eql upgrade [options]
 | `--dry-run` | Show what would happen without making changes |
 | `--supabase` | Use Supabase-compatible upgrade |
 
-The install SQL is idempotent and safe to re-run. If EQL is not installed, the command suggests running `npx stash eql install` instead.
+The install SQL is safe to re-run: encrypted columns and rows live outside the
+disposable EQL schemas and are never dropped. Before replacing those schemas,
+the CLI takes a database lifecycle lock, captures dependent functional indexes,
+then rebuilds and verifies their definitions in the same transaction. Any other external
+dependency (for example a policy or view) is reported and the operation refuses
+before changing the database. If index reconstruction fails, the transaction
+restores the previous EQL schemas and indexes. It never reports a partially
+indexed database as successfully upgraded. If EQL is not installed,
+the command suggests running `npx stash eql install` instead.
+
+Run upgrade in a schema-migration maintenance window. Its advisory lock prevents
+overlapping `stash` lifecycle commands, but unrelated sessions must not create,
+alter, or drop EQL-backed indexes while replacement is running.
 
 ---
 
@@ -304,6 +316,8 @@ Reads `databaseUrl` from `stash.config.ts`.
 ## Migration mode
 
 Use `eql migration` to add the EQL v3 installation to your migration history instead of applying it directly. The install then ships to every environment through the same migrate step as the rest of your schema.
+
+**The re-run protections are in the CLI, not in the emitted SQL.** `eql install` and `eql upgrade` take the lifecycle lock, capture dependent functional indexes, refuse on unsupported dependants, and rebuild afterwards — all of that lives in the stash installer. A generated migration is the raw bundle, so applying it through drizzle-kit, the Supabase CLI, or any other migration runner performs the `DROP SCHEMA ... CASCADE` with none of those steps. On a first install there is nothing to lose. Re-applying one over a database that already has EQL and functional indexes on EQL expressions drops those indexes and does not rebuild them; use `eql upgrade` for that, or recreate the indexes in the same migration.
 
 ### Drizzle
 

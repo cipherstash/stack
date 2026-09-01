@@ -10,6 +10,12 @@ import {
   SUPABASE_IMMEDIATE_GRANTS_SQL_V3,
   SUPABASE_PERMISSIONS_SQL_V3,
 } from './grants.js'
+import {
+  acquireLifecycleLock,
+  inspectReinstallDependencies,
+  rebuildIndexes,
+  releaseLifecycleLock,
+} from './reinstall.js'
 
 export {
   DEFERRED_GRANTS_HEADER,
@@ -432,6 +438,18 @@ export class EQLInstaller {
     // whole error, rather than a `detail` interpolated into the install
     // wrapper's transaction narration below.
     const bundledSql = loadBundledEqlSql()
+    // Parsed here for the same reason, and deliberately outside the try below:
+    // a parse failure is a bundle this CLI has outgrown, and the parser's
+    // message names the offending statement. Interpolated into the install
+    // wrapper it would be narrated as a rolled-back transaction that was never
+    // opened, pointing at the database instead of at the bundle.
+    //
+    // `parseExpectedSurface(bundledSql)` rather than `bundledExpectedSurface()`,
+    // which would re-read and re-digest the bundle we already hold. Dynamic to
+    // avoid verify.ts's intentional import of this module for the
+    // digest-checked bundle loader.
+    const { parseExpectedSurface } = await import('./verify.js')
+    const expected = parseExpectedSurface(bundledSql)
     const client = createPgClient(this.databaseUrl)
     try {
       await client.connect()
@@ -444,13 +462,34 @@ export class EQLInstaller {
     }
 
     try {
+      await acquireLifecycleLock(client)
       try {
+        // This catalogue query has a very high estimated cost because its
+        // recursive walk carries every dependency edge. PostgreSQL otherwise
+        // JIT-compiles hundreds of tiny expressions (~880ms locally) for work
+        // that executes in ~35ms interpreted. This connection belongs solely
+        // to this install and is closed below, so the session setting cannot
+        // leak into application queries.
+        await client.query('SET jit = off')
+        const indexes = await inspectReinstallDependencies(
+          client,
+          expected.operators,
+          expected.casts,
+        )
+        // Keep catalogue discovery outside the DDL transaction. The EQL
+        // bundle creates thousands of objects and already approaches
+        // max_locks_per_transaction; retaining the discovery query's catalogue
+        // locks across it can exhaust PostgreSQL's shared lock table. The
+        // documented maintenance window excludes unrelated application DDL
+        // between discovery and replacement.
         await client.query('BEGIN')
         await client.query(bundledSql)
+        await rebuildIndexes(client, indexes)
         await client.query('COMMIT')
       } catch (error) {
         await client.query('ROLLBACK').catch(() => {})
         const detail = error instanceof Error ? error.message : String(error)
+        if (detail.startsWith('EQL reinstall refused')) throw error
         throw new Error(
           `Failed to install EQL: ${detail}. Nothing was applied — the install runs in a transaction and was rolled back.`,
           { cause: error },
@@ -469,6 +508,7 @@ export class EQLInstaller {
         )
       }
     } finally {
+      await releaseLifecycleLock(client).catch(() => {})
       await client.end()
     }
   }
