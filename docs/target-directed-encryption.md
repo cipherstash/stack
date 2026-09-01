@@ -8,7 +8,7 @@
 
 Everything this document decides shipped as designed: one trait on the output type, leaves handwritten, composites assembled from leaves, context threaded per value, ORE held rather than grown into vitaminc. Three things differ from the original sketches and are marked inline where they appear:
 
-- **The derive is not built yet.** Composites are hand-written `EncryptFrom` impls today (`packages/stack-encrypt/examples/encrypted_record.rs`); `#[derive(Encrypted)]` remains the intended end state.
+- **The derives are named after the traits they emit**, not `Encrypted`: `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]` in `stack-encrypt-derive`, under `#[stash(..)]` attributes. Hand-written impls remain the way to write a leaf (`packages/stack-encrypt/examples/encrypted_record.rs` shows one composite written out).
 - **ORE/OPE use `cllw-ore`, not `ore-rs`,** and the per-field key is derived through the PRF *inside* the term — there is no `ProvidesOre` accessor and no key is ever handed back.
 - **An empty context is rejected**, not permitted. `Aad::empty()` was proposed for non-EQL callers; the implementation refuses it (`Error::EmptyContext`).
 
@@ -173,7 +173,7 @@ Use the list for EQL types. `eql_v3_integer_ord_ore` is a schema statement that 
 
 ### Rows are the same mechanism
 
-One level up, unchanged (derive syntax, future):
+One level up, unchanged — same trait, now written by the derive:
 
 ```rust
 #[derive(EncryptFrom)]
@@ -273,8 +273,8 @@ Splitting **analysis** (tokenise, normalise, extract n-grams — pure, sync, key
 
 - **`EncryptFrom`** for the trait (first shipped as `EncryptedFrom`, renamed in review). Spelling the direction keeps bounds unambiguous, and it pairs with `encrypt_into` exactly as `From` pairs with `Into`; `DecryptInto` / `decrypt_from` mirror it.
 - **`encrypt_into` / `encrypt_into_with_context`** for the two forms of the sugar, after vitaminc's `encrypt` / `encrypt_with_aad`; `_with_context` rather than `_with_aad` because here the value feeds the PRF domain separation as well as the AAD.
-- **`#[derive(Encrypted)]`** for the macro. Reads as a noun on the struct.
-- Matching both to `Encrypted`, the way `Serialize` matches `derive(Serialize)`, is a defensible alternative.
+- **`#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`** for the macros, each named after the trait it emits, the way `Serialize` matches `derive(Serialize)`. `#[derive(Encrypted)]` — a noun on the struct — was the sketch; it names neither trait, and one noun cannot cover both directions.
+- **`#[stash(..)]`** for the attribute, after the crate rather than after either derive, since both derives read the same annotations.
 - **Avoid `CipherText` / `EncryptedValue`.** `CipherText` collides with vitaminc's `AesCipherText` container and with eql-bindings' `Ciphertext` newtype — which is a *field inside* these types, not the type itself.
 
 An earlier iteration had two traits, `EncryptInto<T, C>` on the source and `DeriveFrom<S, C>` on the field type. They are the same relation written in opposite directions; the split was the main source of confusion and is gone.
