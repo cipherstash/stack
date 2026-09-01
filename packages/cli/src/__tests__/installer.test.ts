@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  RecordingRestorationDatabase,
+  searchIndexRestorationScenario,
+} from '../installer/__tests__/restoration-scenarios.js'
 
 const mockConnect = vi.fn()
 const mockQuery = vi.fn()
@@ -290,156 +294,73 @@ describe('EQLInstaller', () => {
   it('captures, rebuilds, and verifies functional indexes around reinstall', async () => {
     mockConnect.mockResolvedValue(undefined)
     mockEnd.mockResolvedValue(undefined)
-    const indexDefinition =
-      'CREATE INDEX users_email_idx ON app.users USING btree (eql_v3.eq_term(email))'
-    mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('stash_eql_lifecycle_dependencies')) {
-        return Promise.resolve({
-          rows: [
-            {
-              dependency_kind: 'index',
-              identity: 'app.users_email_idx',
-              definition: indexDefinition,
-              table_identity: 'app.users',
-              valid: true,
-              ready: true,
-              clustered: false,
-              cluster_sql: null,
-            },
-          ],
-          rowCount: 1,
-        })
-      }
-      if (sql.includes('stash_eql_verify_rebuilt_indexes')) {
-        return Promise.resolve({
-          rows: [
-            {
-              identity: 'app.users_email_idx',
-              valid: true,
-              ready: true,
-              clustered: false,
-              definition: indexDefinition,
-            },
-          ],
-          rowCount: 1,
-        })
-      }
-      return Promise.resolve({ rows: [], rowCount: 0 })
-    })
+    const database = new RecordingRestorationDatabase(
+      searchIndexRestorationScenario(),
+    )
+    mockQuery.mockImplementation(database.query)
     const { EQLInstaller } = await import('@/installer/index.ts')
     const installer = new EQLInstaller({ databaseUrl: 'postgres://test' })
 
     await installer.install()
 
-    expect(mockQuery).toHaveBeenCalledWith(
-      'SELECT pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtext($1)) AS acquired',
-      ['cipherstash.eql.lifecycle'],
-    )
-    expect(mockQuery).toHaveBeenCalledWith('SET LOCAL jit = off')
-    expect(mockQuery).toHaveBeenCalledWith(indexDefinition)
-    expect(mockQuery).toHaveBeenCalledWith('ANALYZE app.users')
-    const bundleCall = mockQuery.mock.calls.findIndex(
-      ([sql]) =>
-        typeof sql === 'string' && sql.includes('CREATE SCHEMA eql_v3'),
-    )
-    const rebuildCall = mockQuery.mock.calls.findIndex(
-      ([sql]) => sql === indexDefinition,
-    )
-    expect(bundleCall).toBeGreaterThan(-1)
-    expect(rebuildCall).toBeGreaterThan(bundleCall)
-    const beginCall = mockQuery.mock.calls.findIndex(([sql]) => sql === 'BEGIN')
-    const lockCall = mockQuery.mock.calls.findIndex(
-      ([sql]) =>
-        sql ===
-        'SELECT pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtext($1)) AS acquired',
-    )
-    expect(beginCall).toBeGreaterThan(-1)
-    expect(lockCall).toBeGreaterThan(beginCall)
+    expect(database.events).toEqual([
+      'begin',
+      'lock',
+      'configure',
+      'capture',
+      'replace',
+      'reconstruct',
+      'analyze',
+      'verify',
+      'commit',
+    ])
   })
 
   it('preserves the captured validity state when verifying rebuilt indexes', async () => {
     mockConnect.mockResolvedValue(undefined)
     mockEnd.mockResolvedValue(undefined)
-    const indexDefinition =
-      'CREATE INDEX users_email_idx ON app.users USING btree (eql_v3.eq_term(email))'
-    mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('stash_eql_lifecycle_dependencies')) {
-        return Promise.resolve({
-          rows: [
-            {
-              dependency_kind: 'index',
-              identity: 'app.users_email_idx',
-              definition: indexDefinition,
-              table_identity: 'app.users',
-              valid: false,
-              ready: false,
-              clustered: true,
-              cluster_sql: 'ALTER TABLE app.users CLUSTER ON users_email_idx',
-            },
-          ],
-          rowCount: 1,
-        })
-      }
-      if (sql.includes('stash_eql_verify_rebuilt_indexes')) {
-        return Promise.resolve({
-          rows: [
-            {
-              identity: 'app.users_email_idx',
-              valid: false,
-              ready: false,
-              clustered: true,
-              definition: indexDefinition,
-            },
-          ],
-          rowCount: 1,
-        })
-      }
-      return Promise.resolve({ rows: [], rowCount: 0 })
-    })
+    const database = new RecordingRestorationDatabase(
+      searchIndexRestorationScenario({
+        valid: false,
+        ready: false,
+        clustered: true,
+        clusterSql: 'ALTER TABLE app.users CLUSTER ON users_email_idx',
+      }),
+    )
+    mockQuery.mockImplementation(database.query)
     const { EQLInstaller } = await import('@/installer/index.ts')
 
     await expect(
       new EQLInstaller({ databaseUrl: 'postgres://test' }).install(),
     ).resolves.toEqual({ deferredGrantsSql: null })
-    expect(mockQuery).toHaveBeenCalledWith(
-      'ALTER TABLE app.users CLUSTER ON users_email_idx',
-    )
+    expect(database.events).toContain('cluster')
   })
 
   it('captures dependencies before destructive SQL in the protected transaction', async () => {
     mockConnect.mockResolvedValue(undefined)
     mockEnd.mockResolvedValue(undefined)
-    mockQuery.mockResolvedValue({ rows: [], rowCount: 0 })
+    const database = new RecordingRestorationDatabase()
+    mockQuery.mockImplementation(database.query)
     const { EQLInstaller } = await import('@/installer/index.ts')
 
     await new EQLInstaller({ databaseUrl: 'postgres://test' }).install()
 
-    const statements = mockQuery.mock.calls.map(([sql]) =>
-      typeof sql === 'string' ? sql : '',
-    )
-    const begin = statements.indexOf('BEGIN')
-    const capture = statements.findIndex((sql) =>
-      sql.includes('stash_eql_lifecycle_dependencies'),
-    )
-    const bundle = statements.findIndex((sql) =>
-      sql.includes('CREATE SCHEMA eql_v3'),
-    )
-    expect(begin).toBeGreaterThan(-1)
-    expect(capture).toBeGreaterThan(-1)
-    expect(bundle).toBeGreaterThan(-1)
-    expect(begin).toBeLessThan(capture)
-    expect(capture).toBeLessThan(bundle)
+    expect(database.events.slice(0, 5)).toEqual([
+      'begin',
+      'lock',
+      'configure',
+      'capture',
+      'replace',
+    ])
   })
 
   it('opens a transaction before setup failures use rollback narration', async () => {
     mockConnect.mockResolvedValue(undefined)
     mockEnd.mockResolvedValue(undefined)
-    mockQuery.mockImplementation((sql: string) => {
-      if (sql === 'SET LOCAL jit = off') {
-        return Promise.reject(new Error('setting unavailable'))
-      }
-      return Promise.resolve({ rows: [], rowCount: 0 })
+    const database = new RecordingRestorationDatabase(undefined, {
+      failConfigurationWith: new Error('setting unavailable'),
     })
+    mockQuery.mockImplementation(database.query)
     const { EQLInstaller } = await import('@/installer/index.ts')
 
     await expect(
@@ -447,8 +368,7 @@ describe('EQLInstaller', () => {
     ).rejects.toThrow(
       /Failed to install EQL: setting unavailable.*rolled back/s,
     )
-    expect(mockQuery).toHaveBeenCalledWith('BEGIN')
-    expect(mockQuery).toHaveBeenCalledWith('ROLLBACK')
+    expect(database.events).toEqual(['begin', 'lock', 'configure', 'rollback'])
   })
 
   it('reports a bundle the parser cannot model without a transaction narration', async () => {
@@ -485,66 +405,36 @@ describe('EQLInstaller', () => {
   it('refuses before mutation when a dependency cannot be reconstructed', async () => {
     mockConnect.mockResolvedValue(undefined)
     mockEnd.mockResolvedValue(undefined)
-    mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('stash_eql_lifecycle_dependencies')) {
-        return Promise.resolve({
-          rows: [
-            {
-              dependency_kind: 'unsafe',
-              identity: 'policy app.users_visible',
-              definition: null,
-              table_identity: null,
-            },
-          ],
-          rowCount: 1,
-        })
-      }
-      return Promise.resolve({ rows: [], rowCount: 0 })
+    const database = new RecordingRestorationDatabase(undefined, {
+      unsafeIdentity: 'policy app.users_visible',
     })
+    mockQuery.mockImplementation(database.query)
     const { EQLInstaller } = await import('@/installer/index.ts')
     const installer = new EQLInstaller({ databaseUrl: 'postgres://test' })
 
     await expect(installer.install()).rejects.toThrow(
       /refused before making changes.*policy app\.users_visible/s,
     )
-    expect(mockQuery).toHaveBeenCalledWith('BEGIN')
-    expect(mockQuery).toHaveBeenCalledWith('ROLLBACK')
-    expect(
-      mockQuery.mock.calls.some(
-        ([sql]) =>
-          typeof sql === 'string' && sql.includes('CREATE SCHEMA eql_v3'),
-      ),
-    ).toBe(false)
+    expect(database.events).toEqual([
+      'begin',
+      'lock',
+      'configure',
+      'capture',
+      'rollback',
+    ])
   })
 
   it('rolls back schema replacement when index rebuild fails', async () => {
     mockConnect.mockResolvedValue(undefined)
     mockEnd.mockResolvedValue(undefined)
-    const indexDefinition =
-      'CREATE INDEX users_email_idx ON app.users (eql_v3.eq_term(email))'
-    mockQuery.mockImplementation((sql: string) => {
-      if (sql.includes('stash_eql_lifecycle_dependencies')) {
-        return Promise.resolve({
-          rows: [
-            {
-              dependency_kind: 'index',
-              identity: 'app.users_email_idx',
-              definition: indexDefinition,
-              table_identity: 'app.users',
-              valid: true,
-              ready: true,
-              clustered: false,
-              cluster_sql: null,
-            },
-          ],
-          rowCount: 1,
-        })
-      }
-      if (sql === indexDefinition) {
-        return Promise.reject(new Error('disk full'))
-      }
-      return Promise.resolve({ rows: [], rowCount: 0 })
+    const scenario = searchIndexRestorationScenario({
+      definition:
+        'CREATE INDEX users_email_idx ON app.users (eql_v3.eq_term(email))',
     })
+    const database = new RecordingRestorationDatabase(scenario, {
+      failReconstructionWith: new Error('disk full'),
+    })
+    mockQuery.mockImplementation(database.query)
     const { EQLInstaller } = await import('@/installer/index.ts')
 
     await expect(
@@ -552,8 +442,15 @@ describe('EQLInstaller', () => {
     ).rejects.toThrow(
       /transaction will restore.*Captured index SQL:\nCREATE INDEX users_email_idx/s,
     )
-    expect(mockQuery).toHaveBeenCalledWith('ROLLBACK')
-    expect(mockQuery).not.toHaveBeenCalledWith('COMMIT')
+    expect(database.events).toEqual([
+      'begin',
+      'lock',
+      'configure',
+      'capture',
+      'replace',
+      'reconstruct',
+      'rollback',
+    ])
   })
 
   it('grants both EQL v3 schemas to Supabase roles when the role is a member of postgres', async () => {

@@ -13,46 +13,19 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { derivedSearchIndexRestorationTestSeam } from '../derived-search-index-restoration.js'
 import { EQLInstaller, loadBundledEqlSql } from '../index.js'
 import { parseExpectedSurface } from '../verify.js'
+import {
+  LiveRestorationDatabase,
+  searchIndexRestorationScenario,
+} from './restoration-scenarios.js'
 
-const { acquireLifecycleLock, lifecycleDependenciesSql } =
-  derivedSearchIndexRestorationTestSeam
+const { acquireLifecycleLock } = derivedSearchIndexRestorationTestSeam
 
 const DATABASE_URL = process.env.STASH_TEST_DATABASE_URL
 const describeLive = DATABASE_URL ? describe : describe.skip
-
-async function queryOn<T = unknown>(
-  url: string,
-  sql: string,
-  params: unknown[] = [],
-): Promise<T[]> {
-  const { default: pg } = await import('pg')
-  const client = new pg.Client({ connectionString: url })
-  await client.connect()
-  try {
-    return (await client.query(sql, params)).rows as T[]
-  } finally {
-    await client.end().catch(() => undefined)
-  }
-}
+const postgres = new LiveRestorationDatabase(DATABASE_URL ?? '')
 
 async function query<T = unknown>(sql: string): Promise<T[]> {
-  return queryOn<T>(DATABASE_URL ?? '', sql)
-}
-
-/**
- * The same database, reached on a connection whose `search_path` names the EQL
- * schemas. Provisioned databases routinely carry this (`ALTER ROLE … SET
- * search_path`) so applications can call `eq_term()` unqualified — and it is
- * the one condition under which `format_type()` stops schema-qualifying EQL's
- * own types.
- */
-function withEqlSearchPath(url: string): string {
-  const parsed = new URL(url)
-  parsed.searchParams.set(
-    'options',
-    '-c search_path=public,eql_v3,eql_v3_internal',
-  )
-  return parsed.toString()
+  return postgres.query<T>(sql)
 }
 
 /**
@@ -104,9 +77,14 @@ describeLive('EQLInstaller safe reinstall — live Postgres', () => {
   })
 
   it('preserves data and rebuilds a functional index', async () => {
+    const scenario = searchIndexRestorationScenario({
+      identity: 'stash_reinstall_test.records_encrypted_idx',
+      tableIdentity: 'stash_reinstall_test.records',
+      definition:
+        'CREATE INDEX records_encrypted_idx ON stash_reinstall_test.records (eql_v3.eq_term(encrypted))',
+    })
     await query(`
-      CREATE INDEX records_encrypted_idx
-        ON stash_reinstall_test.records (eql_v3.eq_term(encrypted));
+      ${scenario.definition};
       CREATE UNIQUE INDEX "Records encrypted complex"
         ON stash_reinstall_test.records USING btree (eql_v3.eq_term(encrypted))
         INCLUDE (id) WITH (fillfactor = 80) WHERE id > 0;
@@ -217,13 +195,10 @@ describeLive('EQLInstaller safe reinstall — live Postgres', () => {
    */
   it("exempts the bundle's own operators and casts when the EQL schemas are on the search_path", async () => {
     const expected = parseExpectedSurface(loadBundledEqlSql())
-    const rows = await queryOn<{
+    const rows = await postgres.withEqlSearchPath().dependencyInventory<{
       dependency_kind: string
       identity: string
-    }>(withEqlSearchPath(DATABASE_URL ?? ''), lifecycleDependenciesSql, [
-      expected.operators,
-      expected.casts,
-    ])
+    }>(expected.operators, expected.casts)
     const unsafe = rows
       .filter((row) => row.dependency_kind !== 'index')
       .map((row) => row.identity)
@@ -256,11 +231,12 @@ describeLive('EQLInstaller safe reinstall — live Postgres', () => {
     const withheld = expected.operators.filter(hasBareOperand)
     expect(withheld.length).toBeGreaterThan(0)
 
-    const rows = await queryOn<{ dependency_kind: string; identity: string }>(
-      withEqlSearchPath(DATABASE_URL ?? ''),
-      lifecycleDependenciesSql,
-      [expected.operators.filter((o) => !hasBareOperand(o)), expected.casts],
-    )
+    const rows = await postgres
+      .withEqlSearchPath()
+      .dependencyInventory<{ dependency_kind: string; identity: string }>(
+        expected.operators.filter((o) => !hasBareOperand(o)),
+        expected.casts,
+      )
 
     expect(rows.filter((row) => row.dependency_kind !== 'index')).toHaveLength(
       withheld.length,
@@ -274,7 +250,7 @@ describeLive('EQLInstaller safe reinstall — live Postgres', () => {
     `)
     await expect(
       new EQLInstaller({
-        databaseUrl: withEqlSearchPath(DATABASE_URL ?? ''),
+        databaseUrl: postgres.withEqlSearchPath().url,
       }).install(),
     ).resolves.toEqual({ deferredGrantsSql: null })
   }, 180_000)
