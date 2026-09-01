@@ -3,6 +3,11 @@ import type pg from 'pg'
 import { createPgClient, TlsVerificationError } from '@/db/client.js'
 import { assertBundledEqlSqlDigest } from './bundle-digest.js'
 import {
+  EqlReinstallConnectionError,
+  EqlReinstallRefusalError,
+  restoreDerivedSearchIndexesAroundEqlReplacement,
+} from './derived-search-index-restoration.js'
+import {
   DEFERRED_GRANTS_HEADER,
   EQL_V3_INTERNAL_SCHEMA_NAME,
   EQL_V3_SCHEMA_NAME,
@@ -10,12 +15,6 @@ import {
   SUPABASE_IMMEDIATE_GRANTS_SQL_V3,
   SUPABASE_PERMISSIONS_SQL_V3,
 } from './grants.js'
-import {
-  acquireLifecycleLock,
-  inspectReinstallDependencies,
-  rebuildIndexes,
-  releaseLifecycleLock,
-} from './reinstall.js'
 
 export {
   DEFERRED_GRANTS_HEADER,
@@ -450,66 +449,38 @@ export class EQLInstaller {
     // digest-checked bundle loader.
     const { parseExpectedSurface } = await import('./verify.js')
     const expected = parseExpectedSurface(bundledSql)
-    const client = createPgClient(this.databaseUrl)
     try {
-      await client.connect()
-    } catch (error) {
-      if (error instanceof TlsVerificationError) throw error
-      const detail = error instanceof Error ? error.message : String(error)
-      throw new Error(`Failed to connect to database: ${detail}`, {
-        cause: error,
+      await restoreDerivedSearchIndexesAroundEqlReplacement({
+        databaseUrl: this.databaseUrl,
+        bundledSql,
+        bundleOperators: expected.operators,
+        bundleCasts: expected.casts,
       })
+    } catch (error) {
+      if (
+        error instanceof TlsVerificationError ||
+        error instanceof EqlReinstallConnectionError ||
+        error instanceof EqlReinstallRefusalError
+      ) {
+        throw error
+      }
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new Error(
+        `Failed to install EQL: ${detail}. Nothing was applied — the install runs in a transaction and was rolled back.`,
+        { cause: error },
+      )
     }
 
+    if (!options?.supabase) return { deferredGrantsSql: null }
+
     try {
-      await acquireLifecycleLock(client)
-      try {
-        // This catalogue query has a very high estimated cost because its
-        // recursive walk carries every dependency edge. PostgreSQL otherwise
-        // JIT-compiles hundreds of tiny expressions (~880ms locally) for work
-        // that executes in ~35ms interpreted. This connection belongs solely
-        // to this install and is closed below, so the session setting cannot
-        // leak into application queries.
-        await client.query('SET jit = off')
-        const indexes = await inspectReinstallDependencies(
-          client,
-          expected.operators,
-          expected.casts,
-        )
-        // Keep catalogue discovery outside the DDL transaction. The EQL
-        // bundle creates thousands of objects and already approaches
-        // max_locks_per_transaction; retaining the discovery query's catalogue
-        // locks across it can exhaust PostgreSQL's shared lock table. The
-        // documented maintenance window excludes unrelated application DDL
-        // between discovery and replacement.
-        await client.query('BEGIN')
-        await client.query(bundledSql)
-        await rebuildIndexes(client, indexes)
-        await client.query('COMMIT')
-      } catch (error) {
-        await client.query('ROLLBACK').catch(() => {})
-        const detail = error instanceof Error ? error.message : String(error)
-        if (detail.startsWith('EQL reinstall refused')) throw error
-        throw new Error(
-          `Failed to install EQL: ${detail}. Nothing was applied — the install runs in a transaction and was rolled back.`,
-          { cause: error },
-        )
-      }
-
-      if (!options?.supabase) return { deferredGrantsSql: null }
-
-      try {
-        return await this.runSupabaseGrants(client)
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error)
-        throw new Error(
-          `EQL v3 is installed, but granting the Supabase roles failed: ${detail}. The install itself was NOT rolled back — re-run \`stash eql install --force\` (or plain \`stash eql install\`, which re-applies the grants on an already-installed database).`,
-          { cause: error },
-        )
-      }
-    } finally {
-      await releaseLifecycleLock(client).catch(() => {})
-      await client.end()
+      return await this.applySupabaseGrants()
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new Error(
+        `EQL v3 is installed, but granting the Supabase roles failed: ${detail}. The install itself was NOT rolled back — re-run \`stash eql install --force\` (or plain \`stash eql install\`, which re-applies the grants on an already-installed database).`,
+        { cause: error },
+      )
     }
   }
 

@@ -12,7 +12,7 @@ vi.mock('pg', () => ({
         const result = await mockQuery(...args)
         if (
           typeof args[0] === 'string' &&
-          args[0].includes('pg_try_advisory_lock') &&
+          args[0].includes('pg_try_advisory') &&
           result?.rows?.[0]?.acquired === undefined
         ) {
           return { ...result, rows: [{ acquired: true }] }
@@ -303,6 +303,8 @@ describe('EQLInstaller', () => {
               table_identity: 'app.users',
               valid: true,
               ready: true,
+              clustered: false,
+              cluster_sql: null,
             },
           ],
           rowCount: 1,
@@ -315,6 +317,7 @@ describe('EQLInstaller', () => {
               identity: 'app.users_email_idx',
               valid: true,
               ready: true,
+              clustered: false,
               definition: indexDefinition,
             },
           ],
@@ -329,10 +332,10 @@ describe('EQLInstaller', () => {
     await installer.install()
 
     expect(mockQuery).toHaveBeenCalledWith(
-      'SELECT pg_try_advisory_lock(hashtext($1)) AS acquired',
+      'SELECT pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtext($1)) AS acquired',
       ['cipherstash.eql.lifecycle'],
     )
-    expect(mockQuery).toHaveBeenCalledWith('SET jit = off')
+    expect(mockQuery).toHaveBeenCalledWith('SET LOCAL jit = off')
     expect(mockQuery).toHaveBeenCalledWith(indexDefinition)
     expect(mockQuery).toHaveBeenCalledWith('ANALYZE app.users')
     const bundleCall = mockQuery.mock.calls.findIndex(
@@ -344,10 +347,14 @@ describe('EQLInstaller', () => {
     )
     expect(bundleCall).toBeGreaterThan(-1)
     expect(rebuildCall).toBeGreaterThan(bundleCall)
-    expect(mockQuery).toHaveBeenCalledWith(
-      'SELECT pg_advisory_unlock(hashtext($1))',
-      ['cipherstash.eql.lifecycle'],
+    const beginCall = mockQuery.mock.calls.findIndex(([sql]) => sql === 'BEGIN')
+    const lockCall = mockQuery.mock.calls.findIndex(
+      ([sql]) =>
+        sql ===
+        'SELECT pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtext($1)) AS acquired',
     )
+    expect(beginCall).toBeGreaterThan(-1)
+    expect(lockCall).toBeGreaterThan(beginCall)
   })
 
   it('preserves the captured validity state when verifying rebuilt indexes', async () => {
@@ -366,6 +373,8 @@ describe('EQLInstaller', () => {
               table_identity: 'app.users',
               valid: false,
               ready: false,
+              clustered: true,
+              cluster_sql: 'ALTER TABLE app.users CLUSTER ON users_email_idx',
             },
           ],
           rowCount: 1,
@@ -378,6 +387,7 @@ describe('EQLInstaller', () => {
               identity: 'app.users_email_idx',
               valid: false,
               ready: false,
+              clustered: true,
               definition: indexDefinition,
             },
           ],
@@ -391,9 +401,12 @@ describe('EQLInstaller', () => {
     await expect(
       new EQLInstaller({ databaseUrl: 'postgres://test' }).install(),
     ).resolves.toEqual({ deferredGrantsSql: null })
+    expect(mockQuery).toHaveBeenCalledWith(
+      'ALTER TABLE app.users CLUSTER ON users_email_idx',
+    )
   })
 
-  it('captures dependencies before the destructive install transaction', async () => {
+  it('captures dependencies before destructive SQL in the protected transaction', async () => {
     mockConnect.mockResolvedValue(undefined)
     mockEnd.mockResolvedValue(undefined)
     mockQuery.mockResolvedValue({ rows: [], rowCount: 0 })
@@ -414,8 +427,28 @@ describe('EQLInstaller', () => {
     expect(begin).toBeGreaterThan(-1)
     expect(capture).toBeGreaterThan(-1)
     expect(bundle).toBeGreaterThan(-1)
-    expect(capture).toBeLessThan(begin)
-    expect(begin).toBeLessThan(bundle)
+    expect(begin).toBeLessThan(capture)
+    expect(capture).toBeLessThan(bundle)
+  })
+
+  it('opens a transaction before setup failures use rollback narration', async () => {
+    mockConnect.mockResolvedValue(undefined)
+    mockEnd.mockResolvedValue(undefined)
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql === 'SET LOCAL jit = off') {
+        return Promise.reject(new Error('setting unavailable'))
+      }
+      return Promise.resolve({ rows: [], rowCount: 0 })
+    })
+    const { EQLInstaller } = await import('@/installer/index.ts')
+
+    await expect(
+      new EQLInstaller({ databaseUrl: 'postgres://test' }).install(),
+    ).rejects.toThrow(
+      /Failed to install EQL: setting unavailable.*rolled back/s,
+    )
+    expect(mockQuery).toHaveBeenCalledWith('BEGIN')
+    expect(mockQuery).toHaveBeenCalledWith('ROLLBACK')
   })
 
   it('reports a bundle the parser cannot model without a transaction narration', async () => {
@@ -443,6 +476,7 @@ describe('EQLInstaller', () => {
     expect(message).not.toContain('Failed to install EQL')
     expect(message).not.toContain('rolled back')
     expect(mockQuery).not.toHaveBeenCalledWith('BEGIN')
+    expect(mockQuery).not.toHaveBeenCalledWith('ROLLBACK')
     // A bundle this CLI cannot read is a local defect, like a failed digest
     // check: it must not reach the database at all.
     expect(mockConnect).not.toHaveBeenCalled()
@@ -473,7 +507,8 @@ describe('EQLInstaller', () => {
     await expect(installer.install()).rejects.toThrow(
       /refused before making changes.*policy app\.users_visible/s,
     )
-    expect(mockQuery).not.toHaveBeenCalledWith('BEGIN')
+    expect(mockQuery).toHaveBeenCalledWith('BEGIN')
+    expect(mockQuery).toHaveBeenCalledWith('ROLLBACK')
     expect(
       mockQuery.mock.calls.some(
         ([sql]) =>
@@ -498,6 +533,8 @@ describe('EQLInstaller', () => {
               table_identity: 'app.users',
               valid: true,
               ready: true,
+              clustered: false,
+              cluster_sql: null,
             },
           ],
           rowCount: 1,

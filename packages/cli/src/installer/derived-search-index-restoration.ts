@@ -1,21 +1,11 @@
 import type pg from 'pg'
 
+import { createPgClient, TlsVerificationError } from '@/db/client.js'
+
 const LIFECYCLE_LOCK = 'cipherstash.eql.lifecycle'
 
 /**
  * How long to keep trying for the lifecycle lock before giving up.
- *
- * Sized off what actually holds it: the whole install, which is a
- * `DROP SCHEMA … CASCADE` plus ~3,000 object creations and measures 10-30s
- * against a local container — longer on a managed Postgres. A budget of a few
- * seconds looks generous and is not; it converts ordinary queueing (two
- * installs, a CI job overlapping a developer) into a hard failure on the second
- * one. That regression is real and was caught by the live suite: with 5s, two
- * live files installing back to back failed each other.
- *
- * So: long enough that anything a waiter would sensibly wait for still
- * succeeds, and bounded so a lock nobody will release reports itself instead of
- * looking like a stalled connection.
  *
  * The budget is sized off the INSTALL, which is what actually holds the lock:
  * `DROP SCHEMA ... CASCADE` plus ~3,000 object creations, 10-30s against a
@@ -24,8 +14,7 @@ const LIFECYCLE_LOCK = 'cipherstash.eql.lifecycle'
  * cost. Its recursive shape inflates PostgreSQL's estimate enough to trigger
  * JIT compilation of hundreds of expressions: measured on an idle local
  * container with EQL installed, the query itself is ~35ms with JIT disabled
- * versus ~880ms with JIT enabled. `install()` disables JIT on its dedicated
- * connection before running it.
+ * versus ~880ms with JIT enabled. `install()` disables JIT for its transaction.
  *
  * Five minutes is deliberate margin over that, not a measurement: a waiter
  * should never be refused for ordinary queueing, only for a holder that will
@@ -37,8 +26,25 @@ const LIFECYCLE_LOCK = 'cipherstash.eql.lifecycle'
 const LOCK_WAIT_MS = 300_000
 const LOCK_RETRY_INTERVAL_MS = 250
 
-/** Connections currently holding the lifecycle lock through this module. */
-const lockHolders = new WeakSet<pg.ClientBase>()
+export class EqlReinstallRefusalError extends Error {}
+
+export class EqlReinstallConnectionError extends Error {}
+
+export class DerivedSearchIndexReconstructionError extends Error {}
+
+export class DerivedSearchIndexVerificationError extends Error {}
+
+export interface RestorationSummary {
+  restoredIndexes: number
+  analyzedTables: number
+}
+
+interface RestoreAroundEqlReplacementOptions {
+  databaseUrl: string
+  bundledSql: string
+  bundleOperators: string[]
+  bundleCasts: string[]
+}
 
 export interface ReinstallIndex {
   identity: string
@@ -46,6 +52,8 @@ export interface ReinstallIndex {
   tableIdentity: string
   valid: boolean
   ready: boolean
+  clustered: boolean
+  clusterSql: string | null
 }
 
 interface DependencyRow {
@@ -55,9 +63,11 @@ interface DependencyRow {
   table_identity?: unknown
   valid?: unknown
   ready?: unknown
+  clustered?: unknown
+  cluster_sql?: unknown
 }
 
-export const LIFECYCLE_DEPENDENCIES_SQL = `
+const LIFECYCLE_DEPENDENCIES_SQL = `
 /* stash_eql_lifecycle_dependencies */
 WITH RECURSIVE
 /*
@@ -322,13 +332,9 @@ external_dependants AS (
   )
 )
 /*
- * \`i\` is an ordinary index; \`I\` is a PARTITIONED index — the parent template on
- * a partitioned table. Both are rebuildable, but only together: the parent's
- * \`pg_get_indexdef\` says \`ON ONLY\`, its per-partition children come back as
- * separate \`i\` rows, and the parent stays \`indisvalid = false\` until every one
- * of them is re-ATTACHed. \`parent_identity\` (from pg_inherits, which relates an
- * attached child index to its parent) is what carries that edge across the
- * DROP; see {@link rebuildIndexes}.
+ * Only standalone ordinary indexes are reconstructed. Partitioned index parents
+ * (\`I\`) and attached child indexes are classified as unsafe because recreating
+ * their attachment graph requires metadata beyond \`pg_get_indexdef\`.
  */
 SELECT DISTINCT
   CASE
@@ -364,7 +370,24 @@ SELECT DISTINCT
     WHEN e.classid = 'pg_catalog.pg_class'::regclass
      AND index_class.relkind = 'i'
      AND index_partition.inhrelid IS NULL THEN index_meta.indisready
-  END AS ready
+  END AS ready,
+  CASE
+    WHEN e.classid = 'pg_catalog.pg_class'::regclass
+     AND index_class.relkind = 'i'
+     AND index_partition.inhrelid IS NULL THEN index_meta.indisclustered
+  END AS clustered,
+  CASE
+    WHEN e.classid = 'pg_catalog.pg_class'::regclass
+     AND index_class.relkind = 'i'
+     AND index_partition.inhrelid IS NULL
+     AND index_meta.indisclustered
+      THEN pg_catalog.format(
+        'ALTER TABLE %I.%I CLUSTER ON %I',
+        table_namespace.nspname,
+        table_class.relname,
+        index_class.relname
+      )
+  END AS cluster_sql
 FROM external_dependants e
 LEFT JOIN pg_catalog.pg_class index_class
   ON e.classid = 'pg_catalog.pg_class'::regclass AND index_class.oid = e.objid
@@ -382,6 +405,7 @@ const VERIFY_REBUILT_INDEXES_SQL = `
 SELECT pg_catalog.format('%I.%I', n.nspname, c.relname) AS identity,
        i.indisvalid AS valid,
        i.indisready AS ready,
+       i.indisclustered AS clustered,
        pg_catalog.pg_get_indexdef(i.indexrelid) AS definition
 FROM pg_catalog.pg_index i
 JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
@@ -392,16 +416,16 @@ WHERE pg_catalog.format('%I.%I', n.nspname, c.relname) = ANY($1::text[])
 /**
  * Take the installer's advisory lock, or say why not.
  *
- * `pg_advisory_lock` waits forever. A concurrent `stash eql install`, or a
+ * `pg_advisory_xact_lock` waits forever. A concurrent `stash eql install`, or a
  * session that died holding the lock, then makes the command hang with no
  * output and no timeout — indistinguishable from a network stall, and the one
- * failure a user cannot diagnose. Polling `pg_try_advisory_lock` against a
+ * failure a user cannot diagnose. Polling `pg_try_advisory_xact_lock` against a
  * bounded budget keeps the ordinary case working — a queued install still wins
  * the lock and runs — while turning the pathological one into a sentence. See
- * {@link LOCK_WAIT_MS} for why the budget is a minute and not the handful of
+ * {@link LOCK_WAIT_MS} for why the five-minute budget is not the handful of
  * seconds it first was. (#959)
  */
-export async function acquireLifecycleLock(
+async function acquireLifecycleLock(
   client: pg.ClientBase,
   // Optional so `acquireLifecycleLock(client)` keeps meaning what it did. The
   // budget is a policy, not a constant of nature, and the live suite drives it
@@ -411,11 +435,10 @@ export async function acquireLifecycleLock(
   const deadline = Date.now() + waitMs
   for (;;) {
     const result = await client.query<{ acquired: boolean }>(
-      'SELECT pg_try_advisory_lock(hashtext($1)) AS acquired',
+      'SELECT pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtext($1)) AS acquired',
       [LIFECYCLE_LOCK],
     )
     if (result.rows[0]?.acquired === true) {
-      lockHolders.add(client)
       return
     }
     if (Date.now() >= deadline) {
@@ -429,22 +452,7 @@ export async function acquireLifecycleLock(
   }
 }
 
-/**
- * Release the lock if this connection took it. The caller unlocks
- * unconditionally in a `finally`, which includes the path where the acquire
- * above refused — and `pg_advisory_unlock` on a lock a session never held
- * returns false and raises a WARNING, i.e. noise on the one path that already
- * has a clear message.
- */
-export async function releaseLifecycleLock(client: pg.ClientBase) {
-  if (!lockHolders.has(client)) return
-  lockHolders.delete(client)
-  await client.query('SELECT pg_advisory_unlock(hashtext($1))', [
-    LIFECYCLE_LOCK,
-  ])
-}
-
-export async function inspectReinstallDependencies(
+async function inspectReinstallDependencies(
   client: pg.ClientBase,
   bundleOperators: string[],
   bundleCasts: string[],
@@ -465,7 +473,10 @@ export async function inspectReinstallDependencies(
       typeof row.definition !== 'string' ||
       typeof row.table_identity !== 'string' ||
       typeof row.valid !== 'boolean' ||
-      typeof row.ready !== 'boolean'
+      typeof row.ready !== 'boolean' ||
+      typeof row.clustered !== 'boolean' ||
+      (row.cluster_sql !== null && typeof row.cluster_sql !== 'string') ||
+      (row.clustered && typeof row.cluster_sql !== 'string')
     ) {
       unsafe.push(
         String(row.identity ?? 'index with incomplete catalog metadata'),
@@ -478,10 +489,12 @@ export async function inspectReinstallDependencies(
       tableIdentity: row.table_identity,
       valid: row.valid,
       ready: row.ready,
+      clustered: row.clustered,
+      clusterSql: row.cluster_sql,
     })
   }
   if (unsafe.length > 0) {
-    throw new Error(
+    throw new EqlReinstallRefusalError(
       `EQL reinstall refused before making changes because customer-owned database objects depend on disposable EQL machinery and cannot be reconstructed safely:\n${unsafe.map((identity) => `  - ${identity}`).join('\n')}`,
     )
   }
@@ -499,7 +512,7 @@ export async function inspectReinstallDependencies(
  * rebuilt expression binds to the same function the original did.
  *
  */
-export async function rebuildIndexes(
+async function rebuildIndexes(
   client: pg.ClientBase,
   indexes: ReinstallIndex[],
 ) {
@@ -508,18 +521,22 @@ export async function rebuildIndexes(
       await client.query(index.definition)
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
-      throw new Error(
+      throw new DerivedSearchIndexReconstructionError(
         `EQL reinstall could not rebuild search index ${index.identity}: ${detail}\nThe transaction will restore the previous EQL installation and index. Captured index SQL:\n${index.definition}`,
         { cause: error },
       )
     }
   }
-  for (const tableIdentity of new Set(
-    indexes.map((index) => index.tableIdentity),
-  )) {
+  for (const index of indexes) {
+    if (index.clusterSql !== null) await client.query(index.clusterSql)
+  }
+  const tableIdentities = new Set(indexes.map((index) => index.tableIdentity))
+  for (const tableIdentity of tableIdentities) {
     await client.query(`ANALYZE ${tableIdentity}`)
   }
-  if (indexes.length === 0) return
+  if (indexes.length === 0) {
+    return { restoredIndexes: 0, analyzedTables: 0 }
+  }
   const result = await client.query(VERIFY_REBUILT_INDEXES_SQL, [
     indexes.map((index) => index.identity),
   ])
@@ -544,15 +561,76 @@ export async function rebuildIndexes(
         return (
           expected.definition === row.definition &&
           (row.valid === true || expected.valid === false) &&
-          (row.ready === true || expected.ready === false)
+          (row.ready === true || expected.ready === false) &&
+          row.clustered === expected.clustered
         )
       })
       .map((row) => String(row.identity)),
   )
   const unhealthy = indexes.filter((index) => !healthy.has(index.identity))
   if (unhealthy.length > 0) {
-    throw new Error(
+    throw new DerivedSearchIndexVerificationError(
       `EQL reinstall produced missing, invalid, or changed search indexes; the transaction will restore the previous installation:\n${unhealthy.map((index) => `  - ${index.identity}\n    ${index.definition}`).join('\n')}`,
     )
   }
+  return {
+    restoredIndexes: indexes.length,
+    analyzedTables: tableIdentities.size,
+  }
+}
+
+/**
+ * Replace EQL machinery while preserving every reconstructable derived search
+ * index in one transaction. Catalog discovery, reconstruction details, and
+ * verification remain private so callers cannot execute the protocol out of
+ * order or retain stale captured state.
+ */
+export async function restoreDerivedSearchIndexesAroundEqlReplacement({
+  databaseUrl,
+  bundledSql,
+  bundleOperators,
+  bundleCasts,
+}: RestoreAroundEqlReplacementOptions): Promise<RestorationSummary> {
+  const client = createPgClient(databaseUrl)
+  try {
+    await client.connect()
+  } catch (error) {
+    await client.end().catch(() => {})
+    if (error instanceof TlsVerificationError) throw error
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new EqlReinstallConnectionError(
+      `Failed to connect to database: ${detail}`,
+      {
+        cause: error,
+      },
+    )
+  }
+
+  try {
+    await client.query('BEGIN')
+    try {
+      await acquireLifecycleLock(client)
+      await client.query('SET LOCAL jit = off')
+      const indexes = await inspectReinstallDependencies(
+        client,
+        bundleOperators,
+        bundleCasts,
+      )
+      await client.query(bundledSql)
+      const summary = await rebuildIndexes(client, indexes)
+      await client.query('COMMIT')
+      return summary
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {})
+      throw error
+    }
+  } finally {
+    await client.end()
+  }
+}
+
+/** @internal Direct catalog probes retained only for live PostgreSQL evidence. */
+export const derivedSearchIndexRestorationTestSeam = {
+  acquireLifecycleLock,
+  lifecycleDependenciesSql: LIFECYCLE_DEPENDENCIES_SQL,
 }

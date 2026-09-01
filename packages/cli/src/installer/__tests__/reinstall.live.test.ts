@@ -10,13 +10,12 @@
  */
 
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { derivedSearchIndexRestorationTestSeam } from '../derived-search-index-restoration.js'
 import { EQLInstaller, loadBundledEqlSql } from '../index.js'
-import {
-  acquireLifecycleLock,
-  LIFECYCLE_DEPENDENCIES_SQL,
-  releaseLifecycleLock,
-} from '../reinstall.js'
 import { parseExpectedSurface } from '../verify.js'
+
+const { acquireLifecycleLock, lifecycleDependenciesSql } =
+  derivedSearchIndexRestorationTestSeam
 
 const DATABASE_URL = process.env.STASH_TEST_DATABASE_URL
 const describeLive = DATABASE_URL ? describe : describe.skip
@@ -221,7 +220,7 @@ describeLive('EQLInstaller safe reinstall — live Postgres', () => {
     const rows = await queryOn<{
       dependency_kind: string
       identity: string
-    }>(withEqlSearchPath(DATABASE_URL ?? ''), LIFECYCLE_DEPENDENCIES_SQL, [
+    }>(withEqlSearchPath(DATABASE_URL ?? ''), lifecycleDependenciesSql, [
       expected.operators,
       expected.casts,
     ])
@@ -259,7 +258,7 @@ describeLive('EQLInstaller safe reinstall — live Postgres', () => {
 
     const rows = await queryOn<{ dependency_kind: string; identity: string }>(
       withEqlSearchPath(DATABASE_URL ?? ''),
-      LIFECYCLE_DEPENDENCIES_SQL,
+      lifecycleDependenciesSql,
       [expected.operators.filter((o) => !hasBareOperand(o)), expected.casts],
     )
 
@@ -335,7 +334,7 @@ describeLive('EQLInstaller safe reinstall — live Postgres', () => {
   }, 180_000)
 
   /**
-   * `pg_advisory_lock` waits forever. A concurrent install, or a session that
+   * `pg_advisory_xact_lock` waits forever. A concurrent install, or a session that
    * died holding the lock, then makes the command hang with no output —
    * indistinguishable from a network stall.
    */
@@ -347,14 +346,16 @@ describeLive('EQLInstaller safe reinstall — live Postgres', () => {
     await blocked.connect()
     try {
       // A regression here is a HANG, not a failure — a blocking
-      // `pg_advisory_lock` never returns, the `finally` below never runs, and
+      // `pg_advisory_xact_lock` never returns, the `finally` below never runs, and
       // the leaked lock then blocks every later `install()` in this file. The
       // timeout turns that into a failed assertion. It is inert once the
-      // acquire polls with `pg_try_advisory_lock`, which never waits.
+      // acquire polls with `pg_try_advisory_xact_lock`, which never waits.
       await blocked.query("SET statement_timeout = '10s'")
+      await holder.query('BEGIN')
       await holder.query(
-        "SELECT pg_advisory_lock(hashtext('cipherstash.eql.lifecycle'))",
+        "SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('cipherstash.eql.lifecycle'))",
       )
+      await blocked.query('BEGIN')
 
       // An explicit short budget: the behaviour under test is "refuses rather
       // than hangs", which does not depend on how long the wait is, and the
@@ -364,16 +365,14 @@ describeLive('EQLInstaller safe reinstall — live Postgres', () => {
       await expect(acquireLifecycleLock(blocked, 1_000)).rejects.toThrow(
         /another EQL lifecycle operation is in progress/i,
       )
-      // The failed acquire holds nothing, so the caller's unconditional
-      // release in `finally` has to be a no-op rather than an unlock of a lock
-      // this session never took.
-      await expect(releaseLifecycleLock(blocked)).resolves.toBeUndefined()
-
-      await holder.query('SELECT pg_advisory_unlock_all()')
+      await blocked.query('ROLLBACK')
+      await holder.query('COMMIT')
+      await blocked.query('BEGIN')
       await expect(acquireLifecycleLock(blocked)).resolves.toBeUndefined()
-      await releaseLifecycleLock(blocked)
+      await blocked.query('COMMIT')
     } finally {
-      await holder.query('SELECT pg_advisory_unlock_all()').catch(() => {})
+      await blocked.query('ROLLBACK').catch(() => {})
+      await holder.query('ROLLBACK').catch(() => {})
       await blocked.end().catch(() => undefined)
       await holder.end().catch(() => undefined)
     }
