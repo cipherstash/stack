@@ -6,6 +6,22 @@ one source of truth.
 
 @AGENTS.md
 
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues for `cipherstash/stack`. See
+`docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five default triage labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Use a multi-context layout rooted at `CONTEXT-MAP.md`, with package-specific
+`CONTEXT.md` files added as needed. See `docs/agents/domain.md`.
+
 ## Before you finish
 
 Two rules from `AGENTS.md` are the ones most often missed. They are repeated here

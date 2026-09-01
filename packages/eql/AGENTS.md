@@ -1,5 +1,10 @@
 # CLAUDE.md
 
+> **Repository ownership:** EQL is maintained in the `cipherstash/stack`
+> monorepo. Track all EQL work in `cipherstash/stack` GitHub Issues. The former
+> `cipherstash/encrypt-query-language` repository and its issues are historical
+> provenance only; do not create or update active work there.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Development Commands
