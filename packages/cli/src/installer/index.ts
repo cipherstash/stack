@@ -1,12 +1,11 @@
-import { readInstallSql } from '@cipherstash/eql/sql'
 import type pg from 'pg'
 import { createPgClient, TlsVerificationError } from '@/db/client.js'
-import { assertBundledEqlSqlDigest } from './bundle-digest.js'
 import {
   EqlReinstallConnectionError,
   EqlReinstallRefusalError,
   restoreDerivedSearchIndexesAroundEqlReplacement,
 } from './derived-search-index-restoration.js'
+import { SUPPORTED_PGCRYPTO_SCHEMAS } from './eql-bundle.js'
 import {
   DEFERRED_GRANTS_HEADER,
   EQL_V3_INTERNAL_SCHEMA_NAME,
@@ -15,6 +14,12 @@ import {
   SUPABASE_IMMEDIATE_GRANTS_SQL_V3,
   SUPABASE_PERMISSIONS_SQL_V3,
 } from './grants.js'
+import { loadVerifiedEqlBundle } from './verify.js'
+
+export {
+  loadBundledEqlSql,
+  SUPPORTED_PGCRYPTO_SCHEMAS,
+} from './eql-bundle.js'
 
 export {
   DEFERRED_GRANTS_HEADER,
@@ -48,19 +53,6 @@ const EQL_V2_SCHEMA_NAME = 'eql_v2'
  * @throws if the bundle cannot be read, or if its bytes are not the ones the
  * resolved release attests to (see {@link assertBundledEqlSqlDigest}).
  */
-export function loadBundledEqlSql(): string {
-  let sql: string
-  try {
-    sql = readInstallSql()
-  } catch (error) {
-    throw new Error(
-      'Failed to read the EQL v3 install SQL from `@cipherstash/eql`. Reinstall dependencies (the package ships the bundle in `dist/sql/`).',
-      { cause: error },
-    )
-  }
-  return assertBundledEqlSqlDigest(sql)
-}
-
 /** Supabase grants for the sole installable generation, EQL v3. */
 export function supabaseGrantsFor(): string {
   return SUPABASE_PERMISSIONS_SQL_V3
@@ -177,8 +169,6 @@ const PREFLIGHT_SQL = `
 `
 
 /** The schemas the pinned bundle accepts `pgcrypto` in (its search_path). */
-export const SUPPORTED_PGCRYPTO_SCHEMAS = ['extensions', 'public']
-
 /**
  * Can this role create the ORE btree operator class? (#891)
  *
@@ -436,25 +426,13 @@ export class EQLInstaller {
     // was attempted and rolled back". It also keeps the digest message the
     // whole error, rather than a `detail` interpolated into the install
     // wrapper's transaction narration below.
-    const bundledSql = loadBundledEqlSql()
-    // Parsed here for the same reason, and deliberately outside the try below:
-    // a parse failure is a bundle this CLI has outgrown, and the parser's
-    // message names the offending statement. Interpolated into the install
-    // wrapper it would be narrated as a rolled-back transaction that was never
-    // opened, pointing at the database instead of at the bundle.
-    //
-    // `parseExpectedSurface(bundledSql)` rather than `bundledExpectedSurface()`,
-    // which would re-read and re-digest the bundle we already hold. Dynamic to
-    // avoid verify.ts's intentional import of this module for the
-    // digest-checked bundle loader.
-    const { parseExpectedSurface } = await import('./verify.js')
-    const expected = parseExpectedSurface(bundledSql)
+    const bundle = loadVerifiedEqlBundle()
     try {
       await restoreDerivedSearchIndexesAroundEqlReplacement({
         databaseUrl: this.databaseUrl,
-        bundledSql,
-        bundleOperators: expected.operators,
-        bundleCasts: expected.casts,
+        bundledSql: bundle.sql,
+        bundleOperators: bundle.expectedSurface.operators,
+        bundleCasts: bundle.expectedSurface.casts,
       })
     } catch (error) {
       if (

@@ -1,8 +1,8 @@
 import { releaseManifest } from '@cipherstash/eql/sql'
 import type pg from 'pg'
 import { createPgClient, TlsVerificationError } from '@/db/client.js'
+import { loadBundledEqlSql, SUPPORTED_PGCRYPTO_SCHEMAS } from './eql-bundle.js'
 import { EQL_V3_INTERNAL_SCHEMA_NAME, EQL_V3_SCHEMA_NAME } from './grants.js'
-import { loadBundledEqlSql, SUPPORTED_PGCRYPTO_SCHEMAS } from './index.js'
 import {
   classifyOreState,
   describeOreState,
@@ -59,6 +59,12 @@ export interface ExpectedSurface {
    * these with an always-raising `eql_ore_unavailable` CHECK.
    */
   oreDomains: string[]
+}
+
+/** The digest-verified installer bytes and the complete surface derived from them. */
+export interface VerifiedEqlBundle {
+  sql: string
+  expectedSurface: ExpectedSurface
 }
 
 /**
@@ -353,6 +359,16 @@ export function parseExpectedSurface(sql: string): ExpectedSurface {
   }
 }
 
+/**
+ * Load the one verified artifact consumed by installation, restoration, and
+ * verification. Completeness parsing happens here so callers cannot combine
+ * SQL bytes with metadata derived from a different bundle.
+ */
+export function loadVerifiedEqlBundle(): VerifiedEqlBundle {
+  const sql = loadBundledEqlSql()
+  return { sql, expectedSurface: parseExpectedSurface(sql) }
+}
+
 /** The expected surface of the pinned bundle this CLI installs. */
 export function bundledExpectedSurface(): ExpectedSurface {
   // Through `loadBundledEqlSql()` rather than `readInstallSql()` directly, so
@@ -360,12 +376,7 @@ export function bundledExpectedSurface(): ExpectedSurface {
   // database against this expectation — derived from an unverified bundle it
   // would answer a different question than the one asked, and could report a
   // healthy install as broken (or the reverse) from tampered bytes alone.
-  const sql = loadBundledEqlSql()
-  // Deliberately outside any try: a parse failure is a bundle the parser has
-  // outgrown ({@link assertEveryStatementModelled}), and its message names the
-  // statement. Wrapping it in "reinstall dependencies" would send whoever hits
-  // it to the one remedy that cannot help.
-  return parseExpectedSurface(sql)
+  return loadVerifiedEqlBundle().expectedSurface
 }
 
 // ---------------------------------------------------------------------------

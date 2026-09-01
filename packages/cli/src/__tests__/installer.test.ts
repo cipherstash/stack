@@ -38,9 +38,9 @@ vi.mock('../installer/verify.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../installer/verify.js')>()
   return {
     ...actual,
-    parseExpectedSurface: (sql: string) => {
+    loadVerifiedEqlBundle: () => {
       if (parseFailure.error) throw parseFailure.error
-      return actual.parseExpectedSurface(sql)
+      return actual.loadVerifiedEqlBundle()
     },
   }
 })
