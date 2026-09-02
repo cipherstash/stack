@@ -14,7 +14,8 @@
 //!   `StackCipher<StackKms<HostTokenStrategy, WasiHostConnection>>` (one
 //!   `load-keyset` round trip through the host transport — the index key
 //!   then lives in the guest), and [`se_cipher_free`] drops it (client key
-//!   and index key wiped by their own `ZeroizeOnDrop`). Handle ids are
+//!   wiped unconditionally, index key subject to the `Arc` precondition
+//!   documented on that export). Handle ids are
 //!   never reused; at exhaustion `se_cipher_init` fails with
 //!   `STATUS_INTERNAL` rather than aliasing a live handle.
 //! - During an entry-point call the host's imported functions may re-enter
@@ -242,9 +243,22 @@ fn cipher_init(decoded: vitaminc_aead_value::FfiValue) -> Result<u32, u32> {
     SESSIONS.with(|s| s.borrow_mut().insert(cipher))
 }
 
-/// Drop a cipher handle. The client key and the keyset's index key are
-/// wiped by their own `ZeroizeOnDrop`. Freeing an unknown handle is a
-/// no-op.
+/// Drop a cipher handle. Freeing an unknown handle is a no-op.
+///
+/// The client key's wipe is unconditional: the `StackCipher` owns it, so the
+/// `ZeroizeOnDrop` runs here.
+///
+/// The keyset's index key is wiped here **only while no other reference to
+/// the PRF is outstanding**. It lives in `HmacSha256Prf { key: Arc<Protected
+/// <Vec<u8>>> }`, and `Arc` runs the inner `ZeroizeOnDrop` at strong count
+/// zero — so a live clone means this call frees the handle and leaves the key
+/// in memory. Every derivation takes such a clone (`sem::equality`,
+/// `ore_term`, `ope_term`), but the guest is single-threaded and each clone
+/// is created and dropped inside one `block_on`'d ABI call, so none can still
+/// be alive when the host calls this. That is the precondition, not a
+/// property of the drop: anything that later parks a PRF clone beyond an ABI
+/// call — a cache, a background task, a `'static` handle — silently turns
+/// this wipe into a no-op with no test to catch it.
 #[no_mangle]
 pub extern "C" fn se_cipher_free(handle: u32) {
     let _ = catch_unwind(AssertUnwindSafe(|| {

@@ -252,6 +252,12 @@ where
                 .map_err(term_err),
             _ => Err(STATUS_ENCODING),
         },
+        // The text and bytes arms hand the encryptor the `Zeroizing` operand
+        // itself, not a bare clone of its contents: the CLLW encryptors take
+        // their value by `'static` ownership (the visitor carries it), so a
+        // cloned-out `String`/`Vec<u8>` would be freed with the plaintext
+        // still in it — in linear memory the host can read. Keeping the
+        // wrapper costs nothing and saves the copy as well.
         Output::Ore => match scalar {
             Scalar::Bool(v) => ore(cipher, v, context).await,
             Scalar::I32(v) => ore(cipher, v, context).await,
@@ -260,8 +266,8 @@ where
             Scalar::U64(v) => ore(cipher, v, context).await,
             Scalar::F32(v) => ore(cipher, v, context).await,
             Scalar::F64(v) => ore(cipher, v, context).await,
-            Scalar::Text(t) => ore(cipher, String::clone(&t), context).await,
-            Scalar::Bytes(b) => ore(cipher, Vec::clone(&b), context).await,
+            Scalar::Text(t) => ore(cipher, t, context).await,
+            Scalar::Bytes(b) => ore(cipher, b, context).await,
         },
         Output::Ope => match scalar {
             Scalar::Bool(v) => ope(cipher, v, context).await,
@@ -271,8 +277,8 @@ where
             Scalar::U64(v) => ope(cipher, v, context).await,
             Scalar::F32(v) => ope(cipher, v, context).await,
             Scalar::F64(v) => ope(cipher, v, context).await,
-            Scalar::Text(t) => ope(cipher, String::clone(&t), context).await,
-            Scalar::Bytes(b) => ope(cipher, Vec::clone(&b), context).await,
+            Scalar::Text(t) => ope(cipher, t, context).await,
+            Scalar::Bytes(b) => ope(cipher, b, context).await,
         },
     }
 }
