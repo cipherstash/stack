@@ -75,6 +75,8 @@
 		}
 	},
 	"devDependencies": {
+		"@cipherstash/eql-upgrade-baseline": "npm:@cipherstash/eql@3.0.2",
+		"@cipherstash/protect-ffi": "workspace:*",
 		"@cipherstash/stack": "workspace:*",
 		"@types/pg": "^8.23.1",
 		"node-pty": "^1.1.0",

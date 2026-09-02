@@ -2,11 +2,12 @@ import { readInstallSql } from '@cipherstash/eql/sql'
 import type pg from 'pg'
 import { describe, expect, it } from 'vitest'
 import {
+  assessEqlSurface,
   diffSurface,
   type ExpectedSurface,
   type InstalledSurface,
   parseExpectedSurface,
-  readOreState,
+  readInstalledSurface,
 } from '../verify.js'
 
 /**
@@ -387,7 +388,7 @@ describe('diffSurface', () => {
 })
 
 /**
- * A client that answers just the two queries `readOreState` issues, so the
+ * A client that answers the catalogue queries the summary assessment issues, so the
  * version gate can be exercised without a database. `undefinedFunction`
  * spells the 42883 an absent `eql_v3.version()` raises.
  */
@@ -423,10 +424,10 @@ function fakeOreClient(answers: {
   return { client: client as unknown as pg.ClientBase, queries }
 }
 
-describe('readOreState', () => {
+describe('assessEqlSurface summary', () => {
   it('classifies the ORE state when the installed version is the pinned one', async () => {
     const { client } = fakeOreClient({ version: expected.eqlVersion })
-    const reading = await readOreState(client)
+    const { ore: reading } = await assessEqlSurface(client, 'summary')
     expect(reading.comparable).toBe(true)
     if (!reading.comparable) return
     expect(reading.state).toBe('indexable')
@@ -439,7 +440,7 @@ describe('readOreState', () => {
       opclassPresent: false,
       poisonedDomains: expected.oreDomains.length,
     })
-    const reading = await readOreState(client)
+    const { ore: reading } = await assessEqlSurface(client, 'summary')
     expect(reading.comparable && reading.state).toBe('fallback')
   })
 
@@ -454,7 +455,7 @@ describe('readOreState', () => {
       opclassPresent: false,
       poisonedDomains: expected.oreDomains.length - 2,
     })
-    const reading = await readOreState(client)
+    const { ore: reading } = await assessEqlSurface(client, 'summary')
     expect(reading.comparable).toBe(false)
     if (reading.comparable) return
     expect(reading.installedVersion).toBe('3.0.0')
@@ -467,9 +468,150 @@ describe('readOreState', () => {
 
   it('reports a missing version() as not comparable', async () => {
     const { client } = fakeOreClient({ version: null })
-    const reading = await readOreState(client)
+    const { ore: reading } = await assessEqlSurface(client, 'summary')
     expect(reading.comparable).toBe(false)
     if (reading.comparable) return
     expect(reading.installedVersion).toBeNull()
+  })
+})
+
+describe('readInstalledSurface in a caller transaction', () => {
+  it('restores transaction-local settings before returning', async () => {
+    const queries: string[] = []
+    const client = {
+      async query(sql: string) {
+        queries.push(sql)
+        if (sql.includes('pgcrypto_installed')) {
+          return {
+            rows: [
+              {
+                eql_v3_present: false,
+                eql_v3_internal_present: false,
+                pgcrypto_installed: false,
+                pgcrypto_schema: null,
+              },
+            ],
+          }
+        }
+        if (sql.includes('ore_opclass_present')) {
+          return { rows: [{ ore_opclass_present: false, poisoned_domains: 0 }] }
+        }
+        return { rows: [] }
+      },
+    }
+
+    await readInstalledSurface(client as unknown as pg.ClientBase, expected, {
+      manageTransaction: false,
+    })
+
+    expect(queries[0]).toBe('SAVEPOINT installed_eql_surface_read')
+    expect(queries.at(-2)).toBe(
+      'ROLLBACK TO SAVEPOINT installed_eql_surface_read',
+    )
+    expect(queries.at(-1)).toBe('RELEASE SAVEPOINT installed_eql_surface_read')
+  })
+
+  it('preserves the version-read error when probe cleanup also fails', async () => {
+    const client = {
+      async query(sql: string) {
+        if (sql.includes('pgcrypto_installed')) {
+          return {
+            rows: [
+              {
+                eql_v3_present: true,
+                eql_v3_internal_present: true,
+                pgcrypto_installed: true,
+                pgcrypto_schema: 'public',
+              },
+            ],
+          }
+        }
+        if (sql.includes('ore_opclass_present')) {
+          return { rows: [{ ore_opclass_present: true, poisoned_domains: 0 }] }
+        }
+        if (sql.includes('eql_v3.version()')) {
+          throw Object.assign(new Error('permission denied'), { code: '42501' })
+        }
+        if (sql === 'ROLLBACK TO SAVEPOINT installed_eql_version_probe') {
+          throw new Error('cleanup failed')
+        }
+        return { rows: [] }
+      },
+    }
+
+    await expect(
+      readInstalledSurface(client as unknown as pg.ClientBase, expected, {
+        manageTransaction: false,
+      }),
+    ).rejects.toThrow('Could not read eql_v3.version(): permission denied')
+  })
+
+  it('preserves result-construction errors after restoring the caller transaction', async () => {
+    const queries: string[] = []
+    const client = {
+      async query(sql: string) {
+        queries.push(sql)
+        if (sql.includes('pgcrypto_installed')) {
+          return {
+            rows: [
+              {
+                eql_v3_present: false,
+                eql_v3_internal_present: false,
+                pgcrypto_installed: false,
+                pgcrypto_schema: null,
+              },
+            ],
+          }
+        }
+        if (sql.includes('FROM pg_catalog.pg_proc')) {
+          return { rows: [{ name: null, signature: '' }] }
+        }
+        if (sql.includes('ore_opclass_present')) {
+          return { rows: [{ ore_opclass_present: false, poisoned_domains: 0 }] }
+        }
+        if (
+          sql === 'ROLLBACK TO SAVEPOINT installed_eql_surface_read' &&
+          queries.filter((query) => query === sql).length > 1
+        ) {
+          throw new Error('savepoint no longer exists')
+        }
+        return { rows: [] }
+      },
+    }
+
+    await expect(
+      readInstalledSurface(client as unknown as pg.ClientBase, expected, {
+        manageTransaction: false,
+      }),
+    ).rejects.toThrow(/null|toLowerCase/)
+
+    expect(
+      queries.filter(
+        (query) => query === 'ROLLBACK TO SAVEPOINT installed_eql_surface_read',
+      ),
+    ).toHaveLength(1)
+  })
+
+  it('preserves a surface-read error when caller-savepoint cleanup also fails', async () => {
+    const primary = new Error('catalog read failed')
+    const queries: string[] = []
+    const client = {
+      async query(sql: string) {
+        queries.push(sql)
+        if (sql.includes('FROM pg_catalog.pg_proc')) throw primary
+        if (sql === 'ROLLBACK TO SAVEPOINT installed_eql_surface_read') {
+          throw new Error('rollback failed')
+        }
+        return { rows: [] }
+      },
+    }
+
+    await expect(
+      readInstalledSurface(client as unknown as pg.ClientBase, expected, {
+        manageTransaction: false,
+      }),
+    ).rejects.toBe(primary)
+
+    expect(queries).toContain('RELEASE SAVEPOINT installed_eql_surface_read')
   })
 })

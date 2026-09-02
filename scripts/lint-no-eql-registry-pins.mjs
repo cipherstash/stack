@@ -167,7 +167,7 @@ export const EXPECTED_SOURCES = [WORKSPACE_FILE]
 /**
  * Declarations allowed to name a registry version, each with the reason.
  *
- * EMPTY, and that is the goal state rather than an oversight. Every entry is a
+ * Keep this list as short as possible. Every entry is a
  * place the two halves of EQL can drift apart again, and the reason is what a
  * later reader needs in order to decide whether it is still true.
  *
@@ -179,9 +179,19 @@ export const EXPECTED_SOURCES = [WORKSPACE_FILE]
  * DECLARES `@cipherstash/eql` and an existence-based check would have gone on
  * passing over a standing permission nothing needed.
  *
- * Adding one back means writing the reason down here. Prefer not to.
+ * The remaining entry is an immutable test fixture rather than a runtime
+ * dependency. Adding another means writing the reason down here. Prefer not
+ * to.
  */
-export const EXEMPT_DECLARATIONS = new Map([])
+export const EXEMPT_DECLARATIONS = new Map([
+  [
+    'packages/cli/package.json :: @cipherstash/eql-upgrade-baseline',
+    'Test-only immutable upgrade origin: the credentialed live installer test ' +
+      'must install a real previously released bundle before the workspace ' +
+      'installer upgrades it. Runtime `@cipherstash/eql` and the payload-emitting ' +
+      'Rust remain workspace-linked; this alias is never packed for consumers.',
+  ],
+])
 
 /** Files this scan reads, by name. */
 const SCANNED_FILES = new Set(['Cargo.toml', 'package.json', WORKSPACE_FILE])
@@ -458,9 +468,9 @@ function collectNpmEntries(file, table, entries, found) {
       if (named || NPM_ALIAS.test(scalar)) {
         found.push({
           file,
-          // Always the package, never the key it was found under: both
-          // hand-maintained lists are keyed `<file> :: <dependency>`, so an
-          // alias filed under its alias name could never be exempted.
+          // Expected declarations stay keyed by the real package. Exemptions
+          // use the alias key when present so they cannot excuse a runtime
+          // declaration of the same package in the same manifest.
           dependency: NPM_DEPENDENCY,
           table,
           key,
@@ -614,6 +624,12 @@ export function scanTree(root) {
 export const declarationId = (declaration) =>
   `${declaration.file} :: ${declaration.dependency}`
 
+/** A renamed npm dependency can be exempted without exempting its runtime twin. */
+const exemptionId = (declaration) =>
+  declaration.form === 'alias' && declaration.key !== declaration.dependency
+    ? `${declaration.file} :: ${declaration.key}`
+    : declarationId(declaration)
+
 /**
  * The whole check, as data. Separated from the reporting below so the tests can
  * drive every branch — including the two exit-2 ones — by passing a different
@@ -627,17 +643,15 @@ export function lint({
 } = {}) {
   const { declarations, sources: read } = scanTree(root)
   const ids = declarations.map(declarationId)
-  const registryPinned = declarations
-    .filter((d) => !d.inTree)
-    .map(declarationId)
+  const registryPinned = declarations.filter((d) => !d.inTree).map(exemptionId)
   return {
     declarations,
     ids,
     offenders: declarations.filter(
-      (d) => !d.inTree && !exemptions.has(declarationId(d)),
+      (d) => !d.inTree && !exemptions.has(exemptionId(d)),
     ),
     exempted: declarations.filter(
-      (d) => !d.inTree && exemptions.has(declarationId(d)),
+      (d) => !d.inTree && exemptions.has(exemptionId(d)),
     ),
     // An exemption that is not excusing anything, and an exemption whose reason
     // was emptied out. Both are the configuration going stale, and both must
@@ -745,7 +759,7 @@ export function report(result) {
   if (result.offenders.length === 0) {
     const suffix = result.exempted.length
       ? ` (${result.exempted.length} exempt: ${result.exempted
-          .map(declarationId)
+          .map(exemptionId)
           .join(', ')})`
       : ''
     return { code: 0, out: `Every EQL dependency resolves in-tree${suffix}.` }

@@ -20,9 +20,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { EQLInstaller } from '../index.js'
 import {
+  assessEqlSurface,
   bundledExpectedSurface,
   readInstalledSurface,
-  readOreState,
   verifyEqlSurface,
 } from '../verify.js'
 
@@ -78,7 +78,7 @@ describeLive('verifyEqlSurface — live Postgres', () => {
   }, 60_000)
 
   /**
-   * `eql status` reads the ORE half through {@link readOreState} rather than
+   * `eql status` reads the ORE half through the summary assessment rather than
    * the full surface diff (#891). Both must answer the same question the same
    * way against the same database — a cheap read that disagreed with `verify`
    * would be worse than no read at all.
@@ -90,7 +90,8 @@ describeLive('verifyEqlSurface — live Postgres', () => {
     const client = new pg.Client({ connectionString: url })
     await client.connect()
     try {
-      const ore = await readOreState(client)
+      await client.query('BEGIN READ ONLY')
+      const { ore } = await assessEqlSurface(client, 'summary')
       // The database runs the pinned bundle, so the probe is comparable —
       // it declines to answer only on a version skew.
       expect(ore.comparable).toBe(true)
@@ -100,6 +101,7 @@ describeLive('verifyEqlSurface — live Postgres', () => {
       expect(ore.poisonedDomains).toBe(report.ore?.poisonedDomains)
       expect(ore.expectedPoisoned).toBe(report.ore?.expectedPoisoned)
     } finally {
+      await client.query('ROLLBACK').catch(() => undefined)
       await client.end().catch(() => undefined)
     }
   }, 60_000)

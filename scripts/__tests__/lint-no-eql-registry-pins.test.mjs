@@ -79,14 +79,12 @@ const cargoForms = (body) =>
   cargoDeclarations('Cargo.toml', body).map((d) => d.form)
 
 describe('the tree it actually guards', () => {
-  it('passes: every EQL dependency resolves in-tree, with nothing exempt', () => {
+  it('passes with only the immutable CLI upgrade baseline exempt', () => {
     const { exitCode, output } = run()
     expect(output).toContain('resolves in-tree')
-    // No `(N exempt: …)` suffix. The exemption list is empty as of CIP-3744
-    // and the success line reports what it excused, so this is the assertion
-    // that the tree needs no standing permission at all — not merely that the
-    // one it had is still described accurately.
-    expect(output).not.toContain('exempt')
+    expect(output).toContain(
+      '(1 exempt: packages/cli/package.json :: @cipherstash/eql-upgrade-baseline)',
+    )
     expect(exitCode).toBe(0)
   })
 
@@ -800,6 +798,30 @@ describe('the scan reports what it finds', () => {
     ])
     expect(result.offenders.map(declarationId)).toEqual([
       'b/package.json :: @cipherstash/eql',
+    ])
+  })
+
+  it('exempts a test alias without exempting the runtime dependency beside it', () => {
+    const root = tree({
+      'a/package.json': JSON.stringify({
+        dependencies: { '@cipherstash/eql': '3.0.4' },
+        devDependencies: {
+          '@cipherstash/eql-upgrade-baseline': 'npm:@cipherstash/eql@3.0.2',
+        },
+      }),
+    })
+    const result = lint({
+      root,
+      expected: [],
+      exemptions: new Map([
+        ['a/package.json :: @cipherstash/eql-upgrade-baseline', 'test fixture'],
+      ]),
+    })
+    expect(result.exempted.map((entry) => entry.key)).toEqual([
+      '@cipherstash/eql-upgrade-baseline',
+    ])
+    expect(result.offenders.map((entry) => entry.key)).toEqual([
+      '@cipherstash/eql',
     ])
   })
 })

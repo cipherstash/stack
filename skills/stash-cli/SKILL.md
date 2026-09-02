@@ -419,6 +419,10 @@ Run it whenever query-time behaviour looks inconsistent with a "successful" inst
 
 Generates an **EQL v3 install migration**, instead of running SQL directly against the database (`eql install`). Migration-first is the preferred path: the install lands in your migration history and ships to every environment through the same migrate step as the rest of your schema. On Supabase it is the *only* durable path — `supabase db reset` replays the migrations directory, so a direct install is wiped by the next reset. v3 only — there is no `--eql-version` here.
 
+**Generated migrations contain the raw bundle, not the reinstall protocol.** Use
+one for a first install. For replacement, use `eql upgrade` or recreate every
+dependent object in the same migration; see `eql upgrade` below.
+
 ```bash
 stash eql migration --drizzle              # Drizzle custom migration in drizzle/
 stash eql migration --drizzle --supabase   # also grant eql_v3 to anon/authenticated/service_role
@@ -495,7 +499,17 @@ An applied migration carrying a statement the sweep would have skipped anyway �
 
 #### `eql upgrade`
 
-The install SQL is safe to re-run — columns and data survive — but it cascade-drops functional indexes that depend on `eql_v3`; recreate them afterward. `upgrade` is v3-only and accepts `--supabase`, `--dry-run`, and `--database-url`.
+Encrypted columns and rows live outside the disposable EQL schemas. `upgrade`
+captures dependent functional indexes, replaces the schemas, then restores and
+verifies the indexes in one transaction. Unsupported dependencies are refused
+before mutation; restoration failure rolls back the replacement. Completion
+means every definition and restorable catalog property matches, with no
+validity/readiness regression. `upgrade` is v3-only and accepts `--supabase`,
+`--dry-run`, and `--database-url`.
+
+Run it in a schema-migration maintenance window. The advisory lock serializes
+other `stash` lifecycle commands, not arbitrary DDL from unrelated sessions;
+do not create, alter, or drop EQL-backed indexes concurrently.
 
 #### `eql status`
 

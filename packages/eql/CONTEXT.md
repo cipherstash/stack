@@ -29,3 +29,10 @@ _Avoid_: Encrypted data, durable data
 A customer-owned constraint, policy, view, or other database object whose
 meaning cannot be safely inferred and recreated by the EQL installer.
 _Avoid_: Derived search index
+
+**EQL installation state**:
+A consistent observation of installed EQL generations, their versions, the
+health of comparable EQL machinery, and the ORE state. When the installed EQL
+version differs from the observing tool's pinned bundle, health is not
+comparable; version skew is not evidence of damage.
+_Avoid_: Installation status, database state

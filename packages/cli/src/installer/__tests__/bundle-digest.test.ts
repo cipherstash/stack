@@ -59,6 +59,18 @@ describe('bundled EQL SQL digest verification', () => {
     )
   })
 
+  it('presents verified SQL and its derived surface as one artifact', async () => {
+    eqlSql.tampered = null
+    const { loadVerifiedEqlBundle } = await import('@/installer/verify.ts')
+    const { releaseManifest } = await import('@cipherstash/eql/sql')
+
+    const bundle = loadVerifiedEqlBundle()
+
+    expect(bundle.sql).toContain('CREATE SCHEMA eql_v3')
+    expect(bundle.expectedSurface.eqlVersion).toBe(releaseManifest.eqlVersion)
+    expect(bundle.expectedSurface.operators.length).toBeGreaterThan(2000)
+  })
+
   it('refuses SQL whose bytes do not hash to the manifest digest', async () => {
     eqlSql.tampered = TAMPERED
     const { loadBundledEqlSql } = await import('@/installer/index.ts')

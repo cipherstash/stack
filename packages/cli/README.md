@@ -210,7 +210,16 @@ npx stash eql upgrade [options]
 | `--dry-run` | Show what would happen without making changes |
 | `--supabase` | Use Supabase-compatible upgrade |
 
-The install SQL is idempotent and safe to re-run. If EQL is not installed, the command suggests running `npx stash eql install` instead.
+Encrypted columns and rows live outside the disposable EQL schemas. Before
+replacing those schemas, the CLI captures dependent functional indexes and then
+restores their definitions and supported catalog properties in the same
+transaction. It refuses unsupported dependencies before mutation and rolls back
+if restoration fails. If EQL is absent, the command suggests
+`npx stash eql install` instead.
+
+Run upgrade in a schema-migration maintenance window. Its advisory lock prevents
+overlapping `stash` lifecycle commands, but unrelated sessions must not create,
+alter, or drop EQL-backed indexes while replacement is running.
 
 ---
 
@@ -304,6 +313,10 @@ Reads `databaseUrl` from `stash.config.ts`.
 ## Migration mode
 
 Use `eql migration` to add the EQL v3 installation to your migration history instead of applying it directly. The install then ships to every environment through the same migrate step as the rest of your schema.
+
+**Generated migrations contain the raw EQL bundle, not the CLI's reinstall
+protocol.** A first install is safe. To replace an existing installation, use
+`eql upgrade` or recreate every dependent object in the same migration.
 
 ### Drizzle
 

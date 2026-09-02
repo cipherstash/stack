@@ -2,9 +2,8 @@ import * as p from '@clack/prompts'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
 import { createPgClient } from '@/db/client.js'
-import { EQLInstaller } from '@/installer/index.js'
+import { assessEqlInstallation } from '@/installer/installation-state.js'
 import { describeOreState } from '@/installer/ore.js'
-import { readOreState } from '@/installer/verify.js'
 
 export async function statusCommand(options: { databaseUrl?: string } = {}) {
   const pm = detectPackageManager()
@@ -16,29 +15,18 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
   const config = await loadStashConfig({ databaseUrlFlag: options.databaseUrl })
   s.stop('Configuration loaded.')
 
-  const installer = new EQLInstaller({
-    databaseUrl: config.databaseUrl,
-  })
-
   // 1. Check EQL installation status and version — both generations, so a
   // v3-only database is not misreported as "not installed" (the v2 check
   // only looks for the eql_v2 schema).
   s.start('Checking EQL installation...')
 
-  let installedV2: boolean
-  let installedV3: boolean
-  let versionV2: string | null
-  let versionV3: string | null
+  let installation: Awaited<ReturnType<typeof assessEqlInstallation>>
 
   try {
-    installedV2 = await installer.isInstalled({ eqlVersion: 2 })
-    installedV3 = await installer.isInstalled({ eqlVersion: 3 })
-    versionV2 = installedV2
-      ? await installer.getInstalledVersion({ eqlVersion: 2 })
-      : null
-    versionV3 = installedV3
-      ? await installer.getInstalledVersion({ eqlVersion: 3 })
-      : null
+    installation = await assessEqlInstallation({
+      databaseUrl: config.databaseUrl,
+      includeOre: true,
+    })
   } catch (error) {
     s.stop('Failed.')
     p.log.error(
@@ -50,16 +38,18 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
     process.exit(1)
   }
 
+  const installedV2 = installation.v2.status === 'installed'
+  const installedV3 = installation.v3.status === 'installed'
   if (installedV2 || installedV3) {
     s.stop('EQL is installed.')
     if (installedV2) {
       p.log.success(
-        `EQL v2 installed: yes (version: ${versionV2 ?? 'unknown'})`,
+        `EQL v2 installed: yes (version: ${installation.v2.status === 'installed' ? installation.v2.version : 'unknown'})`,
       )
     }
     if (installedV3) {
       p.log.success(
-        `EQL v3 installed: yes (version: ${versionV3 ?? 'unknown'})`,
+        `EQL v3 installed: yes (version: ${installation.v3.status === 'installed' ? installation.v3.version : 'unknown'})`,
       )
     }
   } else {
@@ -75,7 +65,14 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
   s.start('Checking database permissions...')
 
   try {
-    const permissions = await installer.preflight()
+    const capabilityAssessment = await assessEqlInstallation({
+      databaseUrl: config.databaseUrl,
+      includeCapabilities: true,
+    })
+    if (capabilityAssessment.capabilities.status !== 'assessed') {
+      throw new Error('Database capabilities were not assessed')
+    }
+    const permissions = capabilityAssessment.capabilities.preflight
     s.stop('Permissions checked.')
 
     if (permissions.ok) {
@@ -103,41 +100,28 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
   // half, and reads as 'fallback' on a database that has no EQL at all.
   if (installedV3) {
     s.start('Checking ORE operator class...')
-    const oreClient = createPgClient(config.databaseUrl)
-    try {
-      await oreClient.connect()
-      const ore = await readOreState(oreClient)
-      s.stop('ORE state checked.')
-      if (ore.comparable) {
-        const described = describeOreState(ore.state)
-        if (described.severity === 'damage') {
-          p.log.error(described.message)
-        } else {
-          p.log.info(described.message)
-        }
+    const ore = installation.ore
+    s.stop('ORE state checked.')
+    if (ore.status === 'observed') {
+      const described = describeOreState(ore.state)
+      if (described.severity === 'damage') {
+        p.log.error(described.message)
       } else {
-        // Version skew is not damage, and must not be rendered as any ORE
-        // answer at all: the domain list the poison CHECKs are counted over is
-        // the PINNED bundle's, so a perfectly healthy fallback install of an
-        // older EQL classifies as incoherent and would send this operator to
-        // `install --force` over nothing. Say the true thing instead.
-        p.log.info(
-          `ORE operator class: not compared — EQL ${
-            ore.installedVersion ?? 'unknown'
-          } is installed and this CLI pins EQL ${ore.bundleVersion}, so the ORE state cannot be read against the pinned bundle. Run \`${runnerCommand(pm, 'stash eql upgrade')}\`, then check status again.`,
-        )
+        p.log.info(described.message)
       }
-    } catch (error) {
-      // Advisory, not a gate: a status run that could not read one row should
-      // still report everything else it read.
-      s.stop('ORE state check failed.')
-      p.log.warn(
-        `Could not determine the ORE operator class state: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+    } else if (ore.status === 'not-comparable') {
+      // Version skew is not damage, and must not be rendered as any ORE
+      // answer at all: the domain list the poison CHECKs are counted over is
+      // the PINNED bundle's, so a perfectly healthy fallback install of an
+      // older EQL classifies as incoherent and would send this operator to
+      // `install --force` over nothing. Say the true thing instead.
+      p.log.info(
+        `ORE operator class: not compared — EQL ${
+          ore.installedVersion ?? 'unknown'
+        } is installed and this CLI pins EQL ${ore.bundleVersion}, so the ORE state cannot be read against the pinned bundle. Run \`${runnerCommand(pm, 'stash eql upgrade')}\`, then check status again.`,
       )
-    } finally {
-      await oreClient.end().catch(() => {})
+    } else if (ore.status === 'unavailable') {
+      p.log.warn(`Could not read the ORE operator class state: ${ore.message}`)
     }
   }
 

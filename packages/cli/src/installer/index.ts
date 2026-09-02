@@ -1,20 +1,31 @@
-import { readInstallSql } from '@cipherstash/eql/sql'
-import type pg from 'pg'
 import { createPgClient, TlsVerificationError } from '@/db/client.js'
-import { assertBundledEqlSqlDigest } from './bundle-digest.js'
 import {
-  DEFERRED_GRANTS_HEADER,
-  EQL_V3_INTERNAL_SCHEMA_NAME,
-  EQL_V3_SCHEMA_NAME,
-  SUPABASE_DEFAULT_PRIVILEGES_SQL_V3,
-  SUPABASE_IMMEDIATE_GRANTS_SQL_V3,
+  EqlLifecycleLockTimeoutError,
+  EqlReinstallConnectionError,
+  EqlReinstallRefusalError,
+  restoreDerivedSearchIndexesAroundEqlReplacement,
+} from './derived-search-index-restoration.js'
+import {
+  applySupabaseEqlAccess,
   SUPABASE_PERMISSIONS_SQL_V3,
 } from './grants.js'
+import {
+  assessEqlInstallation,
+  type PreflightResult,
+} from './installation-state.js'
+import { loadVerifiedEqlBundle } from './verify.js'
 
 export {
+  loadBundledEqlSql,
+  SUPPORTED_PGCRYPTO_SCHEMAS,
+} from './eql-bundle.js'
+
+export {
+  applySupabaseEqlAccess,
   DEFERRED_GRANTS_HEADER,
   EQL_V3_INTERNAL_SCHEMA_NAME,
   EQL_V3_SCHEMA_NAME,
+  emitSupabaseEqlAccessMigration,
   SUPABASE_DEFAULT_PRIVILEGES_SQL_V3,
   SUPABASE_GUARDED_DEFAULT_PRIVILEGES_SQL_V3,
   SUPABASE_IMMEDIATE_GRANTS_SQL_V3,
@@ -26,35 +37,6 @@ export {
 
 /** EQL generations recognised by read-only installation diagnostics. */
 export type EqlVersion = 2 | 3
-
-const EQL_V2_SCHEMA_NAME = 'eql_v2'
-
-/**
- * The pinned EQL v3 install SQL, verified against the resolved release's
- * `installSqlSha256` before it is handed to anything that executes or emits it.
- *
- * This is the CLI's single choke point for the bundle — `install()`,
- * `stash eql migration`'s emitter and `bundledExpectedSurface()` all come
- * through here — which is why the digest check lives in the wrapper rather than
- * at each call site. `readInstallSql()` itself is in the frozen
- * `@cipherstash/eql` subtree, published from another repository, so a check
- * added there would be dead code for every consumer installing from npm.
- *
- * @throws if the bundle cannot be read, or if its bytes are not the ones the
- * resolved release attests to (see {@link assertBundledEqlSqlDigest}).
- */
-export function loadBundledEqlSql(): string {
-  let sql: string
-  try {
-    sql = readInstallSql()
-  } catch (error) {
-    throw new Error(
-      'Failed to read the EQL v3 install SQL from `@cipherstash/eql`. Reinstall dependencies (the package ships the bundle in `dist/sql/`).',
-      { cause: error },
-    )
-  }
-  return assertBundledEqlSqlDigest(sql)
-}
 
 /** Supabase grants for the sole installable generation, EQL v3. */
 export function supabaseGrantsFor(): string {
@@ -70,48 +52,7 @@ export function supabaseGrantsFor(): string {
  * fine; the installer defers the owner-scoped Supabase default-privilege
  * statements instead (see {@link InstallResult.deferredGrantsSql}).
  */
-export interface PreflightResult {
-  currentUser: string
-  isSuperuser: boolean
-  /**
-   * Whether `current_user` can run `ALTER DEFAULT PRIVILEGES FOR ROLE
-   * postgres`. `null` when the database has no `postgres` role at all.
-   */
-  memberOfPostgres: boolean | null
-  hasDatabaseCreate: boolean
-  hasPublicCreate: boolean
-  pgcryptoInstalled: boolean
-  /**
-   * The schema `pgcrypto` lives in, or `null` when not installed. The pinned
-   * bundle accepts `extensions` and `public` (its functions' search_path) and
-   * ABORTS for any other schema — so an unsupported placement blocks even a
-   * superuser.
-   */
-  pgcryptoSchema: string | null
-  eqlV3SchemaPresent: boolean
-  eqlV3InternalSchemaPresent: boolean
-  /**
-   * Whether `current_user` may drop the existing `eql_v3` / `eql_v3_internal`
-   * schemas (owner, member of the owning role, or superuser). `null` when the
-   * schema is absent. Matters because a reinstall begins with
-   * `DROP SCHEMA ... CASCADE`.
-   */
-  canDropEqlV3Schema: boolean | null
-  canDropEqlV3InternalSchema: boolean | null
-  /**
-   * Whether this role can create the ORE btree operator class the `_ord_ore`
-   * domains need (#891). `null` when the probe could not answer.
-   *
-   * Never blocks: the bundle skips the class and installs its loud-failure
-   * fallback instead, which is a supported configuration. It is reported so
-   * the trade is known before a schema is written, not after a query fails.
-   * See {@link probeOperatorClassCreate} for why this is probed rather than
-   * inferred from `isSuperuser`.
-   */
-  canCreateOperatorClass: boolean | null
-  missing: string[]
-  ok: boolean
-}
+export type { PreflightResult } from './installation-state.js'
 
 /**
  * The legacy permission-check shape.
@@ -138,93 +79,6 @@ export interface InstallResult {
   deferredGrantsSql: string | null
 }
 
-/**
- * One query answering every preflight question. Two guard patterns are
- * load-bearing: `pg_has_role` raises on a nonexistent role name (not every
- * database has a `postgres` role), and `has_schema_privilege` raises 3F000 on
- * a nonexistent schema (hardened databases drop `public`) — each probe that
- * can raise is wrapped so a missing object reads as a capability answer, not
- * a query failure. The scalar subqueries against `pg_namespace` return NULL
- * (not an error) when the schema is absent, which maps to the `null` arms of
- * {@link PreflightResult}.
- */
-const PREFLIGHT_SQL = `
-  SELECT
-    current_user AS role_name,
-    (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS is_superuser,
-    CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres')
-         THEN pg_has_role(current_user, 'postgres', 'MEMBER')
-    END AS member_of_postgres,
-    has_database_privilege(current_user, current_database(), 'CREATE') AS has_database_create,
-    CASE WHEN EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'public')
-         THEN has_schema_privilege(current_user, 'public', 'CREATE')
-         ELSE false
-    END AS has_public_create,
-    EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto') AS pgcrypto_installed,
-    (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
-      WHERE e.extname = 'pgcrypto') AS pgcrypto_schema,
-    EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = '${EQL_V3_SCHEMA_NAME}') AS eql_v3_present,
-    EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = '${EQL_V3_INTERNAL_SCHEMA_NAME}') AS eql_v3_internal_present,
-    (SELECT pg_has_role(current_user, n.nspowner, 'MEMBER') FROM pg_namespace n
-      WHERE n.nspname = '${EQL_V3_SCHEMA_NAME}') AS can_drop_eql_v3,
-    (SELECT pg_has_role(current_user, n.nspowner, 'MEMBER') FROM pg_namespace n
-      WHERE n.nspname = '${EQL_V3_INTERNAL_SCHEMA_NAME}') AS can_drop_eql_v3_internal
-`
-
-/** The schemas the pinned bundle accepts `pgcrypto` in (its search_path). */
-export const SUPPORTED_PGCRYPTO_SCHEMAS = ['extensions', 'public']
-
-/**
- * Can this role create the ORE btree operator class? (#891)
- *
- * Asked of the server rather than inferred, because `rolsuper` is the wrong
- * question. `CREATE OPERATOR CLASS` is superuser-gated in stock PostgreSQL,
- * but managed platforms differ on whether their admin role clears that gate:
- * AWS RDS and Aurora do (with `rolsuper = f`), cloud-hosted Supabase does not.
- * Predicting from `rolsuper` would tell an RDS operator their ORE domains are
- * unavailable when they work — exactly the blanket claim about "managed
- * Postgres" this whole change exists to stop making.
- *
- * `CREATE OPERATOR FAMILY` shares the privilege gate with `CREATE OPERATOR
- * CLASS` and needs no member operators, so it is the cheapest statement that
- * tests it. The whole probe runs in a transaction that is always rolled back,
- * so preflight stays observably read-only.
- *
- * Returns `null` when the attempt could not answer the question — a read-only
- * replica (`25006`), a statement timeout, no `public` schema to create into.
- * Callers must render that as unknown, never as either answer.
- */
-async function probeOperatorClassCreate(
-  client: pg.ClientBase,
-): Promise<boolean | null> {
-  // A name no bundle uses, so a probe that somehow escaped its rollback is
-  // recognisable rather than mistaken for an EQL object.
-  const probeName = 'public.stash_preflight_opclass_probe'
-  try {
-    await client.query('BEGIN')
-  } catch {
-    return null
-  }
-  try {
-    await client.query(`CREATE OPERATOR FAMILY ${probeName} USING btree`)
-    return true
-  } catch (error) {
-    // 42501 insufficient_privilege is the gate itself — a real "no". Anything
-    // else (no CREATE on public, read-only transaction, timeout) is a probe
-    // that failed to ask the question.
-    const code =
-      typeof error === 'object' && error !== null && 'code' in error
-        ? String((error as { code?: unknown }).code)
-        : undefined
-    return code === '42501' ? false : null
-  } finally {
-    // Always: on the success path this is what keeps preflight read-only, and
-    // on the failure path it clears the aborted transaction. A rollback that
-    // itself fails leaves nothing behind — the connection is closed next.
-    await client.query('ROLLBACK').catch(() => {})
-  }
-}
-
 export class EQLInstaller {
   private readonly databaseUrl: string
 
@@ -233,103 +87,14 @@ export class EQLInstaller {
   }
 
   async preflight(): Promise<PreflightResult> {
-    const client = createPgClient(this.databaseUrl)
-    try {
-      await client.connect()
-    } catch (error) {
-      await client.end().catch(() => {})
-      // Already shaped centrally by createPgClient's connect wrapper — the
-      // message is self-contained; adding framing would bury the remedy.
-      if (error instanceof TlsVerificationError) throw error
-      const detail = error instanceof Error ? error.message : String(error)
-      throw new Error(`Failed to connect to database: ${detail}`, {
-        cause: error,
-      })
+    const installation = await assessEqlInstallation({
+      databaseUrl: this.databaseUrl,
+      includeCapabilities: true,
+    })
+    if (installation.capabilities.status !== 'assessed') {
+      throw new Error('Database capabilities were not assessed')
     }
-    try {
-      const result = await client.query(PREFLIGHT_SQL)
-      const row = result.rows[0] ?? {}
-      const isSuperuser = row.is_superuser === true
-      const hasDatabaseCreate = row.has_database_create === true
-      const pgcryptoInstalled = row.pgcrypto_installed === true
-      const pgcryptoSchema =
-        typeof row.pgcrypto_schema === 'string' ? row.pgcrypto_schema : null
-      const asBoolOrNull = (value: unknown) =>
-        typeof value === 'boolean' ? value : null
-      const canDropEqlV3Schema = asBoolOrNull(row.can_drop_eql_v3)
-      const canDropEqlV3InternalSchema = asBoolOrNull(
-        row.can_drop_eql_v3_internal,
-      )
-      const missing: string[] = []
-      if (!isSuperuser) {
-        if (!hasDatabaseCreate) {
-          missing.push(
-            'CREATE on database (required for CREATE SCHEMA and CREATE EXTENSION)',
-          )
-        }
-        if (row.has_public_create !== true) {
-          missing.push(
-            'CREATE on public schema (required for CREATE DOMAIN public.eql_v3_*)',
-          )
-        }
-        if (!pgcryptoInstalled && !hasDatabaseCreate) {
-          missing.push(
-            'SUPERUSER or extension owner (required for CREATE EXTENSION pgcrypto)',
-          )
-        }
-      }
-      // Not gated on superuser: the bundle itself raises for a pgcrypto
-      // outside its functions' search_path, whoever runs it.
-      if (
-        pgcryptoInstalled &&
-        pgcryptoSchema !== null &&
-        !SUPPORTED_PGCRYPTO_SCHEMAS.includes(pgcryptoSchema)
-      ) {
-        missing.push(
-          `pgcrypto relocated (it is in schema "${pgcryptoSchema}", which is not on the EQL search_path — the install aborts; fix with: ALTER EXTENSION pgcrypto SET SCHEMA extensions)`,
-        )
-      }
-      // pg_has_role is true for superusers and for the owner, so this only
-      // fires for a role that genuinely cannot run the bundle's opening
-      // DROP SCHEMA ... CASCADE against someone else's install.
-      if (
-        canDropEqlV3Schema === false ||
-        canDropEqlV3InternalSchema === false
-      ) {
-        missing.push(
-          'ownership of the existing EQL schemas (a reinstall begins with DROP SCHEMA eql_v3 / eql_v3_internal CASCADE, which needs the owner, a member of the owning role, or a superuser)',
-        )
-      }
-      // After the capability read, so a probe that somehow poisons the session
-      // cannot affect any of the answers above.
-      const canCreateOperatorClass = await probeOperatorClassCreate(client)
-      return {
-        currentUser: String(row.role_name ?? 'unknown'),
-        isSuperuser,
-        memberOfPostgres: asBoolOrNull(row.member_of_postgres),
-        hasDatabaseCreate,
-        hasPublicCreate: row.has_public_create === true,
-        pgcryptoInstalled,
-        pgcryptoSchema,
-        eqlV3SchemaPresent: row.eql_v3_present === true,
-        eqlV3InternalSchemaPresent: row.eql_v3_internal_present === true,
-        canDropEqlV3Schema,
-        canDropEqlV3InternalSchema,
-        canCreateOperatorClass,
-        missing,
-        // Deliberately not folded into `missing`: the bundle's ORE fallback
-        // means an install without the operator class is complete, not
-        // blocked.
-        ok: missing.length === 0,
-      }
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
-      throw new Error(`Database preflight query failed: ${detail}`, {
-        cause: error,
-      })
-    } finally {
-      await client.end()
-    }
+    return installation.capabilities.preflight
   }
 
   /**
@@ -349,18 +114,16 @@ export class EQLInstaller {
 
   /** Generation-aware read-only detection retained for legacy diagnostics. */
   async isInstalled(options?: { eqlVersion?: EqlVersion }): Promise<boolean> {
+    const generation = options?.eqlVersion ?? 3
     const client = createPgClient(this.databaseUrl)
-    const requiredSchemas =
-      (options?.eqlVersion ?? 3) === 3
-        ? [EQL_V3_SCHEMA_NAME, EQL_V3_INTERNAL_SCHEMA_NAME]
-        : [EQL_V2_SCHEMA_NAME]
     try {
       await client.connect()
-      const result = await client.query(
-        'SELECT count(*)::int AS found FROM information_schema.schemata WHERE schema_name = ANY($1)',
-        [requiredSchemas],
+      const result = await client.query<{ installed: boolean }>(
+        generation === 2
+          ? "SELECT to_regnamespace('eql_v2') IS NOT NULL AS installed"
+          : "SELECT to_regnamespace('eql_v3') IS NOT NULL AND to_regnamespace('eql_v3_internal') IS NOT NULL AS installed",
       )
-      return result.rows[0]?.found === requiredSchemas.length
+      return result.rows[0]?.installed === true
     } catch (error) {
       if (error instanceof TlsVerificationError) throw error
       const detail = error instanceof Error ? error.message : String(error)
@@ -376,29 +139,26 @@ export class EQLInstaller {
   async getInstalledVersion(options?: {
     eqlVersion?: EqlVersion
   }): Promise<string | null> {
-    const schemaName =
-      (options?.eqlVersion ?? 3) === 3 ? EQL_V3_SCHEMA_NAME : EQL_V2_SCHEMA_NAME
+    const generation = options?.eqlVersion ?? 3
     const client = createPgClient(this.databaseUrl)
     try {
       await client.connect()
-      const schemaResult = await client.query(
-        'SELECT schema_name FROM information_schema.schemata WHERE schema_name = $1',
+      const schemaName = `eql_v${generation}`
+      const schema = await client.query<{ installed: boolean }>(
+        'SELECT to_regnamespace($1) IS NOT NULL AS installed',
         [schemaName],
       )
-      if (schemaResult.rowCount === null || schemaResult.rowCount === 0) {
-        return null
-      }
+      if (schema.rows[0]?.installed !== true) return null
       try {
-        const versionResult = await client.query(
+        const result = await client.query<{ version: string }>(
           `SELECT ${schemaName}.version() AS version`,
         )
-        if (versionResult.rows[0]?.version) {
-          return String(versionResult.rows[0].version)
-        }
+        return result.rows[0]?.version
+          ? String(result.rows[0].version)
+          : 'unknown'
       } catch {
-        // Older installs may not expose version().
+        return 'unknown'
       }
-      return 'unknown'
     } catch (error) {
       if (error instanceof TlsVerificationError) throw error
       const detail = error instanceof Error ? error.message : String(error)
@@ -431,45 +191,38 @@ export class EQLInstaller {
     // was attempted and rolled back". It also keeps the digest message the
     // whole error, rather than a `detail` interpolated into the install
     // wrapper's transaction narration below.
-    const bundledSql = loadBundledEqlSql()
-    const client = createPgClient(this.databaseUrl)
+    const bundle = loadVerifiedEqlBundle()
     try {
-      await client.connect()
-    } catch (error) {
-      if (error instanceof TlsVerificationError) throw error
-      const detail = error instanceof Error ? error.message : String(error)
-      throw new Error(`Failed to connect to database: ${detail}`, {
-        cause: error,
+      await restoreDerivedSearchIndexesAroundEqlReplacement({
+        databaseUrl: this.databaseUrl,
+        bundledSql: bundle.sql,
       })
+    } catch (error) {
+      if (
+        error instanceof TlsVerificationError ||
+        error instanceof EqlLifecycleLockTimeoutError ||
+        error instanceof EqlReinstallConnectionError ||
+        error instanceof EqlReinstallRefusalError
+      ) {
+        throw error
+      }
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new Error(
+        `Failed to install EQL: ${detail}. Nothing was applied — the install runs in a transaction and was rolled back.`,
+        { cause: error },
+      )
     }
 
+    if (!options?.supabase) return { deferredGrantsSql: null }
+
     try {
-      try {
-        await client.query('BEGIN')
-        await client.query(bundledSql)
-        await client.query('COMMIT')
-      } catch (error) {
-        await client.query('ROLLBACK').catch(() => {})
-        const detail = error instanceof Error ? error.message : String(error)
-        throw new Error(
-          `Failed to install EQL: ${detail}. Nothing was applied — the install runs in a transaction and was rolled back.`,
-          { cause: error },
-        )
-      }
-
-      if (!options?.supabase) return { deferredGrantsSql: null }
-
-      try {
-        return await this.runSupabaseGrants(client)
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error)
-        throw new Error(
-          `EQL v3 is installed, but granting the Supabase roles failed: ${detail}. The install itself was NOT rolled back — re-run \`stash eql install --force\` (or plain \`stash eql install\`, which re-applies the grants on an already-installed database).`,
-          { cause: error },
-        )
-      }
-    } finally {
-      await client.end()
+      return await this.applySupabaseGrants()
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new Error(
+        `EQL v3 is installed, but granting the Supabase roles failed: ${detail}. The install itself was NOT rolled back — re-run \`stash eql install --force\` (or plain \`stash eql install\`, which re-applies the grants on an already-installed database).`,
+        { cause: error },
+      )
     }
   }
 
@@ -494,7 +247,11 @@ export class EQLInstaller {
       })
     }
     try {
-      return await this.runSupabaseGrants(client)
+      const outcome = await applySupabaseEqlAccess(client)
+      return {
+        deferredGrantsSql:
+          outcome.status === 'applied' ? null : outcome.deferredSql,
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`Failed to apply the Supabase role grants: ${detail}`, {
@@ -502,24 +259,6 @@ export class EQLInstaller {
       })
     } finally {
       await client.end()
-    }
-  }
-
-  /** The shared grants phase: full block for members, immediate half + deferred tail otherwise. */
-  private async runSupabaseGrants(client: pg.Client): Promise<InstallResult> {
-    const memberResult = await client.query(`
-      SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres')
-             THEN pg_has_role(current_user, 'postgres', 'MEMBER')
-      END AS member_of_postgres
-    `)
-    if (memberResult.rows[0]?.member_of_postgres === true) {
-      await client.query(SUPABASE_PERMISSIONS_SQL_V3)
-      return { deferredGrantsSql: null }
-    }
-    await client.query(SUPABASE_IMMEDIATE_GRANTS_SQL_V3)
-    return {
-      deferredGrantsSql:
-        DEFERRED_GRANTS_HEADER + SUPABASE_DEFAULT_PRIVILEGES_SQL_V3,
     }
   }
 }

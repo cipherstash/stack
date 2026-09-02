@@ -248,6 +248,12 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
+      '@cipherstash/eql-upgrade-baseline':
+        specifier: npm:@cipherstash/eql@3.0.2
+        version: '@cipherstash/eql@3.0.2'
+      '@cipherstash/protect-ffi':
+        specifier: workspace:*
+        version: link:../protect-ffi
       '@cipherstash/stack':
         specifier: workspace:*
         version: link:../stack
@@ -1037,6 +1043,9 @@ packages:
         optional: true
       '@cipherstash/auth-win32-x64-msvc':
         optional: true
+
+  '@cipherstash/eql@3.0.2':
+    resolution: {integrity: sha512-E85o0aoOqgCW6RReLtJ0YLh/ExRlmDJo7LlJGpWPoMTVaw+CW8o11DJ4oJIF1vFtuxSVxNULuPzzBuVmpTvvcA==}
 
   '@clack/core@1.4.3':
     resolution: {integrity: sha512-/kr3UWNtdJfxZtPgDqUOmG2pvwlmcLGheex5yiZKdwbzZJxhV+HMNR9QNmyY5cGwTNV6LrR7Jtp+KjhUAP1qBQ==}
@@ -3989,6 +3998,8 @@ snapshots:
       '@cipherstash/auth-linux-x64-gnu': 0.44.0
       '@cipherstash/auth-linux-x64-musl': 0.44.0
       '@cipherstash/auth-win32-x64-msvc': 0.44.0
+
+  '@cipherstash/eql@3.0.2': {}
 
   '@clack/core@1.4.3':
     dependencies:

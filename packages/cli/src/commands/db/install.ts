@@ -1,11 +1,14 @@
 import { installMigrationsSchema } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
+import { CliExit } from '@/cli/exit.js'
 import { resolveDatabaseUrl } from '@/config/database-url.js'
 import { findConfigFile, loadStashConfig } from '@/config/index.js'
 import { createPgClient } from '@/db/client.js'
+import { EqlReinstallRefusalError } from '@/installer/derived-search-index-restoration.js'
 import { EQLInstaller } from '@/installer/index.js'
+import { assessEqlInstallation } from '@/installer/installation-state.js'
 import { describeOreState } from '@/installer/ore.js'
-import { type VerifyReport, verifyEqlSurface } from '@/installer/verify.js'
+import type { VerifyReport } from '@/installer/verify.js'
 import { messages } from '@/messages.js'
 import { detectPackageManager, runnerCommand } from '../init/utils.js'
 import { ensureEncryptionClient } from './client-scaffold.js'
@@ -141,7 +144,14 @@ export async function installCommand(
 
   const installer = new EQLInstaller({ databaseUrl })
   s.start('Checking database permissions...')
-  const permissions = await installer.preflight()
+  const installation = await assessEqlInstallation({
+    databaseUrl,
+    includeCapabilities: true,
+  })
+  if (installation.capabilities.status !== 'assessed') {
+    throw new Error('Database capabilities were not assessed')
+  }
+  const permissions = installation.capabilities.preflight
   if (!permissions.ok) {
     s.stop('Insufficient database permissions.')
     p.log.error('The connected database role is missing required permissions:')
@@ -163,7 +173,7 @@ export async function installCommand(
 
   if (!options.force) {
     s.start('Checking if EQL is already installed...')
-    const installed = await installer.isInstalled()
+    const installed = installation.v3.status === 'installed'
     s.stop(installed ? 'EQL is already installed.' : 'EQL is not installed.')
     if (installed) {
       // Re-apply the grants even when the bundle is present: since the bundle
@@ -192,7 +202,18 @@ export async function installCommand(
   }
 
   s.start('Installing EQL v3 extensions (pinned bundle)...')
-  const installResult = await installer.install({ supabase })
+  let installResult: Awaited<ReturnType<EQLInstaller['install']>>
+  try {
+    installResult = await installer.install({ supabase })
+  } catch (error) {
+    s.stop('EQL installation failed.')
+    if (error instanceof EqlReinstallRefusalError) {
+      p.log.error(error.message)
+      p.outro('Installation aborted.')
+      throw new CliExit(1)
+    }
+    throw error
+  }
   s.stop('EQL extensions installed.')
   if (supabase) reportSupabaseGrantsOutcome(installResult)
 
@@ -243,7 +264,14 @@ export async function verifySurfaceOrExit(
   s.start('Verifying the installed EQL surface...')
   let report: VerifyReport
   try {
-    report = await verifyEqlSurface(databaseUrl)
+    const installation = await assessEqlInstallation({
+      databaseUrl,
+      depth: 'exhaustive',
+    })
+    if (installation.surface.status === 'not-requested') {
+      throw new Error('Exhaustive EQL assessment returned no surface result')
+    }
+    report = installation.surface.report
   } catch (err) {
     s.stop('Could not verify the installed EQL surface.')
     p.log.warn(
