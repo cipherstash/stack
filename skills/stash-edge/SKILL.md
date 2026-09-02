@@ -433,10 +433,16 @@ longer: every entry now resolves one declaration of the column classes, so
 either import works and both examples below are correct.
 
 ```ts
-// The engine is WASM either way. The schema's declaration site no longer matters.
+// Both of these compile. The engine is WASM either way.
 import { encryptedSupabase } from '@cipherstash/stack-supabase/wasm-inline'
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
-// …or from '@cipherstash/stack/wasm-inline' — same classes, same result.
+```
+
+```ts
+// The same, authored from the edge entry — useful when this module is also
+// imported by the Edge Function, so one table definition serves both sides.
+import { encryptedSupabase } from '@cipherstash/stack-supabase/wasm-inline'
+import { encryptedTable, types } from '@cipherstash/stack/wasm-inline'
 ```
 
 On a version predating that fix the old rule still applies: author from

@@ -55,6 +55,22 @@ const wasmUsers = wasmEncryptedTable('users', {
  * The assertion. Every first-party adapter types its `schemas` option in terms
  * of `AnyV3Table`, so a wasm-inline-authored table that is not assignable here
  * cannot be passed to `encryptedSupabase`, the Drizzle helpers, or Prisma Next.
+ *
+ * `@cipherstash/stack-supabase` is the concrete case, and this line is what
+ * replaced a text-level guard over it. `V3Schemas = Record<string, AnyV3Table>`
+ * (`packages/stack-supabase/src/schema-builder.ts:7`) imports `AnyV3Table` from
+ * `@cipherstash/stack/eql/v3` — the same declaration resolved here — so pinning
+ * assignability to it pins the adapter pairing too, without this package taking
+ * a build-graph dependency on one that depends on it.
+ *
+ * `scripts/__tests__/skills-supabase-edge-schema-entry.test.mjs` used to grep
+ * shipped docs for a snippet pairing `encryptedSupabase` from the adapter's
+ * wasm-inline entry with `encryptedTable`/`types` from
+ * `@cipherstash/stack/wasm-inline`, on the grounds that it did not compile. It
+ * compiles now, and that is the point of this file — so the guard was deleted
+ * rather than reworded. A guard asserting a false claim is worse than no guard:
+ * it would have blocked the first person to write the example the `stash-edge`
+ * skill now recommends, citing a compiler error that no longer happens.
  */
 export const wasmTableIsAV3Table: AnyV3Table = wasmUsers
 
