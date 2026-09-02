@@ -522,8 +522,10 @@ for (const item of decrypted.data) {
 > [!IMPORTANT]
 > The `client` below is a **different client** from the one used everywhere else in this skill. The edge entry has its own `Encryption` factory — the native `Encryption` client's `bulkEncrypt` takes `(plaintexts, { table, column })` and will fail at runtime if given the per-item shape below. Construct the WASM client explicitly:
 
-> [!IMPORTANT]
-> **The schema is not shareable between entries either.** Note that `encryptedTable` and `types` are imported *from the WASM entry* below, not from `@cipherstash/stack/eql/v3`. The entries ship independent type bundles whose column classes carry private fields, so TypeScript compares them **nominally**: a schema authored on one entry is rejected by the other's client, in both directions (`Types have separate declarations of a private property 'columnName'`). It works at runtime, which makes `as any` the tempting fix — don't. Author the shared schema module against exactly one entry and build that entry's client from it. See the `stash-edge` skill.
+> [!NOTE]
+> **The schema, unlike the client, IS shareable between entries.** `encryptedTable` and `types` are imported from the WASM entry below only because this example's own runtime is the edge; a table authored from `@cipherstash/stack/eql/v3` or `@cipherstash/stack/v3` works here just as well, and in the other direction too. One `schema.ts` can serve a Node server and an Edge Function.
+>
+> On older `@cipherstash/stack` versions it could not: the entries shipped separately-emitted declarations of the column classes, which carry private fields, so TypeScript compared them **nominally** and each entry rejected the other's schema (`Types have separate declarations of a private property 'columnName'`). It always worked at runtime, which made `as any` the tempting fix — if you hit that diagnostic, upgrade rather than assert. See the `stash-edge` skill.
 
 ```typescript
 // Deno / Workers / Supabase Edge Functions — note the import path

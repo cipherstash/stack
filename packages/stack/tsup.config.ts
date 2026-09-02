@@ -5,24 +5,51 @@ import { defineConfig } from 'tsup'
 // otherwise wipe another config's output. The pre-tsup `rimraf dist`
 // in `package.json`'s build script clears the dir once before any
 // starts.
+
+// The dual-format entries. Named so the `dts` list below can be derived from it
+// rather than repeated — a second hand-maintained copy would silently drop the
+// types for any subpath added to one list and not the other.
+const mainEntry = [
+  'src/index.ts',
+  'src/types-public.ts',
+  'src/identity/index.ts',
+  'src/schema/index.ts',
+  'src/eql/v3/index.ts',
+  'src/dynamodb/index.ts',
+  'src/encryption/index.ts',
+  'src/encryption/v3.ts',
+  'src/errors/index.ts',
+  'src/adapter-kit.ts',
+]
+
 export default defineConfig([
   // Main entries — dual ESM + CJS bundles.
   {
-    entry: [
-      'src/index.ts',
-      'src/types-public.ts',
-      'src/identity/index.ts',
-      'src/schema/index.ts',
-      'src/eql/v3/index.ts',
-      'src/dynamodb/index.ts',
-      'src/encryption/index.ts',
-      'src/encryption/v3.ts',
-      'src/errors/index.ts',
-      'src/adapter-kit.ts',
-    ],
+    entry: mainEntry,
     format: ['cjs', 'esm'],
     sourcemap: true,
-    dts: true,
+    // `wasm-inline` is listed here for TYPES ONLY — its JS is emitted by the
+    // ESM-only config below, which sets `dts: false`. The two configs are
+    // separate rollup runs, so a `dts` built down there gets its own inlined
+    // copy of every column class, and `EncryptedV3Column` carries `private`
+    // members, which TypeScript compares by declaration origin rather than
+    // structurally. Two copies meant a table authored from
+    // `@cipherstash/stack/wasm-inline` was a COMPILE error against every
+    // first-party adapter's `schemas` ("Types have separate declarations of a
+    // private property 'columnName'"), even though the runtime accepted it.
+    // Emitting these types here shares the `types-public-*.d.ts` chunk with
+    // `./eql/v3` and `./adapter-kit`, so every entry yields one declaration.
+    // This is the type-level half of the same two-copies-of-a-class hazard
+    // `isV3ColumnLike` fixed at runtime; `dist-types/wasm-inline-type-identity.ts`
+    // and `dist-types/node16/wasm-inline.mts` hold it in place.
+    //
+    // Side effect: this config is dual-format, so the wasm-inline entry now also
+    // gets a `dist/wasm-inline.d.cts`. Nothing resolves it — `./wasm-inline` has
+    // no `require` branch in `exports` and there is no `wasm-inline.cjs` for it
+    // to describe. It is unreferenced ballast in the tarball, accepted because
+    // tsup cannot scope a `dts` entry to one format, and one shared declaration
+    // is worth more than the bytes.
+    dts: { entry: [...mainEntry, 'src/wasm-inline.ts'] },
     clean: false,
     target: 'es2022',
     tsconfig: './tsconfig.json',
@@ -44,7 +71,11 @@ export default defineConfig([
     entry: { 'wasm-inline': 'src/wasm-inline.ts' },
     format: ['esm'],
     sourcemap: true,
-    dts: { entry: { 'wasm-inline': 'src/wasm-inline.ts' } },
+    // Types come from the main config above so they share its chunks — see the
+    // comment there. Emitting them here as well would restore the second copy
+    // of every column class and re-break the `wasm-inline` authoring path for
+    // TypeScript consumers. JS emission stays here: only types moved.
+    dts: false,
     clean: false,
     target: 'es2022',
     tsconfig: './tsconfig.json',

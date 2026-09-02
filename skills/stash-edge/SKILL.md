@@ -1,6 +1,6 @@
 ---
 name: stash-edge
-description: Run CipherStash encryption on edge and non-Node runtimes with the `@cipherstash/stack/wasm-inline` entry — Deno, Supabase Edge Functions, Cloudflare Workers, and Bun. Covers the import specifier per runtime, which `CS_*` variables are mandatory and minting them with `stash env`, how keysets and credentials interact on the edge (what must match is the keyset — `stash-zerokms` is canonical), how the WASM client surface differs from the native typed client, why the entry is server-side only and never belongs in a browser bundle, and why an EQL v3 schema module cannot be shared across the two entries. Use when adding encryption to a Supabase Edge Function, a Worker, or a Deno service; when a native module fails to load in a deployed runtime; when wiring `CS_*` secrets into an edge deploy; or when encrypted search returns zero rows on the edge but works locally.
+description: Run CipherStash encryption on edge and non-Node runtimes with the `@cipherstash/stack/wasm-inline` entry — Deno, Supabase Edge Functions, Cloudflare Workers, and Bun. Covers the import specifier per runtime, which `CS_*` variables are mandatory and minting them with `stash env`, how keysets and credentials interact on the edge (what must match is the keyset — `stash-zerokms` is canonical), how the WASM client surface differs from the native typed client, why the entry is server-side only and never belongs in a browser bundle, and how one EQL v3 schema module is shared across both entries. Use when adding encryption to a Supabase Edge Function, a Worker, or a Deno service; when a native module fails to load in a deployed runtime; when wiring `CS_*` secrets into an edge deploy; or when encrypted search returns zero rows on the edge but works locally.
 ---
 
 # Encryption on the Edge (WASM entry)
@@ -46,11 +46,11 @@ together.
 `@cipherstash/stack-supabase/wasm-inline` (not the package root, which pulls
 the native engine) and **declare your `schemas`** — the adapter's default
 behaviour is to introspect the database for its column config, which needs a
-Postgres connection. Declaring skips it. Those `schemas` are authored from
-`@cipherstash/stack/eql/v3`, not from `@cipherstash/stack/wasm-inline` — the
-one place the "use the edge entry for everything" reflex is wrong, and it
-fails at `tsc`, not at runtime. See "Schema Modules Do Not Cross Entries"
-below, plus `stash-supabase` and `stash-managed-platforms`.
+Postgres connection. Declaring skips it. Those `schemas` can be authored from
+either `@cipherstash/stack/eql/v3` or `@cipherstash/stack/wasm-inline` — both
+entries resolve one declaration of the column classes, so the tables are
+interchangeable. See "Schema Modules Cross Entries" below, plus
+`stash-supabase` and `stash-managed-platforms`.
 
 **`@cipherstash/protect` is not one of the options.** It is the deprecated
 predecessor of `@cipherstash/stack`; its native `@cipherstash/protect-ffi`
@@ -261,7 +261,7 @@ Available: `encrypt`, `decrypt`, `isEncrypted`, `encryptQuery`,
 | | Native (`@cipherstash/stack`) | WASM (`@cipherstash/stack/wasm-inline`) |
 |---|---|---|
 | Factory | `Encryption({ schemas })` | `Encryption({ schemas, config })` — same name, different module |
-| Schema authoring | `encryptedTable` / `types` from `@cipherstash/stack/v3` | the entry's own re-exports (see below) |
+| Schema authoring | `encryptedTable` / `types` from `@cipherstash/stack/v3` | the entry's own re-exports — interchangeable with the native ones (see below) |
 | Config | discovered from env / `~/.cipherstash` | passed explicitly — `clientId` + `clientKey`, then either `workspaceCrn` + `accessKey` or a pre-built `authStrategy` (see below) |
 | Typing | signatures derived from the schema | schema-aware, but not the full typed client |
 | `.audit()` | chainable on operations | **not available** |
@@ -378,33 +378,15 @@ if (rows.failure) throw new Error(rows.failure.message)
 ```
 
 A wrapper written against the native signature will therefore compile against
-one entry and break on the other — one more reason to author against exactly
-one entry (see below).
+one entry and break on the other. This is a *client*-surface difference — the
+schema module itself is shareable (see below); wrapper code is not.
 
-## Schema Modules Do Not Cross Entries
+## Schema Modules Cross Entries
 
-A schema authored with `@cipherstash/stack/v3` **will not typecheck**
-against the WASM entry's `Encryption`, and the reverse fails too:
-
-```text
-Type 'EncryptedTextSearchColumn' is not assignable to type 'AnyEncryptedV3Column'.
-  Types have separate declarations of a private property 'columnName'.
-```
-
-The two entries ship independent type bundles, and the column classes carry
-private fields — which TypeScript compares **nominally**. The declarations are
-identical in shape but not the same declaration, so assignment is rejected in
-both directions.
-
-It works fine at runtime, which is the trap: the tempting fix is
-`as never` / `as any` on the schema, which silences a real signal and will
-keep silencing it after a genuine schema mismatch appears.
-
-**Author the schema module against the entry whose CLIENT TYPE consumes it.**
-Not "the entry your runtime uses" — the WASM engine is not what decides this,
-the type of the thing you hand the schema to is. For a project that builds a
-raw `Encryption` client from `@cipherstash/stack/wasm-inline`, that entry is
-also where `encryptedTable` and `types` come from:
+**One schema module serves both entries.** A table authored with
+`encryptedTable`/`types` from `@cipherstash/stack/v3` builds the WASM entry's
+`Encryption`, and one authored from `@cipherstash/stack/wasm-inline` builds the
+native `Encryption` — same types, same runtime, both directions:
 
 ```ts
 // schema.ts — the single source of truth for this project's schema
@@ -416,35 +398,56 @@ export const users = encryptedTable('users', {
 })
 ```
 
-Node-side code that imports this module must then also build its client from
-`@cipherstash/stack/wasm-inline` (which runs on Node perfectly well, just with
-the WASM engine rather than the native one) and must be ESM.
+Author it against whichever entry the schema module's own runtime needs — the
+wasm-inline entry if that module is itself imported by the Edge Function — and
+pass the result to either client.
 
-If a project genuinely needs the native client on the server *and* the WASM
-client on the edge, keep two schema modules and treat their agreement as
-something to test, not something the type system will enforce for you. Column
-names and domains must match exactly — they are what the database and the
-stored payload's `i` identifier are keyed by.
+> **On older `@cipherstash/stack` versions this did not typecheck.** The two
+> entries shipped separately-emitted declarations of the column classes, and
+> those classes carry `private` fields, which TypeScript compares **nominally** —
+> so each entry rejected the other's schema in both directions:
+>
+> ```text
+> Type 'EncryptedTextSearchColumn' is not assignable to type 'AnyEncryptedV3Column'.
+>   Types have separate declarations of a private property 'columnName'.
+> ```
+>
+> The runtime was never affected, which was the trap: `as never` / `as any` on
+> the schema looked like the fix while silencing a signal that would matter after
+> a genuine schema mismatch. If you see this diagnostic, upgrade rather than
+> assert — or, on a version you cannot move off, author the schema module against
+> exactly one entry and build only that entry's client from it.
 
-### The exception: `@cipherstash/stack-supabase/wasm-inline`
+What still does **not** cross is the *client* surface: the two entries' clients
+differ in the ways listed above (the `bulkDecryptModels` signature, config
+shape). A helper written against one client's signatures will not compile against
+the other, so keep wrapper code entry-specific even though the schema is shared.
+
+### `@cipherstash/stack-supabase/wasm-inline`
 
 The Supabase adapter's edge entry runs the WASM engine but types its `schemas`
-option from `@cipherstash/stack/eql/v3` — the same declaration its native
-entry uses. So a Supabase edge project authors its schema module from
-`eql/v3`, **not** from `@cipherstash/stack/wasm-inline`:
+option from `@cipherstash/stack/eql/v3`. That used to make it a special case —
+authoring the schema from `@cipherstash/stack/wasm-inline` was rejected there,
+reported one level up as `schemas` not assignable to `AnyV3Table`. It is no
+longer: every entry now resolves one declaration of the column classes, so
+either import works and both examples below are correct.
 
 ```ts
-// The engine is still WASM. Only the schema's declaration site differs.
+// Both of these compile. The engine is WASM either way.
 import { encryptedSupabase } from '@cipherstash/stack-supabase/wasm-inline'
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
 ```
 
-Get this one backwards and you hit the same nominal-private-field rejection,
-reported one level up — `schemas` not assignable to `AnyV3Table`, because the
-column classes inside it carry a private `columnName` from the other entry's
-declarations. Which way round it goes is a property of the client type, so
-check what consumes the schema before you pick the import. `stash-supabase`
-and `stash-managed-platforms` carry the full edge call shape.
+```ts
+// The same, authored from the edge entry — useful when this module is also
+// imported by the Edge Function, so one table definition serves both sides.
+import { encryptedSupabase } from '@cipherstash/stack-supabase/wasm-inline'
+import { encryptedTable, types } from '@cipherstash/stack/wasm-inline'
+```
+
+On a version predating that fix the old rule still applies: author from
+`eql/v3` for this adapter. `stash-supabase` and `stash-managed-platforms`
+carry the full edge call shape.
 
 ## Querying from the Edge
 

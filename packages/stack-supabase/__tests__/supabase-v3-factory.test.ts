@@ -123,7 +123,15 @@ describe('encryptedSupabaseV3 factory', () => {
         databaseUrl: 'postgres://x',
         schemas: { users },
       }),
-    ).rejects.toThrow(/text_eq|text_search/)
+      // Pin the domain-mismatch message from `verify.ts`, not just the domain
+      // names. `assertTableIsModelled` runs FIRST (`index.ts`, the same loop that
+      // then calls `verifyDeclaredSchemas`) and its message interpolates
+      // `public.${domainName}` too, so `/text_eq|text_search/` stayed green
+      // whichever of the two fired — exactly the prefix-only weakness pinned
+      // down in `supabase-schema-builder.test.ts`.
+    ).rejects.toThrow(
+      /\[supabase v3\]: column "users\.email" has domain "eql_v3_text_search" but the schema declares "eql_v3_text_eq"/,
+    )
     // ...and Encryption must never be reached.
     expect(encryptionMock).not.toHaveBeenCalled()
   })

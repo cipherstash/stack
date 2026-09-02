@@ -246,13 +246,16 @@ describe('groupUnmodelledRows', () => {
 })
 
 describe('ColumnMap recognises v3 columns structurally, not by class identity', () => {
-  // tsup emits `EncryptedV3Column` TWICE — once into the chunk
-  // `dist/adapter-kit.js` imports, once inline in `dist/wasm-inline.js` (a
-  // separate esbuild run). A table authored from `@cipherstash/stack/wasm-inline`
-  // therefore failed `builder instanceof EncryptedV3Column` for EVERY column,
-  // leaving `v3Columns` empty — so the filter collector skipped every term and
-  // the RAW PLAINTEXT operand went into the PostgREST query string, while
-  // `::jsonb` casts and decryption kept working.
+  // tsup emits `EncryptedV3Column` into several bundles: ESM code-splits, so
+  // `dist/adapter-kit.js` and `dist/eql/v3/index.js` share one chunk but
+  // `dist/wasm-inline.js` (a separate esbuild run) does not; and CJS does not
+  // split at all, so `adapter-kit.cjs`, `eql/v3/index.cjs` and
+  // `encryption/v3.cjs` each define their own. Whenever the adapter and the
+  // schema resolved different copies — every CJS consumer, and ESM consumers
+  // authoring from wasm-inline — `builder instanceof EncryptedV3Column` failed
+  // for EVERY column, leaving `v3Columns` empty. The filter collector then
+  // skipped every term and the RAW PLAINTEXT operand went into the PostgREST
+  // query string, while `::jsonb` casts and decryption kept working.
   //
   // These two assert the MECHANISM (`v3Columns` is populated / not
   // over-populated). The HARM — what PostgREST actually receives — is asserted
@@ -286,8 +289,8 @@ describe('ColumnMap recognises v3 columns structurally, not by class identity', 
       build: () => ({ tableName: 'users', columns: {} }),
     }
 
-    // Pin the SPECIFIC message, not just the `[supabase v3]` prefix: 32 errors
-    // across this package share that prefix, two of them thrown by `ColumnMap`
+    // Pin the SPECIFIC message, not just the `[supabase v3]` prefix: 40 errors
+    // across this package share that prefix, three of them thrown by `ColumnMap`
     // itself. A prefix-only matcher stays green whenever a DIFFERENT one of
     // those fires first — measured: with `assertNoPropertyDbNameCollision`
     // throwing unconditionally, so the fail-closed probe below is never
