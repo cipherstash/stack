@@ -1,0 +1,14 @@
+# Fuzz stack-kms's public client-key material decoder
+# (`ClientKey::from_encoded_v1`, hex or base64 then CBOR keyset decoding), via
+# libFuzzer/cargo-fuzz. Requires the nightly toolchain. Runs 60s by default;
+# override by appending a libFuzzer flag, e.g.
+# `mise run fuzz:client-key -- -max_total_time=300` (the last repeated value
+# wins). `--sanitizer none` is safe — the decode path is pure safe Rust.
+# `--target $(rustc … host)` forces the native host triple (the cargo-fuzz
+# binary may be x86_64 under Rosetta on Apple Silicon, which otherwise
+# misdetects the target). The fuzz crate lives in `packages/stack-kms/fuzz/`
+# (detached).
+["fuzz:client-key"]
+description = "Fuzz stack-kms's client-key material decoder (libFuzzer, nightly, 60s default)"
+dir = "{{config_root}}/packages/stack-kms"
+run = "cargo +nightly fuzz run client_key_encoded --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"

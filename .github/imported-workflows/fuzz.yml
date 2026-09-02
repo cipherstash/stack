@@ -20,6 +20,7 @@ on:
     paths:
       - packages/cts-common/**
       - packages/stack-auth/**
+      - packages/stack-kms/**
       - .github/workflows/fuzz.yml
       # Ordering matters: keep these excludes last so docs-only changes are skipped.
       - "!**.md"
@@ -59,6 +60,7 @@ jobs:
           - { task: "fuzz:region", slug: region }
           - { task: "fuzz:access-key", slug: access-key }
           - { task: "fuzz:jwt-decode", slug: jwt-decode }
+          - { task: "fuzz:client-key", slug: client-key }
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-rust
@@ -83,6 +85,7 @@ jobs:
           - { task: "fuzz:region",       slug: region,       dir: packages/cts-common, target: region_parse }
           - { task: "fuzz:access-key",   slug: access-key,   dir: packages/stack-auth, target: access_key_parse }
           - { task: "fuzz:jwt-decode",   slug: jwt-decode,   dir: packages/stack-auth, target: jwt_decode }
+          - { task: "fuzz:client-key",   slug: client-key,   dir: packages/stack-kms,  target: client_key_encoded }
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-rust

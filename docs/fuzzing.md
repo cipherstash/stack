@@ -26,6 +26,7 @@ Current targets:
 | `fuzz:region`        | `cts-common`  | `region_parse`        | `Region`                                      |
 | `fuzz:access-key`    | `stack-auth`  | `access_key_parse`    | `AccessKey` (`CSAK<key_id>.<key_secret>`)     |
 | `fuzz:jwt-decode`    | `stack-auth`  | `jwt_decode`          | JWT claims (`Token::fuzz_decode_claims`)      |
+| `fuzz:client-key`    | `stack-kms`   | `client_key_encoded`  | `ClientKey::from_encoded_v1` (hex or base64)  |
 
 Each target is a few lines — `libfuzzer-sys` hands a `&str` to the
 parser via the `arbitrary` crate:
@@ -62,6 +63,7 @@ packages/cts-common/fuzz/
   fuzz_targets/*.rs          # one file per target binary
   corpus/<target>/*          # committed seed inputs (valid examples)
 packages/stack-auth/fuzz/
+packages/stack-kms/fuzz/
   …
 ```
 
@@ -122,8 +124,9 @@ Two jobs with deliberately different roles:
   to stay small, and any crash reproducer is uploaded as an artifact.
 
 The `pull_request` trigger is path-filtered to `packages/cts-common/**`,
-`packages/stack-auth/**`, and the workflow file, with `!**.md` /
-`!**.example` excludes last so docs-only changes are skipped.
+`packages/stack-auth/**`, `packages/stack-kms/**`, and the workflow file,
+with `!**.md` / `!**.example` excludes last so docs-only changes are
+skipped.
 
 ## Adding a new target
 

@@ -1,0 +1,35 @@
+# Fuzz crate for stack-kms's public client-key material decoder.
+#
+# This is a DETACHED crate: the `[workspace]` table at the bottom makes it its
+# own workspace root so the libfuzzer-sys dependency and the nightly-only build
+# never touch the main monorepo workspace. It is not a member of the root
+# workspace (see the root Cargo.toml `members` list). Run via the `fuzz:*`
+# mise tasks, which invoke `cargo +nightly fuzz run`.
+[package]
+name = "stack-kms-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+uuid = "1.8"
+
+[dependencies.stack-kms]
+path = ".."
+# The decoder needs neither the HTTP transport nor the on-disk profile, and
+# dropping them keeps reqwest and its TLS stack out of the fuzz build.
+default-features = false
+
+[[bin]]
+name = "client_key_encoded"
+path = "fuzz_targets/client_key_encoded.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+resolver = "2"
