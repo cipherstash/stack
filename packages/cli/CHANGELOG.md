@@ -1,5 +1,391 @@
 # stash
 
+## 1.2.0
+
+### Minor Changes
+
+- f7488e9: Preserve encrypted data and reconstruct functional indexes when reinstalling EQL v3, while refusing unsupported external dependencies before mutation.
+
+  `stash eql install` and `stash eql upgrade` now capture dependent functional
+  indexes before replacing the disposable EQL schemas, then restore and verify
+  their definitions, clustering, replica-identity role, comments, explicit
+  statistics targets, and health in the same transaction. A
+  reconstruction failure rolls the replacement back.
+  PostgreSQL derives index ownership from the table owner, so reinstall verifies
+  the resulting owner and rolls back on a mismatch rather than independently
+  restoring ownership.
+  Unsupported dependencies—including views, policies, constraints, and
+  partitioned indexes—are named and refused before mutation.
+
+  Reinstall remains a maintenance-window operation: its advisory lock serializes
+  `stash` lifecycle commands, not unrelated database DDL. Generated EQL migrations
+  contain the raw bundle and do not include these reinstall protections.
+
+- b04ea2f: Surface CipherStash token-service refusals as typed diagnostics.
+
+  `@cipherstash/stack` operation and initialization failures now carry
+  `authCode`, `help`, and `url` from stack-auth. The message remains stack-auth's
+  original diagnostic message; Stack does not copy or rewrite its instructions.
+  Callers can branch on `USAGE_LIMIT_EXCEEDED` or `ORG_NOT_PROVISIONED`, render
+  `help`, and link to `url`.
+
+  `LockContext.identify()` also recognizes those two codes on a genuine CTS
+  `402`, while declining malformed or unknown responses. Legacy valid JSON
+  responses without `cs_code` retain the historical usage-limit classification.
+
+  `stash auth login` and `stash env` now consume `@cipherstash/auth` 0.44.0's
+  typed failures. They print the upstream diagnostic guidance, preserve its URL,
+  avoid suggesting another login for terminal account refusals, and expose
+  terminal codes on the JSON stream. The JSON error envelope gains an optional
+  `hint` for the upstream guidance.
+
+### Patch Changes
+
+- 801868d: Verify the EQL install SQL against its release digest before running it.
+
+  `stash eql install` reads the EQL v3 bundle from the resolved
+  `@cipherstash/eql` in your `node_modules` and executes it against your
+  database. That read was a bare `readFileSync` — nothing checked that the bytes
+  on disk were the bundle the resolved release actually ships. A corrupt,
+  partially-updated, or tampered package installed silently: the database ended
+  up carrying SQL the version it reports does not define, and the CLI printed
+  "EQL extensions installed."
+
+  The CLI now hashes the bundle and compares it to `installSqlSha256` from the
+  release manifest that ships alongside it, and **refuses** on a mismatch. The
+  error names the expected digest, the actual digest, the resolved file path and
+  the EQL version, so the remedy is visible rather than inferred. Verification
+  happens before any database connection is opened, so a refusal means nothing
+  was attempted — not that something was rolled back.
+
+  The check covers all three paths that read the bundle: `stash eql install`,
+  the SQL embedded by `stash eql migration --drizzle` / `--supabase`, and the
+  expected-surface baseline `stash eql verify` compares your database against.
+  `@cipherstash/stack-prisma` has verified against this same digest since its v3
+  migrations landed; this brings the CLI in line.
+
+  No healthy install is affected — the SQL and its manifest are produced by the
+  same build of `@cipherstash/eql`, so a mismatch only ever means a broken
+  dependency tree.
+
+  `skills/stash-cli` documents the new pre-flight alongside the existing
+  post-install surface check, so an agent reading it does not report a digest
+  refusal as a failed install.
+
+- ac46a5a: `stash doctor` no longer reports "All checks passed." when `@cipherstash/stack`
+  is absent. The package is an optional peer, so running `doctor` before `stash
+init` skips the encryption check entirely — the row already said so, but the
+  outro claimed a pass for a check that never ran. It now ends with "stash doctor
+  could not run every check.", the same line an unprobeable install gets, and
+  still exits 0: an absent optional package is recoverable, not a failure.
+- 4422d5c: Pin the packed `@cipherstash/eql` dependency to an exact version, closing a
+  route by which an installed EQL bundle could drift ahead of the code built
+  against it.
+
+  Both packages declared `"@cipherstash/eql": "workspace:^"` under
+  `dependencies`. In this workspace that resolves in-tree either way, so nothing
+  in development or CI could see a difference — but the two specifiers do not
+  pack the same. pnpm rewrites the protocol when it builds the tarball a customer
+  actually installs:
+
+      "workspace:^"  packs as  "^3.0.5"
+      "workspace:*"  packs as  "3.0.5"
+
+  The caret is the problem. `@cipherstash/eql` is still published from
+  `cipherstash/encrypt-query-language` until the publisher repoint, so a 3.0.x can
+  reach npm without passing through this repository at all — and `^3.0.5` accepts
+  it. A customer installing `stash` or `@cipherstash/stack-prisma` would then get
+  SQL that STORES and queries encrypted payloads at one version, while
+  `@cipherstash/stack`'s v3 domain types (which EMIT those payloads) and
+  `stack-prisma`'s baked migrations stayed frozen at the version this repo built
+  and tested against. The two halves of EQL are released in lockstep precisely
+  because that skew does not fail at install or in CI — it fails in a database.
+
+  `workspace:*` is the only form that closes it. A literal `"3.0.5"` would be an
+  exact pin too, but it is a registry pin: `pnpm run lint:eql-pins` rejects it,
+  because resolving EQL from a registry rather than from this repo is the same
+  drift one layer up.
+
+  No API, behaviour or SQL changes. What changes is the dependency range in the
+  published tarballs, and only in the narrowing direction — the version resolved
+  today is the version that was already being resolved. Nothing needs to be done
+  on upgrade.
+
+  `@cipherstash/stack` declares the same dependency under `devDependencies` and
+  is deliberately left alone: pnpm rewrites that range too, but no consumer of the
+  package ever resolves it.
+
+- ad033df: `skills/stash-prisma` now documents the re-plan step that follows an
+  `@cipherstash/stack-prisma` upgrade: `rm -rf migrations/cipherstash && npx
+prisma-next migration plan`, why only `migration plan` vendors new migration
+  packages, and the exact `db init` refusal a stale vendored directory produces on
+  a fresh database (`Operation cipherstash.upgrade-eql-v3-bundle-3.0.5 has class
+"data" which is not allowed by policy.`).
+
+  The package README already carried this; the skill did not — and the skill is
+  what ships inside the `stash` tarball and gets copied into a user's
+  `.claude/skills/`, so an agent driving the upgrade hit the refusal with no route
+  out of it. `packages/stack-prisma/test/v3/stale-vendored-space.test.ts` now pins
+  both files to the planner's real message so they cannot drift apart again.
+
+- 4422d5c: Correct two things the bundled agent skills were telling customers wrongly
+  about EQL.
+
+  **`skills/stash-postgres` pointed at the wrong repository.** EQL's source now
+  lives in `cipherstash/stack` under `packages/eql/`, and that is where operator
+  gaps and domain-level bugs are filed; only _publishing_ still happens from
+  `cipherstash/encrypt-query-language`, which the skill continues to say. The
+  skill also cited "the EQL skill" as a source of truth that "ships from
+  `encrypt-query-language` alongside the bundle" — no such skill ships from
+  either repository, so the reference is gone and the remaining three sources
+  (the generated types, the install SQL, and `SELECT eql_v3.version()`) are
+  renumbered.
+
+  **And it claimed the CLI pins an exact `@cipherstash/eql` version, "so a
+  database is only ever on one bundle."** Neither half holds: the CLI depends on
+  the workspace package rather than a pinned literal, and a database is on
+  whatever bundle was last applied to it — the Prisma Next adapter installs and
+  upgrades the bundle through its own migrations without involving the CLI at
+  all. Replaced with the guarantee that does hold: one `stash` release carries
+  one resolved bundle, and the database is the authority on which bundle it has.
+
+  **`skills/stash-prisma` hands out the functional-index recipe without saying an
+  EQL upgrade destroys it.** Installing a bundle begins with `DROP SCHEMA IF
+EXISTS eql_v3 CASCADE`, which cascade-drops every index over an `eql_v3.*`
+  extractor — the PSL expression indexes Prisma Next 0.17 introduced and any
+  `rawSql` index DDL alike; queries keep working and silently sequential-scan.
+  Because an applied migration is never replayed, recovery is a NEW one: a PSL
+  expression index has to change its `name:` (the physical name carries a content
+  hash of the expression, so re-declaring the same one plans no work), and a
+  `rawSql` recovery op needs a new `id`. Said where the recipe is given, pointing
+  at `stash-indexing` for the mechanism and at
+  [cipherstash/stack#918](https://github.com/cipherstash/stack/issues/918) for
+  capturing and restoring them automatically.
+
+- e36f1a0: Stop telling customers the Supabase wrapper cannot run in a Worker.
+
+  `@cipherstash/stack-supabase` has shipped two entry points since #912. The
+  package root introspects your database and runs on Node; the `wasm-inline`
+  entry carries the WASM engine, takes declared `schemas` instead of
+  introspecting, and runs on Deno, Supabase Edge Functions and Cloudflare
+  Workers. Introspection was the only thing that needed a Postgres socket, and
+  that entry does not do it.
+
+  Two shipping documents were never updated and still described the state before
+  that change:
+
+  - `packages/stack-supabase/README.md` said "the factory cannot run in an edge
+    Worker or the browser" and did not mention the `wasm-inline` entry anywhere
+    in the file. This is the npm package page.
+  - `skills/stash-supabase/SKILL.md` said the same thing in its setup section.
+    The skill ships inside the `stash` tarball, and `stash init` copies it into
+    the customer's own repository, where their coding agent reads it as
+    instruction. The one correct mention of the edge entry was in a callout near
+    the top that the setup steps never pointed at, so a reader following the
+    setup never learned the second entry existed.
+
+  The population this misled hardest is the one that needs the edge entry most:
+  server code on Lovable, v0, Bolt and Replit runs on an edge runtime, which is
+  exactly the case `wasm-inline` was built for and exactly the case these
+  documents called impossible.
+
+  Both files now describe both entries. The README gains an "Edge runtimes"
+  section with the call shape; the skill gains a fifth setup step with the same,
+  and the introspection paragraph now scopes its restriction to the native entry
+  and points there. Both name the four ways the edge entry differs: `schemas` is
+  required, `config` is required, `databaseUrl` is refused, and
+  `.withLockContext()` / `.audit()` throw rather than silently dropping an
+  identity claim (#797).
+
+  The **browser** half of the old sentence was correct and is kept, with the
+  reason now given: the WASM client requires a workspace `clientKey` on every
+  authentication path, so a browser build would ship the key with it (#804).
+
+  Four claims that were wrong in the same neighbourhood are corrected while we
+  are here, three of them pre-dating this change:
+
+  - **`skills/stash-managed-platforms/SKILL.md` shipped a snippet that does not
+    compile.** It authored the `schemas` object from `@cipherstash/stack/wasm-inline`
+    and handed it to `encryptedSupabase` from `@cipherstash/stack-supabase/wasm-inline`.
+    The adapter types `schemas` from `@cipherstash/stack/eql/v3`, and the two
+    entries ship independent declarations of the column classes whose private
+    `columnName` field TypeScript compares nominally — so `tsc` rejects it while
+    the code runs perfectly, which is why nobody noticed. The schema import now
+    comes from `eql/v3`, and a new guard
+    (`scripts/__tests__/skills-supabase-edge-schema-entry.test.mjs`) fails if any
+    shipped document pairs the two again.
+  - **`skills/stash-edge/SKILL.md` is what produced that snippet.** Its "Schema
+    Modules Do Not Cross Entries" section told edge projects to author schemas
+    from `@cipherstash/stack/wasm-inline` with no carve-out. The rule is really
+    "author against the entry whose _client type_ consumes the schema": a raw
+    `Encryption` client from `wasm-inline` wants `wasm-inline` tables, but the
+    Supabase adapter wants `eql/v3` tables on both of its entries, WASM engine or
+    not. The section now says so, and the "The Supabase adapter has its own edge
+    entry" note points at it.
+  - **`skills/stash-supabase/SKILL.md` described the wrong failure mode for a
+    missing declaration.** Omitting `schemas` on the edge entry cannot produce a
+    no-column client — it is non-optional on the type and throws at construction —
+    and an undeclared _table_ throws rather than passing through unencrypted. The
+    hazard is an undeclared **column** on a declared table, which is treated as
+    plaintext; the bullet now says that, along with the one thing that limits it
+    (a plaintext write to an `eql_v3_*` column fails the domain CHECK, though a
+    NULL still passes) and the fact that the native entry's warning about
+    unverified declarations is gated on the introspector and so never fires
+    there. Reads get no equivalent backstop, and the bullet now says so: the
+    `select('*')` refusal looks like one, but a query awaited with no
+    `.select()` at all takes the raw-`*` branch in `query-builder.ts` and
+    returns every column undecrypted.
+  - **"Undeclared tables behave exactly as with no `schemas` at all" was false on
+    the native entry too.** Introspection is gated on a resolved database URL,
+    not on the absence of `schemas`, and an ambient `DATABASE_URL` is
+    deliberately ignored once tables are declared. The statement holds only when
+    `databaseUrl` is passed _alongside_ `schemas`, which is what it now says.
+
+  `config` is corrected everywhere that called all four `CS_*` values mandatory:
+  the README, `skills/stash-supabase/SKILL.md`, and — in `skills/stash-edge/SKILL.md`
+  — its frontmatter description, its Credentials section, its troubleshooting
+  advice, and the native-vs-WASM comparison table. That skill already contradicted
+  itself, since its own `config.authStrategy` example passes two values, not four.
+  The same sentence in the `EncryptedSupabaseWasmOptions` doc comment
+  (`packages/stack-supabase/src/wasm-inline.ts`) is fixed too, comment-only. Only
+  `clientId` and `clientKey` are always required. Beyond them the config is a union — the
+  access-key path adds `workspaceCrn` + `accessKey`, and the strategy path takes
+  a pre-built `config.authStrategy` and makes `workspaceCrn` optional, because a
+  built strategy already carries the CRN. `OidcFederationStrategy` is re-exported
+  from `@cipherstash/stack/wasm-inline`, so authenticating as the end user works
+  on the edge; what does not work is binding data to that user, which stays
+  called out in its own `.withLockContext()` bullet.
+
+  Tests now anchor the corrected claims against the code rather than against
+  prose. `packages/stack-supabase/__tests__/supabase-wasm-config.test-d.ts` asserts
+  at the type level that the edge `config` accepts both the access-key arm and a
+  strategy-only arm without `workspaceCrn`, and rejects `clientId` + `clientKey`
+  alone. `supabase-declared-mode.test.ts` gains a case pinning the real hazard: an
+  undeclared column on a declared table reaches PostgREST as plaintext on insert,
+  update and filter, and is absent from the decrypt call.
+
+  Review found four more, one of them a change to a published type:
+
+  - **`databaseUrl` was only refused for callers who wrote the options inline.**
+    `EncryptedSupabaseWasmOptions` left the field out, and omission is policed by
+    excess-property checking, which fires on fresh object literals alone. An
+    options object assembled as a `const` and passed by variable — which is what
+    a Node-to-edge port actually holds — type-checked clean and reached the
+    construction-time throw instead, from documents saying the type checker
+    enforced it. The field is now declared `databaseUrl?: never`, mirroring
+    `WasmClientConfig.eqlVersion?: never` in `@cipherstash/stack`, which exists
+    for the identical reason one package along. The runtime throw stays as the
+    backstop for plain JS. New type tests cover the inline and by-variable
+    shapes on both call forms, plus a positive control that the same options
+    object still compiles once `databaseUrl` is dropped.
+  - **The `select('*')` correction had landed in only one of its two shipped
+    copies.** `skills/stash-supabase/SKILL.md` carried it;
+    `skills/stash-managed-platforms/SKILL.md`, edited in the same change, still
+    framed declared mode as giving things up "loudly rather than silently" over a
+    bullet naming the refusal — precisely the inference the correction exists to
+    kill. That skill is read as instruction by an agent on Lovable, v0, Bolt or
+    Replit, and the failure it mispromised is silent: raw EQL payloads returned
+    as `data`, no error. The wording is carried across, and a new guard
+    (`scripts/__tests__/skills-select-star-not-a-read-backstop.test.mjs`) fails
+    if any shipped document states the refusal without the caveat in the same
+    section. Two copies of one fact drift the moment one of them is edited, and
+    no reviewer diff shows the copy nobody touched.
+  - **"Everything after construction is the same wrapper" was false in the first
+    way a reader hits it.** Both `packages/stack-supabase/README.md` and
+    `skills/stash-supabase/SKILL.md` said `from()`, the filters and the response
+    shape are identical across the two entries — the README saying so twenty-five
+    lines under a paragraph telling the same reader `select('*')` just works. The
+    edge entry is always in declared mode, where `select('*')` is refused and
+    `from()` on an undeclared table throws. Both sentences now name the two
+    exceptions, so the quick-start snippet the section tells you to port no
+    longer arrives with a promise it breaks.
+  - **The ambient-`DATABASE_URL` warning cannot fire on the edge entry.**
+    `skills/stash-managed-platforms/SKILL.md` said an ambient `DATABASE_URL` is
+    ignored when `schemas` are passed, "with a warning that the declaration is
+    unverified" — in a section whose subject is `wasm-inline`. Both the ambient
+    read and the warning are gated on the introspector, which that build does not
+    have, so nothing there ever tells you a declaration is incomplete. Now scoped
+    to Node, with the edge case stated. The sentence immediately above it had the
+    same fault and is fixed with it: the ⚠️ callout on undeclared columns offered
+    "pass `databaseUrl` so introspection fills the gaps" as the remedy, inside a
+    section about the entry that refuses `databaseUrl` — and it is the remedy a
+    Lovable or Replit agent, which has only the edge entry, would have reached
+    for. It now says introspection is unavailable there and what to do instead.
+
+  `@cipherstash/wizard` is bumped alongside `stash` because `skills/` ships in
+  both tarballs — `packages/wizard/tsup.config.ts` copies it into `dist/skills`
+  and `package.json` lists that under `files`. Without the bump the published
+  wizard keeps shipping the old text until some unrelated change moves its
+  version.
+
+  One more wording correction, of the kind #952 fixed in this package's `.d.ts`:
+  `packages/stack-supabase/README.md` and `skills/stash-supabase/SKILL.md` both
+  derived "runs on Node only" from introspection — "introspection needs a direct
+  Postgres connection, **so** … this entry runs on Node only". Introspection is
+  not the cause. The entry binds the native engine, so it is Node-only whether or
+  not you declare `schemas`; a reader who took the stated cause at face value
+  would conclude that declaring tables makes the root entry edge-capable, which is
+  the exact wrong turn the `wasm-inline` entry exists to prevent. Both sentences
+  now attribute the restriction to the engine and say that declaring `schemas`
+  does not move it. Both files are enrolled in #952's
+  `scripts/__tests__/supabase-runtime-claims.test.mjs`, which is what its own
+  comment said to do once this branch stopped rewriting the same lines — the
+  README and this skill are the two copies that reach a customer, and the guard
+  now fails if either grows the claim back. `skills/stash-managed-platforms/SKILL.md`
+  stays out, with the reason written down: its causal claims are correct, but
+  rewording the unqualified "Worker" in its frontmatter `description` changes
+  what the skill matches on, which is not a rider on a documentation fix.
+
+  No runtime behaviour changes. The one non-documentation change is the
+  `databaseUrl?: never` field on `EncryptedSupabaseWasmOptions`, which is
+  type-level: it rejects at compile time a call that already threw at
+  construction.
+
+- ba37039: Update the bundled agent skills for eql-3.0.5. `skills/stash-supabase`
+  re-states the PostgREST query-domain limitations against 3.0.5 (unchanged in
+  substance — the typed `eql_v3.query_*` operand requirement still stands), and
+  `skills/stash-postgres` drops one of the two places it claimed the CLI pins
+  `@cipherstash/eql` to an exact version — a claim that stopped being true when
+  EQL moved in-tree. The second copy goes in the same release, with the rest of
+  that skill's EQL source and issue pointers.
+- 518abfd: Document that `@cipherstash/stack/wasm-inline` is server-side only, and pin the
+  reason against the core.
+
+  `WasmClientConfig` requires `clientId` and `clientKey` on every auth arm,
+  including the `authStrategy` (OIDC federation) arm. That read like an
+  over-declaration the SDK could relax — if federation alone sufficed, a browser
+  could hold a client without a workspace secret. It cannot. The core requires
+  both fields regardless of strategy, and loads `clientKey` as encryption key
+  material _before_ it ever calls the auth strategy. Since `clientKey` is a
+  workspace secret, no configuration of this entry belongs in a browser bundle —
+  which is why this entry has no `browser` export condition, and will not get one
+  until the core changes.
+
+  No behaviour change. The types and runtime are unchanged; what changes is that
+  the constraint is now stated where callers meet it — `WasmClientConfig`, the
+  `stash-edge` skill, the `stash-encryption` entry-point table, and, where this
+  entry had been described as browser-capable, the `stash-supabase` skill and
+  the `supabase-worker` example — and enforced by contract tests that run
+  against the real WASM core instead of the mocks and stubs the rest of the wasm
+  suite uses.
+
+- c1bf387: Fix: a schema authored with `encryptedTable`/`types` from
+  `@cipherstash/stack/wasm-inline` was a compile error wherever an EQL v3 table was
+  expected — `encryptedSupabase`'s `schemas`, the Drizzle helpers, Prisma Next, the
+  native `Encryption` — and native-authored tables were rejected by the WASM
+  `Encryption`, with `Types have separate declarations of a private property
+'columnName'`. The two entries shipped separately-emitted copies of every column
+  class, and TypeScript compares classes with private members by declaration
+  origin. The runtime was never affected, which made `as any` the tempting fix.
+
+  Every entry now resolves one declaration, so one schema module can be shared
+  between a Node server and an Edge Function in either direction. `./wasm-inline`
+  keeps its ESM-only shape.
+
+- Updated dependencies [e52d331]
+  - @cipherstash/eql@3.0.6
+  - @cipherstash/migrate@1.0.0
+
 ## 1.1.1
 
 ### Patch Changes

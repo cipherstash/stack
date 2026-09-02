@@ -1,5 +1,69 @@
 # @cipherstash/stack
 
+## 1.2.0
+
+### Minor Changes
+
+- b04ea2f: Surface CipherStash token-service refusals as typed diagnostics.
+
+  `@cipherstash/stack` operation and initialization failures now carry
+  `authCode`, `help`, and `url` from stack-auth. The message remains stack-auth's
+  original diagnostic message; Stack does not copy or rewrite its instructions.
+  Callers can branch on `USAGE_LIMIT_EXCEEDED` or `ORG_NOT_PROVISIONED`, render
+  `help`, and link to `url`.
+
+  `LockContext.identify()` also recognizes those two codes on a genuine CTS
+  `402`, while declining malformed or unknown responses. Legacy valid JSON
+  responses without `cs_code` retain the historical usage-limit classification.
+
+  `stash auth login` and `stash env` now consume `@cipherstash/auth` 0.44.0's
+  typed failures. They print the upstream diagnostic guidance, preserve its URL,
+  avoid suggesting another login for terminal account refusals, and expose
+  terminal codes on the JSON stream. The JSON error envelope gains an optional
+  `hint` for the upstream guidance.
+
+### Patch Changes
+
+- 518abfd: Document that `@cipherstash/stack/wasm-inline` is server-side only, and pin the
+  reason against the core.
+
+  `WasmClientConfig` requires `clientId` and `clientKey` on every auth arm,
+  including the `authStrategy` (OIDC federation) arm. That read like an
+  over-declaration the SDK could relax — if federation alone sufficed, a browser
+  could hold a client without a workspace secret. It cannot. The core requires
+  both fields regardless of strategy, and loads `clientKey` as encryption key
+  material _before_ it ever calls the auth strategy. Since `clientKey` is a
+  workspace secret, no configuration of this entry belongs in a browser bundle —
+  which is why this entry has no `browser` export condition, and will not get one
+  until the core changes.
+
+  No behaviour change. The types and runtime are unchanged; what changes is that
+  the constraint is now stated where callers meet it — `WasmClientConfig`, the
+  `stash-edge` skill, the `stash-encryption` entry-point table, and, where this
+  entry had been described as browser-capable, the `stash-supabase` skill and
+  the `supabase-worker` example — and enforced by contract tests that run
+  against the real WASM core instead of the mocks and stubs the rest of the wasm
+  suite uses.
+
+- c1bf387: Fix: a schema authored with `encryptedTable`/`types` from
+  `@cipherstash/stack/wasm-inline` was a compile error wherever an EQL v3 table was
+  expected — `encryptedSupabase`'s `schemas`, the Drizzle helpers, Prisma Next, the
+  native `Encryption` — and native-authored tables were rejected by the WASM
+  `Encryption`, with `Types have separate declarations of a private property
+'columnName'`. The two entries shipped separately-emitted copies of every column
+  class, and TypeScript compares classes with private members by declaration
+  origin. The runtime was never affected, which made `as any` the tempting fix.
+
+  Every entry now resolves one declaration, so one schema module can be shared
+  between a Node server and an Edge Function in either direction. `./wasm-inline`
+  keeps its ESM-only shape.
+
+- Updated dependencies [8839d5a]
+- Updated dependencies [8839d5a]
+- Updated dependencies [4422d5c]
+- Updated dependencies
+  - @cipherstash/protect-ffi@0.33.0
+
 ## 1.1.1
 
 ## 1.1.0
@@ -415,7 +479,7 @@
 
   ```ts
   async function makeClient<S extends readonly [AnyV3Table, ...AnyV3Table[]]>(
-    schemas: S
+    schemas: S,
   ) {
     return await Encryption({ schemas });
   }
@@ -2137,7 +2201,7 @@ value)` and `selectorNe(col, path, value)` (dot-notation paths; `ne` includes
     schemas: [users],
     config: {
       authStrategy: OidcFederationStrategy.create(workspaceCrn, () =>
-        getUserJwt()
+        getUserJwt(),
       ),
     },
   });
@@ -2357,7 +2421,6 @@ value)` and `selectorNe(col, path, value)` (dot-notation paths; `ne` includes
   - **README**: Refreshed main repo README and Stack package readme; basic example README now uses `npm install @cipherstash/stack`, CipherStash account and dashboard credentials, and drops Stash CLI references. Added docs badge linking to cipherstash.com/docs.
 
   ### Features
-
   - **Logging**: Logger is now used consistently across Stack client interfaces for initialization and operations.
 
 ## 0.4.0
