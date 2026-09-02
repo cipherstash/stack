@@ -120,7 +120,11 @@ pub use tokenize::Tokenizer;
 use std::fmt;
 use std::marker::PhantomData;
 
-use cllw_ore::{CllwOpeEncrypt, CllwOreEncrypt};
+// Re-exported because they appear in this module's public bounds
+// ([`StackCipher::ore_term`], [`OreTerm`], ...): a caller writing a generic
+// wrapper over the term APIs has to be able to name them without depending
+// on `cllw-ore` directly.
+pub use cllw_ore::{CllwOpeEncrypt, CllwOreEncrypt};
 use vitaminc_hmac::HmacSha256Prf;
 use vitaminc_prf::{
     BlockVisitor, IntoPrfContext, MapAccess, PrfContext, PrfError, PrfValue, PrfVisitor,

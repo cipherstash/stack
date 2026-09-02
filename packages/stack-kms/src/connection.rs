@@ -15,6 +15,14 @@ use zerokms_protocol::{ViturRequest, ViturRequestError};
 
 use crate::endpoint::ZeroKmsEndpoint;
 
+// Transport-independent: a guest built without the `http` feature classifies
+// responses exactly as `HttpConnection` does.
+mod classify;
+pub use classify::{
+    classify_response, is_json_content_type, BaseUrlUnresolved, FailureResponse,
+    UnexpectedContentType,
+};
+
 #[cfg(feature = "http")]
 mod http;
 #[cfg(feature = "http")]

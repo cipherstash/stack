@@ -856,7 +856,41 @@ impl PendingStackCipherText {
         self,
         cipher: &StackCipher<K>,
     ) -> Result<StackCipherText, Error> {
-        crate::target::seal_pending(cipher, self).settle().await
+        self.into_pending(cipher).settle().await
+    }
+
+    /// Turn this tree into a [`Pending`](crate::target::Pending) request
+    /// carrier without settling it.
+    ///
+    /// [`seal`](Self::seal) is this plus an immediate settle — one ZeroKMS
+    /// call per tree. `into_pending` exists for callers that hold *several*
+    /// independently built trees (each from its own [`Encrypt`] drive, e.g.
+    /// one per record field in a language binding) and want them merged with
+    /// [`Pending::zip`](crate::target::Pending::zip) /
+    /// [`Pending::all`](crate::target::Pending::all) so the whole assembly
+    /// seals in **one** batched `generate_keys` call. Same sealing path
+    /// either way.
+    ///
+    /// **Context contract.** The cipher-directed path deliberately accepts
+    /// *any* AAD, including none at all (`()`) — it mirrors
+    /// `Aes256Cipher`, where AAD-less sealing is a legitimate AEAD use,
+    /// opened symmetrically by [`StackCipher::decrypt`]. But a tree that
+    /// will be opened through the target layer's
+    /// [`decrypt_into`](crate::target::DecryptInto) — a per-field record
+    /// assembly in an FFI front-end, say — is bound by that layer's rule: a
+    /// *degenerate* context (see
+    /// [`is_degenerate_aad`](crate::target::is_degenerate_aad)) is refused
+    /// on open with [`Error::EmptyContext`], so sealing under one here
+    /// produces ciphertext that path can never read. Validate the context
+    /// before driving [`Encrypt`] —
+    /// [`supplied_aad`](crate::target::supplied_aad) is the checked
+    /// encoder — until vitaminc#291 moves non-emptiness into the context
+    /// type and makes the mismatch unrepresentable.
+    pub fn into_pending<K>(
+        self,
+        cipher: &StackCipher<K>,
+    ) -> crate::target::Pending<'_, StackCipherText, K> {
+        crate::target::seal_pending(cipher, self)
     }
 
     /// Recursively seal, drawing one key per leaf from `keys` in traversal order.

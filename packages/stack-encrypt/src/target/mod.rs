@@ -519,10 +519,18 @@ mod prf_framing {
 /// `for_map_entry`, the markers — are derived after this check runs, from
 /// the caller-visible AAD this sees.)
 ///
-/// Crate-private: third-party leaves go through [`supplied_aad`] /
+/// In-crate, third-party leaves go through [`supplied_aad`] /
 /// [`supplied_prf_context`], the one choke point whose signature survives
-/// the vitaminc#291 migration.
-pub(crate) fn is_degenerate_aad(bytes: &[u8]) -> bool {
+/// the vitaminc#291 migration — prefer those in Rust code: they check and
+/// encode in one step, so the value checked is the value sealed. This bare
+/// predicate is public *only* for runtime front-ends whose contexts arrive
+/// as FFI bytes rather than Rust values (the WASI guest's record plans),
+/// which need the same predicate at parse time to report a precise status.
+/// It is temporary scaffolding on those terms: when vitaminc#291 moves
+/// non-emptiness into the context type, this function is removed with the
+/// rest of the runtime checks (a semver-visible removal, accepted while the
+/// crate is 0.x).
+pub fn is_degenerate_aad(bytes: &[u8]) -> bool {
     if bytes.is_empty() {
         return true;
     }
@@ -579,10 +587,12 @@ pub(crate) fn is_degenerate_prf_context(bytes: &[u8]) -> bool {
 ///
 /// This is the choke point every built-in leaf goes through on the AEAD
 /// channel, and the one a third-party ciphertext-like leaf should call too
-/// (see the [module docs](self#extending-with-your-own-sem-type)): there is
-/// deliberately no public way to make the underlying degeneracy check
-/// without also obtaining the encoded context, so a leaf cannot encode one
-/// value and check another. The *signature* is stable across the
+/// (see the [module docs](self#extending-with-your-own-sem-type)): checking
+/// and encoding are one step, so a leaf cannot encode one value and check
+/// another. ([`is_degenerate_aad`] does exist bare, for runtime front-ends
+/// whose contexts are FFI bytes rather than Rust values — a Rust leaf that
+/// reaches for it instead of this reintroduces exactly the check/use
+/// divergence this signature prevents.) The *signature* is stable across the
 /// [vitaminc#291](https://github.com/cipherstash/vitaminc/issues/291)
 /// migration: when non-emptiness moves into the context type, the runtime
 /// check here collapses to a conversion, and callers do not change.

@@ -460,6 +460,45 @@ pub enum AuthError {
 }
 
 impl AuthError {
+    /// True when the *credential itself* was refused — an expired, invalid or
+    /// consumed token, key or grant — so obtaining a fresh credential and
+    /// retrying is a sensible response. False for everything else:
+    /// authenticated-but-forbidden, server faults, and configuration or
+    /// transport problems that no amount of refreshing can fix.
+    ///
+    /// This classification lives here, next to the variants, because
+    /// `AuthError` is `#[non_exhaustive]`: a downstream `match` needs a `_`
+    /// arm, which silently mis-classifies every variant added later. Inside
+    /// this crate the match *is* exhaustive — adding a variant is a compile
+    /// error until it is classified. FFI front-ends (the wasm guest's status
+    /// mapping) key their "refresh the token and retry" signal off this.
+    pub fn is_credential_rejection(&self) -> bool {
+        match self {
+            AuthError::NotAuthenticated(_)
+            | AuthError::TokenExpired(_)
+            | AuthError::InvalidGrant(_)
+            | AuthError::InvalidClient(_)
+            | AuthError::InvalidAccessKey(_)
+            | AuthError::AlreadyConsumed(_) => true,
+            AuthError::Request(_)
+            | AuthError::AccessDenied(_)
+            | AuthError::InvalidUrl(_)
+            | AuthError::Region(_)
+            | AuthError::InvalidCrn(_)
+            | AuthError::WorkspaceMismatch(_)
+            | AuthError::InvalidWorkspaceId(_)
+            | AuthError::MissingWorkspaceCrn(_)
+            | AuthError::InvalidToken(_)
+            | AuthError::UsageLimitExceeded(_)
+            | AuthError::OrgNotProvisioned(_)
+            | AuthError::Server(_)
+            | AuthError::Internal(_)
+            | AuthError::Custom(_) => false,
+            #[cfg(not(target_arch = "wasm32"))]
+            AuthError::Store(_) => false,
+        }
+    }
+
     /// The complete set of codes [`AuthError::error_code`] can return — the
     /// stable, machine-readable contract surfaced across FFI (JS `Error.code`,
     /// Node-API codes, the `index.d.ts` / `wasm-inline.d.ts` `AuthFailure`

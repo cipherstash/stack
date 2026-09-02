@@ -7,7 +7,7 @@
 > rustdoc and the tests are the source of truth. Where the two disagree, the
 > code wins and this document is simply out of date.
 
-**Status:** in progress — Phases 0, 1 and 2 are open as stacked draft PRs on #2156
+**Status:** in progress — Phases 0 through 3 are open as stacked draft PRs on #2156
 **Date:** 2026-08-27
 **Builds on:** #2099 (WASI/wazero beachhead), #2156 (`#[derive(EncryptFrom, DecryptInto)]`), vitaminc `bindings/go` (`vcvalue` + `vcencrypt`)
 
@@ -135,7 +135,7 @@ Go application
        ├─ imports vcvalue (value model) + the FFI codec
        ├─ embeds stack_encrypt_guest.wasm
        ├─ host import  cipherstash_transport::transport_send  → net/http → ZeroKMS
-       └─ host import  cipherstash_auth::token_get            → token source (phase 1: static)
+       └─ host import  cipherstash_transport::token_get       → token source (phase 1: static)
              │
              ▼  wazero (wasm32-wasip1)
        stack-encrypt guest (Rust cdylib)
@@ -278,6 +278,69 @@ get decided and documented before the guest is written, independently of Go:
   encodes → fixed hex) so the Go decoder tests against the same bytes.
 
 ### Phase 3 — the guest
+
+**Landed (stacked PR on Phase 2).** What shipped, against the plan below:
+the crate at the planned location (detached workspace), exporting
+`se_alloc`/`se_dealloc`, `se_cipher_init`/`se_cipher_free`,
+`se_encrypt`/`se_decrypt` (+`_element`), `se_encrypt_record`/
+`se_decrypt_record`, and `se_term`, under the vitaminc guest's ABI
+conventions (buffer registry with zeroizing dealloc, packed-`u64` results,
+hostile-input validation; status codes 1–4 byte-identical to vitaminc's,
+5–11 added for the ZeroKMS request outcomes and term failures).
+`WasiHostConnection` implements `stack_kms::ZeroKMSConnection` over the
+generalised `transport_send(method, url, headers, body)` import (headers as
+`name: value` lines), with the endpoint pinned from the config or
+discovered from the token's `services` claim via `ensure_base_url`;
+`HostTokenStrategy` fetches the bearer token per request over `token_get`.
+Records deviate from the sketch in two small ways: there is no separate
+`aad` argument (each plan field's `context` *is* the AAD, as in the target
+layer) and the result rides the ciphertext codec — per field a map of
+output keys (`"c"`, `"eq"`, `"match"`, `"ore"`, `"ope"`) whose term nodes
+are passthrough bytes. Batching all rows into one `generate_keys` goes
+through a new public `PendingStackCipherText::into_pending` in
+stack-encrypt (decoded `FfiValue`s are not `Clone`, so the `EncryptFrom`
+path was not usable). Extracting the shared ABI into a `vitaminc-wasi-abi`
+crate is out of this repo's reach and stays a vitaminc follow-up — the
+registry/session modules are copies with a pointer back. The `bridge.go`
+host function and the integration harness land with their consumer, the Go
+module (Phases 4–5). Verified: native tests over `FakeDataKeySource`
+(round trips, term-byte equality with the native `sem` calls, a counting
+key source proving one ZeroKMS call per record batch), and the release
+`.wasm` builds with an import surface of exactly WASI +
+`cipherstash_transport` (`mise run wasm:guest:build` / `wasm:guest:test`).
+
+Both tasks run in CI. The guest is a detached workspace, so the
+workspace-wide jobs never compile, lint or test it; the WASI workflow
+(`.github/workflows/test-wasi.yml`) watches the guest path and runs the two
+tasks, which is the crate's only gate. The import surface is asserted, not
+eyeballed: `scripts/check-wasm-imports.py` parses the linked module's
+import section and fails closed — every import must be either WASI (with
+the capability-granting `path_*`, `sock_*` and `fd_prestat*` names denied,
+so a dependency cannot quietly acquire ambient filesystem or network
+access) or one of the two required `cipherstash_transport` functions, and
+both of those must be present. A build alone proves nothing here: the
+property is about what the *linked* module can reach.
+
+Two things worth stating plainly, because they are easy to read the wrong
+way:
+
+- **Batching is one *batch*, not always one *call*.** All rows and fields
+  of an invocation are merged into a single pending batch, which the client
+  then splits into one ZeroKMS request per `ClientOpts::max_keys_per_req`
+  keyed leaves — 500 by default, sent sequentially (the guest pins
+  `max_concurrent_reqs` to 1). So "one `generate_keys` call per batch" is
+  exact up to 500 leaves and "one call per 500" past it. The default is
+  kept rather than raised: it is the server-friendly request size, and a
+  larger one is a promise ZeroKMS need not honour.
+- **Record `"c"` leaves carry the aead-value *tagged* plaintext encoding**
+  (`[type tag] ++ payload`), because that tag table is the cross-language
+  contract Go, Node and this guest share. A Rust `#[derive(EncryptFrom)]`
+  over a plain primitive seals untagged bytes instead, so a plain-primitive
+  Rust derive and a Go plan do **not** interchange ciphertexts for the same
+  field until the Rust side uses aead-value's tagged types. By design; a
+  separate follow-up, not a defect in either side.
+
+The plan as written before the work:
 
 Location: `bindings/go/stackencrypt/guest/` (mirrors vitaminc's layout;
 detached workspace like #2099's guest and the fuzz crates so its wasm profile

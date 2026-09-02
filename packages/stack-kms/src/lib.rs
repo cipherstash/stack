@@ -107,6 +107,12 @@ pub use client::{
 #[cfg(feature = "http")]
 pub use connection::{ConnectionInitError, HttpConnection, HttpConnectionOpts};
 pub use connection::{ZeroKMSConnection, ZeroKMSConnectionInit};
+// Transport-independent response classification, shared by `HttpConnection`
+// and by hosts that bring their own transport (the WASI guest).
+pub use connection::{
+    classify_response, is_json_content_type, BaseUrlUnresolved, FailureResponse,
+    UnexpectedContentType,
+};
 pub use endpoint::{InvalidEndpoint, ZeroKmsEndpoint};
 
 // The native/wasm32 Send split for the async traits' returned futures
