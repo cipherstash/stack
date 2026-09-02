@@ -547,8 +547,12 @@ async function readInstalledEqlVersion(
         ? (error as { code?: string }).code
         : undefined
     if (insideCallerTransaction) {
-      await client.query('ROLLBACK TO SAVEPOINT installed_eql_version_probe')
-      await client.query('RELEASE SAVEPOINT installed_eql_version_probe')
+      await client
+        .query('ROLLBACK TO SAVEPOINT installed_eql_version_probe')
+        .catch(() => {})
+      await client
+        .query('RELEASE SAVEPOINT installed_eql_version_probe')
+        .catch(() => {})
     }
     if (code === '42883') return null
     const detail = error instanceof Error ? error.message : String(error)
@@ -584,74 +588,93 @@ export async function readInstalledSurface(
   // search_path. SET LOCAL dies with the transaction, so the caller's
   // session is untouched. The qualified version() probe is protected by a
   // savepoint because a missing function must not abort the caller's snapshot.
-  if (options.manageTransaction !== false) await client.query('BEGIN READ ONLY')
-  await client.query(`SET LOCAL search_path = ''`)
-  const schemas = await client.query<{
-    eql_v3_present: boolean
-    eql_v3_internal_present: boolean
-    pgcrypto_installed: boolean
-    pgcrypto_schema: string | null
-  }>(SCHEMAS_SQL)
-  const types = await client.query<{ name: string }>(TYPES_SQL, [
-    [...expected.domains, ...expected.types],
-  ])
-  const functions = await client.query<{ name: string; signature: string }>(
-    FUNCTION_SIGNATURES_SQL,
-    [[...expected.functions.keys()]],
-  )
-  const operators = await client.query<{
-    name: string
-    leftarg: string
-    rightarg: string
-  }>(OPERATORS_SQL)
-  const casts = await client.query<{ source: string; target: string }>(
-    CASTS_SQL,
-  )
-  const ore = await client.query<{
-    ore_opclass_present: boolean
-    poisoned_domains: number
-  }>(ORE_STATE_SQL, [expected.oreDomains])
-  const eqlV3SchemaPresent = schemas.rows[0]?.eql_v3_present === true
-  const installedVersion = eqlV3SchemaPresent
-    ? await readInstalledEqlVersion(client, true)
-    : null
-  // Ends the SET LOCAL scope. On a mid-transaction error the caller's
-  // client.end() discards the aborted transaction with the connection.
-  if (options.manageTransaction !== false) await client.query('COMMIT')
+  const manageTransaction = options.manageTransaction !== false
+  if (manageTransaction) await client.query('BEGIN READ ONLY')
+  else await client.query('SAVEPOINT installed_eql_surface_read')
+  try {
+    await client.query(`SET LOCAL search_path = ''`)
+    const schemas = await client.query<{
+      eql_v3_present: boolean
+      eql_v3_internal_present: boolean
+      pgcrypto_installed: boolean
+      pgcrypto_schema: string | null
+    }>(SCHEMAS_SQL)
+    const types = await client.query<{ name: string }>(TYPES_SQL, [
+      [...expected.domains, ...expected.types],
+    ])
+    const functions = await client.query<{ name: string; signature: string }>(
+      FUNCTION_SIGNATURES_SQL,
+      [[...expected.functions.keys()]],
+    )
+    const operators = await client.query<{
+      name: string
+      leftarg: string
+      rightarg: string
+    }>(OPERATORS_SQL)
+    const casts = await client.query<{ source: string; target: string }>(
+      CASTS_SQL,
+    )
+    const ore = await client.query<{
+      ore_opclass_present: boolean
+      poisoned_domains: number
+    }>(ORE_STATE_SQL, [expected.oreDomains])
+    const eqlV3SchemaPresent = schemas.rows[0]?.eql_v3_present === true
+    const installedVersion = eqlV3SchemaPresent
+      ? await readInstalledEqlVersion(client, true)
+      : null
+    const functionSignatures = new Map<string, Set<string>>()
+    for (const row of functions.rows) {
+      const name = row.name.toLowerCase()
+      const existing = functionSignatures.get(name) ?? new Set<string>()
+      existing.add(row.signature.toLowerCase())
+      functionSignatures.set(name, existing)
+    }
 
-  const functionSignatures = new Map<string, Set<string>>()
-  for (const row of functions.rows) {
-    const name = row.name.toLowerCase()
-    const existing = functionSignatures.get(name) ?? new Set<string>()
-    existing.add(row.signature.toLowerCase())
-    functionSignatures.set(name, existing)
-  }
-
-  return {
-    eqlV3SchemaPresent,
-    eqlV3InternalSchemaPresent:
-      schemas.rows[0]?.eql_v3_internal_present === true,
-    pgcryptoInstalled: schemas.rows[0]?.pgcrypto_installed === true,
-    pgcryptoSchema:
-      typeof schemas.rows[0]?.pgcrypto_schema === 'string'
-        ? schemas.rows[0].pgcrypto_schema
-        : null,
-    installedVersion,
-    presentTypes: new Set(types.rows.map((row) => row.name.toLowerCase())),
-    functionSignatures,
-    presentOperators: new Set(
-      operators.rows.map(
-        (row) =>
-          `${row.name.toLowerCase()} (${row.leftarg.toLowerCase()}, ${row.rightarg.toLowerCase()})`,
+    const installedSurface: InstalledSurface = {
+      eqlV3SchemaPresent,
+      eqlV3InternalSchemaPresent:
+        schemas.rows[0]?.eql_v3_internal_present === true,
+      pgcryptoInstalled: schemas.rows[0]?.pgcrypto_installed === true,
+      pgcryptoSchema:
+        typeof schemas.rows[0]?.pgcrypto_schema === 'string'
+          ? schemas.rows[0].pgcrypto_schema
+          : null,
+      installedVersion,
+      presentTypes: new Set(types.rows.map((row) => row.name.toLowerCase())),
+      functionSignatures,
+      presentOperators: new Set(
+        operators.rows.map(
+          (row) =>
+            `${row.name.toLowerCase()} (${row.leftarg.toLowerCase()}, ${row.rightarg.toLowerCase()})`,
+        ),
       ),
-    ),
-    presentCasts: new Set(
-      casts.rows.map(
-        (row) => `${row.source.toLowerCase()} AS ${row.target.toLowerCase()}`,
+      presentCasts: new Set(
+        casts.rows.map(
+          (row) => `${row.source.toLowerCase()} AS ${row.target.toLowerCase()}`,
+        ),
       ),
-    ),
-    oreOpclassPresent: ore.rows[0]?.ore_opclass_present === true,
-    poisonedDomains: ore.rows[0]?.poisoned_domains ?? 0,
+      oreOpclassPresent: ore.rows[0]?.ore_opclass_present === true,
+      poisonedDomains: ore.rows[0]?.poisoned_domains ?? 0,
+    }
+    // Keep the savepoint alive until every fallible conversion above has
+    // completed. Otherwise the catch path attempts to clean up a savepoint
+    // already released and can replace the original error with 25P01.
+    if (manageTransaction) await client.query('COMMIT')
+    else {
+      await client.query('ROLLBACK TO SAVEPOINT installed_eql_surface_read')
+      await client.query('RELEASE SAVEPOINT installed_eql_surface_read')
+    }
+    return installedSurface
+  } catch (error) {
+    if (!manageTransaction) {
+      await client
+        .query('ROLLBACK TO SAVEPOINT installed_eql_surface_read')
+        .catch(() => {})
+      await client
+        .query('RELEASE SAVEPOINT installed_eql_surface_read')
+        .catch(() => {})
+    }
+    throw error
   }
 }
 
@@ -953,7 +976,7 @@ export async function verifyEqlSurface(
 }
 
 /**
- * The ORE half of an install as {@link readOreState} could read it.
+ * The ORE half of an install returned by a summary surface assessment.
  *
  * `comparable: false` means the installed EQL is not the pinned one, so there
  * is no honest ORE answer to give — not that anything is wrong. Callers must
@@ -997,31 +1020,6 @@ export async function assessEqlSurface(
     manageTransaction: false,
   })
   return { depth, report: diffSurface(expected, installed) }
-}
-
-/**
- * Read just the ORE half of an install — the two catalogue values and the
- * state they classify to (#891).
- *
- * `eql status` wants the ORE answer and nothing else. Routing it through
- * {@link verifyEqlSurface} would work but would read the whole 3,000-operator
- * surface to render one row.
- *
- * It still needs {@link diffSurface}'s version gate, though, because the ORE
- * state is NOT a pure catalogue fact: `expectedPoisoned` is the pinned
- * bundle's ORE-domain count, and {@link ORE_STATE_SQL} counts poisoned domains
- * only among that same pinned list. So a healthy fallback install of a
- * DIFFERENT EQL — the ordinary "CLI upgraded, database not yet" case — poisons
- * ITS domains, of which the pinned list sees only some, and
- * {@link classifyOreState} reads the shortfall as `incoherent-unpoisoned`
- * damage. Reporting a version skew as `comparable: false` is what stops
- * `eql status` telling that operator to reinstall `--force` over nothing.
- */
-export async function readOreState(
-  client: pg.ClientBase,
-): Promise<OreStateReading> {
-  const expected = bundledExpectedSurface()
-  return readOreStateAgainst(client, expected)
 }
 
 async function readOreStateAgainst(

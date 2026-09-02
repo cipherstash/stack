@@ -1,3 +1,4 @@
+import { releaseManifest } from '@cipherstash/eql/sql'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const query = vi.fn()
@@ -75,7 +76,8 @@ describe('EQL installation state', () => {
       }
       if (sql.includes('eql_v3.version()')) {
         versionReads += 1
-        if (versionReads === 1) return { rows: [{ version: '3.0.5' }] }
+        if (versionReads === 1)
+          return { rows: [{ version: releaseManifest.eqlVersion }] }
         aborted = true
         throw Object.assign(new Error('undefined function'), { code: '42883' })
       }
@@ -132,7 +134,7 @@ describe('EQL installation state', () => {
         }
       }
       if (sql.includes('eql_v3.version()'))
-        return { rows: [{ version: '3.0.5' }] }
+        return { rows: [{ version: releaseManifest.eqlVersion }] }
       if (sql.includes('ore_opclass_present'))
         throw new Error('catalog unavailable')
       return { rows: [] }
@@ -149,5 +151,98 @@ describe('EQL installation state', () => {
       message: 'catalog unavailable',
     })
     expect(query).toHaveBeenCalledWith('COMMIT')
+  })
+
+  it('reports one authoritative schema-presence observation across installation and capabilities', async () => {
+    query.mockImplementation(async (sql: string) => {
+      if (sql.includes("to_regnamespace('eql_v2')")) {
+        return {
+          rows: [
+            {
+              eql_v2_present: false,
+              eql_v3_present: true,
+              eql_v3_internal_present: true,
+            },
+          ],
+        }
+      }
+      if (sql.includes('eql_v3.version()'))
+        return { rows: [{ version: releaseManifest.eqlVersion }] }
+      if (sql.includes('current_user AS role_name')) {
+        return {
+          rows: [
+            {
+              role_name: 'restricted_role',
+              is_superuser: false,
+              member_of_postgres: false,
+              has_database_create: true,
+              has_public_create: true,
+              pgcrypto_installed: true,
+              pgcrypto_schema: 'public',
+              // information_schema can hide schemas that to_regnamespace sees.
+              eql_v3_present: false,
+              eql_v3_internal_present: false,
+              can_drop_eql_v3: false,
+              can_drop_eql_v3_internal: false,
+            },
+          ],
+        }
+      }
+      return { rows: [] }
+    })
+
+    const { assessEqlInstallation } = await import('../installation-state.js')
+    const state = await assessEqlInstallation({
+      databaseUrl: 'postgres://test',
+      includeCapabilities: true,
+    })
+
+    expect(state.v3.status).toBe('installed')
+    expect(state.capabilities).toMatchObject({
+      status: 'assessed',
+      preflight: {
+        eqlV3SchemaPresent: true,
+        eqlV3InternalSchemaPresent: true,
+      },
+    })
+  })
+
+  it('exhaustively reports a missing EQL installation', async () => {
+    query.mockImplementation(async (sql: string) => {
+      if (sql.includes("to_regnamespace('eql_v2')")) {
+        return {
+          rows: [
+            {
+              eql_v2_present: false,
+              eql_v3_present: false,
+              eql_v3_internal_present: false,
+            },
+          ],
+        }
+      }
+      if (sql.includes('pgcrypto_installed')) {
+        return {
+          rows: [
+            {
+              eql_v3_present: false,
+              eql_v3_internal_present: false,
+              pgcrypto_installed: false,
+              pgcrypto_schema: null,
+            },
+          ],
+        }
+      }
+      return { rows: [] }
+    })
+
+    const { assessEqlInstallation } = await import('../installation-state.js')
+    const state = await assessEqlInstallation({
+      databaseUrl: 'postgres://test',
+      depth: 'exhaustive',
+    })
+
+    expect(state.surface.status).toBe('damaged')
+    if (state.surface.status !== 'damaged') return
+    expect(state.surface.report.status).toBe('not-installed')
   })
 })

@@ -52,14 +52,23 @@ jobs:
     strategy:
       matrix:
         node-version: [22, 24]
+        postgres-version: [16, 17]
+        exclude:
+          - node-version: 22
+            postgres-version: 17
+          - node-version: 24
+            postgres-version: 16
 
     # Postgres + EQL for the integration tests. Official EQL image —
-    # PostgreSQL 17 with EQL pre-installed via /docker-entrypoint-initdb.d.
+    # PostgreSQL 16 and 17 with EQL pre-installed via
+    # /docker-entrypoint-initdb.d. Keeping one supported Node line on each
+    # server version exercises the pre-PG17 attstattarget representation
+    # without adding a third full test leg.
     # Pinned to eql-2.3.1 to match the EQL payload format the code emits
     # (protect-ffi 0.23.x); bump in lockstep with the protect-ffi upgrade.
     services:
       postgres:
-        image: ghcr.io/cipherstash/postgres-eql:17-2.3.1
+        image: ghcr.io/cipherstash/postgres-eql:${{ matrix.postgres-version }}-2.3.1
         env:
           POSTGRES_USER: cipherstash
           POSTGRES_PASSWORD: password
@@ -339,7 +348,7 @@ jobs:
       # suite installs EQL v3 into its own schemas, which coexists
       # with the image's pre-installed EQL v2 that the stack tests use.
       # They share that one database, so the CLI vitest config runs them
-      # serially (the `live` project sets `fileParallelism: false` —
+      # serially (the `live` project uses a single fork —
       # verify.live's bundle install opens with DROP SCHEMA … CASCADE, which
       # races destructively under the other suites in parallel forks).
       # (`supabase-push.live.test.ts` gates on different env vars and still

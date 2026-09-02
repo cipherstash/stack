@@ -1,5 +1,6 @@
 import { createPgClient, TlsVerificationError } from '@/db/client.js'
 import {
+  EqlLifecycleLockTimeoutError,
   EqlReinstallConnectionError,
   EqlReinstallRefusalError,
   restoreDerivedSearchIndexesAroundEqlReplacement,
@@ -123,6 +124,12 @@ export class EQLInstaller {
           : "SELECT to_regnamespace('eql_v3') IS NOT NULL AND to_regnamespace('eql_v3_internal') IS NOT NULL AS installed",
       )
       return result.rows[0]?.installed === true
+    } catch (error) {
+      if (error instanceof TlsVerificationError) throw error
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new Error(`Failed to connect to database: ${detail}`, {
+        cause: error,
+      })
     } finally {
       await client.end()
     }
@@ -136,17 +143,28 @@ export class EQLInstaller {
     const client = createPgClient(this.databaseUrl)
     try {
       await client.connect()
-      const result = await client.query<{ version: string }>(
-        `SELECT eql_v${generation}.version() AS version`,
+      const schemaName = `eql_v${generation}`
+      const schema = await client.query<{ installed: boolean }>(
+        'SELECT to_regnamespace($1) IS NOT NULL AS installed',
+        [schemaName],
       )
-      return result.rows[0]?.version ?? null
+      if (schema.rows[0]?.installed !== true) return null
+      try {
+        const result = await client.query<{ version: string }>(
+          `SELECT ${schemaName}.version() AS version`,
+        )
+        return result.rows[0]?.version
+          ? String(result.rows[0].version)
+          : 'unknown'
+      } catch {
+        return 'unknown'
+      }
     } catch (error) {
-      const code =
-        typeof error === 'object' && error !== null && 'code' in error
-          ? String((error as { code?: unknown }).code)
-          : undefined
-      if (code === '42883' || code === '3F000') return null
-      throw error
+      if (error instanceof TlsVerificationError) throw error
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new Error(`Failed to connect to database: ${detail}`, {
+        cause: error,
+      })
     } finally {
       await client.end()
     }
@@ -178,12 +196,11 @@ export class EQLInstaller {
       await restoreDerivedSearchIndexesAroundEqlReplacement({
         databaseUrl: this.databaseUrl,
         bundledSql: bundle.sql,
-        bundleOperators: bundle.expectedSurface.operators,
-        bundleCasts: bundle.expectedSurface.casts,
       })
     } catch (error) {
       if (
         error instanceof TlsVerificationError ||
+        error instanceof EqlLifecycleLockTimeoutError ||
         error instanceof EqlReinstallConnectionError ||
         error instanceof EqlReinstallRefusalError
       ) {

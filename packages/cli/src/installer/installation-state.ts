@@ -2,6 +2,7 @@ import type pg from 'pg'
 import { createPgClient, TlsVerificationError } from '@/db/client.js'
 import { SUPPORTED_PGCRYPTO_SCHEMAS } from './eql-bundle.js'
 import { EQL_V3_INTERNAL_SCHEMA_NAME, EQL_V3_SCHEMA_NAME } from './grants.js'
+import type { OreSurfaceState } from './ore.js'
 import {
   assessEqlSurface,
   type OreStateReading,
@@ -23,12 +24,7 @@ export type AssessedOreState =
     }
   | {
       status: 'observed'
-      state:
-        | 'indexable'
-        | 'fallback'
-        | 'incoherent-mixed'
-        | 'incoherent-poisoned'
-        | 'incoherent-unpoisoned'
+      state: OreSurfaceState
       opclassPresent: boolean
       poisonedDomains: number
       expectedPoisoned: number
@@ -75,8 +71,6 @@ const CAPABILITIES_SQL = `
     CASE WHEN EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'public') THEN has_schema_privilege(current_user, 'public', 'CREATE') ELSE false END AS has_public_create,
     EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto') AS pgcrypto_installed,
     (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'pgcrypto') AS pgcrypto_schema,
-    EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = '${EQL_V3_SCHEMA_NAME}') AS eql_v3_present,
-    EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = '${EQL_V3_INTERNAL_SCHEMA_NAME}') AS eql_v3_internal_present,
     (SELECT pg_has_role(current_user, n.nspowner, 'MEMBER') FROM pg_namespace n WHERE n.nspname = '${EQL_V3_SCHEMA_NAME}') AS can_drop_eql_v3,
     (SELECT pg_has_role(current_user, n.nspowner, 'MEMBER') FROM pg_namespace n WHERE n.nspname = '${EQL_V3_INTERNAL_SCHEMA_NAME}') AS can_drop_eql_v3_internal
 `
@@ -124,7 +118,7 @@ export async function assessEqlInstallation(options: {
 
     let verification = null
     let unavailableOre: AssessedOreState | null = null
-    if (v3Present && options.depth === 'exhaustive') {
+    if (options.depth === 'exhaustive') {
       verification = await assessEqlSurface(client, 'exhaustive')
     } else if (v3Present && options.includeOre === true) {
       await client.query('SAVEPOINT eql_ore_assessment')
@@ -175,6 +169,10 @@ export async function assessEqlInstallation(options: {
           preflight: buildPreflight(
             capabilityRow,
             await probeOperatorClassCreate(client),
+            {
+              eqlV3SchemaPresent: row?.eql_v3_present === true,
+              eqlV3InternalSchemaPresent: row?.eql_v3_internal_present === true,
+            },
           ),
         }
       : { status: 'not-requested' as const }
@@ -190,6 +188,10 @@ export async function assessEqlInstallation(options: {
 function buildPreflight(
   row: Record<string, unknown>,
   canCreateOperatorClass: boolean | null,
+  presence: {
+    eqlV3SchemaPresent: boolean
+    eqlV3InternalSchemaPresent: boolean
+  },
 ): PreflightResult {
   const asBoolOrNull = (value: unknown) =>
     typeof value === 'boolean' ? value : null
@@ -235,8 +237,8 @@ function buildPreflight(
     hasPublicCreate: row.has_public_create === true,
     pgcryptoInstalled,
     pgcryptoSchema,
-    eqlV3SchemaPresent: row.eql_v3_present === true,
-    eqlV3InternalSchemaPresent: row.eql_v3_internal_present === true,
+    eqlV3SchemaPresent: presence.eqlV3SchemaPresent,
+    eqlV3InternalSchemaPresent: presence.eqlV3InternalSchemaPresent,
     canDropEqlV3Schema,
     canDropEqlV3InternalSchema,
     canCreateOperatorClass,

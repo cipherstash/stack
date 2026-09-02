@@ -25,7 +25,6 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
   try {
     installation = await assessEqlInstallation({
       databaseUrl: config.databaseUrl,
-      includeCapabilities: true,
       includeOre: true,
     })
   } catch (error) {
@@ -66,10 +65,14 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
   s.start('Checking database permissions...')
 
   try {
-    if (installation.capabilities.status !== 'assessed') {
+    const capabilityAssessment = await assessEqlInstallation({
+      databaseUrl: config.databaseUrl,
+      includeCapabilities: true,
+    })
+    if (capabilityAssessment.capabilities.status !== 'assessed') {
       throw new Error('Database capabilities were not assessed')
     }
-    const permissions = installation.capabilities.preflight
+    const permissions = capabilityAssessment.capabilities.preflight
     s.stop('Permissions checked.')
 
     if (permissions.ok) {

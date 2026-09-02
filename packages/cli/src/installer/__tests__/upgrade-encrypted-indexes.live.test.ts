@@ -5,12 +5,9 @@
  */
 
 import { readInstallSql as readBaselineInstallSql } from '@cipherstash/eql-upgrade-baseline/sql'
-import {
-  decryptBulk,
-  type EncryptConfig,
-  type EncryptedPayload,
-  encryptBulk,
-  encryptQuery,
+import type {
+  EncryptConfig,
+  EncryptedPayload,
   newClient,
 } from '@cipherstash/protect-ffi'
 import { config as loadEnv } from 'dotenv'
@@ -45,9 +42,11 @@ const encryptConfig: EncryptConfig = {
 
 describeLive('EQLInstaller upgrade — genuine encrypted indexes', () => {
   const client = new pg.Client({ connectionString: DATABASE_URL })
+  let protectFfi: typeof import('@cipherstash/protect-ffi')
   let protectClient: Awaited<ReturnType<typeof newClient>>
 
   beforeAll(async () => {
+    protectFfi = await import('@cipherstash/protect-ffi')
     await client.connect()
     await client.query('DROP TABLE IF EXISTS eql_upgrade_records')
     await client.query(readBaselineInstallSql())
@@ -59,8 +58,8 @@ describeLive('EQLInstaller upgrade — genuine encrypted indexes', () => {
       ).rows[0].version,
     ).toBe(BASELINE_VERSION)
 
-    protectClient = await newClient({ encryptConfig, eqlVersion: 3 })
-    const rows = await encryptBulk(protectClient, {
+    protectClient = await protectFfi.newClient({ encryptConfig, eqlVersion: 3 })
+    const rows = await protectFfi.encryptBulk(protectClient, {
       plaintexts: [
         {
           plaintext: 'alice@example.com',
@@ -104,13 +103,13 @@ describeLive('EQLInstaller upgrade — genuine encrypted indexes', () => {
   it('upgrades a released installation while preserving usable encrypted indexes', async () => {
     await new EQLInstaller({ databaseUrl: DATABASE_URL ?? '' }).install()
 
-    const emailOperand = await encryptQuery(protectClient, {
+    const emailOperand = await protectFfi.encryptQuery(protectClient, {
       plaintext: 'bob@example.com',
       column: 'email',
       table: 'eql_upgrade_records',
       indexType: 'unique',
     })
-    const scoreOperand = await encryptQuery(protectClient, {
+    const scoreOperand = await protectFfi.encryptQuery(protectClient, {
       plaintext: 15,
       column: 'score',
       table: 'eql_upgrade_records',
@@ -126,7 +125,7 @@ describeLive('EQLInstaller upgrade — genuine encrypted indexes', () => {
       [emailOperand, scoreOperand],
     )
     expect(
-      await decryptBulk(protectClient, {
+      await protectFfi.decryptBulk(protectClient, {
         ciphertexts: result.rows.flatMap(({ email, score }) => [
           { ciphertext: email },
           { ciphertext: score },

@@ -75,11 +75,6 @@ function reachableBareSpecifiers(entry: string): string[] {
   const bare = new Set<string>()
   const walk = (file: string): void => {
     if (seen.has(file)) return
-    if (!existsSync(file)) {
-      throw new Error(
-        `Emitted module graph references missing relative file: ${file}`,
-      )
-    }
     seen.add(file)
     for (const specifier of specifiers(file)) {
       if (specifier.startsWith('.')) walk(resolve(dirname(file), specifier))

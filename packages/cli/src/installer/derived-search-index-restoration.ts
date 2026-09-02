@@ -30,6 +30,8 @@ export class EqlReinstallRefusalError extends Error {}
 
 export class EqlReinstallConnectionError extends Error {}
 
+export class EqlLifecycleLockTimeoutError extends Error {}
+
 export class DerivedSearchIndexReconstructionError extends Error {}
 
 export class DerivedSearchIndexVerificationError extends Error {}
@@ -42,8 +44,6 @@ export interface RestorationSummary {
 interface RestoreAroundEqlReplacementOptions {
   databaseUrl: string
   bundledSql: string
-  bundleOperators: string[]
-  bundleCasts: string[]
 }
 
 export interface ReinstallIndex {
@@ -58,6 +58,9 @@ export interface ReinstallIndex {
   replicaIdentitySql: string | null
   comment: string | null
   commentSql: string | null
+  owner: string
+  statisticsTargets: Array<number | null>
+  statisticsSql: string[]
 }
 
 interface DependencyRow {
@@ -73,50 +76,14 @@ interface DependencyRow {
   replica_identity_sql?: unknown
   comment?: unknown
   comment_sql?: unknown
+  owner?: unknown
+  statistics_targets?: unknown
+  statistics_sql?: unknown
 }
 
 const LIFECYCLE_DEPENDENCIES_SQL = `
 /* stash_eql_lifecycle_dependencies */
 WITH RECURSIVE
-/*
- * A type's name spelled the way \`parseExpectedSurface\` spells it, so the
- * operator and cast identities below can be compared against the ones parsed
- * out of the bundle.
- *
- * The rule is NOT \`format_type()\`. That function omits the schema whenever the
- * type is visible on the current search_path, while the parser always emits the
- * qualification the bundle wrote (\`eql_v3.query_text_eq\`,
- * \`eql_v3_internal.ore_block_256\`). On a connection whose search_path names
- * eql_v3 — routine on a provisioned database, so an application can call
- * \`eq_term()\` unqualified — \`format_type()\` answers a bare \`query_text_eq\`,
- * every bundle-owned operator and cast misses its ownership exemption, and the
- * installer refuses on a healthy database listing EQL's own operators as
- * customer-owned. (#918)
- *
- * It is not unconditional qualification either: the bundle declares operands in
- * \`pg_catalog\` (\`text\`, \`text[]\`, \`jsonb\`, \`jsonpath\`, \`integer\`) and writes
- * them bare, so \`pg_catalog.text\` would miss in the other direction. Hence:
- * \`format_type()\` for pg_catalog — it also spells the SQL-standard multi-word
- * names (\`double precision\`) and array suffixes the parser's alias map targets
- * — and an explicit qualification for everything else.
- */
-type_identity(oid, identity) AS (
-  SELECT t.oid,
-         CASE
-           WHEN tn.nspname = 'pg_catalog'
-             THEN pg_catalog.format_type(t.oid, NULL)
-           -- An array of a non-catalog type: pg_type calls it \`_eql_v3_text_eq\`,
-           -- the bundle would write \`public.eql_v3_text_eq[]\`.
-           WHEN t.typcategory = 'A' AND et.oid IS NOT NULL
-             THEN pg_catalog.format('%I.%I[]', en.nspname, et.typname)
-           ELSE pg_catalog.format('%I.%I', tn.nspname, t.typname)
-         END
-  FROM pg_catalog.pg_type t
-  JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace
-  LEFT JOIN pg_catalog.pg_type et
-    ON et.oid = t.typelem AND t.typcategory = 'A'
-  LEFT JOIN pg_catalog.pg_namespace en ON en.oid = et.typnamespace
-),
 eql_roots(classid, objid, objsubid) AS (
   SELECT 'pg_catalog.pg_namespace'::regclass, n.oid, 0
   FROM pg_catalog.pg_namespace n
@@ -269,55 +236,39 @@ external_dependants AS (
         AND n.nspname IN ('eql_v3', 'eql_v3_internal')
     )
   )
-  -- Only exact operator identities parsed from the pinned bundle are owned by
-  -- EQL. A customer may legally give an EQL function a different operator
-  -- name, so implementation namespace alone is not an ownership marker.
+  -- EQL installs its operators in public and implements them with functions in
+  -- a disposable EQL schema. Classify the installed catalog, not the incoming
+  -- bundle: an upgrade may legitimately remove an old operator.
   AND NOT (
     d.classid = 'pg_catalog.pg_operator'::regclass
     AND EXISTS (
       SELECT 1
       FROM pg_catalog.pg_operator operator
-      -- Prefix operators carry oprleft = 0, which matches no pg_type row; the
-      -- parser writes that operand as \`none\`.
-      LEFT JOIN type_identity left_type ON left_type.oid = operator.oprleft
-      LEFT JOIN type_identity right_type ON right_type.oid = operator.oprright
+      JOIN pg_catalog.pg_namespace operator_namespace
+        ON operator_namespace.oid = operator.oprnamespace
+      JOIN pg_catalog.pg_proc implementation
+        ON implementation.oid = operator.oprcode
+      JOIN pg_catalog.pg_namespace implementation_namespace
+        ON implementation_namespace.oid = implementation.pronamespace
       WHERE operator.oid = d.objid
-        AND pg_catalog.lower(operator.oprname) || ' (' ||
-            COALESCE(left_type.identity, 'none') || ', ' ||
-            COALESCE(right_type.identity, 'none') || ')'
-            = ANY($1::text[])
-        -- Compared raw, NOT through lower(). Postgres operator names are drawn
-        -- from +-*/<>=~!@#%^&|? and cannot contain a letter, so lower() is a
-        -- no-op on the value -- but it is not a no-op on the plan: it makes
-        -- pg_operator_oprname_l_r_n_index (oprname, oprleft, oprright,
-        -- oprnamespace) unusable and turns this into a sequential scan. The
-        -- planner evaluates this count as a filter over the whole of
-        -- pg_operator before operator.oid = d.objid narrows anything, so
-        -- with lower() the guard is a self-join of pg_operator against itself:
-        -- ~3,900 rows squared, ~15M comparisons and ~9GB of buffer traffic on
-        -- a database with EQL installed, which is most of this query's cost.
-        -- Do not reintroduce it.
-        AND (
-          SELECT pg_catalog.count(*)
-          FROM pg_catalog.pg_operator candidate
-          WHERE candidate.oprname = operator.oprname
-            AND candidate.oprleft = operator.oprleft
-            AND candidate.oprright = operator.oprright
-        ) = 1
+        AND operator_namespace.nspname = 'public'
+        AND implementation_namespace.nspname IN ('eql_v3', 'eql_v3_internal')
     )
   )
-  -- Likewise, these public-data-domain <-> query-domain casts are declarations
-  -- in the bundle, not application objects.
+  -- Likewise, EQL's casts are implemented by functions in the disposable EQL
+  -- schemas. Classify the installed catalog rather than the incoming bundle:
+  -- an upgrade may legitimately remove an old cast.
   AND NOT (
     d.classid = 'pg_catalog.pg_cast'::regclass
     AND EXISTS (
       SELECT 1
       FROM pg_catalog.pg_cast cast_row
-      JOIN type_identity source_type ON source_type.oid = cast_row.castsource
-      JOIN type_identity target_type ON target_type.oid = cast_row.casttarget
+      JOIN pg_catalog.pg_proc implementation
+        ON implementation.oid = cast_row.castfunc
+      JOIN pg_catalog.pg_namespace implementation_namespace
+        ON implementation_namespace.oid = implementation.pronamespace
       WHERE cast_row.oid = d.objid
-        AND source_type.identity || ' AS ' || target_type.identity
-            = ANY($2::text[])
+        AND implementation_namespace.nspname IN ('eql_v3', 'eql_v3_internal')
     )
   )
   -- pg_amop/pg_amproc have no namespace of their own; their owning family does.
@@ -431,6 +382,40 @@ SELECT DISTINCT
         pg_catalog.obj_description(index_class.oid, 'pg_class')
       )
   END AS comment_sql
+  , pg_catalog.pg_get_userbyid(index_class.relowner) AS owner
+  , CASE
+      WHEN e.classid = 'pg_catalog.pg_class'::regclass
+       AND index_class.relkind = 'i'
+       AND index_partition.inhrelid IS NULL
+        THEN ARRAY(
+          SELECT attribute.attstattarget
+          FROM pg_catalog.pg_attribute attribute
+          WHERE attribute.attrelid = index_class.oid
+            AND attribute.attnum > 0
+            AND NOT attribute.attisdropped
+          ORDER BY attribute.attnum
+        )
+    END AS statistics_targets
+  , CASE
+      WHEN e.classid = 'pg_catalog.pg_class'::regclass
+       AND index_class.relkind = 'i'
+       AND index_partition.inhrelid IS NULL
+        THEN ARRAY(
+          SELECT pg_catalog.format(
+            'ALTER INDEX %I.%I ALTER COLUMN %s SET STATISTICS %s',
+            index_namespace.nspname,
+            index_class.relname,
+            attribute.attnum,
+            attribute.attstattarget
+          )
+          FROM pg_catalog.pg_attribute attribute
+          WHERE attribute.attrelid = index_class.oid
+            AND attribute.attnum > 0
+            AND NOT attribute.attisdropped
+            AND attribute.attstattarget >= 0
+          ORDER BY attribute.attnum
+        )
+    END AS statistics_sql
 FROM external_dependants e
 LEFT JOIN pg_catalog.pg_class index_class
   ON e.classid = 'pg_catalog.pg_class'::regclass AND index_class.oid = e.objid
@@ -451,6 +436,15 @@ SELECT pg_catalog.format('%I.%I', n.nspname, c.relname) AS identity,
        i.indisclustered AS clustered,
        i.indisreplident AS replica_identity,
        pg_catalog.obj_description(c.oid, 'pg_class') AS comment,
+       pg_catalog.pg_get_userbyid(c.relowner) AS owner,
+       ARRAY(
+         SELECT attribute.attstattarget
+         FROM pg_catalog.pg_attribute attribute
+         WHERE attribute.attrelid = c.oid
+           AND attribute.attnum > 0
+           AND NOT attribute.attisdropped
+         ORDER BY attribute.attnum
+       ) AS statistics_targets,
        pg_catalog.pg_get_indexdef(i.indexrelid) AS definition
 FROM pg_catalog.pg_index i
 JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
@@ -487,7 +481,7 @@ async function acquireLifecycleLock(
       return
     }
     if (Date.now() >= deadline) {
-      throw new Error(
+      throw new EqlLifecycleLockTimeoutError(
         `Another EQL lifecycle operation is in progress on this database — it has held the installer's advisory lock for more than ${Math.round(waitMs / 1000)} seconds. Nothing was changed. Wait for the other \`stash eql install\`/\`eql upgrade\` to finish and re-run. If no other command is running, an earlier one may have died holding the lock: find its session in \`pg_stat_activity\` and close it, then retry.`,
       )
     }
@@ -499,13 +493,8 @@ async function acquireLifecycleLock(
 
 async function inspectReinstallDependencies(
   client: pg.ClientBase,
-  bundleOperators: string[],
-  bundleCasts: string[],
 ): Promise<ReinstallIndex[]> {
-  const result = await client.query(LIFECYCLE_DEPENDENCIES_SQL, [
-    bundleOperators,
-    bundleCasts,
-  ])
+  const result = await client.query(LIFECYCLE_DEPENDENCIES_SQL)
   const unsafe: string[] = []
   const indexes: ReinstallIndex[] = []
   for (const row of result.rows as DependencyRow[]) {
@@ -528,7 +517,15 @@ async function inspectReinstallDependencies(
       (row.replica_identity && typeof row.replica_identity_sql !== 'string') ||
       (row.comment !== null && typeof row.comment !== 'string') ||
       (row.comment_sql !== null && typeof row.comment_sql !== 'string') ||
-      (typeof row.comment === 'string' && typeof row.comment_sql !== 'string')
+      (typeof row.comment === 'string' &&
+        typeof row.comment_sql !== 'string') ||
+      typeof row.owner !== 'string' ||
+      !Array.isArray(row.statistics_targets) ||
+      !row.statistics_targets.every(
+        (target) => target === null || typeof target === 'number',
+      ) ||
+      !Array.isArray(row.statistics_sql) ||
+      !row.statistics_sql.every((sql) => typeof sql === 'string')
     ) {
       unsafe.push(
         String(row.identity ?? 'index with incomplete catalog metadata'),
@@ -547,6 +544,9 @@ async function inspectReinstallDependencies(
       replicaIdentitySql: row.replica_identity_sql,
       comment: row.comment,
       commentSql: row.comment_sql,
+      owner: row.owner,
+      statisticsTargets: row.statistics_targets,
+      statisticsSql: row.statistics_sql,
     })
   }
   if (unsafe.length > 0) {
@@ -588,6 +588,9 @@ async function rebuildIndexes(
     if (index.replicaIdentitySql !== null)
       await client.query(index.replicaIdentitySql)
     if (index.commentSql !== null) await client.query(index.commentSql)
+    for (const statisticsSql of index.statisticsSql) {
+      await client.query(statisticsSql)
+    }
   }
   const tableIdentities = new Set(indexes.map((index) => index.tableIdentity))
   for (const tableIdentity of tableIdentities) {
@@ -623,7 +626,14 @@ async function rebuildIndexes(
           (row.ready === true || expected.ready === false) &&
           row.clustered === expected.clustered &&
           row.replica_identity === expected.replicaIdentity &&
-          (row.comment ?? null) === expected.comment
+          (row.comment ?? null) === expected.comment &&
+          row.owner === expected.owner &&
+          Array.isArray(row.statistics_targets) &&
+          row.statistics_targets.length === expected.statisticsTargets.length &&
+          row.statistics_targets.every(
+            (target: unknown, position: number) =>
+              target === expected.statisticsTargets[position],
+          )
         )
       })
       .map((row) => String(row.identity)),
@@ -649,8 +659,6 @@ async function rebuildIndexes(
 export async function restoreDerivedSearchIndexesAroundEqlReplacement({
   databaseUrl,
   bundledSql,
-  bundleOperators,
-  bundleCasts,
 }: RestoreAroundEqlReplacementOptions): Promise<RestorationSummary> {
   const client = createPgClient(databaseUrl)
   try {
@@ -672,11 +680,7 @@ export async function restoreDerivedSearchIndexesAroundEqlReplacement({
     try {
       await acquireLifecycleLock(client)
       await client.query('SET LOCAL jit = off')
-      const indexes = await inspectReinstallDependencies(
-        client,
-        bundleOperators,
-        bundleCasts,
-      )
+      const indexes = await inspectReinstallDependencies(client)
       await client.query(bundledSql)
       const summary = await rebuildIndexes(client, indexes)
       await client.query('COMMIT')

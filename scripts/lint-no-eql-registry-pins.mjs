@@ -643,9 +643,7 @@ export function lint({
 } = {}) {
   const { declarations, sources: read } = scanTree(root)
   const ids = declarations.map(declarationId)
-  const registryPinned = declarations
-    .filter((d) => !d.inTree)
-    .map(exemptionId)
+  const registryPinned = declarations.filter((d) => !d.inTree).map(exemptionId)
   return {
     declarations,
     ids,

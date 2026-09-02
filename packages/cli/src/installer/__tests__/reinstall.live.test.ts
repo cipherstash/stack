@@ -10,9 +10,11 @@
  */
 
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
-import { derivedSearchIndexRestorationTestSeam } from '../derived-search-index-restoration.js'
-import { EQLInstaller, loadBundledEqlSql } from '../index.js'
-import { parseExpectedSurface } from '../verify.js'
+import {
+  derivedSearchIndexRestorationTestSeam,
+  EqlLifecycleLockTimeoutError,
+} from '../derived-search-index-restoration.js'
+import { EQLInstaller } from '../index.js'
 import {
   LiveRestorationDatabase,
   searchIndexRestorationScenario,
@@ -183,6 +185,57 @@ describeLive('EQLInstaller safe reinstall — live Postgres', () => {
     ])
   }, 180_000)
 
+  it('preserves index ownership and explicit statistics targets', async () => {
+    await query(`
+      CREATE INDEX records_encrypted_idx
+        ON stash_reinstall_test.records (eql_v3.eq_term(encrypted));
+      ALTER INDEX stash_reinstall_test.records_encrypted_idx
+        ALTER COLUMN 1 SET STATISTICS 750;
+    `)
+
+    await new EQLInstaller({ databaseUrl: DATABASE_URL ?? '' }).install()
+
+    expect(
+      await query<{ owner: string; statistics_target: number }>(`
+        SELECT pg_catalog.pg_get_userbyid(index_class.relowner) AS owner,
+               attribute.attstattarget AS statistics_target
+        FROM pg_catalog.pg_class index_class
+        JOIN pg_catalog.pg_attribute attribute
+          ON attribute.attrelid = index_class.oid AND attribute.attnum = 1
+        WHERE index_class.oid =
+          'stash_reinstall_test.records_encrypted_idx'::regclass
+      `),
+    ).toEqual([{ owner: 'cipherstash', statistics_target: 750 }])
+  }, 180_000)
+
+  it('preserves the default pre-Postgres-17 statistics target representation', async () => {
+    const [{ server_version_num: serverVersion }] = await query<{
+      server_version_num: string
+    }>('SHOW server_version_num')
+    if (Number(serverVersion) >= 170000) return
+
+    await query(`
+      CREATE INDEX records_encrypted_idx
+        ON stash_reinstall_test.records (eql_v3.eq_term(encrypted));
+    `)
+    const statisticsTarget = async () =>
+      query<{ statistics_target: number }>(`
+        SELECT attribute.attstattarget AS statistics_target
+        FROM pg_catalog.pg_attribute attribute
+        WHERE attribute.attrelid =
+          'stash_reinstall_test.records_encrypted_idx'::regclass
+          AND attribute.attnum = 1
+      `)
+
+    await expect(statisticsTarget()).resolves.toEqual([
+      { statistics_target: -1 },
+    ])
+    await new EQLInstaller({ databaseUrl: DATABASE_URL ?? '' }).install()
+    await expect(statisticsTarget()).resolves.toEqual([
+      { statistics_target: -1 },
+    ])
+  }, 180_000)
+
   /**
    * `format_type()` omits the schema whenever the type is visible on the
    * current search_path, while the identities parsed out of the bundle always
@@ -194,11 +247,10 @@ describeLive('EQLInstaller safe reinstall — live Postgres', () => {
    * in `format_type()`, not in our SQL.
    */
   it("exempts the bundle's own operators and casts when the EQL schemas are on the search_path", async () => {
-    const expected = parseExpectedSurface(loadBundledEqlSql())
     const rows = await postgres.withEqlSearchPath().dependencyInventory<{
       dependency_kind: string
       identity: string
-    }>(expected.operators, expected.casts)
+    }>()
     const unsafe = rows
       .filter((row) => row.dependency_kind !== 'index')
       .map((row) => row.identity)
@@ -211,36 +263,51 @@ describeLive('EQLInstaller safe reinstall — live Postgres', () => {
     })
   }, 60_000)
 
-  /**
-   * The negative control for the test above. An empty result proves nothing on
-   * its own — it is also what an EMPTY dependency graph looks like. Withhold
-   * exactly the operators the bundle declares with a `pg_catalog` operand
-   * (`text`, `text[]`, `jsonb`, `jsonpath`, `integer` — the parser spells those
-   * bare, with no schema) and they must reappear as `unsafe`. That is what
-   * pins the other half of the rule: qualifying every operand unconditionally
-   * would spell these `pg_catalog.text` and silently break their exemption in
-   * the direction this test, not the one above, can see.
-   */
-  it('exempts operators with a bare pg_catalog operand, and only because of the match', async () => {
-    const expected = parseExpectedSurface(loadBundledEqlSql())
-    const hasBareOperand = (identity: string) =>
-      identity
-        .slice(identity.indexOf('(') + 1, -1)
-        .split(', ')
-        .some((operand) => operand !== 'none' && !operand.includes('.'))
-    const withheld = expected.operators.filter(hasBareOperand)
-    expect(withheld.length).toBeGreaterThan(0)
-
+  it('exempts installed EQL operators independently of the pinned bundle', async () => {
     const rows = await postgres
       .withEqlSearchPath()
-      .dependencyInventory<{ dependency_kind: string; identity: string }>(
-        expected.operators.filter((o) => !hasBareOperand(o)),
-        expected.casts,
-      )
+      .dependencyInventory<{ dependency_kind: string; identity: string }>()
 
-    expect(rows.filter((row) => row.dependency_kind !== 'index')).toHaveLength(
-      withheld.length,
-    )
+    expect(rows.filter((row) => row.dependency_kind !== 'index')).toEqual([])
+  }, 60_000)
+
+  it('exempts installed EQL casts independently of the pinned bundle', async () => {
+    await query(`
+      CREATE DOMAIN stash_reinstall_test.legacy_encrypted AS jsonb;
+      CREATE FUNCTION eql_v3.legacy_query_cast(stash_reinstall_test.legacy_encrypted)
+        RETURNS eql_v3.query_text_eq
+        LANGUAGE sql IMMUTABLE STRICT
+        AS 'SELECT jsonb_build_object(''v'', $1)::eql_v3.query_text_eq';
+      CREATE CAST (
+        stash_reinstall_test.legacy_encrypted AS eql_v3.query_text_eq
+      ) WITH FUNCTION eql_v3.legacy_query_cast(stash_reinstall_test.legacy_encrypted);
+    `)
+
+    const rows = await postgres.dependencyInventory<{
+      dependency_kind: string
+      identity: string
+    }>()
+
+    expect(rows.filter((row) => row.dependency_kind !== 'index')).toEqual([])
+  }, 60_000)
+
+  it('keeps a customer operator unsafe when it duplicates an EQL signature', async () => {
+    await query(`CREATE OPERATOR stash_reinstall_test.= (
+      FUNCTION = eql_v3.eq,
+      LEFTARG = public.eql_v3_text_eq,
+      RIGHTARG = public.eql_v3_text_eq
+    )`)
+    const rows = await postgres.dependencyInventory<{
+      dependency_kind: string
+      identity: string
+    }>()
+    const unsafe = rows
+      .filter((row) => row.dependency_kind !== 'index')
+      .map((row) => row.identity)
+
+    expect(unsafe).toEqual([
+      'stash_reinstall_test.=(public.eql_v3_text_eq,public.eql_v3_text_eq)',
+    ])
   }, 60_000)
 
   it('installs over a connection whose search_path names the EQL schemas', async () => {
@@ -335,11 +402,11 @@ describeLive('EQLInstaller safe reinstall — live Postgres', () => {
 
       // An explicit short budget: the behaviour under test is "refuses rather
       // than hangs", which does not depend on how long the wait is, and the
-      // production default is deliberately a minute. The default's own
+      // production default is deliberately five minutes. The default's own
       // property — that an ordinary queued install still succeeds — is the
       // next test.
-      await expect(acquireLifecycleLock(blocked, 1_000)).rejects.toThrow(
-        /another EQL lifecycle operation is in progress/i,
+      await expect(acquireLifecycleLock(blocked, 1_000)).rejects.toBeInstanceOf(
+        EqlLifecycleLockTimeoutError,
       )
       await blocked.query('ROLLBACK')
       await holder.query('COMMIT')

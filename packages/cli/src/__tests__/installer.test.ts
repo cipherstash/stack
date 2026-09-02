@@ -299,16 +299,100 @@ describe('EQLInstaller', () => {
     )
   })
 
-  it('reads a legacy installed version with one query', async () => {
+  it('reads a legacy installed version', async () => {
     mockConnect.mockResolvedValue(undefined)
     mockEnd.mockResolvedValue(undefined)
-    mockQuery.mockResolvedValue({ rows: [{ version: '3.0.5' }], rowCount: 1 })
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ installed: true }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ version: '3.0.5' }], rowCount: 1 })
     const { EQLInstaller } = await import('@/installer/index.ts')
     const installer = new EQLInstaller({ databaseUrl: 'postgres://test' })
 
     await expect(installer.getInstalledVersion()).resolves.toBe('3.0.5')
-    expect(mockQuery).toHaveBeenCalledTimes(1)
-    expect(mockQuery).toHaveBeenCalledWith('SELECT eql_v3.version() AS version')
+  })
+
+  it('reads the version when the schema exists but is hidden from information_schema', async () => {
+    mockConnect.mockResolvedValue(undefined)
+    mockEnd.mockResolvedValue(undefined)
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('to_regnamespace')) {
+        return Promise.resolve({ rows: [{ installed: true }], rowCount: 1 })
+      }
+      if (sql.includes('information_schema.schemata')) {
+        return Promise.resolve({ rows: [], rowCount: 0 })
+      }
+      if (sql.includes('eql_v3.version()')) {
+        return Promise.resolve({ rows: [{ version: '3.0.5' }], rowCount: 1 })
+      }
+      return Promise.resolve({ rows: [], rowCount: 0 })
+    })
+    const { EQLInstaller } = await import('@/installer/index.ts')
+
+    await expect(
+      new EQLInstaller({
+        databaseUrl: 'postgres://test',
+      }).getInstalledVersion(),
+    ).resolves.toBe('3.0.5')
+  })
+
+  it('reports unknown for an installed legacy schema without version()', async () => {
+    mockConnect.mockResolvedValue(undefined)
+    mockEnd.mockResolvedValue(undefined)
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ installed: true }], rowCount: 1 })
+      .mockRejectedValueOnce(
+        Object.assign(new Error('undefined function'), { code: '42883' }),
+      )
+    const { EQLInstaller } = await import('@/installer/index.ts')
+
+    await expect(
+      new EQLInstaller({
+        databaseUrl: 'postgres://test',
+      }).getInstalledVersion(),
+    ).resolves.toBe('unknown')
+  })
+
+  it('frames connection failures from legacy installation detection', async () => {
+    mockConnect.mockRejectedValue(new Error('connection refused'))
+    mockEnd.mockResolvedValue(undefined)
+    const { EQLInstaller } = await import('@/installer/index.ts')
+
+    await expect(
+      new EQLInstaller({ databaseUrl: 'postgres://test' }).isInstalled(),
+    ).rejects.toThrow('Failed to connect to database: connection refused')
+  })
+
+  it('preserves lifecycle lock timeout guidance without rollback narration', async () => {
+    vi.useFakeTimers()
+    mockConnect.mockResolvedValue(undefined)
+    mockEnd.mockResolvedValue(undefined)
+    mockQuery.mockImplementation((sql: string) => {
+      if (sql.includes('pg_try_advisory_xact_lock')) {
+        return Promise.resolve({ rows: [{ acquired: false }], rowCount: 1 })
+      }
+      return Promise.resolve({ rows: [], rowCount: 0 })
+    })
+    try {
+      const { EQLInstaller } = await import('@/installer/index.ts')
+      const { EqlLifecycleLockTimeoutError } = await import(
+        '../installer/derived-search-index-restoration.js'
+      )
+      const installing = new EQLInstaller({
+        databaseUrl: 'postgres://test',
+      }).install()
+      const outcome = installing.catch((error: unknown) => error)
+
+      await vi.advanceTimersByTimeAsync(300_000)
+
+      const error = await outcome
+      expect(error).toBeInstanceOf(EqlLifecycleLockTimeoutError)
+      expect(error).not.toHaveProperty(
+        'message',
+        expect.stringMatching(/Failed to install EQL/),
+      )
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('installs only the pinned EQL v3 bundle', async () => {
@@ -393,6 +477,28 @@ describe('EQLInstaller', () => {
 
     expect(database.events).toContain('comment')
     expect(database.events.indexOf('comment')).toBeLessThan(
+      database.events.indexOf('verify'),
+    )
+  })
+
+  it('restores explicit per-column index statistics targets', async () => {
+    mockConnect.mockResolvedValue(undefined)
+    mockEnd.mockResolvedValue(undefined)
+    const database = new RecordingRestorationDatabase(
+      searchIndexRestorationScenario({
+        statisticsTargets: [750],
+        statisticsSql: [
+          'ALTER INDEX app.users_email_idx ALTER COLUMN 1 SET STATISTICS 750',
+        ],
+      }),
+    )
+    mockQuery.mockImplementation(database.query)
+    const { EQLInstaller } = await import('@/installer/index.ts')
+
+    await new EQLInstaller({ databaseUrl: 'postgres://test' }).install()
+
+    expect(database.events).toContain('statistics')
+    expect(database.events.indexOf('statistics')).toBeLessThan(
       database.events.indexOf('verify'),
     )
   })
@@ -485,6 +591,29 @@ describe('EQLInstaller', () => {
     ])
   })
 
+  it('refuses before mutation when index catalog metadata is incomplete', async () => {
+    mockConnect.mockResolvedValue(undefined)
+    mockEnd.mockResolvedValue(undefined)
+    const database = new RecordingRestorationDatabase(undefined, {
+      incompleteCaptureMetadata: true,
+    })
+    mockQuery.mockImplementation(database.query)
+    const { EQLInstaller } = await import('@/installer/index.ts')
+
+    await expect(
+      new EQLInstaller({ databaseUrl: 'postgres://test' }).install(),
+    ).rejects.toThrow(
+      /refused before making changes.*incomplete catalog metadata/s,
+    )
+    expect(database.events).toEqual([
+      'begin',
+      'lock',
+      'configure',
+      'capture',
+      'rollback',
+    ])
+  })
+
   it('rolls back schema replacement when index rebuild fails', async () => {
     mockConnect.mockResolvedValue(undefined)
     mockEnd.mockResolvedValue(undefined)
@@ -512,6 +641,57 @@ describe('EQLInstaller', () => {
       'reconstruct',
       'rollback',
     ])
+  })
+
+  it('rolls back schema replacement when rebuilt index verification fails', async () => {
+    mockConnect.mockResolvedValue(undefined)
+    mockEnd.mockResolvedValue(undefined)
+    const scenario = searchIndexRestorationScenario()
+    const database = new RecordingRestorationDatabase(scenario, {
+      verificationOverrides: { valid: false },
+    })
+    mockQuery.mockImplementation(database.query)
+    const { EQLInstaller } = await import('@/installer/index.ts')
+
+    await expect(
+      new EQLInstaller({ databaseUrl: 'postgres://test' }).install(),
+    ).rejects.toThrow(/missing, invalid, or changed.*app\.users_email_idx/s)
+    expect(database.events.slice(-2)).toEqual(['verify', 'rollback'])
+    expect(database.events).not.toContain('commit')
+  })
+
+  it('rolls back when a rebuilt index has a different owner', async () => {
+    mockConnect.mockResolvedValue(undefined)
+    mockEnd.mockResolvedValue(undefined)
+    const database = new RecordingRestorationDatabase(
+      searchIndexRestorationScenario(),
+      { verificationOverrides: { owner: 'unexpected_owner' } },
+    )
+    mockQuery.mockImplementation(database.query)
+    const { EQLInstaller } = await import('@/installer/index.ts')
+
+    await expect(
+      new EQLInstaller({ databaseUrl: 'postgres://test' }).install(),
+    ).rejects.toThrow(/missing, invalid, or changed.*app\.users_email_idx/s)
+    expect(database.events.slice(-2)).toEqual(['verify', 'rollback'])
+    expect(database.events).not.toContain('commit')
+  })
+
+  it('rolls back when a rebuilt index has different statistics targets', async () => {
+    mockConnect.mockResolvedValue(undefined)
+    mockEnd.mockResolvedValue(undefined)
+    const database = new RecordingRestorationDatabase(
+      searchIndexRestorationScenario({ statisticsTargets: [750] }),
+      { verificationOverrides: { statisticsTargets: [100] } },
+    )
+    mockQuery.mockImplementation(database.query)
+    const { EQLInstaller } = await import('@/installer/index.ts')
+
+    await expect(
+      new EQLInstaller({ databaseUrl: 'postgres://test' }).install(),
+    ).rejects.toThrow(/missing, invalid, or changed.*app\.users_email_idx/s)
+    expect(database.events.slice(-2)).toEqual(['verify', 'rollback'])
+    expect(database.events).not.toContain('commit')
   })
 
   it('grants both EQL v3 schemas to Supabase roles when the role is a member of postgres', async () => {

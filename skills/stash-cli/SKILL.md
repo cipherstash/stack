@@ -419,7 +419,9 @@ Run it whenever query-time behaviour looks inconsistent with a "successful" inst
 
 Generates an **EQL v3 install migration**, instead of running SQL directly against the database (`eql install`). Migration-first is the preferred path: the install lands in your migration history and ships to every environment through the same migrate step as the rest of your schema. On Supabase it is the *only* durable path — `supabase db reset` replays the migrations directory, so a direct install is wiped by the next reset. v3 only — there is no `--eql-version` here.
 
-**The re-run protections do not travel with the file.** The lifecycle lock, index capture, refusal on unsupported dependants, and rebuild all live in the `eql install`/`eql upgrade` code path, not in the bundle SQL. A generated migration is the raw bundle, so a migration runner applying it does the `DROP SCHEMA ... CASCADE` unprotected. That is fine on a first install. Re-applying it over a database that already carries EQL functional indexes drops them with no rebuild — reach for `eql upgrade` there, or recreate the indexes in the same migration.
+**Generated migrations contain the raw bundle, not the reinstall protocol.** Use
+one for a first install. For replacement, use `eql upgrade` or recreate every
+dependent object in the same migration; see `eql upgrade` below.
 
 ```bash
 stash eql migration --drizzle              # Drizzle custom migration in drizzle/
@@ -497,14 +499,13 @@ An applied migration carrying a statement the sweep would have skipped anyway �
 
 #### `eql upgrade`
 
-The install SQL is safe to re-run: encrypted columns and rows live outside the
-disposable EQL schemas. `upgrade` serializes the lifecycle with a database
-advisory lock, captures functional-index definitions, replaces the schemas,
-then rebuilds, analyzes, and verifies those indexes in the same transaction. Unsupported external
-dependencies (including policies and views) make it refuse before mutation. A
-rebuild failure rolls back the schema replacement and restores the prior indexes;
-never describe a failed reconstruction as a successful upgrade. `upgrade` is
-v3-only and accepts `--supabase`, `--dry-run`, and `--database-url`.
+Encrypted columns and rows live outside the disposable EQL schemas. `upgrade`
+captures dependent functional indexes, replaces the schemas, then restores and
+verifies the indexes in one transaction. Unsupported dependencies are refused
+before mutation; restoration failure rolls back the replacement. Completion
+means every definition and restorable catalog property matches, with no
+validity/readiness regression. `upgrade` is v3-only and accepts `--supabase`,
+`--dry-run`, and `--database-url`.
 
 Run it in a schema-migration maintenance window. The advisory lock serializes
 other `stash` lifecycle commands, not arbitrary DDL from unrelated sessions;

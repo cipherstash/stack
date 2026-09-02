@@ -1,8 +1,10 @@
 import { installMigrationsSchema } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
+import { CliExit } from '@/cli/exit.js'
 import { resolveDatabaseUrl } from '@/config/database-url.js'
 import { findConfigFile, loadStashConfig } from '@/config/index.js'
 import { createPgClient } from '@/db/client.js'
+import { EqlReinstallRefusalError } from '@/installer/derived-search-index-restoration.js'
 import { EQLInstaller } from '@/installer/index.js'
 import { assessEqlInstallation } from '@/installer/installation-state.js'
 import { describeOreState } from '@/installer/ore.js'
@@ -200,7 +202,18 @@ export async function installCommand(
   }
 
   s.start('Installing EQL v3 extensions (pinned bundle)...')
-  const installResult = await installer.install({ supabase })
+  let installResult: Awaited<ReturnType<EQLInstaller['install']>>
+  try {
+    installResult = await installer.install({ supabase })
+  } catch (error) {
+    s.stop('EQL installation failed.')
+    if (error instanceof EqlReinstallRefusalError) {
+      p.log.error(error.message)
+      p.outro('Installation aborted.')
+      throw new CliExit(1)
+    }
+    throw error
+  }
   s.stop('EQL extensions installed.')
   if (supabase) reportSupabaseGrantsOutcome(installResult)
 

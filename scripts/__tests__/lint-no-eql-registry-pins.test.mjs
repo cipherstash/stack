@@ -79,14 +79,12 @@ const cargoForms = (body) =>
   cargoDeclarations('Cargo.toml', body).map((d) => d.form)
 
 describe('the tree it actually guards', () => {
-  it('passes: every EQL dependency resolves in-tree, with nothing exempt', () => {
+  it('passes with only the immutable CLI upgrade baseline exempt', () => {
     const { exitCode, output } = run()
     expect(output).toContain('resolves in-tree')
-    // No `(N exempt: …)` suffix. The exemption list is empty as of CIP-3744
-    // and the success line reports what it excused, so this is the assertion
-    // that the tree needs no standing permission at all — not merely that the
-    // one it had is still described accurately.
-    expect(output).not.toContain('exempt')
+    expect(output).toContain(
+      '(1 exempt: packages/cli/package.json :: @cipherstash/eql-upgrade-baseline)',
+    )
     expect(exitCode).toBe(0)
   })
 

@@ -10,6 +10,9 @@ export interface SearchIndexRestorationScenario {
   replicaIdentitySql: string | null
   comment: string | null
   commentSql: string | null
+  owner: string
+  statisticsTargets: Array<number | null>
+  statisticsSql: string[]
 }
 
 export type RestorationEvent =
@@ -22,6 +25,7 @@ export type RestorationEvent =
   | 'cluster'
   | 'replica-identity'
   | 'comment'
+  | 'statistics'
   | 'analyze'
   | 'verify'
   | 'commit'
@@ -43,6 +47,9 @@ export function searchIndexRestorationScenario(
     replicaIdentitySql: null,
     comment: null,
     commentSql: null,
+    owner: 'app_owner',
+    statisticsTargets: [null],
+    statisticsSql: [],
     ...overrides,
   }
 }
@@ -57,6 +64,8 @@ export class RecordingRestorationDatabase {
       unsafeIdentity?: string
       failReconstructionWith?: Error
       failConfigurationWith?: Error
+      verificationOverrides?: Partial<SearchIndexRestorationScenario>
+      incompleteCaptureMetadata?: boolean
     } = {},
   ) {}
 
@@ -71,6 +80,18 @@ export class RecordingRestorationDatabase {
       throw this.options.failConfigurationWith
     }
     if (event === 'capture') {
+      if (this.options.incompleteCaptureMetadata) {
+        return {
+          rows: [
+            {
+              ...captureRow(searchIndexRestorationScenario()),
+              identity: null,
+              definition: null,
+            },
+          ],
+          rowCount: 1,
+        }
+      }
       if (this.options.unsafeIdentity) {
         return {
           rows: [
@@ -90,7 +111,15 @@ export class RecordingRestorationDatabase {
       throw this.options.failReconstructionWith
     }
     if (event === 'verify' && this.scenario) {
-      return { rows: [verificationRow(this.scenario)], rowCount: 1 }
+      return {
+        rows: [
+          verificationRow({
+            ...this.scenario,
+            ...this.options.verificationOverrides,
+          }),
+        ],
+        rowCount: 1,
+      }
     }
     return { rows: [], rowCount: 0 }
   }
@@ -120,10 +149,9 @@ export class LiveRestorationDatabase {
     }
   }
 
-  dependencyInventory<T>(operators: string[], casts: string[]): Promise<T[]> {
+  dependencyInventory<T>(): Promise<T[]> {
     return this.query<T>(
       derivedSearchIndexRestorationTestSeam.lifecycleDependenciesSql,
-      [operators, casts],
     )
   }
 }
@@ -142,6 +170,9 @@ function captureRow(scenario: SearchIndexRestorationScenario) {
     replica_identity_sql: scenario.replicaIdentitySql,
     comment: scenario.comment,
     comment_sql: scenario.commentSql,
+    owner: scenario.owner,
+    statistics_targets: scenario.statisticsTargets,
+    statistics_sql: scenario.statisticsSql,
   }
 }
 
@@ -154,6 +185,8 @@ function verificationRow(scenario: SearchIndexRestorationScenario) {
     clustered: scenario.clustered,
     replica_identity: scenario.replicaIdentity,
     comment: scenario.comment,
+    owner: scenario.owner,
+    statistics_targets: scenario.statisticsTargets,
   }
 }
 
@@ -171,6 +204,7 @@ function restorationEvent(
   if (scenario?.replicaIdentitySql && sql === scenario.replicaIdentitySql)
     return 'replica-identity'
   if (scenario?.commentSql && sql === scenario.commentSql) return 'comment'
+  if (scenario?.statisticsSql.includes(sql)) return 'statistics'
   if (sql.startsWith('ANALYZE ')) return 'analyze'
   if (sql.includes('stash_eql_verify_rebuilt_indexes')) return 'verify'
   if (sql === 'COMMIT') return 'commit'
