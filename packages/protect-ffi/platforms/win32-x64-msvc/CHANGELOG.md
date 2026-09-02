@@ -1,5 +1,7 @@
 # @cipherstash/protect-ffi-win32-x64-msvc
 
+## 0.33.0
+
 ## 0.32.0
 
 ### Patch Changes
