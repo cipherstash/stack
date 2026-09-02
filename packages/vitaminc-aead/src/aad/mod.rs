@@ -2,6 +2,8 @@ mod pae;
 
 use std::borrow::Cow;
 
+use vitaminc_protected::NonEmpty;
+
 /// Associated Authenticated Data passed to an AEAD cipher.
 ///
 /// `Aad` is authenticated but not encrypted: tampering with it (or with the
@@ -195,6 +197,24 @@ pub trait IntoAad<'a> {
         Self: Sized;
 }
 
+// `Aad` deliberately does NOT implement `IsEmpty`: an already-encoded AAD can
+// only be judged on its bytes, and PAE framing makes a composite built from
+// empty parts (`Some("")`, `("", "")`) non-empty as bytes — so `NonEmpty<Aad>`
+// would certify exactly the degenerate value it exists to exclude. Prove
+// non-emptiness on the raw value, before it is framed, then convert:
+// `NonEmpty<T>` where `T: IntoAad`.
+
+/// `NonEmpty<T>` is transparent: it encodes exactly as `T` does. The wrapper
+/// changes what the type promises, never the bytes authenticated.
+impl<'a, T> IntoAad<'a> for NonEmpty<T>
+where
+    T: IntoAad<'a>,
+{
+    fn into_aad(self) -> Aad<'a> {
+        self.into_inner().into_aad()
+    }
+}
+
 /// Self type is already an Aad
 impl<'a> IntoAad<'a> for Aad<'a> {
     fn into_aad(self) -> Aad<'a> {
@@ -251,12 +271,21 @@ impl<'a> IntoAad<'a> for &'a str {
     }
 }
 
-impl<'a> IntoAad<'a> for u64 {
-    fn into_aad(self) -> Aad<'a> {
-        let bytes = self.to_le_bytes();
-        Aad::new_owned(bytes)
-    }
+macro_rules! integer_aad {
+    ($($ty:ty),+ $(,)?) => {$(
+        /// An integer encodes as its raw little-endian bytes, with no type
+        /// tag — matching the original `u64` wire format. Distinct integer
+        /// types of the same width therefore encode identically; compose a
+        /// tuple (PAE-framed) when that distinction must be authenticated.
+        impl<'a> IntoAad<'a> for $ty {
+            fn into_aad(self) -> Aad<'a> {
+                Aad::new_owned(self.to_le_bytes())
+            }
+        }
+    )+};
 }
+
+integer_aad!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
 
 impl<'a, T> IntoAad<'a> for Option<T>
 where
@@ -288,6 +317,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn non_empty_is_transparent_to_the_encoding() {
+        assert_eq!(
+            NonEmpty::new("users/email")
+                .expect("non-empty")
+                .into_aad()
+                .as_bytes(),
+            "users/email".into_aad().as_bytes()
+        );
+        assert_eq!(
+            Some(NonEmpty::new("users/email").expect("non-empty"))
+                .into_aad()
+                .as_bytes(),
+            Some("users/email").into_aad().as_bytes()
+        );
+        assert_eq!(
+            NonEmpty::new(("users", "email"))
+                .expect("non-empty")
+                .into_aad()
+                .as_bytes(),
+            ("users", "email").into_aad().as_bytes()
+        );
+        assert_eq!(
+            vitaminc_protected::nonempty!("users/email")
+                .into_aad()
+                .as_bytes(),
+            b"users/email"
+        );
+    }
+
+    #[test]
+    fn encoded_aad_reports_emptiness_of_its_bytes_only() {
+        assert!(Aad::empty().is_empty());
+        assert!("".into_aad().is_empty());
+        assert!(!Aad::from_slice(b"raw").is_empty());
+        // Composite framing makes an encoded empty value non-empty as bytes —
+        // which is exactly why `Aad` has no `IsEmpty` impl: the structural
+        // check belongs before encoding (`NonEmpty<T>` where `T: IntoAad`).
+        assert!(!Some("").into_aad().is_empty());
+    }
+
+    #[test]
     fn test_aad() {
         let aad = Aad::new_owned(vec![1, 2, 3]);
         assert_eq!(aad.as_bytes(), &[1, 2, 3]);
@@ -317,6 +387,22 @@ mod tests {
         let aad = 42u64.into_aad();
         assert_eq!(aad.as_bytes(), &[42, 0, 0, 0, 0, 0, 0, 0]);
         assert!(!aad.is_empty());
+    }
+
+    #[test]
+    fn every_integer_type_encodes_as_little_endian_bytes() {
+        assert_eq!(7u8.into_aad().as_bytes(), &7u8.to_le_bytes());
+        assert_eq!(7u16.into_aad().as_bytes(), &7u16.to_le_bytes());
+        assert_eq!(7u32.into_aad().as_bytes(), &7u32.to_le_bytes());
+        assert_eq!(7u64.into_aad().as_bytes(), &7u64.to_le_bytes());
+        assert_eq!(7u128.into_aad().as_bytes(), &7u128.to_le_bytes());
+        assert_eq!((-7i8).into_aad().as_bytes(), &(-7i8).to_le_bytes());
+        assert_eq!((-7i16).into_aad().as_bytes(), &(-7i16).to_le_bytes());
+        assert_eq!((-7i32).into_aad().as_bytes(), &(-7i32).to_le_bytes());
+        assert_eq!((-7i64).into_aad().as_bytes(), &(-7i64).to_le_bytes());
+        assert_eq!((-7i128).into_aad().as_bytes(), &(-7i128).to_le_bytes());
+        // Widths keep the types apart even without a tag.
+        assert_ne!(7u32.into_aad().as_bytes(), 7u64.into_aad().as_bytes());
     }
 
     #[test]
