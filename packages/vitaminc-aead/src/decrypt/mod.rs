@@ -8,6 +8,8 @@
 pub mod impls;
 
 use crate::{Aad, Decipher, IntoAad};
+use vitaminc_protected::{Controlled, Protected};
+use zeroize::Zeroize;
 
 /// The counterpart to `Encrypt` — a type that knows how to decrypt itself using a `Decipher`.
 /// Analogous to serde's `Deserialize`.
@@ -29,4 +31,25 @@ pub trait Decrypt<'c>: Sized + Send {
     where
         D: Decipher<'c>,
         A: IntoAad<'a>;
+
+    /// Decrypt straight into a `Protected<Self>`.
+    ///
+    /// The counterpart to [`Encrypt::encrypt_protected`](crate::Encrypt::encrypt_protected),
+    /// and the seam the blanket `impl Decrypt for Protected<T>` goes through.
+    /// The default decrypts a bare `Self` and wraps it, which is right for
+    /// composite types. Byte leaves override it to keep the
+    /// `Protected<Vec<u8>>` the decipher already hands to
+    /// [`DecipherVisitor::visit_bytes_vec`](crate::DecipherVisitor::visit_bytes_vec)
+    /// wrapped the whole way out, rather than unwrapping it only to wrap it again.
+    fn decrypt_protected<'a, D, A>(decipher: D, aad: A) -> D::Ok<Protected<Self>>
+    where
+        Self: Zeroize + 'c,
+        D: Decipher<'c>,
+        A: IntoAad<'a>,
+    {
+        D::map_ok(
+            Self::decrypt_with_aad(decipher, aad),
+            Protected::init_from_inner,
+        )
+    }
 }

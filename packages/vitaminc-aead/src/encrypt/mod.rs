@@ -1,4 +1,6 @@
 use crate::{cipher::Cipher, Aad, IntoAad};
+use vitaminc_protected::{Controlled, Protected};
+use zeroize::Zeroize;
 pub mod impls;
 
 /// A type that knows how to encrypt itself by driving a [`Cipher`].
@@ -24,4 +26,34 @@ pub trait Encrypt {
     where
         C: Cipher,
         A: IntoAad<'a>;
+
+    /// Encrypt a `Protected<Self>` without exposing the inner value.
+    ///
+    /// This is the seam the blanket `impl Encrypt for Protected<T>` goes
+    /// through. The default unwraps `this` and defers to
+    /// [`encrypt_with_aad`](Encrypt::encrypt_with_aad), which is right for
+    /// composite types: each field re-wraps itself before it reaches the
+    /// cipher, so the only bare value is the container being taken apart.
+    ///
+    /// Byte leaves — `[u8; N]`, `Vec<u8>`, and `String` — override it to hand
+    /// the still-wrapped value straight to the cipher's `Protected`-taking
+    /// entry point ([`Cipher::encrypt_bytes_array`] /
+    /// [`Cipher::encrypt_bytes_vec`]; `String` maps to its byte buffer inside
+    /// the wrapper first), so a `Protected<[u8; 32]>` key or a
+    /// `Protected<String>` password, or a newtype deriving `Encrypt` around
+    /// one, is never unwrapped on its way in.
+    /// Override it whenever `Self` has a way to reach the cipher that keeps
+    /// the plaintext wrapped end-to-end.
+    fn encrypt_protected<'a, C, A>(
+        this: Protected<Self>,
+        cipher: C,
+        aad: A,
+    ) -> Result<C::Ok, C::Error>
+    where
+        Self: Sized + Zeroize,
+        C: Cipher,
+        A: IntoAad<'a>,
+    {
+        this.risky_unwrap().encrypt_with_aad(cipher, aad)
+    }
 }

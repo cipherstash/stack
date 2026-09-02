@@ -3,7 +3,7 @@
 //! the exact derivation a wrapper binds, without any real cryptography.
 
 use std::any::Any;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use vitaminc_protected::{Controlled, Protected};
 
@@ -20,17 +20,26 @@ use crate::{
 /// driven.
 pub(crate) struct MockCipher {
     captured_aad: RefCell<Vec<u8>>,
+    /// How many times `encrypt_bytes_array` was called directly, as opposed
+    /// to the trait's default forwarding through `encrypt_bytes_vec`. Lets a
+    /// test prove a wrapped array reached the cipher still wrapped.
+    array_entry_hits: Cell<usize>,
 }
 
 impl MockCipher {
     pub(crate) fn new() -> Self {
         MockCipher {
             captured_aad: RefCell::new(Vec::new()),
+            array_entry_hits: Cell::new(0),
         }
     }
 
     pub(crate) fn captured_aad(&self) -> Vec<u8> {
         self.captured_aad.borrow().clone()
+    }
+
+    pub(crate) fn array_entry_hits(&self) -> usize {
+        self.array_entry_hits.get()
     }
 }
 
@@ -54,6 +63,19 @@ impl Cipher for &MockCipher {
     {
         *self.captured_aad.borrow_mut() = aad.into_aad().as_bytes().to_vec();
         Ok(data.risky_unwrap())
+    }
+
+    fn encrypt_bytes_array<'a, const N: usize, A>(
+        self,
+        data: Protected<[u8; N]>,
+        aad: A,
+    ) -> Result<Self::Ok, Self::Error>
+    where
+        A: IntoAad<'a>,
+    {
+        self.array_entry_hits.set(self.array_entry_hits.get() + 1);
+        *self.captured_aad.borrow_mut() = aad.into_aad().as_bytes().to_vec();
+        Ok(data.risky_ref().to_vec())
     }
 
     fn encrypt_seq<'a, A>(self, _size_hint: Option<usize>, _aad: A) -> Self::SeqCipher
@@ -149,6 +171,80 @@ impl MapCipher for UnusedMap {
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
+        Ok(Vec::new())
+    }
+}
+
+/// A cipher that deliberately does **not** override
+/// [`Cipher::encrypt_bytes_array`], so tests can drive the trait's default
+/// forwarding body — the issue-#170 discipline of borrowing the wrapped array
+/// and copying inside `Protected` rather than `risky_unwrap`ping it. Both
+/// [`MockCipher`] and the real ciphers override the method, so without this
+/// double the default body would be unexercised in the crate.
+pub(crate) struct MockDefaultCipher {
+    captured_aad: RefCell<Vec<u8>>,
+}
+
+impl MockDefaultCipher {
+    pub(crate) fn new() -> Self {
+        MockDefaultCipher {
+            captured_aad: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+impl Cipher for &MockDefaultCipher {
+    type Ok = Vec<u8>;
+    type Error = Unspecified;
+    type Passthrough = ();
+    type SeqCipher = UnusedSeq;
+    type MapCipher = UnusedMap;
+
+    fn encrypt_bytes_vec<'a, A>(
+        self,
+        data: Protected<Vec<u8>>,
+        aad: A,
+    ) -> Result<Self::Ok, Self::Error>
+    where
+        A: IntoAad<'a>,
+    {
+        *self.captured_aad.borrow_mut() = aad.into_aad().as_bytes().to_vec();
+        Ok(data.risky_unwrap())
+    }
+
+    // No `encrypt_bytes_array`: the trait default forwards here through
+    // `encrypt_bytes_vec` — that forwarding is what this double exists to test.
+
+    fn encrypt_seq<'a, A>(self, _size_hint: Option<usize>, _aad: A) -> Self::SeqCipher
+    where
+        A: IntoAad<'a>,
+    {
+        UnusedSeq
+    }
+
+    fn encrypt_map<'a, A>(self, _aad: A) -> Self::MapCipher
+    where
+        A: IntoAad<'a>,
+    {
+        UnusedMap
+    }
+
+    fn encrypt_none<'a, A>(self, aad: A) -> Result<Self::Ok, Self::Error>
+    where
+        A: IntoAad<'a>,
+    {
+        *self.captured_aad.borrow_mut() = aad.into_aad().as_bytes().to_vec();
+        Ok(Vec::new())
+    }
+
+    fn passthrough(self, _value: Self::Passthrough) -> Result<Self::Ok, Self::Error> {
+        Ok(Vec::new())
+    }
+
+    fn passthrough_boxed(
+        self,
+        _value: Box<dyn Any + Send + 'static>,
+    ) -> Result<Self::Ok, Self::Error> {
         Ok(Vec::new())
     }
 }

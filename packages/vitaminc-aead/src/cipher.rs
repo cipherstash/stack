@@ -337,3 +337,24 @@ pub trait MapCipher: Sized {
     /// [`SeqCipher::end`].
     fn end(self) -> Result<Self::Ok, Self::Error>;
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::test_util::MockDefaultCipher;
+    use crate::Encrypt;
+
+    // Drives the trait-default `encrypt_bytes_array` body: a cipher with no
+    // override must forward the array's bytes through `encrypt_bytes_vec`.
+    // `MockCipher` and the real ciphers all override the method, so this is
+    // the only test in the crate exercising the default. It pins the
+    // forwarding only — an unwrap-then-`to_vec` rewrite of the body would
+    // forward the same bytes and still pass, so the issue-#170 custody
+    // discipline (borrow, never `risky_unwrap`) is held by the comment in
+    // the default body and by review, not by this test.
+    #[test]
+    fn default_encrypt_bytes_array_forwards_through_the_vec_entry_point() {
+        let cipher = MockDefaultCipher::new();
+        let ct = [1u8, 2, 3].encrypt(&cipher).expect("encrypt");
+        assert_eq!(ct, vec![1, 2, 3]);
+    }
+}
