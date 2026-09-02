@@ -309,6 +309,18 @@ key source proving one ZeroKMS call per record batch), and the release
 `.wasm` builds with an import surface of exactly WASI +
 `cipherstash_transport` (`mise run wasm:guest:build` / `wasm:guest:test`).
 
+Both tasks run in CI. The guest is a detached workspace, so the
+workspace-wide jobs never compile, lint or test it; the WASI workflow
+(`.github/workflows/test-wasi.yml`) watches the guest path and runs the two
+tasks, which is the crate's only gate. The import surface is asserted, not
+eyeballed: `scripts/check-wasm-imports.py` parses the linked module's
+import section and fails closed — every import must be either WASI (with
+the capability-granting `path_*`, `sock_*` and `fd_prestat*` names denied,
+so a dependency cannot quietly acquire ambient filesystem or network
+access) or one of the two required `cipherstash_transport` functions, and
+both of those must be present. A build alone proves nothing here: the
+property is about what the *linked* module can reach.
+
 Two things worth stating plainly, because they are easy to read the wrong
 way:
 

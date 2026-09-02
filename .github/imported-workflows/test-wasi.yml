@@ -12,6 +12,10 @@ on:
       # Trigger on all of packages/ rather than enumerating the closure,
       # which would silently drift.
       - packages/**
+      # The guest is a detached workspace, so nothing else in CI compiles,
+      # tests or links it — this job is its only gate.
+      - bindings/go/stackencrypt/guest/**
+      - scripts/check-wasm-imports.py
       - Cargo.toml
       - Cargo.lock
       - .cargo/**
@@ -24,6 +28,10 @@ on:
   pull_request:
     paths:
       - packages/**
+      # The guest is a detached workspace, so nothing else in CI compiles,
+      # tests or links it — this job is its only gate.
+      - bindings/go/stackencrypt/guest/**
+      - scripts/check-wasm-imports.py
       - Cargo.toml
       - Cargo.lock
       - .cargo/**
@@ -70,3 +78,17 @@ jobs:
       # compile gate above cannot see doc examples or intra-doc links.
       - name: No-http tests and docs
         run: mise run wasm:no-http-test
+
+      # The stack-encrypt WASI guest (bindings/go/stackencrypt/guest) is a
+      # detached workspace: `test:unit` and the workspace-wide lints never
+      # see it, so without these two steps its tests could fail and its
+      # wasm-only modules stop compiling with every check still green.
+      - name: Guest lint and tests
+        run: mise run wasm:guest:test
+
+      # Builds the release module and asserts its host-import surface is
+      # exactly WASI (minus ambient filesystem/sockets) plus the two
+      # `cipherstash_transport` functions — the property the Go embedder's
+      # sandboxing rests on, checkable only on the linked artifact.
+      - name: Guest release build and import-surface gate
+        run: mise run wasm:guest:build
