@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-03
+
+### Breaking
+
+- **Breaking:** Ciphertexts written by 0.2.0-pre.1 do not decrypt with this release. Every leaf now begins with an authenticated wire-version byte, container shape, map keys and empty composites are authenticated, and several AAD encodings changed. Re-encrypt prerelease data; there is no migration path.
+- **Breaking:** Decryption now takes the same AAD the encrypt side was given — the decrypt path mirrors encrypt, so callers that supplied AAD when encrypting must supply it again to decrypt.
+- **Breaking:** The ciphertext container is now the generic `CipherText<Leaf, P>` (`AesCipherText` is an alias) and ciphers carry a `Passthrough` associated type; code that matched on the old container or used `T: Any` passthrough needs updating.
+- **Breaking:** Map keys are authenticated, may be derived at runtime, and duplicates are rejected on both encrypt and decrypt.
+- **Breaking:** Composite AAD is captured once at sub-cipher construction, closing bypasses where absence markers and passthrough entries escaped authentication; static nested map entries now bind their outer key.
+
+### Features
+
+- Derive `Encrypt`/`Decrypt` on structs (via `vitaminc-aead-derive`), including `#[aead(passthrough)]` to store chosen fields in the clear — passthrough values are unencrypted and **not authenticated**.
+- `ContextTag` returns on the revised `Cipher`/`Decipher` traits, with `context`, `decrypt` and `decrypt_with_aad` helpers.
+- Self-describing decryption: `decrypt_any` plus a typed passthrough channel re-homes unencrypted subtrees without knowing the plaintext type up front.
+- `Element` wrapper for row-at-a-time sequence access — element order is a caller obligation, not an authenticated fact.
+- Contexts must be non-empty, checked once at construction (`NonEmpty`); `Equatable` values encrypt directly; `Aad::for_leaf_type` binds the expected plaintext type on the decrypt side.
+
+### Fixes
+
+- Hostile input can no longer force quadratic scans or eager allocations during decode.
+- A decipher without a passthrough channel now inherits a refusal instead of accepting values it cannot represent.
+
+### Documentation
+
+- The `#[aead(...)]` attribute reference is written once and inlined everywhere it applies; intra-doc links are fixed and gated in CI.
+
 
 ### Documentation
 
