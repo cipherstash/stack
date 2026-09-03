@@ -1,6 +1,8 @@
 
 ## [0.2.0] - 2026-09-03
 
+First release.
+
 ### Features
 
 - `#[derive(Encrypt, Decrypt)]` encrypts structs field by field with no hand-written impls.
