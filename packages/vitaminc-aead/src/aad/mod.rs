@@ -338,6 +338,14 @@ mod tests {
                 .as_bytes(),
             ("users", "email").into_aad().as_bytes()
         );
+        // A pair extended from a proven head encodes as the bare pair.
+        assert_eq!(
+            vitaminc_protected::nonempty!("users/email")
+                .with(42u64)
+                .into_aad()
+                .as_bytes(),
+            ("users/email", 42u64).into_aad().as_bytes()
+        );
         assert_eq!(
             vitaminc_protected::nonempty!("users/email")
                 .into_aad()
