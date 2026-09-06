@@ -197,7 +197,7 @@ pub trait IntoAad<'a> {
         Self: Sized;
 }
 
-// `Aad` deliberately does NOT implement `IsEmpty`: an already-encoded AAD can
+// `Aad` deliberately does NOT implement `MaybeEmpty`: an already-encoded AAD can
 // only be judged on its bytes, and PAE framing makes a composite built from
 // empty parts (`Some("")`, `("", "")`) non-empty as bytes — so `NonEmpty<Aad>`
 // would certify exactly the degenerate value it exists to exclude. Prove
@@ -360,7 +360,7 @@ mod tests {
         assert!("".into_aad().is_empty());
         assert!(!Aad::from_slice(b"raw").is_empty());
         // Composite framing makes an encoded empty value non-empty as bytes —
-        // which is exactly why `Aad` has no `IsEmpty` impl: the structural
+        // which is exactly why `Aad` has no `MaybeEmpty` impl: the structural
         // check belongs before encoding (`NonEmpty<T>` where `T: IntoAad`).
         assert!(!Some("").into_aad().is_empty());
     }
