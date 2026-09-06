@@ -232,7 +232,7 @@
 		"@cipherstash/auth": "catalog:repo",
 		"@cipherstash/protect-ffi": "workspace:*",
 		"evlog": "1.11.0",
-		"uuid": "14.0.1",
+		"uuid": "14.0.2",
 		"zod": "3.25.76"
 	},
 	"//optionalDependencies": "@cipherstash/auth ships per-platform native bindings as optional peerDependencies. pnpm does not auto-install platform-matched optional peer deps, so we declare them here as optionalDependencies — pnpm then picks the binary matching the host's os/cpu (from each sub-package's own package.json) and ignores the rest. Required because @cipherstash/stack re-exports the Node auth strategies (OidcFederationStrategy, AccessKeyStrategy, …). All seven names share a single catalog entry to keep them in lockstep.",
