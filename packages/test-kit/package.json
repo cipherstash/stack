@@ -19,7 +19,7 @@
 		"@cipherstash/stack": "workspace:*"
 	},
 	"devDependencies": {
-		"@clerk/backend": "3.16.7",
+		"@clerk/backend": "3.16.13",
 		"typescript": "catalog:repo",
 		"vitest": "catalog:repo"
 	}
