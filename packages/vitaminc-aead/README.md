@@ -222,6 +222,32 @@ use vitaminc_aead::Encrypt;
 "my-secret".encrypt_with_aad(&cipher, ())?;
 ```
 
+Every one of those types also describes itself as a tree of *parts*, before
+framing, through `IntoAad::into_aad_piece` — for a consumer that has to name what the
+bytes were built from (a key service logging the field a key was issued for,
+an audit trail, a structured binding built from the same parts as the AAD)
+rather than parse PAE back out of them:
+
+```rust
+use vitaminc_aead::{AadPiece, IntoAad};
+
+let piece = ("users/email", 7u64).into_aad_piece();
+assert_eq!(piece.to_string(), "(\"users/email\", 7u64)");
+assert_eq!(piece.leaves().count(), 2);
+// Same bytes, one extra view.
+assert_eq!(
+    piece.into_aad().as_bytes(),
+    ("users/email", 7u64).into_aad().as_bytes()
+);
+```
+
+`into_aad_piece` is a provided method on `IntoAad`, defaulting to the whole encoding as one opaque
+`Bytes` leaf, so a context type of your own keeps compiling with only `into_aad` and overrides
+`into_aad_piece` when it wants its parts named. A `ContextTag` hands its cipher a context whose
+`into_aad_piece()` is `List([extra_aad, tag])`, so a backend can read the parts directly, while
+`into_aad()` still writes the bytes in one allocation. `Display` is injective (Rust literal
+syntax), so two contexts that authenticate different bytes never share a log line.
+
 ### Working with Protected Types
 
 The crate integrates with `vitaminc-protected` so sensitive plaintext stays wrapped:

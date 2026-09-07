@@ -10,7 +10,7 @@ use vitaminc_protected::{Controlled, Protected};
 use crate::{
     cipher::{Cipher, MapCipher, SeqCipher},
     decipher::{Decipher, DecipherVisitor, MapAccess},
-    Encrypt, IntoAad, Unspecified,
+    AadPiece, Encrypt, IntoAad, Unspecified,
 };
 
 /// A minimal [`Cipher`] that records the AAD bytes it is handed and echoes the
@@ -19,6 +19,9 @@ use crate::{
 /// sequence/map sub-ciphers exist solely to satisfy the trait and are never
 /// driven.
 pub(crate) struct MockCipher {
+    /// Recorded through `aad.into_aad()`, the path a byte-oriented cipher
+    /// takes, so the layout tests pin a wrapper's optimised byte encoding
+    /// (`FoldedAad::into_aad`) and not a re-encoding of its parts view.
     captured_aad: RefCell<Vec<u8>>,
     /// How many times `encrypt_bytes_array` was called directly, as opposed
     /// to the trait's default forwarding through `encrypt_bytes_vec`. Lets a
@@ -38,8 +41,89 @@ impl MockCipher {
         self.captured_aad.borrow().clone()
     }
 
+    fn capture<'a, A: IntoAad<'a>>(&self, aad: A) {
+        *self.captured_aad.borrow_mut() = aad.into_aad().as_bytes().to_vec();
+    }
+
     pub(crate) fn array_entry_hits(&self) -> usize {
         self.array_entry_hits.get()
+    }
+}
+
+/// A [`Cipher`] that records the AAD's *parts* view, `aad.into_aad_piece()`,
+/// and nothing else. A consumed `A` can expose only one view, so this is a
+/// separate spy from [`MockCipher`]: use it to prove a wrapper handed the
+/// parts through intact, and `MockCipher` to prove the bytes.
+pub(crate) struct PartsCipher {
+    captured_piece: RefCell<Option<AadPiece<'static>>>,
+}
+
+impl PartsCipher {
+    pub(crate) fn new() -> Self {
+        PartsCipher {
+            captured_piece: RefCell::new(None),
+        }
+    }
+
+    pub(crate) fn captured_piece(&self) -> Option<AadPiece<'static>> {
+        self.captured_piece.borrow().clone()
+    }
+
+    fn capture<'a, A: IntoAad<'a>>(&self, aad: A) {
+        *self.captured_piece.borrow_mut() = Some(aad.into_aad_piece().into_owned());
+    }
+}
+
+impl Cipher for &PartsCipher {
+    type Ok = Vec<u8>;
+    type Error = Unspecified;
+    type Passthrough = ();
+    type SeqCipher = UnusedSeq;
+    type MapCipher = UnusedMap;
+
+    fn encrypt_bytes_vec<'a, A>(
+        self,
+        data: Protected<Vec<u8>>,
+        aad: A,
+    ) -> Result<Self::Ok, Self::Error>
+    where
+        A: IntoAad<'a>,
+    {
+        self.capture(aad);
+        Ok(data.risky_unwrap())
+    }
+
+    fn encrypt_seq<'a, A>(self, _size_hint: Option<usize>, _aad: A) -> Self::SeqCipher
+    where
+        A: IntoAad<'a>,
+    {
+        UnusedSeq
+    }
+
+    fn encrypt_map<'a, A>(self, _aad: A) -> Self::MapCipher
+    where
+        A: IntoAad<'a>,
+    {
+        UnusedMap
+    }
+
+    fn encrypt_none<'a, A>(self, aad: A) -> Result<Self::Ok, Self::Error>
+    where
+        A: IntoAad<'a>,
+    {
+        self.capture(aad);
+        Ok(Vec::new())
+    }
+
+    fn passthrough(self, _value: Self::Passthrough) -> Result<Self::Ok, Self::Error> {
+        Ok(Vec::new())
+    }
+
+    fn passthrough_boxed(
+        self,
+        _value: Box<dyn Any + Send + 'static>,
+    ) -> Result<Self::Ok, Self::Error> {
+        Ok(Vec::new())
     }
 }
 
@@ -61,7 +145,7 @@ impl Cipher for &MockCipher {
     where
         A: IntoAad<'a>,
     {
-        *self.captured_aad.borrow_mut() = aad.into_aad().as_bytes().to_vec();
+        self.capture(aad);
         Ok(data.risky_unwrap())
     }
 
@@ -74,7 +158,7 @@ impl Cipher for &MockCipher {
         A: IntoAad<'a>,
     {
         self.array_entry_hits.set(self.array_entry_hits.get() + 1);
-        *self.captured_aad.borrow_mut() = aad.into_aad().as_bytes().to_vec();
+        self.capture(aad);
         Ok(data.risky_ref().to_vec())
     }
 
@@ -96,7 +180,7 @@ impl Cipher for &MockCipher {
     where
         A: IntoAad<'a>,
     {
-        *self.captured_aad.borrow_mut() = aad.into_aad().as_bytes().to_vec();
+        self.capture(aad);
         Ok(Vec::new())
     }
 
