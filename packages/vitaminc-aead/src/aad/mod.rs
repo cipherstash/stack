@@ -1,6 +1,9 @@
 mod pae;
+mod piece;
 
 use std::borrow::Cow;
+
+pub use piece::AadPiece;
 
 use vitaminc_protected::NonEmpty;
 
@@ -190,11 +193,69 @@ impl<'a> Aad<'a> {
 /// integers, tuples, options). Composite implementations use Pre-Authentication
 /// Encoding (PAE) so structurally distinct inputs always encode to distinct
 /// byte strings.
+///
+/// A context has two views. [`into_aad`](Self::into_aad) is the *bytes*
+/// view, what the AEAD authenticates. [`into_aad_piece`](Self::into_aad_piece)
+/// is the *parts* view, an [`AadPiece`] tree for a consumer that needs to
+/// name what those bytes were built from (a log, an audit trail, a
+/// structured binding). The parts view is a provided method, defaulting to
+/// the whole encoding as one opaque `Bytes` leaf, so every `IntoAad` type
+/// has one and a type that implements only `into_aad` keeps compiling and
+/// keeps working. Override it to expose structure. The contract for an
+/// override: `x.into_aad_piece().into_aad()` is byte-for-byte
+/// `x.into_aad()`. Every built-in upholds it, pinned by quickcheck.
+///
+/// ```rust
+/// use std::borrow::Cow;
+/// use vitaminc_aead::{Aad, AadPiece, IntoAad};
+///
+/// // Bytes only: the parts view is the encoding as one opaque leaf.
+/// struct Opaque;
+/// impl<'a> IntoAad<'a> for Opaque {
+///     fn into_aad(self) -> Aad<'a> {
+///         "opaque".into_aad()
+///     }
+/// }
+/// assert_eq!(
+///     Opaque.into_aad_piece(),
+///     AadPiece::Bytes(Cow::Borrowed(b"opaque")),
+/// );
+///
+/// // Structured: override the parts view, and keep the bytes identical.
+/// struct TenantId(u64);
+/// impl<'a> IntoAad<'a> for TenantId {
+///     fn into_aad(self) -> Aad<'a> {
+///         ("tenant", self.0).into_aad()
+///     }
+///     fn into_aad_piece(self) -> AadPiece<'a> {
+///         ("tenant", self.0).into_aad_piece()
+///     }
+/// }
+/// let id = TenantId(7);
+/// assert_eq!(id.into_aad_piece().to_string(), "(\"tenant\", 7u64)");
+/// assert_eq!(
+///     TenantId(7).into_aad_piece().into_aad().as_bytes(),
+///     TenantId(7).into_aad().as_bytes(),
+/// );
+/// ```
 pub trait IntoAad<'a> {
     /// Convert `self` into an [`Aad`].
     fn into_aad(self) -> Aad<'a>
     where
         Self: Sized;
+
+    /// Describe `self` as an [`AadPiece`] tree that encodes to the same
+    /// bytes as [`into_aad`](Self::into_aad).
+    ///
+    /// Provided: the whole encoding as a single [`AadPiece::Bytes`] leaf,
+    /// which is always correct and never exposes structure. Override it to
+    /// name the parts.
+    fn into_aad_piece(self) -> AadPiece<'a>
+    where
+        Self: Sized,
+    {
+        AadPiece::Bytes(self.into_aad().0)
+    }
 }
 
 // `Aad` deliberately does NOT implement `MaybeEmpty`: an already-encoded AAD can
@@ -213,12 +274,20 @@ where
     fn into_aad(self) -> Aad<'a> {
         self.into_inner().into_aad()
     }
+
+    fn into_aad_piece(self) -> AadPiece<'a> {
+        self.into_inner().into_aad_piece()
+    }
 }
 
 /// Self type is already an Aad
 impl<'a> IntoAad<'a> for Aad<'a> {
     fn into_aad(self) -> Aad<'a> {
         self
+    }
+
+    fn into_aad_piece(self) -> AadPiece<'a> {
+        AadPiece::Bytes(self.0)
     }
 }
 
@@ -227,11 +296,19 @@ impl<'a> IntoAad<'a> for () {
     fn into_aad(self) -> Aad<'a> {
         Aad::from_slice(&[])
     }
+
+    fn into_aad_piece(self) -> AadPiece<'a> {
+        AadPiece::Bytes(Cow::Borrowed(&[]))
+    }
 }
 
 impl<'a> IntoAad<'a> for &'a [u8] {
     fn into_aad(self) -> Aad<'a> {
         Aad::from_slice(self)
+    }
+
+    fn into_aad_piece(self) -> AadPiece<'a> {
+        AadPiece::Bytes(Cow::Borrowed(self))
     }
 }
 
@@ -239,11 +316,19 @@ impl<'a> IntoAad<'a> for Vec<u8> {
     fn into_aad(self) -> Aad<'a> {
         Aad::new_owned(self)
     }
+
+    fn into_aad_piece(self) -> AadPiece<'a> {
+        AadPiece::Bytes(Cow::Owned(self))
+    }
 }
 
 impl<'a, const N: usize> IntoAad<'a> for [u8; N] {
     fn into_aad(self) -> Aad<'a> {
         Aad::new_owned(self)
+    }
+
+    fn into_aad_piece(self) -> AadPiece<'a> {
+        AadPiece::Bytes(Cow::Owned(self.to_vec()))
     }
 }
 
@@ -251,11 +336,19 @@ impl<'a, const N: usize> IntoAad<'a> for &'a [u8; N] {
     fn into_aad(self) -> Aad<'a> {
         Aad::from_slice(self.as_slice())
     }
+
+    fn into_aad_piece(self) -> AadPiece<'a> {
+        AadPiece::Bytes(Cow::Borrowed(self.as_slice()))
+    }
 }
 
 impl<'a> IntoAad<'a> for String {
     fn into_aad(self) -> Aad<'a> {
         Aad::new_owned(self.into_bytes())
+    }
+
+    fn into_aad_piece(self) -> AadPiece<'a> {
+        AadPiece::Text(Cow::Owned(self))
     }
 }
 
@@ -263,16 +356,24 @@ impl<'a> IntoAad<'a> for Cow<'a, [u8]> {
     fn into_aad(self) -> Aad<'a> {
         Aad(self)
     }
+
+    fn into_aad_piece(self) -> AadPiece<'a> {
+        AadPiece::Bytes(self)
+    }
 }
 
 impl<'a> IntoAad<'a> for &'a str {
     fn into_aad(self) -> Aad<'a> {
         Aad::from_slice(self.as_bytes())
     }
+
+    fn into_aad_piece(self) -> AadPiece<'a> {
+        AadPiece::Text(Cow::Borrowed(self))
+    }
 }
 
 macro_rules! integer_aad {
-    ($($ty:ty),+ $(,)?) => {$(
+    ($($ty:ty => $variant:ident),+ $(,)?) => {$(
         /// An integer encodes as its raw little-endian bytes, with no type
         /// tag — matching the original `u64` wire format. Distinct integer
         /// types of the same width therefore encode identically; compose a
@@ -281,11 +382,20 @@ macro_rules! integer_aad {
             fn into_aad(self) -> Aad<'a> {
                 Aad::new_owned(self.to_le_bytes())
             }
+
+            /// The integer as its own [`AadPiece`] variant, so the parts
+            /// view keeps the type the encoding drops.
+            fn into_aad_piece(self) -> AadPiece<'a> {
+                AadPiece::$variant(self)
+            }
         }
     )+};
 }
 
-integer_aad!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+integer_aad!(
+    u8 => U8, u16 => U16, u32 => U32, u64 => U64, u128 => U128,
+    i8 => I8, i16 => I16, i32 => I32, i64 => I64, i128 => I128,
+);
 
 impl<'a, T> IntoAad<'a> for Option<T>
 where
@@ -296,6 +406,10 @@ where
             Some(value) => Aad::pae(&[value.into_aad().as_bytes()]),
             None => Aad::pae(&[]),
         }
+    }
+
+    fn into_aad_piece(self) -> AadPiece<'a> {
+        AadPiece::List(self.into_iter().map(T::into_aad_piece).collect())
     }
 }
 
@@ -309,6 +423,11 @@ where
         let a = a.into_aad();
         let b = b.into_aad();
         Aad::pae(&[a.as_bytes(), b.as_bytes()])
+    }
+
+    fn into_aad_piece(self) -> AadPiece<'a> {
+        let (a, b) = self;
+        AadPiece::List(vec![a.into_aad_piece(), b.into_aad_piece()])
     }
 }
 
