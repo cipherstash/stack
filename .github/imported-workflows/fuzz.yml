@@ -21,6 +21,10 @@ on:
       - packages/cts-common/**
       - packages/stack-auth/**
       - packages/stack-kms/**
+      # Root manifest/lockfile: a workspace-wide dependency change can break
+      # this suite without touching any package source.
+      - Cargo.toml
+      - Cargo.lock
       - .github/workflows/fuzz.yml
       # Ordering matters: keep these excludes last so docs-only changes are skipped.
       - "!**.md"

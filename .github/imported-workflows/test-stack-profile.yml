@@ -5,6 +5,10 @@ on:
       - main
     paths:
       - packages/stack-profile/**
+      # Root manifest/lockfile: a workspace-wide dependency change can break
+      # this suite without touching any package source.
+      - Cargo.toml
+      - Cargo.lock
       - .github/workflows/test-stack-profile.yml
       # Ordering matters, this needs to stay at the end if we want to include the above, but exclude all .md files.
       - "!**.md"
@@ -13,6 +17,10 @@ on:
   pull_request:
     paths:
       - packages/stack-profile/**
+      # Root manifest/lockfile: a workspace-wide dependency change can break
+      # this suite without touching any package source.
+      - Cargo.toml
+      - Cargo.lock
       - .github/workflows/test-stack-profile.yml
       # Ordering matters, this needs to stay at the end if we want to include the above, but exclude all .md files.
       - "!**.md"
