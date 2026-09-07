@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-07
+
+### Breaking
+
+- **Breaking:** rename `IsEmpty` to `MaybeEmpty`
+
+### Features
+
+- `NonEmpty::with` and `From<integer>` for `NonEmpty`
+- a context exposes its parts as an `AadPiece` tree, not only its bytes
+- `ContextTag` hands its cipher the context's parts at no extra cost
+
 ## [0.2.0] - 2026-09-03
 
 ### Breaking
