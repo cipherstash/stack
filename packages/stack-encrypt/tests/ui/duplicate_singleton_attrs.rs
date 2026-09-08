@@ -6,7 +6,7 @@ struct User {
 }
 
 #[derive(EncryptFrom)]
-#[stash(plaintext = User)]
+#[stash(struct = User, context = "users")]
 struct DupFrom {
     #[stash(from = expected, from = other)]
     c: StackCipherText,

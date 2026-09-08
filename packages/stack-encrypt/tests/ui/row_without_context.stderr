@@ -1,5 +1,0 @@
-error: `row = ..` needs a `context = ".."` beside it naming the table (e.g. `#[stash(row = User, context = "users")]`): each field is derived under `"<context>/<field>"`, and the prefix is part of the stored data's identity, so it is given explicitly rather than inferred from the Rust type's name
-  --> tests/ui/row_without_context.rs:13:15
-   |
-13 | #[stash(row = User)]
-   |               ^^^^

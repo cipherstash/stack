@@ -1,6 +1,6 @@
 //! A leaf, a record that hands the caller's context to one, and a column of
-//! either all need a supplied context: the context-free `encrypt_into` /
-//! `decrypt_from` exist only for outputs that carry their own.
+//! either all need a `NonEmpty<_>` context: the context-free `encrypt_into`
+//! / `decrypt_from` pass `()`, which no leaf accepts.
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{DecryptFrom, EncryptInto};
 use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
@@ -21,6 +21,10 @@ async fn encrypt(cipher: &StackCipher<FakeDataKeySource>) {
 
 async fn decrypt(cipher: &StackCipher<FakeDataKeySource>, record: EncryptedAge) {
     let _age = u32::decrypt_from(record, cipher).await.unwrap();
+}
+
+async fn decrypt_leaf(cipher: &StackCipher<FakeDataKeySource>, record: EncryptedAge) {
+    let _age: u32 = record.decrypt_into(cipher, ()).await.unwrap();
 }
 
 fn main() {}

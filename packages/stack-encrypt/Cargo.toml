@@ -10,8 +10,7 @@ keywords.workspace = true
 categories.workspace = true
 license-file = "LICENSE"
 # Not yet released: keep release-plz from picking this crate up (it processes
-# any workspace crate whose Cargo.toml lacks `publish = false`), and the git
-# vitaminc deps below have no registry version to publish against anyway.
+# any workspace crate whose Cargo.toml lacks `publish = false`).
 publish = false
 
 [dependencies]
@@ -26,23 +25,21 @@ stack-auth = { workspace = true, optional = true }
 # `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`, re-exported from `target`.
 stack-encrypt-derive = { path = "../stack-encrypt-derive" }
 
-# The revised Cipher/Decipher traits, ContextTag, Element, and the PRF crates
-# have all merged to vitaminc main but are not yet published (crates.io is 200+
-# commits behind). Pinned to a commit rather than `branch = "main"` so a
-# `cargo update` cannot silently move the trait definitions under this crate,
-# and declared here rather than via the workspace dep so the rest of the suite
-# stays on the published 0.2.0-pre until the next vitaminc release.
-#
-# Temporarily pinned to the commit of cipherstash/vitaminc#289 (main + the
-# `vitaminc_aead::Passthrough` wrapper); move the pin back to a main commit
-# once it merges. All five must share one source or the aead crate is
-# duplicated.
-vitaminc-aead = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
-vitaminc-encrypt = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
-vitaminc-hmac = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
-vitaminc-prf = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
-vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
+# vitaminc 0.3.0 from the registry: the first release with `NonEmpty::with`,
+# `From<integer> for NonEmpty` (cipherstash/vitaminc#314) and `IntoAadPiece`
+# (#318), all of which this crate relies on. The rest of the suite builds
+# against a different vitaminc line (`cts-domain`, `stack-kms`); 0.x minors
+# are distinct to cargo, so this is a second copy and nothing depends on
+# both. All five must share one version or the aead crate is duplicated
+# within stack-encrypt itself.
+vitaminc-aead = "0.3.0"
+vitaminc-encrypt = "0.3.0"
+vitaminc-hmac = "0.3.0"
+vitaminc-prf = "0.3.0"
+vitaminc-protected = "0.3.0"
 serde = { workspace = true }
+# `Descriptor`: the base64 rendering of a non-textual context for ZeroKMS.
+base64ct = { version = "1.7", features = ["alloc"] }
 
 cllw-ore = { workspace = true }
 thiserror = { workspace = true }
@@ -69,9 +66,6 @@ stack-kms = { path = "../stack-kms", default-features = false, features = ["test
 tokio = { workspace = true, features = ["rt", "macros"] }
 # Compile-fail tests for the derive diagnostics (`tests/ui`).
 trybuild = "1"
-vitaminc-hmac = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
-vitaminc-prf = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
-vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
 
 [[example]]
 name = "encrypted_record"

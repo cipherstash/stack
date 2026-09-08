@@ -39,18 +39,19 @@
 //!
 //! As the vitaminc guest: every export validates its pointer/length pairs
 //! against linear memory before any unsafe construction (null with nonzero
-//! length rejected; a null AAD must not silently become an empty AAD),
-//! invalid input yields `STATUS_ENCODING` rather than a trap, and the
-//! `catch_unwind` at each export is belt-and-braces for a hypothetical
-//! unwind build — wasm32-wasip1 aborts on panic. Statuses are the only
-//! detail leaked.
+//! length rejected), invalid input yields `STATUS_ENCODING` rather than a
+//! trap, and the `catch_unwind` at each export is belt-and-braces for a
+//! hypothetical unwind build — wasm32-wasip1 aborts on panic. Statuses are
+//! the only detail leaked.
 //!
-//! A null *or empty* AAD is rejected on every path — value, record and term
-//! alike — with `STATUS_ENCODING`: sealing under no context makes
-//! ciphertexts transplantable between fields, so it is never a default the
-//! guest supplies for a caller who omitted one. "Empty" is
-//! [`stack_encrypt::is_degenerate_aad`], so shapes that are not literally
-//! zero-length (the PAE of an empty list, for instance) are rejected too.
+//! The value exports ([`se_encrypt`] and friends) are the cipher-directed
+//! path and take the AAD as `StackCipher::encrypt` does: any bytes, none
+//! included — a null pointer with zero length is the empty AAD, as a Go
+//! `nil` slice is. The record and term exports bind fields, so their
+//! contexts must be non-empty (`STATUS_ENCODING` otherwise): each is a
+//! [`stack_encrypt::NonEmpty`] from the moment it is parsed, and the sealing
+//! and opening sides bind that one value. The asymmetry is the design; see
+//! `packages/stack-encrypt/docs/adr/0001-context-optional-cipher-directed-path.md`.
 //!
 //! One difference from the vitaminc guest, deliberate: where `vc_encrypt`
 //! decodes its input *before* looking up the handle — so garbage bytes read
@@ -139,7 +140,7 @@ fn linear_memory_bytes() -> u64 {
 
 /// Borrow a host-supplied `(ptr, len)` pair, validating before any slice
 /// exists: null-with-nonzero-length is rejected (treating it as empty would
-/// silently drop an AAD context binding), the length must be under
+/// silently drop whatever bytes the host meant to pass), the length must be under
 /// `isize::MAX`, and the whole range must lie inside the current linear
 /// memory. A pair that fails validation yields `STATUS_ENCODING`; a pair
 /// that passes can still name the wrong bytes — the host owns its pointers
@@ -275,8 +276,8 @@ pub extern "C" fn se_cipher_free(handle: u32) {
 /// to a codec-encoded ciphertext tree whose leaves are the frozen
 /// `SealedValue` byte encoding.
 ///
-/// `aad` must be non-empty (`STATUS_ENCODING` otherwise) — see this module's
-/// hostile-input notes.
+/// `aad` may be empty (a null pointer with zero length is empty) — see this
+/// module's hostile-input notes.
 ///
 /// # Safety
 ///
@@ -318,8 +319,7 @@ pub unsafe extern "C" fn se_encrypt_element(
 /// must copy it out and immediately release it with [`se_dealloc`] (which
 /// wipes it).
 ///
-/// `aad` must be non-empty, and must be the one the ciphertext was sealed
-/// under.
+/// `aad` must be the one the ciphertext was sealed under, empty included.
 ///
 /// # Safety
 ///

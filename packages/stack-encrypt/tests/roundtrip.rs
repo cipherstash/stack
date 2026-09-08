@@ -317,7 +317,10 @@ async fn decipher_can_be_driven_directly() {
         .encrypt(Element("row".to_string()), b"users".as_slice())
         .await
         .expect("encrypt");
-    let decipher = cipher.decipher(ct).await.expect("retrieve keys");
+    let decipher = cipher
+        .decipher(ct, b"users".as_slice())
+        .await
+        .expect("retrieve keys");
     let pt = <String as stack_encrypt::Decrypt>::decrypt_with_aad(
         decipher,
         Aad::from_slice(b"users").for_sequence_element(),
@@ -330,7 +333,10 @@ async fn decipher_can_be_driven_directly() {
         .encrypt("scalar".to_string(), b"ctx".as_slice())
         .await
         .expect("encrypt");
-    let decipher = cipher.decipher(ct).await.expect("retrieve keys");
+    let decipher = cipher
+        .decipher(ct, b"ctx".as_slice())
+        .await
+        .expect("retrieve keys");
     let pt = <String as stack_encrypt::Decrypt>::decrypt_with_aad(decipher, b"ctx".into_aad())
         .expect("decrypt");
     assert_eq!(pt, "scalar");

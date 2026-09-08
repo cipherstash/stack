@@ -1,8 +1,8 @@
 //! `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`: the derived impls are the
 //! hand-written composite in `target.rs`, emitted — same terms, same decrypt
 //! mirror, same one-batched-call settlement — plus what only a derive makes
-//! cheap: sources listed or left generic, rows derived field by field, and
-//! fields that are not derived at all.
+//! cheap: sources listed or left generic, structs encrypted field by field,
+//! and fields that are not derived at all.
 
 mod common;
 
@@ -13,7 +13,7 @@ use common::{counting_cipher, stack_cipher};
 use stack_encrypt::sem::{EqualityTerm, MatchTerm, OreTerm};
 use stack_encrypt::target::{DecryptFrom, EncryptInto};
 use stack_encrypt::{
-    DecryptField, DecryptInto, DecryptTarget, Decryptable, EncryptFrom, Error, Pending,
+    nonempty, DecryptField, DecryptInto, DecryptTarget, Decryptable, EncryptFrom, Error, Pending,
     StackCipher, StackCipherText,
 };
 
@@ -35,25 +35,28 @@ async fn a_derived_record_is_the_hand_written_one() {
     let generator = stack_cipher().await;
 
     let record: EncryptedAge = 42u32
-        .encrypt_into_with_context(&cipher, "users/age")
+        .encrypt_into_with_context(&cipher, nonempty!("users/age"))
         .await
         .unwrap();
 
     // Each term is what the leaf derives on its own, so query terms built
     // leaf-by-leaf find records encrypted as composites.
     let hm: EqualityTerm = 42u32
-        .encrypt_into_with_context(&generator, "users/age")
+        .encrypt_into_with_context(&generator, nonempty!("users/age"))
         .await
         .unwrap();
     let ob: OreTerm<u32> = 42u32
-        .encrypt_into_with_context(&generator, "users/age")
+        .encrypt_into_with_context(&generator, nonempty!("users/age"))
         .await
         .unwrap();
     assert_eq!(record.hm, hm);
     assert_eq!(record.ob, ob);
 
     // And the decrypt mirror opens the ciphertext field.
-    let age: u32 = record.decrypt_into(&cipher, "users/age").await.unwrap();
+    let age: u32 = record
+        .decrypt_into(&cipher, nonempty!("users/age"))
+        .await
+        .unwrap();
     assert_eq!(age, 42);
 }
 
@@ -88,46 +91,56 @@ async fn a_generic_plaintext_record_accepts_what_its_leaves_accept() {
 
     let record: SearchableText = "alice"
         .to_string()
-        .encrypt_into_with_context(&cipher, "users/name")
+        .encrypt_into_with_context(&cipher, nonempty!("users/name"))
         .await
         .unwrap();
     let hm: EqualityTerm = "alice"
         .to_string()
-        .encrypt_into_with_context(&generator, "users/name")
+        .encrypt_into_with_context(&generator, nonempty!("users/name"))
         .await
         .unwrap();
     let m: MatchTerm = "alice"
         .to_string()
-        .encrypt_into_with_context(&generator, "users/name")
+        .encrypt_into_with_context(&generator, nonempty!("users/name"))
         .await
         .unwrap();
     assert_eq!(record.hm, hm);
     assert_eq!(record.m, m);
-    let name: String = record.decrypt_into(&cipher, "users/name").await.unwrap();
+    let name: String = record
+        .decrypt_into(&cipher, nonempty!("users/name"))
+        .await
+        .unwrap();
     assert_eq!(name, "alice");
 
     let pair: Pair = "bob"
-        .encrypt_into_with_context(&cipher, "users/name")
+        .encrypt_into_with_context(&cipher, nonempty!("users/name"))
         .await
         .unwrap();
     let hm: EqualityTerm = "bob"
-        .encrypt_into_with_context(&generator, "users/name")
+        .encrypt_into_with_context(&generator, nonempty!("users/name"))
         .await
         .unwrap();
     assert_eq!(pair.1, hm);
-    let name: String = pair.0.decrypt_into(&cipher, "users/name").await.unwrap();
+    let name: String = pair
+        .0
+        .decrypt_into(&cipher, nonempty!("users/name"))
+        .await
+        .unwrap();
     assert_eq!(name, "bob");
 
     let tagged: Tagged<u32> = 7u32
-        .encrypt_into_with_context(&cipher, "users/score")
+        .encrypt_into_with_context(&cipher, nonempty!("users/score"))
         .await
         .unwrap();
     let ob: OreTerm<u32> = 7u32
-        .encrypt_into_with_context(&generator, "users/score")
+        .encrypt_into_with_context(&generator, nonempty!("users/score"))
         .await
         .unwrap();
     assert_eq!(tagged.ob, ob);
-    let score: u32 = tagged.decrypt_into(&cipher, "users/score").await.unwrap();
+    let score: u32 = tagged
+        .decrypt_into(&cipher, nonempty!("users/score"))
+        .await
+        .unwrap();
     assert_eq!(score, 7);
 }
 
@@ -157,29 +170,40 @@ async fn decrypt_marks_the_field_when_the_types_cannot_choose() {
     let cipher = stack_cipher().await;
 
     let doubled: Doubled = 9u32
-        .encrypt_into_with_context(&cipher, "doubled")
+        .encrypt_into_with_context(&cipher, nonempty!("doubled"))
         .await
         .unwrap();
-    let opened: u32 = doubled.decrypt_into(&cipher, "doubled").await.unwrap();
+    let opened: u32 = doubled
+        .decrypt_into(&cipher, nonempty!("doubled"))
+        .await
+        .unwrap();
     assert_eq!(opened, 9);
-    // The unmarked ciphertext is still a ciphertext, just not the record's.
+    // The unmarked ciphertext is still a ciphertext, just not the record's —
+    // and its literal context is extended by the caller's like any other:
+    // sealed under `("doubled/shadow", "doubled")`.
     let doubled: Doubled = 9u32
-        .encrypt_into_with_context(&cipher, "doubled")
+        .encrypt_into_with_context(&cipher, nonempty!("doubled"))
         .await
         .unwrap();
     let shadow: u32 = doubled
         .shadow
-        .decrypt_into(&cipher, "doubled/shadow")
+        .decrypt_into(
+            &cipher,
+            nonempty!("doubled/shadow").with(nonempty!("doubled")),
+        )
         .await
         .unwrap();
     assert_eq!(shadow, 9);
 
     let numbers: Numbers = vec![1u32, 2, 3]
-        .encrypt_into_with_context(&cipher, "numbers")
+        .encrypt_into_with_context(&cipher, nonempty!("numbers"))
         .await
         .unwrap();
     assert_eq!(numbers.hm.len(), 3);
-    let opened: Vec<u32> = numbers.decrypt_into(&cipher, "numbers").await.unwrap();
+    let opened: Vec<u32> = numbers
+        .decrypt_into(&cipher, nonempty!("numbers"))
+        .await
+        .unwrap();
     assert_eq!(opened, vec![1, 2, 3]);
 }
 
@@ -225,16 +249,19 @@ async fn explicit_mode_supports_opaque_fields_in_the_paired_derive() {
     let generator = stack_cipher().await;
 
     let record: WithOpaque = 5u32
-        .encrypt_into_with_context(&cipher, "opaque")
+        .encrypt_into_with_context(&cipher, nonempty!("opaque"))
         .await
         .unwrap();
     let hm: EqualityTerm = 5u32
-        .encrypt_into_with_context(&generator, "opaque")
+        .encrypt_into_with_context(&generator, nonempty!("opaque"))
         .await
         .unwrap();
     assert!(record.o == OpaqueTerm(hm));
 
-    let opened: u32 = record.decrypt_into(&cipher, "opaque").await.unwrap();
+    let opened: u32 = record
+        .decrypt_into(&cipher, nonempty!("opaque"))
+        .await
+        .unwrap();
     assert_eq!(opened, 5);
 }
 
@@ -268,9 +295,8 @@ struct Held {
 }
 
 #[derive(DecryptInto)]
-#[stash(plaintext = Held)]
-struct LyingRow {
-    #[stash(from = value, context = "held/value")]
+#[stash(struct = Held, context = "held")]
+struct LyingHeld {
     value: Lying,
 }
 
@@ -281,10 +307,12 @@ async fn a_broken_decrypt_field_contract_is_not_opened_never_a_panic() {
     // The compile-time check accepted `Lying` (its `DECRYPTABLE` is `true`),
     // so the broken contract only shows at decrypt time: `Error::NotOpened`
     // as a failed pending, for the record and for the row alike.
-    let result: Result<u32, _> = LyingRecord { l: Lying }.decrypt_into(&cipher, "l").await;
+    let result: Result<u32, _> = LyingRecord { l: Lying }
+        .decrypt_into(&cipher, nonempty!("l"))
+        .await;
     assert!(matches!(result, Err(Error::NotOpened)));
 
-    let result: Result<Held, _> = LyingRow { value: Lying }.decrypt_into(&cipher, ()).await;
+    let result: Result<Held, _> = LyingHeld { value: Lying }.decrypt_into(&cipher, ()).await;
     assert!(matches!(result, Err(Error::NotOpened)));
 }
 
@@ -301,22 +329,25 @@ async fn listed_plaintexts_each_get_their_own_impl() {
     let cipher = stack_cipher().await;
 
     let number: EncryptedValue = 7u32
-        .encrypt_into_with_context(&cipher, "t/n")
+        .encrypt_into_with_context(&cipher, nonempty!("t/n"))
         .await
         .unwrap();
     let text: EncryptedValue = "seven"
         .to_string()
-        .encrypt_into_with_context(&cipher, "t/t")
+        .encrypt_into_with_context(&cipher, nonempty!("t/t"))
         .await
         .unwrap();
     let hm: EqualityTerm = 7u32
-        .encrypt_into_with_context(&cipher, "t/n")
+        .encrypt_into_with_context(&cipher, nonempty!("t/n"))
         .await
         .unwrap();
     assert_eq!(number.hm, hm);
 
-    let number: u32 = number.decrypt_into(&cipher, "t/n").await.unwrap();
-    let text: String = text.decrypt_into(&cipher, "t/t").await.unwrap();
+    let number: u32 = number
+        .decrypt_into(&cipher, nonempty!("t/n"))
+        .await
+        .unwrap();
+    let text: String = text.decrypt_into(&cipher, nonempty!("t/t")).await.unwrap();
     assert_eq!((number, text.as_str()), (7, "seven"));
 }
 
@@ -324,18 +355,18 @@ async fn listed_plaintexts_each_get_their_own_impl() {
 async fn a_failed_field_fails_the_derived_record_before_any_io() {
     let (cipher, generates, _) = counting_cipher().await;
 
-    // An empty context fails every leaf during the synchronous build; the
-    // derived record is the zip of those, so it fails the same way and never
-    // mints the data key its ciphertext field would have wanted.
-    let result: Result<SearchableText, _> = "alice"
-        .to_string()
-        .encrypt_into_with_context(&cipher, "")
+    // Text that yields no match tokens fails that leaf during the
+    // synchronous build; the derived record is the zip of its fields, so it
+    // fails the same way and never mints the data key its ciphertext field
+    // would have wanted.
+    let result: Result<SearchableText, _> = String::new()
+        .encrypt_into_with_context(&cipher, nonempty!("users/name"))
         .await;
-    assert!(matches!(result, Err(Error::EmptyContext)));
+    assert!(matches!(result, Err(Error::Term(_))));
     assert_eq!(generates.load(AtomicOrdering::SeqCst), 0);
 }
 
-// --- Rows: each field from one field of the plaintext, under its own context
+// --- Structs: each field from one field of the plaintext, under its own context
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct User {
@@ -343,16 +374,16 @@ struct User {
     email: String,
 }
 
-/// A row: every field is derived from the plaintext field of its own name,
-/// under the context `"<context>/<field>"` — `"user/age"`, `"user/email"` —
-/// with no attribute on the field. The prefix names the table, explicitly:
-/// it is part of the stored data's identity, so it is never inferred from
-/// the type's name. `from` is the override for a field name that differs;
-/// the context then follows the plaintext field.
+/// A struct encrypted field by field: every field is derived from the
+/// plaintext field of its own name, under the context `"<context>/<field>"`
+/// — `"user/age"`, `"user/email"` — with no attribute on the field. The
+/// prefix names the stored data, explicitly: it is part of its identity, so
+/// it is never inferred from the type's name. `from` is the override for a
+/// field name that differs; the context then follows the plaintext field.
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(row = User, context = "user")]
+#[stash(struct = User, context = "user")]
 struct EncryptedUser {
-    /// A record inside a row: recursion, not a second mechanism.
+    /// A record inside a struct: recursion, not a second mechanism.
     age: EncryptedAge,
     email: StackCipherText,
     /// A second field from the same plaintext field — a term alongside the
@@ -372,30 +403,30 @@ fn user() -> User {
 }
 
 #[tokio::test]
-async fn a_row_is_one_batched_call_and_rebuilds_its_plaintext() {
+async fn a_struct_is_one_batched_call_and_rebuilds_its_plaintext() {
     let (cipher, generates, retrieves) = counting_cipher().await;
     let generator = stack_cipher().await;
 
-    // Every field has its own context, so the row needs none from the
+    // Every field has its own context, so the struct needs none from the
     // caller: the context-free forms are the whole call, both ways.
     let row: EncryptedUser = user().encrypt_into(&cipher).await.unwrap();
     assert_eq!(
         generates.load(AtomicOrdering::SeqCst),
         1,
-        "a two-ciphertext row must be ONE generate_keys call"
+        "a two-ciphertext struct must be ONE generate_keys call"
     );
     assert_eq!(row.version, 3);
 
-    // Each field's terms are what a query site derives under the column's
-    // inferred context: the row's name and the plaintext field's.
+    // Each field's terms are what a query site derives under the field's
+    // inferred context: the prefix and the plaintext field's name.
     let age_hm: EqualityTerm = 42u32
-        .encrypt_into_with_context(&generator, "user/age")
+        .encrypt_into_with_context(&generator, nonempty!("user/age"))
         .await
         .unwrap();
     assert_eq!(row.age.hm, age_hm);
     let email_hm: EqualityTerm = user()
         .email
-        .encrypt_into_with_context(&generator, "user/email")
+        .encrypt_into_with_context(&generator, nonempty!("user/email"))
         .await
         .unwrap();
     assert_eq!(row.email_eq, email_hm);
@@ -406,12 +437,12 @@ async fn a_row_is_one_batched_call_and_rebuilds_its_plaintext() {
     assert_eq!(
         retrieves.load(AtomicOrdering::SeqCst),
         1,
-        "opening a two-ciphertext row must be ONE retrieve_keys call"
+        "opening a two-ciphertext struct must be ONE retrieve_keys call"
     );
 }
 
 #[tokio::test]
-async fn a_column_of_rows_is_still_one_call_each_way() {
+async fn a_column_of_structs_is_still_one_call_each_way() {
     let (cipher, generates, retrieves) = counting_cipher().await;
 
     let users: Vec<User> = (0..4)
@@ -431,37 +462,99 @@ async fn a_column_of_rows_is_still_one_call_each_way() {
 }
 
 #[tokio::test]
-async fn a_row_field_opened_under_the_wrong_context_fails() {
+async fn a_struct_extends_its_contexts_with_the_callers() {
+    let (cipher, generates, retrieves) = counting_cipher().await;
+    let generator = stack_cipher().await;
+
+    // The caller's context — the record's id — extends every inferred one:
+    // `age` is derived under `("user/age", 7u64)`, still in one batched
+    // call, and a query site probes it under the same pair.
+    let row: EncryptedUser = user()
+        .encrypt_into_with_context(&cipher, 7u64)
+        .await
+        .unwrap();
+    assert_eq!(generates.load(AtomicOrdering::SeqCst), 1);
+    let age_hm: EqualityTerm = 42u32
+        .encrypt_into_with_context(&generator, nonempty!("user/age").with(7u64))
+        .await
+        .unwrap();
+    assert_eq!(row.age.hm, age_hm);
+    let unextended: EqualityTerm = 42u32
+        .encrypt_into_with_context(&generator, nonempty!("user/age"))
+        .await
+        .unwrap();
+    assert_ne!(row.age.hm, unextended);
+
+    // Opens under the same extension, in one call — and under no other.
+    let recovered = User::decrypt_from_with_context(row, &cipher, 7u64)
+        .await
+        .unwrap();
+    assert_eq!(recovered, user());
+    assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 1);
+
+    let row: EncryptedUser = user()
+        .encrypt_into_with_context(&cipher, 7u64)
+        .await
+        .unwrap();
+    // The fake key source ignores descriptors, so the AEAD is what refuses
+    // a wrong context here. ZeroKMS refuses the key retrieval itself first
+    // (`Error::Kms`) — `examples/encrypted_record.rs` shows that live.
+    let other_row = User::decrypt_from_with_context(row, &cipher, 8u64).await;
+    assert!(matches!(other_row, Err(Error::Aead)));
+    let row: EncryptedUser = user()
+        .encrypt_into_with_context(&cipher, 7u64)
+        .await
+        .unwrap();
+    let no_row = User::decrypt_from(row, &cipher).await;
+    assert!(matches!(no_row, Err(Error::Aead)));
+
+    // Any context does: a string, a pair, an `Option`.
+    let row: EncryptedUser = user()
+        .encrypt_into_with_context(&cipher, nonempty!("tenant/acme"))
+        .await
+        .unwrap();
+    let recovered = User::decrypt_from_with_context(row, &cipher, nonempty!("tenant/acme"))
+        .await
+        .unwrap();
+    assert_eq!(recovered, user());
+}
+
+#[tokio::test]
+async fn a_struct_field_opened_under_the_wrong_context_fails() {
     let cipher = stack_cipher().await;
 
     let row: EncryptedUser = user().encrypt_into(&cipher).await.unwrap();
     // The literal contexts are baked into the impl, so a transplanted field
-    // is caught by the AAD exactly as for a leaf.
-    let transplanted: Result<u32, _> = row.age.c.decrypt_into(&cipher, "user/height").await;
+    // is caught exactly as for a leaf: by the AAD against the fake key
+    // source, by ZeroKMS's descriptor check (`Error::Kms`) before that in
+    // production.
+    let transplanted: Result<u32, _> = row
+        .age
+        .c
+        .decrypt_into(&cipher, nonempty!("user/height"))
+        .await;
     assert!(matches!(transplanted, Err(Error::Aead)));
 }
 
-/// A row inside a row. The inner row carries its own contexts, so the outer
-/// field needs no `context` of its own: a `from` field with none is handed
-/// `()`, which is exactly what a row accepts — and the outer row stays
-/// context-free too.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Account {
     user: User,
     plan: String,
 }
 
+/// A struct nesting a struct: `#[stash(nested)]` opts the field out of the
+/// inferred context — the inner struct carries its own — so it is handed
+/// the caller's context as it is, which the inner struct composes with them.
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(plaintext = Account)]
+#[stash(struct = Account, context = "accounts")]
 struct EncryptedAccount {
-    #[stash(from = user)]
+    #[stash(nested)]
     user: EncryptedUser,
-    #[stash(from = plan, context = "accounts/plan")]
     plan: StackCipherText,
 }
 
 #[tokio::test]
-async fn a_row_nests_in_a_row_without_a_context() {
+async fn a_struct_nests_in_a_struct_via_nested() {
     let (cipher, generates, retrieves) = counting_cipher().await;
     let generator = stack_cipher().await;
 
@@ -472,45 +565,9 @@ async fn a_row_nests_in_a_row_without_a_context() {
     let row: EncryptedAccount = account.encrypt_into(&cipher).await.unwrap();
     assert_eq!(generates.load(AtomicOrdering::SeqCst), 1);
 
-    // The inner row's fields are still under their own literals.
+    // The inner struct's fields are still under their own contexts.
     let age_hm: EqualityTerm = 42u32
-        .encrypt_into_with_context(&generator, "user/age")
-        .await
-        .unwrap();
-    assert_eq!(row.user.age.hm, age_hm);
-
-    let recovered = Account::decrypt_from(row, &cipher).await.unwrap();
-    assert_eq!(recovered, account);
-    assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 1);
-}
-
-/// A row nesting a row, in row mode: `#[stash(nested)]` opts the field out
-/// of the inferred context — the inner row carries its own — so it is handed
-/// `()`, exactly as a `plaintext = ..` record's bare `from` field is. The
-/// outer row stays context-free.
-#[derive(EncryptFrom, DecryptInto)]
-#[stash(row = Account, context = "accounts")]
-struct EncryptedAccountRow {
-    #[stash(nested)]
-    user: EncryptedUser,
-    plan: StackCipherText,
-}
-
-#[tokio::test]
-async fn a_row_nests_in_a_row_in_row_mode_via_nested() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
-    let generator = stack_cipher().await;
-
-    let account = Account {
-        user: user(),
-        plan: "pro".to_string(),
-    };
-    let row: EncryptedAccountRow = account.encrypt_into(&cipher).await.unwrap();
-    assert_eq!(generates.load(AtomicOrdering::SeqCst), 1);
-
-    // The inner row's fields are still under their own literals.
-    let age_hm: EqualityTerm = 42u32
-        .encrypt_into_with_context(&generator, "user/age")
+        .encrypt_into_with_context(&generator, nonempty!("user/age"))
         .await
         .unwrap();
     assert_eq!(row.user.age.hm, age_hm);
@@ -521,29 +578,48 @@ async fn a_row_nests_in_a_row_in_row_mode_via_nested() {
 
     // The outer's plan is under the inferred `"accounts/plan"`. Decrypting
     // the row consumed it, so mint a fresh one to open the field alone.
-    let row: EncryptedAccountRow = account.encrypt_into(&cipher).await.unwrap();
+    let row: EncryptedAccount = account.encrypt_into(&cipher).await.unwrap();
     let plan: String = row
         .plan
-        .decrypt_into(&cipher, "accounts/plan")
+        .decrypt_into(&cipher, nonempty!("accounts/plan"))
+        .await
+        .unwrap();
+    assert_eq!(plan, "pro");
+
+    // An extension reaches the nested struct unchanged and is composed with
+    // its own contexts there: the inner `age` is under `("user/age", id)`,
+    // the outer `plan` under `("accounts/plan", id)`.
+    let row: EncryptedAccount = account
+        .encrypt_into_with_context(&cipher, 9u64)
+        .await
+        .unwrap();
+    let age_hm: EqualityTerm = 42u32
+        .encrypt_into_with_context(&generator, nonempty!("user/age").with(9u64))
+        .await
+        .unwrap();
+    assert_eq!(row.user.age.hm, age_hm);
+    let plan: String = row
+        .plan
+        .decrypt_into(&cipher, nonempty!("accounts/plan").with(9u64))
         .await
         .unwrap();
     assert_eq!(plan, "pro");
 }
 
-/// A tuple-struct plaintext is reached by index — inferred for a tuple row,
-/// `from = 0` when the row has named fields — and named by it in the
-/// context: `"reading/0"`.
+/// A tuple-struct plaintext is reached by index — inferred for a tuple
+/// struct, `from = 0` when the encrypted struct has named fields — and named
+/// by it in the context: `"reading/0"`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Reading(u32, String);
 
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(row = Reading, context = "reading")]
+#[stash(struct = Reading, context = "reading")]
 struct EncryptedReading(EncryptedAge, StackCipherText);
 
-/// The same row with named fields: `from` by index, and the context follows
-/// the index too unless given.
+/// The same with named fields: `from` by index, and the context follows the
+/// index too unless given.
 #[derive(EncryptFrom, DecryptInto)]
-#[stash(row = Reading, context = "reading")]
+#[stash(struct = Reading, context = "reading")]
 struct NamedReading {
     #[stash(from = 0)]
     value: EncryptedAge,
@@ -552,7 +628,7 @@ struct NamedReading {
 }
 
 #[tokio::test]
-async fn a_tuple_plaintext_row_is_reached_and_rebuilt_by_index() {
+async fn a_tuple_plaintext_is_reached_and_rebuilt_by_index() {
     let cipher = stack_cipher().await;
     let generator = stack_cipher().await;
 
@@ -560,7 +636,7 @@ async fn a_tuple_plaintext_row_is_reached_and_rebuilt_by_index() {
     let row: EncryptedReading = reading.encrypt_into(&cipher).await.unwrap();
 
     let hm: EqualityTerm = 21u32
-        .encrypt_into_with_context(&generator, "reading/0")
+        .encrypt_into_with_context(&generator, nonempty!("reading/0"))
         .await
         .unwrap();
     assert_eq!(row.0.hm, hm);
@@ -572,7 +648,7 @@ async fn a_tuple_plaintext_row_is_reached_and_rebuilt_by_index() {
     assert_eq!(named.value.hm, hm, "from = 0 infers the same context");
     let unit: String = named
         .unit
-        .decrypt_into(&cipher, "readings/unit")
+        .decrypt_into(&cipher, nonempty!("readings/unit"))
         .await
         .unwrap();
     assert_eq!(unit, "celsius");

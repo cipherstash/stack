@@ -15,7 +15,7 @@ use std::collections::VecDeque;
 
 use stack_kms::{DataKey, DataKeyWithTag, Iv};
 
-use crate::Error;
+use crate::{Descriptor, Error};
 
 /// One unit of ZeroKMS work a [`Pending`](super::Pending) needs:
 /// constructible, otherwise opaque, so new request kinds (a PRF derivation, a
@@ -25,22 +25,36 @@ pub struct Request(RequestKind);
 
 #[derive(Debug, Clone)]
 pub(super) enum RequestKind {
-    /// Generate one fresh data key under the cipher's keyset.
-    GenerateDataKey,
-    /// Re-derive the data key identified by `iv` + `tag`.
-    RetrieveDataKey { iv: Iv, tag: Vec<u8> },
+    /// Generate one fresh data key under the cipher's keyset, bound to
+    /// `descriptor`.
+    GenerateDataKey { descriptor: Descriptor },
+    /// Re-derive the data key identified by `iv` + `tag`, under the
+    /// `descriptor` it was generated with.
+    RetrieveDataKey {
+        iv: Iv,
+        tag: Vec<u8>,
+        descriptor: Descriptor,
+    },
 }
 
 impl Request {
-    /// Request one fresh data key (encrypt side).
-    pub fn generate_data_key() -> Self {
-        Self(RequestKind::GenerateDataKey)
+    /// Request one fresh data key (encrypt side), bound to `descriptor` —
+    /// the [`Descriptor`] of the context the leaf is sealed under. ZeroKMS
+    /// HMACs it into the key `tag`, so the key re-derives only under the
+    /// same descriptor.
+    pub fn generate_data_key(descriptor: Descriptor) -> Self {
+        Self(RequestKind::GenerateDataKey { descriptor })
     }
 
     /// Request re-derivation of the data key identified by `iv` + `tag`
-    /// (decrypt side).
-    pub fn retrieve_data_key(iv: Iv, tag: Vec<u8>) -> Self {
-        Self(RequestKind::RetrieveDataKey { iv, tag })
+    /// (decrypt side), under `descriptor` — which must be the one the key
+    /// was generated with, or ZeroKMS refuses.
+    pub fn retrieve_data_key(iv: Iv, tag: Vec<u8>, descriptor: Descriptor) -> Self {
+        Self(RequestKind::RetrieveDataKey {
+            iv,
+            tag,
+            descriptor,
+        })
     }
 
     /// Consume the request, yielding what it asks for.
@@ -55,7 +69,7 @@ pub(super) fn tally(requests: &[Request]) -> (usize, usize) {
     let (mut generate, mut retrieve) = (0usize, 0usize);
     for request in requests {
         match request.0 {
-            RequestKind::GenerateDataKey => generate += 1,
+            RequestKind::GenerateDataKey { .. } => generate += 1,
             RequestKind::RetrieveDataKey { .. } => retrieve += 1,
         }
     }
@@ -134,6 +148,10 @@ mod tests {
 
     use super::*;
 
+    fn d() -> Descriptor {
+        Descriptor::of("test/field")
+    }
+
     /// `n` real generated keys, plus the retrieved keys for the same `n`
     /// (`iv`, `tag`) pairs — the stub round-trips, which is all these tests
     /// need from it.
@@ -177,32 +195,37 @@ mod tests {
     #[test]
     fn tally_separates_the_two_kinds() {
         let requests = vec![
-            Request::generate_data_key(),
-            Request::retrieve_data_key(Iv::default(), vec![1]),
-            Request::generate_data_key(),
-            Request::retrieve_data_key(Iv::default(), vec![2]),
-            Request::generate_data_key(),
+            Request::generate_data_key(d()),
+            Request::retrieve_data_key(Iv::default(), vec![1], d()),
+            Request::generate_data_key(d()),
+            Request::retrieve_data_key(Iv::default(), vec![2], d()),
+            Request::generate_data_key(d()),
         ];
         assert_eq!(tally(&requests), (3, 2));
     }
 
     #[test]
-    fn a_generate_request_is_a_generate_kind() {
-        assert!(matches!(
-            Request::generate_data_key().into_kind(),
-            RequestKind::GenerateDataKey
-        ));
+    fn a_generate_request_carries_its_descriptor() {
+        match Request::generate_data_key(d()).into_kind() {
+            RequestKind::GenerateDataKey { descriptor } => assert_eq!(descriptor, d()),
+            RequestKind::RetrieveDataKey { .. } => panic!("expected a generate request"),
+        }
     }
 
     #[test]
-    fn a_retrieve_request_carries_its_iv_and_tag() {
-        let request = Request::retrieve_data_key(Iv::default(), vec![7, 8, 9]);
+    fn a_retrieve_request_carries_its_iv_tag_and_descriptor() {
+        let request = Request::retrieve_data_key(Iv::default(), vec![7, 8, 9], d());
         match request.into_kind() {
-            RequestKind::RetrieveDataKey { iv, tag } => {
+            RequestKind::RetrieveDataKey {
+                iv,
+                tag,
+                descriptor,
+            } => {
                 assert_eq!(iv, Iv::default());
                 assert_eq!(tag, vec![7, 8, 9]);
+                assert_eq!(descriptor, d());
             }
-            RequestKind::GenerateDataKey => panic!("expected a retrieve request"),
+            RequestKind::GenerateDataKey { .. } => panic!("expected a retrieve request"),
         }
     }
 

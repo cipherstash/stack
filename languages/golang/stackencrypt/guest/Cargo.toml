@@ -31,9 +31,12 @@ stack-kms = { path = "../../../../packages/stack-kms", default-features = false 
 zerokms-protocol = { path = "../../../../packages/zerokms-protocol" }
 
 # The FFI codec + `FfiValue` tree, shared with vitaminc's own guest — one
-# codec, not a fork. Same rev the suite pins for the other vitaminc crates.
-vitaminc-aead-value = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
-vitaminc-protected = { git = "https://github.com/cipherstash/vitaminc", rev = "04f4faa3eeeb69ae30dd0247865e06c640585fea" }
+# codec, not a fork. Same vitaminc version stack-encrypt builds against
+# (see the comment in packages/stack-encrypt/Cargo.toml). A different
+# version here fails at the `FfiValue: Decrypt` bound, since the aead crate
+# would be duplicated.
+vitaminc-aead-value = "0.3.0"
+vitaminc-protected = "0.3.0"
 
 futures = { version = "0.3", default-features = false, features = ["executor"] }
 serde = "1"

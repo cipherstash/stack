@@ -19,8 +19,8 @@ use syn::{
 };
 
 use crate::shape::{
-    impl_sources, push_context_generics, push_field_bounds, trait_impl, zip_fields, CallerContext,
-    Field, FieldBound, Record,
+    context_param, impl_sources, push_field_bounds, trait_impl, zip_fields, CallerContext,
+    ContextImpl, Field, FieldBound, Record,
 };
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
@@ -42,15 +42,23 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
 // =============================================================================
 
 /// `impl DecryptInto<Plaintext, StackCipher<__K>, Ctx> for Record` around
-/// `body`; `ctx` is `__Ctx` or `()` ([`push_context_generics`]).
+/// `body`; `ctx` is `()` or `NonEmpty<__T>` ([`context_param`]). The
+/// context parameter is unnamed when no opened field uses it, so the
+/// expansion warns of nothing.
 fn impl_block(
     input: &DeriveInput,
     krate: &Path,
     generics: &Generics,
     plaintext: &Type,
     ctx: &Type,
+    uses_context: bool,
     body: TokenStream,
 ) -> TokenStream {
+    let context = if uses_context {
+        quote!(__context)
+    } else {
+        quote!(_)
+    };
     trait_impl(
         input,
         generics,
@@ -59,7 +67,7 @@ fn impl_block(
             fn decrypt_into<'__a>(
                 self,
                 __cipher: &'__a #krate::StackCipher<__K>,
-                __context: #ctx,
+                #context: #ctx,
             ) -> #krate::target::Pending<'__a, #plaintext, __K>
             where
                 Self: '__a,
@@ -111,12 +119,10 @@ fn decrypt_field_impl(input: &DeriveInput, krate: &Path) -> TokenStream {
     }
 }
 
-/// The context one opened field is handed, by move: its own, or the caller's.
-fn context_for(field: &Field) -> TokenStream {
-    field
-        .field_context()
-        .own_expr()
-        .unwrap_or_else(|| quote!(__context))
+/// The context one opened field is handed, by move, in the impl for
+/// `which`: its own, the caller's, or its own extended with the caller's.
+fn context_for(krate: &Path, field: &Field, which: ContextImpl) -> TokenStream {
+    field.field_context().expr(krate, which, quote!(__context))
 }
 
 /// The plaintext type as a struct-literal path: `User<T>` becomes `User::<T>`.
@@ -165,26 +171,17 @@ struct Group<'a> {
 }
 
 impl<'a> Auto<'a> {
-    fn classify(record: &'a Record, name: &Ident) -> Result<Self> {
+    fn classify(record: &'a Record) -> Self {
         let candidates = record.derived();
-        let with_from = candidates.iter().filter(|f| f.from().is_some()).count();
-        if with_from == 0 {
-            return Ok(Auto::Whole(candidates));
-        }
-        if with_from != candidates.len() {
-            return Err(syn::Error::new_spanned(
-                name,
-                "some derived fields name a plaintext field (`from = ..`) and some do not, so it \
-                 is ambiguous whether decryption opens the record as a whole or rebuilds the \
-                 plaintext field by field: mark the fields decryption opens `#[stash(decrypt)]`",
-            ));
+        if !record.by_field {
+            return Auto::Whole(candidates);
         }
 
         let mut groups: Vec<Group<'a>> = Vec::new();
         for field in candidates {
             let from = field
                 .from()
-                .unwrap_or_else(|| unreachable!("counted above"));
+                .unwrap_or_else(|| unreachable!("every field of a `struct` derive has a `from`"));
             match groups.iter_mut().find(|g| g.from == from) {
                 Some(group) => group.fields.push(field),
                 None => groups.push(Group {
@@ -193,14 +190,14 @@ impl<'a> Auto<'a> {
                 }),
             }
         }
-        Ok(Auto::ByField(groups))
+        Auto::ByField(groups)
     }
 }
 
 fn automatic(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
     let krate = &record.krate;
     let name = &input.ident;
-    let auto = Auto::classify(record, name)?;
+    let auto = Auto::classify(record);
 
     // The one-ciphertext check: at the definition for a concrete record, at
     // the first use for a generic one (a `const _` cannot name the record's
@@ -228,29 +225,33 @@ fn automatic(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
             .flat_map(|g| g.fields.iter().copied())
             .collect(),
     };
-    let destructure = {
+    let destructure = |uses_context: bool| {
         let bind = candidates.iter().map(|f| {
             let member = &f.member;
             let local = &f.local;
             quote!(#member: #local)
         });
+        // The caller's context is cloned to every field that uses it, so
+        // it is taken by reference once.
+        let borrow = uses_context.then(|| quote!(let __context = &__context;));
         quote! {
             let Self { #(#bind,)* .. } = self;
-            let __context = &__context;
+            #borrow
         }
     };
 
     // One impl per listed plaintext, or one generic over it (whole mode
     // only: rebuilding field by field needs a struct literal, and
-    // `Record::parse` has rejected `from` without a named plaintext). Each
-    // candidate field is bounded by `DecryptField` under the context it is
-    // opened under, so a record's impl exists for exactly the plaintexts its
-    // ciphertext field opens to — and only under a supplied context if that
-    // field needs one.
+    // `Record::parse` has rejected `from` without a named plaintext) — and
+    // each twice, for `()` and for `NonEmpty<__T>` (see `context_param`).
+    // Each candidate field is bounded by `DecryptField` under the context
+    // it is opened under, so a record's impl exists for exactly the
+    // plaintexts its ciphertext field opens to — and only under a non-empty
+    // context if that field needs one.
     let (plaintexts, generic) = impl_sources(record, parse_quote!(__P));
-    let impls = plaintexts
-        .iter()
-        .map(|plaintext| {
+    let mut impls = Vec::with_capacity(plaintexts.len() * 2);
+    for plaintext in &plaintexts {
+        for which in ContextImpl::BOTH {
             let mut generics = input.generics.clone();
             if generic {
                 generics.params.push(parse_quote!(__P));
@@ -264,17 +265,33 @@ fn automatic(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
                         fields,
                         plaintext,
                         FieldBound::DecryptField,
+                        which,
                     );
-                    open_one(krate, fields, plaintext)
+                    open_one(krate, fields, plaintext, which)
                 }
-                Auto::ByField(groups) => by_group_body(krate, groups, plaintext)?,
+                Auto::ByField(groups) => by_group_body(krate, groups, plaintext, which)?,
             };
-            let ctx =
-                push_context_generics(&mut generics, CallerContext::Decrypt(krate), &candidates);
+            let ctx = context_param(
+                &mut generics,
+                CallerContext::Decrypt(krate),
+                which,
+                record.by_field,
+                &candidates,
+            );
+            let uses_context = candidates.iter().any(|f| f.uses_callers_context(which));
+            let destructure = destructure(uses_context);
             let body = quote!(#body_check #destructure #open);
-            Ok(impl_block(input, krate, &generics, plaintext, &ctx, body))
-        })
-        .collect::<Result<Vec<_>>>()?;
+            impls.push(impl_block(
+                input,
+                krate,
+                &generics,
+                plaintext,
+                &ctx,
+                uses_context,
+                body,
+            ));
+        }
+    }
 
     Ok(quote!(#(#impls)* #definition_check))
 }
@@ -327,17 +344,23 @@ fn check(krate: &Path, name: &Ident, from: Option<&Member>, fields: &[&Field]) -
 }
 
 /// The one `Some` among the fields' `decrypt_field`s, as a pending of
-/// `plaintext` (`_` when it is inferred from a struct literal).
-fn open_one(krate: &Path, fields: &[&Field], plaintext: &Type) -> TokenStream {
+/// `plaintext` (`_` when it is inferred from a struct literal), in the impl
+/// for `which`.
+fn open_one(krate: &Path, fields: &[&Field], plaintext: &Type, which: ContextImpl) -> TokenStream {
     let mut calls = fields.iter().map(|field| {
         let ty = &field.ty;
         let local = &field.local;
-        let context = field
-            .field_context()
-            .own_expr()
-            .unwrap_or_else(|| quote!(::core::clone::Clone::clone(__context)));
-        quote! {
-            <#ty as #krate::target::DecryptField<#plaintext, #krate::StackCipher<__K>, _>>::decrypt_field(
+        let context = field.field_context().expr(
+            krate,
+            which,
+            quote!(::core::clone::Clone::clone(__context)),
+        );
+        // The context type is named, not inferred, so a leaf that cannot
+        // open under it is reported by the trait's `on_unimplemented`
+        // rather than as an argument type mismatch inside the expansion.
+        let context_ty = field.field_context().ty(krate, which);
+        quote_spanned! {ty.span()=>
+            <#ty as #krate::target::DecryptField<#plaintext, #krate::StackCipher<__K>, #context_ty>>::decrypt_field(
                 #local, __cipher, #context,
             )
         }
@@ -364,7 +387,12 @@ fn open_one(krate: &Path, fields: &[&Field], plaintext: &Type) -> TokenStream {
 
 /// Each group's opened pending, zipped into one and mapped into a struct
 /// literal of the plaintext.
-fn by_group_body(krate: &Path, groups: &[Group<'_>], plaintext: &Type) -> Result<TokenStream> {
+fn by_group_body(
+    krate: &Path,
+    groups: &[Group<'_>],
+    plaintext: &Type,
+    which: ContextImpl,
+) -> Result<TokenStream> {
     let literal = struct_literal_path(plaintext)?;
     let inferred: Type = parse_quote!(_);
 
@@ -372,7 +400,7 @@ fn by_group_body(krate: &Path, groups: &[Group<'_>], plaintext: &Type) -> Result
         .map(|index| Ident::new(&format!("__group_{index}"), Span::call_site()))
         .collect();
     let opens = groups.iter().zip(&locals).map(|(group, local)| {
-        let open = open_one(krate, &group.fields, &inferred);
+        let open = open_one(krate, &group.fields, &inferred, which);
         quote!(let #local = #open;)
     });
 
@@ -409,39 +437,69 @@ fn explicit(input: &DeriveInput, record: &Record) -> Result<TokenStream> {
     let opened: Vec<&Field> = record.fields.iter().filter(|f| f.decrypt).collect();
     let mode = Mode::classify(opened, name)?;
 
-    // One impl per listed plaintext, or one generic over it. Only the
-    // whole-plaintext mode can be generic — rebuilding field by field needs
-    // a struct literal, and therefore a name — and `Record::parse` has
-    // already rejected `from` without one.
+    // One impl per listed plaintext, or one generic over it — and each
+    // twice, for `()` and for `NonEmpty<__T>`. Only the whole-plaintext mode
+    // can be generic — rebuilding field by field needs a struct literal, and
+    // therefore a name — and `Record::parse` has already rejected `from`
+    // without one.
     let (plaintexts, generic) = impl_sources(record, parse_quote!(__P));
-    let impls = plaintexts
-        .iter()
-        .map(|plaintext| {
+    let mut impls = Vec::with_capacity(plaintexts.len() * 2);
+    for plaintext in &plaintexts {
+        for which in ContextImpl::BOTH {
             let mut generics = input.generics.clone();
             if generic {
                 generics.params.push(parse_quote!(__P));
             }
             generics.params.push(parse_quote!(__K));
-            let (body, ctx) = match &mode {
+            let (body, ctx, uses_context) = match &mode {
                 Mode::Whole(field) => {
-                    let ty = &field.ty;
-                    let context = field.field_context().ty();
-                    generics.make_where_clause().predicates.push(parse_quote! {
-                        #ty: #krate::target::DecryptInto<#plaintext, #krate::StackCipher<__K>, #context>
-                    });
-                    let ctx =
-                        push_context_generics(&mut generics, CallerContext::Decrypt(krate), &[field]);
-                    (whole_body(krate, field, plaintext), ctx)
+                    push_field_bounds(
+                        &mut generics,
+                        krate,
+                        &[field],
+                        plaintext,
+                        FieldBound::DecryptInto,
+                        which,
+                    );
+                    let ctx = context_param(
+                        &mut generics,
+                        CallerContext::Decrypt(krate),
+                        which,
+                        record.by_field,
+                        &[field],
+                    );
+                    (
+                        whole_body(krate, field, plaintext, which),
+                        ctx,
+                        field.uses_callers_context(which),
+                    )
                 }
                 Mode::ByField(fields) => {
-                    let ctx =
-                        push_context_generics(&mut generics, CallerContext::Decrypt(krate), fields);
-                    (by_field_body(krate, fields, plaintext)?, ctx)
+                    let ctx = context_param(
+                        &mut generics,
+                        CallerContext::Decrypt(krate),
+                        which,
+                        record.by_field,
+                        fields,
+                    );
+                    (
+                        by_field_body(krate, fields, plaintext, which)?,
+                        ctx,
+                        fields.iter().any(|f| f.uses_callers_context(which)),
+                    )
                 }
             };
-            Ok(impl_block(input, krate, &generics, plaintext, &ctx, body))
-        })
-        .collect::<Result<Vec<_>>>()?;
+            impls.push(impl_block(
+                input,
+                krate,
+                &generics,
+                plaintext,
+                &ctx,
+                uses_context,
+                body,
+            ));
+        }
+    }
 
     Ok(quote!(#(#impls)*))
 }
@@ -466,19 +524,16 @@ impl<'a> Mode<'a> {
             }
             return Err(syn::Error::new_spanned(
                 name,
-                "several fields are marked `decrypt` but none names a plaintext field: one \
-                 plaintext cannot be recovered from two fields. Either mark only the ciphertext \
-                 field, or give each a `from = ..` so decryption rebuilds the plaintext field by \
-                 field.",
+                "several fields are marked `decrypt` but the record is one value: one plaintext \
+                 cannot be recovered from two fields. Mark only the ciphertext field, or encrypt \
+                 a struct field by field with `#[stash(struct = ..)]`.",
             ));
         }
-        if by_field != opened.len() {
-            return Err(syn::Error::new_spanned(
-                name,
-                "`decrypt` fields must either all name a plaintext field (`from = ..`) or be a \
-                 single field opened as the whole plaintext; this record mixes the two",
-            ));
-        }
+        debug_assert_eq!(
+            by_field,
+            opened.len(),
+            "every field of a `struct` derive has a `from`, and no other field does"
+        );
 
         let mut seen: HashSet<&Member> = HashSet::with_capacity(opened.len());
         for field in &opened {
@@ -497,12 +552,13 @@ impl<'a> Mode<'a> {
     }
 }
 
-fn whole_body(krate: &Path, field: &Field, plaintext: &Type) -> TokenStream {
+fn whole_body(krate: &Path, field: &Field, plaintext: &Type, which: ContextImpl) -> TokenStream {
     let ty = &field.ty;
     let member = &field.member;
-    let context = context_for(field);
+    let context = context_for(krate, field, which);
+    let context_ty = field.field_context().ty(krate, which);
     quote! {
-        <#ty as #krate::target::DecryptInto<#plaintext, #krate::StackCipher<__K>, _>>::decrypt_into(
+        <#ty as #krate::target::DecryptInto<#plaintext, #krate::StackCipher<__K>, #context_ty>>::decrypt_into(
             self.#member,
             __cipher,
             #context,
@@ -510,7 +566,12 @@ fn whole_body(krate: &Path, field: &Field, plaintext: &Type) -> TokenStream {
     }
 }
 
-fn by_field_body(krate: &Path, fields: &[&Field], plaintext: &Type) -> Result<TokenStream> {
+fn by_field_body(
+    krate: &Path,
+    fields: &[&Field],
+    plaintext: &Type,
+    which: ContextImpl,
+) -> Result<TokenStream> {
     let literal = struct_literal_path(plaintext)?;
 
     let assign = fields.iter().map(|field| {
@@ -520,16 +581,20 @@ fn by_field_body(krate: &Path, fields: &[&Field], plaintext: &Type) -> Result<To
     });
 
     Ok(zip_fields(
+        krate,
         fields,
+        which,
         |field, context| {
             let ty = &field.ty;
             let member = &field.member;
             // The plaintext field's type is not known here; it is inferred
             // from the struct literal, and the obligation checked against it
-            // — spanned at the field type, so a leaf handed `()` (no
-            // literal) is reported at the field that needs a `context`.
+            // — spanned at the field type, so a leaf handed `()` (a `nested`
+            // field) is reported at the field that needs a `context`, by the
+            // trait's `on_unimplemented` since the context type is named.
+            let context_ty = field.field_context().ty(krate, which);
             let call = quote_spanned! {ty.span()=>
-                <#ty as #krate::target::DecryptInto<_, #krate::StackCipher<__K>, _>>::decrypt_into
+                <#ty as #krate::target::DecryptInto<_, #krate::StackCipher<__K>, #context_ty>>::decrypt_into
             };
             quote!(#call(self.#member, __cipher, #context,))
         },
@@ -560,20 +625,28 @@ mod tests {
         })
         .unwrap();
         // Every derived field is a candidate, bounded and asked in turn; the
-        // `default` field is neither.
+        // `default` field is neither. Once for `()` and once for
+        // `NonEmpty<__T>`.
         assert_contains(&expansion, quote! {
+            impl<__K> ::stack_encrypt::target::DecryptInto<u32, ::stack_encrypt::StackCipher<__K>, ()> for Rec
             where
-                StackCipherText: ::stack_encrypt::target::DecryptField<u32, ::stack_encrypt::StackCipher<__K>, __Ctx>,
-                EqualityTerm: ::stack_encrypt::target::DecryptField<u32, ::stack_encrypt::StackCipher<__K>, __Ctx>,
-                __Ctx: ::stack_encrypt::target::DecryptContext<'__ctx>
+                StackCipherText: ::stack_encrypt::target::DecryptField<u32, ::stack_encrypt::StackCipher<__K>, ()>,
+                EqualityTerm: ::stack_encrypt::target::DecryptField<u32, ::stack_encrypt::StackCipher<__K>, ()>
         });
-        assert_contains(&expansion, quote!(let Self { c: __field_0, hm: __field_1, .. } = self;));
+        assert_contains(&expansion, quote! {
+            impl<'__ctx, __K, __T> ::stack_encrypt::target::DecryptInto<u32, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<__T>> for Rec
+            where
+                StackCipherText: ::stack_encrypt::target::DecryptField<u32, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<__T>>,
+                EqualityTerm: ::stack_encrypt::target::DecryptField<u32, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<__T>>,
+                __T: ::stack_encrypt::IntoAad<'__ctx> + ::core::clone::Clone
+        });
+        assert_contains(&expansion, quote!(let Self { c: __field_0, hm: __field_1, .. } = self; let __context = &__context;));
         assert_contains(&expansion, quote! {
             ::core::option::Option::or_else(
-                <StackCipherText as ::stack_encrypt::target::DecryptField<u32, ::stack_encrypt::StackCipher<__K>, _>>::decrypt_field(
+                <StackCipherText as ::stack_encrypt::target::DecryptField<u32, ::stack_encrypt::StackCipher<__K>, ()>>::decrypt_field(
                     __field_0, __cipher, ::core::clone::Clone::clone(__context),
                 ),
-                move || <EqualityTerm as ::stack_encrypt::target::DecryptField<u32, ::stack_encrypt::StackCipher<__K>, _>>::decrypt_field(
+                move || <EqualityTerm as ::stack_encrypt::target::DecryptField<u32, ::stack_encrypt::StackCipher<__K>, ()>>::decrypt_field(
                     __field_1, __cipher, ::core::clone::Clone::clone(__context),
                 )
             )
@@ -596,12 +669,12 @@ mod tests {
 
     #[test]
     #[rustfmt::skip]
-    fn a_caller_context_must_be_a_decrypt_context() {
-        // The regression shape: the ciphertext field carries a literal, so
-        // only the term fields see the caller's context — and a term's
-        // `DecryptField` accepts anything (it opens nothing). The impl-level
-        // bound is what keeps `decrypt_into` from accepting, and silently
-        // discarding, a value that is not a context at all.
+    fn a_caller_context_is_bounded_by_the_vitaminc_traits() {
+        // The regression shape: the ciphertext field carries a literal and
+        // a term's `DecryptField` accepts anything (it opens nothing). The
+        // impl-level bound is what keeps `decrypt_into` from accepting a
+        // value that is not a context at all — and the literal extends the
+        // caller's context, so the ciphertext authenticates under it.
         let expansion = expand(parse_quote! {
             #[stash(plaintext = u32)]
             struct Rec {
@@ -612,10 +685,17 @@ mod tests {
         })
         .unwrap();
         assert_contains(&expansion, quote! {
-            impl<'__ctx, __K, __Ctx> ::stack_encrypt::target::DecryptInto<u32, ::stack_encrypt::StackCipher<__K>, __Ctx> for Rec
+            impl<__K, __T> ::stack_encrypt::target::DecryptInto<u32, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<__T>> for Rec
         });
         assert_contains(&expansion, quote! {
-            __Ctx: ::stack_encrypt::target::DecryptContext<'__ctx>
+            __T: ::stack_encrypt::IntoAad<'static> + ::core::clone::Clone
+        });
+        // The literal is a compile-time `NonEmpty` under `()`, extended
+        // under `NonEmpty<__T>`.
+        assert_contains(&expansion, quote!(__field_0, __cipher, ::stack_encrypt::nonempty!("rec/c"),));
+        assert_contains(&expansion, quote! {
+            __field_0, __cipher,
+            ::stack_encrypt::NonEmpty::with(::stack_encrypt::nonempty!("rec/c"), ::core::clone::Clone::clone(__context)),
         });
     }
 
@@ -636,13 +716,11 @@ mod tests {
     #[rustfmt::skip]
     fn unmarked_from_fields_are_grouped_by_plaintext_field() {
         let expansion = expand(parse_quote! {
-            #[stash(plaintext = User)]
+            #[stash(struct = User, context = "users")]
             struct Row {
-                #[stash(from = age, context = "users/age")]
                 age: EncryptedAge,
-                #[stash(from = email, context = "users/email")]
                 email: StackCipherText,
-                #[stash(from = email, context = "users/email")]
+                #[stash(from = email)]
                 email_eq: EqualityTerm,
             }
         })
@@ -654,39 +732,59 @@ mod tests {
         assert_contains(&expansion, quote! {
             let __group_1 = ::core::option::Option::unwrap_or_else(
                 ::core::option::Option::or_else(
-                    <StackCipherText as ::stack_encrypt::target::DecryptField<_, ::stack_encrypt::StackCipher<__K>, _>>::decrypt_field(
-                        __field_1, __cipher, "users/email",
+                    <StackCipherText as ::stack_encrypt::target::DecryptField<_, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<&'static str>>>::decrypt_field(
+                        __field_1, __cipher, ::stack_encrypt::nonempty!("users/email"),
                     ),
-                    move || <EqualityTerm as ::stack_encrypt::target::DecryptField<_, ::stack_encrypt::StackCipher<__K>, _>>::decrypt_field(
-                        __field_2, __cipher, "users/email",
+                    move || <EqualityTerm as ::stack_encrypt::target::DecryptField<_, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<&'static str>>>::decrypt_field(
+                        __field_2, __cipher, ::stack_encrypt::nonempty!("users/email"),
                     )
                 ),
                 || ::stack_encrypt::target::Pending::failed(__cipher, ::stack_encrypt::Error::NotOpened,)
             );
         });
         assert_contains(&expansion, quote!(__group_0.zip(__group_1).map(|(__group_0, __group_1)| User { age: __group_0, email: __group_1 })));
-        // Every field has its own context: the impl is for `()` exactly, and
-        // `User::decrypt_from(row, &cipher)` is the one form that compiles.
+        // Every field has its own context: the `()` impl uses none of the
+        // caller's, so its parameter is unnamed and never borrowed; the
+        // `NonEmpty<__T>` impl extends each with it.
         assert_contains(&expansion, quote! {
             impl<__K> ::stack_encrypt::target::DecryptInto<User, ::stack_encrypt::StackCipher<__K>, ()> for Row
         });
-        assert_lacks(&expansion, quote!(DecryptInto<User, ::stack_encrypt::StackCipher<__K>, __Ctx>));
+        assert_contains(&expansion, quote!(_: (),));
+        assert_contains(&expansion, quote! {
+            impl<__K, __T> ::stack_encrypt::target::DecryptInto<User, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<__T>> for Row
+        });
+        assert_contains(&expansion, quote!(let __context = &__context;));
     }
 
     #[test]
-    fn a_record_mixing_from_and_whole_fields_must_be_marked() {
-        let err = expand(parse_quote! {
-            #[stash(plaintext = User)]
-            struct Row {
-                #[stash(from = email)]
+    #[rustfmt::skip]
+    fn a_struct_opens_its_fields_under_their_extended_contexts() {
+        let expansion = expand(parse_quote! {
+            #[stash(struct = User, context = "user")]
+            struct EncryptedUser {
+                age: EncryptedAge,
                 email: StackCipherText,
-                hm: EqualityTerm,
             }
         })
-        .unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("ambiguous whether decryption opens"));
+        .unwrap();
+        // Under `()`, the inferred literals as they are.
+        assert_contains(&expansion, quote!(__field_0, __cipher, ::stack_encrypt::nonempty!("user/age"),));
+        // Under `NonEmpty<__T>`, each extended with the caller's — cloned,
+        // since every opened field is asked through a reference — and `__T`
+        // bounded for `'static`.
+        assert_contains(&expansion, quote! {
+            impl<__K, __T> ::stack_encrypt::target::DecryptInto<User, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<__T>> for EncryptedUser
+            where
+                __T: ::stack_encrypt::IntoAad<'static> + ::core::clone::Clone
+        });
+        assert_contains(&expansion, quote! {
+            __field_0, __cipher,
+            ::stack_encrypt::NonEmpty::with(::stack_encrypt::nonempty!("user/age"), ::core::clone::Clone::clone(__context)),
+        });
+        assert_contains(&expansion, quote! {
+            __field_1, __cipher,
+            ::stack_encrypt::NonEmpty::with(::stack_encrypt::nonempty!("user/email"), ::core::clone::Clone::clone(__context)),
+        });
     }
 
     #[test]
@@ -743,26 +841,11 @@ mod tests {
     }
 
     #[test]
-    fn mixed_modes_are_rejected() {
-        let err = expand(parse_quote! {
-            #[stash(plaintext = User)]
-            struct Rec {
-                #[stash(decrypt, from = a)]
-                a: StackCipherText,
-                #[stash(decrypt)]
-                b: StackCipherText,
-            }
-        })
-        .unwrap_err();
-        assert!(err.to_string().contains("mixes the two"));
-    }
-
-    #[test]
     fn duplicate_recovery_targets_are_rejected() {
         let err = expand(parse_quote! {
-            #[stash(plaintext = User)]
+            #[stash(struct = User, context = "users")]
             struct Rec {
-                #[stash(decrypt, from = a)]
+                #[stash(decrypt)]
                 a: StackCipherText,
                 #[stash(decrypt, from = a)]
                 b: StackCipherText,
@@ -784,31 +867,22 @@ mod tests {
         })
         .unwrap();
         assert_contains(&expansion, quote! {
-            impl<'__ctx, __P, __K, __Ctx> ::stack_encrypt::target::DecryptInto<__P, ::stack_encrypt::StackCipher<__K>, __Ctx> for Wrapped
+            impl<__P, __K> ::stack_encrypt::target::DecryptInto<__P, ::stack_encrypt::StackCipher<__K>, ()> for Wrapped
             where
-                StackCipherText: ::stack_encrypt::target::DecryptInto<__P, ::stack_encrypt::StackCipher<__K>, __Ctx>,
-                __Ctx: ::stack_encrypt::target::DecryptContext<'__ctx>
+                StackCipherText: ::stack_encrypt::target::DecryptInto<__P, ::stack_encrypt::StackCipher<__K>, ()>
         });
         assert_contains(&expansion, quote! {
-            <StackCipherText as ::stack_encrypt::target::DecryptInto<__P, ::stack_encrypt::StackCipher<__K>, _>>::decrypt_into(
+            impl<'__ctx, __P, __K, __T> ::stack_encrypt::target::DecryptInto<__P, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<__T>> for Wrapped
+            where
+                StackCipherText: ::stack_encrypt::target::DecryptInto<__P, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<__T>>,
+                __T: ::stack_encrypt::IntoAad<'__ctx> + ::core::clone::Clone
+        });
+        assert_contains(&expansion, quote! {
+            <StackCipherText as ::stack_encrypt::target::DecryptInto<__P, ::stack_encrypt::StackCipher<__K>, ()>>::decrypt_into(
                 self.c, __cipher, __context,
             )
         });
         assert_lacks(&expansion, quote!(hm));
-    }
-
-    #[test]
-    fn a_generic_plaintext_cannot_be_rebuilt_field_by_field() {
-        let err = expand(parse_quote! {
-            struct Row {
-                #[stash(decrypt, from = age)]
-                age: EncryptedAge,
-            }
-        })
-        .unwrap_err();
-        // `Record::parse` catches `from` without a named plaintext first;
-        // either message says what to add.
-        assert!(err.to_string().contains("plaintext type must be named"));
     }
 
     #[test]
@@ -824,12 +898,12 @@ mod tests {
         })
         .unwrap();
         assert_contains(&expansion, quote! {
-            impl<'__ctx, __K, __Ctx> ::stack_encrypt::target::DecryptInto<u32, ::stack_encrypt::StackCipher<__K>, __Ctx> for EncryptedAge
+            impl<'__ctx, __K, __T> ::stack_encrypt::target::DecryptInto<u32, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<__T>> for EncryptedAge
             where
-                StackCipherText: ::stack_encrypt::target::DecryptInto<u32, ::stack_encrypt::StackCipher<__K>, __Ctx>
+                StackCipherText: ::stack_encrypt::target::DecryptInto<u32, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<__T>>
         });
         assert_contains(&expansion, quote! {
-            <StackCipherText as ::stack_encrypt::target::DecryptInto<u64, ::stack_encrypt::StackCipher<__K>, _>>::decrypt_into(
+            <StackCipherText as ::stack_encrypt::target::DecryptInto<u64, ::stack_encrypt::StackCipher<__K>, ()>>::decrypt_into(
                 self.c, __cipher, __context,
             )
         });
@@ -841,30 +915,35 @@ mod tests {
     #[rustfmt::skip]
     fn by_field_mode_rebuilds_the_plaintext() {
         let expansion = expand(parse_quote! {
-            #[stash(plaintext = User<T>)]
+            #[stash(struct = User<T>, context = "users")]
             struct EncryptedUser {
-                #[stash(decrypt, from = age, context = "users/age")]
+                #[stash(decrypt, context = "legacy/age")]
                 age: EncryptedAge,
-                #[stash(decrypt, from = email)]
-                email: StackCipherText,
-                #[stash(from = email, context = "users/email")]
+                #[stash(decrypt, nested)]
+                email: EncryptedEmail,
+                #[stash(from = email)]
                 email_eq: EqualityTerm,
             }
         })
         .unwrap();
         assert_contains(&expansion, quote! {
-            <EncryptedAge as ::stack_encrypt::target::DecryptInto<_, ::stack_encrypt::StackCipher<__K>, _>>::decrypt_into(
-                self.age, __cipher, "users/age",
+            <EncryptedAge as ::stack_encrypt::target::DecryptInto<_, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<&'static str>>>::decrypt_into(
+                self.age, __cipher, ::stack_encrypt::nonempty!("legacy/age"),
             )
         });
-        // `email` has no literal: a `from` field is handed `()`, never the
-        // caller's context, and the leaf reports itself at the field if it
-        // cannot take that. The row is then for `()` exactly.
-        assert_contains(&expansion, quote!(self.email, __cipher, (),));
+        // `email` is `nested`: it is handed the caller's context as it is —
+        // `()` in one impl, `NonEmpty<__T>` in the other — and its type
+        // composes it with its own contexts. A `struct` derive is bounded
+        // for `'static`.
+        assert_contains(&expansion, quote!(self.email, __cipher, __context,));
         assert_contains(&expansion, quote! {
             impl<__K> ::stack_encrypt::target::DecryptInto<User<T>, ::stack_encrypt::StackCipher<__K>, ()> for EncryptedUser
         });
-        assert_lacks(&expansion, quote!(SuppliedContext));
+        assert_contains(&expansion, quote! {
+            impl<__K, __T> ::stack_encrypt::target::DecryptInto<User<T>, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<__T>> for EncryptedUser
+            where
+                __T: ::stack_encrypt::IntoAad<'static> + ::core::clone::Clone
+        });
         assert_contains(&expansion, quote!(.map(|(__field_0, __field_1)| User::<T> { age: __field_0, email: __field_1 })));
         assert_lacks(&expansion, quote!(email_eq));
     }
@@ -872,11 +951,11 @@ mod tests {
     #[test]
     fn tuple_plaintexts_are_rebuilt_by_index() {
         let expansion = expand(parse_quote! {
-            #[stash(plaintext = Pair)]
+            #[stash(struct = Pair, context = "pair")]
             struct EncryptedPair {
-                #[stash(decrypt, from = 0, context = "pair/0")]
+                #[stash(decrypt, from = 0)]
                 a: StackCipherText,
-                #[stash(decrypt, from = 1, context = "pair/1")]
+                #[stash(decrypt, from = 1)]
                 b: StackCipherText,
             }
         })
@@ -893,7 +972,7 @@ mod tests {
     #[test]
     fn duplicate_recovery_targets_by_index_are_rejected() {
         let err = expand(parse_quote! {
-            #[stash(plaintext = Pair)]
+            #[stash(struct = Pair, context = "pair")]
             struct Rec {
                 #[stash(decrypt, from = 0)]
                 a: StackCipherText,

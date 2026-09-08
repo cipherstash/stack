@@ -5,9 +5,9 @@ struct User {
 }
 
 #[derive(DecryptInto)]
-#[stash(plaintext = User)]
+#[stash(struct = User, context = "users")]
 struct Rec {
-    #[stash(decrypt, from = a)]
+    #[stash(decrypt)]
     a: StackCipherText,
     #[stash(decrypt, from = a)]
     b: StackCipherText,

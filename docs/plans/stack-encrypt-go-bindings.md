@@ -321,7 +321,7 @@ access) or one of the two required `cipherstash_transport` functions, and
 both of those must be present. A build alone proves nothing here: the
 property is about what the *linked* module can reach.
 
-Two things worth stating plainly, because they are easy to read the wrong
+Three things worth stating plainly, because they are easy to read the wrong
 way:
 
 - **Batching is one *batch*, not always one *call*.** All rows and fields
@@ -339,6 +339,21 @@ way:
   Rust derive and a Go plan do **not** interchange ciphertexts for the same
   field until the Rust side uses aead-value's tagged types. By design; a
   separate follow-up, not a defect in either side.
+- **A plan context is the whole context, flat.** Each plan field carries one
+  string, and the guest seals the field under exactly that — the same AAD
+  bytes and the same ZeroKMS descriptor as a Rust derive gives the field
+  when the record is sealed with `encrypt_into` (no caller context). The
+  Rust derive can also *extend* every field's context with the caller's
+  (`encrypt_into_with_context(row, 7u64)` seals `users/email` under
+  `("users/email", 7u64)`, descriptor `users/email|7u64`), and a plan
+  cannot spell that: the context slot is a string, and a string that looks
+  like the rendered descriptor is escaped, not parsed. Rows sealed from Rust
+  under a caller context are unreadable through a plan, and rows sealed
+  through a plan are unreadable from Rust under any caller context. A
+  structured context slot (string | integer | list, mirroring vitaminc's
+  `AadPiece`, with the Go struct tag growing a `tenant=` or similar) is the
+  fix, and is a Phase 4 item, not a Phase 3 one: the cross-language fixtures
+  in Phase 5 must cover both the flat and the extended shape.
 
 The plan as written before the work:
 

@@ -1,5 +1,0 @@
-error: `decrypt` fields must either all name a plaintext field (`from = ..`) or be a single field opened as the whole plaintext; this record mixes the two
-  --> tests/ui/decrypt_mixed_modes.rs:10:8
-   |
-10 | struct Rec {
-   |        ^^^

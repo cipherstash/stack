@@ -6,4 +6,7 @@
 fn derive_diagnostics() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");
+    // And the shapes that must compile, so a diagnostic never grows to
+    // cover a valid call.
+    t.pass("tests/ui/pass/*.rs");
 }

@@ -1,15 +1,14 @@
-error[E0277]: `()` is not a context the caller supplied
+error[E0277]: `EqualityTerm` is not an encrypted form of `&str` under a `()` context
   --> tests/ui/leaf_without_context.rs:17:39
    |
 17 |     let _term: EqualityTerm = "alice".encrypt_into(cipher).await.unwrap();
-   |                                       ^^^^^^^^^^^^ this leaf needs a context
+   |                                       ^^^^^^^^^^^^ not `EncryptFrom<&str, _, ()>`
    |
-   = note: `()` is what `encrypt_into` / `decrypt_from` pass, and what a derived row hands a `from` field with no `context = ".."` of its own: an output that reaches a leaf needs `encrypt_into_with_context` / `decrypt_from_with_context`, or the literal
-   = note: a context type of your own opts in with an empty `impl SuppliedContext<'_> for MyContext {}`
-   = help: the trait `SuppliedContext<'_>` is not implemented for `()`
-           but it is implemented for `(_, _)`
-   = help: for that trait implementation, expected `(_, _)`, found `()`
-   = note: required for `EqualityTerm` to implement `EncryptFrom<&str, StackCipher<FakeDataKeySource>, ()>`
+   = note: a leaf — a ciphertext or an index term — exists only under a `NonEmpty<_>` context: `encrypt_into` passes `()`, so use `encrypt_into_with_context(&cipher, context)`, or give the field a `context = ".."` of its own
+   = note: a context is anything vitaminc encodes (`&str`, `String`, bytes, integers, `Option`s and pairs of those), proven non-empty: `nonempty!("users/email")` for a literal, `NonEmpty::new(value)?` for a runtime value, a bare integer for an id
+   = help: the trait `EncryptFrom<&str, StackCipher<FakeDataKeySource>, ()>` is not implemented for `EqualityTerm`
+           but trait `EncryptFrom<&str, StackCipher<FakeDataKeySource>, NonEmpty<_>>` is implemented for it
+   = help: for that trait implementation, expected `NonEmpty<_>`, found `()`
 note: required by a bound in `encrypt_into`
   --> src/target/mod.rs
    |
@@ -19,20 +18,25 @@ note: required by a bound in `encrypt_into`
    |         T: EncryptFrom<Self, C, ()> + 'a,
    |            ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
 
-error[E0277]: `()` is not a context the caller supplied
+error[E0277]: `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` is not an encrypted form of `u32` under a `()` context
   --> tests/ui/leaf_without_context.rs:18:39
    |
 18 |     let _record: EncryptedAge = 42u32.encrypt_into(cipher).await.unwrap();
-   |                                       ^^^^^^^^^^^^ this leaf needs a context
+   |                                       ^^^^^^^^^^^^ not `EncryptFrom<u32, _, ()>`
    |
-   = note: `()` is what `encrypt_into` / `decrypt_from` pass, and what a derived row hands a `from` field with no `context = ".."` of its own: an output that reaches a leaf needs `encrypt_into_with_context` / `decrypt_from_with_context`, or the literal
-   = note: a context type of your own opts in with an empty `impl SuppliedContext<'_> for MyContext {}`
-   = help: the trait `SuppliedContext<'_>` is not implemented for `()`
-           but it is implemented for `(_, _)`
-   = help: for that trait implementation, expected `(_, _)`, found `()`
-   = note: required for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` to implement `EncryptFrom<u32, StackCipher<FakeDataKeySource>, ()>`
-   = note: 1 redundant requirement hidden
-   = note: required for `EncryptedAge` to implement `EncryptFrom<u32, StackCipher<FakeDataKeySource>, ()>`
+   = note: a leaf — a ciphertext or an index term — exists only under a `NonEmpty<_>` context: `encrypt_into` passes `()`, so use `encrypt_into_with_context(&cipher, context)`, or give the field a `context = ".."` of its own
+   = note: a context is anything vitaminc encodes (`&str`, `String`, bytes, integers, `Option`s and pairs of those), proven non-empty: `nonempty!("users/email")` for a literal, `NonEmpty::new(value)?` for a runtime value, a bare integer for an id
+   = help: the trait `EncryptFrom<u32, StackCipher<FakeDataKeySource>, ()>` is not implemented for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>`
+           but trait `EncryptFrom<u32, StackCipher<FakeDataKeySource>, NonEmpty<_>>` is implemented for it
+   = help: for that trait implementation, expected `NonEmpty<_>`, found `()`
+note: required for `EncryptedAge` to implement `EncryptFrom<u32, StackCipher<FakeDataKeySource>, ()>`
+  --> tests/ui/leaf_without_context.rs:9:10
+   |
+ 9 | #[derive(EncryptFrom, DecryptInto)]
+   |          ^^^^^^^^^^^ unsatisfied trait bound introduced in this `derive` macro
+10 | #[stash(plaintext = u32)]
+11 | struct EncryptedAge {
+   |        ^^^^^^^^^^^^
 note: required by a bound in `encrypt_into`
   --> src/target/mod.rs
    |
@@ -41,22 +45,50 @@ note: required by a bound in `encrypt_into`
 ...
    |         T: EncryptFrom<Self, C, ()> + 'a,
    |            ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
+   = note: this error originates in the derive macro `EncryptFrom` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error[E0277]: `()` is not a context the caller supplied
+error[E0277]: `EqualityTerm` is not an encrypted form of `u32` under a `()` context
+  --> tests/ui/leaf_without_context.rs:18:39
+   |
+18 |     let _record: EncryptedAge = 42u32.encrypt_into(cipher).await.unwrap();
+   |                                       ^^^^^^^^^^^^ not `EncryptFrom<u32, _, ()>`
+   |
+   = note: a leaf — a ciphertext or an index term — exists only under a `NonEmpty<_>` context: `encrypt_into` passes `()`, so use `encrypt_into_with_context(&cipher, context)`, or give the field a `context = ".."` of its own
+   = note: a context is anything vitaminc encodes (`&str`, `String`, bytes, integers, `Option`s and pairs of those), proven non-empty: `nonempty!("users/email")` for a literal, `NonEmpty::new(value)?` for a runtime value, a bare integer for an id
+   = help: the trait `EncryptFrom<u32, StackCipher<FakeDataKeySource>, ()>` is not implemented for `EqualityTerm`
+           but trait `EncryptFrom<u32, StackCipher<FakeDataKeySource>, NonEmpty<_>>` is implemented for it
+   = help: for that trait implementation, expected `NonEmpty<_>`, found `()`
+note: required for `EncryptedAge` to implement `EncryptFrom<u32, StackCipher<FakeDataKeySource>, ()>`
+  --> tests/ui/leaf_without_context.rs:9:10
+   |
+ 9 | #[derive(EncryptFrom, DecryptInto)]
+   |          ^^^^^^^^^^^ unsatisfied trait bound introduced in this `derive` macro
+10 | #[stash(plaintext = u32)]
+11 | struct EncryptedAge {
+   |        ^^^^^^^^^^^^
+note: required by a bound in `encrypt_into`
+  --> src/target/mod.rs
+   |
+   |     fn encrypt_into<'a, T, C>(&'a self, cipher: &'a C) -> C::Output<'a, T>
+   |        ------------ required by a bound in this associated function
+...
+   |         T: EncryptFrom<Self, C, ()> + 'a,
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
+   = note: this error originates in the derive macro `EncryptFrom` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `CipherText<SealedValue, Box<dyn Any + Send>>` is not an encrypted form of `u32` under a `()` context
   --> tests/ui/leaf_without_context.rs:19:41
    |
 19 |     let _column: Vec<StackCipherText> = vec![1u32].encrypt_into(cipher).await.unwrap();
    |                                         ^^^^^^^^^^ ------------ required by a bound introduced by this call
    |                                         |
-   |                                         this leaf needs a context
+   |                                         not `EncryptFrom<u32, _, ()>`
    |
-   = note: `()` is what `encrypt_into` / `decrypt_from` pass, and what a derived row hands a `from` field with no `context = ".."` of its own: an output that reaches a leaf needs `encrypt_into_with_context` / `decrypt_from_with_context`, or the literal
-   = note: a context type of your own opts in with an empty `impl SuppliedContext<'_> for MyContext {}`
-   = help: the trait `SuppliedContext<'_>` is not implemented for `()`
-           but it is implemented for `(_, _)`
-   = help: for that trait implementation, expected `(_, _)`, found `()`
-   = note: required for `CipherText<SealedValue, Box<dyn Any + Send>>` to implement `EncryptFrom<u32, StackCipher<FakeDataKeySource>, ()>`
-   = note: 1 redundant requirement hidden
+   = note: a leaf — a ciphertext or an index term — exists only under a `NonEmpty<_>` context: `encrypt_into` passes `()`, so use `encrypt_into_with_context(&cipher, context)`, or give the field a `context = ".."` of its own
+   = note: a context is anything vitaminc encodes (`&str`, `String`, bytes, integers, `Option`s and pairs of those), proven non-empty: `nonempty!("users/email")` for a literal, `NonEmpty::new(value)?` for a runtime value, a bare integer for an id
+   = help: the trait `EncryptFrom<u32, StackCipher<FakeDataKeySource>, ()>` is not implemented for `CipherText<SealedValue, Box<dyn Any + Send>>`
+           but trait `EncryptFrom<u32, StackCipher<FakeDataKeySource>, NonEmpty<_>>` is implemented for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>`
+   = help: for that trait implementation, expected `NonEmpty<_>`, found `()`
    = note: required for `Vec<CipherText<SealedValue, Box<dyn Any + Send>>>` to implement `EncryptFrom<Vec<u32>, StackCipher<FakeDataKeySource>, ()>`
 note: required by a bound in `encrypt_into`
   --> src/target/mod.rs
@@ -67,23 +99,27 @@ note: required by a bound in `encrypt_into`
    |         T: EncryptFrom<Self, C, ()> + 'a,
    |            ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
 
-error[E0277]: `()` is not a context the caller supplied
+error[E0277]: `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` does not decrypt to `u32` under a `()` context
   --> tests/ui/leaf_without_context.rs:23:34
    |
 23 |     let _age = u32::decrypt_from(record, cipher).await.unwrap();
-   |                ----------------- ^^^^^^ this leaf needs a context
+   |                ----------------- ^^^^^^ not `DecryptInto<u32, _, ()>`
    |                |
    |                required by a bound introduced by this call
    |
-   = note: `()` is what `encrypt_into` / `decrypt_from` pass, and what a derived row hands a `from` field with no `context = ".."` of its own: an output that reaches a leaf needs `encrypt_into_with_context` / `decrypt_from_with_context`, or the literal
-   = note: a context type of your own opts in with an empty `impl SuppliedContext<'_> for MyContext {}`
-   = help: the trait `SuppliedContext<'_>` is not implemented for `()`
-           but it is implemented for `(_, _)`
-   = help: for that trait implementation, expected `(_, _)`, found `()`
-   = note: required for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` to implement `DecryptInto<u32, StackCipher<_>, ()>`
+   = note: a leaf decrypts only under a `NonEmpty<_>` context — the one it was encrypted under (`decrypt_into(&cipher, context)` / `decrypt_from_with_context`); an output whose fields carry their own opens under `()` (`decrypt_from`) as well
+   = help: the trait `DecryptInto<u32, StackCipher<_>, ()>` is not implemented for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>`
+           but trait `DecryptInto<u32, StackCipher<_>, NonEmpty<_>>` is implemented for it
+   = help: for that trait implementation, expected `NonEmpty<_>`, found `()`
    = note: required for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` to implement `DecryptField<u32, StackCipher<_>, ()>`
-   = note: 1 redundant requirement hidden
-   = note: required for `EncryptedAge` to implement `DecryptInto<u32, StackCipher<_>, ()>`
+note: required for `EncryptedAge` to implement `DecryptInto<u32, StackCipher<_>, ()>`
+  --> tests/ui/leaf_without_context.rs:9:23
+   |
+ 9 | #[derive(EncryptFrom, DecryptInto)]
+   |                       ^^^^^^^^^^^ unsatisfied trait bound introduced in this `derive` macro
+10 | #[stash(plaintext = u32)]
+11 | struct EncryptedAge {
+   |        ^^^^^^^^^^^^
 note: required by a bound in `decrypt_from`
   --> src/target/mod.rs
    |
@@ -92,3 +128,20 @@ note: required by a bound in `decrypt_from`
 ...
    |         S: DecryptInto<Self, C, ()> + 'a,
    |            ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `DecryptFrom::decrypt_from`
+   = note: this error originates in the derive macro `DecryptInto` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0308]: mismatched types
+  --> tests/ui/leaf_without_context.rs:27:49
+   |
+27 |     let _age: u32 = record.decrypt_into(cipher, ()).await.unwrap();
+   |                            ------------         ^^ expected `NonEmpty<_>`, found `()`
+   |                            |
+   |                            arguments to this method are incorrect
+   |
+   = note: expected struct `NonEmpty<_>`
+           found unit type `()`
+note: method defined here
+  --> src/target/mod.rs
+   |
+   |     fn decrypt_into<'a>(self, cipher: &'a C, context: Ctx) -> C::Output<'a, P>
+   |        ^^^^^^^^^^^^

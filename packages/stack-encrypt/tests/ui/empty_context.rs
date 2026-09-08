@@ -5,10 +5,17 @@ struct User {
 }
 
 #[derive(EncryptFrom)]
-#[stash(plaintext = User)]
+#[stash(struct = User, context = "users")]
 struct EncryptedUser {
-    #[stash(from = email, context = "")]
+    #[stash(context = "")]
     email: StackCipherText,
+}
+
+#[derive(EncryptFrom)]
+#[stash(plaintext = u32)]
+struct Pinned {
+    #[stash(context = "")]
+    c: StackCipherText,
 }
 
 fn main() {}

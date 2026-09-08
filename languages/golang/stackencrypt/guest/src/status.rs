@@ -17,7 +17,12 @@ use stack_auth::AuthError;
 use stack_kms::{GenerateKeyError, LoadKeysetError, RetrieveKeyError};
 use zerokms_protocol::ViturRequestErrorKind;
 
-/// AEAD open failure: wrong key, wrong AAD, or tampered ciphertext.
+/// AEAD open failure: a tampered ciphertext, a wrong element derivation, or
+/// a wrong AAD that reached the AEAD. Against ZeroKMS a wrong AAD does not
+/// get that far — every data key is bound to its context's descriptor, so
+/// the retrieve is refused first, as [`STATUS_KMS_FORBIDDEN`]. Only a key
+/// source that ignores descriptors (the native tests' fake) reports a wrong
+/// AAD here.
 pub const STATUS_AUTH: u32 = 1;
 /// Invalid input at the boundary: malformed transport bytes, a malformed
 /// cipher config, an empty encryption context, or a pointer/length pair that
@@ -38,8 +43,10 @@ pub const STATUS_INTERNAL: u32 = 4;
 /// no number of refreshes can fix it.
 pub const STATUS_KMS_UNAUTHORIZED: u32 = 5;
 /// ZeroKMS rejected the request as forbidden: the token is valid but lacks
-/// permission (or the keyset is disabled, or the organisation is over its
-/// usage allowance).
+/// permission, the keyset is disabled, the organisation is over its usage
+/// allowance — or, on decrypt, the AAD/context is not the one the value
+/// was sealed under, so the data key cannot be re-derived. That last one is
+/// the production form of a wrong-context open; see [`STATUS_AUTH`].
 pub const STATUS_KMS_FORBIDDEN: u32 = 6;
 /// ZeroKMS could not find the resource: an unknown keyset (or client), or a
 /// data key that does not exist for the presented `iv`/`tag`.
@@ -70,20 +77,22 @@ pub const STATUS_TERM: u32 = 11;
 pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
     match error {
         stack_encrypt::Error::Aead => STATUS_AUTH,
-        stack_encrypt::Error::EmptyContext => STATUS_ENCODING,
         stack_encrypt::Error::Term(_) => STATUS_TERM,
         stack_encrypt::Error::Kms(kms) => status_for_kms(kms),
+        // A context that renders past ZeroKMS's descriptor limit is the
+        // caller's input, refused before any request is sent.
+        stack_encrypt::Error::DescriptorTooLong { .. } => STATUS_ENCODING,
         _ => STATUS_INTERNAL,
     }
 }
 
 /// Map a term-derivation error directly (the term entry points return
-/// [`stack_encrypt::sem::TermError`], not the sealing error).
-pub fn status_for_term_error(error: &stack_encrypt::sem::TermError) -> u32 {
-    match error {
-        stack_encrypt::sem::TermError::EmptyContext => STATUS_ENCODING,
-        _ => STATUS_TERM,
-    }
+/// [`stack_encrypt::sem::TermError`], not the sealing error). An empty
+/// context never reaches a term — it is [`STATUS_ENCODING`] at the boundary,
+/// where the context is proven — so every term error is a derivation
+/// failure.
+pub fn status_for_term_error(_: &stack_encrypt::sem::TermError) -> u32 {
+    STATUS_TERM
 }
 
 // These matches are deliberately exhaustive — no `_` arms. None of the
@@ -187,10 +196,10 @@ mod tests {
     }
 
     #[test]
-    fn aead_and_context_errors_map_to_the_vitaminc_codes() {
+    fn aead_and_composition_errors_map_to_the_vitaminc_codes() {
         assert_eq!(status_for_error(&stack_encrypt::Error::Aead), STATUS_AUTH);
         assert_eq!(
-            status_for_error(&stack_encrypt::Error::EmptyContext),
+            status_for_error(&stack_encrypt::Error::DescriptorTooLong { len: 513 }),
             STATUS_ENCODING
         );
         assert_eq!(
@@ -275,11 +284,7 @@ mod tests {
     }
 
     #[test]
-    fn term_errors_split_empty_context_from_derivation() {
-        assert_eq!(
-            status_for_term_error(&stack_encrypt::sem::TermError::EmptyContext),
-            STATUS_ENCODING
-        );
+    fn term_errors_are_derivation_failures() {
         assert_eq!(
             status_for_term_error(&stack_encrypt::sem::TermError::EmptyTermText),
             STATUS_TERM

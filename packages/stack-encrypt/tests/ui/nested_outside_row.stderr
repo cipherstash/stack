@@ -1,5 +1,0 @@
-error: `nested` opts a row field out of its inferred context, so it applies only with `row = ..` on the struct; a `plaintext` record's `from` field with no `context` is already handed `()`
-  --> tests/ui/nested_outside_row.rs:14:12
-   |
-14 |     email: StackCipherText,
-   |            ^^^^^^^^^^^^^^^

@@ -7,7 +7,7 @@
 //! target-directed:
 //!
 //! ```text
-//! let term: EqualityTerm = value.encrypt_into_with_context(&cipher, "users/email").await?;
+//! let term: EqualityTerm = value.encrypt_into_with_context(&cipher, nonempty!("users/email")).await?;
 //! ```
 //!
 //! * [`EqualityTerm`] — a PRF of the whole value; exact-match queries.
@@ -25,10 +25,12 @@
 //! they double as worked examples for defining your own term types in another
 //! crate (see [`target`](crate::target#extending-with-your-own-sem-type)).
 //!
-//! Alongside the target-directed path, the cipher carries descriptor-string
+//! Alongside the target-directed path, the cipher carries descriptor
 //! methods ([`StackCipher::equality_term`] and friends) for call sites that
 //! want a single term rather than a whole record — query builders, mostly.
-//! They derive no data keys, so building a probe never calls ZeroKMS.
+//! They derive no data keys, so building a probe never calls ZeroKMS. The
+//! descriptor is the same [`NonEmpty`] context the target-directed path
+//! takes, so the two agree byte for byte.
 //!
 //! # PRF backends, visitors, and the 2-party future
 //!
@@ -36,8 +38,8 @@
 //! the term (`EqualityVisitor`, `BloomVisitor`, `OreVisitor`, `OpeVisitor` —
 //! all private). The shaping is pure and synchronous by construction: only block
 //! production can involve I/O, so a visitor never knows which side of a
-//! round-trip it runs on. All pure work — context validation, option
-//! validation, tokenization — happens *before* the PRF is invoked.
+//! round-trip it runs on. All pure work — option validation, tokenization —
+//! happens *before* the PRF is invoked.
 //!
 //! The backend today is the local
 //! [`HmacSha256Prf`] — keyed by the
@@ -130,12 +132,10 @@ use vitaminc_prf::{
     BlockVisitor, IntoPrfContext, MapAccess, PrfContext, PrfError, PrfValue, PrfVisitor,
     PrfVisitorError, SeqAccess,
 };
+use vitaminc_protected::NonEmpty;
 use zeroize::Zeroize;
 
-use crate::target::{
-    is_degenerate_prf_context, DecryptField, DecryptTarget, Decryptable, EncryptContext,
-    EncryptFrom, Pending, SuppliedContext,
-};
+use crate::target::{DecryptField, DecryptTarget, Decryptable, EncryptFrom, Pending};
 use crate::{Error, StackCipher};
 
 // The `/v1` suffix versions the *derivation* (domain + input framing), not the
@@ -178,13 +178,6 @@ pub enum TermError {
         "text produces no match tokens (empty, separator-only, or shorter than the n-gram length)"
     )]
     EmptyTermText,
-    /// The encryption context (field descriptor) was empty. An empty context
-    /// defeats per-field domain separation: equal plaintexts in different
-    /// fields would produce identical terms, and every field would share one
-    /// ORE/OPE key. See
-    /// [`EncryptContext`].
-    #[error("the encryption context must not be empty (it domain-separates fields)")]
-    EmptyContext,
     /// Term bytes do not decode under the term kind's frozen encoding — see
     /// [`TermBytesError`].
     #[error(transparent)]
@@ -236,18 +229,6 @@ impl TermError {
     {
         Self::Prf(Box::new(err))
     }
-}
-
-/// Reject an empty context before any derivation — see
-/// [`TermError::EmptyContext`]. "Empty" is structural
-/// ([`is_degenerate_prf_context`]): `()`, `""`, `None`, `Some("")`, tuples of
-/// empties and their nestings all carry no caller information, and every
-/// field using one would share a single derivation domain.
-fn require_context(context: &PrfContext<'_>) -> Result<(), TermError> {
-    if is_degenerate_prf_context(context.as_bytes()) {
-        return Err(TermError::EmptyContext);
-    }
-    Ok(())
 }
 
 // =============================================================================
@@ -326,15 +307,16 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for EqualityVisitor {
 /// Derive an equality term. Synchronous: the local HMAC backend does no I/O,
 /// and the visitor does all the shaping (see the module docs — under a
 /// deferred backend the same visitor runs after the round-trip instead).
+/// `context` is the encoding of a [`NonEmpty`] — every caller holds one —
+/// so there is nothing left to validate here.
 fn equality<T>(
-    prf: HmacSha256Prf,
+    prf: &HmacSha256Prf,
     value: T,
     context: PrfContext<'_>,
 ) -> Result<EqualityTerm, TermError>
 where
     T: PrfValue,
 {
-    require_context(&context)?;
     let context = PrfContext::pae(&[EQUALITY_DOMAIN, context.as_bytes()]);
     value
         .prf_visit_with_context(prf, context, EqualityVisitor)
@@ -344,21 +326,24 @@ where
 
 /// An equality term of any [`PrfValue`] source. Derived locally during the
 /// synchronous build — the returned [`Pending`] carries no requests.
-impl<'c, S, K, Ctx> EncryptFrom<S, StackCipher<K>, Ctx> for EqualityTerm
+impl<'c, S, K, T> EncryptFrom<S, StackCipher<K>, NonEmpty<T>> for EqualityTerm
 where
     S: PrfValue + Clone,
-    Ctx: EncryptContext<'c> + SuppliedContext<'c>,
+    T: IntoPrfContext<'c>,
 {
+    // Derived locally: no data key, no descriptor.
+    const KEYED: bool = false;
+
     fn encrypt_from<'a>(
         source: &'a S,
         cipher: &'a StackCipher<K>,
-        context: Ctx,
+        context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
     where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = equality(cipher.prf().clone(), source.clone(), context).map_err(Error::from);
+        let term = equality(cipher.prf(), source.clone(), context).map_err(Error::from);
         Pending::ready(cipher, term)
     }
 }
@@ -629,12 +614,11 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for BloomVisitor {
 /// Derive a match term. Synchronous — see [`equality`]: validation and
 /// tokenization run before the PRF, the visitor folds blocks into positions.
 fn match_term<O>(
-    prf: HmacSha256Prf,
+    prf: &HmacSha256Prf,
     text: &str,
     context: PrfContext<'_>,
     options: MatchOptions,
 ) -> Result<MatchTerm<O>, TermError> {
-    require_context(&context)?;
     let mask = options.validate()?;
     let tokens = tokenize::tokenize(text, options.tokenizer, options.downcase);
     if tokens.is_empty() {
@@ -654,23 +638,26 @@ fn match_term<O>(
 /// A match term of any text source, generated under `O`'s options. Derived
 /// locally during the synchronous build — the returned [`Pending`] carries no
 /// requests (tokenize makes the one necessary copy of the text).
-impl<'c, S, K, O, Ctx> EncryptFrom<S, StackCipher<K>, Ctx> for MatchTerm<O>
+impl<'c, S, K, O, T> EncryptFrom<S, StackCipher<K>, NonEmpty<T>> for MatchTerm<O>
 where
     S: AsRef<str>,
     O: MatchConfig,
-    Ctx: EncryptContext<'c> + SuppliedContext<'c>,
+    T: IntoPrfContext<'c>,
 {
+    // Derived locally: no data key, no descriptor.
+    const KEYED: bool = false;
+
     fn encrypt_from<'a>(
         source: &'a S,
         cipher: &'a StackCipher<K>,
-        context: Ctx,
+        context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
     where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = match_term(cipher.prf().clone(), source.as_ref(), context, O::options())
-            .map_err(Error::from);
+        let term =
+            match_term(cipher.prf(), source.as_ref(), context, O::options()).map_err(Error::from);
         Pending::ready(cipher, term)
     }
 }
@@ -911,12 +898,11 @@ where
 /// PRF — never the plaintext, which rides in the visitor and is encrypted
 /// there. Deterministic, so write-time and query-time terms agree; under a
 /// 2-party PRF backend this derivation is a visible ZeroKMS event.
-fn ore<T>(prf: HmacSha256Prf, value: T, context: PrfContext<'_>) -> Result<OreTerm<T>, TermError>
+fn ore<T>(prf: &HmacSha256Prf, value: T, context: PrfContext<'_>) -> Result<OreTerm<T>, TermError>
 where
     T: CllwOreEncrypt + Send + 'static,
     T::Output: Send + 'static,
 {
-    require_context(&context)?;
     let context_bytes = context.as_bytes();
     context_bytes
         .prf_visit_with_context(
@@ -932,12 +918,11 @@ where
 
 /// Derive an OPE term — as [`ore`], under the OPE domain so the two schemes
 /// never share a key.
-fn ope<T>(prf: HmacSha256Prf, value: T, context: PrfContext<'_>) -> Result<OpeTerm<T>, TermError>
+fn ope<T>(prf: &HmacSha256Prf, value: T, context: PrfContext<'_>) -> Result<OpeTerm<T>, TermError>
 where
     T: CllwOpeEncrypt + Send + 'static,
     T::Output: Send + 'static,
 {
-    require_context(&context)?;
     let context_bytes = context.as_bytes();
     context_bytes
         .prf_visit_with_context(
@@ -953,44 +938,50 @@ where
 
 /// An ORE term of any [`CllwOreEncrypt`] source. Derived locally during the
 /// synchronous build — the returned [`Pending`] carries no requests.
-impl<'c, S, K, Ctx> EncryptFrom<S, StackCipher<K>, Ctx> for OreTerm<S>
+impl<'c, S, K, T> EncryptFrom<S, StackCipher<K>, NonEmpty<T>> for OreTerm<S>
 where
     S: CllwOreEncrypt + Clone + Send + 'static,
     S::Output: Send + 'static,
-    Ctx: EncryptContext<'c> + SuppliedContext<'c>,
+    T: IntoPrfContext<'c>,
 {
+    // Derived locally: no data key, no descriptor.
+    const KEYED: bool = false;
+
     fn encrypt_from<'a>(
         source: &'a S,
         cipher: &'a StackCipher<K>,
-        context: Ctx,
+        context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
     where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = ore(cipher.prf().clone(), source.clone(), context).map_err(Error::from);
+        let term = ore(cipher.prf(), source.clone(), context).map_err(Error::from);
         Pending::ready(cipher, term)
     }
 }
 
 /// An OPE term of any [`CllwOpeEncrypt`] source. Derived locally during the
 /// synchronous build — the returned [`Pending`] carries no requests.
-impl<'c, S, K, Ctx> EncryptFrom<S, StackCipher<K>, Ctx> for OpeTerm<S>
+impl<'c, S, K, T> EncryptFrom<S, StackCipher<K>, NonEmpty<T>> for OpeTerm<S>
 where
     S: CllwOpeEncrypt + Clone + Send + 'static,
     S::Output: Send + 'static,
-    Ctx: EncryptContext<'c> + SuppliedContext<'c>,
+    T: IntoPrfContext<'c>,
 {
+    // Derived locally: no data key, no descriptor.
+    const KEYED: bool = false;
+
     fn encrypt_from<'a>(
         source: &'a S,
         cipher: &'a StackCipher<K>,
-        context: Ctx,
+        context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
     where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = ope(cipher.prf().clone(), source.clone(), context).map_err(Error::from);
+        let term = ope(cipher.prf(), source.clone(), context).map_err(Error::from);
         Pending::ready(cipher, term)
     }
 }
@@ -999,29 +990,32 @@ where
 // Term generation on the cipher
 // =============================================================================
 
-/// Descriptor-string term generation, for call sites that want one term rather
-/// than a whole record: query builders probing an index, re-indexers, tests of
-/// a single scheme.
+/// Descriptor term generation, for call sites that want one term rather than
+/// a whole record: query builders probing an index, re-indexers, tests of a
+/// single scheme.
 ///
 /// Every [`StackCipher`] carries the PRF keyed by its keyset's index key, so
 /// these need no data-key traffic at all — a query builder holding a cipher
-/// never touches ZeroKMS to build a probe. Each is byte-identical to the
-/// target-directed path for the same descriptor, so a term generated here
-/// compares against one generated by `encrypt_into_with_context`.
+/// never touches ZeroKMS to build a probe. The descriptor is a context as
+/// the target-directed leaves take it — a [`NonEmpty<T>`]:
+/// `nonempty!("users/email")`, `NonEmpty::new(column)?`,
+/// `nonempty!("users/email").with(row_id)` — and each method is
+/// byte-identical to that path for the same descriptor, so a term generated
+/// here compares against one generated by `encrypt_into_with_context`.
 impl<K> StackCipher<K> {
     /// Generate an equality (exact-match) term for `value` under the field
     /// `descriptor`. Deterministic: the same value + descriptor always yields
     /// the same term, at write time and at query time. Byte-identical to
     /// `value.encrypt_into_with_context(&cipher, descriptor)` into an `EqualityTerm`.
-    pub async fn equality_term<T>(
+    pub async fn equality_term<'c, T>(
         &self,
         value: T,
-        descriptor: &str,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Result<EqualityTerm, TermError>
     where
         T: PrfValue,
     {
-        equality(self.prf().clone(), value, descriptor.into_prf_context())
+        equality(self.prf(), value, descriptor.into_prf_context())
     }
 
     /// Generate a match (full-text) term for `text` under the field
@@ -1042,13 +1036,13 @@ impl<K> StackCipher<K> {
     /// Returns [`TermError::EmptyTermText`] when the text yields no tokens —
     /// empty or separator-only text, or an n-gram probe shorter than the gram
     /// length (which could never match; see [`Tokenizer::Ngram`]).
-    pub async fn match_terms<O: MatchConfig>(
+    pub async fn match_terms<'c, O: MatchConfig>(
         &self,
         text: &str,
-        descriptor: &str,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
     ) -> Result<MatchTerm<O>, TermError> {
         match_term(
-            self.prf().clone(),
+            self.prf(),
             text,
             descriptor.into_prf_context(),
             O::options(),
@@ -1066,23 +1060,31 @@ impl<K> StackCipher<K> {
     /// (`'static`) because the visitor carries it; pass a `String` for
     /// borrowed text. Returns the raw CLLW ciphertext; the target-directed
     /// path wraps the same bytes in [`OreTerm`].
-    pub async fn ore_term<T>(&self, value: T, descriptor: &str) -> Result<T::Output, TermError>
+    pub async fn ore_term<'c, T>(
+        &self,
+        value: T,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
+    ) -> Result<T::Output, TermError>
     where
         T: CllwOreEncrypt + Send + 'static,
         T::Output: Send + 'static,
     {
-        ore(self.prf().clone(), value, descriptor.into_prf_context()).map(OreTerm::into_inner)
+        ore(self.prf(), value, descriptor.into_prf_context()).map(OreTerm::into_inner)
     }
 
     /// Generate an order-preserving (CLLW OPE) term: ciphertexts compare with
     /// plain lexicographic byte order, no custom comparator required.
     /// Encrypt-only — pair with the record ciphertext for round-trips. Key
     /// handling and input bounds as for [`ore_term`](Self::ore_term).
-    pub async fn ope_term<T>(&self, value: T, descriptor: &str) -> Result<T::Output, TermError>
+    pub async fn ope_term<'c, T>(
+        &self,
+        value: T,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
+    ) -> Result<T::Output, TermError>
     where
         T: CllwOpeEncrypt + Send + 'static,
         T::Output: Send + 'static,
     {
-        ope(self.prf().clone(), value, descriptor.into_prf_context()).map(OpeTerm::into_inner)
+        ope(self.prf(), value, descriptor.into_prf_context()).map(OpeTerm::into_inner)
     }
 }

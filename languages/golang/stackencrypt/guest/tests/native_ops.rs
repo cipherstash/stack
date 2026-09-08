@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use futures::executor::block_on;
 use stack_encrypt::sem::DefaultMatch;
-use stack_encrypt::{Aad, CipherText, Decrypt, SealedValue, StackCipher};
+use stack_encrypt::{nonempty, Aad, CipherText, Decrypt, SealedValue, StackCipher};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
 use stack_encrypt_guest::status::{STATUS_AUTH, STATUS_ENCODING};
 use stack_kms::{
@@ -240,7 +240,7 @@ fn guest_leaves_are_the_frozen_storage_encoding() {
     // payload`, the vitaminc sealed-leaf format), so the native open goes
     // through `FfiValue`'s own `Decrypt` — not a bare `String`.
     let decipher =
-        block_on(cipher.decipher(CipherText::Single(leaf))).expect("retrieve the data key");
+        block_on(cipher.decipher(CipherText::Single(leaf), "ctx")).expect("retrieve the data key");
     let value = FfiValue::decrypt_with_aad(decipher, Aad::from_slice(b"ctx"))
         .expect("native decrypt of a guest leaf");
     assert_eq!(text(&value), "durable");
@@ -252,7 +252,9 @@ fn wrong_aad_and_malformed_inputs_map_to_statuses() {
     let ct =
         block_on(ops::encrypt_value(&cipher, &encode(s("x")), b"ctx", false)).expect("encrypt");
 
-    // Wrong AAD: authentication, not encoding.
+    // Wrong AAD: authentication, not encoding. (The fake key source ignores
+    // descriptors; against ZeroKMS the retrieve is refused first, as
+    // `STATUS_KMS_FORBIDDEN` — see `status.rs`.)
     assert_eq!(
         block_on(ops::decrypt_value(&cipher, &ct, b"other", false)),
         Err(STATUS_AUTH)
@@ -283,44 +285,42 @@ fn wrong_aad_and_malformed_inputs_map_to_statuses() {
     );
 }
 
-/// The AAD is what makes a ciphertext belong to a field. Sealing under
-/// nothing would make ciphertexts transplantable between fields, so the value
-/// paths refuse it exactly as the record and term paths do — and refuse it
-/// *before* minting a key, so a caller that omitted the AAD cannot spend a
-/// ZeroKMS call discovering it.
+/// The value paths are the cipher-directed path, and take the AAD as
+/// `StackCipher::encrypt` does — any bytes, none included. An empty AAD
+/// seals under no context and opens under the same, and a null pointer with
+/// zero length is the same empty AAD (the ABI's `input` maps it so). Binding
+/// a value to a field is the record and term paths' job, where the context is
+/// a `NonEmpty`.
 #[test]
-fn an_empty_or_degenerate_aad_is_refused_on_the_value_paths() {
+fn an_empty_aad_round_trips_on_the_value_paths() {
     let cipher = cipher();
     let value = encode(s("x"));
 
-    // A real ciphertext to try to open with a missing AAD.
-    let ct = block_on(ops::encrypt_value(&cipher, &value, b"ctx", false)).expect("encrypt");
-    let before = cipher.kms().generate_calls.load(Ordering::SeqCst);
+    for as_element in [false, true] {
+        let ct = block_on(ops::encrypt_value(&cipher, &value, b"", as_element))
+            .expect("encrypt under an empty aad");
+        let out = block_on(ops::decrypt_value(&cipher, &ct, b"", as_element))
+            .expect("decrypt under an empty aad");
+        assert_eq!(out, value, "element: {as_element}");
 
-    // `pae([])` — eight zero bytes — is not byte-empty but carries nothing,
-    // and is what `None` and `0u64` encode to. Both forms must be refused.
-    for (label, aad) in [
-        ("empty", b"".as_slice()),
-        ("pae of an empty list", &[0u8; 8][..]),
-    ] {
-        for as_element in [false, true] {
-            assert_eq!(
-                block_on(ops::encrypt_value(&cipher, &value, aad, as_element)),
-                Err(STATUS_ENCODING),
-                "encrypt with a {label} aad (element: {as_element})"
-            );
-            assert_eq!(
-                block_on(ops::decrypt_value(&cipher, &ct, aad, as_element)),
-                Err(STATUS_ENCODING),
-                "decrypt with a {label} aad (element: {as_element})"
-            );
-        }
+        // Empty is a context like any other: not interchangeable with one
+        // that carries bytes.
+        assert_eq!(
+            block_on(ops::decrypt_value(&cipher, &ct, b"ctx", as_element)),
+            Err(STATUS_AUTH),
+            "element: {as_element}"
+        );
     }
 
+    // Odd-looking but non-empty bytes are a context too, and bind.
+    let zeros = &[0u8; 8][..];
+    let ct = block_on(ops::encrypt_value(&cipher, &value, zeros, false)).expect("encrypt");
+    let opened =
+        decode(&block_on(ops::decrypt_value(&cipher, &ct, zeros, false)).expect("decrypt"));
+    assert_eq!(text(&opened), "x");
     assert_eq!(
-        cipher.kms().generate_calls.load(Ordering::SeqCst),
-        before,
-        "no data key may be minted for a rejected call"
+        block_on(ops::decrypt_value(&cipher, &ct, b"ctx", false)),
+        Err(STATUS_AUTH)
     );
 }
 
@@ -340,7 +340,7 @@ fn guest_terms_match_the_native_sem_derivations() {
         TERM_EQUALITY,
     ))
     .expect("eq term");
-    let native = block_on(cipher.equality_term(42u32, "users/age")).expect("native eq");
+    let native = block_on(cipher.equality_term(42u32, nonempty!("users/age"))).expect("native eq");
     assert_eq!(eq, native.as_bytes());
 
     let ore = block_on(ops::term(
@@ -350,7 +350,7 @@ fn guest_terms_match_the_native_sem_derivations() {
         TERM_ORE,
     ))
     .expect("ore term");
-    let native = block_on(cipher.ore_term(42u32, "users/age")).expect("native ore");
+    let native = block_on(cipher.ore_term(42u32, nonempty!("users/age"))).expect("native ore");
     assert_eq!(ore, native.as_ref());
 
     let ope = block_on(ops::term(
@@ -360,7 +360,7 @@ fn guest_terms_match_the_native_sem_derivations() {
         TERM_OPE,
     ))
     .expect("ope term");
-    let native = block_on(cipher.ope_term(42u32, "users/age")).expect("native ope");
+    let native = block_on(cipher.ope_term(42u32, nonempty!("users/age"))).expect("native ope");
     assert_eq!(ope, native.as_ref());
 
     let m = block_on(ops::term(
@@ -371,7 +371,8 @@ fn guest_terms_match_the_native_sem_derivations() {
     ))
     .expect("match term");
     let native =
-        block_on(cipher.match_terms::<DefaultMatch>("alice smith", "users/name")).expect("native");
+        block_on(cipher.match_terms::<DefaultMatch>("alice smith", nonempty!("users/name")))
+            .expect("native");
     assert_eq!(m, native.to_bytes());
 
     // Strings and bytes have distinct PRF encodings — the guest must keep
@@ -386,10 +387,12 @@ fn guest_terms_match_the_native_sem_derivations() {
     ))
     .expect("bytes term");
     assert_ne!(eq_text, eq_bytes);
-    let native_text = block_on(cipher.equality_term("ab".to_string(), "f")).expect("native");
+    let native_text =
+        block_on(cipher.equality_term("ab".to_string(), nonempty!("f"))).expect("native");
     assert_eq!(eq_text, native_text.as_bytes());
     let native_bytes =
-        block_on(cipher.equality_term(Protected::new(b"ab".to_vec()), "f")).expect("native");
+        block_on(cipher.equality_term(Protected::new(b"ab".to_vec()), nonempty!("f")))
+            .expect("native");
     assert_eq!(eq_bytes, native_bytes.as_bytes());
 
     // Variable-width CLLW output for strings.
@@ -574,16 +577,17 @@ fn record_terms_equal_the_native_derivations_and_probe_them() {
 
     // The stored terms are byte-identical to query-time probes built the
     // native way — the property that makes the index searchable.
-    let eq_probe = block_on(cipher.equality_term(34u32, "users/age")).expect("probe");
+    let eq_probe = block_on(cipher.equality_term(34u32, nonempty!("users/age"))).expect("probe");
     assert_eq!(term_bytes(&age_outputs[1].1), eq_probe.as_bytes());
-    let ore_probe = block_on(cipher.ore_term(34u32, "users/age")).expect("probe");
+    let ore_probe = block_on(cipher.ore_term(34u32, nonempty!("users/age"))).expect("probe");
     assert_eq!(term_bytes(&age_outputs[2].1), ore_probe.as_ref());
 
     let (_, CipherText::Map(name_outputs)) = &fields[1] else {
         panic!("expected an output map for the second field");
     };
     let match_probe =
-        block_on(cipher.match_terms::<DefaultMatch>("alice smith", "users/name")).expect("probe");
+        block_on(cipher.match_terms::<DefaultMatch>("alice smith", nonempty!("users/name")))
+            .expect("probe");
     assert_eq!(term_bytes(&name_outputs[1].1), match_probe.to_bytes());
 
     // And the "c" node is an ordinary value-model ciphertext bound to the
@@ -592,8 +596,8 @@ fn record_terms_equal_the_native_derivations_and_probe_them() {
         panic!("expected a single leaf for a scalar field");
     };
     let leaf = SealedValue::from_bytes(leaf).expect("frozen leaf");
-    let decipher =
-        block_on(cipher.decipher(CipherText::Single(leaf))).expect("retrieve the data key");
+    let decipher = block_on(cipher.decipher(CipherText::Single(leaf), "users/age"))
+        .expect("retrieve the data key");
     let value = FfiValue::decrypt_with_aad(decipher, "users/age")
         .expect("native decrypt of a record field");
     assert!(matches!(value, FfiValue::UInt32(34)));
@@ -670,22 +674,20 @@ fn record_shape_violations_are_encoding_errors() {
     assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 0);
 }
 
-/// A context that is not byte-empty but still carries nothing — the PAE of an
-/// empty list, i.e. eight zero bytes, which is what `None` and `0u64` encode
-/// to — must be rejected at plan-parse time.
-///
-/// Without the check the two record paths disagree: `encrypt_record` seals
-/// through the cipher-directed path, which does not run stack-encrypt's
-/// context predicate, while `decrypt_record` opens through `decrypt_into`,
-/// which does. The row would encrypt and then never decrypt.
+/// An empty plan context is refused at plan-parse time, before anything is
+/// sealed — and on both record paths, so neither half can drift into
+/// accepting what the other refuses. (`encrypt_record` seals through the
+/// cipher-directed path, which accepts any AAD; `decrypt_record` opens
+/// through `decrypt_into`, which takes a `NonEmpty<_>`: proving the context
+/// once, at parse, is what keeps a row from encrypting and then never
+/// decrypting.)
 #[test]
-fn a_degenerate_plan_context_is_refused_before_anything_is_sealed() {
+fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
     let cipher = cipher();
-    let degenerate = String::from_utf8(vec![0u8; 8]).expect("nul bytes are valid utf-8");
     let bad_plan = encode(obj(vec![(
         "f",
         obj(vec![
-            ("context", s(&degenerate)),
+            ("context", s("")),
             ("outputs", FfiValue::Array(vec![s("c")])),
         ]),
     )]));
@@ -700,11 +702,24 @@ fn a_degenerate_plan_context_is_refused_before_anything_is_sealed() {
         0,
         "a context that could never be decrypted under must not seal"
     );
-
-    // And the decrypt side agrees, so neither half can drift into accepting
-    // what the other refuses.
     assert_eq!(
         block_on(ops::decrypt_record(&cipher, &source, &bad_plan)),
         Err(STATUS_ENCODING)
     );
+
+    // A context of unusual bytes is still a context: it seals, and opens.
+    let odd = String::from_utf8(vec![0u8; 8]).expect("nul bytes are valid utf-8");
+    let odd_plan = encode(obj(vec![(
+        "f",
+        obj(vec![
+            ("context", s(&odd)),
+            ("outputs", FfiValue::Array(vec![s("c")])),
+        ]),
+    )]));
+    let sealed = block_on(ops::encrypt_record(&cipher, &source, &odd_plan)).expect("encrypt");
+    let opened = block_on(ops::decrypt_record(&cipher, &sealed, &odd_plan)).expect("decrypt");
+    let FfiValue::Object(fields) = decode(&opened) else {
+        panic!("a record decrypts to an object");
+    };
+    assert!(matches!(fields.as_slice(), [(name, FfiValue::UInt32(1))] if name == "f"));
 }

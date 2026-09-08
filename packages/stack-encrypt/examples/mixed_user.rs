@@ -18,6 +18,13 @@
 //! Passthrough values travel in the clear and are **not authenticated** —
 //! use them for non-sensitive routing/display data only.
 //!
+//! This is the *cipher-directed* layer — vitaminc's `Encrypt` / `Decrypt`
+//! driven by hand — one level below `#[derive(EncryptFrom)]`, which the
+//! `encrypted_record` example uses. Reach for this layer when a value needs
+//! what the derive does not express: fields stored in the clear beside
+//! sealed ones, or a single ciphertext whose internal shape (this
+//! sequence-of-maps) is what the AAD chain authenticates.
+//!
 //! Run with:
 //!
 //! ```sh

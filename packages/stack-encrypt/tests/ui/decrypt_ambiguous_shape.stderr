@@ -1,5 +1,0 @@
-error: some derived fields name a plaintext field (`from = ..`) and some do not, so it is ambiguous whether decryption opens the record as a whole or rebuilds the plaintext field by field: mark the fields decryption opens `#[stash(decrypt)]`
-  --> tests/ui/decrypt_ambiguous_shape.rs:10:8
-   |
-10 | struct Rec {
-   |        ^^^

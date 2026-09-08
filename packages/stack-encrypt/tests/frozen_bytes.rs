@@ -20,6 +20,7 @@
 
 use std::borrow::Cow;
 
+use stack_encrypt::nonempty;
 use stack_encrypt::sem::{DefaultMatch, EqualityTerm, MatchTerm, OpeTerm, OreTerm, TermBytesError};
 use stack_encrypt::target::EncryptInto;
 use stack_encrypt::{CipherText, Error, LeafBytesError, SealedValue, StackCipher};
@@ -218,7 +219,7 @@ async fn seal_rejects_a_key_tag_the_length_field_cannot_frame() {
 async fn equality_term_encoding_is_the_raw_prf_bytes() {
     let term = cipher()
         .await
-        .equality_term("alice", "users/email")
+        .equality_term("alice", nonempty!("users/email"))
         .await
         .expect("equality term");
 
@@ -251,7 +252,7 @@ fn equality_term_try_from_rejects_wrong_length() {
 async fn match_term_bytes_are_pinned() {
     let term = cipher()
         .await
-        .match_terms::<DefaultMatch>("alice smith", "users/name")
+        .match_terms::<DefaultMatch>("alice smith", nonempty!("users/name"))
         .await
         .expect("match term");
 
@@ -329,7 +330,7 @@ fn match_term_from_bytes_rejects_positions_outside_the_filter() {
 async fn ore_term_encoding_is_the_raw_cllw_bytes() {
     let cipher = cipher().await;
     let term: OreTerm<u32> = 42u32
-        .encrypt_into_with_context(&cipher, "users/age")
+        .encrypt_into_with_context(&cipher, nonempty!("users/age"))
         .await
         .expect("ore term");
 
@@ -358,7 +359,7 @@ async fn ore_term_encoding_is_the_raw_cllw_bytes() {
 async fn ope_term_encoding_is_the_raw_cllw_bytes() {
     let cipher = cipher().await;
     let term: OpeTerm<u32> = 42u32
-        .encrypt_into_with_context(&cipher, "users/age")
+        .encrypt_into_with_context(&cipher, nonempty!("users/age"))
         .await
         .expect("ope term");
 
@@ -402,7 +403,7 @@ async fn variable_length_ore_and_ope_terms_decode() {
     let cipher = cipher().await;
     let ore: OreTerm<String> = "alice"
         .to_string()
-        .encrypt_into_with_context(&cipher, "users/name")
+        .encrypt_into_with_context(&cipher, nonempty!("users/name"))
         .await
         .expect("ore term");
     assert_eq!(ore.as_bytes().len(), 5 * 8);
@@ -417,7 +418,7 @@ async fn variable_length_ore_and_ope_terms_decode() {
 
     let ope: OpeTerm<String> = "alice"
         .to_string()
-        .encrypt_into_with_context(&cipher, "users/name")
+        .encrypt_into_with_context(&cipher, nonempty!("users/name"))
         .await
         .expect("ope term");
     assert_eq!(ope.as_bytes().len(), 5 * 8 + 1);

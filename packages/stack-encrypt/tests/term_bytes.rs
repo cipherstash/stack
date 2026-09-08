@@ -10,6 +10,7 @@
 //! Keyed by `FakeDataKeySource`'s deterministic index key, so the expected
 //! bytes are stable without ZeroKMS.
 
+use stack_encrypt::nonempty;
 use stack_encrypt::sem::DefaultMatch;
 use stack_encrypt::StackCipher;
 use stack_kms::FakeDataKeySource;
@@ -30,7 +31,7 @@ fn hex(bytes: &[u8]) -> String {
 async fn equality_term_bytes_are_pinned() {
     let term = cipher()
         .await
-        .equality_term("alice", "users/email")
+        .equality_term("alice", nonempty!("users/email"))
         .await
         .unwrap();
 
@@ -44,7 +45,7 @@ async fn equality_term_bytes_are_pinned() {
 async fn match_term_positions_are_pinned() {
     let term = cipher()
         .await
-        .match_terms::<DefaultMatch>("alice smith", "users/name")
+        .match_terms::<DefaultMatch>("alice smith", nonempty!("users/name"))
         .await
         .unwrap();
 
@@ -63,7 +64,11 @@ async fn match_term_positions_are_pinned() {
 async fn ore_term_bytes_are_pinned() {
     // The ORE key is a PRF of the descriptor, so this pins the key derivation
     // as much as the CLLW encryption.
-    let term = cipher().await.ore_term(42u32, "users/age").await.unwrap();
+    let term = cipher()
+        .await
+        .ore_term(42u32, nonempty!("users/age"))
+        .await
+        .unwrap();
 
     assert_eq!(
         hex(term.as_ref()),
@@ -76,7 +81,11 @@ async fn ope_term_bytes_are_pinned() {
     // Distinct from the ORE pin above under the same descriptor: the two
     // schemes derive their keys under different domains and must never share
     // one (OPE ciphertexts are encrypt-only).
-    let term = cipher().await.ope_term(42u32, "users/age").await.unwrap();
+    let term = cipher()
+        .await
+        .ope_term(42u32, nonempty!("users/age"))
+        .await
+        .unwrap();
 
     assert_eq!(
         hex(term.as_ref()),

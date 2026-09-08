@@ -1,0 +1,11 @@
+error: `struct` and `plaintext` are two ways of naming the plaintext: `struct = ..` encrypts it field by field, `plaintext = ..` as one value, so give one of them
+ --> tests/ui/struct_with_plaintext.rs:8:18
+  |
+8 | #[stash(struct = User, plaintext = User)]
+  |                  ^^^^
+
+error: `plaintext` given here
+ --> tests/ui/struct_with_plaintext.rs:8:36
+  |
+8 | #[stash(struct = User, plaintext = User)]
+  |                                    ^^^^

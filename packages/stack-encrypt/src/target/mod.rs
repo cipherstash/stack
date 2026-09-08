@@ -7,15 +7,21 @@
 //! record shape in charge:
 //!
 //! ```text
-//! let term: EqualityTerm = value.encrypt_into_with_context(&cipher, "users/email").await?;
+//! let term: EqualityTerm = value.encrypt_into_with_context(&cipher, nonempty!("users/email")).await?;
 //! let row: EncryptedUser = user.encrypt_into(&cipher).await?;
+//! let row: EncryptedUser = user.encrypt_into_with_context(&cipher, user_id).await?;
 //! ```
 //!
 //! compiles only when the output type declares itself an encrypted form of
 //! the value's type, producible by that cipher, under that context — and a
-//! context is something the output type may already have. A leaf takes the
-//! caller's; a row whose fields each name their own column needs none, and
-//! the second line is the whole call.
+//! context is something the output type may already have. A leaf has
+//! nothing of its own to authenticate under and takes the caller's, proven
+//! non-empty before it arrives ([`NonEmpty`]). A struct encrypted field by
+//! field names each field's context itself and needs none, so the second
+//! line is the whole call; the third *extends* every field's context with a
+//! value only the caller knows — the record's id — so each field is bound
+//! to its record as well as its name. See [Which form
+//! compiles](self#which-form-compiles).
 //!
 //! # The pieces
 //!
@@ -23,13 +29,12 @@
 //!   an encrypted representation of `S`, producible by a cipher `C`, under a
 //!   context `Ctx`". The context is a parameter of the *trait* so that an
 //!   implementation can say which contexts it accepts: the leaves accept
-//!   only a [`SuppliedContext`], a record passes the obligation through to
-//!   its fields, and a row whose fields carry their own contexts accepts
-//!   `()` alone. Leaf
+//!   only a [`NonEmpty<T>`], and a derived record accepts `()` — its
+//!   fields' own contexts — and any `NonEmpty<T>`, which extends them. Leaf
 //!   implementations exist for [`StackCipherText`] (the AEAD ciphertext, via
 //!   vitaminc's [`Encrypt`]) and for the SEM term types in [`sem`]
 //!   ([`EqualityTerm`], [`MatchTerm`], [`OreTerm`], [`OpeTerm`]). Composite
-//!   record types — a struct of leaves, or a row of records — get theirs from
+//!   record types — a struct of leaves, or a struct of records — get theirs from
 //!   [`#[derive(EncryptFrom)]`](macro@EncryptFrom), which combines the
 //!   fields' pendings with [`Pending::zip`] / [`Pending::map`] exactly as a
 //!   hand-written impl would.
@@ -42,24 +47,150 @@
 //!   implement on; the halves whose `Self` is the plaintext are blanket:
 //! * [`EncryptInto`] / [`DecryptFrom`] — call-site sugar, the `Into` to
 //!   `EncryptFrom` and the `From` to `DecryptInto`, each in two forms:
-//!   [`encrypt_into(&cipher)`](EncryptInto::encrypt_into) for an output that
-//!   needs no context from the caller, and
+//!   [`encrypt_into(&cipher)`](EncryptInto::encrypt_into) passes `()`, for
+//!   an output that needs nothing from the caller, and
 //!   [`encrypt_into_with_context(&cipher, ctx)`](EncryptInto::encrypt_into_with_context)
-//!   for one that does — the split of vitaminc's `encrypt` /
-//!   `encrypt_with_aad`, decided by the output type at compile time. Never
-//!   implemented by hand.
+//!   passes a `NonEmpty<T>` — the split of vitaminc's `encrypt` /
+//!   `encrypt_with_aad`. Never implemented by hand.
 //! * [`EncryptTarget`] / [`DecryptTarget`] — implemented by ciphers; their
 //!   `Output` type decides what a call site gets back. A synchronous cipher
 //!   returns `Result<T, E>` directly; [`StackCipher`] returns a [`Pending`],
 //!   which does its ZeroKMS I/O — **one batched call** — when awaited.
-//! * [`EncryptContext`] — one context value per field, convertible to both an
-//!   AEAD [`Aad`] and a
-//!   [`PrfContext`](vitaminc_prf::PrfContext), so the same identifier that
-//!   domain-separates the index terms also *authenticates* the ciphertext.
-//!   `&str` and `String` qualify. [`SuppliedContext`] marks the ones a
-//!   caller actually passed — everything but `()` — and is what a leaf
-//!   demands; the context must also be **non-empty**.
 //!
+//! # Contexts
+//!
+//! A context is one value that domain-separates every primitive a field can
+//! use: it becomes the AEAD associated data of the ciphertext *and* the PRF
+//! context of any index term, so the identifier that keeps `users/email`
+//! terms apart from `users/name` terms also authenticates the ciphertext to
+//! its column. The vocabulary is vitaminc's — [`IntoAad`],
+//! [`IntoPrfContext`](crate::IntoPrfContext) and, for the proof that a value
+//! carries caller bytes, [`NonEmpty<T>`] —
+//! and this crate adds no trait of its own on top: anything vitaminc encodes
+//! as a context is a context here. `&str`, `String`, byte strings, the
+//! fixed-width integers, and `Option`s and pairs of those all qualify.
+//!
+//! The same context reaches ZeroKMS. Every data key a leaf asks for —
+//! generated on encrypt, retrieved on decrypt — is requested under the
+//! context rendered as the key's **descriptor** ([`Descriptor`]), which
+//! ZeroKMS HMACs into the key tag and logs per retrieval. So `users/email`
+//! is enforced twice: locally, where the ciphertext fails to open under
+//! any other AAD, and at ZeroKMS, where the key fails to re-derive under
+//! any other descriptor — and it is the name an audit trail shows. A
+//! textual context is its own descriptor, and a composite renders its
+//! parts in order: `nonempty!("users/email").with(7u64)` is the descriptor
+//! `users/email|7u64`. See [`Descriptor::from_piece`] for the frozen rules,
+//! and the [descriptor docs](crate::descriptor) for why a context must be
+//! presented in the same shape on both sides.
+//!
+//! A leaf takes a `NonEmpty<T>` and nothing else. Under an empty context,
+//! equal plaintexts in different fields derive identical index terms
+//! (cross-field equality leakage), every field shares one ORE/OPE key
+//! (values become mutually order-comparable), and ciphertexts transplant
+//! between fields. `()` — what `encrypt_into` passes — is the canonical
+//! empty context, and vitaminc implements the context traits for it, so a
+//! leaf bound on those alone would let `value.encrypt_into(&cipher)` into a
+//! term compile and quietly derive under nothing. Bound on `NonEmpty<T>`,
+//! that call is a compile error, and `""`, `None`, `Some("")` never reach a
+//! leaf either: [`NonEmpty::new`] refuses them once, where the value is
+//! built, and [`nonempty!`](crate::nonempty) refuses an empty literal at compile time. An
+//! integer is never empty and converts on its own (`42u64.into()`, or just
+//! `42u64` to the sugar). A pair is empty only when both halves are, so a
+//! proven head extends freely: `nonempty!("users/email").with(record_id)`.
+//!
+//! One collision to know about, inherited from vitaminc's integer encoding:
+//! an integer's AAD is its untagged little-endian bytes, so `0u64`
+//! authenticates the same eight zero bytes as `None::<u64>` (the PAE of an
+//! empty list). Index terms do not collide — the PRF encoding is typed —
+//! but a ciphertext sealed under `("users/age", 0u64)` opens under
+//! `("users/age", None::<u64>)`. Do not mix an integer id and an optional
+//! one under the same prefix; cipherstash/vitaminc#315 tracks typing the
+//! AAD channel too.
+//!
+//! # Which form compiles
+//!
+//! Three record shapes, and the call forms each accepts. Which contexts a
+//! type accepts is which [`EncryptFrom`] impls it has; the derive decides
+//! what impls exist, and the compiler enforces it at every call site.
+//!
+//! A record whose field pins a literal context needs nothing from the
+//! caller, and a context passed anyway *extends* the literal — it is never
+//! silently dropped:
+//!
+//! ```
+//! use stack_encrypt::target::EncryptInto;
+//! use stack_encrypt::{DecryptInto, EncryptFrom, Error, NonEmpty, StackCipher, StackCipherText};
+//! use stack_kms::FakeDataKeySource;
+//!
+//! #[derive(EncryptFrom, DecryptInto)]
+//! #[stash(plaintext = u32)]
+//! struct Pinned {
+//!     #[stash(context = "legacy/age")]
+//!     c: StackCipherText,
+//! }
+//!
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+//! # let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! // Sealed under "legacy/age".
+//! let p: Pinned = 42u32.encrypt_into(&cipher).await?;
+//! assert_eq!(p.decrypt_into(&cipher, ()).await?, 42);
+//!
+//! // Sealed under ("legacy/age", tenant): opens there, and nowhere else.
+//! let tenant = 7u64;
+//! let p: Pinned = 42u32.encrypt_into_with_context(&cipher, tenant).await?;
+//! let p2: Pinned = 42u32.encrypt_into_with_context(&cipher, tenant).await?;
+//! assert_eq!(p.decrypt_into(&cipher, NonEmpty::from(tenant)).await?, 42);
+//! // The fake key source ignores descriptors, so the AEAD is what refuses
+//! // here; ZeroKMS refuses the key retrieval itself first (`Error::Kms`).
+//! assert!(matches!(p2.decrypt_into(&cipher, NonEmpty::from(8u64)).await, Err(Error::Aead)));
+//! # Ok::<(), stack_encrypt::Error>(())
+//! # }).unwrap();
+//! ```
+//!
+//! A record whose fields have no context of their own has only the
+//! caller's, so it must be given: the context-free form does not compile.
+//!
+//! ```
+//! use stack_encrypt::sem::EqualityTerm;
+//! use stack_encrypt::target::EncryptInto;
+//! use stack_encrypt::{nonempty, DecryptInto, EncryptFrom, StackCipher, StackCipherText};
+//! use stack_kms::FakeDataKeySource;
+//!
+//! #[derive(EncryptFrom, DecryptInto)]
+//! #[stash(plaintext = u32)]
+//! struct Foo {
+//!     c: StackCipherText,
+//!     hm: EqualityTerm,
+//! }
+//!
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+//! # let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! let f: Foo = 42u32.encrypt_into_with_context(&cipher, nonempty!("users/age")).await?;
+//! assert_eq!(f.decrypt_into(&cipher, nonempty!("users/age")).await?, 42);
+//! # Ok::<(), stack_encrypt::Error>(())
+//! # }).unwrap();
+//! ```
+//!
+//! ```compile_fail,E0277
+//! # use stack_encrypt::sem::EqualityTerm;
+//! # use stack_encrypt::target::EncryptInto;
+//! # use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
+//! # use stack_kms::FakeDataKeySource;
+//! # #[derive(EncryptFrom, DecryptInto)]
+//! # #[stash(plaintext = u32)]
+//! # struct Foo { c: StackCipherText, hm: EqualityTerm }
+//! async fn encrypt(cipher: &StackCipher<FakeDataKeySource>) {
+//!     // "`StackCipherText` is not an encrypted form of `u32` under a `()`
+//!     // context": the leaf that needs a context is named.
+//!     let _: Foo = 42u32.encrypt_into(cipher).await.unwrap();
+//! }
+//! ```
+//!
+//! A struct encrypted field by field infers a context for every field, so
+//! it takes either form: `encrypt_into` seals each field under its own
+//! context, `encrypt_into_with_context` under that context extended with
+//! the caller's. See [the next section](self#records-and-structs-deriveencryptfrom)
+//! for the worked example.
 //! # Build synchronously, settle once
 //!
 //! `encrypt_from` does **no I/O**. It validates, derives every local term,
@@ -72,7 +203,7 @@
 //!
 //! ```
 //! use stack_encrypt::target::{DecryptInto, EncryptInto};
-//! use stack_encrypt::{StackCipher, StackCipherText};
+//! use stack_encrypt::{nonempty, StackCipher, StackCipherText};
 //! use stack_kms::FakeDataKeySource;
 //!
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
@@ -86,11 +217,11 @@
 //!
 //! // A column of independently sealed ciphertexts: ONE generate_keys call.
 //! let sealed: Vec<StackCipherText> = ages
-//!     .encrypt_into_with_context(&cipher, "users/age")
+//!     .encrypt_into_with_context(&cipher, nonempty!("users/age"))
 //!     .await?;
 //!
 //! // And back: ONE retrieve_keys call for the whole column.
-//! let roundtrip: Vec<u32> = sealed.decrypt_into(&cipher, "users/age").await?;
+//! let roundtrip: Vec<u32> = sealed.decrypt_into(&cipher, nonempty!("users/age")).await?;
 //! assert_eq!(roundtrip, ages);
 //! # Ok::<(), stack_encrypt::Error>(())
 //! # }).unwrap();
@@ -122,11 +253,8 @@
 //! behind a PRF request instead, joining the record's one batched call.
 //!
 //! ```
-//! use stack_encrypt::target::{
-//!     supplied_prf_context, DecryptField, DecryptTarget, Decryptable, EncryptContext,
-//!     EncryptFrom, Pending, SuppliedContext,
-//! };
-//! use stack_encrypt::{Error, StackCipher};
+//! use stack_encrypt::target::{DecryptField, DecryptTarget, Decryptable, EncryptFrom, Pending};
+//! use stack_encrypt::{Error, IntoPrfContext, NonEmpty, StackCipher};
 //! use vitaminc_prf::{PrfContext, PrfValue, PrfVisitor, PrfVisitorError};
 //!
 //! /// A third-party term type: one PRF block under its own domain.
@@ -142,37 +270,32 @@
 //!     }
 //! }
 //!
-//! // A leaf owns the context policy, and states it in the impl header:
-//! // `SuppliedContext` refuses `()` at compile time (nothing above a leaf
-//! // checks, since a column of rows has no context of its own). The
-//! // lifetime is the context's own, as in the `IntoAad<'c>` it implements.
-//! impl<'c, S, K, Ctx> EncryptFrom<S, StackCipher<K>, Ctx> for MyTerm
+//! // A leaf owns the context policy, and states it in the impl header: it
+//! // exists only for a `NonEmpty<T>`, so `()` — and any unproven value — is
+//! // a compile error (nothing above a leaf checks, since a column of rows
+//! // has no context of its own). The lifetime is the context's own, as in
+//! // the `IntoPrfContext<'c>` it implements.
+//! impl<'c, S, K, T> EncryptFrom<S, StackCipher<K>, NonEmpty<T>> for MyTerm
 //! where
 //!     S: PrfValue + Clone,
-//!     Ctx: EncryptContext<'c> + SuppliedContext<'c>,
+//!     T: IntoPrfContext<'c>,
 //! {
 //!     fn encrypt_from<'a>(
 //!         source: &'a S,
 //!         cipher: &'a StackCipher<K>,
-//!         context: Ctx,
+//!         context: NonEmpty<T>,
 //!     ) -> Pending<'a, Self, K>
 //!     where
 //!         Self: 'a,
 //!     {
-//!         // The type rules out an absent context; an empty one is still a
-//!         // runtime check, made by the same choke point the built-in
-//!         // leaves use — validation and encoding are one call, so a leaf
-//!         // cannot encode one value and check another. Then
-//!         // domain-separate under your own label so your terms can never
-//!         // collide with another scheme's under the same context.
-//!         let context = match supplied_prf_context(context) {
-//!             Ok(context) => context,
-//!             Err(error) => return Pending::ready(cipher, Err(error)),
-//!         };
+//!         // The type is the proof; there is nothing left to check. Encode,
+//!         // then domain-separate under your own label so your terms can
+//!         // never collide with another scheme's under the same context.
+//!         let context = context.into_prf_context().into_owned();
 //!         let context = PrfContext::pae(&[b"my-crate/my-term/v1".as_slice(), context.as_bytes()]);
 //!         let term = source
 //!             .clone()
-//!             .prf_visit_with_context(cipher.prf().clone(), context, MyVisitor)
+//!             .prf_visit_with_context(cipher.prf(), context, MyVisitor)
 //!             .into_result()
 //!             .map_err(|e| Error::Other(Box::new(e)));
 //!         Pending::ready(cipher, term)
@@ -211,20 +334,24 @@
 //! different construction; the block scheme lands as a third-party term type
 //! in `eql-bindings`, built with exactly the recipe above.
 //!
-//! # Records and rows: `#[derive(EncryptFrom)]`
+//! # Records and structs: `#[derive(EncryptFrom)]`
 //!
-//! A struct of leaves is a *record*; a struct of records, each derived from
-//! one field of the source under its own column context, is a *row*. Both
-//! are the same derive, and both settle as one batched call. A row names its
-//! table once and its fields' contexts follow —
-//! `#[stash(row = User, context = "users")]` derives `age` from `user.age`
-//! under `"users/age"` — and are overridden per field where that is not
-//! wanted:
+//! A struct of leaves derived from one value is a *record*; a struct whose
+//! fields are each derived from one field of a plaintext struct, under a
+//! context of its own, is that plaintext encrypted *field by field*. Both
+//! are the same derive, and both settle as one batched call. The field-by-
+//! field form names its prefix once and its fields' contexts follow —
+//! `#[stash(struct = User, context = "users")]` derives `age` from
+//! `user.age` under `"users/age"` — and are overridden per field where that
+//! is not wanted. A context the caller passes *extends* those: under
+//! `encrypt_into_with_context(&cipher, 42u64)` the same field is derived
+//! under `("users/age", 42u64)`, binding it to its record as well as its
+//! name. Which is what a query site derives its probe under, too:
 //!
 //! ```
 //! use stack_encrypt::sem::{EqualityTerm, OreTerm};
 //! use stack_encrypt::target::{DecryptFrom, EncryptInto};
-//! use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
+//! use stack_encrypt::{nonempty, DecryptInto, EncryptFrom, StackCipher, StackCipherText};
 //! use stack_kms::FakeDataKeySource;
 //!
 //! /// An encrypted `u32`, queryable by equality and range.
@@ -242,10 +369,10 @@
 //!     email: String,
 //! }
 //!
-//! /// A row of `User`: each field from the plaintext field of its own name,
-//! /// under the context `"users/<field>"` — no attribute on the fields.
+//! /// `User` field by field: each field from the plaintext field of its own
+//! /// name, under the context `"users/<field>"` — no attribute on the fields.
 //! #[derive(EncryptFrom, DecryptInto)]
-//! #[stash(row = User, context = "users")]
+//! #[stash(struct = User, context = "users")]
 //! struct EncryptedUser {
 //!     age: EncryptedAge,
 //!     email: StackCipherText,
@@ -259,16 +386,25 @@
 //!     .unwrap();
 //!
 //! let user = User { age: 42, email: "alice@example.com".into() };
-//! // Every field names its own context, so the row needs none from the
-//! // caller — and the context-free forms are the only ones that apply.
+//! // Every field names its own context, so nothing is needed from the
+//! // caller: the context-free forms are the whole call.
 //! let row: EncryptedUser = user.encrypt_into(&cipher).await?;
 //! // A query site derives the same term under the column's context.
 //! let probe: EqualityTerm = 42u32
-//!     .encrypt_into_with_context(&cipher, "users/age")
+//!     .encrypt_into_with_context(&cipher, nonempty!("users/age"))
 //!     .await?;
 //! assert_eq!(row.age.hm, probe);
-//!
 //! let recovered = User::decrypt_from(row, &cipher).await?;
+//! assert_eq!(recovered, user);
+//!
+//! // Or the caller extends every field's context with the record's id: the
+//! // same field is now under `("users/age", 7u64)`, and opens only there.
+//! let row: EncryptedUser = user.encrypt_into_with_context(&cipher, 7u64).await?;
+//! let probe: EqualityTerm = 42u32
+//!     .encrypt_into_with_context(&cipher, nonempty!("users/age").with(7u64))
+//!     .await?;
+//! assert_eq!(row.age.hm, probe);
+//! let recovered = User::decrypt_from_with_context(row, &cipher, 7u64).await?;
 //! assert_eq!(recovered, user);
 //! # Ok::<(), stack_encrypt::Error>(())
 //! # }).unwrap();
@@ -292,14 +428,12 @@
 //! [`OreTerm`]: crate::sem::OreTerm
 //! [`OpeTerm`]: crate::sem::OpeTerm
 
-use std::borrow::Cow;
-
 use stack_kms::MaybeSend;
-use vitaminc_aead::{Aad, CipherText, Decrypt, Encrypt, IntoAad};
-use vitaminc_prf::IntoPrfContext;
+use vitaminc_aead::{CipherText, Decrypt, Encrypt, IntoAad};
+use vitaminc_protected::NonEmpty;
 
 use crate::cipher::{bind_keys, PendingStackCipherText, StackDecipher};
-use crate::{Error, StackCipher, StackCipherText};
+use crate::{Descriptor, Error, StackCipher, StackCipherText};
 
 mod pending;
 mod request;
@@ -307,343 +441,6 @@ mod request;
 pub use pending::{Pending, PendingFuture};
 pub use request::{Request, Responses};
 pub use stack_encrypt_derive::{DecryptInto, EncryptFrom};
-
-// =============================================================================
-// Contexts
-// =============================================================================
-
-/// Per-field encryption context: one value that domain-separates every
-/// primitive a record field can use — it becomes the AEAD associated data of
-/// the ciphertext *and* the PRF context of any index term.
-///
-/// Blanket-implemented; never implement it directly. `&str` and `String`
-/// qualify. `Clone` is required because one context fans out to every field
-/// of a record.
-///
-/// The context must be **non-empty**: with an empty context, equal plaintexts
-/// in different fields produce identical index terms (cross-field equality
-/// leakage), every field shares one ORE/OPE key (values become mutually
-/// order-comparable), and ciphertexts become transplantable between fields.
-/// That is enforced in two layers. An *absent* context — `()`, what
-/// [`encrypt_into`](EncryptInto::encrypt_into) passes — is refused by the
-/// type: every leaf demands a [`SuppliedContext`], and containers (`Vec`,
-/// `Option`) and derived records pass that demand through to their elements
-/// and fields untouched, so only a record whose fields all carry contexts of
-/// their own — a [`#[derive(EncryptFrom)]`](macro@EncryptFrom) row — accepts
-/// `()`. An *empty* one — `""`, `b""`, `None`, `Some("")`, `("", "")`,
-/// anything that encodes to nothing but vitaminc framing — is refused by
-/// every built-in leaf during the synchronous build, before any I/O
-/// ([`Error::EmptyContext`]). That check is structural over the PAE encoding
-/// vitaminc uses, so a nested empty context cannot hide behind an `Option`
-/// or tuple wrapper. (An integer context whose bytes coincide with an empty
-/// encoding — `0u64` — is rejected too: it is byte-identical to `None`.)
-pub trait EncryptContext<'a>: IntoAad<'a> + IntoPrfContext<'a> + Clone {}
-
-impl<'a, T> EncryptContext<'a> for T where T: IntoAad<'a> + IntoPrfContext<'a> + Clone {}
-
-/// Per-field decryption context: must convert to the AEAD associated data the
-/// value was encrypted under. Decryption derives nothing, so no PRF bound.
-/// Blanket-implemented; `&str`, `String` and [`Aad`]
-/// qualify.
-///
-/// This is the bound [`#[derive(DecryptInto)]`](macro@DecryptInto) places on
-/// a record's caller-supplied decrypt context, and the supertrait of
-/// [`SuppliedContext`]. It holds even when only term fields would see the
-/// caller's context — a term opens nothing and would accept anything, so
-/// without it a record whose ciphertext field carries a literal would take,
-/// and silently discard, a value that is not a context at all:
-///
-/// Note the flip side: for such a record the bound is all the caller's
-/// context does. The terms discard its *value* and the ciphertext
-/// authenticates under its literal, so decryption succeeds under any
-/// well-typed context — a wrong one is not the [`Error::Aead`] it would be
-/// against a leaf, and the decrypt context is not a tenancy check there.
-///
-/// ```compile_fail,E0277
-/// use stack_encrypt::sem::EqualityTerm;
-/// use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
-/// use stack_kms::FakeDataKeySource;
-///
-/// #[derive(EncryptFrom, DecryptInto)]
-/// #[stash(plaintext = u32)]
-/// struct Rec {
-///     #[stash(context = "rec/c")]
-///     c: StackCipherText,
-///     hm: EqualityTerm,
-/// }
-///
-/// async fn decrypt(cipher: &StackCipher<FakeDataKeySource>, rec: Rec) {
-///     // `42u8` is not a context (no `IntoAad`): a compile error, not a
-///     // value the term fields quietly swallow.
-///     let _: u32 = rec.decrypt_into(cipher, 42u8).await.unwrap();
-/// }
-/// ```
-pub trait DecryptContext<'a>: IntoAad<'a> + Clone {}
-
-impl<'a, T> DecryptContext<'a> for T where T: IntoAad<'a> + Clone {}
-
-/// A context the caller actually passed, as opposed to `()` — the absence of
-/// one.
-///
-/// This is what lets an output type decide, at compile time, whether the
-/// call site owes it a context. The leaves ([`StackCipherText`], the
-/// [`sem`](crate::sem) terms) implement [`EncryptFrom`] and [`DecryptInto`]
-/// only for a `SuppliedContext`, so `value.encrypt_into(&cipher)` — which
-/// passes `()` — does not compile against them, nor against a record that
-/// hands its context on to one of them. A row whose fields each carry a
-/// context of their own never passes the caller's anywhere: it implements
-/// the traits for `()` alone, and is encrypted with no context at all.
-///
-/// Implemented for every context type vitaminc provides except `()` — and
-/// except a composite that contains `()`, such as `("users/email", ())` or
-/// `Option<()>`, whose `()` half adds no domain separation: `&str`,
-/// `String`, byte strings, [`Aad`], `u64`, and `Option`s
-/// and pairs of those. A context type of your own opts in with an empty
-/// `impl SuppliedContext<'_> for MyContext {}` alongside its `IntoAad` /
-/// `IntoPrfContext`; without it the leaves refuse the type.
-///
-/// The marker is about the *type*: `""` is a `&str` and therefore supplied.
-/// Whether what was supplied is non-empty stays a runtime check at the leaf
-/// ([`Error::EmptyContext`]) until vitaminc carries non-emptiness in the
-/// type itself (cipherstash/vitaminc#291), at which point the bound tightens
-/// to that.
-///
-/// [`DecryptContext`] (the same `IntoAad + Clone`) is a supertrait, so the
-/// implication holds by construction and a decrypt leaf bounds its context
-/// by this marker alone.
-#[diagnostic::on_unimplemented(
-    message = "`{Self}` is not a context the caller supplied",
-    label = "this leaf needs a context",
-    note = "`()` is what `encrypt_into` / `decrypt_from` pass, and what a derived row hands a \
-            `from` field with no `context = \"..\"` of its own: an output that reaches a leaf \
-            needs `encrypt_into_with_context` / `decrypt_from_with_context`, or the literal",
-    note = "a context type of your own opts in with an empty `impl SuppliedContext<'_> for MyContext {{}}`"
-)]
-pub trait SuppliedContext<'a>: DecryptContext<'a> {}
-
-// This roster hand-mirrors vitaminc's `IntoAad` implementor list (minus `()`)
-// at the pinned rev, and the orphan rule means a *future* vitaminc-owned
-// context type cannot opt itself in from user code — it waits for a release
-// of this crate. That coupling is a conscious interim choice: when bumping
-// the vitaminc pin, diff its `IntoAad` implementors against this list; at
-// vitaminc#291 the bound moves to an upstream marker and the roster goes
-// away.
-impl<'a> SuppliedContext<'a> for &'a str {}
-impl SuppliedContext<'_> for String {}
-impl<'a> SuppliedContext<'a> for &'a [u8] {}
-impl<'a, const N: usize> SuppliedContext<'a> for &'a [u8; N] {}
-impl<const N: usize> SuppliedContext<'_> for [u8; N] {}
-impl SuppliedContext<'_> for Vec<u8> {}
-impl<'a> SuppliedContext<'a> for Cow<'a, [u8]> {}
-impl<'a> SuppliedContext<'a> for Aad<'a> {}
-impl SuppliedContext<'_> for u64 {}
-impl<'a, T: SuppliedContext<'a>> SuppliedContext<'a> for Option<T> {}
-impl<'a, A: SuppliedContext<'a>, B: SuppliedContext<'a>> SuppliedContext<'a> for (A, B) {}
-
-// The two checks below reconstruct, at runtime and from the outside, an
-// invariant that should be carried by the type: "this context was built
-// from something the caller supplied". Doing it this way means parsing an
-// encoding we do not own, mirroring constants that are private upstream,
-// and re-deriving the answer on every encrypt.
-//
-// It works, and the tests pin it — but the shape of it is a symptom, not a
-// design. cipherstash/vitaminc#291 tracks the type-level replacement (a
-// non-empty context that checks once at construction, without giving up the
-// plain-string call site). When that lands, this module, both predicates and
-// `Error::EmptyContext` all go away, and the `EncryptContext` bound tightens
-// to the upstream marker instead.
-//
-// This code stays as it is until then: the check is correct, just weaker and
-// more fragile than an invariant would be. The prefix-versus-position bug the
-// review found here is exactly the fragility being described.
-
-/// The framing tags vitaminc's PRF context encoding inserts, each of which
-/// occupies **piece 0** of the PAE node it labels. Matched exactly and only
-/// in that position — a prefix test would classify any caller string
-/// beginning `vitaminc/` as framing (`Some("vitaminc/customer")` would read
-/// as empty), which is the opposite of what this check is for.
-///
-/// # Why these exist at all
-///
-/// They are mirrored from `vitaminc_prf::context`, where they are private,
-/// and nothing about the *check* requires them. They are a consequence of
-/// *where* the check runs:
-///
-/// 1. [`EncryptContext`] is a blanket bound over vitaminc's `IntoAad +
-///    IntoPrfContext`, so inside `encrypt_from` the context is an opaque
-///    generic. The only thing this crate can do with it is encode it.
-/// 2. The encoding is framed: `"".into_prf_context()` is
-///    `pae([context-value, utf8-label, ""])`, not zero bytes. Seeing whether
-///    the *value* is empty means parsing past the tags.
-/// 3. Parsing past the tags means knowing which pieces are tags.
-///
-/// So the crate ends up parsing an encoding it does not own, restating
-/// constants it cannot import, and re-deriving on every encrypt an answer
-/// that was knowable once, at construction. If vitaminc renames a domain
-/// these literals drift silently: the byte pins still pass and the check
-/// quietly starts admitting empties.
-///
-/// That is the case for <https://github.com/cipherstash/vitaminc/issues/291>:
-/// a context that carries non-emptiness in its type, checked once where it
-/// is built. When it lands, this module, both predicates below and
-/// [`Error::EmptyContext`] are deleted and the [`EncryptContext`] bound
-/// tightens to the upstream marker. Until then the literals are pinned by
-/// `context_tests`, which build every shape through the public API rather
-/// than asserting the strings.
-mod prf_framing {
-    /// `pae([CONTEXT_VALUE, <encoding label>, value])` — a typed leaf.
-    pub(super) const CONTEXT_VALUE: &[u8] = b"vitaminc/prf/context-value/v1";
-    /// `pae([OPTION_SOME, inner])`.
-    pub(super) const OPTION_SOME: &[u8] = b"vitaminc/prf/option-some/v1";
-    /// `pae([MAP_ENTRY, base, key])` — `key` is raw caller bytes.
-    pub(super) const MAP_ENTRY: &[u8] = b"vitaminc/prf/map-entry/v1";
-    /// `pae([REFINE, base, component])` — both are encoded contexts.
-    pub(super) const REFINE: &[u8] = b"vitaminc/prf/refine/v1";
-}
-
-/// Do encoded **AAD** bytes carry no caller-supplied information? See
-/// [`EncryptContext`] for what that means and why it is rejected.
-///
-/// The AAD channel carries no framing tags of its own: a leaf is its own raw
-/// bytes (`"x".into_aad() == b"x"`), and `None`, `Some(_)` and tuples are
-/// bare PAE nodes. So the rule is purely structural — degenerate if empty, or
-/// if it parses as a PAE (`LE64(count) || (LE64(len) || piece)*`) whose every
-/// piece is itself degenerate. Bytes that are not a well-formed PAE are
-/// caller content and count as information.
-///
-/// Covers `()`, `""`, `b""`, `None` (`pae([])`), `Some(<empty>)` and tuples
-/// of empties at any nesting depth — and `0u64`, whose eight zero bytes are
-/// byte-identical to `pae([])`.
-///
-/// (The tags vitaminc applies *inside* the cipher — `Aad::for_leaf`,
-/// `for_map_entry`, the markers — are derived after this check runs, from
-/// the caller-visible AAD this sees.)
-///
-/// In-crate, third-party leaves go through [`supplied_aad`] /
-/// [`supplied_prf_context`], the one choke point whose signature survives
-/// the vitaminc#291 migration — prefer those in Rust code: they check and
-/// encode in one step, so the value checked is the value sealed. This bare
-/// predicate is public *only* for runtime front-ends whose contexts arrive
-/// as FFI bytes rather than Rust values (the WASI guest's record plans),
-/// which need the same predicate at parse time to report a precise status.
-/// It is temporary scaffolding on those terms: when vitaminc#291 moves
-/// non-emptiness into the context type, this function is removed with the
-/// rest of the runtime checks (a semver-visible removal, accepted while the
-/// crate is 0.x).
-pub fn is_degenerate_aad(bytes: &[u8]) -> bool {
-    if bytes.is_empty() {
-        return true;
-    }
-    match parse_pae(bytes) {
-        Some(pieces) => pieces.iter().all(|piece| is_degenerate_aad(piece)),
-        None => false,
-    }
-}
-
-/// Do encoded **PRF context** bytes carry no caller-supplied information?
-///
-/// Unlike the AAD channel, every caller value here is wrapped in a framing
-/// node — `"x".into_prf_context()` is `pae([CONTEXT_VALUE, <utf8 label>,
-/// b"x"])` — so the check has to see past the framing to reach the value.
-/// Framing is recognised by exact tag *and* arity at piece 0, and the
-/// recursion descends only into the positions that actually hold caller
-/// data. That is what keeps caller bytes from ever being mistaken for a tag:
-/// caller data never lands at piece 0 of a framing node, because it is always
-/// wrapped one level deeper.
-///
-/// A node that is not framing (a tuple, or a `PrfContext` the caller built by
-/// hand) is degenerate only if every one of its pieces is. Bytes that are not
-/// a well-formed PAE are caller content.
-///
-/// Crate-private, on the same terms as [`is_degenerate_aad`]: the public
-/// surface is [`supplied_prf_context`].
-pub(crate) fn is_degenerate_prf_context(bytes: &[u8]) -> bool {
-    if bytes.is_empty() {
-        return true;
-    }
-    let Some(pieces) = parse_pae(bytes) else {
-        return false;
-    };
-    match (pieces.first(), pieces.len()) {
-        // The value is raw caller bytes, not a nested context: judge it
-        // structurally. This is what still rejects `0u64` — eight zero bytes
-        // are byte-identical to `pae([])`.
-        (Some(&tag), 3) if tag == prf_framing::CONTEXT_VALUE => is_degenerate_aad(pieces[2]),
-        (Some(&tag), 2) if tag == prf_framing::OPTION_SOME => is_degenerate_prf_context(pieces[1]),
-        (Some(&tag), 3) if tag == prf_framing::MAP_ENTRY => {
-            is_degenerate_prf_context(pieces[1]) && pieces[2].is_empty()
-        }
-        (Some(&tag), 3) if tag == prf_framing::REFINE => {
-            is_degenerate_prf_context(pieces[1]) && is_degenerate_prf_context(pieces[2])
-        }
-        _ => pieces.iter().all(|piece| is_degenerate_prf_context(piece)),
-    }
-}
-
-/// Validate and encode a supplied **AAD** context in one step: the encoded
-/// bytes if the context carries caller information, [`Error::EmptyContext`]
-/// if it is degenerate (`""`, `None`, `Some("")`, `0u64`, nested empties —
-/// see [`EncryptContext`]).
-///
-/// This is the choke point every built-in leaf goes through on the AEAD
-/// channel, and the one a third-party ciphertext-like leaf should call too
-/// (see the [module docs](self#extending-with-your-own-sem-type)): checking
-/// and encoding are one step, so a leaf cannot encode one value and check
-/// another. ([`is_degenerate_aad`] does exist bare, for runtime front-ends
-/// whose contexts are FFI bytes rather than Rust values — a Rust leaf that
-/// reaches for it instead of this reintroduces exactly the check/use
-/// divergence this signature prevents.) The *signature* is stable across the
-/// [vitaminc#291](https://github.com/cipherstash/vitaminc/issues/291)
-/// migration: when non-emptiness moves into the context type, the runtime
-/// check here collapses to a conversion, and callers do not change.
-pub fn supplied_aad<'c>(context: impl IntoAad<'c>) -> Result<Aad<'static>, Error> {
-    let aad = context.into_aad().into_owned();
-    if is_degenerate_aad(aad.as_bytes()) {
-        return Err(Error::EmptyContext);
-    }
-    Ok(aad)
-}
-
-/// Validate and encode a supplied **PRF** context in one step — the
-/// derivation-channel twin of [`supplied_aad`], for index-term leaves.
-/// Returns the encoded context, or [`Error::EmptyContext`] for one that
-/// carries no caller information.
-///
-/// Domain-separate the result under your own label before deriving from it,
-/// as the recipe in the
-/// [module docs](self#extending-with-your-own-sem-type) shows.
-pub fn supplied_prf_context<'c>(
-    context: impl IntoPrfContext<'c>,
-) -> Result<vitaminc_prf::PrfContext<'static>, Error> {
-    let context = context.into_prf_context().into_owned();
-    if is_degenerate_prf_context(context.as_bytes()) {
-        return Err(Error::EmptyContext);
-    }
-    Ok(context)
-}
-
-/// Parse `bytes` as exactly one PAE encoding: `LE64(count)` then `count`
-/// `LE64(len) || piece` frames, consuming every byte. `None` if the bytes are
-/// not that shape.
-fn parse_pae(bytes: &[u8]) -> Option<Vec<&[u8]>> {
-    fn le64(bytes: &[u8]) -> Option<(usize, &[u8])> {
-        let (head, rest) = bytes.split_first_chunk::<8>()?;
-        let n = usize::try_from(u64::from_le_bytes(*head)).ok()?;
-        Some((n, rest))
-    }
-    let (count, mut rest) = le64(bytes)?;
-    let mut pieces = Vec::with_capacity(count.min(16));
-    for _ in 0..count {
-        let (len, after_len) = le64(rest)?;
-        if after_len.len() < len {
-            return None;
-        }
-        let (piece, tail) = after_len.split_at(len);
-        pieces.push(piece);
-        rest = tail;
-    }
-    rest.is_empty().then_some(pieces)
-}
 
 // =============================================================================
 // Cipher-owned output types
@@ -716,29 +513,51 @@ impl<K> DecryptTarget for StackCipher<K> {
 /// # The context parameter
 ///
 /// `Ctx` is a parameter of the trait, not of the method, so that each
-/// implementation can say which contexts it accepts: a leaf demands a
-/// [`SuppliedContext`] (it has nothing else to authenticate under), a record
-/// passes whatever it is given on to its fields and inherits their demands
-/// through its where clause, and a row whose fields carry their own contexts
-/// is implemented for `()` alone — a context handed to it would go nowhere.
-/// The call site then gets one of two answers from the compiler:
+/// implementation can say which contexts it accepts. A leaf is implemented
+/// for [`NonEmpty<T>`] alone — it has nothing else to authenticate under,
+/// and `()` is the empty context it must never derive under (see the
+/// [module docs](self#contexts)). A derived record is implemented twice:
+/// for `()`, deriving each field under the context the field carries itself
+/// (a `context = ".."` literal, or the one a `struct = ..` derive infers),
+/// and for `NonEmpty<T>`, deriving each field under that context extended
+/// with the caller's (`("users/age", id)`) — or, for a field with no
+/// context of its own, under the caller's as it is. No record accepts a
+/// context it then discards. The call site then
+/// gets one of two answers from the compiler:
 /// [`encrypt_into(&cipher)`](EncryptInto::encrypt_into) resolves against
-/// `EncryptFrom<S, C, ()>` and exists exactly for the outputs that need no
-/// context; everything else takes
+/// `EncryptFrom<S, C, ()>`, so it compiles for exactly the outputs whose
+/// every leaf has a context of its own; anything else takes
 /// [`encrypt_into_with_context`](EncryptInto::encrypt_into_with_context).
 ///
 /// The trait itself places no bound on `Ctx`; an implementation that uses the
-/// context bounds it as [`EncryptContext<'c>`] with the context's own
-/// lifetime as an impl parameter (see the
+/// context bounds it as `NonEmpty<T>` with `T: IntoAad<'c> + IntoPrfContext<'c>`
+/// and the context's own lifetime as an impl parameter (see the
 /// [module docs](self#extending-with-your-own-sem-type)).
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not an encrypted form of `{S}` under a `{Ctx}` context",
     label = "not `EncryptFrom<{S}, _, {Ctx}>`",
-    note = "an output that reaches a leaf exists only under a supplied context \
-            (`encrypt_into_with_context`); one whose fields carry their own, only under `()` \
-            (`encrypt_into`)"
+    note = "a leaf — a ciphertext or an index term — exists only under a `NonEmpty<_>` context: \
+            `encrypt_into` passes `()`, so use `encrypt_into_with_context(&cipher, context)`, or \
+            give the field a `context = \"..\"` of its own",
+    note = "a context is anything vitaminc encodes (`&str`, `String`, bytes, integers, `Option`s \
+            and pairs of those), proven non-empty: `nonempty!(\"users/email\")` for a literal, \
+            `NonEmpty::new(value)?` for a runtime value, a bare integer for an id"
 )]
 pub trait EncryptFrom<S, C: EncryptTarget, Ctx>: Sized {
+    /// Whether encrypting from `S` requests ZeroKMS data keys under the
+    /// caller's context (or an extension of it), so that the context must
+    /// render within [`Descriptor::MAX_LEN`]. A ciphertext leaf does; a
+    /// term derives locally and never renders a descriptor, so it says
+    /// `false` and a column of terms is not held to the limit. The default
+    /// is the safe over-approximation: a type that does not say is treated
+    /// as keyed, and a derived record is keyed if any field might be (the
+    /// derive does not compute this per field, so a record of terms alone
+    /// is checked like any other record).
+    ///
+    /// Read by the column implementations, which check the context once
+    /// before walking their elements ([`ElementContext`]).
+    const KEYED: bool = true;
+
     /// Encrypt `source` into `Self` under `context`, returning the cipher's
     /// [`Output`](EncryptTarget::Output). No I/O happens here; work needing
     /// ZeroKMS is carried as requests and settles when the output is awaited.
@@ -765,15 +584,51 @@ pub trait EncryptFrom<S, C: EncryptTarget, Ctx>: Sized {
 /// terms (which have no plaintext to recover) simply do not participate.
 ///
 /// `Ctx` is a trait parameter for the reason it is on [`EncryptFrom`]: the
-/// leaves accept only a [`SuppliedContext`], so an encrypted type that needs
+/// leaves accept only a [`NonEmpty<T>`], so an encrypted type that needs
 /// no context from the caller is exactly one that implements
-/// `DecryptInto<P, C, ()>` — what [`DecryptFrom::decrypt_from`] asks for.
+/// `DecryptInto<P, C, ()>` — what [`DecryptFrom::decrypt_from`] asks for —
+/// and a derived record opened under `NonEmpty<T>` extends its fields'
+/// contexts with it, exactly as it did when encrypting.
+///
+/// A record whose ciphertext field carries a `context = ".."` literal and
+/// whose other fields are terms opens under `()` *and* under any
+/// `NonEmpty<T>`, but not interchangeably. The terms open nothing, so a
+/// context reaches them and is checked for nothing; the ciphertext
+/// authenticates under its literal extended with the caller's context
+/// exactly as it was sealed — `()` leaves the literal alone, a `NonEmpty<T>`
+/// extends it. A record sealed with `encrypt_into` opens with
+/// `decrypt_from` and one sealed under an extension opens only under the
+/// same extension; a wrong caller context is the refusal it is against a
+/// leaf: [`Error::Kms`], ZeroKMS declining the key retrieval under the
+/// other descriptor before the AEAD runs, or [`Error::Aead`] from a key
+/// source that ignores descriptors. What the caller's context cannot be is
+/// something that is not a context at all:
+///
+/// ```compile_fail,E0277
+/// use stack_encrypt::sem::EqualityTerm;
+/// use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
+/// use stack_kms::FakeDataKeySource;
+///
+/// #[derive(EncryptFrom, DecryptInto)]
+/// #[stash(plaintext = u32)]
+/// struct Rec {
+///     #[stash(context = "rec/c")]
+///     c: StackCipherText,
+///     hm: EqualityTerm,
+/// }
+///
+/// async fn decrypt(cipher: &StackCipher<FakeDataKeySource>, rec: Rec) {
+///     // `true` is neither `()` nor a `NonEmpty<_>`: a compile error, not a
+///     // value the term fields quietly swallow.
+///     let _: u32 = rec.decrypt_into(cipher, true).await.unwrap();
+/// }
+/// ```
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not decrypt to `{P}` under a `{Ctx}` context",
     label = "not `DecryptInto<{P}, _, {Ctx}>`",
-    note = "a value that reaches a leaf decrypts only under the context it was encrypted under \
-            (`decrypt_into(&cipher, context)` / `decrypt_from_with_context`); one whose fields \
-            carry their own, only under `()` (`decrypt_from`)"
+    note = "a leaf decrypts only under a `NonEmpty<_>` context — the one it was encrypted under \
+            (`decrypt_into(&cipher, context)` / `decrypt_from_with_context`); an output whose \
+            fields carry their own opens under `()` (`decrypt_from`) as well"
 )]
 pub trait DecryptInto<P, C: DecryptTarget, Ctx>: Sized {
     /// Decrypt `self` into `P`, authenticating against `context` — which
@@ -789,16 +644,16 @@ pub trait DecryptInto<P, C: DecryptTarget, Ctx>: Sized {
 ///
 /// The `Into` to [`EncryptFrom`]'s `From` — blanket-implemented for every
 /// type, never implemented by hand. The target type is usually inferred from
-/// the binding. Which of the two methods applies is not a choice: a leaf, or
-/// a record that hands the caller's context to one, exists only under a
-/// [`SuppliedContext`] and takes the second; a row whose fields name their
-/// own contexts needs nothing from the caller and takes the first. The
+/// the binding. A leaf, or a record that hands the caller's context to one,
+/// exists only under a [`NonEmpty<T>`] and takes the second form; a record
+/// whose fields name their own contexts takes either — the first as it is,
+/// the second with every field's context extended by the caller's. The
 /// split is vitaminc's `encrypt` / `encrypt_with_aad`, decided by the type.
 ///
 /// ```
 /// use stack_encrypt::sem::EqualityTerm;
 /// use stack_encrypt::target::EncryptInto;
-/// use stack_encrypt::StackCipher;
+/// use stack_encrypt::{nonempty, NonEmpty, StackCipher};
 /// use stack_kms::FakeDataKeySource;
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
@@ -808,15 +663,22 @@ pub trait DecryptInto<P, C: DecryptTarget, Ctx>: Sized {
 ///     .await
 ///     .unwrap();
 ///
+/// // A literal, checked at compile time.
 /// let term: EqualityTerm = "alice"
-///     .encrypt_into_with_context(&cipher, "users/email")
+///     .encrypt_into_with_context(&cipher, nonempty!("users/email"))
 ///     .await?;
-/// # Ok::<(), stack_encrypt::Error>(())
+/// // A runtime value, checked once where it is built.
+/// let column = String::from("users/email");
+/// let same: EqualityTerm = "alice"
+///     .encrypt_into_with_context(&cipher, NonEmpty::new(column)?)
+///     .await?;
+/// assert_eq!(term, same);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// # }).unwrap();
 /// ```
 pub trait EncryptInto {
     /// Encrypt `self` into a `T` that needs no context from the caller —
-    /// a row whose fields carry their own. See [`EncryptFrom`].
+    /// a record whose fields carry their own. See [`EncryptFrom`].
     ///
     /// Passes `()`, so this exists only for `T: EncryptFrom<Self, C, ()>`:
     /// against a leaf the compiler says to use
@@ -829,19 +691,20 @@ pub trait EncryptInto {
 
     /// Encrypt `self` into `T` under `context`. See [`EncryptFrom`].
     ///
-    /// The context must be one the caller actually supplies
-    /// ([`SuppliedContext`]): passing `()` here, or a supplied context to an
-    /// output that takes none — a row — is a compile error either way, with
-    /// [`encrypt_into`](Self::encrypt_into) as the answer to both.
-    fn encrypt_into_with_context<'a, 'c, T, C, Ctx>(
+    /// The context is anything that converts into a [`NonEmpty<T>`]: a
+    /// `NonEmpty` itself — [`nonempty!`](crate::nonempty) for a literal,
+    /// [`NonEmpty::new`] for a runtime value — or a bare integer, which is
+    /// never empty. Passing `()` here is a compile error, with
+    /// [`encrypt_into`](Self::encrypt_into) as the answer.
+    fn encrypt_into_with_context<'a, T, C, N, Ctx>(
         &'a self,
         cipher: &'a C,
         context: Ctx,
     ) -> C::Output<'a, T>
     where
         C: EncryptTarget,
-        T: EncryptFrom<Self, C, Ctx> + 'a,
-        Ctx: SuppliedContext<'c>,
+        T: EncryptFrom<Self, C, NonEmpty<N>> + 'a,
+        Ctx: Into<NonEmpty<N>>,
         Self: Sized;
 }
 
@@ -854,17 +717,17 @@ impl<S> EncryptInto for S {
         T::encrypt_from(self, cipher, ())
     }
 
-    fn encrypt_into_with_context<'a, 'c, T, C, Ctx>(
+    fn encrypt_into_with_context<'a, T, C, N, Ctx>(
         &'a self,
         cipher: &'a C,
         context: Ctx,
     ) -> C::Output<'a, T>
     where
         C: EncryptTarget,
-        T: EncryptFrom<Self, C, Ctx> + 'a,
-        Ctx: SuppliedContext<'c>,
+        T: EncryptFrom<Self, C, NonEmpty<N>> + 'a,
+        Ctx: Into<NonEmpty<N>>,
     {
-        T::encrypt_from(self, cipher, context)
+        T::encrypt_from(self, cipher, context.into())
     }
 }
 
@@ -875,8 +738,8 @@ impl<S> EncryptInto for S {
 /// plaintext; never implemented by hand.
 ///
 /// (The implemented trait, [`DecryptInto`], always takes a context:
-/// `encrypted.decrypt_into(&cipher, "users/age")` is the method-call form
-/// for a value that needs one.)
+/// `encrypted.decrypt_into(&cipher, nonempty!("users/age"))` is the
+/// method-call form for a value that needs one.)
 pub trait DecryptFrom: Sized {
     /// Decrypt `source` — an encrypted type that needs no context from the
     /// caller — into `Self`. See [`DecryptInto`].
@@ -889,19 +752,18 @@ pub trait DecryptFrom: Sized {
     /// Decrypt `source` into `Self`, authenticating against `context`. See
     /// [`DecryptInto`].
     ///
-    /// The context must be one the caller actually supplies
-    /// ([`SuppliedContext`]): passing `()` here, or a supplied context to an
-    /// encrypted type that takes none — a row — is a compile error either
-    /// way, with [`decrypt_from`](Self::decrypt_from) as the answer to both.
-    fn decrypt_from_with_context<'a, 'c, S, C, Ctx>(
+    /// The context is anything that converts into a [`NonEmpty<T>`], as for
+    /// [`encrypt_into_with_context`](EncryptInto::encrypt_into_with_context),
+    /// and must be the one the value was encrypted under.
+    fn decrypt_from_with_context<'a, S, C, N, Ctx>(
         source: S,
         cipher: &'a C,
         context: Ctx,
     ) -> C::Output<'a, Self>
     where
         C: DecryptTarget,
-        S: DecryptInto<Self, C, Ctx> + 'a,
-        Ctx: SuppliedContext<'c>,
+        S: DecryptInto<Self, C, NonEmpty<N>> + 'a,
+        Ctx: Into<NonEmpty<N>>,
         Self: 'a;
 }
 
@@ -915,18 +777,18 @@ impl<P> DecryptFrom for P {
         source.decrypt_into(cipher, ())
     }
 
-    fn decrypt_from_with_context<'a, 'c, S, C, Ctx>(
+    fn decrypt_from_with_context<'a, S, C, N, Ctx>(
         source: S,
         cipher: &'a C,
         context: Ctx,
     ) -> C::Output<'a, Self>
     where
         C: DecryptTarget,
-        S: DecryptInto<Self, C, Ctx> + 'a,
-        Ctx: SuppliedContext<'c>,
+        S: DecryptInto<Self, C, NonEmpty<N>> + 'a,
+        Ctx: Into<NonEmpty<N>>,
         Self: 'a,
     {
-        source.decrypt_into(cipher, context)
+        source.decrypt_into(cipher, context.into())
     }
 }
 
@@ -937,7 +799,7 @@ impl<P> DecryptFrom for P {
 /// it is what lets `#[derive(DecryptInto)]` find the ciphertext field on its
 /// own, with no attribute: the derive counts the fields whose
 /// [`DECRYPTABLE`](Self::DECRYPTABLE) is `true` and requires exactly one
-/// (per plaintext field, for a row). `#[derive(EncryptFrom)]` emits it for
+/// (per plaintext field, for a `struct = ..` derive). `#[derive(EncryptFrom)]` emits it for
 /// a record — a record is decryptable if any of its fields is, or outright
 /// when `#[stash(decrypt)]` names the opened fields — and the
 /// built-in leaves implement it by hand: [`StackCipherText`] is, the
@@ -1000,7 +862,7 @@ pub trait Decryptable {
 /// their [`DecryptInto`], terms return `None` for every `P`. (Not a
 /// supertrait relationship: `#[derive(DecryptInto)]` emits this for every
 /// record, and a record that only decrypts — no `EncryptFrom` derive to
-/// emit its `Decryptable` — must still be a field of a row in the explicit
+/// emit its `Decryptable` — must still be a field of a record in the explicit
 /// mode.)
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be a field of an automatically decrypted record",
@@ -1045,7 +907,7 @@ impl<S: Decryptable> Decryptable for Vec<S> {
 impl<S, T, K, Ctx> DecryptField<Vec<T>, StackCipher<K>, Ctx> for Vec<S>
 where
     S: Decryptable + DecryptField<T, StackCipher<K>, Ctx>,
-    Ctx: Clone,
+    Ctx: ElementContext,
 {
     fn decrypt_field<'a>(
         self,
@@ -1058,6 +920,11 @@ where
     {
         if !S::DECRYPTABLE {
             return None;
+        }
+        if !self.is_empty() {
+            if let Err(e) = context.check_descriptor() {
+                return Some(Pending::failed(cipher, e));
+            }
         }
         let items = self
             .into_iter()
@@ -1117,35 +984,35 @@ where
 /// drawn in the same traversal order the tree was built in.
 ///
 /// A leaf has nothing of its own to authenticate under, so it exists only
-/// for a [`SuppliedContext`]: `()` is a compile error here.
-impl<'c, S, K, Ctx> EncryptFrom<S, StackCipher<K>, Ctx> for StackCipherText
+/// for a [`NonEmpty<T>`]: `()` is a compile error here. (An empty context
+/// would leave the leaf AAD carrying only the key tag, making ciphertexts
+/// transplantable between empty-context fields — see the
+/// [module docs](self#contexts).)
+impl<'c, S, K, T> EncryptFrom<S, StackCipher<K>, NonEmpty<T>> for StackCipherText
 where
     S: Encrypt + Clone,
-    Ctx: EncryptContext<'c> + SuppliedContext<'c>,
+    T: IntoAad<'c>,
 {
     fn encrypt_from<'a>(
         source: &'a S,
         cipher: &'a StackCipher<K>,
-        context: Ctx,
+        context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
     where
         Self: 'a,
     {
-        // An empty context would leave the leaf AAD carrying only the key
-        // tag, making ciphertexts transplantable between empty-context
-        // fields — see `EncryptContext`.
-        let aad = match supplied_aad(context) {
-            Ok(aad) => aad,
-            Err(error) => return Pending::failed(cipher, error),
-        };
+        let context = context.into_aad_piece();
+        let descriptor = Descriptor::from_piece(&context);
+        let aad = context.into_aad().into_owned();
         match source.clone().encrypt_with_aad(cipher, aad) {
-            Ok(tree) => seal_pending(cipher, tree),
+            Ok(tree) => seal_pending(cipher, tree, descriptor),
             Err(_) => Pending::ready(cipher, Err(Error::Aead)),
         }
     }
 }
 
 /// Seal a pending tree: one [`Request::generate_data_key`] per keyed leaf,
+/// every one under `descriptor` — the tree's root context, rendered — with
 /// keys drawn back in the same traversal order the tree was built in.
 ///
 /// Both ways of encrypting go through here — the target-directed
@@ -1156,8 +1023,15 @@ where
 pub(crate) fn seal_pending<'a, K>(
     cipher: &'a StackCipher<K>,
     tree: PendingStackCipherText,
+    descriptor: Descriptor,
 ) -> Pending<'a, StackCipherText, K> {
-    let requests = std::iter::repeat_with(Request::generate_data_key)
+    // Fast path: refuse an over-long descriptor before a single request
+    // exists, not after one per leaf has been built. `dispatch` is the gate
+    // proper, and checks every request's descriptor.
+    if let Err(e) = descriptor.check() {
+        return Pending::ready(cipher, Err(e));
+    }
+    let requests = std::iter::repeat_with(|| Request::generate_data_key(descriptor.clone()))
         .take(tree.key_count())
         .collect();
     Pending::request(cipher, requests, move |responses| {
@@ -1167,14 +1041,23 @@ pub(crate) fn seal_pending<'a, K>(
 }
 
 /// Bind retrieved keys onto a ciphertext: one [`Request::retrieve_data_key`]
-/// per keyed leaf, keys zipped back on in the same depth-first order. The
-/// decrypt twin of [`seal_pending`], and likewise the single path for both
-/// `decrypt_into` and the cipher-directed [`StackCipher::decipher`].
+/// per keyed leaf, every one under `descriptor` (the one the tree was
+/// sealed under), keys zipped back on in the same depth-first order. The
+/// decrypt twin of [`seal_pending`], behind the cipher-directed
+/// [`StackCipher::decipher`]. The target-directed `decrypt_into` below
+/// shares both halves — [`retrieve_requests`] and
+/// [`decipher_from_responses`] — but runs the value's `Decrypt` impl in the
+/// same fulfilment rather than composing a second pending over this one.
 pub(crate) fn decipher_pending<'a, K>(
     cipher: &'a StackCipher<K>,
     ciphertext: StackCipherText,
+    descriptor: Descriptor,
 ) -> Pending<'a, StackDecipher, K> {
-    let requests = retrieve_requests(&ciphertext);
+    // Fast path, as in `seal_pending`; `dispatch` is the gate.
+    if let Err(e) = descriptor.check() {
+        return Pending::ready(cipher, Err(e));
+    }
+    let requests = retrieve_requests(&ciphertext, &descriptor);
     Pending::request(cipher, requests, move |responses| {
         decipher_from_responses(ciphertext, responses)
     })
@@ -1204,23 +1087,28 @@ fn decipher_from_responses(
 /// (`iv` + `tag` are lifted out of the tree during the synchronous build);
 /// the fulfilment binds the retrieved keys back onto the leaves and lets the
 /// value's `Decrypt` impl drive the opening.
-impl<'c, T, K, Ctx> DecryptInto<T, StackCipher<K>, Ctx> for StackCipherText
+///
+/// Symmetric with the encrypt side: the target layer never encrypts under an
+/// empty context, so it never decrypts under one either — the context is a
+/// [`NonEmpty<T>`] here too.
+impl<'c, T, K, A> DecryptInto<T, StackCipher<K>, NonEmpty<A>> for StackCipherText
 where
     T: Decrypt<'static> + 'static,
-    Ctx: SuppliedContext<'c>,
+    A: IntoAad<'c>,
 {
-    fn decrypt_into<'a>(self, cipher: &'a StackCipher<K>, context: Ctx) -> Pending<'a, T, K>
+    fn decrypt_into<'a>(self, cipher: &'a StackCipher<K>, context: NonEmpty<A>) -> Pending<'a, T, K>
     where
         Self: 'a,
         T: 'a,
     {
-        // Symmetric with the encrypt side: the target layer never encrypts
-        // under an empty context, so it never decrypts under one either.
-        let aad = match supplied_aad(context) {
-            Ok(aad) => aad,
-            Err(error) => return Pending::failed(cipher, error),
-        };
-        let requests = retrieve_requests(&self);
+        let context = context.into_aad_piece();
+        let descriptor = Descriptor::from_piece(&context);
+        // Fast path, as in `seal_pending`; `dispatch` is the gate.
+        if let Err(e) = descriptor.check() {
+            return Pending::ready(cipher, Err(e));
+        }
+        let requests = retrieve_requests(&self, &descriptor);
+        let aad = context.into_aad().into_owned();
         Pending::request(cipher, requests, move |responses| {
             let decipher = decipher_from_responses(self, responses)?;
             T::decrypt_with_aad(decipher, aad).map_err(Error::from)
@@ -1228,30 +1116,39 @@ where
     }
 }
 
-/// One [`Request::retrieve_data_key`] per keyed leaf, in the same depth-first
-/// order `bind_keys` will consume the responses.
-fn retrieve_requests(ciphertext: &StackCipherText) -> Vec<Request> {
+/// One [`Request::retrieve_data_key`] per keyed leaf, all under
+/// `descriptor`, in the same depth-first order `bind_keys` will consume the
+/// responses.
+fn retrieve_requests(ciphertext: &StackCipherText, descriptor: &Descriptor) -> Vec<Request> {
     let mut out = Vec::new();
-    collect_retrieve_requests(ciphertext, &mut out);
+    collect_retrieve_requests(ciphertext, descriptor, &mut out);
     out
 }
 
-fn collect_retrieve_requests(ciphertext: &StackCipherText, out: &mut Vec<Request>) {
+fn collect_retrieve_requests(
+    ciphertext: &StackCipherText,
+    descriptor: &Descriptor,
+    out: &mut Vec<Request>,
+) {
     match ciphertext {
         CipherText::Single(leaf)
         | CipherText::None(leaf)
         | CipherText::EmptySequence(leaf)
         | CipherText::EmptyMap(leaf) => {
-            out.push(Request::retrieve_data_key(*leaf.iv(), leaf.tag().to_vec()));
+            out.push(Request::retrieve_data_key(
+                *leaf.iv(),
+                leaf.tag().to_vec(),
+                descriptor.clone(),
+            ));
         }
         CipherText::Sequence(items) => {
             for item in items {
-                collect_retrieve_requests(item, out);
+                collect_retrieve_requests(item, descriptor, out);
             }
         }
         CipherText::Map(entries) => {
             for (_, value) in entries {
-                collect_retrieve_requests(value, out);
+                collect_retrieve_requests(value, descriptor, out);
             }
         }
         CipherText::Passthrough(_) => {}
@@ -1269,26 +1166,18 @@ fn collect_retrieve_requests(ciphertext: &StackCipherText, out: &mut Vec<Request
 /// record whose value is a list — see the [module docs](self).
 ///
 /// The context is passed through untouched, and so is the obligation: a
-/// column of leaves needs a [`SuppliedContext`] because its leaves do, a
-/// column of rows accepts `()` because its rows do. Neither is decided here,
-/// and neither is an empty context, which the leaves reject the moment a
-/// value reaches them.
-///
-/// A consequence, accepted knowingly: an *empty* container performs no
-/// check at all, so a degenerate supplied context (`""` from a
-/// runtime-resolved descriptor, say) succeeds against a table with no rows
-/// and first fails on the first populated value. The container cannot
-/// pre-check — its `Ctx` is legitimately `()` for a column of rows, and
-/// only the element type knows whether a context is even owed. Fail-fast
-/// returns for free at
-/// [vitaminc#291](https://github.com/cipherstash/vitaminc/issues/291), when
-/// a supplied context validates non-emptiness at construction, before any
-/// container is reached.
+/// column of leaves needs a [`NonEmpty<T>`] because its leaves do, a column
+/// of records whose fields carry their own contexts accepts `()` as well
+/// because they do. Neither is decided here. What *is* decided here is
+/// that an over-long context is refused once, before the column is walked
+/// ([`ElementContext`]), not once per element.
 impl<S, T, K, Ctx> EncryptFrom<Vec<S>, StackCipher<K>, Ctx> for Vec<T>
 where
     T: EncryptFrom<S, StackCipher<K>, Ctx>,
-    Ctx: Clone,
+    Ctx: ElementContext,
 {
+    const KEYED: bool = T::KEYED;
+
     fn encrypt_from<'a>(
         source: &'a Vec<S>,
         cipher: &'a StackCipher<K>,
@@ -1297,6 +1186,11 @@ where
     where
         Self: 'a,
     {
+        if T::KEYED && !source.is_empty() {
+            if let Err(e) = context.check_descriptor() {
+                return Pending::failed(cipher, e);
+            }
+        }
         let items = source
             .iter()
             .map(|item| T::encrypt_from(item, cipher, context.clone()))
@@ -1305,22 +1199,78 @@ where
     }
 }
 
-/// The column decrypt mirror: one batched retrieve for every row.
+/// The column decrypt mirror: one batched retrieve for every element.
 impl<S, T, K, Ctx> DecryptInto<Vec<T>, StackCipher<K>, Ctx> for Vec<S>
 where
     S: DecryptInto<T, StackCipher<K>, Ctx>,
-    Ctx: Clone,
+    Ctx: ElementContext,
 {
     fn decrypt_into<'a>(self, cipher: &'a StackCipher<K>, context: Ctx) -> Pending<'a, Vec<T>, K>
     where
         Self: 'a,
         Vec<T>: 'a,
     {
+        // Every `DecryptInto` opens keyed leaves (terms are one-way), so
+        // the only column with nothing to bind is the empty one.
+        if !self.is_empty() {
+            if let Err(e) = context.check_descriptor() {
+                return Pending::failed(cipher, e);
+            }
+        }
         let items = self
             .into_iter()
             .map(|item| item.decrypt_into(cipher, context.clone()))
             .collect();
         Pending::all(cipher, items)
+    }
+}
+
+/// The context a column hands to each of its elements: `()` or a
+/// [`NonEmpty<T>`], the two shapes the target layer takes.
+///
+/// A column clones its context into every element, and every keyed element
+/// renders it as its ZeroKMS [`Descriptor`]. The rendering is bounded
+/// ([`Descriptor::MAX_LEN`]) but the context is not, so a column checks the
+/// rendering **once**, here, before it walks its elements: an over-long
+/// context costs one rendering and is refused whole, not one rendering per
+/// element before [`Pending::all`] surfaces the first refusal. Under `()`
+/// the elements carry their own contexts and there is nothing to check.
+///
+/// The check is on the context the column was given. A derived record
+/// extends it with each field's own literal before its leaves render it,
+/// and that extension can exceed the limit where the caller's part alone
+/// did not; the leaf then refuses it, once per row — each such rendering
+/// bounded by [`Descriptor::MAX_LEN`] plus the literal, since the caller's
+/// part has already been shown to fit. And a column whose elements request
+/// no keys under the context ([`EncryptFrom::KEYED`] is `false`, as for a
+/// column of terms), or that has no elements, is not checked at all: there
+/// is no descriptor to bind.
+///
+/// Sealed: the two implementations are the two shapes.
+pub trait ElementContext: Clone + sealed::Sealed {
+    /// Render the descriptor the elements will render, and refuse it now if
+    /// ZeroKMS could not bind it.
+    fn check_descriptor(&self) -> Result<(), Error>;
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for () {}
+    impl<T> Sealed for vitaminc_protected::NonEmpty<T> {}
+}
+
+impl ElementContext for () {
+    fn check_descriptor(&self) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+impl<'c, T> ElementContext for NonEmpty<T>
+where
+    T: IntoAad<'c> + Clone,
+{
+    fn check_descriptor(&self) -> Result<(), Error> {
+        Descriptor::of(self.clone()).check()
     }
 }
 
@@ -1332,6 +1282,8 @@ impl<S, T, K, Ctx> EncryptFrom<Option<S>, StackCipher<K>, Ctx> for Option<T>
 where
     T: EncryptFrom<S, StackCipher<K>, Ctx> + MaybeSend,
 {
+    const KEYED: bool = T::KEYED;
+
     fn encrypt_from<'a>(
         source: &'a Option<S>,
         cipher: &'a StackCipher<K>,
@@ -1340,8 +1292,6 @@ where
     where
         Self: 'a,
     {
-        // `None` derives nothing and checks nothing: the context is the
-        // leaf's to validate (see the `Vec` implementation above).
         match source {
             Some(value) => T::encrypt_from(value, cipher, context).map(Some),
             None => Pending::ready(cipher, Ok(None)),
@@ -1364,140 +1314,5 @@ where
             Some(value) => value.decrypt_into(cipher, context).map(Some),
             None => Pending::ready(cipher, Ok(None)),
         }
-    }
-}
-
-#[cfg(test)]
-mod context_tests {
-    use vitaminc_aead::{Aad, IntoAad};
-    use vitaminc_prf::{IntoPrfContext, PrfContext};
-
-    use super::{is_degenerate_aad, is_degenerate_prf_context};
-
-    fn aad<'a>(ctx: impl IntoAad<'a>) -> bool {
-        is_degenerate_aad(ctx.into_aad().as_bytes())
-    }
-
-    fn prf<'a>(ctx: impl IntoPrfContext<'a>) -> bool {
-        is_degenerate_prf_context(ctx.into_prf_context().as_bytes())
-    }
-
-    #[test]
-    fn empty_encodings_are_degenerate_on_both_channels() {
-        assert!(aad(()));
-        assert!(aad(""));
-        assert!(aad(b"".as_slice()));
-        assert!(aad(None::<&str>));
-        assert!(aad(Some("")));
-        assert!(aad(("", "")));
-        assert!(aad(Some(None::<&str>)));
-        assert!(aad((None::<&str>, Some(""))));
-
-        assert!(prf(()));
-        assert!(prf(""));
-        assert!(prf(b"".as_slice()));
-        assert!(prf(None::<&str>));
-        assert!(prf(Some("")));
-        assert!(prf(("", "")));
-        assert!(prf(Some(None::<&str>)));
-        assert!(prf(PrfContext::empty()));
-        assert!(prf(PrfContext::pae(&[])));
-    }
-
-    #[test]
-    fn contexts_carrying_information_are_not() {
-        assert!(!aad("users/email"));
-        assert!(!aad("x"));
-        assert!(!aad(Some("users/email")));
-        assert!(!aad(("users", "email")));
-        assert!(!aad(("", "email")));
-        assert!(!aad(Aad::from_slice(b"raw")));
-        assert!(!aad(7u64));
-
-        assert!(!prf("users/email"));
-        assert!(!prf("x"));
-        assert!(!prf(Some("users/email")));
-        assert!(!prf(("users", "email")));
-        assert!(!prf(("", "email")));
-        assert!(!prf(7u64));
-        assert!(!prf(PrfContext::from_slice(b"raw")));
-    }
-
-    /// Caller data that *looks* like vitaminc framing is still caller data.
-    ///
-    /// The tags are matched by exact value at piece 0 of a framing node, and
-    /// caller data never lands there — on the PRF channel it is wrapped a
-    /// level deeper by `CONTEXT_VALUE`, and the AAD channel has no tags at
-    /// all. A prefix test over every piece got all of these wrong, rejecting
-    /// a legitimate context as empty.
-    #[test]
-    fn caller_data_shaped_like_framing_still_carries_information() {
-        for tag in [
-            "vitaminc/customer",
-            "vitaminc/",
-            "vitaminc/prf/context-value/v1",
-            "vitaminc/prf/option-some/v1",
-            "vitaminc/prf/map-entry/v1",
-            "vitaminc/prf/refine/v1",
-            "vitaminc/prf/encoding/utf8/v1",
-            "vitaminc/aead/leaf",
-        ] {
-            assert!(!aad(tag), "aad({tag:?})");
-            assert!(!aad(Some(tag)), "aad(Some({tag:?}))");
-            assert!(!aad((tag, "")), "aad(({tag:?}, \"\"))");
-            assert!(!prf(tag), "prf({tag:?})");
-            assert!(!prf(Some(tag)), "prf(Some({tag:?}))");
-            assert!(!prf((tag, "")), "prf(({tag:?}, \"\"))");
-        }
-    }
-
-    /// A hand-built `PrfContext` that impersonates a framing node is judged
-    /// on the data it actually frames — the tag alone buys nothing.
-    #[test]
-    fn a_hand_built_framing_node_is_judged_on_its_payload() {
-        let some =
-            |inner: &[u8]| PrfContext::pae(&[b"vitaminc/prf/option-some/v1", inner]).into_owned();
-        // Framing a real value: information.
-        assert!(!prf(some("users/email".into_prf_context().as_bytes())));
-        // Framing an empty value: still empty, and still rejected.
-        assert!(prf(some("".into_prf_context().as_bytes())));
-        // A bare tag with nothing under it is not a well-formed framing node
-        // and is read as a one-piece PAE of caller bytes.
-        assert!(!prf(PrfContext::pae(&[b"vitaminc/prf/option-some/v1"])));
-    }
-
-    /// The arity check matters: a node carrying the right tag but the wrong
-    /// number of pieces is not that framing shape and is judged piecewise.
-    #[test]
-    fn a_framing_tag_with_the_wrong_arity_is_not_framing() {
-        let wrong = PrfContext::pae(&[
-            b"vitaminc/prf/context-value/v1",
-            b"vitaminc/prf/encoding/utf8/v1",
-            b"users",
-            b"email",
-        ]);
-        assert!(!prf(wrong));
-    }
-
-    #[test]
-    fn a_zero_u64_is_byte_identical_to_none_and_rejected_with_it() {
-        assert_eq!(
-            0u64.into_aad().as_bytes(),
-            None::<&str>.into_aad().as_bytes()
-        );
-        assert!(aad(0u64));
-    }
-
-    #[test]
-    fn a_truncated_or_overlong_pae_is_caller_content() {
-        // Looks like a count of two but carries only one frame.
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&2u64.to_le_bytes());
-        bytes.extend_from_slice(&0u64.to_le_bytes());
-        assert!(!is_degenerate_aad(&bytes));
-        // A well-formed empty PAE followed by a trailing byte.
-        let mut bytes = 0u64.to_le_bytes().to_vec();
-        bytes.push(0);
-        assert!(!is_degenerate_aad(&bytes));
     }
 }

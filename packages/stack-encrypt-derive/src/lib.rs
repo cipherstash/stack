@@ -15,7 +15,7 @@
 //! ```
 //! use stack_encrypt::sem::{EqualityTerm, OreTerm};
 //! use stack_encrypt::target::EncryptInto;
-//! use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
+//! use stack_encrypt::{nonempty, DecryptInto, EncryptFrom, StackCipher, StackCipherText};
 //! use stack_kms::FakeDataKeySource;
 //!
 //! /// An encrypted integer, queryable by equality and range.
@@ -33,9 +33,9 @@
 //!     .init()
 //!     .await?;
 //! let record: EncryptedAge = 42u32
-//!     .encrypt_into_with_context(&cipher, "users/age")
+//!     .encrypt_into_with_context(&cipher, nonempty!("users/age"))
 //!     .await?;
-//! let age: u32 = record.decrypt_into(&cipher, "users/age").await?;
+//! let age: u32 = record.decrypt_into(&cipher, nonempty!("users/age")).await?;
 //! assert_eq!(age, 42);
 //! # Ok::<(), stack_encrypt::Error>(())
 //! # }).unwrap();
@@ -50,11 +50,11 @@
 //! batched ZeroKMS call.
 //!
 //! The record takes the caller's context because its fields do: the derive
-//! bounds the impl's context parameter by what each field accepts, so a
-//! record of leaves — which accept only a `SuppliedContext` — is encrypted
-//! with `encrypt_into_with_context`, and the context-free `encrypt_into`
-//! does not compile against it. That is decided by the field types, not by
-//! an attribute.
+//! emits one impl for `()` and one for `NonEmpty<T>`, each bounded by what
+//! the fields accept under it, so a record of leaves — which accept only a
+//! `NonEmpty<T>` — is encrypted with `encrypt_into_with_context`, and the
+//! context-free `encrypt_into` does not compile against it. That is decided
+//! by the field types, not by an attribute.
 //!
 //! Decryption opens the ciphertext field and passes over the terms, and no
 //! attribute says which is which: each field type does, through
@@ -62,21 +62,21 @@
 //! field is a ciphertext. `#[stash(decrypt)]` names the field only when the
 //! types cannot — two ciphertexts, say.
 //!
-//! # Rows
+//! # Structs, field by field
 //!
 //! One level up, the same derive: a struct whose fields are each derived from
-//! a *field* of the plaintext, under a context of their own. `row = User,
+//! a *field* of the plaintext, under a context of their own. `struct = User,
 //! context = "users"` says so once, for every field: `age` is derived from
 //! `user.age` under `"users/age"`, `email` from `user.email` under
-//! `"users/email"` — the table you name and the field, nothing invented.
+//! `"users/email"` — the prefix you name and the field, nothing invented.
 //! Attributes on the fields are for the exceptions: `from = ..` when the
 //! names differ, `context = ".."` to pin a whole context by hand, `nested`
-//! for a field whose type is itself a row carrying its own contexts.
+//! for a field whose type is itself such a struct, carrying its own contexts.
 //!
 //! ```
 //! # use stack_encrypt::sem::{EqualityTerm, OreTerm};
 //! # use stack_encrypt::target::{DecryptFrom, EncryptInto};
-//! # use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
+//! # use stack_encrypt::{nonempty, DecryptInto, EncryptFrom, StackCipher, StackCipherText};
 //! # use stack_kms::FakeDataKeySource;
 //! # #[derive(EncryptFrom, DecryptInto)]
 //! # #[stash(plaintext = u32)]
@@ -92,7 +92,7 @@
 //! }
 //!
 //! #[derive(EncryptFrom, DecryptInto)]
-//! #[stash(row = User, context = "users")]
+//! #[stash(struct = User, context = "users")]
 //! struct EncryptedUser {
 //!     age: EncryptedAge,
 //!     email: StackCipherText,
@@ -101,36 +101,58 @@
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 //! # let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 //! let user = User { age: 42, email: "alice@example.com".into() };
-//! let row: EncryptedUser = user.encrypt_into(&cipher).await?; // one batch
+//! let encrypted: EncryptedUser = user.encrypt_into(&cipher).await?; // one batch
 //! let users = vec![User { age: 1, email: "a".into() }, User { age: 2, email: "b".into() }];
-//! let rows: Vec<EncryptedUser> = users.encrypt_into(&cipher).await?; // still one
-//! let user = User::decrypt_from(row, &cipher).await?;
+//! let column: Vec<EncryptedUser> = users.encrypt_into(&cipher).await?; // still one
+//! let user = User::decrypt_from(encrypted, &cipher).await?;
 //! assert_eq!(user, User { age: 42, email: "alice@example.com".into() });
-//! assert_eq!(rows.len(), 2);
+//! assert_eq!(column.len(), 2);
+//!
+//! // A context passed by the caller *extends* every field's: `age` is now
+//! // under `("users/age", 7u64)` — bound to its record as well as its name
+//! // — and a probe for it is built under the same pair.
+//! let user = User { age: 42, email: "alice@example.com".into() };
+//! let encrypted: EncryptedUser = user.encrypt_into_with_context(&cipher, 7u64).await?;
+//! let probe: EqualityTerm = 42u32
+//!     .encrypt_into_with_context(&cipher, nonempty!("users/age").with(7u64))
+//!     .await?;
+//! assert_eq!(encrypted.age.hm, probe);
+//! let user = User::decrypt_from_with_context(encrypted, &cipher, 7u64).await?;
+//! assert_eq!(user.age, 42);
 //! # Ok::<(), stack_encrypt::Error>(())
 //! # }).unwrap();
 //! ```
 //!
-//! A row field's context is the *column's* identity — `"users/age"` is what a
-//! query site derives a probe under — which is why it is a literal per field
-//! rather than something composed from a context the caller passes. A row
-//! takes no context from the caller at all: its impls are for `()` exactly,
-//! which is what makes the context-free `encrypt_into` / `decrypt_from` the
-//! forms that compile against it. A `plaintext = ..` record's `from` field
-//! with no `context` is handed `()` too, and its type decides whether that
-//! will do: a nested row accepts it; a leaf refuses it, at the field, until
-//! it is given a `context`. In a row, `#[stash(nested)]` is the same
-//! hand-off: it marks the fields whose types carry their own contexts, so no
-//! context is inferred for them.
+//! A field's context is the stored field's identity — `"users/age"` is what
+//! a query site derives a probe under — which is why it is inferred per
+//! field rather than taken from the caller. What the caller passes is an
+//! *extension*: the derive emits one impl for `()`, deriving each field
+//! under its own context as it is, and one for `NonEmpty<T>`, deriving it
+//! under `("users/age", context)` — a record id, typically, so a field opens
+//! only in the record it was written to. That holds for a `plaintext`
+//! record's `context = ".."` literals too: no record accepts a context and
+//! then discards it. A field with no context of its own — a `plaintext`
+//! record's field with no `context`, or a `#[stash(nested)]` field — is
+//! handed the caller's as it is, and its type decides whether that will do:
+//! a nested `struct` derive composes it with its own contexts; a leaf
+//! accepts only a `NonEmpty<T>`, so the `()` impl fails to compile at the
+//! field until it is given a `context`.
 //!
 //! The prefix is given explicitly (`context = "users"`), never inferred from
 //! the Rust type's name: it is part of the stored data's identity — the AAD
-//! of every ciphertext in the row and the domain of every term — and a name
-//! two types share, or a refactor changes, must not be able to move it
-//! silently. The field half is still inferred from the plaintext field's
-//! name, so renaming a plaintext field changes that column's context and
-//! stored rows stop decrypting; pin the old value with `context = ".."` on
-//! the field before such a rename. The [attributes](#rows) section says more.
+//! of every ciphertext derived from the struct and the domain of every term
+//! — and a name two types share, or a refactor changes, must not be able to
+//! move it silently. The field half is still inferred from the plaintext
+//! field's name, so renaming a plaintext field changes that field's context
+//! and stored data stops decrypting; pin the old value with `context = ".."`
+//! on the field before such a rename. The [attributes](#structs-field-by-field)
+//! section says more.
+//!
+//! `plaintext = T` and `struct = T` are the two shapes a derive can take,
+//! and the derive cannot tell them apart from `T` — a proc macro sees the
+//! name, not the definition — so the attribute says which: `plaintext`
+//! derives every field from the whole value, `struct` reaches into its
+//! fields. `from` and `nested` exist only with `struct`.
 //!
 //! # What the derive commits to
 //!

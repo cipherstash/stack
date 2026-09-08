@@ -15,7 +15,7 @@ use std::pin::Pin;
 use stack_kms::{DataKeySource, GenerateKeyPayload, Iv, MaybeSend, RetrieveKeyPayload};
 
 use super::request::{tally, Request, RequestKind, Responses};
-use crate::{Error, StackCipher};
+use crate::{Descriptor, Error, StackCipher};
 
 /// The boxed fulfilment: consumes this pending's slice of the responses and
 /// produces the output. The `Send` split mirrors [`stack_kms::MaybeSend`] —
@@ -273,30 +273,47 @@ async fn dispatch<K: DataKeySource>(
     cipher: &StackCipher<K>,
     requests: Vec<Request>,
 ) -> Result<Responses, Error> {
-    let mut generate = 0usize;
-    let mut retrieves: Vec<(Iv, Vec<u8>)> = Vec::new();
+    let mut generates: Vec<Descriptor> = Vec::new();
+    let mut retrieves: Vec<(Iv, Vec<u8>, Descriptor)> = Vec::new();
     for request in requests {
         match request.into_kind() {
-            RequestKind::GenerateDataKey => generate += 1,
-            RequestKind::RetrieveDataKey { iv, tag } => retrieves.push((iv, tag)),
+            RequestKind::GenerateDataKey { descriptor } => generates.push(descriptor),
+            RequestKind::RetrieveDataKey {
+                iv,
+                tag,
+                descriptor,
+            } => retrieves.push((iv, tag, descriptor)),
         }
     }
 
-    let generated = if generate == 0 {
+    // ZeroKMS binds a descriptor into a fixed-size block and does not check
+    // the length itself. This is the gate: every request passes through
+    // here, including ones built directly from the `pub` constructors. The
+    // entry points check the root descriptor earlier as well, so a tree of
+    // ten thousand leaves is refused before ten thousand requests exist —
+    // a fast path, not a second rule.
+    generates
+        .iter()
+        .chain(retrieves.iter().map(|(_, _, descriptor)| descriptor))
+        .try_for_each(Descriptor::check)?;
+
+    let generated = if generates.is_empty() {
         Vec::new()
     } else {
-        // Empty descriptor + empty context for every leaf — see the
-        // wire-format note in the cipher module docs.
-        let payloads: Vec<GenerateKeyPayload<'_>> = (0..generate)
-            .map(|_| GenerateKeyPayload::new("", Cow::Owned(Vec::new())))
+        // Each leaf's descriptor is its context, rendered; the lock context
+        // stays empty — see the descriptor module docs.
+        let payloads: Vec<GenerateKeyPayload<'_>> = generates
+            .iter()
+            .map(|descriptor| GenerateKeyPayload::new(descriptor.as_str(), Cow::Owned(Vec::new())))
             .collect();
+        let expected = payloads.len();
         let keys = cipher
             .kms()
             .generate_keys(payloads, Some(cipher.keyset_id()), None)
             .await?;
-        if keys.len() != generate {
+        if keys.len() != expected {
             return Err(Error::KeyCountMismatch {
-                expected: generate,
+                expected,
                 received: keys.len(),
             });
         }
@@ -308,7 +325,7 @@ async fn dispatch<K: DataKeySource>(
     } else {
         let payloads: Vec<RetrieveKeyPayload<'_>> = retrieves
             .iter()
-            .map(|(iv, tag)| RetrieveKeyPayload::new(*iv, "", tag))
+            .map(|(iv, tag, descriptor)| RetrieveKeyPayload::new(*iv, descriptor.as_str(), tag))
             .collect();
         let expected = payloads.len();
         let keys = cipher
@@ -332,6 +349,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
 
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
 
     use stack_kms::{FakeDataKeySource, IdentifiedBy, IndexKey, IndexKeySource, UnverifiedContext};
     use uuid::Uuid;
@@ -346,6 +364,9 @@ mod tests {
         inner: FakeDataKeySource,
         generate_calls: AtomicUsize,
         retrieve_calls: AtomicUsize,
+        /// The descriptors of every payload sent, per call, in payload order.
+        generate_descriptors: Mutex<Vec<Vec<String>>>,
+        retrieve_descriptors: Mutex<Vec<Vec<String>>>,
     }
 
     impl CountingSource {
@@ -355,6 +376,14 @@ mod tests {
 
         fn retrieve_calls(&self) -> usize {
             self.retrieve_calls.load(Ordering::Relaxed)
+        }
+
+        fn generate_descriptors(&self) -> Vec<Vec<String>> {
+            self.generate_descriptors.lock().unwrap().clone()
+        }
+
+        fn retrieve_descriptors(&self) -> Vec<Vec<String>> {
+            self.retrieve_descriptors.lock().unwrap().clone()
         }
     }
 
@@ -366,6 +395,10 @@ mod tests {
             unverified_context: Option<Cow<'_, UnverifiedContext>>,
         ) -> Result<Vec<stack_kms::DataKeyWithTag>, stack_kms::Error> {
             self.generate_calls.fetch_add(1, Ordering::Relaxed);
+            self.generate_descriptors
+                .lock()
+                .unwrap()
+                .push(payloads.iter().map(|p| p.descriptor.to_owned()).collect());
             self.inner
                 .generate_keys(payloads, keyset_id, unverified_context)
                 .await
@@ -378,6 +411,10 @@ mod tests {
             unverified_context: Option<&UnverifiedContext>,
         ) -> Result<Vec<stack_kms::DataKey>, stack_kms::Error> {
             self.retrieve_calls.fetch_add(1, Ordering::Relaxed);
+            self.retrieve_descriptors
+                .lock()
+                .unwrap()
+                .push(payloads.iter().map(|p| p.descriptor.to_owned()).collect());
             self.inner
                 .retrieve_keys(payloads, keyset_id, unverified_context)
                 .await
@@ -393,6 +430,10 @@ mod tests {
         }
     }
 
+    fn d() -> Descriptor {
+        Descriptor::of("test/field")
+    }
+
     async fn cipher() -> StackCipher<CountingSource> {
         StackCipher::builder()
             .kms(CountingSource::default())
@@ -406,7 +447,7 @@ mod tests {
         cipher: &'a StackCipher<CountingSource>,
         n: usize,
     ) -> Pending<'a, Vec<Vec<u8>>, CountingSource> {
-        let requests = std::iter::repeat_with(Request::generate_data_key)
+        let requests = std::iter::repeat_with(|| Request::generate_data_key(d()))
             .take(n)
             .collect();
         Pending::request(cipher, requests, move |responses| {
@@ -429,9 +470,9 @@ mod tests {
     #[tokio::test]
     async fn a_ready_pending_propagates_its_error() {
         let cipher = cipher().await;
-        let result: Result<u32, Error> = Pending::ready(&cipher, Err(Error::EmptyContext)).await;
+        let result: Result<u32, Error> = Pending::ready(&cipher, Err(Error::Aead)).await;
 
-        assert!(matches!(result, Err(Error::EmptyContext)));
+        assert!(matches!(result, Err(Error::Aead)));
         assert_eq!(cipher.kms().generate_calls(), 0);
     }
 
@@ -449,11 +490,11 @@ mod tests {
     #[tokio::test]
     async fn map_does_not_run_on_an_error() {
         let cipher = cipher().await;
-        let result: Result<u32, Error> = Pending::ready(&cipher, Err(Error::EmptyContext))
+        let result: Result<u32, Error> = Pending::ready(&cipher, Err(Error::Aead))
             .map(|_: u32| panic!("map must not run on an error"))
             .await;
 
-        assert!(matches!(result, Err(Error::EmptyContext)));
+        assert!(matches!(result, Err(Error::Aead)));
     }
 
     #[tokio::test]
@@ -516,15 +557,15 @@ mod tests {
     #[tokio::test]
     async fn zip_propagates_an_error_from_either_side() {
         let cipher = cipher().await;
-        let result = Pending::ready(&cipher, Err(Error::EmptyContext))
+        let result = Pending::ready(&cipher, Err(Error::Aead))
             .zip(Pending::ready(&cipher, Ok(1u32)))
             .await;
-        assert!(matches!(result, Err::<(u32, u32), _>(Error::EmptyContext)));
+        assert!(matches!(result, Err::<(u32, u32), _>(Error::Aead)));
 
         let result = Pending::ready(&cipher, Ok(1u32))
-            .zip(Pending::ready(&cipher, Err(Error::EmptyContext)))
+            .zip(Pending::ready(&cipher, Err(Error::Aead)))
             .await;
-        assert!(matches!(result, Err::<(u32, u32), _>(Error::EmptyContext)));
+        assert!(matches!(result, Err::<(u32, u32), _>(Error::Aead)));
     }
 
     #[tokio::test]
@@ -557,11 +598,11 @@ mod tests {
         let cipher = cipher().await;
         let items = vec![
             Pending::ready(&cipher, Ok(1u32)),
-            Pending::ready(&cipher, Err(Error::EmptyContext)),
+            Pending::ready(&cipher, Err(Error::Aead)),
         ];
         let result = Pending::all(&cipher, items).await;
 
-        assert!(matches!(result, Err::<Vec<u32>, _>(Error::EmptyContext)));
+        assert!(matches!(result, Err::<Vec<u32>, _>(Error::Aead)));
     }
 
     /// Over-drawing is the fulfilment's own error, not a stolen sibling key:
@@ -569,12 +610,15 @@ mod tests {
     #[tokio::test]
     async fn over_drawing_responses_is_a_response_shape_error() {
         let cipher = cipher().await;
-        let greedy: Pending<'_, Vec<u8>, _> =
-            Pending::request(&cipher, vec![Request::generate_data_key()], |responses| {
+        let greedy: Pending<'_, Vec<u8>, _> = Pending::request(
+            &cipher,
+            vec![Request::generate_data_key(d())],
+            |responses| {
                 let _ = responses.next_generated_key()?;
                 // One request, two draws.
                 responses.next_generated_key().map(|key| key.tag)
-            });
+            },
+        );
         let result = greedy.zip(generating(&cipher, 1)).await;
 
         assert!(matches!(
@@ -594,7 +638,7 @@ mod tests {
     async fn under_drawing_responses_is_a_response_shape_error() {
         let cipher = cipher().await;
         let lazy: Pending<'_, (), _> =
-            Pending::request(&cipher, vec![Request::generate_data_key()], |_| Ok(()));
+            Pending::request(&cipher, vec![Request::generate_data_key(d())], |_| Ok(()));
         let result = lazy.zip(generating(&cipher, 1)).await;
 
         assert!(matches!(
@@ -607,7 +651,10 @@ mod tests {
     #[tokio::test]
     async fn drawing_fewer_responses_than_requested_is_a_response_shape_error() {
         let cipher = cipher().await;
-        let requests = vec![Request::generate_data_key(), Request::generate_data_key()];
+        let requests = vec![
+            Request::generate_data_key(d()),
+            Request::generate_data_key(d()),
+        ];
         let lazy: Pending<'_, Vec<u8>, _> = Pending::request(&cipher, requests, |responses| {
             responses.next_generated_key().map(|key| key.tag)
         });
@@ -626,8 +673,8 @@ mod tests {
         let mut pairs = generating_pairs(&cipher, 1).await.unwrap();
         let (iv, tag) = pairs.remove(0);
         let requests = vec![
-            Request::generate_data_key(),
-            Request::retrieve_data_key(iv, tag),
+            Request::generate_data_key(d()),
+            Request::retrieve_data_key(iv, tag, d()),
         ];
         let lazy: Pending<'_, Vec<u8>, _> = Pending::request(&cipher, requests, |responses| {
             responses.next_generated_key().map(|key| key.tag)
@@ -657,7 +704,7 @@ mod tests {
         cipher: &StackCipher<CountingSource>,
         n: usize,
     ) -> Pending<'_, Vec<(Iv, Vec<u8>)>, CountingSource> {
-        let requests = std::iter::repeat_with(Request::generate_data_key)
+        let requests = std::iter::repeat_with(|| Request::generate_data_key(d()))
             .take(n)
             .collect();
         Pending::request(cipher, requests, move |responses| {
@@ -681,7 +728,7 @@ mod tests {
 
         let requests: Vec<Request> = pairs
             .iter()
-            .map(|(iv, tag)| Request::retrieve_data_key(*iv, tag.clone()))
+            .map(|(iv, tag)| Request::retrieve_data_key(*iv, tag.clone(), d()))
             .collect();
         let retrieve: Pending<'_, usize, _> = Pending::request(&cipher, requests, |responses| {
             Ok(responses.drain_retrieved().count())
@@ -692,5 +739,90 @@ mod tests {
         assert_eq!(fresh.len(), 1);
         assert_eq!(cipher.kms().generate_calls(), 2);
         assert_eq!(cipher.kms().retrieve_calls(), 1);
+    }
+
+    /// Every request's descriptor reaches ZeroKMS on its own payload, in
+    /// request order, on both the generate and the retrieve call: the
+    /// descriptor is what binds the key to its field at ZeroKMS.
+    #[tokio::test]
+    async fn dispatch_forwards_each_requests_descriptor_in_order() {
+        let cipher = cipher().await;
+        let requests = vec![
+            Request::generate_data_key(Descriptor::of("users/email")),
+            Request::generate_data_key(Descriptor::of("users/name")),
+        ];
+        let pairs: Vec<(Iv, Vec<u8>)> = Pending::request(&cipher, requests, |responses| {
+            (0..2)
+                .map(|_| {
+                    responses
+                        .next_generated_key()
+                        .map(|key| (key.key.iv, key.tag))
+                })
+                .collect()
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            cipher.kms().generate_descriptors(),
+            vec![vec!["users/email".to_owned(), "users/name".to_owned()]]
+        );
+
+        let requests: Vec<Request> = pairs
+            .iter()
+            .zip(["users/name", "users/email"])
+            .map(|((iv, tag), descriptor)| {
+                Request::retrieve_data_key(*iv, tag.clone(), Descriptor::of(descriptor))
+            })
+            .collect();
+        let count: usize = Pending::request(&cipher, requests, |responses| {
+            Ok(responses.drain_retrieved().count())
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(count, 2);
+        assert_eq!(
+            cipher.kms().retrieve_descriptors(),
+            vec![vec!["users/name".to_owned(), "users/email".to_owned()]]
+        );
+    }
+
+    /// ZeroKMS copies a descriptor into a fixed 512-byte block without a
+    /// length check, so an over-long one must never reach it: the batch is
+    /// refused before either call, with no key minted or retrieved.
+    #[tokio::test]
+    async fn an_over_long_descriptor_is_refused_before_any_call() {
+        let cipher = cipher().await;
+        let long = Descriptor::of("a".repeat(Descriptor::MAX_LEN + 1));
+        let requests = vec![
+            Request::generate_data_key(Descriptor::of("users/email")),
+            Request::generate_data_key(long.clone()),
+        ];
+        let Err(err) = dispatch(&cipher, requests).await else {
+            panic!("an over-long descriptor must be refused");
+        };
+        assert!(
+            matches!(err, Error::DescriptorTooLong { len } if len == Descriptor::MAX_LEN + 1),
+            "{err}"
+        );
+        assert_eq!(cipher.kms().generate_calls(), 0);
+
+        let mut pairs = generating_pairs(&cipher, 1).await.unwrap();
+        let (iv, tag) = pairs.remove(0);
+        let requests = vec![Request::retrieve_data_key(iv, tag, long)];
+        let Err(err) = dispatch(&cipher, requests).await else {
+            panic!("an over-long descriptor must be refused");
+        };
+        assert!(matches!(err, Error::DescriptorTooLong { .. }), "{err}");
+        assert_eq!(cipher.kms().retrieve_calls(), 0);
+
+        // At the limit is fine.
+        let before = cipher.kms().generate_calls();
+
+        let requests = vec![Request::generate_data_key(Descriptor::of(
+            "a".repeat(Descriptor::MAX_LEN),
+        ))];
+        assert!(dispatch(&cipher, requests).await.is_ok(), "at the limit");
+        assert_eq!(cipher.kms().generate_calls(), before + 1);
     }
 }

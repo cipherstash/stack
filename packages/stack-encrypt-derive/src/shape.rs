@@ -29,11 +29,14 @@ pub(crate) struct Field {
 pub(crate) enum Kind {
     /// Derived from the source through the field type's own `EncryptFrom`.
     Derived {
-        /// `#[stash(context = "...")]`: this field's context, overriding
-        /// the record's.
+        /// This field's own context, if it has one: a `#[stash(context =
+        /// "...")]` literal, or the `"<prefix>/<field>"` a `struct` derive
+        /// infers. A context the caller passes extends it either way.
         context: Option<LitStr>,
-        /// `#[stash(from = field)]` / `from = 0`: derived from one
-        /// field of the plaintext rather than the whole plaintext.
+        /// With `struct = ..`: the plaintext field this one is derived
+        /// from — its own name, or the `#[stash(from = field)]` override.
+        /// `None` for a `plaintext` record, whose fields are all derived
+        /// from the whole value.
         from: Option<Member>,
     },
     /// Not derived: `Default::default()` or the given expression.
@@ -56,78 +59,104 @@ impl Field {
     /// How this derived field gets its context — the one classification both
     /// derives project their where clauses and bodies from.
     ///
-    /// A `from` field with no literal is [`FieldContext::Unit`], never the
-    /// caller's: it reaches into one field of the plaintext, and its type
-    /// says what that field needs — a leaf refuses `()` (the derive cannot
-    /// name the plaintext field's type in a where clause, so the obligation
-    /// is checked in the body and reported at the field type), and a nested
-    /// row carrying its own contexts accepts nothing else. Handing such a
-    /// field the caller's context instead would encrypt every column of the
-    /// row under one context, which is the cross-column transplant the
-    /// per-field contexts exist to prevent.
+    /// A field with a context of its own — a literal, or the one a `struct`
+    /// derive infers — is derived under it as it is when the caller passes
+    /// `()`, and under it *extended* with the caller's (`("users/age", id)`)
+    /// when the caller passes a `NonEmpty<_>`. A field with none is handed
+    /// the caller's context as it is, and its type decides what that means:
+    /// a nested `struct` derive composes it with its own contexts; a leaf
+    /// accepts it only as a `NonEmpty<_>`, so under the record's `()` impl
+    /// such a leaf is a compile error — at the field, since a `from` field's
+    /// obligation is checked in the body against the plaintext field's type
+    /// the derive cannot name — and the fix is a `context = ".."` on it.
     ///
     /// Only called for derived fields: a `default` field is not derived from
     /// the source and is never handed a context at all.
     pub(crate) fn field_context(&self) -> FieldContext<'_> {
         match &self.kind {
             Kind::Derived {
-                context: Some(literal),
-                ..
-            } => FieldContext::Literal(literal),
-            Kind::Derived {
-                context: None,
-                from: Some(_),
-            } => FieldContext::Unit,
-            Kind::Derived {
-                context: None,
-                from: None,
-            } => FieldContext::Caller,
+                context: Some(lit), ..
+            } => FieldContext::Own(lit),
+            Kind::Derived { context: None, .. } => FieldContext::Caller,
             Kind::Default(_) => unreachable!("a `default` field has no context"),
         }
     }
 
-    /// Is this field derived under the context the caller passes for the
-    /// record? Only a field derived from the whole plaintext with no literal
-    /// of its own is; see [`push_context_generics`].
-    pub(crate) fn takes_callers_context(&self) -> bool {
-        self.is_derived() && matches!(self.field_context(), FieldContext::Caller)
+    /// Does this field use the context the caller passes, in the impl for
+    /// `which`? A field with no context of its own always does; one with a
+    /// context of its own extends the caller's, so only under `NonEmpty<_>`.
+    /// See [`context_param`].
+    pub(crate) fn uses_callers_context(&self, which: ContextImpl) -> bool {
+        self.is_derived()
+            && match self.field_context() {
+                FieldContext::Caller => true,
+                FieldContext::Own(_) => which == ContextImpl::NonEmpty,
+            }
     }
 }
 
-/// Where a derived field's context comes from: a literal of its own, `()`
-/// for a `from` field with no literal, or the caller's. See
-/// [`Field::field_context`] for why a `from` field never gets the caller's.
+/// Where a derived field's context comes from. See [`Field::field_context`].
 #[cfg_attr(test, derive(Debug))]
 pub(crate) enum FieldContext<'a> {
-    /// `#[stash(context = "...")]`.
-    Literal(&'a LitStr),
-    /// A `from` field with no literal: handed `()`, and its type decides
-    /// whether that will do.
-    Unit,
-    /// The context the caller passes for the record, as the impl's `__Ctx`.
+    /// A context of the field's own — `#[stash(context = "...")]`, or the
+    /// `"<prefix>/<field>"` a `struct` derive infers: as it is under `()`,
+    /// extended with the caller's context under `NonEmpty<_>`.
+    Own(&'a LitStr),
+    /// No context of its own: handed the caller's as it is — `()`, or the
+    /// impl's `NonEmpty<__T>`.
     Caller,
 }
 
+/// Which of a derived record's two impls is being emitted: the context the
+/// caller passes is `()` in one and `NonEmpty<__T>` in the other. Every
+/// record gets both (see [`context_param`]), and every derived field uses
+/// the caller's context under `NonEmpty<__T>`, so no record accepts a
+/// context it then discards; a leaf field that has no context of its own
+/// makes the `()` one unsatisfiable, which is the compile error
+/// `encrypt_into` then reports.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(test, derive(Debug))]
+pub(crate) enum ContextImpl {
+    Unit,
+    NonEmpty,
+}
+
+impl ContextImpl {
+    pub(crate) const BOTH: [ContextImpl; 2] = [ContextImpl::Unit, ContextImpl::NonEmpty];
+}
+
 impl FieldContext<'_> {
-    /// The context type as it appears in a where clause: the literal's,
-    /// `()`, or the impl's `__Ctx`.
-    pub(crate) fn ty(&self) -> Type {
-        match self {
-            FieldContext::Literal(_) => parse_quote!(&'static str),
-            FieldContext::Unit => parse_quote!(()),
-            FieldContext::Caller => parse_quote!(__Ctx),
+    /// The context type as it appears in a where clause, in the impl for
+    /// `which`.
+    pub(crate) fn ty(&self, krate: &Path, which: ContextImpl) -> Type {
+        match (self, which) {
+            (FieldContext::Own(_), ContextImpl::Unit) => {
+                parse_quote!(#krate::NonEmpty<&'static str>)
+            }
+            (FieldContext::Own(_), ContextImpl::NonEmpty) => {
+                parse_quote!(#krate::NonEmpty<(&'static str, #krate::NonEmpty<__T>)>)
+            }
+            (FieldContext::Caller, ContextImpl::Unit) => parse_quote!(()),
+            (FieldContext::Caller, ContextImpl::NonEmpty) => parse_quote!(#krate::NonEmpty<__T>),
         }
     }
 
-    /// The context expression the field is handed when it is not the
-    /// caller's; `None` for a field that takes the caller's, whose
-    /// expression is the call site's to choose (move, clone, or clone
-    /// through a reference).
-    pub(crate) fn own_expr(&self) -> Option<TokenStream> {
-        match self {
-            FieldContext::Literal(literal) => Some(quote!(#literal)),
-            FieldContext::Unit => Some(quote!(())),
-            FieldContext::Caller => None,
+    /// The context expression the field is handed in the impl for `which`;
+    /// `caller` is the expression for the caller's context, which the call
+    /// site chooses (move, clone, or clone through a reference) and which
+    /// only a field that [uses it](Field::uses_callers_context) receives.
+    pub(crate) fn expr(
+        &self,
+        krate: &Path,
+        which: ContextImpl,
+        caller: TokenStream,
+    ) -> TokenStream {
+        match (self, which) {
+            (FieldContext::Own(lit), ContextImpl::Unit) => quote!(#krate::nonempty!(#lit)),
+            (FieldContext::Own(lit), ContextImpl::NonEmpty) => {
+                quote!(#krate::NonEmpty::with(#krate::nonempty!(#lit), #caller))
+            }
+            (FieldContext::Caller, _) => caller,
         }
     }
 }
@@ -137,8 +166,11 @@ impl FieldContext<'_> {
 pub(crate) struct Record {
     pub(crate) krate: Path,
     /// The plaintext types, one impl each; empty means one impl generic over
-    /// the plaintext.
+    /// the plaintext. Exactly one for a `struct = ..` derive.
     pub(crate) plaintexts: Vec<Type>,
+    /// `struct = ..`: the plaintext is encrypted field by field, every
+    /// derived field from one field of it (`Field::from`).
+    pub(crate) by_field: bool,
     pub(crate) fields: Vec<Field>,
 }
 
@@ -169,10 +201,11 @@ impl Record {
         };
 
         // `ContainerAttrs::parse` has established that `context` is present
-        // exactly when `row` is.
+        // exactly when `struct` is.
         let fields = collect(&data.fields, attrs.context.as_ref())?;
-        let plaintexts = match attrs.row {
-            Some(row) => vec![row],
+        let by_field = attrs.by_field.is_some();
+        let plaintexts = match attrs.by_field {
+            Some(plaintext) => vec![plaintext],
             None => attrs.plaintexts,
         };
 
@@ -183,72 +216,90 @@ impl Record {
             ));
         }
 
-        if plaintexts.is_empty() {
-            if let Some(field) = fields.iter().find(|f| f.from().is_some()) {
-                return Err(syn::Error::new(
-                    field.from().map_or_else(Span::call_site, Spanned::span),
-                    "`from = ..` reaches into a field of the plaintext, so the plaintext type must \
-                     be named: add `#[stash(plaintext = ..)]` to the struct",
-                ));
-            }
-        }
-
         Ok(Self {
             krate: attrs.krate,
             plaintexts,
+            by_field,
             fields,
         })
     }
 }
 
-/// The demand a derive places on the impl's context parameter, beyond what
-/// the field bounds already say.
+/// The demand a derive places on the inner type of the caller's
+/// `NonEmpty<__T>`, beyond what the field bounds already say — the vitaminc
+/// context traits the direction needs, and `Clone` because one context
+/// fans out to every field.
+///
+/// The leaves in this crate state that demand through the field bounds
+/// already, but a `from` field's bound is checked in the body (the derive
+/// cannot name the plaintext field's type), and a term field's
+/// `DecryptField` accepts *any* context (it opens nothing), so without
+/// this bound a record whose ciphertext field carries a literal would
+/// accept — and silently discard — a value that is not a context at all.
 pub(crate) enum CallerContext<'a> {
-    /// Encrypt: `EncryptContext` — convertible to AAD and to a PRF context.
-    /// The leaves in this crate state that demand through the field bounds
-    /// already, but a third-party leaf generic over its context would not,
-    /// and without this bound such a leaf lets `EncryptFrom::encrypt_from`
-    /// accept — and silently discard — any `Clone` value as its context.
+    /// Encrypt: convertible to AAD and to a PRF context.
     Encrypt(&'a Path),
-    /// Decrypt: `DecryptContext` — convertible to the AAD the value was
-    /// encrypted under. A term field's `DecryptField` accepts *any* context
-    /// (it opens nothing), so field bounds alone would let a record whose
-    /// ciphertext field carries a literal accept — and silently discard —
-    /// any `Clone` value as its decrypt context.
+    /// Decrypt: convertible to the AAD the value was encrypted under.
     Decrypt(&'a Path),
 }
 
-/// Adds the impl's context parameter, if `fields` give it a use, and returns
-/// the type the impl is for.
+/// Adds the impl's context parameter for `which`, and returns the type the
+/// impl is for.
 ///
-/// A field with a context of its own ([`FieldContext::own_expr`]) never sees
-/// the caller's. A record whose fields all have one — every row does — is
-/// therefore encrypted with no context at all, and its impl is for `()`
-/// exactly: `row.encrypt_into(&cipher)` compiles and
-/// `encrypt_into_with_context` does not, since the context would go nowhere.
-/// Otherwise the impl is generic over `__Ctx`, cloned to each field that
-/// takes it, bounded by what `bound` says the direction demands.
-pub(crate) fn push_context_generics(
+/// Every derived record gets two impls: one for `()`, under which each
+/// field is derived under the context it carries itself, and one for
+/// `NonEmpty<__T>`, under which a row's inferred contexts are extended with
+/// the caller's and a field with no context of its own is handed the
+/// caller's as it is. The `()` impl of a record whose leaf takes the
+/// caller's context is unsatisfiable — a leaf exists only under a
+/// `NonEmpty<_>` — which is exactly the compile error `encrypt_into` reports
+/// against it.
+///
+/// Under `NonEmpty<__T>` an extended context is `NonEmpty<(&'static str,
+/// NonEmpty<__T>)>`, and the literal's `'static` fixes the lifetime the pair
+/// implements the context traits for; a `struct` derive's `nested` field
+/// hands the caller's context to a nested `struct` derive that extends it
+/// likewise, and its obligation is checked in the body, where a free
+/// lifetime could not meet it. So a record with any context of its own, and
+/// every `struct` derive, is bounded for `'static`. Only a `plaintext`
+/// record whose fields all take the caller's context as it is — every
+/// bound in the where clause — is bounded for a free lifetime, and can pass
+/// a borrowed context through.
+pub(crate) fn context_param(
     generics: &mut Generics,
     bound: CallerContext<'_>,
+    which: ContextImpl,
+    by_field: bool,
     fields: &[&Field],
 ) -> Type {
-    if !fields.iter().any(|f| f.takes_callers_context()) {
+    if which == ContextImpl::Unit {
         return parse_quote!(());
     }
-    generics.params.push(parse_quote!(__Ctx));
+    let krate = match bound {
+        CallerContext::Encrypt(krate) | CallerContext::Decrypt(krate) => krate,
+    };
+    let needs_static = by_field
+        || fields
+            .iter()
+            .any(|f| matches!(f.field_context(), FieldContext::Own(_)));
+    let lifetime: syn::Lifetime = if needs_static {
+        parse_quote!('static)
+    } else {
+        // A lifetime parameter must precede the type parameters.
+        generics.params.insert(0, parse_quote!('__ctx));
+        parse_quote!('__ctx)
+    };
+    generics.params.push(parse_quote!(__T));
     let predicates = &mut generics.make_where_clause().predicates;
     match bound {
-        CallerContext::Encrypt(krate) => {
-            predicates.push(parse_quote!(__Ctx: #krate::target::EncryptContext<'__ctx>));
-        }
-        CallerContext::Decrypt(krate) => {
-            predicates.push(parse_quote!(__Ctx: #krate::target::DecryptContext<'__ctx>));
-        }
+        CallerContext::Encrypt(_) => predicates.push(parse_quote! {
+            __T: #krate::IntoAad<#lifetime> + #krate::IntoPrfContext<#lifetime> + ::core::clone::Clone
+        }),
+        CallerContext::Decrypt(_) => predicates.push(parse_quote! {
+            __T: #krate::IntoAad<#lifetime> + ::core::clone::Clone
+        }),
     }
-    // A lifetime parameter must precede the type parameters.
-    generics.params.insert(0, parse_quote!('__ctx));
-    parse_quote!(__Ctx)
+    parse_quote!(#krate::NonEmpty<__T>)
 }
 
 /// `impl #trait_path for Record` around `content` — the scaffolding both
@@ -280,29 +331,35 @@ pub(crate) enum FieldBound {
     /// whole source (the caller filters; a `from` field's obligation is
     /// checked in the body instead, where the source field's type is known).
     Encrypt,
-    /// `DecryptField<Plaintext, ..>` — for decrypt, on every candidate field.
+    /// `DecryptField<Plaintext, ..>` — for automatic decrypt, on every
+    /// candidate field.
     DecryptField,
+    /// `DecryptInto<Plaintext, ..>` — for explicit decrypt, on the one field
+    /// opened as the whole plaintext.
+    DecryptInto,
 }
 
 /// `FieldTy: Trait<Target, StackCipher<__K>, Ctx>` for each of `fields`,
-/// under the context it is derived or opened under — its literal's, `()`,
-/// or the caller's `__Ctx`, which is how a record inherits its leaves'
-/// demand for a supplied context.
+/// under the context it is derived or opened under in the impl for `which`
+/// — its literal's, `()`, or the caller's `NonEmpty<__T>`, which is how a
+/// record inherits its leaves' demand for a non-empty context.
 pub(crate) fn push_field_bounds(
     generics: &mut Generics,
     krate: &Path,
     fields: &[&Field],
     target: &Type,
     bound: FieldBound,
+    which: ContextImpl,
 ) {
     let trait_name: Ident = match bound {
         FieldBound::Encrypt => parse_quote!(EncryptFrom),
         FieldBound::DecryptField => parse_quote!(DecryptField),
+        FieldBound::DecryptInto => parse_quote!(DecryptInto),
     };
     let predicates = &mut generics.make_where_clause().predicates;
     for field in fields {
         let ty = &field.ty;
-        let context = field.field_context().ty();
+        let context = field.field_context().ty(krate, which);
         // Spanned at the field type, so a type that cannot be a field of the
         // record is reported there, not at the derive.
         predicates.push(parse_quote_spanned! {ty.span()=>
@@ -326,30 +383,36 @@ pub(crate) fn impl_sources(record: &Record, generic: Ident) -> (Vec<Type>, bool)
 /// struct literal over the fields' locals). Nothing is awaited, so the record
 /// settles as one batched call.
 ///
-/// `call(field, context)` renders one field's pending under `context`. The
-/// record's context (`__context`) goes to every field without a context of
-/// its own; the last such field takes it by move, the rest clone it.
+/// `call(field, context)` renders one field's pending under `context`, the
+/// expression [`FieldContext::expr`] gives the field in the impl for
+/// `which`. The caller's context (`__context`) goes to every field that
+/// uses it; the last such field takes it by move, the rest clone it.
 pub(crate) fn zip_fields(
+    krate: &Path,
     fields: &[&Field],
+    which: ContextImpl,
     mut call: impl FnMut(&Field, TokenStream) -> TokenStream,
     build: TokenStream,
 ) -> TokenStream {
-    let mut remaining = fields.iter().filter(|f| f.takes_callers_context()).count();
+    let mut remaining = fields
+        .iter()
+        .filter(|f| f.uses_callers_context(which))
+        .count();
 
     let mut chain = TokenStream::new();
     let mut pattern = TokenStream::new();
     for (index, field) in fields.iter().enumerate() {
-        let context = match field.field_context().own_expr() {
-            Some(own) => own,
-            None => {
-                remaining -= 1;
-                if remaining == 0 {
-                    quote!(__context)
-                } else {
-                    quote!(::core::clone::Clone::clone(&__context))
-                }
+        let caller = if field.uses_callers_context(which) {
+            remaining -= 1;
+            if remaining == 0 {
+                quote!(__context)
+            } else {
+                quote!(::core::clone::Clone::clone(&__context))
             }
+        } else {
+            TokenStream::new()
         };
+        let context = field.field_context().expr(krate, which, caller);
         let call = call(field, context);
         let local = &field.local;
         if index == 0 {
@@ -364,13 +427,15 @@ pub(crate) fn zip_fields(
     quote!(#chain.map(|#pattern| #build))
 }
 
-/// The fields, with what a row (`row_context` is the container's `context`
-/// prefix) fills in: `from` is the field's own name and `context` is
-/// `"<row_context>/<from>"`, each unless the field gives its own.
+/// The fields, with what a `struct` derive (`prefix` is the container's
+/// `context`) fills in: `from` is the field's own name and `context` is
+/// `"<prefix>/<from>"`, each unless the field gives its own.
 /// `#[stash(nested)]` opts a field out of the inferred context — it is handed
-/// `()`, which a nested row (a type carrying its own contexts) accepts and a
-/// leaf refuses.
-fn collect(fields: &Fields, row_context: Option<&LitStr>) -> Result<Vec<Field>> {
+/// the caller's as it is, which a nested `struct` derive (a type carrying its
+/// own contexts) composes with them and a leaf accepts only as a
+/// `NonEmpty<_>`. `from` and `nested` reach into the plaintext, so they
+/// exist only with `struct = ..`.
+fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
     fields
         .iter()
         .enumerate()
@@ -380,13 +445,40 @@ fn collect(fields: &Fields, row_context: Option<&LitStr>) -> Result<Vec<Field>> 
                 Some(ident) => Member::Named(ident.clone()),
                 None => Member::Unnamed(syn::Index::from(index)),
             };
-            if attrs.nested && row_context.is_none() {
-                return Err(syn::Error::new_spanned(
-                    &field.ty,
-                    "`nested` opts a row field out of its inferred context, so it applies only \
-                     with `row = ..` on the struct; a `plaintext` record's `from` field with no \
-                     `context` is already handed `()`",
-                ));
+            if prefix.is_none() {
+                if let Some(from) = &attrs.from {
+                    return Err(syn::Error::new(
+                        from.span(),
+                        "`from = ..` reaches into a field of the plaintext, which is what \
+                         `#[stash(struct = ..)]` does: a `plaintext` record derives every field \
+                         from the whole value",
+                    ));
+                }
+                if attrs.nested {
+                    return Err(syn::Error::new_spanned(
+                        &field.ty,
+                        "`nested` opts a field out of the context a `struct` derive infers, so \
+                         it applies only with `struct = ..`; a `plaintext` record's field with no \
+                         `context` is already handed the caller's",
+                    ));
+                }
+            }
+            // A literal context becomes a `nonempty!(..)`, which refuses an
+            // empty one at compile time anyway; say so here, at the
+            // attribute, with the alternative that applies.
+            if let Some(context) = &attrs.context {
+                if context.value().is_empty() {
+                    let message = if prefix.is_some() {
+                        "an empty `context` is rejected when a value is encrypted: name the \
+                         field (e.g. \"users/email\"), or drop the attribute to use the inferred \
+                         `\"<context>/<field>\"`"
+                    } else {
+                        "an empty `context` is rejected when a value is encrypted: name the \
+                         field (e.g. \"users/email\"), or drop the attribute to hand the field \
+                         the caller's context"
+                    };
+                    return Err(syn::Error::new(context.span(), message));
+                }
             }
             let kind = match attrs.default {
                 Some(default) => {
@@ -403,22 +495,22 @@ fn collect(fields: &Fields, row_context: Option<&LitStr>) -> Result<Vec<Field>> 
                     }
                     Kind::Default(default)
                 }
-                None => match row_context {
-                    Some(row_context) => {
+                None => match prefix {
+                    Some(prefix) => {
                         let from = attrs.from.unwrap_or_else(|| member.clone());
                         let context = if attrs.nested {
                             // The field's type carries its own contexts; it
-                            // is handed `()` (`FieldContext::Unit`).
+                            // is handed the caller's (`FieldContext::Caller`).
                             None
+                        } else if let Some(lit) = attrs.context {
+                            Some(lit)
                         } else {
-                            Some(attrs.context.unwrap_or_else(|| {
-                                let column = match &from {
-                                    Member::Named(ident) => ident.to_string(),
-                                    Member::Unnamed(index) => index.index.to_string(),
-                                };
-                                let prefix = row_context.value();
-                                LitStr::new(&format!("{prefix}/{column}"), member.span())
-                            }))
+                            let column = match &from {
+                                Member::Named(ident) => ident.to_string(),
+                                Member::Unnamed(index) => index.index.to_string(),
+                            };
+                            let prefix = prefix.value();
+                            Some(LitStr::new(&format!("{prefix}/{column}"), member.span()))
                         };
                         Kind::Derived {
                             context,
@@ -427,7 +519,7 @@ fn collect(fields: &Fields, row_context: Option<&LitStr>) -> Result<Vec<Field>> 
                     }
                     None => Kind::Derived {
                         context: attrs.context,
-                        from: attrs.from,
+                        from: None,
                     },
                 },
             };
@@ -451,11 +543,11 @@ mod tests {
         Record::parse(&input)
     }
 
-    /// The field's literal context, for assertions.
-    fn literal(field: &Field) -> String {
+    /// The field's own context, for assertions.
+    fn own(field: &Field) -> String {
         match field.field_context() {
-            FieldContext::Literal(lit) => lit.value(),
-            other => panic!("expected a literal context, got {other:?}"),
+            FieldContext::Own(lit) => lit.value(),
+            other => panic!("expected a context of the field's own, got {other:?}"),
         }
     }
 
@@ -481,15 +573,32 @@ mod tests {
     }
 
     #[test]
-    fn from_needs_a_named_plaintext() {
-        let err = parse(parse_quote! {
-            struct Row {
-                #[stash(from = age)]
-                age: EncryptedAge,
-            }
-        })
-        .unwrap_err();
-        assert!(err.to_string().contains("plaintext type must be named"));
+    fn from_applies_only_with_struct() {
+        // `from` reaches into the plaintext, which is what `struct = ..`
+        // means; a `plaintext` record derives every field from the whole
+        // value, named or not.
+        for input in [
+            parse_quote! {
+                struct Row {
+                    #[stash(from = age)]
+                    age: EncryptedAge,
+                }
+            },
+            parse_quote! {
+                #[stash(plaintext = User)]
+                struct Row {
+                    #[stash(from = age, context = "users/age")]
+                    age: EncryptedAge,
+                }
+            },
+        ] {
+            let err = parse(input).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("what `#[stash(struct = ..)]` does"),
+                "{err}"
+            );
+        }
     }
 
     #[test]
@@ -532,7 +641,7 @@ mod tests {
         // typed) plaintext field — the crossed-field failure the derive
         // exists to prevent — so every singular attribute rejects a repeat.
         let err = parse(parse_quote! {
-            #[stash(plaintext = User)]
+            #[stash(struct = User, context = "users")]
             struct Rec {
                 #[stash(from = expected, from = other)]
                 c: StackCipherText,
@@ -588,10 +697,19 @@ mod tests {
         })
         .unwrap_err();
         assert!(err.to_string().contains("`crate` is given twice"));
+
+        let err = parse(parse_quote! {
+            #[stash(struct = User, struct = User, context = "users")]
+            struct Rec {
+                c: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("`struct` is given twice"));
     }
 
     #[test]
-    fn a_literal_empty_context_is_rejected() {
+    fn a_literal_empty_context_is_rejected_with_the_alternative_that_applies() {
         let err = parse(parse_quote! {
             struct Rec {
                 #[stash(context = "")]
@@ -600,39 +718,20 @@ mod tests {
         })
         .unwrap_err();
         assert!(err.to_string().contains("empty `context`"));
-        assert!(err.to_string().contains("drop the attribute"));
-    }
+        assert!(err
+            .to_string()
+            .contains("hand the field the caller's context"));
 
-    #[test]
-    fn an_empty_context_on_a_from_field_gets_from_specific_advice() {
-        // "Drop the attribute" is a dead end for a `from` field — it is
-        // never handed the record's context — so the advice must not offer
-        // it, whichever order the attributes were written in.
-        for input in [
-            parse_quote! {
-                #[stash(plaintext = User)]
-                struct Row {
-                    #[stash(from = email, context = "")]
-                    email: StackCipherText,
-                }
-            },
-            parse_quote! {
-                #[stash(plaintext = User)]
-                struct Row {
-                    #[stash(context = "", from = email)]
-                    email: StackCipherText,
-                }
-            },
-        ] {
-            let err = parse(input).unwrap_err();
-            let message = err.to_string();
-            assert!(message.contains("empty `context`"), "{message}");
-            assert!(
-                message.contains("never handed the record's context"),
-                "{message}"
-            );
-            assert!(!message.contains("drop the attribute"), "{message}");
-        }
+        let err = parse(parse_quote! {
+            #[stash(struct = User, context = "users")]
+            struct Rec {
+                #[stash(context = "")]
+                email: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("empty `context`"));
+        assert!(err.to_string().contains("use the inferred"));
     }
 
     #[test]
@@ -660,25 +759,9 @@ mod tests {
     }
 
     #[test]
-    fn from_addresses_tuple_plaintexts_by_index() {
+    fn a_struct_fills_in_from_and_context() {
         let record = parse(parse_quote! {
-            #[stash(plaintext = Pair)]
-            struct Rec {
-                #[stash(from = 0, context = "pair/0")]
-                a: StackCipherText,
-                #[stash(from = 1, context = "pair/1")]
-                b: StackCipherText,
-            }
-        })
-        .unwrap();
-        assert!(matches!(record.fields[0].from(), Some(Member::Unnamed(i)) if i.index == 0));
-        assert!(matches!(record.fields[1].from(), Some(Member::Unnamed(i)) if i.index == 1));
-    }
-
-    #[test]
-    fn a_row_fills_in_from_and_context() {
-        let record = parse(parse_quote! {
-            #[stash(row = crate::model::UserProfile<T>, context = "user_profiles")]
+            #[stash(struct = crate::model::UserProfile<T>, context = "user_profiles")]
             struct EncryptedUser {
                 age: EncryptedAge,
                 #[stash(from = email_address)]
@@ -692,6 +775,7 @@ mod tests {
             }
         })
         .unwrap();
+        assert!(record.by_field);
         assert_eq!(record.plaintexts.len(), 1);
         let (age, email, name, address, version) = (
             &record.fields[0],
@@ -702,39 +786,43 @@ mod tests {
         );
         // Own name under the container's prefix.
         assert!(matches!(age.from(), Some(Member::Named(m)) if m == "age"));
-        assert_eq!(literal(age), "user_profiles/age");
+        assert_eq!(own(age), "user_profiles/age");
         // `from` overrides the field; the context follows the plaintext field.
         assert!(matches!(email.from(), Some(Member::Named(m)) if m == "email_address"));
-        assert_eq!(literal(email), "user_profiles/email_address");
-        // `context` is taken verbatim.
+        assert_eq!(own(email), "user_profiles/email_address");
+        // `context` is taken verbatim; like the inferred ones, the caller's
+        // context extends it.
         assert!(matches!(name.from(), Some(Member::Named(m)) if m == "name"));
-        assert_eq!(literal(name), "legacy/name");
-        // `nested`: no inferred context — the field is handed `()`.
+        assert_eq!(own(name), "legacy/name");
+        assert!(name.uses_callers_context(ContextImpl::NonEmpty));
+        assert!(!name.uses_callers_context(ContextImpl::Unit));
+        // `nested`: no inferred context — the field is handed the caller's.
         assert!(matches!(address.from(), Some(Member::Named(m)) if m == "address"));
-        assert!(matches!(address.field_context(), FieldContext::Unit));
+        assert!(matches!(address.field_context(), FieldContext::Caller));
+        assert!(address.uses_callers_context(ContextImpl::Unit));
         assert!(!version.is_derived());
     }
 
     #[test]
-    fn a_tuple_row_is_reached_and_named_by_index() {
+    fn a_tuple_struct_is_reached_and_named_by_index() {
         let record = parse(parse_quote! {
-            #[stash(row = Reading, context = "readings")]
+            #[stash(struct = Reading, context = "readings")]
             struct EncryptedReading(EncryptedAge, StackCipherText);
         })
         .unwrap();
         assert!(matches!(record.fields[1].from(), Some(Member::Unnamed(i)) if i.index == 1));
-        assert_eq!(literal(&record.fields[0]), "readings/0");
-        assert_eq!(literal(&record.fields[1]), "readings/1");
+        assert_eq!(own(&record.fields[0]), "readings/0");
+        assert_eq!(own(&record.fields[1]), "readings/1");
     }
 
     #[test]
-    fn a_row_requires_a_container_context() {
+    fn a_struct_requires_a_container_context() {
         // The prefix is part of the stored data's identity, so it is never
         // inferred from the Rust type's name: two types named `Account` in
-        // different modules would otherwise silently share every column
+        // different modules would otherwise silently share every field
         // context.
         let err = parse(parse_quote! {
-            #[stash(row = User)]
+            #[stash(struct = User)]
             struct EncryptedUser {
                 age: EncryptedAge,
             }
@@ -742,11 +830,11 @@ mod tests {
         .unwrap_err();
         let message = err.to_string();
         assert!(message.contains("needs a `context = \"..\"`"), "{message}");
-        assert!(message.contains("naming the table"), "{message}");
+        assert!(message.contains("naming the stored data"), "{message}");
     }
 
     #[test]
-    fn a_container_context_requires_a_row() {
+    fn a_container_context_requires_a_struct() {
         let err = parse(parse_quote! {
             #[stash(plaintext = User, context = "users")]
             struct Rec {
@@ -754,7 +842,7 @@ mod tests {
             }
         })
         .unwrap_err();
-        assert!(err.to_string().contains("applies only with `row = ..`"));
+        assert!(err.to_string().contains("applies only with `struct = ..`"));
 
         let err = parse(parse_quote! {
             #[stash(context = "users")]
@@ -763,37 +851,35 @@ mod tests {
             }
         })
         .unwrap_err();
-        assert!(err.to_string().contains("applies only with `row = ..`"));
+        assert!(err.to_string().contains("applies only with `struct = ..`"));
     }
 
     #[test]
     fn an_empty_container_context_is_rejected() {
         let err = parse(parse_quote! {
-            #[stash(row = User, context = "")]
+            #[stash(struct = User, context = "")]
             struct EncryptedUser {
                 age: EncryptedAge,
             }
         })
         .unwrap_err();
-        assert!(err.to_string().contains("name the table"));
+        assert!(err.to_string().contains("name the stored data"));
     }
 
     #[test]
-    fn nested_applies_only_in_a_row_and_excludes_context() {
-        // Outside a row it is at best redundant (`from` with no `context` is
-        // already handed `()`), so it is rejected rather than ignored.
+    fn nested_applies_only_with_struct_and_excludes_context() {
         let err = parse(parse_quote! {
             #[stash(plaintext = User)]
             struct Rec {
-                #[stash(nested, from = user)]
+                #[stash(nested)]
                 user: EncryptedUser,
             }
         })
         .unwrap_err();
-        assert!(err.to_string().contains("applies only with `row = ..`"));
+        assert!(err.to_string().contains("applies only with `struct = ..`"));
 
         let err = parse(parse_quote! {
-            #[stash(row = Account, context = "accounts")]
+            #[stash(struct = Account, context = "accounts")]
             struct Rec {
                 #[stash(nested, context = "accounts/user")]
                 user: EncryptedUser,
@@ -804,21 +890,21 @@ mod tests {
     }
 
     #[test]
-    fn row_and_plaintext_are_exclusive() {
+    fn struct_and_plaintext_are_exclusive() {
         let err = parse(parse_quote! {
-            #[stash(row = User, plaintext = User)]
+            #[stash(struct = User, plaintext = User)]
             struct Rec {
                 age: EncryptedAge,
             }
         })
         .unwrap_err();
-        assert!(err.to_string().contains("give `row = ..` alone"));
+        assert!(err.to_string().contains("give one of them"));
     }
 
     #[test]
-    fn a_row_must_name_a_struct_directly() {
+    fn a_struct_must_name_a_struct_directly() {
         let err = parse(parse_quote! {
-            #[stash(row = &User)]
+            #[stash(struct = &User)]
             struct Rec {
                 age: EncryptedAge,
             }
@@ -827,7 +913,7 @@ mod tests {
         assert!(err.to_string().contains("must name a struct directly"));
 
         let err = parse(parse_quote! {
-            #[stash(row = <T as Trait>::Row)]
+            #[stash(struct = <T as Trait>::Row)]
             struct Rec {
                 age: EncryptedAge,
             }
@@ -837,28 +923,30 @@ mod tests {
     }
 
     #[test]
-    fn fields_classify() {
+    fn plaintext_fields_classify() {
         let record = parse(parse_quote! {
-            #[stash(plaintext = User, plaintext = Admin)]
-            struct Row {
-                #[stash(from = age, context = "users/age", decrypt)]
-                age: EncryptedAge,
-                whole: RowTerm,
+            #[stash(plaintext = u32, plaintext = u64)]
+            struct Rec {
+                #[stash(context = "users/age", decrypt)]
+                c: StackCipherText,
+                hm: EqualityTerm,
                 #[stash(default = SchemaVersion::V3)]
                 v: SchemaVersion,
             }
         })
         .unwrap();
+        assert!(!record.by_field);
         assert_eq!(record.plaintexts.len(), 2);
         assert_eq!(record.fields.len(), 3);
-        assert!(matches!(record.fields[0].from(), Some(Member::Named(name)) if name == "age"));
-        assert!(matches!(
-            record.fields[0].field_context(),
-            FieldContext::Literal(literal) if literal.value() == "users/age"
-        ));
+        // Nothing is derived from a field of the plaintext.
+        assert!(record.fields.iter().all(|f| f.from().is_none()));
+        assert_eq!(own(&record.fields[0]), "users/age");
         assert!(record.fields[0].decrypt);
         assert!(record.fields[1].is_derived());
-        assert!(record.fields[1].from().is_none());
+        assert!(matches!(
+            record.fields[1].field_context(),
+            FieldContext::Caller
+        ));
         assert!(!record.fields[2].is_derived());
     }
 }

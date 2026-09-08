@@ -59,8 +59,13 @@
 //! always bound, so the ciphertext is cryptographically tied to its ZeroKMS
 //! data key (key binding); a caller AAD (e.g. a
 //! [`ContextTag`](vitaminc_aead::ContextTag)) adds a further binding layer.
-//! Every data key is requested with an empty descriptor: stack-encrypt does
-//! not use descriptors.
+//! Every data key is requested under a ZeroKMS **descriptor**: the context
+//! the tree is sealed under, rendered as a string by
+//! [`Descriptor`]. ZeroKMS HMACs the descriptor into the
+//! key `tag` and demands the same descriptor to re-derive the key, so the
+//! binding the leaf AAD makes locally is enforced at ZeroKMS as well, and
+//! the descriptor is what ZeroKMS logs per retrieval. The lock context on
+//! each request is empty.
 //!
 //! This is a fresh framing and is intentionally **not** byte-compatible with
 //! `cipherstash-client`'s `EncryptedRecord` AAD (a raw `descriptor || tag`
@@ -84,6 +89,8 @@ use vitaminc_aead::{
 };
 use vitaminc_encrypt::{Aes256Cipher, AesCipherText, Key as AesKey};
 use vitaminc_protected::{Controlled, Protected};
+
+use crate::Descriptor;
 
 /// The passthrough payload type: type-erased, as for Rust-native vitaminc
 /// ciphers. Callers box on the way in and downcast on the way out.
@@ -111,6 +118,14 @@ pub enum Error {
     /// ZeroKMS returned a different number of keys than were requested.
     #[error("expected {expected} data keys from ZeroKMS but received {received}")]
     KeyCountMismatch { expected: usize, received: usize },
+    /// A context rendered to a descriptor longer than ZeroKMS can bind
+    /// ([`Descriptor::MAX_LEN`]). Raised before any request is sent, so no
+    /// key is minted or retrieved for the batch.
+    #[error(
+        "context renders to a {len}-byte ZeroKMS descriptor; the limit is {} bytes",
+        Descriptor::MAX_LEN
+    )]
+    DescriptorTooLong { len: usize },
     /// Building a ZeroKMS client from the environment failed: credentials or
     /// client key missing or malformed.
     ///
@@ -120,17 +135,9 @@ pub enum Error {
     /// would then change this enum's shape under a downstream match.
     #[error("could not build a ZeroKMS client from the environment: {0}")]
     Config(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
-    /// The per-field encryption context was empty. An empty context defeats
-    /// per-field domain separation: equal plaintexts in different fields
-    /// would produce identical index terms, ORE/OPE keys would be shared
-    /// across fields, and ciphertexts would be transplantable between them.
-    #[error("the encryption context must not be empty (it domain-separates fields)")]
-    EmptyContext,
-    /// An index term failed to derive. An empty context is *not* reported
-    /// here — it folds into [`Error::EmptyContext`] so every path spells the
-    /// same misconfiguration the same way.
+    /// An index term failed to derive.
     #[error(transparent)]
-    Term(crate::sem::TermError),
+    Term(#[from] crate::sem::TermError),
     /// A third-party [`EncryptFrom`](crate::target::EncryptFrom) /
     /// [`DecryptInto`](crate::target::DecryptInto) implementation failed
     /// for a reason of its own.
@@ -162,15 +169,6 @@ pub enum Error {
 impl From<stack_kms::StackKmsBuilderError> for Error {
     fn from(error: stack_kms::StackKmsBuilderError) -> Self {
         Error::Config(Box::new(error))
-    }
-}
-
-impl From<crate::sem::TermError> for Error {
-    fn from(error: crate::sem::TermError) -> Self {
-        match error {
-            crate::sem::TermError::EmptyContext => Error::EmptyContext,
-            other => Error::Term(other),
-        }
     }
 }
 
@@ -443,54 +441,67 @@ fn hmac_prf_from_index_key(index_key: &stack_kms::IndexKey) -> vitaminc_hmac::Hm
     // `[u8; 32]` is `Copy`: the move into `Protected` leaves this stack copy
     // behind, so wipe it before returning.
     let mut key = *index_key.key();
-    let prf = vitaminc_hmac::HmacSha256Prf::new(Protected::new(key));
+    let prf = <vitaminc_hmac::HmacSha256Prf as vitaminc_prf::PrfKeyInit>::new(Protected::new(key));
     key.zeroize();
     prf
 }
 
 impl<K: DataKeySource> StackCipher<K> {
     /// Encrypt a value, binding `aad`, and seal it against fresh ZeroKMS data
-    /// keys in a single batched `generate_keys` call.
+    /// keys in a single batched `generate_keys` call. Every key is requested
+    /// under the [`Descriptor`] of `aad`.
     pub async fn encrypt<'a, T, A>(&self, value: T, aad: A) -> Result<StackCipherText, Error>
     where
         T: Encrypt,
         A: IntoAad<'a>,
     {
-        let pending = value.encrypt_with_aad(self, aad)?;
-        pending.seal(self).await
+        let aad = aad.into_aad_piece();
+        let pending = value.encrypt_with_aad(self, aad.clone().into_aad())?;
+        pending.seal(self, aad).await
     }
 
     /// Decrypt a [`StackCipherText`] into `T`, authenticating against `aad`.
     ///
     /// Thin wrapper over [`decipher`](Self::decipher): one batched
-    /// `retrieve_keys` call, then `T`'s [`Decrypt`] impl drives the returned
-    /// [`StackDecipher`] with `aad` — exactly as `Aes256Cipher::decrypt_with_aad`
-    /// drives `AesDecipher`.
+    /// `retrieve_keys` call under the [`Descriptor`] of `aad`, then `T`'s
+    /// [`Decrypt`] impl drives the returned [`StackDecipher`] with `aad` —
+    /// exactly as `Aes256Cipher::decrypt_with_aad` drives `AesDecipher`.
     pub async fn decrypt<'a, T, A>(&self, ciphertext: StackCipherText, aad: A) -> Result<T, Error>
     where
         T: Decrypt<'static> + 'static,
         A: IntoAad<'a>,
     {
-        let decipher = self.decipher(ciphertext).await?;
-        T::decrypt_with_aad(decipher, aad).map_err(Error::from)
+        let aad = aad.into_aad_piece();
+        let decipher = self.decipher(ciphertext, aad.clone()).await?;
+        T::decrypt_with_aad(decipher, aad.into_aad()).map_err(Error::from)
     }
 
-    /// Fetch every leaf's data key (one batched `retrieve_keys` call) and bind
-    /// them onto the ciphertext, returning a synchronous [`Decipher`] that does
-    /// the AEAD opening as the value's [`Decrypt`] impl drives it.
+    /// Fetch every leaf's data key (one batched `retrieve_keys` call, every
+    /// key under the [`Descriptor`] of `aad`) and bind them onto the
+    /// ciphertext, returning a synchronous [`Decipher`] that does the AEAD
+    /// opening as the value's [`Decrypt`] impl drives it.
     ///
     /// This is the decrypt-side counterpart to passing `&cipher` (a [`Cipher`])
     /// on the encrypt side, mirroring `Aes256Cipher::decipher`: the ZeroKMS I/O
     /// is front-loaded here, and the AAD is supplied per call by
     /// [`Decrypt::decrypt_with_aad`], so `Decrypt` impls that derive their own
     /// AAD (e.g. `vitaminc_aead::Element`) behave identically to `AesDecipher`.
+    /// The one thing ZeroKMS needs before that drive is the descriptor the
+    /// keys were generated under, so `aad` is the context the value was
+    /// sealed under — the same value, in the same shape, that the drive will
+    /// present (an `Element`'s own derivation is applied by the drive, not
+    /// here). [`decrypt`](Self::decrypt) does both steps.
     ///
     /// Settles through the target layer's request carrier
     /// ([`decipher_pending`](crate::target)), so this and
     /// `decrypt_into` share one definition of how leaves map to retrieve
     /// requests and one path to ZeroKMS.
-    pub async fn decipher(&self, ciphertext: StackCipherText) -> Result<StackDecipher, Error> {
-        crate::target::decipher_pending(self, ciphertext)
+    pub async fn decipher<'a>(
+        &self,
+        ciphertext: StackCipherText,
+        aad: impl IntoAad<'a>,
+    ) -> Result<StackDecipher, Error> {
+        crate::target::decipher_pending(self, ciphertext, Descriptor::of(aad))
             .settle()
             .await
     }
@@ -846,17 +857,26 @@ impl PendingStackCipherText {
     }
 
     /// Generate one data key per keyed leaf (one batched ZeroKMS call — none
-    /// for a passthrough-only tree) and seal the whole tree.
+    /// for a passthrough-only tree), every key under the [`Descriptor`] of
+    /// `aad`, and seal the whole tree.
+    ///
+    /// `aad` is the context the tree was built under — the value passed to
+    /// `encrypt_with_aad`, in the same shape (see the
+    /// [descriptor docs](crate::descriptor)). The tree itself only carries
+    /// the *derived* per-leaf AADs, so the root is named here; nothing can
+    /// check that the two agree, which is why [`StackCipher::encrypt`], which
+    /// does both steps from one value, is the form to prefer.
     ///
     /// Settles through the target layer's request carrier
     /// ([`seal_pending`](crate::target)), so this and
     /// `encrypt_into_with_context` into a `StackCipherText` share one definition of how a tree
     /// is sealed and one path to ZeroKMS.
-    pub async fn seal<K: DataKeySource>(
+    pub async fn seal<'a, K: DataKeySource>(
         self,
         cipher: &StackCipher<K>,
+        aad: impl IntoAad<'a>,
     ) -> Result<StackCipherText, Error> {
-        self.into_pending(cipher).settle().await
+        self.into_pending(cipher, aad).settle().await
     }
 
     /// Turn this tree into a [`Pending`](crate::target::Pending) request
@@ -877,20 +897,17 @@ impl PendingStackCipherText {
     /// opened symmetrically by [`StackCipher::decrypt`]. But a tree that
     /// will be opened through the target layer's
     /// [`decrypt_into`](crate::target::DecryptInto) — a per-field record
-    /// assembly in an FFI front-end, say — is bound by that layer's rule: a
-    /// *degenerate* context (see
-    /// [`is_degenerate_aad`](crate::target::is_degenerate_aad)) is refused
-    /// on open with [`Error::EmptyContext`], so sealing under one here
-    /// produces ciphertext that path can never read. Validate the context
-    /// before driving [`Encrypt`] —
-    /// [`supplied_aad`](crate::target::supplied_aad) is the checked
-    /// encoder — until vitaminc#291 moves non-emptiness into the context
-    /// type and makes the mismatch unrepresentable.
-    pub fn into_pending<K>(
+    /// assembly in an FFI front-end, say — is bound by that layer's rule: it
+    /// opens only under a [`NonEmpty`](crate::NonEmpty) context, so seal
+    /// under one here (a `NonEmpty<T>` is an [`IntoAad`] like any other, and
+    /// encodes exactly as `T` does) or the ciphertext can never be read that
+    /// way.
+    pub fn into_pending<'c, 'a, K>(
         self,
-        cipher: &StackCipher<K>,
-    ) -> crate::target::Pending<'_, StackCipherText, K> {
-        crate::target::seal_pending(cipher, self)
+        cipher: &'a StackCipher<K>,
+        aad: impl IntoAad<'c>,
+    ) -> crate::target::Pending<'a, StackCipherText, K> {
+        crate::target::seal_pending(cipher, self, Descriptor::of(aad))
     }
 
     /// Recursively seal, drawing one key per leaf from `keys` in traversal order.
@@ -1258,6 +1275,19 @@ impl<'c, K> MapCipher for PendingMapCipher<'c, K> {
         Ok(self)
     }
 
+    fn passthrough_entry_boxed<S>(
+        self,
+        key: S,
+        value: Box<dyn Any + Send + 'static>,
+    ) -> Result<Self, Self::Error>
+    where
+        S: Into<Cow<'static, str>>,
+    {
+        // This cipher's passthrough type *is* `Box<dyn Any + Send>`, so the
+        // type-erased box is already the payload — same as `passthrough_boxed`.
+        self.passthrough_entry(key, value)
+    }
+
     fn end(self) -> Result<Self::Ok, Self::Error> {
         // Finalising with a pending key would silently drop the entry.
         if self.current_key.is_some() {
@@ -1405,6 +1435,7 @@ impl<'c> Decipher<'c> for StackDecipher {
                 visitor.visit_map(StackMapAccess {
                     entries: entries.into_iter(),
                     aad: aad.into_aad(),
+                    pending: None,
                 })
             }
             CipherText::EmptyMap(keyed) => {
@@ -1414,6 +1445,7 @@ impl<'c> Decipher<'c> for StackDecipher {
                 visitor.visit_map(StackMapAccess {
                     entries: Vec::new().into_iter(),
                     aad,
+                    pending: None,
                 })
             }
             _ => Err(Unspecified),
@@ -1506,22 +1538,56 @@ impl<'c> SeqAccess<'c> for StackSeqAccess {
 struct StackMapAccess<'a> {
     entries: std::vec::IntoIter<(String, KeyedCipherText)>,
     aad: Aad<'a>,
+    /// The entry handed out by `next_key` and not yet consumed by
+    /// `next_value` / `next_passthrough`. Held as ciphertext rather than
+    /// decrypted up front so the caller can choose the plaintext type after
+    /// seeing the key — see [`MapAccess::next_key`] — alongside the entry
+    /// AAD it was sealed under, derived once here so the key itself moves
+    /// out to the caller.
+    pending: Option<(Aad<'static>, KeyedCipherText)>,
 }
 
 impl<'c, 'a> MapAccess<'c> for StackMapAccess<'a> {
     type Error = Unspecified;
 
-    fn next_entry<T: Decrypt<'c> + 'c>(&mut self) -> Result<Option<(String, T)>, Self::Error> {
+    fn next_key(&mut self) -> Result<Option<String>, Self::Error> {
+        // A still-pending entry means the caller skipped a value. Refused
+        // rather than tolerated: an entry whose value is never opened is an
+        // entry whose AAD binding is never verified.
+        if self.pending.is_some() {
+            return Err(Unspecified);
+        }
         match self.entries.next() {
             Some((key, ct)) => {
-                // Mirror `PendingMapCipher::encrypt_value`: the value was sealed
-                // against `for_map_entry(key)`, so a swapped or renamed key
-                // fails here.
-                let entry_aad = self.aad.for_map_entry(&key);
-                let value = T::decrypt_with_aad(StackDecipher::over(ct), entry_aad)?;
-                Ok(Some((key, value)))
+                // Mirror `PendingMapCipher::encrypt_value`: the value was
+                // sealed against `for_map_entry(key)`, so a swapped or
+                // renamed key fails when the entry is opened.
+                self.pending = Some((self.aad.for_map_entry(&key), ct));
+                Ok(Some(key))
             }
             None => Ok(None),
+        }
+    }
+
+    fn next_value<T: Decrypt<'c> + 'c>(&mut self) -> Result<T, Self::Error> {
+        let (entry_aad, ct) = self.pending.take().ok_or(Unspecified)?;
+        T::decrypt_with_aad(StackDecipher::over(ct), entry_aad)
+    }
+
+    fn next_passthrough(&mut self) -> Result<Box<dyn Any + Send + 'static>, Self::Error> {
+        match self.pending.take() {
+            Some((_key, CipherText::Passthrough(value))) => Ok(value),
+            // A sealed value under a key the caller asked to read as a
+            // passthrough: refuse rather than hand it back with its tag
+            // unchecked — but keep the entry pending. The refusal is the
+            // caller's answer, not a reason to lose the entry: it can still
+            // open it with `next_value`, and until it does `next_key` keeps
+            // refusing to move past it.
+            Some(entry) => {
+                self.pending = Some(entry);
+                Err(Unspecified)
+            }
+            None => Err(Unspecified),
         }
     }
 }
@@ -1529,6 +1595,69 @@ impl<'c, 'a> MapAccess<'c> for StackMapAccess<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn map_access(entries: Vec<(&str, KeyedCipherText)>) -> StackMapAccess<'static> {
+        StackMapAccess {
+            entries: entries
+                .into_iter()
+                .map(|(key, ct)| (key.to_string(), ct))
+                .collect::<Vec<_>>()
+                .into_iter(),
+            aad: Aad::from_slice(b"map"),
+            pending: None,
+        }
+    }
+
+    #[test]
+    fn a_passthrough_entry_is_read_back_as_the_boxed_value() {
+        let mut map = map_access(vec![("plain", CipherText::Passthrough(Box::new(7u32)))]);
+
+        assert_eq!(map.next_key(), Ok(Some("plain".to_string())));
+        let value = map.next_passthrough().expect("passthrough entry");
+        assert_eq!(value.downcast_ref::<u32>(), Some(&7));
+        assert_eq!(map.next_key(), Ok(None));
+    }
+
+    /// Asking for a sealed entry as a passthrough is refused, and the entry
+    /// stays pending: it is neither handed back unverified nor lost, so the
+    /// caller can still open it with `next_value` and cannot skip it.
+    #[test]
+    fn a_sealed_entry_survives_being_misread_as_a_passthrough() {
+        let mut map = map_access(vec![
+            ("sealed", CipherText::Sequence(vec![])),
+            ("plain", CipherText::Passthrough(Box::new(7u32))),
+        ]);
+
+        assert_eq!(map.next_key(), Ok(Some("sealed".to_string())));
+        assert!(map.next_passthrough().is_err());
+        // Still pending: the map refuses to advance past an unopened entry.
+        assert_eq!(map.next_key(), Err(Unspecified));
+        // And the refusal is repeatable, not a one-shot that then drops it.
+        assert!(map.next_passthrough().is_err());
+        assert_eq!(map.next_key(), Err(Unspecified));
+    }
+
+    /// A draw with nothing pending — before any `next_key`, or after the
+    /// entry has already been taken — is a clean refusal, never a value and
+    /// never a panic. This is the guard that keeps an absent or unverified
+    /// value from being handed back, so a refactor from `ok_or(..)?` to an
+    /// `unwrap` would regress silently without it.
+    #[test]
+    fn drawing_a_value_with_nothing_pending_is_refused() {
+        let mut map = map_access(vec![("plain", CipherText::Passthrough(Box::new(7u32)))]);
+
+        // No `next_key` yet: nothing is pending.
+        assert!(map.next_value::<String>().is_err());
+        assert!(map.next_passthrough().is_err());
+
+        // A legitimate draw consumes the entry, so a second draw of either
+        // kind is refused too.
+        assert_eq!(map.next_key(), Ok(Some("plain".to_string())));
+        assert!(map.next_passthrough().is_ok());
+        assert!(map.next_passthrough().is_err());
+        assert!(map.next_value::<String>().is_err());
+        assert_eq!(map.next_key(), Ok(None));
+    }
 
     /// Byte-level pin for the [`leaf_aad`] derivation. This is part of the
     /// frozen leaf format: a change to the domain label, the version byte,

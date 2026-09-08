@@ -125,9 +125,15 @@ assert_eq!(plaintext, "secret message");
 //! Besides your AAD, the *shape* of a value is authenticated: an element cannot
 //! be spliced out of a sequence and passed off as a scalar, a map value cannot
 //! be moved under a different key, and "absent" / "empty" are themselves
-//! sealed markers rather than inferable from structure. A tampered, re-homed,
-//! or wrong-context ciphertext fails with [`Error::Aead`]; a failed or denied
-//! key retrieval surfaces as [`Error::Kms`].
+//! sealed markers rather than inferable from structure. A tampered or
+//! re-homed ciphertext fails with [`Error::Aead`]; a failed or denied key
+//! retrieval surfaces as [`Error::Kms`]. A ciphertext opened under the
+//! *wrong context* is refused by ZeroKMS first: every data key is bound to
+//! its context's [`Descriptor`], so the retrieve is denied
+//! ([`Error::Kms`], a forbidden request) before the AEAD runs — as
+//! `examples/encrypted_record.rs` shows against a live ZeroKMS. Only a key
+//! source that ignores descriptors (`FakeDataKeySource`, in tests) lets a
+//! wrong context reach the AEAD, where it is [`Error::Aead`].
 //!
 //! For one-row reads of a batch-encrypted collection, decrypt as
 //! [`Element<T>`](Element) under the same AAD used for the whole collection.
@@ -141,11 +147,14 @@ assert_eq!(plaintext, "secret message");
 //! are vitaminc's (`vitaminc_encrypt::Aes256Cipher`, AES-256-GCM under a random
 //! per-leaf nonce vitaminc generates itself). The ZeroKMS `iv` a [`SealedValue`]
 //! carries is *not* that nonce: it identifies the data key, and is sent back to
-//! ZeroKMS with the key `tag` to re-derive it. The types a caller needs from
+//! ZeroKMS with the key `tag` to re-derive it — under the same [`Descriptor`]
+//! (the leaf's context, rendered) the key was generated with, which ZeroKMS
+//! binds into the tag and logs. The types a caller needs from
 //! vitaminc are re-exported here. The [`cipher`] module docs describe the
 //! internals (batching, AAD derivation, wire format).
 
 pub mod cipher;
+pub mod descriptor;
 pub mod sem;
 pub mod target;
 
@@ -153,19 +162,27 @@ pub use cipher::{
     BoxedPassthrough, Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue,
     StackCipher, StackCipherBuilder, StackCipherText, StackDecipher,
 };
+pub use descriptor::Descriptor;
 pub use target::{
-    is_degenerate_aad, DecryptContext, DecryptField, DecryptFrom, DecryptInto, DecryptTarget,
-    Decryptable, EncryptContext, EncryptFrom, EncryptInto, EncryptTarget, Pending, PendingFuture,
-    Request, Responses, SuppliedContext,
+    DecryptField, DecryptFrom, DecryptInto, DecryptTarget, Decryptable, ElementContext,
+    EncryptFrom, EncryptInto, EncryptTarget, Pending, PendingFuture, Request, Responses,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they
 // don't have to depend on `vitaminc-aead` directly for the common path.
 pub use vitaminc_aead::{
-    Aad, Cipher, CipherText, ContextTag, Decipher, Decrypt, Element, Encrypt, IntoAad, Unspecified,
+    Aad, AadPiece, Cipher, CipherText, ContextTag, Decipher, Decrypt, Element, Encrypt, IntoAad,
+    Unspecified,
 };
 
-// Likewise the PRF context surface: a context newtype (the `SuppliedContext`
-// opt-in recipe) needs `IntoPrfContext` alongside `IntoAad`, and should not
-// need a direct `vitaminc-prf` dependency for it.
+// Likewise the PRF context surface: a context type of your own implements
+// `IntoPrfContext` alongside `IntoAad`, and should not need a direct
+// `vitaminc-prf` dependency for it.
 pub use vitaminc_prf::{IntoPrfContext, PrfContext};
+
+// And the proof every target-directed leaf asks for: a `NonEmpty<T>` is what
+// `encrypt_into_with_context` / `decrypt_into` take, built with `nonempty!`
+// (a literal, checked at compile time) or `NonEmpty::new` (a runtime value,
+// checked once); `MaybeEmpty` is what a context type of your own implements
+// to be wrapped. `#[derive(EncryptFrom)]` names these through this crate.
+pub use vitaminc_protected::{nonempty, nonempty_bytes, EmptyError, MaybeEmpty, NonEmpty};

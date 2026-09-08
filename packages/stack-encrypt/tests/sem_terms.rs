@@ -3,6 +3,7 @@
 
 use std::cmp::Ordering;
 
+use stack_encrypt::nonempty;
 use stack_encrypt::sem::{DefaultMatch, MatchConfig, MatchOptions, Tokenizer};
 use stack_encrypt::StackCipher;
 use stack_kms::{FakeDataKeySource, IdentifiedBy};
@@ -58,24 +59,42 @@ async fn generator_for(keyset: Uuid) -> StackCipher<FakeDataKeySource> {
 #[tokio::test]
 async fn equality_terms_are_deterministic() {
     let gen = generator().await;
-    let a = gen.equality_term("alice", "users/email").await.unwrap();
-    let b = gen.equality_term("alice", "users/email").await.unwrap();
+    let a = gen
+        .equality_term("alice", nonempty!("users/email"))
+        .await
+        .unwrap();
+    let b = gen
+        .equality_term("alice", nonempty!("users/email"))
+        .await
+        .unwrap();
     assert_eq!(a, b, "same value + descriptor must yield the same term");
 }
 
 #[tokio::test]
 async fn equality_terms_bind_the_descriptor() {
     let gen = generator().await;
-    let a = gen.equality_term("alice", "users/email").await.unwrap();
-    let b = gen.equality_term("alice", "users/name").await.unwrap();
+    let a = gen
+        .equality_term("alice", nonempty!("users/email"))
+        .await
+        .unwrap();
+    let b = gen
+        .equality_term("alice", nonempty!("users/name"))
+        .await
+        .unwrap();
     assert_ne!(a, b, "the descriptor must domain-separate terms");
 }
 
 #[tokio::test]
 async fn equality_terms_differ_by_value() {
     let gen = generator().await;
-    let a = gen.equality_term("alice", "users/email").await.unwrap();
-    let b = gen.equality_term("bob", "users/email").await.unwrap();
+    let a = gen
+        .equality_term("alice", nonempty!("users/email"))
+        .await
+        .unwrap();
+    let b = gen
+        .equality_term("bob", nonempty!("users/email"))
+        .await
+        .unwrap();
     assert_ne!(a, b);
 }
 
@@ -83,8 +102,14 @@ async fn equality_terms_differ_by_value() {
 async fn equality_terms_bind_the_index_key() {
     let gen_a = generator_for(Uuid::from_u128(1)).await;
     let gen_b = generator_for(Uuid::from_u128(2)).await;
-    let a = gen_a.equality_term("alice", "users/email").await.unwrap();
-    let b = gen_b.equality_term("alice", "users/email").await.unwrap();
+    let a = gen_a
+        .equality_term("alice", nonempty!("users/email"))
+        .await
+        .unwrap();
+    let b = gen_b
+        .equality_term("alice", nonempty!("users/email"))
+        .await
+        .unwrap();
     assert_ne!(a, b, "different keysets must yield different terms");
 }
 
@@ -93,11 +118,11 @@ async fn match_query_terms_are_contained_in_stored_terms() {
     let gen = generator().await;
 
     let stored = gen
-        .match_terms::<DefaultMatch>("alice wonderland", "users/bio")
+        .match_terms::<DefaultMatch>("alice wonderland", nonempty!("users/bio"))
         .await
         .unwrap();
     let query = gen
-        .match_terms::<DefaultMatch>("wonder", "users/bio")
+        .match_terms::<DefaultMatch>("wonder", nonempty!("users/bio"))
         .await
         .unwrap();
 
@@ -112,11 +137,11 @@ async fn match_is_case_insensitive_by_default() {
     let gen = generator().await;
 
     let stored = gen
-        .match_terms::<DefaultMatch>("Alice", "users/name")
+        .match_terms::<DefaultMatch>("Alice", nonempty!("users/name"))
         .await
         .unwrap();
     let query = gen
-        .match_terms::<DefaultMatch>("alice", "users/name")
+        .match_terms::<DefaultMatch>("alice", nonempty!("users/name"))
         .await
         .unwrap();
     assert_eq!(stored, query);
@@ -127,11 +152,11 @@ async fn match_binds_the_descriptor() {
     let gen = generator().await;
 
     let stored = gen
-        .match_terms::<DefaultMatch>("alice", "users/bio")
+        .match_terms::<DefaultMatch>("alice", nonempty!("users/bio"))
         .await
         .unwrap();
     let query = gen
-        .match_terms::<DefaultMatch>("alice", "users/name")
+        .match_terms::<DefaultMatch>("alice", nonempty!("users/name"))
         .await
         .unwrap();
     assert_ne!(stored, query, "match tokens must be descriptor-bound");
@@ -151,7 +176,7 @@ async fn match_positions_stay_within_the_filter() {
 
     let gen = generator().await;
     let term = gen
-        .match_terms::<SmallFilter>("a longer piece of text", "users/bio")
+        .match_terms::<SmallFilter>("a longer piece of text", nonempty!("users/bio"))
         .await
         .unwrap();
     assert!(!term.positions().is_empty());
@@ -166,14 +191,26 @@ async fn match_rejects_invalid_options() {
 
     // The v1 match indexer's bounds apply: k in 3..=16, m a power of two in
     // [32, 65536].
-    assert!(gen.match_terms::<TooBigK>("xxx", "d").await.is_err());
-    assert!(gen.match_terms::<TooSmallK>("xxx", "d").await.is_err());
-    assert!(gen.match_terms::<NonPowerOfTwoM>("xxx", "d").await.is_err());
-    assert!(gen.match_terms::<TooSmallM>("xxx", "d").await.is_err());
+    assert!(gen
+        .match_terms::<TooBigK>("xxx", nonempty!("d"))
+        .await
+        .is_err());
+    assert!(gen
+        .match_terms::<TooSmallK>("xxx", nonempty!("d"))
+        .await
+        .is_err());
+    assert!(gen
+        .match_terms::<NonPowerOfTwoM>("xxx", nonempty!("d"))
+        .await
+        .is_err());
+    assert!(gen
+        .match_terms::<TooSmallM>("xxx", nonempty!("d"))
+        .await
+        .is_err());
 
     // A zero-length n-gram must be an options error, not a panic.
     assert!(matches!(
-        gen.match_terms::<ZeroNgram>("xxx", "d").await,
+        gen.match_terms::<ZeroNgram>("xxx", nonempty!("d")).await,
         Err(stack_encrypt::sem::TermError::InvalidOptions(_))
     ));
 }
@@ -188,7 +225,8 @@ async fn match_rejects_text_that_yields_no_tokens() {
     for text in ["", "  "] {
         assert!(
             matches!(
-                gen.match_terms::<DefaultMatch>(text, "users/bio").await,
+                gen.match_terms::<DefaultMatch>(text, nonempty!("users/bio"))
+                    .await,
                 Err(TermError::EmptyTermText)
             ),
             "{text:?} must be rejected"
@@ -198,13 +236,15 @@ async fn match_rejects_text_that_yields_no_tokens() {
     // A probe shorter than the n-gram length could never match a stored gram
     // (v1 indexer semantics) — rejected instead of a silent false negative.
     assert!(matches!(
-        gen.match_terms::<DefaultMatch>("hi", "users/bio").await,
+        gen.match_terms::<DefaultMatch>("hi", nonempty!("users/bio"))
+            .await,
         Err(TermError::EmptyTermText)
     ));
 
     // Separator-only text under the Standard tokenizer.
     assert!(matches!(
-        gen.match_terms::<WordMatch>(" ,;:! ", "users/bio").await,
+        gen.match_terms::<WordMatch>(" ,;:! ", nonempty!("users/bio"))
+            .await,
         Err(TermError::EmptyTermText)
     ));
 }
@@ -214,11 +254,11 @@ async fn word_tokenizer_matches_whole_words() {
     let gen = generator().await;
 
     let stored = gen
-        .match_terms::<WordMatch>("alice in wonderland", "users/bio")
+        .match_terms::<WordMatch>("alice in wonderland", nonempty!("users/bio"))
         .await
         .unwrap();
     let query = gen
-        .match_terms::<WordMatch>("wonderland", "users/bio")
+        .match_terms::<WordMatch>("wonderland", nonempty!("users/bio"))
         .await
         .unwrap();
     assert!(stored.contains(&query));
@@ -228,9 +268,9 @@ async fn word_tokenizer_matches_whole_words() {
 async fn ore_terms_preserve_order_and_determinism() {
     let gen = generator().await;
 
-    let ten = gen.ore_term(10u64, "users/age").await.unwrap();
-    let ten_again = gen.ore_term(10u64, "users/age").await.unwrap();
-    let twenty = gen.ore_term(20u64, "users/age").await.unwrap();
+    let ten = gen.ore_term(10u64, nonempty!("users/age")).await.unwrap();
+    let ten_again = gen.ore_term(10u64, nonempty!("users/age")).await.unwrap();
+    let twenty = gen.ore_term(20u64, nonempty!("users/age")).await.unwrap();
 
     assert_eq!(ten, ten_again, "ORE terms must be deterministic");
     assert_eq!(ten.cmp(&twenty), Ordering::Less);
@@ -239,16 +279,25 @@ async fn ore_terms_preserve_order_and_determinism() {
 #[tokio::test]
 async fn ore_terms_bind_the_descriptor() {
     let gen = generator().await;
-    let a = gen.ore_term(10u64, "users/age").await.unwrap();
-    let b = gen.ore_term(10u64, "users/height").await.unwrap();
+    let a = gen.ore_term(10u64, nonempty!("users/age")).await.unwrap();
+    let b = gen
+        .ore_term(10u64, nonempty!("users/height"))
+        .await
+        .unwrap();
     assert_ne!(a, b, "per-descriptor ORE keys must differ");
 }
 
 #[tokio::test]
 async fn string_ore_terms_preserve_lexicographic_order() {
     let gen = generator().await;
-    let apple = gen.ore_term("apple", "users/name").await.unwrap();
-    let banana = gen.ore_term("banana", "users/name").await.unwrap();
+    let apple = gen
+        .ore_term("apple", nonempty!("users/name"))
+        .await
+        .unwrap();
+    let banana = gen
+        .ore_term("banana", nonempty!("users/name"))
+        .await
+        .unwrap();
     assert_eq!(apple.cmp(&banana), Ordering::Less);
 }
 
@@ -256,8 +305,8 @@ async fn string_ore_terms_preserve_lexicographic_order() {
 async fn ope_terms_compare_with_plain_byte_order() {
     let gen = generator().await;
 
-    let ten = gen.ope_term(10u64, "users/age").await.unwrap();
-    let twenty = gen.ope_term(20u64, "users/age").await.unwrap();
+    let ten = gen.ope_term(10u64, nonempty!("users/age")).await.unwrap();
+    let twenty = gen.ope_term(20u64, nonempty!("users/age")).await.unwrap();
 
     // OPE ciphertexts order with standard lexicographic comparison.
     assert!(ten.as_ref() < twenty.as_ref());
@@ -268,24 +317,30 @@ async fn ore_and_ope_keys_are_domain_separated() {
     // The same descriptor must not derive the same key material for both
     // schemes; equal plaintexts should produce different ciphertext bytes.
     let gen = generator().await;
-    let ore = gen.ore_term(42u64, "users/age").await.unwrap();
-    let ope = gen.ope_term(42u64, "users/age").await.unwrap();
+    let ore = gen.ore_term(42u64, nonempty!("users/age")).await.unwrap();
+    let ope = gen.ope_term(42u64, nonempty!("users/age")).await.unwrap();
     assert_ne!(ore.as_ref(), ope.as_ref());
 }
 
 #[tokio::test]
 async fn owned_and_borrowed_text_yield_identical_ore_and_ope_terms() {
     let gen = generator().await;
-    let borrowed = gen.ore_term("apple", "users/name").await.unwrap();
+    let borrowed = gen
+        .ore_term("apple", nonempty!("users/name"))
+        .await
+        .unwrap();
     let owned = gen
-        .ore_term(String::from("apple"), "users/name")
+        .ore_term(String::from("apple"), nonempty!("users/name"))
         .await
         .unwrap();
     assert_eq!(borrowed.as_ref(), owned.as_ref());
 
-    let borrowed = gen.ope_term("apple", "users/name").await.unwrap();
+    let borrowed = gen
+        .ope_term("apple", nonempty!("users/name"))
+        .await
+        .unwrap();
     let owned = gen
-        .ope_term(String::from("apple"), "users/name")
+        .ope_term(String::from("apple"), nonempty!("users/name"))
         .await
         .unwrap();
     assert_eq!(borrowed.as_ref(), owned.as_ref());

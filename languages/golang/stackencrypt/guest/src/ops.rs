@@ -37,7 +37,7 @@
 use stack_encrypt::sem::{CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch};
 use stack_encrypt::target::Pending;
 use stack_encrypt::{
-    is_degenerate_aad, Aad, BoxedPassthrough, CipherText, Decrypt, Element, Encrypt, SealedValue,
+    BoxedPassthrough, CipherText, Decrypt, Element, Encrypt, IntoPrfContext, NonEmpty, SealedValue,
     StackCipher, StackCipherText,
 };
 use stack_kms::DataKeySource;
@@ -67,31 +67,20 @@ type BytesTree = CipherText<Vec<u8>, BoxedPassthrough>;
 // Whole-value encrypt / decrypt (the vitaminc guest's vc_encrypt shape)
 // =============================================================================
 
-/// Reject an AAD that carries no caller-supplied information.
-///
-/// The value entry points take raw AAD bytes rather than a typed context, so
-/// nothing upstream has already applied the target layer's rule. An absent or
-/// empty AAD must not silently become "sealed under nothing": with no
-/// context, ciphertexts are transplantable between fields, which is exactly
-/// what a context is for. [`is_degenerate_aad`] is the same predicate
-/// `EncryptFrom`/`DecryptInto` apply, so the value paths, the record paths
-/// and native Rust code all agree on what counts as empty — including the
-/// shapes that are not literally zero bytes (`pae([])`, `0u64`).
-fn check_aad(aad: &[u8]) -> Result<(), u32> {
-    if is_degenerate_aad(aad) {
-        return Err(STATUS_ENCODING);
-    }
-    Ok(())
-}
-
 /// Encrypt a codec-encoded [`FfiValue`] tree under `aad`, sealing every leaf
 /// against a fresh ZeroKMS data key (one batched request; see the module
 /// docs for how a batch is chunked). With `as_element`,
 /// seal it as a *sequence element* — interchangeable with rows written by
 /// encrypting a whole sequence under the same AAD.
 ///
-/// An empty (or otherwise degenerate) `aad` is [`STATUS_ENCODING`], as on the
-/// record and term paths — see [`check_aad`].
+/// This is the cipher-directed path, and it takes the AAD as `StackCipher`
+/// does: any bytes, including none. An empty `aad` seals under no context —
+/// the plain AEAD use `Aes256Cipher` allows, opened symmetrically by
+/// [`decrypt_value`] — and is the Go caller's choice to make. The record and
+/// term paths ([`encrypt_record`], [`decrypt_record`], [`term`]) are the
+/// ones that bind fields: each takes a [`NonEmpty`] context, proven once at
+/// the boundary when the plan or the term's context is parsed, and refused
+/// as [`STATUS_ENCODING`] when empty.
 pub async fn encrypt_value<K>(
     cipher: &StackCipher<K>,
     value: &[u8],
@@ -101,16 +90,17 @@ pub async fn encrypt_value<K>(
 where
     K: DataKeySource + Sync,
 {
-    check_aad(aad)?;
     let value = decode_value(value)?;
-    let aad = Aad::from_slice(aad);
     let tree = if as_element {
         Element(value).encrypt_with_aad(cipher, aad)
     } else {
         value.encrypt_with_aad(cipher, aad)
     }
     .map_err(|_| STATUS_INTERNAL)?;
-    let ct = tree.seal(cipher).await.map_err(|e| status_for_error(&e))?;
+    let ct = tree
+        .seal(cipher, aad)
+        .await
+        .map_err(|e| status_for_error(&e))?;
     encode_tree(ct)
 }
 
@@ -118,8 +108,8 @@ where
 /// [`FfiValue`] tree (one batched `retrieve_keys` request). The output buffer
 /// contains plaintext — the ABI layer's ownership rules govern its wiping.
 ///
-/// Symmetric with [`encrypt_value`]: an empty AAD is [`STATUS_ENCODING`],
-/// checked before any key is retrieved.
+/// Symmetric with [`encrypt_value`]: the AAD is whatever the value was sealed
+/// under, empty included.
 pub async fn decrypt_value<K>(
     cipher: &StackCipher<K>,
     ciphertext: &[u8],
@@ -129,13 +119,11 @@ pub async fn decrypt_value<K>(
 where
     K: DataKeySource + Sync,
 {
-    check_aad(aad)?;
     let tree = decode_tree(ciphertext)?;
     let decipher = cipher
-        .decipher(tree)
+        .decipher(tree, aad)
         .await
         .map_err(|e| status_for_error(&e))?;
-    let aad = Aad::from_slice(aad);
     let value: FfiValue = if as_element {
         Element::<FfiValue>::decrypt_with_aad(decipher, aad).map(Element::into_inner)
     } else {
@@ -163,6 +151,9 @@ where
 {
     let value = decode_value(value)?;
     let context = std::str::from_utf8(context).map_err(|_| STATUS_ENCODING)?;
+    // The same proof every stack-encrypt leaf demands: an empty context is
+    // `STATUS_ENCODING` here, before any derivation.
+    let context = NonEmpty::new(context).map_err(|_| STATUS_ENCODING)?;
     let output = match kind {
         TERM_EQUALITY => Output::Equality,
         TERM_MATCH => Output::Match,
@@ -213,14 +204,15 @@ fn scalar_of(value: &FfiValue) -> Result<Scalar, u32> {
 /// must equal the term the Rust side derives for `34u32`. Unsupported
 /// combinations (floats or booleans under equality, anything non-text under
 /// match) are [`STATUS_ENCODING`] — the scheme does not define them.
-async fn term_bytes<K>(
+async fn term_bytes<'c, K, D>(
     cipher: &StackCipher<K>,
     scalar: Scalar,
-    context: &str,
+    context: NonEmpty<D>,
     output: Output,
 ) -> Result<Vec<u8>, u32>
 where
     K: DataKeySource + Sync,
+    D: IntoPrfContext<'c>,
 {
     let term_err = |e| status_for_term_error(&e);
     match output {
@@ -285,11 +277,16 @@ where
 
 /// The `AsRef<[u8]>` on the output is what turns the typed CLLW ciphertext
 /// into the frozen raw-bytes encoding.
-async fn ore<K, T>(cipher: &StackCipher<K>, value: T, context: &str) -> Result<Vec<u8>, u32>
+async fn ore<'c, K, T, D>(
+    cipher: &StackCipher<K>,
+    value: T,
+    context: NonEmpty<D>,
+) -> Result<Vec<u8>, u32>
 where
     K: DataKeySource + Sync,
     T: CllwOreEncrypt + Send + 'static,
     T::Output: AsRef<[u8]> + Send + 'static,
+    D: IntoPrfContext<'c>,
 {
     cipher
         .ore_term(value, context)
@@ -299,11 +296,16 @@ where
 }
 
 /// See [`ore`].
-async fn ope<K, T>(cipher: &StackCipher<K>, value: T, context: &str) -> Result<Vec<u8>, u32>
+async fn ope<'c, K, T, D>(
+    cipher: &StackCipher<K>,
+    value: T,
+    context: NonEmpty<D>,
+) -> Result<Vec<u8>, u32>
 where
     K: DataKeySource + Sync,
     T: CllwOpeEncrypt + Send + 'static,
     T::Output: AsRef<[u8]> + Send + 'static,
+    D: IntoPrfContext<'c>,
 {
     cipher
         .ope_term(value, context)
@@ -358,7 +360,11 @@ impl Output {
 /// One field of a record plan.
 struct FieldPlan {
     name: String,
-    context: String,
+    /// Proven non-empty when the plan is parsed, so every path that seals or
+    /// opens under it — the cipher-directed `encrypt_with_aad` in
+    /// [`build_row`] as much as the target-directed `decrypt_into` in
+    /// [`decrypt_record`] — is under a context stack-encrypt's leaves accept.
+    context: NonEmpty<String>,
     outputs: Vec<Output>,
 }
 
@@ -369,19 +375,28 @@ struct FieldPlan {
 /// { <field>: { "context": <string>, "outputs": [ "c" | "eq" | "match" | "ore" | "ope", ... ] }, ... }
 /// ```
 ///
-/// Rejected as [`STATUS_ENCODING`]: an empty plan, a missing or *degenerate*
-/// context (contexts domain-separate fields — see `Error::EmptyContext` in
-/// stack-encrypt), an empty/unknown/duplicated output list, unknown keys.
-/// Field names are unique by construction (the codec rejects duplicate
-/// object keys).
+/// Rejected as [`STATUS_ENCODING`]: an empty plan, a missing or *empty*
+/// context (contexts domain-separate fields; stack-encrypt's leaves take a
+/// `NonEmpty<_>` and nothing else), an empty/unknown/duplicated output list,
+/// unknown keys. Field names are unique by construction (the codec rejects
+/// duplicate object keys).
 ///
-/// "Degenerate" is [`is_degenerate_aad`], not `is_empty`, and the check has
-/// to happen *here*: [`build_row`] seals through `encrypt_with_aad(..)
-/// .into_pending(..)`, which is the cipher-directed path and does not run
-/// the target layer's context check, whereas [`decrypt_record`] opens
-/// through `decrypt_into`, which does. A context that is not byte-empty but
-/// still carries nothing — the PAE of an empty list, i.e. eight zero bytes —
-/// would otherwise encrypt happily and then never decrypt.
+/// The context is proven here, once, and carried as a [`NonEmpty`]: the
+/// cipher-directed path [`build_row`] seals through accepts any AAD, so
+/// nothing downstream would otherwise stop an empty context from being
+/// sealed under — and [`decrypt_record`] opens through `decrypt_into`,
+/// which would then never open it.
+///
+/// A plan context is one flat string, and it is the *whole* context of the
+/// field: the guest has no caller context to extend it with. That matches a
+/// Rust `#[derive(EncryptFrom)]` record sealed with `encrypt_into` (no
+/// caller context), where the derive's `"<context>/<field>"` string is the
+/// field's whole context too — same AAD bytes, same descriptor. A Rust
+/// record sealed with `encrypt_into_with_context(.., 7u64)` extends every
+/// field's context to `("users/email", 7u64)`, which no plan string can
+/// spell (a string that *looks* like the rendered descriptor is escaped,
+/// not parsed); those rows are not readable from a plan, and the reverse
+/// holds. See the Go bindings plan.
 fn parse_plan(value: FfiValue) -> Result<Vec<FieldPlan>, u32> {
     let FfiValue::Object(entries) = value else {
         return Err(STATUS_ENCODING);
@@ -425,10 +440,8 @@ fn parse_plan(value: FfiValue) -> Result<Vec<FieldPlan>, u32> {
                     _ => return Err(STATUS_ENCODING),
                 }
             }
-            // `&str`'s AAD encoding is its own raw bytes, so the predicate
-            // applies directly to the context string.
             let context = context.ok_or(STATUS_ENCODING)?;
-            check_aad(context.as_bytes())?;
+            let context = NonEmpty::new(context).map_err(|_| STATUS_ENCODING)?;
             let outputs = outputs.filter(|o| !o.is_empty()).ok_or(STATUS_ENCODING)?;
             Ok(FieldPlan {
                 name,
@@ -604,6 +617,10 @@ where
             .position(|(name, _)| name == &field.name)
             .ok_or(STATUS_ENCODING)?;
         let (name, value) = row.swap_remove(at);
+        // Borrowed from the plan once per field: the proof was made at
+        // parse time, so re-taking it over the same bytes cannot fail, and
+        // `NonEmpty<&str>` is `Copy` for the outputs below.
+        let context = NonEmpty::new(field.context.get().as_str()).map_err(|_| STATUS_INTERNAL)?;
 
         // Terms first — they lift a copy of the scalar; the value itself is
         // consumed by the ciphertext path below.
@@ -622,16 +639,16 @@ where
                 continue;
             }
             let scalar = scalar.clone().ok_or(STATUS_INTERNAL)?;
-            let term = term_bytes(cipher, scalar, &field.context, *output).await?;
+            let term = term_bytes(cipher, scalar, context, *output).await?;
             outputs.push((output.key(), Some(term)));
         }
 
         if field.outputs.contains(&Output::Ciphertext) {
             reject_passthrough_value(&value)?;
             let tree = value
-                .encrypt_with_aad(cipher, field.context.as_str())
+                .encrypt_with_aad(cipher, context)
                 .map_err(|_| STATUS_INTERNAL)?;
-            pendings.push(tree.into_pending(cipher));
+            pendings.push(tree.into_pending(cipher, context));
         }
 
         skeleton.push((name, outputs));
@@ -684,6 +701,8 @@ where
             if !field.outputs.contains(&Output::Ciphertext) {
                 continue;
             }
+            let context =
+                NonEmpty::new(field.context.get().as_str()).map_err(|_| STATUS_INTERNAL)?;
             let at = row
                 .iter()
                 .position(|(name, _)| name == &field.name)
@@ -697,7 +716,7 @@ where
                 .find_map(|(key, node)| (key == "c").then_some(node))
                 .ok_or(STATUS_ENCODING)?;
             reject_passthrough_tree(&ct)?;
-            pendings.push(ct.decrypt_into(cipher, field.context.as_str()));
+            pendings.push(ct.decrypt_into(cipher, context));
             row_names.push(name);
         }
         names.push(row_names);

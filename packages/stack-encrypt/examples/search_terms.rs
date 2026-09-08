@@ -20,7 +20,7 @@
 
 use stack_encrypt::sem::{EqualityTerm, MatchTerm, OreTerm};
 use stack_encrypt::target::EncryptInto;
-use stack_encrypt::StackCipher;
+use stack_encrypt::{nonempty, EncryptFrom, StackCipher, StackCipherText};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -40,17 +40,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // value indexed under another field can never produce a colliding term.
 
     let stored: EqualityTerm = "alice@example.com"
-        .encrypt_into_with_context(&terms, "users/email")
+        .encrypt_into_with_context(&terms, nonempty!("users/email"))
         .await?;
 
     let hit: EqualityTerm = "alice@example.com"
-        .encrypt_into_with_context(&terms, "users/email")
+        .encrypt_into_with_context(&terms, nonempty!("users/email"))
         .await?;
     let miss: EqualityTerm = "bob@example.com"
-        .encrypt_into_with_context(&terms, "users/email")
+        .encrypt_into_with_context(&terms, nonempty!("users/email"))
         .await?;
     let wrong_field: EqualityTerm = "alice@example.com"
-        .encrypt_into_with_context(&terms, "users/name")
+        .encrypt_into_with_context(&terms, nonempty!("users/name"))
         .await?;
 
     println!("\nequality:");
@@ -70,13 +70,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bio: MatchTerm = "alice, senior cryptography engineer"
         .to_string()
-        .encrypt_into_with_context(&terms, "users/bio")
+        .encrypt_into_with_context(&terms, nonempty!("users/bio"))
         .await?;
 
     for query in ["crypto", "engineer", "plumber"] {
         let probe: MatchTerm = query
             .to_string()
-            .encrypt_into_with_context(&terms, "users/bio")
+            .encrypt_into_with_context(&terms, nonempty!("users/bio"))
             .await?;
         println!("match: bio contains {query:?} => {}", bio.contains(&probe));
     }
@@ -93,9 +93,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the key derivation becomes an auditable server event while values stay
     // local.
 
-    let age_30: OreTerm<u32> = 30u32.encrypt_into_with_context(&terms, "users/age").await?;
-    let age_45: OreTerm<u32> = 45u32.encrypt_into_with_context(&terms, "users/age").await?;
-    let query_40: OreTerm<u32> = 40u32.encrypt_into_with_context(&terms, "users/age").await?;
+    let age_30: OreTerm<u32> = 30u32
+        .encrypt_into_with_context(&terms, nonempty!("users/age"))
+        .await?;
+    let age_45: OreTerm<u32> = 45u32
+        .encrypt_into_with_context(&terms, nonempty!("users/age"))
+        .await?;
+    let query_40: OreTerm<u32> = 40u32
+        .encrypt_into_with_context(&terms, nonempty!("users/age"))
+        .await?;
 
     println!("\nore (WHERE age > 40):");
     println!("  age 30 > 40 => {}", age_30 > query_40);
@@ -103,12 +109,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Strings order lexicographically.
     let apple: OreTerm<&str> = "apple"
-        .encrypt_into_with_context(&terms, "users/name")
+        .encrypt_into_with_context(&terms, nonempty!("users/name"))
         .await?;
     let banana: OreTerm<&str> = "banana"
-        .encrypt_into_with_context(&terms, "users/name")
+        .encrypt_into_with_context(&terms, nonempty!("users/name"))
         .await?;
     println!("  \"apple\" < \"banana\" => {}", apple < banana);
+
+    // --- The same terms, as a record --------------------------------------------
+    //
+    // Leaf by leaf is the query side. On the write side a field is stored
+    // as *every* term it needs beside its ciphertext, in one shape: derive
+    // `EncryptFrom` for that shape and each field of it is derived from the
+    // one value under the one context — byte-identical to the leaves above,
+    // so a probe built leaf by leaf finds what the record stored.
+    #[derive(EncryptFrom)]
+    #[stash(plaintext = String)]
+    struct SearchableEmail {
+        c: StackCipherText,
+        eq: EqualityTerm,
+        text: MatchTerm,
+        ord: OreTerm<String>,
+    }
+
+    let record: SearchableEmail = "alice@example.com"
+        .to_string()
+        .encrypt_into_with_context(&terms, nonempty!("users/email"))
+        .await?;
+    let probe: MatchTerm = "example"
+        .to_string()
+        .encrypt_into_with_context(&terms, nonempty!("users/email"))
+        .await?;
+    println!("\nrecord:");
+    println!(
+        "  equality term equals the leaf's => {}",
+        record.eq == stored
+    );
+    println!(
+        "  match: contains \"example\"      => {}",
+        record.text.contains(&probe)
+    );
+    println!(
+        "  ore: sorts after \"alice\"       => {}",
+        record.ord
+            > "alice"
+                .to_string()
+                .encrypt_into_with_context(&terms, nonempty!("users/email"))
+                .await?
+    );
+    let _ = record.c; // the ciphertext, opened with `decrypt_into` under the same context
 
     Ok(())
 }

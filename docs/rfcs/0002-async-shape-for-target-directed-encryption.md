@@ -269,8 +269,8 @@ up.
 Composites combine pendings **without awaiting them**, so requests merge:
 
 ```rust
-impl<'c, K, Ctx: EncryptContext<'c> + SuppliedContext<'c>> EncryptFrom<u32, StackCipher<K>, Ctx> for EncryptedInt {
-    fn encrypt_from<'a>(source: &'a u32, cipher: &'a StackCipher<K>, ctx: Ctx)
+impl<'c, K, T: IntoAad<'c> + IntoPrfContext<'c> + Clone> EncryptFrom<u32, StackCipher<K>, NonEmpty<T>> for EncryptedInt {
+    fn encrypt_from<'a>(source: &'a u32, cipher: &'a StackCipher<K>, ctx: NonEmpty<T>)
         -> PendingEncrypted<'a, Self, K>
     {
         StackCipherText::encrypt_from(source, cipher, ctx.clone())
@@ -349,7 +349,7 @@ and `ReadyPrf::into_result()` extracts without an executor. So today a term's
 
 ```rust
 let term = tokens
-    .prf_visit_with_context(cipher.prf().clone(), context, BloomVisitor { k, mask })
+    .prf_visit_with_context(cipher.prf(), context, BloomVisitor { k, mask })
     .into_result()                                  // ReadyPrf: sync, infallible backend
     .map_err(TermError::from_prf);
 PendingEncrypted::ready(cipher, term.map_err(Error::from))
@@ -386,15 +386,15 @@ The current module docs teach external term authors to return
 all until a deferred PRF exists:
 
 ```rust
-impl<'c, S, K, Ctx> EncryptFrom<S, StackCipher<K>, Ctx> for MyTerm
+impl<'c, S, K, T> EncryptFrom<S, StackCipher<K>, NonEmpty<T>> for MyTerm
 where
     S: PrfValue + Clone,
-    Ctx: EncryptContext<'c> + SuppliedContext<'c>,
+    T: IntoPrfContext<'c>,
 {
     fn encrypt_from<'a>(
         source: &'a S,
         cipher: &'a StackCipher<K>,
-        context: Ctx,
+        context: NonEmpty<T>,
     ) -> PendingEncrypted<'a, Self, K>
     where
         Self: 'a,
@@ -403,7 +403,7 @@ where
         let context = PrfContext::pae(&[b"my-crate/my-term/v1".as_slice(), context.as_bytes()]);
         let term = source
             .clone()
-            .prf_visit_with_context(cipher.prf().clone(), context, MyVisitor)
+            .prf_visit_with_context(cipher.prf(), context, MyVisitor)
             .into_result()
             .map(MyTerm)
             .map_err(|e| Error::Other(Box::new(e)));
@@ -513,6 +513,25 @@ The implementation kept the design and changed three names/details:
   `decrypt_from_with_context` mirror it). Which applies is the type's
   decision, made at compile time; runtime rejection is left to what the
   type cannot see — an empty string — pending vitaminc#291.
+- **Contexts are vitaminc's `NonEmpty<T>`, and a caller's context extends
+  a field's own** (2026-09-04, after vitaminc 0.2.0 shipped `NonEmpty`).
+  `SuppliedContext`, `EncryptContext` and `DecryptContext` are gone: a leaf
+  is implemented for `NonEmpty<T>` alone (`T: IntoAad + IntoPrfContext`), so
+  `()` is a compile error against it and `""` cannot be built, with no
+  runtime emptiness check anywhere in this crate — the pre-request
+  `require_context` step in §4.5 went with it. A derived record is
+  implemented twice — for `()`, each field under the context it carries
+  itself (a `context = ".."` literal, or the one a `struct = ..` derive
+  infers), and for `NonEmpty<T>`, each field under that context extended
+  with the caller's (`("users/age", id)`) — so `user.encrypt_into(&cipher)`
+  and `user.encrypt_into_with_context(&cipher, id)` both compile, the second
+  binding every field to its record, and no record accepts a context it
+  then discards. The `_with_context` sugar takes anything that converts
+  into a `NonEmpty<T>`: `nonempty!("..")`, `NonEmpty::new(value)?`, a bare
+  integer. `row = ..` became `struct = ..` (2026-09-05: "row" pushed
+  database vocabulary into a general-purpose library), and `from` /
+  `nested` exist only there — `plaintext = T` derives every field from the
+  whole value whatever `T` is.
 - **`dispatch` issues one call per request *kind*** (at most one
   `generate_keys` + one `retrieve_keys`, sequentially — a mixed batch is rare
   today). When ZeroKMS grows the combined keys-plus-PRF operation, `dispatch`
@@ -553,20 +572,31 @@ claims:
 
 The derive emits exactly the §4.4 shape — one impl over `StackCipher<K>`,
 field pendings zipped and mapped, never awaited — for a struct of leaves, and
-one level up for a *row*: a struct whose fields are each derived from a
-field of the source (`from = ..`) under a literal context of their own
-(`context = ".."`). Field contexts **replace** the record's rather than
-composing with it, so a query site builds a term under the same literal the
-row stored it under; the row's own context is then unused and the caller
-passes `()`.
+one level up for a *struct record*: a struct whose fields are each derived
+from a field of the source (`from = ..`, inferred from the field's own name)
+under an *own context* — `"<struct context>/<field>"`, inferred, or a
+`context = ".."` literal. An own context is never discarded: a caller's
+context **extends** it (`("users/age", id)` under
+`encrypt_into_with_context(&cipher, id)`), so a record sealed with
+`encrypt_into` opens with `decrypt_from` and one sealed under an extension
+opens only under the same extension, and a query site derives its term under
+the same own context, extended the same way. This is how a field is bound to
+its record as well as its name without the type knowing the id. (First
+shipped the other way round — field literals *replacing* the record's
+context, the caller passing `()` — which let a literal-only record accept a
+context and seal nothing under it; #2180 made extension the rule. The
+contract is stated in `packages/stack-encrypt/CONTEXT.md` under "Own
+context" and in ADR-0001.)
 
-That last point reversed one of the final-review guards above: `Vec` and
-`Option` no longer validate the context themselves. They pass it through
-untouched, and the leaves reject an empty one synchronously as before. What
-was lost is the "fail on the fixture with no rows" property — an empty
-column under an empty context now succeeds, and the misconfiguration is
-caught by the first real value instead — which is a small price for
-containers of self-describing records being expressible at all.
+The final-review "empty context" guard above moved from a runtime check to
+the types in the same change: a leaf takes vitaminc's `NonEmpty<T>` and `()`
+is a compile error against it, so `Vec` and `Option` have no emptiness to
+check and pass the context through. What a column does check, once before
+walking its elements, is that a context whose elements bind ZeroKMS keys
+renders within the descriptor limit (`ElementContext`); an empty column and
+a column of terms are not held to it. The "fail on the fixture with no
+rows" property went with the runtime check — a misconfigured context is now
+a type error rather than a value the first row catches.
 
 The derive is bound to `StackCipher<K>` rather than generic over
 `EncryptTarget`, because combining outputs needs `zip`/`map` and only
@@ -580,7 +610,8 @@ off and decrypt to whatever its ciphertext field opens to.
 
 The derives are named after the trait they emit, as serde's are, and the
 attribute after the crate: `#[stash(plaintext = ..)]` for a record,
-`#[stash(row = .., context = "..")]` for a row — which infers every field's
+`#[stash(struct = .., context = "..")]` for a struct encrypted field by
+field (shipped as `row = ..`) — which infers every field's
 `from` (its own name) and the field half of its context
 (`"<context>/<plaintext field>"`; the prefix is the required container
 `context`, given explicitly because it is stored-data identity and must not
