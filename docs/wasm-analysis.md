@@ -178,7 +178,7 @@ Changes:
 - `.cargo/config.toml` — wasm32 rustflag `--cfg getrandom_backend="wasm_js"` (required by `getrandom >= 0.3` to select the browser/Deno backend; pulled in via `vitaminc-random` → `rand 0.10`)
 - Per-crate wasm32 target deps for `getrandom` (`js` feature for v0.2, `wasm_js` for v0.4) so feature unification activates the right backend
 - `cts-common` wasm32 target dep on `uuid = { features = ["js"] }` so `Uuid::new_v4()` can source entropy
-- Workspace `vitaminc`, `vitaminc-aead`, and `vitaminc-protected` pinned to `0.2.0-pre` on crates.io — the first release containing the cfg-based dual backend (aws-lc-rs on native, RustCrypto on wasm32) for `vitaminc-encrypt`. Shipped via [vitaminc PR #163](https://github.com/cipherstash/vitaminc/pull/163).
+- Workspace `vitaminc`, `vitaminc-aead`, and `vitaminc-protected` on crates.io (`0.2.0-pre` at the time; now `0.3.0`) — the first release containing the cfg-based dual backend (aws-lc-rs on native, RustCrypto on wasm32) for `vitaminc-encrypt`. Shipped via [vitaminc PR #163](https://github.com/cipherstash/vitaminc/pull/163).
 
 Native build verified via `mise run lint`. `cts-common` unit tests: 138/138 passing.
 

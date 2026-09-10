@@ -25,18 +25,15 @@ stack-auth = { workspace = true, optional = true }
 # `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`, re-exported from `target`.
 stack-encrypt-derive = { path = "../stack-encrypt-derive" }
 
-# vitaminc 0.3.0 from the registry: the first release with `NonEmpty::with`,
-# `From<integer> for NonEmpty` (cipherstash/vitaminc#314) and `IntoAadPiece`
-# (#318), all of which this crate relies on. The rest of the suite builds
-# against a different vitaminc line (`cts-domain`, `stack-kms`); 0.x minors
-# are distinct to cargo, so this is a second copy and nothing depends on
-# both. All five must share one version or the aead crate is duplicated
-# within stack-encrypt itself.
-vitaminc-aead = "0.3.0"
-vitaminc-encrypt = "0.3.0"
-vitaminc-hmac = "0.3.0"
-vitaminc-prf = "0.3.0"
-vitaminc-protected = "0.3.0"
+# The workspace vitaminc (0.3.0): the first release with `NonEmpty::with`,
+# `From<integer> for NonEmpty` (cipherstash/vitaminc#314) and `AadPiece`
+# (#318), all of which this crate relies on. All five must share one
+# version or the aead crate is duplicated.
+vitaminc-aead = { workspace = true }
+vitaminc-encrypt = { workspace = true }
+vitaminc-hmac = { workspace = true }
+vitaminc-prf = { workspace = true }
+vitaminc-protected = { workspace = true }
 serde = { workspace = true }
 # `Descriptor`: the base64 rendering of a non-textual context for ZeroKMS.
 base64ct = { version = "1.7", features = ["alloc"] }
