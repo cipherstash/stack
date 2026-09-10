@@ -394,9 +394,10 @@ fn run_decrypt(
     .map_or_else(err_status, ok_buffer)
 }
 
-/// Derive one index term: a codec-encoded scalar plus a context string and
-/// a term kind ([`ops::TERM_EQUALITY`] etc.); the output is the term's
-/// frozen byte encoding. Local PRF/CLLW only — never touches ZeroKMS.
+/// Derive one index term: a codec-encoded scalar, a codec-encoded context
+/// (a string, or an array of parts — see [`crate::context`]) and a term
+/// kind ([`ops::TERM_EQUALITY`] etc.); the output is the term's frozen byte
+/// encoding. Local PRF/CLLW only — never touches ZeroKMS.
 ///
 /// # Safety
 ///

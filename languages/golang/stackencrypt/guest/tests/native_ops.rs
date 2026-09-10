@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use futures::executor::block_on;
 use stack_encrypt::sem::DefaultMatch;
-use stack_encrypt::{nonempty, Aad, CipherText, Decrypt, SealedValue, StackCipher};
+use stack_encrypt::{nonempty, Aad, CipherText, Decrypt, Encrypt, SealedValue, StackCipher};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
 use stack_encrypt_guest::status::{STATUS_AUTH, STATUS_ENCODING};
 use stack_kms::{
@@ -331,12 +331,12 @@ fn an_empty_aad_round_trips_on_the_value_paths() {
 #[test]
 fn guest_terms_match_the_native_sem_derivations() {
     let cipher = cipher();
-    let ctx = b"users/age".as_slice();
+    let ctx = encode(s("users/age"));
 
     let eq = block_on(ops::term(
         &cipher,
         &encode(FfiValue::UInt32(42)),
-        ctx,
+        &ctx,
         TERM_EQUALITY,
     ))
     .expect("eq term");
@@ -346,7 +346,7 @@ fn guest_terms_match_the_native_sem_derivations() {
     let ore = block_on(ops::term(
         &cipher,
         &encode(FfiValue::UInt32(42)),
-        ctx,
+        &ctx,
         TERM_ORE,
     ))
     .expect("ore term");
@@ -356,7 +356,7 @@ fn guest_terms_match_the_native_sem_derivations() {
     let ope = block_on(ops::term(
         &cipher,
         &encode(FfiValue::UInt32(42)),
-        ctx,
+        &ctx,
         TERM_OPE,
     ))
     .expect("ope term");
@@ -366,7 +366,7 @@ fn guest_terms_match_the_native_sem_derivations() {
     let m = block_on(ops::term(
         &cipher,
         &encode(s("alice smith")),
-        b"users/name",
+        &encode(s("users/name")),
         TERM_MATCH,
     ))
     .expect("match term");
@@ -377,12 +377,17 @@ fn guest_terms_match_the_native_sem_derivations() {
 
     // Strings and bytes have distinct PRF encodings — the guest must keep
     // them apart even when their raw bytes are equal.
-    let eq_text =
-        block_on(ops::term(&cipher, &encode(s("ab")), b"f", TERM_EQUALITY)).expect("text term");
+    let eq_text = block_on(ops::term(
+        &cipher,
+        &encode(s("ab")),
+        &encode(s("f")),
+        TERM_EQUALITY,
+    ))
+    .expect("text term");
     let eq_bytes = block_on(ops::term(
         &cipher,
         &encode(FfiValue::Bytes(Protected::new(b"ab".to_vec()))),
-        b"f",
+        &encode(s("f")),
         TERM_EQUALITY,
     ))
     .expect("bytes term");
@@ -399,7 +404,7 @@ fn guest_terms_match_the_native_sem_derivations() {
     let ore_s = block_on(ops::term(
         &cipher,
         &encode(s("alice")),
-        b"users/name",
+        &encode(s("users/name")),
         TERM_ORE,
     ))
     .expect("string ore");
@@ -413,7 +418,7 @@ fn guest_terms_match_the_native_sem_derivations() {
 #[test]
 fn unsupported_term_inputs_are_encoding_errors() {
     let cipher = cipher();
-    let ctx = b"f".as_slice();
+    let ctx = encode(s("f"));
 
     // Floats and bools have no equality encoding; match is text-only;
     // containers have no term semantics; kinds outside the table and empty
@@ -427,7 +432,7 @@ fn unsupported_term_inputs_are_encoding_errors() {
         (FfiValue::UInt32(1), 99),
     ] {
         assert_eq!(
-            block_on(ops::term(&cipher, &encode(value), ctx, kind)),
+            block_on(ops::term(&cipher, &encode(value), &ctx, kind)),
             Err(STATUS_ENCODING),
             "kind {kind}"
         );
@@ -436,7 +441,7 @@ fn unsupported_term_inputs_are_encoding_errors() {
         block_on(ops::term(
             &cipher,
             &encode(FfiValue::UInt32(1)),
-            b"",
+            &encode(s("")),
             TERM_EQUALITY
         )),
         Err(STATUS_ENCODING),
@@ -601,6 +606,214 @@ fn record_terms_equal_the_native_derivations_and_probe_them() {
     let value = FfiValue::decrypt_with_aad(decipher, "users/age")
         .expect("native decrypt of a record field");
     assert!(matches!(value, FfiValue::UInt32(34)));
+}
+
+// =============================================================================
+// Structured contexts
+// =============================================================================
+
+/// The caller extension a Rust row gets from
+/// `encrypt_into_with_context(row, 7u64)`: every field's context becomes
+/// `("users/<field>", 7u64)`. A plan spells it as a list.
+fn extended(field: &str) -> FfiValue {
+    FfiValue::Array(vec![s(&format!("users/{field}")), FfiValue::UInt64(7)])
+}
+
+/// `plan()` under the extension.
+fn extended_plan() -> Vec<u8> {
+    encode(obj(vec![
+        (
+            "age",
+            obj(vec![
+                ("context", extended("age")),
+                ("outputs", FfiValue::Array(vec![s("c"), s("eq"), s("ore")])),
+            ]),
+        ),
+        (
+            "name",
+            obj(vec![
+                ("context", extended("name")),
+                ("outputs", FfiValue::Array(vec![s("c"), s("match")])),
+            ]),
+        ),
+    ]))
+}
+
+/// A plan whose context is a list seals exactly what the Rust derive seals
+/// under a caller-extended context: the stored terms are the native probes
+/// under `nonempty!("users/age").with(7u64)`, the guest's own probe under
+/// the list is the same bytes, and the `"c"` leaf opens natively under the
+/// tuple. The flat context is a different domain, as it must be.
+#[test]
+fn a_structured_plan_context_seals_what_the_native_extended_context_does() {
+    let cipher = cipher();
+    let record = block_on(ops::encrypt_record(
+        &cipher,
+        &encode(row(34, "alice smith")),
+        &extended_plan(),
+    ))
+    .expect("encrypt record");
+
+    let CipherText::Map(fields) = decode_tree(&record) else {
+        panic!("expected a field map");
+    };
+    let (_, CipherText::Map(age_outputs)) = &fields[0] else {
+        panic!("expected an output map for the first field");
+    };
+    let term_bytes = |node: &CipherText<Vec<u8>, FfiValue>| -> Vec<u8> {
+        let CipherText::Passthrough(FfiValue::Bytes(b)) = node else {
+            panic!("expected a passthrough bytes term node");
+        };
+        b.risky_ref().to_vec()
+    };
+
+    let native = nonempty!("users/age").with(7u64);
+    let eq_probe = block_on(cipher.equality_term(34u32, native)).expect("probe");
+    assert_eq!(term_bytes(&age_outputs[1].1), eq_probe.as_bytes());
+    let ore_probe = block_on(cipher.ore_term(34u32, native)).expect("probe");
+    assert_eq!(term_bytes(&age_outputs[2].1), ore_probe.as_ref());
+    let flat_probe = block_on(cipher.equality_term(34u32, nonempty!("users/age"))).expect("probe");
+    assert_ne!(
+        term_bytes(&age_outputs[1].1),
+        flat_probe.as_bytes(),
+        "the extension domain-separates from the flat context"
+    );
+
+    let guest_probe = block_on(ops::term(
+        &cipher,
+        &encode(FfiValue::UInt32(34)),
+        &encode(extended("age")),
+        TERM_EQUALITY,
+    ))
+    .expect("guest probe");
+    assert_eq!(term_bytes(&age_outputs[1].1), guest_probe);
+
+    let (_, CipherText::Map(name_outputs)) = &fields[1] else {
+        panic!("expected an output map for the second field");
+    };
+    let match_probe = block_on(
+        cipher.match_terms::<DefaultMatch>("alice smith", nonempty!("users/name").with(7u64)),
+    )
+    .expect("probe");
+    assert_eq!(term_bytes(&name_outputs[1].1), match_probe.to_bytes());
+
+    let CipherText::Single(leaf) = &age_outputs[0].1 else {
+        panic!("expected a single leaf for a scalar field");
+    };
+    let leaf = SealedValue::from_bytes(leaf).expect("frozen leaf");
+    let decipher =
+        block_on(cipher.decipher(CipherText::Single(leaf), native)).expect("retrieve the data key");
+    let value =
+        FfiValue::decrypt_with_aad(decipher, native).expect("native decrypt under the tuple");
+    assert!(matches!(value, FfiValue::UInt32(34)));
+}
+
+/// The reverse direction: a field sealed natively under the tuple — as a
+/// Rust row sealed with a caller context is — opens through a plan whose
+/// context is the same list, and not through the flat plan.
+#[test]
+fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
+    let cipher = cipher();
+    let native = nonempty!("users/age").with(7u64);
+    let sealed = block_on(
+        FfiValue::UInt32(34)
+            .encrypt_with_aad(&cipher, native)
+            .expect("encrypt")
+            .seal(&cipher, native),
+    )
+    .expect("seal");
+    let CipherText::Single(leaf) = sealed else {
+        panic!("a scalar seals to a single leaf");
+    };
+
+    // Shape the tree the way `encrypt_record` writes it: field → { c: leaf }.
+    let tree: CipherText<Vec<u8>, FfiValue> = CipherText::Map(vec![(
+        "age".to_string(),
+        CipherText::Map(vec![("c".to_string(), CipherText::Single(leaf.to_bytes()))]),
+    )]);
+    let mut record = Vec::new();
+    codec::encode_ciphertext(&tree, &mut record).expect("encode tree");
+
+    let plan_with = |context: FfiValue| {
+        encode(obj(vec![(
+            "age",
+            obj(vec![
+                ("context", context),
+                ("outputs", FfiValue::Array(vec![s("c")])),
+            ]),
+        )]))
+    };
+
+    let opened = block_on(ops::decrypt_record(
+        &cipher,
+        &record,
+        &plan_with(extended("age")),
+    ))
+    .expect("open through the plan");
+    let FfiValue::Object(fields) = decode(&opened) else {
+        panic!("a record decrypts to an object");
+    };
+    assert!(matches!(fields.as_slice(), [(name, FfiValue::UInt32(34))] if name == "age"));
+
+    assert_eq!(
+        block_on(ops::decrypt_record(
+            &cipher,
+            &record,
+            &plan_with(s("users/age"))
+        )),
+        Err(STATUS_AUTH),
+        "the flat context is not the one it was sealed under"
+    );
+}
+
+/// A plan context that is not a context — the wrong value kind, or empty
+/// by the tuple rule — is refused at parse, before anything is sealed.
+#[test]
+fn a_structured_plan_context_is_validated_at_parse() {
+    let cipher = cipher();
+    let plan_with = |context: FfiValue| {
+        encode(obj(vec![(
+            "f",
+            obj(vec![
+                ("context", context),
+                ("outputs", FfiValue::Array(vec![s("c")])),
+            ]),
+        )]))
+    };
+    let source = encode(obj(vec![("f", FfiValue::UInt32(1))]));
+
+    for bad in [
+        FfiValue::Bool(true),
+        FfiValue::Float64(7.0),
+        FfiValue::Object(vec![]),
+        FfiValue::Array(vec![]),
+        FfiValue::Array(vec![s("")]),
+        FfiValue::Array(vec![s("users/age"), FfiValue::Float64(7.0)]),
+    ] {
+        assert_eq!(
+            block_on(ops::encrypt_record(&cipher, &source, &plan_with(bad))),
+            Err(STATUS_ENCODING)
+        );
+    }
+    assert_eq!(
+        cipher.kms().generate_calls.load(Ordering::SeqCst),
+        0,
+        "nothing seals under a context that is not one"
+    );
+
+    // Non-empty by the tuple rule: one part carries bytes.
+    let sealed = block_on(ops::encrypt_record(
+        &cipher,
+        &source,
+        &plan_with(FfiValue::Array(vec![s(""), FfiValue::UInt64(7)])),
+    ))
+    .expect("an integer part is never empty");
+    assert!(block_on(ops::decrypt_record(
+        &cipher,
+        &sealed,
+        &plan_with(FfiValue::Array(vec![s(""), FfiValue::UInt64(7)]))
+    ))
+    .is_ok());
 }
 
 #[test]

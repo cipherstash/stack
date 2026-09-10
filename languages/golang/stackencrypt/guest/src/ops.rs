@@ -45,6 +45,7 @@ use vitaminc_aead_value::{transport as codec, FfiValue};
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroizing;
 
+use crate::context::{parse_context, ContextPart};
 use crate::status::{
     status_for_error, status_for_term_error, STATUS_AUTH, STATUS_ENCODING, STATUS_INTERNAL,
 };
@@ -137,9 +138,13 @@ where
 // Terms
 // =============================================================================
 
-/// Derive one index term: a codec-encoded scalar in, the term's frozen byte
-/// encoding out (see `stack-encrypt`'s `sem` module docs). Purely local —
-/// this never touches ZeroKMS, which is what makes query probes cheap.
+/// Derive one index term: a codec-encoded scalar and a codec-encoded
+/// context (a string, or an array of parts — see [`crate::context`]) in,
+/// the term's frozen byte encoding out (see `stack-encrypt`'s `sem` module
+/// docs). Purely local — this never touches ZeroKMS, which is what makes
+/// query probes cheap. A probe for a field sealed through a plan takes the
+/// field's plan context verbatim; a probe for a field a Rust row sealed
+/// under an extended context takes the same parts as a list.
 pub async fn term<K>(
     cipher: &StackCipher<K>,
     value: &[u8],
@@ -150,10 +155,9 @@ where
     K: DataKeySource + Sync,
 {
     let value = decode_value(value)?;
-    let context = std::str::from_utf8(context).map_err(|_| STATUS_ENCODING)?;
     // The same proof every stack-encrypt leaf demands: an empty context is
     // `STATUS_ENCODING` here, before any derivation.
-    let context = NonEmpty::new(context).map_err(|_| STATUS_ENCODING)?;
+    let context = parse_context(decode_value(context)?)?;
     let output = match kind {
         TERM_EQUALITY => Output::Equality,
         TERM_MATCH => Output::Match,
@@ -364,7 +368,7 @@ struct FieldPlan {
     /// opens under it — the cipher-directed `encrypt_with_aad` in
     /// [`build_row`] as much as the target-directed `decrypt_into` in
     /// [`decrypt_record`] — is under a context stack-encrypt's leaves accept.
-    context: NonEmpty<String>,
+    context: NonEmpty<ContextPart>,
     outputs: Vec<Output>,
 }
 
@@ -372,12 +376,14 @@ struct FieldPlan {
 /// [`FfiValue::Object`]:
 ///
 /// ```text
-/// { <field>: { "context": <string>, "outputs": [ "c" | "eq" | "match" | "ore" | "ope", ... ] }, ... }
+/// { <field>: { "context": <context>, "outputs": [ "c" | "eq" | "match" | "ore" | "ope", ... ] }, ... }
+/// context := <string> | <bytes> | <i32> | <i64> | <u32> | <u64> | [ context, ... ]
 /// ```
 ///
-/// Rejected as [`STATUS_ENCODING`]: an empty plan, a missing or *empty*
-/// context (contexts domain-separate fields; stack-encrypt's leaves take a
-/// `NonEmpty<_>` and nothing else), an empty/unknown/duplicated output list,
+/// Rejected as [`STATUS_ENCODING`]: an empty plan, a missing, malformed or
+/// *empty* context (contexts domain-separate fields; stack-encrypt's leaves
+/// take a `NonEmpty<_>` and nothing else — see [`crate::context`] for the
+/// shape and the emptiness rule), an empty/unknown/duplicated output list,
 /// unknown keys. Field names are unique by construction (the codec rejects
 /// duplicate object keys).
 ///
@@ -387,16 +393,17 @@ struct FieldPlan {
 /// sealed under — and [`decrypt_record`] opens through `decrypt_into`,
 /// which would then never open it.
 ///
-/// A plan context is one flat string, and it is the *whole* context of the
-/// field: the guest has no caller context to extend it with. That matches a
-/// Rust `#[derive(EncryptFrom)]` record sealed with `encrypt_into` (no
-/// caller context), where the derive's `"<context>/<field>"` string is the
-/// field's whole context too — same AAD bytes, same descriptor. A Rust
-/// record sealed with `encrypt_into_with_context(.., 7u64)` extends every
-/// field's context to `("users/email", 7u64)`, which no plan string can
-/// spell (a string that *looks* like the rendered descriptor is escaped,
-/// not parsed); those rows are not readable from a plan, and the reverse
-/// holds. See the Go bindings plan.
+/// A plan context is the *whole* context of the field: the guest has no
+/// caller context to extend it with, so the plan spells the extension
+/// itself. A bare string matches a Rust `#[derive(EncryptFrom)]` record
+/// sealed with `encrypt_into` (no caller context), where the derive's
+/// `"<context>/<field>"` string is the field's whole context — same AAD
+/// bytes, same descriptor. A list matches a record sealed with
+/// `encrypt_into_with_context(.., 7u64)`, which extends every field's
+/// context to `("users/email", 7u64)`: the plan says `["users/email", 7u64]`
+/// and seals the same bytes under the same descriptor, `users/email|7u64`.
+/// Rows are readable across the two however they were sealed, provided the
+/// plan names the context the row was sealed under.
 fn parse_plan(value: FfiValue) -> Result<Vec<FieldPlan>, u32> {
     let FfiValue::Object(entries) = value else {
         return Err(STATUS_ENCODING);
@@ -410,16 +417,11 @@ fn parse_plan(value: FfiValue) -> Result<Vec<FieldPlan>, u32> {
             let FfiValue::Object(spec) = spec else {
                 return Err(STATUS_ENCODING);
             };
-            let mut context: Option<String> = None;
+            let mut context: Option<NonEmpty<ContextPart>> = None;
             let mut outputs: Option<Vec<Output>> = None;
             for (key, value) in spec {
                 match key.as_str() {
-                    "context" => {
-                        let FfiValue::String(s) = value else {
-                            return Err(STATUS_ENCODING);
-                        };
-                        context = Some(text_of(&s)?.to_string());
-                    }
+                    "context" => context = Some(parse_context(value)?),
                     "outputs" => {
                         let FfiValue::Array(items) = value else {
                             return Err(STATUS_ENCODING);
@@ -441,7 +443,6 @@ fn parse_plan(value: FfiValue) -> Result<Vec<FieldPlan>, u32> {
                 }
             }
             let context = context.ok_or(STATUS_ENCODING)?;
-            let context = NonEmpty::new(context).map_err(|_| STATUS_ENCODING)?;
             let outputs = outputs.filter(|o| !o.is_empty()).ok_or(STATUS_ENCODING)?;
             Ok(FieldPlan {
                 name,
@@ -617,10 +618,9 @@ where
             .position(|(name, _)| name == &field.name)
             .ok_or(STATUS_ENCODING)?;
         let (name, value) = row.swap_remove(at);
-        // Borrowed from the plan once per field: the proof was made at
-        // parse time, so re-taking it over the same bytes cannot fail, and
-        // `NonEmpty<&str>` is `Copy` for the outputs below.
-        let context = NonEmpty::new(field.context.get().as_str()).map_err(|_| STATUS_INTERNAL)?;
+        // The proof was made at parse time; the context is cloned per use
+        // below (it is a small tree, and the outputs each consume one).
+        let context = &field.context;
 
         // Terms first — they lift a copy of the scalar; the value itself is
         // consumed by the ciphertext path below.
@@ -639,16 +639,16 @@ where
                 continue;
             }
             let scalar = scalar.clone().ok_or(STATUS_INTERNAL)?;
-            let term = term_bytes(cipher, scalar, context, *output).await?;
+            let term = term_bytes(cipher, scalar, context.clone(), *output).await?;
             outputs.push((output.key(), Some(term)));
         }
 
         if field.outputs.contains(&Output::Ciphertext) {
             reject_passthrough_value(&value)?;
             let tree = value
-                .encrypt_with_aad(cipher, context)
+                .encrypt_with_aad(cipher, context.clone())
                 .map_err(|_| STATUS_INTERNAL)?;
-            pendings.push(tree.into_pending(cipher, context));
+            pendings.push(tree.into_pending(cipher, context.clone()));
         }
 
         skeleton.push((name, outputs));
@@ -701,8 +701,7 @@ where
             if !field.outputs.contains(&Output::Ciphertext) {
                 continue;
             }
-            let context =
-                NonEmpty::new(field.context.get().as_str()).map_err(|_| STATUS_INTERNAL)?;
+            let context = field.context.clone();
             let at = row
                 .iter()
                 .position(|(name, _)| name == &field.name)
