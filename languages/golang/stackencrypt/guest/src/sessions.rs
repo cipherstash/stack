@@ -43,7 +43,7 @@ impl<C> Sessions<C> {
         match self.ciphers.entry(handle) {
             Entry::Occupied(_) => Err(STATUS_INTERNAL),
             Entry::Vacant(slot) => {
-                slot.insert(cipher);
+                let _ = slot.insert(cipher);
                 self.next = bumped;
                 Ok(handle)
             }
@@ -54,8 +54,10 @@ impl<C> Sessions<C> {
         self.ciphers.get(&handle)
     }
 
+    /// The removed cipher is dropped here, which is where its keys are
+    /// wiped (`ZeroizeOnDrop`); an unknown handle is a no-op.
     pub(crate) fn remove(&mut self, handle: u32) {
-        self.ciphers.remove(&handle);
+        drop(self.ciphers.remove(&handle));
     }
 }
 

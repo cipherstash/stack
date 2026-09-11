@@ -1,4 +1,28 @@
+// Security lints — the block `stack-encrypt` and `stack-auth` carry, minus
+// `deny(unsafe_code)`: the export surface (`abi`) and the two host imports
+// (`host`) are `extern "C"` over raw pointers by nature. Every `unsafe`
+// block is confined to those two wasm32-only modules and documented at the
+// site; `unsafe_op_in_unsafe_fn` keeps each one explicit.
 #![deny(unsafe_op_in_unsafe_fn)]
+#![warn(clippy::unwrap_used)]
+#![warn(clippy::expect_used)]
+#![warn(clippy::panic)]
+// Prevent mem::forget from bypassing ZeroizeOnDrop
+#![warn(clippy::mem_forget)]
+// Prevent accidental data leaks via output
+#![warn(clippy::print_stdout)]
+#![warn(clippy::print_stderr)]
+#![warn(clippy::dbg_macro)]
+// Code quality
+#![warn(unreachable_pub)]
+#![warn(unused_results)]
+#![warn(clippy::todo)]
+#![warn(clippy::unimplemented)]
+// Relax in tests
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+#![cfg_attr(test, allow(clippy::expect_used))]
+#![cfg_attr(test, allow(clippy::panic))]
+#![cfg_attr(test, allow(unused_results))]
 //! # stack-encrypt WASI guest
 //!
 //! WASI guest module exposing [`stack-encrypt`](stack_encrypt) —

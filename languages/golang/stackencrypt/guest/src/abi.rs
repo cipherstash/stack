@@ -395,9 +395,16 @@ fn run_decrypt(
 }
 
 /// Derive one index term: a codec-encoded scalar, a codec-encoded context
-/// (a string, or an array of parts — see [`crate::context`]) and a term
-/// kind ([`ops::TERM_EQUALITY`] etc.); the output is the term's frozen byte
-/// encoding. Local PRF/CLLW only — never touches ZeroKMS.
+/// and a term kind ([`ops::TERM_EQUALITY`] etc.); the output is the term's
+/// frozen byte encoding. Local PRF/CLLW only — never touches ZeroKMS.
+///
+/// The context is one part — a string, bytes, or an `i32`/`i64`/`u32`/`u64`
+/// — or an array of parts, nested to any depth; [`crate::context`] is the
+/// one home of that grammar and of which Rust context each shape spells.
+/// A part and the one-element array holding it are *different* contexts
+/// (`[x]` is PAE-framed, `x` is not), so a probe must pass the context in
+/// exactly the shape the field was sealed under: a plan field's context
+/// verbatim, a bare part for a Rust leaf sealed under that part.
 ///
 /// # Safety
 ///

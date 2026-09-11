@@ -139,12 +139,18 @@ where
 // =============================================================================
 
 /// Derive one index term: a codec-encoded scalar and a codec-encoded
-/// context (a string, or an array of parts — see [`crate::context`]) in,
-/// the term's frozen byte encoding out (see `stack-encrypt`'s `sem` module
-/// docs). Purely local — this never touches ZeroKMS, which is what makes
-/// query probes cheap. A probe for a field sealed through a plan takes the
-/// field's plan context verbatim; a probe for a field a Rust row sealed
-/// under an extended context takes the same parts as a list.
+/// context in, the term's frozen byte encoding out (see `stack-encrypt`'s
+/// `sem` module docs). Purely local — this never touches ZeroKMS, which is
+/// what makes query probes cheap.
+///
+/// The context is one part — a string, bytes, or an `i32`/`i64`/`u32`/`u64`
+/// — or an array of parts, nested to any depth, exactly as a plan field's;
+/// [`crate::context`] is the one home of that grammar. Shape is identity:
+/// `[x]` is a PAE-framed list and `x` is not, so a probe takes the context
+/// in the shape the field was sealed under — a plan field's context
+/// verbatim, a bare part for a Rust leaf sealed under that part, and the
+/// same parts as a (left-nested) list for a Rust row sealed under an
+/// extended context.
 pub async fn term<K>(
     cipher: &StackCipher<K>,
     value: &[u8],
