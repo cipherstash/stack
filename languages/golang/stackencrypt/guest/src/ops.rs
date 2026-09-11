@@ -144,8 +144,10 @@ where
 /// what makes query probes cheap.
 ///
 /// The context is one part — a string, bytes, or an `i32`/`i64`/`u32`/`u64`
-/// — or an array of parts, nested to any depth, exactly as a plan field's;
-/// [`crate::context`] is the one home of that grammar. Shape is identity:
+/// — or an array of parts, nested as deep as the transport codec allows
+/// ([`codec::MAX_DEPTH`] levels from the root of the encoded value; deeper
+/// is [`STATUS_ENCODING`] before the context is parsed), exactly as a plan
+/// field's; [`crate::context`] is the one home of that grammar. Shape is identity:
 /// `[x]` is a PAE-framed list and `x` is not, so a probe takes the context
 /// in the shape the field was sealed under — a plan field's context
 /// verbatim, a bare part for a Rust leaf sealed under that part, and the

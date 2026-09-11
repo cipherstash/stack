@@ -36,7 +36,12 @@
 //!
 //! A bare string is the flat form every plan used before this module: one
 //! text part, the field's whole context, same bytes as before. An array is
-//! a list; it may nest. Text and bytes with the same content are distinct
+//! a list; it may nest as deep as the transport codec allows
+//! ([`MAX_DEPTH`](vitaminc_aead_value::transport::MAX_DEPTH) levels,
+//! counted from the root of the encoded value — a plan's field context
+//! starts two levels down), and a deeper value is refused as
+//! [`STATUS_ENCODING`] by the codec before this module sees it. Text and
+//! bytes with the same content are distinct
 //! on the PRF side (UTF-8 versus bytes encodings) though they share AAD
 //! bytes — the same distinction the Rust types make.  Booleans, floats,
 //! null, undefined, objects and passthroughs are not contexts and are

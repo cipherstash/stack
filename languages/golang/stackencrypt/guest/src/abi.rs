@@ -399,8 +399,11 @@ fn run_decrypt(
 /// frozen byte encoding. Local PRF/CLLW only — never touches ZeroKMS.
 ///
 /// The context is one part — a string, bytes, or an `i32`/`i64`/`u32`/`u64`
-/// — or an array of parts, nested to any depth; [`crate::context`] is the
-/// one home of that grammar and of which Rust context each shape spells.
+/// — or an array of parts, which may nest as deep as the transport codec
+/// allows (`vitaminc_aead_value::transport::MAX_DEPTH` levels, counted from
+/// the root of the encoded value; deeper is refused as `STATUS_ENCODING`
+/// before the context is parsed). [`crate::context`] is the one home of
+/// that grammar and of which Rust context each shape spells.
 /// A part and the one-element array holding it are *different* contexts
 /// (`[x]` is PAE-framed, `x` is not), so a probe must pass the context in
 /// exactly the shape the field was sealed under: a plan field's context
