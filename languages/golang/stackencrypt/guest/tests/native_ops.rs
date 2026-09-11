@@ -137,25 +137,50 @@ fn s(value: &str) -> FfiValue {
     FfiValue::String(value.into())
 }
 
-/// The plan used by the record tests: an ORE-indexed integer and a
-/// match-indexed string, both stored.
-fn plan() -> Vec<u8> {
+/// The plan shape the record tests share — an ORE-indexed integer and a
+/// match-indexed string, both stored — under whatever context `ctx` gives
+/// each field. Output order is fixed here, and the tests index into it.
+fn plan_under(ctx: impl Fn(&str) -> FfiValue) -> Vec<u8> {
     encode(obj(vec![
         (
             "age",
             obj(vec![
-                ("context", s("users/age")),
+                ("context", ctx("age")),
                 ("outputs", FfiValue::Array(vec![s("c"), s("eq"), s("ore")])),
             ]),
         ),
         (
             "name",
             obj(vec![
-                ("context", s("users/name")),
+                ("context", ctx("name")),
                 ("outputs", FfiValue::Array(vec![s("c"), s("match")])),
             ]),
         ),
     ]))
+}
+
+/// The plan used by the record tests: `plan_under` with flat contexts.
+fn plan() -> Vec<u8> {
+    plan_under(|field| s(&format!("users/{field}")))
+}
+
+/// A one-field plan storing only the ciphertext, under `context`.
+fn single_field_plan(field: &str, context: FfiValue) -> Vec<u8> {
+    encode(obj(vec![(
+        field,
+        obj(vec![
+            ("context", context),
+            ("outputs", FfiValue::Array(vec![s("c")])),
+        ]),
+    )]))
+}
+
+/// The bytes of a term node in a decoded record tree.
+fn term_bytes(node: &CipherText<Vec<u8>, FfiValue>) -> Vec<u8> {
+    let CipherText::Passthrough(FfiValue::Bytes(b)) = node else {
+        panic!("expected a passthrough bytes term node");
+    };
+    b.risky_ref().to_vec()
 }
 
 fn row(age: u32, name: &str) -> FfiValue {
@@ -447,6 +472,26 @@ fn unsupported_term_inputs_are_encoding_errors() {
         Err(STATUS_ENCODING),
         "empty context"
     );
+
+    // The context is codec-encoded, not raw text: the pre-structured form
+    // must be refused at the boundary, not read as a flat context; and a
+    // codec value that is not a context must be refused too.
+    for (label, context) in [
+        ("raw utf-8 bytes", b"f".to_vec()),
+        ("a boolean", encode(FfiValue::Bool(true))),
+        ("an object", encode(obj(vec![("k", s("v"))]))),
+    ] {
+        assert_eq!(
+            block_on(ops::term(
+                &cipher,
+                &encode(FfiValue::UInt32(1)),
+                &context,
+                TERM_EQUALITY
+            )),
+            Err(STATUS_ENCODING),
+            "a term context of {label} must be refused"
+        );
+    }
 }
 
 // =============================================================================
@@ -573,13 +618,6 @@ fn record_terms_equal_the_native_derivations_and_probe_them() {
         "output order is the plan's"
     );
 
-    let term_bytes = |node: &CipherText<Vec<u8>, FfiValue>| -> Vec<u8> {
-        let CipherText::Passthrough(FfiValue::Bytes(b)) = node else {
-            panic!("expected a passthrough bytes term node");
-        };
-        b.risky_ref().to_vec()
-    };
-
     // The stored terms are byte-identical to query-time probes built the
     // native way — the property that makes the index searchable.
     let eq_probe = block_on(cipher.equality_term(34u32, nonempty!("users/age"))).expect("probe");
@@ -621,22 +659,7 @@ fn extended(field: &str) -> FfiValue {
 
 /// `plan()` under the extension.
 fn extended_plan() -> Vec<u8> {
-    encode(obj(vec![
-        (
-            "age",
-            obj(vec![
-                ("context", extended("age")),
-                ("outputs", FfiValue::Array(vec![s("c"), s("eq"), s("ore")])),
-            ]),
-        ),
-        (
-            "name",
-            obj(vec![
-                ("context", extended("name")),
-                ("outputs", FfiValue::Array(vec![s("c"), s("match")])),
-            ]),
-        ),
-    ]))
+    plan_under(extended)
 }
 
 /// A plan whose context is a list seals exactly what the Rust derive seals
@@ -659,12 +682,6 @@ fn a_structured_plan_context_seals_what_the_native_extended_context_does() {
     };
     let (_, CipherText::Map(age_outputs)) = &fields[0] else {
         panic!("expected an output map for the first field");
-    };
-    let term_bytes = |node: &CipherText<Vec<u8>, FfiValue>| -> Vec<u8> {
-        let CipherText::Passthrough(FfiValue::Bytes(b)) = node else {
-            panic!("expected a passthrough bytes term node");
-        };
-        b.risky_ref().to_vec()
     };
 
     let native = nonempty!("users/age").with(7u64);
@@ -734,15 +751,7 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
     let mut record = Vec::new();
     codec::encode_ciphertext(&tree, &mut record).expect("encode tree");
 
-    let plan_with = |context: FfiValue| {
-        encode(obj(vec![(
-            "age",
-            obj(vec![
-                ("context", context),
-                ("outputs", FfiValue::Array(vec![s("c")])),
-            ]),
-        )]))
-    };
+    let plan_with = |context: FfiValue| single_field_plan("age", context);
 
     let opened = block_on(ops::decrypt_record(
         &cipher,
@@ -771,28 +780,24 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
 #[test]
 fn a_structured_plan_context_is_validated_at_parse() {
     let cipher = cipher();
-    let plan_with = |context: FfiValue| {
-        encode(obj(vec![(
-            "f",
-            obj(vec![
-                ("context", context),
-                ("outputs", FfiValue::Array(vec![s("c")])),
-            ]),
-        )]))
-    };
+    let plan_with = |context: FfiValue| single_field_plan("f", context);
     let source = encode(obj(vec![("f", FfiValue::UInt32(1))]));
 
-    for bad in [
-        FfiValue::Bool(true),
-        FfiValue::Float64(7.0),
-        FfiValue::Object(vec![]),
-        FfiValue::Array(vec![]),
-        FfiValue::Array(vec![s("")]),
-        FfiValue::Array(vec![s("users/age"), FfiValue::Float64(7.0)]),
+    for (label, bad) in [
+        ("a boolean", FfiValue::Bool(true)),
+        ("a float", FfiValue::Float64(7.0)),
+        ("an object", FfiValue::Object(vec![])),
+        ("an empty list", FfiValue::Array(vec![])),
+        ("a list of one empty string", FfiValue::Array(vec![s("")])),
+        (
+            "a list with a float in it",
+            FfiValue::Array(vec![s("users/age"), FfiValue::Float64(7.0)]),
+        ),
     ] {
         assert_eq!(
             block_on(ops::encrypt_record(&cipher, &source, &plan_with(bad))),
-            Err(STATUS_ENCODING)
+            Err(STATUS_ENCODING),
+            "a plan context of {label} must be refused at parse"
         );
     }
     assert_eq!(

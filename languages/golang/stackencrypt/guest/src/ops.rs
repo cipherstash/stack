@@ -377,15 +377,17 @@ struct FieldPlan {
 ///
 /// ```text
 /// { <field>: { "context": <context>, "outputs": [ "c" | "eq" | "match" | "ore" | "ope", ... ] }, ... }
-/// context := <string> | <bytes> | <i32> | <i64> | <u32> | <u64> | [ context, ... ]
 /// ```
+///
+/// `<context>` is defined once, in [`crate::context`]: a string, bytes, an
+/// integer, or a list of those, with what each spells in Rust and the
+/// emptiness rule.
 ///
 /// Rejected as [`STATUS_ENCODING`]: an empty plan, a missing, malformed or
 /// *empty* context (contexts domain-separate fields; stack-encrypt's leaves
-/// take a `NonEmpty<_>` and nothing else — see [`crate::context`] for the
-/// shape and the emptiness rule), an empty/unknown/duplicated output list,
-/// unknown keys. Field names are unique by construction (the codec rejects
-/// duplicate object keys).
+/// take a `NonEmpty<_>` and nothing else), an empty/unknown/duplicated
+/// output list, unknown keys. Field names are unique by construction (the
+/// codec rejects duplicate object keys).
 ///
 /// The context is proven here, once, and carried as a [`NonEmpty`]: the
 /// cipher-directed path [`build_row`] seals through accepts any AAD, so
@@ -396,14 +398,11 @@ struct FieldPlan {
 /// A plan context is the *whole* context of the field: the guest has no
 /// caller context to extend it with, so the plan spells the extension
 /// itself. A bare string matches a Rust `#[derive(EncryptFrom)]` record
-/// sealed with `encrypt_into` (no caller context), where the derive's
-/// `"<context>/<field>"` string is the field's whole context — same AAD
-/// bytes, same descriptor. A list matches a record sealed with
-/// `encrypt_into_with_context(.., 7u64)`, which extends every field's
-/// context to `("users/email", 7u64)`: the plan says `["users/email", 7u64]`
-/// and seals the same bytes under the same descriptor, `users/email|7u64`.
-/// Rows are readable across the two however they were sealed, provided the
-/// plan names the context the row was sealed under.
+/// sealed with `encrypt_into` (no caller context); a list matches one
+/// sealed with `encrypt_into_with_context` — see [`crate::context`] for
+/// which list spells which Rust context. Rows are readable across the two
+/// however they were sealed, provided the plan names the context the row
+/// was sealed under.
 fn parse_plan(value: FfiValue) -> Result<Vec<FieldPlan>, u32> {
     let FfiValue::Object(entries) = value else {
         return Err(STATUS_ENCODING);
@@ -618,9 +617,10 @@ where
             .position(|(name, _)| name == &field.name)
             .ok_or(STATUS_ENCODING)?;
         let (name, value) = row.swap_remove(at);
-        // The proof was made at parse time; the context is cloned per use
-        // below (it is a small tree, and the outputs each consume one).
-        let context = &field.context;
+        // Borrowed from the plan once per field: the proof was made at
+        // parse time, so re-taking it over the same tree cannot fail, and
+        // `NonEmpty<&ContextPart>` is `Copy` for the outputs below.
+        let context = NonEmpty::new(field.context.get()).map_err(|_| STATUS_INTERNAL)?;
 
         // Terms first — they lift a copy of the scalar; the value itself is
         // consumed by the ciphertext path below.
@@ -639,16 +639,16 @@ where
                 continue;
             }
             let scalar = scalar.clone().ok_or(STATUS_INTERNAL)?;
-            let term = term_bytes(cipher, scalar, context.clone(), *output).await?;
+            let term = term_bytes(cipher, scalar, context, *output).await?;
             outputs.push((output.key(), Some(term)));
         }
 
         if field.outputs.contains(&Output::Ciphertext) {
             reject_passthrough_value(&value)?;
             let tree = value
-                .encrypt_with_aad(cipher, context.clone())
+                .encrypt_with_aad(cipher, context)
                 .map_err(|_| STATUS_INTERNAL)?;
-            pendings.push(tree.into_pending(cipher, context.clone()));
+            pendings.push(tree.into_pending(cipher, context));
         }
 
         skeleton.push((name, outputs));
@@ -701,7 +701,7 @@ where
             if !field.outputs.contains(&Output::Ciphertext) {
                 continue;
             }
-            let context = field.context.clone();
+            let context = NonEmpty::new(field.context.get()).map_err(|_| STATUS_INTERNAL)?;
             let at = row
                 .iter()
                 .position(|(name, _)| name == &field.name)

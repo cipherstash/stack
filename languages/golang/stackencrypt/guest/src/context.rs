@@ -31,14 +31,37 @@
 //! context := <string> | <bytes> | <i32> | <i64> | <u32> | <u64> | [ context, ... ]
 //! ```
 //!
+//! This module is the one home of that grammar; the plan parser, the ABI
+//! docs and the Go bindings plan point here.
+//!
 //! A bare string is the flat form every plan used before this module: one
 //! text part, the field's whole context, same bytes as before. An array is
-//! a list; it may nest. A one-element list is *not* the bare part (it is
-//! PAE-framed, as `Some(x)` is), and text and bytes with the same content
-//! are distinct on the PRF side (UTF-8 versus bytes encodings) though they
-//! share AAD bytes — the same distinctions the Rust types make. Booleans,
-//! floats, null, undefined, objects and passthroughs are not contexts and
-//! are refused as [`STATUS_ENCODING`].
+//! a list; it may nest. Text and bytes with the same content are distinct
+//! on the PRF side (UTF-8 versus bytes encodings) though they share AAD
+//! bytes — the same distinction the Rust types make.  Booleans, floats,
+//! null, undefined, objects and passthroughs are not contexts and are
+//! refused as [`STATUS_ENCODING`].
+//!
+//! # Which Rust contexts a list spells
+//!
+//! * `["users/age", 7u64]` is `nonempty!("users/age").with(7u64)`: a
+//!   two-element list is the pair.
+//! * `NonEmpty::with` nests to the **left**: `nonempty!("a").with(7u64)
+//!   .with("eu")` is `(("a", 7u64), "eu")`, spelled `[["a", 7u64], "eu"]`.
+//!   A flat three-element list is a different context (a three-part PAE)
+//!   that no `.with()` chain produces; `a_left_nested_list_is_the_with_chain`
+//!   pins both facts.
+//! * A one-element list is *not* the bare part: it is PAE-framed, as
+//!   `Some(x)` is on the AAD side. On the PRF side vitaminc currently tags
+//!   `Some(x)` with an `option-some` domain, so `[x]` matches a Rust
+//!   `Some(x)` for the ciphertext and the descriptor but **not** for index
+//!   terms. That is a divergence inside vitaminc between a context's two
+//!   derivations, and vitaminc#335 removes it (`Some(x)` becomes the
+//!   one-element list on both sides, and this type becomes `AadPiece`
+//!   itself). Until it ships, a Rust row that Go must query must not be
+//!   sealed under an `Option` context; `a_one_element_list_is_not_the_bare_part`
+//!   and `a_one_element_list_is_not_yet_some_on_the_prf_side` pin the
+//!   current state so the fix shows up as a test change.
 //!
 //! # Emptiness
 //!
@@ -105,15 +128,58 @@ impl<'a> IntoPrfContext<'a> for ContextPart {
             ContextPart::U32(v) => v.into_prf_context(),
             ContextPart::U64(v) => v.into_prf_context(),
             ContextPart::List(parts) => {
-                let encoded: Vec<PrfContext<'static>> = parts
-                    .into_iter()
-                    .map(|part| part.into_prf_context().into_owned())
-                    .collect();
-                let pieces: Vec<&[u8]> = encoded.iter().map(PrfContext::as_bytes).collect();
-                PrfContext::pae(&pieces)
+                pae_of(parts.into_iter().map(IntoPrfContext::into_prf_context))
             }
         }
     }
+}
+
+/// Borrowed forms, so a plan's context is bound once at parse and then
+/// handed to every output of every row without cloning the tree: the
+/// leaves borrow (`Cow::Borrowed`, `&str`, `&[u8]`), and the consumers
+/// (`encrypt_with_aad`, `into_pending`, `decrypt_into`, the term
+/// derivations) take the context by value with a free lifetime and own
+/// what they keep before any await.
+impl<'a> IntoAad<'a> for &'a ContextPart {
+    fn into_aad(self) -> Aad<'a> {
+        self.into_aad_piece().into_aad()
+    }
+
+    fn into_aad_piece(self) -> AadPiece<'a> {
+        match self {
+            ContextPart::Text(text) => AadPiece::Text(Cow::Borrowed(text)),
+            ContextPart::Bytes(bytes) => AadPiece::Bytes(Cow::Borrowed(bytes)),
+            ContextPart::I32(v) => AadPiece::I32(*v),
+            ContextPart::I64(v) => AadPiece::I64(*v),
+            ContextPart::U32(v) => AadPiece::U32(*v),
+            ContextPart::U64(v) => AadPiece::U64(*v),
+            ContextPart::List(parts) => {
+                AadPiece::List(parts.iter().map(IntoAad::into_aad_piece).collect())
+            }
+        }
+    }
+}
+
+impl<'a> IntoPrfContext<'a> for &'a ContextPart {
+    fn into_prf_context(self) -> PrfContext<'a> {
+        match self {
+            ContextPart::Text(text) => text.as_str().into_prf_context(),
+            ContextPart::Bytes(bytes) => bytes.as_slice().into_prf_context(),
+            ContextPart::I32(v) => v.into_prf_context(),
+            ContextPart::I64(v) => v.into_prf_context(),
+            ContextPart::U32(v) => v.into_prf_context(),
+            ContextPart::U64(v) => v.into_prf_context(),
+            ContextPart::List(parts) => pae_of(parts.iter().map(IntoPrfContext::into_prf_context)),
+        }
+    }
+}
+
+/// The PAE of already-derived parts: what vitaminc's `(A, B)` impl does
+/// for two, for any number.
+fn pae_of<'a>(parts: impl Iterator<Item = PrfContext<'a>>) -> PrfContext<'static> {
+    let encoded: Vec<PrfContext<'a>> = parts.collect();
+    let pieces: Vec<&[u8]> = encoded.iter().map(PrfContext::as_bytes).collect();
+    PrfContext::pae(&pieces)
 }
 
 impl MaybeEmpty for ContextPart {
@@ -139,13 +205,14 @@ pub fn parse_context(value: FfiValue) -> Result<NonEmpty<ContextPart>, u32> {
 
 fn part_of(value: FfiValue) -> Result<ContextPart, u32> {
     Ok(match value {
-        FfiValue::String(s) => {
-            // Valid UTF-8 by `Utf8String`'s construction invariant; checked
-            // rather than assumed because this is boundary code.
-            let text = std::str::from_utf8(s.risky_ref()).map_err(|_| STATUS_ENCODING)?;
-            ContextPart::Text(text.to_string())
-        }
-        FfiValue::Bytes(bytes) => ContextPart::Bytes(bytes.risky_ref().clone()),
+        // Valid UTF-8 by `Utf8String`'s construction invariant; checked
+        // rather than assumed because this is boundary code. The payload
+        // moves out of its `Protected` rather than being copied: a context
+        // is not secret, and the copy would only be wiped and freed.
+        FfiValue::String(s) => ContextPart::Text(
+            String::from_utf8(s.into_inner().risky_unwrap()).map_err(|_| STATUS_ENCODING)?,
+        ),
+        FfiValue::Bytes(bytes) => ContextPart::Bytes(bytes.risky_unwrap()),
         FfiValue::Int32(v) => ContextPart::I32(v),
         FfiValue::Int64(v) => ContextPart::I64(v),
         FfiValue::UInt32(v) => ContextPart::U32(v),
@@ -236,6 +303,98 @@ mod tests {
         );
     }
 
+    /// The borrowed impls are the owned ones without the clone.
+    #[test]
+    fn borrowed_and_owned_forms_encode_alike() {
+        let parsed = parse_context(FfiValue::Array(vec![
+            s("users/age"),
+            FfiValue::Array(vec![
+                FfiValue::Bytes(Protected::new(b"k".to_vec())),
+                FfiValue::Int64(-1),
+            ]),
+        ]))
+        .expect("context");
+        let owned = parsed.clone().into_inner();
+        let borrowed = NonEmpty::new(parsed.get()).expect("a non-empty context borrows non-empty");
+        assert_eq!(
+            borrowed.into_aad().as_bytes(),
+            owned.clone().into_aad().as_bytes(),
+            "AAD bytes differ between the borrowed and owned forms"
+        );
+        assert_eq!(
+            NonEmpty::new(parsed.get())
+                .expect("non-empty")
+                .into_prf_context()
+                .as_bytes(),
+            owned.into_prf_context().as_bytes(),
+            "PRF bytes differ between the borrowed and owned forms"
+        );
+    }
+
+    /// `NonEmpty::with` nests to the left, so a `.with().with()` chain is
+    /// the left-nested list; a flat list of three is a different context.
+    #[test]
+    fn a_left_nested_list_is_the_with_chain() {
+        let chain = nonempty!("a").with(7u64).with("eu");
+        let nested = parse_context(FfiValue::Array(vec![
+            FfiValue::Array(vec![s("a"), FfiValue::UInt64(7)]),
+            s("eu"),
+        ]))
+        .expect("nested")
+        .into_inner();
+        let flat = parse_context(FfiValue::Array(vec![s("a"), FfiValue::UInt64(7), s("eu")]))
+            .expect("flat")
+            .into_inner();
+        assert_eq!(
+            nested.clone().into_aad().as_bytes(),
+            chain.into_aad().as_bytes(),
+            "the left-nested list is not the with-chain on the AAD side"
+        );
+        assert_eq!(
+            nested.clone().into_prf_context().as_bytes(),
+            chain.into_prf_context().as_bytes(),
+            "the left-nested list is not the with-chain on the PRF side"
+        );
+        assert_ne!(
+            flat.clone().into_aad().as_bytes(),
+            nested.clone().into_aad().as_bytes(),
+            "a flat three-part list must not collide with the nested pair"
+        );
+        assert_ne!(
+            flat.into_prf_context().as_bytes(),
+            nested.into_prf_context().as_bytes(),
+            "a flat three-part list must not collide with the nested pair"
+        );
+    }
+
+    /// The state vitaminc#335 changes: `[x]` is `Some(x)` for the AAD and
+    /// the descriptor, and not yet for index terms. When the PRF `Option`
+    /// impl follows the parts view, the `assert_ne!` here flips to
+    /// `assert_eq!` and the module docs lose their caveat.
+    #[test]
+    fn a_one_element_list_is_not_yet_some_on_the_prf_side() {
+        use stack_encrypt::Descriptor;
+        let list = parse_context(FfiValue::Array(vec![FfiValue::UInt64(7)]))
+            .expect("list")
+            .into_inner();
+        let some = Some(7u64);
+        assert_eq!(
+            list.clone().into_aad().as_bytes(),
+            some.into_aad().as_bytes(),
+            "[x] and Some(x) share AAD bytes"
+        );
+        assert_eq!(
+            Descriptor::of(list.clone()).as_str(),
+            Descriptor::of(some).as_str(),
+            "[x] and Some(x) render the same descriptor"
+        );
+        assert_ne!(
+            list.into_prf_context().as_bytes(),
+            some.into_prf_context().as_bytes(),
+            "vitaminc#335 has landed: [x] now equals Some(x) on the PRF side too — flip this to assert_eq! and drop the module-doc caveat"
+        );
+    }
+
     #[test]
     fn a_one_element_list_is_not_the_bare_part() {
         let list = parse_context(FfiValue::Array(vec![s("a")])).expect("list");
@@ -268,36 +427,62 @@ mod tests {
 
     #[test]
     fn emptiness_follows_the_tuple_rule() {
-        for empty in [
-            s(""),
-            FfiValue::Bytes(Protected::new(Vec::new())),
-            FfiValue::Array(vec![]),
-            FfiValue::Array(vec![s("")]),
-            FfiValue::Array(vec![FfiValue::Array(vec![]), s("")]),
+        for (label, empty) in [
+            ("an empty string", s("")),
+            ("empty bytes", FfiValue::Bytes(Protected::new(Vec::new()))),
+            ("an empty list", FfiValue::Array(vec![])),
+            ("a list of one empty string", FfiValue::Array(vec![s("")])),
+            (
+                "a list of empties",
+                FfiValue::Array(vec![FfiValue::Array(vec![]), s("")]),
+            ),
         ] {
-            assert_eq!(parse_context(empty).err(), Some(STATUS_ENCODING));
+            assert_eq!(
+                parse_context(empty).err(),
+                Some(STATUS_ENCODING),
+                "{label} is empty by the tuple rule and must be refused"
+            );
         }
-        for non_empty in [
-            FfiValue::UInt64(0),
-            FfiValue::Array(vec![s(""), FfiValue::Int32(0)]),
-            FfiValue::Array(vec![FfiValue::Array(vec![s("x")])]),
+        for (label, non_empty) in [
+            ("a zero integer", FfiValue::UInt64(0)),
+            (
+                "an empty string beside an integer",
+                FfiValue::Array(vec![s(""), FfiValue::Int32(0)]),
+            ),
+            (
+                "a nested non-empty list",
+                FfiValue::Array(vec![FfiValue::Array(vec![s("x")])]),
+            ),
         ] {
-            assert!(parse_context(non_empty).is_ok());
+            assert!(
+                parse_context(non_empty).is_ok(),
+                "{label} carries bytes and must be accepted"
+            );
         }
     }
 
     #[test]
     fn non_context_values_are_encoding_errors() {
-        for bad in [
-            FfiValue::Null,
-            FfiValue::Undefined,
-            FfiValue::Bool(true),
-            FfiValue::Float32(1.0),
-            FfiValue::Float64(1.0),
-            FfiValue::Object(vec![("k".to_string(), s("v"))]),
-            FfiValue::Array(vec![s("ok"), FfiValue::Bool(false)]),
+        for (label, bad) in [
+            ("null", FfiValue::Null),
+            ("undefined", FfiValue::Undefined),
+            ("a boolean", FfiValue::Bool(true)),
+            ("a float32", FfiValue::Float32(1.0)),
+            ("a float64", FfiValue::Float64(1.0)),
+            (
+                "an object",
+                FfiValue::Object(vec![("k".to_string(), s("v"))]),
+            ),
+            (
+                "a list with a boolean in it",
+                FfiValue::Array(vec![s("ok"), FfiValue::Bool(false)]),
+            ),
         ] {
-            assert_eq!(parse_context(bad).err(), Some(STATUS_ENCODING));
+            assert_eq!(
+                parse_context(bad).err(),
+                Some(STATUS_ENCODING),
+                "{label} is not a context and must be refused"
+            );
         }
     }
 }
