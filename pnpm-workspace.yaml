@@ -52,7 +52,7 @@ catalogs:
     tsup: 8.5.1
     tsx: 4.23.12
     typescript: 5.9.3
-    vitest: 3.2.7
+    vitest: 4.1.11
     # Must track `vitest` exactly: the coverage provider is versioned in
     # lockstep with the runner, and vitest refuses to start against a mismatched
     # one ("Vitest failed to load @vitest/coverage-v8"). Catalogued for the same
