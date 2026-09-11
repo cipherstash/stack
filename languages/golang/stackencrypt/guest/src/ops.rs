@@ -32,7 +32,7 @@
 //! `ClientOpts::max_keys_per_req` keyed leaves (500 by default, sent
 //! sequentially: the guest pins `max_concurrent_reqs` to 1), so "one call"
 //! is exact up to 500 leaves and "one call per 500" past it. See
-//! [`parse_plan`] for the plan encoding.
+//! `parse_plan` for the plan encoding.
 
 use stack_encrypt::sem::{CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch};
 use stack_encrypt::target::Pending;

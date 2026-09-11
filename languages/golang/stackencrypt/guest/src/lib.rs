@@ -23,6 +23,10 @@
 #![cfg_attr(test, allow(clippy::expect_used))]
 #![cfg_attr(test, allow(clippy::panic))]
 #![cfg_attr(test, allow(unused_results))]
+// The crate's target is wasm32; `abi` and `host` only exist there, so on a
+// native doc build their intra-doc links have nothing to resolve to. The
+// wasm32 doc build (`mise run wasm:guest:test`) is where links are enforced.
+#![cfg_attr(not(target_arch = "wasm32"), allow(rustdoc::broken_intra_doc_links))]
 //! # stack-encrypt WASI guest
 //!
 //! WASI guest module exposing [`stack-encrypt`](stack_encrypt) —
@@ -42,11 +46,11 @@
 //! Split into:
 //!
 //! - [`ops`], [`context`], [`config`], [`response`], [`headers`], [`status`],
-//!   [`sessions`] — everything that is pure logic over `StackCipher<K>` /
+//!   `sessions` — everything that is pure logic over `StackCipher<K>` /
 //!   bytes. Compiles and unit-tests on the native host target (`cargo
 //!   test` here, no wasm toolchain needed) against
 //!   `stack_kms::FakeDataKeySource`.
-//! - [`abi`], [`host`], [`buffers`] (wasm32 only) — the export surface,
+//! - [`abi`], [`host`], `buffers` (wasm32 only) — the export surface,
 //!   the two host imports, and the buffer registry. See [`abi`]'s module
 //!   docs for the full ABI contract.
 //!

@@ -5,7 +5,7 @@
 //!   memory obtained from [`se_alloc`] and releases every buffer — its own
 //!   inputs and the guest's outputs — with [`se_dealloc`], which **zeroizes
 //!   before freeing**. The guest keeps a registry of every buffer it hands
-//!   out ([`crate::buffers`]), so `se_dealloc` never trusts the host's
+//!   out (`crate::buffers`), so `se_dealloc` never trusts the host's
 //!   length. Two entry points additionally wipe their *input* buffer in
 //!   place before returning: [`se_cipher_init`] (the config carries the
 //!   client key) and [`se_decrypt`]'s output is plaintext the host must
@@ -100,7 +100,7 @@ pub extern "C" fn se_alloc(len: u32) -> *mut u8 {
 }
 
 /// Zeroize and free a buffer previously handed out by [`se_alloc`] or
-/// packed into a result. See [`crate::buffers::dealloc`] for the registry
+/// packed into a result. See `crate::buffers::dealloc` for the registry
 /// discipline (unknown pointer: no-op; length mismatch: refused).
 ///
 /// # Safety
@@ -272,7 +272,7 @@ pub extern "C" fn se_cipher_free(handle: u32) {
 /// Encrypt an FFI-codec-encoded value tree under the handle's cipher,
 /// binding `aad`; every leaf is sealed from one batched key request,
 /// dispatched as one `generate-data-key` call per 500 keyed leaves (see
-/// [`cipher_init`] for where that bound comes from). Output: packed pointer
+/// `cipher_init` for where that bound comes from). Output: packed pointer
 /// to a codec-encoded ciphertext tree whose leaves are the frozen
 /// `SealedValue` byte encoding.
 ///
