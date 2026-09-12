@@ -68,9 +68,10 @@
 //! and opening sides bind that one value. The asymmetry is the design; see
 //! `packages/stack-encrypt/docs/adr/0001-context-optional-cipher-directed-path.md`.
 //!
-//! Every export decodes and structurally validates *all* of its inputs —
-//! the operation payload, the plan or context, the term kind, and the
-//! options object — before it consults the cipher ([`ops::validate`]), so
+//! Every export decodes and validates *all* of its inputs — the operation
+//! payload, the plan or context, the term kind, the value against the
+//! plan or kind, and the options object — before it consults the cipher
+//! ([`ops::validate`] runs the operation's own parsers), so
 //! malformed input reads as `STATUS_ENCODING` whether or not
 //! `se_cipher_init` has run, and never costs a keyset load; only a
 //! well-formed call with no cipher is `STATUS_STATE`. Keyset *resolution*
@@ -553,9 +554,7 @@ pub unsafe extern "C" fn se_term(
         let value = value.as_slice();
         let context = input(ctx_ptr, ctx_len)?;
         let opts = input(opt_ptr, opt_len)?;
-        ops::validate::value(value)?;
-        ops::validate::context(context)?;
-        ops::validate::term_kind(kind)?;
+        ops::validate::term(value, context, kind)?;
         with_keyset(opts, |keyset| {
             block_on(ops::term(keyset, value, context, kind))
         })
@@ -588,8 +587,7 @@ pub unsafe extern "C" fn se_encrypt_record(
         let source = source.as_slice();
         let plan = input(plan_ptr, plan_len)?;
         let opts = input(opt_ptr, opt_len)?;
-        ops::validate::value(source)?;
-        ops::validate::plan(plan)?;
+        ops::validate::record(source, plan)?;
         with_keyset(opts, |keyset| {
             block_on(ops::encrypt_record(keyset, source, plan))
         })
@@ -621,8 +619,7 @@ pub unsafe extern "C" fn se_decrypt_record(
         let record = input(rec_ptr, rec_len)?;
         let plan = input(plan_ptr, plan_len)?;
         let opts = input(opt_ptr, opt_len)?;
-        ops::validate::tree(record)?;
-        ops::validate::plan(plan)?;
+        ops::validate::record_tree(record, plan)?;
         with_opener(opts, |opener| {
             block_on(ops::decrypt_record(opener, record, plan))
         })

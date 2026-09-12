@@ -144,7 +144,8 @@ impl KeysetSelector {
 /// from any keyset (`{"any"}`), or one keyset's cipher, which opens only its
 /// own leaves and refuses the rest before any key is retrieved.
 pub enum Opener<'c, K> {
-    /// Leaves from any keyset, one ZeroKMS call per keyset.
+    /// Leaves from any keyset: one batched retrieval per keyset the leaves
+    /// were sealed under, each chunked at the client's request limit.
     Any(&'c StackCipher<K>),
     /// Leaves from this keyset only.
     Only(KeysetCipher<'c, K>),

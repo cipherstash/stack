@@ -1243,3 +1243,242 @@ fn terms_derive_under_the_selected_keyset() {
     let native = block_on(acme.equality_term(42u32, nonempty!("users/age"))).expect("native");
     assert_eq!(acme_term, native.into_bytes().to_vec());
 }
+
+// =============================================================================
+// Validation precedence
+// =============================================================================
+
+/// The ABI runs `ops::validate` on every input before it consults the
+/// cipher, so a malformed call must be refused there — not by the operation
+/// after a keyset has been resolved. These pin that the validators reject
+/// exactly the inputs the operations reject as `STATUS_ENCODING`, on a
+/// static path that needs no cipher at all, and accept what the operations
+/// accept.
+#[test]
+fn term_validation_refuses_what_the_term_op_refuses() {
+    let cipher = cipher();
+    let ctx = encode(s("f"));
+
+    for (label, value, kind) in [
+        (
+            "a float under equality",
+            FfiValue::Float64(1.5),
+            TERM_EQUALITY,
+        ),
+        ("a bool under equality", FfiValue::Bool(true), TERM_EQUALITY),
+        ("an integer under match", FfiValue::UInt32(1), TERM_MATCH),
+        ("a container", FfiValue::Array(vec![]), TERM_ORE),
+        ("an object", obj(vec![("k", s("v"))]), TERM_EQUALITY),
+        ("null", FfiValue::Null, TERM_OPE),
+        ("an unknown kind", FfiValue::UInt32(1), 99),
+    ] {
+        let value = encode(value);
+        assert_eq!(
+            ops::validate::term(&value, &ctx, kind),
+            Err(STATUS_ENCODING),
+            "{label} must be refused by validation"
+        );
+        assert_eq!(
+            block_on(ops::term(&cipher.default_keyset(), &value, &ctx, kind)),
+            Err(STATUS_ENCODING),
+            "{label} must be refused by the op too"
+        );
+    }
+    for (label, context) in [
+        ("an empty context", encode(s(""))),
+        (
+            "a context that is not a context",
+            encode(FfiValue::Bool(true)),
+        ),
+        ("raw bytes for a context", b"f".to_vec()),
+    ] {
+        assert_eq!(
+            ops::validate::term(&encode(FfiValue::UInt32(1)), &context, TERM_EQUALITY),
+            Err(STATUS_ENCODING),
+            "{label} must be refused by validation"
+        );
+    }
+
+    // Every pair the scheme defines passes.
+    for (value, kind) in [
+        (FfiValue::UInt32(1), TERM_EQUALITY),
+        (FfiValue::Int64(-1), TERM_EQUALITY),
+        (s("x"), TERM_EQUALITY),
+        (FfiValue::Bytes(Protected::new(vec![1])), TERM_EQUALITY),
+        (s("x y"), TERM_MATCH),
+        (FfiValue::Float64(1.5), TERM_ORE),
+        (FfiValue::Bool(true), TERM_OPE),
+        (s("x"), TERM_ORE),
+    ] {
+        assert_eq!(ops::validate::term(&encode(value), &ctx, kind), Ok(()));
+    }
+}
+
+#[test]
+fn record_validation_refuses_what_encrypt_record_refuses() {
+    let cipher = cipher();
+    let plan = plan();
+
+    for (label, source) in [
+        ("a missing field", obj(vec![("age", FfiValue::UInt32(1))])),
+        (
+            "an extra field",
+            obj(vec![
+                ("age", FfiValue::UInt32(1)),
+                ("name", s("a")),
+                ("stray", s("b")),
+            ]),
+        ),
+        (
+            "a container under a term output",
+            obj(vec![
+                ("age", FfiValue::Array(vec![FfiValue::UInt32(1)])),
+                ("name", s("a")),
+            ]),
+        ),
+        (
+            "a float under equality",
+            obj(vec![("age", FfiValue::Float64(1.0)), ("name", s("a"))]),
+        ),
+        (
+            "an integer under match",
+            obj(vec![
+                ("age", FfiValue::UInt32(1)),
+                ("name", FfiValue::UInt32(2)),
+            ]),
+        ),
+        ("a scalar, not a record", FfiValue::UInt32(1)),
+        (
+            "a batch holding a non-record",
+            FfiValue::Array(vec![row(1, "a"), FfiValue::Null]),
+        ),
+    ] {
+        let source = encode(source);
+        assert_eq!(
+            ops::validate::record(&source, &plan),
+            Err(STATUS_ENCODING),
+            "{label} must be refused by validation"
+        );
+        assert_eq!(
+            block_on(ops::encrypt_record(
+                &cipher.default_keyset(),
+                &source,
+                &plan
+            )),
+            Err(STATUS_ENCODING),
+            "{label} must be refused by the op too"
+        );
+    }
+
+    // A passthrough under a ciphertext output, with no term output to mask
+    // it (the invariant `a_passthrough_source_value_is_refused_a_ciphertext_slot` pins).
+    let ct_only = single_field_plan("age", s("users/age"));
+    let passthrough = encode(obj(vec![(
+        "age",
+        FfiValue::Passthrough(Box::new(FfiValue::UInt32(29))),
+    )]));
+    assert_eq!(
+        ops::validate::record(&passthrough, &ct_only),
+        Err(STATUS_ENCODING)
+    );
+
+    // A malformed plan is refused with a well-formed source.
+    assert_eq!(
+        ops::validate::record(&encode(row(1, "a")), &encode(obj(vec![]))),
+        Err(STATUS_ENCODING)
+    );
+
+    assert_eq!(ops::validate::record(&encode(row(1, "a")), &plan), Ok(()));
+    assert_eq!(
+        ops::validate::record(
+            &encode(FfiValue::Array(vec![row(1, "a"), row(2, "b")])),
+            &plan
+        ),
+        Ok(())
+    );
+    assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn record_tree_validation_refuses_what_decrypt_record_refuses() {
+    let cipher = cipher();
+    let plan = plan();
+    let record = block_on(ops::encrypt_record(
+        &cipher.default_keyset(),
+        &encode(row(29, "alice")),
+        &plan,
+    ))
+    .expect("encrypt record");
+    assert_eq!(ops::validate::record_tree(&record, &plan), Ok(()));
+
+    type Node = CipherText<Vec<u8>, FfiValue>;
+    // The tree is not `Clone`; every variant decodes the record afresh.
+    let fields = || {
+        let CipherText::Map(fields) = decode_tree(&record) else {
+            panic!("expected a field map");
+        };
+        fields
+    };
+    let re_encode = |tree: Node| {
+        let mut out = Vec::new();
+        codec::encode_ciphertext(&tree, &mut out).expect("re-encode");
+        out
+    };
+    let with_age = |edit: &dyn Fn(&mut Node)| {
+        let mut fields = fields();
+        for (field, node) in &mut fields {
+            if field == "age" {
+                edit(node);
+            }
+        }
+        CipherText::Map(fields)
+    };
+
+    let forged_c = with_age(&|node| {
+        let CipherText::Map(outputs) = node else {
+            panic!("expected an output map");
+        };
+        for (key, slot) in outputs.iter_mut() {
+            if key == "c" {
+                *slot = CipherText::Passthrough(FfiValue::UInt32(99));
+            }
+        }
+    });
+    let no_c = with_age(&|node| {
+        let CipherText::Map(outputs) = node else {
+            panic!("expected an output map");
+        };
+        outputs.retain(|(key, _)| key != "c");
+    });
+    let not_a_map = with_age(&|node| *node = CipherText::Passthrough(FfiValue::Null));
+    let missing_field = {
+        let mut fields = fields();
+        fields.retain(|(field, _)| field != "age");
+        CipherText::Map(fields)
+    };
+    let batch_of_non_records = CipherText::Sequence(vec![
+        CipherText::Map(fields()),
+        CipherText::Passthrough(FfiValue::Null),
+    ]);
+
+    for (label, tree) in [
+        ("a forged passthrough under c", forged_c),
+        ("a field without c", no_c),
+        ("a field that is not an output map", not_a_map),
+        ("a missing field", missing_field),
+        ("a batch holding a non-record", batch_of_non_records),
+    ] {
+        let tree = re_encode(tree);
+        assert_eq!(
+            ops::validate::record_tree(&tree, &plan),
+            Err(STATUS_ENCODING),
+            "{label} must be refused by validation"
+        );
+        assert_eq!(
+            block_on(ops::decrypt_record(Opener::Any(&cipher), &tree, &plan)),
+            Err(STATUS_ENCODING),
+            "{label} must be refused by the op too"
+        );
+    }
+    assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), 0);
+}
