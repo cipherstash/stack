@@ -2,6 +2,7 @@ package stackencrypt
 
 import (
 	"context"
+	"crypto/rand"
 	"embed"
 	"errors"
 	"fmt"
@@ -61,6 +62,24 @@ type instance struct {
 	encryptRecord, decryptRecord api.Function
 }
 
+// guestModuleConfig is the module configuration every guest instance runs
+// under. wazero's defaults are deterministic by design (see its
+// RATIONALE.md): a WASI random_get backed by math/rand with a fixed seed,
+// and clocks that start at a fixed epoch and advance 1ms per read. The
+// guest's cipher draws ZeroKMS IVs and AEAD nonces through random_get, so
+// the default would hand every instance the same nonce sequence; its
+// keyset-name cache expires on clock_time_get, so the default would never
+// let a name expire on wall time. Each override below is load-bearing and
+// pinned by TestGuestModuleConfigHostSources.
+func guestModuleConfig() wazero.ModuleConfig {
+	return wazero.NewModuleConfig().
+		WithName("stack_encrypt_guest").
+		// crypto/rand.Reader: the process CSPRNG, safe for concurrent use.
+		WithRandSource(rand.Reader).
+		WithSysNanotime().
+		WithSysWalltime()
+}
+
 // newInstance instantiates wasm with the transport as its host module.
 func newInstance(ctx context.Context, wasm []byte, t *transport) (*instance, error) {
 	// WithCloseOnContextDone lets a caller's deadline or cancellation
@@ -78,7 +97,7 @@ func newInstance(ctx context.Context, wasm []byte, t *transport) (*instance, err
 	}
 	// The guest is a reactor (cdylib): no _start. wazero runs _initialize
 	// when present.
-	module, err := runtime.InstantiateWithConfig(ctx, wasm, wazero.NewModuleConfig().WithName("stack_encrypt_guest"))
+	module, err := runtime.InstantiateWithConfig(ctx, wasm, guestModuleConfig())
 	if err != nil {
 		_ = runtime.Close(ctx)
 		return nil, fmt.Errorf("stackencrypt: instantiating guest: %w", err)

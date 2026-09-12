@@ -48,4 +48,13 @@
 // [net/http.RoundTripper], and a bearer-token fetch, served by a
 // [TokenSource]. What crosses per ZeroKMS call is what would cross TLS
 // anyway; derived key material never leaves the guest.
+//
+// # Host runtime
+//
+// The guest also imports WASI random_get and clock_time_get, and the
+// cipher's security rests on the first: ZeroKMS IVs and AEAD nonces are
+// drawn from it. wazero's defaults for both are deterministic, so every
+// instance is configured with the process CSPRNG ([crypto/rand.Reader])
+// and the system clocks. An embedder that instantiates the guest module
+// under its own wazero configuration must do the same.
 package stackencrypt
