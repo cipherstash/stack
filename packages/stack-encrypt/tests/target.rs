@@ -99,8 +99,11 @@ async fn equality_leaf_binds_the_context() {
 
 #[tokio::test]
 async fn term_derivation_makes_no_kms_calls() {
-    // Terms derive under the index key the cipher already holds: building a
-    // query probe must never touch ZeroKMS.
+    // Under the local HMAC backend, terms derive under the index key the
+    // cipher already holds, so a query probe settles with no ZeroKMS call.
+    // That is this backend's property, not the term API's contract: a
+    // backend that derives terms at the server (ZeroKMS v2) settles the same
+    // `Pending` through a request.
     let (cipher, generates, retrieves) = counting_cipher().await;
     let cipher = cipher.default_keyset();
 
@@ -787,12 +790,23 @@ async fn a_failed_field_fails_the_record_before_any_kms_call() {
     );
 }
 
+/// Which `StackCipher` *value* a pending was built through is not part of
+/// the merge rule — the keyset is. Two ciphers over the same client config
+/// resolve the same default keyset, so their pendings merge and settle as
+/// one batch, through the cipher the assembly dispatches on. (Before the
+/// multi-keyset `StackCipher` this was pointer equality on the cipher, and
+/// refused the pair.)
 #[tokio::test]
-async fn pendings_from_different_ciphers_refuse_to_merge() {
+async fn pendings_from_two_ciphers_over_the_same_keyset_merge() {
     let (cipher_a, generates, _) = counting_cipher().await;
     let cipher_a = cipher_a.default_keyset();
     let cipher_b = counting_cipher().await.0;
     let cipher_b = cipher_b.default_keyset();
+    assert_eq!(
+        cipher_a.keyset_id(),
+        cipher_b.keyset_id(),
+        "two ciphers over the same client config share a default keyset"
+    );
     let v = "v".to_string();
     let w = "w".to_string();
 
@@ -803,7 +817,11 @@ async fn pendings_from_different_ciphers_refuse_to_merge() {
             nonempty!("users/x"),
         ))
         .await;
-    assert!(matches!(zipped, Err(Error::CipherMismatch)));
+    assert!(
+        zipped.is_ok(),
+        "two ciphers over the same keyset must merge: {:?}",
+        zipped.err()
+    );
 
     let column = Pending::all(
         &cipher_a,
@@ -813,9 +831,54 @@ async fn pendings_from_different_ciphers_refuse_to_merge() {
         ],
     )
     .await;
-    assert!(matches!(column, Err(Error::CipherMismatch)));
+    assert!(
+        column.is_ok(),
+        "a column drawn from two ciphers over one keyset must merge: {:?}",
+        column.err()
+    );
 
-    assert_eq!(generates.load(AtomicOrdering::SeqCst), 0);
+    assert_eq!(
+        generates.load(AtomicOrdering::SeqCst),
+        2,
+        "each merged assembly settles as exactly one generate_keys call"
+    );
+}
+
+/// The rule the cipher check gave way to: two *keysets* still refuse to
+/// merge, whichever ciphers they came from, and with no I/O.
+#[tokio::test]
+async fn pendings_from_two_ciphers_over_different_keysets_refuse_to_merge() {
+    let (cipher_a, generates, _) = counting_cipher().await;
+    let acme = cipher_a
+        .keyset(IdentifiedBy::Name("acme".to_string().into()))
+        .await
+        .unwrap();
+    let cipher_b = counting_cipher().await.0;
+    let globex = cipher_b
+        .keyset(IdentifiedBy::Name("globex".to_string().into()))
+        .await
+        .unwrap();
+    let v = "v".to_string();
+    let w = "w".to_string();
+
+    let zipped = StackCipherText::encrypt_from(&v, &acme, nonempty!("users/x"))
+        .zip(StackCipherText::encrypt_from(
+            &w,
+            &globex,
+            nonempty!("users/x"),
+        ))
+        .await;
+    assert!(
+        matches!(zipped, Err(Error::KeysetMismatch { left, right })
+            if left == acme.keyset_id() && right == globex.keyset_id()),
+        "expected KeysetMismatch, got: {zipped:?}"
+    );
+
+    assert_eq!(
+        generates.load(AtomicOrdering::SeqCst),
+        0,
+        "a mismatched merge must be refused before any key is minted"
+    );
 }
 
 #[tokio::test]

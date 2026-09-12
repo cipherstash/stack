@@ -70,8 +70,9 @@ pub const STATUS_TERM: u32 = 11;
 
 /// Map a sealing/opening error onto the ABI status word.
 ///
-/// Total over [`stack_encrypt::Error`]: composition-bug variants
-/// (`ResponseShape`, `CipherMismatch`, `KeyCountMismatch`) and everything
+/// Total over [`stack_encrypt::Error`] (which is `#[non_exhaustive]`, so the
+/// catch-all arm is required as well as convenient): composition-bug variants
+/// (`ResponseShape`, `KeysetMismatch`, `KeyCountMismatch`) and everything
 /// else unexpected collapse into [`STATUS_INTERNAL`] — statuses distinguish
 /// what a host can act on, not what it can only log.
 pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {

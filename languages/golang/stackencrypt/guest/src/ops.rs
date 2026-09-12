@@ -27,8 +27,10 @@
 //! the field values. However many rows and fields are in one call, all
 //! ciphertext leaves seal from **one** batched `generate_keys` — the
 //! pendings are merged before settling, exactly like the derive's `zip`/`all`
-//! composition — and index terms derive locally with no ZeroKMS traffic at
-//! all. That batch reaches ZeroKMS as one request per
+//! composition — and index terms derive under the same keyset's index key
+//! (under the local HMAC backend with no ZeroKMS traffic of their own; a
+//! backend that derives terms at ZeroKMS, as ZeroKMS v2 does, adds its own
+//! requests to the same batch). That batch reaches ZeroKMS as one request per
 //! `ClientOpts::max_keys_per_req` keyed leaves (500 by default, sent
 //! sequentially: the guest pins `max_concurrent_reqs` to 1), so "one call"
 //! is exact up to 500 leaves and "one call per 500" past it. See

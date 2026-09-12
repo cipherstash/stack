@@ -96,8 +96,16 @@ async fn init_loads_the_default_keyset_once() {
         .await
         .expect("resolve")
         .0;
-    assert_eq!(cipher.default_keyset().keyset_id(), expected);
-    assert_eq!(cipher.default_keyset().keyset_name(), None);
+    assert_eq!(
+        cipher.default_keyset().keyset_id(),
+        expected,
+        "init resolves the source's own default keyset"
+    );
+    assert_eq!(
+        cipher.default_keyset().keyset_name(),
+        None,
+        "an unnamed builder keyset leaves the default with no name"
+    );
     assert_eq!(cipher.kms().loads(), 1, "default_keyset() never loads");
 }
 
@@ -110,9 +118,17 @@ async fn a_named_default_knows_its_name() {
         .await
         .expect("build cipher");
 
-    assert_eq!(cipher.default_keyset().keyset_name(), Some("customers"));
+    assert_eq!(
+        cipher.default_keyset().keyset_name(),
+        Some("customers"),
+        "a builder keyset named by name reports that name"
+    );
     let by_name = cipher.keyset(name("customers")).await.expect("select");
-    assert_eq!(by_name.keyset_id(), cipher.default_keyset().keyset_id());
+    assert_eq!(
+        by_name.keyset_id(),
+        cipher.default_keyset().keyset_id(),
+        "selecting the default by its builder name returns the default"
+    );
     assert_eq!(
         cipher.kms().loads(),
         1,
@@ -125,7 +141,11 @@ async fn a_keyset_loads_on_first_selection_and_is_cached_after() {
     let cipher = cipher().await;
     let first = cipher.keyset(name("acme")).await.expect("select");
     assert_eq!(cipher.kms().loads(), 2, "first selection loads");
-    assert_eq!(first.keyset_name(), Some("acme"));
+    assert_eq!(
+        first.keyset_name(),
+        Some("acme"),
+        "a keyset selected by name reports the name it was selected by"
+    );
 
     let again = cipher.keyset(name("acme")).await.expect("select again");
     let by_id = cipher
@@ -133,8 +153,16 @@ async fn a_keyset_loads_on_first_selection_and_is_cached_after() {
         .await
         .expect("select by id");
     assert_eq!(cipher.kms().loads(), 2, "later selections are lookups");
-    assert_eq!(again.keyset_id(), first.keyset_id());
-    assert_eq!(by_id.keyset_id(), first.keyset_id());
+    assert_eq!(
+        again.keyset_id(),
+        first.keyset_id(),
+        "the second selection by name is the same keyset"
+    );
+    assert_eq!(
+        by_id.keyset_id(),
+        first.keyset_id(),
+        "and so is the selection by the id it resolved to"
+    );
     assert_eq!(
         by_id.keyset_name(),
         Some("acme"),
@@ -146,8 +174,12 @@ async fn a_keyset_loads_on_first_selection_and_is_cached_after() {
 async fn a_keyset_selected_by_id_is_not_known_by_name() {
     let cipher = cipher().await;
     let by_id = cipher.keyset(Uuid::from_u128(42)).await.expect("select");
-    assert_eq!(by_id.keyset_name(), None);
-    assert_eq!(cipher.kms().loads(), 2);
+    assert_eq!(
+        by_id.keyset_name(),
+        None,
+        "a selection by id knows no name to report"
+    );
+    assert_eq!(cipher.kms().loads(), 2, "default + the selected keyset");
 }
 
 #[tokio::test]
@@ -166,8 +198,16 @@ async fn an_evicted_keyset_reloads_on_its_next_selection() {
     // `a` was evicted by `b`; selecting it again is a load. The handle taken
     // earlier is unaffected: it holds its own state.
     let a_again = cipher.keyset(Uuid::from_u128(1)).await.expect("a again");
-    assert_eq!(cipher.kms().loads(), 4);
-    assert_eq!(a_again.keyset_id(), a.keyset_id());
+    assert_eq!(
+        cipher.kms().loads(),
+        4,
+        "an evicted keyset is loaded again on its next selection"
+    );
+    assert_eq!(
+        a_again.keyset_id(),
+        a.keyset_id(),
+        "the reload is the same keyset"
+    );
 
     // The default never evicts, however small the cache.
     let _ = cipher.default_keyset();
@@ -175,7 +215,11 @@ async fn an_evicted_keyset_reloads_on_its_next_selection() {
         .keyset(cipher.default_keyset().keyset_id())
         .await
         .expect("default by id");
-    assert_eq!(cipher.kms().loads(), 4);
+    assert_eq!(
+        cipher.kms().loads(),
+        4,
+        "the default never evicts, however small the cache"
+    );
 }
 
 /// A name is a lookup, not an identity: past the window, selecting a keyset
@@ -190,7 +234,7 @@ async fn a_name_selection_is_re_resolved_after_its_window() {
         .init()
         .await
         .expect("build cipher");
-    assert_eq!(cipher.kms().loads(), 1);
+    assert_eq!(cipher.kms().loads(), 1, "init loads the default keyset");
 
     let acme = cipher.keyset(name("acme")).await.expect("acme");
     let _ = cipher.keyset(name("acme")).await.expect("acme again");
@@ -220,7 +264,11 @@ async fn a_name_selection_is_re_resolved_after_its_window() {
         .keyset(cipher.default_keyset().keyset_id())
         .await
         .expect("default by id");
-    assert_eq!(cipher.kms().loads(), 4);
+    assert_eq!(
+        cipher.kms().loads(),
+        4,
+        "the default's id is identity too, and is never re-asked"
+    );
 }
 
 #[tokio::test]
@@ -269,7 +317,11 @@ async fn a_sealed_leaf_names_the_keyset_it_was_sealed_under() {
         .encrypt("hello".to_string(), "greeting")
         .await
         .expect("seal");
-    assert_eq!(leaf_of(sealed).keyset_id(), tenant.keyset_id());
+    assert_eq!(
+        leaf_of(sealed).keyset_id(),
+        tenant.keyset_id(),
+        "a leaf carries the keyset it was sealed under"
+    );
 
     let sealed = cipher
         .default_keyset()
@@ -278,7 +330,8 @@ async fn a_sealed_leaf_names_the_keyset_it_was_sealed_under() {
         .expect("seal");
     assert_eq!(
         leaf_of(sealed).keyset_id(),
-        cipher.default_keyset().keyset_id()
+        cipher.default_keyset().keyset_id(),
+        "and so does one sealed through the default keyset"
     );
 }
 
@@ -296,7 +349,7 @@ async fn the_client_opens_a_leaf_from_any_keyset() {
         .expect("seal");
 
     let opened: String = cipher.decrypt(sealed, "greeting").await.expect("open");
-    assert_eq!(opened, "hello");
+    assert_eq!(opened, "hello", "the client opens another keyset's leaf");
     assert_eq!(
         cipher.kms().retrieve_keysets(),
         vec![Some(tenant.keyset_id())],
@@ -314,7 +367,7 @@ async fn a_keyset_handle_opens_its_own_leaves() {
         .expect("seal");
 
     let opened: String = tenant.decrypt(sealed, "greeting").await.expect("open");
-    assert_eq!(opened, "hello");
+    assert_eq!(opened, "hello", "a keyset handle opens its own leaf");
 }
 
 #[tokio::test]
@@ -361,14 +414,14 @@ async fn the_target_path_through_a_keyset_handle_is_constrained_too() {
         .decrypt_into(&acme, nonempty!("users/age"))
         .await
         .expect("own keyset opens");
-    assert_eq!(opened, 34);
+    assert_eq!(opened, 34, "the sealing keyset opens its own leaf");
 
     let opened: u32 = seal()
         .await
         .decrypt_into(&cipher, nonempty!("users/age"))
         .await
         .expect("the client opens");
-    assert_eq!(opened, 34);
+    assert_eq!(opened, 34, "and so does the client it belongs to");
 
     let result: Result<u32, _> = seal()
         .await
@@ -400,7 +453,11 @@ async fn a_mixed_keyset_column_opens_through_the_client_in_one_call_per_keyset()
         .decrypt_into(&cipher, nonempty!("users/age"))
         .await
         .expect("open");
-    assert_eq!(opened, vec![1, 2, 3]);
+    assert_eq!(
+        opened,
+        vec![1, 2, 3],
+        "a two-tenant column opens in row order"
+    );
     assert_eq!(
         cipher.kms().retrieve_keysets(),
         vec![Some(acme.keyset_id()), Some(globex.keyset_id())],
@@ -427,5 +484,8 @@ async fn a_mixed_keyset_column_does_not_open_through_a_keyset_handle() {
         matches!(result, Err(Error::ForeignKeyset { .. })),
         "{result:?}"
     );
-    assert!(cipher.kms().retrieve_keysets().is_empty());
+    assert!(
+        cipher.kms().retrieve_keysets().is_empty(),
+        "refused before any key was retrieved"
+    );
 }

@@ -120,6 +120,7 @@ pub type StackCipherText = CipherText<SealedValue, BoxedPassthrough>;
 
 /// Errors from sealing or opening a [`StackCipherText`].
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     /// A ZeroKMS data-key generate/retrieve call failed.
     #[error("ZeroKMS data-key operation failed: {0}")]
@@ -164,19 +165,21 @@ pub enum Error {
     /// implementation, never a data error.
     #[error("a pending fulfilment's responses did not match its requests")]
     ResponseShape,
-    /// [`Pending`](crate::target::Pending)s built on different
-    /// [`StackCipher`] instances were merged (`zip` / `all`). An assembly
-    /// settles through one cipher's backend, so the other side's keys would
-    /// be minted by the wrong client. Always a composition bug, caught
-    /// before any I/O.
-    #[error("merged pendings were built from different ciphers")]
-    CipherMismatch,
     /// [`Pending`](crate::target::Pending)s scoped to different keysets were
     /// merged (`zip` / `all`): one built through a [`KeysetCipher`] for one
     /// keyset, the other for another. A row belongs to one tenant; an
     /// assembly that spans two is a composition bug, caught before any
     /// I/O. (Opening leaves from several keysets in one batch is allowed —
     /// through the [`StackCipher`], which is scoped to none.)
+    ///
+    /// The keyset is the *whole* merge rule: two pendings built through two
+    /// different [`StackCipher`] values merge freely as long as they agree
+    /// on a keyset, because a keyset id is global and a cipher only holds a
+    /// keyset ZeroKMS resolved for its client. (Before the multi-keyset
+    /// `StackCipher` there was a `CipherMismatch` variant here, raised on
+    /// pointer equality of the two ciphers; it tested object identity
+    /// rather than client identity, and so refused two ciphers over the
+    /// same client and the same keyset.)
     #[error("merged pendings were scoped to different keysets ({left} and {right})")]
     KeysetMismatch { left: Uuid, right: Uuid },
     /// A leaf sealed under one keyset was handed to a [`KeysetCipher`] for
@@ -329,6 +332,21 @@ impl StackCipher<FromEnv> {
     }
 }
 
+/// Opaque: the default keyset's identity and the data-key source's type
+/// name, and nothing else. A cipher reaches the whole keyset cache — every
+/// loaded keyset's index-key PRF — and, through its backend, the client key
+/// and access token; none of that is printable, and a `Debug` that walked
+/// the cache would also take its lock.
+impl<K> std::fmt::Debug for StackCipher<K> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StackCipher")
+            .field("default_keyset_id", &self.default.id)
+            .field("default_keyset_name", &self.default.name)
+            .field("kms", &std::any::type_name::<K>())
+            .finish_non_exhaustive()
+    }
+}
+
 impl<K> StackCipher<K> {
     /// The cipher bound to its default keyset: the one named on the builder
     /// (by id or by name), else the client's default. Loaded at `init`, so
@@ -400,19 +418,32 @@ impl<K: IndexKeySource> StackCipher<K> {
         // selection. Two selections racing on the same miss load twice; the
         // cache keeps both keysets by id, and the name follows the later
         // lookup whichever answer lands first.
-        let name = match &keyset {
-            IdentifiedBy::Name(name) => Some(name.to_string()),
-            IdentifiedBy::Uuid(_) => None,
-        };
-        let (id, index_key) = self.kms.load_index_key(Some(keyset)).await?;
-        let state = Arc::new(KeysetState {
-            id,
-            name,
-            prf: hmac_prf_from_index_key(&index_key),
-        });
+        let state = load_keyset(&self.kms, Some(keyset)).await?;
         self.keysets().insert(Arc::clone(&state), resolution);
         Ok(KeysetCipher::new(self, state))
     }
+}
+
+/// Resolve a keyset at ZeroKMS and build the state the cipher holds for it:
+/// its resolved id, the name it was selected by (a selection by id has
+/// none), and the PRF keyed by its index key. The one round trip a keyset
+/// costs, shared by eager loading at
+/// [`init`](StackCipherBuilder::init) and lazy loading in
+/// [`StackCipher::keyset`] so both hold a keyset in exactly the same shape.
+async fn load_keyset<K: IndexKeySource>(
+    kms: &K,
+    keyset: Option<IdentifiedBy>,
+) -> Result<Arc<KeysetState>, Error> {
+    let name = match &keyset {
+        Some(IdentifiedBy::Name(name)) => Some(name.to_string()),
+        Some(IdentifiedBy::Uuid(_)) | None => None,
+    };
+    let (id, index_key) = kms.load_index_key(keyset).await?;
+    Ok(Arc::new(KeysetState {
+        id,
+        name,
+        prf: hmac_prf_from_index_key(&index_key),
+    }))
 }
 
 /// The state of a [`StackCipherBuilder`] that has not been given a data-key
@@ -560,14 +591,7 @@ impl StackCipherBuilder<FromEnv> {
             .with_key_provider(client_key_provider())
             .build()
             .await?;
-        StackCipherBuilder {
-            kms,
-            keyset: self.keyset,
-            cache_size: self.cache_size,
-            name_ttl: self.name_ttl,
-        }
-        .init()
-        .await
+        self.kms(kms).init().await
     }
 }
 
@@ -577,16 +601,7 @@ impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
     /// seal values and derive index terms. The one round trip a cipher
     /// always pays; every other keyset loads on first selection.
     pub async fn init(self) -> Result<StackCipher<K>, Error> {
-        let name = match &self.keyset {
-            Some(IdentifiedBy::Name(name)) => Some(name.to_string()),
-            _ => None,
-        };
-        let (id, index_key) = self.kms.load_index_key(self.keyset).await?;
-        let default = Arc::new(KeysetState {
-            id,
-            name,
-            prf: hmac_prf_from_index_key(&index_key),
-        });
+        let default = load_keyset(&self.kms, self.keyset).await?;
         Ok(StackCipher {
             kms: self.kms,
             keysets: Mutex::new(KeysetCache::new(
@@ -635,9 +650,7 @@ impl<K: DataKeySource> KeysetCipher<'_, K> {
         T: Decrypt<'static> + 'static,
         A: IntoAad<'a>,
     {
-        let aad = aad.into_aad_piece();
-        let decipher = self.decipher(ciphertext, aad.clone()).await?;
-        T::decrypt_with_aad(decipher, aad.into_aad()).map_err(Error::from)
+        decrypt_through(self, ciphertext, aad).await
     }
 
     /// [`StackCipher::decipher`], constrained to this keyset: a leaf sealed
@@ -648,10 +661,38 @@ impl<K: DataKeySource> KeysetCipher<'_, K> {
         ciphertext: StackCipherText,
         aad: impl IntoAad<'a>,
     ) -> Result<StackDecipher, Error> {
-        crate::target::decipher_pending(self, ciphertext, Descriptor::of(aad))
-            .settle()
-            .await
+        decipher_through(self, ciphertext, aad).await
     }
+}
+
+/// `decipher`, for either scope. The work is the same on both — one
+/// descriptor, one pending, one settle — and the scope is the whole
+/// difference: a [`KeysetCipher`] constrains the leaves to its keyset, a
+/// [`StackCipher`] constrains nothing. Keeping one definition is what makes
+/// that true, rather than two bodies that happen to agree.
+async fn decipher_through<'s, 'a, K: DataKeySource + 's>(
+    scope: impl crate::target::CipherScope<'s, K>,
+    ciphertext: StackCipherText,
+    aad: impl IntoAad<'a>,
+) -> Result<StackDecipher, Error> {
+    crate::target::decipher_pending(scope, ciphertext, Descriptor::of(aad))
+        .settle()
+        .await
+}
+
+/// `decrypt`, for either scope: [`decipher_through`], then the value's own
+/// [`Decrypt`] drive under the same `aad`.
+async fn decrypt_through<'s, 'a, T, K: DataKeySource + 's>(
+    scope: impl crate::target::CipherScope<'s, K>,
+    ciphertext: StackCipherText,
+    aad: impl IntoAad<'a>,
+) -> Result<T, Error>
+where
+    T: Decrypt<'static> + 'static,
+{
+    let aad = aad.into_aad_piece();
+    let decipher = decipher_through(scope, ciphertext, aad.clone()).await?;
+    T::decrypt_with_aad(decipher, aad.into_aad()).map_err(Error::from)
 }
 
 impl<K: DataKeySource> StackCipher<K> {
@@ -672,9 +713,7 @@ impl<K: DataKeySource> StackCipher<K> {
         T: Decrypt<'static> + 'static,
         A: IntoAad<'a>,
     {
-        let aad = aad.into_aad_piece();
-        let decipher = self.decipher(ciphertext, aad.clone()).await?;
-        T::decrypt_with_aad(decipher, aad.into_aad()).map_err(Error::from)
+        decrypt_through(self, ciphertext, aad).await
     }
 
     /// Fetch every leaf's data key (one batched `retrieve_keys` call per
@@ -703,9 +742,7 @@ impl<K: DataKeySource> StackCipher<K> {
         ciphertext: StackCipherText,
         aad: impl IntoAad<'a>,
     ) -> Result<StackDecipher, Error> {
-        crate::target::decipher_pending(self, ciphertext, Descriptor::of(aad))
-            .settle()
-            .await
+        decipher_through(self, ciphertext, aad).await
     }
 }
 
