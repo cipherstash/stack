@@ -401,7 +401,9 @@ fn run_decrypt(
 
 /// Derive one index term: a codec-encoded scalar, a codec-encoded context
 /// and a term kind ([`ops::TERM_EQUALITY`] etc.); the output is the term's
-/// frozen byte encoding. Local PRF/CLLW only — never touches ZeroKMS.
+/// frozen byte encoding. Under the local HMAC backend this is one PRF/CLLW
+/// derivation with no ZeroKMS I/O; that is the backend's property, not this
+/// export's contract.
 ///
 /// The context is one part — a string, bytes, or an `i32`/`i64`/`u32`/`u64`
 /// — or an array of parts, which may nest as deep as the transport codec
@@ -442,7 +444,9 @@ pub unsafe extern "C" fn se_term(
 /// plan, and result encodings. All rows and fields seal from **one** batched
 /// key request regardless of row count — dispatched as one
 /// `generate-data-key` call per 500 keyed leaves, sequentially — and terms
-/// derive locally with no ZeroKMS traffic at all.
+/// derive under the same keyset's index key (with no ZeroKMS traffic under
+/// the local HMAC backend; a backend that derives terms at ZeroKMS would
+/// add its own).
 ///
 /// # Safety
 ///

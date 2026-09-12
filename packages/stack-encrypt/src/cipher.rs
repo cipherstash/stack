@@ -87,6 +87,7 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use stack_kms::{DataKey, DataKeySource, DataKeyWithTag, IdentifiedBy, IndexKeySource};
@@ -102,7 +103,7 @@ use vitaminc_aead::{
 use vitaminc_encrypt::{Aes256Cipher, AesCipherText, Key as AesKey};
 use vitaminc_protected::{Controlled, Protected};
 
-use crate::keyset::{KeysetCache, KeysetCipher, KeysetState};
+use crate::keyset::{KeysetCache, KeysetCipher, KeysetState, Lookup, DEFAULT_NAME_TTL};
 use crate::Descriptor;
 
 /// The passthrough payload type: type-erased, as for Rust-native vitaminc
@@ -379,17 +380,21 @@ impl<K: IndexKeySource> StackCipher<K> {
     /// A keyset ZeroKMS does not know, or has disabled, is
     /// [`Error::Kms`]. The name-to-id resolution is ZeroKMS's: a keyset
     /// selected by name reports the resolved id from
-    /// [`KeysetCipher::keyset_id`].
+    /// [`KeysetCipher::keyset_id`], and a name the cipher resolved earlier
+    /// is trusted for a bounded window
+    /// ([`keyset_name_ttl`](StackCipherBuilder::keyset_name_ttl)) before it
+    /// is asked again — ZeroKMS allows renames, and a running process
+    /// notices one within that window. Selecting by id never asks twice.
     pub async fn keyset(
         &self,
         keyset: impl Into<IdentifiedBy>,
     ) -> Result<KeysetCipher<'_, K>, Error> {
         let keyset = keyset.into();
-        if self.default.is(&keyset) {
-            return Ok(self.default_keyset());
-        }
-        if let Some(state) = self.keysets().get(&keyset) {
-            return Ok(KeysetCipher::new(self, state));
+        match self.keysets().get(&keyset) {
+            Lookup::Hit(state) => return Ok(KeysetCipher::new(self, state)),
+            // A name past its window: the keyset is still loaded, but
+            // whether the name still means it is ZeroKMS's to say.
+            Lookup::Stale | Lookup::Miss => {}
         }
         // Loaded outside the lock: a round trip must not hold up every other
         // selection, and two selections racing on the same miss simply load
@@ -458,6 +463,7 @@ pub struct StackCipherBuilder<K = FromEnv> {
     kms: K,
     keyset: Option<IdentifiedBy>,
     cache_size: NonZeroUsize,
+    name_ttl: Duration,
 }
 
 impl StackCipherBuilder<FromEnv> {
@@ -471,6 +477,7 @@ impl StackCipherBuilder<FromEnv> {
             kms: FromEnv,
             keyset: None,
             cache_size: KeysetCache::DEFAULT_CAPACITY,
+            name_ttl: DEFAULT_NAME_TTL,
         }
     }
 }
@@ -499,6 +506,20 @@ impl<K> StackCipherBuilder<K> {
         self.cache_size = size;
         self
     }
+
+    /// How long a keyset selected by name is trusted to still be the keyset
+    /// that name resolved to (default five minutes, [`DEFAULT_NAME_TTL`]).
+    /// ZeroKMS allows a keyset to be renamed; within the window a rename is
+    /// invisible to a running process, after it the next selection by that
+    /// name asks ZeroKMS again. `Duration::ZERO` makes every selection by
+    /// name a round trip; selection by id is never affected. See
+    /// [`StackCipher::keyset`].
+    ///
+    /// [`DEFAULT_NAME_TTL`]: crate::keyset::DEFAULT_NAME_TTL
+    pub fn keyset_name_ttl(mut self, ttl: Duration) -> Self {
+        self.name_ttl = ttl;
+        self
+    }
 }
 
 impl StackCipherBuilder<FromEnv> {
@@ -514,6 +535,7 @@ impl StackCipherBuilder<FromEnv> {
             kms,
             keyset: self.keyset,
             cache_size: self.cache_size,
+            name_ttl: self.name_ttl,
         }
     }
 
@@ -541,6 +563,7 @@ impl StackCipherBuilder<FromEnv> {
             kms,
             keyset: self.keyset,
             cache_size: self.cache_size,
+            name_ttl: self.name_ttl,
         }
         .init()
         .await
@@ -565,8 +588,12 @@ impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
         });
         Ok(StackCipher {
             kms: self.kms,
+            keysets: Mutex::new(KeysetCache::new(
+                self.cache_size,
+                self.name_ttl,
+                Arc::clone(&default),
+            )),
             default,
-            keysets: Mutex::new(KeysetCache::new(self.cache_size)),
         })
     }
 }

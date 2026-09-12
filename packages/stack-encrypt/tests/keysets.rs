@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use stack_encrypt::target::{DecryptInto, EncryptInto};
 use stack_encrypt::{nonempty, CipherText, Error, SealedValue, StackCipher, StackCipherText};
@@ -170,6 +171,51 @@ async fn an_evicted_keyset_reloads_on_its_next_selection() {
 
     // The default never evicts, however small the cache.
     let _ = cipher.default_keyset();
+    let _ = cipher
+        .keyset(cipher.default_keyset().keyset_id())
+        .await
+        .expect("default by id");
+    assert_eq!(cipher.kms().loads(), 4);
+}
+
+/// A name is a lookup, not an identity: past the window, selecting a keyset
+/// by name asks ZeroKMS again, while selecting by id never does. The
+/// default keyset's builder-time name ages the same way.
+#[tokio::test]
+async fn a_name_selection_is_re_resolved_after_its_window() {
+    let cipher = StackCipher::builder()
+        .kms(Observed::default())
+        .keyset(name("primary"))
+        .keyset_name_ttl(Duration::ZERO)
+        .init()
+        .await
+        .expect("build cipher");
+    assert_eq!(cipher.kms().loads(), 1);
+
+    let acme = cipher.keyset(name("acme")).await.expect("acme");
+    let _ = cipher.keyset(name("acme")).await.expect("acme again");
+    assert_eq!(
+        cipher.kms().loads(),
+        3,
+        "every selection by name asks again"
+    );
+
+    let _ = cipher.keyset(acme.keyset_id()).await.expect("acme by id");
+    let _ = cipher
+        .keyset(acme.keyset_id())
+        .await
+        .expect("acme by id again");
+    assert_eq!(
+        cipher.kms().loads(),
+        3,
+        "an id is identity and is never re-asked"
+    );
+
+    let _ = cipher
+        .keyset(name("primary"))
+        .await
+        .expect("default by name");
+    assert_eq!(cipher.kms().loads(), 4, "the default's name ages too");
     let _ = cipher
         .keyset(cipher.default_keyset().keyset_id())
         .await

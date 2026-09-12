@@ -138,8 +138,10 @@ where
 
 /// Derive one index term: a codec-encoded scalar and a codec-encoded
 /// context in, the term's frozen byte encoding out (see `stack-encrypt`'s
-/// `sem` module docs). Purely local — this never touches ZeroKMS, which is
-/// what makes query probes cheap.
+/// `sem` module docs). Under the local HMAC backend the derivation is one
+/// PRF/CLLW computation with no ZeroKMS I/O; that is the backend's
+/// property, not this operation's contract — the term API is a `Pending`
+/// so a backend that derives terms at ZeroKMS settles the same way.
 ///
 /// The context is one part — a string, bytes, or an `i32`/`i64`/`u32`/`u64`
 /// — or an array of parts, nested as deep as the transport codec allows
