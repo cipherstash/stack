@@ -38,7 +38,8 @@
 //! renamed away, and that binding goes. And because resolutions run outside
 //! the lock, their answers can land in any order; a binding follows the
 //! *later lookup*, whichever answer arrives first, so an answer from before
-//! a rename cannot overwrite one from after it.
+//! a rename cannot overwrite one from after it — neither under the same
+//! name, nor by taking back the name the keyset has since left.
 
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
@@ -67,11 +68,13 @@ pub(crate) struct KeysetState {
 
 /// A loaded keyset in the cache, with the name it is currently bound under
 /// if any — kept across replacement so the binding is dropped when the id
-/// is evicted, however the entry was last loaded.
+/// is evicted, however the entry was last loaded — and the lookup whose
+/// answer last spoke for it.
 struct Entry {
     state: Arc<KeysetState>,
     last_used: u64,
     name: Option<String>,
+    resolution: Resolution,
 }
 
 /// A name-to-id binding: when ZeroKMS last confirmed it, and which lookup
@@ -84,9 +87,10 @@ struct Alias {
 
 /// A lookup's place in the order of lookups that went to ZeroKMS. The
 /// caller carries it from [`get`](KeysetCache::get) to
-/// [`insert`](KeysetCache::insert), where a name binding is applied only if
-/// this lookup is later than the one that produced the current binding —
-/// answers land in any order, and a later question has the later answer.
+/// [`insert`](KeysetCache::insert), where an answer is applied only if it is
+/// later than the one that already spoke for that keyset, and its name only
+/// if it is later than the one that produced that name's binding — answers
+/// land in any order, and a later question has the later answer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Resolution(u64);
 
@@ -136,6 +140,9 @@ pub(crate) struct KeysetCache {
     /// The name the default is currently bound under, if any: its
     /// builder-time name until a resolution binds it under another.
     default_name: Option<String>,
+    /// The lookup whose answer last spoke for the default; the builder's
+    /// own for a cipher that has resolved nothing yet.
+    default_resolution: Resolution,
     by_id: HashMap<Uuid, Entry>,
     by_name: HashMap<String, Alias>,
 }
@@ -170,6 +177,7 @@ impl KeysetCache {
             tick: 0,
             resolutions: 0,
             default_name: default.name.clone(),
+            default_resolution: Resolution(0),
             default,
             by_id: HashMap::new(),
             by_name,
@@ -224,12 +232,24 @@ impl KeysetCache {
     /// keyset has one name, so binding it under a new name drops the old
     /// one; and a name that moved to this keyset is dropped from the keyset
     /// it used to name. No binding outlives the id it names.
+    ///
+    /// An answer older than the one this keyset already holds is dropped
+    /// whole. It has nothing newer to say about the keyset, and applying it
+    /// would undo what a later lookup applied — restoring, under a full
+    /// window, a name the keyset has since been renamed away from.
     pub(crate) fn insert(&mut self, state: Arc<KeysetState>, resolution: Resolution) {
+        if self
+            .last_resolution_of(state.id)
+            .is_some_and(|applied| applied > resolution)
+        {
+            return;
+        }
         let bound = match &state.name {
             Some(name) => self.bind(name, state.id, resolution),
             None => false,
         };
         if state.id == self.default.id {
+            self.default_resolution = resolution;
             return;
         }
         if !self.by_id.contains_key(&state.id) && self.by_id.len() >= self.capacity.get() {
@@ -243,6 +263,7 @@ impl KeysetCache {
                 }
                 entry.state = state;
                 entry.last_used = self.tick;
+                entry.resolution = resolution;
             }
             None => {
                 let name = bound.then(|| state.name.clone()).flatten();
@@ -252,6 +273,7 @@ impl KeysetCache {
                         state,
                         last_used: self.tick,
                         name,
+                        resolution,
                     },
                 );
             }
@@ -287,6 +309,16 @@ impl KeysetCache {
             self.default_name = Some(name.to_owned());
         }
         true
+    }
+
+    /// The lookup whose answer last spoke for `id`, if the cache holds it.
+    /// An id it has never held (or has evicted) has nothing to supersede.
+    fn last_resolution_of(&self, id: Uuid) -> Option<Resolution> {
+        if id == self.default.id {
+            Some(self.default_resolution)
+        } else {
+            self.by_id.get(&id).map(|entry| entry.resolution)
+        }
     }
 
     /// The name `id` is currently bound under, if any.
@@ -624,6 +656,55 @@ mod tests {
         cache.insert(state(1, Some("acme")), next);
         assert_eq!(hit(cache.get(&name("acme"))), Some(Uuid::from_u128(1)));
         assert_eq!(cache.names(), 1, "2 no longer claims the name");
+    }
+
+    /// The same race with the two lookups asking *different* names, which
+    /// is the shape a rename actually takes: a selection by the old name
+    /// starts, the keyset is renamed, a selection by the new name starts
+    /// and answers first. The older answer must not take the old name back
+    /// — it would route that name, which ZeroKMS may have given to another
+    /// keyset, here for a whole window.
+    #[test]
+    fn an_older_answer_does_not_restore_a_name_the_keyset_has_left() {
+        let mut cache = cache(4);
+        cache.load(state(1, Some("acme")));
+
+        cache.name_ttl = Duration::ZERO;
+        let earlier = ticket(cache.get(&name("acme")));
+        let later = ticket(cache.get(&name("acme-corp")));
+        cache.name_ttl = Duration::MAX;
+
+        cache.insert(state(1, Some("acme-corp")), later);
+        cache.insert(state(1, Some("acme")), earlier);
+
+        assert_eq!(hit(cache.get(&name("acme-corp"))), Some(Uuid::from_u128(1)));
+        assert!(
+            matches!(cache.get(&name("acme")), Lookup::Miss(_)),
+            "the name the keyset was renamed away from is not bound again"
+        );
+        assert_eq!(cache.names(), 1);
+    }
+
+    /// And the default keyset, held apart from the bound, orders its
+    /// answers the same way.
+    #[test]
+    fn the_defaults_binding_also_follows_the_later_lookup() {
+        let mut cache = KeysetCache::new(
+            NonZeroUsize::new(4).unwrap(),
+            Duration::ZERO,
+            state(0, Some("primary")),
+        );
+
+        let earlier = ticket(cache.get(&name("primary")));
+        let later = ticket(cache.get(&name("main")));
+        cache.name_ttl = Duration::MAX;
+
+        cache.insert(state(0, Some("main")), later);
+        cache.insert(state(0, Some("primary")), earlier);
+
+        assert_eq!(hit(cache.get(&name("main"))), Some(Uuid::from_u128(0)));
+        assert!(matches!(cache.get(&name("primary")), Lookup::Miss(_)));
+        assert_eq!(cache.names(), 1);
     }
 
     /// A rename: the name now resolves to another id. The binding moves,

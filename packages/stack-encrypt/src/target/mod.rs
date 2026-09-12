@@ -60,7 +60,11 @@
 //!   and [`StackCipher`] (the decrypt target — a sealed leaf names its own
 //!   keyset, so opening is not keyset-scoped; a `KeysetCipher` decrypts too,
 //!   refusing leaves from any other keyset) return a [`Pending`], which does
-//!   its ZeroKMS I/O — **one batched call** — when awaited.
+//!   its ZeroKMS I/O when awaited, batched whatever the request count:
+//!   **one** `generate_keys` call for everything sealed — one keyset by
+//!   construction, since that is what the handle binds — and **one**
+//!   `retrieve_keys` call *per keyset* the leaves being opened were sealed
+//!   under, which is one call unless a client-scoped decrypt spans keysets.
 //!
 //! # Contexts
 //!
