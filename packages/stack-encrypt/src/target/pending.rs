@@ -73,11 +73,26 @@ pub struct Pending<'a, T, K> {
 /// What a [`Pending`] is built through: a [`StackCipher`] (no keyset
 /// scope) or a [`KeysetCipher`] (scoped to its keyset). Implemented for
 /// references to both, so the constructors take either.
-pub trait CipherScope<'a, K> {
+///
+/// Sealed: the two scopes are the two shapes, and a scope is how the target
+/// layer asks a cipher what it is bound to — not an extension point. An
+/// outside implementation could name any keyset id without holding the
+/// keyset, which would make [`Pending`]'s scope rules
+/// ([`Error::NoKeyset`], [`Error::ForeignKeyset`]) say less than they do:
+/// a scope's id is one the cipher loaded from ZeroKMS. Downstream code
+/// implements [`EncryptFrom`](super::EncryptFrom) and passes the scope it
+/// was handed; it never needs one of its own.
+pub trait CipherScope<'a, K>: sealed::Sealed {
     /// The client-scoped cipher the pending settles through.
     fn cipher(&self) -> &'a StackCipher<K>;
     /// The keyset the pending is scoped to, if any.
     fn keyset(&self) -> Option<Uuid>;
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl<K> Sealed for &crate::StackCipher<K> {}
+    impl<K> Sealed for &crate::KeysetCipher<'_, K> {}
 }
 
 impl<'a, K> CipherScope<'a, K> for &'a StackCipher<K> {
