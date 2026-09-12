@@ -32,6 +32,13 @@
 //! every name selection a round trip. The default keyset's builder-time
 //! name is bound the same way: after the window, selecting it by name asks
 //! ZeroKMS again.
+//!
+//! A keyset has one name at a time in ZeroKMS, so the cache keeps one name
+//! per keyset: resolving a keyset under a new name means its old name was
+//! renamed away, and that binding goes. And because resolutions run outside
+//! the lock, their answers can land in any order; a binding follows the
+//! *later lookup*, whichever answer arrives first, so an answer from before
+//! a rename cannot overwrite one from after it.
 
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
@@ -58,20 +65,30 @@ pub(crate) struct KeysetState {
     pub(crate) prf: HmacSha256Prf,
 }
 
-/// A loaded keyset in the cache, with every name it has been resolved
-/// under — kept across replacement so a name bound to this id is dropped
-/// when the id is evicted, however the entry was last loaded.
+/// A loaded keyset in the cache, with the name it is currently bound under
+/// if any — kept across replacement so the binding is dropped when the id
+/// is evicted, however the entry was last loaded.
 struct Entry {
     state: Arc<KeysetState>,
     last_used: u64,
-    names: Vec<String>,
+    name: Option<String>,
 }
 
-/// A name-to-id binding, and when ZeroKMS last confirmed it.
+/// A name-to-id binding: when ZeroKMS last confirmed it, and which lookup
+/// asked.
 struct Alias {
     id: Uuid,
     resolved_at: Instant,
+    resolution: Resolution,
 }
+
+/// A lookup's place in the order of lookups that went to ZeroKMS. The
+/// caller carries it from [`get`](KeysetCache::get) to
+/// [`insert`](KeysetCache::insert), where a name binding is applied only if
+/// this lookup is later than the one that produced the current binding —
+/// answers land in any order, and a later question has the later answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Resolution(u64);
 
 /// What a lookup found.
 pub(crate) enum Lookup {
@@ -79,13 +96,17 @@ pub(crate) enum Lookup {
     Hit(Arc<KeysetState>),
     /// A name binding past its window (the keyset it named may still be
     /// loaded, but whether the name still means it is ZeroKMS's to say): the
-    /// caller re-resolves the name with ZeroKMS and [`insert`]s the result,
-    /// which refreshes the binding — or moves it, if the name did.
+    /// caller re-resolves the name with ZeroKMS and [`insert`]s the result
+    /// with this ticket, which refreshes the binding — or moves it, if the
+    /// name did.
     ///
     /// [`insert`]: KeysetCache::insert
-    Stale,
-    /// Nothing loaded for this id, or no binding for this name.
-    Miss,
+    Stale(Resolution),
+    /// Nothing loaded for this id, or no binding for this name: the caller
+    /// loads it and [`insert`]s the result with this ticket.
+    ///
+    /// [`insert`]: KeysetCache::insert
+    Miss(Resolution),
 }
 
 /// The bounded, least-recently-used cache of loaded keysets behind
@@ -101,14 +122,20 @@ pub(crate) enum Lookup {
 ///
 /// Hits are `O(1)`; an insert into a full cache scans for the oldest entry,
 /// `O(n)` in the bound, which is the rare case by construction. The name
-/// index is bounded by the entries it serves: every binding names either
-/// the default or a cached id, and goes when that id does.
+/// index is bounded by the entries it serves: one binding per cached id at
+/// most, plus the default's, and a binding goes when its id does or when
+/// the keyset is resolved under another name.
 pub(crate) struct KeysetCache {
     capacity: NonZeroUsize,
     name_ttl: Duration,
     /// Monotonic use counter; an entry's tick is the last time it was hit.
     tick: u64,
+    /// Monotonic lookup counter; see [`Resolution`].
+    resolutions: u64,
     default: Arc<KeysetState>,
+    /// The name the default is currently bound under, if any: its
+    /// builder-time name until a resolution binds it under another.
+    default_name: Option<String>,
     by_id: HashMap<Uuid, Entry>,
     by_name: HashMap<String, Alias>,
 }
@@ -133,6 +160,7 @@ impl KeysetCache {
                 Alias {
                     id: default.id,
                     resolved_at: Instant::now(),
+                    resolution: Resolution(0),
                 },
             );
         }
@@ -140,10 +168,18 @@ impl KeysetCache {
             capacity,
             name_ttl,
             tick: 0,
+            resolutions: 0,
+            default_name: default.name.clone(),
             default,
             by_id: HashMap::new(),
             by_name,
         }
+    }
+
+    /// The ticket for a lookup that is about to go to ZeroKMS.
+    fn resolution(&mut self) -> Resolution {
+        self.resolutions += 1;
+        Resolution(self.resolutions)
     }
 
     /// Look a keyset up by id or name, marking it most recently used.
@@ -151,8 +187,10 @@ impl KeysetCache {
         let (id, fresh) = match by {
             IdentifiedBy::Uuid(id) => (*id, true),
             IdentifiedBy::Name(name) => match self.by_name.get::<str>(name) {
-                Some(alias) => (alias.id, alias.resolved_at.elapsed() <= self.name_ttl),
-                None => return Lookup::Miss,
+                // Strictly within the window: a zero window is never fresh,
+                // whatever the clock's resolution.
+                Some(alias) => (alias.id, alias.resolved_at.elapsed() < self.name_ttl),
+                None => return Lookup::Miss(self.resolution()),
             },
         };
         let state = if id == self.default.id {
@@ -164,33 +202,33 @@ impl KeysetCache {
                     entry.last_used = self.tick;
                     Arc::clone(&entry.state)
                 }
-                None => return Lookup::Miss,
+                None => return Lookup::Miss(self.resolution()),
             }
         };
         if fresh {
             Lookup::Hit(state)
         } else {
-            Lookup::Stale
+            Lookup::Stale(self.resolution())
         }
     }
 
-    /// Record a keyset ZeroKMS just resolved, evicting the least recently
-    /// used entry first if the cache is full and the id is new. The name it
-    /// was resolved under (if any) is bound to its id as of now — refreshing
-    /// a binding that had aged, or moving one whose keyset was renamed — and
-    /// every name an existing entry already carried is kept, so no binding
-    /// outlives the id it names. Resolving the default keyset again only
-    /// refreshes its binding: its state is never replaced.
-    pub(crate) fn insert(&mut self, state: Arc<KeysetState>) {
-        if let Some(name) = &state.name {
-            let _ = self.by_name.insert(
-                name.clone(),
-                Alias {
-                    id: state.id,
-                    resolved_at: Instant::now(),
-                },
-            );
-        }
+    /// Record a keyset ZeroKMS just resolved for the lookup `resolution`,
+    /// evicting the least recently used entry first if the cache is full
+    /// and the id is new. Resolving the default keyset again never replaces
+    /// its state.
+    ///
+    /// The name it was resolved under (if any) is bound to its id as of now
+    /// — refreshing a binding that had aged, or moving one whose keyset was
+    /// renamed — unless a later lookup has already bound that name, in
+    /// which case this answer is the older one and the binding stands. A
+    /// keyset has one name, so binding it under a new name drops the old
+    /// one; and a name that moved to this keyset is dropped from the keyset
+    /// it used to name. No binding outlives the id it names.
+    pub(crate) fn insert(&mut self, state: Arc<KeysetState>, resolution: Resolution) {
+        let bound = match &state.name {
+            Some(name) => self.bind(name, state.id, resolution),
+            None => false,
+        };
         if state.id == self.default.id {
             return;
         }
@@ -200,24 +238,75 @@ impl KeysetCache {
         self.tick += 1;
         match self.by_id.get_mut(&state.id) {
             Some(entry) => {
-                if let Some(name) = &state.name {
-                    if !entry.names.contains(name) {
-                        entry.names.push(name.clone());
-                    }
+                if bound {
+                    entry.name.clone_from(&state.name);
                 }
                 entry.state = state;
                 entry.last_used = self.tick;
             }
             None => {
-                let names = state.name.iter().cloned().collect();
+                let name = bound.then(|| state.name.clone()).flatten();
                 let _ = self.by_id.insert(
                     state.id,
                     Entry {
                         state,
                         last_used: self.tick,
-                        names,
+                        name,
                     },
                 );
+            }
+        }
+    }
+
+    /// Bind `name` to `id` for the lookup `resolution`; false if a later
+    /// lookup already bound it. Also unbinds the name this id was bound under
+    /// before, and unbinds this name from the id it named before.
+    fn bind(&mut self, name: &str, id: Uuid, resolution: Resolution) -> bool {
+        if let Some(alias) = self.by_name.get(name) {
+            if alias.resolution > resolution {
+                return false;
+            }
+            if alias.id != id {
+                self.forget_name_of(alias.id, name);
+            }
+        }
+        if let Some(previous) = self.current_name_of(id) {
+            if previous != name {
+                let _ = self.by_name.remove(&previous);
+            }
+        }
+        let _ = self.by_name.insert(
+            name.to_owned(),
+            Alias {
+                id,
+                resolved_at: Instant::now(),
+                resolution,
+            },
+        );
+        if id == self.default.id {
+            self.default_name = Some(name.to_owned());
+        }
+        true
+    }
+
+    /// The name `id` is currently bound under, if any.
+    fn current_name_of(&self, id: Uuid) -> Option<String> {
+        if id == self.default.id {
+            self.default_name.clone()
+        } else {
+            self.by_id.get(&id).and_then(|entry| entry.name.clone())
+        }
+    }
+
+    /// `name` moved away from `id`: the id no longer claims it.
+    fn forget_name_of(&mut self, id: Uuid, name: &str) {
+        if id == self.default.id {
+            if self.default_name.as_deref() == Some(name) {
+                self.default_name = None;
+            }
+        } else if let Some(entry) = self.by_id.get_mut(&id) {
+            if entry.name.as_deref() == Some(name) {
+                entry.name = None;
             }
         }
     }
@@ -232,9 +321,9 @@ impl KeysetCache {
             return;
         };
         if let Some(entry) = self.by_id.remove(&oldest) {
-            for name in entry.names {
+            if let Some(name) = entry.name {
                 // A name that has since moved to another id keeps its
-                // binding: only this id's bindings go with it.
+                // binding: only this id's binding goes with it.
                 if self
                     .by_name
                     .get(&name)
@@ -244,6 +333,14 @@ impl KeysetCache {
                 }
             }
         }
+    }
+
+    /// Insert as a fresh, in-order resolution — what every test that is not
+    /// about ordering wants.
+    #[cfg(test)]
+    pub(crate) fn load(&mut self, state: Arc<KeysetState>) {
+        let resolution = self.resolution();
+        self.insert(state, resolution);
     }
 
     #[cfg(test)]
@@ -364,28 +461,35 @@ mod tests {
     fn hit(lookup: Lookup) -> Option<Uuid> {
         match lookup {
             Lookup::Hit(state) => Some(state.id),
-            Lookup::Stale | Lookup::Miss => None,
+            Lookup::Stale(_) | Lookup::Miss(_) => None,
+        }
+    }
+
+    fn ticket(lookup: Lookup) -> Resolution {
+        match lookup {
+            Lookup::Stale(r) | Lookup::Miss(r) => r,
+            Lookup::Hit(_) => panic!("expected a lookup that goes to ZeroKMS"),
         }
     }
 
     #[test]
     fn a_keyset_is_found_by_id_and_by_the_name_it_loaded_under() {
         let mut cache = cache(4);
-        cache.insert(state(1, Some("customers")));
+        cache.load(state(1, Some("customers")));
 
         assert_eq!(hit(cache.get(&id(1))), Some(Uuid::from_u128(1)));
         assert_eq!(hit(cache.get(&name("customers"))), Some(Uuid::from_u128(1)));
-        assert!(matches!(cache.get(&name("staff")), Lookup::Miss));
-        assert!(matches!(cache.get(&id(2)), Lookup::Miss));
+        assert!(matches!(cache.get(&name("staff")), Lookup::Miss(_)));
+        assert!(matches!(cache.get(&id(2)), Lookup::Miss(_)));
     }
 
     #[test]
     fn a_keyset_loaded_by_id_is_not_found_by_name() {
         let mut cache = cache(4);
-        cache.insert(state(1, None));
+        cache.load(state(1, None));
 
         assert!(matches!(cache.get(&id(1)), Lookup::Hit(_)));
-        assert!(matches!(cache.get(&name("customers")), Lookup::Miss));
+        assert!(matches!(cache.get(&name("customers")), Lookup::Miss(_)));
     }
 
     #[test]
@@ -399,32 +503,38 @@ mod tests {
         assert_eq!(hit(cache.get(&name("primary"))), Some(Uuid::from_u128(0)));
 
         // Filling the one slot evicts nothing of the default's.
-        cache.insert(state(1, None));
-        cache.insert(state(2, None));
+        cache.load(state(1, None));
+        cache.load(state(2, None));
         assert_eq!(cache.len(), 1);
         assert_eq!(hit(cache.get(&id(0))), Some(Uuid::from_u128(0)));
         assert_eq!(hit(cache.get(&name("primary"))), Some(Uuid::from_u128(0)));
 
         // Re-resolving the default by name refreshes its binding, and does
         // not put a second copy of it in the bounded part.
-        cache.insert(state(0, Some("primary")));
+        cache.load(state(0, Some("primary")));
         assert_eq!(cache.len(), 1);
+
+        // The default renamed: its old name no longer selects it.
+        cache.load(state(0, Some("main")));
+        assert_eq!(hit(cache.get(&name("main"))), Some(Uuid::from_u128(0)));
+        assert!(matches!(cache.get(&name("primary")), Lookup::Miss(_)));
+        assert_eq!(cache.names(), 1);
     }
 
     #[test]
     fn the_least_recently_used_keyset_is_evicted_with_its_names() {
         let mut cache = cache(2);
-        cache.insert(state(1, Some("one")));
-        cache.insert(state(2, Some("two")));
+        cache.load(state(1, Some("one")));
+        cache.load(state(2, Some("two")));
         // Touch 1 so 2 is the oldest.
         assert!(matches!(cache.get(&id(1)), Lookup::Hit(_)));
 
-        cache.insert(state(3, Some("three")));
+        cache.load(state(3, Some("three")));
 
         assert_eq!(cache.len(), 2);
-        assert!(matches!(cache.get(&id(2)), Lookup::Miss), "2 was oldest");
+        assert!(matches!(cache.get(&id(2)), Lookup::Miss(_)), "2 was oldest");
         assert!(
-            matches!(cache.get(&name("two")), Lookup::Miss),
+            matches!(cache.get(&name("two")), Lookup::Miss(_)),
             "the evicted keyset's name goes with it"
         );
         assert!(matches!(cache.get(&id(1)), Lookup::Hit(_)));
@@ -438,20 +548,20 @@ mod tests {
     #[test]
     fn a_reload_by_id_keeps_the_names_a_keyset_was_bound_under() {
         let mut cache = cache(1);
-        cache.insert(state(1, Some("one")));
-        cache.insert(state(1, None));
+        cache.load(state(1, Some("one")));
+        cache.load(state(1, None));
         assert_eq!(cache.len(), 1);
         assert_eq!(hit(cache.get(&name("one"))), Some(Uuid::from_u128(1)));
 
         // Evicting 1 takes "one" with it, whichever load was last.
-        cache.insert(state(2, None));
-        assert!(matches!(cache.get(&id(1)), Lookup::Miss));
-        assert!(matches!(cache.get(&name("one")), Lookup::Miss));
+        cache.load(state(2, None));
+        assert!(matches!(cache.get(&id(1)), Lookup::Miss(_)));
+        assert!(matches!(cache.get(&name("one")), Lookup::Miss(_)));
         assert_eq!(cache.names(), 0);
 
         // And reloading 1 by id does not resurrect the binding.
-        cache.insert(state(1, None));
-        assert!(matches!(cache.get(&name("one")), Lookup::Miss));
+        cache.load(state(1, None));
+        assert!(matches!(cache.get(&name("one")), Lookup::Miss(_)));
     }
 
     /// Bindings never outnumber the keysets they name: churning names
@@ -460,8 +570,8 @@ mod tests {
     fn the_name_index_is_bounded_by_the_cache() {
         let mut cache = cache(1);
         for i in 1..=1000u128 {
-            cache.insert(state(i, Some(&format!("tenant-{i}"))));
-            cache.insert(state(i, None));
+            cache.load(state(i, Some(&format!("tenant-{i}"))));
+            cache.load(state(i, None));
         }
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.names(), 1);
@@ -471,18 +581,49 @@ mod tests {
         );
     }
 
-    /// A keyset resolved under two names carries both, and both go when it
-    /// does.
+    /// A keyset has one name at a time: resolved under a new one, its old
+    /// name was renamed away and no longer selects it. The index therefore
+    /// never holds more bindings than keysets, however often one is renamed.
     #[test]
-    fn a_keyset_can_be_bound_under_several_names() {
+    fn a_keysets_newer_name_replaces_its_older_one() {
         let mut cache = cache(1);
-        cache.insert(state(1, Some("one")));
-        cache.insert(state(1, Some("uno")));
-        assert_eq!(hit(cache.get(&name("one"))), Some(Uuid::from_u128(1)));
+        cache.load(state(1, Some("one")));
+        cache.load(state(1, Some("uno")));
         assert_eq!(hit(cache.get(&name("uno"))), Some(Uuid::from_u128(1)));
+        assert!(matches!(cache.get(&name("one")), Lookup::Miss(_)));
+        assert_eq!(cache.names(), 1);
 
-        cache.insert(state(2, None));
+        for i in 0..1000 {
+            cache.load(state(1, Some(&format!("name-{i}"))));
+        }
+        assert_eq!(cache.names(), 1);
+
+        cache.load(state(2, None));
         assert_eq!(cache.names(), 0);
+    }
+
+    /// Resolutions run outside the lock and their answers land in any
+    /// order. The binding follows the later lookup: an answer from before a
+    /// rename that arrives after the answer from after it must not move the
+    /// name back. Key material is cached by id either way.
+    #[test]
+    fn a_binding_follows_the_later_lookup_whichever_answer_lands_first() {
+        let mut cache = cache(4);
+        let earlier = ticket(cache.get(&name("acme")));
+        let later = ticket(cache.get(&name("acme")));
+
+        cache.insert(state(2, Some("acme")), later);
+        cache.insert(state(1, Some("acme")), earlier);
+
+        assert_eq!(hit(cache.get(&name("acme"))), Some(Uuid::from_u128(2)));
+        assert!(matches!(cache.get(&id(1)), Lookup::Hit(_)));
+        assert_eq!(cache.names(), 1);
+
+        // In order, the later answer moves it as usual.
+        let next = ticket(cache.get(&name("other")));
+        cache.insert(state(1, Some("acme")), next);
+        assert_eq!(hit(cache.get(&name("acme"))), Some(Uuid::from_u128(1)));
+        assert_eq!(cache.names(), 1, "2 no longer claims the name");
     }
 
     /// A rename: the name now resolves to another id. The binding moves,
@@ -490,14 +631,14 @@ mod tests {
     #[test]
     fn a_name_that_moved_to_another_keyset_follows_it() {
         let mut cache = cache(2);
-        cache.insert(state(1, Some("acme")));
-        cache.insert(state(2, Some("acme")));
+        cache.load(state(1, Some("acme")));
+        cache.load(state(2, Some("acme")));
         assert_eq!(hit(cache.get(&name("acme"))), Some(Uuid::from_u128(2)));
 
         // Evict 1 (the oldest): "acme" belongs to 2 now and stays.
         assert!(matches!(cache.get(&id(2)), Lookup::Hit(_)));
-        cache.insert(state(3, None));
-        assert!(matches!(cache.get(&id(1)), Lookup::Miss));
+        cache.load(state(3, None));
+        assert!(matches!(cache.get(&id(1)), Lookup::Miss(_)));
         assert_eq!(hit(cache.get(&name("acme"))), Some(Uuid::from_u128(2)));
     }
 
@@ -510,19 +651,20 @@ mod tests {
             Duration::ZERO,
             state(0, Some("primary")),
         );
-        cache.insert(state(1, Some("one")));
+        cache.load(state(1, Some("one")));
 
-        assert!(matches!(cache.get(&name("one")), Lookup::Stale));
-        assert!(matches!(cache.get(&name("primary")), Lookup::Stale));
+        assert!(matches!(cache.get(&name("one")), Lookup::Stale(_)));
+        assert!(matches!(cache.get(&name("primary")), Lookup::Stale(_)));
         assert!(
             matches!(cache.get(&id(1)), Lookup::Hit(_)),
             "an id never ages"
         );
 
-        // A zero window is stale again immediately after a refresh, which is
-        // the point of a zero window; a wide one is fresh.
-        cache.insert(state(1, Some("one")));
-        assert!(matches!(cache.get(&name("one")), Lookup::Stale));
+        // A zero window is stale again immediately after a refresh — with
+        // no time elapsed at all, on the coarsest clock — which is the point
+        // of a zero window; a wide one is fresh.
+        cache.load(state(1, Some("one")));
+        assert!(matches!(cache.get(&name("one")), Lookup::Stale(_)));
         cache.name_ttl = Duration::MAX;
         assert!(matches!(cache.get(&name("one")), Lookup::Hit(_)));
     }

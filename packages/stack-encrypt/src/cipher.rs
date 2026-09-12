@@ -390,15 +390,16 @@ impl<K: IndexKeySource> StackCipher<K> {
         keyset: impl Into<IdentifiedBy>,
     ) -> Result<KeysetCipher<'_, K>, Error> {
         let keyset = keyset.into();
-        match self.keysets().get(&keyset) {
+        let resolution = match self.keysets().get(&keyset) {
             Lookup::Hit(state) => return Ok(KeysetCipher::new(self, state)),
             // A name past its window: the keyset is still loaded, but
             // whether the name still means it is ZeroKMS's to say.
-            Lookup::Stale | Lookup::Miss => {}
-        }
+            Lookup::Stale(resolution) | Lookup::Miss(resolution) => resolution,
+        };
         // Loaded outside the lock: a round trip must not hold up every other
-        // selection, and two selections racing on the same miss simply load
-        // twice and the second insert replaces the first with its equal.
+        // selection. Two selections racing on the same miss load twice; the
+        // cache keeps both keysets by id, and the name follows the later
+        // lookup whichever answer lands first.
         let name = match &keyset {
             IdentifiedBy::Name(name) => Some(name.to_string()),
             IdentifiedBy::Uuid(_) => None,
@@ -409,7 +410,7 @@ impl<K: IndexKeySource> StackCipher<K> {
             name,
             prf: hmac_prf_from_index_key(&index_key),
         });
-        self.keysets().insert(Arc::clone(&state));
+        self.keysets().insert(Arc::clone(&state), resolution);
         Ok(KeysetCipher::new(self, state))
     }
 }
