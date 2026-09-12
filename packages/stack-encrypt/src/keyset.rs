@@ -295,12 +295,35 @@ impl KeysetCache {
     /// whole. It has nothing newer to say about the keyset, and applying it
     /// would undo what a later lookup applied — restoring, under a full
     /// window, a name the keyset has since been renamed away from.
-    pub(crate) fn insert(&mut self, state: Arc<KeysetState>, resolution: Resolution) {
-        if self
-            .last_resolution_of(state.id)
-            .is_some_and(|applied| applied > resolution)
+    ///
+    /// Returns what the lookup should be answered with, which is not always
+    /// what ZeroKMS said: when a later lookup has already spoken — for this
+    /// keyset, or for the name this one asked under — the caller gets that
+    /// later answer, the same one every selection after it gets. The
+    /// answer that lost is not handed out even once. An answer nothing
+    /// later contradicts is returned as it is, whether or not its name
+    /// bound (an answer older than the eviction watermark has no binding to
+    /// lose to, and is still the latest thing said about its name).
+    pub(crate) fn insert(
+        &mut self,
+        state: Arc<KeysetState>,
+        resolution: Resolution,
+    ) -> Arc<KeysetState> {
+        if let Some(entry) = self.entry(state.id) {
+            if entry.resolution > resolution {
+                return Arc::clone(&entry.state);
+            }
+        }
+        // Evict before binding: the entry that goes may be the one whose
+        // answer this one is older than, and its place in the order must be
+        // on the watermark before `bind` consults it — or an answer from
+        // before a rename binds a name it should have lost to the entry its
+        // own insert evicts.
+        if state.id != self.default_id()
+            && !self.by_id.contains_key(&state.id)
+            && self.by_id.len() >= self.capacity.get()
         {
-            return;
+            self.evict_oldest();
         }
         // `bind` gives the entry the name it binds, when the cache already
         // holds one; a first insert carries it over below instead.
@@ -308,12 +331,21 @@ impl KeysetCache {
             Some(name) => self.bind(name, state.id, resolution),
             None => false,
         };
+        // A name lookup is answered with whatever the name means now. When
+        // this answer's binding lost to a later one, that is the keyset the
+        // later lookup resolved — held, since no binding outlives its id.
+        let answer = match (&state.name, bound) {
+            (Some(name), false) => self
+                .by_name
+                .get(name)
+                .and_then(|alias| self.entry(alias.id))
+                .map(|entry| Arc::clone(&entry.state))
+                .unwrap_or_else(|| Arc::clone(&state)),
+            _ => Arc::clone(&state),
+        };
         if state.id == self.default_id() {
             self.default.resolution = resolution;
-            return;
-        }
-        if !self.by_id.contains_key(&state.id) && self.by_id.len() >= self.capacity.get() {
-            self.evict_oldest();
+            return answer;
         }
         self.tick += 1;
         match self.by_id.get_mut(&state.id) {
@@ -335,6 +367,7 @@ impl KeysetCache {
                 );
             }
         }
+        answer
     }
 
     /// Bind `name` to `id` for the lookup `resolution`; false if a later
@@ -376,12 +409,6 @@ impl KeysetCache {
             entry.name = Some(name.to_owned());
         }
         true
-    }
-
-    /// The lookup whose answer last spoke for `id`, if the cache holds it.
-    /// An id it has never held (or has evicted) has nothing to supersede.
-    fn last_resolution_of(&self, id: Uuid) -> Option<Resolution> {
-        self.entry(id).map(|entry| entry.resolution)
     }
 
     /// The name `id` is currently bound under, if any.
@@ -435,7 +462,7 @@ impl KeysetCache {
     #[cfg(test)]
     pub(crate) fn load(&mut self, state: Arc<KeysetState>) {
         let resolution = self.resolution();
-        self.insert(state, resolution);
+        let _ = self.insert(state, resolution);
     }
 
     #[cfg(test)]
@@ -510,9 +537,12 @@ impl<'k, K> KeysetCipher<'k, K> {
         self.state.id
     }
 
-    /// The name this keyset was selected by, if it was selected by name
-    /// (the default keyset knows its name only when the builder named it).
-    /// A label from the time of selection, not an identity: see the
+    /// The name this keyset's loaded state was last resolved under, if any.
+    /// That is the name of the lookup that loaded (or last refreshed) it,
+    /// not necessarily of the selection that produced this handle: a
+    /// selection by id returns state another selection may have loaded by
+    /// name, and the default keyset knows its name only when the builder
+    /// named it. A label from the time of loading, not an identity: see the
     /// [module docs](self#ids-are-identity-names-are-looked-up).
     pub fn keyset_name(&self) -> Option<&str> {
         self.state.name.as_deref()
@@ -986,6 +1016,82 @@ mod tests {
             "a name from before two renames is not bound by the answer that lands last"
         );
         assert_eq!(cache.names(), 0, "and no other binding was made");
+    }
+
+    /// The entry an old answer's own insert evicts can be the very one its
+    /// binding should lose to, so eviction must happen before the binding
+    /// is tried: with room for one, `old` resolves to keyset 1, then to
+    /// keyset 2, then keyset 2 is renamed `new`, and the first answer lands
+    /// last — into a cache that holds keyset 2 under `new` and has no
+    /// binding for `old` at all. Caching keyset 1 evicts keyset 2; the
+    /// watermark that eviction leaves is what refuses the stale `old`.
+    #[test]
+    fn an_older_answer_does_not_bind_a_name_past_the_entry_its_own_insert_evicts() {
+        let mut cache = cache(1);
+        let oldest = ticket(cache.get(&name("old")));
+        let middle = ticket(cache.get(&name("old")));
+        let _ = cache.insert(state(2, Some("old")), middle);
+        let newest = ticket(cache.get(&name("new")));
+        let _ = cache.insert(state(2, Some("new")), newest);
+        assert!(
+            matches!(cache.get(&name("old")), Lookup::Miss(_)),
+            "renaming keyset 2 to `new` took `old` off it"
+        );
+
+        let answer = cache.insert(state(1, Some("old")), oldest);
+        assert_eq!(
+            answer.id,
+            Uuid::from_u128(1),
+            "nothing later is known about `old`, so the answer stands for this lookup"
+        );
+        assert_eq!(
+            hit(cache.get(&id(1))),
+            Some(Uuid::from_u128(1)),
+            "and keyset 1 is cached by id, evicting keyset 2"
+        );
+        assert!(
+            matches!(cache.get(&name("old")), Lookup::Miss(_)),
+            "but an answer older than the entry its insert evicted binds no name"
+        );
+        assert_eq!(cache.names(), 0, "and no other binding was made");
+    }
+
+    /// The caller of a lookup whose answer lost to a later one is answered
+    /// with the later one — the keyset every selection after it gets — not
+    /// with the answer that lost, which would mint under a keyset the name
+    /// has since left.
+    #[test]
+    fn a_lookup_whose_answer_lost_is_answered_with_the_one_that_won() {
+        let mut cache = cache(4);
+        let earlier = ticket(cache.get(&name("acme")));
+        let later = ticket(cache.get(&name("acme")));
+
+        // `acme` moved from keyset 1 to keyset 2 between the two lookups,
+        // and the later answer lands first.
+        let _ = cache.insert(state(2, Some("acme")), later);
+        let answer = cache.insert(state(1, Some("acme")), earlier);
+        assert_eq!(
+            answer.id,
+            Uuid::from_u128(2),
+            "the earlier lookup is answered with what `acme` means now"
+        );
+        assert_eq!(
+            hit(cache.get(&id(1))),
+            Some(Uuid::from_u128(1)),
+            "keyset 1 is still cached by id: its key material is right whichever lookup asked"
+        );
+
+        // The same keyset resolved under a newer name: the older answer is
+        // dropped whole, and its caller gets the state the keyset holds.
+        let earlier = ticket(cache.get(&name("acme-corp")));
+        let later = ticket(cache.get(&name("acme-corp")));
+        let _ = cache.insert(state(3, Some("acme-corp")), later);
+        let answer = cache.insert(state(3, Some("acme")), earlier);
+        assert_eq!(
+            answer.name.as_deref(),
+            Some("acme-corp"),
+            "an answer older than the keyset's own is replaced by the keyset's"
+        );
     }
 
     /// Past the window a name lookup is stale — the keyset is still there,

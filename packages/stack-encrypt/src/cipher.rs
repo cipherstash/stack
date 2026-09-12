@@ -417,9 +417,10 @@ impl<K: IndexKeySource> StackCipher<K> {
         // Loaded outside the lock: a round trip must not hold up every other
         // selection. Two selections racing on the same miss load twice; the
         // cache keeps both keysets by id, and the name follows the later
-        // lookup whichever answer lands first.
+        // lookup whichever answer lands first — and so does this caller,
+        // who is handed the answer that won, not the one that lost.
         let state = load_keyset(&self.kms, Some(keyset)).await?;
-        self.keysets().insert(Arc::clone(&state), resolution);
+        let state = self.keysets().insert(state, resolution);
         Ok(KeysetCipher::new(self, state))
     }
 }
@@ -708,6 +709,19 @@ impl<K: DataKeySource> StackCipher<K> {
     /// sealed under, and this opens leaves from any keyset the client is
     /// authorised for. To insist on one keyset, decrypt through its
     /// [`KeysetCipher`] instead.
+    ///
+    /// # Fan-out
+    ///
+    /// The retrieve calls are one per *distinct keyset* among the leaves,
+    /// issued in sequence, and the keyset ids come from the ciphertext —
+    /// so their number is the input's to decide, up to the keysets this
+    /// client can retrieve from (ZeroKMS refuses a retrieve whose tag it
+    /// did not mint, and the first refusal ends the batch). A ciphertext
+    /// assembled from many tenants' leaves costs a round trip per tenant to
+    /// open here, whoever assembled it. A service opening rows it does not
+    /// trust — one tenant's data at a time — should hold that tenant's
+    /// [`KeysetCipher`], whose decrypt is one round trip at most and refuses
+    /// a foreign leaf before any.
     pub async fn decrypt<'a, T, A>(&self, ciphertext: StackCipherText, aad: A) -> Result<T, Error>
     where
         T: Decrypt<'static> + 'static,
@@ -718,9 +732,10 @@ impl<K: DataKeySource> StackCipher<K> {
 
     /// Fetch every leaf's data key (one batched `retrieve_keys` call per
     /// keyset the leaves were sealed under, every key under the
-    /// [`Descriptor`] of `aad`) and bind them onto the ciphertext, returning
-    /// a synchronous [`Decipher`] that does the AEAD opening as the value's
-    /// [`Decrypt`] impl drives it.
+    /// [`Descriptor`] of `aad`; see [`decrypt`](Self::decrypt) on what that
+    /// fan-out means for untrusted input) and bind them onto the
+    /// ciphertext, returning a synchronous [`Decipher`] that does the AEAD
+    /// opening as the value's [`Decrypt`] impl drives it.
     ///
     /// This is the decrypt-side counterpart to passing `&keyset` (a
     /// [`Cipher`]) on the encrypt side, mirroring `Aes256Cipher::decipher`:

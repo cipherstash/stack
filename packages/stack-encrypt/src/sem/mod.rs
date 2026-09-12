@@ -1056,9 +1056,11 @@ impl<K> KeysetCipher<'_, K> {
     /// time (index the probe text, then test [`MatchTerm::contains`]
     /// server-side).
     ///
-    /// Returns [`TermError::EmptyTermText`] when the text yields no tokens —
-    /// empty or separator-only text, or an n-gram probe shorter than the gram
-    /// length (which could never match; see [`Tokenizer::Ngram`]).
+    /// Fails with [`TermError::EmptyTermText`] — as
+    /// [`Error::Term`](crate::Error::Term), once awaited — when the text
+    /// yields no tokens: empty or separator-only text, or an n-gram probe
+    /// shorter than the gram length (which could never match; see
+    /// [`Tokenizer::Ngram`]).
     pub fn match_terms<'c, O>(
         &self,
         text: &str,

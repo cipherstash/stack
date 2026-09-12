@@ -4,8 +4,10 @@
 //!
 //! A `Pending` is built synchronously and settled once. Combining pendings
 //! merges their [`Request`]s without doing any I/O; awaiting the combined
-//! result issues one batched ZeroKMS call per request kind
-//! ([`dispatch`]) and then runs each fulfilment over exactly the
+//! result issues the batched ZeroKMS calls ([`dispatch`]) — one
+//! `generate_keys` for every generate, since a pending mints under one
+//! keyset, and one `retrieve_keys` per keyset the leaves being opened were
+//! sealed under — and then runs each fulfilment over exactly the
 //! [`Responses`] its own requests asked for.
 
 use std::borrow::Cow;
