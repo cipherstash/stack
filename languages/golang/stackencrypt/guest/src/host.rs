@@ -214,7 +214,7 @@ impl ZeroKMSConnection for WasiHostConnection {
 /// An [`AuthStrategy`] that fetches the bearer token from the host on every
 /// request via `token_get`. Refresh policy stays host-side (Phase-1 auth):
 /// whatever token the host hands over is presented as-is, so the host can
-/// rotate tokens without re-initialising the cipher handle.
+/// rotate tokens without re-initialising the cipher.
 pub struct HostTokenStrategy;
 
 impl AuthStrategy for &HostTokenStrategy {

@@ -108,6 +108,22 @@ pub(crate) unsafe fn take(ptr: *mut u8, len: usize) -> Option<Vec<u8>> {
     unsafe { reclaim(ptr, len) }
 }
 
+/// Wipe and free every buffer the registry still holds — what `se_shutdown`
+/// does after dropping the cipher, so a host that tears the instance down
+/// without releasing an output first still leaves no plaintext behind.
+/// Empties carry no bytes; their count is simply reset.
+pub(crate) fn wipe_all() {
+    let live: Vec<(usize, usize)> = BUFFERS.with(|b| b.borrow_mut().drain().collect());
+    for (ptr, len) in live {
+        // SAFETY: every entry was registered by `register`, which leaked a
+        // boxed slice of exactly `len` bytes at `ptr`, and it was removed
+        // above so nothing else can reclaim it.
+        let mut buf = unsafe { Vec::from_raw_parts(ptr as *mut u8, len, len) };
+        buf.zeroize();
+    }
+    EMPTY_BUFFERS.with(|c| c.set(0));
+}
+
 unsafe fn reclaim(ptr: *mut u8, len: usize) -> Option<Vec<u8>> {
     if ptr.is_null() {
         return None;

@@ -8,19 +8,24 @@
 //! |---------------|----------|---------|
 //! | `client_id`   | yes      | ZeroKMS client id (UUID) |
 //! | `client_key`  | yes      | the v1 client key material, hex-encoded (upper or lower case — the `to_hex_v1` / `CS_CLIENT_KEY` form) or standard padded base64 (the form `secretkey.json` serialises) |
-//! | `keyset`      | no       | keyset *name* to pin the cipher to |
-//! | `keyset_id`   | no       | keyset *id* (UUID) to pin the cipher to |
 //! | `zerokms_url` | no       | pins the ZeroKMS endpoint at init; when absent the endpoint is resolved from the access token's `services` claim on first use |
+//! | `keyset_cache_size` | no | how many keysets beyond the default the cipher keeps loaded (a positive decimal integer; the crate default, 1024, when absent). See `StackCipherBuilder::keyset_cache_size` |
 //!
-//! `keyset` and `keyset_id` are mutually exclusive; with neither, the
-//! client's default keyset is used. Unknown keys are rejected — a typo'd
-//! optional key must not silently fall back to a default.
+//! There is no config key for a keyset. `{"default"}` means the default a
+//! ZeroKMS administrator set for this client, and a client does not get to
+//! redefine it — the same reason `StackCipherBuilder::keyset` was removed.
+//! Every other keyset is selected per call (see [`crate::options`]). Unknown
+//! keys are rejected — a typo'd optional key must not silently fall back to a
+//! default — so a host still sending `keyset` is told so rather than quietly
+//! encrypting somewhere else.
 //!
 //! The parsed [`FfiValue`] holds the client-key hex inside
 //! `Protected`, which wipes on drop; the raw config *buffer* is wiped by the
 //! ABI layer immediately after decoding (see [`crate::abi`]).
 
-use stack_kms::{ClientKey, IdentifiedBy, ZeroKmsEndpoint};
+use std::num::NonZeroUsize;
+
+use stack_kms::{ClientKey, ZeroKmsEndpoint};
 use uuid::Uuid;
 use vitaminc_aead_value::FfiValue;
 use zeroize::Zeroizing;
@@ -38,8 +43,6 @@ pub enum ConfigError {
     NotAString(&'static str),
     /// A key's value failed its own validation (bad UUID, bad hex, bad URL).
     Invalid(&'static str),
-    /// `keyset` and `keyset_id` were both given.
-    ConflictingKeysets,
     /// A key appeared twice. The codec rejects duplicate object keys before
     /// this parser runs, but `parse_config` is `pub` and takes any
     /// [`FfiValue`] — last-write-wins on, say, `client_key` must never be
@@ -52,8 +55,8 @@ pub enum ConfigError {
 /// Everything `se_cipher_init` needs to build the cipher.
 pub struct CipherConfig {
     pub client_key: ClientKey,
-    pub keyset: Option<IdentifiedBy>,
     pub endpoint: Option<ZeroKmsEndpoint>,
+    pub keyset_cache_size: Option<NonZeroUsize>,
 }
 
 /// Parse a decoded config value. Consumes it so the client-key material has
@@ -70,17 +73,15 @@ pub fn parse_config(value: FfiValue) -> Result<CipherConfig, ConfigError> {
     // above the wipe. Uniform is cheaper than remembering.
     let mut client_id: Option<Zeroizing<String>> = None;
     let mut client_key_encoded: Option<Zeroizing<String>> = None;
-    let mut keyset_name: Option<Zeroizing<String>> = None;
-    let mut keyset_id: Option<Zeroizing<String>> = None;
     let mut url: Option<Zeroizing<String>> = None;
+    let mut cache_size: Option<Zeroizing<String>> = None;
 
     for (key, value) in entries {
         let slot = match key.as_str() {
             "client_id" => &mut client_id,
             "client_key" => &mut client_key_encoded,
-            "keyset" => &mut keyset_name,
-            "keyset_id" => &mut keyset_id,
             "zerokms_url" => &mut url,
+            "keyset_cache_size" => &mut cache_size,
             _ => return Err(ConfigError::UnknownKey(key)),
         };
         // The codec already rejects duplicate object keys, so on the ABI
@@ -112,27 +113,21 @@ pub fn parse_config(value: FfiValue) -> Result<CipherConfig, ConfigError> {
     let client_key = ClientKey::from_encoded_v1(client_id, &client_key_encoded)
         .map_err(|_| ConfigError::Invalid("client_key"))?;
 
-    let keyset = match (keyset_name, keyset_id) {
-        (Some(_), Some(_)) => return Err(ConfigError::ConflictingKeysets),
-        (Some(name), None) => Some(IdentifiedBy::Name(
-            name.as_str()
-                .try_into()
-                .map_err(|_| ConfigError::Invalid("keyset"))?,
-        )),
-        (None, Some(id)) => Some(IdentifiedBy::Uuid(
-            Uuid::parse_str(&id).map_err(|_| ConfigError::Invalid("keyset_id"))?,
-        )),
-        (None, None) => None,
-    };
-
     let endpoint = url
         .map(|u| u.parse().map_err(|_| ConfigError::Invalid("zerokms_url")))
         .transpose()?;
 
+    let keyset_cache_size = cache_size
+        .map(|n| {
+            n.parse::<NonZeroUsize>()
+                .map_err(|_| ConfigError::Invalid("keyset_cache_size"))
+        })
+        .transpose()?;
+
     Ok(CipherConfig {
         client_key,
-        keyset,
         endpoint,
+        keyset_cache_size,
     })
 }
 
@@ -142,9 +137,8 @@ fn name_of(key: &str) -> &'static str {
     match key {
         "client_id" => "client_id",
         "client_key" => "client_key",
-        "keyset" => "keyset",
-        "keyset_id" => "keyset_id",
         "zerokms_url" => "zerokms_url",
+        "keyset_cache_size" => "keyset_cache_size",
         _ => "unknown",
     }
 }
@@ -182,31 +176,66 @@ mod tests {
         ]))
         .expect("minimal config parses");
         assert_eq!(cfg.client_key.key_id, id);
-        assert!(cfg.keyset.is_none());
         assert!(cfg.endpoint.is_none());
+        assert!(cfg.keyset_cache_size.is_none());
     }
 
     #[test]
-    fn parses_keyset_name_id_and_url() {
+    fn parses_the_keyset_cache_size() {
+        let (id, hex) = client_key_hex();
+        let id_s = id.to_string();
+        let cfg = parse_config(obj(vec![
+            ("client_id", &id_s),
+            ("client_key", &hex),
+            ("keyset_cache_size", "16"),
+        ]))
+        .expect("config parses");
+        assert_eq!(cfg.keyset_cache_size, NonZeroUsize::new(16));
+
+        for bad in ["0", "-1", "sixteen", ""] {
+            assert!(
+                matches!(
+                    parse_config(obj(vec![
+                        ("client_id", &id_s),
+                        ("client_key", &hex),
+                        ("keyset_cache_size", bad),
+                    ])),
+                    Err(ConfigError::Invalid("keyset_cache_size"))
+                ),
+                "{bad:?} must be refused"
+            );
+        }
+    }
+
+    /// A keyset is not a config key: the default is the server's and a
+    /// client does not redefine it, so a host that still sends one is told,
+    /// rather than silently encrypting under the client's default instead of
+    /// the keyset it named.
+    #[test]
+    fn a_keyset_key_is_rejected_like_any_other_unknown_key() {
+        let (id, hex) = client_key_hex();
+        for key in ["keyset", "keyset_id"] {
+            assert!(matches!(
+                parse_config(obj(vec![
+                    ("client_id", &id.to_string()),
+                    ("client_key", &hex),
+                    (key, "users"),
+                ])),
+                Err(ConfigError::UnknownKey(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn parses_the_zerokms_url() {
         let (id, hex) = client_key_hex();
         let cfg = parse_config(obj(vec![
             ("client_id", &id.to_string()),
             ("client_key", &hex),
-            ("keyset", "users"),
             ("zerokms_url", "https://zerokms.example.com"),
         ]))
         .expect("config parses");
-        assert!(matches!(cfg.keyset, Some(IdentifiedBy::Name(_))));
         assert!(cfg.endpoint.is_some());
-
-        let keyset_id = Uuid::from_u128(9);
-        let cfg = parse_config(obj(vec![
-            ("client_id", &id.to_string()),
-            ("client_key", &hex),
-            ("keyset_id", &keyset_id.to_string()),
-        ]))
-        .expect("config parses");
-        assert!(matches!(cfg.keyset, Some(IdentifiedBy::Uuid(k)) if k == keyset_id));
     }
 
     /// The config table promises hex in either case *or* base64 — the form
@@ -260,15 +289,6 @@ mod tests {
                 ("client_key", "deadbeef"), // valid hex, not a keyset
             ])),
             Err(ConfigError::Invalid("client_key"))
-        ));
-        assert!(matches!(
-            parse_config(obj(vec![
-                ("client_id", &id_s),
-                ("client_key", &hex),
-                ("keyset", "users"),
-                ("keyset_id", "00000000-0000-0000-0000-000000000009"),
-            ])),
-            Err(ConfigError::ConflictingKeysets)
         ));
         assert!(matches!(
             parse_config(obj(vec![

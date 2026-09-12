@@ -41,15 +41,22 @@
 //! [`host`]); what crosses the boundary per call is a value tree in, a
 //! ciphertext/record tree out, and — inside the call — the same bytes that
 //! would cross TLS anyway. The client key enters guest memory once at
-//! `se_cipher_init`; derived data keys and the index key never leave.
+//! `se_cipher_init`; derived data keys and index keys never leave.
+//!
+//! One instance is one client: `se_cipher_init` runs once per instance and
+//! the keysets that client uses are selected per call through the options
+//! object ([`options`]), loaded on first use. There is no cipher handle,
+//! and nothing for the host to allocate, alias or free — `se_shutdown` is
+//! the one lifetime call, and it exists because closing a wasm instance
+//! frees linear memory without running Rust destructors.
 //!
 //! Split into:
 //!
-//! - [`ops`], [`context`], [`config`], [`response`], [`headers`], [`status`],
-//!   `sessions` — everything that is pure logic over `StackCipher<K>` /
-//!   bytes. Compiles and unit-tests on the native host target (`cargo
-//!   test` here, no wasm toolchain needed) against
-//!   `stack_kms::FakeDataKeySource`.
+//! - [`ops`], [`context`], [`options`], [`config`], [`response`],
+//!   [`headers`], [`status`] — everything that is pure logic over
+//!   `StackCipher<K>` / `KeysetCipher<K>` / bytes. Compiles and unit-tests
+//!   on the native host target (`cargo test` here, no wasm toolchain
+//!   needed) against `stack_kms::FakeDataKeySource`.
 //! - [`abi`], [`host`], `buffers` (wasm32 only) — the export surface,
 //!   the two host imports, and the buffer registry. See [`abi`]'s module
 //!   docs for the full ABI contract.
@@ -65,13 +72,9 @@ pub mod config;
 pub mod context;
 pub mod headers;
 pub mod ops;
+pub mod options;
 pub mod response;
 pub mod status;
-
-// Only the wasm32 ABI constructs the table; natively it exists for its
-// unit tests.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-pub(crate) mod sessions;
 
 // The ABI's packed u64 results embed 32-bit pointers, its bounds checks
 // read the wasm linear-memory size, and `host` calls imported functions —
@@ -82,7 +85,7 @@ pub(crate) mod sessions;
 #[cfg(target_arch = "wasm32")]
 pub mod abi;
 // Target-independent (plain `Vec`s and raw pointers, no linear-memory
-// reads), so like `sessions` it exists natively for its unit tests — the
+// reads), so it exists natively for its unit tests — the
 // empty-buffer accounting in particular is pinned there.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) mod buffers;

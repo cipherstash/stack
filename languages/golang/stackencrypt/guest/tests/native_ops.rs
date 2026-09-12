@@ -20,7 +20,8 @@ use std::future::IntoFuture;
 use stack_encrypt::sem::DefaultMatch;
 use stack_encrypt::{nonempty, CipherText, Encrypt, SealedValue, StackCipher};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
-use stack_encrypt_guest::status::{STATUS_AUTH, STATUS_ENCODING};
+use stack_encrypt_guest::options::Opener;
+use stack_encrypt_guest::status::{STATUS_AUTH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET};
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IndexKeySource,
     RetrieveKeyPayload,
@@ -214,7 +215,13 @@ fn value_round_trips_through_the_guest_ops() {
         false,
     ))
     .expect("encrypt");
-    let pt = block_on(ops::decrypt_value(&cipher, &ct, b"users/42", false)).expect("decrypt");
+    let pt = block_on(ops::decrypt_value(
+        Opener::Any(&cipher),
+        &ct,
+        b"users/42",
+        false,
+    ))
+    .expect("decrypt");
 
     let FfiValue::Object(entries) = decode(&pt) else {
         panic!("expected an object back");
@@ -240,13 +247,24 @@ fn element_mode_round_trips() {
         true,
     ))
     .expect("encrypt element");
-    let pt = block_on(ops::decrypt_value(&cipher, &ct, b"users", true)).expect("decrypt element");
+    let pt = block_on(ops::decrypt_value(
+        Opener::Any(&cipher),
+        &ct,
+        b"users",
+        true,
+    ))
+    .expect("decrypt element");
     assert_eq!(text(&decode(&pt)), "row-0");
 
     // An element is not a plain value: opening it without the element
     // derivation must fail authentication.
     assert_eq!(
-        block_on(ops::decrypt_value(&cipher, &ct, b"users", false)),
+        block_on(ops::decrypt_value(
+            Opener::Any(&cipher),
+            &ct,
+            b"users",
+            false
+        )),
         Err(STATUS_AUTH)
     );
 }
@@ -291,7 +309,12 @@ fn wrong_aad_and_malformed_inputs_map_to_statuses() {
     // descriptors; against ZeroKMS the retrieve is refused first, as
     // `STATUS_KMS_FORBIDDEN` — see `status.rs`.)
     assert_eq!(
-        block_on(ops::decrypt_value(&cipher, &ct, b"other", false)),
+        block_on(ops::decrypt_value(
+            Opener::Any(&cipher),
+            &ct,
+            b"other",
+            false
+        )),
         Err(STATUS_AUTH)
     );
     // Garbage transport bytes on either path: encoding.
@@ -305,7 +328,12 @@ fn wrong_aad_and_malformed_inputs_map_to_statuses() {
         Err(STATUS_ENCODING)
     );
     assert_eq!(
-        block_on(ops::decrypt_value(&cipher, b"\xffgarbage", b"ctx", false)),
+        block_on(ops::decrypt_value(
+            Opener::Any(&cipher),
+            b"\xffgarbage",
+            b"ctx",
+            false
+        )),
         Err(STATUS_ENCODING)
     );
     // A truncated leaf inside a well-formed tree: encoding (structural),
@@ -320,7 +348,12 @@ fn wrong_aad_and_malformed_inputs_map_to_statuses() {
     )
     .expect("encode truncated");
     assert_eq!(
-        block_on(ops::decrypt_value(&cipher, &out, b"ctx", false)),
+        block_on(ops::decrypt_value(
+            Opener::Any(&cipher),
+            &out,
+            b"ctx",
+            false
+        )),
         Err(STATUS_ENCODING)
     );
 }
@@ -344,14 +377,24 @@ fn an_empty_aad_round_trips_on_the_value_paths() {
             as_element,
         ))
         .expect("encrypt under an empty aad");
-        let out = block_on(ops::decrypt_value(&cipher, &ct, b"", as_element))
-            .expect("decrypt under an empty aad");
+        let out = block_on(ops::decrypt_value(
+            Opener::Any(&cipher),
+            &ct,
+            b"",
+            as_element,
+        ))
+        .expect("decrypt under an empty aad");
         assert_eq!(out, value, "element: {as_element}");
 
         // Empty is a context like any other: not interchangeable with one
         // that carries bytes.
         assert_eq!(
-            block_on(ops::decrypt_value(&cipher, &ct, b"ctx", as_element)),
+            block_on(ops::decrypt_value(
+                Opener::Any(&cipher),
+                &ct,
+                b"ctx",
+                as_element
+            )),
             Err(STATUS_AUTH),
             "element: {as_element}"
         );
@@ -366,11 +409,12 @@ fn an_empty_aad_round_trips_on_the_value_paths() {
         false,
     ))
     .expect("encrypt");
-    let opened =
-        decode(&block_on(ops::decrypt_value(&cipher, &ct, zeros, false)).expect("decrypt"));
+    let opened = decode(
+        &block_on(ops::decrypt_value(Opener::Any(&cipher), &ct, zeros, false)).expect("decrypt"),
+    );
     assert_eq!(text(&opened), "x");
     assert_eq!(
-        block_on(ops::decrypt_value(&cipher, &ct, b"ctx", false)),
+        block_on(ops::decrypt_value(Opener::Any(&cipher), &ct, b"ctx", false)),
         Err(STATUS_AUTH)
     );
 }
@@ -572,7 +616,8 @@ fn a_record_batch_encrypts_in_one_call_and_round_trips() {
     // Three rows, two ciphertext fields each: still exactly one call.
     assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 1);
 
-    let pt = block_on(ops::decrypt_record(&cipher, &record, &plan())).expect("decrypt records");
+    let pt = block_on(ops::decrypt_record(Opener::Any(&cipher), &record, &plan()))
+        .expect("decrypt records");
     assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), 1);
 
     let FfiValue::Array(rows) = decode(&pt) else {
@@ -624,7 +669,7 @@ fn a_forged_passthrough_ciphertext_slot_is_rejected_not_decrypted() {
     codec::encode_ciphertext(&CipherText::Map(fields), &mut forged).expect("re-encode");
 
     assert_eq!(
-        block_on(ops::decrypt_record(&cipher, &forged, &plan())),
+        block_on(ops::decrypt_record(Opener::Any(&cipher), &forged, &plan())),
         Err(STATUS_ENCODING),
         "a passthrough in a ciphertext slot must be a hard error, never plaintext"
     );
@@ -841,7 +886,7 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
     let plan_with = |context: FfiValue| single_field_plan("age", context);
 
     let opened = block_on(ops::decrypt_record(
-        &cipher,
+        Opener::Any(&cipher),
         &record,
         &plan_with(extended("age")),
     ))
@@ -853,7 +898,7 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
 
     assert_eq!(
         block_on(ops::decrypt_record(
-            &cipher,
+            Opener::Any(&cipher),
             &record,
             &plan_with(s("users/age"))
         )),
@@ -905,7 +950,7 @@ fn a_structured_plan_context_is_validated_at_parse() {
     ))
     .expect("an integer part is never empty");
     assert!(block_on(ops::decrypt_record(
-        &cipher,
+        Opener::Any(&cipher),
         &sealed,
         &plan_with(FfiValue::Array(vec![s(""), FfiValue::UInt64(7)]))
     ))
@@ -1028,7 +1073,11 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
         "a context that could never be decrypted under must not seal"
     );
     assert_eq!(
-        block_on(ops::decrypt_record(&cipher, &source, &bad_plan)),
+        block_on(ops::decrypt_record(
+            Opener::Any(&cipher),
+            &source,
+            &bad_plan
+        )),
         Err(STATUS_ENCODING)
     );
 
@@ -1047,9 +1096,150 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
         &odd_plan,
     ))
     .expect("encrypt");
-    let opened = block_on(ops::decrypt_record(&cipher, &sealed, &odd_plan)).expect("decrypt");
+    let opened = block_on(ops::decrypt_record(
+        Opener::Any(&cipher),
+        &sealed,
+        &odd_plan,
+    ))
+    .expect("decrypt");
     let FfiValue::Object(fields) = decode(&opened) else {
         panic!("a record decrypts to an object");
     };
     assert!(matches!(fields.as_slice(), [(name, FfiValue::UInt32(1))] if name == "f"));
+}
+
+// =============================================================================
+// Keysets: the opener a call selects
+// =============================================================================
+
+fn keyset_named<'c>(
+    cipher: &'c StackCipher<Counting>,
+    name: &str,
+) -> stack_encrypt::KeysetCipher<'c, Counting> {
+    block_on(cipher.keyset(IdentifiedBy::Name(name.to_string().into()))).expect("select keyset")
+}
+
+/// A value sealed under a tenant's keyset opens through that keyset, through
+/// `{"any"}`, and not through another tenant's — and the refusal costs no
+/// ZeroKMS call.
+#[test]
+fn a_value_opens_under_its_own_keyset_or_any_but_not_another() {
+    let cipher = cipher();
+    let acme = keyset_named(&cipher, "acme");
+    let globex = keyset_named(&cipher, "globex");
+    let ct = block_on(ops::encrypt_value(&acme, &encode(s("x")), b"ctx", false)).expect("encrypt");
+
+    let pt = block_on(ops::decrypt_value(
+        Opener::Only(acme.clone()),
+        &ct,
+        b"ctx",
+        false,
+    ))
+    .expect("own keyset opens");
+    assert_eq!(text(&decode(&pt)), "x");
+    let pt =
+        block_on(ops::decrypt_value(Opener::Any(&cipher), &ct, b"ctx", false)).expect("any opens");
+    assert_eq!(text(&decode(&pt)), "x");
+    let retrieves = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
+
+    assert_eq!(
+        block_on(ops::decrypt_value(Opener::Only(globex), &ct, b"ctx", false)),
+        Err(STATUS_FOREIGN_KEYSET),
+        "another tenant's keyset must refuse the leaf"
+    );
+    assert_eq!(
+        cipher.kms().retrieve_calls.load(Ordering::SeqCst),
+        retrieves,
+        "the refusal happens before any key is retrieved"
+    );
+}
+
+/// A record batch whose rows were sealed under different keysets opens
+/// through `{"any"}` in one call per keyset, and not through one keyset.
+#[test]
+fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
+    let cipher = cipher();
+    let acme = keyset_named(&cipher, "acme");
+    let globex = keyset_named(&cipher, "globex");
+
+    // One row per tenant, sealed separately; a host stores them side by
+    // side and reads them back as one batch.
+    let acme_rows = block_on(ops::encrypt_record(
+        &acme,
+        &encode(row(29, "alice smith")),
+        &plan(),
+    ))
+    .expect("encrypt acme row");
+    let globex_rows = block_on(ops::encrypt_record(
+        &globex,
+        &encode(row(34, "bob jones")),
+        &plan(),
+    ))
+    .expect("encrypt globex row");
+    let batch = {
+        let (CipherText::Map(a), CipherText::Map(g)) = (
+            codec::decode_ciphertext_boxed::<Vec<u8>>(&mut codec::Reader::new(&acme_rows))
+                .expect("decode"),
+            codec::decode_ciphertext_boxed::<Vec<u8>>(&mut codec::Reader::new(&globex_rows))
+                .expect("decode"),
+        ) else {
+            panic!("a single record is a map");
+        };
+        let mut out = Vec::new();
+        codec::encode_ciphertext_boxed(
+            CipherText::Sequence(vec![CipherText::Map(a), CipherText::Map(g)]),
+            &mut out,
+        )
+        .expect("encode batch");
+        out
+    };
+
+    let before = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
+    let pt = block_on(ops::decrypt_record(Opener::Any(&cipher), &batch, &plan()))
+        .expect("any opens the mixed batch");
+    assert_eq!(
+        cipher.kms().retrieve_calls.load(Ordering::SeqCst) - before,
+        2,
+        "one retrieve per keyset"
+    );
+    let FfiValue::Array(rows) = decode(&pt) else {
+        panic!("expected an array of rows back");
+    };
+    assert_eq!(rows.len(), 2);
+
+    let before = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
+    assert_eq!(
+        block_on(ops::decrypt_record(Opener::Only(acme), &batch, &plan())),
+        Err(STATUS_FOREIGN_KEYSET)
+    );
+    assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), before);
+}
+
+/// Terms derive under the selected keyset's index key: the same probe
+/// under two keysets differs, and matches the native derivation for each.
+#[test]
+fn terms_derive_under_the_selected_keyset() {
+    let cipher = cipher();
+    let acme = keyset_named(&cipher, "acme");
+    let globex = keyset_named(&cipher, "globex");
+    let ctx = encode(s("users/age"));
+
+    let acme_term = block_on(ops::term(
+        &acme,
+        &encode(FfiValue::UInt32(42)),
+        &ctx,
+        TERM_EQUALITY,
+    ))
+    .expect("acme term");
+    let globex_term = block_on(ops::term(
+        &globex,
+        &encode(FfiValue::UInt32(42)),
+        &ctx,
+        TERM_EQUALITY,
+    ))
+    .expect("globex term");
+    assert_ne!(acme_term, globex_term);
+
+    let native = block_on(acme.equality_term(42u32, nonempty!("users/age"))).expect("native");
+    assert_eq!(acme_term, native.into_bytes().to_vec());
 }

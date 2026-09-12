@@ -43,7 +43,7 @@ use stack_encrypt::sem::{CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch};
 use stack_encrypt::target::Pending;
 use stack_encrypt::{
     AadPiece, BoxedPassthrough, CipherText, Element, Encrypt, IntoPrfContext, KeysetCipher,
-    NonEmpty, SealedValue, StackCipher, StackCipherText,
+    NonEmpty, SealedValue, StackCipherText,
 };
 use stack_kms::DataKeySource;
 use vitaminc_aead_value::{transport as codec, FfiValue};
@@ -51,6 +51,7 @@ use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroizing;
 
 use crate::context::{borrowed, parse_context};
+use crate::options::Opener;
 use crate::status::{status_for_error, STATUS_ENCODING, STATUS_INTERNAL};
 
 /// Term kinds for `se_term`, part of the guest/host contract (the Go host
@@ -113,9 +114,10 @@ where
 /// contains plaintext — the ABI layer's ownership rules govern its wiping.
 ///
 /// Symmetric with [`encrypt_value`]: the AAD is whatever the value was sealed
-/// under, empty included.
+/// under, empty included. The [`Opener`] says which keysets may be opened:
+/// any, or one, refusing the rest before any key is retrieved.
 pub async fn decrypt_value<K>(
-    cipher: &StackCipher<K>,
+    opener: Opener<'_, K>,
     ciphertext: &[u8],
     aad: &[u8],
     as_element: bool,
@@ -124,22 +126,23 @@ where
     K: DataKeySource + Sync,
 {
     let tree = decode_tree(ciphertext)?;
-    // One `decrypt` per arm, not one `decipher` and two drives: the element
-    // derivation is `Element<T>`'s to apply, and naming the type is what
-    // asks for it. Only one arm runs, so the retrieve happens once either
-    // way.
-    let value: FfiValue = if as_element {
-        let wrapped: Element<FfiValue> = cipher
-            .decrypt(tree, aad)
+    // One `decrypt` per arm, not one `decipher` and two drives. The element
+    // derivation is `Element<T>`'s to apply and naming the type is what asks
+    // for it; the opener decides whether a foreign leaf is refused before any
+    // key is retrieved. Only one arm runs, so the retrieve happens once.
+    let value: FfiValue = match (&opener, as_element) {
+        (Opener::Any(cipher), true) => cipher
+            .decrypt::<Element<FfiValue>, _>(tree, aad)
             .await
-            .map_err(|e| status_for_error(&e))?;
-        wrapped.into_inner()
-    } else {
-        cipher
-            .decrypt(tree, aad)
+            .map(Element::into_inner),
+        (Opener::Any(cipher), false) => cipher.decrypt(tree, aad).await,
+        (Opener::Only(keyset), true) => keyset
+            .decrypt::<Element<FfiValue>, _>(tree, aad)
             .await
-            .map_err(|e| status_for_error(&e))?
-    };
+            .map(Element::into_inner),
+        (Opener::Only(keyset), false) => keyset.decrypt(tree, aad).await,
+    }
+    .map_err(|e| status_for_error(&e))?;
     encode_value(value)
 }
 
@@ -682,7 +685,7 @@ where
 /// [`FfiValue::Array`] of them for a batch. One `retrieve_keys` call per
 /// invocation.
 pub async fn decrypt_record<K>(
-    cipher: &StackCipher<K>,
+    opener: Opener<'_, K>,
     record: &[u8],
     plan: &[u8],
 ) -> Result<Vec<u8>, u32>
@@ -735,16 +738,22 @@ where
                 .find_map(|(key, node)| (key == "c").then_some(node))
                 .ok_or(STATUS_ENCODING)?;
             reject_passthrough_tree(&ct)?;
-            pendings.push(ct.decrypt_into(cipher, context));
+            pendings.push(match &opener {
+                Opener::Any(cipher) => ct.decrypt_into(*cipher, context),
+                Opener::Only(keyset) => ct.decrypt_into(keyset, context),
+            });
             row_names.push(name);
         }
         names.push(row_names);
     }
 
-    // The one ZeroKMS call for the whole invocation.
-    let values = Pending::all(cipher, pendings)
-        .await
-        .map_err(|e| status_for_error(&e))?;
+    // The one ZeroKMS call for the whole invocation (one per keyset the
+    // leaves were sealed under, when opening any).
+    let values = match &opener {
+        Opener::Any(cipher) => Pending::all(*cipher, pendings).await,
+        Opener::Only(keyset) => Pending::all(keyset, pendings).await,
+    }
+    .map_err(|e| status_for_error(&e))?;
     let mut values = values.into_iter();
 
     let mut row_values = Vec::with_capacity(names.len());
