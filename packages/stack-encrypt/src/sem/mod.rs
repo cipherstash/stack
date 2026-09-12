@@ -1057,7 +1057,7 @@ impl<K> KeysetCipher<'_, K> {
     /// server-side).
     ///
     /// Fails with [`TermError::EmptyTermText`] — as
-    /// [`Error::Term`](crate::Error::Term), once awaited — when the text
+    /// [`Error::Term`], once awaited — when the text
     /// yields no tokens: empty or separator-only text, or an n-gram probe
     /// shorter than the gram length (which could never match; see
     /// [`Tokenizer::Ngram`]).
