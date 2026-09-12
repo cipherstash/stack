@@ -2,6 +2,7 @@ package stackencrypt
 
 import (
 	"bufio"
+	"context"
 	"encoding/hex"
 	"errors"
 	"net/http"
@@ -15,6 +16,76 @@ import (
 )
 
 // Pure Go: no guest needed.
+
+func TestCommitRecordsPreservesRowsAndIsAtomic(t *testing.T) {
+	type row struct {
+		ID    int64  `stash:"-"`
+		Age   uint8  `stash:"context=users/age"`
+		Email string `stash:"context=users/email"`
+	}
+	plan, err := planFor(reflect.TypeOf(row{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded := func(age any, email string) vcvalue.Object {
+		return vcvalue.Object{{Key: "Age", Value: age}, {Key: "Email", Value: email}}
+	}
+
+	// One row per record: unplanned fields survive.
+	rows := []row{{ID: 1, Age: 9}, {ID: 2, Age: 9}}
+	if err := commitRecords(reflect.ValueOf(&rows).Elem(), []any{decoded(uint32(30), "a"), decoded(uint32(40), "b")}, plan); err != nil {
+		t.Fatal(err)
+	}
+	if want := []row{{1, 30, "a"}, {2, 40, "b"}}; !reflect.DeepEqual(rows, want) {
+		t.Fatalf("rows = %+v, want %+v", rows, want)
+	}
+
+	// A failing record leaves the slice untouched.
+	before := append([]row(nil), rows...)
+	err = commitRecords(reflect.ValueOf(&rows).Elem(), []any{decoded(uint32(31), "c"), decoded(uint32(300), "d")}, plan)
+	if !errors.Is(err, errUnassignable) {
+		t.Fatalf("overflowing batch: %v", err)
+	}
+	if !reflect.DeepEqual(rows, before) {
+		t.Fatalf("partial write: %+v", rows)
+	}
+
+	// A different length replaces the slice.
+	if err := commitRecords(reflect.ValueOf(&rows).Elem(), []any{decoded(uint32(1), "z")}, plan); err != nil {
+		t.Fatal(err)
+	}
+	if want := []row{{0, 1, "z"}}; !reflect.DeepEqual(rows, want) {
+		t.Fatalf("rows = %+v, want %+v", rows, want)
+	}
+
+	// One record: same contract on a struct.
+	one := row{ID: 7, Age: 1, Email: "keep"}
+	if err := commitRecord(reflect.ValueOf(&one).Elem(), decoded(uint32(300), "new"), plan); !errors.Is(err, errUnassignable) {
+		t.Fatalf("overflowing record: %v", err)
+	}
+	if one != (row{7, 1, "keep"}) {
+		t.Fatalf("partial write: %+v", one)
+	}
+	if err := commitRecord(reflect.ValueOf(&one).Elem(), decoded(uint32(2), "new"), plan); err != nil {
+		t.Fatal(err)
+	}
+	if one != (row{7, 2, "new"}) {
+		t.Fatalf("record = %+v", one)
+	}
+}
+
+func TestEncryptRecordRejectsNil(t *testing.T) {
+	c := &Client{closed: true}
+	cph := c.DefaultCipher()
+	for name, in := range map[string]any{"nil": nil, "nil pointer": (*taggedUser)(nil)} {
+		if _, err := cph.EncryptRecord(context.Background(), in); err == nil || errors.Is(err, ErrState) {
+			t.Errorf("EncryptRecord(%s): %v, want a record error", name, err)
+		}
+		if _, err := cph.EncryptRecords(context.Background(), in); err == nil || errors.Is(err, ErrState) {
+			t.Errorf("EncryptRecords(%s): %v, want a record error", name, err)
+		}
+	}
+}
 
 func TestKeysetIDRoundTripsCanonicalForm(t *testing.T) {
 	const s = "6a70bd18-99ac-4650-b104-37eec3a15b09"
@@ -143,14 +214,23 @@ func TestPlanFromTags(t *testing.T) {
 }
 
 func TestAssignFieldConvertsWithinFamiliesOnly(t *testing.T) {
+	type flag bool
+	type name string
+	type raw []byte
 	type row struct {
-		I   int
-		U8  uint8
-		F   float32
-		S   string
-		B   []byte
-		P   *int64
-		Bad bool
+		I    int
+		U8   uint8
+		F    float32
+		F64  float64
+		S    string
+		B    []byte
+		P    *int64
+		Bool bool
+		Flag flag
+		Name name
+		Raw  raw
+		M    map[string]int
+		Any  any
 	}
 	var r row
 	rv := reflect.ValueOf(&r).Elem()
@@ -163,21 +243,44 @@ func TestAssignFieldConvertsWithinFamiliesOnly(t *testing.T) {
 	must("I", int64(-5))
 	must("U8", uint32(200))
 	must("F", float32(1.5))
+	must("F", float64(0.5)) // exactly representable: narrows
+	must("F64", float32(0.1))
 	must("S", "s")
 	must("B", []byte{1})
 	must("P", int64(9))
-	if r.I != -5 || r.U8 != 200 || r.F != 1.5 || r.S != "s" || string(r.B) != "\x01" || *r.P != 9 {
+	must("Bool", true)
+	must("Flag", true)
+	must("Name", "n")
+	must("Raw", []byte{2})
+	if r.I != -5 || r.U8 != 200 || r.F != 0.5 || r.F64 != float64(float32(0.1)) || r.S != "s" || string(r.B) != "\x01" || *r.P != 9 ||
+		!r.Bool || !bool(r.Flag) || r.Name != "n" || string(r.Raw) != "\x02" {
 		t.Fatalf("assigned %+v", r)
+	}
+	// A sealed none decodes as nil: only a field that can hold one takes it.
+	r.P, r.B, r.M, r.Any = new(int64), []byte{1}, map[string]int{"a": 1}, 1
+	must("P", nil)
+	must("B", nil)
+	must("M", nil)
+	must("Any", nil)
+	if r.P != nil || r.B != nil || r.M != nil || r.Any != nil {
+		t.Fatalf("nil did not clear: %+v", r)
 	}
 	for _, bad := range []struct {
 		field string
 		v     any
 	}{
-		{"U8", uint32(300)}, // overflow
-		{"I", uint64(1)},    // family
-		{"S", int64(1)},     // kind
-		{"Bad", "true"},     // unsupported target
-		{"I", float64(1)},   // family
+		{"U8", uint32(300)},      // overflow
+		{"I", uint64(1)},         // family
+		{"S", int64(1)},          // kind
+		{"Bool", "true"},         // kind
+		{"I", float64(1)},        // family
+		{"F", float64(0.1)},      // not representable as float32
+		{"F", float64(16777217)}, // in range, not representable
+		{"I", nil},               // a none into a scalar
+		{"S", nil},               // a none into a scalar
+		{"Bool", nil},            // a none into a scalar
+		{"Name", []byte("n")},    // kind
+		{"Raw", "r"},             // kind
 	} {
 		if err := assignField(rv.FieldByName(bad.field), bad.v); !errors.Is(err, errUnassignable) {
 			t.Errorf("%s <- %v: got %v, want errUnassignable", bad.field, bad.v, err)

@@ -172,12 +172,12 @@ func applyOptions(opts []RecordOption) recordOptions {
 }
 
 // EncryptRecords seals every row of a slice of structs (or a pointer to
-// one) per the struct's `stash` tags: all rows and fields from one batched
-// ZeroKMS key request, terms derived under this keyset's index key. One
-// EncryptedRecord per row, in order.
+// one) per the struct's `stash` tags: all rows and fields from batched
+// ZeroKMS key requests (one per 500 sealed fields), terms derived under
+// this keyset's index key. One EncryptedRecord per row, in order.
 func (cph *Cipher) EncryptRecords(ctx context.Context, rows any, opts ...RecordOption) ([]EncryptedRecord, error) {
 	v := reflect.Indirect(reflect.ValueOf(rows))
-	if v.Kind() != reflect.Slice {
+	if !v.IsValid() || v.Kind() != reflect.Slice {
 		return nil, fmt.Errorf("stackencrypt: EncryptRecords takes a slice of structs, not %T", rows)
 	}
 	plan, err := planFor(v.Type().Elem())
@@ -209,6 +209,9 @@ func (cph *Cipher) EncryptRecords(ctx context.Context, rows any, opts ...RecordO
 // tags; see EncryptRecords.
 func (cph *Cipher) EncryptRecord(ctx context.Context, row any, opts ...RecordOption) (EncryptedRecord, error) {
 	v := reflect.Indirect(reflect.ValueOf(row))
+	if !v.IsValid() {
+		return nil, fmt.Errorf("stackencrypt: EncryptRecord takes a struct, not %T", row)
+	}
 	plan, err := planFor(v.Type())
 	if err != nil {
 		return nil, err
@@ -252,6 +255,7 @@ func (cph *Cipher) encryptRecords(ctx context.Context, plan []fieldPlan, source 
 	if err != nil {
 		return nil, err
 	}
+	defer wipe(out)
 	return unmarshalCipherText(out)
 }
 
@@ -312,13 +316,16 @@ func termBytes(node any) ([]byte, error) {
 // (a record from another keyset is ErrForeignKeyset) into out, a pointer to
 // a slice of the same struct type, one element per record. Only the sealed
 // outputs participate; terms are one-way. Fields the plan does not name are
-// left as they are.
+// left as they are: when the slice already holds one row per record, each
+// row keeps its other fields; otherwise it is replaced by a fresh slice.
+// Nothing is written unless every record decodes.
 func (cph *Cipher) DecryptRecords(ctx context.Context, records []EncryptedRecord, out any, opts ...RecordOption) error {
 	return cph.client.decryptRecords(ctx, cph.keyset, records, out, opts)
 }
 
 // DecryptRecord opens one record into out, a pointer to a struct; see
-// DecryptRecords.
+// DecryptRecords. Fields the plan does not name keep their values, and
+// nothing is written unless every planned field decodes.
 func (cph *Cipher) DecryptRecord(ctx context.Context, record EncryptedRecord, out any, opts ...RecordOption) error {
 	return cph.client.decryptRecord(ctx, cph.keyset, record, out, opts)
 }
@@ -347,13 +354,37 @@ func (c *Client) decryptRecords(ctx context.Context, sel KeysetSelector, records
 	if !ok || len(items) != len(records) {
 		return fmt.Errorf("%w: record batch decrypted as %T", ErrInternal, values)
 	}
-	slice := reflect.MakeSlice(ptr.Elem().Type(), len(items), len(items))
+	return commitRecords(ptr.Elem(), items, plan)
+}
+
+// commitRecords writes decrypted records into a slice value, atomically:
+// the rows are assembled in a scratch slice — copies of the existing rows
+// when there is one per record, zero rows otherwise — and stored only once
+// every record has been assigned.
+func commitRecords(slice reflect.Value, items []any, plan []fieldPlan) error {
+	scratch := reflect.MakeSlice(slice.Type(), len(items), len(items))
+	if slice.Len() == len(items) {
+		reflect.Copy(scratch, slice)
+	}
 	for i, item := range items {
-		if err := assignRecord(slice.Index(i), item, plan); err != nil {
+		if err := assignRecord(scratch.Index(i), item, plan); err != nil {
 			return err
 		}
 	}
-	ptr.Elem().Set(slice)
+	slice.Set(scratch)
+	return nil
+}
+
+// commitRecord writes one decrypted record into a struct value, atomically:
+// a copy takes the planned fields and replaces the original only once
+// every one of them has been assigned.
+func commitRecord(target reflect.Value, item any, plan []fieldPlan) error {
+	scratch := reflect.New(target.Type()).Elem()
+	scratch.Set(target)
+	if err := assignRecord(scratch, item, plan); err != nil {
+		return err
+	}
+	target.Set(scratch)
 	return nil
 }
 
@@ -374,7 +405,7 @@ func (c *Client) decryptRecord(ctx context.Context, sel KeysetSelector, record E
 	if err != nil {
 		return err
 	}
-	return assignRecord(ptr.Elem(), value, plan)
+	return commitRecord(ptr.Elem(), value, plan)
 }
 
 // recordTree renders the ciphertext tree the guest opens: per planned
@@ -444,11 +475,18 @@ func assignRecord(target reflect.Value, value any, plan []fieldPlan) error {
 var errUnassignable = errors.New("cannot assign decrypted value")
 
 // assignField sets a struct field from a decoded value, converting within
-// a numeric family when the value fits and refusing anything lossy.
+// a numeric family when the value fits and refusing anything lossy. A
+// decoded nil (a sealed none) is accepted only by a field that can hold
+// one — a pointer, slice, map or interface — never as a zero scalar.
 func assignField(field reflect.Value, v any) error {
 	if v == nil {
-		field.Set(reflect.Zero(field.Type()))
-		return nil
+		switch field.Kind() {
+		case reflect.Pointer, reflect.Slice, reflect.Map, reflect.Interface:
+			field.Set(reflect.Zero(field.Type()))
+			return nil
+		default:
+			return fmt.Errorf("%w: nil into %s", errUnassignable, field.Type())
+		}
 	}
 	if field.Kind() == reflect.Pointer {
 		elem := reflect.New(field.Type().Elem())
@@ -462,6 +500,15 @@ func assignField(field reflect.Value, v any) error {
 	if rv.Type().AssignableTo(field.Type()) {
 		field.Set(rv)
 		return nil
+	}
+	// A defined type over the same kind (type Flag bool, type Raw []byte)
+	// converts without loss.
+	if rv.Kind() == field.Kind() && rv.Type().ConvertibleTo(field.Type()) {
+		switch field.Kind() {
+		case reflect.Bool, reflect.String, reflect.Slice:
+			field.Set(rv.Convert(field.Type()))
+			return nil
+		}
 	}
 	switch field.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -505,6 +552,11 @@ func assignField(field reflect.Value, v any) error {
 		if field.OverflowFloat(f) {
 			return fmt.Errorf("%w: %v overflows %s", errUnassignable, f, field.Type())
 		}
+		// Narrowing must be exact: a float64 that float32 cannot represent
+		// would silently round. NaN is its own case, never equal to itself.
+		if field.Kind() == reflect.Float32 && float64(float32(f)) != f && f == f {
+			return fmt.Errorf("%w: %v is not representable as %s", errUnassignable, f, field.Type())
+		}
 		field.SetFloat(f)
 	case reflect.String:
 		s, ok := v.(string)
@@ -512,6 +564,12 @@ func assignField(field reflect.Value, v any) error {
 			return fmt.Errorf("%w: %T into %s", errUnassignable, v, field.Type())
 		}
 		field.SetString(s)
+	case reflect.Bool:
+		b, ok := v.(bool)
+		if !ok {
+			return fmt.Errorf("%w: %T into %s", errUnassignable, v, field.Type())
+		}
+		field.SetBool(b)
 	default:
 		return fmt.Errorf("%w: %T into %s", errUnassignable, v, field.Type())
 	}
