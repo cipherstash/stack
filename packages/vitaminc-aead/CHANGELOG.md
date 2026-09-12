@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-12
+
+### Breaking
+
+- **Breaking:** Context display now renders unit as `()` and an empty list as `None`. ([#338](https://github.com/cipherstash/vitaminc/pull/338))
+
+### Features
+
+- Runtime `AadPiece` contexts now support PRF derivation and `NonEmpty`, matching equivalent Rust contexts. Existing ciphertexts remain compatible. ([#338](https://github.com/cipherstash/vitaminc/pull/338))
+
 ## [0.3.0] - 2026-09-07
 
 ### Breaking

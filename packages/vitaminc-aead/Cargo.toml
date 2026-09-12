@@ -12,12 +12,12 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-vitaminc-aead-derive = { version = "0.3.0", path = "../aead-derive" }
+vitaminc-aead-derive = { version = "0.4.0", path = "../aead-derive" }
 # For `AadPiece`'s PRF derivation: a context's parts view is its identity on
 # both derivations, so the parts type carries both.
-vitaminc-prf = { version = "0.3.0", path = "../prf" }
-vitaminc-protected = { version = "0.3.0", path = "../protected" }
-vitaminc-random = { version = "0.3.0", path = "../random" }
+vitaminc-prf = { version = "0.4.0", path = "../prf" }
+vitaminc-protected = { version = "0.4.0", path = "../protected" }
+vitaminc-random = { version = "0.4.0", path = "../random" }
 
 bytes = { version = "^1", features = ["serde"] }
 serde = { workspace = true }
