@@ -112,8 +112,13 @@ pub(crate) unsafe fn take(ptr: *mut u8, len: usize) -> Option<Vec<u8>> {
 /// does after dropping the cipher, so a host that tears the instance down
 /// without releasing an output first still leaves no plaintext behind.
 /// Empties carry no bytes; their count is simply reset.
+///
+/// This path allocates nothing: the registry is moved out whole (an empty
+/// `HashMap` does not allocate) and walked in place, so a shutdown under
+/// linear-memory pressure cannot fail before the wipe on an allocation the
+/// wipe itself made.
 pub(crate) fn wipe_all() {
-    let live: Vec<(usize, usize)> = BUFFERS.with(|b| b.borrow_mut().drain().collect());
+    let live = BUFFERS.with(|b| core::mem::take(&mut *b.borrow_mut()));
     for (ptr, len) in live {
         // SAFETY: every entry was registered by `register`, which leaked a
         // boxed slice of exactly `len` bytes at `ptr`, and it was removed

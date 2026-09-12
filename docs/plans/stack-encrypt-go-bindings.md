@@ -141,10 +141,11 @@ Go application
              │
              ▼  wazero (wasm32-wasip1)
        stack-encrypt guest (Rust cdylib)
-         ├─ StackCipher<StackKms<HostTokenStrategy, WasiHostConnection>>   (one per instance; keysets selected per call)
-         ├─ FfiValue.encrypt_with_aad(&cipher, aad) → PendingStackCipherText → seal(kms)   (block_on)
-         ├─ record plan → per-field EncryptFrom pendings → Pending::all → one generate_keys
-         └─ term(value, context, kind) → local PRF/ORE, no I/O
+         ├─ StackCipher<StackKms<HostTokenStrategy, WasiHostConnection>>   (one per instance)
+         ├─ opts.keyset → cipher.keyset(selector) → KeysetCipher   (per call; a cold name/id is one load)
+         ├─ FfiValue.encrypt_with_aad(&keyset_cipher, aad) → pending → seal   (block_on; one generate_keys per 500 leaves)
+         ├─ record plan → per-field EncryptFrom pendings → Pending::all → generate_keys, chunked the same way
+         └─ term(value, context, kind) → keyset_cipher.term: the backend derives it (local PRF/ORE today, no I/O; ZeroKMS v2 derives server-side)
 ```
 
 Control stays in Rust: request assembly, key derivation, batching, AAD/PRF
