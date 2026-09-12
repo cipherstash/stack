@@ -40,7 +40,7 @@
 //! *later lookup*, whichever answer arrives first, so an answer from before
 //! a rename cannot overwrite one from after it — neither under the same
 //! name, nor by taking back the name the keyset has since left, nor by
-//! arriving after eviction has dropped the binding it would have lost to.
+//! arriving after eviction has forgotten the answer it would have lost to.
 
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
@@ -129,8 +129,8 @@ pub(crate) enum Lookup {
 /// `O(n)` in the bound, which is the rare case by construction. The name
 /// index is bounded by the entries it serves: one binding per cached id at
 /// most, plus the default's, and a binding goes when its id does or when
-/// the keyset is resolved under another name. What an evicted binding
-/// leaves behind is one watermark, not a record per name: see
+/// the keyset is resolved under another name. What an evicted entry leaves
+/// behind is one watermark, not a record per name: see
 /// [`evicted_binding`](Self::evicted_binding).
 pub(crate) struct KeysetCache {
     capacity: NonZeroUsize,
@@ -146,17 +146,25 @@ pub(crate) struct KeysetCache {
     /// The lookup whose answer last spoke for the default; the builder's
     /// own for a cipher that has resolved nothing yet.
     default_resolution: Resolution,
-    /// The latest lookup whose name binding eviction dropped.
+    /// The latest lookup whose answer eviction has forgotten.
     ///
-    /// A keyset carries the order of the answers that spoke for it; evicting
-    /// it drops that with the rest of the entry, and an answer older than the
-    /// binding that went would then find nothing left to say it is the older
-    /// one. So no binding is made from an answer older than this. It is one
-    /// watermark for all names rather than one per forgotten name — a cache
-    /// whose whole contract is a bound must not grow a record per name it has
-    /// evicted — so it also refuses some bindings an older lookup could have
-    /// made safely. That costs a round trip on the next selection by such a
-    /// name, in the eviction regime that is already paying them.
+    /// A keyset carries the order of the answers that spoke for it, and a
+    /// binding the order of the lookup that made it; evicting the keyset
+    /// drops both, and an answer older than what went would then find
+    /// nothing left to say it is the older one. So every eviction leaves the
+    /// entry's place here — its own bindings never sat later in the order
+    /// than it does, since the insert that binds a name is the insert that
+    /// stamps the entry — and no binding is made from an answer older than
+    /// this. The name is the only thing an answer too old to order can get
+    /// wrong: an id's key material is the same whichever lookup asked, so it
+    /// still caches.
+    ///
+    /// It is one watermark for all names rather than one per forgotten name
+    /// — a cache whose whole contract is a bound must not grow a record per
+    /// name it has evicted — so it also refuses some bindings an older
+    /// lookup could have made safely. That costs a round trip on the next
+    /// selection by such a name, in the eviction regime that is already
+    /// paying them.
     evicted_binding: Resolution,
     by_id: HashMap<Uuid, Entry>,
     by_name: HashMap<String, Alias>,
@@ -376,17 +384,23 @@ impl KeysetCache {
             return;
         };
         if let Some(entry) = self.by_id.remove(&oldest) {
+            // The entry's place in the order outlives it as a watermark:
+            // once it is gone there is nothing left to order an older answer
+            // for this keyset against. It is taken whether or not the entry
+            // still owns a name — a keyset whose name has already moved to
+            // another keyset is precisely the one an older answer would
+            // rebind, and the binding it would have lost to is no longer
+            // here to say so.
+            self.evicted_binding = self.evicted_binding.max(entry.resolution);
             if let Some(name) = entry.name {
                 // A name that has since moved to another id keeps its
-                // binding: only this id's binding goes with it. Its place in
-                // the order of lookups outlives it as a watermark, so an
-                // answer older than it cannot bind a name once there is no
-                // entry left to order it against.
-                if let Some(alias) = self.by_name.get(&name) {
-                    if alias.id == oldest {
-                        self.evicted_binding = self.evicted_binding.max(alias.resolution);
-                        let _ = self.by_name.remove(&name);
-                    }
+                // binding: only this id's binding goes with it.
+                if self
+                    .by_name
+                    .get(&name)
+                    .is_some_and(|alias| alias.id == oldest)
+                {
+                    let _ = self.by_name.remove(&name);
                 }
             }
         }
@@ -776,6 +790,34 @@ mod tests {
         let next = ticket(cache.get(&name("acme")));
         cache.insert(state(1, Some("acme")), next);
         assert_eq!(hit(cache.get(&name("acme"))), Some(Uuid::from_u128(1)));
+    }
+
+    /// An entry carries its place in the order whether or not it still owns
+    /// a name, and eviction must leave that place behind either way. A
+    /// keyset whose name has already moved to another keyset is exactly the
+    /// one an old answer would rebind: here three lookups resolve `old` to
+    /// keyset 1, then `new` to keyset 1, then `new` to keyset 2, and the
+    /// first answer — from before either rename — lands last, into a cache
+    /// that evicted keyset 1 after taking `new` off it.
+    #[test]
+    fn an_evicted_keyset_leaves_its_place_in_the_order_with_or_without_a_name() {
+        let mut cache = cache(1);
+        let oldest = ticket(cache.get(&name("old")));
+        let middle = ticket(cache.get(&name("new")));
+        let newest = ticket(cache.get(&name("new")));
+
+        // `new` meant 1, then 2: binding the later answer takes the name off
+        // 1, and caching 2 evicts 1 with no name of its own to leave behind.
+        cache.insert(state(1, Some("new")), middle);
+        cache.insert(state(2, Some("new")), newest);
+        assert_eq!(hit(cache.get(&name("new"))), Some(Uuid::from_u128(2)));
+
+        cache.insert(state(1, Some("old")), oldest);
+        assert!(
+            matches!(cache.get(&name("old")), Lookup::Miss(_)),
+            "a name from before two renames is not bound by the answer that lands last"
+        );
+        assert_eq!(cache.names(), 0);
     }
 
     /// Past the window a name lookup is stale — the keyset is still there,
