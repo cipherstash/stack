@@ -1,9 +1,13 @@
 package stackencrypt
 
 import (
+	"bufio"
+	"encoding/hex"
 	"errors"
 	"net/http"
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
@@ -276,5 +280,72 @@ func TestStatusMappingIsTotal(t *testing.T) {
 	}
 	if got := statusError(99); !errors.Is(got, ErrInternal) {
 		t.Errorf("unknown status: %v", got)
+	}
+}
+
+// The Go ordering of ORE and OPE terms agrees with Rust's Ord: testdata
+// holds ciphertexts the cllw-ore crate produced, each group in ascending
+// plaintext order, and every pair must order the same way here.
+func TestTermOrderingAgreesWithRust(t *testing.T) {
+	f, err := os.Open("testdata/cllw_order.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	groups := map[string][][]byte{}
+	var order []string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "#") || line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		kind, typ, raw := parts[0], parts[1], parts[len(parts)-1]
+		if raw == "-" {
+			raw = ""
+		}
+		term, err := hex.DecodeString(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		key := kind + " " + typ
+		if _, seen := groups[key]; !seen {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], term)
+	}
+	if len(order) != 4 {
+		t.Fatalf("expected 4 vector groups, found %v", order)
+	}
+	for _, key := range order {
+		terms := groups[key]
+		compare := func(i, j int) int {
+			if strings.HasPrefix(key, "ope") {
+				return OpeTerm(terms[i]).Compare(OpeTerm(terms[j]))
+			}
+			return OreTerm(terms[i]).Compare(OreTerm(terms[j]))
+		}
+		for i := range terms {
+			for j := range terms {
+				want := 0
+				if i < j {
+					want = -1
+				} else if i > j {
+					want = 1
+				}
+				if got := compare(i, j); got != want {
+					t.Errorf("%s: compare(%d, %d) = %d, want %d", key, i, j, got, want)
+				}
+			}
+		}
+		if strings.HasPrefix(key, "ore") && !OreTerm(terms[0]).Less(OreTerm(terms[1])) {
+			t.Errorf("%s: Less disagrees with Compare", key)
+		}
+	}
+	// A different length that shares no prefix bytes still orders by the
+	// first difference, and an empty term is less than any other.
+	if OreTerm(nil).Compare(OreTerm{1}) != -1 || (OreTerm{1}).Compare(OreTerm(nil)) != 1 || OreTerm(nil).Compare(OreTerm(nil)) != 0 {
+		t.Error("empty ORE terms do not order by length")
 	}
 }
