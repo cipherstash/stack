@@ -31,8 +31,9 @@ func (cph *Cipher) Keyset() KeysetSelector { return cph.keyset }
 // model: builtins, slices, maps and structs by reflection, a type
 // implementing vcffi.Encryptable by its own encoding, vcvalue.Plain marking
 // a passthrough. aad is authenticated but not encrypted, and may be empty;
-// the same aad must be presented to Decrypt. Every leaf of v seals from one
-// batched ZeroKMS key request.
+// the same aad must be presented to Decrypt. The leaves of v seal from
+// batched ZeroKMS key requests: one per 500 keyed leaves, so one request
+// for any ordinary value.
 //
 // The ciphertext comes back as ordinary Go values mirroring the
 // plaintext's structure: Sealed leaves (and the SealedNone / SealedEmptySeq
@@ -86,10 +87,14 @@ func (cph *Cipher) Term(ctx context.Context, value any, context Context, kind Te
 	if err != nil {
 		return nil, err
 	}
+	// The probe value is plaintext: its transport copy is wiped once it is
+	// in the guest, as is the context it binds.
+	defer wipe(encodedValue)
 	encodedContext, err := vcffi.Marshal(context.value())
 	if err != nil {
 		return nil, err
 	}
+	defer wipe(encodedContext)
 	opts, err := vcffi.Marshal(options(cph.keyset))
 	if err != nil {
 		return nil, err
@@ -139,5 +144,8 @@ func (cph *Cipher) encryptValue(ctx context.Context, v any, aad []byte, element 
 	if err != nil {
 		return nil, err
 	}
+	// Passthrough (vcvalue.Plain) fields come back in the clear; the
+	// serialized copy is wiped once decoded.
+	defer wipe(out)
 	return unmarshalCipherText(out)
 }

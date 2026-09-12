@@ -154,10 +154,12 @@ func (inst *instance) allocWrite(ctx context.Context, data []byte) (guestBuf, er
 }
 
 // free zeroizes and releases a guest buffer (se_dealloc wipes; an unknown
-// pointer is a no-op there).
+// pointer is a no-op there). It runs under a context that cannot be
+// cancelled: a caller's deadline expiring after the guest call returned
+// must not skip the wipe of the buffers that call staged.
 func (inst *instance) free(ctx context.Context, buf guestBuf) {
 	if buf.ptr != 0 {
-		_, _ = inst.dealloc.Call(ctx, uint64(buf.ptr), uint64(buf.len))
+		_, _ = inst.dealloc.Call(context.WithoutCancel(ctx), uint64(buf.ptr), uint64(buf.len))
 	}
 }
 

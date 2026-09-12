@@ -9,11 +9,15 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/sys"
 )
 
 // Tests that drive the embedded guest without a live ZeroKMS. What they
@@ -124,7 +128,8 @@ func TestImportSurfaceIsWASIPlusTransport(t *testing.T) {
 		}
 	}
 	want := []string{"token_get", "transport_send"}
-	if len(transportImports) != 2 || (transportImports[0] != want[0] && transportImports[0] != want[1]) {
+	sort.Strings(transportImports)
+	if !reflect.DeepEqual(transportImports, want) {
 		t.Fatalf("transport imports = %v, want %v", transportImports, want)
 	}
 	for name := range map[string]bool{"se_alloc": true, "se_dealloc": true, "se_cipher_init": true, "se_shutdown": true, "se_keyset": true, "se_encrypt": true, "se_decrypt": true, "se_encrypt_element": true, "se_decrypt_element": true, "se_term": true, "se_encrypt_record": true, "se_decrypt_record": true} {
@@ -223,6 +228,83 @@ func TestRoundTripperFailureIsTransport(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// An interrupted call closes the module (WithCloseOnContextDone); the
+// client must then be closed rather than a wedge or a runtime error.
+func TestInterruptedCallClosesTheClient(t *testing.T) {
+	t.Run("deadline during a request", func(t *testing.T) {
+		guestOrSkip(t)
+		cfg := testConfig("http://zerokms.invalid")
+		cfg.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			<-r.Context().Done()
+			return nil, r.Context().Err()
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+		_, err := NewClient(ctx, cfg)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("NewClient: %v, want the deadline", err)
+		}
+	})
+	t.Run("closed module is ErrState", func(t *testing.T) {
+		ctx := context.Background()
+		c := rawInstance(t)
+		// What the runtime does to the module when a call's context ends.
+		if err := c.inst.module.CloseWithExitCode(ctx, sys.ExitCodeContextCanceled); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.Keyset(ctx, KeysetName("k")); !errors.Is(err, ErrState) {
+			t.Fatalf("Keyset on a closed module: %v, want ErrState", err)
+		}
+		if err := c.Close(ctx); err != nil {
+			t.Fatalf("Close after interruption: %v", err)
+		}
+	})
+}
+
+// A response the host would have to buffer without bound is refused as a
+// transport failure, whether the size is announced or streamed.
+func TestOversizedResponseIsTransport(t *testing.T) {
+	guestOrSkip(t)
+	respond := func(length int64, body io.Reader) roundTripFunc {
+		return func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode:    http.StatusOK,
+				Header:        http.Header{"Content-Type": {"application/json"}},
+				ContentLength: length,
+				Body:          io.NopCloser(body),
+			}, nil
+		}
+	}
+	for name, rt := range map[string]roundTripFunc{
+		"announced": respond(maxResponseBytes+1, strings.NewReader("{}")),
+		"streamed":  respond(-1, io.MultiReader(strings.NewReader("{"), &zeros{n: maxResponseBytes})),
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := testConfig("http://zerokms.invalid")
+			cfg.Transport = rt
+			_, err := NewClient(context.Background(), cfg)
+			if !errors.Is(err, ErrTransport) {
+				t.Fatalf("NewClient: %v, want ErrTransport", err)
+			}
+		})
+	}
+}
+
+// zeros reads n zero bytes.
+type zeros struct{ n int }
+
+func (z *zeros) Read(p []byte) (int, error) {
+	if z.n == 0 {
+		return 0, io.EOF
+	}
+	if len(p) > z.n {
+		p = p[:z.n]
+	}
+	clear(p)
+	z.n -= len(p)
+	return len(p), nil
+}
 
 func TestConfigValidation(t *testing.T) {
 	ctx := context.Background()

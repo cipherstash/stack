@@ -57,6 +57,12 @@ const transportFailed int32 = -1
 // hostFailed is the return value of token_get when no token is available.
 const hostFailed int32 = 1
 
+// maxResponseBytes bounds what transport_send will buffer from ZeroKMS. The
+// guest issues at most one 500-key batch per request, which is well under a
+// megabyte either way; the bound exists so that an endpoint the transport
+// was pointed at cannot make the host allocate without limit.
+const maxResponseBytes = 16 << 20
+
 // instantiate registers the host module in r.
 func (t *transport) instantiate(ctx context.Context, r wazero.Runtime) error {
 	_, err := r.NewHostModuleBuilder(transportModule).
@@ -81,6 +87,9 @@ func (t *transport) send(ctx context.Context, m api.Module,
 	mem := m.Memory()
 	status, respHeaders, respBody := t.perform(ctx, mem,
 		methodPtr, methodLen, urlPtr, urlLen, headersPtr, headersLen, bodyPtr, bodyLen)
+	// The response carries wrapped key material; once it is in guest memory
+	// the host copy is wiped.
+	defer wipe(respBody)
 	if !place(ctx, m, respHeadersPtrOut, respHeadersLenOut, respHeaders) ||
 		!place(ctx, m, respBodyPtrOut, respBodyLenOut, respBody) {
 		// The guest reclaims whatever was placed and refuses an unplaced
@@ -102,9 +111,11 @@ func (t *transport) perform(ctx context.Context, mem api.Memory,
 	}
 	// The request body may carry key-material contexts; it is copied
 	// because the guest wipes its own buffer when the call returns, and the
-	// RoundTripper may read it after this function has.
+	// RoundTripper may read it after this function has. The copy is wiped
+	// once the round trip is over.
 	reqBody := make([]byte, len(body))
 	copy(reqBody, body)
+	defer wipe(reqBody)
 	req, err := http.NewRequestWithContext(ctx, string(method), string(url), bytes.NewReader(reqBody))
 	if err != nil {
 		return transportFailed, nil, []byte(err.Error())
@@ -115,9 +126,16 @@ func (t *transport) perform(ctx context.Context, mem api.Memory,
 		return transportFailed, nil, []byte(err.Error())
 	}
 	defer resp.Body.Close()
-	respBody, err := io.ReadAll(resp.Body)
+	if resp.ContentLength > maxResponseBytes {
+		return transportFailed, nil, fmt.Appendf(nil, "response of %d bytes exceeds the %d-byte limit", resp.ContentLength, maxResponseBytes)
+	}
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
 		return transportFailed, nil, []byte(err.Error())
+	}
+	if len(respBody) > maxResponseBytes {
+		wipe(respBody)
+		return transportFailed, nil, fmt.Appendf(nil, "response exceeds the %d-byte limit", maxResponseBytes)
 	}
 	return int32(resp.StatusCode), encodeHeaders(resp.Header), respBody
 }
@@ -128,7 +146,11 @@ func (t *transport) tokenGet(ctx context.Context, m api.Module, tokenPtrOut, tok
 	if err != nil || token == "" {
 		return hostFailed
 	}
-	if !place(ctx, m, tokenPtrOut, tokenLenOut, []byte(token)) {
+	// The credential's transport copy is wiped once it is in guest memory;
+	// the TokenSource's own string is the source's.
+	tok := []byte(token)
+	defer wipe(tok)
+	if !place(ctx, m, tokenPtrOut, tokenLenOut, tok) {
 		return hostFailed
 	}
 	return 0

@@ -128,7 +128,8 @@ func encodeConfig(cfg Config) ([]byte, error) {
 
 // Close shuts the guest down — the client key and every loaded index key
 // are wiped inside the instance — and releases the runtime. Idempotent.
-// Every call after it fails with ErrState.
+// Every call after it fails with ErrState. The shutdown runs even if ctx
+// is already cancelled: the wipe is the point of this method.
 func (c *Client) Close(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -136,9 +137,13 @@ func (c *Client) Close(ctx context.Context) error {
 		return nil
 	}
 	c.closed = true
-	// A trapped or already-closed module cannot run se_shutdown; the runtime
-	// close still frees its memory. Nothing else can be done host-side.
-	_, _ = c.inst.shutdown.Call(ctx)
+	ctx = context.WithoutCancel(ctx)
+	// A module closed by an interrupted call (see Client.call) or by a trap
+	// cannot run se_shutdown; the runtime close still frees its memory.
+	// Nothing else can be done host-side.
+	if !c.inst.module.IsClosed() {
+		_, _ = c.inst.shutdown.Call(ctx)
+	}
 	return c.inst.close(ctx)
 }
 
@@ -186,9 +191,10 @@ func (c *Client) Cipher(sel KeysetSelector) *Cipher {
 func (c *Client) DefaultCipher() *Cipher { return c.Cipher(DefaultKeyset) }
 
 // Decrypt opens a ciphertext produced by any keyset of this client: each
-// leaf is opened under the keyset it was sealed with, with one batched key
-// retrieval per keyset. ct is the shape Cipher.Encrypt returns; aad must be
-// what the value was sealed under.
+// leaf is opened under the keyset it was sealed with, with batched key
+// retrievals per keyset (one per 500 leaves sealed under it). ct is the
+// shape Cipher.Encrypt returns; aad must be what the value was sealed
+// under.
 func (c *Client) Decrypt(ctx context.Context, ct any, aad []byte) (any, error) {
 	return c.decryptValue(ctx, anyKeyset{}, ct, aad, false)
 }
@@ -212,13 +218,28 @@ func (c *Client) DecryptRecord(ctx context.Context, record EncryptedRecord, out 
 }
 
 // call runs f on the instance under the client's lock.
+//
+// A call interrupted by its context (the runtime closes the module on a
+// deadline or cancellation, see newInstance) leaves the instance closed:
+// its key material is gone with its memory and no further call can run.
+// The client is then closed, so later calls are ErrState rather than a
+// runtime error, and Close releases the runtime without a shutdown call.
 func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.closed || c.inst.module.IsClosed() {
+		c.closed = true
 		return nil, ErrState
 	}
-	return f(c.inst)
+	out, err := f(c.inst)
+	if c.inst.module.IsClosed() {
+		c.closed = true
+		if err == nil {
+			err = ErrState
+		}
+		return nil, fmt.Errorf("%w: interrupted call closed the client", err)
+	}
+	return out, err
 }
 
 func (c *Client) decryptValue(ctx context.Context, sel KeysetSelector, ct any, aad []byte, element bool) (any, error) {

@@ -17,7 +17,7 @@
 // [Client.DefaultCipher]): it seals values, derives terms and encrypts
 // records under that keyset, and opens only that keyset's ciphertexts. The
 // [Client] itself opens ciphertexts from any keyset ([Client.Decrypt] and
-// friends), fetching one batched key retrieval per keyset the leaves were
+// friends), fetching batched key retrievals per keyset the leaves were
 // sealed under.
 //
 // # Values
@@ -35,8 +35,11 @@
 //
 // [Cipher.EncryptRecords] is the runtime form of the Rust derive: a struct's
 // `stash` tags say, per field, which context to bind and which index terms
-// to produce, and one call seals every row of a slice from one batched key
-// request. Terms ([EqualityTerm], [MatchTerm], [OreTerm], [OpeTerm]) are
+// to produce, and one call seals every row of a slice from batched key
+// requests. Key requests are batched 500 keys at a time, in both
+// directions: one request for any ordinary value or batch, one more per
+// 500 sealed leaves beyond that. Terms ([EqualityTerm], [MatchTerm],
+// [OreTerm], [OpeTerm]) are
 // byte-equal to the ones the Rust crate derives, so a probe from
 // [Cipher.Term] compares against a stored term from any language.
 // [Cipher.Term] takes a context and returns an error from day one: term
