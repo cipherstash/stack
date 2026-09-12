@@ -9,10 +9,12 @@
 //! | `{"default": {}}` | the cipher's default keyset (the one named at `se_cipher_init`, else the client's) |
 //! | `{"name": <string>}` | the keyset with that name, loaded on first use |
 //! | `{"id": <16 bytes>}` | the keyset with that id (raw UUID bytes), loaded on first use |
-//! | `{"any": {}}`     | **decrypt only**: open leaves from whichever keyset each was sealed under, one ZeroKMS call per keyset |
+//! | `{"any": {}}`     | **decrypt only**: open leaves from whichever keyset each was sealed under, one batched retrieval per keyset (chunked at the client's request limit, 500 keys) |
 //!
 //! Every variant is spelled; there is no zero-length or omitted-field
-//! sentinel, so a host that means the default says so. On the sealing and
+//! sentinel, so a host that means the default says so. A name is validated
+//! at parse (ZeroKMS's own rules for keyset names), so a malformed
+//! selector is refused before the cipher is consulted. On the sealing and
 //! term exports the selector picks the keyset that mints; on the opening
 //! exports it is a *constraint*: `{"name"}`, `{"id"}` and `{"default"}`
 //! refuse a leaf sealed under any other keyset before any key is retrieved
@@ -30,6 +32,7 @@ use stack_kms::{IdentifiedBy, IndexKeySource};
 use uuid::Uuid;
 use vitaminc_aead_value::FfiValue;
 use vitaminc_protected::Controlled;
+use zerokms_protocol::Name;
 
 use crate::status::{status_for_error, STATUS_ENCODING};
 
@@ -38,8 +41,8 @@ use crate::status::{status_for_error, STATUS_ENCODING};
 pub enum KeysetSelector {
     /// The cipher's default keyset.
     Default,
-    /// A keyset by name.
-    Name(String),
+    /// A keyset by name, already validated against ZeroKMS's naming rules.
+    Name(Name),
     /// A keyset by id.
     Id(Uuid),
     /// Whichever keyset each leaf was sealed under; opening only.
@@ -101,13 +104,11 @@ pub fn parse_selector(value: FfiValue) -> Result<KeysetSelector, u32> {
             // Valid UTF-8 by `Utf8String`'s construction invariant; checked
             // rather than assumed because this is boundary code. A keyset
             // name is not secret, so the payload moves out of its
-            // `Protected` rather than being copied and wiped.
+            // `Protected` rather than being copied and wiped. ZeroKMS's
+            // naming rules apply here, at the boundary, not at resolution.
             let name =
                 String::from_utf8(name.into_inner().risky_unwrap()).map_err(|_| STATUS_ENCODING)?;
-            if name.is_empty() {
-                return Err(STATUS_ENCODING);
-            }
-            KeysetSelector::Name(name)
+            KeysetSelector::Name(Name::try_from(name.as_str()).map_err(|_| STATUS_ENCODING)?)
         }
         ("id", FfiValue::Bytes(bytes)) => {
             KeysetSelector::Id(Uuid::from_slice(bytes.risky_ref()).map_err(|_| STATUS_ENCODING)?)
@@ -132,9 +133,7 @@ impl KeysetSelector {
         let by: IdentifiedBy = match self {
             KeysetSelector::Default => return Ok(cipher.default_keyset()),
             KeysetSelector::Any => return Err(STATUS_ENCODING),
-            KeysetSelector::Name(name) => {
-                IdentifiedBy::Name(name.as_str().try_into().map_err(|_| STATUS_ENCODING)?)
-            }
+            KeysetSelector::Name(name) => IdentifiedBy::Name(name.clone()),
             KeysetSelector::Id(id) => IdentifiedBy::Uuid(*id),
         };
         cipher.keyset(by).await.map_err(|e| status_for_error(&e))
@@ -202,7 +201,9 @@ mod tests {
         );
         assert_eq!(
             parse_selector(obj(vec![("name", FfiValue::String("acme".into()))])),
-            Ok(KeysetSelector::Name("acme".to_string()))
+            Ok(KeysetSelector::Name(
+                Name::try_from("acme").ok().expect("valid name")
+            ))
         );
         assert_eq!(
             parse_selector(obj(vec![(
@@ -239,6 +240,13 @@ mod tests {
             (
                 "an empty name",
                 obj(vec![("name", FfiValue::String("".into()))]),
+            ),
+            (
+                "a name past ZeroKMS's 64-byte limit",
+                obj(vec![(
+                    "name",
+                    FfiValue::String("x".repeat(65).as_str().into()),
+                )]),
             ),
             (
                 "an id that is not 16 bytes",

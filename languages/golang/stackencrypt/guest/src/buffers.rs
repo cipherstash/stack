@@ -188,6 +188,27 @@ mod tests {
         assert_eq!(unsafe { take(sized, 3) }, Some(vec![0, 0, 0]));
     }
 
+    /// Shutdown's invariant: after `wipe_all`, nothing the registry handed
+    /// out is live — sized or empty — so a host that forgot to release an
+    /// output cannot reclaim it, and the bytes were zeroized on the way
+    /// out.
+    #[test]
+    fn wipe_all_leaves_no_live_buffer() {
+        let sized = register(vec![7, 7, 7]);
+        let host_written = alloc(2);
+        let empty = alloc(0);
+
+        wipe_all();
+
+        assert_eq!(unsafe { take(sized, 3) }, None);
+        assert_eq!(unsafe { take(host_written, 2) }, None);
+        assert_eq!(unsafe { take(empty, 0) }, None);
+        // The registry is usable afterwards: a fresh allocation is tracked
+        // as before.
+        let again = alloc(1);
+        assert_eq!(unsafe { take(again, 1) }, Some(vec![0]));
+    }
+
     #[test]
     fn a_null_pointer_with_zero_length_is_the_canonical_empty() {
         assert_eq!(unsafe { take(core::ptr::null_mut(), 0) }, Some(Vec::new()));

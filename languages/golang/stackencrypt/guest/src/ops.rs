@@ -777,6 +777,49 @@ where
 }
 
 // =============================================================================
+// Boundary validation
+// =============================================================================
+
+/// The structural checks the ABI runs on every operation input *before* it
+/// consults the cipher, so a malformed call is [`STATUS_ENCODING`] whether
+/// or not the instance is initialised, and never costs a keyset load. Each
+/// is the same decode or parse the operation itself performs; the second
+/// pass is cheap next to the AEAD and buys a stable status precedence.
+pub mod validate {
+    use super::*;
+
+    /// A codec-encoded value tree decodes.
+    pub fn value(bytes: &[u8]) -> Result<(), u32> {
+        decode_value(bytes).map(drop)
+    }
+
+    /// A codec-encoded ciphertext tree decodes and its leaves are
+    /// well-formed `SealedValue` encodings.
+    pub fn tree(bytes: &[u8]) -> Result<(), u32> {
+        decode_tree(bytes).map(drop)
+    }
+
+    /// A codec-encoded record plan decodes and parses (every field's
+    /// context non-empty, every output known).
+    pub fn plan(bytes: &[u8]) -> Result<(), u32> {
+        parse_plan(decode_value(bytes)?).map(drop)
+    }
+
+    /// A codec-encoded term context decodes and is a non-empty context.
+    pub fn context(bytes: &[u8]) -> Result<(), u32> {
+        parse_context(decode_value(bytes)?).map(drop)
+    }
+
+    /// A term kind is one of [`TERM_EQUALITY`] .. [`TERM_OPE`].
+    pub fn term_kind(kind: u32) -> Result<(), u32> {
+        match kind {
+            TERM_EQUALITY | TERM_MATCH | TERM_ORE | TERM_OPE => Ok(()),
+            _ => Err(STATUS_ENCODING),
+        }
+    }
+}
+
+// =============================================================================
 // Codec glue
 // =============================================================================
 

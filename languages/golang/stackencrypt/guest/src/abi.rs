@@ -68,12 +68,14 @@
 //! and opening sides bind that one value. The asymmetry is the design; see
 //! `packages/stack-encrypt/docs/adr/0001-context-optional-cipher-directed-path.md`.
 //!
-//! Every export decodes and validates its inputs — including the options
-//! object — before it consults the cipher, so malformed input reads as
-//! `STATUS_ENCODING` whether or not `se_cipher_init` has run; only a
-//! well-formed call with no cipher is `STATUS_STATE`. The one exception is
-//! keyset *resolution* (a name or id the cipher has not loaded), which is a
-//! round trip and so happens inside the call, after the state check.
+//! Every export decodes and structurally validates *all* of its inputs —
+//! the operation payload, the plan or context, the term kind, and the
+//! options object — before it consults the cipher ([`ops::validate`]), so
+//! malformed input reads as `STATUS_ENCODING` whether or not
+//! `se_cipher_init` has run, and never costs a keyset load; only a
+//! well-formed call with no cipher is `STATUS_STATE`. Keyset *resolution*
+//! (a name or id the cipher has not loaded) is a round trip and so happens
+//! inside the call, after every check.
 //!
 //! Wasm modules are single-threaded; the host must serialize calls into one
 //! instance.
@@ -92,7 +94,7 @@ use crate::buffers;
 use crate::config::parse_config;
 use crate::host::{HostTokenStrategy, WasiHostConnection};
 use crate::ops;
-use crate::options::{parse_options, parse_selector, Opener, Side};
+use crate::options::{parse_options, parse_selector, KeysetSelector, Opener, Side};
 use crate::status::{STATUS_ENCODING, STATUS_INTERNAL, STATUS_KMS_TRANSPORT, STATUS_STATE};
 
 /// The instance's cipher: `stack-encrypt` over the host-transport ZeroKMS
@@ -273,7 +275,12 @@ fn with_opener<R>(
 #[no_mangle]
 pub unsafe extern "C" fn se_cipher_init(cfg_ptr: *mut u8, cfg_len: u32) -> u64 {
     catch_unwind(AssertUnwindSafe(|| {
-        let decoded = input(cfg_ptr, cfg_len).and_then(decode);
+        // The pointer/length pair is validated first and on its own: a pair
+        // that fails here returns before anything touches the range, which
+        // is `wipe_input`'s precondition. Only a validated buffer is decoded
+        // and, whatever the decode outcome, wiped.
+        let bytes = input(cfg_ptr, cfg_len)?;
+        let decoded = decode(bytes);
         // The borrow of the raw buffer ends with `decoded` owned; wipe the
         // buffer now — it holds the client-key hex — before parsing (and
         // before the init round trip), whatever the decode outcome.
@@ -345,7 +352,7 @@ pub extern "C" fn se_shutdown() {
 
 /// Resolve a keyset selector (a codec-encoded tagged object — see
 /// [`crate::options`]; `{"any"}` is not a keyset and is `STATUS_ENCODING`
-/// here) through the cipher's cache and return the keyset's id (16 raw UUID
+/// here, before the cipher is consulted) through the cipher's cache and return the keyset's id (16 raw UUID
 /// bytes). A first use of a keyset is one `load-keyset` round trip; a host
 /// can call this at boot to validate a tenant's keyset and learn its id.
 ///
@@ -356,6 +363,9 @@ pub extern "C" fn se_shutdown() {
 pub unsafe extern "C" fn se_keyset(sel_ptr: *const u8, sel_len: u32) -> u64 {
     catch_unwind(AssertUnwindSafe(|| {
         let selector = parse_selector(decode(input(sel_ptr, sel_len)?)?)?;
+        if selector == KeysetSelector::Any {
+            return Err(STATUS_ENCODING);
+        }
         with_cipher(|cipher| {
             let keyset = block_on(selector.resolve(cipher))?;
             Ok(keyset.keyset_id().as_bytes().to_vec())
@@ -476,6 +486,7 @@ fn run_encrypt(
         let value = value.as_slice();
         let aad = input(aad_ptr, aad_len)?;
         let opts = input(opt_ptr, opt_len)?;
+        ops::validate::value(value)?;
         with_keyset(opts, |keyset| {
             block_on(ops::encrypt_value(keyset, value, aad, as_element))
         })
@@ -498,6 +509,7 @@ fn run_decrypt(
         let ciphertext = input(ct_ptr, ct_len)?;
         let aad = input(aad_ptr, aad_len)?;
         let opts = input(opt_ptr, opt_len)?;
+        ops::validate::tree(ciphertext)?;
         with_opener(opts, |opener| {
             block_on(ops::decrypt_value(opener, ciphertext, aad, as_element))
         })
@@ -541,6 +553,9 @@ pub unsafe extern "C" fn se_term(
         let value = value.as_slice();
         let context = input(ctx_ptr, ctx_len)?;
         let opts = input(opt_ptr, opt_len)?;
+        ops::validate::value(value)?;
+        ops::validate::context(context)?;
+        ops::validate::term_kind(kind)?;
         with_keyset(opts, |keyset| {
             block_on(ops::term(keyset, value, context, kind))
         })
@@ -573,6 +588,8 @@ pub unsafe extern "C" fn se_encrypt_record(
         let source = source.as_slice();
         let plan = input(plan_ptr, plan_len)?;
         let opts = input(opt_ptr, opt_len)?;
+        ops::validate::value(source)?;
+        ops::validate::plan(plan)?;
         with_keyset(opts, |keyset| {
             block_on(ops::encrypt_record(keyset, source, plan))
         })
@@ -604,6 +621,8 @@ pub unsafe extern "C" fn se_decrypt_record(
         let record = input(rec_ptr, rec_len)?;
         let plan = input(plan_ptr, plan_len)?;
         let opts = input(opt_ptr, opt_len)?;
+        ops::validate::tree(record)?;
+        ops::validate::plan(plan)?;
         with_opener(opts, |opener| {
             block_on(ops::decrypt_record(opener, record, plan))
         })
