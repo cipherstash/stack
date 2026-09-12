@@ -12,9 +12,10 @@ on:
       # Trigger on all of packages/ rather than enumerating the closure,
       # which would silently drift.
       - packages/**
-      # The guest is a detached workspace, so nothing else in CI compiles,
-      # tests or links it — this job is its only gate.
-      - bindings/go/stackencrypt/guest/**
+      # The guest is a detached workspace and the Go binding a separate
+      # module, so nothing else in CI compiles, tests or links them — this
+      # job is their only gate.
+      - bindings/go/stackencrypt/**
       - scripts/check-wasm-imports.py
       - Cargo.toml
       - Cargo.lock
@@ -28,9 +29,10 @@ on:
   pull_request:
     paths:
       - packages/**
-      # The guest is a detached workspace, so nothing else in CI compiles,
-      # tests or links it — this job is its only gate.
-      - bindings/go/stackencrypt/guest/**
+      # The guest is a detached workspace and the Go binding a separate
+      # module, so nothing else in CI compiles, tests or links them — this
+      # job is their only gate.
+      - bindings/go/stackencrypt/**
       - scripts/check-wasm-imports.py
       - Cargo.toml
       - Cargo.lock
@@ -92,3 +94,12 @@ jobs:
       # sandboxing rests on, checkable only on the linked artifact.
       - name: Guest release build and import-surface gate
         run: mise run wasm:guest:build
+
+      # The Go binding (bindings/go/stackencrypt) embeds the module built
+      # above: format, vet and hermetic tests (import surface, transport
+      # bridge against an httptest ZeroKMS, guest-parser acceptance of every
+      # encoding the package builds, hostile ABI inputs, key residency), on
+      # amd64 and 386. Live round trips through ZeroKMS are the phase 5
+      # harness's.
+      - name: Go binding
+        run: mise run go:stackencrypt:test

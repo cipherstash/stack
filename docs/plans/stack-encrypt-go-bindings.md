@@ -423,9 +423,21 @@ for the proof; the Go side pools instances later.
 
 ### Phase 4 — the Go module
 
-`bindings/go/stackencrypt` (module path TBD — see decisions). Imports
-`vcvalue` for the model. Surface mirrors `vcencrypt` so the two feel like one
-SDK:
+**Status (2026-09-12): implemented in `bindings/go/stackencrypt`** (module
+path `github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt`,
+temporary until publishing). It imports `vcffi` + `vcvalue` from vitaminc
+(pseudo-versioned to a main commit; no fork), embeds the guest from
+`wasm/` (copied by `wasm:guest:build`, gitignored), and is gated by
+`go:stackencrypt:test` in `test-wasi.yml`. Where the shipped surface
+differs from the sketch below, the shipped one follows CIP-4037: one
+instance per `Client` and no cipher handle, so `NewClient` takes the
+ZeroKMS credentials and initialises the cipher, `Client.Cipher(selector)`
+is the keyset-bound view (the Rust `KeysetCipher`), `Client.Decrypt*`
+opens any keyset, and `Term` takes a `Context` and returns an error.
+
+Original sketch: `bindings/go/stackencrypt` (module path TBD — see
+decisions). Imports `vcvalue` for the model. Surface mirrors `vcencrypt` so
+the two feel like one SDK:
 
 ```go
 client, _ := stackencrypt.NewClient(ctx, stackencrypt.Config{
