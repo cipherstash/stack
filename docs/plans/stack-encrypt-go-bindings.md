@@ -339,21 +339,25 @@ way:
   Rust derive and a Go plan do **not** interchange ciphertexts for the same
   field until the Rust side uses aead-value's tagged types. By design; a
   separate follow-up, not a defect in either side.
-- **A plan context is the whole context, flat.** Each plan field carries one
-  string, and the guest seals the field under exactly that — the same AAD
-  bytes and the same ZeroKMS descriptor as a Rust derive gives the field
-  when the record is sealed with `encrypt_into` (no caller context). The
-  Rust derive can also *extend* every field's context with the caller's
-  (`encrypt_into_with_context(row, 7u64)` seals `users/email` under
-  `("users/email", 7u64)`, descriptor `users/email|7u64`), and a plan
-  cannot spell that: the context slot is a string, and a string that looks
-  like the rendered descriptor is escaped, not parsed. Rows sealed from Rust
-  under a caller context are unreadable through a plan, and rows sealed
-  through a plan are unreadable from Rust under any caller context. A
-  structured context slot (string | integer | list, mirroring vitaminc's
-  `AadPiece`, with the Go struct tag growing a `tenant=` or similar) is the
-  fix, and is a Phase 4 item, not a Phase 3 one: the cross-language fixtures
-  in Phase 5 must cover both the flat and the extended shape.
+- **A plan context is the whole context, and it is structured.** Each
+  plan field's context is a string, bytes, an integer (`i32`/`i64`/`u32`/
+  `u64`) or a list of those, nested as needed (the guest's `context`
+  module; CIP-4023, landed after Phase 3). The guest seals the field under
+  exactly that. A bare string is what every plan carried before — the same
+  AAD bytes and the same ZeroKMS descriptor as a Rust derive gives the
+  field when the record is sealed with `encrypt_into` (no caller context).
+  A list is what the Rust derive produces when it *extends* every field's
+  context with the caller's: `encrypt_into_with_context(row, 7u64)` seals
+  `users/email` under `("users/email", 7u64)`, descriptor
+  `users/email|7u64`, and the plan spells that as `["users/email", 7u64]`
+  — the same bytes on the AAD side (a list is an `AadPiece::List`, PAE of
+  its parts like a tuple) and on the PRF side (leaves carry vitaminc's own
+  typed encodings, lists are `PrfContext::pae`). Rows sealed from Rust
+  under a caller context open through a plan that names the same parts, and
+  the reverse; `se_term` takes the same form so a probe can match either.
+  The Go struct tag grows the extension in Phase 4 (`tenant=` or similar),
+  and the cross-language fixtures in Phase 5 cover both the flat and the
+  extended shape.
 
 The plan as written before the work:
 
@@ -382,7 +386,7 @@ via the registry, packed `u64` results, status in the low word on error):
 | `se_encrypt_element` / `se_decrypt_element` | as vitaminc; row-at-a-time interop with batch-encrypted slices |
 | `se_encrypt_record(handle, source, plan, aad)` | the runtime form of `#[derive(EncryptFrom)]`: `plan` is an `FfiValue` object `{ field → { context, outputs: [c \| eq \| match(opts) \| ore \| ope] } }`; per field the guest dispatches on the source `FfiValue` variant to the typed `EncryptFrom` impls (`u32`/`u64`/`i64`/`f64`/`String`), zips the pendings, `Pending::all` across an array source, and returns `{ field → { c: leaf, hm: bytes, ob: bytes, … } }`. One `generate_keys` call per invocation regardless of row count. |
 | `se_decrypt_record(handle, record, plan, aad)` | inverse; only the `c` outputs participate |
-| `se_term(handle, value, context, kind)` | query probe; local PRF/ORE only, never touches ZeroKMS |
+| `se_term(handle, value, context, kind)` | query probe; `context` is codec-encoded in the plan-field grammar — one part (a string, bytes, or an `i32`/`i64`/`u32`/`u64`) or an array of parts, nested as deep as the transport codec allows (`vitaminc_aead_value::transport::MAX_DEPTH`, 128 levels from the root of the encoded value; deeper is `STATUS_ENCODING` before the context is parsed, not an interop bug). Shape is identity: `[x]` is not `x`, so a probe passes the context in exactly the shape the field was sealed under (the guest's `context` module is the one home of the grammar and of which Rust context each shape spells). Local PRF/ORE only, never touches ZeroKMS |
 
 Host imports (two, both from the `cipherstash_transport` module #2099
 defined):

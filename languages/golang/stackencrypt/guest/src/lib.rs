@@ -1,4 +1,32 @@
+// Security lints — the block `stack-encrypt` and `stack-auth` carry, minus
+// `deny(unsafe_code)`: the export surface (`abi`) and the two host imports
+// (`host`) are `extern "C"` over raw pointers by nature. Every `unsafe`
+// block is confined to those two wasm32-only modules and documented at the
+// site; `unsafe_op_in_unsafe_fn` keeps each one explicit.
 #![deny(unsafe_op_in_unsafe_fn)]
+#![warn(clippy::unwrap_used)]
+#![warn(clippy::expect_used)]
+#![warn(clippy::panic)]
+// Prevent mem::forget from bypassing ZeroizeOnDrop
+#![warn(clippy::mem_forget)]
+// Prevent accidental data leaks via output
+#![warn(clippy::print_stdout)]
+#![warn(clippy::print_stderr)]
+#![warn(clippy::dbg_macro)]
+// Code quality
+#![warn(unreachable_pub)]
+#![warn(unused_results)]
+#![warn(clippy::todo)]
+#![warn(clippy::unimplemented)]
+// Relax in tests
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+#![cfg_attr(test, allow(clippy::expect_used))]
+#![cfg_attr(test, allow(clippy::panic))]
+#![cfg_attr(test, allow(unused_results))]
+// The crate's target is wasm32; `abi` and `host` only exist there, so on a
+// native doc build their intra-doc links have nothing to resolve to. The
+// wasm32 doc build (`mise run wasm:guest:test`) is where links are enforced.
+#![cfg_attr(not(target_arch = "wasm32"), allow(rustdoc::broken_intra_doc_links))]
 //! # stack-encrypt WASI guest
 //!
 //! WASI guest module exposing [`stack-encrypt`](stack_encrypt) —
@@ -17,12 +45,12 @@
 //!
 //! Split into:
 //!
-//! - [`ops`], [`config`], [`response`], [`headers`], [`status`],
-//!   [`sessions`] — everything that is pure logic over `StackCipher<K>` /
+//! - [`ops`], [`context`], [`config`], [`response`], [`headers`], [`status`],
+//!   `sessions` — everything that is pure logic over `StackCipher<K>` /
 //!   bytes. Compiles and unit-tests on the native host target (`cargo
 //!   test` here, no wasm toolchain needed) against
 //!   `stack_kms::FakeDataKeySource`.
-//! - [`abi`], [`host`], [`buffers`] (wasm32 only) — the export surface,
+//! - [`abi`], [`host`], `buffers` (wasm32 only) — the export surface,
 //!   the two host imports, and the buffer registry. See [`abi`]'s module
 //!   docs for the full ABI contract.
 //!
@@ -34,6 +62,7 @@
 //! out of a tree is exactly what a database column holds.
 
 pub mod config;
+pub mod context;
 pub mod headers;
 pub mod ops;
 pub mod response;

@@ -5,7 +5,7 @@
 //!   memory obtained from [`se_alloc`] and releases every buffer — its own
 //!   inputs and the guest's outputs — with [`se_dealloc`], which **zeroizes
 //!   before freeing**. The guest keeps a registry of every buffer it hands
-//!   out ([`crate::buffers`]), so `se_dealloc` never trusts the host's
+//!   out (`crate::buffers`), so `se_dealloc` never trusts the host's
 //!   length. Two entry points additionally wipe their *input* buffer in
 //!   place before returning: [`se_cipher_init`] (the config carries the
 //!   client key) and [`se_decrypt`]'s output is plaintext the host must
@@ -100,7 +100,7 @@ pub extern "C" fn se_alloc(len: u32) -> *mut u8 {
 }
 
 /// Zeroize and free a buffer previously handed out by [`se_alloc`] or
-/// packed into a result. See [`crate::buffers::dealloc`] for the registry
+/// packed into a result. See `crate::buffers::dealloc` for the registry
 /// discipline (unknown pointer: no-op; length mismatch: refused).
 ///
 /// # Safety
@@ -272,7 +272,7 @@ pub extern "C" fn se_cipher_free(handle: u32) {
 /// Encrypt an FFI-codec-encoded value tree under the handle's cipher,
 /// binding `aad`; every leaf is sealed from one batched key request,
 /// dispatched as one `generate-data-key` call per 500 keyed leaves (see
-/// [`cipher_init`] for where that bound comes from). Output: packed pointer
+/// `cipher_init` for where that bound comes from). Output: packed pointer
 /// to a codec-encoded ciphertext tree whose leaves are the frozen
 /// `SealedValue` byte encoding.
 ///
@@ -394,9 +394,20 @@ fn run_decrypt(
     .map_or_else(err_status, ok_buffer)
 }
 
-/// Derive one index term: a codec-encoded scalar plus a context string and
-/// a term kind ([`ops::TERM_EQUALITY`] etc.); the output is the term's
+/// Derive one index term: a codec-encoded scalar, a codec-encoded context
+/// and a term kind ([`ops::TERM_EQUALITY`] etc.); the output is the term's
 /// frozen byte encoding. Local PRF/CLLW only — never touches ZeroKMS.
+///
+/// The context is one part — a string, bytes, or an `i32`/`i64`/`u32`/`u64`
+/// — or an array of parts, which may nest as deep as the transport codec
+/// allows (`vitaminc_aead_value::transport::MAX_DEPTH` levels, counted from
+/// the root of the encoded value; deeper is refused as `STATUS_ENCODING`
+/// before the context is parsed). [`crate::context`] is the one home of
+/// that grammar and of which Rust context each shape spells.
+/// A part and the one-element array holding it are *different* contexts
+/// (`[x]` is PAE-framed, `x` is not), so a probe must pass the context in
+/// exactly the shape the field was sealed under: a plan field's context
+/// verbatim, a bare part for a Rust leaf sealed under that part.
 ///
 /// # Safety
 ///

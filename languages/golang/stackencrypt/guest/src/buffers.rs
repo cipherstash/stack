@@ -68,7 +68,10 @@ pub(crate) fn register(buf: Vec<u8>) -> *mut u8 {
     let boxed = buf.into_boxed_slice();
     let len = boxed.len();
     let ptr = Box::into_raw(boxed) as *mut u8;
-    BUFFERS.with(|b| b.borrow_mut().insert(ptr as usize, len));
+    // A fresh allocation can't already be registered; the returned previous
+    // entry is the invariant, checked in debug builds.
+    let previous = BUFFERS.with(|b| b.borrow_mut().insert(ptr as usize, len));
+    debug_assert!(previous.is_none());
     ptr
 }
 
@@ -125,7 +128,10 @@ unsafe fn reclaim(ptr: *mut u8, len: usize) -> Option<Vec<u8>> {
     }
     let real_len = BUFFERS.with(|b| b.borrow_mut().remove(&(ptr as usize)))?;
     if real_len != len {
-        BUFFERS.with(|b| b.borrow_mut().insert(ptr as usize, real_len));
+        // Put the entry back exactly as it was; it was just removed, so
+        // nothing can be there to displace.
+        let previous = BUFFERS.with(|b| b.borrow_mut().insert(ptr as usize, real_len));
+        debug_assert!(previous.is_none());
         return None;
     }
     // SAFETY: the registry guarantees `(ptr, real_len)` is exactly one live

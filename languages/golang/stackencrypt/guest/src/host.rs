@@ -7,7 +7,7 @@
 //!
 //! All pointers are offsets into guest linear memory; the host allocates
 //! guest buffers with `se_alloc` and the guest reclaims them through its
-//! registry ([`crate::buffers`]).
+//! registry (`crate::buffers`).
 //!
 //! - `transport_send(method, url, headers, body, resp_headers_out,
 //!   resp_body_out) -> status` — perform one HTTP request. Each of the four
