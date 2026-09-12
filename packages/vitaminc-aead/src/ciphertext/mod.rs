@@ -14,7 +14,7 @@ pub use write_monads::CipherTextBuilder;
 /// rejects versions it does not know how to parse.
 ///
 /// The byte is authenticated, not merely parsed: every leaf's effective
-/// AAD binds it via [`Aad::for_leaf`](crate::Aad::for_leaf), so relabeling
+/// AAD binds it via [`Context::for_leaf`](crate::Context::for_leaf), so relabeling
 /// a stored leaf's version fails tag verification instead of selecting a
 /// different (perhaps weaker) set of derivation rules — a downgrade is
 /// foreclosed by construction, not by parser luck.

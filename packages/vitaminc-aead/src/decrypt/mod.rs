@@ -7,7 +7,7 @@
 
 pub mod impls;
 
-use crate::{Aad, Decipher, IntoAad};
+use crate::{Context, Decipher, IntoAad};
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroize;
 
@@ -19,7 +19,7 @@ pub trait Decrypt<'c>: Sized + Send {
     /// Convenience wrapper around [`decrypt_with_aad`](Decrypt::decrypt_with_aad), mirroring
     /// [`Encrypt::encrypt`](crate::Encrypt::encrypt).
     fn decrypt<D: Decipher<'c>>(decipher: D) -> D::Ok<Self> {
-        Self::decrypt_with_aad(decipher, Aad::empty())
+        Self::decrypt_with_aad(decipher, Context::empty())
     }
 
     /// Decrypt `Self` from the given decipher, authenticating against `aad`.

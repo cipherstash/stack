@@ -75,7 +75,7 @@ pub trait Decipher<'c>: Sized {
         A: IntoAad<'a>;
     /// Decrypt a sequence of ciphertexts authenticated against `aad`, driving the
     /// visitor's [`visit_seq`](DecipherVisitor::visit_seq). Each element is
-    /// verified against [`Aad::for_sequence_element`](crate::Aad::for_sequence_element)
+    /// verified against [`Context::for_sequence_element`](crate::Context::for_sequence_element)
     /// of `aad`, mirroring how [`SeqCipher::encrypt_next`](crate::SeqCipher::encrypt_next)
     /// binds it per element.
     ///
@@ -94,7 +94,7 @@ pub trait Decipher<'c>: Sized {
     ///
     /// **Caller obligation — membership is not authenticated.** Each entry's
     /// key is inseparably bound to its value (via
-    /// [`Aad::for_map_entry`](crate::Aad::for_map_entry)), and duplicate
+    /// [`Context::for_map_entry`](crate::Context::for_map_entry)), and duplicate
     /// keys are rejected, but the *set* of keys present is not committed:
     /// a column projection (`SELECT foo, bar`) legitimately returns a
     /// subset, so deleting *some* entries from a stored ciphertext still
@@ -232,7 +232,7 @@ pub trait SeqAccess<'c> {
     /// Implementations **must authenticate each element against the sequence's associated
     /// data** — derive the effective AAD by passing the AAD supplied to
     /// [`Decipher::decrypt_seq`] through
-    /// [`Aad::for_sequence_element`](crate::Aad::for_sequence_element) and thread it into
+    /// [`Context::for_sequence_element`](crate::Context::for_sequence_element) and thread it into
     /// the element's [`Decrypt::decrypt_with_aad`]. This mirrors how
     /// [`SeqCipher::encrypt_next`](crate::SeqCipher::encrypt_next) binds the derived AAD to
     /// each element at encrypt time; an implementation that decrypts elements with the bare
@@ -285,7 +285,7 @@ pub trait MapAccess<'c> {
     /// As with [`SeqAccess::next_element`], implementations **must authenticate each value
     /// against the map's associated data** — and additionally against the entry's own key.
     /// Derive the effective AAD by passing the AAD supplied to [`Decipher::decrypt_map`]
-    /// through [`Aad::for_map_entry`](crate::Aad::for_map_entry) with the entry key, mirroring
+    /// through [`Context::for_map_entry`](crate::Context::for_map_entry) with the entry key, mirroring
     /// the binding [`MapCipher::encrypt_value`](crate::MapCipher::encrypt_value) performs at
     /// encrypt time. An implementation that decrypts values against the bare map AAD leaves
     /// keys swappable in stored ciphertext (and will fail to decrypt conforming ciphertexts).

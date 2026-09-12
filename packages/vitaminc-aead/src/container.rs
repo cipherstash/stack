@@ -38,7 +38,7 @@ pub enum CipherText<Leaf, P> {
     EmptySequence(Leaf),
     /// A map of (cleartext key, ciphertext value) pairs produced from a
     /// map-shaped plaintext. Keys are stored in the clear but are bound into
-    /// each value's AAD via [`Aad::for_map_entry`](crate::Aad::for_map_entry),
+    /// each value's AAD via [`Context::for_map_entry`](crate::Context::for_map_entry),
     /// so they cannot be swapped or renamed undetected (passthrough entries
     /// excepted).
     Map(Vec<(String, CipherText<Leaf, P>)>),

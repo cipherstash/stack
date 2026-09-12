@@ -123,7 +123,7 @@ pub trait Cipher: Sized {
     /// `Some(_)` ciphertext and bound to `aad` so it cannot be forged.
     ///
     /// Implementations must seal the marker against
-    /// [`Aad::for_none`](crate::Aad::for_none) of the caller's AAD (and the
+    /// [`Context::for_none`](crate::Context::for_none) of the caller's AAD (and the
     /// decrypt side must verify the sealed plaintext is empty under the same
     /// derivation), so a `Some(_)` leaf sealed under the bare AAD can never
     /// be re-tagged as an authenticated absence.
@@ -214,7 +214,7 @@ pub trait SeqCipher: Sized {
     /// map value would not authenticate the map entry's derived AAD, allowing
     /// its cleartext key to be renamed without detection. The empty marker
     /// must be sealed against
-    /// [`Aad::for_empty_sequence`](crate::Aad::for_empty_sequence) of that AAD.
+    /// [`Context::for_empty_sequence`](crate::Context::for_empty_sequence) of that AAD.
     ///
     /// A sequence whose elements are all passthrough must be **rejected**:
     /// passthrough elements authenticate nothing, so such a container would
@@ -238,7 +238,7 @@ pub trait SeqCipher: Sized {
 ///
 /// Keys travel in the clear, but they are **not** unauthenticated:
 /// implementations must bind each entry's key into the AAD its value is sealed
-/// against, via [`Aad::for_map_entry`](crate::Aad::for_map_entry). Swapping or
+/// against, via [`Context::for_map_entry`](crate::Context::for_map_entry). Swapping or
 /// renaming keys in a stored ciphertext therefore causes the affected values to
 /// fail decryption. [`MapAccess`](crate::MapAccess) implementations perform the
 /// symmetric binding on decrypt.
@@ -272,7 +272,7 @@ pub trait MapCipher: Sized {
     ///
     /// Implementations **must not** seal the value against the map's AAD
     /// directly: they must bind the pending key alongside it via
-    /// [`Aad::for_map_entry`](crate::Aad::for_map_entry), so that key and value
+    /// [`Context::for_map_entry`](crate::Context::for_map_entry), so that key and value
     /// are cryptographically inseparable in the stored ciphertext.
     fn encrypt_value<T>(self, value: T) -> Result<Self, Self::Error>
     where
@@ -331,7 +331,7 @@ pub trait MapCipher: Sized {
     /// entries were appended. Otherwise an empty map used as a map value would
     /// not authenticate the outer entry's derived AAD, allowing its cleartext
     /// key to be renamed without detection. The empty marker must be sealed
-    /// against [`Aad::for_empty_map`](crate::Aad::for_empty_map) of that AAD.
+    /// against [`Context::for_empty_map`](crate::Context::for_empty_map) of that AAD.
     ///
     /// A map whose entries are all passthrough must be **rejected** — see
     /// [`SeqCipher::end`].

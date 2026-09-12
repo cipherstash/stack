@@ -17,7 +17,9 @@ mod passthrough;
 mod test_util;
 
 #[doc(inline)]
-pub use aad::{Aad, AadPiece, IntoAad};
+#[allow(deprecated)]
+pub use aad::{Aad, AadPiece};
+pub use aad::{Context, ContextPiece, IntoAad, IntoContext};
 #[doc(inline)]
 pub use cipher::{Cipher, MapCipher, SeqCipher, Unspecified};
 #[doc(inline)]

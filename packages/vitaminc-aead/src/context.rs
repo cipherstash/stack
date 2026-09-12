@@ -49,15 +49,16 @@
 //!   ──► final_aad = PAE(extra_aad, PAE("a", "b"))
 //! ```
 //!
-//! The cipher receives that context with its parts intact: `into_aad_piece()` on the value it is
+//! The cipher receives that context with its parts intact: `into_context()` on the value it is
 //! handed is `List([extra_aad, List(["a", "b"])])` for the example, so a backend that names the
 //! parts (a key-management service logging which field a key was issued for) reads them directly
 //! rather than from pre-encoded bytes. A backend that only wants bytes calls `into_aad()`, which
 //! writes `PAE(extra_aad, tag)` into one buffer — the same allocations as the plain tuple.
 
-use crate::{Aad, AadPiece, Cipher, Decipher, Decrypt, Encrypt, IntoAad};
+use crate::{Cipher, Context, ContextPiece, Decipher, Decrypt, Encrypt, IntoAad, IntoContext};
 
-/// Folds a context `tag` and `extra_aad` into the AAD layout bound by `ContextTag`.
+/// Folds a context `tag` and `extra_aad` into the context layout bound by `ContextTag`: the
+/// pair `(extra_aad, tag)`.
 ///
 /// This is the layout shared by the two *type-driven* paths: both the [`Encrypt`] impl and
 /// [`ContextTag::decrypt_with_aad`] go through it, so those two sides cannot drift out of sync (a
@@ -67,43 +68,17 @@ use crate::{Aad, AadPiece, Cipher, Decipher, Decrypt, Encrypt, IntoAad};
 /// a parallel construction kept in lockstep only by the `*_helper_matches_encrypt_binding` tests —
 /// if you change the layout here, update those builders too.
 ///
-/// The tag becomes an owned/`'static` [`AadPiece`] and is re-borrowed for the call's `'a`
-/// lifetime (`AadPiece` is covariant in its lifetime, so `'static: 'a` permits the narrowing);
-/// the result is a [`FoldedAad`], whose bytes are `PAE(extra_aad, tag)` — the same as the tuple
-/// `(extra_aad, tag)` — and whose parts are `List([extra_aad, tag])`.
-fn fold_tag_aad<'a, Tag, A>(tag: Tag, extra_aad: A) -> FoldedAad<'a, A>
+/// The tag becomes an owned/`'static` [`ContextPiece`] and is re-borrowed for the call's `'a`
+/// lifetime (`ContextPiece` is covariant in its lifetime, so `'static: 'a` permits the narrowing).
+/// The result is an ordinary pair, so it is a context like any other: its parts are
+/// `List([extra_aad, tag])` and its bytes are that list's encoding, written in one allocation.
+fn fold_tag_aad<'a, Tag, A>(tag: Tag, extra_aad: A) -> (A, ContextPiece<'a>)
 where
-    Tag: IntoAad<'static>,
+    Tag: IntoContext<'static>,
 {
-    let tag: AadPiece<'static> = tag.into_aad_piece();
-    let tag: AadPiece<'a> = tag;
-    FoldedAad { extra_aad, tag }
-}
-
-/// The context a [`ContextTag`] hands its cipher: `extra_aad` and the tag, in that order.
-///
-/// Bytes and parts are produced by different paths so the parts view costs nothing unless asked
-/// for: `into_aad` writes `PAE(extra_aad, tag)` straight into one buffer (no intermediate list, no
-/// second copy of the tag), while `into_aad_piece` builds `List([extra_aad, tag])`. Both agree
-/// with the tuple `(extra_aad, tag)` byte for byte — `cipher_receives_the_context_as_parts` and the
-/// `*_helper_matches_encrypt_binding` tests pin it.
-struct FoldedAad<'a, A> {
-    extra_aad: A,
-    tag: AadPiece<'a>,
-}
-
-impl<'a, A> IntoAad<'a> for FoldedAad<'a, A>
-where
-    A: IntoAad<'a>,
-{
-    fn into_aad(self) -> Aad<'a> {
-        let extra_aad = self.extra_aad.into_aad();
-        self.tag.pae_after(extra_aad.as_bytes())
-    }
-
-    fn into_aad_piece(self) -> AadPiece<'a> {
-        AadPiece::List(vec![self.extra_aad.into_aad_piece(), self.tag])
-    }
+    let tag: ContextPiece<'static> = tag.into_context();
+    let tag: ContextPiece<'a> = tag;
+    (extra_aad, tag)
 }
 
 /// A wrapper that pairs a plaintext value with a context tag used as additional authenticated
@@ -241,8 +216,8 @@ impl<Tag> ContextTag<Tag, ()> {
     ///     ((), "user:42").into_aad().as_bytes(),
     /// );
     /// ```
-    pub fn aad(tag: Tag) -> (Aad<'static>, Tag) {
-        (Aad::empty(), tag)
+    pub fn aad(tag: Tag) -> (Context<'static>, Tag) {
+        (Context::empty(), tag)
     }
 
     /// Low-level: builds the raw AAD tuple for **decrypting** a value sealed with
@@ -304,7 +279,7 @@ where
         D: Decipher<'c>,
         T: Decrypt<'c> + 'c,
     {
-        self.decrypt_with_aad(decipher, Aad::empty())
+        self.decrypt_with_aad(decipher, Context::empty())
     }
 
     /// Decrypts a value sealed against this context plus `extra_aad`, mirroring
@@ -329,7 +304,7 @@ where
     T: Encrypt,
     // `Encrypt::encrypt_with_aad` chooses the AAD lifetime at the call site, but the tag is owned
     // by the wrapper. Requiring `IntoAad<'static>` lets the tag become an owned (or
-    // `'static`-borrowed) `AadPiece` that we then re-borrow for the call's lifetime via covariance.
+    // `'static`-borrowed) `ContextPiece` that we then re-borrow for the call's lifetime via covariance.
     // Owned tags (`String`, `u64`, `Vec<u8>`, tuples thereof) and `&'static str` satisfy this;
     // non-`'static` borrows do not — promote them to `String` or a `&'static str`.
     Tag: IntoAad<'static>,
@@ -337,7 +312,7 @@ where
     /// Encrypts the inner value, folding the embedded tag into the AAD.
     ///
     /// The final AAD is `(extra_aad, tag)`, PAE-encoded into an unambiguous byte representation
-    /// that binds both pieces. The cipher receives it with its parts intact — `into_aad_piece()`
+    /// that binds both pieces. The cipher receives it with its parts intact — `into_context()`
     /// gives `List([extra_aad, tag])` — and `into_aad()` writes the bytes in one allocation.
     fn encrypt_with_aad<'a, C, A>(self, cipher: C, extra_aad: A) -> Result<C::Ok, C::Error>
     where
@@ -372,18 +347,18 @@ mod tests {
         let piece = parts.captured_piece().expect("aad captured");
         assert_eq!(
             piece,
-            AadPiece::List(vec![
-                AadPiece::Text(Cow::Borrowed("row:99")),
-                AadPiece::List(vec![
-                    AadPiece::Text(Cow::Borrowed("table:users")),
-                    AadPiece::Text(Cow::Borrowed("column:email")),
+            ContextPiece::List(vec![
+                ContextPiece::Text(Cow::Borrowed("row:99")),
+                ContextPiece::List(vec![
+                    ContextPiece::Text(Cow::Borrowed("table:users")),
+                    ContextPiece::Text(Cow::Borrowed("column:email")),
                 ]),
             ])
         );
         let names: Vec<String> = piece.leaves().map(ToString::to_string).collect();
         assert_eq!(names, ["\"row:99\"", "\"table:users\"", "\"column:email\""]);
         // Both views agree with the tuple: the parts tree re-encoded, and the
-        // bytes a byte-oriented cipher gets from `FoldedAad::into_aad`.
+        // bytes a byte-oriented cipher gets from the pair `(extra_aad, tag)`.
         let expected = ("row:99", ("table:users", "column:email")).into_aad();
         assert_eq!(piece.into_aad().as_bytes(), expected.as_bytes());
         let bytes = MockCipher::new();
@@ -405,8 +380,8 @@ mod tests {
 
         // The inner value is encrypted unchanged...
         assert_eq!(ciphertext, plaintext.as_bytes());
-        // ...and the bound AAD is PAE(extra, tag).
-        let expected = Aad::pae(&[b"extra", b"tag_aad"]);
+        // ...and the bound AAD is the pair (extra, tag).
+        let expected = ("extra", "tag_aad").into_aad();
         assert_eq!(cipher.captured_aad(), expected.as_bytes());
     }
 
@@ -435,7 +410,7 @@ mod tests {
         // is *not* empty AAD — so `cipher.decrypt(ct)` (empty AAD) must fail. A
         // regression that folded a `()` tag to empty AAD would silently break it.
         assert_eq!(cipher.captured_aad(), ((), ()).into_aad().as_bytes());
-        assert_ne!(cipher.captured_aad(), Aad::empty().as_bytes());
+        assert_ne!(cipher.captured_aad(), Context::empty().as_bytes());
     }
 
     #[test]
@@ -447,9 +422,8 @@ mod tests {
             .encrypt_with_aad(&cipher, "extra")
             .expect("encryption should succeed");
 
-        // extra + (table, column) => PAE(extra, PAE(table, column)).
-        let inner = Aad::pae(&[b"table:users", b"column:email"]);
-        let expected = Aad::pae(&[b"extra", inner.as_bytes()]);
+        // extra + (table, column) => the nested pair (extra, (table, column)).
+        let expected = ("extra", ("table:users", "column:email")).into_aad();
         assert_eq!(cipher.captured_aad(), expected.as_bytes());
     }
 

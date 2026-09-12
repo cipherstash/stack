@@ -18,7 +18,7 @@
 //!
 //! A struct is encrypted as a **map**, keyed by field name. This is the
 //! deliberate choice over a sequence: [`MapCipher`] binds each entry's key
-//! into the AAD its value is sealed against (`Aad::for_map_entry`), so a
+//! into the AAD its value is sealed against (`Context::for_map_entry`), so a
 //! stored ciphertext cannot have its fields renamed or swapped without
 //! decryption failing. Sequence elements carry no such binding — their AAD
 //! has no positional component — so two same-typed fields encoded as a

@@ -262,7 +262,7 @@ where
 mod tests {
     use super::*;
     use crate::test_util::MockDecipher;
-    use crate::Aad;
+    use crate::Context;
 
     // `array_from_protected` is the one length check between the decipher's
     // variable-length buffer and a fixed-size array. These pin both halves of
@@ -289,7 +289,8 @@ mod tests {
     #[test]
     fn bare_array_decrypts_the_payload_bytes() {
         let decipher = MockDecipher::new(vec![9u8, 8, 7]);
-        let out: [u8; 3] = <[u8; 3]>::decrypt_with_aad(&decipher, Aad::empty()).expect("decrypt");
+        let out: [u8; 3] =
+            <[u8; 3]>::decrypt_with_aad(&decipher, Context::empty()).expect("decrypt");
         assert_eq!(out, [9, 8, 7]);
     }
 
@@ -297,7 +298,7 @@ mod tests {
     fn bare_array_rejects_a_length_mismatch() {
         let decipher = MockDecipher::new(vec![9u8, 8, 7]);
         assert_eq!(
-            <[u8; 2]>::decrypt_with_aad(&decipher, Aad::empty()),
+            <[u8; 2]>::decrypt_with_aad(&decipher, Context::empty()),
             Err(Unspecified)
         );
     }
@@ -305,20 +306,20 @@ mod tests {
     #[test]
     fn protected_array_decrypts_the_payload_bytes_wrapped() {
         let decipher = MockDecipher::new(vec![3u8, 2, 1, 0]);
-        let out = <[u8; 4]>::decrypt_protected(&decipher, Aad::empty()).expect("decrypt");
+        let out = <[u8; 4]>::decrypt_protected(&decipher, Context::empty()).expect("decrypt");
         assert_eq!(out.risky_ref(), &[3, 2, 1, 0]);
     }
 
     #[test]
     fn protected_array_rejects_a_length_mismatch() {
         let decipher = MockDecipher::new(vec![3u8, 2, 1, 0]);
-        assert!(<[u8; 8]>::decrypt_protected(&decipher, Aad::empty()).is_err());
+        assert!(<[u8; 8]>::decrypt_protected(&decipher, Context::empty()).is_err());
     }
 
     #[test]
     fn protected_vec_decrypts_the_payload_bytes_wrapped() {
         let decipher = MockDecipher::new(vec![5u8, 6]);
-        let out = <Vec<u8>>::decrypt_protected(&decipher, Aad::empty()).expect("decrypt");
+        let out = <Vec<u8>>::decrypt_protected(&decipher, Context::empty()).expect("decrypt");
         assert_eq!(out.risky_ref(), &[5, 6]);
     }
 
@@ -328,13 +329,13 @@ mod tests {
     #[test]
     fn u32_decrypts_the_little_endian_payload() {
         let decipher = MockDecipher::new(vec![1u8, 2, 3, 4]);
-        let out = u32::decrypt_with_aad(&decipher, Aad::empty()).expect("decrypt");
+        let out = u32::decrypt_with_aad(&decipher, Context::empty()).expect("decrypt");
         assert_eq!(out, 0x04030201);
     }
 
     #[test]
     fn u32_rejects_a_length_mismatch() {
         let decipher = MockDecipher::new(vec![1u8, 2, 3]);
-        assert!(u32::decrypt_with_aad(&decipher, Aad::empty()).is_err());
+        assert!(u32::decrypt_with_aad(&decipher, Context::empty()).is_err());
     }
 }

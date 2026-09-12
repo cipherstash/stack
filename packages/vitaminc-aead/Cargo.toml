@@ -13,9 +13,7 @@ categories.workspace = true
 
 [dependencies]
 vitaminc-aead-derive = { version = "0.4.0", path = "../aead-derive" }
-# For `AadPiece`'s PRF derivation: a context's parts view is its identity on
-# both derivations, so the parts type carries both.
-vitaminc-prf = { version = "0.4.0", path = "../prf" }
+vitaminc-context = { version = "0.4.0", path = "../context" }
 vitaminc-protected = { version = "0.4.0", path = "../protected" }
 vitaminc-random = { version = "0.4.0", path = "../random" }
 
@@ -36,6 +34,10 @@ hlist = []
 
 
 [dev-dependencies]
+# Path-only, so publish order does not matter: only the test that pins
+# `into_aad` and `into_prf_context` to the same bytes needs the PRF crate.
+vitaminc-prf = { path = "../prf" }
+vitaminc-context = { path = "../context", features = ["arbitrary"] }
 quickcheck = "1.1.0"
 quickcheck_macros = "1.2.0"
 # Compile-fail tests for the derive macros' guards — see tests/derive_ui.rs.

@@ -19,7 +19,7 @@ impl CipherTextReader {
     /// layout of everything after this byte is unknown, so there is nothing
     /// safe to read. (When a future version lands, this is where the reader
     /// grows a per-version dispatch.) The byte is *also* bound into the
-    /// leaf AAD ([`Aad::for_leaf`](crate::Aad::for_leaf)), so a relabeled
+    /// leaf AAD ([`Context::for_leaf`](crate::Context::for_leaf)), so a relabeled
     /// version that happens to parse still fails tag verification.
     pub fn read_version(self) -> Result<VersionedReader, Unspecified> {
         let mut buf = self.0;

@@ -15,7 +15,7 @@ use crate::{cipher::Cipher, decipher::Decipher, decrypt::Decrypt, encrypt::Encry
 /// # Why
 ///
 /// Sequence elements are sealed against
-/// [`Aad::for_sequence_element`](crate::Aad::for_sequence_element) of the
+/// [`Context::for_sequence_element`](crate::Context::for_sequence_element) of the
 /// caller's AAD, not the bare AAD, so the container shape is authenticated
 /// (a `Single` cannot be rewrapped as a one-element `Sequence`, nor an
 /// element re-homed to top level). The consequence for database-shaped
@@ -37,7 +37,7 @@ use crate::{cipher::Cipher, decipher::Decipher, decrypt::Decrypt, encrypt::Encry
 /// Retrieval *multiplicity* between "fetched alone" and "one element of a
 /// `Vec` read" is deliberately not authenticated, matching the existing
 /// stance on element order (see
-/// [`Aad::for_sequence_element`](crate::Aad::for_sequence_element)): both are
+/// [`Context::for_sequence_element`](crate::Context::for_sequence_element)): both are
 /// caller obligations, not authenticated facts.
 ///
 /// # ⚠️ Wrap the row, not the collection
@@ -54,14 +54,14 @@ use crate::{cipher::Cipher, decipher::Decipher, decrypt::Decrypt, encrypt::Encry
 ///
 /// ```ignore
 /// // Batch write: rows sealed as sequence elements.
-/// let ct = vec![row1, row2].encrypt_with_aad(&cipher, Aad::from_slice(b"users"))?;
+/// let ct = vec![row1, row2].encrypt_with_aad(&cipher, Context::from_encoded(b"users"))?;
 ///
 /// // Single-row read: same caller AAD, Element derives the rest.
 /// let row: Element<HashMap<String, String>> =
-///     cipher.decrypt_with_aad(row_ct, Aad::from_slice(b"users"))?;
+///     cipher.decrypt_with_aad(row_ct, Context::from_encoded(b"users"))?;
 ///
 /// // Single-row write: interchangeable with the batch above.
-/// let ct = Element(row3).encrypt_with_aad(&cipher, Aad::from_slice(b"users"))?;
+/// let ct = Element(row3).encrypt_with_aad(&cipher, Context::from_encoded(b"users"))?;
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Element<T>(pub T);
@@ -84,7 +84,7 @@ where
     T: Encrypt,
 {
     /// Seals the inner value under
-    /// [`Aad::for_sequence_element`](crate::Aad::for_sequence_element) of the
+    /// [`Context::for_sequence_element`](crate::Context::for_sequence_element) of the
     /// caller's AAD — byte-identical to what `Vec` encryption binds per
     /// element.
     fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
@@ -102,7 +102,7 @@ where
     T: Decrypt<'c> + 'c,
 {
     /// Verifies the inner value against
-    /// [`Aad::for_sequence_element`](crate::Aad::for_sequence_element) of the
+    /// [`Context::for_sequence_element`](crate::Context::for_sequence_element) of the
     /// caller's AAD — the derivation `Vec` decryption applies per element.
     fn decrypt_with_aad<'a, D, A>(decipher: D, aad: A) -> D::Ok<Self>
     where
@@ -120,7 +120,7 @@ where
 mod tests {
     use super::*;
     use crate::test_util::{MockCipher, MockDecipher};
-    use crate::Aad;
+    use crate::Context;
 
     #[test]
     fn encrypt_binds_the_sequence_element_derivation() {
@@ -133,9 +133,9 @@ mod tests {
         assert_eq!(ct, b"row");
         // ...bound against `for_sequence_element` of the caller's AAD, never
         // the bare AAD.
-        let expected = Aad::from_slice(b"users").for_sequence_element();
+        let expected = "users".into_aad().for_sequence_element();
         assert_eq!(cipher.captured_aad(), expected.as_bytes());
-        assert_ne!(cipher.captured_aad(), b"users");
+        assert_ne!(cipher.captured_aad(), "users".into_aad().as_bytes());
     }
 
     #[test]
@@ -148,9 +148,9 @@ mod tests {
             .encrypt(&cipher)
             .expect("encryption should succeed");
 
-        let expected = Aad::empty().for_sequence_element();
+        let expected = Context::empty().for_sequence_element();
         assert_eq!(cipher.captured_aad(), expected.as_bytes());
-        assert_ne!(cipher.captured_aad(), Aad::empty().as_bytes());
+        assert_ne!(cipher.captured_aad(), Context::empty().as_bytes());
     }
 
     #[test]
@@ -162,7 +162,7 @@ mod tests {
         // The inner value comes back wrapped...
         assert_eq!(got, Element("row".to_string()));
         // ...after being verified against the same derivation encrypt binds.
-        let expected = Aad::from_slice(b"users").for_sequence_element();
+        let expected = "users".into_aad().for_sequence_element();
         assert_eq!(decipher.captured_aad(), expected.as_bytes());
     }
 

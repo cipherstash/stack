@@ -126,7 +126,7 @@ impl<'c> MapCipher for MyMapCipher<'c> {
         K: Into<std::borrow::Cow<'static, str>>,
     { unimplemented!() }
 
-    // Must seal the value against `Aad::for_map_entry(aad, key)` of the AAD
+    // Must seal the value against `Context::for_map_entry(aad, key)` of the AAD
     // this MapCipher was constructed with — see the `MapCipher` docs on key
     // authentication.
     fn encrypt_value<T>(self, _value: T) -> Result<Self, Self::Error>
@@ -197,7 +197,7 @@ let plaintext: String = cipher.decrypt_with_aad(ciphertext, "context data")?;
 
 `String`, `Vec<u8>`, `[u8; N]`, `u32`, `Vec<T: Decrypt>`, `HashMap<String, T: Decrypt>`, and `Protected<T: Decrypt>` all implement `Decrypt` out of the box.
 
-> **Note on maps:** both `HashMap<&'static str, T>` and `HashMap<String, T>` implement `Encrypt` (keys are anything `Into<Cow<'static, str>>`), and decryption yields `HashMap<String, T>`. Map keys travel in the clear but are bound into each value's AAD via [`Aad::for_map_entry`], so swapping or renaming keys inside a stored ciphertext causes decryption to fail.
+> **Note on maps:** both `HashMap<&'static str, T>` and `HashMap<String, T>` implement `Encrypt` (keys are anything `Into<Cow<'static, str>>`), and decryption yields `HashMap<String, T>`. Map keys travel in the clear but are bound into each value's AAD via [`Context::for_map_entry`], so swapping or renaming keys inside a stored ciphertext causes decryption to fail.
 
 ### Additional Authenticated Data (AAD)
 
@@ -222,42 +222,46 @@ use vitaminc_aead::Encrypt;
 "my-secret".encrypt_with_aad(&cipher, ())?;
 ```
 
-Every one of those types also describes itself as a tree of *parts*, before
-framing, through `IntoAad::into_aad_piece` — for a consumer that has to name what the
-bytes were built from (a key service logging the field a key was issued for,
-an audit trail, a structured binding built from the same parts as the AAD)
-rather than parse PAE back out of them:
+Every one of those types is a context, and a context has one encoding. The AEAD's associated
+data and a PRF's derivation context for the same value are the same bytes, because both are views
+of the [`vitaminc-context`](https://docs.rs/vitaminc-context) crate: a context type implements
+`IntoContext`, which names its parts as a `ContextPiece` tree, and `IntoAad` is a blanket over it.
+There is no `into_aad` to write by hand, so a type of your own cannot be given one encoding for
+the AEAD and another for the PRF.
 
 ```rust
-use vitaminc_aead::{AadPiece, IntoAad};
+use vitaminc_aead::{ContextPiece, IntoAad, IntoContext};
 
-let piece = ("users/email", 7u64).into_aad_piece();
-assert_eq!(piece.to_string(), "(\"users/email\", 7u64)");
+struct TenantId(u64);
+
+impl<'a> IntoContext<'a> for TenantId {
+    fn into_context(self) -> ContextPiece<'a> {
+        ("tenant", self.0).into_context()
+    }
+}
+
+let piece = TenantId(7).into_context();
+assert_eq!(piece.to_string(), "(\"tenant\", 7u64)");
 assert_eq!(piece.leaves().count(), 2);
-// Same bytes, one extra view.
 assert_eq!(
-    piece.into_aad().as_bytes(),
-    ("users/email", 7u64).into_aad().as_bytes()
+    TenantId(7).into_aad().as_bytes(),
+    ("tenant", 7u64).into_aad().as_bytes()
 );
 ```
 
-`into_aad_piece` has a default on `IntoAad` that returns the whole encoding as one opaque `Bytes`
-leaf, so a context type of your own keeps compiling with only `into_aad`, and overrides
-`into_aad_piece` when it wants its parts named. A `ContextTag` hands its cipher a context whose
-`into_aad_piece()` is `List([extra_aad, tag])`, so a backend can read the parts directly, while
-`into_aad()` still writes the bytes in one allocation. `Display` renders different trees
+The parts view is for a consumer that has to name what the bytes were built from (a key service
+logging the field a key was issued for, an audit trail) rather than parse framing back out of them.
+A `ContextTag` hands its cipher the pair `(extra_aad, tag)`, so a backend can read the parts
+directly, while `into_aad()` writes the bytes in one allocation. `Display` renders different trees
 differently (in Rust literal syntax), so two contexts that authenticate different bytes never share
 a log line.
 
-A parts tree is the same context as the value it came from, on both sides a context is used.
-`AadPiece` implements `IntoPrfContext` as well as `IntoAad`, and for every built-in context type
-`x.into_aad_piece().into_aad() == x.into_aad()` and
-`x.into_aad_piece().into_prf_context() == x.into_prf_context()` (checked by quickcheck). So a
-context that arrives as data, for example across an FFI boundary, needs no mirror type: a list of
-one is `Some(x)`, the empty list is `None`, a list of two is `(a, b)`,
-`nonempty!(a).with(b).with(c)` is the nested `((a, b), c)`, and `AadPiece::Unit` is `()`.
-`AadPiece` also implements `MaybeEmpty` by the same rule the static types use, so a tree can be
-wrapped in `NonEmpty`.
+A parts tree is the same context as the value it came from. A context that arrives as data, for
+example across an FFI boundary, needs no mirror type: a `ContextPiece` list of one is `Some(x)`,
+the empty list is `None`, a list of two is `(a, b)`, `nonempty!(a).with(b).with(c)` is the nested
+`((a, b), c)`, and `ContextPiece::Unit` is `()`. Every leaf is typed, so `7u32` and `7i32` are
+different contexts and so are `"ab"` and `b"ab"`. `ContextPiece` also implements `MaybeEmpty` by the
+same rule the static types use, so a tree can be wrapped in `NonEmpty`.
 
 ### Working with Protected Types
 
@@ -291,7 +295,7 @@ struct User {
 }
 ```
 
-A derived struct is encrypted as a **map keyed by field name**, which is the shape that gets each field its own AAD binding: `MapCipher` seals every value against `Aad::for_map_entry` of its key, so a stored field cannot be renamed, or moved onto another key, without decryption failing. A sequence would give no such guarantee — element AAD carries no positional component, so two same-typed fields would be freely interchangeable.
+A derived struct is encrypted as a **map keyed by field name**, which is the shape that gets each field its own AAD binding: `MapCipher` seals every value against `Context::for_map_entry` of its key, so a stored field cannot be renamed, or moved onto another key, without decryption failing. A sequence would give no such guarantee — element AAD carries no positional component, so two same-typed fields would be freely interchangeable.
 
 What follows from that shape:
 

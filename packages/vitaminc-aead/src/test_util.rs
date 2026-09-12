@@ -10,7 +10,7 @@ use vitaminc_protected::{Controlled, Protected};
 use crate::{
     cipher::{Cipher, MapCipher, SeqCipher},
     decipher::{Decipher, DecipherVisitor, MapAccess},
-    AadPiece, Encrypt, IntoAad, Unspecified,
+    ContextPiece, Encrypt, IntoAad, Unspecified,
 };
 
 /// A minimal [`Cipher`] that records the AAD bytes it is handed and echoes the
@@ -21,7 +21,7 @@ use crate::{
 pub(crate) struct MockCipher {
     /// Recorded through `aad.into_aad()`, the path a byte-oriented cipher
     /// takes, so the layout tests pin a wrapper's optimised byte encoding
-    /// (`FoldedAad::into_aad`) and not a re-encoding of its parts view.
+    /// (the pair encoded in one pass) and not a re-encoding of its parts view.
     captured_aad: RefCell<Vec<u8>>,
     /// How many times `encrypt_bytes_array` was called directly, as opposed
     /// to the trait's default forwarding through `encrypt_bytes_vec`. Lets a
@@ -50,12 +50,12 @@ impl MockCipher {
     }
 }
 
-/// A [`Cipher`] that records the AAD's *parts* view, `aad.into_aad_piece()`,
+/// A [`Cipher`] that records the AAD's *parts* view, `aad.into_context()`,
 /// and nothing else. A consumed `A` can expose only one view, so this is a
 /// separate spy from [`MockCipher`]: use it to prove a wrapper handed the
 /// parts through intact, and `MockCipher` to prove the bytes.
 pub(crate) struct PartsCipher {
-    captured_piece: RefCell<Option<AadPiece<'static>>>,
+    captured_piece: RefCell<Option<ContextPiece<'static>>>,
 }
 
 impl PartsCipher {
@@ -65,12 +65,12 @@ impl PartsCipher {
         }
     }
 
-    pub(crate) fn captured_piece(&self) -> Option<AadPiece<'static>> {
+    pub(crate) fn captured_piece(&self) -> Option<ContextPiece<'static>> {
         self.captured_piece.borrow().clone()
     }
 
     fn capture<'a, A: IntoAad<'a>>(&self, aad: A) {
-        *self.captured_piece.borrow_mut() = Some(aad.into_aad_piece().into_owned());
+        *self.captured_piece.borrow_mut() = Some(aad.into_context().into_owned());
     }
 }
 
@@ -472,6 +472,6 @@ impl<'c> MapAccess<'c> for MockMapAccess {
     fn next_value<T: crate::Decrypt<'c> + 'c>(&mut self) -> Result<T, Self::Error> {
         let payload = self.pending.take().ok_or(Unspecified)?;
         let decipher = MockDecipher::new(payload);
-        T::decrypt_with_aad(&decipher, crate::Aad::empty())
+        T::decrypt_with_aad(&decipher, crate::Context::empty())
     }
 }

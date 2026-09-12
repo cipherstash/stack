@@ -1,4 +1,4 @@
-use crate::{cipher::Cipher, Aad, IntoAad};
+use crate::{cipher::Cipher, Context, IntoAad};
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroize;
 pub mod impls;
@@ -15,7 +15,7 @@ pub trait Encrypt {
         Self: Sized,
         C: Cipher,
     {
-        self.encrypt_with_aad(cipher, Aad::empty())
+        self.encrypt_with_aad(cipher, Context::empty())
     }
 
     /// Encrypt `self` with the supplied associated data.

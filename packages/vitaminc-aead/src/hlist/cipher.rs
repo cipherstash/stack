@@ -5,7 +5,7 @@
 
 use vitaminc_protected::Protected;
 
-use crate::{Aad, IntoAad};
+use crate::{Context, IntoAad};
 
 use super::types::{Absent, Encrypted, Entry, Map, Passthrough};
 use super::{HCons, HList, HNil};
@@ -71,7 +71,7 @@ where
 {
     /// Add an encrypted entry.
     ///
-    /// The value is sealed against [`Aad::for_map_entry`](crate::Aad::for_map_entry)
+    /// The value is sealed against [`Context::for_map_entry`](crate::Context::for_map_entry)
     /// of the caller's AAD and `key` — the same contract as the dynamic
     /// [`MapCipher`](crate::MapCipher) — so a stored entry's cleartext key
     /// cannot be swapped or renamed undetected. Open with a counterpart that
@@ -140,7 +140,7 @@ where
     ///
     /// A nested map has no leaf of its own to seal, so its outer cleartext
     /// `key` can only be authenticated *through* its entries: `build`
-    /// receives [`Aad::for_map_entry`](crate::Aad::for_map_entry) of the
+    /// receives [`Context::for_map_entry`](crate::Context::for_map_entry) of the
     /// caller's AAD and `key`, and every inner entry must be sealed against
     /// (a derivation of) it — the same chain the dynamic
     /// [`MapCipher`](crate::MapCipher) composes when it encrypts a nested
@@ -161,7 +161,7 @@ where
     where
         A: IntoAad<'a>,
         Inner: HList,
-        F: FnOnce(StaticMapBuilder<C, HNil>, Aad<'static>) -> Result<Map<Inner>, C::Error>,
+        F: FnOnce(StaticMapBuilder<C, HNil>, Context<'static>) -> Result<Map<Inner>, C::Error>,
     {
         let nested_aad = aad.into_aad().for_map_entry(key);
         let value = build(self.cipher.encrypt_map(), nested_aad)?;
