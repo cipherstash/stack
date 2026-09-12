@@ -37,15 +37,15 @@
 use stack_encrypt::sem::{CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch};
 use stack_encrypt::target::Pending;
 use stack_encrypt::{
-    BoxedPassthrough, CipherText, Decrypt, Element, Encrypt, IntoPrfContext, NonEmpty, SealedValue,
-    StackCipher, StackCipherText,
+    AadPiece, BoxedPassthrough, CipherText, Decrypt, Element, Encrypt, IntoPrfContext, NonEmpty,
+    SealedValue, StackCipher, StackCipherText,
 };
 use stack_kms::DataKeySource;
 use vitaminc_aead_value::{transport as codec, FfiValue};
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroizing;
 
-use crate::context::{parse_context, ContextPart};
+use crate::context::{borrowed, parse_context};
 use crate::status::{
     status_for_error, status_for_term_error, STATUS_AUTH, STATUS_ENCODING, STATUS_INTERNAL,
 };
@@ -376,7 +376,7 @@ struct FieldPlan {
     /// opens under it — the cipher-directed `encrypt_with_aad` in
     /// [`build_row`] as much as the target-directed `decrypt_into` in
     /// [`decrypt_record`] — is under a context stack-encrypt's leaves accept.
-    context: NonEmpty<ContextPart>,
+    context: NonEmpty<AadPiece<'static>>,
     outputs: Vec<Output>,
 }
 
@@ -424,7 +424,7 @@ fn parse_plan(value: FfiValue) -> Result<Vec<FieldPlan>, u32> {
             let FfiValue::Object(spec) = spec else {
                 return Err(STATUS_ENCODING);
             };
-            let mut context: Option<NonEmpty<ContextPart>> = None;
+            let mut context: Option<NonEmpty<AadPiece<'static>>> = None;
             let mut outputs: Option<Vec<Output>> = None;
             for (key, value) in spec {
                 match key.as_str() {
@@ -625,10 +625,10 @@ where
             .position(|(name, _)| name == &field.name)
             .ok_or(STATUS_ENCODING)?;
         let (name, value) = row.swap_remove(at);
-        // Borrowed from the plan once per field: the proof was made at
-        // parse time, so re-taking it over the same tree cannot fail, and
-        // `NonEmpty<&ContextPart>` is `Copy` for the outputs below.
-        let context = NonEmpty::new(field.context.get()).map_err(|_| STATUS_INTERNAL)?;
+        // A borrowed view of the plan's context, once per field: the proof
+        // was made at parse time, so re-taking it over the same tree cannot
+        // fail, and the view clones cheaply for each output below.
+        let context = NonEmpty::new(borrowed(field.context.get())).map_err(|_| STATUS_INTERNAL)?;
 
         // Terms first — they lift a copy of the scalar; the value itself is
         // consumed by the ciphertext path below.
@@ -647,14 +647,14 @@ where
                 continue;
             }
             let scalar = scalar.clone().ok_or(STATUS_INTERNAL)?;
-            let term = term_bytes(cipher, scalar, context, *output).await?;
+            let term = term_bytes(cipher, scalar, context.clone(), *output).await?;
             outputs.push((output.key(), Some(term)));
         }
 
         if field.outputs.contains(&Output::Ciphertext) {
             reject_passthrough_value(&value)?;
             let tree = value
-                .encrypt_with_aad(cipher, context)
+                .encrypt_with_aad(cipher, context.clone())
                 .map_err(|_| STATUS_INTERNAL)?;
             pendings.push(tree.into_pending(cipher, context));
         }
@@ -709,7 +709,8 @@ where
             if !field.outputs.contains(&Output::Ciphertext) {
                 continue;
             }
-            let context = NonEmpty::new(field.context.get()).map_err(|_| STATUS_INTERNAL)?;
+            let context =
+                NonEmpty::new(borrowed(field.context.get())).map_err(|_| STATUS_INTERNAL)?;
             let at = row
                 .iter()
                 .position(|(name, _)| name == &field.name)

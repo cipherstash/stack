@@ -1,29 +1,27 @@
 //! Structured contexts for the record and term paths.
 //!
 //! A plan field's context, and a term probe's, arrives as an [`FfiValue`]
-//! and becomes a [`ContextPart`] tree: the guest's runtime form of the
-//! context a Rust caller builds statically. A Rust
-//! `#[derive(EncryptFrom)]` row sealed with `encrypt_into_with_context(row,
-//! 7u64)` binds each field under `("users/age", 7u64)` — a `NonEmpty<(&str,
-//! u64)>` — and a plan spells the same context as `["users/age", 7u64]`.
-//! The two must agree byte for byte on *both* derivations a context feeds:
+//! and becomes an [`AadPiece`] tree: vitaminc's runtime form of a context,
+//! and the *identity* of one. vitaminc's law (pinned there by quickcheck
+//! over every built-in context type) is that a context's two derivations
+//! each equal the same derivation of its parts view:
 //!
-//! * **AAD** (the ciphertext binding, and the ZeroKMS descriptor rendered
-//!   from its parts): a [`ContextPart`] is an [`AadPiece`], so a list
-//!   encodes as the PAE of its parts exactly as a tuple does, and
-//!   [`Descriptor`](stack_encrypt::Descriptor) renders it the same way.
-//! * **PRF context** (the index terms' domain separation): a leaf hands
-//!   itself to the standard type's own [`IntoPrfContext`] impl — text is
-//!   `String`'s, an integer is that integer's — so it carries the same
-//!   typed encoding, and a list is [`PrfContext::pae`] of its parts, which
-//!   is what vitaminc's tuple impl produces.
+//! ```text
+//! x.into_aad()         == x.into_aad_piece().into_aad()
+//! x.into_prf_context() == x.into_aad_piece().into_prf_context()
+//! ```
 //!
-//! Neither encoding is re-derived here: the leaves *are* the standard
-//! impls, and the list framing is the one public `pae` both crates expose.
-//! The unit tests below pin the agreement against `nonempty!(..).with(..)`
-//! on both sides, and `tests/native_ops.rs` pins it end to end: a plan's
-//! stored terms equal native probes under the tuple, and its `"c"` leaf
-//! opens natively under the tuple.
+//! So a Rust `#[derive(EncryptFrom)]` row sealed with
+//! `encrypt_into_with_context(row, 7u64)`, which binds each field under
+//! `("users/age", 7u64)` — a `NonEmpty<(&str, u64)>` — and a plan that
+//! spells the same context as `["users/age", 7u64]` agree byte for byte on
+//! the AAD (the ciphertext binding and the ZeroKMS descriptor rendered from
+//! its parts) *and* on the PRF context (the index terms' domain separation).
+//! Nothing is re-derived in this crate: the tree is handed to vitaminc's own
+//! impls. The unit tests below pin the agreement against
+//! `nonempty!(..).with(..)` on both sides, and `tests/native_ops.rs` pins it
+//! end to end: a plan's stored terms equal native probes under the tuple,
+//! and its `"c"` leaf opens natively under the tuple.
 //!
 //! # Shape
 //!
@@ -41,11 +39,10 @@
 //! counted from the root of the encoded value — a plan's field context
 //! starts two levels down), and a deeper value is refused as
 //! [`STATUS_ENCODING`] by the codec before this module sees it. Text and
-//! bytes with the same content are distinct
-//! on the PRF side (UTF-8 versus bytes encodings) though they share AAD
-//! bytes — the same distinction the Rust types make.  Booleans, floats,
-//! null, undefined, objects and passthroughs are not contexts and are
-//! refused as [`STATUS_ENCODING`].
+//! bytes with the same content are distinct on the PRF side (UTF-8 versus
+//! bytes encodings) though they share AAD bytes — the same distinction the
+//! Rust types make. Booleans, floats, null, undefined, objects and
+//! passthroughs are not contexts and are refused as [`STATUS_ENCODING`].
 //!
 //! # Which Rust contexts a list spells
 //!
@@ -56,178 +53,54 @@
 //!   A flat three-element list is a different context (a three-part PAE)
 //!   that no `.with()` chain produces; `a_left_nested_list_is_the_with_chain`
 //!   pins both facts.
-//! * A one-element list is *not* the bare part: it is PAE-framed, as
-//!   `Some(x)` is on the AAD side. On the PRF side vitaminc currently tags
-//!   `Some(x)` with an `option-some` domain, so `[x]` matches a Rust
-//!   `Some(x)` for the ciphertext and the descriptor but **not** for index
-//!   terms. That is a divergence inside vitaminc between a context's two
-//!   derivations, and vitaminc#335 removes it (`Some(x)` becomes the
-//!   one-element list on both sides, and this type becomes `AadPiece`
-//!   itself). Until it ships, a Rust row that Go must query must not be
-//!   sealed under an `Option` context; `a_one_element_list_is_not_the_bare_part`
-//!   and `a_one_element_list_is_not_yet_some_on_the_prf_side` pin the
-//!   current state so the fix shows up as a test change.
+//! * `[x]` is `Some(x)` and `[]` is `None`, on both derivations. A
+//!   one-element list is *not* the bare part: it is PAE-framed, the bare
+//!   part is not; `a_one_element_list_is_some` and
+//!   `a_one_element_list_is_not_the_bare_part` pin both.
 //!
 //! # Emptiness
 //!
-//! [`parse_context`] returns a [`NonEmpty`], proven once at the boundary:
-//! an empty string or byte string is empty, an integer never is, and a list
-//! is empty when every part is (so `[]` and `[""]` are, `["", 7]` is not) —
-//! the rule vitaminc's `Option` and tuple impls follow.
+//! [`parse_context`] returns a [`NonEmpty`], proven once at the boundary by
+//! vitaminc's own rule for the tree: an empty string or byte string is
+//! empty, an integer never is, and a list is empty when every part is (so
+//! `[]` and `[""]` are, `["", 7]` is not) — the rule its `Option` and tuple
+//! impls follow.
 
 use std::borrow::Cow;
 
-use stack_encrypt::{Aad, AadPiece, IntoAad, IntoPrfContext, MaybeEmpty, NonEmpty, PrfContext};
+use stack_encrypt::{AadPiece, NonEmpty};
 use vitaminc_aead_value::FfiValue;
 use vitaminc_protected::Controlled;
 
 use crate::status::STATUS_ENCODING;
 
-/// One part of a context, or a list of parts. See the [module docs](self)
-/// for the encoding each variant carries.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ContextPart {
-    /// Text: [`AadPiece::Text`]; PRF-encoded as a `String`.
-    Text(String),
-    /// Opaque bytes: [`AadPiece::Bytes`]; PRF-encoded as a `Vec<u8>`.
-    Bytes(Vec<u8>),
-    /// [`AadPiece::I32`]; PRF-encoded as an `i32`.
-    I32(i32),
-    /// [`AadPiece::I64`]; PRF-encoded as an `i64`.
-    I64(i64),
-    /// [`AadPiece::U32`]; PRF-encoded as a `u32`.
-    U32(u32),
-    /// [`AadPiece::U64`]; PRF-encoded as a `u64`.
-    U64(u64),
-    /// [`AadPiece::List`]; PRF-encoded as the PAE of its parts.
-    List(Vec<ContextPart>),
-}
-
-impl<'a> IntoAad<'a> for ContextPart {
-    fn into_aad(self) -> Aad<'a> {
-        self.into_aad_piece().into_aad()
-    }
-
-    fn into_aad_piece(self) -> AadPiece<'a> {
-        match self {
-            ContextPart::Text(text) => AadPiece::Text(Cow::Owned(text)),
-            ContextPart::Bytes(bytes) => AadPiece::Bytes(Cow::Owned(bytes)),
-            ContextPart::I32(v) => AadPiece::I32(v),
-            ContextPart::I64(v) => AadPiece::I64(v),
-            ContextPart::U32(v) => AadPiece::U32(v),
-            ContextPart::U64(v) => AadPiece::U64(v),
-            ContextPart::List(parts) => {
-                AadPiece::List(parts.into_iter().map(IntoAad::into_aad_piece).collect())
-            }
-        }
-    }
-}
-
-impl<'a> IntoPrfContext<'a> for ContextPart {
-    fn into_prf_context(self) -> PrfContext<'a> {
-        match self {
-            ContextPart::Text(text) => text.into_prf_context(),
-            ContextPart::Bytes(bytes) => bytes.into_prf_context(),
-            ContextPart::I32(v) => v.into_prf_context(),
-            ContextPart::I64(v) => v.into_prf_context(),
-            ContextPart::U32(v) => v.into_prf_context(),
-            ContextPart::U64(v) => v.into_prf_context(),
-            ContextPart::List(parts) => {
-                pae_of(parts.into_iter().map(IntoPrfContext::into_prf_context))
-            }
-        }
-    }
-}
-
-/// Borrowed forms, so a plan's context is bound once at parse and then
-/// handed to every output of every row without cloning the tree: the
-/// leaves borrow (`Cow::Borrowed`, `&str`, `&[u8]`), and the consumers
-/// (`encrypt_with_aad`, `into_pending`, `decrypt_into`, the term
-/// derivations) take the context by value with a free lifetime and own
-/// what they keep before any await.
-impl<'a> IntoAad<'a> for &'a ContextPart {
-    fn into_aad(self) -> Aad<'a> {
-        self.into_aad_piece().into_aad()
-    }
-
-    fn into_aad_piece(self) -> AadPiece<'a> {
-        match self {
-            ContextPart::Text(text) => AadPiece::Text(Cow::Borrowed(text)),
-            ContextPart::Bytes(bytes) => AadPiece::Bytes(Cow::Borrowed(bytes)),
-            ContextPart::I32(v) => AadPiece::I32(*v),
-            ContextPart::I64(v) => AadPiece::I64(*v),
-            ContextPart::U32(v) => AadPiece::U32(*v),
-            ContextPart::U64(v) => AadPiece::U64(*v),
-            ContextPart::List(parts) => {
-                AadPiece::List(parts.iter().map(IntoAad::into_aad_piece).collect())
-            }
-        }
-    }
-}
-
-impl<'a> IntoPrfContext<'a> for &'a ContextPart {
-    fn into_prf_context(self) -> PrfContext<'a> {
-        match self {
-            ContextPart::Text(text) => text.as_str().into_prf_context(),
-            ContextPart::Bytes(bytes) => bytes.as_slice().into_prf_context(),
-            ContextPart::I32(v) => v.into_prf_context(),
-            ContextPart::I64(v) => v.into_prf_context(),
-            ContextPart::U32(v) => v.into_prf_context(),
-            ContextPart::U64(v) => v.into_prf_context(),
-            ContextPart::List(parts) => pae_of(parts.iter().map(IntoPrfContext::into_prf_context)),
-        }
-    }
-}
-
-/// The PAE of already-derived parts: what vitaminc's `(A, B)` impl does
-/// for two, for any number.
-fn pae_of<'a>(parts: impl Iterator<Item = PrfContext<'a>>) -> PrfContext<'static> {
-    let encoded: Vec<PrfContext<'a>> = parts.collect();
-    let pieces: Vec<&[u8]> = encoded.iter().map(PrfContext::as_bytes).collect();
-    PrfContext::pae(&pieces)
-}
-
-impl MaybeEmpty for ContextPart {
-    fn is_empty(&self) -> bool {
-        match self {
-            ContextPart::Text(text) => text.is_empty(),
-            ContextPart::Bytes(bytes) => bytes.is_empty(),
-            ContextPart::I32(_)
-            | ContextPart::I64(_)
-            | ContextPart::U32(_)
-            | ContextPart::U64(_) => false,
-            ContextPart::List(parts) => parts.iter().all(MaybeEmpty::is_empty),
-        }
-    }
-}
-
 /// Parse a context from its decoded [`FfiValue`] form and prove it
 /// non-empty. Anything outside the shape in the [module docs](self), and
 /// an empty context, is [`STATUS_ENCODING`].
-pub fn parse_context(value: FfiValue) -> Result<NonEmpty<ContextPart>, u32> {
-    NonEmpty::new(part_of(value)?).map_err(|_| STATUS_ENCODING)
+pub fn parse_context(value: FfiValue) -> Result<NonEmpty<AadPiece<'static>>, u32> {
+    NonEmpty::new(piece_of(value)?).map_err(|_| STATUS_ENCODING)
 }
 
-fn part_of(value: FfiValue) -> Result<ContextPart, u32> {
+fn piece_of(value: FfiValue) -> Result<AadPiece<'static>, u32> {
     Ok(match value {
         // Valid UTF-8 by `Utf8String`'s construction invariant; checked
         // rather than assumed because this is boundary code. The payload
         // moves out of its `Protected` rather than being copied: a context
         // is not secret, and the copy would only be wiped and freed.
-        FfiValue::String(s) => ContextPart::Text(
+        FfiValue::String(s) => AadPiece::Text(Cow::Owned(
             String::from_utf8(s.into_inner().risky_unwrap()).map_err(|_| STATUS_ENCODING)?,
-        ),
-        FfiValue::Bytes(bytes) => ContextPart::Bytes(bytes.risky_unwrap()),
-        FfiValue::Int32(v) => ContextPart::I32(v),
-        FfiValue::Int64(v) => ContextPart::I64(v),
-        FfiValue::UInt32(v) => ContextPart::U32(v),
-        FfiValue::UInt64(v) => ContextPart::U64(v),
+        )),
+        FfiValue::Bytes(bytes) => AadPiece::Bytes(Cow::Owned(bytes.risky_unwrap())),
+        FfiValue::Int32(v) => AadPiece::I32(v),
+        FfiValue::Int64(v) => AadPiece::I64(v),
+        FfiValue::UInt32(v) => AadPiece::U32(v),
+        FfiValue::UInt64(v) => AadPiece::U64(v),
         // Nesting depth is bounded by the codec's `MAX_DEPTH` before the
         // value reaches here.
-        FfiValue::Array(items) => ContextPart::List(
+        FfiValue::Array(items) => AadPiece::List(
             items
                 .into_iter()
-                .map(part_of)
+                .map(piece_of)
                 .collect::<Result<Vec<_>, u32>>()?,
         ),
         FfiValue::Null
@@ -240,10 +113,38 @@ fn part_of(value: FfiValue) -> Result<ContextPart, u32> {
     })
 }
 
+/// A view of a context tree that borrows its text and bytes, so a plan's
+/// context — parsed and proven once — can be handed to every output of
+/// every row without copying the payloads. Integers are copied (they are
+/// the payload); the list spine is rebuilt, which is the cost of a tree of
+/// `Cow`s rather than a tree of references.
+///
+/// `AadPiece` is `#[non_exhaustive]`, so a variant this crate does not know
+/// is cloned whole rather than refused: the view must be the same context,
+/// and a clone is.
+pub fn borrowed<'b>(piece: &'b AadPiece<'_>) -> AadPiece<'b> {
+    match piece {
+        AadPiece::Text(text) => AadPiece::Text(Cow::Borrowed(text.as_ref())),
+        AadPiece::Bytes(bytes) => AadPiece::Bytes(Cow::Borrowed(bytes.as_ref())),
+        AadPiece::U8(v) => AadPiece::U8(*v),
+        AadPiece::U16(v) => AadPiece::U16(*v),
+        AadPiece::U32(v) => AadPiece::U32(*v),
+        AadPiece::U64(v) => AadPiece::U64(*v),
+        AadPiece::U128(v) => AadPiece::U128(*v),
+        AadPiece::I8(v) => AadPiece::I8(*v),
+        AadPiece::I16(v) => AadPiece::I16(*v),
+        AadPiece::I32(v) => AadPiece::I32(*v),
+        AadPiece::I64(v) => AadPiece::I64(*v),
+        AadPiece::I128(v) => AadPiece::I128(*v),
+        AadPiece::List(parts) => AadPiece::List(parts.iter().map(borrowed).collect()),
+        other => other.clone().into_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stack_encrypt::nonempty;
+    use stack_encrypt::{nonempty, IntoAad, IntoPrfContext};
     use vitaminc_protected::Protected;
 
     fn s(value: &str) -> FfiValue {
@@ -253,7 +154,7 @@ mod tests {
     #[test]
     fn a_bare_string_is_the_flat_context() {
         let parsed = parse_context(s("users/age")).expect("flat context");
-        assert_eq!(parsed.get(), &ContextPart::Text("users/age".to_string()));
+        assert_eq!(parsed.get(), &AadPiece::Text(Cow::Borrowed("users/age")));
         assert_eq!(
             parsed.into_inner().into_aad().as_bytes(),
             "users/age".into_aad().as_bytes()
@@ -308,9 +209,9 @@ mod tests {
         );
     }
 
-    /// The borrowed impls are the owned ones without the clone.
+    /// The borrowed view is the same context as the owned tree.
     #[test]
-    fn borrowed_and_owned_forms_encode_alike() {
+    fn the_borrowed_view_encodes_as_the_owned_tree() {
         let parsed = parse_context(FfiValue::Array(vec![
             s("users/age"),
             FfiValue::Array(vec![
@@ -320,19 +221,18 @@ mod tests {
         ]))
         .expect("context");
         let owned = parsed.clone().into_inner();
-        let borrowed = NonEmpty::new(parsed.get()).expect("a non-empty context borrows non-empty");
+        let view =
+            NonEmpty::new(borrowed(parsed.get())).expect("a non-empty context borrows non-empty");
+        assert_eq!(view.get(), &owned, "the view is a different tree");
         assert_eq!(
-            borrowed.into_aad().as_bytes(),
+            view.clone().into_inner().into_aad().as_bytes(),
             owned.clone().into_aad().as_bytes(),
-            "AAD bytes differ between the borrowed and owned forms"
+            "AAD bytes differ between the borrowed view and the owned tree"
         );
         assert_eq!(
-            NonEmpty::new(parsed.get())
-                .expect("non-empty")
-                .into_prf_context()
-                .as_bytes(),
+            view.into_inner().into_prf_context().as_bytes(),
             owned.into_prf_context().as_bytes(),
-            "PRF bytes differ between the borrowed and owned forms"
+            "PRF bytes differ between the borrowed view and the owned tree"
         );
     }
 
@@ -372,12 +272,10 @@ mod tests {
         );
     }
 
-    /// The state vitaminc#335 changes: `[x]` is `Some(x)` for the AAD and
-    /// the descriptor, and not yet for index terms. When the PRF `Option`
-    /// impl follows the parts view, the `assert_ne!` here flips to
-    /// `assert_eq!` and the module docs lose their caveat.
+    /// `[x]` is `Some(x)` on the AAD, the descriptor and the PRF side
+    /// (vitaminc 0.4.0 made the `Option` PRF context follow its parts view).
     #[test]
-    fn a_one_element_list_is_not_yet_some_on_the_prf_side() {
+    fn a_one_element_list_is_some() {
         use stack_encrypt::Descriptor;
         let list = parse_context(FfiValue::Array(vec![FfiValue::UInt64(7)]))
             .expect("list")
@@ -393,10 +291,10 @@ mod tests {
             Descriptor::of(some).as_str(),
             "[x] and Some(x) render the same descriptor"
         );
-        assert_ne!(
+        assert_eq!(
             list.into_prf_context().as_bytes(),
             some.into_prf_context().as_bytes(),
-            "vitaminc#335 has landed: [x] now equals Some(x) on the PRF side too — flip this to assert_eq! and drop the module-doc caveat"
+            "[x] and Some(x) share the PRF context"
         );
     }
 
