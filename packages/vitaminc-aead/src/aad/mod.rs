@@ -194,16 +194,21 @@ impl<'a> Aad<'a> {
 /// Encoding (PAE) so structurally distinct inputs always encode to distinct
 /// byte strings.
 ///
-/// A context has two views. [`into_aad`](Self::into_aad) is the *bytes*
-/// view, what the AEAD authenticates. [`into_aad_piece`](Self::into_aad_piece)
-/// is the *parts* view, an [`AadPiece`] tree for a consumer that needs to
-/// name what those bytes were built from (a log, an audit trail, a
-/// structured binding). The parts view is a provided method, defaulting to
-/// the whole encoding as one opaque `Bytes` leaf, so every `IntoAad` type
-/// has one and a type that implements only `into_aad` keeps compiling and
-/// keeps working. Override it to expose structure. The contract for an
-/// override: `x.into_aad_piece().into_aad()` is byte-for-byte
-/// `x.into_aad()`. Every built-in upholds it, pinned by quickcheck.
+/// A context has two views. [`into_aad`](Self::into_aad) gives the bytes
+/// the AEAD authenticates. [`into_aad_piece`](Self::into_aad_piece) gives
+/// the same context as an [`AadPiece`] tree, for a consumer that needs to
+/// know what those bytes were built from (a log, an audit trail, a
+/// structured binding). `into_aad_piece` has a default that returns the
+/// whole encoding as one opaque `Bytes` leaf, so a type that implements
+/// only `into_aad` keeps compiling and working. Override it to expose
+/// structure.
+///
+/// An override must keep the two views consistent: `x.into_aad_piece().into_aad()`
+/// must be byte-for-byte `x.into_aad()`, and if the type is also a PRF
+/// context, `x.into_aad_piece().into_prf_context()` must equal
+/// `x.into_prf_context()`. In other words, the tree is the same context as
+/// the value (see [`AadPiece`]). Every built-in type follows this, checked
+/// by quickcheck.
 ///
 /// ```rust
 /// use std::borrow::Cow;
@@ -298,7 +303,7 @@ impl<'a> IntoAad<'a> for () {
     }
 
     fn into_aad_piece(self) -> AadPiece<'a> {
-        AadPiece::Bytes(Cow::Borrowed(&[]))
+        AadPiece::Unit
     }
 }
 

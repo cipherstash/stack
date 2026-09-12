@@ -241,12 +241,23 @@ assert_eq!(
 );
 ```
 
-`into_aad_piece` is a provided method on `IntoAad`, defaulting to the whole encoding as one opaque
-`Bytes` leaf, so a context type of your own keeps compiling with only `into_aad` and overrides
+`into_aad_piece` has a default on `IntoAad` that returns the whole encoding as one opaque `Bytes`
+leaf, so a context type of your own keeps compiling with only `into_aad`, and overrides
 `into_aad_piece` when it wants its parts named. A `ContextTag` hands its cipher a context whose
 `into_aad_piece()` is `List([extra_aad, tag])`, so a backend can read the parts directly, while
-`into_aad()` still writes the bytes in one allocation. `Display` is injective (Rust literal
-syntax), so two contexts that authenticate different bytes never share a log line.
+`into_aad()` still writes the bytes in one allocation. `Display` renders different trees
+differently (in Rust literal syntax), so two contexts that authenticate different bytes never share
+a log line.
+
+A parts tree is the same context as the value it came from, on both sides a context is used.
+`AadPiece` implements `IntoPrfContext` as well as `IntoAad`, and for every built-in context type
+`x.into_aad_piece().into_aad() == x.into_aad()` and
+`x.into_aad_piece().into_prf_context() == x.into_prf_context()` (checked by quickcheck). So a
+context that arrives as data, for example across an FFI boundary, needs no mirror type: a list of
+one is `Some(x)`, the empty list is `None`, a list of two is `(a, b)`,
+`nonempty!(a).with(b).with(c)` is the nested `((a, b), c)`, and `AadPiece::Unit` is `()`.
+`AadPiece` also implements `MaybeEmpty` by the same rule the static types use, so a tree can be
+wrapped in `NonEmpty`.
 
 ### Working with Protected Types
 
