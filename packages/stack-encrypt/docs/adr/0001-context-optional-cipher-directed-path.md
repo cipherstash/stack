@@ -1,9 +1,17 @@
 ---
-status: accepted
+status: superseded by ADR-0003
 date: 2026-09-03
 ---
 
 # The cipher-directed path takes any context; the target-directed path takes a `NonEmpty`
+
+Superseded on 2026-09-12 by
+[ADR-0003](0003-declarative-targets-and-ciphertext-transcoding.md). The replacement
+retains the allowance for absent context on the cipher-directed path and the
+nonempty-context requirement for EQL operations, but moves target context
+requirements into declarations executed by core code. The original rationale
+below is retained as history; ADR-0003 records the accepted design pending
+implementation.
 
 `StackCipher::encrypt` / `decrypt` / `decipher` (the cipher-directed path) accept
 any `IntoAad`, including `()`, exactly as vitaminc's `Aes256Cipher` does: sealing

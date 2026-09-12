@@ -14,8 +14,20 @@ _Avoid_: raw path, low-level path
 
 **Target-directed**:
 Encryption driven by the output type: the type being produced (a ciphertext, a
-term, a record) declares what it is derived from and which context it demands.
+term, a record) declares what it is derived from, which operations produce it,
+and which context it demands; execution belongs to the cipher.
 _Avoid_: typed path, high-level path
+
+**Operation description**:
+The target's declaration of the ciphertext and term operations, source selections,
+and context requirements needed to produce it.
+_Avoid_: user-supplied encryption callback, caller-supplied plan
+
+**Ciphertext transcoding**:
+Construction or inspection of an encrypted target through its native encrypted
+structure, preserving the distinctions between ciphertext, terms, metadata, and
+authenticated structural markers.
+_Avoid_: plaintext serialization, re-encryption
 
 **Context**:
 The value a ciphertext is authenticated under and a term is derived under. A
