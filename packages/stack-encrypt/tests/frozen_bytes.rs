@@ -2,7 +2,8 @@
 //! languages:
 //!
 //! * the [`SealedValue`] leaf layout
-//!   (`version ‖ iv ‖ tag_len ‖ tag ‖ local_ciphertext`) — the storage
+//!   (`version ‖ keyset_id ‖ iv ‖ tag_len ‖ tag ‖ local_ciphertext`) — the
+//!   storage
 //!   format a database column holds, and
 //! * the index-term encodings (equality: raw 32 bytes; match: LE `u16`
 //!   positions; ORE/OPE: raw CLLW ciphertext bytes).
@@ -50,20 +51,27 @@ fn hex(bytes: &[u8]) -> String {
 /// "ciphertext" is not a real AEAD output — encoding is structural and must
 /// not care.
 fn fixture_leaf() -> SealedValue {
+    let keyset_id = Uuid::from_bytes(*b"keyset-fixture16");
     let iv: stack_kms::Iv = *b"0123456789abcdef";
-    SealedValue::from_parts(iv, vec![0xAA, 0xBB, 0xCC], vec![0xDE, 0xAD, 0xBE, 0xEF])
-        .expect("fixture tag fits the length field")
+    SealedValue::from_parts(
+        keyset_id,
+        iv,
+        vec![0xAA, 0xBB, 0xCC],
+        vec![0xDE, 0xAD, 0xBE, 0xEF],
+    )
+    .expect("fixture tag fits the length field")
 }
 
 #[test]
 fn sealed_value_layout_is_pinned() {
     let bytes = fixture_leaf().to_bytes();
 
-    // version(01) ‖ iv(16 bytes: ASCII "0123456789abcdef") ‖
-    // tag_len(0300 — 3, u16 LE) ‖ tag(aabbcc) ‖ local_ciphertext(deadbeef)
+    // version(01) ‖ keyset_id(16 raw UUID bytes: ASCII "keyset-fixture16") ‖
+    // iv(16 bytes: ASCII "0123456789abcdef") ‖ tag_len(0300 — 3, u16 LE) ‖
+    // tag(aabbcc) ‖ local_ciphertext(deadbeef)
     assert_eq!(
         hex(&bytes),
-        "01303132333435363738396162636465660300aabbccdeadbeef"
+        "016b65797365742d666978747572653136303132333435363738396162636465660300aabbccdeadbeef"
     );
 }
 
@@ -73,12 +81,14 @@ fn sealed_value_from_bytes_inverts_to_bytes() {
     let bytes = original.to_bytes();
     let decoded = SealedValue::from_bytes(&bytes).expect("decode leaf");
 
+    assert_eq!(decoded.keyset_id(), original.keyset_id());
     assert_eq!(decoded.iv(), original.iv());
     assert_eq!(decoded.tag(), original.tag());
     assert_eq!(decoded.ciphertext(), original.ciphertext());
 
     // The std conversion is the same decoder.
     let converted = SealedValue::try_from(bytes.as_slice()).expect("TryFrom decode");
+    assert_eq!(converted.keyset_id(), original.keyset_id());
     assert_eq!(converted.ciphertext(), original.ciphertext());
 }
 
@@ -96,11 +106,11 @@ fn sealed_value_rejects_unknown_version() {
 fn sealed_value_rejects_truncation() {
     let bytes = fixture_leaf().to_bytes();
 
-    // Every prefix shorter than the tag's end is truncated: empty, mid-iv,
-    // mid-length-field, and mid-tag. (Anything at or past the tag's end
-    // parses — the local ciphertext takes the remainder, and proving *it*
-    // whole is the AEAD open's job.)
-    let tag_end = 1 + 16 + 2 + 3;
+    // Every prefix shorter than the tag's end is truncated: empty,
+    // mid-keyset-id, mid-iv, mid-length-field, and mid-tag. (Anything at or
+    // past the tag's end parses — the local ciphertext takes the remainder,
+    // and proving *it* whole is the AEAD open's job.)
+    let tag_end = 1 + 16 + 16 + 2 + 3;
     for len in 0..tag_end {
         assert!(
             matches!(
@@ -118,6 +128,7 @@ fn sealed_value_rejects_oversized_tag_on_construction() {
     // `to_bytes` is infallible because the tag can never outgrow the `u16`
     // length field: the only constructor that could admit one rejects it.
     let result = SealedValue::from_parts(
+        Uuid::nil(),
         [0; 16],
         vec![0; usize::from(u16::MAX) + 1],
         vec![0xDE, 0xAD],
@@ -132,7 +143,8 @@ fn sealed_value_rejects_oversized_tag_on_construction() {
 async fn sealed_leaf_survives_persistence_via_bytes() {
     // The format round-trips a *real* leaf: encrypt, encode, decode, decrypt.
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt("durable".to_string(), b"ctx".as_slice())
         .await
         .expect("encrypt");
@@ -148,6 +160,36 @@ async fn sealed_leaf_survives_persistence_via_bytes() {
         .await
         .expect("decoded leaf must decrypt");
     assert_eq!(pt, "durable");
+}
+
+#[tokio::test]
+async fn sealed_value_keyset_id_is_authenticated() {
+    // The keyset id is bound into the leaf's AAD: a leaf re-pointed at another
+    // keyset fails to open. (The fake source ignores keyset ids, so the key
+    // retrieve itself succeeds — the AEAD is what refuses.)
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let aad = b"ctx".as_slice();
+    let ct = keyset
+        .encrypt("durable".to_string(), aad)
+        .await
+        .expect("encrypt");
+    let leaf = match ct {
+        CipherText::Single(leaf) => leaf,
+        other => panic!("expected a Single leaf, got {other:?}"),
+    };
+    let (keyset_id, iv, tag, bytes) = leaf.into_parts();
+    let other_keyset = Uuid::from_bytes(*b"another-keyset16");
+    assert_ne!(keyset_id, other_keyset);
+    let tampered = SealedValue::from_parts(other_keyset, iv, tag, bytes).expect("rebuild leaf");
+
+    let result = cipher
+        .decrypt::<String, _>(CipherText::Single(tampered), aad)
+        .await;
+    assert!(
+        matches!(result, Err(Error::Aead)),
+        "a leaf re-pointed at another keyset must not decrypt: {result:?}"
+    );
 }
 
 /// Delegates to [`FakeDataKeySource`] but inflates every generated key tag
@@ -203,6 +245,7 @@ async fn seal_rejects_a_key_tag_the_length_field_cannot_frame() {
         .expect("build cipher");
 
     let result = cipher
+        .default_keyset()
         .encrypt("boundary".to_string(), b"ctx".as_slice())
         .await;
     assert!(
@@ -217,8 +260,9 @@ async fn seal_rejects_a_key_tag_the_length_field_cannot_frame() {
 
 #[tokio::test]
 async fn equality_term_encoding_is_the_raw_prf_bytes() {
-    let term = cipher()
-        .await
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let term = keyset
         .equality_term("alice", nonempty!("users/email"))
         .await
         .expect("equality term");
@@ -250,8 +294,9 @@ fn equality_term_try_from_rejects_wrong_length() {
 
 #[tokio::test]
 async fn match_term_bytes_are_pinned() {
-    let term = cipher()
-        .await
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let term = keyset
         .match_terms::<DefaultMatch>("alice smith", nonempty!("users/name"))
         .await
         .expect("match term");
@@ -329,8 +374,9 @@ fn match_term_from_bytes_rejects_positions_outside_the_filter() {
 #[tokio::test]
 async fn ore_term_encoding_is_the_raw_cllw_bytes() {
     let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
     let term: OreTerm<u32> = 42u32
-        .encrypt_into_with_context(&cipher, nonempty!("users/age"))
+        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
         .await
         .expect("ore term");
 
@@ -358,8 +404,9 @@ async fn ore_term_encoding_is_the_raw_cllw_bytes() {
 #[tokio::test]
 async fn ope_term_encoding_is_the_raw_cllw_bytes() {
     let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
     let term: OpeTerm<u32> = 42u32
-        .encrypt_into_with_context(&cipher, nonempty!("users/age"))
+        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
         .await
         .expect("ope term");
 
@@ -401,9 +448,10 @@ async fn variable_length_ore_and_ope_terms_decode() {
     // plaintext byte; OPE adds a leading carry byte) — their decode path is
     // the length-validating TryFrom in cllw-ore.
     let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
     let ore: OreTerm<String> = "alice"
         .to_string()
-        .encrypt_into_with_context(&cipher, nonempty!("users/name"))
+        .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await
         .expect("ore term");
     assert_eq!(ore.as_bytes().len(), 5 * 8);
@@ -418,7 +466,7 @@ async fn variable_length_ore_and_ope_terms_decode() {
 
     let ope: OpeTerm<String> = "alice"
         .to_string()
-        .encrypt_into_with_context(&cipher, nonempty!("users/name"))
+        .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await
         .expect("ope term");
     assert_eq!(ope.as_bytes().len(), 5 * 8 + 1);

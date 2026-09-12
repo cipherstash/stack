@@ -6,8 +6,8 @@ use syn::spanned::Spanned;
 use syn::{parse_quote, DeriveInput, Generics, Path, Result, Type};
 
 use crate::shape::{
-    context_param, impl_sources, push_field_bounds, trait_impl, zip_fields, CallerContext,
-    ContextImpl, Field, FieldBound, Kind, Record,
+    cipher_type, context_param, impl_sources, push_field_bounds, push_keyset_lifetime, trait_impl,
+    zip_fields, CallerContext, ContextImpl, Field, FieldBound, Kind, Record,
 };
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
@@ -39,6 +39,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                 generics.params.push(parse_quote!(__S));
             }
             generics.params.push(parse_quote!(__K));
+            push_keyset_lifetime(&mut generics);
             push_field_bounds(
                 &mut generics,
                 krate,
@@ -71,8 +72,8 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     Ok(quote!(#(#impls)* #decryptable))
 }
 
-/// `impl EncryptFrom<Source, StackCipher<__K>, Ctx> for Record` around
-/// `body`; `ctx` is `()` or `NonEmpty<__T>` ([`context_param`]). The
+/// `impl EncryptFrom<Source, KeysetCipher<'__k, __K>, Ctx> for Record`
+/// around `body`; `ctx` is `()` or `NonEmpty<__T>` ([`context_param`]). The
 /// context parameter is unnamed when no field uses it — every field of the
 /// `()` impl of a `struct` derive carries its own — so the expansion warns
 /// of nothing.
@@ -90,14 +91,15 @@ fn impl_block(
     } else {
         quote!(_)
     };
+    let cipher = cipher_type(krate, &FieldBound::Encrypt);
     trait_impl(
         input,
         generics,
-        quote!(#krate::target::EncryptFrom<#source, #krate::StackCipher<__K>, #ctx>),
+        quote!(#krate::target::EncryptFrom<#source, #cipher, #ctx>),
         quote! {
             fn encrypt_from<'__a>(
                 __source: &'__a #source,
-                __cipher: &'__a #krate::StackCipher<__K>,
+                __cipher: &'__a #cipher,
                 #context: #ctx,
             ) -> #krate::target::Pending<'__a, Self, __K>
             where
@@ -181,7 +183,7 @@ fn body(
             };
             let context_ty = field.field_context().ty(krate, which);
             let call = quote_spanned! {ty.span()=>
-                <#ty as #krate::target::EncryptFrom<#source_ty, #krate::StackCipher<__K>, #context_ty>>::encrypt_from
+                <#ty as #krate::target::EncryptFrom<#source_ty, #krate::KeysetCipher<'__k, __K>, #context_ty>>::encrypt_from
             };
             quote!(#call(#source_expr, __cipher, #context,))
         },
@@ -258,19 +260,19 @@ mod tests {
         // lifetime: nothing here extends a literal, so a borrowed context
         // passes through.
         assert_contains(&expansion, quote! {
-            impl<__S, __K> ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::StackCipher<__K>, ()>
+            impl<'__k, __S, __K> ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::KeysetCipher<'__k, __K>, ()>
                 for EncryptedAge
             where
-                StackCipherText: ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::StackCipher<__K>, ()>,
-                EqualityTerm: ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::StackCipher<__K>, ()>
+                StackCipherText: ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::KeysetCipher<'__k, __K>, ()>,
+                EqualityTerm: ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::KeysetCipher<'__k, __K>, ()>
         });
         assert_contains(&expansion, quote!(__context: (),));
         assert_contains(&expansion, quote! {
-            impl<'__ctx, __S, __K, __T> ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<__T>>
+            impl<'__ctx, '__k, __S, __K, __T> ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::KeysetCipher<'__k, __K>, ::stack_encrypt::NonEmpty<__T>>
                 for EncryptedAge
             where
-                StackCipherText: ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<__T>>,
-                EqualityTerm: ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<__T>>,
+                StackCipherText: ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::KeysetCipher<'__k, __K>, ::stack_encrypt::NonEmpty<__T>>,
+                EqualityTerm: ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::KeysetCipher<'__k, __K>, ::stack_encrypt::NonEmpty<__T>>,
                 __T: ::stack_encrypt::IntoAad<'__ctx> + ::stack_encrypt::IntoPrfContext<'__ctx> + ::core::clone::Clone
         });
         // The first field clones the caller's context, the last takes it.
@@ -292,9 +294,9 @@ mod tests {
         // Under `()`: the literal as it is, a compile-time `NonEmpty`, and
         // the (unit) context parameter unnamed.
         assert_contains(&expansion, quote! {
-            impl<__K> ::stack_encrypt::target::EncryptFrom<u32, ::stack_encrypt::StackCipher<__K>, ()> for Pinned
+            impl<'__k, __K> ::stack_encrypt::target::EncryptFrom<u32, ::stack_encrypt::KeysetCipher<'__k, __K>, ()> for Pinned
             where
-                StackCipherText: ::stack_encrypt::target::EncryptFrom<u32, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<&'static str>>
+                StackCipherText: ::stack_encrypt::target::EncryptFrom<u32, ::stack_encrypt::KeysetCipher<'__k, __K>, ::stack_encrypt::NonEmpty<&'static str>>
         });
         assert_contains(&expansion, quote!(_: (),));
         assert_contains(&expansion, quote!(__source, __cipher, ::stack_encrypt::nonempty!("legacy/age"),));
@@ -302,9 +304,9 @@ mod tests {
         // no record accepts a context and then discards it; the literal
         // fixes the pair's lifetime, so `__T` is bounded for `'static`.
         assert_contains(&expansion, quote! {
-            impl<__K, __T> ::stack_encrypt::target::EncryptFrom<u32, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<__T>> for Pinned
+            impl<'__k, __K, __T> ::stack_encrypt::target::EncryptFrom<u32, ::stack_encrypt::KeysetCipher<'__k, __K>, ::stack_encrypt::NonEmpty<__T>> for Pinned
             where
-                StackCipherText: ::stack_encrypt::target::EncryptFrom<u32, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<(&'static str, ::stack_encrypt::NonEmpty<__T>)>>,
+                StackCipherText: ::stack_encrypt::target::EncryptFrom<u32, ::stack_encrypt::KeysetCipher<'__k, __K>, ::stack_encrypt::NonEmpty<(&'static str, ::stack_encrypt::NonEmpty<__T>)>>,
                 __T: ::stack_encrypt::IntoAad<'static> + ::stack_encrypt::IntoPrfContext<'static> + ::core::clone::Clone
         });
         assert_contains(&expansion, quote! {
@@ -327,10 +329,10 @@ mod tests {
         });
         for source in [quote!(i32), quote!(i64)] {
             assert_contains(&expansion, quote! {
-                impl<__K> ::stack_encrypt::target::EncryptFrom<#source, ::stack_encrypt::StackCipher<__K>, ()> for IntegerOrdOre
+                impl<'__k, __K> ::stack_encrypt::target::EncryptFrom<#source, ::stack_encrypt::KeysetCipher<'__k, __K>, ()> for IntegerOrdOre
             });
             assert_contains(&expansion, quote! {
-                impl<'__ctx, __K, __T> ::stack_encrypt::target::EncryptFrom<#source, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<__T>> for IntegerOrdOre
+                impl<'__ctx, '__k, __K, __T> ::stack_encrypt::target::EncryptFrom<#source, ::stack_encrypt::KeysetCipher<'__k, __K>, ::stack_encrypt::NonEmpty<__T>> for IntegerOrdOre
             });
         }
         assert_contains(&expansion, quote!(Self { c: __field_0, v: SchemaVersion::V3 }));
@@ -352,11 +354,11 @@ mod tests {
         // where clause: the plaintext field's type is unknown here, so the
         // obligation is checked in the body instead.
         assert_contains(&expansion, quote! {
-            impl<__K> ::stack_encrypt::target::EncryptFrom<User, ::stack_encrypt::StackCipher<__K>, ()> for EncryptedUser
+            impl<'__k, __K> ::stack_encrypt::target::EncryptFrom<User, ::stack_encrypt::KeysetCipher<'__k, __K>, ()> for EncryptedUser
         });
         assert_contains(&expansion, quote!(_: (),));
         assert_contains(&expansion, quote! {
-            <EncryptedAge as ::stack_encrypt::target::EncryptFrom<_, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<&'static str>>>::encrypt_from(
+            <EncryptedAge as ::stack_encrypt::target::EncryptFrom<_, ::stack_encrypt::KeysetCipher<'__k, __K>, ::stack_encrypt::NonEmpty<&'static str>>>::encrypt_from(
                 &__source.age, __cipher, ::stack_encrypt::nonempty!("user/age"),
             )
         });
@@ -365,7 +367,7 @@ mod tests {
         // all but the last — and `__T` bounded for `'static`, the lifetime
         // the literal fixes.
         assert_contains(&expansion, quote! {
-            impl<__K, __T> ::stack_encrypt::target::EncryptFrom<User, ::stack_encrypt::StackCipher<__K>, ::stack_encrypt::NonEmpty<__T>> for EncryptedUser
+            impl<'__k, __K, __T> ::stack_encrypt::target::EncryptFrom<User, ::stack_encrypt::KeysetCipher<'__k, __K>, ::stack_encrypt::NonEmpty<__T>> for EncryptedUser
             where
                 __T: ::stack_encrypt::IntoAad<'static> + ::stack_encrypt::IntoPrfContext<'static> + ::core::clone::Clone
         });

@@ -32,8 +32,9 @@
 //!     .kms(FakeDataKeySource::new())
 //!     .init()
 //!     .await?;
+//! let keyset = cipher.default_keyset();
 //! let record: EncryptedAge = 42u32
-//!     .encrypt_into_with_context(&cipher, nonempty!("users/age"))
+//!     .encrypt_into_with_context(&keyset, nonempty!("users/age"))
 //!     .await?;
 //! let age: u32 = record.decrypt_into(&cipher, nonempty!("users/age")).await?;
 //! assert_eq!(age, 42);
@@ -47,7 +48,10 @@
 //! it, so a term built at a query site under `"users/age"` matches the one
 //! stored in the record. The field pendings are combined without being
 //! awaited, so however many fields a record has, awaiting it is **one**
-//! batched ZeroKMS call.
+//! batched ZeroKMS call. Encrypting binds to a keyset — the `KeysetCipher`
+//! every data key is minted and every term derived under — while decrypting
+//! takes the client-scoped `StackCipher` (a sealed leaf names its own keyset)
+//! or the `KeysetCipher`, which then refuses leaves from any other keyset.
 //!
 //! The record takes the caller's context because its fields do: the derive
 //! emits one impl for `()` and one for `NonEmpty<T>`, each bounded by what
@@ -100,10 +104,11 @@
 //!
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 //! # let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! # let keyset = cipher.default_keyset();
 //! let user = User { age: 42, email: "alice@example.com".into() };
-//! let encrypted: EncryptedUser = user.encrypt_into(&cipher).await?; // one batch
+//! let encrypted: EncryptedUser = user.encrypt_into(&keyset).await?; // one batch
 //! let users = vec![User { age: 1, email: "a".into() }, User { age: 2, email: "b".into() }];
-//! let column: Vec<EncryptedUser> = users.encrypt_into(&cipher).await?; // still one
+//! let column: Vec<EncryptedUser> = users.encrypt_into(&keyset).await?; // still one
 //! let user = User::decrypt_from(encrypted, &cipher).await?;
 //! assert_eq!(user, User { age: 42, email: "alice@example.com".into() });
 //! assert_eq!(column.len(), 2);
@@ -112,9 +117,9 @@
 //! // under `("users/age", 7u64)` — bound to its record as well as its name
 //! // — and a probe for it is built under the same pair.
 //! let user = User { age: 42, email: "alice@example.com".into() };
-//! let encrypted: EncryptedUser = user.encrypt_into_with_context(&cipher, 7u64).await?;
+//! let encrypted: EncryptedUser = user.encrypt_into_with_context(&keyset, 7u64).await?;
 //! let probe: EqualityTerm = 42u32
-//!     .encrypt_into_with_context(&cipher, nonempty!("users/age").with(7u64))
+//!     .encrypt_into_with_context(&keyset, nonempty!("users/age").with(7u64))
 //!     .await?;
 //! assert_eq!(encrypted.age.hm, probe);
 //! let user = User::decrypt_from_with_context(encrypted, &cipher, 7u64).await?;
@@ -156,11 +161,13 @@
 //!
 //! # What the derive commits to
 //!
-//! The impls are over `StackCipher<K>` for any `K`, returning its `Pending`.
-//! That is the only cipher today, and the only one whose output can be
-//! combined without awaiting; a derive generic over any `EncryptTarget` needs
-//! combinators on that trait and can replace this one without changing the
-//! attribute surface.
+//! The `EncryptFrom` impls are over `KeysetCipher<'k, K>` and the
+//! `DecryptInto` impls over `StackCipher<K>` (reaching a `KeysetCipher`
+//! through stack-encrypt's blanket impls), for any `K`, each returning its
+//! `Pending`. Those are the only ciphers today, and the only ones whose
+//! output can be combined without awaiting; a derive generic over any
+//! `EncryptTarget` needs combinators on that trait and can replace this one
+//! without changing the attribute surface.
 //!
 //! Field-by-field decryption rebuilds the plaintext with a struct literal, so
 //! every field of the plaintext must be recovered by exactly one ciphertext

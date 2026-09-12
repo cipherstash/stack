@@ -72,7 +72,7 @@ which a nested `struct` derive (carrying its own contexts) composes with
 them and a leaf accepts only as a `NonEmpty<T>`.
 
 A context passed by the caller extends every field's: under
-`user.encrypt_into_with_context(&cipher, 7u64)` the `age` field is derived
+`user.encrypt_into_with_context(&keyset, 7u64)` the `age` field is derived
 under `("users/age", 7u64)`, and a query site probes it under
 `nonempty!("users/age").with(7u64)`. This is how a field is bound to its
 record as well as its name — a record id, say — without the type having to

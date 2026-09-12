@@ -7,13 +7,15 @@
 //! record shape in charge:
 //!
 //! ```text
-//! let term: EqualityTerm = value.encrypt_into_with_context(&cipher, nonempty!("users/email")).await?;
-//! let row: EncryptedUser = user.encrypt_into(&cipher).await?;
-//! let row: EncryptedUser = user.encrypt_into_with_context(&cipher, user_id).await?;
+//! let term: EqualityTerm = value.encrypt_into_with_context(&keyset, nonempty!("users/email")).await?;
+//! let row: EncryptedUser = user.encrypt_into(&keyset).await?;
+//! let row: EncryptedUser = user.encrypt_into_with_context(&keyset, user_id).await?;
 //! ```
 //!
 //! compiles only when the output type declares itself an encrypted form of
-//! the value's type, producible by that cipher, under that context — and a
+//! the value's type, producible by that cipher (a [`KeysetCipher`]: every
+//! data key is minted, and every term derived, under one keyset), under that
+//! context — and a
 //! context is something the output type may already have. A leaf has
 //! nothing of its own to authenticate under and takes the caller's, proven
 //! non-empty before it arrives ([`NonEmpty`]). A struct encrypted field by
@@ -54,8 +56,11 @@
 //!   `encrypt_with_aad`. Never implemented by hand.
 //! * [`EncryptTarget`] / [`DecryptTarget`] — implemented by ciphers; their
 //!   `Output` type decides what a call site gets back. A synchronous cipher
-//!   returns `Result<T, E>` directly; [`StackCipher`] returns a [`Pending`],
-//!   which does its ZeroKMS I/O — **one batched call** — when awaited.
+//!   returns `Result<T, E>` directly; [`KeysetCipher`] (the encrypt target)
+//!   and [`StackCipher`] (the decrypt target — a sealed leaf names its own
+//!   keyset, so opening is not keyset-scoped; a `KeysetCipher` decrypts too,
+//!   refusing leaves from any other keyset) return a [`Pending`], which does
+//!   its ZeroKMS I/O — **one batched call** — when awaited.
 //!
 //! # Contexts
 //!
@@ -131,14 +136,15 @@
 //!
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 //! # let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! # let keyset = cipher.default_keyset();
 //! // Sealed under "legacy/age".
-//! let p: Pinned = 42u32.encrypt_into(&cipher).await?;
+//! let p: Pinned = 42u32.encrypt_into(&keyset).await?;
 //! assert_eq!(p.decrypt_into(&cipher, ()).await?, 42);
 //!
 //! // Sealed under ("legacy/age", tenant): opens there, and nowhere else.
 //! let tenant = 7u64;
-//! let p: Pinned = 42u32.encrypt_into_with_context(&cipher, tenant).await?;
-//! let p2: Pinned = 42u32.encrypt_into_with_context(&cipher, tenant).await?;
+//! let p: Pinned = 42u32.encrypt_into_with_context(&keyset, tenant).await?;
+//! let p2: Pinned = 42u32.encrypt_into_with_context(&keyset, tenant).await?;
 //! assert_eq!(p.decrypt_into(&cipher, NonEmpty::from(tenant)).await?, 42);
 //! // The fake key source ignores descriptors, so the AEAD is what refuses
 //! // here; ZeroKMS refuses the key retrieval itself first (`Error::Kms`).
@@ -165,7 +171,8 @@
 //!
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 //! # let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
-//! let f: Foo = 42u32.encrypt_into_with_context(&cipher, nonempty!("users/age")).await?;
+//! # let keyset = cipher.default_keyset();
+//! let f: Foo = 42u32.encrypt_into_with_context(&keyset, nonempty!("users/age")).await?;
 //! assert_eq!(f.decrypt_into(&cipher, nonempty!("users/age")).await?, 42);
 //! # Ok::<(), stack_encrypt::Error>(())
 //! # }).unwrap();
@@ -174,15 +181,15 @@
 //! ```compile_fail,E0277
 //! # use stack_encrypt::sem::EqualityTerm;
 //! # use stack_encrypt::target::EncryptInto;
-//! # use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
+//! # use stack_encrypt::{DecryptInto, EncryptFrom, KeysetCipher, StackCipherText};
 //! # use stack_kms::FakeDataKeySource;
 //! # #[derive(EncryptFrom, DecryptInto)]
 //! # #[stash(plaintext = u32)]
 //! # struct Foo { c: StackCipherText, hm: EqualityTerm }
-//! async fn encrypt(cipher: &StackCipher<FakeDataKeySource>) {
+//! async fn encrypt(keyset: &KeysetCipher<'_, FakeDataKeySource>) {
 //!     // "`StackCipherText` is not an encrypted form of `u32` under a `()`
 //!     // context": the leaf that needs a context is named.
-//!     let _: Foo = 42u32.encrypt_into(cipher).await.unwrap();
+//!     let _: Foo = 42u32.encrypt_into(keyset).await.unwrap();
 //! }
 //! ```
 //!
@@ -212,12 +219,13 @@
 //!     .init()
 //!     .await
 //!     .unwrap();
+//! let keyset = cipher.default_keyset();
 //!
 //! let ages: Vec<u32> = vec![29, 34, 41];
 //!
 //! // A column of independently sealed ciphertexts: ONE generate_keys call.
 //! let sealed: Vec<StackCipherText> = ages
-//!     .encrypt_into_with_context(&cipher, nonempty!("users/age"))
+//!     .encrypt_into_with_context(&keyset, nonempty!("users/age"))
 //!     .await?;
 //!
 //! // And back: ONE retrieve_keys call for the whole column.
@@ -240,21 +248,22 @@
 //! # Extending with your own SEM type
 //!
 //! The set of term types is open. Any crate can define one: implement
-//! [`EncryptFrom`] for it against [`StackCipher`], build the result with
+//! [`EncryptFrom`] for it against [`KeysetCipher`], build the result with
 //! [`Pending::ready`] (local derivation) or [`Pending::request`] (derivation
 //! needing ZeroKMS responses). Every built-in term type is implemented with
 //! **exactly** this recipe — they use no privileged access — so [`sem`]
 //! doubles as worked examples.
 //!
 //! The one thing every searchable-encryption scheme needs is a keyed,
-//! deterministic derivation — the cipher's PRF. Under the local HMAC backend
-//! the PRF completes synchronously (`into_result`), so the pending carries no
+//! deterministic derivation — the keyset's PRF ([`KeysetCipher::prf`], keyed
+//! by that keyset's index key). Under the local HMAC backend the PRF
+//! completes synchronously (`into_result`), so the pending carries no
 //! requests; a future 2-party ZeroKMS PRF backend moves the same visitor
 //! behind a PRF request instead, joining the record's one batched call.
 //!
 //! ```
-//! use stack_encrypt::target::{DecryptField, DecryptTarget, Decryptable, EncryptFrom, Pending};
-//! use stack_encrypt::{Error, IntoPrfContext, NonEmpty, StackCipher};
+//! use stack_encrypt::target::{DecryptField, Decryptable, EncryptFrom, Pending};
+//! use stack_encrypt::{Error, IntoPrfContext, KeysetCipher, NonEmpty, StackCipher};
 //! use vitaminc_prf::{PrfContext, PrfValue, PrfVisitor, PrfVisitorError};
 //!
 //! /// A third-party term type: one PRF block under its own domain.
@@ -274,15 +283,16 @@
 //! // exists only for a `NonEmpty<T>`, so `()` — and any unproven value — is
 //! // a compile error (nothing above a leaf checks, since a column of rows
 //! // has no context of its own). The lifetime is the context's own, as in
-//! // the `IntoPrfContext<'c>` it implements.
-//! impl<'c, S, K, T> EncryptFrom<S, StackCipher<K>, NonEmpty<T>> for MyTerm
+//! // the `IntoPrfContext<'c>` it implements; `'k` is the keyset handle's
+//! // borrow of its `StackCipher`.
+//! impl<'c, 'k, S, K, T> EncryptFrom<S, KeysetCipher<'k, K>, NonEmpty<T>> for MyTerm
 //! where
 //!     S: PrfValue + Clone,
 //!     T: IntoPrfContext<'c>,
 //! {
 //!     fn encrypt_from<'a>(
 //!         source: &'a S,
-//!         cipher: &'a StackCipher<K>,
+//!         cipher: &'a KeysetCipher<'k, K>,
 //!         context: NonEmpty<T>,
 //!     ) -> Pending<'a, Self, K>
 //!     where
@@ -303,13 +313,15 @@
 //! }
 //!
 //! // A term is one-way. Saying so is what lets `#[derive(DecryptInto)]`
-//! // pass over a `MyTerm` field and open the ciphertext beside it.
+//! // pass over a `MyTerm` field and open the ciphertext beside it. The
+//! // decrypt side is over `StackCipher` — the `KeysetCipher` form is the
+//! // blanket impl in `target`, as for every `DecryptInto` / `DecryptField`.
 //! impl Decryptable for MyTerm {
 //!     const DECRYPTABLE: bool = false;
 //! }
 //!
-//! impl<P, C: DecryptTarget, Ctx> DecryptField<P, C, Ctx> for MyTerm {
-//!     fn decrypt_field<'a>(self, _: &'a C, _: Ctx) -> Option<C::Output<'a, P>>
+//! impl<P, K, Ctx> DecryptField<P, StackCipher<K>, Ctx> for MyTerm {
+//!     fn decrypt_field<'a>(self, _: &'a StackCipher<K>, _: Ctx) -> Option<Pending<'a, P, K>>
 //!     where
 //!         Self: 'a,
 //!         P: 'a,
@@ -319,15 +331,15 @@
 //! }
 //! ```
 //!
-//! A third-party *ciphertext* type implements `DecryptInto` as well, sets
-//! `DECRYPTABLE` to `true`, and has `decrypt_field` return
-//! `Some(self.decrypt_into(cipher, context))`.
+//! A third-party *ciphertext* type implements `DecryptInto` as well — over
+//! `StackCipher<K>`, like `DecryptField` — sets `DECRYPTABLE` to `true`, and
+//! has `decrypt_field` return `Some(self.decrypt_into(cipher, context))`.
 //!
 //! A scheme needing state the cipher does not carry defines its own
-//! capability trait and implements it for [`StackCipher`] (a local trait on a
-//! foreign type is orphan-rule-legal) using its public accessors
-//! ([`keyset_id`](StackCipher::keyset_id), [`prf`](StackCipher::prf),
-//! [`kms`](StackCipher::kms)).
+//! capability trait and implements it for [`KeysetCipher`] (a local trait on
+//! a foreign type is orphan-rule-legal) using its public accessors
+//! ([`keyset_id`](KeysetCipher::keyset_id), [`prf`](KeysetCipher::prf),
+//! [`kms`](KeysetCipher::kms)).
 //!
 //! **Not yet here:** the `ore_rs` *block* ORE scheme (`OreBlock256`) that EQL
 //! and `cipherstash-client` use. The ORE/OPE terms in [`sem`] are CLLW, a
@@ -384,14 +396,15 @@
 //!     .init()
 //!     .await
 //!     .unwrap();
+//! let keyset = cipher.default_keyset();
 //!
 //! let user = User { age: 42, email: "alice@example.com".into() };
 //! // Every field names its own context, so nothing is needed from the
 //! // caller: the context-free forms are the whole call.
-//! let row: EncryptedUser = user.encrypt_into(&cipher).await?;
+//! let row: EncryptedUser = user.encrypt_into(&keyset).await?;
 //! // A query site derives the same term under the column's context.
 //! let probe: EqualityTerm = 42u32
-//!     .encrypt_into_with_context(&cipher, nonempty!("users/age"))
+//!     .encrypt_into_with_context(&keyset, nonempty!("users/age"))
 //!     .await?;
 //! assert_eq!(row.age.hm, probe);
 //! let recovered = User::decrypt_from(row, &cipher).await?;
@@ -399,9 +412,9 @@
 //!
 //! // Or the caller extends every field's context with the record's id: the
 //! // same field is now under `("users/age", 7u64)`, and opens only there.
-//! let row: EncryptedUser = user.encrypt_into_with_context(&cipher, 7u64).await?;
+//! let row: EncryptedUser = user.encrypt_into_with_context(&keyset, 7u64).await?;
 //! let probe: EqualityTerm = 42u32
-//!     .encrypt_into_with_context(&cipher, nonempty!("users/age").with(7u64))
+//!     .encrypt_into_with_context(&keyset, nonempty!("users/age").with(7u64))
 //!     .await?;
 //! assert_eq!(row.age.hm, probe);
 //! let recovered = User::decrypt_from_with_context(row, &cipher, 7u64).await?;
@@ -433,12 +446,12 @@ use vitaminc_aead::{CipherText, Decrypt, Encrypt, IntoAad};
 use vitaminc_protected::NonEmpty;
 
 use crate::cipher::{bind_keys, PendingStackCipherText, StackDecipher};
-use crate::{Descriptor, Error, StackCipher, StackCipherText};
+use crate::{Descriptor, Error, KeysetCipher, StackCipher, StackCipherText};
 
 mod pending;
 mod request;
 
-pub use pending::{Pending, PendingFuture};
+pub use pending::{CipherScope, Pending, PendingFuture};
 pub use request::{Request, Responses};
 pub use stack_encrypt_derive::{DecryptInto, EncryptFrom};
 
@@ -449,7 +462,7 @@ pub use stack_encrypt_derive::{DecryptInto, EncryptFrom};
 /// Implemented by ciphers: decides what an [`EncryptFrom`] implementation
 /// hands back. A cipher that does no I/O sets
 /// `Output<'a, T> = Result<T, Self::Error>` — no future, no `.await`.
-/// [`StackCipher`] sets `Output<'a, T> = Pending<'a, T, K>`, a request
+/// [`KeysetCipher`] sets `Output<'a, T> = Pending<'a, T, K>`, a request
 /// carrier that talks to ZeroKMS when awaited.
 ///
 /// This mirrors `Cipher::Ok` and `Prf::Ok<T>`: the async shape belongs to the
@@ -477,7 +490,10 @@ pub trait DecryptTarget {
         T: 'a;
 }
 
-impl<K> EncryptTarget for StackCipher<K> {
+/// Encrypting binds to a keyset: data keys are minted under one, and index
+/// terms are derived under one's index key. So the encrypt target is the
+/// [`KeysetCipher`], not the client-scoped [`StackCipher`].
+impl<K> EncryptTarget for KeysetCipher<'_, K> {
     type Error = Error;
     type Output<'a, T>
         = Pending<'a, T, K>
@@ -486,6 +502,9 @@ impl<K> EncryptTarget for StackCipher<K> {
         T: 'a;
 }
 
+/// Decrypting is not keyset-scoped — a sealed leaf carries the id of the
+/// keyset it was sealed under — so the client-scoped [`StackCipher`] is a
+/// decrypt target, opening leaves from any keyset in one batch.
 impl<K> DecryptTarget for StackCipher<K> {
     type Error = Error;
     type Output<'a, T>
@@ -493,6 +512,56 @@ impl<K> DecryptTarget for StackCipher<K> {
     where
         Self: 'a,
         T: 'a;
+}
+
+/// A [`KeysetCipher`] decrypts too, constrained: every [`DecryptInto`] and
+/// [`DecryptField`] implementation over [`StackCipher`] applies through it
+/// (the blanket impls below), and a leaf from any other keyset is
+/// [`Error::ForeignKeyset`] before any key is retrieved.
+impl<K> DecryptTarget for KeysetCipher<'_, K> {
+    type Error = Error;
+    type Output<'a, T>
+        = Pending<'a, T, K>
+    where
+        Self: 'a,
+        T: 'a;
+}
+
+/// The constrained form of every decrypt: whatever opens through the
+/// [`StackCipher`] opens through a [`KeysetCipher`] scoped to the leaves'
+/// keyset, and refuses leaves from any other. Implement `DecryptInto` over
+/// `StackCipher<K>`; this impl supplies the `KeysetCipher` form.
+impl<'k, P, K, Ctx, X> DecryptInto<P, KeysetCipher<'k, K>, Ctx> for X
+where
+    X: DecryptInto<P, StackCipher<K>, Ctx>,
+{
+    fn decrypt_into<'a>(self, cipher: &'a KeysetCipher<'k, K>, context: Ctx) -> Pending<'a, P, K>
+    where
+        Self: 'a,
+        P: 'a,
+    {
+        let inner: &'a StackCipher<K> = cipher.cipher();
+        X::decrypt_into(self, inner, context).scoped_to(cipher.keyset_id())
+    }
+}
+
+/// See the [`DecryptInto`] blanket above.
+impl<'k, P, K, Ctx, X> DecryptField<P, KeysetCipher<'k, K>, Ctx> for X
+where
+    X: DecryptField<P, StackCipher<K>, Ctx>,
+{
+    fn decrypt_field<'a>(
+        self,
+        cipher: &'a KeysetCipher<'k, K>,
+        context: Ctx,
+    ) -> Option<Pending<'a, P, K>>
+    where
+        Self: 'a,
+        P: 'a,
+    {
+        let inner: &'a StackCipher<K> = cipher.cipher();
+        X::decrypt_field(self, inner, context).map(|pending| pending.scoped_to(cipher.keyset_id()))
+    }
 }
 
 // =============================================================================
@@ -662,15 +731,16 @@ pub trait DecryptInto<P, C: DecryptTarget, Ctx>: Sized {
 ///     .init()
 ///     .await
 ///     .unwrap();
+/// let keyset = cipher.default_keyset();
 ///
 /// // A literal, checked at compile time.
 /// let term: EqualityTerm = "alice"
-///     .encrypt_into_with_context(&cipher, nonempty!("users/email"))
+///     .encrypt_into_with_context(&keyset, nonempty!("users/email"))
 ///     .await?;
 /// // A runtime value, checked once where it is built.
 /// let column = String::from("users/email");
 /// let same: EqualityTerm = "alice"
-///     .encrypt_into_with_context(&cipher, NonEmpty::new(column)?)
+///     .encrypt_into_with_context(&keyset, NonEmpty::new(column)?)
 ///     .await?;
 /// assert_eq!(term, same);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -885,12 +955,15 @@ impl Decryptable for StackCipherText {
     const DECRYPTABLE: bool = true;
 }
 
-impl<P, C, Ctx> DecryptField<P, C, Ctx> for StackCipherText
+impl<P, K, Ctx> DecryptField<P, StackCipher<K>, Ctx> for StackCipherText
 where
-    C: DecryptTarget,
-    Self: DecryptInto<P, C, Ctx>,
+    Self: DecryptInto<P, StackCipher<K>, Ctx>,
 {
-    fn decrypt_field<'a>(self, cipher: &'a C, context: Ctx) -> Option<C::Output<'a, P>>
+    fn decrypt_field<'a>(
+        self,
+        cipher: &'a StackCipher<K>,
+        context: Ctx,
+    ) -> Option<Pending<'a, P, K>>
     where
         Self: 'a,
         P: 'a,
@@ -973,10 +1046,10 @@ where
 // Leaf implementations: the record ciphertext
 // =============================================================================
 
-/// The record ciphertext: any vitaminc [`Encrypt`] value, sealed by the
-/// [`StackCipher`] under per-leaf ZeroKMS data keys. The context becomes the
-/// AEAD associated data, binding the ciphertext to the field it was encrypted
-/// for.
+/// The record ciphertext: any vitaminc [`Encrypt`] value, sealed by a
+/// [`KeysetCipher`] under per-leaf ZeroKMS data keys minted under its
+/// keyset. The context becomes the AEAD associated data, binding the
+/// ciphertext to the field it was encrypted for.
 ///
 /// The build is synchronous: the value's `Encrypt` impl drives the cipher to
 /// a pending tree (no I/O), and the returned [`Pending`] carries one
@@ -988,14 +1061,14 @@ where
 /// would leave the leaf AAD carrying only the key tag, making ciphertexts
 /// transplantable between empty-context fields — see the
 /// [module docs](self#contexts).)
-impl<'c, S, K, T> EncryptFrom<S, StackCipher<K>, NonEmpty<T>> for StackCipherText
+impl<'c, 'k, S, K, T> EncryptFrom<S, KeysetCipher<'k, K>, NonEmpty<T>> for StackCipherText
 where
     S: Encrypt + Clone,
     T: IntoAad<'c>,
 {
     fn encrypt_from<'a>(
         source: &'a S,
-        cipher: &'a StackCipher<K>,
+        cipher: &'a KeysetCipher<'k, K>,
         context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
     where
@@ -1018,10 +1091,10 @@ where
 /// Both ways of encrypting go through here — the target-directed
 /// `encrypt_into_with_context` into a [`StackCipherText`] above and the
 /// cipher-directed
-/// [`PendingStackCipherText::seal`] behind [`StackCipher::encrypt`] — so
+/// [`PendingStackCipherText::seal`] behind [`KeysetCipher::encrypt`] — so
 /// there is one definition of how a tree is sealed and one path to ZeroKMS.
 pub(crate) fn seal_pending<'a, K>(
-    cipher: &'a StackCipher<K>,
+    cipher: &'a KeysetCipher<'_, K>,
     tree: PendingStackCipherText,
     descriptor: Descriptor,
 ) -> Pending<'a, StackCipherText, K> {
@@ -1031,12 +1104,13 @@ pub(crate) fn seal_pending<'a, K>(
     if let Err(e) = descriptor.check() {
         return Pending::ready(cipher, Err(e));
     }
+    let keyset_id = cipher.keyset_id();
     let requests = std::iter::repeat_with(|| Request::generate_data_key(descriptor.clone()))
         .take(tree.key_count())
         .collect();
     Pending::request(cipher, requests, move |responses| {
         let mut keys = responses.drain_generated();
-        tree.seal_with(&mut keys).map_err(Error::from)
+        tree.seal_with(keyset_id, &mut keys).map_err(Error::from)
     })
 }
 
@@ -1049,16 +1123,16 @@ pub(crate) fn seal_pending<'a, K>(
 /// [`decipher_from_responses`] — but runs the value's `Decrypt` impl in the
 /// same fulfilment rather than composing a second pending over this one.
 pub(crate) fn decipher_pending<'a, K>(
-    cipher: &'a StackCipher<K>,
+    scope: impl CipherScope<'a, K>,
     ciphertext: StackCipherText,
     descriptor: Descriptor,
 ) -> Pending<'a, StackDecipher, K> {
     // Fast path, as in `seal_pending`; `dispatch` is the gate.
     if let Err(e) = descriptor.check() {
-        return Pending::ready(cipher, Err(e));
+        return Pending::ready(scope, Err(e));
     }
     let requests = retrieve_requests(&ciphertext, &descriptor);
-    Pending::request(cipher, requests, move |responses| {
+    Pending::request(scope, requests, move |responses| {
         decipher_from_responses(ciphertext, responses)
     })
 }
@@ -1139,6 +1213,7 @@ fn collect_retrieve_requests(
                 *leaf.iv(),
                 leaf.tag().to_vec(),
                 descriptor.clone(),
+                leaf.keyset_id(),
             ));
         }
         CipherText::Sequence(items) => {
@@ -1171,16 +1246,16 @@ fn collect_retrieve_requests(
 /// because they do. Neither is decided here. What *is* decided here is
 /// that an over-long context is refused once, before the column is walked
 /// ([`ElementContext`]), not once per element.
-impl<S, T, K, Ctx> EncryptFrom<Vec<S>, StackCipher<K>, Ctx> for Vec<T>
+impl<'k, S, T, K, Ctx> EncryptFrom<Vec<S>, KeysetCipher<'k, K>, Ctx> for Vec<T>
 where
-    T: EncryptFrom<S, StackCipher<K>, Ctx>,
+    T: EncryptFrom<S, KeysetCipher<'k, K>, Ctx>,
     Ctx: ElementContext,
 {
     const KEYED: bool = T::KEYED;
 
     fn encrypt_from<'a>(
         source: &'a Vec<S>,
-        cipher: &'a StackCipher<K>,
+        cipher: &'a KeysetCipher<'k, K>,
         context: Ctx,
     ) -> Pending<'a, Self, K>
     where
@@ -1278,15 +1353,15 @@ where
 /// absent *record field*, carrying no requests). This is distinct from
 /// `Option<S> → StackCipherText` via [`Encrypt`], which produces an
 /// *authenticated* absence marker inside one ciphertext.
-impl<S, T, K, Ctx> EncryptFrom<Option<S>, StackCipher<K>, Ctx> for Option<T>
+impl<'k, S, T, K, Ctx> EncryptFrom<Option<S>, KeysetCipher<'k, K>, Ctx> for Option<T>
 where
-    T: EncryptFrom<S, StackCipher<K>, Ctx> + MaybeSend,
+    T: EncryptFrom<S, KeysetCipher<'k, K>, Ctx> + MaybeSend,
 {
     const KEYED: bool = T::KEYED;
 
     fn encrypt_from<'a>(
         source: &'a Option<S>,
-        cipher: &'a StackCipher<K>,
+        cipher: &'a KeysetCipher<'k, K>,
         context: Ctx,
     ) -> Pending<'a, Self, K>
     where

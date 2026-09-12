@@ -3,10 +3,12 @@
 //! `tests/ui/bare_context.rs` pin the lines that must not.
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{DecryptFrom, EncryptInto};
-use stack_encrypt::{nonempty, DecryptInto, EncryptFrom, NonEmpty, StackCipher, StackCipherText};
+use stack_encrypt::{nonempty, DecryptInto, EncryptFrom, KeysetCipher, NonEmpty, StackCipherText};
 use stack_kms::FakeDataKeySource;
 
-type Cipher = StackCipher<FakeDataKeySource>;
+/// Encrypting binds to a keyset; decrypting works through the same handle
+/// (constrained to that keyset) as well as through the `StackCipher`.
+type Cipher<'k> = KeysetCipher<'k, FakeDataKeySource>;
 
 /// A record whose one field pins a literal context: needs nothing from the
 /// caller, and takes a context that then *extends* the literal.
@@ -17,7 +19,7 @@ struct Pinned {
     c: StackCipherText,
 }
 
-async fn pinned(cipher: &Cipher, tenant_id: u64) -> Result<(), stack_encrypt::Error> {
+async fn pinned(cipher: &Cipher<'_>, tenant_id: u64) -> Result<(), stack_encrypt::Error> {
     // Sealed under "legacy/age".
     let p: Pinned = 42u32.encrypt_into(cipher).await?;
     let _: u32 = p.decrypt_into(cipher, ()).await?;
@@ -36,7 +38,7 @@ struct Foo {
     hm: EqualityTerm,
 }
 
-async fn foo(cipher: &Cipher, column: String) -> Result<(), stack_encrypt::Error> {
+async fn foo(cipher: &Cipher<'_>, column: String) -> Result<(), stack_encrypt::Error> {
     // A literal, a runtime value, a bare integer.
     let f: Foo = 42u32.encrypt_into_with_context(cipher, nonempty!("users/age")).await?;
     let _: u32 = f.decrypt_into(cipher, nonempty!("users/age")).await?;
@@ -65,7 +67,7 @@ struct EncryptedUser {
     email: StackCipherText,
 }
 
-async fn user(cipher: &Cipher, user: User, id: u64) -> Result<(), stack_encrypt::Error> {
+async fn user(cipher: &Cipher<'_>, user: User, id: u64) -> Result<(), stack_encrypt::Error> {
     // "users/age", "users/email".
     let r: EncryptedUser = user.encrypt_into(cipher).await?;
     let user = User::decrypt_from(r, cipher).await?;

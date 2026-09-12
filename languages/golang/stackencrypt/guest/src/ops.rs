@@ -1,4 +1,4 @@
-//! The guest's operations, written against `StackCipher<K>` for any
+//! The guest's operations, written against `StackCipher<K>` / `KeysetCipher<K>` for any
 //! [`DataKeySource`] so they compile — and their tests run — on the native
 //! host target with `FakeDataKeySource`. The wasm32-only [`crate::abi`]
 //! module wires them to the session table and the packed ABI; nothing in
@@ -37,8 +37,8 @@
 use stack_encrypt::sem::{CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch};
 use stack_encrypt::target::Pending;
 use stack_encrypt::{
-    AadPiece, BoxedPassthrough, CipherText, Decrypt, Element, Encrypt, IntoPrfContext, NonEmpty,
-    SealedValue, StackCipher, StackCipherText,
+    AadPiece, BoxedPassthrough, CipherText, Decrypt, Element, Encrypt, IntoPrfContext,
+    KeysetCipher, NonEmpty, SealedValue, StackCipher, StackCipherText,
 };
 use stack_kms::DataKeySource;
 use vitaminc_aead_value::{transport as codec, FfiValue};
@@ -46,9 +46,7 @@ use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroizing;
 
 use crate::context::{borrowed, parse_context};
-use crate::status::{
-    status_for_error, status_for_term_error, STATUS_AUTH, STATUS_ENCODING, STATUS_INTERNAL,
-};
+use crate::status::{status_for_error, STATUS_AUTH, STATUS_ENCODING, STATUS_INTERNAL};
 
 /// Term kinds for `se_term`, part of the guest/host contract (the Go host
 /// mirrors these values).
@@ -83,7 +81,7 @@ type BytesTree = CipherText<Vec<u8>, BoxedPassthrough>;
 /// the boundary when the plan or the term's context is parsed, and refused
 /// as [`STATUS_ENCODING`] when empty.
 pub async fn encrypt_value<K>(
-    cipher: &StackCipher<K>,
+    cipher: &KeysetCipher<'_, K>,
     value: &[u8],
     aad: &[u8],
     as_element: bool,
@@ -154,7 +152,7 @@ where
 /// same parts as a (left-nested) list for a Rust row sealed under an
 /// extended context.
 pub async fn term<K>(
-    cipher: &StackCipher<K>,
+    cipher: &KeysetCipher<'_, K>,
     value: &[u8],
     context: &[u8],
     kind: u32,
@@ -217,7 +215,7 @@ fn scalar_of(value: &FfiValue) -> Result<Scalar, u32> {
 /// combinations (floats or booleans under equality, anything non-text under
 /// match) are [`STATUS_ENCODING`] — the scheme does not define them.
 async fn term_bytes<'c, K, D>(
-    cipher: &StackCipher<K>,
+    cipher: &KeysetCipher<'_, K>,
     scalar: Scalar,
     context: NonEmpty<D>,
     output: Output,
@@ -226,7 +224,7 @@ where
     K: DataKeySource + Sync,
     D: IntoPrfContext<'c>,
 {
-    let term_err = |e| status_for_term_error(&e);
+    let term_err = |e| status_for_error(&e);
     match output {
         Output::Ciphertext => Err(STATUS_ENCODING),
         Output::Equality => {
@@ -290,7 +288,7 @@ where
 /// The `AsRef<[u8]>` on the output is what turns the typed CLLW ciphertext
 /// into the frozen raw-bytes encoding.
 async fn ore<'c, K, T, D>(
-    cipher: &StackCipher<K>,
+    cipher: &KeysetCipher<'_, K>,
     value: T,
     context: NonEmpty<D>,
 ) -> Result<Vec<u8>, u32>
@@ -304,12 +302,12 @@ where
         .ore_term(value, context)
         .await
         .map(|t| t.as_ref().to_vec())
-        .map_err(|e| status_for_term_error(&e))
+        .map_err(|e| status_for_error(&e))
 }
 
 /// See [`ore`].
 async fn ope<'c, K, T, D>(
-    cipher: &StackCipher<K>,
+    cipher: &KeysetCipher<'_, K>,
     value: T,
     context: NonEmpty<D>,
 ) -> Result<Vec<u8>, u32>
@@ -323,7 +321,7 @@ where
         .ope_term(value, context)
         .await
         .map(|t| t.as_ref().to_vec())
-        .map_err(|e| status_for_term_error(&e))
+        .map_err(|e| status_for_error(&e))
 }
 
 // =============================================================================
@@ -533,7 +531,7 @@ fn reject_passthrough_tree(tree: &StackCipherText) -> Result<(), u32> {
 /// side uses aead-value's tagged types too. This is by design, not a defect
 /// in either side; making the derive tagged is a separate follow-up.
 pub async fn encrypt_record<K>(
-    cipher: &StackCipher<K>,
+    cipher: &KeysetCipher<'_, K>,
     source: &[u8],
     plan: &[u8],
 ) -> Result<Vec<u8>, u32>
@@ -607,7 +605,7 @@ where
 /// returning the row skeleton. The plan drives the iteration so the output
 /// field order is the plan's; the row must contain exactly the plan's fields.
 async fn build_row<'c, K>(
-    cipher: &'c StackCipher<K>,
+    cipher: &'c KeysetCipher<'_, K>,
     mut row: Vec<(String, FfiValue)>,
     plan: &[FieldPlan],
     pendings: &mut Vec<Pending<'c, StackCipherText, K>>,

@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 
 use stack_encrypt::nonempty;
 use stack_encrypt::sem::{DefaultMatch, MatchConfig, MatchOptions, Tokenizer};
-use stack_encrypt::StackCipher;
+use stack_encrypt::{Error, StackCipher};
 use stack_kms::{FakeDataKeySource, IdentifiedBy};
 use uuid::Uuid;
 
@@ -58,7 +58,8 @@ async fn generator_for(keyset: Uuid) -> StackCipher<FakeDataKeySource> {
 
 #[tokio::test]
 async fn equality_terms_are_deterministic() {
-    let gen = generator().await;
+    let cipher = generator().await;
+    let gen = cipher.default_keyset();
     let a = gen
         .equality_term("alice", nonempty!("users/email"))
         .await
@@ -72,7 +73,8 @@ async fn equality_terms_are_deterministic() {
 
 #[tokio::test]
 async fn equality_terms_bind_the_descriptor() {
-    let gen = generator().await;
+    let cipher = generator().await;
+    let gen = cipher.default_keyset();
     let a = gen
         .equality_term("alice", nonempty!("users/email"))
         .await
@@ -86,7 +88,8 @@ async fn equality_terms_bind_the_descriptor() {
 
 #[tokio::test]
 async fn equality_terms_differ_by_value() {
-    let gen = generator().await;
+    let cipher = generator().await;
+    let gen = cipher.default_keyset();
     let a = gen
         .equality_term("alice", nonempty!("users/email"))
         .await
@@ -100,8 +103,10 @@ async fn equality_terms_differ_by_value() {
 
 #[tokio::test]
 async fn equality_terms_bind_the_index_key() {
-    let gen_a = generator_for(Uuid::from_u128(1)).await;
-    let gen_b = generator_for(Uuid::from_u128(2)).await;
+    let cipher_a = generator_for(Uuid::from_u128(1)).await;
+    let cipher_b = generator_for(Uuid::from_u128(2)).await;
+    let gen_a = cipher_a.default_keyset();
+    let gen_b = cipher_b.default_keyset();
     let a = gen_a
         .equality_term("alice", nonempty!("users/email"))
         .await
@@ -115,7 +120,8 @@ async fn equality_terms_bind_the_index_key() {
 
 #[tokio::test]
 async fn match_query_terms_are_contained_in_stored_terms() {
-    let gen = generator().await;
+    let cipher = generator().await;
+    let gen = cipher.default_keyset();
 
     let stored = gen
         .match_terms::<DefaultMatch>("alice wonderland", nonempty!("users/bio"))
@@ -134,7 +140,8 @@ async fn match_query_terms_are_contained_in_stored_terms() {
 
 #[tokio::test]
 async fn match_is_case_insensitive_by_default() {
-    let gen = generator().await;
+    let cipher = generator().await;
+    let gen = cipher.default_keyset();
 
     let stored = gen
         .match_terms::<DefaultMatch>("Alice", nonempty!("users/name"))
@@ -149,7 +156,8 @@ async fn match_is_case_insensitive_by_default() {
 
 #[tokio::test]
 async fn match_binds_the_descriptor() {
-    let gen = generator().await;
+    let cipher = generator().await;
+    let gen = cipher.default_keyset();
 
     let stored = gen
         .match_terms::<DefaultMatch>("alice", nonempty!("users/bio"))
@@ -174,7 +182,8 @@ async fn match_positions_stay_within_the_filter() {
         }
     }
 
-    let gen = generator().await;
+    let cipher = generator().await;
+    let gen = cipher.default_keyset();
     let term = gen
         .match_terms::<SmallFilter>("a longer piece of text", nonempty!("users/bio"))
         .await
@@ -187,7 +196,8 @@ async fn match_positions_stay_within_the_filter() {
 
 #[tokio::test]
 async fn match_rejects_invalid_options() {
-    let gen = generator().await;
+    let cipher = generator().await;
+    let gen = cipher.default_keyset();
 
     // The v1 match indexer's bounds apply: k in 3..=16, m a power of two in
     // [32, 65536].
@@ -211,7 +221,9 @@ async fn match_rejects_invalid_options() {
     // A zero-length n-gram must be an options error, not a panic.
     assert!(matches!(
         gen.match_terms::<ZeroNgram>("xxx", nonempty!("d")).await,
-        Err(stack_encrypt::sem::TermError::InvalidOptions(_))
+        Err(Error::Term(stack_encrypt::sem::TermError::InvalidOptions(
+            _
+        )))
     ));
 }
 
@@ -219,7 +231,8 @@ async fn match_rejects_invalid_options() {
 async fn match_rejects_text_that_yields_no_tokens() {
     use stack_encrypt::sem::TermError;
 
-    let gen = generator().await;
+    let cipher = generator().await;
+    let gen = cipher.default_keyset();
 
     // An empty term used as a query would vacuously match every stored row.
     for text in ["", "  "] {
@@ -227,7 +240,7 @@ async fn match_rejects_text_that_yields_no_tokens() {
             matches!(
                 gen.match_terms::<DefaultMatch>(text, nonempty!("users/bio"))
                     .await,
-                Err(TermError::EmptyTermText)
+                Err(Error::Term(TermError::EmptyTermText))
             ),
             "{text:?} must be rejected"
         );
@@ -238,20 +251,21 @@ async fn match_rejects_text_that_yields_no_tokens() {
     assert!(matches!(
         gen.match_terms::<DefaultMatch>("hi", nonempty!("users/bio"))
             .await,
-        Err(TermError::EmptyTermText)
+        Err(Error::Term(TermError::EmptyTermText))
     ));
 
     // Separator-only text under the Standard tokenizer.
     assert!(matches!(
         gen.match_terms::<WordMatch>(" ,;:! ", nonempty!("users/bio"))
             .await,
-        Err(TermError::EmptyTermText)
+        Err(Error::Term(TermError::EmptyTermText))
     ));
 }
 
 #[tokio::test]
 async fn word_tokenizer_matches_whole_words() {
-    let gen = generator().await;
+    let cipher = generator().await;
+    let gen = cipher.default_keyset();
 
     let stored = gen
         .match_terms::<WordMatch>("alice in wonderland", nonempty!("users/bio"))
@@ -266,7 +280,8 @@ async fn word_tokenizer_matches_whole_words() {
 
 #[tokio::test]
 async fn ore_terms_preserve_order_and_determinism() {
-    let gen = generator().await;
+    let cipher = generator().await;
+    let gen = cipher.default_keyset();
 
     let ten = gen.ore_term(10u64, nonempty!("users/age")).await.unwrap();
     let ten_again = gen.ore_term(10u64, nonempty!("users/age")).await.unwrap();
@@ -278,7 +293,8 @@ async fn ore_terms_preserve_order_and_determinism() {
 
 #[tokio::test]
 async fn ore_terms_bind_the_descriptor() {
-    let gen = generator().await;
+    let cipher = generator().await;
+    let gen = cipher.default_keyset();
     let a = gen.ore_term(10u64, nonempty!("users/age")).await.unwrap();
     let b = gen
         .ore_term(10u64, nonempty!("users/height"))
@@ -289,7 +305,8 @@ async fn ore_terms_bind_the_descriptor() {
 
 #[tokio::test]
 async fn string_ore_terms_preserve_lexicographic_order() {
-    let gen = generator().await;
+    let cipher = generator().await;
+    let gen = cipher.default_keyset();
     let apple = gen
         .ore_term("apple", nonempty!("users/name"))
         .await
@@ -303,7 +320,8 @@ async fn string_ore_terms_preserve_lexicographic_order() {
 
 #[tokio::test]
 async fn ope_terms_compare_with_plain_byte_order() {
-    let gen = generator().await;
+    let cipher = generator().await;
+    let gen = cipher.default_keyset();
 
     let ten = gen.ope_term(10u64, nonempty!("users/age")).await.unwrap();
     let twenty = gen.ope_term(20u64, nonempty!("users/age")).await.unwrap();
@@ -316,7 +334,8 @@ async fn ope_terms_compare_with_plain_byte_order() {
 async fn ore_and_ope_keys_are_domain_separated() {
     // The same descriptor must not derive the same key material for both
     // schemes; equal plaintexts should produce different ciphertext bytes.
-    let gen = generator().await;
+    let cipher = generator().await;
+    let gen = cipher.default_keyset();
     let ore = gen.ore_term(42u64, nonempty!("users/age")).await.unwrap();
     let ope = gen.ope_term(42u64, nonempty!("users/age")).await.unwrap();
     assert_ne!(ore.as_ref(), ope.as_ref());
@@ -324,7 +343,8 @@ async fn ore_and_ope_keys_are_domain_separated() {
 
 #[tokio::test]
 async fn owned_and_borrowed_text_yield_identical_ore_and_ope_terms() {
-    let gen = generator().await;
+    let cipher = generator().await;
+    let gen = cipher.default_keyset();
     let borrowed = gen
         .ore_term("apple", nonempty!("users/name"))
         .await

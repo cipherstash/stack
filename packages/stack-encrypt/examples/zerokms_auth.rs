@@ -53,20 +53,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(other) => return Err(other.into()),
     };
-    println!("connected; keyset {}", cipher.keyset_id());
+    let keyset = cipher.default_keyset();
+    println!("connected; keyset {}", keyset.keyset_id());
 
-    let ciphertext = cipher.encrypt("hello".to_string(), "demo/greeting").await?;
+    let ciphertext = keyset.encrypt("hello".to_string(), "demo/greeting").await?;
     let plaintext: String = cipher.decrypt(ciphertext, "demo/greeting").await?;
     assert_eq!(plaintext, "hello");
     println!("round-tripped a value under the default keyset");
 
     // --- A specific keyset --------------------------------------------------
     //
-    // The keyset pins both halves at once: data keys are generated under it,
-    // and its index key derives every SEM term. They cannot diverge.
+    // A cipher is client-scoped and serves any keyset the client is
+    // authorised for; selecting one (loaded from ZeroKMS on first use, then
+    // cached) yields a handle that pins both halves at once: data keys are
+    // generated under it, and its index key derives every SEM term. They
+    // cannot diverge.
+    //
+    //     let customers = cipher
+    //         .keyset(IdentifiedBy::Name("customers".to_string().into()))
+    //         .await?;
+    //     let ciphertext = customers.encrypt("hello".to_string(), "demo/greeting").await?;
+    //
+    // To make a keyset the default instead, name it on the builder:
     //
     //     StackCipher::builder()
-    //         .keyset(IdentifiedBy::Name("customers".into()))
+    //         .keyset(IdentifiedBy::Name("customers".to_string().into()))
     //         .init()
     //         .await?;
 

@@ -177,7 +177,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // One call, one batched generate_keys round-trip for every encrypted leaf
     // in the whole Vec (here: 3 rows x 2 encrypted fields = 6 data keys).
-    let ciphertext = cipher.encrypt(users, "users/v1").await?;
+    let ciphertext = cipher.default_keyset().encrypt(users, "users/v1").await?;
 
     println!("what the stored ciphertext reveals:");
     describe(&ciphertext, 1);

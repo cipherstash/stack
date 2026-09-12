@@ -339,10 +339,13 @@ pub(crate) enum FieldBound {
     DecryptInto,
 }
 
-/// `FieldTy: Trait<Target, StackCipher<__K>, Ctx>` for each of `fields`,
-/// under the context it is derived or opened under in the impl for `which`
-/// — its literal's, `()`, or the caller's `NonEmpty<__T>`, which is how a
-/// record inherits its leaves' demand for a non-empty context.
+/// `FieldTy: Trait<Target, Cipher, Ctx>` for each of `fields`, under the
+/// context it is derived or opened under in the impl for `which` — its
+/// literal's, `()`, or the caller's `NonEmpty<__T>`, which is how a record
+/// inherits its leaves' demand for a non-empty context. The cipher is the
+/// one the trait binds to: encrypting binds to a keyset
+/// (`KeysetCipher<'__k, __K>`), decrypting to the client (`StackCipher<__K>`;
+/// the keyset-constrained form is a blanket over it).
 pub(crate) fn push_field_bounds(
     generics: &mut Generics,
     krate: &Path,
@@ -356,6 +359,7 @@ pub(crate) fn push_field_bounds(
         FieldBound::DecryptField => parse_quote!(DecryptField),
         FieldBound::DecryptInto => parse_quote!(DecryptInto),
     };
+    let cipher = cipher_type(krate, &bound);
     let predicates = &mut generics.make_where_clause().predicates;
     for field in fields {
         let ty = &field.ty;
@@ -363,9 +367,28 @@ pub(crate) fn push_field_bounds(
         // Spanned at the field type, so a type that cannot be a field of the
         // record is reported there, not at the derive.
         predicates.push(parse_quote_spanned! {ty.span()=>
-            #ty: #krate::target::#trait_name<#target, #krate::StackCipher<__K>, #context>
+            #ty: #krate::target::#trait_name<#target, #cipher, #context>
         });
     }
+}
+
+/// The cipher a derived impl binds to. Encrypting binds to a keyset, so the
+/// encrypt impls are over `KeysetCipher<'__k, __K>` and carry the `'__k`
+/// lifetime ([`push_keyset_lifetime`]); decrypting is client-scoped, so the
+/// decrypt impls are over `StackCipher<__K>`.
+pub(crate) fn cipher_type(krate: &Path, bound: &FieldBound) -> Type {
+    match bound {
+        FieldBound::Encrypt => parse_quote!(#krate::KeysetCipher<'__k, __K>),
+        FieldBound::DecryptField | FieldBound::DecryptInto => {
+            parse_quote!(#krate::StackCipher<__K>)
+        }
+    }
+}
+
+/// Add the `'__k` lifetime of the `KeysetCipher` an encrypt impl binds to.
+/// Lifetimes precede type parameters in a generics list, so it goes first.
+pub(crate) fn push_keyset_lifetime(generics: &mut Generics) {
+    generics.params.insert(0, parse_quote!('__k));
 }
 
 /// The source (or plaintext) types a derive emits one impl each for: the

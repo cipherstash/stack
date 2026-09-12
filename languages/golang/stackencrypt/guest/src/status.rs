@@ -86,15 +86,6 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
     }
 }
 
-/// Map a term-derivation error directly (the term entry points return
-/// [`stack_encrypt::sem::TermError`], not the sealing error). An empty
-/// context never reaches a term — it is [`STATUS_ENCODING`] at the boundary,
-/// where the context is proven — so every term error is a derivation
-/// failure.
-pub fn status_for_term_error(_: &stack_encrypt::sem::TermError) -> u32 {
-    STATUS_TERM
-}
-
 // These matches are deliberately exhaustive — no `_` arms. None of the
 // stack-kms error enums is `#[non_exhaustive]`, so exhaustiveness is free
 // compiler coverage: `GenerateKeyError` already grew `Unauthorized` /
@@ -285,8 +276,13 @@ mod tests {
 
     #[test]
     fn term_errors_are_derivation_failures() {
+        // An empty context never reaches a term — it is `STATUS_ENCODING`
+        // at the boundary, where the context is proven — so every term
+        // error that does arrive is a derivation failure.
         assert_eq!(
-            status_for_term_error(&stack_encrypt::sem::TermError::EmptyTermText),
+            status_for_error(&stack_encrypt::Error::Term(
+                stack_encrypt::sem::TermError::EmptyTermText
+            )),
             STATUS_TERM
         );
     }

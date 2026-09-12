@@ -367,7 +367,12 @@ fn run_encrypt(
         let value = input(val_ptr, val_len)?;
         let aad = input(aad_ptr, aad_len)?;
         with_cipher(handle, |cipher| {
-            block_on(ops::encrypt_value(cipher, value, aad, as_element))
+            block_on(ops::encrypt_value(
+                &cipher.default_keyset(),
+                value,
+                aad,
+                as_element,
+            ))
         })
     }))
     .unwrap_or(Err(STATUS_INTERNAL))
@@ -425,7 +430,7 @@ pub unsafe extern "C" fn se_term(
         let value = input(val_ptr, val_len)?;
         let context = input(ctx_ptr, ctx_len)?;
         with_cipher(handle, |cipher| {
-            block_on(ops::term(cipher, value, context, kind))
+            block_on(ops::term(&cipher.default_keyset(), value, context, kind))
         })
     }))
     .unwrap_or(Err(STATUS_INTERNAL))
@@ -454,7 +459,7 @@ pub unsafe extern "C" fn se_encrypt_record(
         let source = input(src_ptr, src_len)?;
         let plan = input(plan_ptr, plan_len)?;
         with_cipher(handle, |cipher| {
-            block_on(ops::encrypt_record(cipher, source, plan))
+            block_on(ops::encrypt_record(&cipher.default_keyset(), source, plan))
         })
     }))
     .unwrap_or(Err(STATUS_INTERNAL))

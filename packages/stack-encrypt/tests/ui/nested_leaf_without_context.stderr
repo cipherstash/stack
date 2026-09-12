@@ -6,8 +6,8 @@ error[E0277]: `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` is not 
    |
    = note: a leaf — a ciphertext or an index term — exists only under a `NonEmpty<_>` context: `encrypt_into` passes `()`, so use `encrypt_into_with_context(&cipher, context)`, or give the field a `context = ".."` of its own
    = note: a context is anything vitaminc encodes (`&str`, `String`, bytes, integers, `Option`s and pairs of those), proven non-empty: `nonempty!("users/email")` for a literal, `NonEmpty::new(value)?` for a runtime value, a bare integer for an id
-   = help: the trait `EncryptFrom<_, StackCipher<__K>, ()>` is not implemented for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>`
-           but trait `EncryptFrom<_, StackCipher<__K>, NonEmpty<_>>` is implemented for it
+   = help: the trait `EncryptFrom<_, KeysetCipher<'__k, __K>, ()>` is not implemented for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>`
+           but trait `EncryptFrom<_, KeysetCipher<'_, __K>, NonEmpty<_>>` is implemented for it
    = help: for that trait implementation, expected `NonEmpty<_>`, found `()`
 
 error[E0277]: `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` cannot be a field of an automatically decrypted record

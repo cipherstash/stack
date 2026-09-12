@@ -29,8 +29,9 @@ fn hex(bytes: &[u8]) -> String {
 
 #[tokio::test]
 async fn equality_term_bytes_are_pinned() {
-    let term = cipher()
-        .await
+    let cipher = cipher().await;
+    let term = cipher
+        .default_keyset()
         .equality_term("alice", nonempty!("users/email"))
         .await
         .unwrap();
@@ -43,8 +44,9 @@ async fn equality_term_bytes_are_pinned() {
 
 #[tokio::test]
 async fn match_term_positions_are_pinned() {
-    let term = cipher()
-        .await
+    let cipher = cipher().await;
+    let term = cipher
+        .default_keyset()
         .match_terms::<DefaultMatch>("alice smith", nonempty!("users/name"))
         .await
         .unwrap();
@@ -64,8 +66,9 @@ async fn match_term_positions_are_pinned() {
 async fn ore_term_bytes_are_pinned() {
     // The ORE key is a PRF of the descriptor, so this pins the key derivation
     // as much as the CLLW encryption.
-    let term = cipher()
-        .await
+    let cipher = cipher().await;
+    let term = cipher
+        .default_keyset()
         .ore_term(42u32, nonempty!("users/age"))
         .await
         .unwrap();
@@ -81,8 +84,9 @@ async fn ope_term_bytes_are_pinned() {
     // Distinct from the ORE pin above under the same descriptor: the two
     // schemes derive their keys under different domains and must never share
     // one (OPE ciphertexts are encrypt-only).
-    let term = cipher()
-        .await
+    let cipher = cipher().await;
+    let term = cipher
+        .default_keyset()
         .ope_term(42u32, nonempty!("users/age"))
         .await
         .unwrap();

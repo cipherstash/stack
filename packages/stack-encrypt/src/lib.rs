@@ -22,12 +22,16 @@
 #![cfg_attr(test, allow(unused_results))]
 //! Encrypt Rust values under per-value ZeroKMS data keys.
 //!
-//! [`StackCipher`] encrypts any value that implements [`Encrypt`] (`String`,
-//! `Vec<T>`, `HashMap<K, V>`, `Option<T>`, `Protected<T>`, your own types, and
-//! any nesting of them) and decrypts back into any [`Decrypt`] type. Every
-//! scalar inside the value is sealed under its **own** ZeroKMS data key, so each
-//! value access is an individually auditable key retrieval — there is no
-//! long-lived key in your process.
+//! A [`StackCipher`] is scoped to one ZeroKMS client, and a [`KeysetCipher`] —
+//! the cipher bound to one of that client's keysets, from
+//! [`default_keyset`](StackCipher::default_keyset) or
+//! [`keyset`](StackCipher::keyset) — encrypts any value that implements
+//! [`Encrypt`] (`String`, `Vec<T>`, `HashMap<K, V>`, `Option<T>`,
+//! `Protected<T>`, your own types, and any nesting of them). Either cipher
+//! decrypts back into any [`Decrypt`] type. Every scalar inside the value is
+//! sealed under its **own** ZeroKMS data key, so each value access is an
+//! individually auditable key retrieval — there is no long-lived key in your
+//! process.
 //!
 //! # Quick start
 //!
@@ -45,8 +49,9 @@ use stack_encrypt::StackCipher;
 // Credentials: `npx stash auth login` on a developer machine, or
 // CS_CLIENT_ID / CS_CLIENT_KEY + CS_CLIENT_ACCESS_KEY / CS_WORKSPACE_CRN in CI.
 let cipher = StackCipher::new().await?;
+let keyset = cipher.default_keyset();
 
-let ciphertext = cipher.encrypt("secret message".to_string(), ()).await?;
+let ciphertext = keyset.encrypt("secret message".to_string(), ()).await?;
 let plaintext: String = cipher.decrypt(ciphertext, ()).await?;
 assert_eq!(plaintext, "secret message");
 # Ok(())
@@ -61,6 +66,14 @@ assert_eq!(plaintext, "secret message");
  ZeroKMS credentials itself."
 )]
 //!
+//! Encrypting binds to a keyset (every data key is minted under one); decrypting
+//! does not (every sealed leaf carries the id of the keyset it was sealed
+//! under), so it goes through the client-scoped `cipher` — or through the
+//! `keyset`, which then refuses leaves from any other keyset. A client may use
+//! many keysets, one per tenant say; [`StackCipher::keyset`] selects any of
+//! them by id or name, loading it on first use. The [`keyset`](crate::keyset)
+//! module docs lay out the model.
+//!
 //! The second argument is the *associated data* (AAD): anything that implements
 //! [`IntoAad`] — `()`, `&[u8]`, `&str`, a tuple, or a derived [`Aad`]. It is
 //! authenticated, not encrypted, and must be supplied identically on decrypt.
@@ -69,7 +82,8 @@ assert_eq!(plaintext, "secret message");
 //!
 //! ```no_run
 //! # async fn example<K: stack_kms::DataKeySource>(cipher: stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
-//! let ct = cipher.encrypt("4111 1111 1111 1111".to_string(), "users/42/card").await?;
+//! # let keyset = cipher.default_keyset();
+//! let ct = keyset.encrypt("4111 1111 1111 1111".to_string(), "users/42/card").await?;
 //! let card: String = cipher.decrypt(ct, "users/42/card").await?; // ok
 //! # Ok(())
 //! # }
@@ -97,7 +111,8 @@ assert_eq!(plaintext, "secret message");
 //!     .kms(FakeDataKeySource::new())
 //!     .init()
 //!     .await?;
-//! let ct = cipher.encrypt(vec!["a".to_string(), "b".to_string()], ()).await?;
+//! let keyset = cipher.default_keyset();
+//! let ct = keyset.encrypt(vec!["a".to_string(), "b".to_string()], ()).await?;
 //! let pt: Vec<String> = cipher.decrypt(ct, ()).await?;
 //! assert_eq!(pt, vec!["a", "b"]);
 //! # Ok::<(), stack_encrypt::Error>(())
@@ -106,13 +121,15 @@ assert_eq!(plaintext, "secret message");
 //!
 //! # Storing ciphertext
 //!
-//! [`encrypt`](StackCipher::encrypt) returns a [`StackCipherText`]: a tree whose
+//! [`encrypt`](KeysetCipher::encrypt) returns a [`StackCipherText`]: a tree whose
 //! shape mirrors the value (a scalar is a single leaf, a `Vec` a sequence of
 //! leaves, a map a set of named leaves) and whose leaves are [`SealedValue`]s.
 //! A `SealedValue` is the persistable unit: its canonical, frozen byte
 //! encoding is [`to_bytes`](SealedValue::to_bytes) /
 //! [`from_bytes`](SealedValue::from_bytes) — the format a database column
-//! holds and every language binding reads. For callers that manage their own
+//! holds and every language binding reads. Each leaf carries the id of the
+//! keyset it was sealed under, which is what lets a column be opened with no
+//! keyset named. For callers that manage their own
 //! storage format it also implements `serde` `Serialize`/`Deserialize` and
 //! offers [`into_parts`](SealedValue::into_parts) /
 //! [`from_parts`](SealedValue::from_parts). Map keys are stored in the clear
@@ -142,7 +159,7 @@ assert_eq!(plaintext, "secret message");
 //!
 //! # Relationship to vitaminc
 //!
-//! `StackCipher` is a vitaminc [`Cipher`]; everything a vitaminc cipher can
+//! A `KeysetCipher` is a vitaminc [`Cipher`]; everything a vitaminc cipher can
 //! encrypt, it can encrypt, and the AEAD, AAD derivations and leaf wire format
 //! are vitaminc's (`vitaminc_encrypt::Aes256Cipher`, AES-256-GCM under a random
 //! per-leaf nonce vitaminc generates itself). The ZeroKMS `iv` a [`SealedValue`]
@@ -155,6 +172,7 @@ assert_eq!(plaintext, "secret message");
 
 pub mod cipher;
 pub mod descriptor;
+pub mod keyset;
 pub mod sem;
 pub mod target;
 
@@ -163,9 +181,11 @@ pub use cipher::{
     StackCipher, StackCipherBuilder, StackCipherText, StackDecipher,
 };
 pub use descriptor::Descriptor;
+pub use keyset::KeysetCipher;
 pub use target::{
-    DecryptField, DecryptFrom, DecryptInto, DecryptTarget, Decryptable, ElementContext,
-    EncryptFrom, EncryptInto, EncryptTarget, Pending, PendingFuture, Request, Responses,
+    CipherScope, DecryptField, DecryptFrom, DecryptInto, DecryptTarget, Decryptable,
+    ElementContext, EncryptFrom, EncryptInto, EncryptTarget, Pending, PendingFuture, Request,
+    Responses,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they

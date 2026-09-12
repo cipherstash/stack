@@ -14,6 +14,7 @@
 use std::collections::VecDeque;
 
 use stack_kms::{DataKey, DataKeyWithTag, Iv};
+use uuid::Uuid;
 
 use crate::{Descriptor, Error};
 
@@ -25,15 +26,17 @@ pub struct Request(RequestKind);
 
 #[derive(Debug, Clone)]
 pub(super) enum RequestKind {
-    /// Generate one fresh data key under the cipher's keyset, bound to
+    /// Generate one fresh data key under the pending's keyset, bound to
     /// `descriptor`.
     GenerateDataKey { descriptor: Descriptor },
     /// Re-derive the data key identified by `iv` + `tag`, under the
-    /// `descriptor` it was generated with.
+    /// `descriptor` it was generated with, from the keyset it was minted
+    /// under.
     RetrieveDataKey {
         iv: Iv,
         tag: Vec<u8>,
         descriptor: Descriptor,
+        keyset_id: Uuid,
     },
 }
 
@@ -48,18 +51,36 @@ impl Request {
 
     /// Request re-derivation of the data key identified by `iv` + `tag`
     /// (decrypt side), under `descriptor` — which must be the one the key
-    /// was generated with, or ZeroKMS refuses.
-    pub fn retrieve_data_key(iv: Iv, tag: Vec<u8>, descriptor: Descriptor) -> Self {
+    /// was generated with, or ZeroKMS refuses — from `keyset_id`, the
+    /// keyset it was minted under (a [`SealedValue`] carries it).
+    ///
+    /// [`SealedValue`]: crate::SealedValue
+    pub fn retrieve_data_key(
+        iv: Iv,
+        tag: Vec<u8>,
+        descriptor: Descriptor,
+        keyset_id: Uuid,
+    ) -> Self {
         Self(RequestKind::RetrieveDataKey {
             iv,
             tag,
             descriptor,
+            keyset_id,
         })
     }
 
     /// Consume the request, yielding what it asks for.
     pub(super) fn into_kind(self) -> RequestKind {
         self.0
+    }
+
+    /// The keyset a retrieve request names; `None` for a generate request,
+    /// which mints under the pending's keyset.
+    pub(super) fn retrieve_keyset(&self) -> Option<Uuid> {
+        match &self.0 {
+            RequestKind::GenerateDataKey { .. } => None,
+            RequestKind::RetrieveDataKey { keyset_id, .. } => Some(*keyset_id),
+        }
     }
 }
 
@@ -181,6 +202,10 @@ mod tests {
         (generated, retrieved)
     }
 
+    fn ks() -> Uuid {
+        Uuid::from_u128(7)
+    }
+
     async fn responses(generated: usize, retrieved: usize) -> Responses {
         let (g, _) = key_pairs(generated).await;
         let (_, r) = key_pairs(retrieved).await;
@@ -196,9 +221,9 @@ mod tests {
     fn tally_separates_the_two_kinds() {
         let requests = vec![
             Request::generate_data_key(d()),
-            Request::retrieve_data_key(Iv::default(), vec![1], d()),
+            Request::retrieve_data_key(Iv::default(), vec![1], d(), ks()),
             Request::generate_data_key(d()),
-            Request::retrieve_data_key(Iv::default(), vec![2], d()),
+            Request::retrieve_data_key(Iv::default(), vec![2], d(), ks()),
             Request::generate_data_key(d()),
         ];
         assert_eq!(tally(&requests), (3, 2));
@@ -214,13 +239,15 @@ mod tests {
 
     #[test]
     fn a_retrieve_request_carries_its_iv_tag_and_descriptor() {
-        let request = Request::retrieve_data_key(Iv::default(), vec![7, 8, 9], d());
+        let request = Request::retrieve_data_key(Iv::default(), vec![7, 8, 9], d(), ks());
         match request.into_kind() {
             RequestKind::RetrieveDataKey {
                 iv,
                 tag,
                 descriptor,
+                keyset_id,
             } => {
+                assert_eq!(keyset_id, ks());
                 assert_eq!(iv, Iv::default());
                 assert_eq!(tag, vec![7, 8, 9]);
                 assert_eq!(descriptor, d());

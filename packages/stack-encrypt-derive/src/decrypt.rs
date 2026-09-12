@@ -84,33 +84,34 @@ fn impl_block(
 fn decrypt_field_impl(input: &DeriveInput, krate: &Path) -> TokenStream {
     let name = &input.ident;
     let (_, ty_generics, _) = input.generics.split_for_impl();
+    // Over `StackCipher<__K>` only: the `KeysetCipher` form of every
+    // `DecryptField` is a blanket impl in `stack_encrypt::target`, which a
+    // generic-cipher impl here would overlap.
     let mut generics = input.generics.clone();
     generics.params.push(parse_quote!(__P));
-    generics.params.push(parse_quote!(__C));
+    generics.params.push(parse_quote!(__K));
     generics.params.push(parse_quote!(__Ctx));
     generics.make_where_clause().predicates.push(parse_quote! {
-        __C: #krate::target::DecryptTarget
-    });
-    generics.make_where_clause().predicates.push(parse_quote! {
-        Self: #krate::target::DecryptInto<__P, __C, __Ctx>
+        Self: #krate::target::DecryptInto<__P, #krate::StackCipher<__K>, __Ctx>
     });
     let (impl_generics, _, where_clause) = generics.split_for_impl();
     quote! {
         #[automatically_derived]
-        impl #impl_generics #krate::target::DecryptField<__P, __C, __Ctx> for #name #ty_generics
+        impl #impl_generics #krate::target::DecryptField<__P, #krate::StackCipher<__K>, __Ctx>
+            for #name #ty_generics
             #where_clause
         {
             fn decrypt_field<'__a>(
                 self,
-                __cipher: &'__a __C,
+                __cipher: &'__a #krate::StackCipher<__K>,
                 __context: __Ctx,
-            ) -> ::core::option::Option<<__C as #krate::target::DecryptTarget>::Output<'__a, __P>>
+            ) -> ::core::option::Option<#krate::target::Pending<'__a, __P, __K>>
             where
                 Self: '__a,
                 __P: '__a,
             {
                 ::core::option::Option::Some(
-                    <Self as #krate::target::DecryptInto<__P, __C, __Ctx>>::decrypt_into(
+                    <Self as #krate::target::DecryptInto<__P, #krate::StackCipher<__K>, __Ctx>>::decrypt_into(
                         self, __cipher, __context,
                     ),
                 )
@@ -800,10 +801,9 @@ mod tests {
         assert_contains(
             &expansion,
             quote! {
-                impl<__P, __C, __Ctx> ::stack_encrypt::target::DecryptField<__P, __C, __Ctx> for Rec
+                impl<__P, __K, __Ctx> ::stack_encrypt::target::DecryptField<__P, ::stack_encrypt::StackCipher<__K>, __Ctx> for Rec
                 where
-                    __C: ::stack_encrypt::target::DecryptTarget,
-                    Self: ::stack_encrypt::target::DecryptInto<__P, __C, __Ctx>
+                    Self: ::stack_encrypt::target::DecryptInto<__P, ::stack_encrypt::StackCipher<__K>, __Ctx>
             },
         );
     }
@@ -908,7 +908,13 @@ mod tests {
             )
         });
         assert_lacks(&expansion, quote!(hm));
-        assert_lacks(&expansion, quote!(DecryptInto<__P, ::stack_encrypt::StackCipher));
+        // Listed plaintexts: no impl over a generic `__P` (the `DecryptField`
+        // impl's `Self: DecryptInto<__P, ..>` bound is the one place `__P`
+        // legitimately appears).
+        assert_lacks(
+            &expansion,
+            quote!(DecryptInto<__P, ::stack_encrypt::StackCipher<__K>, ()> for EncryptedAge),
+        );
     }
 
     #[test]

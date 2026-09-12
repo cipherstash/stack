@@ -21,14 +21,21 @@
 //!   derived through the PRF; range queries.
 //!
 //! Every term type here is built on exactly one thing the cipher exposes
-//! publicly — its PRF ([`StackCipher::prf`]) — with no privileged access, so
-//! they double as worked examples for defining your own term types in another
+//! publicly — its PRF ([`KeysetCipher::prf`], keyed by the index key of the
+//! keyset the handle is bound to) — with no privileged access, so they
+//! double as worked examples for defining your own term types in another
 //! crate (see [`target`](crate::target#extending-with-your-own-sem-type)).
+//! Terms bind to a keyset the way sealed values do: a term derived through
+//! one tenant's [`KeysetCipher`] compares only against terms derived through
+//! the same keyset.
 //!
-//! Alongside the target-directed path, the cipher carries descriptor
-//! methods ([`StackCipher::equality_term`] and friends) for call sites that
+//! Alongside the target-directed path, the keyset cipher carries descriptor
+//! methods ([`KeysetCipher::equality_term`] and friends) for call sites that
 //! want a single term rather than a whole record — query builders, mostly.
-//! They derive no data keys, so building a probe never calls ZeroKMS. The
+//! Each returns a [`Pending`], as the record path does; they derive no data
+//! keys, and under the local HMAC backend the pending carries no requests,
+//! so a probe settles without a ZeroKMS call — though a backend that derives
+//! terms at ZeroKMS settles it through the same pending. The
 //! descriptor is the same [`NonEmpty`] context the target-directed path
 //! takes, so the two agree byte for byte.
 //!
@@ -44,9 +51,11 @@
 //! The backend today is the local
 //! [`HmacSha256Prf`] — keyed by the
 //! deterministic per-keyset [`IndexKey`](stack_kms::IndexKey) from
-//! [`stack_kms::IndexKeySource`] — so every derivation completes with no I/O
-//! and an [`EncryptFrom`] term carries **no requests** in its
-//! [`Pending`]. The next ZeroKMS release adds 2-party PRF generation; under
+//! [`stack_kms::IndexKeySource`], loaded when the keyset is selected — so
+//! every derivation completes with no I/O and an [`EncryptFrom`] term
+//! carries **no requests** in its [`Pending`]. That is the backend's
+//! property, not the API's: the term is a `Pending` either way. The next
+//! ZeroKMS release adds 2-party PRF generation; under
 //! that backend a term's `encrypt_from` pushes a PRF *request* instead and
 //! runs the **same visitor** over the blocks the server returns — the shaping
 //! code does not change, and terms then share the one batched ZeroKMS call
@@ -123,7 +132,7 @@ use std::fmt;
 use std::marker::PhantomData;
 
 // Re-exported because they appear in this module's public bounds
-// ([`StackCipher::ore_term`], [`OreTerm`], ...): a caller writing a generic
+// ([`KeysetCipher::ore_term`], [`OreTerm`], ...): a caller writing a generic
 // wrapper over the term APIs has to be able to name them without depending
 // on `cllw-ore` directly.
 pub use cllw_ore::{CllwOpeEncrypt, CllwOreEncrypt};
@@ -135,8 +144,10 @@ use vitaminc_prf::{
 use vitaminc_protected::NonEmpty;
 use zeroize::Zeroize;
 
-use crate::target::{DecryptField, DecryptTarget, Decryptable, EncryptFrom, Pending};
-use crate::{Error, StackCipher};
+use stack_kms::MaybeSend;
+
+use crate::target::{DecryptField, Decryptable, EncryptFrom, Pending};
+use crate::{Error, KeysetCipher, StackCipher};
 
 // The `/v1` suffix versions the *derivation* (domain + input framing), not the
 // crate. Any change to the bytes a term derives from must bump it: a changed
@@ -324,9 +335,10 @@ where
         .map_err(TermError::from_prf)
 }
 
-/// An equality term of any [`PrfValue`] source. Derived locally during the
-/// synchronous build — the returned [`Pending`] carries no requests.
-impl<'c, S, K, T> EncryptFrom<S, StackCipher<K>, NonEmpty<T>> for EqualityTerm
+/// An equality term of any [`PrfValue`] source. Under the local HMAC
+/// backend, derived during the synchronous build — the returned [`Pending`]
+/// carries no requests.
+impl<'c, 'k, S, K, T> EncryptFrom<S, KeysetCipher<'k, K>, NonEmpty<T>> for EqualityTerm
 where
     S: PrfValue + Clone,
     T: IntoPrfContext<'c>,
@@ -336,7 +348,7 @@ where
 
     fn encrypt_from<'a>(
         source: &'a S,
-        cipher: &'a StackCipher<K>,
+        cipher: &'a KeysetCipher<'k, K>,
         context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
     where
@@ -635,10 +647,11 @@ fn match_term<O>(
     Ok(MatchTerm::normalised(positions))
 }
 
-/// A match term of any text source, generated under `O`'s options. Derived
-/// locally during the synchronous build — the returned [`Pending`] carries no
-/// requests (tokenize makes the one necessary copy of the text).
-impl<'c, S, K, O, T> EncryptFrom<S, StackCipher<K>, NonEmpty<T>> for MatchTerm<O>
+/// A match term of any text source, generated under `O`'s options. Under
+/// the local HMAC backend, derived during the synchronous build — the
+/// returned [`Pending`] carries no requests (tokenize makes the one
+/// necessary copy of the text).
+impl<'c, 'k, S, K, O, T> EncryptFrom<S, KeysetCipher<'k, K>, NonEmpty<T>> for MatchTerm<O>
 where
     S: AsRef<str>,
     O: MatchConfig,
@@ -649,7 +662,7 @@ where
 
     fn encrypt_from<'a>(
         source: &'a S,
-        cipher: &'a StackCipher<K>,
+        cipher: &'a KeysetCipher<'k, K>,
         context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
     where
@@ -688,14 +701,16 @@ macro_rules! index_term {
             const DECRYPTABLE: bool = false;
         }
 
-        impl<__P, __C: DecryptTarget, __Ctx $(, $param: $bound)?> DecryptField<__P, __C, __Ctx>
+        // Over `StackCipher` only: the `KeysetCipher` form is the blanket
+        // in `target`, as for every `DecryptField`.
+        impl<__P, __K, __Ctx $(, $param: $bound)?> DecryptField<__P, StackCipher<__K>, __Ctx>
             for $ty
         {
             fn decrypt_field<'a>(
                 self,
-                _cipher: &'a __C,
+                _cipher: &'a StackCipher<__K>,
                 _context: __Ctx,
-            ) -> Option<__C::Output<'a, __P>>
+            ) -> Option<Pending<'a, __P, __K>>
             where
                 Self: 'a,
                 __P: 'a,
@@ -936,9 +951,10 @@ where
         .map_err(TermError::Ore)
 }
 
-/// An ORE term of any [`CllwOreEncrypt`] source. Derived locally during the
-/// synchronous build — the returned [`Pending`] carries no requests.
-impl<'c, S, K, T> EncryptFrom<S, StackCipher<K>, NonEmpty<T>> for OreTerm<S>
+/// An ORE term of any [`CllwOreEncrypt`] source. Under the local HMAC
+/// backend, derived during the synchronous build — the returned [`Pending`]
+/// carries no requests.
+impl<'c, 'k, S, K, T> EncryptFrom<S, KeysetCipher<'k, K>, NonEmpty<T>> for OreTerm<S>
 where
     S: CllwOreEncrypt + Clone + Send + 'static,
     S::Output: Send + 'static,
@@ -949,7 +965,7 @@ where
 
     fn encrypt_from<'a>(
         source: &'a S,
-        cipher: &'a StackCipher<K>,
+        cipher: &'a KeysetCipher<'k, K>,
         context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
     where
@@ -961,9 +977,10 @@ where
     }
 }
 
-/// An OPE term of any [`CllwOpeEncrypt`] source. Derived locally during the
-/// synchronous build — the returned [`Pending`] carries no requests.
-impl<'c, S, K, T> EncryptFrom<S, StackCipher<K>, NonEmpty<T>> for OpeTerm<S>
+/// An OPE term of any [`CllwOpeEncrypt`] source. Under the local HMAC
+/// backend, derived during the synchronous build — the returned [`Pending`]
+/// carries no requests.
+impl<'c, 'k, S, K, T> EncryptFrom<S, KeysetCipher<'k, K>, NonEmpty<T>> for OpeTerm<S>
 where
     S: CllwOpeEncrypt + Clone + Send + 'static,
     S::Output: Send + 'static,
@@ -974,7 +991,7 @@ where
 
     fn encrypt_from<'a>(
         source: &'a S,
-        cipher: &'a StackCipher<K>,
+        cipher: &'a KeysetCipher<'k, K>,
         context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
     where
@@ -994,28 +1011,34 @@ where
 /// a whole record: query builders probing an index, re-indexers, tests of a
 /// single scheme.
 ///
-/// Every [`StackCipher`] carries the PRF keyed by its keyset's index key, so
-/// these need no data-key traffic at all — a query builder holding a cipher
-/// never touches ZeroKMS to build a probe. The descriptor is a context as
-/// the target-directed leaves take it — a [`NonEmpty<T>`]:
+/// Each returns a [`Pending`], the same carrier the record path hands back,
+/// so probes combine ([`Pending::zip`], [`Pending::all`]) and a batch of
+/// them settles as one. Under the local HMAC backend a term is derived
+/// during the synchronous build and the pending carries no requests —
+/// awaiting it does no I/O — but that is the backend's property, not the
+/// API's: a backend that derives terms at ZeroKMS settles them the way it
+/// settles data keys, through the same pending. The descriptor is a context
+/// as the target-directed leaves take it — a [`NonEmpty<T>`]:
 /// `nonempty!("users/email")`, `NonEmpty::new(column)?`,
 /// `nonempty!("users/email").with(row_id)` — and each method is
 /// byte-identical to that path for the same descriptor, so a term generated
 /// here compares against one generated by `encrypt_into_with_context`.
-impl<K> StackCipher<K> {
+impl<K> KeysetCipher<'_, K> {
     /// Generate an equality (exact-match) term for `value` under the field
     /// `descriptor`. Deterministic: the same value + descriptor always yields
     /// the same term, at write time and at query time. Byte-identical to
-    /// `value.encrypt_into_with_context(&cipher, descriptor)` into an `EqualityTerm`.
-    pub async fn equality_term<'c, T>(
+    /// `value.encrypt_into_with_context(&keyset, descriptor)` into an
+    /// `EqualityTerm`.
+    pub fn equality_term<'c, T>(
         &self,
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
-    ) -> Result<EqualityTerm, TermError>
+    ) -> Pending<'_, EqualityTerm, K>
     where
         T: PrfValue,
     {
-        equality(self.prf(), value, descriptor.into_prf_context())
+        let term = equality(self.prf(), value, descriptor.into_prf_context());
+        Pending::ready(self, term.map_err(Error::from))
     }
 
     /// Generate a match (full-text) term for `text` under the field
@@ -1036,17 +1059,21 @@ impl<K> StackCipher<K> {
     /// Returns [`TermError::EmptyTermText`] when the text yields no tokens —
     /// empty or separator-only text, or an n-gram probe shorter than the gram
     /// length (which could never match; see [`Tokenizer::Ngram`]).
-    pub async fn match_terms<'c, O: MatchConfig>(
+    pub fn match_terms<'c, O>(
         &self,
         text: &str,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
-    ) -> Result<MatchTerm<O>, TermError> {
-        match_term(
+    ) -> Pending<'_, MatchTerm<O>, K>
+    where
+        O: MatchConfig + MaybeSend,
+    {
+        let term = match_term(
             self.prf(),
             text,
             descriptor.into_prf_context(),
             O::options(),
-        )
+        );
+        Pending::ready(self, term.map_err(Error::from))
     }
 
     /// Generate an order-revealing (CLLW ORE) term for a range-queryable value
@@ -1060,31 +1087,33 @@ impl<K> StackCipher<K> {
     /// (`'static`) because the visitor carries it; pass a `String` for
     /// borrowed text. Returns the raw CLLW ciphertext; the target-directed
     /// path wraps the same bytes in [`OreTerm`].
-    pub async fn ore_term<'c, T>(
+    pub fn ore_term<'c, T>(
         &self,
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
-    ) -> Result<T::Output, TermError>
+    ) -> Pending<'_, T::Output, K>
     where
         T: CllwOreEncrypt + Send + 'static,
         T::Output: Send + 'static,
     {
-        ore(self.prf(), value, descriptor.into_prf_context()).map(OreTerm::into_inner)
+        let term = ore(self.prf(), value, descriptor.into_prf_context()).map(OreTerm::into_inner);
+        Pending::ready(self, term.map_err(Error::from))
     }
 
     /// Generate an order-preserving (CLLW OPE) term: ciphertexts compare with
     /// plain lexicographic byte order, no custom comparator required.
     /// Encrypt-only — pair with the record ciphertext for round-trips. Key
     /// handling and input bounds as for [`ore_term`](Self::ore_term).
-    pub async fn ope_term<'c, T>(
+    pub fn ope_term<'c, T>(
         &self,
         value: T,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
-    ) -> Result<T::Output, TermError>
+    ) -> Pending<'_, T::Output, K>
     where
         T: CllwOpeEncrypt + Send + 'static,
         T::Output: Send + 'static,
     {
-        ope(self.prf(), value, descriptor.into_prf_context()).map(OpeTerm::into_inner)
+        let term = ope(self.prf(), value, descriptor.into_prf_context()).map(OpeTerm::into_inner);
+        Pending::ready(self, term.map_err(Error::from))
     }
 }
