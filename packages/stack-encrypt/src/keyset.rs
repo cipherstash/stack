@@ -39,7 +39,8 @@
 //! the lock, their answers can land in any order; a binding follows the
 //! *later lookup*, whichever answer arrives first, so an answer from before
 //! a rename cannot overwrite one from after it — neither under the same
-//! name, nor by taking back the name the keyset has since left.
+//! name, nor by taking back the name the keyset has since left, nor by
+//! arriving after eviction has dropped the binding it would have lost to.
 
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
@@ -128,7 +129,9 @@ pub(crate) enum Lookup {
 /// `O(n)` in the bound, which is the rare case by construction. The name
 /// index is bounded by the entries it serves: one binding per cached id at
 /// most, plus the default's, and a binding goes when its id does or when
-/// the keyset is resolved under another name.
+/// the keyset is resolved under another name. What an evicted binding
+/// leaves behind is one watermark, not a record per name: see
+/// [`evicted_binding`](Self::evicted_binding).
 pub(crate) struct KeysetCache {
     capacity: NonZeroUsize,
     name_ttl: Duration,
@@ -143,6 +146,18 @@ pub(crate) struct KeysetCache {
     /// The lookup whose answer last spoke for the default; the builder's
     /// own for a cipher that has resolved nothing yet.
     default_resolution: Resolution,
+    /// The latest lookup whose name binding eviction dropped.
+    ///
+    /// A keyset carries the order of the answers that spoke for it; evicting
+    /// it drops that with the rest of the entry, and an answer older than the
+    /// binding that went would then find nothing left to say it is the older
+    /// one. So no binding is made from an answer older than this. It is one
+    /// watermark for all names rather than one per forgotten name — a cache
+    /// whose whole contract is a bound must not grow a record per name it has
+    /// evicted — so it also refuses some bindings an older lookup could have
+    /// made safely. That costs a round trip on the next selection by such a
+    /// name, in the eviction regime that is already paying them.
+    evicted_binding: Resolution,
     by_id: HashMap<Uuid, Entry>,
     by_name: HashMap<String, Alias>,
 }
@@ -178,6 +193,7 @@ impl KeysetCache {
             resolutions: 0,
             default_name: default.name.clone(),
             default_resolution: Resolution(0),
+            evicted_binding: Resolution(0),
             default,
             by_id: HashMap::new(),
             by_name,
@@ -281,9 +297,16 @@ impl KeysetCache {
     }
 
     /// Bind `name` to `id` for the lookup `resolution`; false if a later
-    /// lookup already bound it. Also unbinds the name this id was bound under
-    /// before, and unbinds this name from the id it named before.
+    /// lookup already bound it, or if eviction has since dropped a binding
+    /// this answer is older than ([`evicted_binding`]). Also unbinds the name
+    /// this id was bound under before, and unbinds this name from the id it
+    /// named before.
+    ///
+    /// [`evicted_binding`]: Self::evicted_binding
     fn bind(&mut self, name: &str, id: Uuid, resolution: Resolution) -> bool {
+        if resolution < self.evicted_binding {
+            return false;
+        }
         if let Some(alias) = self.by_name.get(name) {
             if alias.resolution > resolution {
                 return false;
@@ -355,13 +378,15 @@ impl KeysetCache {
         if let Some(entry) = self.by_id.remove(&oldest) {
             if let Some(name) = entry.name {
                 // A name that has since moved to another id keeps its
-                // binding: only this id's binding goes with it.
-                if self
-                    .by_name
-                    .get(&name)
-                    .is_some_and(|alias| alias.id == oldest)
-                {
-                    let _ = self.by_name.remove(&name);
+                // binding: only this id's binding goes with it. Its place in
+                // the order of lookups outlives it as a watermark, so an
+                // answer older than it cannot bind a name once there is no
+                // entry left to order it against.
+                if let Some(alias) = self.by_name.get(&name) {
+                    if alias.id == oldest {
+                        self.evicted_binding = self.evicted_binding.max(alias.resolution);
+                        let _ = self.by_name.remove(&name);
+                    }
                 }
             }
         }
@@ -721,6 +746,36 @@ mod tests {
         cache.load(state(3, None));
         assert!(matches!(cache.get(&id(1)), Lookup::Miss(_)));
         assert_eq!(hit(cache.get(&name("acme"))), Some(Uuid::from_u128(2)));
+    }
+
+    /// Eviction must not lose the order either: the keyset the later answer
+    /// named can be evicted — taking the binding, and the entry that ordered
+    /// it — while the earlier answer is still in flight. Landing in a cache
+    /// that holds neither id and no binding for the name, it must still not
+    /// bind the name it asked under.
+    #[test]
+    fn an_older_answer_does_not_bind_a_name_eviction_has_forgotten() {
+        let mut cache = cache(1);
+        let earlier = ticket(cache.get(&name("acme")));
+        let later = ticket(cache.get(&name("acme")));
+
+        cache.insert(state(2, Some("acme")), later);
+        // 2 is evicted, and "acme" goes with it.
+        cache.load(state(3, None));
+        assert_eq!(cache.names(), 0);
+
+        cache.insert(state(1, Some("acme")), earlier);
+        assert!(
+            matches!(cache.get(&name("acme")), Lookup::Miss(_)),
+            "the name the later lookup moved away is not taken back"
+        );
+        assert_eq!(cache.names(), 0);
+
+        // A lookup later than the evicted binding still binds: the watermark
+        // does not close the name index for good.
+        let next = ticket(cache.get(&name("acme")));
+        cache.insert(state(1, Some("acme")), next);
+        assert_eq!(hit(cache.get(&name("acme"))), Some(Uuid::from_u128(1)));
     }
 
     /// Past the window a name lookup is stale — the keyset is still there,
