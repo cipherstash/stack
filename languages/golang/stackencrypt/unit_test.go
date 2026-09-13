@@ -2,9 +2,11 @@ package stackencrypt
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"reflect"
@@ -285,6 +287,41 @@ func TestAssignFieldConvertsWithinFamiliesOnly(t *testing.T) {
 		if err := assignField(rv.FieldByName(bad.field), bad.v); !errors.Is(err, errUnassignable) {
 			t.Errorf("%s <- %v: got %v, want errUnassignable", bad.field, bad.v, err)
 		}
+	}
+}
+
+// The request body wipes its buffer when closed, not before: reads up to
+// Close see the bytes, Close zeroes them, a read after Close is an error
+// rather than zeros, and a second Close is harmless.
+func TestRequestBodyWipesOnClose(t *testing.T) {
+	src := []byte(`{"client_id":"abc"}`)
+	b := newRequestBody(src)
+	wipe(src) // the guest wipes its own buffer on return; the copy must not notice
+	got, err := io.ReadAll(b)
+	if err != nil || string(got) != `{"client_id":"abc"}` {
+		t.Fatalf("ReadAll = %q, %v", got, err)
+	}
+	if err := b.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if !bytes.Equal(b.buf, make([]byte, len(b.buf))) {
+		t.Errorf("buffer after Close = %q, want zeros", b.buf)
+	}
+	if _, err := b.Read(make([]byte, 1)); !errors.Is(err, errRequestBodyClosed) {
+		t.Errorf("Read after Close: %v, want errRequestBodyClosed", err)
+	}
+	if err := b.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	// A close before the send is complete fails the send rather than
+	// letting zeros through as the request.
+	b = newRequestBody([]byte("0123456789"))
+	if n, err := b.Read(make([]byte, 4)); n != 4 || err != nil {
+		t.Fatalf("partial Read = %d, %v", n, err)
+	}
+	_ = b.Close()
+	if _, err := io.ReadAll(b); !errors.Is(err, errRequestBodyClosed) {
+		t.Errorf("ReadAll after an early Close: %v, want errRequestBodyClosed", err)
 	}
 }
 

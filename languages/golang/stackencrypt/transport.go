@@ -1,13 +1,14 @@
 package stackencrypt
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/tetratelabs/wazero"
@@ -111,15 +112,21 @@ func (t *transport) perform(ctx context.Context, mem api.Memory,
 	}
 	// The request body may carry key-material contexts; it is copied
 	// because the guest wipes its own buffer when the call returns, and the
-	// RoundTripper may read it after this function has. The copy is wiped
-	// once the round trip is over.
-	reqBody := make([]byte, len(body))
-	copy(reqBody, body)
-	defer wipe(reqBody)
-	req, err := http.NewRequestWithContext(ctx, string(method), string(url), bytes.NewReader(reqBody))
+	// RoundTripper may read it after this function has. The copy is owned
+	// by the request body handed to the RoundTripper and is wiped when that
+	// body is closed — not here: RoundTrip may go on reading, and close,
+	// in another goroutine after it has returned, on the error path
+	// included, and a wipe racing that send would put a truncated or
+	// zeroed request on the wire.
+	reqBody := newRequestBody(body)
+	req, err := http.NewRequestWithContext(ctx, string(method), string(url), reqBody)
 	if err != nil {
+		reqBody.Close()
 		return transportFailed, nil, []byte(err.Error())
 	}
+	// NewRequest only infers a length from the readers it knows; without
+	// one the transport would send the body chunked.
+	req.ContentLength = int64(len(body))
 	req.Header = parseHeaders(headers)
 	resp, err := t.rt.RoundTrip(req)
 	if err != nil {
@@ -144,6 +151,61 @@ func (t *transport) perform(ctx context.Context, mem api.Memory,
 		return transportFailed, nil, fmt.Appendf(nil, "response exceeds the %d-byte limit", maxResponseBytes)
 	}
 	return int32(resp.StatusCode), encodeHeaders(resp.Header), respBody
+}
+
+// requestBody is the io.ReadCloser a guest request goes out as. It owns
+// the host copy of the body and wipes it on Close, the one point at which
+// the RoundTripper contract says the transport is done with it: RoundTrip
+// must close the body, but may do so in another goroutine after it has
+// returned, so nothing this side can wipe any earlier without racing the
+// send. Read and Close are serialised for the same reason. A transport
+// that never closes the body leaves it to the collector, as any body it
+// was handed; a Close before the send is complete fails the read rather
+// than sending zeros in place of the request.
+//
+// A body of this type has no GetBody, so net/http cannot replay the
+// request on a reused connection that turns out to be dead. Replay would
+// need the plaintext to outlive Close, and the guest only ever POSTs,
+// which net/http does not replay in any case.
+type requestBody struct {
+	mu     sync.Mutex
+	buf    []byte
+	off    int
+	closed bool
+}
+
+var errRequestBodyClosed = errors.New("stackencrypt: request body read after close")
+
+// newRequestBody copies src, which the caller does not keep alive.
+func newRequestBody(src []byte) *requestBody {
+	buf := make([]byte, len(src))
+	copy(buf, src)
+	return &requestBody{buf: buf}
+}
+
+func (b *requestBody) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return 0, errRequestBodyClosed
+	}
+	if b.off >= len(b.buf) {
+		return 0, io.EOF
+	}
+	n := copy(p, b.buf[b.off:])
+	b.off += n
+	return n, nil
+}
+
+// Close wipes the body. It is idempotent and never fails.
+func (b *requestBody) Close() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.closed {
+		wipe(b.buf)
+		b.closed = true
+	}
+	return nil
 }
 
 // tokenGet is token_get: hand the guest the current bearer token.

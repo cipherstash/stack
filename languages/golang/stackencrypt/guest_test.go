@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -362,6 +363,58 @@ func TestInterruptedResponseBodyIsTransport(t *testing.T) {
 	})
 	if _, err := NewClient(context.Background(), cfg); !errors.Is(err, ErrTransport) {
 		t.Fatalf("NewClient: %v, want ErrTransport", err)
+	}
+}
+
+// A RoundTripper may keep reading the request body, and close it, in
+// another goroutine after RoundTrip has returned — on the error path too.
+// The host copy of the body must therefore survive until the transport
+// closes it: a wipe on RoundTrip's return would race the send and put a
+// truncated or zeroed request on the wire. Here the drain happens strictly
+// after the whole guest call has returned, and must still see the request.
+func TestRequestBodyOutlivesTheRoundTrip(t *testing.T) {
+	guestOrSkip(t)
+	returned := make(chan struct{})
+	type drained struct {
+		req  *http.Request
+		body []byte
+		err  error
+	}
+	done := make(chan drained, 1)
+	cfg := testConfig("http://zerokms.invalid")
+	cfg.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		go func() {
+			<-returned
+			b, err := io.ReadAll(r.Body)
+			_ = r.Body.Close()
+			done <- drained{req: r, body: b, err: err}
+		}()
+		return nil, errors.New("connection reset")
+	})
+	_, err := NewClient(context.Background(), cfg)
+	if !errors.Is(err, ErrTransport) {
+		t.Fatalf("NewClient: %v, want ErrTransport", err)
+	}
+	close(returned)
+	d := <-done
+	if d.err != nil {
+		t.Fatalf("reading the body after RoundTrip returned: %v", d.err)
+	}
+	if !json.Valid(d.body) || !bytes.Contains(d.body, []byte(testClientID)) {
+		t.Fatalf("body read after RoundTrip returned is not the request: %q", d.body)
+	}
+	// The length is declared, so the transport sends Content-Length rather
+	// than chunking a body it cannot size.
+	if d.req.ContentLength != int64(len(d.body)) {
+		t.Errorf("ContentLength = %d, want %d", d.req.ContentLength, len(d.body))
+	}
+	// And once closed, the host copy is gone.
+	rb, ok := d.req.Body.(*requestBody)
+	if !ok {
+		t.Fatalf("request body is %T, want *requestBody", d.req.Body)
+	}
+	if !bytes.Equal(rb.buf, make([]byte, len(rb.buf))) {
+		t.Error("request body was not wiped on Close")
 	}
 }
 
