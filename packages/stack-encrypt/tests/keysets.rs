@@ -2,8 +2,9 @@
 //! keyset-scoped versus client-scoped decrypt paths.
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -11,18 +12,34 @@ use stack_encrypt::target::{DecryptInto, EncryptInto};
 use stack_encrypt::{nonempty, CipherText, Error, SealedValue, StackCipher, StackCipherText};
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,
-    IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
+    IndexKey, IndexKeySource, LoadKeysetError, RetrieveKeyPayload, UnverifiedContext,
 };
 use uuid::Uuid;
+use zerokms_protocol::{ViturRequestError, ViturRequestErrorKind};
 
 /// The fake, plus a count of keyset loads and a log of the keyset each
 /// retrieve call named — the two facts the cache and the grouped dispatch
-/// are about.
+/// are about — and two knobs for the name-lookup races: a name can be
+/// *refused* (ZeroKMS answers the lookup with an error) and the next lookup
+/// of a name can be *held* until released, so an answer can be in flight
+/// while a later lookup completes.
 #[derive(Default)]
 struct Observed {
     inner: FakeDataKeySource,
     loads: AtomicUsize,
     retrieve_keysets: Mutex<Vec<Option<Uuid>>>,
+    refused: Mutex<HashMap<String, Refusal>>,
+    /// The name whose *next* lookup waits for [`release`](Self::release).
+    held: Mutex<Option<String>>,
+    released: AtomicBool,
+}
+
+/// How a refused name's lookup fails: with ZeroKMS's own answer that no
+/// keyset has the name, or with no answer at all.
+#[derive(Clone, Copy)]
+enum Refusal {
+    Unknown,
+    Unreachable,
 }
 
 impl Observed {
@@ -32,6 +49,30 @@ impl Observed {
 
     fn retrieve_keysets(&self) -> Vec<Option<Uuid>> {
         self.retrieve_keysets.lock().expect("lock").clone()
+    }
+
+    /// Every lookup of `name` from now on fails as `how` says.
+    fn refuse(&self, name: &str, how: Refusal) {
+        let _ = self
+            .refused
+            .lock()
+            .expect("lock")
+            .insert(name.to_owned(), how);
+    }
+
+    fn allow(&self, name: &str) {
+        let _ = self.refused.lock().expect("lock").remove(name);
+    }
+
+    /// The next lookup of `name` decides its answer on arrival but does not
+    /// return it until [`release`](Self::release).
+    fn hold(&self, name: &str) {
+        *self.held.lock().expect("lock") = Some(name.to_owned());
+        self.released.store(false, Ordering::SeqCst);
+    }
+
+    fn release(&self) {
+        self.released.store(true, Ordering::SeqCst);
     }
 }
 
@@ -66,7 +107,43 @@ impl IndexKeySource for Observed {
         keyset_id: Option<IdentifiedBy>,
     ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
         self.loads.fetch_add(1, Ordering::Relaxed);
-        self.inner.load_index_key(keyset_id).await
+        let asked = match &keyset_id {
+            Some(IdentifiedBy::Name(name)) => Some(name.to_string()),
+            Some(IdentifiedBy::Uuid(_)) | None => None,
+        };
+        // The answer is decided when the lookup arrives, as ZeroKMS would
+        // decide it; holding only delays its return.
+        let refusal = asked
+            .as_deref()
+            .and_then(|name| self.refused.lock().expect("lock").get(name).copied());
+        let held = {
+            let mut held = self.held.lock().expect("lock");
+            if held.as_deref() == asked.as_deref() && asked.is_some() {
+                *held = None;
+                true
+            } else {
+                false
+            }
+        };
+        if held {
+            while !self.released.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        }
+        match refusal {
+            Some(how) => {
+                let (kind, message) = match how {
+                    Refusal::Unknown => {
+                        (ViturRequestErrorKind::NotFound, "no keyset has this name")
+                    }
+                    Refusal::Unreachable => (ViturRequestErrorKind::SendRequest, "no answer"),
+                };
+                Err(stack_kms::Error::from(LoadKeysetError::from(
+                    ViturRequestError::new(kind, message, std::io::Error::other(message)),
+                )))
+            }
+            None => self.inner.load_index_key(keyset_id).await,
+        }
     }
 }
 
@@ -269,6 +346,154 @@ async fn a_name_selection_is_re_resolved_after_its_window() {
         4,
         "the default's id is identity too, and is never re-asked"
     );
+}
+
+/// ZeroKMS's own answer that no keyset has a name reaches the caller as it
+/// is, and a request that got no answer as a request failure. Neither
+/// touches what is cached by id: the name was answered, not the keyset. A
+/// zero window, so every selection by name asks ZeroKMS and can be refused.
+#[tokio::test]
+async fn a_refused_name_is_zerokms_answer_and_leaves_the_keyset_cached_by_id() {
+    let cipher = StackCipher::builder()
+        .kms(Observed::default())
+        .keyset_name_ttl(Duration::ZERO)
+        .init()
+        .await
+        .expect("build cipher");
+    let acme = cipher.keyset(name("acme")).await.expect("acme");
+    assert_eq!(cipher.kms().loads(), 2, "init and acme");
+
+    cipher.kms().refuse("acme", Refusal::Unknown);
+    let error = cipher.keyset(name("acme")).await.expect_err("refused");
+    assert!(
+        matches!(
+            error,
+            Error::Kms(stack_kms::Error::LoadKeyset(
+                LoadKeysetError::KeysetNotFound(_)
+            ))
+        ),
+        "ZeroKMS's not-found reaches the caller as it is, got {error:?}"
+    );
+    let by_id = cipher.keyset(acme.keyset_id()).await.expect("acme by id");
+    assert_eq!(
+        cipher.kms().loads(),
+        3,
+        "the keyset is still cached by id: only the name was answered"
+    );
+    assert_eq!(by_id.keyset_id(), acme.keyset_id());
+
+    cipher.kms().refuse("acme", Refusal::Unreachable);
+    let error = cipher.keyset(name("acme")).await.expect_err("failed");
+    assert!(
+        matches!(
+            error,
+            Error::Kms(stack_kms::Error::LoadKeyset(
+                LoadKeysetError::RequestFailed(_)
+            ))
+        ),
+        "a request that got no answer is a request failure, got {error:?}"
+    );
+
+    cipher.kms().allow("acme");
+    let again = cipher.keyset(name("acme")).await.expect("acme once more");
+    assert_eq!(
+        again.keyset_id(),
+        acme.keyset_id(),
+        "the fake resolves a name deterministically"
+    );
+}
+
+/// The race the negative answer exists for, end to end: a lookup for `acme`
+/// is in flight when ZeroKMS tells a later lookup that no keyset has the
+/// name. The earlier answer still reaches its own caller, but it binds
+/// nothing — a selection after it asks ZeroKMS, instead of being routed to
+/// the keyset the name no longer means for a whole window.
+#[tokio::test]
+async fn an_answer_in_flight_does_not_rebind_a_name_zerokms_has_since_refused() {
+    let cipher = cipher().await;
+    cipher.kms().hold("acme");
+    let earlier = cipher.keyset(name("acme"));
+    let meanwhile = async {
+        cipher.kms().refuse("acme", Refusal::Unknown);
+        let refused = cipher.keyset(name("acme")).await;
+        cipher.kms().release();
+        refused
+    };
+    // `join!` polls in order: the earlier lookup takes its ticket and parks
+    // on the hold, the later one is refused, and the release lets the
+    // earlier answer land last.
+    let (earlier, refused) = tokio::join!(earlier, meanwhile);
+    let earlier = earlier.expect("the earlier lookup's own answer stands for its caller");
+    assert!(
+        matches!(
+            refused,
+            Err(Error::Kms(stack_kms::Error::LoadKeyset(
+                LoadKeysetError::KeysetNotFound(_)
+            )))
+        ),
+        "the later lookup was refused, got {refused:?}"
+    );
+    assert_eq!(
+        cipher.kms().loads(),
+        3,
+        "init, the held lookup, the refused one"
+    );
+
+    cipher.kms().allow("acme");
+    let later = cipher.keyset(name("acme")).await.expect("acme afterwards");
+    assert_eq!(
+        cipher.kms().loads(),
+        4,
+        "the earlier answer bound nothing: a selection by the name asks ZeroKMS"
+    );
+    assert_eq!(
+        later.keyset_id(),
+        earlier.keyset_id(),
+        "the fake resolves a name deterministically; what differs is that it was asked"
+    );
+}
+
+/// The mirror of the race above: the later lookup gets no answer at all.
+/// That says nothing about the name, so the earlier answer binds it as
+/// usual and the next selection is served from the binding. This is the
+/// line between ZeroKMS's own not-found and a request that failed to reach
+/// it — only the former is an answer.
+#[tokio::test]
+async fn a_lookup_that_got_no_answer_forgets_nothing() {
+    let cipher = cipher().await;
+    cipher.kms().hold("acme");
+    let earlier = cipher.keyset(name("acme"));
+    let meanwhile = async {
+        cipher.kms().refuse("acme", Refusal::Unreachable);
+        let failed = cipher.keyset(name("acme")).await;
+        cipher.kms().release();
+        failed
+    };
+    let (earlier, failed) = tokio::join!(earlier, meanwhile);
+    let earlier = earlier.expect("the earlier lookup's answer stands");
+    assert!(
+        matches!(
+            failed,
+            Err(Error::Kms(stack_kms::Error::LoadKeyset(
+                LoadKeysetError::RequestFailed(_)
+            )))
+        ),
+        "the later lookup got no answer, got {failed:?}"
+    );
+    assert_eq!(
+        cipher.kms().loads(),
+        3,
+        "init, the held lookup, the failed one"
+    );
+
+    cipher.kms().allow("acme");
+    let later = cipher.keyset(name("acme")).await.expect("acme afterwards");
+    assert_eq!(
+        cipher.kms().loads(),
+        3,
+        "a failure to get an answer forgot nothing: the earlier answer bound the name and serves"
+    );
+    assert_eq!(later.keyset_id(), earlier.keyset_id());
 }
 
 #[tokio::test]
