@@ -98,3 +98,76 @@ evolution plan.
 
 [`ts-rs`]: https://github.com/Aleph-Alpha/ts-rs
 [`schemars`]: https://graham.cool/schemars/
+
+## Rust text equality with Stack Encrypt
+
+The optional `stack-encrypt` feature enables `EncryptFrom<String>` for `TextEq`
+and `TextEqQuery`, and `DecryptInto<String>` for `TextEq`. Other domains do not
+yet expose these conversions. The derives are emitted by `eql-codegen`.
+
+The generated API docs include a complete, executable example in the
+`eql_bindings::encryption` module, from cipher setup through decryption. Its
+[source](src/encryption/example.rs) is also run by the encryption test crate:
+
+```bash
+# From packages/eql, using the unpublished suite checkout:
+bash tasks/dev/with-stack-encrypt.sh /path/to/cipherstash-suite \
+  test -p eql-encryption-tests --test text_eq_example
+```
+
+With an initialized cipher, the essential calls are:
+
+```rust,ignore
+use eql_bindings::{Identifier, v3::text::{TextEq, TextEqQuery}};
+
+let column = Identifier::for_column("users", "email")?;
+let keyset = cipher.default_keyset();
+let email = "alice@example.com".to_owned();
+let stored: TextEq = keyset.encrypt_as(&email, column.clone()).await?;
+let query: TextEqQuery = keyset.encrypt_as(&email, column.clone()).await?;
+let opened: String = cipher.decrypt_as(stored, column.into()).await?;
+```
+
+Both identifier components must be nonempty. Encryption stores the identifier
+in `i`; its table and column supply the ciphertext AAD, term context, and ZeroKMS
+descriptor. The storage field names `c` and `hm` add no further context.
+Decryption validates `i` before retrieving keys. Passing an expected identifier,
+as above, also checks the destination. `Default::default()` uses the stored
+identifier alone, so moving a complete payload with its original `i` still opens.
+
+Ciphertext uses Vitamin C's native string encoding. Equality uses its exact
+string PRF input, with no normalization or case folding: `café` and
+`cafe\u{301}`, or `Alice` and `alice`, produce different terms. A query contains
+only `v`, `i`, and `hm` and requests no data keys. Neither EQL type implements
+the plaintext-side `Encrypt` or `Decrypt` traits.
+
+This is a **new producer profile**, independent of existing cipherstash-client
+ciphertext and terms. `c` is `stack-encrypt:1:` followed by padded standard base64 of Stack
+Encrypt's native `SealedValue` bytes; `hm` is the native 32-byte equality term
+encoded as hex. Serde handles the final EQL JSON envelope only. SQL consumes
+these payloads through the existing `public.eql_v3_text_eq` and
+`eql_v3.query_text_eq` domains and their equality extractor index. Writers and
+query producers for these values must use this same profile.
+
+### Developing against the unpublished crates
+
+Stack Encrypt and its runtime prerequisites must be published before the normal
+registry-based build, CI, and `eql-bindings` publication can succeed. Regenerate
+`Cargo.lock` without local overrides once they are published, before merging.
+During development, use a checkout containing
+[cipherstash-suite#2215](https://github.com/cipherstash/cipherstash-suite/pull/2215)
+(tested with commit `cbb3e000009b5974e90ec7da98d015b4b19a7270`):
+
+```bash
+# From packages/eql. Generates a temporary Cargo patch; no local paths are committed.
+bash tasks/dev/with-stack-encrypt.sh /path/to/cipherstash-suite \
+  test -p eql-encryption-tests
+bash tasks/dev/with-stack-encrypt.sh /path/to/cipherstash-suite \
+  test -p eql-bindings --features stack-encrypt
+
+# Against a disposable PostgreSQL database, using fresh encryption and a fake KMS:
+psql "$EQL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -f crates/eql-bindings/sql/cipherstash-encrypt.sql
+bash tasks/dev/with-stack-encrypt.sh /path/to/cipherstash-suite \
+  test -p eql-encryption-tests --test text_eq -- --ignored
+```

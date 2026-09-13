@@ -33,6 +33,19 @@ serde_json = "1"
 # caught by the `types:check` gate on the committed TS/JSON output.
 ts-rs = { version = "10", features = ["no-serde-warnings"] }
 schemars = "1"
+# Unpublished until cipherstash-suite#2215 lands. Local development uses
+# tasks/dev/with-stack-encrypt.sh; release/CI use the registry versions.
+stack-encrypt = { version = "0.1.0", optional = true, default-features = false }
+vitaminc-prf = { version = "0.4.0", optional = true }
+base64 = { version = "0.22", optional = true }
+hex = { version = "0.4", optional = true }
+
+[features]
+default = []
+stack-encrypt = ["dep:stack-encrypt", "dep:vitaminc-prf", "dep:base64", "dep:hex"]
+
+[package.metadata.docs.rs]
+features = ["stack-encrypt"]
 
 [dev-dependencies]
 # Parity oracle: tests/catalog_parity.rs asserts the v3 domain inventory

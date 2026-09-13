@@ -1,0 +1,23 @@
+[package]
+name = "eql-encryption-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Execute the exact source included in the public Rustdoc example. Keep its
+# test key source and async runtime out of eql-bindings' default test build.
+[[test]]
+name = "text_eq_example"
+path = "../../crates/eql-bindings/src/encryption/example.rs"
+harness = false
+
+# Keep crypto/Postgres test dependencies out of eql-bindings' default test build.
+[dev-dependencies]
+eql-bindings = { path = "../../crates/eql-bindings", features = ["stack-encrypt"] }
+stack-encrypt = { version = "0.1.0", default-features = false }
+stack-kms = { version = "0.1.0", default-features = false, features = ["test-support"] }
+serde = "1"
+serde_json = "1"
+uuid = "1"
+tokio = { version = "1", features = ["rt", "macros"] }
+postgres = "0.19"

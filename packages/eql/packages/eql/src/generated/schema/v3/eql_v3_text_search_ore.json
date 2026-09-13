@@ -11,7 +11,7 @@
       "type": "array"
     },
     "Ciphertext": {
-      "description": "mp_base85 source ciphertext — the `c` envelope key.\n\nRequired by every v3 domain CHECK; present on every payload.",
+      "description": "Producer-encoded source ciphertext — the `c` envelope key.\n\nRequired by every v3 domain CHECK; present on every payload.",
       "type": "string"
     },
     "Hmac256": {

@@ -26,6 +26,12 @@ This repository also carries the source of the **`eql-bindings`** Rust crate
 lockstep with `@cipherstash/eql`. It is in scope for security reports on the
 same terms as the npm packages above.
 
+The `eql-encryption-tests` Rust crate (`packages/eql/tests/encryption`) is
+an unpublished test harness for these bindings. It uses real encryption with
+a fake key source, executes the Rustdoc text encryption example, and provides
+optional disposable PostgreSQL coverage. It adds no published package or
+production service.
+
 > **Note on publishing.** `@cipherstash/eql` and the `eql-bindings` crate are
 > developed here but are *published* from `cipherstash/encrypt-query-language`
 > until the Phase 5 cutover in

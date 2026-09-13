@@ -126,6 +126,29 @@ fn struct_doc_lines(full: &str, domain: &Domain) -> [String; 3] {
     [summary, String::new(), detail]
 }
 
+/// Rust API navigation, separate from the shared wire-format descriptions
+/// exported to TypeScript and JSON Schema. The site groups domain variants by
+/// plaintext family, including their query operands.
+fn reference_docs(family: &DomainFamily) -> TokenStream {
+    let page = match family.name {
+        "integer" | "smallint" | "bigint" | "numeric" | "real" | "double" => "numbers",
+        "date" | "timestamp" => "dates-and-times",
+        "text" => "text",
+        "boolean" => "booleans",
+        "json" => "json",
+        other => panic!("missing CipherStash documentation page for {other:?}"),
+    };
+    let reference = format!(
+        " See the [EQL {} reference](https://cipherstash.com/docs/reference/eql/{page}) \
+         for SQL domain variants, operators, and query examples.",
+        family.name
+    );
+    quote! {
+        #[cfg_attr(doc, doc = "")]
+        #[cfg_attr(doc, doc = #reference)]
+    }
+}
+
 /// One payload struct + its three-method `DomainType` impl. A catalog-derived
 /// struct doc (summary + operators + required keys — see [`struct_doc_lines`]),
 /// no field docs. Term fields come from `Term::payload_terms`, matching on the
@@ -136,6 +159,8 @@ fn render_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
     let ident = format_ident!("{}", domain.struct_ident(family.name));
     let sql_domain = crate::context::domain_name(&full);
     let [doc_summary, doc_blank, doc_detail] = struct_doc_lines(&full, domain);
+    let reference = reference_docs(family);
+    let (encryption, version, context) = encryption_attrs(family, domain, false);
 
     // The envelope triple is hardcoded (not looped over `ENVELOPE_KEYS`) because
     // each key maps to a distinct Rust type: `v: SchemaVersion`, `i: Identifier`,
@@ -143,8 +168,8 @@ fn render_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
     // `eql_domains::ENVELOPE_KEYS` — `envelope_fields_match_catalog_keys` (below)
     // fails if that ever diverges.
     let mut fields = TokenStream::new();
-    fields.extend(quote! { pub v: SchemaVersion, });
-    fields.extend(quote! { pub i: Identifier, });
+    fields.extend(quote! { #version pub v: SchemaVersion, });
+    fields.extend(quote! { #context pub i: Identifier, });
     fields.extend(quote! { pub c: Ciphertext, });
     for term in Term::payload_terms(domain.terms) {
         let fid = format_ident!("{}", term.json_key());
@@ -163,6 +188,8 @@ fn render_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
         #[doc = #doc_summary]
         #[doc = #doc_blank]
         #[doc = #doc_detail]
+        #reference
+        #encryption
         #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
         #[ts(export, export_to = "v3/")]
         #[serde(deny_unknown_fields)]
@@ -206,6 +233,8 @@ fn render_query_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
     // Query operands live in the public-API schema, NOT `public`: they are
     // never valid column types.
     let sql_domain = format!("eql_v3.{query_name}");
+    let reference = reference_docs(family);
+    let (encryption, version, context) = encryption_attrs(family, domain, true);
 
     // Query doc: same capability label + operator union as storage, but the
     // required-key list drops `c` (query operands omit the ciphertext).
@@ -230,8 +259,8 @@ fn render_query_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
     // Envelope minus `c`: `v`/`i` only. Kept in lockstep with the storage
     // struct's envelope triple (see `envelope_fields_match_catalog_keys`).
     let mut fields = TokenStream::new();
-    fields.extend(quote! { pub v: SchemaVersion, });
-    fields.extend(quote! { pub i: Identifier, });
+    fields.extend(quote! { #version pub v: SchemaVersion, });
+    fields.extend(quote! { #context pub i: Identifier, });
     for term in Term::payload_terms(domain.terms) {
         let fid = format_ident!("{}", term.json_key());
         let tid = format_ident!("{}", term.binding_newtype());
@@ -243,6 +272,8 @@ fn render_query_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
         #[doc = #summary]
         #[doc = ""]
         #[doc = #detail]
+        #reference
+        #encryption
         #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
         #[ts(export, export_to = "v3/")]
         #[serde(deny_unknown_fields)]
@@ -271,6 +302,42 @@ fn render_query_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
             }
         }
     }
+}
+
+/// Text equality is the first supported encryption domain. Keep attributes in
+/// the generator so regeneration preserves the opt-in derives without enabling
+/// other domains before their operations and plaintext contracts are supported.
+fn encryption_attrs(
+    family: &DomainFamily,
+    domain: &Domain,
+    query: bool,
+) -> (TokenStream, TokenStream, TokenStream) {
+    if family.name != "text" || domain.name != "eq" {
+        return Default::default();
+    }
+    let decrypt = (!query).then(
+        || quote!(#[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::DecryptInto))]),
+    );
+    let plaintext = if query {
+        " Plaintext input: [`String`]. With the `stack-encrypt` feature, implements \
+         `EncryptFrom<String>` to build equality query terms. Query operands do not decrypt."
+    } else {
+        " Plaintext input and decrypted output: [`String`]. With the `stack-encrypt` \
+         feature, implements `EncryptFrom<String>` and `DecryptInto<String>`."
+    };
+    (
+        quote! {
+            #[cfg_attr(doc, doc = "")]
+            #[cfg_attr(doc, doc = #plaintext)]
+            #[cfg_attr(doc, doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.")]
+            #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = " See the [complete encryption example](crate::encryption#example).")]
+            #[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::EncryptFrom))]
+            #decrypt
+            #[cfg_attr(feature = "stack-encrypt", stash(plaintext = String))]
+        },
+        quote!(#[cfg_attr(feature = "stack-encrypt", stash(default))]),
+        quote!(#[cfg_attr(feature = "stack-encrypt", stash(context_field))]),
+    )
 }
 
 /// Render a whole family module (`integer.rs`, `text.rs`, …): the import header

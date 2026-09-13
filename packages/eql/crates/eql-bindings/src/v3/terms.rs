@@ -15,7 +15,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// mp_base85 source ciphertext — the `c` envelope key.
+/// Producer-encoded source ciphertext — the `c` envelope key.
 ///
 /// Required by every v3 domain CHECK; present on every payload.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, TS, JsonSchema)]
