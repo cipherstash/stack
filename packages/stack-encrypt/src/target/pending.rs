@@ -37,9 +37,8 @@ pub type PendingFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, Error>> + 
 #[cfg(target_arch = "wasm32")]
 pub type PendingFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, Error>> + 'a>>;
 
-/// A request carrier resolving to `T`: [`StackCipher`]'s
-/// [`EncryptTarget::Output`](super::EncryptTarget::Output) /
-/// [`DecryptTarget::Output`](super::DecryptTarget::Output).
+/// A request carrier resolving to `T`, built by the cipher executing an
+/// encryption or decryption declaration.
 ///
 /// **Not a future** until awaited. A `Pending` holds the ZeroKMS requests its
 /// value needs plus the fulfilment that shapes the responses; combining
@@ -87,8 +86,8 @@ pub struct Pending<'a, T, K> {
 /// keyset, which would make [`Pending`]'s scope rules
 /// ([`Error::NoKeyset`], [`Error::ForeignKeyset`]) say less than they do:
 /// a scope's id is one the cipher loaded from ZeroKMS. Downstream code
-/// implements [`EncryptFrom`](super::EncryptFrom) and passes the scope it
-/// was handed; it never needs one of its own.
+/// uses the cipher to execute [`EncryptFrom`](super::EncryptFrom); it never
+/// implements a scope of its own.
 pub trait CipherScope<'a, K>: sealed::Sealed {
     /// The client-scoped cipher the pending settles through.
     fn cipher(&self) -> &'a StackCipher<K>;
@@ -315,10 +314,20 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         scope: impl CipherScope<'a, K>,
         items: Vec<Pending<'a, T, K>>,
     ) -> Pending<'a, Vec<T>, K> {
+        Self::collect(scope, items)
+    }
+
+    /// Build a collection lazily, stopping at the first local failure so a bad
+    /// context does not repeat work for every remaining row.
+    pub(crate) fn collect(
+        scope: impl CipherScope<'a, K>,
+        items: impl IntoIterator<Item = Pending<'a, T, K>>,
+    ) -> Pending<'a, Vec<T>, K> {
+        let items = items.into_iter();
         let cipher = scope.cipher();
         let mut keyset = scope.keyset();
         let mut requests = Vec::new();
-        let mut fulfils = Vec::with_capacity(items.len());
+        let mut fulfils = Vec::with_capacity(items.size_hint().0);
         for item in items {
             keyset = match merge_scopes(keyset, item.keyset) {
                 Ok(keyset) => keyset,
@@ -879,6 +888,25 @@ mod tests {
             matches!(result, Err::<Vec<u32>, _>(Error::Aead)),
             "the first failed item fails the column: {result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_lazy_column_stops_building_after_a_local_failure() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let built = AtomicUsize::new(0);
+        let items = (0..10_000).map(|index| {
+            built.fetch_add(1, Ordering::Relaxed);
+            if index == 1 {
+                Pending::failed(&keyset, Error::Aead)
+            } else {
+                generating(&keyset, 1)
+            }
+        });
+        let result = Pending::collect(&keyset, items).await;
+        assert!(matches!(result, Err(Error::Aead)));
+        assert_eq!(built.load(Ordering::Relaxed), 2);
+        assert_eq!(cipher.kms().generate_calls(), 0);
     }
 
     /// Over-drawing is the fulfilment's own error, not a stolen sibling key:

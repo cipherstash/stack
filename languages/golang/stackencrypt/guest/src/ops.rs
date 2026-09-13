@@ -822,10 +822,8 @@ pub async fn decrypt_record<K>(
     plan: &[u8],
 ) -> Result<Vec<u8>, u32>
 where
-    K: DataKeySource + Sync,
+    K: DataKeySource + Sync + 'static,
 {
-    use stack_encrypt::target::DecryptInto;
-
     let plan = parse_plan(decode_value(plan)?)?;
     let (rows, batched) = record_leaves(decode_tree(record)?, &plan)?;
     let contexts = plan
@@ -845,9 +843,11 @@ where
         let mut row_names = Vec::with_capacity(row.len());
         for ((name, ct), context) in row.into_iter().zip(&contexts) {
             let context = context.clone();
+            // The scope is the opener's, the declaration is the target's:
+            // `decrypt_as` takes one context and drives both halves with it.
             pendings.push(match &opener {
-                Opener::Any(cipher) => ct.decrypt_into(*cipher, context),
-                Opener::Only(keyset) => ct.decrypt_into(keyset, context),
+                Opener::Any(cipher) => cipher.decrypt_as(ct, context.into()),
+                Opener::Only(keyset) => keyset.decrypt_as(ct, context.into()),
             });
             row_names.push(name);
         }

@@ -8,13 +8,15 @@ use std::cmp::Ordering;
 use std::sync::atomic::Ordering as AtomicOrdering;
 
 use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerm, OreTerm};
-use stack_encrypt::target::{DecryptInto, EncryptFrom, EncryptInto, Pending, Request};
+use stack_encrypt::target::{
+    CallerContext, DecryptFrom, DecryptInto, Decryption, EncryptFrom, EncryptInto, Encryption,
+    Pending, Request,
+};
 use stack_encrypt::{
-    nonempty, Descriptor, EmptyError, Error, KeysetCipher, NonEmpty, StackCipher, StackCipherText,
+    nonempty, Descriptor, EmptyError, Error, NonEmpty, StackCipher, StackCipherText,
 };
 use stack_kms::{FakeDataKeySource, IdentifiedBy, IndexKeySource};
 use uuid::Uuid;
-use vitaminc_prf::{BlockVisitor, IntoPrfContext, PrfContext, PrfValue};
 
 mod common;
 use common::{counting_cipher, stack_cipher};
@@ -341,45 +343,22 @@ struct EncryptedAge {
     ob: OreTerm<u32>,
 }
 
-// The record hands the caller's context to its leaves, so it needs what
-// they need — inherited through per-field bounds, the same clauses the
-// derive emits, rather than restated as a leaf-policy bound of the record's
-// own (which would need editing every time the leaves' policy tightens).
-impl<'k, K, Ctx> EncryptFrom<u32, KeysetCipher<'k, K>, Ctx> for EncryptedAge
-where
-    Ctx: Clone,
-    StackCipherText: EncryptFrom<u32, KeysetCipher<'k, K>, Ctx>,
-    EqualityTerm: EncryptFrom<u32, KeysetCipher<'k, K>, Ctx>,
-    OreTerm<u32>: EncryptFrom<u32, KeysetCipher<'k, K>, Ctx>,
-{
-    fn encrypt_from<'a>(
-        source: &'a u32,
-        cipher: &'a KeysetCipher<'k, K>,
-        context: Ctx,
-    ) -> Pending<'a, Self, K>
+impl EncryptFrom<u32> for EncryptedAge {
+    type Context = CallerContext;
+    fn encryption<'s, K: 'static>(context: Self::Context) -> Encryption<'s, u32, Self, K>
     where
-        Self: 'a,
+        u32: 's,
     {
-        StackCipherText::encrypt_from(source, cipher, context.clone())
-            .zip(EqualityTerm::encrypt_from(source, cipher, context.clone()))
-            .zip(OreTerm::<u32>::encrypt_from(source, cipher, context))
+        stack_encrypt::target::ciphertext(context.clone())
+            .zip(stack_encrypt::target::equality(context.clone()))
+            .zip(stack_encrypt::target::ore(context))
             .map(|((c, hm), ob)| Self { c, hm, ob })
     }
 }
-
-/// The decrypt mirror a derive would emit: only the ciphertext field
-/// participates — terms are one-way — and its context demand is inherited
-/// through the field bound, as on the encrypt side.
-impl<K, Ctx> DecryptInto<u32, StackCipher<K>, Ctx> for EncryptedAge
-where
-    StackCipherText: DecryptInto<u32, StackCipher<K>, Ctx>,
-{
-    fn decrypt_into<'a>(self, cipher: &'a StackCipher<K>, context: Ctx) -> Pending<'a, u32, K>
-    where
-        Self: 'a,
-        u32: 'a,
-    {
-        self.c.decrypt_into(cipher, context)
+impl DecryptInto<u32> for EncryptedAge {
+    type Context = CallerContext;
+    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<u32, K> {
+        stack_encrypt::target::open(self.c, context)
     }
 }
 
@@ -466,111 +445,35 @@ async fn composite_record_terms_preserve_order() {
     assert_eq!(ten.ob.cmp(&twenty.ob), Ordering::Less);
 }
 
-// --- A "third-party" term type ----------------------------------------------
-//
-// Defined here using only the public extension surface: `EncryptFrom`,
-// `Pending::ready`, and the cipher's public PRF. This is the proof that the
-// set of SEM types is open — a separate crate can do exactly this.
-
-/// A prefix term: the PRF of the first `N` characters of a string, enabling
-/// "starts with" queries on the first N chars. (Illustrative only.)
+// A third-party output can wrap a supported operation, but cannot replace its
+// cryptographic implementation. Prefix tokenization would need a core operation.
 #[derive(Debug, PartialEq, Eq)]
-struct PrefixTerm<const N: usize>([u8; 32]);
-
-impl<'c, 'k, S, K, T, const N: usize> EncryptFrom<S, KeysetCipher<'k, K>, NonEmpty<T>>
-    for PrefixTerm<N>
+struct StoredEquality([u8; 32]);
+impl<S> EncryptFrom<S> for StoredEquality
 where
-    S: AsRef<str>,
-    T: IntoPrfContext<'c>,
+    EqualityTerm: EncryptFrom<S>,
 {
-    fn encrypt_from<'a>(
-        source: &'a S,
-        cipher: &'a KeysetCipher<'k, K>,
-        context: NonEmpty<T>,
-    ) -> Pending<'a, Self, K>
+    type Context = <EqualityTerm as EncryptFrom<S>>::Context;
+    fn encryption<'s, K: 'static>(context: Self::Context) -> Encryption<'s, S, Self, K>
     where
-        Self: 'a,
+        S: 's,
     {
-        // The `NonEmpty` is the proof the built-in leaves rely on too; then
-        // an own domain label, so this can never collide with a built-in
-        // term under the same context.
-        let context = context.into_prf_context().into_owned();
-        let context = PrfContext::pae(&[
-            b"example/prefix-term/v1",
-            &(N as u64).to_le_bytes(),
-            context.as_bytes(),
-        ]);
-        let prefix: String = source.as_ref().chars().take(N).collect();
-        let term = prefix
-            .prf_visit_with_context(cipher.prf(), context, BlockVisitor)
-            .into_result()
-            .map(PrefixTerm)
-            .map_err(|e| Error::Other(Box::new(e)));
-        Pending::ready(cipher, term)
+        EqualityTerm::encryption(context).map(|term| Self(term.into_bytes()))
     }
 }
-
 #[tokio::test]
-async fn third_party_term_type_works_on_the_public_surface() {
+async fn third_party_output_wraps_a_core_term() {
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
-    let generator = generator().await;
-    let generator = generator.default_keyset();
-
-    let stored: PrefixTerm<3> = "alice"
+    let stored: StoredEquality = "alice"
         .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await
         .unwrap();
-    let probe: PrefixTerm<3> = "alicia"
-        .encrypt_into_with_context(&generator, nonempty!("users/name"))
-        .await
-        .unwrap();
-    let miss: PrefixTerm<3> = "bob"
-        .encrypt_into_with_context(&generator, nonempty!("users/name"))
-        .await
-        .unwrap();
-
-    assert_eq!(stored, probe, "same 3-char prefix, same term");
-    assert_ne!(stored, miss);
-
-    // And it composes into a record like any built-in term.
-    struct NameRecord {
-        c: StackCipherText,
-        prefix: PrefixTerm<3>,
-    }
-
-    impl<'k, K, Ctx> EncryptFrom<String, KeysetCipher<'k, K>, Ctx> for NameRecord
-    where
-        Ctx: Clone,
-        StackCipherText: EncryptFrom<String, KeysetCipher<'k, K>, Ctx>,
-        PrefixTerm<3>: EncryptFrom<String, KeysetCipher<'k, K>, Ctx>,
-    {
-        fn encrypt_from<'a>(
-            source: &'a String,
-            cipher: &'a KeysetCipher<'k, K>,
-            context: Ctx,
-        ) -> Pending<'a, Self, K>
-        where
-            Self: 'a,
-        {
-            StackCipherText::encrypt_from(source, cipher, context.clone())
-                .zip(PrefixTerm::<3>::encrypt_from(source, cipher, context))
-                .map(|(c, prefix)| Self { c, prefix })
-        }
-    }
-
-    let record: NameRecord = "alice"
-        .to_string()
+    let canonical: EqualityTerm = "alice"
         .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await
         .unwrap();
-    assert_eq!(record.prefix, stored);
-    let name: String = record
-        .c
-        .decrypt_into(&cipher, nonempty!("users/name"))
-        .await
-        .unwrap();
-    assert_eq!(name, "alice");
+    assert_eq!(stored.0, canonical.into_bytes());
 }
 
 // --- Guard rails --------------------------------------------------------------

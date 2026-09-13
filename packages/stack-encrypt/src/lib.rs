@@ -268,9 +268,8 @@ pub use cipher::{
 pub use descriptor::Descriptor;
 pub use keyset::KeysetCipher;
 pub use target::{
-    CipherScope, DecryptField, DecryptFrom, DecryptInto, DecryptTarget, Decryptable,
-    ElementContext, EncryptFrom, EncryptInto, EncryptTarget, Pending, PendingFuture, Request,
-    Responses,
+    CallerContext, CipherScope, DecryptField, DecryptFrom, DecryptInto, Decryptable, Decryption,
+    EncryptFrom, EncryptInto, Encryption, Pending, PendingFuture, Request, Responses,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they

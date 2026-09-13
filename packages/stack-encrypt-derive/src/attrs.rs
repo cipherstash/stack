@@ -167,6 +167,7 @@ impl ContainerAttrs {
 /// Field-level options, from `#[stash(...)]` on a field.
 #[derive(Default)]
 pub(crate) struct FieldAttrs {
+    pub(crate) context_field: bool,
     /// `#[stash(context = "...")]`: derive this field under exactly this
     /// context instead of the one a `struct` derive would infer, or the one
     /// the caller passes for the record. Extended by a caller's context like
@@ -194,6 +195,13 @@ impl FieldAttrs {
 
         for attr in attrs.iter().filter(|a| a.path().is_ident("stash")) {
             attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("context_field") {
+                    if parsed.context_field {
+                        return Err(meta.error("`context_field` is given twice"));
+                    }
+                    parsed.context_field = true;
+                    return Ok(());
+                }
                 if meta.path.is_ident("context") {
                     // Each of these is singular by meaning, so a repeat is a
                     // mistake: rejected rather than silently overwritten. A

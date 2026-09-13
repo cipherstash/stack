@@ -13,9 +13,9 @@ All attributes live under `#[stash(...)]`.
 
 `plaintext` must be an owned type: the generated impl has no lifetime to give
 a reference. Without `plaintext`, each derive emits one impl generic over the plaintext,
-bounded by what the fields accept: `EncryptedAge` below is `EncryptFrom<P, _, _>`
+bounded by what the fields accept: `EncryptedAge` below is `EncryptFrom<P>`
 for any `P` that both `StackCipherText` and `EqualityTerm` accept, and
-`DecryptInto<P, _, _>` for any `P` its `decrypt` field opens to. With
+`DecryptInto<P>` for any `P` its `decrypt` field opens to. With
 `plaintext`, the record accepts only the listed types (a field that holds
 integers should not accept a `String`). Whether `Type` is a struct makes no
 difference to `plaintext`: the derive sees a name, not a definition, and
@@ -27,30 +27,34 @@ literal.
 
 | Attribute | Effect |
 |---|---|
+| `context_field` | Store the caller’s typed context here and recover it on decryption. Exactly one per record; excludes the other field attributes and literal contexts. |
 | `context = "..."` | Derive this field under exactly this context, extended by the one the caller passes for the record like any other. A query-side term built under the same literal — extended the same way — matches it. Must not be empty. |
 | `from = field` / `from = 0` | With `struct` only: derive this field from `plaintext.field` (or `plaintext.0` for a tuple struct) when its name differs from its plaintext field's. |
 | `default` / `default = expr` | Not derived: filled with `Default::default()` or `expr`. Never encrypted, never authenticated. |
 | `decrypt` | Decryption opens this field (`DecryptInto` only). Needed only when the field types cannot decide it — see below. |
 | `nested` | With `struct` only: infer no context for this field — it is handed the caller's context as it is, which its type (a nested `struct` derive carrying its own contexts) composes with them. Excludes `context`. |
 
-Each derive emits two impls per plaintext: one for `()`, the context
-`encrypt_into` / `Plaintext::decrypt_from(record, &cipher)` pass, and one for
-`NonEmpty<T>`, the context `encrypt_into_with_context` /
-`decrypt_from_with_context` pass (anything that converts into a
-`NonEmpty<T>`: `nonempty!("users/email")`, `NonEmpty::new(value)?`, a bare
-integer). Under `()` every field is derived under the context it carries
-itself; under `NonEmpty<T>` every such context — a `context = ".."` literal
-or a `struct` derive's inferred one — is extended with the caller's
-(`("users/age", context)`), and a field with no context of its own is
-handed the caller's as it is. No record accepts a context and then discards
-it.
+Each derive emits one declaration per plaintext, with an associated `Context`.
+A record with `#[stash(context_field)]` on a field of type `T` requires
+`NonEmpty<T>` for encryption and stores its inner value in that field. Decryption
+takes `ExpectedContext<T>`: its default reads and validates the stored value;
+`NonEmpty<T>.into()` also checks it against the expected destination before key
+retrieval. `T` supplies the Vitamin C context encodings and implements `Clone`,
+`MaybeEmpty`, and `PartialEq`. This metadata is not a separate encrypted field.
+It cannot be combined with literal context attributes.
 
-A leaf accepts only a `NonEmpty<T>`, so a record that hands the caller's
-context to one — a record of leaves, or a `nested` leaf — has a `()` impl
-the compiler cannot satisfy: `encrypt_into` is turned away with the field
-that needs a context named, and `encrypt_into_with_context` is the form
-that compiles. A record whose every field carries a context — every
-`struct` derive — compiles under both.
+Otherwise, a record whose fields all carry their own contexts (including a
+`struct` derive) uses `DeclaredContext`. `().into()` or its default selects the
+declared contexts unchanged; a nonempty caller context extends each base context.
+A record with fields that need a caller context uses `CallerContext`, constructed
+from a `NonEmpty<T>` or a supported integer. Both encodings and the descriptor's
+structured identity are preserved when borrowing context data is converted into
+an owned declaration. No context is inferred from a Rust type's name.
+
+The blanket `EncryptInto` and `DecryptFrom` convenience traits execute these
+declarations. Import `DecryptFrom` to call `.decrypt_into(...)`. Custom targets
+implement the declaration methods `encryption` and `decryption`; the old methods
+that received plaintext and a cipher are no longer extension points.
 
 Every attribute except `plaintext` is singular, and repeating one is a
 compile error rather than a silent overwrite (`plaintext` is repeatable,
@@ -76,10 +80,8 @@ A context passed by the caller extends every field's: under
 under `("users/age", 7u64)`, and a query site probes it under
 `nonempty!("users/age").with(7u64)`. This is how a field is bound to its
 record as well as its name — a record id, say — without the type having to
-know the id. Decryption takes the same extension. The extension is owned or
-`'static` (`u64`, `String`, `&'static str`, `Option`s and pairs of those):
-the field's own context fixes the pair's lifetime, for a `plaintext` record
-with `context = ".."` literals as much as for a `struct` derive.
+know the id. Decryption takes the same extension. The extension may be borrowed at the call site: its Vitamin C encodings are
+owned by the declaration before execution.
 
 The context is part of the stored data's identity: it is the AAD of every
 ciphertext in the column and the domain of every term. That is why the prefix

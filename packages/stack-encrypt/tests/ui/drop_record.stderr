@@ -1,10 +1,8 @@
 error[E0509]: cannot move out of type `Rec`, which implements the `Drop` trait
- --> tests/ui/drop_record.rs:7:23
-  |
-7 | #[derive(EncryptFrom, DecryptInto)]
-  |                       ^^^^^^^^^^^
-  |                       |
-  |                       cannot move out of here
-  |                       move occurs because value has type `CipherText<SealedValue, Box<dyn Any + Send>>`, which does not implement the `Copy` trait
-  |
-  = note: this error originates in the derive macro `DecryptInto` (in Nightly builds, run with -Z macro-backtrace for more info)
+  --> tests/ui/drop_record.rs:11:5
+   |
+11 |     c: StackCipherText,
+   |     ^^^^^^^^^^^^^^^^^^
+   |     |
+   |     cannot move out of here
+   |     move occurs because value has type `CipherText<SealedValue, Box<dyn Any + Send>>`, which does not implement the `Copy` trait

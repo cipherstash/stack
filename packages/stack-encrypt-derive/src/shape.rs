@@ -4,11 +4,24 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
 use syn::{
-    parse_quote, parse_quote_spanned, Data, DeriveInput, Expr, Fields, Generics, Ident, Lifetime,
-    LitStr, Member, Path, Result, Type,
+    parse_quote, Data, DeriveInput, Expr, Fields, Generics, Ident, Lifetime, LitStr, Member, Path,
+    Result, Type,
 };
 
 use crate::attrs::{ContainerAttrs, FieldAttrs};
+
+/// A generated lifetime must not shadow one the record declares. Append
+/// underscores until the name is free, preserving the user's parameters.
+pub(crate) fn fresh_lifetime(generics: &Generics, base: &str) -> Lifetime {
+    let mut name = base.to_owned();
+    while generics
+        .lifetimes()
+        .any(|declared| declared.lifetime.ident == name)
+    {
+        name.push('_');
+    }
+    Lifetime::new(&format!("'{name}"), Span::call_site())
+}
 
 /// One field of a record.
 #[cfg_attr(test, derive(Debug))]
@@ -41,6 +54,7 @@ pub(crate) enum Kind {
     },
     /// Not derived: `Default::default()` or the given expression.
     Default(Option<Expr>),
+    Context,
 }
 
 impl Field {
@@ -52,7 +66,7 @@ impl Field {
     pub(crate) fn from(&self) -> Option<&Member> {
         match &self.kind {
             Kind::Derived { from, .. } => from.as_ref(),
-            Kind::Default(_) => None,
+            Kind::Default(_) | Kind::Context => None,
         }
     }
 
@@ -78,20 +92,8 @@ impl Field {
                 context: Some(lit), ..
             } => FieldContext::Own(lit),
             Kind::Derived { context: None, .. } => FieldContext::Caller,
-            Kind::Default(_) => unreachable!("a `default` field has no context"),
+            Kind::Default(_) | Kind::Context => unreachable!("a `default` field has no context"),
         }
-    }
-
-    /// Does this field use the context the caller passes, in the impl for
-    /// `which`? A field with no context of its own always does; one with a
-    /// context of its own extends the caller's, so only under `NonEmpty<_>`.
-    /// See [`context_param`].
-    pub(crate) fn uses_callers_context(&self, which: ContextImpl) -> bool {
-        self.is_derived()
-            && match self.field_context() {
-                FieldContext::Caller => true,
-                FieldContext::Own(_) => which == ContextImpl::NonEmpty,
-            }
     }
 }
 
@@ -103,62 +105,8 @@ pub(crate) enum FieldContext<'a> {
     /// extended with the caller's context under `NonEmpty<_>`.
     Own(&'a LitStr),
     /// No context of its own: handed the caller's as it is — `()`, or the
-    /// impl's `NonEmpty<__T>`.
+    /// record's associated context.
     Caller,
-}
-
-/// Which of a derived record's two impls is being emitted: the context the
-/// caller passes is `()` in one and `NonEmpty<__T>` in the other. Every
-/// record gets both (see [`context_param`]), and every derived field uses
-/// the caller's context under `NonEmpty<__T>`, so no record accepts a
-/// context it then discards; a leaf field that has no context of its own
-/// makes the `()` one unsatisfiable, which is the compile error
-/// `encrypt_into` then reports.
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(test, derive(Debug))]
-pub(crate) enum ContextImpl {
-    Unit,
-    NonEmpty,
-}
-
-impl ContextImpl {
-    pub(crate) const BOTH: [ContextImpl; 2] = [ContextImpl::Unit, ContextImpl::NonEmpty];
-}
-
-impl FieldContext<'_> {
-    /// The context type as it appears in a where clause, in the impl for
-    /// `which`.
-    pub(crate) fn ty(&self, krate: &Path, which: ContextImpl) -> Type {
-        match (self, which) {
-            (FieldContext::Own(_), ContextImpl::Unit) => {
-                parse_quote!(#krate::NonEmpty<&'static str>)
-            }
-            (FieldContext::Own(_), ContextImpl::NonEmpty) => {
-                parse_quote!(#krate::NonEmpty<(&'static str, #krate::NonEmpty<__T>)>)
-            }
-            (FieldContext::Caller, ContextImpl::Unit) => parse_quote!(()),
-            (FieldContext::Caller, ContextImpl::NonEmpty) => parse_quote!(#krate::NonEmpty<__T>),
-        }
-    }
-
-    /// The context expression the field is handed in the impl for `which`;
-    /// `caller` is the expression for the caller's context, which the call
-    /// site chooses (move, clone, or clone through a reference) and which
-    /// only a field that [uses it](Field::uses_callers_context) receives.
-    pub(crate) fn expr(
-        &self,
-        krate: &Path,
-        which: ContextImpl,
-        caller: TokenStream,
-    ) -> TokenStream {
-        match (self, which) {
-            (FieldContext::Own(lit), ContextImpl::Unit) => quote!(#krate::nonempty!(#lit)),
-            (FieldContext::Own(lit), ContextImpl::NonEmpty) => {
-                quote!(#krate::NonEmpty::with(#krate::nonempty!(#lit), #caller))
-            }
-            (FieldContext::Caller, _) => caller,
-        }
-    }
 }
 
 /// The record a derive input describes.
@@ -203,6 +151,36 @@ impl Record {
         // `ContainerAttrs::parse` has established that `context` is present
         // exactly when `struct` is.
         let fields = collect(&data.fields, attrs.context.as_ref())?;
+        if fields
+            .iter()
+            .filter(|f| matches!(f.kind, Kind::Context))
+            .count()
+            > 1
+        {
+            return Err(syn::Error::new_spanned(
+                &input.ident,
+                "a record has exactly one `context_field`",
+            ));
+        }
+        if fields.iter().any(|f| matches!(f.kind, Kind::Context)) && attrs.context.is_some() {
+            return Err(syn::Error::new_spanned(
+                &input.ident,
+                "`context_field` supplies the complete context; a literal prefix does not apply",
+            ));
+        }
+        if fields.iter().any(|f| matches!(f.kind, Kind::Context))
+            && fields.iter().any(|f| {
+                matches!(
+                    f.kind,
+                    Kind::Derived {
+                        context: Some(_),
+                        ..
+                    }
+                )
+            })
+        {
+            return Err(syn::Error::new_spanned(&input.ident, "`context_field` supplies the complete context; literal field contexts do not apply"));
+        }
         let by_field = attrs.by_field.is_some();
         let plaintexts = match attrs.by_field {
             Some(plaintext) => vec![plaintext],
@@ -225,87 +203,6 @@ impl Record {
     }
 }
 
-/// The demand a derive places on the inner type of the caller's
-/// `NonEmpty<__T>`, beyond what the field bounds already say — the vitaminc
-/// context traits the direction needs, and `Clone` because one context
-/// fans out to every field.
-///
-/// The leaves in this crate state that demand through the field bounds
-/// already, but a `from` field's bound is checked in the body (the derive
-/// cannot name the plaintext field's type), and a term field's
-/// `DecryptField` accepts *any* context (it opens nothing), so without
-/// this bound a record whose ciphertext field carries a literal would
-/// accept — and silently discard — a value that is not a context at all.
-pub(crate) enum CallerContext<'a> {
-    /// Encrypt: convertible to AAD and to a PRF context.
-    Encrypt(&'a Path),
-    /// Decrypt: convertible to the AAD the value was encrypted under.
-    Decrypt(&'a Path),
-}
-
-/// Adds the impl's context parameter for `which`, and returns the type the
-/// impl is for.
-///
-/// Every derived record gets two impls: one for `()`, under which each
-/// field is derived under the context it carries itself, and one for
-/// `NonEmpty<__T>`, under which a row's inferred contexts are extended with
-/// the caller's and a field with no context of its own is handed the
-/// caller's as it is. The `()` impl of a record whose leaf takes the
-/// caller's context is unsatisfiable — a leaf exists only under a
-/// `NonEmpty<_>` — which is exactly the compile error `encrypt_into` reports
-/// against it.
-///
-/// Under `NonEmpty<__T>` an extended context is `NonEmpty<(&'static str,
-/// NonEmpty<__T>)>`, and the literal's `'static` fixes the lifetime the pair
-/// implements the context traits for; a `struct` derive's `nested` field
-/// hands the caller's context to a nested `struct` derive that extends it
-/// likewise, and its obligation is checked in the body, where a free
-/// lifetime could not meet it. So a record with any context of its own, and
-/// every `struct` derive, is bounded for `'static`. Only a `plaintext`
-/// record whose fields all take the caller's context as it is — every
-/// bound in the where clause — is bounded for a free lifetime, and can pass
-/// a borrowed context through.
-pub(crate) fn context_param(
-    generics: &mut Generics,
-    bound: CallerContext<'_>,
-    which: ContextImpl,
-    by_field: bool,
-    fields: &[&Field],
-) -> Type {
-    if which == ContextImpl::Unit {
-        return parse_quote!(());
-    }
-    let krate = match bound {
-        CallerContext::Encrypt(krate) | CallerContext::Decrypt(krate) => krate,
-    };
-    let needs_static = by_field
-        || fields
-            .iter()
-            .any(|f| matches!(f.field_context(), FieldContext::Own(_)));
-    let lifetime: syn::Lifetime = if needs_static {
-        parse_quote!('static)
-    } else {
-        // A lifetime parameter must precede the type parameters.
-        generics.params.insert(0, parse_quote!('__ctx));
-        parse_quote!('__ctx)
-    };
-    generics.params.push(parse_quote!(__T));
-    let predicates = &mut generics.make_where_clause().predicates;
-    match bound {
-        CallerContext::Encrypt(_) => predicates.push(parse_quote! {
-            __T: #krate::IntoAad<#lifetime> + #krate::IntoPrfContext<#lifetime> + ::core::clone::Clone
-        }),
-        CallerContext::Decrypt(_) => predicates.push(parse_quote! {
-            __T: #krate::IntoAad<#lifetime> + ::core::clone::Clone
-        }),
-    }
-    parse_quote!(#krate::NonEmpty<__T>)
-}
-
-/// `impl #trait_path for Record` around `content` — the scaffolding both
-/// derives share. Splits the record's own generics (for the type position)
-/// and the augmented `generics` (for the impl and its where clause) here, so
-/// each derive hands over one `Generics` instead of three projections of it.
 pub(crate) fn trait_impl(
     input: &DeriveInput,
     generics: &Generics,
@@ -321,151 +218,6 @@ pub(crate) fn trait_impl(
             #content
         }
     }
-}
-
-/// Which trait a field bound names; the bound is otherwise identical between
-/// the two derives, and built in one place so the where-clause logic that
-/// carries the per-field contexts cannot diverge between them.
-pub(crate) enum FieldBound {
-    /// `EncryptFrom<Source, ..>` — for encrypt, on fields derived from the
-    /// whole source (the caller filters; a `from` field's obligation is
-    /// checked in the body instead, where the source field's type is known).
-    /// Carries the lifetime of the `KeysetCipher` the impl binds to
-    /// ([`keyset_lifetime`]).
-    Encrypt(Lifetime),
-    /// `DecryptField<Plaintext, ..>` — for automatic decrypt, on every
-    /// candidate field.
-    DecryptField,
-    /// `DecryptInto<Plaintext, ..>` — for explicit decrypt, on the one field
-    /// opened as the whole plaintext.
-    DecryptInto,
-}
-
-/// `FieldTy: Trait<Target, Cipher, Ctx>` for each of `fields`, under the
-/// context it is derived or opened under in the impl for `which` — its
-/// literal's, `()`, or the caller's `NonEmpty<__T>`, which is how a record
-/// inherits its leaves' demand for a non-empty context. The cipher is the
-/// one the trait binds to: encrypting binds to a keyset
-/// (`KeysetCipher<'__k, __K>`), decrypting to the client (`StackCipher<__K>`;
-/// the keyset-constrained form is a blanket over it).
-pub(crate) fn push_field_bounds(
-    generics: &mut Generics,
-    krate: &Path,
-    fields: &[&Field],
-    target: &Type,
-    bound: FieldBound,
-    which: ContextImpl,
-) {
-    let trait_name: Ident = match bound {
-        FieldBound::Encrypt(_) => parse_quote!(EncryptFrom),
-        FieldBound::DecryptField => parse_quote!(DecryptField),
-        FieldBound::DecryptInto => parse_quote!(DecryptInto),
-    };
-    let cipher = cipher_type(krate, &bound);
-    let predicates = &mut generics.make_where_clause().predicates;
-    for field in fields {
-        let ty = &field.ty;
-        let context = field.field_context().ty(krate, which);
-        // Spanned at the field type, so a type that cannot be a field of the
-        // record is reported there, not at the derive.
-        predicates.push(parse_quote_spanned! {ty.span()=>
-            #ty: #krate::target::#trait_name<#target, #cipher, #context>
-        });
-    }
-}
-
-/// The cipher a derived impl binds to. Encrypting binds to a keyset, so the
-/// encrypt impls are over `KeysetCipher<'__k, __K>` and carry that lifetime
-/// ([`keyset_lifetime`], [`push_keyset_lifetime`]); decrypting is
-/// client-scoped, so the decrypt impls are over `StackCipher<__K>`.
-pub(crate) fn cipher_type(krate: &Path, bound: &FieldBound) -> Type {
-    match bound {
-        FieldBound::Encrypt(keyset) => parse_quote!(#krate::KeysetCipher<#keyset, __K>),
-        FieldBound::DecryptField | FieldBound::DecryptInto => {
-            parse_quote!(#krate::StackCipher<__K>)
-        }
-    }
-}
-
-/// The lifetime of the `KeysetCipher` an encrypt impl binds to: `'__k`,
-/// unless the record declares that name itself — it is a legal lifetime
-/// for a user's type — in which case the first of `'__k_`, `'__k__`, … it
-/// does not. The record's parameters are the user's; a name the derive
-/// adds beside them must be one they did not take.
-pub(crate) fn keyset_lifetime(generics: &Generics) -> Lifetime {
-    let mut name = String::from("__k");
-    while generics
-        .lifetimes()
-        .any(|declared| declared.lifetime.ident == name)
-    {
-        name.push('_');
-    }
-    Lifetime::new(&format!("'{name}"), Span::call_site())
-}
-
-/// Add the lifetime of the `KeysetCipher` an encrypt impl binds to.
-/// Lifetimes precede type parameters in a generics list, so it goes first.
-pub(crate) fn push_keyset_lifetime(generics: &mut Generics, keyset: &Lifetime) {
-    generics.params.insert(0, parse_quote!(#keyset));
-}
-
-/// The source (or plaintext) types a derive emits one impl each for: the
-/// listed ones, or — when none are listed — the given generic parameter,
-/// with `true` saying it must be pushed onto the impl's generics.
-pub(crate) fn impl_sources(record: &Record, generic: Ident) -> (Vec<Type>, bool) {
-    if record.plaintexts.is_empty() {
-        (vec![parse_quote!(#generic)], true)
-    } else {
-        (record.plaintexts.clone(), false)
-    }
-}
-
-/// The pendings of `fields`, zipped into one and mapped into `build` (a
-/// struct literal over the fields' locals). Nothing is awaited, so the record
-/// settles as one batched call.
-///
-/// `call(field, context)` renders one field's pending under `context`, the
-/// expression [`FieldContext::expr`] gives the field in the impl for
-/// `which`. The caller's context (`__context`) goes to every field that
-/// uses it; the last such field takes it by move, the rest clone it.
-pub(crate) fn zip_fields(
-    krate: &Path,
-    fields: &[&Field],
-    which: ContextImpl,
-    mut call: impl FnMut(&Field, TokenStream) -> TokenStream,
-    build: TokenStream,
-) -> TokenStream {
-    let mut remaining = fields
-        .iter()
-        .filter(|f| f.uses_callers_context(which))
-        .count();
-
-    let mut chain = TokenStream::new();
-    let mut pattern = TokenStream::new();
-    for (index, field) in fields.iter().enumerate() {
-        let caller = if field.uses_callers_context(which) {
-            remaining -= 1;
-            if remaining == 0 {
-                quote!(__context)
-            } else {
-                quote!(::core::clone::Clone::clone(&__context))
-            }
-        } else {
-            TokenStream::new()
-        };
-        let context = field.field_context().expr(krate, which, caller);
-        let call = call(field, context);
-        let local = &field.local;
-        if index == 0 {
-            chain = call;
-            pattern = quote!(#local);
-        } else {
-            chain = quote!(#chain.zip(#call));
-            pattern = quote!((#pattern, #local));
-        }
-    }
-
-    quote!(#chain.map(|#pattern| #build))
 }
 
 /// The fields, with what a `struct` derive (`prefix` is the container's
@@ -521,48 +273,64 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                     return Err(syn::Error::new(context.span(), message));
                 }
             }
-            let kind = match attrs.default {
-                Some(default) => {
-                    if attrs.context.is_some()
-                        || attrs.from.is_some()
-                        || attrs.decrypt
-                        || attrs.nested
-                    {
-                        return Err(syn::Error::new_spanned(
-                            &field.ty,
-                            "a `default` field is not derived from the source, so `context`, \
+            if attrs.context_field
+                && (attrs.default.is_some()
+                    || attrs.context.is_some()
+                    || attrs.from.is_some()
+                    || attrs.decrypt
+                    || attrs.nested)
+            {
+                return Err(syn::Error::new_spanned(
+                    &field.ty,
+                    "`context_field` is metadata and cannot also be derived or defaulted",
+                ));
+            }
+            let kind = if attrs.context_field {
+                Kind::Context
+            } else {
+                match attrs.default {
+                    Some(default) => {
+                        if attrs.context.is_some()
+                            || attrs.from.is_some()
+                            || attrs.decrypt
+                            || attrs.nested
+                        {
+                            return Err(syn::Error::new_spanned(
+                                &field.ty,
+                                "a `default` field is not derived from the source, so `context`, \
                              `from`, `decrypt` and `nested` do not apply to it",
-                        ));
-                    }
-                    Kind::Default(default)
-                }
-                None => match prefix {
-                    Some(prefix) => {
-                        let from = attrs.from.unwrap_or_else(|| member.clone());
-                        let context = if attrs.nested {
-                            // The field's type carries its own contexts; it
-                            // is handed the caller's (`FieldContext::Caller`).
-                            None
-                        } else if let Some(lit) = attrs.context {
-                            Some(lit)
-                        } else {
-                            let column = match &from {
-                                Member::Named(ident) => ident.to_string(),
-                                Member::Unnamed(index) => index.index.to_string(),
-                            };
-                            let prefix = prefix.value();
-                            Some(LitStr::new(&format!("{prefix}/{column}"), member.span()))
-                        };
-                        Kind::Derived {
-                            context,
-                            from: Some(from),
+                            ));
                         }
+                        Kind::Default(default)
                     }
-                    None => Kind::Derived {
-                        context: attrs.context,
-                        from: None,
+                    None => match prefix {
+                        Some(prefix) => {
+                            let from = attrs.from.unwrap_or_else(|| member.clone());
+                            let context = if attrs.nested {
+                                // The field's type carries its own contexts; it
+                                // is handed the caller's (`FieldContext::Caller`).
+                                None
+                            } else if let Some(lit) = attrs.context {
+                                Some(lit)
+                            } else {
+                                let column = match &from {
+                                    Member::Named(ident) => ident.to_string(),
+                                    Member::Unnamed(index) => index.index.to_string(),
+                                };
+                                let prefix = prefix.value();
+                                Some(LitStr::new(&format!("{prefix}/{column}"), member.span()))
+                            };
+                            Kind::Derived {
+                                context,
+                                from: Some(from),
+                            }
+                        }
+                        None => Kind::Derived {
+                            context: attrs.context,
+                            from: None,
+                        },
                     },
-                },
+                }
             };
             Ok(Field {
                 member,
@@ -573,6 +341,83 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
             })
         })
         .collect()
+}
+
+impl Record {
+    pub(crate) fn context_field(&self) -> Option<&Field> {
+        self.fields.iter().find(|f| matches!(f.kind, Kind::Context))
+    }
+    pub(crate) fn declared_contexts(&self) -> bool {
+        self.by_field
+            || self
+                .derived()
+                .iter()
+                .all(|f| matches!(f.field_context(), FieldContext::Own(_)))
+    }
+    pub(crate) fn context_type(&self, decrypt: bool) -> Type {
+        let krate = &self.krate;
+        if let Some(field) = self.context_field() {
+            let ty = &field.ty;
+            if decrypt {
+                parse_quote!(#krate::target::ExpectedContext<#ty>)
+            } else {
+                parse_quote!(#krate::NonEmpty<#ty>)
+            }
+        } else if self.declared_contexts() {
+            parse_quote!(#krate::target::DeclaredContext)
+        } else {
+            parse_quote!(#krate::target::CallerContext)
+        }
+    }
+    pub(crate) fn field_context_type(&self, field: &Field) -> Type {
+        let krate = &self.krate;
+        match field.field_context() {
+            FieldContext::Own(_) => parse_quote!(#krate::target::CallerContext),
+            FieldContext::Caller => self.context_type(false),
+        }
+    }
+    pub(crate) fn context_expr(&self, field: &Field, decrypt: bool) -> TokenStream {
+        let krate = &self.krate;
+        match field.field_context() {
+            FieldContext::Caller => quote!(::core::clone::Clone::clone(&__context)),
+            FieldContext::Own(lit) => {
+                let failed = if decrypt {
+                    quote!(#krate::target::Decryption::failed)
+                } else {
+                    quote!(#krate::target::Encryption::failed)
+                };
+                let method = if self.declared_contexts() {
+                    quote!(field)
+                } else {
+                    quote!(under)
+                };
+                quote!(match __context.clone().#method(#lit) {
+                    Ok(context) => context, Err(error) => return #failed(error),
+                })
+            }
+        }
+    }
+    pub(crate) fn sources(&self, generic: Type) -> (Vec<Type>, bool) {
+        if self.plaintexts.is_empty() {
+            (vec![generic], true)
+        } else {
+            (self.plaintexts.clone(), false)
+        }
+    }
+}
+pub(crate) fn zip(plans: Vec<(TokenStream, Ident)>, result: TokenStream) -> TokenStream {
+    let mut chain = TokenStream::new();
+    let mut pattern = TokenStream::new();
+    for (index, (plan, local)) in plans.into_iter().enumerate() {
+        if index == 0 {
+            chain = plan;
+            pattern = quote!(#local);
+        } else {
+            chain = quote!(#chain.zip(#plan));
+            pattern = quote!((#pattern, #local));
+        }
+    }
+    quote!(#chain.map(move |#pattern| #result))
 }
 
 #[cfg(test)]
@@ -835,12 +680,9 @@ mod tests {
         // context extends it.
         assert!(matches!(name.from(), Some(Member::Named(m)) if m == "name"));
         assert_eq!(own(name), "legacy/name");
-        assert!(name.uses_callers_context(ContextImpl::NonEmpty));
-        assert!(!name.uses_callers_context(ContextImpl::Unit));
         // `nested`: no inferred context — the field is handed the caller's.
         assert!(matches!(address.from(), Some(Member::Named(m)) if m == "address"));
         assert!(matches!(address.field_context(), FieldContext::Caller));
-        assert!(address.uses_callers_context(ContextImpl::Unit));
         assert!(!version.is_derived());
     }
 

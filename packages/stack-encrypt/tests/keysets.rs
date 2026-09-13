@@ -1,6 +1,7 @@
 //! Keysets: one client, many keysets. Selection, caching, and the
 //! keyset-scoped versus client-scoped decrypt paths.
 
+use stack_encrypt::DecryptFrom;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
@@ -8,7 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use stack_encrypt::target::{DecryptInto, EncryptInto};
+use stack_encrypt::target::EncryptInto;
 use stack_encrypt::{nonempty, CipherText, Error, SealedValue, StackCipher, StackCipherText};
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,

@@ -31,8 +31,8 @@ _Avoid_: plaintext serialization, re-encryption
 
 **Context**:
 The value a ciphertext is authenticated under and a term is derived under. A
-leaf takes a `NonEmpty<T>` — vitaminc's proof that the value carries caller
-bytes — and nothing else; a `nonempty!("users/email")` literal, a
+leaf requires a nonempty context, validated by Vitamin C and owned in an
+`AeadContext` or `CallerContext` declaration; a `nonempty!("users/email")` literal, a
 `NonEmpty::new(value)?` at runtime, or a bare integer. It becomes the
 ciphertext's associated data, the term's PRF context, and the ZeroKMS
 descriptor of the data key.
@@ -70,7 +70,7 @@ _Avoid_: composite, struct (the plaintext is the struct; the record is derived f
 **EQL type**:
 An output type that participates in EQL — a ciphertext or index term stored
 for query — and so carries the contract that its context is supplied and
-non-empty. Every leaf and record in the target-directed path is one.
+non-empty. EQL integration supplies a concrete identifier; generic target records need not be EQL types.
 _Avoid_: searchable type, indexed type
 
 **Term**:

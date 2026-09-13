@@ -15,10 +15,12 @@ operations and constructing the target through a visitor over native encryption
 output. This preserves Vitamin C's plaintext contract while supporting derived
 records without an additional serialized buffer or generic intermediate tree.
 
-This records the accepted architecture; implementation is pending. It supersedes
+This records the accepted architecture, implemented by the core operation
+descriptions, native readers, and derives in this crate. It supersedes
 [ADR-0001](0001-context-optional-cipher-directed-path.md) as the current context
 and target-extension contract, carrying forward the context policies stated
-below. Exact supporting trait signatures remain implementation work.
+below. EQL-shaped integration tests exercise the consumer contract; wiring the
+actual EQL crate and extending Vitamin C plaintext coverage remain separate work.
 
 ## Decision
 
@@ -38,7 +40,7 @@ normalization and tokenization must be declared where the types do not determine
 them. Callers provide plaintext and the target's context, not a separate plan:
 
 ```rust
-// Intended call-site shape; not an implemented API.
+// Consumer call-site shape; Identifier and TextEq belong to EQL.
 let identifier = Identifier::for_column("users", "email")?;
 let encrypted: TextEq = keyset.encrypt_as(&email, identifier).await?;
 ```

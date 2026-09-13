@@ -13,8 +13,7 @@ use common::{counting_cipher, stack_cipher};
 use stack_encrypt::sem::{EqualityTerm, MatchTerm, OreTerm};
 use stack_encrypt::target::{DecryptFrom, EncryptInto};
 use stack_encrypt::{
-    nonempty, DecryptField, DecryptInto, Decryptable, EncryptFrom, Error, KeysetCipher, Pending,
-    StackCipher, StackCipherText,
+    nonempty, DecryptField, DecryptInto, Decryptable, EncryptFrom, Error, StackCipherText,
 };
 
 // --- Records: every field from one plaintext, under one context -------------
@@ -76,8 +75,8 @@ struct SearchableText {
 #[derive(EncryptFrom)]
 struct Pair(StackCipherText, EqualityTerm);
 
-/// A record may declare `'__k` itself; the derive's keyset lifetime steps
-/// aside rather than colliding with it. Compiling is the test.
+/// A record may declare `'__k` itself; the declaration API no longer adds
+/// a keyset lifetime. Compiling is the test.
 #[derive(EncryptFrom)]
 #[stash(plaintext = u32)]
 #[allow(dead_code)]
@@ -85,6 +84,19 @@ struct Borrowed<'__k> {
     c: StackCipherText,
     #[stash(default)]
     label: Option<&'__k str>,
+}
+
+/// The declaration's source lifetime steps aside for the record's own,
+/// including when the first fallback name is also taken.
+#[derive(EncryptFrom)]
+#[stash(plaintext = u32)]
+#[allow(dead_code)]
+struct BorrowedSource<'__source, '__source_> {
+    c: StackCipherText,
+    #[stash(default)]
+    label: Option<&'__source str>,
+    #[stash(default)]
+    other: Option<&'__source_ str>,
 }
 
 /// The record's own generics (and their bounds) are carried through, and the
@@ -228,19 +240,18 @@ async fn decrypt_marks_the_field_when_the_types_cannot_choose() {
 #[derive(PartialEq)]
 struct OpaqueTerm(EqualityTerm);
 
-impl<'k, S, K, Ctx> EncryptFrom<S, KeysetCipher<'k, K>, Ctx> for OpaqueTerm
+impl<S> EncryptFrom<S> for OpaqueTerm
 where
-    EqualityTerm: EncryptFrom<S, KeysetCipher<'k, K>, Ctx>,
+    EqualityTerm: EncryptFrom<S>,
 {
-    fn encrypt_from<'a>(
-        source: &'a S,
-        cipher: &'a KeysetCipher<'k, K>,
-        context: Ctx,
-    ) -> Pending<'a, Self, K>
+    type Context = <EqualityTerm as EncryptFrom<S>>::Context;
+    fn encryption<'s, K: 'static>(
+        context: Self::Context,
+    ) -> stack_encrypt::Encryption<'s, S, Self, K>
     where
-        Self: 'a,
+        S: 's,
     {
-        EqualityTerm::encrypt_from(source, cipher, context).map(OpaqueTerm)
+        EqualityTerm::encryption(context).map(OpaqueTerm)
     }
 }
 
@@ -292,16 +303,11 @@ impl Decryptable for Lying {
     const DECRYPTABLE: bool = true;
 }
 
-impl<P, K, Ctx> DecryptField<P, StackCipher<K>, Ctx> for Lying {
-    fn decrypt_field<'a>(
+impl<P, Ctx> DecryptField<P, Ctx> for Lying {
+    fn decryption_field<K: 'static>(
         self,
-        _cipher: &'a StackCipher<K>,
         _context: Ctx,
-    ) -> Option<Pending<'a, P, K>>
-    where
-        Self: 'a,
-        P: 'a,
-    {
+    ) -> Option<stack_encrypt::Decryption<P, K>> {
         None
     }
 }
