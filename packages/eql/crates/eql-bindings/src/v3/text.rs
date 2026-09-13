@@ -40,11 +40,16 @@ impl DomainType for Text {
 /// `public.eql_v3_text_eq` — equality domain.
 ///
 /// Operators: `=` `<>`. Required keys: `v` `i` `c` `hm`.
+#[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::EncryptFrom))]
+#[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::DecryptInto))]
+#[cfg_attr(feature = "stack-encrypt", stash(plaintext = String))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
 pub struct TextEq {
+    #[cfg_attr(feature = "stack-encrypt", stash(default))]
     pub v: SchemaVersion,
+    #[cfg_attr(feature = "stack-encrypt", stash(context_field))]
     pub i: Identifier,
     pub c: Ciphertext,
     pub hm: Hmac256,
@@ -271,11 +276,15 @@ impl DomainType for TextSearch {
 /// `eql_v3.query_text_eq` — equality domain query operand.
 ///
 /// Operators: `=` `<>`. Required keys: `v` `i` `hm`.
+#[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::EncryptFrom))]
+#[cfg_attr(feature = "stack-encrypt", stash(plaintext = String))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
 pub struct TextEqQuery {
+    #[cfg_attr(feature = "stack-encrypt", stash(default))]
     pub v: SchemaVersion,
+    #[cfg_attr(feature = "stack-encrypt", stash(context_field))]
     pub i: Identifier,
     pub hm: Hmac256,
 }

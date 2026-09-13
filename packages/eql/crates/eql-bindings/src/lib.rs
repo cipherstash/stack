@@ -34,6 +34,9 @@ pub mod from_v2;
 pub mod sql;
 pub mod v3;
 
+#[cfg(feature = "stack-encrypt")]
+pub mod encryption;
+
 /// EQL wire-format version. Hard-coded to `3` for every payload in the
 /// [`v3`] tier, whose generated domain CHECKs assert `VALUE->>'v' = '3'`.
 /// (The legacy `eql_v2` wire stays `v: 2` — see
