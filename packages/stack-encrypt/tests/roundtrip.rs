@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use stack_encrypt::{Aad, CipherText, ContextTag, Element, IntoAad, SealedValue, StackCipher};
+use stack_encrypt::{CipherText, ContextTag, Element, SealedValue, StackCipher};
 use stack_kms::FakeDataKeySource;
 use vitaminc_protected::{Controlled, Protected};
 
@@ -327,40 +327,24 @@ async fn element_fails_under_wrong_caller_aad() {
     );
 }
 
+/// The derivation that binds a sequence element to its position is the
+/// library's, applied by `Element<T>` itself — there is no entry point that
+/// lets a caller retrieve keys under one context and authenticate under
+/// another, so a batched row is read back by naming the type, not by
+/// reconstructing the AAD.
 #[tokio::test]
-async fn decipher_can_be_driven_directly() {
-    // `StackCipher::decipher` mirrors `Aes256Cipher::decipher`: the returned
-    // Decipher is driven via `Decrypt::decrypt_with_aad` with a caller-chosen
-    // AAD, so manual derivations work too.
+async fn a_batched_element_opens_by_naming_the_type() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
         .encrypt(Element("row".to_string()), b"users".as_slice())
         .await
         .expect("encrypt");
-    let decipher = cipher
-        .decipher(ct, b"users".as_slice())
+    let opened: Element<String> = cipher
+        .decrypt(ct, b"users".as_slice())
         .await
-        .expect("retrieve keys");
-    let pt = <String as stack_encrypt::Decrypt>::decrypt_with_aad(
-        decipher,
-        Aad::from_slice(b"users").for_sequence_element(),
-    )
-    .expect("manual element derivation must open the leaf");
-    assert_eq!(pt, "row");
-
-    // And a plain scalar opens under the bare AAD through the same path.
-    let ct = keyset
-        .encrypt("scalar".to_string(), b"ctx".as_slice())
-        .await
-        .expect("encrypt");
-    let decipher = cipher
-        .decipher(ct, b"ctx".as_slice())
-        .await
-        .expect("retrieve keys");
-    let pt = <String as stack_encrypt::Decrypt>::decrypt_with_aad(decipher, b"ctx".into_aad())
-        .expect("decrypt");
-    assert_eq!(pt, "scalar");
+        .expect("Element applies its own derivation on open");
+    assert_eq!(opened.into_inner(), "row");
 }
 
 #[tokio::test]

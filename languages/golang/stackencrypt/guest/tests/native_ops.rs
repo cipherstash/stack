@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::future::IntoFuture;
 
 use stack_encrypt::sem::DefaultMatch;
-use stack_encrypt::{nonempty, Aad, CipherText, Decrypt, Encrypt, SealedValue, StackCipher};
+use stack_encrypt::{nonempty, CipherText, Encrypt, SealedValue, StackCipher};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
 use stack_encrypt_guest::status::{STATUS_AUTH, STATUS_ENCODING};
 use stack_kms::{
@@ -271,9 +271,7 @@ fn guest_leaves_are_the_frozen_storage_encoding() {
     // A guest leaf seals the *value model's* typed payload (`[tag] ++
     // payload`, the vitaminc sealed-leaf format), so the native open goes
     // through `FfiValue`'s own `Decrypt` — not a bare `String`.
-    let decipher =
-        block_on(cipher.decipher(CipherText::Single(leaf), "ctx")).expect("retrieve the data key");
-    let value = FfiValue::decrypt_with_aad(decipher, Aad::from_slice(b"ctx"))
+    let value: FfiValue = block_on(cipher.decrypt(CipherText::Single(leaf), "ctx"))
         .expect("native decrypt of a guest leaf");
     assert_eq!(text(&value), "durable");
 }
@@ -724,9 +722,7 @@ fn record_terms_equal_the_native_derivations_and_probe_them() {
         panic!("expected a single leaf for a scalar field");
     };
     let leaf = SealedValue::from_bytes(leaf).expect("frozen leaf");
-    let decipher = block_on(cipher.decipher(CipherText::Single(leaf), "users/age"))
-        .expect("retrieve the data key");
-    let value = FfiValue::decrypt_with_aad(decipher, "users/age")
+    let value: FfiValue = block_on(cipher.decrypt(CipherText::Single(leaf), "users/age"))
         .expect("native decrypt of a record field");
     assert!(matches!(value, FfiValue::UInt32(34)));
 }
@@ -810,10 +806,8 @@ fn a_structured_plan_context_seals_what_the_native_extended_context_does() {
         panic!("expected a single leaf for a scalar field");
     };
     let leaf = SealedValue::from_bytes(leaf).expect("frozen leaf");
-    let decipher =
-        block_on(cipher.decipher(CipherText::Single(leaf), native)).expect("retrieve the data key");
-    let value =
-        FfiValue::decrypt_with_aad(decipher, native).expect("native decrypt under the tuple");
+    let value: FfiValue = block_on(cipher.decrypt(CipherText::Single(leaf), native))
+        .expect("native decrypt under the tuple");
     assert!(matches!(value, FfiValue::UInt32(34)));
 }
 

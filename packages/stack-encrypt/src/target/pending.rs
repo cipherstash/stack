@@ -355,7 +355,7 @@ where
     /// Settle: one batched ZeroKMS call per request kind (none at all for an
     /// all-[`ready`](Pending::ready) assembly), then the fulfilments shape the
     /// responses. This is the only place I/O happens — the cipher-directed
-    /// API ([`StackCipher::encrypt`] / [`StackCipher::decipher`]) settles
+    /// API ([`KeysetCipher::encrypt`] / [`StackCipher::decrypt`]) settles
     /// through here too, so there is exactly one path to ZeroKMS.
     ///
     /// Unboxed, so it carries no `Send`/`Sync` demands beyond the backend's

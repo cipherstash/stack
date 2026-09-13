@@ -236,9 +236,11 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! wrong context reach the AEAD, where it is [`Error::Aead`].
 //!
 //! For one-row reads of a batch-encrypted collection, decrypt as
-//! [`Element<T>`](Element) under the same AAD used for the whole collection.
-//! For finer control (custom `Decrypt` drivers, manual AAD derivations) use
-//! [`StackCipher::decipher`] and drive the returned [`StackDecipher`] yourself.
+//! [`Element<T>`](Element) under the same AAD used for the whole collection:
+//! the derivation that binds an element to its position is applied by the
+//! type, not by the caller. That is the general rule here — every leaf's AAD
+//! is derived from the context its key was minted under, and there is no
+//! entry point that lets a caller supply one of its own.
 //!
 //! # Relationship to vitaminc
 //!

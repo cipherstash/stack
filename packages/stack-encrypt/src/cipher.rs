@@ -25,9 +25,9 @@
 //!   [`PendingStackCipherText::seal`] (or the [`KeysetCipher::encrypt`]
 //!   convenience) then batches **one** `generate_keys` call for the whole
 //!   tree, under the handle's keyset, and seals every leaf.
-//! * **Decrypt** — [`StackCipher::decipher`] batches **one** `retrieve_keys`
+//! * **Decrypt** — [`StackCipher::decrypt`] batches **one** `retrieve_keys`
 //!   call per keyset the leaves were sealed under and zips each key onto its
-//!   leaf, returning a [`StackDecipher`]. The
+//!   leaf, building a [`StackDecipher`] it does not hand out. The
 //!   value's [`Decrypt`] impl then drives that decipher exactly as it would
 //!   `AesDecipher`: each leaf is opened under the AAD the drive supplies, so
 //!   the visitor pattern (nested `Vec`/`HashMap`/`Option`/`Protected` values,
@@ -244,11 +244,10 @@ impl From<Unspecified> for Error {
 ///
 /// Decrypting is not keyset-scoped: a sealed leaf carries the id of the
 /// keyset it was sealed under, and retrieving its data key needs nothing
-/// more than that and the client. So [`decrypt`](Self::decrypt) and
-/// [`decipher`](Self::decipher) live here and open leaves from any keyset
-/// the client is authorised for, in one batch. The same methods on a
-/// [`KeysetCipher`] add a constraint: they refuse a leaf from any other
-/// keyset before any key is retrieved.
+/// more than that and the client. So [`decrypt`](Self::decrypt) lives here
+/// and opens leaves from any keyset the client is authorised for, in one
+/// batch. The same method on a [`KeysetCipher`] adds a constraint: it
+/// refuses a leaf from any other keyset before any key is retrieved.
 ///
 /// # Construction
 ///
@@ -690,24 +689,22 @@ impl<K: DataKeySource> KeysetCipher<'_, K> {
     {
         decrypt_through(self, ciphertext, aad).await
     }
-
-    /// [`StackCipher::decipher`], constrained to this keyset: a leaf sealed
-    /// under any other is [`Error::ForeignKeyset`], refused before any key
-    /// is retrieved.
-    pub async fn decipher<'a>(
-        &self,
-        ciphertext: StackCipherText,
-        aad: impl IntoAad<'a>,
-    ) -> Result<StackDecipher, Error> {
-        decipher_through(self, ciphertext, aad).await
-    }
 }
 
-/// `decipher`, for either scope. The work is the same on both — one
-/// descriptor, one pending, one settle — and the scope is the whole
+/// Retrieve every leaf's data key under `aad`'s descriptor and bind them
+/// onto the ciphertext, for either scope. The work is the same on both —
+/// one descriptor, one pending, one settle — and the scope is the whole
 /// difference: a [`KeysetCipher`] constrains the leaves to its keyset, a
-/// [`StackCipher`] constrains nothing. Keeping one definition is what makes
-/// that true, rather than two bodies that happen to agree.
+/// [`StackCipher`] constrains nothing.
+///
+/// Deliberately private. The returned [`StackDecipher`] is driven with an
+/// AAD supplied per call, so exposing this would let a caller retrieve keys
+/// under one context and authenticate the ciphertext under an unrelated
+/// one. Every leaf's AAD is a derivation of the descriptor its key was
+/// minted under — `for_sequence_element`, `for_map_entry`, `for_leaf` —
+/// and that derivation is the library's to compute, never the caller's to
+/// supply. [`decrypt_through`] is the only way in, and it passes one `aad`
+/// to both halves.
 async fn decipher_through<'s, 'a, K: DataKeySource + 's>(
     scope: impl crate::target::CipherScope<'s, K>,
     ciphertext: StackCipherText,
@@ -736,11 +733,12 @@ where
 impl<K: DataKeySource> StackCipher<K> {
     /// Decrypt a [`StackCipherText`] into `T`, authenticating against `aad`.
     ///
-    /// Thin wrapper over [`decipher`](Self::decipher): one batched
-    /// `retrieve_keys` call per keyset the leaves were sealed under, every
-    /// key under the [`Descriptor`] of `aad`, then `T`'s [`Decrypt`] impl
-    /// drives the returned [`StackDecipher`] with `aad` — exactly as
-    /// `Aes256Cipher::decrypt_with_aad` drives `AesDecipher`.
+    /// One batched `retrieve_keys` call per keyset the leaves were sealed
+    /// under, every key under the [`Descriptor`] of `aad`, then `T`'s
+    /// [`Decrypt`] impl drives the resulting [`StackDecipher`] with the
+    /// *same* `aad` — exactly as `Aes256Cipher::decrypt_with_aad` drives
+    /// `AesDecipher`. One context in, and every leaf's AAD derived from it;
+    /// there is no form of this call that takes two.
     ///
     /// Not keyset-scoped: each leaf carries the id of the keyset it was
     /// sealed under, and this opens leaves from any keyset the client is
@@ -765,36 +763,6 @@ impl<K: DataKeySource> StackCipher<K> {
         A: IntoAad<'a>,
     {
         decrypt_through(self, ciphertext, aad).await
-    }
-
-    /// Fetch every leaf's data key (one batched `retrieve_keys` call per
-    /// keyset the leaves were sealed under, every key under the
-    /// [`Descriptor`] of `aad`; see [`decrypt`](Self::decrypt) on what that
-    /// fan-out means for untrusted input) and bind them onto the
-    /// ciphertext, returning a synchronous [`Decipher`] that does the AEAD
-    /// opening as the value's [`Decrypt`] impl drives it.
-    ///
-    /// This is the decrypt-side counterpart to passing `&keyset` (a
-    /// [`Cipher`]) on the encrypt side, mirroring `Aes256Cipher::decipher`:
-    /// the ZeroKMS I/O is front-loaded here, and the AAD is supplied per
-    /// call by [`Decrypt::decrypt_with_aad`], so `Decrypt` impls that derive
-    /// their own AAD (e.g. `vitaminc_aead::Element`) behave identically to
-    /// `AesDecipher`. The one thing ZeroKMS needs before that drive is the
-    /// descriptor the keys were generated under, so `aad` is the context the
-    /// value was sealed under — the same value, in the same shape, that the
-    /// drive will present (an `Element`'s own derivation is applied by the
-    /// drive, not here). [`decrypt`](Self::decrypt) does both steps.
-    ///
-    /// Settles through the target layer's request carrier
-    /// ([`decipher_pending`](crate::target)), so this and
-    /// `decrypt_into` share one definition of how leaves map to retrieve
-    /// requests and one path to ZeroKMS.
-    pub async fn decipher<'a>(
-        &self,
-        ciphertext: StackCipherText,
-        aad: impl IntoAad<'a>,
-    ) -> Result<StackDecipher, Error> {
-        decipher_through(self, ciphertext, aad).await
     }
 }
 
@@ -1644,7 +1612,9 @@ impl<K> MapCipher for PendingMapCipher<'_, '_, K> {
 // =============================================================================
 
 /// A [`Decipher`] over a single [`StackCipherText`] whose leaves already
-/// carry their retrieved data keys, produced by [`StackCipher::decipher`].
+/// carry their retrieved data keys, built inside
+/// [`StackCipher::decrypt`] and driven there by the value's [`Decrypt`]
+/// impl under the same context the keys were retrieved with.
 ///
 /// Structurally identical to `vitaminc_encrypt::AesDecipher` — the only
 /// difference is where each leaf's key comes from. The AAD is supplied per call

@@ -42,8 +42,8 @@
 use stack_encrypt::sem::{CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch};
 use stack_encrypt::target::Pending;
 use stack_encrypt::{
-    AadPiece, BoxedPassthrough, CipherText, Decrypt, Element, Encrypt, IntoPrfContext,
-    KeysetCipher, NonEmpty, SealedValue, StackCipher, StackCipherText,
+    AadPiece, BoxedPassthrough, CipherText, Element, Encrypt, IntoPrfContext, KeysetCipher,
+    NonEmpty, SealedValue, StackCipher, StackCipherText,
 };
 use stack_kms::DataKeySource;
 use vitaminc_aead_value::{transport as codec, FfiValue};
@@ -51,7 +51,7 @@ use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroizing;
 
 use crate::context::{borrowed, parse_context};
-use crate::status::{status_for_error, STATUS_AUTH, STATUS_ENCODING, STATUS_INTERNAL};
+use crate::status::{status_for_error, STATUS_ENCODING, STATUS_INTERNAL};
 
 /// Term kinds for `se_term`, part of the guest/host contract (the Go host
 /// mirrors these values).
@@ -124,16 +124,22 @@ where
     K: DataKeySource + Sync,
 {
     let tree = decode_tree(ciphertext)?;
-    let decipher = cipher
-        .decipher(tree, aad)
-        .await
-        .map_err(|e| status_for_error(&e))?;
+    // One `decrypt` per arm, not one `decipher` and two drives: the element
+    // derivation is `Element<T>`'s to apply, and naming the type is what
+    // asks for it. Only one arm runs, so the retrieve happens once either
+    // way.
     let value: FfiValue = if as_element {
-        Element::<FfiValue>::decrypt_with_aad(decipher, aad).map(Element::into_inner)
+        let wrapped: Element<FfiValue> = cipher
+            .decrypt(tree, aad)
+            .await
+            .map_err(|e| status_for_error(&e))?;
+        wrapped.into_inner()
     } else {
-        FfiValue::decrypt_with_aad(decipher, aad)
-    }
-    .map_err(|_| STATUS_AUTH)?;
+        cipher
+            .decrypt(tree, aad)
+            .await
+            .map_err(|e| status_for_error(&e))?
+    };
     encode_value(value)
 }
 
