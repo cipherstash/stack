@@ -46,8 +46,9 @@ under the same terms.
 
 The `eql-encryption-tests` Rust crate (`packages/eql/tests/encryption`) is
 an unpublished test harness for these bindings. It uses real encryption with
-a fake key source and an optional disposable PostgreSQL database; it adds no
-published package or production service.
+a fake key source, executes the Rustdoc text encryption example, and provides
+optional disposable PostgreSQL coverage. It adds no published package or
+production service.
 
 > **Note on publishing.** Every package in the table above, including all
 > seven `@cipherstash/protect-ffi*` packages, all seven `@cipherstash/auth*`

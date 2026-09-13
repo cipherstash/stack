@@ -11,6 +11,38 @@
 //! [`TextEq`]: crate::v3::text::TextEq
 //! [`TextEqQuery`]: crate::v3::text::TextEqQuery
 //!
+//! # Example
+//!
+//! Enable the `stack-encrypt` feature on `eql-bindings`. Both targets accept
+//! a [`String`] as plaintext and a [`NonEmpty<Identifier>`] as context.
+//! [`Identifier::for_column`] validates the table and column; the returned
+//! identifier is passed directly to `encrypt_as` and stored in the output's `i`.
+//! The output type selects the encryption operations: [`TextEq`] includes
+//! ciphertext and an equality term, while [`TextEqQuery`] contains only the term.
+//!
+//! This complete example runs locally without credentials. It uses real
+//! encryption with `stack_kms::FakeDataKeySource`, whose keys exist only for
+//! this process. Add `stack-encrypt`, `stack-kms` (with `default-features = false`
+//! and `features = ["test-support"]`), and `tokio` (with `features = ["rt", "macros"]`)
+//! to your example's dependencies. Stack Encrypt is currently unpublished;
+//! use the local development helper described in the crate README.
+//!
+//! The code below is executed by `cargo test -p eql-encryption-tests --test
+//! text_eq_example`. It is excluded from this crate's doctests so its optional
+//! test key source and runtime remain in the separate encryption test crate.
+#![doc = concat!("```rust,ignore\n", include_str!("encryption/example.rs"), "\n```")]
+//!
+//! For ZeroKMS, enable Stack Encrypt's `http` feature and replace the fake-key
+//! builder with `StackCipher::new().await?`, using your configured CipherStash
+//! credentials. The encryption and decryption calls are identical.
+//!
+//! Use the same table and column identifier for writes and queries. Passing
+//! `column.into()` on decryption also checks that the stored identifier matches
+//! the expected destination before retrieving keys. `Default::default()` instead
+//! uses the stored identifier alone.
+//!
+//! # Unsupported conversions
+//!
 //! Query terms cannot recover plaintext:
 //! ```compile_fail
 //! use eql_bindings::v3::text::TextEqQuery;

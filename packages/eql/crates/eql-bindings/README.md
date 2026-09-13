@@ -105,6 +105,18 @@ The optional `stack-encrypt` feature enables `EncryptFrom<String>` for `TextEq`
 and `TextEqQuery`, and `DecryptInto<String>` for `TextEq`. Other domains do not
 yet expose these conversions. The derives are emitted by `eql-codegen`.
 
+The generated API docs include a complete, executable example in the
+`eql_bindings::encryption` module, from cipher setup through decryption. Its
+[source](src/encryption/example.rs) is also run by the encryption test crate:
+
+```bash
+# From packages/eql, using the unpublished suite checkout:
+bash tasks/dev/with-stack-encrypt.sh /path/to/cipherstash-suite \
+  test -p eql-encryption-tests --test text_eq_example
+```
+
+With an initialized cipher, the essential calls are:
+
 ```rust,ignore
 use eql_bindings::{Identifier, v3::text::{TextEq, TextEqQuery}};
 

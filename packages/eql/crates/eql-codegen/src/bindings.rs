@@ -126,6 +126,29 @@ fn struct_doc_lines(full: &str, domain: &Domain) -> [String; 3] {
     [summary, String::new(), detail]
 }
 
+/// Rust API navigation, separate from the shared wire-format descriptions
+/// exported to TypeScript and JSON Schema. The site groups domain variants by
+/// plaintext family, including their query operands.
+fn reference_docs(family: &DomainFamily) -> TokenStream {
+    let page = match family.name {
+        "integer" | "smallint" | "bigint" | "numeric" | "real" | "double" => "numbers",
+        "date" | "timestamp" => "dates-and-times",
+        "text" => "text",
+        "boolean" => "booleans",
+        "json" => "json",
+        other => panic!("missing CipherStash documentation page for {other:?}"),
+    };
+    let reference = format!(
+        " See the [EQL {} reference](https://cipherstash.com/docs/reference/eql/{page}) \
+         for SQL domain variants, operators, and query examples.",
+        family.name
+    );
+    quote! {
+        #[cfg_attr(doc, doc = "")]
+        #[cfg_attr(doc, doc = #reference)]
+    }
+}
+
 /// One payload struct + its three-method `DomainType` impl. A catalog-derived
 /// struct doc (summary + operators + required keys — see [`struct_doc_lines`]),
 /// no field docs. Term fields come from `Term::payload_terms`, matching on the
@@ -136,6 +159,7 @@ fn render_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
     let ident = format_ident!("{}", domain.struct_ident(family.name));
     let sql_domain = crate::context::domain_name(&full);
     let [doc_summary, doc_blank, doc_detail] = struct_doc_lines(&full, domain);
+    let reference = reference_docs(family);
     let (encryption, version, context) = encryption_attrs(family, domain, false);
 
     // The envelope triple is hardcoded (not looped over `ENVELOPE_KEYS`) because
@@ -164,6 +188,7 @@ fn render_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
         #[doc = #doc_summary]
         #[doc = #doc_blank]
         #[doc = #doc_detail]
+        #reference
         #encryption
         #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
         #[ts(export, export_to = "v3/")]
@@ -208,6 +233,7 @@ fn render_query_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
     // Query operands live in the public-API schema, NOT `public`: they are
     // never valid column types.
     let sql_domain = format!("eql_v3.{query_name}");
+    let reference = reference_docs(family);
     let (encryption, version, context) = encryption_attrs(family, domain, true);
 
     // Query doc: same capability label + operator union as storage, but the
@@ -246,6 +272,7 @@ fn render_query_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
         #[doc = #summary]
         #[doc = ""]
         #[doc = #detail]
+        #reference
         #encryption
         #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
         #[ts(export, export_to = "v3/")]
@@ -291,8 +318,19 @@ fn encryption_attrs(
     let decrypt = (!query).then(
         || quote!(#[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::DecryptInto))]),
     );
+    let plaintext = if query {
+        " Plaintext input: [`String`]. With the `stack-encrypt` feature, implements \
+         `EncryptFrom<String>` to build equality query terms. Query operands do not decrypt."
+    } else {
+        " Plaintext input and decrypted output: [`String`]. With the `stack-encrypt` \
+         feature, implements `EncryptFrom<String>` and `DecryptInto<String>`."
+    };
     (
         quote! {
+            #[cfg_attr(doc, doc = "")]
+            #[cfg_attr(doc, doc = #plaintext)]
+            #[cfg_attr(doc, doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.")]
+            #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = " See the [complete encryption example](crate::encryption#example).")]
             #[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::EncryptFrom))]
             #decrypt
             #[cfg_attr(feature = "stack-encrypt", stash(plaintext = String))]
