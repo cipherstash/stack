@@ -568,6 +568,7 @@ jobs:
           PGPASSWORD: postgres
           EQL_TEST_DATABASE_URL: "host=localhost port=7433 user=postgres password=postgres dbname=postgres"
         run: |
+          set -euo pipefail
           cargo test --locked -p eql-bindings --features stack-encrypt
           cargo test --locked -p eql-encryption-tests
           cargo clippy --locked -p eql-bindings -p eql-encryption-tests --all-features --all-targets -- -D warnings
@@ -576,6 +577,7 @@ jobs:
 
       - name: Compile Rust text equality for WASI without HTTP
         run: |
+          set -euo pipefail
           rustup target add wasm32-wasip1
           cargo check --locked -p eql-bindings --features stack-encrypt --target wasm32-wasip1
 

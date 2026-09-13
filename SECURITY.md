@@ -44,6 +44,11 @@ includes the optional `stack-encrypt` feature of the MIT-licensed
 `eql-bindings` crate, which depends on `stack-encrypt` and so is usable only
 under the same terms.
 
+The `eql-encryption-tests` Rust crate (`packages/eql/tests/encryption`) is
+an unpublished test harness for these bindings. It uses real encryption with
+a fake key source and an optional disposable PostgreSQL database; it adds no
+published package or production service.
+
 > **Note on publishing.** Every package in the table above, including all
 > seven `@cipherstash/protect-ffi*` packages, all seven `@cipherstash/auth*`
 > packages and `@cipherstash/eql`, is published from this repository by
