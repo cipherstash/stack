@@ -156,6 +156,16 @@ pub use device_code::{DeviceCodeStrategy, DeviceCodeStrategyBuilder, PendingDevi
 #[cfg(not(target_arch = "wasm32"))]
 pub use stack_profile::DeviceIdentity;
 
+/// The workspace CRN every strategy is bound to, re-exported from
+/// `cts-common`.
+///
+/// A strategy built by hand takes one — `AccessKeyStrategy::new(crn, key)`,
+/// `OidcFederationStrategy::new(crn, provider)` — so a caller that names its
+/// own strategy needs this type and nothing else from `cts-common`. Its
+/// region drives service discovery and its workspace id verifies every
+/// token issued.
+pub use cts_common::Crn;
+
 /// Token *acquisition* — strategies that produce a [`ServiceToken`].
 ///
 /// Use [`AuthStrategy`] as the consumer-facing trait (e.g. when wiring
