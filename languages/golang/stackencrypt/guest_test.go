@@ -305,6 +305,42 @@ func TestOversizedResponseIsTransport(t *testing.T) {
 	}
 }
 
+// A bare empty part is an empty context, which the guest refuses at the
+// boundary — so the constructor refuses it first, rather than handing back
+// a Context that fails every call it is used in. A list is empty only when
+// every part is, so With may still carry one.
+func TestEmptyContextIsRefusedAtTheRoot(t *testing.T) {
+	for name, part := range map[string]any{"string": "", "bytes": []byte{}} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := NewContext(part); err == nil {
+				t.Fatal("NewContext accepted an empty part")
+			}
+			func() {
+				defer func() {
+					if recover() == nil {
+						t.Error("MustContext did not panic on an empty part")
+					}
+				}()
+				_ = MustContext(part)
+			}()
+		})
+	}
+	// The rule is the tree's: an empty part beside a non-empty one is a
+	// context the guest takes, so With must not inherit the root's check.
+	mixed, err := MustContext("users/age").With("")
+	if err != nil {
+		t.Fatalf("With(empty): %v", err)
+	}
+	guestOrSkip(t)
+	ctx := context.Background()
+	// No cipher on a raw instance, so a context the guest accepts reaches
+	// the state check — ErrState here means the context itself passed,
+	// where a refused one is ErrEncoding before it.
+	if _, err := rawInstance(t).DefaultCipher().Term(ctx, uint32(34), mixed, Equality); !errors.Is(err, ErrState) {
+		t.Fatalf("Term under [non-empty, empty]: %v, want ErrState (the context accepted)", err)
+	}
+}
+
 // A body that fails partway through is a transport failure, not a partial
 // response the guest is handed. io.ReadAll returns the bytes it managed to
 // read alongside the error; those bytes are a fragment of a ZeroKMS reply
@@ -477,12 +513,18 @@ func TestGuestRefusesMalformedInputsBeforeState(t *testing.T) {
 		"float under equality":    func() error { _, err := def.Term(ctx, 1.5, MustContext("k"), Equality); return err },
 		"integer under match":     func() error { _, err := def.Term(ctx, 1, MustContext("k"), Match); return err },
 		"container as term value": func() error { _, err := def.Term(ctx, []any{1}, MustContext("k"), Ore); return err },
-		"empty context part":      func() error { _, err := def.Term(ctx, 1, MustContext(""), Equality); return err },
-		"unknown term kind":       func() error { _, err := def.Term(ctx, 1, MustContext("k"), TermKind(9)); return err },
-		"name with spaces":        func() error { _, err := c.Keyset(ctx, KeysetName("not a name")); return err },
-		"empty name":              func() error { _, err := c.Keyset(ctx, KeysetName("")); return err },
-		"any as a keyset":         func() error { _, err := c.Keyset(ctx, anyKeyset{}); return err },
-		"float under eq in plan":  func() error { _, err := def.EncryptRecords(ctx, []badRow{{1.5}}); return err },
+		// NewContext refuses this one now (see
+		// TestEmptyContextIsRefusedAtTheRoot); built by hand so the guest's
+		// own boundary check stays covered from this side too.
+		"empty context part": func() error {
+			_, err := def.Term(ctx, 1, Context{node: ""}, Equality)
+			return err
+		},
+		"unknown term kind":      func() error { _, err := def.Term(ctx, 1, MustContext("k"), TermKind(9)); return err },
+		"name with spaces":       func() error { _, err := c.Keyset(ctx, KeysetName("not a name")); return err },
+		"empty name":             func() error { _, err := c.Keyset(ctx, KeysetName("")); return err },
+		"any as a keyset":        func() error { _, err := c.Keyset(ctx, anyKeyset{}); return err },
+		"float under eq in plan": func() error { _, err := def.EncryptRecords(ctx, []badRow{{1.5}}); return err },
 		"malformed leaf": func() error {
 			_, err := c.Decrypt(ctx, Sealed{1, 2, 3}, nil)
 			return err

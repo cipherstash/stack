@@ -65,7 +65,15 @@ func (defaultKeyset) selector() map[string]any { return map[string]any{"default"
 // DefaultKeyset selects the client's default keyset: the one named in
 // [Config.Keyset], else the ZeroKMS client's own default. Selecting it is
 // never a round trip.
-var DefaultKeyset KeysetSelector = defaultKeyset{}
+//
+// Its type is the unexported concrete one rather than [KeysetSelector] on
+// purpose. A package-level var of interface type is writable by every
+// importer, so one package could point this at a named keyset — or nil —
+// and silently redirect [Client.DefaultCipher] and every nil selector for
+// the whole process, racily. As a concrete zero-size struct it still
+// passes anywhere a KeysetSelector is wanted, and the only value it can be
+// reassigned is the one it already holds.
+var DefaultKeyset = defaultKeyset{}
 
 // anyKeyset is the opening-only selector: open every leaf under whichever
 // keyset it was sealed with. Not exported — the Client's own decrypt

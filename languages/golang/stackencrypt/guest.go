@@ -90,7 +90,16 @@ func newInstance(ctx context.Context, wasm []byte, t *transport) (*instance, err
 		WithCompilationCache(compilationCache()).
 		WithCloseOnContextDone(true)
 	runtime := wazero.NewRuntimeWithConfig(ctx, config)
-	wasi_snapshot_preview1.MustInstantiate(ctx, runtime)
+	// The Must* form of this panics on any error, which is the wrong
+	// failure mode for a constructor in a library and would strand the
+	// runtime it was instantiating into. No error is reachable here today —
+	// the host module is fixed and the runtime is new and private, so there
+	// is nothing for it to collide with — so this is the total form of a
+	// call that does not currently fail, matching the host transport below.
+	if _, err := wasi_snapshot_preview1.Instantiate(ctx, runtime); err != nil {
+		_ = runtime.Close(ctx)
+		return nil, fmt.Errorf("stackencrypt: instantiating WASI: %w", err)
+	}
 	if err := t.instantiate(ctx, runtime); err != nil {
 		_ = runtime.Close(ctx)
 		return nil, err

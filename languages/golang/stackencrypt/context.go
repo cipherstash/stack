@@ -1,6 +1,9 @@
 package stackencrypt
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // Context is the encryption context a record field or a term probe binds:
 // a domain-separating value that becomes both the ciphertext's AAD (and
@@ -21,16 +24,29 @@ type Context struct {
 	node any
 }
 
-// NewContext makes a one-part context.
+// NewContext makes a one-part context. The part must not be empty: a bare
+// empty string or empty byte slice is an empty context, and the guest
+// proves every context non-empty at the boundary, so such a Context could
+// only ever fail — every call, with ErrEncoding. Rust refuses the same
+// thing one step earlier: nonempty!("") does not compile.
+//
+// Emptiness is the whole tree's property, not the part's — a list is empty
+// only when every part is — so [Context.With] may still add an empty part
+// to a context that already has a non-empty one. Only the root is checked
+// here.
 func NewContext(part any) (Context, error) {
 	if err := checkPart(part); err != nil {
+		return Context{}, err
+	}
+	if err := checkRootNonEmpty(part); err != nil {
 		return Context{}, err
 	}
 	return Context{node: part}, nil
 }
 
 // MustContext is [NewContext] for a part known to be valid; it panics
-// otherwise. For string literals in plans and probes.
+// otherwise, an empty part included. For string literals in plans and
+// probes.
 func MustContext(part any) Context {
 	c, err := NewContext(part)
 	if err != nil {
@@ -53,6 +69,22 @@ func (c Context) With(part any) (Context, error) {
 // value renders the context in the guest's grammar: a scalar or nested
 // lists of scalars, ready for the transport codec.
 func (c Context) value() any { return c.node }
+
+// checkRootNonEmpty refuses the bare parts that are themselves an empty
+// context. Integers never are, whatever their value.
+func checkRootNonEmpty(part any) error {
+	switch p := part.(type) {
+	case string:
+		if p == "" {
+			return errors.New("stackencrypt: an empty string is an empty context")
+		}
+	case []byte:
+		if len(p) == 0 {
+			return errors.New("stackencrypt: an empty byte slice is an empty context")
+		}
+	}
+	return nil
+}
 
 func checkPart(part any) error {
 	switch part.(type) {
