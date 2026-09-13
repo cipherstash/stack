@@ -9,6 +9,11 @@ use ts_rs::TS;
 /// `public.eql_v3_text` — storage-only domain.
 ///
 /// Operators: none. Required keys: `v` `i` `c`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -40,6 +45,24 @@ impl DomainType for Text {
 /// `public.eql_v3_text_eq` — equality domain.
 ///
 /// Operators: `=` `<>`. Required keys: `v` `i` `c` `hm`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
+)]
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " Plaintext input and decrypted output: [`String`]. With the `stack-encrypt` feature, implements `EncryptFrom<String>` and `DecryptInto<String>`."
+)]
+#[cfg_attr(
+    doc,
+    doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`."
+)]
+#[cfg_attr(
+    all(doc, feature = "stack-encrypt"),
+    doc = " See the [complete encryption example](crate::encryption#example)."
+)]
 #[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::EncryptFrom))]
 #[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::DecryptInto))]
 #[cfg_attr(feature = "stack-encrypt", stash(plaintext = String))]
@@ -77,6 +100,11 @@ impl DomainType for TextEq {
 /// `public.eql_v3_text_match` — match domain.
 ///
 /// Operators: `@@`. Required keys: `v` `i` `c` `bf`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -109,6 +137,11 @@ impl DomainType for TextMatch {
 /// `public.eql_v3_text_ord_ore` — ordering domain.
 ///
 /// Operators: `=` `<>` `<` `<=` `>` `>=`. Required keys: `v` `i` `c` `hm` `ob`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -142,6 +175,11 @@ impl DomainType for TextOrdOre {
 /// `public.eql_v3_text_ord` — ordering domain.
 ///
 /// Operators: `=` `<>` `<` `<=` `>` `>=`. Required keys: `v` `i` `c` `hm` `op`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -175,6 +213,11 @@ impl DomainType for TextOrd {
 /// `public.eql_v3_text_ord_ope` — ordering domain.
 ///
 /// Operators: `=` `<>` `<` `<=` `>` `>=`. Required keys: `v` `i` `c` `hm` `op`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -208,6 +251,11 @@ impl DomainType for TextOrdOpe {
 /// `public.eql_v3_text_search_ore` — search domain.
 ///
 /// Operators: `=` `<>` `<` `<=` `>` `>=` `@@`. Required keys: `v` `i` `c` `hm` `ob` `bf`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -242,6 +290,11 @@ impl DomainType for TextSearchOre {
 /// `public.eql_v3_text_search` — search domain.
 ///
 /// Operators: `=` `<>` `<` `<=` `>` `>=` `@@`. Required keys: `v` `i` `c` `hm` `op` `bf`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -276,6 +329,24 @@ impl DomainType for TextSearch {
 /// `eql_v3.query_text_eq` — equality domain query operand.
 ///
 /// Operators: `=` `<>`. Required keys: `v` `i` `hm`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
+)]
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " Plaintext input: [`String`]. With the `stack-encrypt` feature, implements `EncryptFrom<String>` to build equality query terms. Query operands do not decrypt."
+)]
+#[cfg_attr(
+    doc,
+    doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`."
+)]
+#[cfg_attr(
+    all(doc, feature = "stack-encrypt"),
+    doc = " See the [complete encryption example](crate::encryption#example)."
+)]
 #[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::EncryptFrom))]
 #[cfg_attr(feature = "stack-encrypt", stash(plaintext = String))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
@@ -311,6 +382,11 @@ impl DomainType for TextEqQuery {
 /// `eql_v3.query_text_match` — match domain query operand.
 ///
 /// Operators: `@@`. Required keys: `v` `i` `bf`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -342,6 +418,11 @@ impl DomainType for TextMatchQuery {
 /// `eql_v3.query_text_ord_ore` — ordering domain query operand.
 ///
 /// Operators: `=` `<>` `<` `<=` `>` `>=`. Required keys: `v` `i` `hm` `ob`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -374,6 +455,11 @@ impl DomainType for TextOrdOreQuery {
 /// `eql_v3.query_text_ord` — ordering domain query operand.
 ///
 /// Operators: `=` `<>` `<` `<=` `>` `>=`. Required keys: `v` `i` `hm` `op`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -406,6 +492,11 @@ impl DomainType for TextOrdQuery {
 /// `eql_v3.query_text_ord_ope` — ordering domain query operand.
 ///
 /// Operators: `=` `<>` `<` `<=` `>` `>=`. Required keys: `v` `i` `hm` `op`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -438,6 +529,11 @@ impl DomainType for TextOrdOpeQuery {
 /// `eql_v3.query_text_search_ore` — search domain query operand.
 ///
 /// Operators: `=` `<>` `<` `<=` `>` `>=` `@@`. Required keys: `v` `i` `hm` `ob` `bf`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -471,6 +567,11 @@ impl DomainType for TextSearchOreQuery {
 /// `eql_v3.query_text_search` — search domain query operand.
 ///
 /// Operators: `=` `<>` `<` `<=` `>` `>=` `@@`. Required keys: `v` `i` `hm` `op` `bf`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]

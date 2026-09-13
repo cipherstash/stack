@@ -25,6 +25,13 @@
 //!
 //! Wire rule: **field names ARE wire names** — no `#[serde(rename)]`
 //! anywhere. The struct definition reads exactly like the JSON payload.
+//!
+//! Enable the `stack-encrypt` feature to encrypt Rust strings into `TextEq`
+//! storage values and `TextEqQuery` search values.
+#![cfg_attr(
+    feature = "stack-encrypt",
+    doc = "See the [complete encryption example](encryption#example), including cipher setup, table/column identifiers, and decryption."
+)]
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

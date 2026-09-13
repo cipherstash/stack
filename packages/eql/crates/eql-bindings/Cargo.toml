@@ -44,6 +44,9 @@ hex = { version = "0.4", optional = true }
 default = []
 stack-encrypt = ["dep:stack-encrypt", "dep:vitaminc-prf", "dep:base64", "dep:hex"]
 
+[package.metadata.docs.rs]
+features = ["stack-encrypt"]
+
 [dev-dependencies]
 # Parity oracle: tests/catalog_parity.rs asserts the v3 domain inventory
 # exactly covers eql_domains::CATALOG, so the types here cannot drift from

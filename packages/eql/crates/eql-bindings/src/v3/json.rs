@@ -86,6 +86,11 @@ impl JsonSchema for SteVecForm {
 /// stored once for the whole document (every entry encrypts under the
 /// document's single data key, with per-entry nonces derived from the
 /// entries' selectors).
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = "See the [EQL JSON reference](https://cipherstash.com/docs/reference/eql/json) for document storage and containment queries."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -107,6 +112,11 @@ pub struct SteVecDocument {
 /// presence, so no per-entry equality term exists (`hm` is retired). The
 /// optional `i`/`v`/`h` fields model metadata grafted onto an entry returned by
 /// `->`; naming them explicitly keeps unknown keys rejectable.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = "See the [EQL JSON reference](https://cipherstash.com/docs/reference/eql/json) for encrypted field access."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -136,6 +146,11 @@ pub struct SteVecEntry {
 }
 
 /// `eql_v3.query_json` — a containment needle (`{sv:[query-entry]}`). Strict.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = "See the [EQL JSON reference](https://cipherstash.com/docs/reference/eql/json) for containment queries."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -148,6 +163,11 @@ pub struct SteVecQuery {
 /// entries are selector-only (matched on presence), and (per the SQL CHECK)
 /// no element carries a ciphertext. Unknown fields are rejected so the Rust
 /// parser and published JSON Schema enforce the same boundary as PostgreSQL.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = "See the [EQL JSON reference](https://cipherstash.com/docs/reference/eql/json) for containment query entries."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
