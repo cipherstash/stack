@@ -51,7 +51,9 @@ use stack_encrypt::StackCipher;
 let cipher = StackCipher::new().await?;
 let keyset = cipher.default_keyset();
 
-let ciphertext = keyset.encrypt("secret message".to_string(), ()).await?;
+// A `&str` encrypts as it is; decryption is owned, so it comes back a
+// `String` — nothing borrows from a ciphertext.
+let ciphertext = keyset.encrypt("secret message", ()).await?;
 let plaintext: String = cipher.decrypt(ciphertext, ()).await?;
 assert_eq!(plaintext, "secret message");
 # Ok(())
@@ -69,9 +71,11 @@ assert_eq!(plaintext, "secret message");
 //! Encrypting binds to a keyset (every data key is minted under one); decrypting
 //! does not (every sealed leaf carries the id of the keyset it was sealed
 //! under), so it goes through the client-scoped `cipher` — or through the
-//! `keyset`, which then refuses leaves from any other keyset. A client may use
-//! many keysets, one per tenant say; [`StackCipher::keyset`] selects any of
-//! them by id or name, loading it on first use. The [`keyset`](crate::keyset)
+//! `keyset`, which then refuses leaves from any other keyset.
+//! [`default_keyset`](StackCipher::default_keyset) is the client's own —
+//! the keyset a ZeroKMS administrator set for it — and is always that one.
+//! A client may use many others, one per tenant say; [`StackCipher::keyset`]
+//! selects any of them by id or name, loading it on first use. The [`keyset`](crate::keyset)
 //! module docs lay out the model.
 //!
 //! The second argument is the *associated data* (AAD): anything that implements
@@ -83,11 +87,90 @@ assert_eq!(plaintext, "secret message");
 //! ```no_run
 //! # async fn example<K: stack_kms::DataKeySource>(cipher: stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
 //! # let keyset = cipher.default_keyset();
-//! let ct = keyset.encrypt("4111 1111 1111 1111".to_string(), "users/42/card").await?;
+//! let ct = keyset.encrypt("4111 1111 1111 1111", "users/42/card").await?;
 //! let card: String = cipher.decrypt(ct, "users/42/card").await?; // ok
 //! # Ok(())
 //! # }
 //! ```
+//!
+// Credentials only exist on the `http` path: without it there is no client
+// to authenticate, only the `DataKeySource` the caller supplies.
+#![cfg_attr(
+    feature = "http",
+    doc = r#"# Credentials
+
+A cipher needs two credentials, resolved independently of each other:
+
+- a **client key** — an id and key material, which data keys are derived
+  against; and
+- an **auth strategy** — whatever obtains a token ZeroKMS will accept.
+
+Each is looked for in the environment first, then in the current workspace of
+the CLI's profile directory (`~/.cipherstash`), which `npx stash auth login`
+writes. A logged-in developer machine has both there, so
+`StackCipher::new()` usually just works with nothing else set.
+
+Where there is no profile — CI, a container, wasm — the environment carries
+them. `CS_CLIENT_ID` + `CS_CLIENT_KEY` are the client key.
+`CS_CLIENT_ACCESS_KEY` is the auth strategy `AutoStrategy` detects, and it
+needs a workspace CRN (`CS_WORKSPACE_CRN`) alongside it: the profile is what
+supplies that otherwise, and its region drives service discovery while its
+workspace id verifies every token issued.
+
+An access key is not the only way to authenticate, and often not the one a
+service wants. A `stack_auth::OidcFederationStrategy` federates a
+third-party OIDC JWT (Clerk, Supabase, Auth0) into a CipherStash token, so
+the deployment holds no long-lived CipherStash credential of its own. What
+`AutoStrategy` detects is only the two above — access key, then profile — so
+any other strategy is named explicitly, and that is what
+[`kms`](StackCipherBuilder::kms) is for: build the
+[`StackKms`](stack_kms::StackKms) over the strategy you want and hand it to
+the builder.
+
+```no_run
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+use stack_auth::{AuthError, AuthStrategyFn, SecretToken, ServiceToken};
+use stack_encrypt::StackCipher;
+use stack_kms::{EnvKeyProvider, StackKmsBuilder};
+
+// Any `AuthStrategy` goes in this slot — `AccessKeyStrategy`,
+// `OidcFederationStrategy`, `DeviceSessionStrategy`, or, as here,
+// `AuthStrategyFn` over a closure of your own. The closure is called
+// whenever ZeroKMS needs a fresh token, so refresh belongs inside it. Note
+// what holds the token: `SecretToken` is zeroized on drop and prints as
+// `***`, so a long-lived credential neither lingers in freed memory nor
+// lands in a log line.
+let token = SecretToken::new(std::env::var("MY_SERVICE_TOKEN")?);
+let strategy = AuthStrategyFn::new(move || {
+    let token = token.clone();
+    async move { Ok::<_, AuthError>(ServiceToken::new(token)) }
+});
+
+// The client key is the other half, and has its own provider: `EnvKeyProvider`
+// reads CS_CLIENT_ID / CS_CLIENT_KEY, or supply a `KeyProvider` of your own.
+let kms = StackKmsBuilder::new(strategy)
+    .with_key_provider(EnvKeyProvider)
+    .build()
+    .await?;
+
+let cipher = StackCipher::builder().kms(kms).init().await?;
+# Ok(())
+# }
+```
+
+The built-in strategies are constructed from a workspace CRN
+(`stack_auth::Crn`) rather than read from the environment —
+`OidcFederationStrategy::new(crn, provider)` — and otherwise reach the
+builder through the same `kms` seam.
+
+`examples/zerokms_auth.rs` runs this end to end against a live ZeroKMS,
+alongside the default path and the errors each half fails with. The
+transport knobs — timeouts, batch size, concurrency, an alternate ZeroKMS
+endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
+[`keyset_cache_size`](StackCipherBuilder::keyset_cache_size) and
+[`keyset_name_ttl`](StackCipherBuilder::keyset_name_ttl).
+"#
+)]
 //!
 //! # Testing without ZeroKMS
 //!

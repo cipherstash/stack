@@ -56,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let keyset = cipher.default_keyset();
     println!("connected; keyset {}", keyset.keyset_id());
 
-    let ciphertext = keyset.encrypt("hello".to_string(), "demo/greeting").await?;
+    let ciphertext = keyset.encrypt("hello", "demo/greeting").await?;
     let plaintext: String = cipher.decrypt(ciphertext, "demo/greeting").await?;
     assert_eq!(plaintext, "hello");
     println!("round-tripped a value under the default keyset");
@@ -72,14 +72,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     let customers = cipher
     //         .keyset(IdentifiedBy::Name("customers".to_string().into()))
     //         .await?;
-    //     let ciphertext = customers.encrypt("hello".to_string(), "demo/greeting").await?;
+    //     let ciphertext = customers.encrypt("hello", "demo/greeting").await?;
     //
-    // To make a keyset the default instead, name it on the builder:
-    //
-    //     StackCipher::builder()
-    //         .keyset(IdentifiedBy::Name("customers".to_string().into()))
-    //         .init()
-    //         .await?;
+    // `default_keyset()` above is not one of these: it is the client's own
+    // default, the keyset a ZeroKMS administrator set for this client, and
+    // selecting others never moves it.
 
     // --- A custom authentication strategy -----------------------------------
     //
