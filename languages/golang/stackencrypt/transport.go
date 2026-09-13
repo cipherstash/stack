@@ -131,6 +131,12 @@ func (t *transport) perform(ctx context.Context, mem api.Memory,
 	}
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
+		// ReadAll hands back what it managed to read alongside the error.
+		// Those bytes are a partial ZeroKMS response and can carry wrapped
+		// key material, so they are wiped rather than dropped on the floor
+		// for the collector — the same discipline as the over-limit branch
+		// below.
+		wipe(respBody)
 		return transportFailed, nil, []byte(err.Error())
 	}
 	if len(respBody) > maxResponseBytes {

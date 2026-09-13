@@ -48,8 +48,16 @@ type Client struct {
 	mu        sync.Mutex
 	inst      *instance
 	transport *transport
-	closed    bool
-	def       KeysetID
+	// closed refuses further calls: either Close ran, or an interrupted
+	// call took the module down under us (see Client.call). released is
+	// the runtime's own state, tracked apart from it because those two
+	// things come apart: an interrupted call closes the module — and so
+	// the client — while the runtime and the host modules beside it are
+	// still allocated. Close is what frees those, so it must do its work
+	// even on a client that is already closed.
+	closed   bool
+	released bool
+	def      KeysetID
 }
 
 // NewClient instantiates the guest, loads the client key into it, and loads
@@ -133,9 +141,12 @@ func encodeConfig(cfg Config) ([]byte, error) {
 func (c *Client) Close(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	// Idempotency turns on the runtime, not on the client: a client an
+	// interrupted call already closed has never released its runtime.
+	if c.released {
 		return nil
 	}
+	c.released = true
 	c.closed = true
 	ctx = context.WithoutCancel(ctx)
 	// A module closed by an interrupted call (see Client.call) or by a trap

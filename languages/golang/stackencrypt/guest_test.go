@@ -259,6 +259,20 @@ func TestInterruptedCallClosesTheClient(t *testing.T) {
 		if err := c.Close(ctx); err != nil {
 			t.Fatalf("Close after interruption: %v", err)
 		}
+		// The close must reach the runtime. An interrupted call closes the
+		// module and marks the client closed; a Close that treated that as
+		// "already done" would leave the runtime and the host module it
+		// carries allocated for the life of the process.
+		if !c.released {
+			t.Error("Close after interruption left the runtime unreleased")
+		}
+		if m := c.inst.runtime.Module(transportModule); m != nil {
+			t.Errorf("host module %s is still registered after Close", transportModule)
+		}
+		// Still idempotent.
+		if err := c.Close(ctx); err != nil {
+			t.Fatalf("second Close: %v", err)
+		}
 	})
 }
 
@@ -290,6 +304,35 @@ func TestOversizedResponseIsTransport(t *testing.T) {
 		})
 	}
 }
+
+// A body that fails partway through is a transport failure, not a partial
+// response the guest is handed. io.ReadAll returns the bytes it managed to
+// read alongside the error; those bytes are a fragment of a ZeroKMS reply
+// and are wiped before the error goes back (see transport.perform) — the
+// wipe is not observable from here, but the verdict is.
+func TestInterruptedResponseBodyIsTransport(t *testing.T) {
+	guestOrSkip(t)
+	cfg := testConfig("http://zerokms.invalid")
+	cfg.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Header:        http.Header{"Content-Type": {"application/json"}},
+			ContentLength: -1,
+			Body: io.NopCloser(io.MultiReader(
+				strings.NewReader(`{"partial":"`),
+				&failingReader{err: io.ErrUnexpectedEOF},
+			)),
+		}, nil
+	})
+	if _, err := NewClient(context.Background(), cfg); !errors.Is(err, ErrTransport) {
+		t.Fatalf("NewClient: %v, want ErrTransport", err)
+	}
+}
+
+// failingReader fails every read.
+type failingReader struct{ err error }
+
+func (f *failingReader) Read([]byte) (int, error) { return 0, f.err }
 
 // zeros reads n zero bytes.
 type zeros struct{ n int }
