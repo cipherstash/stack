@@ -31,9 +31,14 @@
 //!   key and every loaded index key wiped by `ZeroizeOnDrop`) and wipes
 //!   every buffer the registry still holds. It exists because closing a
 //!   wasm instance frees linear memory without running Rust destructors —
-//!   without it, key material would sit in freed host memory. Every export
-//!   after it, and every export before [`se_cipher_init`], is
-//!   `STATUS_STATE`.
+//!   without it, key material would sit in freed host memory. After it, a
+//!   well-formed cipher operation is `STATUS_STATE`, as one before
+//!   [`se_cipher_init`] is, and so is a re-`se_cipher_init`. That is the
+//!   whole of the claim: [`se_alloc`] and [`se_dealloc`] return no status
+//!   and go on working — the host still has buffers to free — a second
+//!   [`se_shutdown`] is a no-op, and a *malformed* call is
+//!   `STATUS_ENCODING` in any state, because validation runs first (see
+//!   below).
 //! - During an entry-point call the host's imported functions may re-enter
 //!   the guest **only** through `se_alloc` (to place the transport response
 //!   / token); calling any other export from inside a host import is
@@ -265,7 +270,9 @@ fn with_opener<R>(
 /// traffic, whatever the outcome.
 ///
 /// Once per instance: a second call, or a call after [`se_shutdown`], is
-/// `STATUS_STATE` (the config buffer is still wiped).
+/// `STATUS_STATE` once the config parses — a config that does not parse is
+/// `STATUS_ENCODING` first, like any malformed input. Either way the config
+/// buffer is wiped.
 ///
 /// # Safety
 ///
@@ -331,8 +338,11 @@ fn cipher_init(decoded: FfiValue) -> Result<Vec<u8>, u32> {
 /// Tear the instance down: drop the cipher — the client key and every
 /// loaded keyset's index key are wiped by `ZeroizeOnDrop` — and wipe every
 /// buffer the registry still holds, so nothing the host forgot to
-/// [`se_dealloc`] survives in freed memory. Idempotent; every other export
-/// is `STATUS_STATE` afterwards, [`se_cipher_init`] included.
+/// [`se_dealloc`] survives in freed memory. Idempotent — a second call is a
+/// no-op, and [`se_alloc`]/[`se_dealloc`] keep working so the host can
+/// still free what it holds. Afterwards every well-formed cipher operation
+/// is `STATUS_STATE`, [`se_cipher_init`] included; a malformed one is
+/// `STATUS_ENCODING` first, as in any other state.
 ///
 /// The index keys' wipe holds because each `HmacSha256Prf` clone a
 /// derivation takes is created and dropped inside one `block_on`'d call,

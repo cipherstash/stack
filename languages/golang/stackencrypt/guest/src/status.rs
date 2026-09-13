@@ -13,8 +13,9 @@
 //! ([`ViturRequestErrorKind`]-shaped) so a Go caller can distinguish a bad
 //! token from a tampered ciphertext without parsing strings. Code 11 is a
 //! term-derivation failure (a caller-input condition, e.g. match text that
-//! yields no tokens). Code 12 is a keyset-scoped open refusing a leaf from
-//! another keyset — a host's own constraint, distinct from tampering.
+//! yields no tokens). Code 12 is a keyset-scoped open refusing a leaf whose
+//! keyset id is not the scope's — a host's own constraint, checked before
+//! the leaf is authenticated and so not a statement about tampering.
 
 use stack_auth::AuthError;
 use stack_kms::{GenerateKeyError, LoadKeysetError, RetrieveKeyError};
@@ -74,10 +75,18 @@ pub const STATUS_KMS_OTHER: u32 = 10;
 /// a value/scheme combination the term does not support.
 pub const STATUS_TERM: u32 = 11;
 /// An opening export was constrained to one keyset (`{"name"}`, `{"id"}` or
-/// `{"default"}` in its options) and a leaf was sealed under another.
-/// Refused before any key is retrieved. A host that means "whichever
-/// keyset" opens with `{"any"}`; a host that meant this keyset has the
-/// wrong tenant's row, not a tampered one — see [`STATUS_AUTH`].
+/// `{"default"}` in its options) and the leaf named another. Refused before
+/// any key is retrieved. A host that means "whichever keyset" opens with
+/// `{"any"}`.
+///
+/// A constraint failure, and only that — never provenance. The comparison
+/// reads the keyset id *out of the leaf*, before anything is retrieved and
+/// so before anything is authenticated, which means a flipped byte in that
+/// field arrives here exactly as a genuinely misrouted row does. The id is
+/// bound into the leaf AAD, so the tampered leaf cannot go on to open —
+/// it fails as [`STATUS_AUTH`] — but that verdict is only reached on the
+/// path where the constraint let it through. Read this status as "not this
+/// keyset's row", never as "an untampered row".
 pub const STATUS_FOREIGN_KEYSET: u32 = 12;
 
 /// Map a sealing/opening error onto the ABI status word.
