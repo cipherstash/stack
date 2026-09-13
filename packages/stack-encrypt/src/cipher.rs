@@ -419,7 +419,25 @@ impl<K: IndexKeySource> StackCipher<K> {
         // cache keeps both keysets by id, and the name follows the later
         // lookup whichever answer lands first — and so does this caller,
         // who is handed the answer that won, not the one that lost.
-        let state = load_keyset(&self.kms, Some(keyset)).await?;
+        let asked_name = match &keyset {
+            IdentifiedBy::Name(name) => Some(name.to_string()),
+            IdentifiedBy::Uuid(_) => None,
+        };
+        let state = match load_keyset(&self.kms, Some(keyset)).await {
+            Ok(state) => state,
+            Err(error) => {
+                // ZeroKMS's own answer that no keyset has this name is an
+                // answer about the name, and the cache orders it like one:
+                // the binding an earlier lookup made goes, and an earlier
+                // positive answer still in flight cannot bind the name after
+                // it. A lookup that got no answer (transport, auth) says
+                // nothing about the name and leaves the cache as it was.
+                if let (Some(name), true) = (&asked_name, is_keyset_not_found(&error)) {
+                    self.keysets().forget(name, resolution);
+                }
+                return Err(error);
+            }
+        };
         let state = self.keysets().insert(state, resolution);
         Ok(KeysetCipher::new(self, state))
     }
@@ -431,6 +449,17 @@ impl<K: IndexKeySource> StackCipher<K> {
 /// costs, shared by eager loading at
 /// [`init`](StackCipherBuilder::init) and lazy loading in
 /// [`StackCipher::keyset`] so both hold a keyset in exactly the same shape.
+/// ZeroKMS answered a load with "no such keyset" — as opposed to not
+/// answering at all.
+fn is_keyset_not_found(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Kms(stack_kms::Error::LoadKeyset(
+            stack_kms::LoadKeysetError::KeysetNotFound(_)
+        ))
+    )
+}
+
 async fn load_keyset<K: IndexKeySource>(
     kms: &K,
     keyset: Option<IdentifiedBy>,

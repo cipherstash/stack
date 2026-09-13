@@ -85,6 +85,12 @@ found in review:
   an older lookup could have made safely, costing a round trip on the next
   selection by such a name — in the eviction regime that is already paying
   them.
+- **A negative answer raises the same watermark.** ZeroKMS answering a name
+  lookup with "no such keyset" is an answer about the name, held as no binding
+  at all: the binding an earlier lookup made goes, and the watermark rises to
+  that lookup so an earlier positive answer still in flight cannot bind the
+  name after ZeroKMS has said it is bound to nothing. Only ZeroKMS's own answer
+  counts; a lookup that failed to get one leaves the cache as it was.
 
 ## Consequences
 

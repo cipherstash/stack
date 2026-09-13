@@ -122,14 +122,18 @@ land in any order; the ticket is what says which *question* was later, and a
 binding follows the later question rather than the earlier arrival.
 _Avoid_: generation, version, sequence number
 
-**Eviction watermark**:
-The place in the resolution order of the latest entry eviction has dropped.
-Once an entry is gone there is nothing left to order an older answer for
-that keyset against, so no binding is made from an answer older than the
-watermark. One watermark for every name, not one per forgotten name — a
-cache whose whole contract is a bound must not grow a record per eviction.
-_Avoid_: tombstone, evicted binding (it is the entry's place, not a
-binding's)
+**Watermark**:
+The place in the resolution order of the latest answer the cache holds
+nothing of to order an older answer against: an entry eviction has dropped,
+or ZeroKMS's answer that a name is bound to nothing. Once an entry is gone
+there is nothing left to order an older answer for that keyset against, and
+a negative answer is held as no binding at all, so no binding is made from
+an answer older than the watermark. One watermark for every name, not one
+per forgotten name — a cache whose whole contract is a bound must not grow
+a record per eviction or per unbound name.
+_Avoid_: tombstone, negative cache, evicted binding (it is the entry's
+place, not a binding's), eviction watermark (eviction is one of two things
+that raise it)
 
 **Foreign keyset**:
 A keyset other than the one a `KeysetCipher` is bound to, from that

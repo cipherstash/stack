@@ -40,7 +40,9 @@
 //! *later lookup*, whichever answer arrives first, so an answer from before
 //! a rename cannot overwrite one from after it — neither under the same
 //! name, nor by taking back the name the keyset has since left, nor by
-//! arriving after eviction has forgotten the answer it would have lost to.
+//! arriving after eviction has forgotten the answer it would have lost to,
+//! nor after ZeroKMS has answered a later lookup that the name is bound to
+//! nothing.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -136,9 +138,9 @@ pub(crate) enum Lookup {
 /// `O(n)` in the bound, which is the rare case by construction. The name
 /// index is bounded by the entries it serves: one binding per cached id at
 /// most, plus the default's, and a binding goes when its id does or when
-/// the keyset is resolved under another name. What an evicted entry leaves
-/// behind is one watermark, not a record per name: see
-/// [`eviction_watermark`](Self::eviction_watermark).
+/// the keyset is resolved under another name. What an evicted entry — or a
+/// name ZeroKMS answered is bound to nothing — leaves behind is one
+/// watermark, not a record per name: see [`watermark`](Self::watermark).
 pub(crate) struct KeysetCache {
     capacity: NonZeroUsize,
     name_ttl: Duration,
@@ -149,7 +151,9 @@ pub(crate) struct KeysetCache {
     /// The default keyset's entry, held apart from the bound: it never
     /// evicts, and [`insert`](Self::insert) never replaces its state.
     default: Entry,
-    /// The latest lookup whose answer eviction has forgotten.
+    /// The latest lookup whose answer the cache holds nothing of to order
+    /// an older answer against: one eviction has forgotten, or one ZeroKMS
+    /// answered with "no keyset has this name".
     ///
     /// A keyset carries the order of the answers that spoke for it, and a
     /// binding the order of the lookup that made it; evicting the keyset
@@ -158,17 +162,21 @@ pub(crate) struct KeysetCache {
     /// entry's place here — its own bindings never sat later in the order
     /// than it does, since the insert that binds a name is the insert that
     /// stamps the entry — and no binding is made from an answer older than
-    /// this. The name is the only thing an answer too old to order can get
-    /// wrong: an id's key material is the same whichever lookup asked, so it
-    /// still caches.
+    /// this. A negative answer is the same case from the start: it is an
+    /// answer about a name that the cache holds no binding for, so it too
+    /// leaves its place here ([`forget`](Self::forget)), and an earlier
+    /// positive answer still in flight cannot bind the name after it. The
+    /// name is the only thing an answer too old to order can get wrong: an
+    /// id's key material is the same whichever lookup asked, so it still
+    /// caches.
     ///
     /// It is one watermark for all names rather than one per forgotten name
     /// — a cache whose whole contract is a bound must not grow a record per
-    /// name it has evicted — so it also refuses some bindings an older
-    /// lookup could have made safely. That costs a round trip on the next
-    /// selection by such a name, in the eviction regime that is already
-    /// paying them.
-    eviction_watermark: Resolution,
+    /// name it has evicted or been told is unbound — so it also refuses some
+    /// bindings an older lookup could have made safely. That costs a round
+    /// trip on the next selection by such a name, in the eviction regime
+    /// that is already paying them.
+    watermark: Resolution,
     by_id: HashMap<Uuid, Entry>,
     by_name: HashMap<String, Alias>,
 }
@@ -202,7 +210,7 @@ impl KeysetCache {
             name_ttl,
             tick: 0,
             resolutions: 0,
-            eviction_watermark: Resolution(0),
+            watermark: Resolution(0),
             default: Entry {
                 last_used: 0,
                 name: default.name.clone(),
@@ -297,31 +305,31 @@ impl KeysetCache {
     /// window, a name the keyset has since been renamed away from.
     ///
     /// Returns what the lookup should be answered with, which is not always
-    /// what ZeroKMS said: when a later lookup has already spoken — for this
-    /// keyset, or for the name this one asked under — the caller gets that
-    /// later answer, the same one every selection after it gets. The
-    /// answer that lost is not handed out even once, and that is decided
-    /// before this insert evicts anything: the entry it evicts can be the
-    /// very winner. An answer nothing later contradicts is returned as it
-    /// is, whether or not its name bound (an answer older than the eviction
-    /// watermark has no binding left to lose to, and is still the latest
-    /// thing the cache knows about its name).
+    /// what ZeroKMS said: when a later lookup has already spoken — for the
+    /// name this one asked under first, else for this keyset — the caller
+    /// gets that later answer, the same one every selection after it gets.
+    /// The name comes first because it is what the caller asked: an answer
+    /// older than what its keyset holds *and* than what its name is bound
+    /// to is answered by the name, since the keyset's later answer may have
+    /// come under another name. The answer that lost is not handed out even
+    /// once, and that is decided before this insert evicts anything: the
+    /// entry it evicts can be the very winner. An answer nothing later
+    /// contradicts is returned as it is, whether or not its name bound (an
+    /// answer older than the watermark has no binding left to lose to, and
+    /// is still the latest thing the cache knows about its name).
     pub(crate) fn insert(
         &mut self,
         state: Arc<KeysetState>,
         resolution: Resolution,
     ) -> Arc<KeysetState> {
-        if let Some(entry) = self.entry(state.id) {
-            if entry.resolution > resolution {
-                return Arc::clone(&entry.state);
-            }
-        }
         // A name lookup is answered with whatever the name means now: when
         // a later lookup has already bound it — to this keyset or another —
         // the caller gets that keyset (held, since no binding outlives its
         // id), and `bind` below refuses this answer as the older one. Taken
-        // before eviction, which can take that very binding with the entry
-        // it evicts and leave this answer looking uncontradicted.
+        // first: before the keyset's own order is consulted, since the name
+        // is what was asked, and before eviction, which can take that very
+        // binding with the entry it evicts and leave this answer looking
+        // uncontradicted.
         let later = state
             .name
             .as_deref()
@@ -329,6 +337,11 @@ impl KeysetCache {
             .filter(|alias| alias.resolution > resolution)
             .and_then(|alias| self.entry(alias.id))
             .map(|entry| Arc::clone(&entry.state));
+        if let Some(entry) = self.entry(state.id) {
+            if entry.resolution > resolution {
+                return later.unwrap_or_else(|| Arc::clone(&entry.state));
+            }
+        }
         // Evict before binding: the entry that goes may be the one whose
         // answer this one is older than, and its place in the order must be
         // on the watermark before `bind` consults it — or an answer from
@@ -376,13 +389,13 @@ impl KeysetCache {
 
     /// Bind `name` to `id` for the lookup `resolution`; false if a later
     /// lookup already bound it, or if this answer is older than a place in
-    /// the order eviction has since forgotten
-    /// ([`eviction_watermark`]). Also unbinds the name this id was bound
-    /// under before, and unbinds this name from the id it named before.
+    /// the order the cache has since let go of ([`watermark`]). Also
+    /// unbinds the name this id was bound under before, and unbinds this
+    /// name from the id it named before.
     ///
-    /// [`eviction_watermark`]: Self::eviction_watermark
+    /// [`watermark`]: Self::watermark
     fn bind(&mut self, name: &str, id: Uuid, resolution: Resolution) -> bool {
-        if resolution < self.eviction_watermark {
+        if resolution < self.watermark {
             return false;
         }
         if let Some(alias) = self.by_name.get(name) {
@@ -420,6 +433,28 @@ impl KeysetCache {
         self.entry(id).and_then(|entry| entry.name.clone())
     }
 
+    /// ZeroKMS answered the lookup `resolution` for `name` with "no keyset
+    /// has this name". That is an answer about the name, and it orders
+    /// like one: a binding an earlier lookup made goes (a later lookup's
+    /// stands — the name may have been given out again since), and the
+    /// [`watermark`](Self::watermark) rises to this lookup, so an earlier
+    /// positive answer still in flight cannot bind the name after ZeroKMS
+    /// has said it is bound to nothing. Only ZeroKMS's own answer counts:
+    /// a lookup that failed to get one (transport, auth) says nothing about
+    /// the name and must not come here.
+    pub(crate) fn forget(&mut self, name: &str, resolution: Resolution) {
+        self.watermark = self.watermark.max(resolution);
+        let Some(alias) = self.by_name.get(name) else {
+            return;
+        };
+        if alias.resolution > resolution {
+            return;
+        }
+        let id = alias.id;
+        let _ = self.by_name.remove(name);
+        self.forget_name_of(id, name);
+    }
+
     /// `name` moved away from `id`: the id no longer claims it.
     fn forget_name_of(&mut self, id: Uuid, name: &str) {
         if let Some(entry) = self.entry_mut(id) {
@@ -446,7 +481,7 @@ impl KeysetCache {
             // another keyset is precisely the one an older answer would
             // rebind, and the binding it would have lost to is no longer
             // here to say so.
-            self.eviction_watermark = self.eviction_watermark.max(entry.resolution);
+            self.watermark = self.watermark.max(entry.resolution);
             if let Some(name) = entry.name {
                 // A name that has since moved to another id keeps its
                 // binding: only this id's binding goes with it.
@@ -1123,6 +1158,95 @@ mod tests {
         assert!(
             matches!(cache.get(&name("acme")), Lookup::Miss(_)),
             "and the loser bound no name: it is older than the watermark keyset 2 left"
+        );
+    }
+
+    /// Newer information can exist for both the name asked and the keyset
+    /// answered: `old` resolves to keyset 1, then `old` moves to keyset 2,
+    /// then keyset 1 is resolved under `new`, and the first answer lands
+    /// last. It is older than what keyset 1 holds, so it is dropped whole —
+    /// but its caller asked for `old`, and `old` means keyset 2 now.
+    #[test]
+    fn a_dropped_answer_is_answered_by_its_name_before_its_keyset() {
+        let mut cache = cache(4);
+        let oldest = ticket(cache.get(&name("old")));
+        let middle = ticket(cache.get(&name("old")));
+        let newest = ticket(cache.get(&name("new")));
+        let _ = cache.insert(state(2, Some("old")), middle);
+        let _ = cache.insert(state(1, Some("new")), newest);
+
+        let answer = cache.insert(state(1, Some("old")), oldest);
+        assert_eq!(
+            answer.id,
+            Uuid::from_u128(2),
+            "the caller asked for `old`, which means keyset 2 now — not keyset 1, whose own later answer came under `new`"
+        );
+        assert_eq!(
+            hit(cache.get(&name("old"))),
+            Some(Uuid::from_u128(2)),
+            "`old` still means keyset 2"
+        );
+        assert_eq!(
+            hit(cache.get(&name("new"))),
+            Some(Uuid::from_u128(1)),
+            "and `new` still means keyset 1"
+        );
+        assert_eq!(cache.names(), 2, "no other binding was made");
+    }
+
+    /// ZeroKMS answering "no keyset has this name" is an answer about the
+    /// name: the binding an earlier lookup made goes, an earlier positive
+    /// answer still in flight cannot bind the name after it, a later lookup
+    /// binds as usual, and a negative answer older than the binding that
+    /// stands leaves it standing. A zero window, so every name lookup is a
+    /// lookup with a ticket and a bound name reads as `Stale`.
+    #[test]
+    fn a_negative_answer_unbinds_a_name_and_refuses_earlier_answers_for_it() {
+        let mut cache = KeysetCache::new(
+            NonZeroUsize::new(4).unwrap(),
+            Duration::ZERO,
+            state(0, None),
+        );
+        cache.load(state(1, Some("acme")));
+        let earlier = ticket(cache.get(&name("acme")));
+        let negative = ticket(cache.get(&name("acme")));
+
+        cache.forget("acme", negative);
+        assert!(
+            matches!(cache.get(&name("acme")), Lookup::Miss(_)),
+            "the binding the earlier load made is gone"
+        );
+        assert_eq!(
+            hit(cache.get(&id(1))),
+            Some(Uuid::from_u128(1)),
+            "the keyset itself stays cached: only the name was answered"
+        );
+
+        let answer = cache.insert(state(1, Some("acme")), earlier);
+        assert_eq!(
+            answer.id,
+            Uuid::from_u128(1),
+            "nothing later positive is known about `acme`, so the answer stands for its own caller"
+        );
+        assert!(
+            matches!(cache.get(&name("acme")), Lookup::Miss(_)),
+            "but it binds no name: ZeroKMS has since said `acme` is bound to nothing"
+        );
+
+        let later = ticket(cache.get(&name("acme")));
+        let _ = cache.insert(state(2, Some("acme")), later);
+        assert!(
+            matches!(cache.get(&name("acme")), Lookup::Stale(_)),
+            "a lookup later than the negative answer binds as usual"
+        );
+
+        let stale_negative = ticket(cache.get(&name("acme")));
+        let fresher = ticket(cache.get(&name("acme")));
+        let _ = cache.insert(state(3, Some("acme")), fresher);
+        cache.forget("acme", stale_negative);
+        assert!(
+            matches!(cache.get(&name("acme")), Lookup::Stale(_)),
+            "a negative answer older than the binding that stands says nothing about it"
         );
     }
 
