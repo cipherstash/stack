@@ -110,8 +110,14 @@ where
 }
 
 /// Decrypt a codec-encoded ciphertext tree back into a codec-encoded
-/// [`FfiValue`] tree (one batched `retrieve_keys` request). The output buffer
-/// contains plaintext — the ABI layer's ownership rules govern its wiping.
+/// [`FfiValue`] tree. The output buffer contains plaintext — the ABI
+/// layer's ownership rules govern its wiping.
+///
+/// One batched `retrieve_keys` per invocation, dispatched as one ZeroKMS
+/// call per 500 keyed leaves and, under [`Opener::Any`], per keyset the
+/// tree's leaves were sealed under — the same rule [`decrypt_record`]
+/// states. A tree small enough and single-keyset enough is the one request
+/// that suggests; nothing here promises it in general.
 ///
 /// Symmetric with [`encrypt_value`]: the AAD is whatever the value was sealed
 /// under, empty included. The [`Opener`] says which keysets may be opened:
