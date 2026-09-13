@@ -181,35 +181,37 @@ async fn init_loads_the_default_keyset_once() {
     assert_eq!(
         cipher.default_keyset().keyset_name(),
         None,
-        "an unnamed builder keyset leaves the default with no name"
+        "the client's default is resolved by naming nothing, so it has no name"
     );
     assert_eq!(cipher.kms().loads(), 1, "default_keyset() never loads");
 }
 
+/// The default is the client's, and stays the client's. A ZeroKMS
+/// administrator sets it; selecting other keysets — however many, however
+/// recently — never moves it.
 #[tokio::test]
-async fn a_named_default_knows_its_name() {
-    let cipher = StackCipher::builder()
-        .kms(Observed::default())
-        .keyset(name("customers"))
-        .init()
-        .await
-        .expect("build cipher");
+async fn selecting_a_keyset_never_moves_the_default() {
+    let cipher = cipher().await;
+    let default = cipher.default_keyset().keyset_id();
 
+    let customers = cipher.keyset(name("customers")).await.expect("select");
+    assert_ne!(customers.keyset_id(), default, "a distinct keyset");
+    assert_eq!(
+        cipher.default_keyset().keyset_id(),
+        default,
+        "the default is unchanged by a selection"
+    );
+
+    let _ = cipher.keyset(name("acme")).await.expect("select another");
+    assert_eq!(
+        cipher.default_keyset().keyset_id(),
+        default,
+        "and by any number of them"
+    );
     assert_eq!(
         cipher.default_keyset().keyset_name(),
-        Some("customers"),
-        "a builder keyset named by name reports that name"
-    );
-    let by_name = cipher.keyset(name("customers")).await.expect("select");
-    assert_eq!(
-        by_name.keyset_id(),
-        cipher.default_keyset().keyset_id(),
-        "selecting the default by its builder name returns the default"
-    );
-    assert_eq!(
-        cipher.kms().loads(),
-        1,
-        "selecting the default by name is not a load"
+        None,
+        "the client's default is never a name the caller chose"
     );
 }
 
@@ -300,13 +302,11 @@ async fn an_evicted_keyset_reloads_on_its_next_selection() {
 }
 
 /// A name is a lookup, not an identity: past the window, selecting a keyset
-/// by name asks ZeroKMS again, while selecting by id never does. The
-/// default keyset's builder-time name ages the same way.
+/// by name asks ZeroKMS again, while selecting by id never does.
 #[tokio::test]
 async fn a_name_selection_is_re_resolved_after_its_window() {
     let cipher = StackCipher::builder()
         .kms(Observed::default())
-        .keyset(name("primary"))
         .keyset_name_ttl(Duration::ZERO)
         .init()
         .await
@@ -332,11 +332,8 @@ async fn a_name_selection_is_re_resolved_after_its_window() {
         "an id is identity and is never re-asked"
     );
 
-    let _ = cipher
-        .keyset(name("primary"))
-        .await
-        .expect("default by name");
-    assert_eq!(cipher.kms().loads(), 4, "the default's name ages too");
+    let _ = cipher.keyset(name("primary")).await.expect("primary");
+    assert_eq!(cipher.kms().loads(), 4, "another name, another ask");
     let _ = cipher
         .keyset(cipher.default_keyset().keyset_id())
         .await
@@ -344,7 +341,7 @@ async fn a_name_selection_is_re_resolved_after_its_window() {
     assert_eq!(
         cipher.kms().loads(),
         4,
-        "the default's id is identity too, and is never re-asked"
+        "the client's default is seeded by id, and an id is never re-asked"
     );
 }
 

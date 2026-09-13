@@ -48,12 +48,14 @@ async fn generator() -> StackCipher<FakeDataKeySource> {
 }
 
 async fn generator_for(keyset: Uuid) -> StackCipher<FakeDataKeySource> {
-    StackCipher::builder()
-        .kms(FakeDataKeySource::new())
+    let cipher = generator().await;
+    // Warm the cache so the caller's `keyset(..)` is a lookup; the cipher's
+    // own default stays the client's, which is not ours to choose.
+    let _ = cipher
         .keyset(IdentifiedBy::Uuid(keyset))
-        .init()
         .await
-        .expect("build cipher")
+        .expect("select keyset");
+    cipher
 }
 
 #[tokio::test]
@@ -105,8 +107,14 @@ async fn equality_terms_differ_by_value() {
 async fn equality_terms_bind_the_index_key() {
     let cipher_a = generator_for(Uuid::from_u128(1)).await;
     let cipher_b = generator_for(Uuid::from_u128(2)).await;
-    let gen_a = cipher_a.default_keyset();
-    let gen_b = cipher_b.default_keyset();
+    let gen_a = cipher_a
+        .keyset(IdentifiedBy::Uuid(Uuid::from_u128(1)))
+        .await
+        .expect("keyset 1");
+    let gen_b = cipher_b
+        .keyset(IdentifiedBy::Uuid(Uuid::from_u128(2)))
+        .await
+        .expect("keyset 2");
     let a = gen_a
         .equality_term("alice", nonempty!("users/email"))
         .await

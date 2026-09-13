@@ -599,13 +599,22 @@ async fn an_explicit_keyset_is_honoured() {
     let keyset = Uuid::from_u128(42);
     let cipher = StackCipher::builder()
         .kms(FakeDataKeySource::new())
-        .keyset(IdentifiedBy::Uuid(keyset))
         .init()
         .await
         .expect("build cipher");
-
-    let explicit = cipher.default_keyset();
+    let explicit = cipher
+        .keyset(IdentifiedBy::Uuid(keyset))
+        .await
+        .expect("select keyset");
     assert_eq!(explicit.keyset_id(), keyset);
+
+    // Selecting one does not move the cipher's default: that is the client's,
+    // set by a ZeroKMS administrator, not a preference a caller can override.
+    assert_ne!(
+        cipher.default_keyset().keyset_id(),
+        keyset,
+        "default_keyset() is always the client's default"
+    );
 
     // And its terms differ from the default keyset's: a different keyset means
     // a different index key.

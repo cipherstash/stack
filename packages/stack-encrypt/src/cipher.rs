@@ -232,9 +232,9 @@ impl From<Unspecified> for Error {
 /// Sealing values, sealing records and deriving index terms all happen
 /// under a keyset, and a client may use many — one per tenant, say. So
 /// those operations bind to a [`KeysetCipher`], the cipher scoped to one
-/// keyset: [`default_keyset`](Self::default_keyset) for the keyset named
-/// on the builder (else the client's default), [`keyset`](Self::keyset)
-/// for any other, by id or by name. Keysets load lazily, through a bounded
+/// keyset: [`default_keyset`](Self::default_keyset) for the client's
+/// default — the keyset a ZeroKMS administrator set for this client —
+/// [`keyset`](Self::keyset) for any other, by id or by name. Keysets load lazily, through a bounded
 /// least-recently-used cache: the first selection of a keyset is one
 /// ZeroKMS round trip (its index key, which
 /// [Searchable Encrypted Metadata](crate::sem) terms are derived from),
@@ -293,13 +293,14 @@ different data-key source entirely:"#
 /// # }
 /// ```
 ///
-/// Construction is async because it resolves the default keyset and loads
-/// its index key — one ZeroKMS round-trip, paid once, so a misconfigured
-/// client fails here rather than on first use.
+/// Construction is async because it resolves the client's default keyset
+/// and loads its index key — one ZeroKMS round-trip, paid once, so a
+/// misconfigured client fails here rather than on first use.
 pub struct StackCipher<K> {
     kms: K,
-    /// The keyset named on the builder, else the client's default: loaded
-    /// eagerly by `init`, never evicted.
+    /// The client's default keyset, loaded eagerly by `init` and never
+    /// evicted. Not the caller's to choose — see
+    /// [`default_keyset`](Self::default_keyset).
     default: Arc<KeysetState>,
     /// Every other keyset this cipher has selected, least recently used
     /// first out. See [`keyset`](Self::keyset).
@@ -348,9 +349,14 @@ impl<K> std::fmt::Debug for StackCipher<K> {
 }
 
 impl<K> StackCipher<K> {
-    /// The cipher bound to its default keyset: the one named on the builder
-    /// (by id or by name), else the client's default. Loaded at `init`, so
-    /// this never touches ZeroKMS.
+    /// The cipher bound to the client's default keyset: the one a ZeroKMS
+    /// administrator set for this client, which is what naming no keyset
+    /// resolves to. Loaded at `init`, so this never touches ZeroKMS.
+    ///
+    /// Always that keyset, whatever else the cipher has selected — the
+    /// default is the workspace's statement about this client, not a
+    /// preference a caller can override. To work under another keyset,
+    /// select it with [`keyset`](Self::keyset).
     pub fn default_keyset(&self) -> KeysetCipher<'_, K> {
         KeysetCipher::new(self, Arc::clone(&self.default))
     }
@@ -423,7 +429,7 @@ impl<K: IndexKeySource> StackCipher<K> {
             IdentifiedBy::Name(name) => Some(name.to_string()),
             IdentifiedBy::Uuid(_) => None,
         };
-        let state = match load_keyset(&self.kms, Some(keyset)).await {
+        let state = match load_keyset(&self.kms, keyset).await {
             Ok(state) => state,
             Err(error) => {
                 // ZeroKMS's own answer that no keyset has this name is an
@@ -462,16 +468,29 @@ fn is_keyset_not_found(error: &Error) -> bool {
 
 async fn load_keyset<K: IndexKeySource>(
     kms: &K,
-    keyset: Option<IdentifiedBy>,
+    keyset: IdentifiedBy,
 ) -> Result<Arc<KeysetState>, Error> {
     let name = match &keyset {
-        Some(IdentifiedBy::Name(name)) => Some(name.to_string()),
-        Some(IdentifiedBy::Uuid(_)) | None => None,
+        IdentifiedBy::Name(name) => Some(name.to_string()),
+        IdentifiedBy::Uuid(_) => None,
     };
-    let (id, index_key) = kms.load_index_key(keyset).await?;
+    let (id, index_key) = kms.load_index_key(Some(keyset)).await?;
     Ok(Arc::new(KeysetState {
         id,
         name,
+        prf: hmac_prf_from_index_key(&index_key),
+    }))
+}
+
+/// The client's own default keyset — the one a ZeroKMS administrator set for
+/// this client — asked for by naming nothing. Loaded once, by
+/// [`init`](StackCipherBuilder::init); it is not the caller's to choose, so
+/// there is no id or name to carry.
+async fn load_default_keyset<K: IndexKeySource>(kms: &K) -> Result<Arc<KeysetState>, Error> {
+    let (id, index_key) = kms.load_index_key(None).await?;
+    Ok(Arc::new(KeysetState {
+        id,
+        name: None,
         prf: hmac_prf_from_index_key(&index_key),
     }))
 }
@@ -523,7 +542,6 @@ impl KeyProvider for ProfileClientKey {
 /// its alias [`StackCipher::builder`]).
 pub struct StackCipherBuilder<K = FromEnv> {
     kms: K,
-    keyset: Option<IdentifiedBy>,
     cache_size: NonZeroUsize,
     name_ttl: Duration,
 }
@@ -537,7 +555,6 @@ impl StackCipherBuilder<FromEnv> {
     pub fn new() -> Self {
         Self {
             kms: FromEnv,
-            keyset: None,
             cache_size: KeysetCache::DEFAULT_CAPACITY,
             name_ttl: DEFAULT_NAME_TTL,
         }
@@ -551,14 +568,6 @@ impl Default for StackCipherBuilder<FromEnv> {
 }
 
 impl<K> StackCipherBuilder<K> {
-    /// Make a specific keyset, by id or by name, the cipher's
-    /// [default](StackCipher::default_keyset) instead of the data-key
-    /// source's own default. Loaded at `init`.
-    pub fn keyset(mut self, keyset: IdentifiedBy) -> Self {
-        self.keyset = Some(keyset);
-        self
-    }
-
     /// How many keysets beyond the default the cipher keeps loaded
     /// (default 1024). A process serving more tenants than this reloads a
     /// keyset's index key from ZeroKMS when it comes back into use; nothing
@@ -595,7 +604,6 @@ impl StackCipherBuilder<FromEnv> {
     pub fn kms<K>(self, kms: K) -> StackCipherBuilder<K> {
         StackCipherBuilder {
             kms,
-            keyset: self.keyset,
             cache_size: self.cache_size,
             name_ttl: self.name_ttl,
         }
@@ -631,7 +639,7 @@ impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
     /// seal values and derive index terms. The one round trip a cipher
     /// always pays; every other keyset loads on first selection.
     pub async fn init(self) -> Result<StackCipher<K>, Error> {
-        let default = load_keyset(&self.kms, self.keyset).await?;
+        let default = load_default_keyset(&self.kms).await?;
         Ok(StackCipher {
             kms: self.kms,
             keysets: Mutex::new(KeysetCache::new(
