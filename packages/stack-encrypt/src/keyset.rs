@@ -300,10 +300,12 @@ impl KeysetCache {
     /// what ZeroKMS said: when a later lookup has already spoken — for this
     /// keyset, or for the name this one asked under — the caller gets that
     /// later answer, the same one every selection after it gets. The
-    /// answer that lost is not handed out even once. An answer nothing
-    /// later contradicts is returned as it is, whether or not its name
-    /// bound (an answer older than the eviction watermark has no binding to
-    /// lose to, and is still the latest thing said about its name).
+    /// answer that lost is not handed out even once, and that is decided
+    /// before this insert evicts anything: the entry it evicts can be the
+    /// very winner. An answer nothing later contradicts is returned as it
+    /// is, whether or not its name bound (an answer older than the eviction
+    /// watermark has no binding left to lose to, and is still the latest
+    /// thing the cache knows about its name).
     pub(crate) fn insert(
         &mut self,
         state: Arc<KeysetState>,
@@ -314,6 +316,19 @@ impl KeysetCache {
                 return Arc::clone(&entry.state);
             }
         }
+        // A name lookup is answered with whatever the name means now: when
+        // a later lookup has already bound it — to this keyset or another —
+        // the caller gets that keyset (held, since no binding outlives its
+        // id), and `bind` below refuses this answer as the older one. Taken
+        // before eviction, which can take that very binding with the entry
+        // it evicts and leave this answer looking uncontradicted.
+        let later = state
+            .name
+            .as_deref()
+            .and_then(|name| self.by_name.get(name))
+            .filter(|alias| alias.resolution > resolution)
+            .and_then(|alias| self.entry(alias.id))
+            .map(|entry| Arc::clone(&entry.state));
         // Evict before binding: the entry that goes may be the one whose
         // answer this one is older than, and its place in the order must be
         // on the watermark before `bind` consults it — or an answer from
@@ -331,18 +346,7 @@ impl KeysetCache {
             Some(name) => self.bind(name, state.id, resolution),
             None => false,
         };
-        // A name lookup is answered with whatever the name means now. When
-        // this answer's binding lost to a later one, that is the keyset the
-        // later lookup resolved — held, since no binding outlives its id.
-        let answer = match (&state.name, bound) {
-            (Some(name), false) => self
-                .by_name
-                .get(name)
-                .and_then(|alias| self.entry(alias.id))
-                .map(|entry| Arc::clone(&entry.state))
-                .unwrap_or_else(|| Arc::clone(&state)),
-            _ => Arc::clone(&state),
-        };
+        let answer = later.unwrap_or_else(|| Arc::clone(&state));
         if state.id == self.default_id() {
             self.default.resolution = resolution;
             return answer;
@@ -1091,6 +1095,34 @@ mod tests {
             answer.name.as_deref(),
             Some("acme-corp"),
             "an answer older than the keyset's own is replaced by the keyset's"
+        );
+    }
+
+    /// The later answer reaches the earlier caller even when caching the
+    /// earlier one evicts it: what the name means is decided before the
+    /// eviction, or the eviction the losing insert triggers would take the
+    /// winner — alias and all — and leave the loser as the only answer.
+    #[test]
+    fn a_lookup_whose_answer_lost_is_answered_with_the_winner_its_own_insert_evicts() {
+        let mut cache = cache(1);
+        let earlier = ticket(cache.get(&name("acme")));
+        let later = ticket(cache.get(&name("acme")));
+        let _ = cache.insert(state(2, Some("acme")), later);
+
+        let answer = cache.insert(state(1, Some("acme")), earlier);
+        assert_eq!(
+            answer.id,
+            Uuid::from_u128(2),
+            "the earlier lookup is answered with what `acme` means now, though caching its answer evicted keyset 2"
+        );
+        assert_eq!(
+            hit(cache.get(&id(1))),
+            Some(Uuid::from_u128(1)),
+            "keyset 1 is cached by id all the same"
+        );
+        assert!(
+            matches!(cache.get(&name("acme")), Lookup::Miss(_)),
+            "and the loser bound no name: it is older than the watermark keyset 2 left"
         );
     }
 

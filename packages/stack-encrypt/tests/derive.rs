@@ -76,6 +76,17 @@ struct SearchableText {
 #[derive(EncryptFrom)]
 struct Pair(StackCipherText, EqualityTerm);
 
+/// A record may declare `'__k` itself; the derive's keyset lifetime steps
+/// aside rather than colliding with it. Compiling is the test.
+#[derive(EncryptFrom)]
+#[stash(plaintext = u32)]
+#[allow(dead_code)]
+struct Borrowed<'__k> {
+    c: StackCipherText,
+    #[stash(default)]
+    label: Option<&'__k str>,
+}
+
 /// The record's own generics (and their bounds) are carried through, and the
 /// where clause makes `Tagged<T>` accept exactly `T` — the ORE term is typed
 /// by its source. A generic record's one-ciphertext check runs when the

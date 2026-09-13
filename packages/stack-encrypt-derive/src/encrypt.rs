@@ -3,11 +3,12 @@
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
-use syn::{parse_quote, DeriveInput, Generics, Path, Result, Type};
+use syn::{parse_quote, DeriveInput, Generics, Lifetime, Path, Result, Type};
 
 use crate::shape::{
-    cipher_type, context_param, impl_sources, push_field_bounds, push_keyset_lifetime, trait_impl,
-    zip_fields, CallerContext, ContextImpl, Field, FieldBound, Kind, Record,
+    cipher_type, context_param, impl_sources, keyset_lifetime, push_field_bounds,
+    push_keyset_lifetime, trait_impl, zip_fields, CallerContext, ContextImpl, Field, FieldBound,
+    Kind, Record,
 };
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
@@ -31,6 +32,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     // the where clause spells out so a mismatch is reported against the
     // field type.
     let (sources, generic) = impl_sources(&record, parse_quote!(__S));
+    let keyset = keyset_lifetime(&input.generics);
     let mut impls = Vec::with_capacity(sources.len() * 2);
     for source in &sources {
         for which in ContextImpl::BOTH {
@@ -39,13 +41,13 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                 generics.params.push(parse_quote!(__S));
             }
             generics.params.push(parse_quote!(__K));
-            push_keyset_lifetime(&mut generics);
+            push_keyset_lifetime(&mut generics, &keyset);
             push_field_bounds(
                 &mut generics,
                 krate,
                 &whole,
                 source,
-                FieldBound::Encrypt,
+                FieldBound::Encrypt(keyset.clone()),
                 which,
             );
             let ctx = context_param(
@@ -56,11 +58,12 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                 &derived,
             );
             let uses_context = derived.iter().any(|f| f.uses_callers_context(which));
-            let body = body(krate, &record, &derived, source, which);
+            let body = body(krate, &record, &derived, source, which, &keyset);
             impls.push(impl_block(
                 &input,
                 krate,
                 &generics,
+                &keyset,
                 source,
                 &ctx,
                 uses_context,
@@ -77,10 +80,12 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
 /// context parameter is unnamed when no field uses it — every field of the
 /// `()` impl of a `struct` derive carries its own — so the expansion warns
 /// of nothing.
+#[allow(clippy::too_many_arguments)]
 fn impl_block(
     input: &DeriveInput,
     krate: &Path,
     generics: &Generics,
+    keyset: &Lifetime,
     source: &Type,
     ctx: &Type,
     uses_context: bool,
@@ -91,7 +96,7 @@ fn impl_block(
     } else {
         quote!(_)
     };
-    let cipher = cipher_type(krate, &FieldBound::Encrypt);
+    let cipher = cipher_type(krate, &FieldBound::Encrypt(keyset.clone()));
     trait_impl(
         input,
         generics,
@@ -151,6 +156,7 @@ fn body(
     derived: &[&Field],
     source: &Type,
     which: ContextImpl,
+    keyset: &Lifetime,
 ) -> TokenStream {
     let assign = record.fields.iter().map(|field| {
         let member = &field.member;
@@ -183,7 +189,7 @@ fn body(
             };
             let context_ty = field.field_context().ty(krate, which);
             let call = quote_spanned! {ty.span()=>
-                <#ty as #krate::target::EncryptFrom<#source_ty, #krate::KeysetCipher<'__k, __K>, #context_ty>>::encrypt_from
+                <#ty as #krate::target::EncryptFrom<#source_ty, #krate::KeysetCipher<#keyset, __K>, #context_ty>>::encrypt_from
             };
             quote!(#call(#source_expr, __cipher, #context,))
         },
@@ -242,6 +248,29 @@ mod tests {
         });
         assert_lacks(&expansion, quote!(<OpaqueTerm as ::stack_encrypt::target::Decryptable>));
         assert_lacks(&expansion, quote!(<StackCipherText as ::stack_encrypt::target::Decryptable>));
+    }
+
+    /// `'__k` is a legal lifetime for the record to declare, so the derive's
+    /// own must not collide with it: the impl gains `'__k_` instead, and the
+    /// record's `'__k` is left to mean what the user made it mean.
+    #[test]
+    #[rustfmt::skip]
+    fn the_keyset_lifetime_steps_aside_for_a_record_that_declares_it() {
+        let expansion = expand(parse_quote! {
+            struct Borrowed<'__k> {
+                c: StackCipherText,
+                #[stash(default)]
+                label: Option<&'__k str>,
+            }
+        });
+        assert_contains(&expansion, quote! {
+            impl<'__k_, '__k, __S, __K> ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::KeysetCipher<'__k_, __K>, ()>
+                for Borrowed<'__k>
+        });
+        assert_contains(&expansion, quote! {
+            <StackCipherText as ::stack_encrypt::target::EncryptFrom<__S, ::stack_encrypt::KeysetCipher<'__k_, __K>, ()>>::encrypt_from
+        });
+        assert_lacks(&expansion, quote!(KeysetCipher<'__k, __K>));
     }
 
     #[test]

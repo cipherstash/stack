@@ -27,10 +27,13 @@
 //! the field values. However many rows and fields are in one call, all
 //! ciphertext leaves seal from **one** batched `generate_keys` — the
 //! pendings are merged before settling, exactly like the derive's `zip`/`all`
-//! composition — and index terms derive under the same keyset's index key
-//! (under the local HMAC backend with no ZeroKMS traffic of their own; a
-//! backend that derives terms at ZeroKMS, as ZeroKMS v2 does, adds its own
-//! requests to the same batch). That batch reaches ZeroKMS as one request per
+//! composition. Index terms are *not* in that batch: `build_row` settles
+//! each term's pending as it builds the row, which under the local HMAC
+//! backend is no ZeroKMS traffic at all, and under a backend that derives
+//! terms at ZeroKMS (as ZeroKMS v2 does) would be one round trip per term
+//! until the term pendings are merged into the row's batch — a change for
+//! this module when that backend lands, not something the record path does
+//! today. The ciphertext batch reaches ZeroKMS as one request per
 //! `ClientOpts::max_keys_per_req` keyed leaves (500 by default, sent
 //! sequentially: the guest pins `max_concurrent_reqs` to 1), so "one call"
 //! is exact up to 500 leaves and "one call per 500" past it. See
