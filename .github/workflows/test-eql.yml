@@ -520,6 +520,18 @@ jobs:
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    services:
+      encryption-postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 7433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -548,6 +560,24 @@ jobs:
           active_rust_toolchain=$(rustup show active-toolchain | cut -d' ' -f1)
           rustup component add --toolchain "${active_rust_toolchain}" rustfmt clippy
           mise run test:crates
+
+      # Registry builds require the unpublished Stack Encrypt crates from
+      # cipherstash-suite#2215 to be published before this change merges.
+      - name: Test Rust text equality with PostgreSQL
+        env:
+          PGPASSWORD: postgres
+          EQL_TEST_DATABASE_URL: "host=localhost port=7433 user=postgres password=postgres dbname=postgres"
+        run: |
+          cargo test --locked -p eql-bindings --features stack-encrypt
+          cargo test --locked -p eql-encryption-tests
+          cargo clippy --locked -p eql-bindings -p eql-encryption-tests --all-features --all-targets -- -D warnings
+          psql -h localhost -p 7433 -U postgres -d postgres -v ON_ERROR_STOP=1 -f crates/eql-bindings/sql/cipherstash-encrypt.sql
+          cargo test --locked -p eql-encryption-tests --test text_eq -- --ignored
+
+      - name: Compile Rust text equality for WASI without HTTP
+        run: |
+          rustup target add wasm32-wasip1
+          cargo check --locked -p eql-bindings --features stack-encrypt --target wasm32-wasip1
 
       # Freshness gate for the eql-types codegen output: regenerate the
       # TypeScript bindings and JSON Schemas and fail if the checked-in

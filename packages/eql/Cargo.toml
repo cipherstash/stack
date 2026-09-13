@@ -26,6 +26,7 @@ members = [
     "crates/eql-tests-macros",
     "crates/eql-bindings",
     "tests/sqlx",
+    "tests/encryption",
 ]
 default-members = ["tests/sqlx"]
 
