@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"time"
 
 	"github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
@@ -43,14 +42,15 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("workspace %s (%s), token good for %s\n",
-		creds.Workspace, creds.Region, time.Until(creds.ExpiresAt).Round(time.Minute))
+	fmt.Printf("workspace %s (%s)\n", creds.Workspace, creds.describe())
 
 	ctx := context.Background()
 	client, err := stackencrypt.NewClient(ctx, stackencrypt.Config{
 		ClientID:  creds.ClientID,
 		ClientKey: creds.ClientKey,
-		Token:     stackencrypt.StaticToken(creds.Token),
+		// Asked on every request, so the client follows the profile
+		// rather than pinning one token; see profile.go.
+		Token: creds.token(),
 		// ZeroKMSURL is left empty: the endpoint is resolved from the
 		// token's services claim on first use.
 	})
