@@ -7,6 +7,19 @@
 //! ASCII-case-insensitively, as in HTTP. Pure functions, unit-tested on the
 //! native target.
 
+use std::sync::OnceLock;
+
+/// The host this guest is driven by, as it appears in [`user_agent`].
+///
+/// One token, because today there is one build. `stack-encrypt-ffi` (the
+/// plan in #2209) builds the same ABI crate as this WASI guest *and* as a
+/// native cdylib for C, C++ and Python, at which point this becomes a
+/// per-build value rather than a constant. Letting the host contribute its
+/// own token as well — an application's `myapp/1.0` after ours — is a
+/// deliberate follow-up: what ships now is one string this crate controls,
+/// not an extension point with a single user.
+const HOST: &str = "Go";
+
 /// The `user-agent` every ZeroKMS request carries.
 ///
 /// Not optional, and not cosmetic: the edge in front of production ZeroKMS
@@ -15,14 +28,18 @@
 /// bare nginx 403 that never reaches the application. The native client sets
 /// one in `stack_kms::user_agent`; the guest builds its own requests and
 /// never goes through that path, so it has to say who it is here.
-pub const USER_AGENT: &str = concat!(
-    "stack-encrypt-guest/",
-    env!("CARGO_PKG_VERSION"),
-    " (wasm32-wasip1)"
-);
+///
+/// It names the *library* and the host carrying it, not this crate: a
+/// report of "stack-encrypt 0.1.0" means the same thing from Rust, from
+/// here, or from a native cdylib, and the guest shim's own version number
+/// would say nothing anyone reading a log wants to know.
+pub fn user_agent() -> &'static str {
+    static USER_AGENT: OnceLock<String> = OnceLock::new();
+    USER_AGENT.get_or_init(|| format!("stack-encrypt/{} ({HOST})", stack_encrypt::VERSION))
+}
 
 /// The headers of a ZeroKMS request: the bearer credential, the content
-/// type, and [`USER_AGENT`].
+/// type, and [`user_agent`].
 ///
 /// This lives here rather than at the call site because `host` is
 /// `#[cfg(target_arch = "wasm32")]` and so is never compiled — let alone
@@ -33,7 +50,7 @@ pub fn request_headers(authorization: &str) -> Vec<u8> {
     encode_headers(&[
         ("authorization", authorization),
         ("content-type", "application/json"),
-        ("user-agent", USER_AGENT),
+        ("user-agent", user_agent()),
     ])
 }
 
@@ -107,9 +124,10 @@ mod tests {
     fn every_request_identifies_itself() {
         let headers = request_headers("Bearer tok");
         let ua = header_value(&headers, "user-agent").expect("requests carry a user-agent");
-        assert!(
-            ua.starts_with("stack-encrypt-guest/"),
-            "the user-agent must name this guest, got {ua:?}"
+        assert_eq!(
+            ua,
+            format!("stack-encrypt/{} (Go)", stack_encrypt::VERSION),
+            "the user-agent names the library and the host carrying it"
         );
         assert!(
             !ua.contains("Go-http-client"),

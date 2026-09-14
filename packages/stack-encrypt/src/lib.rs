@@ -255,6 +255,15 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! vitaminc are re-exported here. The [`cipher`] module docs describe the
 //! internals (batching, AAD derivation, wire format).
 
+/// This crate's version, as it appears in the `user-agent` of every ZeroKMS
+/// request.
+///
+/// Requests are identified by the library that makes them, not by whichever
+/// binding shim is carrying it: a report of "stack-encrypt 0.1.0" means the
+/// same thing whether it came from Rust, from the WASI guest under Go, or
+/// from a native cdylib under Python.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub mod cipher;
 pub mod descriptor;
 #[cfg(feature = "dynamic")]
