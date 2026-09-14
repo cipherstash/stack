@@ -446,8 +446,6 @@ func TestConfigValidation(t *testing.T) {
 		"no key":       {ClientID: testClientID, Token: StaticToken("t")},
 		"negative cache": {ClientID: testClientID, ClientKey: testClientKey, Token: StaticToken("t"),
 			KeysetCacheSize: -1},
-		"any keyset as default": {ClientID: testClientID, ClientKey: testClientKey, Token: StaticToken("t"),
-			Keyset: anyKeyset{}},
 	} {
 		if _, err := NewClient(ctx, cfg); err == nil {
 			t.Errorf("%s: NewClient succeeded", name)
@@ -459,7 +457,6 @@ func TestConfigValidation(t *testing.T) {
 		"client id not a uuid": func(c *Config) { c.ClientID = "acme" },
 		"key not hex":          func(c *Config) { c.ClientKey = "zz" },
 		"bad url":              func(c *Config) { c.ZeroKMSURL = "not a url" },
-		"name with spaces":     func(c *Config) { c.Keyset = KeysetName("not a name") },
 	} {
 		stub := newStub(t, http.StatusOK, "application/json", "{}")
 		cfg := testConfig(stub.URL)

@@ -62,9 +62,14 @@ type defaultKeyset struct{}
 
 func (defaultKeyset) selector() map[string]any { return map[string]any{"default": map[string]any{}} }
 
-// DefaultKeyset selects the client's default keyset: the one named in
-// [Config.Keyset], else the ZeroKMS client's own default. Selecting it is
-// never a round trip.
+// DefaultKeyset selects the client's default keyset — the one a ZeroKMS
+// administrator set for this client. Selecting it is never a round trip.
+//
+// There is no way to redefine it from here. A client does not get to decide
+// which keyset is its default; that is the server's to say, and a config key
+// that appeared to override it would encrypt somewhere the operator did not
+// choose. Any other keyset is named per call, with [KeysetName] or
+// [KeysetID].
 //
 // Its type is the unexported concrete one rather than [KeysetSelector] on
 // purpose. A package-level var of interface type is writable by every

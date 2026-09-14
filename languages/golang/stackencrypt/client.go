@@ -22,9 +22,6 @@ type Config struct {
 	// buffer before any request is made; the Go-side copy this package
 	// makes is wiped too. The caller's own string is the caller's.
 	ClientKey string
-	// Keyset pins the client's default keyset: a KeysetName or KeysetID.
-	// Nil, or DefaultKeyset, means the ZeroKMS client's own default.
-	Keyset KeysetSelector
 	// ZeroKMSURL pins the ZeroKMS endpoint. When empty the endpoint is
 	// resolved from the access token's services claim on first use.
 	ZeroKMSURL string
@@ -113,15 +110,6 @@ func encodeConfig(cfg Config) ([]byte, error) {
 		{Key: "client_id", Value: cfg.ClientID},
 		{Key: "client_key", Value: cfg.ClientKey},
 	}
-	switch k := cfg.Keyset.(type) {
-	case nil, defaultKeyset:
-	case KeysetName:
-		fields = append(fields, vcvalue.Field{Key: "keyset", Value: string(k)})
-	case KeysetID:
-		fields = append(fields, vcvalue.Field{Key: "keyset_id", Value: k.String()})
-	default:
-		return nil, fmt.Errorf("stackencrypt: Config.Keyset must be a KeysetName or KeysetID, not %T", cfg.Keyset)
-	}
 	if cfg.ZeroKMSURL != "" {
 		fields = append(fields, vcvalue.Field{Key: "zerokms_url", Value: cfg.ZeroKMSURL})
 	}
@@ -158,8 +146,8 @@ func (c *Client) Close(ctx context.Context) error {
 	return c.inst.close(ctx)
 }
 
-// DefaultKeysetID is the id of the client's default keyset, resolved at
-// NewClient.
+// DefaultKeysetID is the id of the client's default keyset — the one a
+// ZeroKMS administrator set for this client — resolved at NewClient.
 func (c *Client) DefaultKeysetID() KeysetID { return c.def }
 
 // Keyset resolves a selector to its keyset id: the first use of a name or
