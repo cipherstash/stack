@@ -37,7 +37,11 @@
 //! honest encoding: the result tree carries each term as a
 //! [`CipherText::Passthrough`] byte node beside the field's `"c"` subtree.
 //! Under `"c"` itself a passthrough is refused in both directions, and that
-//! is load-bearing — see [`reject_passthrough_tree`].
+//! is load-bearing: `decrypt_as` collects **zero** retrieve-requests for a
+//! passthrough and returns its payload with no AEAD opened, so without the
+//! decrypt-side refusal an attacker with write access to the stored tree
+//! could replace a field's `"c"` subtree with a passthrough carrying forged
+//! plaintext and have it reported as a successful decrypt.
 
 use stack_kms::DataKeySource;
 use vitaminc_aead_value::FfiValue;

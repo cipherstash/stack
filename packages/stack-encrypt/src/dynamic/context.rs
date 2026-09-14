@@ -1,58 +1,4 @@
-//! An [`FfiValue`] read as an encryption context.
-//!
-//! A context arrives from a binding as a value and becomes an [`AadPiece`]
-//! tree: vitaminc's runtime form of a context, and the *identity* of one.
-//! vitaminc's law (pinned there by quickcheck over every built-in context
-//! type) is that a context's two derivations each equal the same derivation
-//! of its parts view:
-//!
-//! ```text
-//! x.into_aad()         == x.into_aad_piece().into_aad()
-//! x.into_prf_context() == x.into_aad_piece().into_prf_context()
-//! ```
-//!
-//! So a `#[derive(EncryptFrom)]` row sealed with
-//! `encrypt_into_with_context(row, 7u64)`, which binds each field under
-//! `("users/age", 7u64)` — a `NonEmpty<(&str, u64)>` — and a binding that
-//! spells the same context as `["users/age", 7u64]` agree byte for byte on
-//! the AAD (the ciphertext binding and the ZeroKMS descriptor rendered from
-//! its parts) *and* on the PRF context (the index terms' domain separation).
-//! Nothing is re-derived here: the tree is handed to vitaminc's own impls.
-//!
-//! # Shape
-//!
-//! ```text
-//! context := <string> | <bytes> | <i32> | <i64> | <u32> | <u64> | [ context, ... ]
-//! ```
-//!
-//! A bare string is one text part. An array is a list, and may nest as deep
-//! as the transport codec allows
-//! ([`MAX_DEPTH`](vitaminc_aead_value::transport::MAX_DEPTH) levels, counted
-//! from the root of the encoded value); a deeper value is refused by the
-//! codec before this module sees it. Text and bytes with the same content
-//! are distinct on the PRF side (UTF-8 versus bytes encodings) though they
-//! share AAD bytes — the same distinction the Rust types make. Booleans,
-//! floats, null, undefined, objects and passthroughs are not contexts.
-//!
-//! # Which Rust contexts a list spells
-//!
-//! * `["users/age", 7u64]` is `nonempty!("users/age").with(7u64)`: a
-//!   two-element list is the pair.
-//! * `NonEmpty::with` nests to the **left**: `nonempty!("a").with(7u64)
-//!   .with("eu")` is `(("a", 7u64), "eu")`, spelled `[["a", 7u64], "eu"]`.
-//!   A flat three-element list is a different context (a three-part PAE)
-//!   that no `.with()` chain produces.
-//! * `[x]` is `Some(x)` and `[]` is `None`, on both derivations. A
-//!   one-element list is *not* the bare part: it is PAE-framed, the bare
-//!   part is not.
-//!
-//! # Emptiness
-//!
-//! [`context`](context()) returns a [`NonEmpty`], proven once here by
-//! vitaminc's own rule for the tree: an empty string or byte string is
-//! empty, an integer never is, and a list is empty when every part is (so
-//! `[]` and `[""]` are, `["", 7]` is not) — the rule its `Option` and tuple
-//! impls follow.
+//! An [`FfiValue`] read as an encryption context. See [`context`](context()).
 
 use std::borrow::Cow;
 
@@ -62,12 +8,64 @@ use vitaminc_protected::Controlled;
 use super::Error;
 use crate::{AadPiece, NonEmpty};
 
-/// Read a context from a decoded [`FfiValue`] and prove it non-empty.
+/// A context arrives from a binding as a value and becomes an [`AadPiece`]
+/// tree: vitaminc's runtime form of a context, and the *identity* of one.
+/// vitaminc's law (pinned there by quickcheck over every built-in context
+/// type) is that a context's two derivations each equal the same derivation
+/// of its parts view:
+///
+/// ```text
+/// x.into_aad()         == x.into_aad_piece().into_aad()
+/// x.into_prf_context() == x.into_aad_piece().into_prf_context()
+/// ```
+///
+/// So a `#[derive(EncryptFrom)]` row sealed with
+/// `encrypt_into_with_context(row, 7u64)`, which binds each field under
+/// `("users/age", 7u64)` — a `NonEmpty<(&str, u64)>` — and a binding that
+/// spells the same context as `["users/age", 7u64]` agree byte for byte on
+/// the AAD (the ciphertext binding and the ZeroKMS descriptor rendered from
+/// its parts) *and* on the PRF context (the index terms' domain separation).
+/// Nothing is re-derived here: the tree is handed to vitaminc's own impls.
+///
+/// # Shape
+///
+/// ```text
+/// context := <string> | <bytes> | <i32> | <i64> | <u32> | <u64> | [ context, ... ]
+/// ```
+///
+/// A bare string is one text part. An array is a list, and may nest as deep
+/// as the transport codec allows
+/// ([`MAX_DEPTH`](vitaminc_aead_value::transport::MAX_DEPTH) levels, counted
+/// from the root of the encoded value); a deeper value is refused by the
+/// codec before this module sees it. Text and bytes with the same content
+/// are distinct on the PRF side (UTF-8 versus bytes encodings) though they
+/// share AAD bytes — the same distinction the Rust types make. Booleans,
+/// floats, null, undefined, objects and passthroughs are not contexts.
+///
+/// # Which Rust contexts a list spells
+///
+/// * `["users/age", 7u64]` is `nonempty!("users/age").with(7u64)`: a
+///   two-element list is the pair.
+/// * `NonEmpty::with` nests to the **left**: `nonempty!("a").with(7u64)
+///   .with("eu")` is `(("a", 7u64), "eu")`, spelled `[["a", 7u64], "eu"]`.
+///   A flat three-element list is a different context (a three-part PAE)
+///   that no `.with()` chain produces.
+/// * `[x]` is `Some(x)` and `[]` is `None`, on both derivations. A
+///   one-element list is *not* the bare part: it is PAE-framed, the bare
+///   part is not.
+///
+/// # Emptiness
+///
+/// [`context`](context()) returns a [`NonEmpty`], proven once here by
+/// vitaminc's own rule for the tree: an empty string or byte string is
+/// empty, an integer never is, and a list is empty when every part is (so
+/// `[]` and `[""]` are, `["", 7]` is not) — the rule its `Option` and tuple
+/// impls follow.
 ///
 /// # Errors
 ///
-/// [`Error::Context`] for anything outside the shape in the [module
-/// docs](self), and for a context that renders empty.
+/// [`Error::Context`] for anything outside the shape above, and for a
+/// context that renders empty.
 pub fn context(value: FfiValue) -> Result<NonEmpty<AadPiece<'static>>, Error> {
     NonEmpty::new(piece_of(value)?).map_err(|_| Error::Context)
 }

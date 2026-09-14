@@ -46,6 +46,11 @@ mod term;
 pub use context::{borrowed, context};
 pub use record::{FieldPlan, Output};
 pub use term::{term, Scalar, TermKind};
+/// vitaminc's language-neutral value tree — the runtime value every binding
+/// funnels through. Its transport codec is `vitaminc_aead_value::transport`,
+/// which stays the binding's: this crate takes and returns values, never
+/// encoded bytes.
+pub use vitaminc_aead_value::FfiValue;
 
 use crate::{KeysetCipher, StackCipher};
 
