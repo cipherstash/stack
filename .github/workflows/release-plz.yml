@@ -149,7 +149,7 @@ jobs:
           git_tag_gpgsign: true
 
       - name: Run release-plz release
-        uses: release-plz/action@2eb1d8bcb770b4c48ccfaad919734b38b51958c9 # v0.5
+        uses: release-plz/action@aec534bbd8631793b9b3b8f1ee6cd886c322e17f # v0.5
         with:
           command: release
           # Required here and absent upstream: a composite action's steps do not
