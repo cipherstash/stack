@@ -257,6 +257,8 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 
 pub mod cipher;
 pub mod descriptor;
+#[cfg(feature = "dynamic")]
+pub mod dynamic;
 pub mod keyset;
 pub mod sem;
 pub mod target;

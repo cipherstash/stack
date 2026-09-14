@@ -69,7 +69,6 @@
 //! out of a tree is exactly what a database column holds.
 
 pub mod config;
-pub mod context;
 pub mod headers;
 pub mod ops;
 pub mod options;

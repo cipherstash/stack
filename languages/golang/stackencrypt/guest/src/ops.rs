@@ -39,20 +39,18 @@
 //! is exact up to 500 leaves and "one call per 500" past it. See
 //! `parse_plan` for the plan encoding.
 
-use stack_encrypt::sem::{CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch};
+use stack_encrypt::dynamic::{self, Scalar, TermKind};
 use stack_encrypt::target::Pending;
 use stack_encrypt::{
-    AadPiece, BoxedPassthrough, CipherText, Element, Encrypt, IntoPrfContext, KeysetCipher,
-    NonEmpty, SealedValue, StackCipherText,
+    AadPiece, BoxedPassthrough, CipherText, Element, Encrypt, KeysetCipher, NonEmpty, SealedValue,
+    StackCipherText,
 };
 use stack_kms::DataKeySource;
 use vitaminc_aead_value::{transport as codec, FfiValue};
 use vitaminc_protected::{Controlled, Protected};
-use zeroize::Zeroizing;
 
-use crate::context::{borrowed, parse_context};
 use crate::options::Opener;
-use crate::status::{status_for_error, STATUS_ENCODING, STATUS_INTERNAL};
+use crate::status::{status_for_dynamic, status_for_error, STATUS_ENCODING, STATUS_INTERNAL};
 
 /// Term kinds for `se_term`, part of the guest/host contract (the Go host
 /// mirrors these values).
@@ -184,193 +182,31 @@ where
 {
     // The same proof every stack-encrypt leaf demands: an empty context is
     // `STATUS_ENCODING` here, before any derivation.
-    let context = parse_context(decode_value(context)?)?;
-    let (scalar, output) = parse_term(decode_value(value)?, kind)?;
-    term_bytes(cipher, scalar, context, output).await
+    let context = dynamic::context(decode_value(context)?).map_err(|e| status_for_dynamic(&e))?;
+    let (scalar, kind) = parse_term(decode_value(value)?, kind)?;
+    dynamic::term(cipher, scalar, kind, context)
+        .await
+        .map_err(|e| status_for_dynamic(&e))
 }
 
-/// The static half of a term: the value is a scalar, the kind is one of
-/// the table, and the scheme defines the pair ([`term_supported`]). Shared
-/// by [`term`] and [`validate::term`] so the ABI refuses exactly what the
-/// operation would, before any keyset is resolved.
-fn parse_term(value: FfiValue, kind: u32) -> Result<(Scalar, Output), u32> {
-    let output = match kind {
-        TERM_EQUALITY => Output::Equality,
-        TERM_MATCH => Output::Match,
-        TERM_ORE => Output::Ore,
-        TERM_OPE => Output::Ope,
+/// The static half of a term: the kind is one of the ABI's table, the value
+/// is a scalar, and the scheme defines the pair
+/// ([`TermKind::supports`]). Shared by [`term`] and [`validate::term`] so
+/// the ABI refuses exactly what the operation would, before any keyset is
+/// resolved.
+fn parse_term(value: FfiValue, kind: u32) -> Result<(Scalar, TermKind), u32> {
+    let kind = match kind {
+        TERM_EQUALITY => TermKind::Equality,
+        TERM_MATCH => TermKind::Match,
+        TERM_ORE => TermKind::Ore,
+        TERM_OPE => TermKind::Ope,
         _ => return Err(STATUS_ENCODING),
     };
-    let scalar = scalar_of(&value)?;
-    if !term_supported(&scalar, output) {
+    let scalar = Scalar::of(&value, kind).map_err(|e| status_for_dynamic(&e))?;
+    if !kind.supports(&scalar) {
         return Err(STATUS_ENCODING);
     }
-    Ok((scalar, output))
-}
-
-/// Which scalar/output pairs the scheme defines: no PRF encoding exists
-/// for floats (equality on IEEE-754 values is a modelling error) or
-/// booleans, match is text-only, ORE and OPE take every scalar. The one
-/// table, consulted before any cipher work; [`term_bytes`]'s arms mirror
-/// it and are unreachable for a refused pair.
-fn term_supported(scalar: &Scalar, output: Output) -> bool {
-    match output {
-        Output::Ciphertext => false,
-        Output::Equality => !matches!(scalar, Scalar::Bool(_) | Scalar::F32(_) | Scalar::F64(_)),
-        Output::Match => matches!(scalar, Scalar::Text(_)),
-        Output::Ore | Output::Ope => true,
-    }
-}
-
-/// A term-able scalar lifted (by copy) out of an [`FfiValue`] leaf, so the
-/// value itself stays movable into the ciphertext path. The owned text/bytes
-/// copies wipe on drop; the PRF/CLLW layers move them into `Protected`
-/// internally.
-#[derive(Clone)]
-enum Scalar {
-    Bool(bool),
-    I32(i32),
-    I64(i64),
-    U32(u32),
-    U64(u64),
-    F32(f32),
-    F64(f64),
-    Text(Zeroizing<String>),
-    Bytes(Zeroizing<Vec<u8>>),
-}
-
-fn scalar_of(value: &FfiValue) -> Result<Scalar, u32> {
-    Ok(match value {
-        FfiValue::Bool(v) => Scalar::Bool(*v),
-        FfiValue::Int32(v) => Scalar::I32(*v),
-        FfiValue::Int64(v) => Scalar::I64(*v),
-        FfiValue::UInt32(v) => Scalar::U32(*v),
-        FfiValue::UInt64(v) => Scalar::U64(*v),
-        FfiValue::Float32(v) => Scalar::F32(*v),
-        FfiValue::Float64(v) => Scalar::F64(*v),
-        FfiValue::String(s) => Scalar::Text(Zeroizing::new(text_of(s)?.to_string())),
-        FfiValue::Bytes(b) => Scalar::Bytes(Zeroizing::new(b.risky_ref().to_vec())),
-        // Containers, nulls and passthroughs have no term semantics.
-        _ => return Err(STATUS_ENCODING),
-    })
-}
-
-/// Derive one output's term bytes for a scalar.
-///
-/// The type dispatch decides the term's PRF/CLLW input encoding, which is
-/// part of the cross-language contract: an equality term for `UInt32(34)`
-/// must equal the term the Rust side derives for `34u32`. Unsupported
-/// combinations (floats or booleans under equality, anything non-text under
-/// match) are [`STATUS_ENCODING`] — the scheme does not define them;
-/// [`term_supported`] is the table, checked before this is reached.
-async fn term_bytes<'c, K, D>(
-    cipher: &KeysetCipher<'_, K>,
-    scalar: Scalar,
-    context: NonEmpty<D>,
-    output: Output,
-) -> Result<Vec<u8>, u32>
-where
-    K: DataKeySource + Sync,
-    D: IntoPrfContext<'c>,
-{
-    let term_err = |e| status_for_error(&e);
-    match output {
-        Output::Ciphertext => Err(STATUS_ENCODING),
-        Output::Equality => {
-            let term = match scalar {
-                Scalar::I32(v) => cipher.equality_term(v, context).await,
-                Scalar::I64(v) => cipher.equality_term(v, context).await,
-                Scalar::U32(v) => cipher.equality_term(v, context).await,
-                Scalar::U64(v) => cipher.equality_term(v, context).await,
-                Scalar::Text(t) => cipher.equality_term(String::clone(&t), context).await,
-                Scalar::Bytes(b) => {
-                    cipher
-                        .equality_term(Protected::new(Vec::clone(&b)), context)
-                        .await
-                }
-                // No PRF encoding is defined for floats (equality on IEEE-754
-                // values is a modelling error) or booleans.
-                Scalar::Bool(_) | Scalar::F32(_) | Scalar::F64(_) => return Err(STATUS_ENCODING),
-            }
-            .map_err(term_err)?;
-            Ok(term.into_bytes().to_vec())
-        }
-        Output::Match => match scalar {
-            Scalar::Text(t) => cipher
-                .match_terms::<DefaultMatch>(&t, context)
-                .await
-                .map(|t| t.to_bytes())
-                .map_err(term_err),
-            _ => Err(STATUS_ENCODING),
-        },
-        // The text and bytes arms hand the encryptor the `Zeroizing` operand
-        // itself, not a bare clone of its contents: the CLLW encryptors take
-        // their value by `'static` ownership (the visitor carries it), so a
-        // cloned-out `String`/`Vec<u8>` would be freed with the plaintext
-        // still in it — in linear memory the host can read. Keeping the
-        // wrapper costs nothing and saves the copy as well.
-        Output::Ore => match scalar {
-            Scalar::Bool(v) => ore(cipher, v, context).await,
-            Scalar::I32(v) => ore(cipher, v, context).await,
-            Scalar::I64(v) => ore(cipher, v, context).await,
-            Scalar::U32(v) => ore(cipher, v, context).await,
-            Scalar::U64(v) => ore(cipher, v, context).await,
-            Scalar::F32(v) => ore(cipher, v, context).await,
-            Scalar::F64(v) => ore(cipher, v, context).await,
-            Scalar::Text(t) => ore(cipher, t, context).await,
-            Scalar::Bytes(b) => ore(cipher, b, context).await,
-        },
-        Output::Ope => match scalar {
-            Scalar::Bool(v) => ope(cipher, v, context).await,
-            Scalar::I32(v) => ope(cipher, v, context).await,
-            Scalar::I64(v) => ope(cipher, v, context).await,
-            Scalar::U32(v) => ope(cipher, v, context).await,
-            Scalar::U64(v) => ope(cipher, v, context).await,
-            Scalar::F32(v) => ope(cipher, v, context).await,
-            Scalar::F64(v) => ope(cipher, v, context).await,
-            Scalar::Text(t) => ope(cipher, t, context).await,
-            Scalar::Bytes(b) => ope(cipher, b, context).await,
-        },
-    }
-}
-
-/// The `AsRef<[u8]>` on the output is what turns the typed CLLW ciphertext
-/// into the frozen raw-bytes encoding.
-async fn ore<'c, K, T, D>(
-    cipher: &KeysetCipher<'_, K>,
-    value: T,
-    context: NonEmpty<D>,
-) -> Result<Vec<u8>, u32>
-where
-    K: DataKeySource + Sync,
-    T: CllwOreEncrypt + Send + 'static,
-    T::Output: AsRef<[u8]> + Send + 'static,
-    D: IntoPrfContext<'c>,
-{
-    cipher
-        .ore_term(value, context)
-        .await
-        .map(|t| t.as_ref().to_vec())
-        .map_err(|e| status_for_error(&e))
-}
-
-/// See [`ore`].
-async fn ope<'c, K, T, D>(
-    cipher: &KeysetCipher<'_, K>,
-    value: T,
-    context: NonEmpty<D>,
-) -> Result<Vec<u8>, u32>
-where
-    K: DataKeySource + Sync,
-    T: CllwOpeEncrypt + Send + 'static,
-    T::Output: AsRef<[u8]> + Send + 'static,
-    D: IntoPrfContext<'c>,
-{
-    cipher
-        .ope_term(value, context)
-        .await
-        .map(|t| t.as_ref().to_vec())
-        .map_err(|e| status_for_error(&e))
+    Ok((scalar, kind))
 }
 
 // =============================================================================
@@ -378,29 +214,25 @@ where
 // =============================================================================
 
 /// What a plan field asks for. The strings are the plan encoding *and* the
-/// keys of the per-field output map in the result.
+/// keys of the per-field output map in the result; the term spellings are
+/// [`TermKind::key`], so the plan grammar and the library agree on them by
+/// construction rather than by two tables.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Output {
     /// `"c"` — the field's [`StackCipherText`].
     Ciphertext,
-    /// `"eq"` — equality term (raw 32 PRF bytes).
-    Equality,
-    /// `"match"` — match term (LE `u16` positions), default tokenizer config.
-    Match,
-    /// `"ore"` — ORE term (raw CLLW bytes).
-    Ore,
-    /// `"ope"` — OPE term (raw CLLW bytes).
-    Ope,
+    /// An index term: `"eq"`, `"match"`, `"ore"` or `"ope"`.
+    Term(TermKind),
 }
 
 impl Output {
     fn parse(s: &str) -> Option<Self> {
         Some(match s {
             "c" => Output::Ciphertext,
-            "eq" => Output::Equality,
-            "match" => Output::Match,
-            "ore" => Output::Ore,
-            "ope" => Output::Ope,
+            "eq" => Output::Term(TermKind::Equality),
+            "match" => Output::Term(TermKind::Match),
+            "ore" => Output::Term(TermKind::Ore),
+            "ope" => Output::Term(TermKind::Ope),
             _ => return None,
         })
     }
@@ -408,10 +240,7 @@ impl Output {
     fn key(self) -> &'static str {
         match self {
             Output::Ciphertext => "c",
-            Output::Equality => "eq",
-            Output::Match => "match",
-            Output::Ore => "ore",
-            Output::Ope => "ope",
+            Output::Term(kind) => kind.key(),
         }
     }
 }
@@ -475,7 +304,9 @@ fn parse_plan(value: FfiValue) -> Result<Vec<FieldPlan>, u32> {
             let mut outputs: Option<Vec<Output>> = None;
             for (key, value) in spec {
                 match key.as_str() {
-                    "context" => context = Some(parse_context(value)?),
+                    "context" => {
+                        context = Some(dynamic::context(value).map_err(|e| status_for_dynamic(&e))?)
+                    }
                     "outputs" => {
                         let FfiValue::Array(items) = value else {
                             return Err(STATUS_ENCODING);
@@ -683,15 +514,19 @@ fn source_rows(source: FfiValue, plan: &[FieldPlan]) -> Result<(Vec<Vec<FfiValue
 }
 
 /// A source value against its plan field: every term output needs a
-/// scalar the scheme defines the term for ([`term_supported`]), and a
+/// scalar the scheme defines the term for ([`TermKind::supports`]), and a
 /// ciphertext output refuses a passthrough anywhere in the value
 /// ([`reject_passthrough_value`]).
 fn check_field(value: &FfiValue, field: &FieldPlan) -> Result<(), u32> {
     for output in &field.outputs {
-        if *output == Output::Ciphertext {
-            reject_passthrough_value(value)?;
-        } else if !term_supported(&scalar_of(value)?, *output) {
-            return Err(STATUS_ENCODING);
+        match output {
+            Output::Ciphertext => reject_passthrough_value(value)?,
+            Output::Term(kind) => {
+                let scalar = Scalar::of(value, *kind).map_err(|e| status_for_dynamic(&e))?;
+                if !kind.supports(&scalar) {
+                    return Err(STATUS_ENCODING);
+                }
+            }
         }
     }
     Ok(())
@@ -773,26 +608,34 @@ where
         // A borrowed view of the plan's context, once per field: the proof
         // was made at parse time, so re-taking it over the same tree cannot
         // fail, and the view clones cheaply for each output below.
-        let context = NonEmpty::new(borrowed(field.context.get())).map_err(|_| STATUS_INTERNAL)?;
+        let context =
+            NonEmpty::new(dynamic::borrowed(field.context.get())).map_err(|_| STATUS_INTERNAL)?;
 
         // Terms first — they lift a copy of the scalar; the value itself is
-        // consumed by the ciphertext path below.
-        let wants_terms = field.outputs.iter().any(|o| *o != Output::Ciphertext);
-        let scalar = if wants_terms {
-            Some(scalar_of(&value)?)
-        } else {
-            None
-        };
+        // consumed by the ciphertext path below. One lift serves every term
+        // output: the kind only names which error a non-scalar reports.
+        let scalar = field
+            .outputs
+            .iter()
+            .find_map(|o| match o {
+                Output::Term(kind) => Some(*kind),
+                Output::Ciphertext => None,
+            })
+            .map(|kind| Scalar::of(&value, kind))
+            .transpose()
+            .map_err(|e| status_for_dynamic(&e))?;
 
         let mut outputs: Vec<(&'static str, Option<Vec<u8>>)> =
             Vec::with_capacity(field.outputs.len());
         for output in &field.outputs {
-            if *output == Output::Ciphertext {
+            let Output::Term(kind) = output else {
                 outputs.push((output.key(), None));
                 continue;
-            }
+            };
             let scalar = scalar.clone().ok_or(STATUS_INTERNAL)?;
-            let term = term_bytes(cipher, scalar, context.clone(), *output).await?;
+            let term = dynamic::term(cipher, scalar, *kind, context.clone())
+                .await
+                .map_err(|e| status_for_dynamic(&e))?;
             outputs.push((output.key(), Some(term)));
         }
 
@@ -829,7 +672,9 @@ where
     let contexts = plan
         .iter()
         .filter(|field| field.outputs.contains(&Output::Ciphertext))
-        .map(|field| NonEmpty::new(borrowed(field.context.get())).map_err(|_| STATUS_INTERNAL))
+        .map(|field| {
+            NonEmpty::new(dynamic::borrowed(field.context.get())).map_err(|_| STATUS_INTERNAL)
+        })
         .collect::<Result<Vec<_>, u32>>()?;
 
     // Per row, per ciphertext-bearing plan field (in plan order, as
@@ -912,9 +757,11 @@ pub mod validate {
     /// A term's inputs, as [`term`] takes them: the context decodes and is
     /// non-empty, the kind is one of [`TERM_EQUALITY`] .. [`TERM_OPE`], and
     /// the value is a scalar the scheme defines that term for
-    /// (`term_supported`).
+    /// ([`TermKind::supports`]).
     pub fn term(value: &[u8], context: &[u8], kind: u32) -> Result<(), u32> {
-        parse_context(decode_value(context)?).map(drop)?;
+        dynamic::context(decode_value(context)?)
+            .map(drop)
+            .map_err(|e| status_for_dynamic(&e))?;
         parse_term(decode_value(value)?, kind).map(drop)
     }
 

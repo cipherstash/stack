@@ -1960,6 +1960,7 @@ dependencies = [
  "thiserror 1.0.69",
  "uuid",
  "vitaminc-aead",
+ "vitaminc-aead-value",
  "vitaminc-encrypt",
  "vitaminc-hmac",
  "vitaminc-prf",

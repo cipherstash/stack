@@ -109,6 +109,19 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
     }
 }
 
+/// A dynamic-path error as a status code.
+///
+/// The split the library draws is the one the ABI needs: every variant but
+/// `Cipher` is a statement about the caller's input, decided before any key
+/// is minted or retrieved, so it is [`STATUS_ENCODING`]. `Cipher` defers to
+/// [`status_for_error`].
+pub fn status_for_dynamic(error: &stack_encrypt::dynamic::Error) -> u32 {
+    match error {
+        stack_encrypt::dynamic::Error::Cipher(e) => status_for_error(e),
+        _ => STATUS_ENCODING,
+    }
+}
+
 // These matches are deliberately exhaustive — no `_` arms. None of the
 // stack-kms error enums is `#[non_exhaustive]`, so exhaustiveness is free
 // compiler coverage: `GenerateKeyError` already grew `Unauthorized` /
