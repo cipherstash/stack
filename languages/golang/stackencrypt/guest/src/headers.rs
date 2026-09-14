@@ -7,6 +7,36 @@
 //! ASCII-case-insensitively, as in HTTP. Pure functions, unit-tested on the
 //! native target.
 
+/// The `user-agent` every ZeroKMS request carries.
+///
+/// Not optional, and not cosmetic: the edge in front of production ZeroKMS
+/// refuses a request that arrives without one — and refuses a host
+/// runtime's generic default too (`Go-http-client/1.1` is rejected) — with a
+/// bare nginx 403 that never reaches the application. The native client sets
+/// one in `stack_kms::user_agent`; the guest builds its own requests and
+/// never goes through that path, so it has to say who it is here.
+pub const USER_AGENT: &str = concat!(
+    "stack-encrypt-guest/",
+    env!("CARGO_PKG_VERSION"),
+    " (wasm32-wasip1)"
+);
+
+/// The headers of a ZeroKMS request: the bearer credential, the content
+/// type, and [`USER_AGENT`].
+///
+/// This lives here rather than at the call site because `host` is
+/// `#[cfg(target_arch = "wasm32")]` and so is never compiled — let alone
+/// tested — on the native target. The header set is the kind of thing that
+/// fails in production and nowhere else, so it belongs in a module the test
+/// suite can see.
+pub fn request_headers(authorization: &str) -> Vec<u8> {
+    encode_headers(&[
+        ("authorization", authorization),
+        ("content-type", "application/json"),
+        ("user-agent", USER_AGENT),
+    ])
+}
+
 /// Encode header pairs as the wire buffer.
 pub fn encode_headers(headers: &[(&str, &str)]) -> Vec<u8> {
     let mut out = String::new();
@@ -67,6 +97,29 @@ mod tests {
         assert_eq!(header_value(b"no colon here", "content-type"), None);
         assert_eq!(header_value(&[0xff, 0xfe], "content-type"), None);
         assert_eq!(header_value(b"", "content-type"), None);
+    }
+
+    /// The edge in front of production ZeroKMS answers a request with no
+    /// `user-agent` with a bare nginx 403, before the application sees it.
+    /// Every request must carry one, and it must not be a host runtime's
+    /// generic default — those are refused too.
+    #[test]
+    fn every_request_identifies_itself() {
+        let headers = request_headers("Bearer tok");
+        let ua = header_value(&headers, "user-agent").expect("requests carry a user-agent");
+        assert!(
+            ua.starts_with("stack-encrypt-guest/"),
+            "the user-agent must name this guest, got {ua:?}"
+        );
+        assert!(
+            !ua.contains("Go-http-client"),
+            "a host runtime's default user-agent is refused by the edge"
+        );
+        assert_eq!(header_value(&headers, "authorization"), Some("Bearer tok"));
+        assert_eq!(
+            header_value(&headers, "content-type"),
+            Some("application/json")
+        );
     }
 
     #[test]
