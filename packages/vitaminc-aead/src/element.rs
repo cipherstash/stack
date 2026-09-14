@@ -54,14 +54,14 @@ use crate::{cipher::Cipher, decipher::Decipher, decrypt::Decrypt, encrypt::Encry
 ///
 /// ```ignore
 /// // Batch write: rows sealed as sequence elements.
-/// let ct = vec![row1, row2].encrypt_with_aad(&cipher, Context::from_encoded(b"users"))?;
+/// let ct = vec![row1, row2].encrypt_with_aad(&cipher, "users")?;
 ///
 /// // Single-row read: same caller AAD, Element derives the rest.
 /// let row: Element<HashMap<String, String>> =
-///     cipher.decrypt_with_aad(row_ct, Context::from_encoded(b"users"))?;
+///     cipher.decrypt_with_aad(row_ct, "users")?;
 ///
 /// // Single-row write: interchangeable with the batch above.
-/// let ct = Element(row3).encrypt_with_aad(&cipher, Context::from_encoded(b"users"))?;
+/// let ct = Element(row3).encrypt_with_aad(&cipher, "users")?;
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Element<T>(pub T);
