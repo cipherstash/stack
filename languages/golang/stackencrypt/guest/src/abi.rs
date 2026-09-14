@@ -6,10 +6,19 @@
 //!   inputs and the guest's outputs — with [`se_dealloc`], which **zeroizes
 //!   before freeing**. The guest keeps a registry of every buffer it hands
 //!   out (`crate::buffers`), so `se_dealloc` never trusts the host's
-//!   length. Two entry points additionally wipe their *input* buffer in
-//!   place before returning: [`se_cipher_init`] (the config carries the
-//!   client key) and [`se_decrypt`]'s output is plaintext the host must
-//!   copy out and immediately `se_dealloc`.
+//!   length.
+//! - **Every export that is handed plaintext wipes that buffer in place
+//!   before it returns**, rather than leaving it for `se_dealloc`:
+//!   [`se_cipher_init`] (the config carries the client key),
+//!   [`se_encrypt`], [`se_encrypt_element`], [`se_term`] and
+//!   [`se_encrypt_record`] (the value/source buffers). The host's plaintext
+//!   therefore lives no longer than the call, instead of until the host
+//!   gets round to releasing it. **A host must not read a plaintext input
+//!   buffer back after the call, or pass the same buffer to two
+//!   calls** — it will be zeros. Context, AAD and plan buffers are not
+//!   secret and are left untouched.
+//! - Output buffers from the decrypt exports contain plaintext; the host
+//!   must copy them out and immediately `se_dealloc` (which zeroizes).
 //! - A cipher is a **handle**: [`se_cipher_init`] builds a
 //!   `StackCipher<StackKms<HostTokenStrategy, WasiHostConnection>>` (one
 //!   `load-keyset` round trip through the host transport — the index key
@@ -73,7 +82,7 @@ use futures::executor::block_on;
 use stack_encrypt::StackCipher;
 use stack_kms::{ClientOpts, StackKms};
 use vitaminc_aead_value::transport as codec;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::buffers;
 use crate::config::parse_config;
@@ -86,10 +95,37 @@ use crate::status::{STATUS_BAD_HANDLE, STATUS_ENCODING, STATUS_INTERNAL, STATUS_
 /// ZeroKMS client with host-supplied tokens.
 type GuestCipher = StackCipher<StackKms<HostTokenStrategy, WasiHostConnection>>;
 
+/// A cipher handle and the keyset its config pinned it to.
+///
+/// The keyset is held as an id rather than a bound handle because a
+/// `KeysetCipher` borrows its `StackCipher`, and a session owns one. It is
+/// resolved once at [`cipher_init`] — so a keyset the client cannot reach
+/// fails there, not on the first encrypt — and every later resolution is a
+/// cache hit inside `StackCipher`.
+struct GuestSession {
+    cipher: GuestCipher,
+    keyset: Option<stack_kms::IdentifiedBy>,
+}
+
+impl GuestSession {
+    /// The keyset this session encrypts under: the configured one, else the
+    /// client's own default.
+    fn keyset(
+        &self,
+    ) -> Result<stack_encrypt::KeysetCipher<'_, StackKms<HostTokenStrategy, WasiHostConnection>>, u32>
+    {
+        match &self.keyset {
+            Some(keyset) => block_on(self.cipher.keyset(keyset.clone()))
+                .map_err(|e| crate::status::status_for_error(&e)),
+            None => Ok(self.cipher.default_keyset()),
+        }
+    }
+}
+
 thread_local! {
     // Wasm is single-threaded, so a thread-local `RefCell` is a plain owner
     // of the session table — no `Send`/`Sync` bounds required.
-    static SESSIONS: RefCell<Sessions<GuestCipher>> = RefCell::new(Sessions::new());
+    static SESSIONS: RefCell<Sessions<GuestSession>> = RefCell::new(Sessions::new());
 }
 
 /// Allocate `len` bytes of guest memory for the host to write into. Returns
@@ -177,8 +213,26 @@ unsafe fn wipe_input(ptr: *mut u8, len: u32) {
     unsafe { std::slice::from_raw_parts_mut(ptr, len as usize) }.zeroize();
 }
 
+/// Take a plaintext input out of the host's buffer and wipe the buffer.
+///
+/// The exports below hold their decoded value across a ZeroKMS round trip, so
+/// the borrow of the host buffer would otherwise outlive the call. Copying
+/// into a `Zeroizing` first lets the original be wiped immediately: the
+/// plaintext then exists for the duration of this call and no longer, instead
+/// of sitting in linear memory until the host gets round to `se_dealloc`.
+///
+/// # Safety
+///
+/// `ptr`/`len` must name a host buffer the caller is done with; it is zeroed
+/// before this returns.
+unsafe fn take_plaintext(ptr: *mut u8, len: u32) -> Result<Zeroizing<Vec<u8>>, u32> {
+    let taken = Zeroizing::new(input(ptr, len)?.to_vec());
+    unsafe { wipe_input(ptr, len) };
+    Ok(taken)
+}
+
 /// Run `f` with the cipher bound to `handle`, or report `STATUS_BAD_HANDLE`.
-fn with_cipher<R>(handle: u32, f: impl FnOnce(&GuestCipher) -> Result<R, u32>) -> Result<R, u32> {
+fn with_cipher<R>(handle: u32, f: impl FnOnce(&GuestSession) -> Result<R, u32>) -> Result<R, u32> {
     SESSIONS.with(|s| {
         let s = s.borrow();
         let cipher = s.get(handle).ok_or(STATUS_BAD_HANDLE)?;
@@ -236,12 +290,21 @@ fn cipher_init(decoded: vitaminc_aead_value::FfiValue) -> Result<u32, u32> {
     )
     .map_err(|_| STATUS_KMS_TRANSPORT)?;
 
-    let mut builder = StackCipher::builder().kms(kms);
-    if let Some(keyset) = config.keyset {
-        builder = builder.keyset(keyset);
+    let cipher = block_on(StackCipher::builder().kms(kms).init())
+        .map_err(|e| crate::status::status_for_error(&e))?;
+    // A configured keyset is resolved now, so a name the client cannot reach
+    // fails at init rather than on the first encrypt. The handle is dropped;
+    // what it warmed is the cipher's keyset cache.
+    if let Some(keyset) = &config.keyset {
+        let _ = block_on(cipher.keyset(keyset.clone()))
+            .map_err(|e| crate::status::status_for_error(&e))?;
     }
-    let cipher = block_on(builder.init()).map_err(|e| crate::status::status_for_error(&e))?;
-    SESSIONS.with(|s| s.borrow_mut().insert(cipher))
+    SESSIONS.with(|s| {
+        s.borrow_mut().insert(GuestSession {
+            cipher,
+            keyset: config.keyset,
+        })
+    })
 }
 
 /// Drop a cipher handle. Freeing an unknown handle is a no-op.
@@ -287,7 +350,7 @@ pub extern "C" fn se_cipher_free(handle: u32) {
 #[no_mangle]
 pub unsafe extern "C" fn se_encrypt(
     handle: u32,
-    val_ptr: *const u8,
+    val_ptr: *mut u8,
     val_len: u32,
     aad_ptr: *const u8,
     aad_len: u32,
@@ -305,7 +368,7 @@ pub unsafe extern "C" fn se_encrypt(
 #[no_mangle]
 pub unsafe extern "C" fn se_encrypt_element(
     handle: u32,
-    val_ptr: *const u8,
+    val_ptr: *mut u8,
     val_len: u32,
     aad_ptr: *const u8,
     aad_len: u32,
@@ -357,18 +420,20 @@ pub unsafe extern "C" fn se_decrypt_element(
 /// up the handle, block on the op.
 fn run_encrypt(
     handle: u32,
-    val_ptr: *const u8,
+    val_ptr: *mut u8,
     val_len: u32,
     aad_ptr: *const u8,
     aad_len: u32,
     as_element: bool,
 ) -> u64 {
     catch_unwind(AssertUnwindSafe(|| {
-        let value = input(val_ptr, val_len)?;
+        // Plaintext: taken and the host's copy wiped before anything else.
+        let value = unsafe { take_plaintext(val_ptr, val_len)? };
+        let value = value.as_slice();
         let aad = input(aad_ptr, aad_len)?;
         with_cipher(handle, |cipher| {
             block_on(ops::encrypt_value(
-                &cipher.default_keyset(),
+                &cipher.keyset()?,
                 value,
                 aad,
                 as_element,
@@ -392,7 +457,12 @@ fn run_decrypt(
         let ciphertext = input(ct_ptr, ct_len)?;
         let aad = input(aad_ptr, aad_len)?;
         with_cipher(handle, |cipher| {
-            block_on(ops::decrypt_value(cipher, ciphertext, aad, as_element))
+            block_on(ops::decrypt_value(
+                &cipher.cipher,
+                ciphertext,
+                aad,
+                as_element,
+            ))
         })
     }))
     .unwrap_or(Err(STATUS_INTERNAL))
@@ -422,17 +492,18 @@ fn run_decrypt(
 #[no_mangle]
 pub unsafe extern "C" fn se_term(
     handle: u32,
-    val_ptr: *const u8,
+    val_ptr: *mut u8,
     val_len: u32,
     ctx_ptr: *const u8,
     ctx_len: u32,
     kind: u32,
 ) -> u64 {
     catch_unwind(AssertUnwindSafe(|| {
-        let value = input(val_ptr, val_len)?;
+        let value = unsafe { take_plaintext(val_ptr, val_len)? };
+        let value = value.as_slice();
         let context = input(ctx_ptr, ctx_len)?;
         with_cipher(handle, |cipher| {
-            block_on(ops::term(&cipher.default_keyset(), value, context, kind))
+            block_on(ops::term(&cipher.keyset()?, value, context, kind))
         })
     }))
     .unwrap_or(Err(STATUS_INTERNAL))
@@ -454,16 +525,17 @@ pub unsafe extern "C" fn se_term(
 #[no_mangle]
 pub unsafe extern "C" fn se_encrypt_record(
     handle: u32,
-    src_ptr: *const u8,
+    src_ptr: *mut u8,
     src_len: u32,
     plan_ptr: *const u8,
     plan_len: u32,
 ) -> u64 {
     catch_unwind(AssertUnwindSafe(|| {
-        let source = input(src_ptr, src_len)?;
+        let source = unsafe { take_plaintext(src_ptr, src_len)? };
+        let source = source.as_slice();
         let plan = input(plan_ptr, plan_len)?;
         with_cipher(handle, |cipher| {
-            block_on(ops::encrypt_record(&cipher.default_keyset(), source, plan))
+            block_on(ops::encrypt_record(&cipher.keyset()?, source, plan))
         })
     }))
     .unwrap_or(Err(STATUS_INTERNAL))
@@ -491,7 +563,7 @@ pub unsafe extern "C" fn se_decrypt_record(
         let record = input(rec_ptr, rec_len)?;
         let plan = input(plan_ptr, plan_len)?;
         with_cipher(handle, |cipher| {
-            block_on(ops::decrypt_record(cipher, record, plan))
+            block_on(ops::decrypt_record(&cipher.cipher, record, plan))
         })
     }))
     .unwrap_or(Err(STATUS_INTERNAL))
