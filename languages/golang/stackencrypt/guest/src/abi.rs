@@ -100,8 +100,9 @@ use crate::buffers;
 use crate::config::parse_config;
 use crate::host::{HostTokenStrategy, WasiHostConnection};
 use crate::ops;
-use crate::options::{parse_options, parse_selector, KeysetSelector, Opener, Side};
+use crate::options::{opener_for, parse_options, parse_selector, KeysetSelector, Side};
 use crate::status::{STATUS_ENCODING, STATUS_INTERNAL, STATUS_KMS_TRANSPORT, STATUS_STATE};
+use stack_encrypt::dynamic::Opener;
 
 /// The instance's cipher: `stack-encrypt` over the host-transport ZeroKMS
 /// client with host-supplied tokens.
@@ -257,7 +258,7 @@ fn with_opener<R>(
 ) -> Result<R, u32> {
     let options = parse_options(decode(opts)?, Side::Open)?;
     with_cipher(|cipher| {
-        let opener = block_on(Opener::for_selector(cipher, &options.keyset))?;
+        let opener = block_on(opener_for(cipher, &options.keyset))?;
         f(opener)
     })
 }

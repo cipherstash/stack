@@ -19,37 +19,26 @@
 //! are attacker-reachable decode/decrypt paths, and the status codes leak
 //! only the failure class (see `status.rs`).
 //!
-//! # Records
+//! # What is here, and what is not
 //!
-//! [`encrypt_record`] is the runtime form of `#[derive(EncryptFrom)]`: a
-//! *plan* says, per field, which encryption context to bind and which
-//! outputs to produce (ciphertext and/or index terms); the source supplies
-//! the field values. However many rows and fields are in one call, all
-//! ciphertext leaves seal from **one** batched `generate_keys` — the
-//! pendings are merged before settling, exactly like the derive's `zip`/`all`
-//! composition. Index terms are *not* in that batch: `build_row` settles
-//! each term's pending as it builds the row, which under the local HMAC
-//! backend is no ZeroKMS traffic at all, and under a backend that derives
-//! terms at ZeroKMS (as ZeroKMS v2 does) would be one round trip per term
-//! until the term pendings are merged into the row's batch — a change for
-//! this module when that backend lands, not something the record path does
-//! today. The ciphertext batch reaches ZeroKMS as one request per
-//! `ClientOpts::max_keys_per_req` keyed leaves (500 by default, sent
-//! sequentially: the guest pins `max_concurrent_reqs` to 1), so "one call"
-//! is exact up to 500 leaves and "one call per 500" past it. See
-//! `parse_plan` for the plan encoding.
+//! The operations themselves live in [`stack_encrypt::dynamic`]: reading a
+//! context out of a value, dispatching an index term on a value's variant,
+//! and driving a record plan. That is shared with every other language
+//! binding, because none of it is specific to Go or to wasm.
+//!
+//! What is left here is what genuinely is this guest's: the codec both
+//! directions, buffers sized before a byte of plaintext is written, the
+//! ABI's numeric term kinds, and the mapping from a library error to a
+//! status code.
 
-use stack_encrypt::dynamic::{self, Scalar, TermKind};
-use stack_encrypt::target::Pending;
+use stack_encrypt::dynamic::{self, Opener, Scalar, TermKind};
 use stack_encrypt::{
-    AadPiece, BoxedPassthrough, CipherText, Element, Encrypt, KeysetCipher, NonEmpty, SealedValue,
-    StackCipherText,
+    BoxedPassthrough, CipherText, Element, Encrypt, KeysetCipher, SealedValue, StackCipherText,
 };
 use stack_kms::DataKeySource;
 use vitaminc_aead_value::{transport as codec, FfiValue};
-use vitaminc_protected::{Controlled, Protected};
+use vitaminc_protected::Controlled;
 
-use crate::options::Opener;
 use crate::status::{status_for_dynamic, status_for_error, STATUS_ENCODING, STATUS_INTERNAL};
 
 /// Term kinds for `se_term`, part of the guest/host contract (the Go host
@@ -213,203 +202,22 @@ fn parse_term(value: FfiValue, kind: u32) -> Result<(Scalar, TermKind), u32> {
 // Records
 // =============================================================================
 
-/// What a plan field asks for. The strings are the plan encoding *and* the
-/// keys of the per-field output map in the result; the term spellings are
-/// [`TermKind::key`], so the plan grammar and the library agree on them by
-/// construction rather than by two tables.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Output {
-    /// `"c"` — the field's [`StackCipherText`].
-    Ciphertext,
-    /// An index term: `"eq"`, `"match"`, `"ore"` or `"ope"`.
-    Term(TermKind),
-}
-
-impl Output {
-    fn parse(s: &str) -> Option<Self> {
-        Some(match s {
-            "c" => Output::Ciphertext,
-            "eq" => Output::Term(TermKind::Equality),
-            "match" => Output::Term(TermKind::Match),
-            "ore" => Output::Term(TermKind::Ore),
-            "ope" => Output::Term(TermKind::Ope),
-            _ => return None,
-        })
-    }
-
-    fn key(self) -> &'static str {
-        match self {
-            Output::Ciphertext => "c",
-            Output::Term(kind) => kind.key(),
-        }
-    }
-}
-
-/// One field of a record plan.
-struct FieldPlan {
-    name: String,
-    /// Proven non-empty when the plan is parsed, so every path that seals or
-    /// opens under it — the cipher-directed `encrypt_with_aad` in
-    /// [`build_row`] as much as the target-directed `decrypt_into` in
-    /// [`decrypt_record`] — is under a context stack-encrypt's leaves accept.
-    context: NonEmpty<AadPiece<'static>>,
-    outputs: Vec<Output>,
-}
-
-/// Parse a record plan from a decoded value. The plan is an
-/// [`FfiValue::Object`]:
-///
-/// ```text
-/// { <field>: { "context": <context>, "outputs": [ "c" | "eq" | "match" | "ore" | "ope", ... ] }, ... }
-/// ```
-///
-/// `<context>` is defined once, in [`crate::context`]: a string, bytes, an
-/// integer, or a list of those, with what each spells in Rust and the
-/// emptiness rule.
-///
-/// Rejected as [`STATUS_ENCODING`]: an empty plan, a missing, malformed or
-/// *empty* context (contexts domain-separate fields; stack-encrypt's leaves
-/// take a `NonEmpty<_>` and nothing else), an empty/unknown/duplicated
-/// output list, unknown keys. Field names are unique by construction (the
-/// codec rejects duplicate object keys).
-///
-/// The context is proven here, once, and carried as a [`NonEmpty`]: the
-/// cipher-directed path [`build_row`] seals through accepts any AAD, so
-/// nothing downstream would otherwise stop an empty context from being
-/// sealed under — and [`decrypt_record`] opens through `decrypt_into`,
-/// which would then never open it.
-///
-/// A plan context is the *whole* context of the field: the guest has no
-/// caller context to extend it with, so the plan spells the extension
-/// itself. A bare string matches a Rust `#[derive(EncryptFrom)]` record
-/// sealed with `encrypt_into` (no caller context); a list matches one
-/// sealed with `encrypt_into_with_context` — see [`crate::context`] for
-/// which list spells which Rust context. Rows are readable across the two
-/// however they were sealed, provided the plan names the context the row
-/// was sealed under.
-fn parse_plan(value: FfiValue) -> Result<Vec<FieldPlan>, u32> {
-    let FfiValue::Object(entries) = value else {
-        return Err(STATUS_ENCODING);
-    };
-    if entries.is_empty() {
-        return Err(STATUS_ENCODING);
-    }
-    entries
-        .into_iter()
-        .map(|(name, spec)| {
-            let FfiValue::Object(spec) = spec else {
-                return Err(STATUS_ENCODING);
-            };
-            let mut context: Option<NonEmpty<AadPiece<'static>>> = None;
-            let mut outputs: Option<Vec<Output>> = None;
-            for (key, value) in spec {
-                match key.as_str() {
-                    "context" => {
-                        context = Some(dynamic::context(value).map_err(|e| status_for_dynamic(&e))?)
-                    }
-                    "outputs" => {
-                        let FfiValue::Array(items) = value else {
-                            return Err(STATUS_ENCODING);
-                        };
-                        let mut parsed = Vec::with_capacity(items.len());
-                        for item in &items {
-                            let FfiValue::String(s) = item else {
-                                return Err(STATUS_ENCODING);
-                            };
-                            let output = Output::parse(text_of(s)?).ok_or(STATUS_ENCODING)?;
-                            if parsed.contains(&output) {
-                                return Err(STATUS_ENCODING);
-                            }
-                            parsed.push(output);
-                        }
-                        outputs = Some(parsed);
-                    }
-                    _ => return Err(STATUS_ENCODING),
-                }
-            }
-            let context = context.ok_or(STATUS_ENCODING)?;
-            let outputs = outputs.filter(|o| !o.is_empty()).ok_or(STATUS_ENCODING)?;
-            Ok(FieldPlan {
-                name,
-                context,
-                outputs,
-            })
-        })
-        .collect()
-}
-
-/// A row's assembled outputs, ciphertext slots still pending: the terms are
-/// derived (locally), and each `None` is filled from the settled ciphertexts
-/// in build order.
-type RowSkeleton = Vec<(String, Vec<(&'static str, Option<Vec<u8>>)>)>;
-
-/// Reject a source field value that contains a passthrough anywhere, before
-/// it reaches a `"c"` slot. A passthrough node is *unauthenticated by
-/// definition* — on decrypt it hands its payload back with no AEAD opened —
-/// so admitting one under a plan field the plan declares ciphertext-bearing
-/// would quietly produce a slot whose bytes verify nothing. Rejecting it
-/// here is what makes [`decrypt_record`]'s mirror-image rejection a
-/// round-trip invariant rather than data loss.
-fn reject_passthrough_value(value: &FfiValue) -> Result<(), u32> {
-    match value {
-        FfiValue::Passthrough(_) => Err(STATUS_ENCODING),
-        FfiValue::Array(items) => items.iter().try_for_each(reject_passthrough_value),
-        FfiValue::Object(entries) => entries
-            .iter()
-            .try_for_each(|(_, v)| reject_passthrough_value(v)),
-        _ => Ok(()),
-    }
-}
-
-/// Reject a `"c"` subtree that contains a passthrough anywhere. This is the
-/// decrypt-side half of [`reject_passthrough_value`], and it is
-/// load-bearing: `decrypt_into` collects **zero** retrieve-requests for a
-/// passthrough and returns its payload with no AEAD opened, so an attacker
-/// with write access to the stored tree could replace a field's `"c"`
-/// subtree with a passthrough carrying forged plaintext and this function's
-/// absence would report it as a successful decrypt. [`encrypt_record`] never
-/// produces a passthrough under `"c"`, so the shape is unconditionally
-/// [`STATUS_ENCODING`].
-fn reject_passthrough_tree(tree: &StackCipherText) -> Result<(), u32> {
-    match tree {
-        CipherText::Passthrough(_) => Err(STATUS_ENCODING),
-        CipherText::Sequence(items) => items.iter().try_for_each(reject_passthrough_tree),
-        CipherText::Map(entries) => entries
-            .iter()
-            .try_for_each(|(_, v)| reject_passthrough_tree(v)),
-        CipherText::Single(_)
-        | CipherText::None(_)
-        | CipherText::EmptySequence(_)
-        | CipherText::EmptyMap(_) => Ok(()),
-    }
-}
-
 /// Encrypt a record — or a batch of records — per a plan.
 ///
-/// `source` is a codec-encoded [`FfiValue::Object`] of `{ field: scalar }`
-/// (one record), or an [`FfiValue::Array`] of such objects (a batch). Every
-/// plan field must be present in each record, and every record field must be
-/// named by the plan — silently dropping a field on either side would lose
-/// data or index nothing.
+/// Both arguments are codec-encoded: the plan is the object
+/// [`dynamic::record::plan`] parses, the source an object of
+/// `{ field: scalar }` (one record) or an array of them (a batch). The
+/// result is a codec-encoded ciphertext tree — per record a map of
+/// `field → { output-key → node }`.
 ///
-/// The result is a codec-encoded ciphertext tree: per record a map of
-/// `field → { output-key → node }`, where `"c"` is the field's sealed
-/// ciphertext subtree and each term rides as a passthrough
-/// [`FfiValue::Bytes`] node (terms are comparands, not ciphertexts to open —
-/// passthrough is their honest encoding). A batch is a sequence of such
-/// maps. All rows and fields seal in one batched `generate_keys`; that
-/// batch is split into one ZeroKMS request per
+/// All rows and fields seal in one batched `generate_keys`; that batch
+/// reaches ZeroKMS as one request per
 /// [`ClientOpts::max_keys_per_req`](stack_kms::ClientOpts::with_max_keys_per_req)
-/// keyed leaves (500 by default), sent sequentially.
-///
-/// **Cross-language note.** A `"c"` leaf seals the aead-value *tagged*
-/// plaintext encoding (`[type tag] ++ payload`), because that tag table is
-/// the contract Go, Node and this guest share. A Rust
-/// `#[derive(EncryptFrom)]` over a plain primitive — a bare `u32` — seals
-/// four untagged bytes instead, so a plain-primitive Rust derive and a Go
-/// plan do **not** interchange ciphertexts for the same field until the Rust
-/// side uses aead-value's tagged types too. This is by design, not a defect
-/// in either side; making the derive tagged is a separate follow-up.
+/// keyed leaves (500 by default, sent sequentially: the guest pins
+/// `max_concurrent_reqs` to 1), so "one call" is exact up to 500 leaves and
+/// "one call per 500" past it. Everything else about the shape — the plan
+/// grammar, the one-context rule, why terms ride as passthrough — is
+/// [`dynamic::record`]'s to state.
 pub async fn encrypt_record<K>(
     cipher: &KeysetCipher<'_, K>,
     source: &[u8],
@@ -418,247 +226,20 @@ pub async fn encrypt_record<K>(
 where
     K: DataKeySource + Sync,
 {
-    let plan = parse_plan(decode_value(plan)?)?;
-    let (rows, batched) = source_rows(decode_value(source)?, &plan)?;
-
-    // Build every row: terms derive now (local), ciphertexts queue their
-    // data-key requests into one flat pending list.
-    let mut pendings: Vec<Pending<'_, StackCipherText, K>> = Vec::new();
-    let mut skeletons: Vec<RowSkeleton> = Vec::with_capacity(rows.len());
-    for row in rows {
-        skeletons.push(build_row(cipher, row, &plan, &mut pendings).await?);
-    }
-
-    // The one batched key request for the whole invocation (one ZeroKMS
-    // call per 500 keyed leaves, per the module docs).
-    let sealed = Pending::all(cipher, pendings)
+    let plan = dynamic::record::plan(decode_value(plan)?).map_err(|e| status_for_dynamic(&e))?;
+    let tree = dynamic::record::encrypt(cipher, decode_value(source)?, &plan)
         .await
-        .map_err(|e| status_for_error(&e))?;
-    let mut sealed = sealed.into_iter();
-
-    // Fill the ciphertext slots back in, in build order.
-    let mut row_nodes = Vec::with_capacity(skeletons.len());
-    for skeleton in skeletons {
-        let mut fields = Vec::with_capacity(skeleton.len());
-        for (field, outputs) in skeleton {
-            let mut nodes = Vec::with_capacity(outputs.len());
-            for (key, slot) in outputs {
-                let node = match slot {
-                    Some(term) => CipherText::Passthrough(Box::new(FfiValue::Bytes(Protected::new(
-                        term,
-                    )))
-                        as BoxedPassthrough),
-                    None => sealed.next().ok_or(STATUS_INTERNAL)?,
-                };
-                nodes.push((key.to_string(), node));
-            }
-            fields.push((field, CipherText::Map(nodes)));
-        }
-        row_nodes.push(CipherText::Map(fields));
-    }
-    if sealed.next().is_some() {
-        return Err(STATUS_INTERNAL);
-    }
-
-    let tree = if batched {
-        CipherText::Sequence(row_nodes)
-    } else {
-        row_nodes.pop().ok_or(STATUS_INTERNAL)?
-    };
+        .map_err(|e| status_for_dynamic(&e))?;
     encode_tree(tree)
 }
 
-/// The rows of a record source, each aligned to the plan's field order,
-/// with everything that can be checked without a cipher checked: the
-/// source is one object or an array of objects, every plan field is present
-/// in every row and no row carries a field the plan does not name (silently
-/// dropping a field on either side would lose data or index nothing), and
-/// each value fits its field's outputs ([`check_field`]). The `bool` is
-/// whether the source was a batch. Shared by [`encrypt_record`] and
-/// [`validate::record`].
-fn source_rows(source: FfiValue, plan: &[FieldPlan]) -> Result<(Vec<Vec<FfiValue>>, bool), u32> {
-    let (rows, batched) = match source {
-        FfiValue::Object(entries) => (vec![entries], false),
-        FfiValue::Array(items) => {
-            let rows = items
-                .into_iter()
-                .map(|item| match item {
-                    FfiValue::Object(entries) => Ok(entries),
-                    _ => Err(STATUS_ENCODING),
-                })
-                .collect::<Result<Vec<_>, u32>>()?;
-            (rows, true)
-        }
-        _ => return Err(STATUS_ENCODING),
-    };
-    let rows = rows
-        .into_iter()
-        .map(|mut row| {
-            if row.len() != plan.len() {
-                return Err(STATUS_ENCODING);
-            }
-            plan.iter()
-                .map(|field| {
-                    let at = row
-                        .iter()
-                        .position(|(name, _)| name == &field.name)
-                        .ok_or(STATUS_ENCODING)?;
-                    let (_, value) = row.swap_remove(at);
-                    check_field(&value, field)?;
-                    Ok(value)
-                })
-                .collect::<Result<Vec<_>, u32>>()
-        })
-        .collect::<Result<Vec<_>, u32>>()?;
-    Ok((rows, batched))
-}
-
-/// A source value against its plan field: every term output needs a
-/// scalar the scheme defines the term for ([`TermKind::supports`]), and a
-/// ciphertext output refuses a passthrough anywhere in the value
-/// ([`reject_passthrough_value`]).
-fn check_field(value: &FfiValue, field: &FieldPlan) -> Result<(), u32> {
-    for output in &field.outputs {
-        match output {
-            Output::Ciphertext => reject_passthrough_value(value)?,
-            Output::Term(kind) => {
-                let scalar = Scalar::of(value, *kind).map_err(|e| status_for_dynamic(&e))?;
-                if !kind.supports(&scalar) {
-                    return Err(STATUS_ENCODING);
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// The `"c"` subtrees a record tree holds for the plan's ciphertext-bearing
-/// fields, per row in plan order, with the row's field name: the tree is
-/// one map or a sequence of maps, each such field is present, is a map of
-/// outputs with a `"c"` node, and that node is not a passthrough
-/// ([`reject_passthrough_tree`]). Terms and fields the plan does not name
-/// are ignored (comparands, not ciphertext). The `bool` is whether the tree
-/// was a batch. Shared by [`decrypt_record`] and [`validate::record_tree`].
-#[allow(clippy::type_complexity)]
-fn record_leaves(
-    tree: StackCipherText,
-    plan: &[FieldPlan],
-) -> Result<(Vec<Vec<(String, StackCipherText)>>, bool), u32> {
-    let (rows, batched) = match tree {
-        CipherText::Map(entries) => (vec![entries], false),
-        CipherText::Sequence(items) => {
-            let rows = items
-                .into_iter()
-                .map(|item| match item {
-                    CipherText::Map(entries) => Ok(entries),
-                    _ => Err(STATUS_ENCODING),
-                })
-                .collect::<Result<Vec<_>, u32>>()?;
-            (rows, true)
-        }
-        _ => return Err(STATUS_ENCODING),
-    };
-    let rows = rows
-        .into_iter()
-        .map(|mut row| {
-            plan.iter()
-                .filter(|field| field.outputs.contains(&Output::Ciphertext))
-                .map(|field| {
-                    let at = row
-                        .iter()
-                        .position(|(name, _)| name == &field.name)
-                        .ok_or(STATUS_ENCODING)?;
-                    let (name, node) = row.swap_remove(at);
-                    let CipherText::Map(outputs) = node else {
-                        return Err(STATUS_ENCODING);
-                    };
-                    let ct = outputs
-                        .into_iter()
-                        .find_map(|(key, node)| (key == "c").then_some(node))
-                        .ok_or(STATUS_ENCODING)?;
-                    reject_passthrough_tree(&ct)?;
-                    Ok((name, ct))
-                })
-                .collect::<Result<Vec<_>, u32>>()
-        })
-        .collect::<Result<Vec<_>, u32>>()?;
-    Ok((rows, batched))
-}
-
-/// Build one record row: derive its terms and queue its ciphertext pendings,
-/// returning the row skeleton. The plan drives the iteration so the output
-/// field order is the plan's; the row arrives from [`source_rows`] already
-/// in that order and checked against the plan.
-async fn build_row<'c, K>(
-    cipher: &'c KeysetCipher<'_, K>,
-    row: Vec<FfiValue>,
-    plan: &[FieldPlan],
-    pendings: &mut Vec<Pending<'c, StackCipherText, K>>,
-) -> Result<RowSkeleton, u32>
-where
-    K: DataKeySource + Sync,
-{
-    // A row `source_rows` did not align is a guest bug, not host input.
-    if row.len() != plan.len() {
-        return Err(STATUS_INTERNAL);
-    }
-    let mut skeleton = Vec::with_capacity(plan.len());
-    for (field, value) in plan.iter().zip(row) {
-        let name = field.name.clone();
-        // A borrowed view of the plan's context, once per field: the proof
-        // was made at parse time, so re-taking it over the same tree cannot
-        // fail, and the view clones cheaply for each output below.
-        let context =
-            NonEmpty::new(dynamic::borrowed(field.context.get())).map_err(|_| STATUS_INTERNAL)?;
-
-        // Terms first — they lift a copy of the scalar; the value itself is
-        // consumed by the ciphertext path below. One lift serves every term
-        // output: the kind only names which error a non-scalar reports.
-        let scalar = field
-            .outputs
-            .iter()
-            .find_map(|o| match o {
-                Output::Term(kind) => Some(*kind),
-                Output::Ciphertext => None,
-            })
-            .map(|kind| Scalar::of(&value, kind))
-            .transpose()
-            .map_err(|e| status_for_dynamic(&e))?;
-
-        let mut outputs: Vec<(&'static str, Option<Vec<u8>>)> =
-            Vec::with_capacity(field.outputs.len());
-        for output in &field.outputs {
-            let Output::Term(kind) = output else {
-                outputs.push((output.key(), None));
-                continue;
-            };
-            let scalar = scalar.clone().ok_or(STATUS_INTERNAL)?;
-            let term = dynamic::term(cipher, scalar, *kind, context.clone())
-                .await
-                .map_err(|e| status_for_dynamic(&e))?;
-            outputs.push((output.key(), Some(term)));
-        }
-
-        if field.outputs.contains(&Output::Ciphertext) {
-            reject_passthrough_value(&value)?;
-            let tree = value
-                .encrypt_with_aad(cipher, context.clone())
-                .map_err(|_| STATUS_INTERNAL)?;
-            pendings.push(tree.into_pending(cipher, context));
-        }
-
-        skeleton.push((name, outputs));
-    }
-    Ok(skeleton)
-}
-
 /// Decrypt a record — or a batch — produced by [`encrypt_record`] under the
-/// same plan. Only the `"c"` outputs participate (terms are one-way); the
-/// result is a codec-encoded [`FfiValue::Object`] per record holding the
-/// plan's ciphertext-bearing fields, in plan order — or an
-/// [`FfiValue::Array`] of them for a batch. One batched `retrieve_keys`
-/// per invocation, dispatched as one ZeroKMS call per 500 keyed leaves and,
-/// when opening any keyset, per keyset the leaves were sealed under.
+/// same plan. Only the `"c"` outputs participate (terms are one-way).
+///
+/// One batched `retrieve_keys` per invocation, dispatched as one ZeroKMS
+/// call per 500 keyed leaves and, under [`Opener::Any`], per keyset the
+/// leaves were sealed under. The output buffer contains plaintext — the ABI
+/// layer's ownership rules govern its wiping.
 pub async fn decrypt_record<K>(
     opener: Opener<'_, K>,
     record: &[u8],
@@ -667,65 +248,10 @@ pub async fn decrypt_record<K>(
 where
     K: DataKeySource + Sync + 'static,
 {
-    let plan = parse_plan(decode_value(plan)?)?;
-    let (rows, batched) = record_leaves(decode_tree(record)?, &plan)?;
-    let contexts = plan
-        .iter()
-        .filter(|field| field.outputs.contains(&Output::Ciphertext))
-        .map(|field| {
-            NonEmpty::new(dynamic::borrowed(field.context.get())).map_err(|_| STATUS_INTERNAL)
-        })
-        .collect::<Result<Vec<_>, u32>>()?;
-
-    // Per row, per ciphertext-bearing plan field (in plan order, as
-    // `record_leaves` lifted them): queue the "c" subtree's decrypt.
-    let mut pendings: Vec<Pending<'_, FfiValue, K>> = Vec::new();
-    let mut names: Vec<Vec<String>> = Vec::with_capacity(rows.len());
-    for row in rows {
-        if row.len() != contexts.len() {
-            return Err(STATUS_INTERNAL);
-        }
-        let mut row_names = Vec::with_capacity(row.len());
-        for ((name, ct), context) in row.into_iter().zip(&contexts) {
-            let context = context.clone();
-            // The scope is the opener's, the declaration is the target's:
-            // `decrypt_as` takes one context and drives both halves with it.
-            pendings.push(match &opener {
-                Opener::Any(cipher) => cipher.decrypt_as(ct, context.into()),
-                Opener::Only(keyset) => keyset.decrypt_as(ct, context.into()),
-            });
-            row_names.push(name);
-        }
-        names.push(row_names);
-    }
-
-    // The one batched key request for the whole invocation: one ZeroKMS
-    // call per 500 keyed leaves, and when opening any, per keyset the leaves
-    // were sealed under.
-    let values = match &opener {
-        Opener::Any(cipher) => Pending::all(*cipher, pendings).await,
-        Opener::Only(keyset) => Pending::all(keyset, pendings).await,
-    }
-    .map_err(|e| status_for_error(&e))?;
-    let mut values = values.into_iter();
-
-    let mut row_values = Vec::with_capacity(names.len());
-    for row_names in names {
-        let mut entries = Vec::with_capacity(row_names.len());
-        for name in row_names {
-            entries.push((name, values.next().ok_or(STATUS_INTERNAL)?));
-        }
-        row_values.push(FfiValue::Object(entries));
-    }
-    if values.next().is_some() {
-        return Err(STATUS_INTERNAL);
-    }
-
-    let value = if batched {
-        FfiValue::Array(row_values)
-    } else {
-        row_values.pop().ok_or(STATUS_INTERNAL)?
-    };
+    let plan = dynamic::record::plan(decode_value(plan)?).map_err(|e| status_for_dynamic(&e))?;
+    let value = dynamic::record::decrypt(opener, decode_tree(record)?, &plan)
+        .await
+        .map_err(|e| status_for_dynamic(&e))?;
     encode_value(value)
 }
 
@@ -736,10 +262,10 @@ where
 /// The static checks the ABI runs on every operation input *before* it
 /// consults the cipher, so a malformed call is [`STATUS_ENCODING`] whether
 /// or not the instance is initialised, and never costs a keyset load. Each
-/// runs the same parser the operation itself runs — `parse_term`,
-/// `source_rows`, `record_leaves` — so the two cannot disagree on what
-/// is malformed; the second pass is cheap next to the AEAD and buys a
-/// stable status precedence.
+/// runs the same parser the operation itself runs — [`parse_term`],
+/// [`dynamic::record::check_source`], [`dynamic::record::check_record`] —
+/// so the two cannot disagree on what is malformed; the second pass is
+/// cheap next to the AEAD and buys a stable status precedence.
 pub mod validate {
     use super::*;
 
@@ -767,20 +293,23 @@ pub mod validate {
 
     /// A record source against its plan, as [`encrypt_record`] takes them:
     /// the plan decodes and parses (every field's context non-empty, every
-    /// output known), and the source fits it (`source_rows`: shape, field
-    /// set, each value against its field's outputs).
+    /// output known), and the source fits it (shape, field set, each value
+    /// against its field's outputs).
     pub fn record(source: &[u8], plan: &[u8]) -> Result<(), u32> {
-        let plan = parse_plan(decode_value(plan)?)?;
-        source_rows(decode_value(source)?, &plan).map(drop)
+        let plan =
+            dynamic::record::plan(decode_value(plan)?).map_err(|e| status_for_dynamic(&e))?;
+        dynamic::record::check_source(decode_value(source)?, &plan)
+            .map_err(|e| status_for_dynamic(&e))
     }
 
     /// A record tree against its plan, as [`decrypt_record`] takes them:
     /// the plan parses, the tree decodes with well-formed leaves, and every
-    /// ciphertext-bearing field has a `"c"` node that is not a passthrough
-    /// (`record_leaves`).
+    /// ciphertext-bearing field has a `"c"` node that is not a passthrough.
     pub fn record_tree(record: &[u8], plan: &[u8]) -> Result<(), u32> {
-        let plan = parse_plan(decode_value(plan)?)?;
-        record_leaves(decode_tree(record)?, &plan).map(drop)
+        let plan =
+            dynamic::record::plan(decode_value(plan)?).map_err(|e| status_for_dynamic(&e))?;
+        dynamic::record::check_record(decode_tree(record)?, &plan)
+            .map_err(|e| status_for_dynamic(&e))
     }
 }
 
@@ -919,15 +448,10 @@ fn tree_encoded_len(tree: &BytesTree) -> Option<usize> {
     }
 }
 
-fn text_of(s: &vitaminc_aead_value::Utf8String) -> Result<&str, u32> {
-    // Valid UTF-8 by `Utf8String`'s construction invariant; checked rather
-    // than assumed because this is boundary code.
-    std::str::from_utf8(s.risky_ref()).map_err(|_| STATUS_ENCODING)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vitaminc_protected::Protected;
 
     // `value_encoded_len` / `tree_encoded_len` re-derive the codec's framing
     // arithmetic; the codec exports no `encoded_len` of its own, so these

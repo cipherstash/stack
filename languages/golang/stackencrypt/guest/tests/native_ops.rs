@@ -17,10 +17,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use std::future::IntoFuture;
 
+use stack_encrypt::dynamic::Opener;
 use stack_encrypt::sem::DefaultMatch;
 use stack_encrypt::{nonempty, CipherText, Encrypt, SealedValue, StackCipher};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
-use stack_encrypt_guest::options::Opener;
 use stack_encrypt_guest::status::{STATUS_AUTH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET};
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IndexKeySource,

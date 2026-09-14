@@ -20,6 +20,9 @@
 //!
 //! * [`context`](context()) — an [`FfiValue`] read as an encryption context.
 //! * [`term`](term()) — one index term for a value, dispatched on its variant.
+//! * [`record`] — the runtime form of `#[derive(EncryptFrom)]`: a *plan*
+//!   says per field what context to bind and what outputs to produce, and
+//!   the whole call seals from one batched key request.
 //!
 //! # What is not here
 //!
@@ -37,10 +40,37 @@
 //! them. Their long-term home is beside vitaminc's frozen tag table, which
 //! already owns this class of constant.
 mod context;
+pub mod record;
 mod term;
 
 pub use context::{borrowed, context};
+pub use record::{FieldPlan, Output};
 pub use term::{term, Scalar, TermKind};
+
+use crate::{KeysetCipher, StackCipher};
+
+/// What an opening operation decrypts through.
+///
+/// [`StackCipher`] and [`KeysetCipher`] both open, and neither is the
+/// other's supertype: the client opens a leaf sealed under any of its
+/// keysets, while a keyset handle opens only its own and refuses the rest
+/// *before any key is retrieved*. That refusal is the point — a
+/// tenant-scoped request handler must not open another tenant's row — so
+/// the choice is named rather than inferred, and it is named here because a
+/// binding's caller makes it at runtime.
+pub enum Opener<'c, K> {
+    /// Leaves from any keyset the client holds: one batched retrieval per
+    /// keyset the leaves were sealed under.
+    Any(&'c StackCipher<K>),
+    /// Leaves from this keyset only.
+    Only(KeysetCipher<'c, K>),
+}
+
+/// The UTF-8 inside a string leaf. Valid by `Utf8String`'s construction
+/// invariant; checked rather than assumed because this is boundary code.
+fn utf8(s: &vitaminc_aead_value::Utf8String) -> Option<&str> {
+    std::str::from_utf8(s.risky_ref()).ok()
+}
 
 /// What went wrong in a dynamic operation.
 ///
@@ -69,6 +99,31 @@ pub enum Error {
         /// The kind that was asked for.
         kind: TermKind,
     },
+
+    /// A record plan is malformed: not an object of field specs, empty,
+    /// missing or duplicating an output, or carrying a key that is not
+    /// `"context"` or `"outputs"`.
+    #[error("record plan is malformed")]
+    Plan,
+
+    /// A record source does not fit its plan: not an object (or an array of
+    /// them), a field the plan does not name, a plan field the source does
+    /// not carry, or a passthrough under a field the plan seals.
+    #[error("record source does not fit the plan")]
+    Source,
+
+    /// A stored record does not fit its plan: not a map (or a sequence of
+    /// them), a ciphertext-bearing field that is absent or has no `"c"`
+    /// node, or a passthrough under `"c"` — which would hand back
+    /// unauthenticated bytes as if they had been opened.
+    #[error("stored record does not fit the plan")]
+    Record,
+
+    /// An invariant this module maintains did not hold — a slot count that
+    /// did not line up, a re-proof that should not have been able to fail.
+    /// Always a bug here, never a statement about the caller's data.
+    #[error("internal invariant violated")]
+    Internal,
 
     /// Sealing, opening or deriving failed.
     #[error(transparent)]

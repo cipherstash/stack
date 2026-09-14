@@ -17,11 +17,11 @@
 use std::fmt;
 
 use stack_kms::DataKeySource;
-use vitaminc_aead_value::{FfiValue, Utf8String};
+use vitaminc_aead_value::FfiValue;
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroizing;
 
-use super::Error;
+use super::{utf8, Error};
 use crate::sem::{CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch};
 use crate::{IntoPrfContext, KeysetCipher, NonEmpty};
 
@@ -125,7 +125,9 @@ impl Scalar {
             FfiValue::UInt64(v) => Scalar::U64(*v),
             FfiValue::Float32(v) => Scalar::F32(*v),
             FfiValue::Float64(v) => Scalar::F64(*v),
-            FfiValue::String(s) => Scalar::Text(Zeroizing::new(text_of(s, kind)?.to_string())),
+            FfiValue::String(s) => Scalar::Text(Zeroizing::new(
+                utf8(s).ok_or(Error::Term { kind })?.to_string(),
+            )),
             FfiValue::Bytes(b) => Scalar::Bytes(Zeroizing::new(b.risky_ref().to_vec())),
             // Containers, nulls and passthroughs have no term semantics.
             _ => return Err(Error::Term { kind }),
@@ -245,10 +247,4 @@ where
         .ope_term(value, context)
         .await
         .map(|t| t.as_ref().to_vec())?)
-}
-
-/// The UTF-8 inside a string leaf. Valid by `Utf8String`'s construction
-/// invariant; checked rather than assumed because this is boundary code.
-fn text_of(s: &Utf8String, kind: TermKind) -> Result<&str, Error> {
-    std::str::from_utf8(s.risky_ref()).map_err(|_| Error::Term { kind })
 }

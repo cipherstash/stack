@@ -27,6 +27,7 @@
 //! it is objects, strings, bytes and nothing else, and this module is its
 //! one home. The Go bindings plan points here.
 
+use stack_encrypt::dynamic::Opener;
 use stack_encrypt::{KeysetCipher, StackCipher};
 use stack_kms::{IdentifiedBy, IndexKeySource};
 use uuid::Uuid;
@@ -122,7 +123,7 @@ impl KeysetSelector {
     /// default without a round trip, a name or id through the cipher's
     /// cache (a first use is one `load-keyset` call). `Any` is not a keyset
     /// and is [`STATUS_ENCODING`] here; opening exports resolve it through
-    /// [`Opener::for_selector`] instead.
+    /// [`opener_for`] instead.
     pub async fn resolve<'c, K>(
         &self,
         cipher: &'c StackCipher<K>,
@@ -140,30 +141,20 @@ impl KeysetSelector {
     }
 }
 
-/// What an opening export decrypts through: the client, which opens a leaf
-/// from any keyset (`{"any"}`), or one keyset's cipher, which opens only its
-/// own leaves and refuses the rest before any key is retrieved.
-pub enum Opener<'c, K> {
-    /// Leaves from any keyset: one batched retrieval per keyset the leaves
-    /// were sealed under, each chunked at the client's request limit.
-    Any(&'c StackCipher<K>),
-    /// Leaves from this keyset only.
-    Only(KeysetCipher<'c, K>),
-}
-
-impl<'c, K> Opener<'c, K> {
-    /// The opener a decrypt-side selector names.
-    pub async fn for_selector(
-        cipher: &'c StackCipher<K>,
-        selector: &KeysetSelector,
-    ) -> Result<Self, u32>
-    where
-        K: IndexKeySource,
-    {
-        match selector {
-            KeysetSelector::Any => Ok(Opener::Any(cipher)),
-            other => other.resolve(cipher).await.map(Opener::Only),
-        }
+/// The [`Opener`] a decrypt-side selector names: the client for `{"any"}`,
+/// which opens a leaf sealed under any of its keysets, or one keyset's
+/// cipher, which opens only its own and refuses the rest before any key is
+/// retrieved.
+pub async fn opener_for<'c, K>(
+    cipher: &'c StackCipher<K>,
+    selector: &KeysetSelector,
+) -> Result<Opener<'c, K>, u32>
+where
+    K: IndexKeySource,
+{
+    match selector {
+        KeysetSelector::Any => Ok(Opener::Any(cipher)),
+        other => other.resolve(cipher).await.map(Opener::Only),
     }
 }
 
