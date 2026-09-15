@@ -13,6 +13,10 @@ const claude = review.steps.find((step) =>
 )
 
 describe('Claude pull-request review', () => {
+  it('contains only the permission-pinned review job', () => {
+    expect(Object.keys(workflow.jobs)).toEqual(['review'])
+  })
+
   it('reviews every agreed pull-request lifecycle event', () => {
     expect(Object.keys(triggers)).toEqual(['pull_request'])
     expect(triggers.pull_request.types).toEqual([
@@ -94,6 +98,7 @@ describe('Claude pull-request review', () => {
   })
 
   it('pins the reviewed Claude action release and authenticates only with OIDC', () => {
+    expect(claude.id).toBe('claude-review')
     expect(claude.uses).toBe(`anthropics/claude-code-action@${ACTION_SHA}`)
     expect(claude.with).toMatchObject({
       anthropic_federation_rule_id: gha('vars.ANTHROPIC_FEDERATION_RULE_ID'),
@@ -103,6 +108,24 @@ describe('Claude pull-request review', () => {
     })
     expect(claude.with).not.toHaveProperty('anthropic_api_key')
     expect(claude.with).not.toHaveProperty('claude_code_oauth_token')
+  })
+
+  it('fails closed when the vendor action skips workflow validation', () => {
+    const guard = review.steps.find(
+      (step) => step.name === 'Require completed Claude review',
+    )
+
+    expect(review.steps.indexOf(guard)).toBeGreaterThan(
+      review.steps.indexOf(claude),
+    )
+    expect(guard).toMatchObject({
+      if: 'always()',
+      env: {
+        REVIEW_CONCLUSION: gha('steps.claude-review.outputs.conclusion'),
+      },
+    })
+    expect(guard.run).toContain('[ "$REVIEW_CONCLUSION" != "success" ]')
+    expect(guard.run).toContain('exit 1')
   })
 
   it('keeps reviews bounded, read-only, quiet, and sticky', () => {
