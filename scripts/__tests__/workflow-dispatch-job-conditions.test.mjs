@@ -108,6 +108,8 @@ const DISPATCH_SKIPPED_JOBS = [
  * the un-run check hides.
  */
 const EXPECTED_FORK_GUARDED_JOBS = [
+  // Anthropic federation is available only to same-repository pull requests.
+  '.github/workflows/claude-review.yml / review',
   '.github/workflows/integration-drizzle.yml / integration',
   '.github/workflows/integration-prisma-next.yml / integration',
   '.github/workflows/integration-protect-ffi.yml / integration',

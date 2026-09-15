@@ -124,6 +124,13 @@ Before adding a new direct dep, ask:
 
 Do **not** commit any `.env` file to the repo.
 
+Treat OIDC as a transport, not as a synonym for publishing. A non-publishing
+workload-identity exchange still needs job-level `id-token: write`, but it must
+be classified separately from registry publishers in
+`scripts/__tests__/workflow-publish-permissions.test.mjs`, with the audience and
+reason recorded there. Keep its static credential inputs absent and grant only
+the repository permissions its exchange actually needs.
+
 ## Publishing — OIDC trusted publishing + provenance (practices #11, #12)
 
 `.github/workflows/release.yml` publishes to npm with **no `NPM_TOKEN`**. It
