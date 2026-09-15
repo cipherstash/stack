@@ -159,14 +159,14 @@ over the same token exchange, and likewise carries no `CARGO_REGISTRY_TOKEN`.
 Both bind to a *workflow filename* at the registry, so renaming either file
 silently invalidates its publisher configuration.
 
-`scripts/__tests__/workflow-publish-permissions.test.mjs` holds the shape those
-two files must keep, as two separate equalities: who may publish (`id-token:
-write`, granted per job and never at workflow level, where it would be inherited
-by every job in a file the registry already trusts), and who may write to the
-repository at all. They are separate because a publishing workflow also contains
-jobs that create a release or dispatch another workflow — holding one does not
-confer the other. Both are equalities, so either addition has to be argued for
-in the same diff.
+`scripts/__tests__/workflow-publish-permissions.test.mjs` classifies every job
+that may mint an OIDC token: publishers and named non-publishing exchanges are
+separate equalities, with a reviewed allowlist for jobs that may write to the
+repository. The distinction matters because OIDC is a transport, not itself a
+publishing capability: `claude-review.yml` exchanges its token with Anthropic,
+while the registry-bound release workflows exchange theirs with npm or
+crates.io. Every grant remains per job, never at workflow level, and any new
+holder or writer must be justified in the same diff.
 
 [GitHub Actions cache poisoning is a known attack][1] against credential-bearing
 workflows. The mechanism is:
