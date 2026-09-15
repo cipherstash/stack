@@ -21,6 +21,12 @@ describe('Claude pull-request review', () => {
       'ready_for_review',
       'reopened',
     ])
+    expect(triggers.pull_request['paths-ignore']).toEqual([
+      '.changeset/**',
+      '**/__snapshots__/**',
+      '**/*.snap',
+      'docs/plans/**',
+    ])
   })
 
   it('admits only non-draft, non-bot pull requests from this repository', () => {
@@ -38,6 +44,20 @@ describe('Claude pull-request review', () => {
       group: `${gha('github.workflow')}-${gha('github.event.pull_request.number')}`,
       'cancel-in-progress': true,
     })
+  })
+
+  it('debounces rapid updates before checkout and Claude authentication', () => {
+    const debounceIndex = review.steps.findIndex(
+      (step) => step.name === 'Debounce rapid updates',
+    )
+    const checkoutIndex = review.steps.findIndex((step) =>
+      String(step.uses ?? '').startsWith('actions/checkout@'),
+    )
+    const claudeIndex = review.steps.indexOf(claude)
+
+    expect(review.steps[debounceIndex].run.trim()).toBe('sleep 300')
+    expect(debounceIndex).toBeLessThan(checkoutIndex)
+    expect(debounceIndex).toBeLessThan(claudeIndex)
   })
 
   it('grants only the permissions needed to read, comment, and federate', () => {
