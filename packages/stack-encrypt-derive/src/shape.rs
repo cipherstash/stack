@@ -405,15 +405,15 @@ impl Record {
         }
     }
 }
-pub(crate) fn zip(plans: Vec<(TokenStream, Ident)>, result: TokenStream) -> TokenStream {
+pub(crate) fn zip(operations: Vec<(TokenStream, Ident)>, result: TokenStream) -> TokenStream {
     let mut chain = TokenStream::new();
     let mut pattern = TokenStream::new();
-    for (index, (plan, local)) in plans.into_iter().enumerate() {
+    for (index, (operation, local)) in operations.into_iter().enumerate() {
         if index == 0 {
-            chain = plan;
+            chain = operation;
             pattern = quote!(#local);
         } else {
-            chain = quote!(#chain.zip(#plan));
+            chain = quote!(#chain.zip(#operation));
             pattern = quote!((#pattern, #local));
         }
     }

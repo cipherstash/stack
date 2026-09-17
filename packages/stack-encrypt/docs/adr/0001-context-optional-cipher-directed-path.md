@@ -10,8 +10,8 @@ Superseded on 2026-09-12 by
 retains the allowance for absent context on the cipher-directed path and the
 nonempty-context requirement for EQL operations, but moves target context
 requirements into declarations executed by core code. The original rationale
-below is retained as history; ADR-0003 records the accepted design pending
-implementation.
+below is retained as history; ADR-0003 records the accepted design, which
+this crate's operation descriptions, native readers, and derives implement.
 
 `StackCipher::encrypt` / `decrypt` / `decipher` (the cipher-directed path) accept
 any `IntoAad`, including `()`, exactly as vitaminc's `Aes256Cipher` does: sealing

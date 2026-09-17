@@ -144,11 +144,16 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// type `T` is ever produced), and any assembly it is merged into fails
     /// without I/O — see the `failed` field.
     ///
-    /// Public because a [`DecryptField`](super::DecryptField) implementation
-    /// (including the derive's generated code) reaches for it when a
-    /// contract is broken at decrypt time — e.g.
-    /// [`Error::NotOpened`] for a field whose type declared
+    /// Public because a hand-written `EncryptFrom` / `DecryptInto` that
+    /// works with a cipher scope directly reaches for it when a contract is
+    /// broken — e.g. [`Error::NotOpened`] for a field whose type declared
     /// [`DECRYPTABLE`](super::Decryptable::DECRYPTABLE) but was passed over.
+    /// Inside an operation description, [`Encryption::failed`] and
+    /// [`Decryption::failed`] are the same thing without the scope; the
+    /// derives' generated code uses those.
+    ///
+    /// [`Encryption::failed`]: super::Encryption::failed
+    /// [`Decryption::failed`]: super::Decryption::failed
     pub fn failed(scope: impl CipherScope<'a, K>, error: Error) -> Self {
         Self {
             cipher: scope.cipher(),

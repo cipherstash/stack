@@ -101,6 +101,10 @@ implement the plaintext-side `Encrypt` / `Decrypt` traits.
   still need migration. Supported operation descriptions must not admit arbitrary
   plaintext-and-cipher callbacks that recreate the bypass. The guarantee concerns
   target-directed execution, not all code a caller could write with a cipher.
+  A field selector (`Encryption::project`) is a capture-free function pointer
+  over a borrow: it cannot reach the cipher, but nothing stops it returning
+  bytes it made up. The guarantee is that no target code holds plaintext and
+  cipher together, not that a selector's output is the plaintext it was given.
 - The implementation must preserve batching and keyset scope, move outputs through
   consuming readers, and retain authenticated markers and cryptographic map keys.
   Unsupported shapes must fail explicitly. Stored context is not inherently

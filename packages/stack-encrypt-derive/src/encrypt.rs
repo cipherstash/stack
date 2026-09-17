@@ -29,16 +29,16 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
             where_.push(parse_quote!(#ty: #krate::target::EncryptFrom<#source>));
             where_.push(parse_quote!(#context: Into<<#ty as #krate::target::EncryptFrom<#source>>::Context>));
         }
-        let plans = fields.iter().map(|field| {
+        let operations = fields.iter().map(|field| {
             let ty = &field.ty;
             let context = record.context_expr(field, false);
-            let plan = if let Some(from) = field.from() {
+            let operation = if let Some(from) = field.from() {
                 quote_spanned!(ty.span()=> <#ty as #krate::target::EncryptFrom<_>>::encryption::<__K>(#context.into())
                     .project(|__source: &#source| &__source.#from))
             } else {
                 quote_spanned!(ty.span()=> <#ty as #krate::target::EncryptFrom<#source>>::encryption::<__K>(#context.into()))
             };
-            (plan, field.local.clone())
+            (operation, field.local.clone())
         }).collect();
         let assignments = record.fields.iter().map(|field| {
             let member = &field.member;
@@ -56,7 +56,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         let stored = record
             .context_field()
             .map(|_| quote!(let __stored_context = __context.clone().into_inner();));
-        let body = zip(plans, quote!(Self { #(#assignments),* }));
+        let body = zip(operations, quote!(Self { #(#assignments),* }));
         impls.push(trait_impl(&input, &generics, quote!(#krate::target::EncryptFrom<#source>), quote! {
             type Context = #context;
             fn encryption<#source_lifetime,__K: 'static>(__context: Self::Context) -> #krate::target::Encryption<#source_lifetime,#source, Self, __K> where #source:#source_lifetime {

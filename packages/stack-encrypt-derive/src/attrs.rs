@@ -249,8 +249,8 @@ impl FieldAttrs {
                     return Ok(());
                 }
                 Err(meta.error(
-                    "unsupported field attribute; expected `context = \"...\"`, `from = field`, \
-                     `default`, `default = expr`, `decrypt` or `nested`",
+                    "unsupported field attribute; expected `context_field`, `context = \"...\"`, \
+                     `from = field`, `default`, `default = expr`, `decrypt` or `nested`",
                 ))
             })?;
         }

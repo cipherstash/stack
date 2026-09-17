@@ -50,7 +50,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
             .make_where_clause()
             .predicates
             .push(parse_quote!(Self: 'static));
-        let mut plans = Vec::new();
+        let mut operations = Vec::new();
         for (index, (from, fields)) in groups.iter().enumerate() {
             let output = if from.is_some() {
                 parse_quote!(_)
@@ -71,7 +71,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                     }
                 }
             }
-            let plan = if explicit {
+            let operation = if explicit {
                 let field = fields[0];
                 let ty = &field.ty;
                 let member = &field.member;
@@ -97,21 +97,21 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                 let rest = &locals[1..];
                 quote!({ #(#bindings)* #first #(.or(#rest))* .unwrap_or_else(|| #krate::target::Decryption::failed(#krate::Error::NotOpened)) })
             };
-            plans.push((
-                plan,
+            operations.push((
+                operation,
                 Ident::new(&format!("__group_{index}"), Span::call_site()),
             ));
         }
         let body = if groups[0].0.is_none() {
-            plans.remove(0).0
+            operations.remove(0).0
         } else {
             let literal = struct_literal_path(&plaintext)?;
             let assignments = groups
                 .iter()
-                .zip(&plans)
+                .zip(&operations)
                 .map(|((from, _), (_, local))| quote!(#from: #local));
             let output = quote!(#literal { #(#assignments),* });
-            zip(plans, output)
+            zip(operations, output)
         };
         let stored = record.context_field().map(|field| {
             let member = &field.member;

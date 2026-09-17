@@ -100,23 +100,42 @@ struct TextEq {
     v: u8,
 }
 
+fn other_column() -> NonEmpty<Identifier> {
+    NonEmpty::new(Identifier {
+        table: "users".into(),
+        column: "other".into(),
+    })
+    .unwrap()
+}
+
 #[tokio::test]
-async fn stored_identifier_supplies_all_operations_and_checks_before_retrieval() {
-    let (cipher, generates, retrieves) = common::counting_cipher().await;
+async fn stored_identifier_supplies_every_operations_context() {
+    let (cipher, generates, _) = common::counting_cipher().await;
     let keyset = cipher.default_keyset();
     let email = "alice@example.com".to_owned();
     let record: TextEq = keyset
         .encrypt_as(&email, Identifier::email())
         .await
         .unwrap();
-    assert_eq!(record.i, Identifier::email().into_inner());
-    assert_eq!(record.v, 3);
-    assert_eq!(generates.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        record.i,
+        Identifier::email().into_inner(),
+        "the identifier is stored in the record as given"
+    );
+    assert_eq!(record.v, 3, "a defaulted field is filled, not derived");
+    assert_eq!(
+        generates.load(Ordering::SeqCst),
+        1,
+        "one ciphertext leaf means one data key, in one batch"
+    );
     let probe = keyset
         .equality_term(email.clone(), Identifier::email())
         .await
         .unwrap();
-    assert_eq!(record.hm, probe);
+    assert_eq!(
+        record.hm, probe,
+        "the term is derived under the stored identifier, so a probe under it matches"
+    );
     // Storage envelope names c/hm add no extra AAD; the canonical path opens it.
     let opened: String = cipher
         .decrypt(
@@ -125,11 +144,23 @@ async fn stored_identifier_supplies_all_operations_and_checks_before_retrieval()
         )
         .await
         .unwrap();
-    assert_eq!(opened, email);
+    assert_eq!(
+        opened, email,
+        "the canonical path opens a leaf the record sealed under the identifier alone"
+    );
+}
 
-    // The reverse direction starts with canonical ciphertext.
+#[tokio::test]
+async fn canonical_ciphertext_opens_through_the_record() {
+    let cipher = common::stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let email = "alice@example.com".to_owned();
     let canonical = keyset
         .encrypt(email.clone(), Identifier::email())
+        .await
+        .unwrap();
+    let probe = keyset
+        .equality_term(email.clone(), Identifier::email())
         .await
         .unwrap();
     let record = TextEq {
@@ -142,32 +173,59 @@ async fn stored_identifier_supplies_all_operations_and_checks_before_retrieval()
         .decrypt_as(record, ExpectedContext::default())
         .await
         .unwrap();
-    assert_eq!(opened, email);
-    let before = retrieves.load(Ordering::SeqCst);
+    assert_eq!(
+        opened, email,
+        "a record assembled from canonical output opens under its stored identifier"
+    );
+}
+
+#[tokio::test]
+async fn expected_identifier_is_checked_before_any_key_is_retrieved() {
+    let (cipher, _, retrieves) = common::counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let email = "alice@example.com".to_owned();
     let record: TextEq = keyset
         .encrypt_as(&email, Identifier::email())
         .await
         .unwrap();
-    let wrong = NonEmpty::new(Identifier {
-        table: "users".into(),
-        column: "other".into(),
-    })
-    .unwrap();
-    assert!(cipher
-        .decrypt_as::<String, _>(record, wrong.into())
-        .await
-        .is_err());
-    assert_eq!(retrieves.load(Ordering::SeqCst), before);
+    let before = retrieves.load(Ordering::SeqCst);
+    let result = cipher
+        .decrypt_as::<String, _>(record, other_column().into())
+        .await;
+    assert!(
+        matches!(result, Err(Error::ContextMismatch { .. })),
+        "a stored identifier that differs from the expected one is a mismatch, got {result:?}"
+    );
+    assert_eq!(
+        retrieves.load(Ordering::SeqCst),
+        before,
+        "the mismatch is refused before ZeroKMS is asked for a key"
+    );
+}
+
+#[tokio::test]
+async fn empty_stored_identifier_is_refused_before_any_key_is_retrieved() {
+    let (cipher, _, retrieves) = common::counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let email = "alice@example.com".to_owned();
     let mut record: TextEq = keyset
         .encrypt_as(&email, Identifier::email())
         .await
         .unwrap();
     record.i.column.clear();
-    assert!(cipher
+    let before = retrieves.load(Ordering::SeqCst);
+    let result = cipher
         .decrypt_as::<String, _>(record, Default::default())
-        .await
-        .is_err());
-    assert_eq!(retrieves.load(Ordering::SeqCst), before);
+        .await;
+    assert!(
+        result.is_err(),
+        "a stored identifier is data, not a proof: an empty one fails validation"
+    );
+    assert_eq!(
+        retrieves.load(Ordering::SeqCst),
+        before,
+        "validation runs before ZeroKMS is asked for a key"
+    );
 }
 
 #[derive(Clone)]
@@ -196,7 +254,10 @@ async fn ciphertext_uses_plaintexts_native_contract_without_serde() {
         )
         .await
         .unwrap();
-    assert_eq!(opened, "native");
+    assert_eq!(
+        opened, "native",
+        "a plaintext without Serde seals through its own Encrypt impl and opens canonically"
+    );
     let text = String::from("borrowed");
     let result: StoredLeaf = keyset
         .encrypt_as(&text.as_str(), nonempty!("value").into())
@@ -209,12 +270,69 @@ async fn ciphertext_uses_plaintexts_native_contract_without_serde() {
         )
         .await
         .unwrap();
-    assert_eq!(opened, text);
+    assert_eq!(opened, text, "a borrowed plaintext seals the same way");
+}
+
+#[tokio::test]
+async fn scalar_destination_refuses_a_sequence() {
+    let cipher = common::stack_cipher().await;
+    let keyset = cipher.default_keyset();
     // A scalar destination must refuse a sequence rather than flatten or serialize it.
     let result = keyset
         .encrypt_as::<_, StoredLeaf>(&vec![1u32, 2], nonempty!("value").into())
         .await;
-    assert!(result.is_err());
+    assert!(
+        matches!(result, Err(Error::UnsupportedShape)),
+        "a visitor that only takes `sealed` refuses a sequence by type, got {:?}",
+        result.err()
+    );
+}
+
+// A target whose declaration carries every context it needs asks its caller
+// for none: `Context = ()`.
+struct FixedLeaf(StoredLeaf);
+impl<S: Encrypt + Clone> EncryptFrom<S> for FixedLeaf {
+    type Context = ();
+    fn encryption<'s, K: 'static>((): ()) -> Encryption<'s, S, Self, K>
+    where
+        S: 's,
+    {
+        target::ciphertext(nonempty!("fixed/leaf"))
+            .transcode()
+            .map(Self)
+    }
+}
+impl<P: stack_encrypt::Decrypt<'static> + 'static> DecryptInto<P> for FixedLeaf {
+    type Context = ();
+    fn decryption<K: 'static>(self, (): ()) -> Decryption<P, K> {
+        self.0.decryption(nonempty!("fixed/leaf").into())
+    }
+}
+
+#[tokio::test]
+async fn unit_context_target_supplies_its_own_context() {
+    use stack_encrypt::EncryptInto;
+    let cipher = common::stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let text = String::from("fixed");
+    let stored: FixedLeaf = text.encrypt_into(&keyset).await.unwrap();
+    let opened: String = cipher
+        .decrypt(
+            CipherText::Single(SealedValue::from_bytes(&stored.0 .0).unwrap()),
+            nonempty!("fixed/leaf"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        opened, text,
+        "the leaf was sealed under the context the declaration named, not one the caller gave"
+    );
+    let stored: FixedLeaf = keyset.encrypt_as(&text, ()).await.unwrap();
+    let opened: String = cipher.decrypt_as(stored, ()).await.unwrap();
+    assert_eq!(
+        opened, text,
+        "and it opens back through the declaration alone"
+    );
 }
 
 // An illustrative final storage format. Each native child is consumed directly
@@ -294,9 +412,20 @@ async fn native_readers_preserve_map_keys_and_authenticated_markers() {
         .decrypt(stored.native(), nonempty!("document"))
         .await
         .unwrap();
-    assert_eq!(opened, value);
-    assert_eq!(generates.load(Ordering::SeqCst), 1);
-    assert_eq!(retrieves.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        opened, value,
+        "a tree read into a destination and back opens as the original value"
+    );
+    assert_eq!(
+        generates.load(Ordering::SeqCst),
+        1,
+        "the whole document sealed under one data key"
+    );
+    assert_eq!(
+        retrieves.load(Ordering::SeqCst),
+        1,
+        "and opened with one retrieval"
+    );
     // Transcoding keeps the authentication: changing a cryptographic map key fails.
     let tree = keyset.encrypt(value, nonempty!("document")).await.unwrap();
     let Stored::Object(mut entries) = tree.read(TreeVisitor).unwrap() else {
@@ -306,7 +435,10 @@ async fn native_readers_preserve_map_keys_and_authenticated_markers() {
     let opened: Result<HashMap<String, Vec<Option<String>>>, _> = cipher
         .decrypt(Stored::Object(entries).native(), nonempty!("document"))
         .await;
-    assert!(opened.is_err());
+    assert!(
+        opened.is_err(),
+        "a map key is part of its entry's authenticated context: renaming it fails to open"
+    );
     let tree = keyset
         .encrypt(HashMap::<String, String>::new(), nonempty!("document"))
         .await
@@ -318,12 +450,19 @@ async fn native_readers_preserve_map_keys_and_authenticated_markers() {
     let opened: Result<HashMap<String, String>, _> = cipher
         .decrypt(CipherText::EmptyMap(marker), nonempty!("wrong"))
         .await;
-    assert!(opened.is_err());
+    assert!(
+        opened.is_err(),
+        "an empty-map marker is sealed under its context, not an unauthenticated empty container"
+    );
     let stored = CipherText::Passthrough(Box::new(17u32) as stack_encrypt::BoxedPassthrough)
         .read(TreeVisitor)
         .unwrap();
     let Stored::Metadata(value) = stored else {
         panic!("metadata")
     };
-    assert_eq!(*value.downcast::<u32>().unwrap(), 17);
+    assert_eq!(
+        *value.downcast::<u32>().unwrap(),
+        17,
+        "passthrough metadata reaches the destination as it was given"
+    );
 }

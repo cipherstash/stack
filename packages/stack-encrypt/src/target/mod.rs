@@ -1,6 +1,6 @@
 //! Targets declare operations; the cipher executes them through Vitamin C.
 //!
-//! [`EncryptFrom<S>`] describes ciphertext and/or index operations and has an
+//! [`EncryptFrom<S>`] describes ciphertext and/or term operations and has an
 //! associated context type. It does not receive plaintext or a cipher. The
 //! cipher's `encrypt_as` executes that description, returning the existing
 //! batched [`Pending`]. [`DecryptInto<P>`] inspects stored output and describes
@@ -68,6 +68,7 @@
 //! `cipher.decrypt_as(record, context)`, or import the blanket [`EncryptInto`] and
 //! [`DecryptFrom`] convenience traits for the existing source-side call syntax.
 //! `EncryptTarget` and `DecryptTarget` are no longer extension points.
+mod context;
 pub(crate) mod core;
 mod operations;
 mod pending;
@@ -75,7 +76,11 @@ mod request;
 pub mod transcode;
 
 pub(crate) use self::core::{decipher_pending, seal_pending};
-pub use operations::*;
+pub use context::{AeadContext, CallerContext, DeclaredContext, ExpectedContext};
+pub use operations::{
+    ciphertext, equality, matching, ope, open, ore, DecryptField, DecryptFrom, DecryptInto,
+    Decryptable, Decryption, EncryptFrom, EncryptInto, Encryption,
+};
 pub use pending::{CipherScope, Pending, PendingFuture};
 pub use request::{Request, Responses};
 pub use stack_encrypt_derive::{DecryptInto, EncryptFrom};

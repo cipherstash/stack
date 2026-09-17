@@ -1,72 +1,44 @@
-//! Core-owned operation descriptions. Constructors never accept a plaintext/cipher callback.
+//! Core-owned operation descriptions: what a target declares, and the cipher
+//! executes. No constructor here accepts a plaintext-and-cipher callback; a
+//! description selects core operations and converts their completed output,
+//! nothing more.
+use super::context::{AeadContext, CallerContext};
 use super::core::{encrypt_native, open_native, Term};
 use super::{CipherScope, Pending};
-use crate::{
-    Aad, AadPiece, Error, IntoAad, IntoPrfContext, KeysetCipher, MaybeEmpty, NonEmpty, PrfContext,
-    StackCipher, StackCipherText,
-};
+use crate::{Error, KeysetCipher, StackCipher, StackCipherText};
 use stack_kms::MaybeSend;
+use std::fmt;
 
-/// Owned, validated context for targets that accept any Vitamin C context.
-/// Concrete records can instead declare their own associated context type.
-/// Both encodings and the descriptor's structured identity are preserved.
-#[derive(Clone, Debug)]
-pub struct CallerContext {
-    aad: AadPiece<'static>,
-    prf: PrfContext<'static>,
-}
-impl<'c, T> From<NonEmpty<T>> for CallerContext
-where
-    T: IntoAad<'c> + IntoPrfContext<'c> + Clone,
-{
-    fn from(context: NonEmpty<T>) -> Self {
-        Self {
-            aad: context.clone().into_aad_piece().into_owned(),
-            prf: context.into_prf_context().into_owned(),
-        }
-    }
-}
-impl MaybeEmpty for CallerContext {
-    fn is_empty(&self) -> bool {
-        false
-    }
-}
-impl<'a> IntoAad<'a> for CallerContext {
-    fn into_aad(self) -> Aad<'a> {
-        self.aad.into_aad()
-    }
-    fn into_aad_piece(self) -> AadPiece<'a> {
-        self.aad
-    }
-}
-impl<'a> IntoPrfContext<'a> for CallerContext {
-    fn into_prf_context(self) -> PrfContext<'a> {
-        self.prf
-    }
-}
-impl CallerContext {
-    fn validated(self) -> Result<NonEmpty<Self>, Error> {
-        NonEmpty::new(self).map_err(|e| Error::Other(Box::new(e)))
-    }
-    /// Extend a field's own context with this caller context.
-    pub fn under(self, field: &'static str) -> Result<Self, Error> {
-        let prefix = NonEmpty::new(field).map_err(|e| Error::Other(Box::new(e)))?;
-        Ok(prefix.with(self.validated()?).into())
-    }
-}
-
-/// Declaration of how an encrypted target is produced from `S`.
-/// The returned description has private execution machinery: implementations can
-/// select core operations and construct outputs, but cannot replace encryption.
+/// Declaration that an encrypted target is produced from `S`.
+///
+/// The derive supplies it; a hand-written implementation composes the
+/// constructors in this module ([`ciphertext`], [`equality`], [`matching`],
+/// [`ore`], [`ope`]) and converts their output with [`Encryption::map`] or
+/// [`Encryption::transcode`]. Nothing here receives the plaintext or a
+/// cipher: the returned [`Encryption`]'s execution is private, so a target
+/// can choose operations and build its output but cannot replace encryption.
 pub trait EncryptFrom<S>: Sized + 'static {
+    /// What a caller supplies alongside the plaintext: a [`CallerContext`] or
+    /// [`AeadContext`] for a generic target, a `NonEmpty<T>` for a record that
+    /// stores its identifier, or `()` when the declaration carries every
+    /// context it needs.
     type Context;
+    /// The description the cipher executes for one value of `S`.
     fn encryption<'s, K: 'static>(context: Self::Context) -> Encryption<'s, S, Self, K>
     where
         S: 's;
 }
-/// Declaration of how a stored target recovers `P`. Inspection sees no cipher.
+/// Declaration of how a stored target recovers `P`.
+///
+/// Inspection sees no cipher: the implementation selects the recoverable
+/// ciphertext and its context, and [`open`] describes the rest. A query-only
+/// target (terms alone) has no implementation.
 pub trait DecryptInto<P>: Sized {
+    /// What a caller supplies to open the target. For a record that stores
+    /// its context this is an [`ExpectedContext`](super::ExpectedContext),
+    /// which may name the destination the caller believes it is opening.
     type Context;
+    /// The description the cipher executes to recover `P`.
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K>;
 }
 
@@ -81,17 +53,37 @@ type Open<T, K> = Box<dyn for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K
 #[cfg(target_arch = "wasm32")]
 type Open<T, K> = Box<dyn for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K>>;
 
-/// A composable encryption description, executed only by the cipher.
+/// A composable description of how `T` is encrypted from `S`.
+///
+/// Built from the constructors in this module and the combinators below;
+/// executed only by [`KeysetCipher::encrypt_as`]. Nothing runs, and no key is
+/// requested, until then.
+#[must_use = "an encryption description does nothing until a keyset cipher executes it"]
 pub struct Encryption<'s, S, T, K> {
     build: Build<'s, S, T, K>,
 }
-/// A composable decryption description, executed only by the cipher.
+/// A composable description of how `T` is recovered from a stored target.
+///
+/// Built from [`open`] and the combinators below; executed only by
+/// `decrypt_as`. Nothing runs, and no key is retrieved, until then.
+#[must_use = "a decryption description does nothing until a cipher executes it"]
 pub struct Decryption<T, K> {
     open: Open<T, K>,
 }
+impl<S, T, K> fmt::Debug for Encryption<'_, S, T, K> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Encryption").finish_non_exhaustive()
+    }
+}
+impl<T, K> fmt::Debug for Decryption<T, K> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Decryption").finish_non_exhaustive()
+    }
+}
 
 impl<'s, S: 's, T: 'static, K: 'static> Encryption<'s, S, T, K> {
-    /// Construct metadata or reject a declaration before any key request.
+    /// A description whose output is already known — metadata a record
+    /// carries, or a declaration rejected before any key request.
     pub fn ready(result: Result<T, Error>) -> Self
     where
         T: MaybeSend,
@@ -100,12 +92,15 @@ impl<'s, S: 's, T: 'static, K: 'static> Encryption<'s, S, T, K> {
             build: Box::new(move |_, cipher| Pending::ready(cipher, result)),
         }
     }
+    /// Reject the declaration: execution yields `error` without I/O, and any
+    /// description this is zipped into fails with it.
     pub fn failed(error: Error) -> Self {
         Self {
             build: Box::new(move |_, cipher| Pending::failed(cipher, error)),
         }
     }
-    /// Construct the destination from completed outputs, without access to plaintext.
+    /// Build the destination from the completed output. `f` sees ciphertext
+    /// and terms, never the plaintext.
     pub fn map<U: 'static, F>(self, f: F) -> Encryption<'s, S, U, K>
     where
         F: FnOnce(T) -> U + MaybeSend + 'static,
@@ -114,7 +109,8 @@ impl<'s, S: 's, T: 'static, K: 'static> Encryption<'s, S, T, K> {
             build: Box::new(move |source, cipher| (self.build)(source, cipher).map(f)),
         }
     }
-    /// Fallible output conversion, including native ciphertext transcoding.
+    /// [`map`](Self::map) for a conversion that can fail, such as reading
+    /// native output into a destination that does not accept every shape.
     pub fn try_map<U: 'static, F>(self, f: F) -> Encryption<'s, S, U, K>
     where
         F: FnOnce(T) -> Result<U, Error> + MaybeSend + 'static,
@@ -123,14 +119,17 @@ impl<'s, S: 's, T: 'static, K: 'static> Encryption<'s, S, T, K> {
             build: Box::new(move |source, cipher| (self.build)(source, cipher).try_map(f)),
         }
     }
-    /// Drive a destination visitor directly from this operation's native output.
+    /// Drive the destination's [`Visitor`](super::transcode::Visitor) from
+    /// this operation's native output, moving leaves and markers across
+    /// without an intermediate tree.
     pub fn transcode<U: super::transcode::Transcode + 'static>(self) -> Encryption<'s, S, U, K>
     where
         T: super::transcode::Reader,
     {
         self.try_map(|output| super::transcode::Reader::read(output, U::visitor()))
     }
-    /// Compose operations over the same source in one key request batch.
+    /// Run both descriptions over the same source, settling their key
+    /// requests in one batch.
     pub fn zip<U: 'static>(self, other: Encryption<'s, S, U, K>) -> Encryption<'s, S, (T, U), K> {
         Encryption {
             build: Box::new(move |source, cipher| {
@@ -138,8 +137,13 @@ impl<'s, S: 's, T: 'static, K: 'static> Encryption<'s, S, T, K> {
             }),
         }
     }
-    /// Select a borrowed plaintext field. The selector cannot supply a new owned
-    /// serialization of that field; its selected type drives the core operation.
+    /// Lift a description of a field to a description of the struct that
+    /// holds it, which is how a `struct = T` derive composes its fields.
+    ///
+    /// The selector is a plain function pointer over a borrow: it captures
+    /// nothing, so it cannot reach a cipher, and what it returns is encrypted
+    /// under `S`'s own Vitamin C contract. It is a place to pick a field, not
+    /// to re-encode one.
     pub fn project<P: 's>(
         self,
         select: for<'borrow> fn(&'borrow P) -> &'borrow S,
@@ -150,7 +154,10 @@ impl<'s, S: 's, T: 'static, K: 'static> Encryption<'s, S, T, K> {
     }
 }
 
-/// Canonical ciphertext operation. Source encoding belongs to Vitamin C.
+/// The canonical ciphertext operation: seal `S` under `context` through its
+/// own Vitamin C `Encrypt` implementation, into the native
+/// [`StackCipherText`] tree. There is no Serde fallback; a plaintext without
+/// `Encrypt` does not compile.
 pub fn ciphertext<'s, S: crate::Encrypt + Clone + 's, K: 'static>(
     context: impl Into<AeadContext>,
 ) -> Encryption<'s, S, StackCipherText, K> {
@@ -163,62 +170,62 @@ pub fn ciphertext<'s, S: crate::Encrypt + Clone + 's, K: 'static>(
     }
 }
 macro_rules! term_operation {
-    ($function:ident, $output:ty, [$($extra:tt)*], $($bounds:tt)*) => {
-        pub fn $function<'s,S,K:'static,$($extra)*>(context: impl Into<CallerContext>)->Encryption<'s,S,$output,K>
-        where S: 's + $($bounds)* {
-            let context=context.into();
-            Encryption { build:Box::new(move |source,cipher| match context.validated() {
-                Ok(ctx) => <$output as Term<S, K, _>>::encrypt_from(source,cipher,ctx),
-                Err(e) => Pending::failed(cipher,e),
-            }) }
+    (
+        $(#[$doc:meta])*
+        $function:ident, $output:ty, [$($generics:tt)*], [$($bounds:tt)*]
+    ) => {
+        $(#[$doc])*
+        pub fn $function<'s, S, K: 'static, $($generics)*>(
+            context: impl Into<CallerContext>,
+        ) -> Encryption<'s, S, $output, K>
+        where
+            S: 's,
+            $($bounds)*
+        {
+            let context = context.into();
+            Encryption {
+                build: Box::new(move |source, cipher| match context.validated() {
+                    Ok(ctx) => <$output as Term<S, K, _>>::encrypt_from(source, cipher, ctx),
+                    Err(e) => Pending::failed(cipher, e),
+                }),
+            }
         }
     };
 }
 term_operation!(
-    equality,
-    crate::sem::EqualityTerm,
-    [],
-    vitaminc_prf::PrfValue + Clone
+    /// The equality term of `S` under `context`. Requires only `S`'s PRF
+    /// contract, not recoverable encryption.
+    equality, crate::sem::EqualityTerm, [], [S: vitaminc_prf::PrfValue + Clone]
 );
-term_operation!(matching, crate::sem::MatchTerm<O>, [O:crate::sem::MatchConfig+'static,], AsRef<str>);
-// Ordering output bounds are part of the primitive's contract.
-pub fn ore<'s, S, K: 'static>(
-    context: impl Into<CallerContext>,
-) -> Encryption<'s, S, crate::sem::OreTerm<S>, K>
-where
-    S: cllw_ore::CllwOreEncrypt + Clone + Send + 'static,
-    S::Output: Send + 'static,
-{
-    let context = context.into();
-    Encryption {
-        build: Box::new(move |source, cipher| match context.validated() {
-            Ok(ctx) => <crate::sem::OreTerm<S> as Term<S, K, _>>::encrypt_from(source, cipher, ctx),
-            Err(e) => Pending::failed(cipher, e),
-        }),
-    }
-}
-pub fn ope<'s, S, K: 'static>(
-    context: impl Into<CallerContext>,
-) -> Encryption<'s, S, crate::sem::OpeTerm<S>, K>
-where
-    S: cllw_ore::CllwOpeEncrypt + Clone + Send + 'static,
-    S::Output: Send + 'static,
-{
-    let context = context.into();
-    Encryption {
-        build: Box::new(move |source, cipher| match context.validated() {
-            Ok(ctx) => <crate::sem::OpeTerm<S> as Term<S, K, _>>::encrypt_from(source, cipher, ctx),
-            Err(e) => Pending::failed(cipher, e),
-        }),
-    }
-}
+term_operation!(
+    /// The match term of any text `S` under `context`, tokenised and hashed
+    /// as `O` declares.
+    matching, crate::sem::MatchTerm<O>, [O: crate::sem::MatchConfig + 'static], [S: AsRef<str>]
+);
+term_operation!(
+    /// The order-revealing term of `S` under `context`. The bounds are the
+    /// leaf's own: they say which `S` the CLLW ORE scheme can order.
+    ore, crate::sem::OreTerm<S>, [],
+    [S: cllw_ore::CllwOreEncrypt + Clone + Send + 'static, S::Output: Send + 'static]
+);
+term_operation!(
+    /// The order-preserving term of `S` under `context`, with the same
+    /// bounds as [`ore`].
+    ope, crate::sem::OpeTerm<S>, [],
+    [S: cllw_ore::CllwOpeEncrypt + Clone + Send + 'static, S::Output: Send + 'static]
+);
 
 impl<T: 'static, K: 'static> Decryption<T, K> {
+    /// Reject the opening: execution yields `error` without I/O, and any
+    /// description this is zipped into fails with it. The derives use it
+    /// when a stored context fails validation.
     pub fn failed(error: Error) -> Self {
         Self {
             open: Box::new(move |cipher| Pending::failed(cipher, error)),
         }
     }
+    /// A description whose output is already known: a defaulted field, or
+    /// an absent optional.
     pub fn ready(value: T) -> Self
     where
         T: MaybeSend,
@@ -227,6 +234,7 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
             open: Box::new(move |cipher| Pending::ready(cipher, Ok(value))),
         }
     }
+    /// Convert the recovered value.
     pub fn map<U: 'static, F>(self, f: F) -> Decryption<U, K>
     where
         F: FnOnce(T) -> U + MaybeSend + 'static,
@@ -235,13 +243,47 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
             open: Box::new(move |cipher| (self.open)(cipher).map(f)),
         }
     }
+    /// Open both, retrieving their keys in one batch.
     pub fn zip<U: 'static>(self, other: Decryption<U, K>) -> Decryption<(T, U), K> {
         Decryption {
             open: Box::new(move |cipher| (self.open)(cipher).zip((other.open)(cipher))),
         }
     }
+    /// Open every description, retrieving all their keys in one batch, and
+    /// collect the results in order.
+    pub fn all<I>(items: I) -> Decryption<Vec<T>, K>
+    where
+        I: IntoIterator<Item = Self>,
+    {
+        let items: Vec<Self> = items.into_iter().collect();
+        Decryption {
+            open: Box::new(move |cipher| {
+                Pending::collect(cipher, items.into_iter().map(|item| (item.open)(cipher)))
+            }),
+        }
+    }
+    /// An absent item recovers as `None` without I/O.
+    fn optional(item: Option<Self>) -> Decryption<Option<T>, K>
+    where
+        T: MaybeSend,
+    {
+        match item {
+            Some(item) => item.map(Some),
+            None => Decryption::ready(None),
+        }
+    }
+    /// Execute under a scope. A [`KeysetCipher`] scope refuses a leaf from any
+    /// other keyset; a [`StackCipher`] scope opens leaves from any.
+    fn open_in<'a>(self, scope: impl CipherScope<'a, K>) -> Pending<'a, T, K> {
+        let pending = (self.open)(scope.cipher());
+        match scope.keyset() {
+            Some(id) => pending.scoped_to(id),
+            None => pending,
+        }
+    }
 }
-/// Open the native ciphertext through Vitamin C's requested plaintext decoder.
+/// The canonical opening operation: retrieve the tree's keys and decode `P`
+/// through its own Vitamin C `Decrypt` implementation, under `context`.
 pub fn open<P: crate::Decrypt<'static> + 'static, K: 'static>(
     tree: StackCipherText,
     context: impl Into<AeadContext>,
@@ -256,12 +298,18 @@ pub fn open<P: crate::Decrypt<'static> + 'static, K: 'static>(
 }
 
 impl<K: 'static> KeysetCipher<'_, K> {
+    /// Encrypt `source` into `T` under this keyset, as `T`'s declaration
+    /// describes. The returned [`Pending`] settles every key request the
+    /// declaration made in one batch.
     pub fn encrypt_as<'a, S, T>(&'a self, source: &S, context: T::Context) -> Pending<'a, T, K>
     where
         T: EncryptFrom<S>,
     {
         (T::encryption(context).build)(source, self)
     }
+    /// Recover `P` from `source`, as its declaration describes. A leaf sealed
+    /// under another keyset is refused ([`Error::ForeignKeyset`]) before any
+    /// key is retrieved.
     pub fn decrypt_as<'a, P: 'static, T>(
         &'a self,
         source: T,
@@ -270,10 +318,12 @@ impl<K: 'static> KeysetCipher<'_, K> {
     where
         T: DecryptInto<P>,
     {
-        (source.decryption(context).open)(self.cipher()).scoped_to(self.keyset_id())
+        source.decryption(context).open_in(self)
     }
 }
 impl<K: 'static> StackCipher<K> {
+    /// Recover `P` from `source`, as its declaration describes. Leaves from
+    /// any of the client's keysets open here.
     pub fn decrypt_as<'a, P: 'static, T>(
         &'a self,
         source: T,
@@ -282,12 +332,16 @@ impl<K: 'static> StackCipher<K> {
     where
         T: DecryptInto<P>,
     {
-        (source.decryption(context).open)(self)
+        source.decryption(context).open_in(self)
     }
 }
 
-/// Blanket call-site convenience; targets implement the declaration, not these methods.
+/// Source-side call syntax for [`KeysetCipher::encrypt_as`], implemented for
+/// every type: `value.encrypt_into(&keyset)`. Targets implement
+/// [`EncryptFrom`], never these methods.
 pub trait EncryptInto: Sized {
+    /// Encrypt into `T` with its default context — `()` for a declaration
+    /// that carries its own contexts.
     fn encrypt_into<'a, T, K: 'static>(&self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
     where
         T: EncryptFrom<Self>,
@@ -295,6 +349,8 @@ pub trait EncryptInto: Sized {
     {
         cipher.encrypt_as(self, Default::default())
     }
+    /// Encrypt into `T` under `context`, accepting anything that converts
+    /// into `T`'s context — a `nonempty!` literal, say.
     fn encrypt_into_with_context<'a, T, K: 'static>(
         &self,
         cipher: &'a KeysetCipher<'_, K>,
@@ -305,6 +361,8 @@ pub trait EncryptInto: Sized {
     {
         cipher.encrypt_as(self, context.into())
     }
+    /// [`encrypt_into_with_context`](Self::encrypt_into_with_context) named
+    /// from the target's side: `Target::encrypt_from(&value, &keyset, ctx)`.
     fn encrypt_from<'a, S, K: 'static>(
         source: &S,
         cipher: &'a KeysetCipher<'_, K>,
@@ -317,8 +375,12 @@ pub trait EncryptInto: Sized {
     }
 }
 impl<T> EncryptInto for T {}
-/// Blanket decrypt call-site convenience; there is no overridable target execution method.
+/// Source-side call syntax for `decrypt_as`, implemented for every type:
+/// `stored.decrypt_into(&cipher, ctx)`. Targets implement [`DecryptInto`],
+/// never these methods.
 pub trait DecryptFrom: Sized + 'static {
+    /// Recover `P` through `cipher`, which may be a [`KeysetCipher`] (refusing
+    /// foreign leaves) or a [`StackCipher`] (opening any).
     fn decrypt_into<'a, P: 'static, K: 'static>(
         self,
         cipher: impl CipherScope<'a, K>,
@@ -327,12 +389,11 @@ pub trait DecryptFrom: Sized + 'static {
     where
         Self: DecryptInto<P>,
     {
-        let pending = (self.decryption(context.into()).open)(cipher.cipher());
-        match cipher.keyset() {
-            Some(id) => pending.scoped_to(id),
-            None => pending,
-        }
+        self.decryption(context.into()).open_in(cipher)
     }
+    /// Recover `Self` from `source` with its default context — the plain
+    /// "read the stored context and validate it" for a record that stores
+    /// one.
     fn decrypt_from<'a, S, K: 'static>(
         source: S,
         cipher: impl CipherScope<'a, K>,
@@ -343,6 +404,7 @@ pub trait DecryptFrom: Sized + 'static {
     {
         source.decrypt_into(cipher, S::Context::default())
     }
+    /// Recover `Self` from `source` under `context`.
     fn decrypt_from_with_context<'a, S, K: 'static>(
         source: S,
         cipher: impl CipherScope<'a, K>,
@@ -417,6 +479,12 @@ where
         ope(context)
     }
 }
+
+// A `Vec<Target>` is a row per item, each encrypted independently under the
+// same context and settled in one batch; an `Option<Target>` is one row or
+// nothing, without I/O. (A plaintext `Vec`/`Option` sealed into a
+// `StackCipherText` is a different thing: Vitamin C's native sequence and
+// option, with their authenticated markers.)
 impl<S, T: EncryptFrom<S>> EncryptFrom<Vec<S>> for Vec<T>
 where
     T::Context: Clone + 'static + MaybeSend,
@@ -458,102 +526,30 @@ where
 impl<P: 'static, T: DecryptInto<P> + 'static> DecryptInto<Vec<P>> for Vec<T>
 where
     T::Context: Clone + 'static,
-    T: MaybeSend,
-    T::Context: MaybeSend,
 {
     type Context = T::Context;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Vec<P>, K> {
-        Decryption {
-            open: Box::new(move |cipher| {
-                Pending::collect(
-                    cipher,
-                    self.into_iter()
-                        .map(|item| cipher.decrypt_as(item, context.clone())),
-                )
-            }),
-        }
+        Decryption::all(
+            self.into_iter()
+                .map(|item| item.decryption(context.clone())),
+        )
     }
 }
-impl<P: 'static + MaybeSend, T: DecryptInto<P> + 'static + MaybeSend> DecryptInto<Option<P>>
-    for Option<T>
-where
-    T::Context: 'static + MaybeSend,
-{
+impl<P: 'static + MaybeSend, T: DecryptInto<P> + 'static> DecryptInto<Option<P>> for Option<T> {
     type Context = T::Context;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Option<P>, K> {
-        Decryption {
-            open: Box::new(move |cipher| match self {
-                Some(item) => cipher.decrypt_as(item, context).map(Some),
-                None => Pending::ready(cipher, Ok(None)),
-            }),
-        }
+        Decryption::optional(self.map(|item| item.decryption(context)))
     }
 }
 
-/// Optional extension for records whose fields already declare their base contexts.
-/// `()` selects the declared contexts unchanged; a nonempty value extends them.
-#[derive(Clone, Debug, Default)]
-pub struct DeclaredContext(Option<CallerContext>);
-impl From<()> for DeclaredContext {
-    fn from(_: ()) -> Self {
-        Self::default()
-    }
-}
-impl From<CallerContext> for DeclaredContext {
-    fn from(value: CallerContext) -> Self {
-        Self(Some(value))
-    }
-}
-impl<'a, T: IntoAad<'a> + IntoPrfContext<'a> + Clone> From<NonEmpty<T>> for DeclaredContext {
-    fn from(value: NonEmpty<T>) -> Self {
-        Self(Some(value.into()))
-    }
-}
-impl DeclaredContext {
-    pub fn field(self, field: &'static str) -> Result<CallerContext, Error> {
-        match self.0 {
-            Some(context) => context.under(field),
-            None => NonEmpty::new(field)
-                .map(Into::into)
-                .map_err(|e| Error::Other(Box::new(e))),
-        }
-    }
-}
-/// Optional destination validation for a record carrying its context in storage.
-/// Even without an expected value, the stored context must pass `NonEmpty::new`.
-#[derive(Clone, Debug)]
-pub struct ExpectedContext<T>(Option<NonEmpty<T>>);
-impl<T> Default for ExpectedContext<T> {
-    fn default() -> Self {
-        Self(None)
-    }
-}
-impl<T> From<()> for ExpectedContext<T> {
-    fn from(_: ()) -> Self {
-        Self::default()
-    }
-}
-impl<T> From<NonEmpty<T>> for ExpectedContext<T> {
-    fn from(value: NonEmpty<T>) -> Self {
-        Self(Some(value))
-    }
-}
-impl<T: MaybeEmpty + PartialEq> ExpectedContext<T> {
-    pub fn validate(self, stored: T) -> Result<NonEmpty<T>, Error> {
-        if self
-            .0
-            .is_some_and(|expected| expected.into_inner() != stored)
-        {
-            return Err(Error::Other(
-                "stored context does not match the expected context".into(),
-            ));
-        }
-        NonEmpty::new(stored).map_err(|e| Error::Other(Box::new(e)))
-    }
-}
-/// Declaration used by derives to select the one recoverable field. Terms return
-/// `None`; ciphertext fields return an opening description. No cipher is exposed.
+/// How a derive finds the one recoverable field of a record among its terms.
+///
+/// A term returns `None`: it is one-way. A ciphertext field returns its
+/// opening description. Neither sees a cipher. Implemented for every leaf
+/// type and for `Vec`/`Option` of them; a hand-written leaf that wraps a
+/// [`StackCipherText`] implements it alongside [`Decryptable`].
 pub trait DecryptField<P, Ctx>: Sized {
+    /// The opening description, if this field holds recoverable ciphertext.
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>>;
 }
 impl<P: 'static, Ctx> DecryptField<P, Ctx> for StackCipherText
@@ -565,121 +561,37 @@ where
         Some(self.decryption(context.into()))
     }
 }
-impl<P, Ctx> DecryptField<P, Ctx> for crate::sem::EqualityTerm {
-    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
-        None
-    }
-}
-impl<P, Ctx, O: crate::sem::MatchConfig> DecryptField<P, Ctx> for crate::sem::MatchTerm<O> {
-    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
-        None
-    }
-}
-impl<P, Ctx, T: cllw_ore::CllwOreEncrypt> DecryptField<P, Ctx> for crate::sem::OreTerm<T> {
-    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
-        None
-    }
-}
-impl<P, Ctx, T: cllw_ore::CllwOpeEncrypt> DecryptField<P, Ctx> for crate::sem::OpeTerm<T> {
-    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
-        None
-    }
-}
-impl<
-        P: 'static,
-        T: 'static + super::Decryptable + DecryptField<P, Ctx> + MaybeSend,
-        Ctx: Clone + 'static + MaybeSend,
-    > DecryptField<Vec<P>, Ctx> for Vec<T>
+impl<P: 'static, T: 'static + Decryptable + DecryptField<P, Ctx>, Ctx: Clone + 'static>
+    DecryptField<Vec<P>, Ctx> for Vec<T>
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<Vec<P>, K>> {
         if !T::DECRYPTABLE {
             return None;
         }
-        Some(Decryption {
-            open: Box::new(move |cipher| {
-                Pending::collect(
-                    cipher,
-                    self.into_iter().map(|item| {
-                        let plan = item
-                            .decryption_field(context.clone())
-                            .unwrap_or_else(|| Decryption::failed(Error::NotOpened));
-                        (plan.open)(cipher)
-                    }),
-                )
-            }),
-        })
+        Some(Decryption::all(self.into_iter().map(|item| {
+            item.decryption_field(context.clone())
+                .unwrap_or_else(|| Decryption::failed(Error::NotOpened))
+        })))
     }
 }
-impl<
-        P: 'static + MaybeSend,
-        T: 'static + super::Decryptable + DecryptField<P, Ctx> + MaybeSend,
-        Ctx: 'static + MaybeSend,
-    > DecryptField<Option<P>, Ctx> for Option<T>
+impl<P: 'static + MaybeSend, T: 'static + Decryptable + DecryptField<P, Ctx>, Ctx: 'static>
+    DecryptField<Option<P>, Ctx> for Option<T>
 {
     fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<Option<P>, K>> {
         if !T::DECRYPTABLE {
             return None;
         }
-        Some(match self {
-            Some(item) => item
-                .decryption_field(context)
+        Some(Decryption::optional(self.map(|item| {
+            item.decryption_field(context)
                 .unwrap_or_else(|| Decryption::failed(Error::NotOpened))
-                .map(Some),
-            None => Decryption::ready(None),
-        })
+        })))
     }
 }
 
-/// Owned nonempty context for ciphertext-only operations. These do not require a
-/// PRF encoding; a type that implements only `IntoAad` remains sufficient.
-#[derive(Clone, Debug)]
-pub struct AeadContext(AadPiece<'static>);
-impl<'a, T: IntoAad<'a>> From<NonEmpty<T>> for AeadContext {
-    fn from(value: NonEmpty<T>) -> Self {
-        Self(value.into_aad_piece().into_owned())
-    }
-}
-impl From<CallerContext> for AeadContext {
-    fn from(value: CallerContext) -> Self {
-        Self(value.aad)
-    }
-}
-impl MaybeEmpty for AeadContext {
-    fn is_empty(&self) -> bool {
-        false
-    }
-}
-impl<'a> IntoAad<'a> for AeadContext {
-    fn into_aad(self) -> Aad<'a> {
-        self.0.into_aad()
-    }
-    fn into_aad_piece(self) -> AadPiece<'a> {
-        self.0
-    }
-}
-impl AeadContext {
-    fn validated(self) -> Result<NonEmpty<Self>, Error> {
-        NonEmpty::new(self).map_err(|e| Error::Other(Box::new(e)))
-    }
-}
-macro_rules! integer_contexts {
-    ($($ty:ty),*) => {$ (
-        impl From<$ty> for CallerContext {
-            fn from(value:$ty)->Self { Self::from(NonEmpty::<$ty>::from(value)) }
-        }
-        impl From<$ty> for AeadContext {
-            fn from(value:$ty)->Self { Self::from(NonEmpty::<$ty>::from(value)) }
-        }
-        impl From<$ty> for DeclaredContext {
-            fn from(value:$ty)->Self { Self::from(NonEmpty::<$ty>::from(value)) }
-        }
-    )*};
-}
-integer_contexts!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
-
-/// Whether a field contains recoverable ciphertext. Derives assert exactly one
-/// such field per plaintext value; query terms are never recovery candidates.
+/// Whether a field type holds recoverable ciphertext. The derives require
+/// exactly one such field per plaintext value; a term is never one.
 pub trait Decryptable {
+    /// `true` for ciphertext, `false` for a term.
     const DECRYPTABLE: bool;
 }
 impl Decryptable for StackCipherText {

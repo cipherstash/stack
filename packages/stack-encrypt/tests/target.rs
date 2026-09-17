@@ -473,7 +473,11 @@ async fn third_party_output_wraps_a_core_term() {
         .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await
         .unwrap();
-    assert_eq!(stored.0, canonical.into_bytes());
+    assert_eq!(
+        stored.0,
+        canonical.into_bytes(),
+        "a hand-written target built on the equality operation matches the term itself"
+    );
 }
 
 // --- Guard rails --------------------------------------------------------------

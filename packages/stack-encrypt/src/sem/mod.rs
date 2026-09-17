@@ -147,7 +147,7 @@ use zeroize::Zeroize;
 use stack_kms::MaybeSend;
 
 use crate::target::core::Term;
-use crate::target::Decryptable;
+use crate::target::{DecryptField, Decryptable, Decryption};
 use crate::{Error, KeysetCipher, Pending};
 
 // The `/v1` suffix versions the *derivation* (domain + input framing), not the
@@ -699,8 +699,11 @@ macro_rules! index_term {
         impl<$($param: $bound)?> Decryptable for $ty {
             const DECRYPTABLE: bool = false;
         }
-
-
+        impl<P, Ctx $(, $param: $bound)?> DecryptField<P, Ctx> for $ty {
+            fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
+                None
+            }
+        }
     };
 }
 

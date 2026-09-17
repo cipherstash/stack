@@ -158,6 +158,20 @@ pub enum Error {
     /// for a reason of its own.
     #[error(transparent)]
     Other(Box<dyn std::error::Error + Send + Sync + 'static>),
+    /// A [`transcode::Visitor`](crate::target::transcode::Visitor) was handed
+    /// an encrypted output shape its destination does not accept: a scalar
+    /// destination offered a sequence, say. Raised by the visitor's default
+    /// methods, so a destination only has to describe the shapes it stores.
+    /// Never a data error: the output was produced correctly, the
+    /// destination just has nowhere to put it.
+    #[error("destination does not support this encrypted output shape")]
+    UnsupportedShape,
+    /// A record carrying its context in storage (`#[stash(context_field)]`)
+    /// was opened with an [`ExpectedContext`](crate::target::ExpectedContext)
+    /// naming a different one. Refused before any key is retrieved; the
+    /// descriptor is the stored context's, rendered as ZeroKMS would log it.
+    #[error("stored context {stored} does not match the expected context")]
+    ContextMismatch { stored: Descriptor },
     /// A [`Pending`](crate::target::Pending) fulfilment's requests and
     /// responses did not line up: it drew more responses — or a different
     /// kind — than its requests asked for, or left some of them unconsumed.
