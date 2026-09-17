@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-09-13
 extends: ADR-0003
 ---
@@ -63,23 +63,65 @@ because there is no second context to pass.
 ciphertext::<S, K>().zip(equality::<S, K>())    // both under the same context
 ```
 
-### 2. `under` is the only way to change it, and it scopes a subtree
+### 2. `under` and `extend` are the only ways to change it, and each covers a whole subtree
 
 A record gives its fields different contexts once each, visibly, instead of
 threading six arguments:
 
 ```rust
-age.under("users/age").zip(email.under("users/email"))
+age.under(nonempty!("users/age")).zip(email.under(nonempty!("users/email")))
 ```
+
+`under` gives a subtree a context of its own, which a caller's context
+extends if one is given — so the result can run under `()`. `extend` does the
+same for a record that cannot make the caller's context optional, because
+some *other* field of it is a bare leaf: the subtree's own context is
+extended by the caller's, which stays required. `under` is available wherever
+a `CallerContext` can become what the subtree needs, and `extend` wherever
+the caller's context — a `CallerContext`, or an `AeadContext` for a record
+that only seals — can; so a subtree may itself be a record whose own contexts
+a caller's extends. An own context is a `NonEmpty<&'static str>`, so an empty
+one is refused at compile time rather than at the first encryption.
+
+Two further combinators change nothing about *which* context reaches a
+subtree, only its type at the root. `accepting` converts the context a record
+declares its caller supplies into the one its operations need, once, at the
+root — a record storing its own context declares the `NonEmpty<T>` it stores
+while its operations want a `CallerContext`. `map_with_context` hands the
+output the context the tree ran under, which is how such a record fills the
+stored field: under threading the context arrives when the description runs,
+not when it is built.
 
 ### 3. The context is a type parameter, so the empty-context rule stays compile-time
 
 `Encryption<'s, S, T, K, Ctx>`, where `zip` requires both sides to share `Ctx`:
 
 - `ciphertext()` is `Encryption<.., CallerContext>` — it needs a real context
-- `.under("users/age")` yields `Encryption<.., DeclaredContext>` — now runnable
-  under `()` or a caller's context
+- `.under(nonempty!("users/age"))` yields `Encryption<.., DeclaredContext>` —
+  now runnable under `()` or a caller's context
 - zipping a bare leaf with own-context fields is a type error, which is correct
+
+A ciphertext and a term need different kinds of context. Sealing uses only
+the AEAD encoding, so `ciphertext()` is `Encryption<.., AeadContext>`, and a
+record made only of ciphertexts may declare `context_type = AeadContext` and
+accept an `IntoAad`-only type, exactly as the leaf does. Deriving a term uses
+the PRF encoding as well, so a term needs a `CallerContext`. The two still
+zip under one value: `accepting` lets the ciphertext take the term's
+`CallerContext`, of which its own `AeadContext` is the AEAD half, and that
+conversion is the only thing that happens to the context between the root
+and the leaf. Nothing is narrowed — a ciphertext alone seals under exactly
+what it did before this ADR.
+
+The derive follows the same rule rather than its own. A field with a context
+of its own gives its subtree that literal (`under`, or `extend` when the
+record cannot make the caller's context optional). A field with none is
+handed the record's context as it is, converted into whatever its type
+declares it needs — unchanged for a leaf, composed with its own contexts by a
+nested record, and, for a leaf reached through a record that may run under
+`()`, refused at the field. The impl names concrete context types in its
+bounds rather than adding a parameter: a parameter constrained only by an
+associated-type binding is E0207, and the author is told "unconstrained type
+parameter" instead of their mistake.
 
 This is the part that cost a spike to find. Threading a single *runtime* value
 (`Option<CallerContext>`) is simpler and wrong: `T::Context` is deliberately
@@ -98,15 +140,29 @@ all public, all documented as the third-party SEM extension point — that lets 
 downstream implementation mint under one context and authenticate under another
 with no crate code in the path.
 
-They will take a context and derive the descriptor themselves. The extension
-point stays; what goes is the ability to hand it two disagreeing values.
+They take a context and render the descriptor themselves. The extension point
+stays; what goes is a *request* naming a descriptor that disagrees with the
+context its data key is asked for under.
+
+What does not go: `SealedValue::from_parts` still takes raw parts, so a
+downstream SEM that seals its AEAD under one AAD and requests its key under
+another remains expressible. That seam *is* the extension point, and closing
+it is the product decision "seal the low-level request API" declines below.
+This decision narrows the exposure to a downstream assembling a sealed value
+by hand; it does not remove it.
 
 ### 5. Stored terms go through targets; standalone derivation is the query path
 
 `KeysetCipher::{equality_term, match_terms, ore_term, ope_term}` remain: a query
-probe has no ciphertext to agree with, so constraining it means nothing.
-Write-side term derivation moves exclusively through targets, where a term
-shares its ciphertext's context by construction.
+probe has no ciphertext to agree with, so constraining it means nothing. They
+are documented as the query-probe path, and a term that will be *stored* is
+directed to a target, where it shares its ciphertext's context by
+construction.
+
+No code moves and nothing enforces this. It is the "convention and
+documentation" option below, applied to the one place the type system cannot
+reach: a probe and a stored term are the same bytes, and the term methods
+cannot tell which they are producing.
 
 ### 6. Targets declare their sources; `FfiValue` is not one
 
@@ -169,9 +225,10 @@ encodings agree by construction rather than by a test. It is the same
 principle one layer down: #341 unifies how a context is *encoded*, this ADR
 unifies how it is *routed*.
 
-Two things here get simpler when it lands. The narrowing in decision 3 — a
-ciphertext context must implement `IntoPrfContext` as well as `IntoAad` —
-disappears, because one `IntoContext` impl gives both. And `CallerContext`,
+Two things here get simpler when it lands. The `accepting` step between a
+ciphertext and the terms beside it — an `AeadContext` taken from a
+`CallerContext` — disappears, because one `IntoContext` impl gives both
+encodings and the two context types collapse into one. And `CallerContext`,
 which exists to hold the two encodings of one value and keep them in
 agreement, thins to a newtype over `Context` or goes entirely.
 
@@ -197,7 +254,9 @@ point is a product decision, and decision 4 closes the seam without it.
 
 The invariant becomes structural rather than documented, and the empty-context
 rule strengthens rather than weakens — both `()`-at-a-leaf and
-divergence-within-a-target become type errors.
+divergence-within-a-target become type errors. The UI fixtures pin both:
+`leaf_without_context.rs` and `nested_leaf_without_context.rs` the first,
+`divergent_context_in_target.rs` the second.
 
 It costs a type parameter through `Encryption`, every operation constructor,
 every combinator, `EncryptFrom::Context`, and the derive's codegen. The UI

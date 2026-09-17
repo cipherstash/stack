@@ -31,18 +31,31 @@ _Avoid_: plaintext serialization, re-encryption
 
 **Context**:
 The value a ciphertext is authenticated under and a term is derived under. A
-leaf requires a nonempty context, validated by Vitamin C and owned in an
-`AeadContext` or `CallerContext` declaration; a `nonempty!("users/email")` literal, a
-`NonEmpty::new(value)?` at runtime, or a bare integer. It becomes the
-ciphertext's associated data, the term's PRF context, and the ZeroKMS
-descriptor of the data key.
+leaf requires a nonempty context, validated by Vitamin C and owned in a
+`CallerContext` (both encodings — what a term is derived under, and what a
+record deriving terms threads to every field) or an `AeadContext` (the AAD
+encoding alone — what a ciphertext is sealed and opened under; a record
+deriving terms hands its ciphertext fields that half of its `CallerContext`);
+a `nonempty!("users/email")` literal, a `NonEmpty::new(value)?` at runtime,
+or a bare integer. It becomes the ciphertext's associated data,
+the term's PRF context, and the ZeroKMS descriptor of the data key.
 _Avoid_: AAD (that is one of its encodings, not the concept), lock context
 
 **Own context**:
 The context a field carries itself: a `context = ".."` literal, or the one a
 `struct = ..` derive infers as `<struct context>/<field>`. A caller's context
-*extends* it (`("users/age", id)`); it is never discarded.
+*extends* it (`("users/age", id)`); it is never discarded. A subtree of a
+declaration is given one with `under` (the caller's is then optional) or
+`extend` (the caller's stays required).
 _Avoid_: default context, field prefix
+
+**Threaded context**:
+The one context a target's declaration tree hands to every operation beneath
+it (ADR-0004): a type parameter of `Encryption`, so two subtrees needing
+different kinds of context do not zip, and a ciphertext and the terms beside
+it cannot be put under different contexts. `under` and `extend` are the only
+ways to change it, and each covers a whole subtree.
+_Avoid_: scope (that is a `Pending`'s), shared context, per-operation context
 
 **Descriptor**:
 The context, rendered as the string ZeroKMS binds into every data key and
