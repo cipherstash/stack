@@ -5,9 +5,10 @@
 //!
 //! No constructor takes a context either. The context reaches every operation
 //! by being threaded through the tree that composes them, as a type parameter
-//! of [`Encryption`] (ADR-0004): a target cannot seal a value under one
-//! context and index it under another, because there is no second context to
-//! hand anything.
+//! of [`Encryption`] (ADR-0004): a target cannot route the context it is
+//! handed to one operation and something else to another, because there is
+//! no argument to route. What a subtree may do is take a context of its own,
+//! by name, with [`Encryption::under`] or [`Encryption::extend`].
 use super::context::{AeadContext, CallerContext, DeclaredContext, Extends};
 use super::core::{encrypt_native, open_native, Term};
 use super::{CipherScope, Pending};
@@ -75,10 +76,14 @@ type Open<T, K> = Box<dyn for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K
 /// rather than by discipline (ADR-0004):
 ///
 /// - **One context per target.** [`zip`](Self::zip) requires both sides to
-///   need the same `Ctx` and hands them the same value, so a target cannot
-///   seal under one context and index under another. A ciphertext beside a
-///   term takes the term's context through [`accepting`](Self::accepting):
-///   the [`AeadContext`] it seals under is the AEAD half of that one value.
+///   need the same `Ctx` and hands them the same value, so a target has no
+///   way to route what it is handed to one side and something else to the
+///   other. A ciphertext beside a term takes the term's context through
+///   [`accepting`](Self::accepting): the [`AeadContext`] it seals under is
+///   the AEAD half of that one value. A side given a context of its own,
+///   with [`under`](Self::under) or [`extend`](Self::extend), says so in the
+///   declaration; that is how a record names its fields' contexts, and the
+///   tree does not tell a record's fields from a target's halves.
 /// - **A leaf still cannot be reached without a context.** An operation needs
 ///   a real one. [`under`](Self::under) and [`extend`](Self::extend) are the
 ///   only ways to change the context a subtree runs under, and only `under`
@@ -170,8 +175,11 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// description is handed, settling their key requests in one batch.
     ///
     /// Both sides must need the same `Ctx`, and both receive the same value:
-    /// there is no second context to pass, which is the whole of ADR-0004's
-    /// first decision.
+    /// there is no second context to pass. A side may still have taken a
+    /// context of its own with [`under`](Self::under) or
+    /// [`extend`](Self::extend) before it got here — that is how a record
+    /// composes fields with different contexts — and `zip` cannot tell that
+    /// from a target's two halves (ADR-0004, decision 1).
     pub fn zip<U: 'static>(
         self,
         other: Encryption<'s, S, U, K, Ctx>,

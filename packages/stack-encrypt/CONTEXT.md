@@ -51,10 +51,12 @@ _Avoid_: default context, field prefix
 
 **Threaded context**:
 The one context a target's declaration tree hands to every operation beneath
-it (ADR-0004): a type parameter of `Encryption`, so two subtrees needing
-different kinds of context do not zip, and a ciphertext and the terms beside
-it cannot be put under different contexts. `under` and `extend` are the only
-ways to change it, and each covers a whole subtree.
+it (ADR-0004): a type parameter of `Encryption`, so a target cannot route what
+it is handed to one operation and something else to another, and two subtrees
+needing different kinds of context do not zip. `under` and `extend` are the
+only ways to change it; each covers a whole subtree and is written in the
+declaration, and the tree does not tell a record's two fields from a target's
+two halves.
 _Avoid_: scope (that is a `Pending`'s), shared context, per-operation context
 
 **Descriptor**:

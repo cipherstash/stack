@@ -56,12 +56,33 @@ have no relation.
 ### 1. Operations take no context; the tree carries one
 
 `Encryption::build` gains the context as a parameter, and `zip` hands the same
-value to both sides. Divergence within a target stops being expressible,
-because there is no second context to pass.
+value to both sides. A target cannot *route* the context it is handed — there
+is no argument to forget, swap, or fill from the wrong variable, because there
+is no argument.
 
 ```rust
-ciphertext::<S, K>().zip(equality::<S, K>())    // both under the same context
+ciphertext::<S, K>().accepting().zip(equality::<S, K>())    // one value reaches both
 ```
+
+(`accepting` converts the ciphertext's context *type*, as decision 3 explains;
+the value passes through.)
+
+What this does not rule out is a target that gives each half a context of its
+own, by name:
+
+```rust
+ciphertext().under(nonempty!("cipher")).zip(equality().under(nonempty!("term")))
+```
+
+That compiles, and the term is under a different context from the ciphertext.
+It is the same construct, to the letter, as a record giving each of two
+*fields* its own context (decision 2), and the tree cannot tell a two-context
+target from a two-field record: the reason the runtime check in `zip` is
+rejected below applies to the type system too. What changes is what the
+divergence costs to write. It is two literals in the declaration, each naming
+the context it sets, where before it was one supplied value reaching one side
+and something else reaching the other — visible at review, where a routing
+mistake was not.
 
 ### 2. `under` and `extend` are the only ways to change it, and each covers a whole subtree
 
@@ -96,7 +117,8 @@ not when it is built.
 
 `Encryption<'s, S, T, K, Ctx>`, where `zip` requires both sides to share `Ctx`:
 
-- `ciphertext()` is `Encryption<.., CallerContext>` — it needs a real context
+- `ciphertext()` is `Encryption<.., AeadContext>` and `equality()` is
+  `Encryption<.., CallerContext>` — each needs a real context
 - `.under(nonempty!("users/age"))` yields `Encryption<.., DeclaredContext>` —
   now runnable under `()` or a caller's context
 - zipping a bare leaf with own-context fields is a type error, which is correct
@@ -140,9 +162,12 @@ all public, all documented as the third-party SEM extension point — that lets 
 downstream implementation mint under one context and authenticate under another
 with no crate code in the path.
 
-They take a context and render the descriptor themselves. The extension point
-stays; what goes is a *request* naming a descriptor that disagrees with the
-context its data key is asked for under.
+They take a context and render the descriptor themselves. The context is
+anything `Into<AeadContext>`: a descriptor is rendered from the AEAD encoding
+alone, and a ciphertext needs no more than that to seal, so the `IntoAad`-only
+type a `StackCipherText` seals under can request the key it seals with. The
+extension point stays; what goes is a *request* naming a descriptor that
+disagrees with the context its data key is asked for under.
 
 What does not go: `SealedValue::from_parts` still takes raw parts, so a
 downstream SEM that seals its AEAD under one AAD and requests its key under
@@ -242,7 +267,14 @@ is enforcement by hope.
 **Detect a mismatch at runtime in `zip`.** Rejected: `zip` cannot distinguish a
 record legitimately combining differently-contexted *fields* from a target
 illegitimately combining differently-contexted *operations*. It would reject
-valid code or miss the bug.
+valid code or miss the bug. The type parameter has the same blind spot
+(decision 1); what it adds is the two compile-time rules, not the distinction.
+
+**Reserve `under` and `extend` for the derive**, so a hand-written declaration
+could name a context only once, at its root. Not taken: a hand-written record
+is a supported shape — the derive emits what one would write — and the derive
+would need a private door into the same combinators. Open, if the residual in
+decision 1 turns out to matter in practice.
 
 **Thread one runtime context.** Rejected for the reason in decision 3: it costs
 the compile-time empty-context guarantee.
@@ -252,11 +284,14 @@ point is a product decision, and decision 4 closes the seam without it.
 
 ## Consequences
 
-The invariant becomes structural rather than documented, and the empty-context
-rule strengthens rather than weakens — both `()`-at-a-leaf and
-divergence-within-a-target become type errors. The UI fixtures pin both:
+The routing of a context becomes structural rather than documented, and the
+empty-context rule strengthens rather than weakens: `()` at a leaf is a type
+error, and so is a target that discharges the context on one side of a `zip`
+and leaves the other still needing it. The UI fixtures pin both:
 `leaf_without_context.rs` and `nested_leaf_without_context.rs` the first,
-`divergent_context_in_target.rs` the second.
+`divergent_context_in_target.rs` the second. Two own contexts inside one target
+remain expressible, as decision 1 says, because they are two fields as far as
+the tree can tell.
 
 It costs a type parameter through `Encryption`, every operation constructor,
 every combinator, `EncryptFrom::Context`, and the derive's codegen. The UI
