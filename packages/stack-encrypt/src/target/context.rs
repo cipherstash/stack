@@ -81,7 +81,10 @@ impl CallerContext {
 ///
 /// Sealing needs only the AEAD encoding, so a type that implements `IntoAad`
 /// without `IntoPrfContext` is enough here where it would not be for a
-/// [`CallerContext`].
+/// [`CallerContext`]. A derived record whose fields are all ciphertexts
+/// declares it with `#[stash(context_type = AeadContext)]`, and then accepts
+/// the same contexts the canonical [`StackCipherText`](crate::StackCipherText)
+/// path does.
 #[derive(Clone, Debug)]
 pub struct AeadContext(AadPiece<'static>);
 impl<'a, T: IntoAad<'a>> From<NonEmpty<T>> for AeadContext {
@@ -110,6 +113,19 @@ impl<'a> IntoAad<'a> for AeadContext {
 impl AeadContext {
     pub(super) fn validated(self) -> Result<NonEmpty<Self>, Error> {
         nonempty(self)
+    }
+    /// Extend a field's own context with this caller context, as
+    /// [`CallerContext::under`] does for a record that derives terms: the
+    /// field's literal is the prefix, this context the extension.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `field` is empty; a field's own context is a literal the
+    /// derive has already checked, so a hand-written caller is the only one
+    /// that can hit this.
+    pub fn under(self, field: &'static str) -> Result<Self, Error> {
+        let prefix = nonempty(field)?;
+        Ok(prefix.with(self.validated()?).into())
     }
 }
 

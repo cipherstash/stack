@@ -11,9 +11,10 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 use cllw_ore::CllwOreEncrypt;
 use common::{counting_cipher, stack_cipher};
 use stack_encrypt::sem::{EqualityTerm, MatchTerm, OreTerm};
-use stack_encrypt::target::{DecryptFrom, EncryptInto};
+use stack_encrypt::target::{AeadContext, DecryptFrom, EncryptInto};
 use stack_encrypt::{
-    nonempty, DecryptField, DecryptInto, Decryptable, EncryptFrom, Error, StackCipherText,
+    nonempty, Aad, DecryptField, DecryptInto, Decryptable, EncryptFrom, Error, IntoAad, MaybeEmpty,
+    NonEmpty, StackCipherText,
 };
 
 // --- Records: every field from one plaintext, under one context -------------
@@ -378,6 +379,66 @@ async fn listed_plaintexts_each_get_their_own_impl() {
         .unwrap();
     let text: String = text.decrypt_into(&cipher, nonempty!("t/t")).await.unwrap();
     assert_eq!((number, text.as_str()), (7, "seven"));
+}
+
+/// A context type with the AEAD encoding alone: enough to seal, not to
+/// derive a term. `WorkspaceId` in `cts-common` is the production shape.
+#[derive(Clone, Debug, PartialEq)]
+struct Tenant(String);
+impl MaybeEmpty for Tenant {
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+impl<'a> IntoAad<'a> for Tenant {
+    fn into_aad(self) -> Aad<'a> {
+        self.0.into_aad()
+    }
+}
+
+/// Ciphertext only, so it declares the ciphertext operation's own context
+/// type rather than the default `CallerContext`, which would demand a PRF
+/// encoding no field here uses.
+#[derive(EncryptFrom, DecryptInto)]
+#[stash(plaintext = String, context_type = AeadContext)]
+struct SealedName {
+    c: StackCipherText,
+}
+
+fn tenant() -> NonEmpty<Tenant> {
+    NonEmpty::new(Tenant("acme".into())).unwrap()
+}
+
+#[tokio::test]
+async fn a_ciphertext_only_record_accepts_an_aead_only_context_like_the_leaf_does() {
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let name = "alice".to_owned();
+
+    // The derived record and the canonical leaf accept the same context
+    // and produce interchangeable ciphertext: each opens the other's.
+    let record: SealedName = name
+        .encrypt_into_with_context(&keyset, tenant())
+        .await
+        .unwrap();
+    let opened: String = cipher.decrypt(record.c, tenant()).await.unwrap();
+    assert_eq!(opened, name);
+
+    let leaf = keyset.encrypt(name.clone(), tenant()).await.unwrap();
+    let opened: String = SealedName { c: leaf }
+        .decrypt_into(&cipher, tenant())
+        .await
+        .unwrap();
+    assert_eq!(opened, name);
+
+    // Bound to the context like any other leaf.
+    let record: SealedName = name
+        .encrypt_into_with_context(&keyset, tenant())
+        .await
+        .unwrap();
+    let other = NonEmpty::new(Tenant("other".into())).unwrap();
+    let result: Result<String, _> = record.decrypt_into(&cipher, other).await;
+    assert!(matches!(result, Err(Error::Aead)), "{result:?}");
 }
 
 #[tokio::test]

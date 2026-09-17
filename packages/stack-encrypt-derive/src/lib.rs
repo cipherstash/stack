@@ -32,7 +32,10 @@
 //! ```
 //!
 //! For a record without a context field, fields use the caller's context or a
-//! declared literal. `struct = User, context = "users"` selects plaintext fields
+//! declared literal. A record made only of ciphertexts can declare
+//! `context_type = AeadContext` and accept a context type that implements
+//! `IntoAad` alone, as the ciphertext leaf itself does.
+//! `struct = User, context = "users"` selects plaintext fields
 //! and binds them under `"users/<field>"`. The storage envelope itself adds no
 //! cryptographic map-entry context. Vitamin C still binds keys inside plaintext
 //! maps and preserves authenticated absence and empty-container markers.

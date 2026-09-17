@@ -9,6 +9,7 @@ All attributes live under `#[stash(...)]`.
 | `plaintext = Type` | The record is an encrypted form of `Type`, every field derived from the whole value. Repeatable: one impl per listed type. Omit it for an impl generic over the plaintext (see below). |
 | `struct = Type` | The record encrypts the struct `Type` field by field: every derived field is derived from the plaintext field of its own name, under the context `"<context>/<field>"` (see [Structs, field by field](#structs-field-by-field)). Exclusive with `plaintext`; requires `context`. |
 | `context = "..."` | With `struct` only: the first half of every field's inferred context — the stored data's name. Required, never inferred from the type's name, and must not be empty. |
+| `context_type = Type` | The record's associated `Context`, for a record whose fields take the caller's context: what the caller passes. Defaults to `CallerContext`; `AeadContext` for a record made only of ciphertexts, so an `IntoAad`-only context type is accepted (see [Which context a record takes](#which-context-a-record-takes)). Not with `context_field` or `struct`. |
 | `crate = "path"` | Where to find `stack_encrypt` in the generated code (default `::stack_encrypt`), for use through a re-export. |
 
 `plaintext` must be an owned type: the generated impl has no lifetime to give
@@ -50,6 +51,36 @@ A record with fields that need a caller context uses `CallerContext`, constructe
 from a `NonEmpty<T>` or a supported integer. Both encodings and the descriptor's
 structured identity are preserved when borrowing context data is converted into
 an owned declaration. No context is inferred from a Rust type's name.
+
+## Which context a record takes
+
+`CallerContext` holds both of Vitamin C's encodings of the context — the AEAD
+one a ciphertext is sealed under and the PRF one a term is derived under — so
+building it needs a `T` that is both `IntoAad` and `IntoPrfContext`. A record
+made only of ciphertexts needs only the first, and the leaf it wraps
+(`StackCipherText`) asks for only that: its context is `AeadContext`. Such a
+record says so with `#[stash(context_type = AeadContext)]`, and then accepts
+every context the canonical `keyset.encrypt(value, context)` path accepts,
+including a type that implements `IntoAad` alone:
+
+```rust,ignore
+#[derive(EncryptFrom, DecryptInto)]
+#[stash(plaintext = String, context_type = AeadContext)]
+struct SealedName {
+    c: StackCipherText,
+}
+
+let record: SealedName = name.encrypt_into_with_context(&keyset, NonEmpty::new(tenant)?).await?;
+```
+
+The derive cannot pick this for you: it sees the field types' names, not
+what they declare. The type you name must convert into every field's own
+`Context` (`AeadContext` does not convert into `CallerContext`, so a term
+field beside it is a compile error at the record, which is the point), and a
+field with a `context = ".."` of its own is derived under that literal
+extended by the caller's context through the type's `under` — `AeadContext`
+and `CallerContext` both have one. A record with a `context_field`, or a
+`struct` derive, settles its context itself and refuses the attribute.
 
 A declaration is executed by `keyset.encrypt_as(&value, context)` and
 `cipher.decrypt_as(record, context)`, or through the blanket `EncryptInto` and

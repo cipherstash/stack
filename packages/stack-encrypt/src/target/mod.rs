@@ -15,11 +15,14 @@
 //! Record envelope names do not add cryptographic map keys.
 //!
 //! Generic targets use [`CallerContext`] (ciphertext and terms) or [`AeadContext`]
-//! (ciphertext only). These own Vitamin C's context encodings, preserving their
-//! structured descriptor identity. They are constructed from a nonempty context,
-//! including a borrowed one. Records that supply their own field contexts use
-//! [`DeclaredContext`], whose default leaves those contexts unchanged and whose
-//! nonempty form extends them. Custom targets may instead declare `Context = ()`.
+//! (ciphertext only; a derived record made only of ciphertexts declares it with
+//! `#[stash(context_type = AeadContext)]`). These own Vitamin C's context
+//! encodings, preserving their structured descriptor identity. They are
+//! constructed from a nonempty context, including a borrowed one — an
+//! `AeadContext` from one with the AEAD encoding alone. Records that supply
+//! their own field contexts use [`DeclaredContext`], whose default leaves those
+//! contexts unchanged and whose nonempty form extends them. Custom targets may
+//! instead declare `Context = ()`.
 //!
 //! # Output adapters
 //!

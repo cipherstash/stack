@@ -119,6 +119,10 @@ pub(crate) struct Record {
     /// `struct = ..`: the plaintext is encrypted field by field, every
     /// derived field from one field of it (`Field::from`).
     pub(crate) by_field: bool,
+    /// `context_type = ..`: what the caller passes, in place of the
+    /// `CallerContext` a record whose fields take the caller's context
+    /// declares by default.
+    pub(crate) context_type: Option<Type>,
     pub(crate) fields: Vec<Field>,
 }
 
@@ -194,12 +198,35 @@ impl Record {
             ));
         }
 
-        Ok(Self {
+        let record = Self {
             krate: attrs.krate,
             plaintexts,
             by_field,
+            context_type: attrs.context_type,
             fields,
-        })
+        };
+        // `ContainerAttrs::parse` has refused `context_type` beside `struct`;
+        // the other two shapes that settle the context themselves are
+        // checked here, where the fields are known.
+        if let Some(context_type) = &record.context_type {
+            if record.context_field().is_some() {
+                return Err(syn::Error::new_spanned(
+                    context_type,
+                    "`context_field` supplies the complete context, so the record's `Context` is \
+                     `NonEmpty<T>` of that field's type; `context_type` does not apply",
+                ));
+            }
+            if record.declared_contexts() {
+                return Err(syn::Error::new_spanned(
+                    context_type,
+                    "`context_type` names what the caller passes to a record whose fields take \
+                     the caller's context; every field here carries a `context = \"..\"` of its \
+                     own, so the record takes `DeclaredContext` and a caller's context extends \
+                     them",
+                ));
+            }
+        }
+        Ok(record)
     }
 }
 
@@ -365,15 +392,23 @@ impl Record {
             }
         } else if self.declared_contexts() {
             parse_quote!(#krate::target::DeclaredContext)
+        } else if let Some(context_type) = &self.context_type {
+            context_type.clone()
         } else {
             parse_quote!(#krate::target::CallerContext)
         }
     }
+    /// The context a field is handed: the caller's as it is, or — for a
+    /// field with a context of its own — what `context_expr` builds from
+    /// the caller's: a `CallerContext` from a `DeclaredContext`'s `field`,
+    /// or the caller's own type from its `under`.
     pub(crate) fn field_context_type(&self, field: &Field) -> Type {
         let krate = &self.krate;
         match field.field_context() {
-            FieldContext::Own(_) => parse_quote!(#krate::target::CallerContext),
-            FieldContext::Caller => self.context_type(false),
+            FieldContext::Own(_) if self.declared_contexts() => {
+                parse_quote!(#krate::target::CallerContext)
+            }
+            FieldContext::Own(_) | FieldContext::Caller => self.context_type(false),
         }
     }
     pub(crate) fn context_expr(&self, field: &Field, decrypt: bool) -> TokenStream {
@@ -803,6 +838,100 @@ mod tests {
         })
         .unwrap_err();
         assert!(err.to_string().contains("must name a struct directly"));
+    }
+
+    #[test]
+    fn context_type_replaces_the_default_caller_context() {
+        let record = parse(parse_quote! {
+            #[stash(plaintext = String, context_type = AeadContext)]
+            struct Rec {
+                c: StackCipherText,
+                #[stash(context = "legacy/name")]
+                shadow: StackCipherText,
+            }
+        })
+        .unwrap();
+        let ty = |ty: &Type| quote!(#ty).to_string();
+        assert_eq!(ty(&record.context_type(false)), "AeadContext");
+        assert_eq!(ty(&record.context_type(true)), "AeadContext");
+        // Both fields are handed the caller's type: the literal one through
+        // its `under`, which returns the same type.
+        assert_eq!(
+            ty(&record.field_context_type(&record.fields[0])),
+            "AeadContext"
+        );
+        assert_eq!(
+            ty(&record.field_context_type(&record.fields[1])),
+            "AeadContext"
+        );
+
+        let record = parse(parse_quote! {
+            struct Rec {
+                c: StackCipherText,
+            }
+        })
+        .unwrap();
+        assert!(record.context_type.is_none());
+        assert_eq!(
+            ty(&record.context_type(false)),
+            ":: stack_encrypt :: target :: CallerContext"
+        );
+    }
+
+    #[test]
+    fn context_type_applies_only_where_the_caller_settles_the_context() {
+        let err = parse(parse_quote! {
+            #[stash(struct = User, context = "users", context_type = AeadContext)]
+            struct Rec {
+                name: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("a `struct` derive's fields carry their own"),
+            "{err}"
+        );
+
+        let err = parse(parse_quote! {
+            #[stash(context_type = AeadContext)]
+            struct Rec {
+                #[stash(context_field)]
+                tenant: String,
+                c: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("`context_type` does not apply"),
+            "{err}"
+        );
+
+        let err = parse(parse_quote! {
+            #[stash(context_type = AeadContext)]
+            struct Rec {
+                #[stash(context = "users/name")]
+                c: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("every field here carries a `context"),
+            "{err}"
+        );
+
+        let err = parse(parse_quote! {
+            #[stash(context_type = AeadContext, context_type = AeadContext)]
+            struct Rec {
+                c: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("`context_type` is given twice"),
+            "{err}"
+        );
     }
 
     #[test]
