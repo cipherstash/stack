@@ -5,7 +5,8 @@
 //! assembly, settling it is one batched ZeroKMS call per request kind.
 
 use std::cmp::Ordering;
-use std::sync::atomic::Ordering as AtomicOrdering;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::Arc;
 
 use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerm, OreTerm};
 use stack_encrypt::target::{
@@ -669,6 +670,35 @@ async fn containers_pass_the_context_through_to_their_leaves() {
         .await
         .unwrap();
     assert!(empty.is_empty());
+}
+
+/// A stored target whose declaration is refused before any key is named —
+/// the shape of a derived record whose stored context fails validation.
+/// Counts how many times it was asked to declare.
+struct Refused(Arc<AtomicUsize>);
+impl DecryptInto<u32> for Refused {
+    type Context = CallerContext;
+    fn decryption<K: 'static>(self, _: Self::Context) -> Decryption<u32, K> {
+        self.0.fetch_add(1, AtomicOrdering::SeqCst);
+        Decryption::failed(Error::NotOpened)
+    }
+}
+
+#[tokio::test]
+async fn a_column_stops_declaring_at_the_first_refused_row() {
+    let (cipher, _, retrieves) = counting_cipher().await;
+    let declared = Arc::new(AtomicUsize::new(0));
+    let column: Vec<Refused> = (0..1_000).map(|_| Refused(Arc::clone(&declared))).collect();
+
+    // `Vec<T>` declares its rows lazily and the collection stops at the
+    // first refusal: the rows after it are never asked, and nothing is
+    // retrieved.
+    let result: Result<Vec<u32>, _> = cipher
+        .decrypt_as(column, CallerContext::from(nonempty!("users/age")))
+        .await;
+    assert!(matches!(result, Err(Error::NotOpened)), "{result:?}");
+    assert_eq!(declared.load(AtomicOrdering::SeqCst), 1);
+    assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 0);
 }
 
 #[tokio::test]

@@ -68,7 +68,15 @@ pub struct Encryption<'s, S, T, K> {
 /// `decrypt_as`. Nothing runs, and no key is retrieved, until then.
 #[must_use = "a decryption description does nothing until a cipher executes it"]
 pub struct Decryption<T, K> {
-    open: Open<T, K>,
+    inner: Opening<T, K>,
+}
+/// A declaration either failed while it was being built, or has an opening
+/// to execute. A failure is held as a value rather than a closure that
+/// yields it, so a combinator can see it without executing anything: that
+/// is what lets [`Decryption::all`] stop at the first failed item.
+enum Opening<T, K> {
+    Failed(Error),
+    Open(Open<T, K>),
 }
 impl<S, T, K> fmt::Debug for Encryption<'_, S, T, K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -77,7 +85,11 @@ impl<S, T, K> fmt::Debug for Encryption<'_, S, T, K> {
 }
 impl<T, K> fmt::Debug for Decryption<T, K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Decryption").finish_non_exhaustive()
+        let mut debug = f.debug_struct("Decryption");
+        if let Opening::Failed(error) = &self.inner {
+            let _ = debug.field("failed", error);
+        }
+        debug.finish_non_exhaustive()
     }
 }
 
@@ -216,12 +228,18 @@ term_operation!(
 );
 
 impl<T: 'static, K: 'static> Decryption<T, K> {
-    /// Reject the opening: execution yields `error` without I/O, and any
-    /// description this is zipped into fails with it. The derives use it
-    /// when a stored context fails validation.
+    /// Reject the opening: execution yields `error` without I/O, any
+    /// description this is zipped into fails with it, and a collection
+    /// ([`all`](Self::all)) stops at it. The derives use it when a stored
+    /// context fails validation.
     pub fn failed(error: Error) -> Self {
         Self {
-            open: Box::new(move |cipher| Pending::failed(cipher, error)),
+            inner: Opening::Failed(error),
+        }
+    }
+    fn open(open: Open<T, K>) -> Self {
+        Self {
+            inner: Opening::Open(open),
         }
     }
     /// A description whose output is already known: a defaulted field, or
@@ -230,37 +248,49 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
     where
         T: MaybeSend,
     {
-        Self {
-            open: Box::new(move |cipher| Pending::ready(cipher, Ok(value))),
-        }
+        Self::open(Box::new(move |cipher| Pending::ready(cipher, Ok(value))))
     }
     /// Convert the recovered value.
     pub fn map<U: 'static, F>(self, f: F) -> Decryption<U, K>
     where
         F: FnOnce(T) -> U + MaybeSend + 'static,
     {
-        Decryption {
-            open: Box::new(move |cipher| (self.open)(cipher).map(f)),
+        match self.inner {
+            Opening::Failed(error) => Decryption::failed(error),
+            Opening::Open(open) => Decryption::open(Box::new(move |cipher| open(cipher).map(f))),
         }
     }
-    /// Open both, retrieving their keys in one batch.
+    /// Open both, retrieving their keys in one batch. A failed side fails
+    /// the pair, the left one first, without executing the other.
     pub fn zip<U: 'static>(self, other: Decryption<U, K>) -> Decryption<(T, U), K> {
-        Decryption {
-            open: Box::new(move |cipher| (self.open)(cipher).zip((other.open)(cipher))),
+        match (self.inner, other.inner) {
+            (Opening::Failed(error), _) | (_, Opening::Failed(error)) => Decryption::failed(error),
+            (Opening::Open(left), Opening::Open(right)) => {
+                Decryption::open(Box::new(move |cipher| left(cipher).zip(right(cipher))))
+            }
         }
     }
     /// Open every description, retrieving all their keys in one batch, and
     /// collect the results in order.
+    ///
+    /// `items` is consumed only as far as its first failed description: the
+    /// column fails with that error, and the descriptions after it are never
+    /// built. A `Vec<T>` whose rows validate a stored context does not go on
+    /// validating rows once one has been refused.
     pub fn all<I>(items: I) -> Decryption<Vec<T>, K>
     where
         I: IntoIterator<Item = Self>,
     {
-        let items: Vec<Self> = items.into_iter().collect();
-        Decryption {
-            open: Box::new(move |cipher| {
-                Pending::collect(cipher, items.into_iter().map(|item| (item.open)(cipher)))
-            }),
+        let mut opens = Vec::new();
+        for item in items {
+            match item.inner {
+                Opening::Failed(error) => return Decryption::failed(error),
+                Opening::Open(open) => opens.push(open),
+            }
         }
+        Decryption::open(Box::new(move |cipher| {
+            Pending::collect(cipher, opens.into_iter().map(|open| open(cipher)))
+        }))
     }
     /// An absent item recovers as `None` without I/O.
     fn optional(item: Option<Self>) -> Decryption<Option<T>, K>
@@ -275,7 +305,10 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
     /// Execute under a scope. A [`KeysetCipher`] scope refuses a leaf from any
     /// other keyset; a [`StackCipher`] scope opens leaves from any.
     fn open_in<'a>(self, scope: impl CipherScope<'a, K>) -> Pending<'a, T, K> {
-        let pending = (self.open)(scope.cipher());
+        let pending = match self.inner {
+            Opening::Failed(error) => return Pending::failed(scope, error),
+            Opening::Open(open) => open(scope.cipher()),
+        };
         match scope.keyset() {
             Some(id) => pending.scoped_to(id),
             None => pending,
@@ -289,12 +322,10 @@ pub fn open<P: crate::Decrypt<'static> + 'static, K: 'static>(
     context: impl Into<AeadContext>,
 ) -> Decryption<P, K> {
     let context = context.into();
-    Decryption {
-        open: Box::new(move |cipher| match context.validated() {
-            Ok(ctx) => open_native(tree, cipher, ctx),
-            Err(e) => Pending::failed(cipher, e),
-        }),
-    }
+    Decryption::open(Box::new(move |cipher| match context.validated() {
+        Ok(ctx) => open_native(tree, cipher, ctx),
+        Err(e) => Pending::failed(cipher, e),
+    }))
 }
 
 impl<K: 'static> KeysetCipher<'_, K> {
