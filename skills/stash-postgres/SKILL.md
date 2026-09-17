@@ -296,8 +296,8 @@ query domain always matches the *column's* domain, not the query type.
 ### Free-text match
 
 ```ts
-// `bio` is a types.TextSearch column here; on a types.TextMatch column the
-// cast is ::eql_v3.query_text_match.
+// `bio` is a types.TextSearch column, so its query operand is
+// eql_v3.query_text_search. A types.TextMatch column uses query_text_match.
 const term = await client.encryptQuery('needle', {
   table: users, column: users.bio, queryType: 'freeTextSearch',
 })
@@ -326,6 +326,48 @@ await sql`SELECT * FROM events
 raw encrypted payload — which is neither meaningful nor index-backed. Sorting
 on `eql_v3.ord_term(col)` is both. Ordering is available on `_ord`,
 `_ord_ore`, and `text_search` columns; use `ord_term_ore` for `_ord_ore`.
+
+### Absolute-value ranges
+
+Encrypted ordering cannot evaluate `abs(encrypted_column)`: the server can
+compare encrypted order terms, but cannot transform their plaintext values.
+Decompose an absolute-value bucket into its positive and negative signed
+ranges. For non-negative bounds `min` and `max`, the half-open predicate
+`min <= abs(amount) < max` is:
+
+```sql
+(amount >= min AND amount < max)
+OR
+(amount <= -min AND amount > -max)
+```
+
+Encrypt all four bounds separately against the same column. For example, when
+`amount` is a `types.DoubleOrd()` column:
+
+```ts
+const query = async (value: number) => {
+  const term = await client.encryptQuery(value, {
+    table: payments, column: payments.amount, queryType: 'orderAndRange',
+  })
+  if (term.failure) throw new Error(term.failure.message)
+  return term.data
+}
+
+const [min, max, negativeMin, negativeMax] = await Promise.all([
+  query(10), query(20), query(-10), query(-20),
+])
+
+await sql`SELECT * FROM payments WHERE
+  (amount >= ${sql.json(min)}::jsonb::eql_v3.query_double_ord
+   AND amount < ${sql.json(max)}::jsonb::eql_v3.query_double_ord)
+  OR
+  (amount <= ${sql.json(negativeMin)}::jsonb::eql_v3.query_double_ord
+   AND amount > ${sql.json(negativeMax)}::jsonb::eql_v3.query_double_ord)`
+```
+
+The inequalities deliberately reverse on the negative branch. At `min = 0`
+the two branches overlap at zero; that does not duplicate rows because this is
+one `WHERE` predicate. Validate `0 <= min < max` before constructing it.
 
 ### Encrypted JSON — containment
 
