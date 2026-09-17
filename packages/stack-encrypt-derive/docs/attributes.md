@@ -38,9 +38,8 @@ literal.
 Each derive emits one declaration per plaintext, with an associated `Context`.
 A record with `#[stash(context_field)]` on a field of type `T` requires
 `NonEmpty<T>` for encryption and stores its inner value in that field. Decryption
-takes `ExpectedContext<T>`: its default reads and validates the stored value;
-`NonEmpty<T>.into()` also checks it against the expected destination before key
-retrieval. `T` supplies the Vitamin C context encodings and implements `Clone`,
+takes `ExpectedContext<T>`. Its default checks only that the stored value is nonempty and then opens the record under whatever context it stores — so a ciphertext moved together with its stored context opens as if it belonged where it now sits. `NonEmpty<T>.into()` names the destination the caller believes it is opening; a stored context that differs is refused with `Error::ContextMismatch` before any key is retrieved. Either way the stored context is data the record arrived with, not something the cipher has authenticated.
+`T` supplies the Vitamin C context encodings and implements `Clone`,
 `MaybeEmpty`, and `PartialEq`. This metadata is not a separate encrypted field.
 It cannot be combined with literal context attributes.
 

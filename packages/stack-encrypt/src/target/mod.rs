@@ -10,8 +10,7 @@
 //!
 //! The derives compose each semantic field's declaration. `#[stash(context_field)]`
 //! on an identifier of type `T` makes the encryption context `NonEmpty<T>` and
-//! stores its inner value. Opening validates that stored identifier; supplying an
-//! [`ExpectedContext`] also checks the expected destination before key retrieval.
+//! stores its inner value. Opening takes an [`ExpectedContext`]: by default it checks only that the stored identifier is nonempty and opens under it as stored; a `NonEmpty<T>` also requires it to equal the destination the caller names, and a mismatch is refused before any key is retrieved.
 //! Record envelope names do not add cryptographic map keys.
 //!
 //! Generic targets use [`CallerContext`] (ciphertext and terms) or [`AeadContext`]

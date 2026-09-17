@@ -24,7 +24,7 @@
 //! let value = "alice@example.com".to_owned();
 //! // The output type selects ciphertext + equality; context is NonEmpty<String>.
 //! let encrypted: TextEq = keyset.encrypt_as(&value, NonEmpty::new("users/email".to_owned())?).await?;
-//! // Reads the identifier from the record, validates it, and opens through Vitamin C.
+//! // Default: checks only that the stored identifier is nonempty, then opens under it as stored. Pass `NonEmpty::new(..)?.into()` to also require it to match the destination.
 //! let opened: String = cipher.decrypt_as(encrypted, ExpectedContext::default()).await?;
 //! assert_eq!(opened, value);
 //! # Ok::<(), Box<dyn std::error::Error>> (())
