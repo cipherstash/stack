@@ -128,9 +128,19 @@ Targets differ per field, so there is no common output type. `map` applies to an
 to its own node type and collects the results — one batch, strongly typed
 targets right up to the point they become wire bytes.
 
-`Encryption::all` composes a runtime-length list, mirroring the `Pending::all`
-that already exists. Without it a plan-driven caller must reach past the
-declaration layer into `Pending`, which is what ADR-0003 set out to prevent.
+A plan-driven caller collects those mapped `Pending`s with `Pending::all`, and
+that is the right layer for it: a binding bridging a dynamic wire format to
+static types has to hold per-field encryptions before combining them, and
+naming the carrier costs nothing. What matters is the narrower property —
+`encrypt_as(&source, context)` takes one context and feeds both halves — which
+holds whether or not `Pending` appears in the binding's imports.
+
+An `Encryption::all` was proposed here and implemented, then removed: a
+declaration is produced by `encryption()`, which sees no source, so the length
+of such a list is fixed per *type* and cannot come from a plan. The
+homogeneous runtime-length case is already `EncryptFrom<Vec<S>> for Vec<T>`,
+whose length comes from the source. A combinator that composed from the source
+would serve the remaining case, and is not proposed until something needs it.
 
 ### 8. `ExpectedContext` stays permissive, deliberately
 
@@ -150,6 +160,20 @@ deputy, mitigated by client-side checking rather than by this mechanism. The
 AEAD and descriptor bindings are unaffected: nobody reaches a key they are not
 entitled to. Dropping the stored identifier entirely is the likelier end state
 than tightening the check.
+
+## Relation to vitaminc#341
+
+That PR collapses `Aad`, `AadPiece` and `PrfContext` into one `Context` with
+`IntoContext` as the only implementable trait, so a context's AAD and PRF
+encodings agree by construction rather than by a test. It is the same
+principle one layer down: #341 unifies how a context is *encoded*, this ADR
+unifies how it is *routed*.
+
+Two things here get simpler when it lands. The narrowing in decision 3 — a
+ciphertext context must implement `IntoPrfContext` as well as `IntoAad` —
+disappears, because one `IntoContext` impl gives both. And `CallerContext`,
+which exists to hold the two encodings of one value and keep them in
+agreement, thins to a newtype over `Context` or goes entirely.
 
 ## Considered options
 

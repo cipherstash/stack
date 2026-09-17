@@ -187,6 +187,23 @@ impl DeclaredContext {
 /// stored value be nonempty; a `NonEmpty<T>` asks that it also equal the
 /// destination the caller believes it is opening. Either way the check runs
 /// before any key is retrieved.
+///
+/// # The default accepts whatever the record stores
+///
+/// That is deliberate, and the reason is the column migration flow — add
+/// `email_encrypted`, migrate, drop `email`, rename `email_encrypted` to
+/// `email`. Every row written before the rename still stores the old
+/// identifier, so a strict check would reject all of them at the first read
+/// afterwards.
+///
+/// The consequence is worth stating rather than discovering: an identifier
+/// that must survive renames cannot also enforce placement. A whole,
+/// self-consistent record moved from one column to another opens cleanly — a
+/// confused deputy, to be caught by the caller passing the identifier it
+/// expects, not by this type's default. What is *not* at risk is the key: the
+/// descriptor is HMAC'd into the tag, so altering a stored identifier makes
+/// the retrieve fail rather than succeed, and nobody reaches a key they are
+/// not entitled to. See ADR-0004.
 #[derive(Clone, Debug)]
 pub struct ExpectedContext<T>(Option<NonEmpty<T>>);
 impl<T> Default for ExpectedContext<T> {
