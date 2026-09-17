@@ -39,9 +39,93 @@
 //!
 //! Ciphertext and term operations compose before awaiting, preserving batched
 //! key requests. Terms alone need only their respective PRF or ordering trait.
-//! A custom storage field can declare a core operation followed by `.transcode()`;
-//! its visitor receives native encrypted output, without an intermediate format.
 //! Query-only targets derive `EncryptFrom` alone.
+//!
+//! # A field in your own storage format
+//!
+//! A record's fields need not be the core types. A field type that stores
+//! encrypted output in its own shape declares the core operation that produces
+//! it and finishes the declaration with `.transcode()`: the cipher runs the
+//! operation and then hands its native output, leaf by leaf, to a
+//! `Visitor` (in `stack_encrypt::target::transcode`) the field type
+//! names. The visitor implements only the shapes the field stores; the trait's
+//! defaults refuse every other shape with `Error::UnsupportedShape`. Nothing
+//! is serialised, re-encrypted, or gathered into an intermediate tree on the
+//! way, so the bytes the visitor stores are the bytes the canonical path opens.
+//!
+//! ```
+//! use stack_encrypt::sem::EqualityTerm;
+//! use stack_encrypt::target::transcode::{Transcode, Visitor};
+//! use stack_encrypt::target::{self, CallerContext};
+//! use stack_encrypt::{
+//!     CipherText, Decryptable, Encrypt, EncryptFrom, Encryption, Error, NonEmpty, SealedValue,
+//!     StackCipher,
+//! };
+//! use stack_kms::FakeDataKeySource;
+//!
+//! /// A column that stores one sealed leaf as bytes.
+//! struct LeafBytes(Vec<u8>);
+//!
+//! struct LeafBytesVisitor;
+//! impl Visitor for LeafBytesVisitor {
+//!     type Value = LeafBytes;
+//!     // The one shape this column stores. A sequence or a map would reach a
+//!     // default method and be refused, never flattened.
+//!     fn sealed(self, leaf: SealedValue) -> Result<LeafBytes, Error> {
+//!         Ok(LeafBytes(leaf.to_bytes()))
+//!     }
+//! }
+//! impl Transcode for LeafBytes {
+//!     type Visitor = LeafBytesVisitor;
+//!     fn visitor() -> LeafBytesVisitor {
+//!         LeafBytesVisitor
+//!     }
+//! }
+//! // Whether the field holds recoverable ciphertext. The derive asks every
+//! // field, so that a record can itself be a field of another record.
+//! impl Decryptable for LeafBytes {
+//!     const DECRYPTABLE: bool = true;
+//! }
+//! // The declaration: the canonical ciphertext operation, read into this type.
+//! impl<S: Encrypt + Clone> EncryptFrom<S> for LeafBytes {
+//!     type Context = CallerContext;
+//!     fn encryption<'s, K: 'static>(context: CallerContext) -> Encryption<'s, S, Self, K>
+//!     where
+//!         S: 's,
+//!     {
+//!         target::ciphertext(context).transcode()
+//!     }
+//! }
+//!
+//! // The record uses it like any core field type.
+//! #[derive(EncryptFrom)]
+//! #[stash(plaintext = String)]
+//! struct TextEq {
+//!     #[stash(context_field)]
+//!     identifier: String,
+//!     c: LeafBytes,
+//!     hm: EqualityTerm,
+//! }
+//!
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+//! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! let keyset = cipher.default_keyset();
+//! let value = "alice@example.com".to_owned();
+//! let context = NonEmpty::new("users/email".to_owned())?;
+//! let encrypted: TextEq = keyset.encrypt_as(&value, context.clone()).await?;
+//!
+//! // What the column holds is the leaf itself: the canonical path opens it.
+//! let leaf = SealedValue::from_bytes(&encrypted.c.0)?;
+//! let opened: String = cipher.decrypt(CipherText::Single(leaf), context).await?;
+//! assert_eq!(opened, value);
+//! # Ok::<(), Box<dyn std::error::Error>> (())
+//! # }).unwrap();
+//! ```
+//!
+//! To recover the plaintext through the record rather than the canonical path,
+//! the field type also implements `DecryptInto` and `DecryptField`, and the
+//! record derives `DecryptInto`; the crate's `transcode` integration test shows
+//! the full set.
 //!
 #![doc = include_str!("../docs/attributes.md")]
 #![doc(html_favicon_url = "https://cipherstash.com/favicon.ico")]

@@ -51,10 +51,12 @@ from a `NonEmpty<T>` or a supported integer. Both encodings and the descriptor's
 structured identity are preserved when borrowing context data is converted into
 an owned declaration. No context is inferred from a Rust type's name.
 
-The blanket `EncryptInto` and `DecryptFrom` convenience traits execute these
-declarations. Import `DecryptFrom` to call `.decrypt_into(...)`. Custom targets
-implement the declaration methods `encryption` and `decryption`; the old methods
-that received plaintext and a cipher are no longer extension points.
+A declaration is executed by `keyset.encrypt_as(&value, context)` and
+`cipher.decrypt_as(record, context)`, or through the blanket `EncryptInto` and
+`DecryptFrom` traits for the source-side spelling (`value.encrypt_into(&keyset)`,
+`record.decrypt_into(&cipher, context)`). A hand-written target implements the
+same two declaration methods the derives emit, `EncryptFrom::encryption` and
+`DecryptInto::decryption`; neither receives the plaintext or a cipher.
 
 Every attribute except `plaintext` is singular, and repeating one is a
 compile error rather than a silent overwrite (`plaintext` is repeatable,
