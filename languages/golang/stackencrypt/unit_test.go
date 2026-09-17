@@ -25,7 +25,7 @@ func TestCommitRecordsPreservesRowsAndIsAtomic(t *testing.T) {
 		Age   uint8  `stash:"context=users/age"`
 		Email string `stash:"context=users/email"`
 	}
-	plan, err := planFor(reflect.TypeOf(row{}))
+	plan, err := planFor(reflect.TypeOf(row{}), recordOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ type taggedUser struct {
 }
 
 func TestPlanFromTags(t *testing.T) {
-	plan, err := planFor(reflect.TypeOf(taggedUser{}))
+	plan, err := planFor(reflect.TypeOf(taggedUser{}), recordOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,9 +209,124 @@ func TestPlanFromTags(t *testing.T) {
 			B int `stash:"context=c,name=x"`
 		}{},
 	} {
-		if _, err := planFor(reflect.TypeOf(bad)); err == nil {
+		if _, err := PlanFromTags(reflect.TypeOf(bad)); err == nil {
 			t.Errorf("%s: plan accepted", name)
 		}
+	}
+}
+
+// An explicit plan is the tag plan by another route: the same fields give
+// the guest the same bytes, and WithPlan's zero value is the tag path.
+func TestExplicitPlanIsTheTagPlan(t *testing.T) {
+	typ := reflect.TypeOf(taggedUser{})
+	explicit, err := NewPlan(
+		PlanField{Field: "Age", Context: "users/age", Index: []TermKind{Equality, Ore}},
+		PlanField{Field: "Email", Name: "email", Context: "users/email", Index: []TermKind{Equality, Match}},
+		PlanField{Field: "Notes", Context: "users/notes"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tagged, err := PlanFromTags(typ)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(explicit.Fields(), tagged.Fields()) {
+		t.Fatalf("fields differ:\n%+v\n%+v", explicit.Fields(), tagged.Fields())
+	}
+	encode := func(p Plan) []byte {
+		bound, err := p.bind(typ)
+		if err != nil {
+			t.Fatal(err)
+		}
+		obj, err := planValue(bound, recordOptions{extension: []any{uint64(7)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := vcffi.Marshal(obj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	if a, b := encode(explicit), encode(tagged); !bytes.Equal(a, b) {
+		t.Fatalf("guest input differs:\n%x\n%x", a, b)
+	}
+	viaOption, err := planFor(typ, applyOptions([]RecordOption{WithPlan(explicit)}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	viaTags, err := planFor(typ, applyOptions([]RecordOption{WithPlan(Plan{})}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(viaOption, viaTags) {
+		t.Fatalf("bound plans differ:\n%+v\n%+v", viaOption, viaTags)
+	}
+	// Fields returns a copy.
+	explicit.Fields()[0].Context = "changed"
+	if explicit.Fields()[0].Context != "users/age" {
+		t.Fatal("Fields exposed the plan's own slice")
+	}
+}
+
+// A plan can name only exported, direct fields of the struct it binds to,
+// and only fields that exist; an untagged struct binds fine under it.
+func TestPlanBindsByFieldName(t *testing.T) {
+	type embedded struct{ Inner string }
+	type untagged struct {
+		embedded
+		Email  string
+		hidden string //nolint:unused // proves unexported fields are refused
+	}
+	typ := reflect.TypeOf(untagged{})
+	if _, err := PlanFromTags(typ); err == nil {
+		t.Fatal("untagged struct has a tag plan")
+	}
+	ok, err := NewPlan(PlanField{Field: "Email", Context: "c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err := planFor(typ, applyOptions([]RecordOption{WithPlan(ok)}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bound) != 1 || bound[0].index != 1 || bound[0].name != "Email" {
+		t.Fatalf("bound = %+v", bound)
+	}
+	for name, field := range map[string]string{
+		"missing":    "Nope",
+		"unexported": "hidden",
+		"promoted":   "Inner",
+	} {
+		p, err := NewPlan(PlanField{Field: field, Context: "c"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.bind(typ); err == nil || !strings.Contains(err.Error(), field) {
+			t.Errorf("%s: bind error = %v, want one naming %q", name, err, field)
+		}
+	}
+	if _, err := ok.bind(reflect.TypeOf(42)); err == nil {
+		t.Error("bound to a non-struct")
+	}
+}
+
+func TestNewPlanValidates(t *testing.T) {
+	for name, fields := range map[string][]PlanField{
+		"no fields":      nil,
+		"no field name":  {{Context: "c"}},
+		"no context":     {{Field: "A"}},
+		"unknown kind":   {{Field: "A", Context: "c", Index: []TermKind{TermKind(9)}}},
+		"duplicate name": {{Field: "A", Context: "c", Name: "x"}, {Field: "B", Context: "c", Name: "x"}},
+		"field twice":    {{Field: "A", Context: "c"}, {Field: "A", Context: "d"}},
+	} {
+		if _, err := NewPlan(fields...); err == nil {
+			t.Errorf("%s: plan accepted", name)
+		}
+	}
+	if (Plan{}).Fields() != nil {
+		t.Error("zero plan has fields")
 	}
 }
 

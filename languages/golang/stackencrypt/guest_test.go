@@ -519,6 +519,18 @@ func TestGuestAcceptsEveryEncodingThisPackageBuilds(t *testing.T) {
 	rows := []recordRow{{Age: 1, Email: "a@b.c"}}
 	var out []recordRow
 	var one recordRow
+	type untaggedRow struct {
+		Age   uint32
+		Email string
+	}
+	plan, err := NewPlan(
+		PlanField{Field: "Age", Context: "users/age", Index: []TermKind{Equality, Ore}},
+		PlanField{Field: "Email", Context: "users/email", Index: []TermKind{Equality, Match}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var planned []untaggedRow
 	calls := map[string]func() error{
 		"KeysetID by name":   func() error { _, err := named.KeysetID(ctx); return err },
 		"KeysetID by id":     func() error { _, err := byID.KeysetID(ctx); return err },
@@ -542,6 +554,13 @@ func TestGuestAcceptsEveryEncodingThisPackageBuilds(t *testing.T) {
 		"DecryptRecords bound": func() error { return def.DecryptRecords(ctx, []EncryptedRecord{record}, &out) },
 		"DecryptRecords any":   func() error { return c.DecryptRecords(ctx, []EncryptedRecord{record, record}, &out) },
 		"DecryptRecord any":    func() error { return c.DecryptRecord(ctx, record, &one, ExtendContext("x")) },
+		"EncryptRecords plan": func() error {
+			_, err := def.EncryptRecords(ctx, []untaggedRow{{Age: 1, Email: "a@b.c"}}, WithPlan(plan))
+			return err
+		},
+		"DecryptRecords plan": func() error {
+			return c.DecryptRecords(ctx, []EncryptedRecord{record}, &planned, WithPlan(plan), ExtendContext(uint64(7)))
+		},
 	}
 	for name, call := range calls {
 		if err := call(); !errors.Is(err, ErrState) {
