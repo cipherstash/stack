@@ -246,13 +246,11 @@ where
     EqualityTerm: EncryptFrom<S>,
 {
     type Context = <EqualityTerm as EncryptFrom<S>>::Context;
-    fn encryption<'s, K: 'static>(
-        context: Self::Context,
-    ) -> stack_encrypt::Encryption<'s, S, Self, K>
+    fn encryption<'s, K: 'static>() -> stack_encrypt::Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
-        EqualityTerm::encryption(context).map(OpaqueTerm)
+        <EqualityTerm as EncryptFrom<S>>::encryption().map(OpaqueTerm)
     }
 }
 

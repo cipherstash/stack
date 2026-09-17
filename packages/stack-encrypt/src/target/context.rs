@@ -62,18 +62,12 @@ impl CallerContext {
     pub(super) fn validated(self) -> Result<NonEmpty<Self>, Error> {
         nonempty(self)
     }
-    /// Extend a field's own context with this caller context: the field's
-    /// literal becomes the prefix, this context the extension, exactly as a
-    /// `struct = T` derive composes them.
-    ///
-    /// # Errors
-    ///
-    /// Fails if `field` is empty; a field's own context is a literal the
-    /// derive has already checked, so a hand-written caller is the only one
-    /// that can hit this.
-    pub fn under(self, field: &'static str) -> Result<Self, Error> {
-        let prefix = nonempty(field)?;
-        Ok(prefix.with(self.validated()?).into())
+    /// The own context `own`, extended by this caller context: the field's
+    /// literal is the prefix, this context the extension, exactly as a
+    /// `struct = T` derive composes them — `("users/age", id)`. The own
+    /// context is never discarded, and both encodings are preserved.
+    pub fn extend(self, own: NonEmpty<&'static str>) -> Self {
+        own.with(self).into()
     }
 }
 
@@ -114,18 +108,39 @@ impl AeadContext {
     pub(super) fn validated(self) -> Result<NonEmpty<Self>, Error> {
         nonempty(self)
     }
-    /// Extend a field's own context with this caller context, as
-    /// [`CallerContext::under`] does for a record that derives terms: the
+    /// The own context `own`, extended by this caller context, as
+    /// [`CallerContext::extend`] does for a record that derives terms: the
     /// field's literal is the prefix, this context the extension.
-    ///
-    /// # Errors
-    ///
-    /// Fails if `field` is empty; a field's own context is a literal the
-    /// derive has already checked, so a hand-written caller is the only one
-    /// that can hit this.
-    pub fn under(self, field: &'static str) -> Result<Self, Error> {
-        let prefix = nonempty(field)?;
-        Ok(prefix.with(self.validated()?).into())
+    pub fn extend(self, own: NonEmpty<&'static str>) -> Self {
+        own.with(self).into()
+    }
+}
+
+/// A caller's context of either kind, extending a field's own context: what
+/// [`Encryption::extend`](super::Encryption::extend) asks of the context a
+/// subtree is run under. An own context is a `NonEmpty<&'static str>` — the
+/// derive emits a `nonempty!(..)` for a literal — so an empty one is refused
+/// at compile time, and extending cannot fail.
+///
+/// Sealed: the two core-owned types are the two kinds, and a context that
+/// extends is one whose encodings the core built.
+pub trait Extends: sealed::Sealed + Sized {
+    /// The own context `own`, extended by this one.
+    fn extend(self, own: NonEmpty<&'static str>) -> Self;
+}
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for super::CallerContext {}
+    impl Sealed for super::AeadContext {}
+}
+impl Extends for CallerContext {
+    fn extend(self, own: NonEmpty<&'static str>) -> Self {
+        CallerContext::extend(self, own)
+    }
+}
+impl Extends for AeadContext {
+    fn extend(self, own: NonEmpty<&'static str>) -> Self {
+        AeadContext::extend(self, own)
     }
 }
 
@@ -154,17 +169,13 @@ impl<'a, T: IntoAad<'a> + IntoPrfContext<'a> + Clone> From<NonEmpty<T>> for Decl
     }
 }
 impl DeclaredContext {
-    /// The context one field is derived under: its own literal, extended by
-    /// the caller's context if one was given.
-    ///
-    /// # Errors
-    ///
-    /// Fails if `field` is empty. The derive checks its literals at compile
-    /// time, so only a hand-written caller can hit this.
-    pub fn field(self, field: &'static str) -> Result<CallerContext, Error> {
+    /// The context one field is derived under: its own `own`, extended by
+    /// the caller's context if one was given — `"users/age"` as it is under
+    /// `()`, `("users/age", id)` under a caller's `id`.
+    pub fn under(self, own: NonEmpty<&'static str>) -> CallerContext {
         match self.0 {
-            Some(context) => context.under(field),
-            None => nonempty(field).map(Into::into),
+            Some(caller) => caller.extend(own),
+            None => own.into(),
         }
     }
 }

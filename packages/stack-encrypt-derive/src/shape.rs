@@ -1,14 +1,35 @@
 //! Classification of the derive input into the record it describes.
 
-use proc_macro2::{Span, TokenStream};
-use quote::quote;
+use proc_macro2::{Group, Span, TokenStream, TokenTree};
+use quote::{quote, quote_spanned, ToTokens};
 use syn::spanned::Spanned;
 use syn::{
     parse_quote, Data, DeriveInput, Expr, Fields, Generics, Ident, Lifetime, LitStr, Member, Path,
-    Result, Type,
+    Result, Type, WherePredicate,
 };
 
 use crate::attrs::{ContainerAttrs, FieldAttrs};
+
+/// `tokens`, every one of them at `span`. An interpolated tree keeps the
+/// spans it was built with, so a bound the derive states about a field is
+/// reported at that field only if the *types* in it are spanned there too —
+/// `quote_spanned!` alone re-spans nothing it interpolates.
+fn respan(tokens: TokenStream, span: Span) -> TokenStream {
+    tokens
+        .into_iter()
+        .map(|tree| match tree {
+            TokenTree::Group(group) => {
+                let mut group = Group::new(group.delimiter(), respan(group.stream(), span));
+                group.set_span(span);
+                TokenTree::Group(group)
+            }
+            mut leaf => {
+                leaf.set_span(span);
+                leaf
+            }
+        })
+        .collect()
+}
 
 /// A generated lifetime must not shadow one the record declares. Append
 /// underscores until the name is free, preserving the user's parameters.
@@ -398,10 +419,11 @@ impl Record {
             parse_quote!(#krate::target::CallerContext)
         }
     }
-    /// The context a field is handed: the caller's as it is, or — for a
-    /// field with a context of its own — what `context_expr` builds from
-    /// the caller's: a `CallerContext` from a `DeclaredContext`'s `field`,
-    /// or the caller's own type from its `under`.
+    /// The context a field is handed on the decrypt side: the caller's as it
+    /// is, or — for a field with a context of its own — what `context_expr`
+    /// builds from the caller's: a `CallerContext` from a
+    /// `DeclaredContext`'s `under`, or the caller's own type from its
+    /// `extend`.
     pub(crate) fn field_context_type(&self, field: &Field) -> Type {
         let krate = &self.krate;
         match field.field_context() {
@@ -411,24 +433,110 @@ impl Record {
             FieldContext::Own(_) | FieldContext::Caller => self.context_type(false),
         }
     }
-    pub(crate) fn context_expr(&self, field: &Field, decrypt: bool) -> TokenStream {
+    /// The context type the record's declaration tree carries on the
+    /// encrypt side (ADR-0004): a `DeclaredContext` when every field has a
+    /// context of its own, so the caller's is optional; otherwise the
+    /// caller's — the `context_type` named, or `CallerContext`. It is the
+    /// record's own `Context` except for a record that stores its context,
+    /// which declares the `NonEmpty<T>` it stores and converts it into this
+    /// once, at the root.
+    pub(crate) fn threaded_context(&self) -> Type {
+        let krate = &self.krate;
+        if self.context_field().is_some() {
+            parse_quote!(#krate::target::CallerContext)
+        } else {
+            self.context_type(false)
+        }
+    }
+
+    /// What `under` / `extend` hand a field with a context of its own: a
+    /// `CallerContext` where the record makes the caller's optional
+    /// (`under`), the threaded context itself where it does not (`extend`).
+    fn own_context_extended_by(&self) -> Type {
+        let krate = &self.krate;
+        if self.declared_contexts() {
+            parse_quote!(#krate::target::CallerContext)
+        } else {
+            self.threaded_context()
+        }
+    }
+
+    /// How the threaded context reaches this field's declaration, as the
+    /// call appended to it on the encrypt side (ADR-0004).
+    ///
+    /// The context reaches operations by being threaded, so a field names
+    /// itself once rather than computing a context to hand over. A field
+    /// with a context of its own gives its subtree that literal — `under`
+    /// when the record can make the caller's context optional, `extend`
+    /// when some other field is a bare leaf and it cannot. A field with none
+    /// is handed the threaded context as it is, converted into whatever its
+    /// type declares it needs: the AEAD half for a ciphertext, unchanged for
+    /// a term, composed with its own contexts by a nested record, and — for
+    /// a leaf reached through a record that may run under `()` — refused,
+    /// at the field.
+    ///
+    /// Spanned at the field type: an interpolated token stream keeps the
+    /// spans it was built with, so what the field's type refuses is
+    /// reported there rather than at the derive.
+    pub(crate) fn field_threading(&self, field: &Field) -> TokenStream {
+        let krate = &self.krate;
+        let span = field.ty.span();
+        match field.field_context() {
+            FieldContext::Own(lit) => {
+                if self.declared_contexts() {
+                    quote_spanned!(span=> .under(#krate::nonempty!(#lit)))
+                } else {
+                    let threaded = respan(self.threaded_context().into_token_stream(), span);
+                    quote_spanned!(span=> .extend::<#threaded>(#krate::nonempty!(#lit)))
+                }
+            }
+            FieldContext::Caller => {
+                let threaded = respan(self.threaded_context().into_token_stream(), span);
+                quote_spanned!(span=> .accepting::<#threaded>())
+            }
+        }
+    }
+
+    /// What [`field_threading`](Self::field_threading) asks of a field's
+    /// type, as the impl's where-clause: that it is a target of `source`,
+    /// and that the context handed down converts into the one it declares.
+    /// Only for a field whose source the derive can name — a `from` field's
+    /// obligation is checked in the body, against a plaintext field's type
+    /// the derive cannot name.
+    pub(crate) fn field_bounds(&self, field: &Field, source: &Type) -> [WherePredicate; 2] {
+        let krate = &self.krate;
+        let ty = &field.ty;
+        let context = quote!(<#ty as #krate::target::EncryptFrom<#source>>::Context);
+        let threading = match field.field_context() {
+            FieldContext::Own(_) => {
+                let extended = self.own_context_extended_by();
+                parse_quote!(#context: From<#extended>)
+            }
+            FieldContext::Caller => {
+                let threaded = self.threaded_context();
+                parse_quote!(#threaded: Into<#context>)
+            }
+        };
+        [
+            parse_quote!(#ty: #krate::target::EncryptFrom<#source>),
+            threading,
+        ]
+    }
+
+    /// The context a field is opened under, from the record's `__context`,
+    /// on the decrypt side: the caller's as it is, or the field's own
+    /// extended by it.
+    pub(crate) fn context_expr(&self, field: &Field) -> TokenStream {
         let krate = &self.krate;
         match field.field_context() {
             FieldContext::Caller => quote!(::core::clone::Clone::clone(&__context)),
             FieldContext::Own(lit) => {
-                let failed = if decrypt {
-                    quote!(#krate::target::Decryption::failed)
-                } else {
-                    quote!(#krate::target::Encryption::failed)
-                };
                 let method = if self.declared_contexts() {
-                    quote!(field)
-                } else {
                     quote!(under)
+                } else {
+                    quote!(extend)
                 };
-                quote!(match __context.clone().#method(#lit) {
-                    Ok(context) => context, Err(error) => return #failed(error),
-                })
+                quote!(::core::clone::Clone::clone(&__context).#method(#krate::nonempty!(#lit)))
             }
         }
     }
@@ -440,7 +548,10 @@ impl Record {
         }
     }
 }
-pub(crate) fn zip(operations: Vec<(TokenStream, Ident)>, result: TokenStream) -> TokenStream {
+/// The chain zipping `operations` into one description, and the nested
+/// tuple pattern that binds each operation's output to its local in the
+/// closure that maps the chain's output.
+pub(crate) fn zip_chain(operations: Vec<(TokenStream, Ident)>) -> (TokenStream, TokenStream) {
     let mut chain = TokenStream::new();
     let mut pattern = TokenStream::new();
     for (index, (operation, local)) in operations.into_iter().enumerate() {
@@ -452,6 +563,12 @@ pub(crate) fn zip(operations: Vec<(TokenStream, Ident)>, result: TokenStream) ->
             pattern = quote!((#pattern, #local));
         }
     }
+    (chain, pattern)
+}
+
+/// The zipped `operations`, mapped to `result`.
+pub(crate) fn zip(operations: Vec<(TokenStream, Ident)>, result: TokenStream) -> TokenStream {
+    let (chain, pattern) = zip_chain(operations);
     quote!(#chain.map(move |#pattern| #result))
 }
 

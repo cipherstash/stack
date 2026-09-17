@@ -23,6 +23,14 @@
 //! contexts unchanged and whose nonempty form extends them. Custom targets may
 //! instead declare `Context = ()`.
 //!
+//! Within one target, every operation runs under the one context the target is
+//! handed (ADR-0004): the context is a type parameter of [`Encryption`], zipped
+//! subtrees must need the same one and receive the same value, and a ciphertext
+//! beside a term takes the term's `CallerContext` — of which its own
+//! `AeadContext` is the AEAD half — through [`Encryption::accepting`]. A record
+//! gives a field a context of its own with [`Encryption::under`] or
+//! [`Encryption::extend`], and the caller's context then extends it.
+//!
 //! # Output adapters
 //!
 //! An adapter selects a core operation and converts only its completed output.
@@ -40,9 +48,9 @@
 //! impl<S> EncryptFrom<S> for StoredEquality
 //! where EqualityTerm: EncryptFrom<S, Context = CallerContext> {
 //!     type Context = CallerContext;
-//!     fn encryption<'s,K:'static>(context:Self::Context)->Encryption<'s,S,Self,K>
+//!     fn encryption<'s,K:'static>()->Encryption<'s,S,Self,K,Self::Context>
 //!     where S:'s {
-//!         EqualityTerm::encryption(context).map(|term| Self(term.into_bytes()))
+//!         <EqualityTerm as EncryptFrom<S>>::encryption().map(|term| Self(term.into_bytes()))
 //!     }
 //! }
 //! ```
@@ -78,7 +86,7 @@ mod request;
 pub mod transcode;
 
 pub(crate) use self::core::{decipher_pending, seal_pending};
-pub use context::{AeadContext, CallerContext, DeclaredContext, ExpectedContext};
+pub use context::{AeadContext, CallerContext, DeclaredContext, ExpectedContext, Extends};
 pub use operations::{
     ciphertext, equality, matching, ope, open, ore, DecryptField, DecryptFrom, DecryptInto,
     Decryptable, Decryption, EncryptFrom, EncryptInto, Encryption,

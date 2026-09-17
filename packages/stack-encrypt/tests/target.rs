@@ -346,13 +346,17 @@ struct EncryptedAge {
 
 impl EncryptFrom<u32> for EncryptedAge {
     type Context = CallerContext;
-    fn encryption<'s, K: 'static>(context: Self::Context) -> Encryption<'s, u32, Self, K>
+    fn encryption<'s, K: 'static>() -> Encryption<'s, u32, Self, K, Self::Context>
     where
         u32: 's,
     {
-        stack_encrypt::target::ciphertext(context.clone())
-            .zip(stack_encrypt::target::equality(context.clone()))
-            .zip(stack_encrypt::target::ore(context))
+        // One context reaches all three; there is no second one to pass.
+        // The ciphertext seals under the AEAD half of the one context the
+        // terms derive under: `accepting` lets it take theirs.
+        stack_encrypt::target::ciphertext()
+            .accepting()
+            .zip(stack_encrypt::target::equality())
+            .zip(stack_encrypt::target::ore())
             .map(|((c, hm), ob)| Self { c, hm, ob })
     }
 }
@@ -455,11 +459,11 @@ where
     EqualityTerm: EncryptFrom<S>,
 {
     type Context = <EqualityTerm as EncryptFrom<S>>::Context;
-    fn encryption<'s, K: 'static>(context: Self::Context) -> Encryption<'s, S, Self, K>
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
-        EqualityTerm::encryption(context).map(|term| Self(term.into_bytes()))
+        <EqualityTerm as EncryptFrom<S>>::encryption().map(|term| Self(term.into_bytes()))
     }
 }
 #[tokio::test]

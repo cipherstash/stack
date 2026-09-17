@@ -2,10 +2,16 @@
 //! executes. No constructor here accepts a plaintext-and-cipher callback; a
 //! description selects core operations and converts their completed output,
 //! nothing more.
-use super::context::{AeadContext, CallerContext};
+//!
+//! No constructor takes a context either. The context reaches every operation
+//! by being threaded through the tree that composes them, as a type parameter
+//! of [`Encryption`] (ADR-0004): a target cannot seal a value under one
+//! context and index it under another, because there is no second context to
+//! hand anything.
+use super::context::{AeadContext, CallerContext, DeclaredContext, Extends};
 use super::core::{encrypt_native, open_native, Term};
 use super::{CipherScope, Pending};
-use crate::{Error, KeysetCipher, StackCipher, StackCipherText};
+use crate::{Error, KeysetCipher, NonEmpty, StackCipher, StackCipherText};
 use stack_kms::MaybeSend;
 use std::fmt;
 
@@ -18,13 +24,17 @@ use std::fmt;
 /// cipher: the returned [`Encryption`]'s execution is private, so a target
 /// can choose operations and build its output but cannot replace encryption.
 pub trait EncryptFrom<S>: Sized + 'static {
-    /// What a caller supplies alongside the plaintext: a [`CallerContext`] or
-    /// [`AeadContext`] for a generic target, a `NonEmpty<T>` for a record that
-    /// stores its identifier, or `()` when the declaration carries every
-    /// context it needs.
+    /// The context this target still needs when it is run — what a caller
+    /// supplies alongside the plaintext: a [`CallerContext`] for a target
+    /// that derives terms, an [`AeadContext`] for one that only seals, a
+    /// `NonEmpty<T>` for a record that stores its identifier, or a
+    /// [`DeclaredContext`] — which `()` satisfies — for a record whose fields
+    /// name their own.
     type Context;
-    /// The description the cipher executes for one value of `S`.
-    fn encryption<'s, K: 'static>(context: Self::Context) -> Encryption<'s, S, Self, K>
+    /// The description the cipher executes for one value of `S`. The context
+    /// is supplied when the description is run, not here, so every operation
+    /// beneath it receives the same one (ADR-0004).
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's;
 }
@@ -43,24 +53,40 @@ pub trait DecryptInto<P>: Sized {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-type Build<'s, S, T, K> =
-    Box<dyn for<'a, 'k> FnOnce(&S, &'a KeysetCipher<'k, K>) -> Pending<'a, T, K> + Send + 's>;
+type Build<'s, S, T, K, Ctx> =
+    Box<dyn for<'a, 'k> FnOnce(&S, &'a KeysetCipher<'k, K>, Ctx) -> Pending<'a, T, K> + Send + 's>;
 #[cfg(target_arch = "wasm32")]
-type Build<'s, S, T, K> =
-    Box<dyn for<'a, 'k> FnOnce(&S, &'a KeysetCipher<'k, K>) -> Pending<'a, T, K> + 's>;
+type Build<'s, S, T, K, Ctx> =
+    Box<dyn for<'a, 'k> FnOnce(&S, &'a KeysetCipher<'k, K>, Ctx) -> Pending<'a, T, K> + 's>;
 #[cfg(not(target_arch = "wasm32"))]
 type Open<T, K> = Box<dyn for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K> + Send>;
 #[cfg(target_arch = "wasm32")]
 type Open<T, K> = Box<dyn for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K>>;
 
-/// A composable description of how `T` is encrypted from `S`.
+/// A composable description of how `T` is encrypted from `S`, under the
+/// `Ctx` it is handed when it runs.
 ///
 /// Built from the constructors in this module and the combinators below;
 /// executed only by [`KeysetCipher::encrypt_as`]. Nothing runs, and no key is
 /// requested, until then.
+///
+/// `Ctx` is the context this description still needs. It is a type parameter,
+/// not a stored value, and that is what makes two rules hold at compile time
+/// rather than by discipline (ADR-0004):
+///
+/// - **One context per target.** [`zip`](Self::zip) requires both sides to
+///   need the same `Ctx` and hands them the same value, so a target cannot
+///   seal under one context and index under another. A ciphertext beside a
+///   term takes the term's context through [`accepting`](Self::accepting):
+///   the [`AeadContext`] it seals under is the AEAD half of that one value.
+/// - **A leaf still cannot be reached without a context.** An operation needs
+///   a real one. [`under`](Self::under) and [`extend`](Self::extend) are the
+///   only ways to change the context a subtree runs under, and only `under`
+///   discharges the requirement into a [`DeclaredContext`], which is what
+///   `()` may satisfy.
 #[must_use = "an encryption description does nothing until a keyset cipher executes it"]
-pub struct Encryption<'s, S, T, K> {
-    build: Build<'s, S, T, K>,
+pub struct Encryption<'s, S, T, K, Ctx> {
+    build: Build<'s, S, T, K, Ctx>,
 }
 /// A composable description of how `T` is recovered from a stored target.
 ///
@@ -78,7 +104,7 @@ enum Opening<T, K> {
     Failed(Error),
     Open(Open<T, K>),
 }
-impl<S, T, K> fmt::Debug for Encryption<'_, S, T, K> {
+impl<S, T, K, Ctx> fmt::Debug for Encryption<'_, S, T, K, Ctx> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Encryption").finish_non_exhaustive()
     }
@@ -93,7 +119,7 @@ impl<T, K> fmt::Debug for Decryption<T, K> {
     }
 }
 
-impl<'s, S: 's, T: 'static, K: 'static> Encryption<'s, S, T, K> {
+impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// A description whose output is already known — metadata a record
     /// carries, or a declaration rejected before any key request.
     pub fn ready(result: Result<T, Error>) -> Self
@@ -101,53 +127,122 @@ impl<'s, S: 's, T: 'static, K: 'static> Encryption<'s, S, T, K> {
         T: MaybeSend,
     {
         Self {
-            build: Box::new(move |_, cipher| Pending::ready(cipher, result)),
+            build: Box::new(move |_, cipher, _| Pending::ready(cipher, result)),
         }
     }
     /// Reject the declaration: execution yields `error` without I/O, and any
     /// description this is zipped into fails with it.
     pub fn failed(error: Error) -> Self {
         Self {
-            build: Box::new(move |_, cipher| Pending::failed(cipher, error)),
+            build: Box::new(move |_, cipher, _| Pending::failed(cipher, error)),
         }
     }
     /// Build the destination from the completed output. `f` sees ciphertext
     /// and terms, never the plaintext.
-    pub fn map<U: 'static, F>(self, f: F) -> Encryption<'s, S, U, K>
+    pub fn map<U: 'static, F>(self, f: F) -> Encryption<'s, S, U, K, Ctx>
     where
         F: FnOnce(T) -> U + MaybeSend + 'static,
     {
         Encryption {
-            build: Box::new(move |source, cipher| (self.build)(source, cipher).map(f)),
+            build: Box::new(move |source, cipher, cx| (self.build)(source, cipher, cx).map(f)),
         }
     }
     /// [`map`](Self::map) for a conversion that can fail, such as reading
     /// native output into a destination that does not accept every shape.
-    pub fn try_map<U: 'static, F>(self, f: F) -> Encryption<'s, S, U, K>
+    pub fn try_map<U: 'static, F>(self, f: F) -> Encryption<'s, S, U, K, Ctx>
     where
         F: FnOnce(T) -> Result<U, Error> + MaybeSend + 'static,
     {
         Encryption {
-            build: Box::new(move |source, cipher| (self.build)(source, cipher).try_map(f)),
+            build: Box::new(move |source, cipher, cx| (self.build)(source, cipher, cx).try_map(f)),
         }
     }
     /// Drive the destination's [`Visitor`](super::transcode::Visitor) from
     /// this operation's native output, moving leaves and markers across
     /// without an intermediate tree.
-    pub fn transcode<U: super::transcode::Transcode + 'static>(self) -> Encryption<'s, S, U, K>
+    pub fn transcode<U: super::transcode::Transcode + 'static>(self) -> Encryption<'s, S, U, K, Ctx>
     where
         T: super::transcode::Reader,
     {
         self.try_map(|output| super::transcode::Reader::read(output, U::visitor()))
     }
-    /// Run both descriptions over the same source, settling their key
-    /// requests in one batch.
-    pub fn zip<U: 'static>(self, other: Encryption<'s, S, U, K>) -> Encryption<'s, S, (T, U), K> {
+    /// Run both descriptions over the same source, under the one context this
+    /// description is handed, settling their key requests in one batch.
+    ///
+    /// Both sides must need the same `Ctx`, and both receive the same value:
+    /// there is no second context to pass, which is the whole of ADR-0004's
+    /// first decision.
+    pub fn zip<U: 'static>(
+        self,
+        other: Encryption<'s, S, U, K, Ctx>,
+    ) -> Encryption<'s, S, (T, U), K, Ctx>
+    where
+        Ctx: Clone,
+    {
         Encryption {
-            build: Box::new(move |source, cipher| {
-                (self.build)(source, cipher).zip((other.build)(source, cipher))
+            build: Box::new(move |source, cipher, cx| {
+                (self.build)(source, cipher, cx.clone()).zip((other.build)(source, cipher, cx))
             }),
         }
+    }
+    /// Take a different context type, converting on the way in.
+    ///
+    /// A ciphertext seals under an [`AeadContext`] while the term beside it
+    /// derives under a [`CallerContext`]: `accepting` lets the ciphertext
+    /// take the term's context, of which its own is the AEAD half, so the two
+    /// zip under one value. Likewise a record declares the context its
+    /// *caller* supplies, which need not be the type its operations need — a
+    /// record storing its own context declares `NonEmpty<T>` while its
+    /// operations want a `CallerContext` — and this adapts the one to the
+    /// other once, at the root.
+    pub fn accepting<C2>(self) -> Encryption<'s, S, T, K, C2>
+    where
+        C2: Into<Ctx> + 's,
+    {
+        self.needing(Into::into)
+    }
+    /// Need a different context, derived from the one supplied by `derive`
+    /// at the root of this subtree. The one place a context changes on its
+    /// way down; every public way of doing so is a closure handed here.
+    fn needing<C2, F>(self, derive: F) -> Encryption<'s, S, T, K, C2>
+    where
+        C2: 's,
+        F: FnOnce(C2) -> Ctx + MaybeSend + 's,
+    {
+        Encryption {
+            build: Box::new(move |source, cipher, cx| (self.build)(source, cipher, derive(cx))),
+        }
+    }
+    /// Run this whole subtree under `own`, extended by the surrounding
+    /// context if there is one.
+    ///
+    /// A record names each field once here rather than handing a context to
+    /// every operation separately. It is also what discharges the context an
+    /// operation needs, which is why a leaf that is never given a context of
+    /// its own cannot be run under `()`. Available wherever a
+    /// [`CallerContext`] can become what the subtree needs: a leaf of either
+    /// kind, or a record whose own contexts a caller's extends.
+    pub fn under(self, own: NonEmpty<&'static str>) -> Encryption<'s, S, T, K, DeclaredContext>
+    where
+        Ctx: From<CallerContext>,
+    {
+        self.needing(move |cx: DeclaredContext| cx.under(own).into())
+    }
+    /// Run this whole subtree under `own`, extended by the surrounding
+    /// context `C` — which is still required.
+    ///
+    /// The sibling of [`under`](Self::under), for a record that cannot make
+    /// the caller's context optional because some *other* field of it is a
+    /// bare leaf. `C` is the caller's context type — a [`CallerContext`], or
+    /// an [`AeadContext`] for a record that only seals — and the same one
+    /// context reaches every operation beneath; the difference from `under`
+    /// is only whether `()` can satisfy the result.
+    pub fn extend<C>(self, own: NonEmpty<&'static str>) -> Encryption<'s, S, T, K, C>
+    where
+        C: Extends + 's,
+        Ctx: From<C>,
+    {
+        self.needing(move |cx: C| cx.extend(own).into())
     }
     /// Lift a description of a field to a description of the struct that
     /// holds it, which is how a `struct = T` derive composes its fields.
@@ -159,28 +254,57 @@ impl<'s, S: 's, T: 'static, K: 'static> Encryption<'s, S, T, K> {
     pub fn project<P: 's>(
         self,
         select: for<'borrow> fn(&'borrow P) -> &'borrow S,
-    ) -> Encryption<'s, P, T, K> {
+    ) -> Encryption<'s, P, T, K, Ctx> {
         Encryption {
-            build: Box::new(move |source, cipher| (self.build)(select(source), cipher)),
+            build: Box::new(move |source, cipher, cx| (self.build)(select(source), cipher, cx)),
         }
     }
 }
 
-/// The canonical ciphertext operation: seal `S` under `context` through its
-/// own Vitamin C `Encrypt` implementation, into the native
-/// [`StackCipherText`] tree. There is no Serde fallback; a plaintext without
-/// `Encrypt` does not compile.
-pub fn ciphertext<'s, S: crate::Encrypt + Clone + 's, K: 'static>(
-    context: impl Into<AeadContext>,
-) -> Encryption<'s, S, StackCipherText, K> {
-    let context = context.into();
-    Encryption {
-        build: Box::new(move |source, cipher| match context.validated() {
-            Ok(ctx) => encrypt_native(source, cipher, ctx),
-            Err(e) => Pending::failed(cipher, e),
-        }),
+impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's + Clone + MaybeSend + 'static>
+    Encryption<'s, S, T, K, Ctx>
+{
+    /// Build the output from the completed operations *and* the context they
+    /// ran under.
+    ///
+    /// For a record that stores its own context in a field
+    /// (`#[stash(context_field)]`): the context is supplied when the
+    /// description runs, so the field it populates is filled there too.
+    pub fn map_with_context<U: 'static, F>(self, f: F) -> Encryption<'s, S, U, K, Ctx>
+    where
+        F: FnOnce(T, Ctx) -> U + MaybeSend + 'static,
+    {
+        Encryption {
+            build: Box::new(move |source, cipher, cx: Ctx| {
+                let carried = cx.clone();
+                (self.build)(source, cipher, cx).map(move |value| f(value, carried))
+            }),
+        }
     }
 }
+
+/// The canonical ciphertext operation: seal `S`, under the [`AeadContext`]
+/// the tree hands it, through its own Vitamin C `Encrypt` implementation,
+/// into the native [`StackCipherText`] tree. There is no Serde fallback; a
+/// plaintext without `Encrypt` does not compile.
+///
+/// Sealing needs only the AEAD encoding of a context, so this needs an
+/// `AeadContext` where a term needs a [`CallerContext`]. Beside a term,
+/// [`accepting`](Encryption::accepting) lets it take the term's context —
+/// the AEAD half of the same value — so the two zip under one context.
+pub fn ciphertext<'s, S: crate::Encrypt + Clone + 's, K: 'static>(
+) -> Encryption<'s, S, StackCipherText, K, AeadContext> {
+    Encryption {
+        build: Box::new(
+            move |source, cipher, cx: AeadContext| match cx.validated() {
+                Ok(ctx) => encrypt_native(source, cipher, ctx),
+                Err(e) => Pending::failed(cipher, e),
+            },
+        ),
+    }
+}
+/// A term operation: `$function` produces `$output` from any `S` satisfying
+/// the bounds, under the [`CallerContext`] the tree hands it.
 macro_rules! term_operation {
     (
         $(#[$doc:meta])*
@@ -188,15 +312,13 @@ macro_rules! term_operation {
     ) => {
         $(#[$doc])*
         pub fn $function<'s, S, K: 'static, $($generics)*>(
-            context: impl Into<CallerContext>,
-        ) -> Encryption<'s, S, $output, K>
+        ) -> Encryption<'s, S, $output, K, CallerContext>
         where
             S: 's,
             $($bounds)*
         {
-            let context = context.into();
             Encryption {
-                build: Box::new(move |source, cipher| match context.validated() {
+                build: Box::new(move |source, cipher, cx: CallerContext| match cx.validated() {
                     Ok(ctx) => <$output as Term<S, K, _>>::encrypt_from(source, cipher, ctx),
                     Err(e) => Pending::failed(cipher, e),
                 }),
@@ -205,24 +327,25 @@ macro_rules! term_operation {
     };
 }
 term_operation!(
-    /// The equality term of `S` under `context`. Requires only `S`'s PRF
-    /// contract, not recoverable encryption.
+    /// The equality term of `S` under the context the tree hands it. Requires
+    /// only `S`'s PRF contract, not recoverable encryption.
     equality, crate::sem::EqualityTerm, [], [S: vitaminc_prf::PrfValue + Clone]
 );
 term_operation!(
-    /// The match term of any text `S` under `context`, tokenised and hashed
-    /// as `O` declares.
+    /// The match term of any text `S` under the context the tree hands it,
+    /// tokenised and hashed as `O` declares.
     matching, crate::sem::MatchTerm<O>, [O: crate::sem::MatchConfig + 'static], [S: AsRef<str>]
 );
 term_operation!(
-    /// The order-revealing term of `S` under `context`. The bounds are the
-    /// leaf's own: they say which `S` the CLLW ORE scheme can order.
+    /// The order-revealing term of `S` under the context the tree hands it.
+    /// The bounds are the leaf's own: they say which `S` the CLLW ORE scheme
+    /// can order.
     ore, crate::sem::OreTerm<S>, [],
     [S: cllw_ore::CllwOreEncrypt + Clone + Send + 'static, S::Output: Send + 'static]
 );
 term_operation!(
-    /// The order-preserving term of `S` under `context`, with the same
-    /// bounds as [`ore`].
+    /// The order-preserving term of `S` under the context the tree hands it,
+    /// with the same bounds as [`ore`].
     ope, crate::sem::OpeTerm<S>, [],
     [S: cllw_ore::CllwOpeEncrypt + Clone + Send + 'static, S::Output: Send + 'static]
 );
@@ -336,7 +459,7 @@ impl<K: 'static> KeysetCipher<'_, K> {
     where
         T: EncryptFrom<S>,
     {
-        (T::encryption(context).build)(source, self)
+        (T::encryption().build)(source, self, context)
     }
     /// Recover `P` from `source`, as its declaration describes. A leaf sealed
     /// under another keyset is refused ([`Error::ForeignKeyset`]) before any
@@ -451,11 +574,11 @@ impl<T: 'static> DecryptFrom for T {}
 
 impl<S: crate::Encrypt + Clone> EncryptFrom<S> for StackCipherText {
     type Context = AeadContext;
-    fn encryption<'s, K: 'static>(context: Self::Context) -> Encryption<'s, S, Self, K>
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
-        ciphertext(context)
+        ciphertext()
     }
 }
 impl<P: crate::Decrypt<'static> + 'static> DecryptInto<P> for StackCipherText {
@@ -466,22 +589,22 @@ impl<P: crate::Decrypt<'static> + 'static> DecryptInto<P> for StackCipherText {
 }
 impl<S: vitaminc_prf::PrfValue + Clone> EncryptFrom<S> for crate::sem::EqualityTerm {
     type Context = CallerContext;
-    fn encryption<'s, K: 'static>(context: Self::Context) -> Encryption<'s, S, Self, K>
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
-        equality(context)
+        equality()
     }
 }
 impl<S: AsRef<str>, O: crate::sem::MatchConfig + 'static> EncryptFrom<S>
     for crate::sem::MatchTerm<O>
 {
     type Context = CallerContext;
-    fn encryption<'s, K: 'static>(context: Self::Context) -> Encryption<'s, S, Self, K>
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
-        matching(context)
+        matching()
     }
 }
 impl<S> EncryptFrom<S> for crate::sem::OreTerm<S>
@@ -490,11 +613,11 @@ where
     S::Output: Send + 'static,
 {
     type Context = CallerContext;
-    fn encryption<'s, K: 'static>(context: Self::Context) -> Encryption<'s, S, Self, K>
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
-        ore(context)
+        ore()
     }
 }
 impl<S> EncryptFrom<S> for crate::sem::OpeTerm<S>
@@ -503,11 +626,11 @@ where
     S::Output: Send + 'static,
 {
     type Context = CallerContext;
-    fn encryption<'s, K: 'static>(context: Self::Context) -> Encryption<'s, S, Self, K>
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
-        ope(context)
+        ope()
     }
 }
 
@@ -521,17 +644,17 @@ where
     T::Context: Clone + 'static + MaybeSend,
 {
     type Context = T::Context;
-    fn encryption<'s, K: 'static>(context: Self::Context) -> Encryption<'s, Vec<S>, Self, K>
+    fn encryption<'s, K: 'static>() -> Encryption<'s, Vec<S>, Self, K, Self::Context>
     where
         S: 's,
     {
         Encryption {
-            build: Box::new(move |source, cipher| {
+            build: Box::new(move |source, cipher, cx: T::Context| {
                 Pending::collect(
                     cipher,
                     source
                         .iter()
-                        .map(|item| cipher.encrypt_as(item, context.clone())),
+                        .map(|item| cipher.encrypt_as(item, cx.clone())),
                 )
             }),
         }
@@ -542,13 +665,13 @@ where
     T::Context: 'static + MaybeSend,
 {
     type Context = T::Context;
-    fn encryption<'s, K: 'static>(context: Self::Context) -> Encryption<'s, Option<S>, Self, K>
+    fn encryption<'s, K: 'static>() -> Encryption<'s, Option<S>, Self, K, Self::Context>
     where
         S: 's,
     {
         Encryption {
-            build: Box::new(move |source, cipher| match source {
-                Some(item) => cipher.encrypt_as(item, context).map(Some),
+            build: Box::new(move |source, cipher, cx: T::Context| match source {
+                Some(item) => cipher.encrypt_as(item, cx).map(Some),
                 None => Pending::ready(cipher, Ok(None)),
             }),
         }
