@@ -685,7 +685,7 @@ mod tests {
         keyset: &'a KeysetCipher<'_, CountingSource>,
         n: usize,
     ) -> Pending<'a, Vec<Vec<u8>>, CountingSource> {
-        let requests = std::iter::repeat_with(|| Request::generate_data_key(d()))
+        let requests = std::iter::repeat_with(|| Request::generate_under(d()))
             .take(n)
             .collect();
         Pending::request(keyset, requests, move |responses| {
@@ -920,15 +920,12 @@ mod tests {
     async fn over_drawing_responses_is_a_response_shape_error() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let greedy: Pending<'_, Vec<u8>, _> = Pending::request(
-            &keyset,
-            vec![Request::generate_data_key(d())],
-            |responses| {
+        let greedy: Pending<'_, Vec<u8>, _> =
+            Pending::request(&keyset, vec![Request::generate_under(d())], |responses| {
                 let _ = responses.next_generated_key()?;
                 // One request, two draws.
                 responses.next_generated_key().map(|key| key.tag)
-            },
-        );
+            });
         let result = greedy.zip(generating(&keyset, 1)).await;
 
         assert!(
@@ -952,7 +949,7 @@ mod tests {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let lazy: Pending<'_, (), _> =
-            Pending::request(&keyset, vec![Request::generate_data_key(d())], |_| Ok(()));
+            Pending::request(&keyset, vec![Request::generate_under(d())], |_| Ok(()));
         let result = lazy.zip(generating(&keyset, 1)).await;
 
         assert!(
@@ -966,10 +963,7 @@ mod tests {
     async fn drawing_fewer_responses_than_requested_is_a_response_shape_error() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let requests = vec![
-            Request::generate_data_key(d()),
-            Request::generate_data_key(d()),
-        ];
+        let requests = vec![Request::generate_under(d()), Request::generate_under(d())];
         let lazy: Pending<'_, Vec<u8>, _> = Pending::request(&keyset, requests, |responses| {
             responses.next_generated_key().map(|key| key.tag)
         });
@@ -990,8 +984,8 @@ mod tests {
         let mut pairs = generating_pairs(&keyset, 1).await.unwrap();
         let (iv, tag) = pairs.remove(0);
         let requests = vec![
-            Request::generate_data_key(d()),
-            Request::retrieve_data_key(iv, tag, d(), keyset.keyset_id()),
+            Request::generate_under(d()),
+            Request::retrieve_under(iv, tag, d(), keyset.keyset_id()),
         ];
         let lazy: Pending<'_, Vec<u8>, _> = Pending::request(&keyset, requests, |responses| {
             responses.next_generated_key().map(|key| key.tag)
@@ -1031,7 +1025,7 @@ mod tests {
         keyset: &'a KeysetCipher<'_, CountingSource>,
         n: usize,
     ) -> Pending<'a, Vec<(Iv, Vec<u8>)>, CountingSource> {
-        let requests = std::iter::repeat_with(|| Request::generate_data_key(d()))
+        let requests = std::iter::repeat_with(|| Request::generate_under(d()))
             .take(n)
             .collect();
         Pending::request(keyset, requests, move |responses| {
@@ -1060,7 +1054,7 @@ mod tests {
 
         let requests: Vec<Request> = pairs
             .iter()
-            .map(|(iv, tag)| Request::retrieve_data_key(*iv, tag.clone(), d(), keyset.keyset_id()))
+            .map(|(iv, tag)| Request::retrieve_under(*iv, tag.clone(), d(), keyset.keyset_id()))
             .collect();
         let retrieve: Pending<'_, usize, _> = Pending::request(&keyset, requests, |responses| {
             Ok(responses.drain_retrieved().count())
@@ -1089,8 +1083,8 @@ mod tests {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let requests = vec![
-            Request::generate_data_key(Descriptor::of("users/email")),
-            Request::generate_data_key(Descriptor::of("users/name")),
+            Request::generate_under(Descriptor::of("users/email")),
+            Request::generate_under(Descriptor::of("users/name")),
         ];
         let pairs: Vec<(Iv, Vec<u8>)> = Pending::request(&keyset, requests, |responses| {
             (0..2)
@@ -1112,7 +1106,7 @@ mod tests {
             .iter()
             .zip(["users/name", "users/email"])
             .map(|((iv, tag), descriptor)| {
-                Request::retrieve_data_key(
+                Request::retrieve_under(
                     *iv,
                     tag.clone(),
                     Descriptor::of(descriptor),
@@ -1142,8 +1136,8 @@ mod tests {
         let keyset = cipher.default_keyset();
         let long = Descriptor::of("a".repeat(Descriptor::MAX_LEN + 1));
         let requests = vec![
-            Request::generate_data_key(Descriptor::of("users/email")),
-            Request::generate_data_key(long.clone()),
+            Request::generate_under(Descriptor::of("users/email")),
+            Request::generate_under(long.clone()),
         ];
         let Err(err) = dispatch(&cipher, Some(keyset.keyset_id()), requests).await else {
             panic!("an over-long descriptor must be refused");
@@ -1160,12 +1154,7 @@ mod tests {
 
         let mut pairs = generating_pairs(&keyset, 1).await.unwrap();
         let (iv, tag) = pairs.remove(0);
-        let requests = vec![Request::retrieve_data_key(
-            iv,
-            tag,
-            long,
-            keyset.keyset_id(),
-        )];
+        let requests = vec![Request::retrieve_under(iv, tag, long, keyset.keyset_id())];
         let Err(err) = dispatch(&cipher, Some(keyset.keyset_id()), requests).await else {
             panic!("an over-long descriptor must be refused");
         };
@@ -1179,7 +1168,7 @@ mod tests {
         // At the limit is fine.
         let before = cipher.kms().generate_calls();
 
-        let requests = vec![Request::generate_data_key(Descriptor::of(
+        let requests = vec![Request::generate_under(Descriptor::of(
             "a".repeat(Descriptor::MAX_LEN),
         ))];
         assert!(
@@ -1205,11 +1194,10 @@ mod tests {
     #[tokio::test]
     async fn a_generate_request_through_the_client_scope_has_no_keyset() {
         let cipher = cipher().await;
-        let pending: Pending<'_, Vec<u8>, _> = Pending::request(
-            &cipher,
-            vec![Request::generate_data_key(d())],
-            |responses| responses.next_generated_key().map(|key| key.tag),
-        );
+        let pending: Pending<'_, Vec<u8>, _> =
+            Pending::request(&cipher, vec![Request::generate_under(d())], |responses| {
+                responses.next_generated_key().map(|key| key.tag)
+            });
         let result = pending.await;
 
         assert!(matches!(result, Err(Error::NoKeyset)), "{result:?}");
@@ -1244,12 +1232,7 @@ mod tests {
         let other = Uuid::from_u128(2);
         let pending: Pending<'_, usize, _> = Pending::request(
             &keyset,
-            vec![Request::retrieve_data_key(
-                Iv::default(),
-                vec![1],
-                d(),
-                other,
-            )],
+            vec![Request::retrieve_under(Iv::default(), vec![1], d(), other)],
             |responses| Ok(responses.drain_retrieved().count()),
         );
         let result = pending.await;
@@ -1278,12 +1261,7 @@ mod tests {
         let other = Uuid::from_u128(2);
         let pending: Pending<'_, usize, _> = Pending::request(
             &cipher,
-            vec![Request::retrieve_data_key(
-                Iv::default(),
-                vec![1],
-                d(),
-                other,
-            )],
+            vec![Request::retrieve_under(Iv::default(), vec![1], d(), other)],
             |responses| Ok(responses.drain_retrieved().count()),
         );
         let result = pending.scoped_to(keyset.keyset_id()).await;
@@ -1364,9 +1342,9 @@ mod tests {
 
         // Interleaved: A, B, A.
         let requests = vec![
-            Request::retrieve_data_key(a1.0, a1.1.clone(), d(), a.keyset_id()),
-            Request::retrieve_data_key(b1.0, b1.1.clone(), d(), b.keyset_id()),
-            Request::retrieve_data_key(a2.0, a2.1.clone(), d(), a.keyset_id()),
+            Request::retrieve_under(a1.0, a1.1.clone(), d(), a.keyset_id()),
+            Request::retrieve_under(b1.0, b1.1.clone(), d(), b.keyset_id()),
+            Request::retrieve_under(a2.0, a2.1.clone(), d(), a.keyset_id()),
         ];
         let ivs: Vec<Iv> = Pending::request(&cipher, requests, |responses| {
             Ok(responses.drain_retrieved().map(|key| key.iv).collect())

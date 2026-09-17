@@ -13,9 +13,7 @@ use stack_encrypt::target::{
     CallerContext, DecryptFrom, DecryptInto, Decryption, EncryptFrom, EncryptInto, Encryption,
     Pending, Request,
 };
-use stack_encrypt::{
-    nonempty, Descriptor, EmptyError, Error, NonEmpty, StackCipher, StackCipherText,
-};
+use stack_encrypt::{nonempty, EmptyError, Error, NonEmpty, StackCipher, StackCipherText};
 use stack_kms::{FakeDataKeySource, IdentifiedBy, IndexKeySource};
 use uuid::Uuid;
 
@@ -840,7 +838,7 @@ async fn an_overdrawing_fulfilment_is_a_response_shape_error() {
 
     let pending: Pending<'_, (), _> = Pending::request(
         &cipher,
-        vec![Request::generate_data_key(Descriptor::of("t"))],
+        vec![Request::generate_data_key(nonempty!("t"))],
         |responses| {
             responses.next_generated_key()?;
             responses.next_generated_key()?; // one more than requested
