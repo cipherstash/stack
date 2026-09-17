@@ -11,7 +11,7 @@
 //! the response-scoping rules that keep one fulfilment from consuming a
 //! sibling's key material are unit-testable on their own.
 
-use super::context::CallerContext;
+use super::context::AeadContext;
 use std::collections::VecDeque;
 
 use stack_kms::{DataKey, DataKeyWithTag, Iv};
@@ -48,7 +48,13 @@ impl Request {
     /// cannot name a context other than the one its leaf is authenticated
     /// under (ADR-0004). ZeroKMS HMACs the descriptor into the key `tag`, so
     /// the key re-derives only under the same one.
-    pub fn generate_data_key(context: impl Into<CallerContext>) -> Self {
+    ///
+    /// A descriptor is rendered from the AEAD encoding alone, so the context
+    /// need only convert into an [`AeadContext`]: the `IntoAad`-only type a
+    /// [`StackCipherText`](crate::StackCipherText) seals under can request
+    /// the key it seals with, and a [`CallerContext`](super::CallerContext)
+    /// converts as it is.
+    pub fn generate_data_key(context: impl Into<AeadContext>) -> Self {
         Self::generate_under(Descriptor::of(context.into()))
     }
 
@@ -61,7 +67,7 @@ impl Request {
     pub fn retrieve_data_key(
         iv: Iv,
         tag: Vec<u8>,
-        context: impl Into<CallerContext>,
+        context: impl Into<AeadContext>,
         keyset_id: Uuid,
     ) -> Self {
         Self::retrieve_under(iv, tag, Descriptor::of(context.into()), keyset_id)
@@ -195,6 +201,7 @@ mod tests {
     use stack_kms::{DataKeySource, FakeDataKeySource, GenerateKeyPayload, RetrieveKeyPayload};
 
     use super::*;
+    use crate::{Aad, IntoAad, MaybeEmpty, NonEmpty};
 
     fn d() -> Descriptor {
         Descriptor::of("test/field")
@@ -258,8 +265,8 @@ mod tests {
 
     /// The public constructors render the descriptor themselves, from the
     /// context, so a request cannot name one that disagrees with the context
-    /// its leaf is authenticated under (ADR-0004) — and rendering through a
-    /// `CallerContext` preserves the context's structured identity.
+    /// its leaf is authenticated under (ADR-0004) — and rendering through an
+    /// `AeadContext` preserves the context's structured identity.
     #[test]
     fn a_public_request_renders_its_descriptor_from_its_context() {
         let context = crate::nonempty!("users/email").with(7u64);
@@ -270,6 +277,40 @@ mod tests {
         }
         match Request::retrieve_data_key(Iv::default(), vec![1], context, ks()).into_kind() {
             RequestKind::RetrieveDataKey { descriptor, .. } => assert_eq!(descriptor, expected),
+            RequestKind::GenerateDataKey { .. } => panic!("expected a retrieve request"),
+        }
+    }
+
+    /// AEAD only: no `IntoPrfContext`, so it can seal but not derive a term.
+    #[derive(Clone)]
+    struct Tenant(String);
+    impl MaybeEmpty for Tenant {
+        fn is_empty(&self) -> bool {
+            self.0.is_empty()
+        }
+    }
+    impl<'a> IntoAad<'a> for Tenant {
+        fn into_aad(self) -> Aad<'a> {
+            self.0.into_aad()
+        }
+    }
+
+    /// A descriptor is rendered from the AEAD encoding alone, so the context
+    /// a `StackCipherText` seals under — one with `IntoAad` and nothing else
+    /// — can request the data key it seals with. Requiring a PRF-capable
+    /// context here would shut an `AeadContext`-only target out of the
+    /// `Pending::request` extension point for no reason.
+    #[test]
+    fn an_aead_only_context_can_request_a_data_key() {
+        let context = NonEmpty::new(Tenant("acme".into())).unwrap();
+        match Request::generate_data_key(context.clone()).into_kind() {
+            RequestKind::GenerateDataKey { descriptor } => assert_eq!(descriptor.as_str(), "acme"),
+            RequestKind::RetrieveDataKey { .. } => panic!("expected a generate request"),
+        }
+        match Request::retrieve_data_key(Iv::default(), vec![1], context, ks()).into_kind() {
+            RequestKind::RetrieveDataKey { descriptor, .. } => {
+                assert_eq!(descriptor.as_str(), "acme")
+            }
             RequestKind::GenerateDataKey { .. } => panic!("expected a retrieve request"),
         }
     }
