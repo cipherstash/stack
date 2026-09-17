@@ -1016,9 +1016,13 @@ where
 /// So derive a term here to *query*: a probe has no ciphertext to agree with,
 /// and needs the field's context because that is what it is matching against.
 /// A term that is going to be **stored** should come from a target instead,
-/// where it shares one context with the ciphertext beside it by construction
-/// (ADR-0004). The bytes are identical either way; what differs is whether
-/// anything holds the two in agreement.
+/// where the one context the target is handed reaches the ciphertext and the
+/// term beside it alike, and giving either a context of its own is written
+/// in the declaration rather than plumbed (ADR-0004). A derived record does
+/// this per field and cannot get it wrong; a hand-written target can still
+/// put a subtree under its own context, but has to say so. The bytes are
+/// identical either way; what differs is whether anything holds the two in
+/// agreement.
 ///
 /// The descriptor is a context
 /// as the target-directed leaves take it — a [`NonEmpty<T>`]:

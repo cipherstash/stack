@@ -45,9 +45,13 @@ impl Request {
     /// Request one fresh data key (encrypt side), minted under `context`.
     ///
     /// The [`Descriptor`] is rendered here rather than supplied, so a request
-    /// cannot name a context other than the one its leaf is authenticated
-    /// under (ADR-0004). ZeroKMS HMACs the descriptor into the key `tag`, so
-    /// the key re-derives only under the same one.
+    /// cannot carry a descriptor that disagrees with its own `context`
+    /// (ADR-0004, decision 4). ZeroKMS HMACs the descriptor into the key
+    /// `tag`, so the key re-derives only under the same one. What this does
+    /// not relate is the request to the leaf sealed with the key: a
+    /// [`SealedValue`](crate::SealedValue) is still assembled from raw parts
+    /// at the extension point, and its AEAD context is the caller's to keep
+    /// in agreement with this one.
     ///
     /// A descriptor is rendered from the AEAD encoding alone, so the context
     /// need only convert into an [`AeadContext`]: the `IntoAad`-only type a
@@ -79,8 +83,8 @@ impl Request {
     /// Crate-internal: the batching paths derive one descriptor from one
     /// context and reuse it across every leaf of a tree, and re-rendering it
     /// per request would cost a context encoding per leaf. The public
-    /// constructor takes the context because an outside caller has no other
-    /// way to prove the two agree.
+    /// constructor takes the context so that a request's descriptor and the
+    /// context it was asked for under cannot disagree.
     pub(crate) fn generate_under(descriptor: Descriptor) -> Self {
         Self(RequestKind::GenerateDataKey { descriptor })
     }
@@ -264,8 +268,8 @@ mod tests {
     }
 
     /// The public constructors render the descriptor themselves, from the
-    /// context, so a request cannot name one that disagrees with the context
-    /// its leaf is authenticated under (ADR-0004) — and rendering through an
+    /// context, so a request cannot carry one that disagrees with its own
+    /// context (ADR-0004, decision 4) — and rendering through an
     /// `AeadContext` preserves the context's structured identity.
     #[test]
     fn a_public_request_renders_its_descriptor_from_its_context() {
