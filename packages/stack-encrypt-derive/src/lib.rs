@@ -4,16 +4,15 @@
 //! Generated code receives context and encrypted outputs, never a cipher.
 //!
 //! ```
-//! use stack_encrypt::{EncryptFrom, DecryptInto, StackCipher, StackCipherText, NonEmpty};
+//! use stack_encrypt::{EncryptFrom, DecryptInto, StackCipher, StackCipherText, nonempty};
 //! use stack_encrypt::sem::EqualityTerm;
-//! use stack_encrypt::target::ExpectedContext;
 //! use stack_kms::FakeDataKeySource;
 //!
 //! #[derive(EncryptFrom, DecryptInto)]
 //! #[stash(plaintext = String)]
 //! struct TextEq {
 //!     #[stash(context_field)]
-//!     identifier: String,
+//!     identifier: &'static str,
 //!     c: StackCipherText,
 //!     hm: EqualityTerm,
 //! }
@@ -22,10 +21,10 @@
 //! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 //! let keyset = cipher.default_keyset();
 //! let value = "alice@example.com".to_owned();
-//! // The output type selects ciphertext + equality; context is NonEmpty<String>.
-//! let encrypted: TextEq = keyset.encrypt_as(&value, NonEmpty::new("users/email".to_owned())?).await?;
-//! // Default: checks only that the stored identifier is nonempty, then opens under it as stored. Pass `NonEmpty::new(..)?.into()` to also require it to match the destination.
-//! let opened: String = cipher.decrypt_as(encrypted, ExpectedContext::default()).await?;
+//! // The output type selects ciphertext + equality; the context is NonEmpty<&str>, stored in `identifier`.
+//! let encrypted: TextEq = keyset.encrypt_as(&value, nonempty!("users/email")).await?;
+//! // Naming the destination requires the stored identifier to equal it before any key is retrieved. `ExpectedContext::default()` would check only that it is nonempty and open under it as stored.
+//! let opened: String = cipher.decrypt_as(encrypted, nonempty!("users/email").into()).await?;
 //! assert_eq!(opened, value);
 //! # Ok::<(), Box<dyn std::error::Error>> (())
 //! # }).unwrap();
@@ -61,8 +60,8 @@
 //! use stack_encrypt::target::transcode::{Transcode, Visitor};
 //! use stack_encrypt::target::{self, CallerContext};
 //! use stack_encrypt::{
-//!     CipherText, Decryptable, Encrypt, EncryptFrom, Encryption, Error, NonEmpty, SealedValue,
-//!     StackCipher,
+//!     CipherText, Decryptable, Encrypt, EncryptFrom, Encryption, Error, SealedValue, StackCipher,
+//!     nonempty,
 //! };
 //! use stack_kms::FakeDataKeySource;
 //!
@@ -105,7 +104,7 @@
 //! #[stash(plaintext = String)]
 //! struct TextEq {
 //!     #[stash(context_field)]
-//!     identifier: String,
+//!     identifier: &'static str,
 //!     c: LeafBytes,
 //!     hm: EqualityTerm,
 //! }
@@ -114,7 +113,7 @@
 //! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 //! let keyset = cipher.default_keyset();
 //! let value = "alice@example.com".to_owned();
-//! let context = NonEmpty::new("users/email".to_owned())?;
+//! let context = nonempty!("users/email");
 //! let encrypted: TextEq = keyset.encrypt_as(&value, context.clone()).await?;
 //!
 //! // What the column holds is the leaf itself: the canonical path opens it.
