@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerm, OreTerm};
 use stack_encrypt::target::{
-    CallerContext, DecryptFrom, DecryptInto, Decryption, EncryptFrom, EncryptInto, Encryption,
-    Pending, Request,
+    ciphertext, equality, CallerContext, DeclaredContext, DecryptFrom, DecryptInto, Decryption,
+    EncryptFrom, EncryptInto, Encryption, Pending, Request,
 };
 use stack_encrypt::{nonempty, EmptyError, Error, NonEmpty, StackCipher, StackCipherText};
 use stack_kms::{FakeDataKeySource, IdentifiedBy, IndexKeySource};
@@ -964,4 +964,162 @@ async fn cipher_directed_decrypt_rejects_a_transplanted_ciphertext() {
         "a target-sealed leaf must not open under another context via the cipher API \
          (the fake key source ignores descriptors; ZeroKMS would refuse the retrieve)"
     );
+}
+
+// --- One context per target, threaded through a hand-written tree (ADR-0004)
+
+/// A hand-written composite with a context of its own: the tree is given it
+/// once, with `under`, and the caller's context — if any — extends it. The
+/// ciphertext and the term beside it are under the same one by
+/// construction; there is no second context to hand either.
+struct OwnedEmail {
+    c: StackCipherText,
+    hm: EqualityTerm,
+}
+
+impl EncryptFrom<String> for OwnedEmail {
+    type Context = DeclaredContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
+    where
+        String: 's,
+    {
+        ciphertext()
+            .accepting()
+            .zip(equality())
+            .under(nonempty!("users/email"))
+            .map(|(c, hm)| Self { c, hm })
+    }
+}
+
+#[tokio::test]
+async fn under_gives_a_subtree_its_own_context_which_the_callers_extends() {
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let generator = generator().await;
+    let generator = generator.default_keyset();
+    let email = "alice@example.com".to_string();
+
+    // Under `()`: the own context as it is, for the ciphertext and the term
+    // alike.
+    let record: OwnedEmail = email.encrypt_into(&keyset).await.unwrap();
+    let probe: EqualityTerm = email
+        .encrypt_into_with_context(&generator, nonempty!("users/email"))
+        .await
+        .unwrap();
+    assert_eq!(record.hm, probe);
+    let opened: String = record
+        .c
+        .decrypt_into(&cipher, nonempty!("users/email"))
+        .await
+        .unwrap();
+    assert_eq!(opened, email);
+
+    // Under a caller's context: the own context extended by it, for both.
+    let record: OwnedEmail = email
+        .encrypt_into_with_context(&keyset, 7u64)
+        .await
+        .unwrap();
+    let probe: EqualityTerm = email
+        .encrypt_into_with_context(&generator, nonempty!("users/email").with(7u64))
+        .await
+        .unwrap();
+    assert_eq!(record.hm, probe);
+    let opened: String = record
+        .c
+        .decrypt_into(&cipher, nonempty!("users/email").with(7u64))
+        .await
+        .unwrap();
+    assert_eq!(opened, email);
+}
+
+/// A composite whose ciphertext has a context of its own and whose term is
+/// derived under the caller's: `extend` gives the one subtree its own, and
+/// the caller's stays required, because the other subtree needs it.
+struct ShadowedEmail {
+    shadow: StackCipherText,
+    hm: EqualityTerm,
+}
+
+impl EncryptFrom<String> for ShadowedEmail {
+    type Context = CallerContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
+    where
+        String: 's,
+    {
+        ciphertext()
+            .extend(nonempty!("users/shadow"))
+            .zip(equality())
+            .map(|(shadow, hm)| Self { shadow, hm })
+    }
+}
+
+#[tokio::test]
+async fn extend_gives_a_subtree_its_own_context_and_still_requires_the_callers() {
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let generator = generator().await;
+    let generator = generator.default_keyset();
+    let email = "alice@example.com".to_string();
+
+    let record: ShadowedEmail = email
+        .encrypt_into_with_context(&keyset, nonempty!("users"))
+        .await
+        .unwrap();
+    // The term is under the caller's context as it is ...
+    let probe: EqualityTerm = email
+        .encrypt_into_with_context(&generator, nonempty!("users"))
+        .await
+        .unwrap();
+    assert_eq!(record.hm, probe);
+    // ... and the ciphertext under its own, extended by the caller's.
+    let opened: String = record
+        .shadow
+        .decrypt_into(&cipher, nonempty!("users/shadow").with(nonempty!("users")))
+        .await
+        .unwrap();
+    assert_eq!(opened, email);
+}
+
+/// A composite declaring the context its *caller* supplies — a tenant id —
+/// while its operations need a `CallerContext`: `accepting` converts once,
+/// at the root, and `map_with_context` hands the output what the tree ran
+/// under, so the record can keep it.
+struct TenantEmail {
+    hm: EqualityTerm,
+    tenant: u64,
+}
+
+impl EncryptFrom<String> for TenantEmail {
+    type Context = NonEmpty<u64>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
+    where
+        String: 's,
+    {
+        equality()
+            .accepting::<NonEmpty<u64>>()
+            .map_with_context(|hm, tenant| Self {
+                hm,
+                tenant: tenant.into_inner(),
+            })
+    }
+}
+
+#[tokio::test]
+async fn accepting_converts_the_declared_context_once_and_map_with_context_keeps_it() {
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let generator = generator().await;
+    let generator = generator.default_keyset();
+    let email = "alice@example.com".to_string();
+
+    let record: TenantEmail = email
+        .encrypt_into_with_context(&keyset, NonEmpty::from(7u64))
+        .await
+        .unwrap();
+    assert_eq!(record.tenant, 7);
+    let probe: EqualityTerm = email
+        .encrypt_into_with_context(&generator, 7u64)
+        .await
+        .unwrap();
+    assert_eq!(record.hm, probe);
 }

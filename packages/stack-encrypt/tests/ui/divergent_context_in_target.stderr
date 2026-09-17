@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+  --> tests/ui/divergent_context_in_target.rs:25:18
+   |
+25 |             .zip(equality())
+   |              --- ^^^^^^^^^^ expected `Encryption<'_, _, _, _, DeclaredContext>`, found `Encryption<'_, _, EqualityTerm, _, ...>`
+   |              |
+   |              arguments to this method are incorrect
+   |
+   = note: expected struct `Encryption<'_, _, _, _, DeclaredContext>`
+              found struct `Encryption<'_, _, EqualityTerm, _, CallerContext>`
+note: method defined here
+  --> src/target/operations.rs
+   |
+   |     pub fn zip<U: 'static>(
+   |            ^^^
