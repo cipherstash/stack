@@ -209,11 +209,17 @@ impl FieldPlan {
 ///
 /// # Errors
 ///
-/// [`Error::Plan`] for an empty plan, a missing or malformed context, an
-/// empty, unknown or duplicated output list, or an unknown key.
-/// [`Error::Context`] for a context that is malformed or empty. Field names
-/// are unique by construction — the transport codec rejects duplicate object
-/// keys before this sees them.
+/// [`Error::Plan`] for a plan that is not an object of field specs, an
+/// empty plan, a field named twice, a spec with a key other than
+/// `"context"` and `"outputs"` or with either given twice or missing, or
+/// an output list that is not a list of known output names, is empty, or
+/// names an output twice. [`Error::Context`] for a `"context"` that is
+/// present but is not a context, or renders empty.
+///
+/// The transport codec refuses duplicate object keys before a binding's
+/// value reaches here, but an [`FfiValue`] can be built with them directly
+/// and this is a public parser, so it refuses them itself rather than
+/// letting the last one win.
 pub fn plan(value: FfiValue) -> Result<Vec<FieldPlan>, Error> {
     let FfiValue::Object(entries) = value else {
         return Err(Error::Plan);
@@ -221,41 +227,44 @@ pub fn plan(value: FfiValue) -> Result<Vec<FieldPlan>, Error> {
     if entries.is_empty() {
         return Err(Error::Plan);
     }
-    entries
-        .into_iter()
-        .map(|(name, spec)| {
-            let FfiValue::Object(spec) = spec else {
-                return Err(Error::Plan);
-            };
-            let mut context: Option<NonEmpty<AadPiece<'static>>> = None;
-            let mut outputs: Option<Vec<Output>> = None;
-            for (key, value) in spec {
-                match key.as_str() {
-                    "context" => context = Some(super::context(value)?),
-                    "outputs" => {
-                        let FfiValue::Array(items) = value else {
+    let mut fields: Vec<FieldPlan> = Vec::with_capacity(entries.len());
+    for (name, spec) in entries {
+        if fields.iter().any(|field| field.name == name) {
+            return Err(Error::Plan);
+        }
+        let FfiValue::Object(spec) = spec else {
+            return Err(Error::Plan);
+        };
+        let mut context: Option<NonEmpty<AadPiece<'static>>> = None;
+        let mut outputs: Option<Vec<Output>> = None;
+        for (key, value) in spec {
+            match key.as_str() {
+                "context" if context.is_none() => context = Some(super::context(value)?),
+                "outputs" if outputs.is_none() => {
+                    let FfiValue::Array(items) = value else {
+                        return Err(Error::Plan);
+                    };
+                    let mut parsed = Vec::with_capacity(items.len());
+                    for item in &items {
+                        let FfiValue::String(s) = item else {
                             return Err(Error::Plan);
                         };
-                        let mut parsed = Vec::with_capacity(items.len());
-                        for item in &items {
-                            let FfiValue::String(s) = item else {
-                                return Err(Error::Plan);
-                            };
-                            let key = utf8(s).ok_or(Error::Plan)?;
-                            parsed.push(Output::parse(key).ok_or(Error::Plan)?);
-                        }
-                        outputs = Some(parsed);
+                        let key = utf8(s).ok_or(Error::Plan)?;
+                        parsed.push(Output::parse(key).ok_or(Error::Plan)?);
                     }
-                    _ => return Err(Error::Plan),
+                    outputs = Some(parsed);
                 }
+                // An unknown key, or one of the two given twice.
+                _ => return Err(Error::Plan),
             }
-            FieldPlan::new(
-                name,
-                context.ok_or(Error::Plan)?,
-                outputs.ok_or(Error::Plan)?,
-            )
-        })
-        .collect()
+        }
+        fields.push(FieldPlan::new(
+            name,
+            context.ok_or(Error::Plan)?,
+            outputs.ok_or(Error::Plan)?,
+        )?);
+    }
+    Ok(fields)
 }
 
 /// Encrypt a record — or a batch of records — per a plan.
@@ -1146,6 +1155,38 @@ mod tests {
                 (
                     "an output named twice",
                     obj(vec![("age", spec(s("users/age"), &["c", "eq", "c"]))]),
+                    |e| matches!(e, Error::Plan),
+                ),
+                (
+                    "a field named twice",
+                    FfiValue::Object(vec![
+                        ("age".to_string(), spec(s("users/age"), &["c"])),
+                        ("age".to_string(), spec(s("users/age"), &["eq"])),
+                    ]),
+                    |e| matches!(e, Error::Plan),
+                ),
+                (
+                    "a context given twice",
+                    obj(vec![(
+                        "age",
+                        obj(vec![
+                            ("context", s("users/age")),
+                            ("outputs", strings(&["c"])),
+                            ("context", s("users/other")),
+                        ]),
+                    )]),
+                    |e| matches!(e, Error::Plan),
+                ),
+                (
+                    "outputs given twice",
+                    obj(vec![(
+                        "age",
+                        obj(vec![
+                            ("context", s("users/age")),
+                            ("outputs", strings(&["c"])),
+                            ("outputs", strings(&["eq"])),
+                        ]),
+                    )]),
                     |e| matches!(e, Error::Plan),
                 ),
                 (
