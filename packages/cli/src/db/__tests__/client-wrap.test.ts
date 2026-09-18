@@ -5,7 +5,8 @@ const mockEnd = vi.fn()
 
 vi.mock('pg', () => ({
   default: {
-    Client: vi.fn(() => {
+    // biome-ignore lint/complexity/useArrowFunction: Vitest 4 mocks called with `new` need a constructible (non-arrow) implementation.
+    Client: vi.fn(function () {
       const client: Record<string, unknown> = {
         connect: (...args: unknown[]) => mockConnect(...args),
         end: mockEnd,

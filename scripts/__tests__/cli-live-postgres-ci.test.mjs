@@ -46,6 +46,6 @@ describe('CLI live-Postgres CI contract', () => {
       (project) => project.test.name === 'live',
     )
 
-    expect(live.test.poolOptions.forks.singleFork).toBe(true)
+    expect(live.test.fileParallelism).toBe(false)
   })
 })
