@@ -112,12 +112,18 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
 /// A dynamic-path error as a status code.
 ///
 /// The split the library draws is the one the ABI needs: every variant but
-/// `Cipher` is a statement about the caller's input, decided before any key
-/// is minted or retrieved, so it is [`STATUS_ENCODING`]. `Cipher` defers to
-/// [`status_for_error`].
+/// `Cipher` and `Internal` is a statement about the caller's input, decided
+/// before any key is minted or retrieved, so it is [`STATUS_ENCODING`].
+/// `Cipher` defers to [`status_for_error`]; `Internal` is the library's own
+/// invariant failing — a slot count that did not line up, a re-proof that
+/// could not fail — and is [`STATUS_INTERNAL`], never a verdict on the
+/// input. The catch-all is required (`Error` is `#[non_exhaustive]`) and
+/// covers input variants only: a variant added tomorrow that is not about
+/// the input must be classified here.
 pub fn status_for_dynamic(error: &stack_encrypt::dynamic::Error) -> u32 {
     match error {
         stack_encrypt::dynamic::Error::Cipher(e) => status_for_error(e),
+        stack_encrypt::dynamic::Error::Internal => STATUS_INTERNAL,
         _ => STATUS_ENCODING,
     }
 }
@@ -327,6 +333,39 @@ mod tests {
         assert_eq!(
             status_for_error(&stack_encrypt::Error::NoKeyset),
             STATUS_INTERNAL
+        );
+    }
+
+    #[test]
+    fn dynamic_input_errors_are_encoding_and_a_library_bug_is_internal() {
+        use stack_encrypt::dynamic::{Error, TermKind};
+        for (label, err) in [
+            ("a bad context", Error::Context),
+            (
+                "a bad term request",
+                Error::Term {
+                    kind: TermKind::Match,
+                },
+            ),
+            ("a bad plan", Error::Plan),
+            ("a bad source", Error::Source),
+            ("a bad record", Error::Record),
+        ] {
+            assert_eq!(
+                status_for_dynamic(&err),
+                STATUS_ENCODING,
+                "{label} is the caller's input"
+            );
+        }
+        assert_eq!(
+            status_for_dynamic(&Error::Internal),
+            STATUS_INTERNAL,
+            "a library invariant failing is never the caller's fault"
+        );
+        assert_eq!(
+            status_for_dynamic(&Error::Cipher(stack_encrypt::Error::Aead)),
+            STATUS_AUTH,
+            "a cipher failure keeps its own status"
         );
     }
 

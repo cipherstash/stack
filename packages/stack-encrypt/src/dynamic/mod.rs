@@ -110,10 +110,13 @@ fn utf8(s: &vitaminc_aead_value::Utf8String) -> Option<&str> {
 
 /// What went wrong in a dynamic operation.
 ///
-/// The split that matters to a caller is malformed input versus a cipher
-/// failure: every variant but [`Cipher`](Error::Cipher) is a statement about
-/// the value or the request, decided before any key is minted or retrieved.
-/// A binding maps them to its own status codes on that line.
+/// The split that matters to a caller is malformed input versus something
+/// else: every variant but [`Cipher`](Error::Cipher) and
+/// [`Internal`](Error::Internal) is a statement about the value or the
+/// request, decided before any key is minted or retrieved. `Cipher` is the
+/// operation failing; `Internal` is this module's own bug. A binding maps
+/// them to its own status codes on those lines, and must not report
+/// `Internal` as the caller's fault.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
