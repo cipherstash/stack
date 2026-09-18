@@ -147,14 +147,16 @@ pub enum Error {
 
     /// A record source does not fit its plan: not an object (or an array of
     /// them), a field the plan does not name, a plan field the source does
-    /// not carry, or a passthrough under a field the plan seals.
+    /// not carry or carries twice, or a passthrough or a repeated map key
+    /// under a field the plan seals.
     #[error("record source does not fit the plan")]
     Source,
 
     /// A stored record does not fit its plan: not a map (or a sequence of
-    /// them), a ciphertext-bearing field that is absent or has no `"c"`
-    /// node, or a passthrough under `"c"` — which would hand back
-    /// unauthenticated bytes as if they had been opened.
+    /// them), a ciphertext-bearing field that is absent or given twice, or
+    /// has no `"c"` node or two of them, a repeated map key under `"c"`, or
+    /// a passthrough under `"c"` — which would hand back unauthenticated
+    /// bytes as if they had been opened.
     #[error("stored record does not fit the plan")]
     Record,
 

@@ -681,16 +681,43 @@ impl<T> Rows<T> {
     }
 }
 
-/// Take the entry named `name` out of a row, whatever order the row had it
-/// in. `None` if the row has no such entry.
+/// Take the one entry named `name` out of a row, whatever order the row had
+/// it in. `None` if the row has no such entry — or has it twice: the maps
+/// this is used on (a row, a field's output map) are stripped here and never
+/// reach the cipher's own duplicate-key refusal, so a first-match take would
+/// quietly pick one of two `"c"` nodes for a field, and an attacker with
+/// write access to the stored tree could append a stale-but-valid
+/// ciphertext beside the current one and have it chosen.
 fn take<T>(row: &mut Vec<(String, T)>, name: &str) -> Option<(String, T)> {
-    let at = row.iter().position(|(n, _)| n == name)?;
+    let mut matches = row.iter().enumerate().filter(|(_, (n, _))| n == name);
+    let (at, _) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
     Some(row.swap_remove(at))
 }
 
-/// Reject a tree that contains a passthrough anywhere.
+/// Whether no key in `entries` repeats.
+fn keys_are_unique<T>(entries: &[(String, T)]) -> bool {
+    let mut seen = std::collections::HashSet::with_capacity(entries.len());
+    entries.iter().all(|(key, _)| seen.insert(key.as_str()))
+}
+
+/// Reject a tree that contains a passthrough anywhere, or a map with a key
+/// given twice anywhere.
 ///
-/// On the encrypt side a source field value with one inside it must not
+/// The duplicate-key half keeps the preflight honest. The cipher refuses a
+/// repeated key itself — at seal, because a map it cannot open must never
+/// be produced, and at open, because a stale entry appended beside the
+/// current one *verifies* under the same per-entry AAD — but it does so
+/// only once the value reaches it: on the encrypt side that is after the
+/// plan check has passed, where a failure reads as this module's own bug,
+/// and on the decrypt side after the row's keys have been requested. A
+/// `check_source`/`check_record` that let such a tree through would say
+/// "well-formed" of a value the operation then refuses, so the walk refuses
+/// it here, as the misfit it is.
+///
+/// On the passthrough half: on the encrypt side a source field value with one inside it must not
 /// reach a `"c"` slot: a passthrough node is *unauthenticated by definition*
 /// — on decrypt it hands its payload back with no AEAD opened — so admitting
 /// one under a field the plan declares ciphertext-bearing would quietly
@@ -703,15 +730,18 @@ fn take<T>(row: &mut Vec<(String, T)>, name: &str) -> Option<(String, T)> {
 /// successful decrypt. [`encrypt`] never produces a passthrough under `"c"`,
 /// so the shape is unconditionally an error, and the encrypt-side check is
 /// what makes that a round-trip invariant rather than data loss.
-fn reject_passthrough<T: RecordTree>(tree: &T) -> Result<(), Error> {
+fn check_tree<T: RecordTree>(tree: &T) -> Result<(), Error> {
     if tree.is_passthrough() {
         return Err(T::MISFIT);
     }
     match tree.children() {
-        Children::Sequence(items) => items.iter().try_for_each(reject_passthrough),
-        Children::Map(entries) => entries
-            .iter()
-            .try_for_each(|(_, node)| reject_passthrough(node)),
+        Children::Sequence(items) => items.iter().try_for_each(check_tree),
+        Children::Map(entries) => {
+            if !keys_are_unique(entries) {
+                return Err(T::MISFIT);
+            }
+            entries.iter().try_for_each(|(_, node)| check_tree(node))
+        }
         Children::None => Ok(()),
     }
 }
@@ -722,10 +752,10 @@ fn reject_passthrough<T: RecordTree>(tree: &T) -> Result<(), Error> {
 
 /// The rows of a record source, each aligned to the plan's field order, with
 /// everything that can be checked without a cipher checked: the source is
-/// one object or an array of objects, every plan field is present in every
-/// row and no row carries a field the plan does not name (silently dropping
-/// a field on either side would lose data or index nothing), and each value
-/// fits its field's outputs ([`check_field`]).
+/// one object or an array of objects, every plan field is present exactly
+/// once in every row and no row carries a field the plan does not name
+/// (silently dropping a field on either side would lose data or index
+/// nothing), and each value fits its field's outputs ([`check_field`]).
 fn source_rows(source: FfiValue, plan: &Plan) -> Result<Rows<Vec<FfiValue>>, Error> {
     rows(source)?.try_map(|mut row| {
         if row.len() != plan.fields.len() {
@@ -744,12 +774,12 @@ fn source_rows(source: FfiValue, plan: &Plan) -> Result<Rows<Vec<FfiValue>>, Err
 
 /// A source value against its plan field: every term output needs a scalar
 /// the scheme defines the term for ([`TermKind::supports`]), and a
-/// ciphertext output refuses a passthrough anywhere in the value
-/// ([`reject_passthrough`]).
+/// ciphertext output refuses a passthrough, or a repeated map key, anywhere
+/// in the value ([`check_tree`]).
 fn check_field(value: &FfiValue, field: &FieldPlan) -> Result<(), Error> {
     for output in &field.outputs {
         match output {
-            Output::Ciphertext => reject_passthrough(value)?,
+            Output::Ciphertext => check_tree(value)?,
             Output::Term(kind) => {
                 let scalar = Scalar::of(value, *kind)?;
                 if !kind.supports(&scalar) {
@@ -850,7 +880,11 @@ where
         }
 
         if field.has_ciphertext() {
-            reject_passthrough(&value)?;
+            // Re-checked here so this function's own contract does not rest
+            // on its caller's: with the tree checked, the cipher's refusals
+            // (a passthrough, a repeated key) cannot fire, and a failure
+            // below is a bug here.
+            check_tree(&value)?;
             let tree = value
                 .encrypt_with_aad(cipher, context.clone())
                 .map_err(|_| Error::Internal)?;
@@ -868,10 +902,10 @@ where
 
 /// The `"c"` subtrees a record tree holds for the plan's ciphertext-bearing
 /// fields, per row in plan order, with the row's field name: the tree is one
-/// map or a sequence of maps, each such field is present, is a map of
-/// outputs with a `"c"` node, and that node has no passthrough in it
-/// ([`reject_passthrough`]). Terms and fields the plan does not name are
-/// ignored (comparands, not ciphertext).
+/// map or a sequence of maps, each such field is present exactly once, is a
+/// map of outputs with exactly one `"c"` node, and that node has no
+/// passthrough and no repeated key in it ([`check_tree`]). Terms and fields
+/// the plan does not name are ignored (comparands, not ciphertext).
 #[allow(clippy::type_complexity)]
 fn record_leaves(
     tree: StackCipherText,
@@ -887,7 +921,7 @@ fn record_leaves(
                     return Err(Error::Record);
                 };
                 let (_, ct) = take(&mut outputs, Output::Ciphertext.key()).ok_or(Error::Record)?;
-                reject_passthrough(&ct)?;
+                check_tree(&ct)?;
                 Ok((name, ct))
             })
             .collect()
@@ -1367,6 +1401,25 @@ mod tests {
                     |e| matches!(e, Error::Source),
                 ),
                 (
+                    "a plan field given twice",
+                    {
+                        let mut entries = object(row(1));
+                        let _ = take(&mut entries, "nick");
+                        entries.push(("age".to_string(), FfiValue::UInt32(2)));
+                        FfiValue::Object(entries)
+                    },
+                    |e| matches!(e, Error::Source),
+                ),
+                (
+                    "a repeated key inside an object under a sealed field",
+                    {
+                        let mut entries = object(row(1));
+                        entries[1].1 = obj(vec![("k", s("a@x")), ("k", s("b@x"))]);
+                        FfiValue::Object(entries)
+                    },
+                    |e| matches!(e, Error::Source),
+                ),
+                (
                     "a container under an indexed field",
                     {
                         let mut entries = object(row(1));
@@ -1757,6 +1810,37 @@ mod tests {
                 CipherText::Map(fields),
             ));
 
+            // The three shapes where a first-match take would have picked
+            // one of two valid ciphertexts: a second, stale-but-valid copy
+            // of a field, of its `"c"` output, or of a key inside it.
+            let mut fields = sealed(&keyset).await;
+            let mut stale = sealed(&keyset).await;
+            fields.push(("age".to_string(), node(&mut stale, "age")));
+            cases.push(("a sealed field given twice", CipherText::Map(fields)));
+
+            let mut fields = sealed(&keyset).await;
+            let mut stale = sealed(&keyset).await;
+            let mut age = map(node(&mut fields, "age"));
+            let mut stale_age = map(node(&mut stale, "age"));
+            age.push(("c".to_string(), node(&mut stale_age, "c")));
+            fields.push(("age".to_string(), CipherText::Map(age)));
+            cases.push(("a ciphertext output given twice", CipherText::Map(fields)));
+
+            let mut fields = sealed(&keyset).await;
+            let mut stale = sealed(&keyset).await;
+            let mut age = map(node(&mut fields, "age"));
+            let mut stale_age = map(node(&mut stale, "age"));
+            let (current, older) = (node(&mut age, "c"), node(&mut stale_age, "c"));
+            age.push((
+                "c".to_string(),
+                CipherText::Map(vec![("v".to_string(), current), ("v".to_string(), older)]),
+            ));
+            fields.push(("age".to_string(), CipherText::Map(age)));
+            cases.push((
+                "a repeated key inside the ciphertext subtree",
+                CipherText::Map(fields),
+            ));
+
             let before = retrieves(&cipher);
             for (label, record) in cases {
                 let err = decrypt(Scope::Client(&cipher), record, &plan).await.err();
@@ -1781,6 +1865,17 @@ mod tests {
             assert!(
                 matches!(err, Some(Error::Record)),
                 "check_record refuses a forged ciphertext the same way: {err:?}"
+            );
+            let mut fields = sealed(&keyset).await;
+            let mut stale = sealed(&keyset).await;
+            let mut age = map(node(&mut fields, "age"));
+            let mut stale_age = map(node(&mut stale, "age"));
+            age.push(("c".to_string(), node(&mut stale_age, "c")));
+            fields.push(("age".to_string(), CipherText::Map(age)));
+            let err = check_record(CipherText::Map(fields), &plan).err();
+            assert!(
+                matches!(err, Some(Error::Record)),
+                "check_record refuses a twice-given ciphertext the same way: {err:?}"
             );
         }
 
