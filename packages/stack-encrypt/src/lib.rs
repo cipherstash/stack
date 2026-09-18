@@ -259,8 +259,11 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 /// ZeroKMS requests it makes.
 ///
 /// A request is identified by the library that makes it, not by whichever
-/// binding shim is carrying it: "stack-encrypt 0.1.0" means the same thing
-/// from the WASI guest under Go as from a native cdylib under Python. The
+/// binding shim is carrying it: a product token of `stack-encrypt/0.1.0`
+/// (the `product/version` spelling a `user-agent` is made of, with the
+/// host in a comment after it — the Go guest sends
+/// `stack-encrypt/0.1.0 (Go)`) means the same thing from the WASI guest
+/// under Go as from a native cdylib under Python. The
 /// native Rust client does not go through a binding and identifies itself
 /// as `stack-kms` (see `stack_kms`'s user agent) — the crate that actually
 /// makes its requests.

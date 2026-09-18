@@ -29,10 +29,11 @@ const HOST: &str = "Go";
 /// one in `stack_kms::user_agent`; the guest builds its own requests and
 /// never goes through that path, so it has to say who it is here.
 ///
-/// It names the *library* and the host carrying it, not this crate: a
-/// report of "stack-encrypt 0.1.0" means the same thing from Rust, from
-/// here, or from a native cdylib, and the guest shim's own version number
-/// would say nothing anyone reading a log wants to know.
+/// It names the *library* and the host carrying it, not this crate — a
+/// `stack-encrypt/0.1.0 (Go)`: the `stack-encrypt/0.1.0` product token
+/// means the same thing from Rust, from here, or from a native cdylib, and
+/// the guest shim's own version number would say nothing anyone reading a
+/// log wants to know.
 pub fn user_agent() -> &'static str {
     static USER_AGENT: OnceLock<String> = OnceLock::new();
     USER_AGENT.get_or_init(|| format!("stack-encrypt/{} ({HOST})", stack_encrypt::VERSION))
