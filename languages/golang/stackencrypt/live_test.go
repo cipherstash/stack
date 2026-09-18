@@ -41,7 +41,7 @@ type liveUser struct {
 func TestLiveValueRoundTrip(t *testing.T) {
 	c := liveClient(t)
 	ctx := t.Context()
-	cipher := c.DefaultCipher()
+	cipher := c.DefaultKeyset()
 	aad := []byte("users/v1")
 	in := map[string]any{"name": "alice", "age": uint32(34), "note": vcvalue.Plain{V: "clear"}}
 
@@ -79,7 +79,11 @@ func TestLiveValueRoundTrip(t *testing.T) {
 	}
 	// The default keyset's id is what the leaves carry: the bound cipher of
 	// that id opens them too.
-	if _, err := c.Cipher(c.DefaultKeysetID()).Decrypt(ctx, ct, aad); err != nil {
+	defID, err := cipher.KeysetID(ctx)
+	if err != nil {
+		t.Fatalf("resolve the default keyset: %v", err)
+	}
+	if _, err := c.Keyset(defID).Decrypt(ctx, ct, aad); err != nil {
 		t.Fatalf("decrypt under the default keyset by id: %v", err)
 	}
 }
@@ -87,7 +91,7 @@ func TestLiveValueRoundTrip(t *testing.T) {
 func TestLiveRecordsAndTerms(t *testing.T) {
 	c := liveClient(t)
 	ctx := t.Context()
-	cipher := c.DefaultCipher()
+	cipher := c.DefaultKeyset()
 	users := []liveUser{{1, 34, "alice@example.com"}, {2, 29, "bob@example.com"}}
 
 	c.transport.sends.Store(0)
@@ -148,12 +152,12 @@ func TestLiveForeignKeysetIsRefusedBeforeRetrieval(t *testing.T) {
 	if other == "" {
 		t.Skip("STACK_ENCRYPT_TEST_OTHER_KEYSET not set")
 	}
-	ct, err := c.Cipher(KeysetName(other)).Encrypt(ctx, "tenant b", nil)
+	ct, err := c.Keyset(KeysetName(other)).Encrypt(ctx, "tenant b", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	c.transport.sends.Store(0)
-	if _, err := c.DefaultCipher().Decrypt(ctx, ct, nil); !errors.Is(err, ErrForeignKeyset) {
+	if _, err := c.DefaultKeyset().Decrypt(ctx, ct, nil); !errors.Is(err, ErrForeignKeyset) {
 		t.Fatalf("default cipher opened another keyset's leaf: %v", err)
 	}
 	if n := c.transport.sends.Load(); n != 0 {

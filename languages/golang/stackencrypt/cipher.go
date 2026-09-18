@@ -27,6 +27,16 @@ func (cph *Cipher) Client() *Client { return cph.client }
 // Keyset is the selector this cipher is bound to.
 func (cph *Cipher) Keyset() KeysetSelector { return cph.keyset }
 
+// KeysetID resolves the cipher's keyset to its id: Rust's
+// KeysetCipher::keyset_id, and in Go the one explicit resolution point,
+// since a Cipher is made without a request. The first use of a name or id
+// on the client is one ZeroKMS round trip, later uses come from the
+// guest's cache; the default keyset never makes a request. Use it at boot
+// to validate a tenant's keyset and learn its id.
+func (cph *Cipher) KeysetID(ctx context.Context) (KeysetID, error) {
+	return cph.client.resolveKeyset(ctx, cph.keyset)
+}
+
 // Encrypt seals v under this keyset. v is encoded through the vcvalue
 // model: builtins, slices, maps and structs by reflection, a type
 // implementing vcffi.Encryptable by its own encoding, vcvalue.Plain marking

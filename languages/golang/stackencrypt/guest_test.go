@@ -254,7 +254,7 @@ func TestInterruptedCallClosesTheClient(t *testing.T) {
 		if err := c.inst.module.CloseWithExitCode(ctx, sys.ExitCodeContextCanceled); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := c.Keyset(ctx, KeysetName("k")); !errors.Is(err, ErrState) {
+		if _, err := c.Keyset(KeysetName("k")).KeysetID(ctx); !errors.Is(err, ErrState) {
 			t.Fatalf("Keyset on a closed module: %v, want ErrState", err)
 		}
 		if err := c.Close(ctx); err != nil {
@@ -337,7 +337,7 @@ func TestEmptyContextIsRefusedAtTheRoot(t *testing.T) {
 	// No cipher on a raw instance, so a context the guest accepts reaches
 	// the state check — ErrState here means the context itself passed,
 	// where a refused one is ErrEncoding before it.
-	if _, err := rawInstance(t).DefaultCipher().Term(ctx, uint32(34), mixed, Equality); !errors.Is(err, ErrState) {
+	if _, err := rawInstance(t).DefaultKeyset().Term(ctx, uint32(34), mixed, Equality); !errors.Is(err, ErrState) {
 		t.Fatalf("Term under [non-empty, empty]: %v, want ErrState (the context accepted)", err)
 	}
 }
@@ -508,9 +508,9 @@ type recordRow struct {
 func TestGuestAcceptsEveryEncodingThisPackageBuilds(t *testing.T) {
 	ctx := context.Background()
 	c := rawInstance(t)
-	def := c.DefaultCipher()
-	named := c.Cipher(KeysetName("acme"))
-	byID := c.Cipher(KeysetID{9})
+	def := c.DefaultKeyset()
+	named := c.Keyset(KeysetName("acme"))
+	byID := c.Keyset(KeysetID{9})
 	ct := map[string]any{"name": Sealed(fixtureLeaf), "note": vcvalue.Plain{V: "clear"}}
 	record := EncryptedRecord{
 		"Age":   {Ciphertext: Sealed(fixtureLeaf), Equality: EqualityTerm{1}, Ore: OreTerm{2}},
@@ -520,9 +520,9 @@ func TestGuestAcceptsEveryEncodingThisPackageBuilds(t *testing.T) {
 	var out []recordRow
 	var one recordRow
 	calls := map[string]func() error{
-		"Keyset by name":     func() error { _, err := c.Keyset(ctx, KeysetName("acme")); return err },
-		"Keyset by id":       func() error { _, err := c.Keyset(ctx, KeysetID{9}); return err },
-		"Keyset default":     func() error { _, err := c.Keyset(ctx, DefaultKeyset); return err },
+		"KeysetID by name":   func() error { _, err := named.KeysetID(ctx); return err },
+		"KeysetID by id":     func() error { _, err := byID.KeysetID(ctx); return err },
+		"KeysetID default":   func() error { _, err := def.KeysetID(ctx); return err },
 		"Encrypt":            func() error { _, err := def.Encrypt(ctx, map[string]any{"a": 1}, []byte("aad")); return err },
 		"EncryptElement":     func() error { _, err := named.EncryptElement(ctx, "row", nil); return err },
 		"Decrypt bound":      func() error { _, err := byID.Decrypt(ctx, ct, nil); return err },
@@ -555,7 +555,7 @@ func TestGuestAcceptsEveryEncodingThisPackageBuilds(t *testing.T) {
 func TestGuestRefusesMalformedInputsBeforeState(t *testing.T) {
 	ctx := context.Background()
 	c := rawInstance(t)
-	def := c.DefaultCipher()
+	def := c.DefaultKeyset()
 	type badRow struct {
 		Age float64 `stash:"context=users/age,index=eq"`
 	}
@@ -571,9 +571,9 @@ func TestGuestRefusesMalformedInputsBeforeState(t *testing.T) {
 			return err
 		},
 		"unknown term kind":      func() error { _, err := def.Term(ctx, 1, MustContext("k"), TermKind(9)); return err },
-		"name with spaces":       func() error { _, err := c.Keyset(ctx, KeysetName("not a name")); return err },
-		"empty name":             func() error { _, err := c.Keyset(ctx, KeysetName("")); return err },
-		"any as a keyset":        func() error { _, err := c.Keyset(ctx, anyKeyset{}); return err },
+		"name with spaces":       func() error { _, err := c.Keyset(KeysetName("not a name")).KeysetID(ctx); return err },
+		"empty name":             func() error { _, err := c.Keyset(KeysetName("")).KeysetID(ctx); return err },
+		"any as a keyset":        func() error { _, err := c.Keyset(anyKeyset{}).KeysetID(ctx); return err },
 		"float under eq in plan": func() error { _, err := def.EncryptRecords(ctx, []badRow{{1.5}}); return err },
 		"malformed leaf": func() error {
 			_, err := c.Decrypt(ctx, Sealed{1, 2, 3}, nil)
@@ -602,7 +602,7 @@ func TestClosedClientIsState(t *testing.T) {
 	if err := c.Close(ctx); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
-	if _, err := c.DefaultCipher().Encrypt(ctx, "x", nil); !errors.Is(err, ErrState) {
+	if _, err := c.DefaultKeyset().Encrypt(ctx, "x", nil); !errors.Is(err, ErrState) {
 		t.Fatalf("Encrypt after Close: %v", err)
 	}
 }
@@ -649,7 +649,7 @@ func TestHostilePointerLengthPairsAreStatusesNotTraps(t *testing.T) {
 		t.Fatalf("dealloc with a mismatched length trapped: %v", err)
 	}
 	// The instance still works.
-	if _, err := c.DefaultCipher().Encrypt(ctx, "alive", nil); !errors.Is(err, ErrState) {
+	if _, err := c.DefaultKeyset().Encrypt(ctx, "alive", nil); !errors.Is(err, ErrState) {
 		t.Fatalf("instance poisoned: %v", err)
 	}
 }

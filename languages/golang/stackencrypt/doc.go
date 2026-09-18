@@ -13,9 +13,10 @@
 // client key and every loaded index key are wiped before the instance is
 // freed — closing a wasm instance runs no Rust destructors on its own.
 //
-// A [Cipher] is the client bound to one keyset ([Client.Cipher],
-// [Client.DefaultCipher]): it seals values, derives terms and encrypts
-// records under that keyset, and opens only that keyset's ciphertexts. The
+// A [Cipher] is the client bound to one keyset ([Client.Keyset] and
+// [Client.DefaultKeyset], the Rust crate's StackCipher::keyset and
+// default_keyset): it seals values, derives terms and encrypts records
+// under that keyset, and opens only that keyset's ciphertexts. The
 // [Client] itself opens ciphertexts from any keyset ([Client.Decrypt] and
 // friends), fetching batched key retrievals per keyset the leaves were
 // sealed under.

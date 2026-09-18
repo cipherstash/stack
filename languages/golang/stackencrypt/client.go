@@ -146,18 +146,31 @@ func (c *Client) Close(ctx context.Context) error {
 	return c.inst.close(ctx)
 }
 
-// DefaultKeysetID is the id of the client's default keyset — the one a
-// ZeroKMS administrator set for this client — resolved at NewClient.
-func (c *Client) DefaultKeysetID() KeysetID { return c.def }
-
-// Keyset resolves a selector to its keyset id: the first use of a name or
-// id on this client is one ZeroKMS round trip, later uses come from the
-// guest's cache. Use it at boot to validate a tenant's keyset and learn its
-// id. DefaultKeyset never makes a request.
-func (c *Client) Keyset(ctx context.Context, sel KeysetSelector) (KeysetID, error) {
+// Keyset binds the client to one keyset, by name or by id: Rust's
+// StackCipher::keyset. No request is made here — Go has no await, so the
+// keyset is resolved by the guest on the cipher's first use (and cached),
+// which makes a Cipher cheap to make per call, per tenant or per request.
+// [Cipher.KeysetID] is the explicit resolution point. A nil selector is a
+// programming error and panics; the default keyset is [Client.DefaultKeyset].
+func (c *Client) Keyset(sel KeysetSelector) *Cipher {
 	if sel == nil {
-		return KeysetID{}, errNilSelector
+		panic("stackencrypt: Client.Keyset(nil); the default keyset is Client.DefaultKeyset")
 	}
+	return &Cipher{client: c, keyset: sel}
+}
+
+// DefaultKeyset binds the client to its default keyset — the one a ZeroKMS
+// administrator set for this client, which is what naming no keyset
+// resolves to: Rust's StackCipher::default_keyset. Loaded at NewClient, so
+// using it never touches ZeroKMS. There is no way to redefine it from here;
+// which keyset is the default is the server's to say. Any other keyset is
+// [Client.Keyset].
+func (c *Client) DefaultKeyset() *Cipher { return &Cipher{client: c, keyset: defaultKeyset{}} }
+
+// resolveKeyset asks the guest for a selector's keyset id: the first use
+// of a name or id on this client is one ZeroKMS round trip, later uses
+// come from the guest's cache. The default keyset never makes a request.
+func (c *Client) resolveKeyset(ctx context.Context, sel KeysetSelector) (KeysetID, error) {
 	encoded, err := vcffi.Marshal(sel.selector())
 	if err != nil {
 		return KeysetID{}, err
@@ -175,19 +188,6 @@ func (c *Client) Keyset(ctx context.Context, sel KeysetSelector) (KeysetID, erro
 	copy(id[:], out)
 	return id, nil
 }
-
-// Cipher binds the client to one keyset. No request is made here: the
-// keyset is resolved by the guest on the cipher's first use (and cached),
-// so a Cipher is cheap to make per call, per tenant or per request.
-func (c *Client) Cipher(sel KeysetSelector) *Cipher {
-	if sel == nil {
-		sel = DefaultKeyset
-	}
-	return &Cipher{client: c, keyset: sel}
-}
-
-// DefaultCipher is Cipher(DefaultKeyset).
-func (c *Client) DefaultCipher() *Cipher { return c.Cipher(DefaultKeyset) }
 
 // Decrypt opens a ciphertext produced by any keyset of this client: each
 // leaf is opened under the keyset it was sealed with, with batched key

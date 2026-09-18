@@ -78,7 +78,7 @@ func TestCommitRecordsPreservesRowsAndIsAtomic(t *testing.T) {
 
 func TestEncryptRecordRejectsNil(t *testing.T) {
 	c := &Client{closed: true}
-	cph := c.DefaultCipher()
+	cph := c.DefaultKeyset()
 	for name, in := range map[string]any{"nil": nil, "nil pointer": (*taggedUser)(nil)} {
 		if _, err := cph.EncryptRecord(context.Background(), in); err == nil || errors.Is(err, ErrState) {
 			t.Errorf("EncryptRecord(%s): %v, want a record error", name, err)
@@ -111,7 +111,7 @@ func TestSelectorsSpellEveryVariant(t *testing.T) {
 		sel  KeysetSelector
 		want map[string]any
 	}{
-		{DefaultKeyset, map[string]any{"default": map[string]any{}}},
+		{defaultKeyset{}, map[string]any{"default": map[string]any{}}},
 		{KeysetName("acme"), map[string]any{"name": "acme"}},
 		{id, map[string]any{"id": id[:]}},
 		{anyKeyset{}, map[string]any{"any": map[string]any{}}},

@@ -106,7 +106,7 @@ func adjacentProperty[T any](t *testing.T, cipher *Cipher, kind TermKind, values
 
 func TestLiveTermOrderIsPlaintextOrder(t *testing.T) {
 	c := liveClient(t)
-	cipher := c.DefaultCipher()
+	cipher := c.DefaultKeyset()
 	for _, kind := range []TermKind{Ore, Ope} {
 		t.Run(kind.String(), func(t *testing.T) {
 			t.Run("uint32", func(t *testing.T) {

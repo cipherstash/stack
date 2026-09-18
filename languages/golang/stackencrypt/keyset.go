@@ -2,13 +2,14 @@ package stackencrypt
 
 import (
 	"encoding/hex"
-	"errors"
 	"fmt"
 )
 
-// KeysetSelector names the keyset a call binds to. The three selectors are
-// [KeysetName], [KeysetID] and [DefaultKeyset]; every variant is spelled,
-// there is no empty-string or nil sentinel. Names follow ZeroKMS's rules
+// KeysetSelector names the keyset a call binds to, as Rust's IdentifiedBy
+// does: [KeysetName] or [KeysetID]. Every variant is spelled, there is no
+// empty-string or nil sentinel; the default keyset is not a selector but
+// [Client.DefaultKeyset], exactly as it is a method and not an IdentifiedBy
+// variant in Rust. Names follow ZeroKMS's rules
 // (non-empty, at most 64 bytes, of A-Z a-z 0-9 _ - /), checked by the
 // guest before any request is made; ZeroKMS itself never issues a
 // UUID-shaped name, so a name and an id cannot be confused.
@@ -58,27 +59,15 @@ func ParseKeysetID(s string) (KeysetID, error) {
 	return id, nil
 }
 
+// defaultKeyset is the guest's spelling of the client's default keyset —
+// the one a ZeroKMS administrator set for this client. Selecting it is
+// never a round trip. Not exported: the default is [Client.DefaultKeyset],
+// a method, so there is no value an importer could reassign or pass by
+// mistake, and no config key that appeared to override what is the
+// server's to say.
 type defaultKeyset struct{}
 
 func (defaultKeyset) selector() map[string]any { return map[string]any{"default": map[string]any{}} }
-
-// DefaultKeyset selects the client's default keyset — the one a ZeroKMS
-// administrator set for this client. Selecting it is never a round trip.
-//
-// There is no way to redefine it from here. A client does not get to decide
-// which keyset is its default; that is the server's to say, and a config key
-// that appeared to override it would encrypt somewhere the operator did not
-// choose. Any other keyset is named per call, with [KeysetName] or
-// [KeysetID].
-//
-// Its type is the unexported concrete one rather than [KeysetSelector] on
-// purpose. A package-level var of interface type is writable by every
-// importer, so one package could point this at a named keyset — or nil —
-// and silently redirect [Client.DefaultCipher] and every nil selector for
-// the whole process, racily. As a concrete zero-size struct it still
-// passes anywhere a KeysetSelector is wanted, and the only value it can be
-// reassigned is the one it already holds.
-var DefaultKeyset = defaultKeyset{}
 
 // anyKeyset is the opening-only selector: open every leaf under whichever
 // keyset it was sealed with. Not exported — the Client's own decrypt
@@ -91,5 +80,3 @@ func (anyKeyset) selector() map[string]any { return map[string]any{"any": map[st
 func options(sel KeysetSelector) map[string]any {
 	return map[string]any{"keyset": sel.selector()}
 }
-
-var errNilSelector = errors.New("stackencrypt: keyset selector is nil")
