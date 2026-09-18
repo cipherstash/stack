@@ -74,6 +74,15 @@ tokio = { workspace = true, features = ["rt", "macros"] }
 # Compile-fail tests for the derive diagnostics (`tests/ui`).
 trybuild = "1"
 
+# The derive diagnostics are recorded with every feature on, as `test:unit`
+# and CI run them. They cannot hold under both feature sets — rustc lists a
+# trait's other implementors in its help, and the `dynamic` feature's
+# `FfiValue` joins one such list and pushes another entry off it — so the
+# test is only built with that feature rather than skipped at runtime.
+[[test]]
+name = "ui"
+required-features = ["dynamic"]
+
 [[example]]
 name = "encrypted_record"
 required-features = ["http"]

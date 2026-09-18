@@ -31,7 +31,7 @@
 //! ABI's numeric term kinds, and the mapping from a library error to a
 //! status code.
 
-use stack_encrypt::dynamic::{self, Opener, Scalar, TermKind};
+use stack_encrypt::dynamic::{self, Scalar, Scope, TermKind};
 use stack_encrypt::{
     BoxedPassthrough, CipherText, Element, Encrypt, KeysetCipher, SealedValue, StackCipherText,
 };
@@ -101,16 +101,16 @@ where
 /// layer's ownership rules govern its wiping.
 ///
 /// One batched `retrieve_keys` per invocation, dispatched as one ZeroKMS
-/// call per 500 keyed leaves and, under [`Opener::Any`], per keyset the
+/// call per 500 keyed leaves and, under [`Scope::Client`], per keyset the
 /// tree's leaves were sealed under — the same rule [`decrypt_record`]
 /// states. A tree small enough and single-keyset enough is the one request
 /// that suggests; nothing here promises it in general.
 ///
 /// Symmetric with [`encrypt_value`]: the AAD is whatever the value was sealed
-/// under, empty included. The [`Opener`] says which keysets may be opened:
+/// under, empty included. The [`Scope`] says which keysets may be opened:
 /// any, or one, refusing the rest before any key is retrieved.
 pub async fn decrypt_value<K>(
-    opener: Opener<'_, K>,
+    scope: Scope<'_, K>,
     ciphertext: &[u8],
     aad: &[u8],
     as_element: bool,
@@ -121,19 +121,19 @@ where
     let tree = decode_tree(ciphertext)?;
     // One `decrypt` per arm, not one `decipher` and two drives. The element
     // derivation is `Element<T>`'s to apply and naming the type is what asks
-    // for it; the opener decides whether a foreign leaf is refused before any
+    // for it; the scope decides whether a foreign leaf is refused before any
     // key is retrieved. Only one arm runs, so the retrieve happens once.
-    let value: FfiValue = match (&opener, as_element) {
-        (Opener::Any(cipher), true) => cipher
+    let value: FfiValue = match (&scope, as_element) {
+        (Scope::Client(cipher), true) => cipher
             .decrypt::<Element<FfiValue>, _>(tree, aad)
             .await
             .map(Element::into_inner),
-        (Opener::Any(cipher), false) => cipher.decrypt(tree, aad).await,
-        (Opener::Only(keyset), true) => keyset
+        (Scope::Client(cipher), false) => cipher.decrypt(tree, aad).await,
+        (Scope::Keyset(keyset), true) => keyset
             .decrypt::<Element<FfiValue>, _>(tree, aad)
             .await
             .map(Element::into_inner),
-        (Opener::Only(keyset), false) => keyset.decrypt(tree, aad).await,
+        (Scope::Keyset(keyset), false) => keyset.decrypt(tree, aad).await,
     }
     .map_err(|e| status_for_error(&e))?;
     encode_value(value)
@@ -237,11 +237,11 @@ where
 /// same plan. Only the `"c"` outputs participate (terms are one-way).
 ///
 /// One batched `retrieve_keys` per invocation, dispatched as one ZeroKMS
-/// call per 500 keyed leaves and, under [`Opener::Any`], per keyset the
+/// call per 500 keyed leaves and, under [`Scope::Client`], per keyset the
 /// leaves were sealed under. The output buffer contains plaintext — the ABI
 /// layer's ownership rules govern its wiping.
 pub async fn decrypt_record<K>(
-    opener: Opener<'_, K>,
+    scope: Scope<'_, K>,
     record: &[u8],
     plan: &[u8],
 ) -> Result<Vec<u8>, u32>
@@ -249,7 +249,7 @@ where
     K: DataKeySource + Sync + 'static,
 {
     let plan = dynamic::record::plan(decode_value(plan)?).map_err(|e| status_for_dynamic(&e))?;
-    let value = dynamic::record::decrypt(opener, decode_tree(record)?, &plan)
+    let value = dynamic::record::decrypt(scope, decode_tree(record)?, &plan)
         .await
         .map_err(|e| status_for_dynamic(&e))?;
     encode_value(value)

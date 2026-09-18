@@ -27,7 +27,7 @@
 //! it is objects, strings, bytes and nothing else, and this module is its
 //! one home. The Go bindings plan points here.
 
-use stack_encrypt::dynamic::Opener;
+use stack_encrypt::dynamic::Scope;
 use stack_encrypt::{KeysetCipher, StackCipher};
 use stack_kms::{IdentifiedBy, IndexKeySource};
 use uuid::Uuid;
@@ -123,7 +123,7 @@ impl KeysetSelector {
     /// default without a round trip, a name or id through the cipher's
     /// cache (a first use is one `load-keyset` call). `Any` is not a keyset
     /// and is [`STATUS_ENCODING`] here; opening exports resolve it through
-    /// [`opener_for`] instead.
+    /// [`scope_for`] instead.
     pub async fn resolve<'c, K>(
         &self,
         cipher: &'c StackCipher<K>,
@@ -141,20 +141,20 @@ impl KeysetSelector {
     }
 }
 
-/// The [`Opener`] a decrypt-side selector names: the client for `{"any"}`,
+/// The [`Scope`] a decrypt-side selector names: the client for `{"any"}`,
 /// which opens a leaf sealed under any of its keysets, or one keyset's
 /// cipher, which opens only its own and refuses the rest before any key is
 /// retrieved.
-pub async fn opener_for<'c, K>(
+pub async fn scope_for<'c, K>(
     cipher: &'c StackCipher<K>,
     selector: &KeysetSelector,
-) -> Result<Opener<'c, K>, u32>
+) -> Result<Scope<'c, K>, u32>
 where
     K: IndexKeySource,
 {
     match selector {
-        KeysetSelector::Any => Ok(Opener::Any(cipher)),
-        other => other.resolve(cipher).await.map(Opener::Only),
+        KeysetSelector::Any => Ok(Scope::Client(cipher)),
+        other => other.resolve(cipher).await.map(Scope::Keyset),
     }
 }
 

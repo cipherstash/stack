@@ -23,6 +23,7 @@
 //! * [`record`] — the runtime form of `#[derive(EncryptFrom)]`: a *plan*
 //!   says per field what context to bind and what outputs to produce, and
 //!   the whole call seals from one batched key request.
+//! * [`Scope`] — which cipher an opening operation decrypts through.
 //!
 //! # What is not here
 //!
@@ -39,9 +40,18 @@
 //! languages agree on them by construction rather than by each re-deriving
 //! them. Their long-term home is beside vitaminc's frozen tag table, which
 //! already owns this class of constant.
+//!
+//! For the same reason the enums that spell them — [`Output`] and
+//! [`TermKind`] — are *not* `#[non_exhaustive]`, against this workspace's
+//! usual rule for public enums: a new output is a wire-format addition every
+//! binding has to be taught, and an exhaustive match is how the compiler
+//! tells a binding author that. [`Scope`] is exhaustive for a different
+//! reason, given on the type.
 mod context;
 pub mod record;
 mod term;
+
+use std::fmt;
 
 pub use context::{borrowed, context};
 pub use record::{FieldPlan, Output};
@@ -54,21 +64,42 @@ pub use vitaminc_aead_value::FfiValue;
 
 use crate::{KeysetCipher, StackCipher};
 
-/// What an opening operation decrypts through.
+/// Which cipher an opening operation decrypts through: the client, or one
+/// of its keysets.
 ///
-/// [`StackCipher`] and [`KeysetCipher`] both open, and neither is the
-/// other's supertype: the client opens a leaf sealed under any of its
-/// keysets, while a keyset handle opens only its own and refuses the rest
-/// *before any key is retrieved*. That refusal is the point — a
-/// tenant-scoped request handler must not open another tenant's row — so
-/// the choice is named rather than inferred, and it is named here because a
-/// binding's caller makes it at runtime.
-pub enum Opener<'c, K> {
+/// This is the runtime form of the crate's *scope* (what a `Pending` is
+/// built through, and so what it may open — [`CipherScope`](crate::CipherScope)
+/// is the trait both ciphers implement). [`StackCipher`] and
+/// [`KeysetCipher`] both open, and neither is the other's supertype: the
+/// client opens a leaf sealed under any of its keysets, while a keyset
+/// cipher opens only its own and fails a foreign leaf with
+/// [`Error::ForeignKeyset`](crate::Error::ForeignKeyset). That refusal is
+/// the keyset cipher's, made when the pending is built and before any key
+/// is retrieved; this enum only names which of the two a call goes through,
+/// because a binding's caller makes that choice at runtime and a typed
+/// caller makes it by naming the cipher.
+///
+/// Not `#[non_exhaustive]`: the two variants are the two ciphers this crate
+/// has, and a binding dispatches on them (the Go guest does, per selector).
+/// A third would be a new cipher type, which is a larger change than adding
+/// a variant here.
+pub enum Scope<'c, K> {
     /// Leaves from any keyset the client holds: one batched retrieval per
     /// keyset the leaves were sealed under.
-    Any(&'c StackCipher<K>),
+    Client(&'c StackCipher<K>),
     /// Leaves from this keyset only.
-    Only(KeysetCipher<'c, K>),
+    Keyset(KeysetCipher<'c, K>),
+}
+
+// By hand rather than derived, so `K: Debug` is not demanded: neither cipher
+// demands it of its own `Debug`, and a data-key source rarely offers one.
+impl<K> fmt::Debug for Scope<'_, K> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Scope::Client(cipher) => f.debug_tuple("Client").field(cipher).finish(),
+            Scope::Keyset(keyset) => f.debug_tuple("Keyset").field(keyset).finish(),
+        }
+    }
 }
 
 /// The UTF-8 inside a string leaf. Valid by `Utf8String`'s construction

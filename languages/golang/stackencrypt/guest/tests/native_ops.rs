@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use std::future::IntoFuture;
 
-use stack_encrypt::dynamic::Opener;
+use stack_encrypt::dynamic::Scope;
 use stack_encrypt::sem::DefaultMatch;
 use stack_encrypt::{nonempty, CipherText, Encrypt, SealedValue, StackCipher};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
@@ -216,7 +216,7 @@ fn value_round_trips_through_the_guest_ops() {
     ))
     .expect("encrypt");
     let pt = block_on(ops::decrypt_value(
-        Opener::Any(&cipher),
+        Scope::Client(&cipher),
         &ct,
         b"users/42",
         false,
@@ -248,7 +248,7 @@ fn element_mode_round_trips() {
     ))
     .expect("encrypt element");
     let pt = block_on(ops::decrypt_value(
-        Opener::Any(&cipher),
+        Scope::Client(&cipher),
         &ct,
         b"users",
         true,
@@ -260,7 +260,7 @@ fn element_mode_round_trips() {
     // derivation must fail authentication.
     assert_eq!(
         block_on(ops::decrypt_value(
-            Opener::Any(&cipher),
+            Scope::Client(&cipher),
             &ct,
             b"users",
             false
@@ -310,7 +310,7 @@ fn wrong_aad_and_malformed_inputs_map_to_statuses() {
     // `STATUS_KMS_FORBIDDEN` — see `status.rs`.)
     assert_eq!(
         block_on(ops::decrypt_value(
-            Opener::Any(&cipher),
+            Scope::Client(&cipher),
             &ct,
             b"other",
             false
@@ -329,7 +329,7 @@ fn wrong_aad_and_malformed_inputs_map_to_statuses() {
     );
     assert_eq!(
         block_on(ops::decrypt_value(
-            Opener::Any(&cipher),
+            Scope::Client(&cipher),
             b"\xffgarbage",
             b"ctx",
             false
@@ -349,7 +349,7 @@ fn wrong_aad_and_malformed_inputs_map_to_statuses() {
     .expect("encode truncated");
     assert_eq!(
         block_on(ops::decrypt_value(
-            Opener::Any(&cipher),
+            Scope::Client(&cipher),
             &out,
             b"ctx",
             false
@@ -378,7 +378,7 @@ fn an_empty_aad_round_trips_on_the_value_paths() {
         ))
         .expect("encrypt under an empty aad");
         let out = block_on(ops::decrypt_value(
-            Opener::Any(&cipher),
+            Scope::Client(&cipher),
             &ct,
             b"",
             as_element,
@@ -390,7 +390,7 @@ fn an_empty_aad_round_trips_on_the_value_paths() {
         // that carries bytes.
         assert_eq!(
             block_on(ops::decrypt_value(
-                Opener::Any(&cipher),
+                Scope::Client(&cipher),
                 &ct,
                 b"ctx",
                 as_element
@@ -410,11 +410,22 @@ fn an_empty_aad_round_trips_on_the_value_paths() {
     ))
     .expect("encrypt");
     let opened = decode(
-        &block_on(ops::decrypt_value(Opener::Any(&cipher), &ct, zeros, false)).expect("decrypt"),
+        &block_on(ops::decrypt_value(
+            Scope::Client(&cipher),
+            &ct,
+            zeros,
+            false,
+        ))
+        .expect("decrypt"),
     );
     assert_eq!(text(&opened), "x");
     assert_eq!(
-        block_on(ops::decrypt_value(Opener::Any(&cipher), &ct, b"ctx", false)),
+        block_on(ops::decrypt_value(
+            Scope::Client(&cipher),
+            &ct,
+            b"ctx",
+            false
+        )),
         Err(STATUS_AUTH)
     );
 }
@@ -616,8 +627,12 @@ fn a_record_batch_encrypts_in_one_call_and_round_trips() {
     // Three rows, two ciphertext fields each: still exactly one call.
     assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 1);
 
-    let pt = block_on(ops::decrypt_record(Opener::Any(&cipher), &record, &plan()))
-        .expect("decrypt records");
+    let pt = block_on(ops::decrypt_record(
+        Scope::Client(&cipher),
+        &record,
+        &plan(),
+    ))
+    .expect("decrypt records");
     assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), 1);
 
     let FfiValue::Array(rows) = decode(&pt) else {
@@ -669,7 +684,11 @@ fn a_forged_passthrough_ciphertext_slot_is_rejected_not_decrypted() {
     codec::encode_ciphertext(&CipherText::Map(fields), &mut forged).expect("re-encode");
 
     assert_eq!(
-        block_on(ops::decrypt_record(Opener::Any(&cipher), &forged, &plan())),
+        block_on(ops::decrypt_record(
+            Scope::Client(&cipher),
+            &forged,
+            &plan()
+        )),
         Err(STATUS_ENCODING),
         "a passthrough in a ciphertext slot must be a hard error, never plaintext"
     );
@@ -886,7 +905,7 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
     let plan_with = |context: FfiValue| single_field_plan("age", context);
 
     let opened = block_on(ops::decrypt_record(
-        Opener::Any(&cipher),
+        Scope::Client(&cipher),
         &record,
         &plan_with(extended("age")),
     ))
@@ -898,7 +917,7 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
 
     assert_eq!(
         block_on(ops::decrypt_record(
-            Opener::Any(&cipher),
+            Scope::Client(&cipher),
             &record,
             &plan_with(s("users/age"))
         )),
@@ -950,7 +969,7 @@ fn a_structured_plan_context_is_validated_at_parse() {
     ))
     .expect("an integer part is never empty");
     assert!(block_on(ops::decrypt_record(
-        Opener::Any(&cipher),
+        Scope::Client(&cipher),
         &sealed,
         &plan_with(FfiValue::Array(vec![s(""), FfiValue::UInt64(7)]))
     ))
@@ -1074,7 +1093,7 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
     );
     assert_eq!(
         block_on(ops::decrypt_record(
-            Opener::Any(&cipher),
+            Scope::Client(&cipher),
             &source,
             &bad_plan
         )),
@@ -1097,7 +1116,7 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
     ))
     .expect("encrypt");
     let opened = block_on(ops::decrypt_record(
-        Opener::Any(&cipher),
+        Scope::Client(&cipher),
         &sealed,
         &odd_plan,
     ))
@@ -1109,7 +1128,7 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
 }
 
 // =============================================================================
-// Keysets: the opener a call selects
+// Keysets: the scope a call selects
 // =============================================================================
 
 fn keyset_named<'c>(
@@ -1130,20 +1149,30 @@ fn a_value_opens_under_its_own_keyset_or_any_but_not_another() {
     let ct = block_on(ops::encrypt_value(&acme, &encode(s("x")), b"ctx", false)).expect("encrypt");
 
     let pt = block_on(ops::decrypt_value(
-        Opener::Only(acme.clone()),
+        Scope::Keyset(acme.clone()),
         &ct,
         b"ctx",
         false,
     ))
     .expect("own keyset opens");
     assert_eq!(text(&decode(&pt)), "x");
-    let pt =
-        block_on(ops::decrypt_value(Opener::Any(&cipher), &ct, b"ctx", false)).expect("any opens");
+    let pt = block_on(ops::decrypt_value(
+        Scope::Client(&cipher),
+        &ct,
+        b"ctx",
+        false,
+    ))
+    .expect("any opens");
     assert_eq!(text(&decode(&pt)), "x");
     let retrieves = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
 
     assert_eq!(
-        block_on(ops::decrypt_value(Opener::Only(globex), &ct, b"ctx", false)),
+        block_on(ops::decrypt_value(
+            Scope::Keyset(globex),
+            &ct,
+            b"ctx",
+            false
+        )),
         Err(STATUS_FOREIGN_KEYSET),
         "another tenant's keyset must refuse the leaf"
     );
@@ -1195,7 +1224,7 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
     };
 
     let before = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
-    let pt = block_on(ops::decrypt_record(Opener::Any(&cipher), &batch, &plan()))
+    let pt = block_on(ops::decrypt_record(Scope::Client(&cipher), &batch, &plan()))
         .expect("any opens the mixed batch");
     assert_eq!(
         cipher.kms().retrieve_calls.load(Ordering::SeqCst) - before,
@@ -1209,7 +1238,7 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
 
     let before = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
     assert_eq!(
-        block_on(ops::decrypt_record(Opener::Only(acme), &batch, &plan())),
+        block_on(ops::decrypt_record(Scope::Keyset(acme), &batch, &plan())),
         Err(STATUS_FOREIGN_KEYSET)
     );
     assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), before);
@@ -1475,7 +1504,7 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
             "{label} must be refused by validation"
         );
         assert_eq!(
-            block_on(ops::decrypt_record(Opener::Any(&cipher), &tree, &plan)),
+            block_on(ops::decrypt_record(Scope::Client(&cipher), &tree, &plan)),
             Err(STATUS_ENCODING),
             "{label} must be refused by the op too"
         );

@@ -21,7 +21,17 @@ _Avoid_: typed path, high-level path
 **Operation description**:
 The target's declaration of the ciphertext and term operations, source selections,
 and context requirements needed to produce it.
-_Avoid_: user-supplied encryption callback, caller-supplied plan
+_Avoid_: user-supplied encryption callback, caller-supplied plan (a **plan**
+is the runtime form of a record's description, not a callback)
+
+**Plan**:
+A record's operation description given as data rather than as a type, per
+field: the context to bind and the outputs (`"c"`, `"eq"`, `"match"`, `"ore"`,
+`"ope"`) to produce. What a binding has instead of a `struct = T` derive;
+`stack_encrypt::dynamic::record` drives one. Its contexts are proven
+nonempty once, when it is built, and its output keys are wire format.
+_Avoid_: schema (that is the source's shape, which a plan does not describe),
+mapping, config
 
 **Ciphertext transcoding**:
 Construction or inspection of an encrypted target through its native encrypted
@@ -120,10 +130,11 @@ sub-cipher, tenant cipher
 What a `Pending` was built through, and therefore what it is allowed to do:
 a `KeysetCipher` scope mints under its keyset and opens leaves from no
 other; a `StackCipher` scope mints nothing and opens leaves from any keyset.
-`CipherScope` is the sealed trait both references implement. Two pendings
-merge when their scopes agree on a keyset — which cipher *value* each came
-from is not part of the rule.
-_Avoid_: binding (that is a name's), context (that is the AAD's)
+`CipherScope` is the sealed trait both references implement; `dynamic::Scope`
+is the same choice as a runtime value, for a binding whose caller makes it
+per call. Two pendings merge when their scopes agree on a keyset — which
+cipher *value* each came from is not part of the rule.
+_Avoid_: binding (that is a name's), context (that is the AAD's), opener
 
 **Name binding**:
 The cache's record that a keyset name resolved to a keyset id, and when.

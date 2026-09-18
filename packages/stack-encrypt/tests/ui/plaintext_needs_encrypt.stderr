@@ -16,7 +16,7 @@ error[E0277]: the trait bound `SerdeOnly: Encrypt` is not satisfied
             Vec<u8>
             [u8; N]
           and $N others
-  = note: required for `CipherText<SealedValue, Box<(dyn std::any::Any + Send + 'static)>>` to implement `EncryptFrom<SerdeOnly>`
+  = note: required for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` to implement `EncryptFrom<SerdeOnly>`
   = note: 1 redundant requirement hidden
   = note: required for `Target` to implement `EncryptFrom<SerdeOnly>`
 note: required by a bound in `target::operations::<impl KeysetCipher<'_, K>>::encrypt_as`
