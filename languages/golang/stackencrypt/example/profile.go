@@ -60,6 +60,9 @@ func loadCredentials() (credentials, error) {
 		return c, fmt.Errorf("no current workspace in %s — run `stash auth login`: %w", root, err)
 	}
 	c.Workspace = strings.TrimSpace(string(workspace))
+	if !validWorkspaceID(c.Workspace) {
+		return c, fmt.Errorf("current_workspace in %s is not a workspace id (%q) — run `stash auth login`", root, c.Workspace)
+	}
 	c.dir = filepath.Join(root, "workspaces", c.Workspace)
 
 	// The client key: the two environment variables win, as they do for the
@@ -127,6 +130,24 @@ func (c credentials) describe() string {
 	}
 	return fmt.Sprintf("%s, token good for %s",
 		auth.Region, time.Until(time.Unix(auth.ExpiresAt, 0)).Round(time.Minute))
+}
+
+// validWorkspaceID is stack-profile's rule for a workspace id: sixteen
+// base32 characters (A-Z, 2-7). The id becomes a path component under
+// workspaces/, and current_workspace is a plain file anything can write, so
+// it is checked here as the Rust reader checks it — otherwise "../.." in that
+// file reads credentials from outside the profile.
+func validWorkspaceID(id string) bool {
+	if len(id) != 16 {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if !(('A' <= c && c <= 'Z') || ('2' <= c && c <= '7')) {
+			return false
+		}
+	}
+	return true
 }
 
 func readJSON(path string, into any) error {
