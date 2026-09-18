@@ -68,6 +68,9 @@ afterEach(() => {
     process.env.CI = originalCi
   }
   setTty(originalIsTty)
+  // Vitest 4: restoreAllMocks only reverts vi.spyOn spies; resetAllMocks
+  // clears the module-mock vi.fn()s' calls and per-test implementations.
+  vi.resetAllMocks()
   vi.restoreAllMocks()
 })
 

@@ -16,11 +16,14 @@ vi.mock('@clack/prompts', () => ({
 const queryMock = vi.fn()
 vi.mock('pg', () => ({
   default: {
-    Client: vi.fn(() => ({
-      connect: vi.fn(async () => {}),
-      query: queryMock,
-      end: vi.fn(async () => {}),
-    })),
+    // biome-ignore lint/complexity/useArrowFunction: Vitest 4 mocks called with `new` need a constructible (non-arrow) implementation.
+    Client: vi.fn(function () {
+      return {
+        connect: vi.fn(async () => {}),
+        query: queryMock,
+        end: vi.fn(async () => {}),
+      }
+    }),
   },
 }))
 

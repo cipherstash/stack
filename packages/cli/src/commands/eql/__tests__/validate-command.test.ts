@@ -74,7 +74,8 @@ const pgMock = vi.hoisted(() => ({
 }))
 vi.mock('pg', () => ({
   default: {
-    Client: vi.fn((config: { connectionString?: string }) => {
+    // biome-ignore lint/complexity/useArrowFunction: Vitest 4 mocks called with `new` need a constructible (non-arrow) implementation.
+    Client: vi.fn(function (config: { connectionString?: string }) {
       pgMock.connectionStrings.push(config?.connectionString)
       return { connect: pgMock.connect, query: pgMock.query, end: pgMock.end }
     }),
