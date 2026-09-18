@@ -73,6 +73,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // keyset's index key, which `init` loads. Data keys and terms are bound to
     // the same keyset by construction — there is no way to mix them up.
     let cipher = StackCipher::new().await?;
+    // Sealing and term derivation bind to a keyset; this is the client's
+    // default one.
+    let keyset = cipher.default_keyset();
 
     // --- Write side: encrypt a table of users ---------------------------------
 
@@ -94,7 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // caller — and one await seals the whole table: the `Vec` implementation
     // merges every struct's pending, so five users (two ciphertexts and two
     // terms each) settle in a single batched generate_keys call.
-    let table: Vec<EncryptedUser> = users.encrypt_into(&cipher).await?;
+    let table: Vec<EncryptedUser> = users.encrypt_into(&keyset).await?;
     println!("stored {} encrypted users in one ZeroKMS call", table.len());
 
     // --- Query side: terms only, no plaintext, no decryption ------------------
@@ -105,7 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // WHERE age = 34: compare equality terms.
     let probe: EqualityTerm = 34u32
-        .encrypt_into_with_context(&cipher, nonempty!("users/age"))
+        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
         .await?;
     let equal: Vec<usize> = (0..table.len())
         .filter(|&i| table[i].age.eq == probe)
@@ -114,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // WHERE age > 40: compare ORE terms.
     let bound: OreTerm<u32> = 40u32
-        .encrypt_into_with_context(&cipher, nonempty!("users/age"))
+        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
         .await?;
     let over_40: Vec<usize> = (0..table.len())
         .filter(|&i| table[i].age.ord > bound)
@@ -160,7 +163,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         age: 34,
         email: "alice@example.com".into(),
     };
-    let record: EncryptedUser = alice.clone().encrypt_into_with_context(&cipher, id).await?;
+    let record: EncryptedUser = alice.clone().encrypt_into_with_context(&keyset, id).await?;
     let unscoped: Vec<usize> = std::iter::once(&record)
         .enumerate()
         .filter(|(_, r)| r.age.eq == probe)
@@ -171,7 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         !unscoped.is_empty()
     );
     let scoped: EqualityTerm = 34u32
-        .encrypt_into_with_context(&cipher, nonempty!("users/age").with(id))
+        .encrypt_into_with_context(&keyset, nonempty!("users/age").with(id))
         .await?;
     println!(
         "  ...and a probe built under the same id: {}",
@@ -184,7 +187,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ZeroKMS descriptor of every data key: opening under another id fails
     // at ZeroKMS, before any key material moves. (Against a source that
     // does not enforce descriptors — the fake — the AEAD refuses instead.)
-    let record: EncryptedUser = alice.encrypt_into_with_context(&cipher, id).await?;
+    let record: EncryptedUser = alice.encrypt_into_with_context(&keyset, id).await?;
     let wrong_id = User::decrypt_from_with_context(record, &decryptor, 43u64).await;
     println!(
         "opening under another id: {}",

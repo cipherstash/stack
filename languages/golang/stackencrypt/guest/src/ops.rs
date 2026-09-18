@@ -1,4 +1,4 @@
-//! The guest's operations, written against `StackCipher<K>` for any
+//! The guest's operations, written against `StackCipher<K>` / `KeysetCipher<K>` for any
 //! [`DataKeySource`] so they compile — and their tests run — on the native
 //! host target with `FakeDataKeySource`. The wasm32-only [`crate::abi`]
 //! module wires them to the session table and the packed ABI; nothing in
@@ -27,8 +27,13 @@
 //! the field values. However many rows and fields are in one call, all
 //! ciphertext leaves seal from **one** batched `generate_keys` — the
 //! pendings are merged before settling, exactly like the derive's `zip`/`all`
-//! composition — and index terms derive locally with no ZeroKMS traffic at
-//! all. That batch reaches ZeroKMS as one request per
+//! composition. Index terms are *not* in that batch: `build_row` settles
+//! each term's pending as it builds the row, which under the local HMAC
+//! backend is no ZeroKMS traffic at all, and under a backend that derives
+//! terms at ZeroKMS (as ZeroKMS v2 does) would be one round trip per term
+//! until the term pendings are merged into the row's batch — a change for
+//! this module when that backend lands, not something the record path does
+//! today. The ciphertext batch reaches ZeroKMS as one request per
 //! `ClientOpts::max_keys_per_req` keyed leaves (500 by default, sent
 //! sequentially: the guest pins `max_concurrent_reqs` to 1), so "one call"
 //! is exact up to 500 leaves and "one call per 500" past it. See
@@ -37,18 +42,16 @@
 use stack_encrypt::sem::{CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch};
 use stack_encrypt::target::Pending;
 use stack_encrypt::{
-    BoxedPassthrough, CipherText, Decrypt, Element, Encrypt, IntoPrfContext, NonEmpty, SealedValue,
-    StackCipher, StackCipherText,
+    AadPiece, BoxedPassthrough, CipherText, Element, Encrypt, IntoPrfContext, KeysetCipher,
+    NonEmpty, SealedValue, StackCipher, StackCipherText,
 };
 use stack_kms::DataKeySource;
 use vitaminc_aead_value::{transport as codec, FfiValue};
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroizing;
 
-use crate::context::{parse_context, ContextPart};
-use crate::status::{
-    status_for_error, status_for_term_error, STATUS_AUTH, STATUS_ENCODING, STATUS_INTERNAL,
-};
+use crate::context::{borrowed, parse_context};
+use crate::status::{status_for_error, STATUS_ENCODING, STATUS_INTERNAL};
 
 /// Term kinds for `se_term`, part of the guest/host contract (the Go host
 /// mirrors these values).
@@ -83,7 +86,7 @@ type BytesTree = CipherText<Vec<u8>, BoxedPassthrough>;
 /// the boundary when the plan or the term's context is parsed, and refused
 /// as [`STATUS_ENCODING`] when empty.
 pub async fn encrypt_value<K>(
-    cipher: &StackCipher<K>,
+    cipher: &KeysetCipher<'_, K>,
     value: &[u8],
     aad: &[u8],
     as_element: bool,
@@ -121,16 +124,22 @@ where
     K: DataKeySource + Sync,
 {
     let tree = decode_tree(ciphertext)?;
-    let decipher = cipher
-        .decipher(tree, aad)
-        .await
-        .map_err(|e| status_for_error(&e))?;
+    // One `decrypt` per arm, not one `decipher` and two drives: the element
+    // derivation is `Element<T>`'s to apply, and naming the type is what
+    // asks for it. Only one arm runs, so the retrieve happens once either
+    // way.
     let value: FfiValue = if as_element {
-        Element::<FfiValue>::decrypt_with_aad(decipher, aad).map(Element::into_inner)
+        let wrapped: Element<FfiValue> = cipher
+            .decrypt(tree, aad)
+            .await
+            .map_err(|e| status_for_error(&e))?;
+        wrapped.into_inner()
     } else {
-        FfiValue::decrypt_with_aad(decipher, aad)
-    }
-    .map_err(|_| STATUS_AUTH)?;
+        cipher
+            .decrypt(tree, aad)
+            .await
+            .map_err(|e| status_for_error(&e))?
+    };
     encode_value(value)
 }
 
@@ -140,8 +149,10 @@ where
 
 /// Derive one index term: a codec-encoded scalar and a codec-encoded
 /// context in, the term's frozen byte encoding out (see `stack-encrypt`'s
-/// `sem` module docs). Purely local — this never touches ZeroKMS, which is
-/// what makes query probes cheap.
+/// `sem` module docs). Under the local HMAC backend the derivation is one
+/// PRF/CLLW computation with no ZeroKMS I/O; that is the backend's
+/// property, not this operation's contract — the term API is a `Pending`
+/// so a backend that derives terms at ZeroKMS settles the same way.
 ///
 /// The context is one part — a string, bytes, or an `i32`/`i64`/`u32`/`u64`
 /// — or an array of parts, nested as deep as the transport codec allows
@@ -154,7 +165,7 @@ where
 /// same parts as a (left-nested) list for a Rust row sealed under an
 /// extended context.
 pub async fn term<K>(
-    cipher: &StackCipher<K>,
+    cipher: &KeysetCipher<'_, K>,
     value: &[u8],
     context: &[u8],
     kind: u32,
@@ -217,7 +228,7 @@ fn scalar_of(value: &FfiValue) -> Result<Scalar, u32> {
 /// combinations (floats or booleans under equality, anything non-text under
 /// match) are [`STATUS_ENCODING`] — the scheme does not define them.
 async fn term_bytes<'c, K, D>(
-    cipher: &StackCipher<K>,
+    cipher: &KeysetCipher<'_, K>,
     scalar: Scalar,
     context: NonEmpty<D>,
     output: Output,
@@ -226,7 +237,7 @@ where
     K: DataKeySource + Sync,
     D: IntoPrfContext<'c>,
 {
-    let term_err = |e| status_for_term_error(&e);
+    let term_err = |e| status_for_error(&e);
     match output {
         Output::Ciphertext => Err(STATUS_ENCODING),
         Output::Equality => {
@@ -290,7 +301,7 @@ where
 /// The `AsRef<[u8]>` on the output is what turns the typed CLLW ciphertext
 /// into the frozen raw-bytes encoding.
 async fn ore<'c, K, T, D>(
-    cipher: &StackCipher<K>,
+    cipher: &KeysetCipher<'_, K>,
     value: T,
     context: NonEmpty<D>,
 ) -> Result<Vec<u8>, u32>
@@ -304,12 +315,12 @@ where
         .ore_term(value, context)
         .await
         .map(|t| t.as_ref().to_vec())
-        .map_err(|e| status_for_term_error(&e))
+        .map_err(|e| status_for_error(&e))
 }
 
 /// See [`ore`].
 async fn ope<'c, K, T, D>(
-    cipher: &StackCipher<K>,
+    cipher: &KeysetCipher<'_, K>,
     value: T,
     context: NonEmpty<D>,
 ) -> Result<Vec<u8>, u32>
@@ -323,7 +334,7 @@ where
         .ope_term(value, context)
         .await
         .map(|t| t.as_ref().to_vec())
-        .map_err(|e| status_for_term_error(&e))
+        .map_err(|e| status_for_error(&e))
 }
 
 // =============================================================================
@@ -376,7 +387,7 @@ struct FieldPlan {
     /// opens under it — the cipher-directed `encrypt_with_aad` in
     /// [`build_row`] as much as the target-directed `decrypt_into` in
     /// [`decrypt_record`] — is under a context stack-encrypt's leaves accept.
-    context: NonEmpty<ContextPart>,
+    context: NonEmpty<AadPiece<'static>>,
     outputs: Vec<Output>,
 }
 
@@ -424,7 +435,7 @@ fn parse_plan(value: FfiValue) -> Result<Vec<FieldPlan>, u32> {
             let FfiValue::Object(spec) = spec else {
                 return Err(STATUS_ENCODING);
             };
-            let mut context: Option<NonEmpty<ContextPart>> = None;
+            let mut context: Option<NonEmpty<AadPiece<'static>>> = None;
             let mut outputs: Option<Vec<Output>> = None;
             for (key, value) in spec {
                 match key.as_str() {
@@ -533,7 +544,7 @@ fn reject_passthrough_tree(tree: &StackCipherText) -> Result<(), u32> {
 /// side uses aead-value's tagged types too. This is by design, not a defect
 /// in either side; making the derive tagged is a separate follow-up.
 pub async fn encrypt_record<K>(
-    cipher: &StackCipher<K>,
+    cipher: &KeysetCipher<'_, K>,
     source: &[u8],
     plan: &[u8],
 ) -> Result<Vec<u8>, u32>
@@ -607,7 +618,7 @@ where
 /// returning the row skeleton. The plan drives the iteration so the output
 /// field order is the plan's; the row must contain exactly the plan's fields.
 async fn build_row<'c, K>(
-    cipher: &'c StackCipher<K>,
+    cipher: &'c KeysetCipher<'_, K>,
     mut row: Vec<(String, FfiValue)>,
     plan: &[FieldPlan],
     pendings: &mut Vec<Pending<'c, StackCipherText, K>>,
@@ -625,10 +636,10 @@ where
             .position(|(name, _)| name == &field.name)
             .ok_or(STATUS_ENCODING)?;
         let (name, value) = row.swap_remove(at);
-        // Borrowed from the plan once per field: the proof was made at
-        // parse time, so re-taking it over the same tree cannot fail, and
-        // `NonEmpty<&ContextPart>` is `Copy` for the outputs below.
-        let context = NonEmpty::new(field.context.get()).map_err(|_| STATUS_INTERNAL)?;
+        // A borrowed view of the plan's context, once per field: the proof
+        // was made at parse time, so re-taking it over the same tree cannot
+        // fail, and the view clones cheaply for each output below.
+        let context = NonEmpty::new(borrowed(field.context.get())).map_err(|_| STATUS_INTERNAL)?;
 
         // Terms first — they lift a copy of the scalar; the value itself is
         // consumed by the ciphertext path below.
@@ -647,14 +658,14 @@ where
                 continue;
             }
             let scalar = scalar.clone().ok_or(STATUS_INTERNAL)?;
-            let term = term_bytes(cipher, scalar, context, *output).await?;
+            let term = term_bytes(cipher, scalar, context.clone(), *output).await?;
             outputs.push((output.key(), Some(term)));
         }
 
         if field.outputs.contains(&Output::Ciphertext) {
             reject_passthrough_value(&value)?;
             let tree = value
-                .encrypt_with_aad(cipher, context)
+                .encrypt_with_aad(cipher, context.clone())
                 .map_err(|_| STATUS_INTERNAL)?;
             pendings.push(tree.into_pending(cipher, context));
         }
@@ -709,7 +720,8 @@ where
             if !field.outputs.contains(&Output::Ciphertext) {
                 continue;
             }
-            let context = NonEmpty::new(field.context.get()).map_err(|_| STATUS_INTERNAL)?;
+            let context =
+                NonEmpty::new(borrowed(field.context.get())).map_err(|_| STATUS_INTERNAL)?;
             let at = row
                 .iter()
                 .position(|(name, _)| name == &field.name)

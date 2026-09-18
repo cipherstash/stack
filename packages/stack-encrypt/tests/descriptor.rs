@@ -48,9 +48,10 @@ fn user() -> User {
 #[tokio::test]
 async fn a_leaf_sends_its_context_as_the_descriptor_both_ways() -> Result<(), Error> {
     let (cipher, sent) = recording_cipher().await;
+    let keyset = cipher.default_keyset();
 
     let ct: StackCipherText = "alice"
-        .encrypt_into_with_context(&cipher, nonempty!("users/email"))
+        .encrypt_into_with_context(&keyset, nonempty!("users/email"))
         .await?;
     let _: String = ct.decrypt_into(&cipher, nonempty!("users/email")).await?;
 
@@ -63,8 +64,9 @@ async fn a_leaf_sends_its_context_as_the_descriptor_both_ways() -> Result<(), Er
 #[tokio::test]
 async fn a_struct_sends_one_descriptor_per_field_context() -> Result<(), Error> {
     let (cipher, sent) = recording_cipher().await;
+    let keyset = cipher.default_keyset();
 
-    let row: EncryptedUser = user().encrypt_into(&cipher).await?;
+    let row: EncryptedUser = user().encrypt_into(&keyset).await?;
     let back = User::decrypt_from(row, &cipher).await?;
     assert_eq!(back, user());
 
@@ -87,8 +89,9 @@ async fn a_struct_sends_one_descriptor_per_field_context() -> Result<(), Error> 
 #[tokio::test]
 async fn a_callers_context_extends_every_fields_descriptor() -> Result<(), Error> {
     let (cipher, sent) = recording_cipher().await;
+    let keyset = cipher.default_keyset();
 
-    let row: EncryptedUser = user().encrypt_into_with_context(&cipher, 7u64).await?;
+    let row: EncryptedUser = user().encrypt_into_with_context(&keyset, 7u64).await?;
     let back = User::decrypt_from_with_context(row, &cipher, 7u64).await?;
     assert_eq!(back, user());
 
@@ -116,9 +119,10 @@ async fn a_callers_context_extends_every_fields_descriptor() -> Result<(), Error
 #[tokio::test]
 async fn every_leaf_of_a_tree_shares_the_root_descriptor() -> Result<(), Error> {
     let (cipher, sent) = recording_cipher().await;
+    let keyset = cipher.default_keyset();
 
     let column: Vec<StackCipherText> = vec![1u32, 2, 3]
-        .encrypt_into_with_context(&cipher, nonempty!("users/age"))
+        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
         .await?;
     let _: Vec<u32> = column.decrypt_into(&cipher, nonempty!("users/age")).await?;
 
@@ -133,11 +137,12 @@ async fn every_leaf_of_a_tree_shares_the_root_descriptor() -> Result<(), Error> 
 #[tokio::test]
 async fn the_cipher_directed_path_renders_its_aad_the_same_way() -> Result<(), Error> {
     let (cipher, sent) = recording_cipher().await;
+    let keyset = cipher.default_keyset();
 
-    let ct = cipher.encrypt(42u32, "users/age").await?;
+    let ct = keyset.encrypt(42u32, "users/age").await?;
     let _: u32 = cipher.decrypt(ct, "users/age").await?;
     // No AAD at all is the empty descriptor: ZeroKMS binds nothing.
-    let ct = cipher.encrypt(42u32, ()).await?;
+    let ct = keyset.encrypt(42u32, ()).await?;
     let _: u32 = cipher.decrypt(ct, ()).await?;
 
     let sent = sent.lock().expect("lock").clone();
@@ -172,12 +177,13 @@ async fn a_column_renders_an_over_long_context_once() -> Result<(), Error> {
     }
 
     let (cipher, sent) = recording_cipher().await;
+    let keyset = cipher.default_keyset();
     let renders = Arc::new(AtomicUsize::new(0));
     let context = stack_encrypt::NonEmpty::new(Counted(renders.clone())).unwrap();
 
     let values: Vec<u32> = (0..10_000).collect();
     let result: Result<Vec<StackCipherText>, Error> = values
-        .encrypt_into_with_context(&cipher, context.clone())
+        .encrypt_into_with_context(&keyset, context.clone())
         .await;
     assert!(
         matches!(result, Err(Error::DescriptorTooLong { .. })),
@@ -190,7 +196,7 @@ async fn a_column_renders_an_over_long_context_once() -> Result<(), Error> {
     );
 
     let column: Vec<StackCipherText> = vec![1u32, 2, 3]
-        .encrypt_into_with_context(&cipher, nonempty!("users/age"))
+        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
         .await?;
     let opened: Result<Vec<u32>, Error> = column.decrypt_into(&cipher, context).await;
     assert!(
@@ -219,17 +225,18 @@ async fn a_column_renders_an_over_long_context_once() -> Result<(), Error> {
 #[tokio::test]
 async fn a_column_with_nothing_to_bind_takes_any_context() -> Result<(), Error> {
     let (cipher, sent) = recording_cipher().await;
+    let keyset = cipher.default_keyset();
     let long = stack_encrypt::NonEmpty::new("a".repeat(Descriptor::MAX_LEN + 1)).unwrap();
 
     let names = vec!["alice".to_string(), "bob".to_string()];
     let terms: Vec<EqualityTerm> = names
-        .encrypt_into_with_context(&cipher, long.clone())
+        .encrypt_into_with_context(&keyset, long.clone())
         .await?;
     assert_eq!(terms.len(), 2);
 
     let none: Vec<u32> = Vec::new();
     let sealed: Vec<StackCipherText> = none
-        .encrypt_into_with_context(&cipher, long.clone())
+        .encrypt_into_with_context(&keyset, long.clone())
         .await?;
     assert!(sealed.is_empty());
     let opened: Vec<u32> = sealed.decrypt_into(&cipher, long).await?;
@@ -246,11 +253,12 @@ async fn a_column_with_nothing_to_bind_takes_any_context() -> Result<(), Error> 
 #[tokio::test]
 async fn an_over_long_context_is_refused_before_any_request_on_either_path() -> Result<(), Error> {
     let (cipher, sent) = recording_cipher().await;
+    let keyset = cipher.default_keyset();
     let long = stack_encrypt::NonEmpty::new("a".repeat(Descriptor::MAX_LEN + 1)).unwrap();
 
     let values: Vec<u32> = (0..10_000).collect();
     let result: Result<Vec<StackCipherText>, Error> = values
-        .encrypt_into_with_context(&cipher, long.clone())
+        .encrypt_into_with_context(&keyset, long.clone())
         .await;
     assert!(
         matches!(result, Err(Error::DescriptorTooLong { len }) if len == Descriptor::MAX_LEN + 1),
@@ -258,7 +266,7 @@ async fn an_over_long_context_is_refused_before_any_request_on_either_path() -> 
     );
 
     let sealed: StackCipherText = 7u32
-        .encrypt_into_with_context(&cipher, nonempty!("users/age"))
+        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
         .await?;
     let opened: Result<u32, Error> = sealed.decrypt_into(&cipher, long).await;
     assert!(

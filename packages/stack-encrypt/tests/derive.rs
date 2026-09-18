@@ -13,7 +13,7 @@ use common::{counting_cipher, stack_cipher};
 use stack_encrypt::sem::{EqualityTerm, MatchTerm, OreTerm};
 use stack_encrypt::target::{DecryptFrom, EncryptInto};
 use stack_encrypt::{
-    nonempty, DecryptField, DecryptInto, DecryptTarget, Decryptable, EncryptFrom, Error, Pending,
+    nonempty, DecryptField, DecryptInto, Decryptable, EncryptFrom, Error, KeysetCipher, Pending,
     StackCipher, StackCipherText,
 };
 
@@ -32,10 +32,12 @@ struct EncryptedAge {
 #[tokio::test]
 async fn a_derived_record_is_the_hand_written_one() {
     let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
     let generator = stack_cipher().await;
+    let generator = generator.default_keyset();
 
     let record: EncryptedAge = 42u32
-        .encrypt_into_with_context(&cipher, nonempty!("users/age"))
+        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
         .await
         .unwrap();
 
@@ -74,6 +76,17 @@ struct SearchableText {
 #[derive(EncryptFrom)]
 struct Pair(StackCipherText, EqualityTerm);
 
+/// A record may declare `'__k` itself; the derive's keyset lifetime steps
+/// aside rather than colliding with it. Compiling is the test.
+#[derive(EncryptFrom)]
+#[stash(plaintext = u32)]
+#[allow(dead_code)]
+struct Borrowed<'__k> {
+    c: StackCipherText,
+    #[stash(default)]
+    label: Option<&'__k str>,
+}
+
 /// The record's own generics (and their bounds) are carried through, and the
 /// where clause makes `Tagged<T>` accept exactly `T` — the ORE term is typed
 /// by its source. A generic record's one-ciphertext check runs when the
@@ -87,11 +100,13 @@ struct Tagged<T: CllwOreEncrypt> {
 #[tokio::test]
 async fn a_generic_plaintext_record_accepts_what_its_leaves_accept() {
     let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
     let generator = stack_cipher().await;
+    let generator = generator.default_keyset();
 
     let record: SearchableText = "alice"
         .to_string()
-        .encrypt_into_with_context(&cipher, nonempty!("users/name"))
+        .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await
         .unwrap();
     let hm: EqualityTerm = "alice"
@@ -113,7 +128,7 @@ async fn a_generic_plaintext_record_accepts_what_its_leaves_accept() {
     assert_eq!(name, "alice");
 
     let pair: Pair = "bob"
-        .encrypt_into_with_context(&cipher, nonempty!("users/name"))
+        .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await
         .unwrap();
     let hm: EqualityTerm = "bob"
@@ -129,7 +144,7 @@ async fn a_generic_plaintext_record_accepts_what_its_leaves_accept() {
     assert_eq!(name, "bob");
 
     let tagged: Tagged<u32> = 7u32
-        .encrypt_into_with_context(&cipher, nonempty!("users/score"))
+        .encrypt_into_with_context(&keyset, nonempty!("users/score"))
         .await
         .unwrap();
     let ob: OreTerm<u32> = 7u32
@@ -168,9 +183,10 @@ struct Numbers {
 #[tokio::test]
 async fn decrypt_marks_the_field_when_the_types_cannot_choose() {
     let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
 
     let doubled: Doubled = 9u32
-        .encrypt_into_with_context(&cipher, nonempty!("doubled"))
+        .encrypt_into_with_context(&keyset, nonempty!("doubled"))
         .await
         .unwrap();
     let opened: u32 = doubled
@@ -182,7 +198,7 @@ async fn decrypt_marks_the_field_when_the_types_cannot_choose() {
     // and its literal context is extended by the caller's like any other:
     // sealed under `("doubled/shadow", "doubled")`.
     let doubled: Doubled = 9u32
-        .encrypt_into_with_context(&cipher, nonempty!("doubled"))
+        .encrypt_into_with_context(&keyset, nonempty!("doubled"))
         .await
         .unwrap();
     let shadow: u32 = doubled
@@ -196,7 +212,7 @@ async fn decrypt_marks_the_field_when_the_types_cannot_choose() {
     assert_eq!(shadow, 9);
 
     let numbers: Numbers = vec![1u32, 2, 3]
-        .encrypt_into_with_context(&cipher, nonempty!("numbers"))
+        .encrypt_into_with_context(&keyset, nonempty!("numbers"))
         .await
         .unwrap();
     assert_eq!(numbers.hm.len(), 3);
@@ -212,13 +228,13 @@ async fn decrypt_marks_the_field_when_the_types_cannot_choose() {
 #[derive(PartialEq)]
 struct OpaqueTerm(EqualityTerm);
 
-impl<S, K, Ctx> EncryptFrom<S, StackCipher<K>, Ctx> for OpaqueTerm
+impl<'k, S, K, Ctx> EncryptFrom<S, KeysetCipher<'k, K>, Ctx> for OpaqueTerm
 where
-    EqualityTerm: EncryptFrom<S, StackCipher<K>, Ctx>,
+    EqualityTerm: EncryptFrom<S, KeysetCipher<'k, K>, Ctx>,
 {
     fn encrypt_from<'a>(
         source: &'a S,
-        cipher: &'a StackCipher<K>,
+        cipher: &'a KeysetCipher<'k, K>,
         context: Ctx,
     ) -> Pending<'a, Self, K>
     where
@@ -246,10 +262,12 @@ const _: () = assert!(<WithOpaque as Decryptable>::DECRYPTABLE);
 #[tokio::test]
 async fn explicit_mode_supports_opaque_fields_in_the_paired_derive() {
     let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
     let generator = stack_cipher().await;
+    let generator = generator.default_keyset();
 
     let record: WithOpaque = 5u32
-        .encrypt_into_with_context(&cipher, nonempty!("opaque"))
+        .encrypt_into_with_context(&keyset, nonempty!("opaque"))
         .await
         .unwrap();
     let hm: EqualityTerm = 5u32
@@ -274,8 +292,12 @@ impl Decryptable for Lying {
     const DECRYPTABLE: bool = true;
 }
 
-impl<P, C: DecryptTarget, Ctx> DecryptField<P, C, Ctx> for Lying {
-    fn decrypt_field<'a>(self, _cipher: &'a C, _context: Ctx) -> Option<C::Output<'a, P>>
+impl<P, K, Ctx> DecryptField<P, StackCipher<K>, Ctx> for Lying {
+    fn decrypt_field<'a>(
+        self,
+        _cipher: &'a StackCipher<K>,
+        _context: Ctx,
+    ) -> Option<Pending<'a, P, K>>
     where
         Self: 'a,
         P: 'a,
@@ -327,18 +349,19 @@ struct EncryptedValue {
 #[tokio::test]
 async fn listed_plaintexts_each_get_their_own_impl() {
     let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
 
     let number: EncryptedValue = 7u32
-        .encrypt_into_with_context(&cipher, nonempty!("t/n"))
+        .encrypt_into_with_context(&keyset, nonempty!("t/n"))
         .await
         .unwrap();
     let text: EncryptedValue = "seven"
         .to_string()
-        .encrypt_into_with_context(&cipher, nonempty!("t/t"))
+        .encrypt_into_with_context(&keyset, nonempty!("t/t"))
         .await
         .unwrap();
     let hm: EqualityTerm = 7u32
-        .encrypt_into_with_context(&cipher, nonempty!("t/n"))
+        .encrypt_into_with_context(&keyset, nonempty!("t/n"))
         .await
         .unwrap();
     assert_eq!(number.hm, hm);
@@ -354,13 +377,14 @@ async fn listed_plaintexts_each_get_their_own_impl() {
 #[tokio::test]
 async fn a_failed_field_fails_the_derived_record_before_any_io() {
     let (cipher, generates, _) = counting_cipher().await;
+    let keyset = cipher.default_keyset();
 
     // Text that yields no match tokens fails that leaf during the
     // synchronous build; the derived record is the zip of its fields, so it
     // fails the same way and never mints the data key its ciphertext field
     // would have wanted.
     let result: Result<SearchableText, _> = String::new()
-        .encrypt_into_with_context(&cipher, nonempty!("users/name"))
+        .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await;
     assert!(matches!(result, Err(Error::Term(_))));
     assert_eq!(generates.load(AtomicOrdering::SeqCst), 0);
@@ -405,11 +429,13 @@ fn user() -> User {
 #[tokio::test]
 async fn a_struct_is_one_batched_call_and_rebuilds_its_plaintext() {
     let (cipher, generates, retrieves) = counting_cipher().await;
+    let keyset = cipher.default_keyset();
     let generator = stack_cipher().await;
+    let generator = generator.default_keyset();
 
     // Every field has its own context, so the struct needs none from the
     // caller: the context-free forms are the whole call, both ways.
-    let row: EncryptedUser = user().encrypt_into(&cipher).await.unwrap();
+    let row: EncryptedUser = user().encrypt_into(&keyset).await.unwrap();
     assert_eq!(
         generates.load(AtomicOrdering::SeqCst),
         1,
@@ -444,6 +470,7 @@ async fn a_struct_is_one_batched_call_and_rebuilds_its_plaintext() {
 #[tokio::test]
 async fn a_column_of_structs_is_still_one_call_each_way() {
     let (cipher, generates, retrieves) = counting_cipher().await;
+    let keyset = cipher.default_keyset();
 
     let users: Vec<User> = (0..4)
         .map(|i| User {
@@ -452,7 +479,7 @@ async fn a_column_of_structs_is_still_one_call_each_way() {
         })
         .collect();
 
-    let rows: Vec<EncryptedUser> = users.encrypt_into(&cipher).await.unwrap();
+    let rows: Vec<EncryptedUser> = users.encrypt_into(&keyset).await.unwrap();
     assert_eq!(rows.len(), 4);
     assert_eq!(generates.load(AtomicOrdering::SeqCst), 1);
 
@@ -464,13 +491,15 @@ async fn a_column_of_structs_is_still_one_call_each_way() {
 #[tokio::test]
 async fn a_struct_extends_its_contexts_with_the_callers() {
     let (cipher, generates, retrieves) = counting_cipher().await;
+    let keyset = cipher.default_keyset();
     let generator = stack_cipher().await;
+    let generator = generator.default_keyset();
 
     // The caller's context — the record's id — extends every inferred one:
     // `age` is derived under `("user/age", 7u64)`, still in one batched
     // call, and a query site probes it under the same pair.
     let row: EncryptedUser = user()
-        .encrypt_into_with_context(&cipher, 7u64)
+        .encrypt_into_with_context(&keyset, 7u64)
         .await
         .unwrap();
     assert_eq!(generates.load(AtomicOrdering::SeqCst), 1);
@@ -493,7 +522,7 @@ async fn a_struct_extends_its_contexts_with_the_callers() {
     assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 1);
 
     let row: EncryptedUser = user()
-        .encrypt_into_with_context(&cipher, 7u64)
+        .encrypt_into_with_context(&keyset, 7u64)
         .await
         .unwrap();
     // The fake key source ignores descriptors, so the AEAD is what refuses
@@ -502,7 +531,7 @@ async fn a_struct_extends_its_contexts_with_the_callers() {
     let other_row = User::decrypt_from_with_context(row, &cipher, 8u64).await;
     assert!(matches!(other_row, Err(Error::Aead)));
     let row: EncryptedUser = user()
-        .encrypt_into_with_context(&cipher, 7u64)
+        .encrypt_into_with_context(&keyset, 7u64)
         .await
         .unwrap();
     let no_row = User::decrypt_from(row, &cipher).await;
@@ -510,7 +539,7 @@ async fn a_struct_extends_its_contexts_with_the_callers() {
 
     // Any context does: a string, a pair, an `Option`.
     let row: EncryptedUser = user()
-        .encrypt_into_with_context(&cipher, nonempty!("tenant/acme"))
+        .encrypt_into_with_context(&keyset, nonempty!("tenant/acme"))
         .await
         .unwrap();
     let recovered = User::decrypt_from_with_context(row, &cipher, nonempty!("tenant/acme"))
@@ -522,8 +551,9 @@ async fn a_struct_extends_its_contexts_with_the_callers() {
 #[tokio::test]
 async fn a_struct_field_opened_under_the_wrong_context_fails() {
     let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
 
-    let row: EncryptedUser = user().encrypt_into(&cipher).await.unwrap();
+    let row: EncryptedUser = user().encrypt_into(&keyset).await.unwrap();
     // The literal contexts are baked into the impl, so a transplanted field
     // is caught exactly as for a leaf: by the AAD against the fake key
     // source, by ZeroKMS's descriptor check (`Error::Kms`) before that in
@@ -556,13 +586,15 @@ struct EncryptedAccount {
 #[tokio::test]
 async fn a_struct_nests_in_a_struct_via_nested() {
     let (cipher, generates, retrieves) = counting_cipher().await;
+    let keyset = cipher.default_keyset();
     let generator = stack_cipher().await;
+    let generator = generator.default_keyset();
 
     let account = Account {
         user: user(),
         plan: "pro".to_string(),
     };
-    let row: EncryptedAccount = account.encrypt_into(&cipher).await.unwrap();
+    let row: EncryptedAccount = account.encrypt_into(&keyset).await.unwrap();
     assert_eq!(generates.load(AtomicOrdering::SeqCst), 1);
 
     // The inner struct's fields are still under their own contexts.
@@ -578,7 +610,7 @@ async fn a_struct_nests_in_a_struct_via_nested() {
 
     // The outer's plan is under the inferred `"accounts/plan"`. Decrypting
     // the row consumed it, so mint a fresh one to open the field alone.
-    let row: EncryptedAccount = account.encrypt_into(&cipher).await.unwrap();
+    let row: EncryptedAccount = account.encrypt_into(&keyset).await.unwrap();
     let plan: String = row
         .plan
         .decrypt_into(&cipher, nonempty!("accounts/plan"))
@@ -590,7 +622,7 @@ async fn a_struct_nests_in_a_struct_via_nested() {
     // its own contexts there: the inner `age` is under `("user/age", id)`,
     // the outer `plan` under `("accounts/plan", id)`.
     let row: EncryptedAccount = account
-        .encrypt_into_with_context(&cipher, 9u64)
+        .encrypt_into_with_context(&keyset, 9u64)
         .await
         .unwrap();
     let age_hm: EqualityTerm = 42u32
@@ -630,10 +662,12 @@ struct NamedReading {
 #[tokio::test]
 async fn a_tuple_plaintext_is_reached_and_rebuilt_by_index() {
     let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
     let generator = stack_cipher().await;
+    let generator = generator.default_keyset();
 
     let reading = Reading(21, "celsius".into());
-    let row: EncryptedReading = reading.encrypt_into(&cipher).await.unwrap();
+    let row: EncryptedReading = reading.encrypt_into(&keyset).await.unwrap();
 
     let hm: EqualityTerm = 21u32
         .encrypt_into_with_context(&generator, nonempty!("reading/0"))
@@ -644,7 +678,7 @@ async fn a_tuple_plaintext_is_reached_and_rebuilt_by_index() {
     let recovered = Reading::decrypt_from(row, &cipher).await.unwrap();
     assert_eq!(recovered, reading);
 
-    let named: NamedReading = reading.encrypt_into(&cipher).await.unwrap();
+    let named: NamedReading = reading.encrypt_into(&keyset).await.unwrap();
     assert_eq!(named.value.hm, hm, "from = 0 infers the same context");
     let unit: String = named
         .unit

@@ -60,6 +60,10 @@ serde_json = { workspace = true }
 # reqwest back into the "no HTTP" gate (`wasm:no-http-test`). The tests only
 # need `FakeDataKeySource` (`test-support`).
 stack-kms = { path = "../stack-kms", default-features = false, features = ["test-support"] }
+# To build the request errors ZeroKMS answers a keyset lookup with (a name it
+# does not know, a request that got no answer) in a test double. Already in
+# the no-HTTP graph through stack-kms; it has no features of its own.
+zerokms-protocol = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 # Compile-fail tests for the derive diagnostics (`tests/ui`).
 trybuild = "1"

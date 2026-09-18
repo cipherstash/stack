@@ -70,8 +70,9 @@ pub const STATUS_TERM: u32 = 11;
 
 /// Map a sealing/opening error onto the ABI status word.
 ///
-/// Total over [`stack_encrypt::Error`]: composition-bug variants
-/// (`ResponseShape`, `CipherMismatch`, `KeyCountMismatch`) and everything
+/// Total over [`stack_encrypt::Error`] (which is `#[non_exhaustive]`, so the
+/// catch-all arm is required as well as convenient): composition-bug variants
+/// (`ResponseShape`, `KeysetMismatch`, `KeyCountMismatch`) and everything
 /// else unexpected collapse into [`STATUS_INTERNAL`] — statuses distinguish
 /// what a host can act on, not what it can only log.
 pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
@@ -84,15 +85,6 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
         stack_encrypt::Error::DescriptorTooLong { .. } => STATUS_ENCODING,
         _ => STATUS_INTERNAL,
     }
-}
-
-/// Map a term-derivation error directly (the term entry points return
-/// [`stack_encrypt::sem::TermError`], not the sealing error). An empty
-/// context never reaches a term — it is [`STATUS_ENCODING`] at the boundary,
-/// where the context is proven — so every term error is a derivation
-/// failure.
-pub fn status_for_term_error(_: &stack_encrypt::sem::TermError) -> u32 {
-    STATUS_TERM
 }
 
 // These matches are deliberately exhaustive — no `_` arms. None of the
@@ -285,8 +277,13 @@ mod tests {
 
     #[test]
     fn term_errors_are_derivation_failures() {
+        // An empty context never reaches a term — it is `STATUS_ENCODING`
+        // at the boundary, where the context is proven — so every term
+        // error that does arrive is a derivation failure.
         assert_eq!(
-            status_for_term_error(&stack_encrypt::sem::TermError::EmptyTermText),
+            status_for_error(&stack_encrypt::Error::Term(
+                stack_encrypt::sem::TermError::EmptyTermText
+            )),
             STATUS_TERM
         );
     }

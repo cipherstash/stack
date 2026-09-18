@@ -71,3 +71,73 @@ An output whose local work (term derivation, per-leaf sealing plan) is done
 and whose ZeroKMS key requests are queued but not sent. Pendings compose
 (`zip`, `map`, `all`) so a whole struct or `Vec` settles in one batched call.
 _Avoid_: future, promise
+
+**Keyset**:
+The ZeroKMS key domain a data key is minted under and an index key belongs
+to — one per tenant is the common shape. A client may use any number;
+`StackCipher` is scoped to the client, not to a keyset. Its **id** (a UUID)
+is its identity: globally unique, carried in every sealed leaf, never
+re-checked.
+_Avoid_: dataset, key ring, tenant (a tenant *has* a keyset)
+
+**Keyset cipher**:
+`KeysetCipher`, the cipher bound to one keyset, and what every operation
+that *mints* binds to — sealing values, sealing records, deriving terms.
+An owned handle (a cipher reference plus the keyset's loaded state), cheap
+to clone and to hold per request. Decrypting through one is a *constraint*,
+not a capability: it refuses a leaf from any other keyset.
+_Avoid_: keyset handle (use "handle" only for the object, not the concept),
+sub-cipher, tenant cipher
+
+**Scope**:
+What a `Pending` was built through, and therefore what it is allowed to do:
+a `KeysetCipher` scope mints under its keyset and opens leaves from no
+other; a `StackCipher` scope mints nothing and opens leaves from any keyset.
+`CipherScope` is the sealed trait both references implement. Two pendings
+merge when their scopes agree on a keyset — which cipher *value* each came
+from is not part of the rule.
+_Avoid_: binding (that is a name's), context (that is the AAD's)
+
+**Name binding**:
+The cache's record that a keyset name resolved to a keyset id, and when.
+A name is a *lookup ZeroKMS answers*, not an identity — ZeroKMS allows
+renames — so a binding is trusted only within a window, a keyset holds at
+most one at a time, and no binding outlives the id it names.
+_Avoid_: alias (the struct is called `Alias`; the concept is a binding),
+name cache entry
+
+**Freshness window**:
+How long a name binding is trusted before the next selection by that name
+asks ZeroKMS again (`DEFAULT_NAME_TTL`, five minutes;
+`StackCipherBuilder::keyset_name_ttl`). It bounds how long a rename can go
+unnoticed by a running process, the way a resolver's TTL does; `ZERO` makes
+every selection by name a round trip. Selection by id has no window.
+_Avoid_: cache expiry, staleness (a binding past its window is *stale*, the
+window itself is not)
+
+**Resolution ticket**:
+A monotonic stamp (`Resolution`) a lookup takes on its way to ZeroKMS and
+hands back on insert. Resolutions run outside the cache lock, so answers
+land in any order; the ticket is what says which *question* was later, and a
+binding follows the later question rather than the earlier arrival.
+_Avoid_: generation, version, sequence number
+
+**Watermark**:
+The place in the resolution order of the latest answer the cache holds
+nothing of to order an older answer against: an entry eviction has dropped,
+or ZeroKMS's answer that a name is bound to nothing. Once an entry is gone
+there is nothing left to order an older answer for that keyset against, and
+a negative answer is held as no binding at all, so no binding is made from
+an answer older than the watermark. One watermark for every name, not one
+per forgotten name — a cache whose whole contract is a bound must not grow
+a record per eviction or per unbound name.
+_Avoid_: tombstone, negative cache, evicted binding (it is the entry's
+place, not a binding's), eviction watermark (eviction is one of two things
+that raise it)
+
+**Foreign keyset**:
+A keyset other than the one a `KeysetCipher` is bound to, from that
+handle's point of view. Handing it a leaf sealed under one is
+`Error::ForeignKeyset`, refused before any key is retrieved — the
+guarantee a tenant-scoped handler asked for by taking a handle.
+_Avoid_: wrong keyset, other tenant

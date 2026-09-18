@@ -7,7 +7,7 @@
 //! skipped by passing the raw value.
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{DecryptFrom, EncryptInto};
-use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
+use stack_encrypt::{DecryptInto, EncryptFrom, KeysetCipher, StackCipher, StackCipherText};
 use stack_kms::FakeDataKeySource;
 
 struct User {
@@ -27,7 +27,7 @@ struct EncryptedAge {
     hm: EqualityTerm,
 }
 
-async fn encrypt(cipher: &StackCipher<FakeDataKeySource>, user: User) {
+async fn encrypt(cipher: &KeysetCipher<'_, FakeDataKeySource>, user: User) {
     let _term: EqualityTerm = "alice"
         .encrypt_into_with_context(cipher, "users/email")
         .await

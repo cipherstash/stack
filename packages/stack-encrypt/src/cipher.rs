@@ -1,12 +1,16 @@
 //! Implementation of [`StackCipher`]. For usage, start at the crate docs; this
 //! module documents the internals.
 //!
-//! `StackCipher` is a vitaminc [`Cipher`] whose per-leaf keys are ZeroKMS data
-//! keys rather than one fixed key. Structurally it mirrors
+//! `StackCipher` is scoped to one ZeroKMS client; a [`KeysetCipher`] — the
+//! cipher bound to one of that client's keysets — is a vitaminc [`Cipher`]
+//! whose per-leaf keys are ZeroKMS data keys, minted under that keyset,
+//! rather than one fixed key. Structurally it mirrors
 //! `vitaminc_encrypt::Aes256Cipher`: encrypting an [`Encrypt`] value produces
 //! a recursive ciphertext tree ([`StackCipherText`], the analog of
 //! `AesCipherText`) whose leaves ([`SealedValue`]) each carry the ZeroKMS
-//! metadata for their own data key.
+//! metadata for their own data key — the keyset it was minted under
+//! included, which is why decrypting needs no keyset named and lives on the
+//! client-scoped `StackCipher`.
 //!
 //! ## Batching the key fetch
 //!
@@ -15,13 +19,15 @@
 //! methods. It is front-loaded on both sides; the AES work stays inside the
 //! trait drive:
 //!
-//! * **Encrypt** — driving the [`Cipher`] trait builds a *pending* tree
-//!   ([`PendingStackCipherText`]) that holds plaintext plus each leaf's fully
-//!   derived AAD, but does no I/O. A single [`PendingStackCipherText::seal`]
-//!   (or the [`StackCipher::encrypt`] convenience) then batches **one**
-//!   `generate_keys` call for the whole tree and seals every leaf.
-//! * **Decrypt** — [`StackCipher::decipher`] batches **one** `retrieve_keys`
-//!   call and zips each key onto its leaf, returning a [`StackDecipher`]. The
+//! * **Encrypt** — driving the [`Cipher`] trait over a `&KeysetCipher` builds
+//!   a *pending* tree ([`PendingStackCipherText`]) that holds plaintext plus
+//!   each leaf's fully derived AAD, but does no I/O. A single
+//!   [`PendingStackCipherText::seal`] (or the [`KeysetCipher::encrypt`]
+//!   convenience) then batches **one** `generate_keys` call for the whole
+//!   tree, under the handle's keyset, and seals every leaf.
+//! * **Decrypt** — [`StackCipher::decrypt`] batches **one** `retrieve_keys`
+//!   call per keyset the leaves were sealed under and zips each key onto its
+//!   leaf, building a [`StackDecipher`] it does not hand out. The
 //!   value's [`Decrypt`] impl then drives that decipher exactly as it would
 //!   `AesDecipher`: each leaf is opened under the AAD the drive supplies, so
 //!   the visitor pattern (nested `Vec`/`HashMap`/`Option`/`Protected` values,
@@ -46,19 +52,23 @@
 //!
 //! ## Leaf crypto and wire format
 //!
-//! Each leaf ([`SealedValue`]) stores the ZeroKMS `iv` and key `tag` — enough
-//! to retrieve the data key — plus a vitaminc [`LocalCipherText`] sealed under
-//! that key by [`vitaminc_encrypt::Aes256Cipher`] (AES-256-GCM via vitaminc's
-//! backend: `aws-lc-rs` on native, RustCrypto on wasm32; vitaminc's own random
-//! nonce and versioned leaf layout). The leaf AAD is the labelled derivation
-//! `leaf_aad` (private): `PAE("stack-encrypt/leaf", version, derived_aad, tag)`, with
+//! Each leaf ([`SealedValue`]) stores the ZeroKMS keyset id, `iv` and key
+//! `tag` — enough to retrieve the data key — plus a vitaminc
+//! [`LocalCipherText`] sealed under that key by
+//! [`vitaminc_encrypt::Aes256Cipher`] (AES-256-GCM via vitaminc's backend:
+//! `aws-lc-rs` on native, RustCrypto on wasm32; vitaminc's own random nonce
+//! and versioned leaf layout). The leaf AAD is the labelled derivation
+//! `leaf_aad` (private):
+//! `PAE("stack-encrypt/leaf", version, keyset_id, derived_aad, tag)`, with
 //! [`SealedValue::FORMAT_VERSION`] — the version byte that prefixes the
-//! leaf's frozen byte encoding ([`SealedValue::to_bytes`]) — bound under the
-//! tag, so a stored leaf relabelled with a different version byte fails
-//! verification instead of selecting different parsing rules. The `tag` is
-//! always bound, so the ciphertext is cryptographically tied to its ZeroKMS
-//! data key (key binding); a caller AAD (e.g. a
-//! [`ContextTag`](vitaminc_aead::ContextTag)) adds a further binding layer.
+//! leaf's frozen byte encoding ([`SealedValue::to_bytes`]) — and the keyset
+//! id bound under the tag, so a stored leaf relabelled with a different
+//! version byte fails verification instead of selecting different parsing
+//! rules, and one re-pointed at another keyset fails instead of asking that
+//! keyset for a key it never minted. The `tag` is always bound, so the
+//! ciphertext is cryptographically tied to its ZeroKMS data key (key
+//! binding); a caller AAD (e.g. a [`ContextTag`](vitaminc_aead::ContextTag))
+//! adds a further binding layer.
 //! Every data key is requested under a ZeroKMS **descriptor**: the context
 //! the tree is sealed under, rendered as a string by
 //! [`Descriptor`]. ZeroKMS HMACs the descriptor into the
@@ -75,6 +85,9 @@
 use std::any::Any;
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::num::NonZeroUsize;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use stack_kms::{DataKey, DataKeySource, DataKeyWithTag, IdentifiedBy, IndexKeySource};
@@ -90,6 +103,7 @@ use vitaminc_aead::{
 use vitaminc_encrypt::{Aes256Cipher, AesCipherText, Key as AesKey};
 use vitaminc_protected::{Controlled, Protected};
 
+use crate::keyset::{KeysetCache, KeysetCipher, KeysetState, Lookup, DEFAULT_NAME_TTL};
 use crate::Descriptor;
 
 /// The passthrough payload type: type-erased, as for Rust-native vitaminc
@@ -106,6 +120,7 @@ pub type StackCipherText = CipherText<SealedValue, BoxedPassthrough>;
 
 /// Errors from sealing or opening a [`StackCipherText`].
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     /// A ZeroKMS data-key generate/retrieve call failed.
     #[error("ZeroKMS data-key operation failed: {0}")]
@@ -150,13 +165,39 @@ pub enum Error {
     /// implementation, never a data error.
     #[error("a pending fulfilment's responses did not match its requests")]
     ResponseShape,
-    /// [`Pending`](crate::target::Pending)s built on different
-    /// [`StackCipher`] instances were merged (`zip` / `all`). An assembly
-    /// settles through one cipher's backend and keyset, so the other side's
-    /// keys would be minted under the wrong keyset. Always a composition
-    /// bug, caught before any I/O.
-    #[error("merged pendings were built from different ciphers")]
-    CipherMismatch,
+    /// [`Pending`](crate::target::Pending)s scoped to different keysets were
+    /// merged (`zip` / `all`): one built through a [`KeysetCipher`] for one
+    /// keyset, the other for another. A row belongs to one tenant; an
+    /// assembly that spans two is a composition bug, caught before any
+    /// I/O. (Opening leaves from several keysets in one batch is allowed —
+    /// through the [`StackCipher`], which is scoped to none.)
+    ///
+    /// The keyset is the *whole* merge rule: two pendings built through two
+    /// different [`StackCipher`] values merge freely as long as they agree
+    /// on a keyset, because a keyset id is global and a cipher only holds a
+    /// keyset ZeroKMS resolved for its client. (Before the multi-keyset
+    /// `StackCipher` there was a `CipherMismatch` variant here, raised on
+    /// pointer equality of the two ciphers; it tested object identity
+    /// rather than client identity, and so refused two ciphers over the
+    /// same client and the same keyset.)
+    #[error("merged pendings were scoped to different keysets ({left} and {right})")]
+    KeysetMismatch { left: Uuid, right: Uuid },
+    /// A leaf sealed under one keyset was handed to a [`KeysetCipher`] for
+    /// another. The handle's keyset is a constraint the caller asked for —
+    /// a tenant-scoped request handler must not open another tenant's row
+    /// — so this is refused before any key is retrieved. To open leaves
+    /// from any keyset, decrypt through the [`StackCipher`].
+    #[error("leaf was sealed under keyset {found}, not the handle's keyset {expected}")]
+    ForeignKeyset { expected: Uuid, found: Uuid },
+    /// A data key was requested through a [`StackCipher`] rather than a
+    /// [`KeysetCipher`]: a [`Request::generate_data_key`] needs a keyset
+    /// to mint under, and only a keyset-scoped pending has one. Always a
+    /// composition bug in a hand-written `EncryptFrom`, caught before any
+    /// I/O.
+    ///
+    /// [`Request::generate_data_key`]: crate::target::Request::generate_data_key
+    #[error("a data key was requested with no keyset to mint it under")]
+    NoKeyset,
     /// A [`DecryptField`](crate::target::DecryptField) implementation
     /// declared its type [`DECRYPTABLE`](crate::target::Decryptable::DECRYPTABLE)
     /// but passed the field over. Always a bug in a third-party
@@ -178,20 +219,35 @@ impl From<Unspecified> for Error {
     }
 }
 
-/// The CipherStash cipher: a vitaminc [`Cipher`] whose per-leaf keys are ZeroKMS
-/// data keys, sourced through a [`DataKeySource`] (production:
-/// [`stack_kms::StackKms`]; tests: `stack_kms::FakeDataKeySource`),
-/// carrying the per-keyset PRF that
-/// [Searchable Encrypted Metadata](crate::sem) terms are derived from.
+/// The CipherStash cipher, scoped to one client: a ZeroKMS client (a
+/// [`DataKeySource`] — production: [`stack_kms::StackKms`]; tests:
+/// `stack_kms::FakeDataKeySource`) and the keysets that client uses.
 ///
 /// Per-leaf keying is deliberate: every value access requires its own data-key
 /// retrieval, so individual value accesses are visible (and auditable) as
 /// ZeroKMS key-retrieval events.
 ///
-/// A cipher is always able to derive index terms: its keyset's
-/// [`IndexKey`](stack_kms::IndexKey) is loaded during construction, so a
-/// backend that cannot supply one is not a Stack Encrypt backend. Plain AEAD
-/// with no indexing is what `vitaminc` alone provides.
+/// # Keysets
+///
+/// Sealing values, sealing records and deriving index terms all happen
+/// under a keyset, and a client may use many — one per tenant, say. So
+/// those operations bind to a [`KeysetCipher`], the cipher scoped to one
+/// keyset: [`default_keyset`](Self::default_keyset) for the client's
+/// default — the keyset a ZeroKMS administrator set for this client —
+/// [`keyset`](Self::keyset) for any other, by id or by name. Keysets load lazily, through a bounded
+/// least-recently-used cache: the first selection of a keyset is one
+/// ZeroKMS round trip (its index key, which
+/// [Searchable Encrypted Metadata](crate::sem) terms are derived from),
+/// and every later one is a lookup. A backend that cannot supply an index
+/// key is not a Stack Encrypt backend; plain AEAD with no indexing is what
+/// `vitaminc` alone provides.
+///
+/// Decrypting is not keyset-scoped: a sealed leaf carries the id of the
+/// keyset it was sealed under, and retrieving its data key needs nothing
+/// more than that and the client. So [`decrypt`](Self::decrypt) lives here
+/// and opens leaves from any keyset the client is authorised for, in one
+/// batch. The same method on a [`KeysetCipher`] adds a constraint: it
+/// refuses a leaf from any other keyset before any key is retrieved.
 ///
 /// # Construction
 ///
@@ -236,16 +292,18 @@ different data-key source entirely:"#
 /// # }
 /// ```
 ///
-/// Construction is async because it resolves the keyset and loads its index
-/// key — one ZeroKMS round-trip, paid once.
+/// Construction is async because it resolves the client's default keyset
+/// and loads its index key — one ZeroKMS round-trip, paid once, so a
+/// misconfigured client fails here rather than on first use.
 pub struct StackCipher<K> {
     kms: K,
-    /// The resolved keyset. Every generate/retrieve call is pinned to it, and
-    /// the PRF below is keyed by *this* keyset's index key: sealing data keys
-    /// under one keyset while deriving terms under another's index key would
-    /// make every query silently match nothing.
-    keyset_id: Uuid,
-    prf: vitaminc_hmac::HmacSha256Prf,
+    /// The client's default keyset, loaded eagerly by `init` and never
+    /// evicted. Not the caller's to choose — see
+    /// [`default_keyset`](Self::default_keyset).
+    default: Arc<KeysetState>,
+    /// Every other keyset this cipher has selected, least recently used
+    /// first out. See [`keyset`](Self::keyset).
+    keysets: Mutex<KeysetCache>,
 }
 
 #[cfg(feature = "http")]
@@ -274,25 +332,166 @@ impl StackCipher<FromEnv> {
     }
 }
 
-impl<K> StackCipher<K> {
-    /// The keyset every generate/retrieve call is pinned to, and whose index
-    /// key keys [`prf`](Self::prf).
-    pub fn keyset_id(&self) -> Uuid {
-        self.keyset_id
+/// Opaque: the default keyset's identity and the data-key source's type
+/// name, and nothing else. A cipher reaches the whole keyset cache — every
+/// loaded keyset's index-key PRF — and, through its backend, the client key
+/// and access token; none of that is printable, and a `Debug` that walked
+/// the cache would also take its lock.
+impl<K> std::fmt::Debug for StackCipher<K> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StackCipher")
+            .field("default_keyset_id", &self.default.id)
+            .field("default_keyset_name", &self.default.name)
+            .field("kms", &std::any::type_name::<K>())
+            .finish_non_exhaustive()
     }
+}
 
-    /// The PRF index terms are derived from, keyed by this cipher's keyset.
+impl<K> StackCipher<K> {
+    /// The cipher bound to the client's default keyset: the one a ZeroKMS
+    /// administrator set for this client, which is what naming no keyset
+    /// resolves to. Loaded at `init`, so this never touches ZeroKMS.
     ///
-    /// Public so that other crates can implement their own term types against
-    /// this cipher (see [`crate::sem`]).
-    pub fn prf(&self) -> &vitaminc_hmac::HmacSha256Prf {
-        &self.prf
+    /// Always that keyset, whatever else the cipher has selected — the
+    /// default is the workspace's statement about this client, not a
+    /// preference a caller can override. To work under another keyset,
+    /// select it with [`keyset`](Self::keyset).
+    pub fn default_keyset(&self) -> KeysetCipher<'_, K> {
+        KeysetCipher::new(self, Arc::clone(&self.default))
     }
 
     /// The underlying data-key source.
     pub fn kms(&self) -> &K {
         &self.kms
     }
+
+    fn keysets(&self) -> std::sync::MutexGuard<'_, KeysetCache> {
+        // The cache holds no invariant a panic mid-update could break (an
+        // insert is two map writes, and a stale name entry only points at
+        // a still-valid state), so a poisoned lock is recovered, not
+        // propagated.
+        self.keysets.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl<K: IndexKeySource> StackCipher<K> {
+    /// The cipher bound to a keyset, by id or by name.
+    ///
+    /// The one async point of keyset selection: a keyset this cipher has
+    /// not seen (or has evicted) is loaded from ZeroKMS here — its id
+    /// resolved and its index key fetched — and cached; every later
+    /// selection is a lookup. The returned handle keeps that keyset loaded
+    /// for as long as it is held, so a request handler that selects its
+    /// tenant's keyset once never pays again within the request.
+    ///
+    /// ```
+    /// # async fn example() -> Result<(), stack_encrypt::Error> {
+    /// use stack_encrypt::{nonempty, StackCipher};
+    /// use stack_kms::{FakeDataKeySource, IdentifiedBy};
+    ///
+    /// let cipher = StackCipher::builder()
+    ///     .kms(FakeDataKeySource::new())
+    ///     .init()
+    ///     .await?;
+    /// let tenant = cipher.keyset(IdentifiedBy::Name("acme".to_string().into())).await?;
+    /// let sealed = tenant.encrypt("hello".to_string(), nonempty!("greeting")).await?;
+    /// # Ok(())
+    /// # }
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+    /// ```
+    ///
+    /// A keyset ZeroKMS does not know, or has disabled, is
+    /// [`Error::Kms`]. The name-to-id resolution is ZeroKMS's: a keyset
+    /// selected by name reports the resolved id from
+    /// [`KeysetCipher::keyset_id`], and a name the cipher resolved earlier
+    /// is trusted for a bounded window
+    /// ([`keyset_name_ttl`](StackCipherBuilder::keyset_name_ttl)) before it
+    /// is asked again — ZeroKMS allows renames, and a running process
+    /// notices one within that window. Selecting by id never asks twice.
+    pub async fn keyset(
+        &self,
+        keyset: impl Into<IdentifiedBy>,
+    ) -> Result<KeysetCipher<'_, K>, Error> {
+        let keyset = keyset.into();
+        let resolution = match self.keysets().get(&keyset) {
+            Lookup::Hit(state) => return Ok(KeysetCipher::new(self, state)),
+            // A name past its window: the keyset is still loaded, but
+            // whether the name still means it is ZeroKMS's to say.
+            Lookup::Stale(resolution) | Lookup::Miss(resolution) => resolution,
+        };
+        // Loaded outside the lock: a round trip must not hold up every other
+        // selection. Two selections racing on the same miss load twice; the
+        // cache keeps both keysets by id, and the name follows the later
+        // lookup whichever answer lands first — and so does this caller,
+        // who is handed the answer that won, not the one that lost.
+        let asked_name = match &keyset {
+            IdentifiedBy::Name(name) => Some(name.to_string()),
+            IdentifiedBy::Uuid(_) => None,
+        };
+        let state = match load_keyset(&self.kms, keyset).await {
+            Ok(state) => state,
+            Err(error) => {
+                // ZeroKMS's own answer that no keyset has this name is an
+                // answer about the name, and the cache orders it like one:
+                // the binding an earlier lookup made goes, and an earlier
+                // positive answer still in flight cannot bind the name after
+                // it. A lookup that got no answer (transport, auth) says
+                // nothing about the name and leaves the cache as it was.
+                if let (Some(name), true) = (&asked_name, is_keyset_not_found(&error)) {
+                    self.keysets().forget(name, resolution);
+                }
+                return Err(error);
+            }
+        };
+        let state = self.keysets().insert(state, resolution);
+        Ok(KeysetCipher::new(self, state))
+    }
+}
+
+/// Resolve a keyset at ZeroKMS and build the state the cipher holds for it:
+/// its resolved id, the name it was selected by (a selection by id has
+/// none), and the PRF keyed by its index key. The one round trip a keyset
+/// costs, shared by eager loading at
+/// [`init`](StackCipherBuilder::init) and lazy loading in
+/// [`StackCipher::keyset`] so both hold a keyset in exactly the same shape.
+/// ZeroKMS answered a load with "no such keyset" — as opposed to not
+/// answering at all.
+fn is_keyset_not_found(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Kms(stack_kms::Error::LoadKeyset(
+            stack_kms::LoadKeysetError::KeysetNotFound(_)
+        ))
+    )
+}
+
+async fn load_keyset<K: IndexKeySource>(
+    kms: &K,
+    keyset: IdentifiedBy,
+) -> Result<Arc<KeysetState>, Error> {
+    let name = match &keyset {
+        IdentifiedBy::Name(name) => Some(name.to_string()),
+        IdentifiedBy::Uuid(_) => None,
+    };
+    let (id, index_key) = kms.load_index_key(Some(keyset)).await?;
+    Ok(Arc::new(KeysetState {
+        id,
+        name,
+        prf: hmac_prf_from_index_key(&index_key),
+    }))
+}
+
+/// The client's own default keyset — the one a ZeroKMS administrator set for
+/// this client — asked for by naming nothing. Loaded once, by
+/// [`init`](StackCipherBuilder::init); it is not the caller's to choose, so
+/// there is no id or name to carry.
+async fn load_default_keyset<K: IndexKeySource>(kms: &K) -> Result<Arc<KeysetState>, Error> {
+    let (id, index_key) = kms.load_index_key(None).await?;
+    Ok(Arc::new(KeysetState {
+        id,
+        name: None,
+        prf: hmac_prf_from_index_key(&index_key),
+    }))
 }
 
 /// The state of a [`StackCipherBuilder`] that has not been given a data-key
@@ -342,7 +541,8 @@ impl KeyProvider for ProfileClientKey {
 /// its alias [`StackCipher::builder`]).
 pub struct StackCipherBuilder<K = FromEnv> {
     kms: K,
-    keyset: Option<IdentifiedBy>,
+    cache_size: NonZeroUsize,
+    name_ttl: Duration,
 }
 
 impl StackCipherBuilder<FromEnv> {
@@ -354,7 +554,8 @@ impl StackCipherBuilder<FromEnv> {
     pub fn new() -> Self {
         Self {
             kms: FromEnv,
-            keyset: None,
+            cache_size: KeysetCache::DEFAULT_CAPACITY,
+            name_ttl: DEFAULT_NAME_TTL,
         }
     }
 }
@@ -366,10 +567,27 @@ impl Default for StackCipherBuilder<FromEnv> {
 }
 
 impl<K> StackCipherBuilder<K> {
-    /// Pin the cipher to a specific keyset, by id or by name, instead of the
-    /// data-key source's default.
-    pub fn keyset(mut self, keyset: IdentifiedBy) -> Self {
-        self.keyset = Some(keyset);
+    /// How many keysets beyond the default the cipher keeps loaded
+    /// (default 1024). A process serving more tenants than this reloads a
+    /// keyset's index key from ZeroKMS when it comes back into use; nothing
+    /// stored depends on the cache, so the bound only trades memory for
+    /// round trips. See [`StackCipher::keyset`].
+    pub fn keyset_cache_size(mut self, size: NonZeroUsize) -> Self {
+        self.cache_size = size;
+        self
+    }
+
+    /// How long a keyset selected by name is trusted to still be the keyset
+    /// that name resolved to (default five minutes, [`DEFAULT_NAME_TTL`]).
+    /// ZeroKMS allows a keyset to be renamed; within the window a rename is
+    /// invisible to a running process, after it the next selection by that
+    /// name asks ZeroKMS again. `Duration::ZERO` makes every selection by
+    /// name a round trip; selection by id is never affected. See
+    /// [`StackCipher::keyset`].
+    ///
+    /// [`DEFAULT_NAME_TTL`]: crate::keyset::DEFAULT_NAME_TTL
+    pub fn keyset_name_ttl(mut self, ttl: Duration) -> Self {
+        self.name_ttl = ttl;
         self
     }
 }
@@ -385,7 +603,8 @@ impl StackCipherBuilder<FromEnv> {
     pub fn kms<K>(self, kms: K) -> StackCipherBuilder<K> {
         StackCipherBuilder {
             kms,
-            keyset: self.keyset,
+            cache_size: self.cache_size,
+            name_ttl: self.name_ttl,
         }
     }
 
@@ -409,25 +628,25 @@ impl StackCipherBuilder<FromEnv> {
             .with_key_provider(client_key_provider())
             .build()
             .await?;
-        StackCipherBuilder {
-            kms,
-            keyset: self.keyset,
-        }
-        .init()
-        .await
+        self.kms(kms).init().await
     }
 }
 
 impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
-    /// Resolve the keyset and load its index key, producing a cipher that can
-    /// both seal values and derive index terms.
+    /// Resolve the default keyset and load its index key, producing a
+    /// cipher whose [`default_keyset`](StackCipher::default_keyset) can both
+    /// seal values and derive index terms. The one round trip a cipher
+    /// always pays; every other keyset loads on first selection.
     pub async fn init(self) -> Result<StackCipher<K>, Error> {
-        let (keyset_id, index_key) = self.kms.load_index_key(self.keyset).await?;
-        let prf = hmac_prf_from_index_key(&index_key);
+        let default = load_default_keyset(&self.kms).await?;
         Ok(StackCipher {
             kms: self.kms,
-            keyset_id,
-            prf,
+            keysets: Mutex::new(KeysetCache::new(
+                self.cache_size,
+                self.name_ttl,
+                Arc::clone(&default),
+            )),
+            default,
         })
     }
 }
@@ -446,10 +665,10 @@ fn hmac_prf_from_index_key(index_key: &stack_kms::IndexKey) -> vitaminc_hmac::Hm
     prf
 }
 
-impl<K: DataKeySource> StackCipher<K> {
+impl<K: DataKeySource> KeysetCipher<'_, K> {
     /// Encrypt a value, binding `aad`, and seal it against fresh ZeroKMS data
-    /// keys in a single batched `generate_keys` call. Every key is requested
-    /// under the [`Descriptor`] of `aad`.
+    /// keys in a single batched `generate_keys` call under this keyset.
+    /// Every key is requested under the [`Descriptor`] of `aad`.
     pub async fn encrypt<'a, T, A>(&self, value: T, aad: A) -> Result<StackCipherText, Error>
     where
         T: Encrypt,
@@ -460,50 +679,90 @@ impl<K: DataKeySource> StackCipher<K> {
         pending.seal(self, aad).await
     }
 
-    /// Decrypt a [`StackCipherText`] into `T`, authenticating against `aad`.
-    ///
-    /// Thin wrapper over [`decipher`](Self::decipher): one batched
-    /// `retrieve_keys` call under the [`Descriptor`] of `aad`, then `T`'s
-    /// [`Decrypt`] impl drives the returned [`StackDecipher`] with `aad` —
-    /// exactly as `Aes256Cipher::decrypt_with_aad` drives `AesDecipher`.
+    /// [`StackCipher::decrypt`], constrained to this keyset: a leaf sealed
+    /// under any other is [`Error::ForeignKeyset`], refused before any key
+    /// is retrieved.
     pub async fn decrypt<'a, T, A>(&self, ciphertext: StackCipherText, aad: A) -> Result<T, Error>
     where
         T: Decrypt<'static> + 'static,
         A: IntoAad<'a>,
     {
-        let aad = aad.into_aad_piece();
-        let decipher = self.decipher(ciphertext, aad.clone()).await?;
-        T::decrypt_with_aad(decipher, aad.into_aad()).map_err(Error::from)
+        decrypt_through(self, ciphertext, aad).await
     }
+}
 
-    /// Fetch every leaf's data key (one batched `retrieve_keys` call, every
-    /// key under the [`Descriptor`] of `aad`) and bind them onto the
-    /// ciphertext, returning a synchronous [`Decipher`] that does the AEAD
-    /// opening as the value's [`Decrypt`] impl drives it.
+/// Retrieve every leaf's data key under `aad`'s descriptor and bind them
+/// onto the ciphertext, for either scope. The work is the same on both —
+/// one descriptor, one pending, one settle — and the scope is the whole
+/// difference: a [`KeysetCipher`] constrains the leaves to its keyset, a
+/// [`StackCipher`] constrains nothing.
+///
+/// Deliberately private. The returned [`StackDecipher`] is driven with an
+/// AAD supplied per call, so exposing this would let a caller retrieve keys
+/// under one context and authenticate the ciphertext under an unrelated
+/// one. Every leaf's AAD is a derivation of the descriptor its key was
+/// minted under — `for_sequence_element`, `for_map_entry`, `for_leaf` —
+/// and that derivation is the library's to compute, never the caller's to
+/// supply. [`decrypt_through`] is the only way in, and it passes one `aad`
+/// to both halves.
+async fn decipher_through<'s, 'a, K: DataKeySource + 's>(
+    scope: impl crate::target::CipherScope<'s, K>,
+    ciphertext: StackCipherText,
+    aad: impl IntoAad<'a>,
+) -> Result<StackDecipher, Error> {
+    crate::target::decipher_pending(scope, ciphertext, Descriptor::of(aad))
+        .settle()
+        .await
+}
+
+/// `decrypt`, for either scope: [`decipher_through`], then the value's own
+/// [`Decrypt`] drive under the same `aad`.
+async fn decrypt_through<'s, 'a, T, K: DataKeySource + 's>(
+    scope: impl crate::target::CipherScope<'s, K>,
+    ciphertext: StackCipherText,
+    aad: impl IntoAad<'a>,
+) -> Result<T, Error>
+where
+    T: Decrypt<'static> + 'static,
+{
+    let aad = aad.into_aad_piece();
+    let decipher = decipher_through(scope, ciphertext, aad.clone()).await?;
+    T::decrypt_with_aad(decipher, aad.into_aad()).map_err(Error::from)
+}
+
+impl<K: DataKeySource> StackCipher<K> {
+    /// Decrypt a [`StackCipherText`] into `T`, authenticating against `aad`.
     ///
-    /// This is the decrypt-side counterpart to passing `&cipher` (a [`Cipher`])
-    /// on the encrypt side, mirroring `Aes256Cipher::decipher`: the ZeroKMS I/O
-    /// is front-loaded here, and the AAD is supplied per call by
-    /// [`Decrypt::decrypt_with_aad`], so `Decrypt` impls that derive their own
-    /// AAD (e.g. `vitaminc_aead::Element`) behave identically to `AesDecipher`.
-    /// The one thing ZeroKMS needs before that drive is the descriptor the
-    /// keys were generated under, so `aad` is the context the value was
-    /// sealed under — the same value, in the same shape, that the drive will
-    /// present (an `Element`'s own derivation is applied by the drive, not
-    /// here). [`decrypt`](Self::decrypt) does both steps.
+    /// One batched `retrieve_keys` call per keyset the leaves were sealed
+    /// under, every key under the [`Descriptor`] of `aad`, then `T`'s
+    /// [`Decrypt`] impl drives the resulting [`StackDecipher`] with the
+    /// *same* `aad` — exactly as `Aes256Cipher::decrypt_with_aad` drives
+    /// `AesDecipher`. One context in, and every leaf's AAD derived from it;
+    /// there is no form of this call that takes two.
     ///
-    /// Settles through the target layer's request carrier
-    /// ([`decipher_pending`](crate::target)), so this and
-    /// `decrypt_into` share one definition of how leaves map to retrieve
-    /// requests and one path to ZeroKMS.
-    pub async fn decipher<'a>(
-        &self,
-        ciphertext: StackCipherText,
-        aad: impl IntoAad<'a>,
-    ) -> Result<StackDecipher, Error> {
-        crate::target::decipher_pending(self, ciphertext, Descriptor::of(aad))
-            .settle()
-            .await
+    /// Not keyset-scoped: each leaf carries the id of the keyset it was
+    /// sealed under, and this opens leaves from any keyset the client is
+    /// authorised for. To insist on one keyset, decrypt through its
+    /// [`KeysetCipher`] instead.
+    ///
+    /// # Fan-out
+    ///
+    /// The retrieve calls are one per *distinct keyset* among the leaves,
+    /// issued in sequence, and the keyset ids come from the ciphertext —
+    /// so their number is the input's to decide, up to the keysets this
+    /// client can retrieve from (ZeroKMS refuses a retrieve whose tag it
+    /// did not mint, and the first refusal ends the batch). A ciphertext
+    /// assembled from many tenants' leaves costs a round trip per tenant to
+    /// open here, whoever assembled it. A service opening rows it does not
+    /// trust — one tenant's data at a time — should hold that tenant's
+    /// [`KeysetCipher`], whose decrypt is one round trip at most and refuses
+    /// a foreign leaf before any.
+    pub async fn decrypt<'a, T, A>(&self, ciphertext: StackCipherText, aad: A) -> Result<T, Error>
+    where
+        T: Decrypt<'static> + 'static,
+        A: IntoAad<'a>,
+    {
+        decrypt_through(self, ciphertext, aad).await
     }
 }
 
@@ -527,30 +786,38 @@ impl<K: DataKeySource> StackCipher<K> {
 /// | offset          | field              | size            | value |
 /// |-----------------|--------------------|-----------------|-------|
 /// | 0               | envelope version   | 1               | [`FORMAT_VERSION`](Self::FORMAT_VERSION) (`0x01`) |
-/// | 1               | ZeroKMS `iv`       | 16              | identifies the data key for retrieval |
-/// | 17              | `tag_len`          | 2               | length of `tag`, `u16` little-endian |
-/// | 19              | ZeroKMS key `tag`  | `tag_len`       | required to retrieve the key |
-/// | 19 + `tag_len`  | local ciphertext   | rest of buffer  | the vitaminc `LocalCipherText` |
+/// | 1               | keyset id          | 16              | the ZeroKMS keyset the data key was minted under, raw UUID bytes |
+/// | 17              | ZeroKMS `iv`       | 16              | identifies the data key for retrieval |
+/// | 33              | `tag_len`          | 2               | length of `tag`, `u16` little-endian |
+/// | 35              | ZeroKMS key `tag`  | `tag_len`       | required to retrieve the key |
+/// | 35 + `tag_len`  | local ciphertext   | rest of buffer  | the vitaminc `LocalCipherText` |
+///
+/// The keyset id is what lets a leaf be opened without the caller saying
+/// which keyset it belongs to: retrieving the data key needs the keyset,
+/// and the leaf is self-describing so that a leaf lifted from a tree — what
+/// a database column holds — is too.
 ///
 /// The local ciphertext is itself a framed value — vitaminc's leaf wire
 /// format, versioned and owned by vitaminc — so the full stored byte string
 /// nests two framings, each led by its own version byte:
 ///
 /// ```text
-/// ┌─ envelope (stack-encrypt, this table) ─────────────────────────────────────┐
-/// │ version ‖ iv ‖ tag_len ‖ tag ‖ ┌─ local ciphertext (vitaminc) ───────────┐ │
-/// │   0x01                         │ version ‖ nonce ‖ ciphertext ‖ gcm_tag  │ │
-/// │                                └─────────────────────────────────────────┘ │
-/// └────────────────────────────────────────────────────────────────────────────┘
+/// ┌─ envelope (stack-encrypt, this table) ──────────────────────────────────────────────┐
+/// │ version ‖ keyset_id ‖ iv ‖ tag_len ‖ tag ‖ ┌─ local ciphertext (vitaminc) ───────────┐ │
+/// │   0x01                                     │ version ‖ nonce ‖ ciphertext ‖ gcm_tag  │ │
+/// │                                            └─────────────────────────────────────────┘ │
+/// └─────────────────────────────────────────────────────────────────────────────────────┘
 /// ```
 ///
-/// Both version bytes are authenticated under the one GCM tag, each bound by
-/// the layer that owns its framing: the envelope version through this crate's
-/// leaf-AAD derivation, `PAE("stack-encrypt/leaf", version, derived_aad,
-/// tag)`, and the inner version through vitaminc's `Aad::for_leaf`, applied
-/// inside `Aes256Cipher` to the AAD this crate hands it. Relabel either version byte in storage and the leaf fails
-/// authentication rather than parsing under the wrong rules. Parsing is
-/// structural only — nothing about a decoded leaf is trusted until it
+/// Both version bytes and the keyset id are authenticated under the one GCM
+/// tag, each bound by the layer that owns its framing: the envelope version
+/// and the keyset id through this crate's leaf-AAD derivation,
+/// `PAE("stack-encrypt/leaf", version, keyset_id, derived_aad, tag)`, and
+/// the inner version through vitaminc's `Aad::for_leaf`, applied inside
+/// `Aes256Cipher` to the AAD this crate hands it. Relabel either version
+/// byte, or re-point the leaf at another keyset, in storage and the leaf
+/// fails authentication rather than parsing under the wrong rules. Parsing
+/// is structural only — nothing about a decoded leaf is trusted until it
 /// decrypts.
 ///
 /// The `serde` `Serialize`/`Deserialize` derives and
@@ -561,6 +828,8 @@ impl<K: DataKeySource> StackCipher<K> {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(try_from = "SealedValueRepr")]
 pub struct SealedValue {
+    /// The keyset the data key was minted under; retrieval names it.
+    keyset_id: Uuid,
     /// ZeroKMS IV: identifies the data key for retrieval.
     iv: stack_kms::Iv,
     /// ZeroKMS key tag: required to retrieve the key, and bound into the
@@ -620,8 +889,10 @@ impl SealedValue {
         let tag_len = u16::try_from(self.tag.len()).unwrap_or(u16::MAX);
         debug_assert_eq!(usize::from(tag_len), self.tag.len());
         let ciphertext = self.ciphertext.as_ref();
-        let mut out = Vec::with_capacity(1 + self.iv.len() + 2 + self.tag.len() + ciphertext.len());
+        let mut out =
+            Vec::with_capacity(1 + 16 + self.iv.len() + 2 + self.tag.len() + ciphertext.len());
         out.push(Self::FORMAT_VERSION);
+        out.extend_from_slice(self.keyset_id.as_bytes());
         out.extend_from_slice(&self.iv);
         out.extend_from_slice(&tag_len.to_le_bytes());
         out.extend_from_slice(&self.tag);
@@ -639,9 +910,11 @@ impl SealedValue {
         if version != Self::FORMAT_VERSION {
             return Err(LeafBytesError::UnknownVersion(version));
         }
-        if rest.len() < IV_LEN + 2 {
+        if rest.len() < 16 + IV_LEN + 2 {
             return Err(LeafBytesError::Truncated);
         }
+        let (keyset_bytes, rest) = rest.split_at(16);
+        let keyset_id = Uuid::from_slice(keyset_bytes).map_err(|_| LeafBytesError::Truncated)?;
         let (iv_bytes, rest) = rest.split_at(IV_LEN);
         let mut iv: stack_kms::Iv = [0; IV_LEN];
         iv.copy_from_slice(iv_bytes);
@@ -652,6 +925,7 @@ impl SealedValue {
         }
         let (tag, ciphertext) = rest.split_at(tag_len);
         Ok(Self {
+            keyset_id,
             iv,
             tag: tag.to_vec(),
             ciphertext: LocalCipherText::from(ciphertext.to_vec()),
@@ -674,21 +948,35 @@ impl SealedValue {
     /// byte format's `u16` length field. Structural only: nothing about the
     /// parts is trusted until the leaf decrypts.
     pub fn from_parts(
+        keyset_id: Uuid,
         iv: stack_kms::Iv,
         tag: Vec<u8>,
         ciphertext: Vec<u8>,
     ) -> Result<Self, LeafBytesError> {
         Self::tag_fits_length_field(&tag)?;
         Ok(Self {
+            keyset_id,
             iv,
             tag,
             ciphertext: LocalCipherText::from(ciphertext),
         })
     }
 
-    /// Decompose into `(iv, tag, ciphertext)` for persistence.
-    pub fn into_parts(self) -> (stack_kms::Iv, Vec<u8>, Vec<u8>) {
-        (self.iv, self.tag, self.ciphertext.into_inner().to_vec())
+    /// Decompose into `(keyset_id, iv, tag, ciphertext)` for persistence.
+    pub fn into_parts(self) -> (Uuid, stack_kms::Iv, Vec<u8>, Vec<u8>) {
+        (
+            self.keyset_id,
+            self.iv,
+            self.tag,
+            self.ciphertext.into_inner().to_vec(),
+        )
+    }
+
+    /// The keyset this leaf's data key was minted under, and so the one it
+    /// is retrieved from. Authenticated: a leaf re-pointed at another
+    /// keyset fails to open.
+    pub fn keyset_id(&self) -> Uuid {
+        self.keyset_id
     }
 
     /// The ZeroKMS IV identifying this leaf's data key.
@@ -710,6 +998,7 @@ impl SealedValue {
 impl Clone for SealedValue {
     fn clone(&self) -> Self {
         Self {
+            keyset_id: self.keyset_id,
             iv: self.iv,
             tag: self.tag.clone(),
             ciphertext: LocalCipherText::from(self.ciphertext.as_ref().to_vec()),
@@ -734,6 +1023,7 @@ impl TryFrom<&[u8]> for SealedValue {
 #[derive(Deserialize)]
 #[serde(rename = "SealedValue")]
 struct SealedValueRepr {
+    keyset_id: Uuid,
     iv: stack_kms::Iv,
     tag: Vec<u8>,
     ciphertext: LocalCipherText,
@@ -744,12 +1034,14 @@ impl TryFrom<SealedValueRepr> for SealedValue {
 
     fn try_from(repr: SealedValueRepr) -> Result<Self, Self::Error> {
         let SealedValueRepr {
+            keyset_id,
             iv,
             tag,
             ciphertext,
         } = repr;
         Self::tag_fits_length_field(&tag)?;
         Ok(Self {
+            keyset_id,
             iv,
             tag,
             ciphertext,
@@ -864,7 +1156,7 @@ impl PendingStackCipherText {
     /// `encrypt_with_aad`, in the same shape (see the
     /// [descriptor docs](crate::descriptor)). The tree itself only carries
     /// the *derived* per-leaf AADs, so the root is named here; nothing can
-    /// check that the two agree, which is why [`StackCipher::encrypt`], which
+    /// check that the two agree, which is why [`KeysetCipher::encrypt`], which
     /// does both steps from one value, is the form to prefer.
     ///
     /// Settles through the target layer's request carrier
@@ -873,7 +1165,7 @@ impl PendingStackCipherText {
     /// is sealed and one path to ZeroKMS.
     pub async fn seal<'a, K: DataKeySource>(
         self,
-        cipher: &StackCipher<K>,
+        cipher: &KeysetCipher<'_, K>,
         aad: impl IntoAad<'a>,
     ) -> Result<StackCipherText, Error> {
         self.into_pending(cipher, aad).settle().await
@@ -904,50 +1196,57 @@ impl PendingStackCipherText {
     /// way.
     pub fn into_pending<'c, 'a, K>(
         self,
-        cipher: &'a StackCipher<K>,
+        cipher: &'a KeysetCipher<'_, K>,
         aad: impl IntoAad<'c>,
     ) -> crate::target::Pending<'a, StackCipherText, K> {
         crate::target::seal_pending(cipher, self, Descriptor::of(aad))
     }
 
-    /// Recursively seal, drawing one key per leaf from `keys` in traversal order.
+    /// Recursively seal under `keyset_id`, drawing one key per leaf from
+    /// `keys` in traversal order.
     pub(crate) fn seal_with(
         self,
+        keyset_id: Uuid,
         keys: &mut impl Iterator<Item = DataKeyWithTag>,
     ) -> Result<StackCipherText, Unspecified> {
         // Markers seal an *empty* plaintext so the AEAD tag still binds their
         // (already domain-separated) AAD, mirroring `Aes256Cipher`.
         fn seal_marker(
             aad: Aad<'static>,
+            keyset_id: Uuid,
             keys: &mut impl Iterator<Item = DataKeyWithTag>,
         ) -> Result<SealedValue, Unspecified> {
             let key = keys.next().ok_or(Unspecified)?;
-            seal_leaf(Protected::new(Vec::new()), &aad, key)
+            seal_leaf(Protected::new(Vec::new()), &aad, keyset_id, key)
         }
 
         match self {
             PendingStackCipherText::Single { plaintext, aad } => {
                 let key = keys.next().ok_or(Unspecified)?;
-                Ok(CipherText::Single(seal_leaf(plaintext, &aad, key)?))
+                Ok(CipherText::Single(seal_leaf(
+                    plaintext, &aad, keyset_id, key,
+                )?))
             }
-            PendingStackCipherText::None { aad } => Ok(CipherText::None(seal_marker(aad, keys)?)),
-            PendingStackCipherText::EmptySequence { aad } => {
-                Ok(CipherText::EmptySequence(seal_marker(aad, keys)?))
+            PendingStackCipherText::None { aad } => {
+                Ok(CipherText::None(seal_marker(aad, keyset_id, keys)?))
             }
+            PendingStackCipherText::EmptySequence { aad } => Ok(CipherText::EmptySequence(
+                seal_marker(aad, keyset_id, keys)?,
+            )),
             PendingStackCipherText::EmptyMap { aad } => {
-                Ok(CipherText::EmptyMap(seal_marker(aad, keys)?))
+                Ok(CipherText::EmptyMap(seal_marker(aad, keyset_id, keys)?))
             }
             PendingStackCipherText::Sequence(items) => {
                 let mut out = Vec::with_capacity(items.len());
                 for item in items {
-                    out.push(item.seal_with(keys)?);
+                    out.push(item.seal_with(keyset_id, keys)?);
                 }
                 Ok(CipherText::Sequence(out))
             }
             PendingStackCipherText::Map(entries) => {
                 let mut out = Vec::with_capacity(entries.len());
                 for (k, v) in entries {
-                    out.push((k, v.seal_with(keys)?));
+                    out.push((k, v.seal_with(keyset_id, keys)?));
                 }
                 Ok(CipherText::Map(out))
             }
@@ -972,37 +1271,38 @@ fn leaf_cipher(key: &DataKey) -> Result<Aes256Cipher, Unspecified> {
 }
 
 /// Derives the effective AAD every leaf is sealed against — and opened
-/// under — binding the caller's derived AAD, the ZeroKMS key `tag`, and the
-/// [`SealedValue::FORMAT_VERSION`] byte that prefixes the leaf's frozen byte
-/// encoding.
+/// under — binding the caller's derived AAD, the ZeroKMS key `tag`, the
+/// keyset the key was minted under, and the [`SealedValue::FORMAT_VERSION`]
+/// byte that prefixes the leaf's frozen byte encoding.
 ///
-/// The labelled four-piece PAE can never collide with a caller's own
+/// The labelled five-piece PAE can never collide with a caller's own
 /// composite AAD (a tuple encodes with no leading domain label) or with
 /// vitaminc's internal derivations (different labels). Binding the format
-/// version under the tag is what makes the byte in
-/// [`SealedValue::to_bytes`] more than a parse hint: bytes relabelled with a
+/// version and the keyset id under the tag is what makes those bytes in
+/// [`SealedValue::to_bytes`] more than parse hints: bytes relabelled with a
 /// different version fail verification instead of selecting different
 /// parsing and derivation rules — mirroring vitaminc's `Aad::for_leaf`,
-/// which binds the *inner* [`LocalCipherText`] wire version the same way.
+/// which binds the *inner* [`LocalCipherText`] wire version the same way —
+/// and a leaf re-pointed at another keyset fails verification instead of
+/// asking that keyset for a key it never minted.
 ///
 /// The domain label deliberately carries no `/v1` suffix: the version is a
 /// *parameter* here, not part of the label.
 ///
 /// # Breaking change
 ///
-/// This labelled four-piece derivation replaced an unlabelled `PAE(aad, tag)`
-/// tuple. A leaf sealed under the old AAD and persisted (via serde or
-/// [`SealedValue::into_parts`]) can no longer be opened: it fails
+/// This derivation has changed twice while the crate is `publish = false`
+/// (an unlabelled `PAE(aad, tag)` tuple; then a four-piece labelled form
+/// without the keyset id), each time without a version bump, because only
+/// dev-persisted data existed. A leaf sealed under an earlier form fails
 /// authentication in `open_leaf` with a plain AEAD error, indistinguishable
-/// from tampering. There is deliberately no `UnknownVersion` signal for it —
-/// the old form carried no version byte to detect. This is acceptable
-/// because the crate is `publish = false` and only dev-persisted data
-/// exists; re-encrypt anything that matters.
-fn leaf_aad(aad: &Aad<'_>, tag: &[u8]) -> Aad<'static> {
+/// from tampering; re-encrypt anything that matters.
+fn leaf_aad(aad: &Aad<'_>, keyset_id: Uuid, tag: &[u8]) -> Aad<'static> {
     const LEAF_AAD_DOMAIN: &[u8] = b"stack-encrypt/leaf";
     Aad::pae(&[
         LEAF_AAD_DOMAIN,
         &[SealedValue::FORMAT_VERSION],
+        keyset_id.as_bytes(),
         aad.as_bytes(),
         tag,
     ])
@@ -1010,12 +1310,13 @@ fn leaf_aad(aad: &Aad<'_>, tag: &[u8]) -> Aad<'static> {
 
 /// Seal one plaintext leaf under a freshly generated data key.
 ///
-/// The AAD is the [`leaf_aad`] derivation of the caller's (derived) AAD and
-/// the key `tag` — `tag` is always bound, so the leaf is cryptographically
-/// tied to its ZeroKMS data key.
+/// The AAD is the [`leaf_aad`] derivation of the caller's (derived) AAD, the
+/// keyset the key was minted under, and the key `tag` — `tag` is always
+/// bound, so the leaf is cryptographically tied to its ZeroKMS data key.
 fn seal_leaf(
     plaintext: Protected<Vec<u8>>,
     aad: &Aad<'_>,
+    keyset_id: Uuid,
     key: DataKeyWithTag,
 ) -> Result<SealedValue, Unspecified> {
     // The `DataKeySource` is caller-supplied, so the key tag is not trusted
@@ -1026,8 +1327,9 @@ fn seal_leaf(
     SealedValue::tag_fits_length_field(&key.tag).map_err(|_| Unspecified)?;
     let iv = key.key.iv;
     let cipher = leaf_cipher(&key.key)?;
-    match (&cipher).encrypt_bytes_vec(plaintext, leaf_aad(aad, &key.tag))? {
+    match (&cipher).encrypt_bytes_vec(plaintext, leaf_aad(aad, keyset_id, &key.tag))? {
         AesCipherText::Single(ciphertext) => Ok(SealedValue {
+            keyset_id,
             iv,
             tag: key.tag,
             ciphertext,
@@ -1052,7 +1354,7 @@ fn open_leaf(keyed: KeyedLeaf, aad: &Aad<'_>) -> Result<Protected<Vec<u8>>, Unsp
     let cipher = leaf_cipher(&key)?;
     cipher
         .decipher(AesCipherText::Single(leaf.ciphertext))
-        .decrypt_bytes(ProtectedBytes, leaf_aad(aad, &leaf.tag))
+        .decrypt_bytes(ProtectedBytes, leaf_aad(aad, leaf.keyset_id, &leaf.tag))
 }
 
 /// Open one marker leaf (absent / empty-sequence / empty-map) and require the
@@ -1068,15 +1370,15 @@ fn verify_empty_marker(keyed: KeyedLeaf, aad: &Aad<'_>) -> Result<(), Unspecifie
 }
 
 // =============================================================================
-// Encrypt side: `Cipher` impl over a `&StackCipher` (builds the pending tree)
+// Encrypt side: `Cipher` impl over a `&KeysetCipher` (builds the pending tree)
 // =============================================================================
 
-impl<'c, K> Cipher for &'c StackCipher<K> {
+impl<'c, 'k, K> Cipher for &'c KeysetCipher<'k, K> {
     type Ok = PendingStackCipherText;
     type Error = Unspecified;
     type Passthrough = BoxedPassthrough;
-    type SeqCipher = PendingSeqCipher<'c, K>;
-    type MapCipher = PendingMapCipher<'c, K>;
+    type SeqCipher = PendingSeqCipher<'c, 'k, K>;
+    type MapCipher = PendingMapCipher<'c, 'k, K>;
 
     fn encrypt_bytes_vec<'a, A>(
         self,
@@ -1148,8 +1450,8 @@ impl<'c, K> Cipher for &'c StackCipher<K> {
 
 /// [`SeqCipher`] driver: accumulates a pending sub-tree per element. Holds the
 /// cipher only to re-drive nested [`Encrypt`] values (no I/O happens here).
-pub struct PendingSeqCipher<'c, K> {
-    cipher: &'c StackCipher<K>,
+pub struct PendingSeqCipher<'c, 'k, K> {
+    cipher: &'c KeysetCipher<'k, K>,
     items: Vec<PendingStackCipherText>,
     /// The AAD fixed at [`Cipher::encrypt_seq`]; the empty marker is sealed
     /// against its `for_empty_sequence` derivation.
@@ -1163,7 +1465,7 @@ pub struct PendingSeqCipher<'c, K> {
     encrypted: bool,
 }
 
-impl<'c, K> SeqCipher for PendingSeqCipher<'c, K> {
+impl<K> SeqCipher for PendingSeqCipher<'_, '_, K> {
     type Ok = PendingStackCipherText;
     type Error = Unspecified;
     type Passthrough = BoxedPassthrough;
@@ -1207,8 +1509,8 @@ impl<'c, K> SeqCipher for PendingSeqCipher<'c, K> {
 /// [`MapCipher`] driver: keys are stored in the clear; values become pending
 /// sub-trees sealed against [`Aad::for_map_entry`] of the map AAD and their
 /// key. Mirrors `AesMapCipher`'s key/value and duplicate-key contract checks.
-pub struct PendingMapCipher<'c, K> {
-    cipher: &'c StackCipher<K>,
+pub struct PendingMapCipher<'c, 'k, K> {
+    cipher: &'c KeysetCipher<'k, K>,
     entries: Vec<(String, PendingStackCipherText)>,
     /// Duplicate keys are rejected at encrypt time: `decrypt_tree` rejects
     /// them outright, so accepting one here would produce a permanently
@@ -1221,7 +1523,7 @@ pub struct PendingMapCipher<'c, K> {
     encrypted: bool,
 }
 
-impl<'c, K> MapCipher for PendingMapCipher<'c, K> {
+impl<K> MapCipher for PendingMapCipher<'_, '_, K> {
     type Ok = PendingStackCipherText;
     type Error = Unspecified;
     type Passthrough = BoxedPassthrough;
@@ -1310,7 +1612,9 @@ impl<'c, K> MapCipher for PendingMapCipher<'c, K> {
 // =============================================================================
 
 /// A [`Decipher`] over a single [`StackCipherText`] whose leaves already
-/// carry their retrieved data keys, produced by [`StackCipher::decipher`].
+/// carry their retrieved data keys, built inside
+/// [`StackCipher::decrypt`] and driven there by the value's [`Decrypt`]
+/// impl under the same context the keys were retrieved with.
 ///
 /// Structurally identical to `vitaminc_encrypt::AesDecipher` — the only
 /// difference is where each leaf's key comes from. The AAD is supplied per call
@@ -1661,19 +1965,21 @@ mod tests {
 
     /// Byte-level pin for the [`leaf_aad`] derivation. This is part of the
     /// frozen leaf format: a change to the domain label, the version byte,
-    /// the piece order, or the PAE framing makes every stored leaf fail
-    /// authentication, so it must be deliberate — and must come with a
+    /// the keyset id's place, the piece order, or the PAE framing makes
+    /// every stored leaf fail authentication, so it must be deliberate —
+    /// and, once anything is stored, must come with a
     /// [`SealedValue::FORMAT_VERSION`] bump, which this pin forces into view.
     #[test]
     fn leaf_aad_bytes_are_pinned() {
-        let aad = leaf_aad(&Aad::from_slice(b"caller-aad"), b"key-tag");
+        let keyset = Uuid::from_bytes(*b"keyset-fixture16");
+        let aad = leaf_aad(&Aad::from_slice(b"caller-aad"), keyset, b"key-tag");
         let hex: String = aad.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
-        // PAE: LE64 count (4) ‖ per piece LE64 length ‖ piece, the pieces
-        // being "stack-encrypt/leaf", [FORMAT_VERSION], the caller AAD, and
-        // the key tag.
+        // PAE: LE64 count (5) ‖ per piece LE64 length ‖ piece, the pieces
+        // being "stack-encrypt/leaf", [FORMAT_VERSION], the keyset id's 16
+        // bytes, the caller AAD, and the key tag.
         assert_eq!(
             hex,
-            "04000000000000001200000000000000737461636b2d656e63727970742f6c6561660100000000000000010a0000000000000063616c6c65722d61616407000000000000006b65792d746167"
+            "05000000000000001200000000000000737461636b2d656e63727970742f6c65616601000000000000000110000000000000006b65797365742d6669787475726531360a0000000000000063616c6c65722d61616407000000000000006b65792d746167"
         );
     }
 }

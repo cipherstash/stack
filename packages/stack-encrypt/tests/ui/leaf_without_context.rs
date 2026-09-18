@@ -3,7 +3,7 @@
 //! / `decrypt_from` pass `()`, which no leaf accepts.
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{DecryptFrom, EncryptInto};
-use stack_encrypt::{DecryptInto, EncryptFrom, StackCipher, StackCipherText};
+use stack_encrypt::{DecryptInto, EncryptFrom, KeysetCipher, StackCipher, StackCipherText};
 use stack_kms::FakeDataKeySource;
 
 #[derive(EncryptFrom, DecryptInto)]
@@ -13,7 +13,7 @@ struct EncryptedAge {
     hm: EqualityTerm,
 }
 
-async fn encrypt(cipher: &StackCipher<FakeDataKeySource>) {
+async fn encrypt(cipher: &KeysetCipher<'_, FakeDataKeySource>) {
     let _term: EqualityTerm = "alice".encrypt_into(cipher).await.unwrap();
     let _record: EncryptedAge = 42u32.encrypt_into(cipher).await.unwrap();
     let _column: Vec<StackCipherText> = vec![1u32].encrypt_into(cipher).await.unwrap();

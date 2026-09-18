@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use stack_encrypt::{Aad, CipherText, ContextTag, Element, IntoAad, SealedValue, StackCipher};
+use stack_encrypt::{CipherText, ContextTag, Element, SealedValue, StackCipher};
 use stack_kms::FakeDataKeySource;
 use vitaminc_protected::{Controlled, Protected};
 
@@ -21,7 +21,8 @@ async fn cipher() -> StackCipher<FakeDataKeySource> {
 #[tokio::test]
 async fn scalar_roundtrips_with_no_aad() {
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt("hello world".to_string(), ())
         .await
         .expect("encrypt");
@@ -32,8 +33,9 @@ async fn scalar_roundtrips_with_no_aad() {
 #[tokio::test]
 async fn scalar_roundtrips_with_matching_aad() {
     let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
     let aad = b"public-context".as_slice();
-    let ct = cipher
+    let ct = keyset
         .encrypt("secret".to_string(), aad)
         .await
         .expect("encrypt");
@@ -44,7 +46,8 @@ async fn scalar_roundtrips_with_matching_aad() {
 #[tokio::test]
 async fn decrypt_fails_with_wrong_aad() {
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt("secret".to_string(), b"aad-a".as_slice())
         .await
         .expect("encrypt");
@@ -55,7 +58,8 @@ async fn decrypt_fails_with_wrong_aad() {
 #[tokio::test]
 async fn decrypt_fails_when_aad_omitted() {
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt("secret".to_string(), b"bound".as_slice())
         .await
         .expect("encrypt");
@@ -68,8 +72,9 @@ async fn decrypt_fails_when_aad_omitted() {
 #[tokio::test]
 async fn vec_roundtrips() {
     let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
     let items = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-    let ct = cipher.encrypt(items.clone(), ()).await.expect("encrypt");
+    let ct = keyset.encrypt(items.clone(), ()).await.expect("encrypt");
     let pt: Vec<String> = cipher.decrypt(ct, ()).await.expect("decrypt");
     assert_eq!(pt, items);
 }
@@ -77,12 +82,13 @@ async fn vec_roundtrips() {
 #[tokio::test]
 async fn map_roundtrips() {
     let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
     // Encrypt side keys are `&'static str`; decrypt side yields `String` keys.
     let mut input: HashMap<&'static str, String> = HashMap::new();
     input.insert("name", "alice".to_string());
     input.insert("role", "admin".to_string());
 
-    let ct = cipher.encrypt(input, ()).await.expect("encrypt");
+    let ct = keyset.encrypt(input, ()).await.expect("encrypt");
     let pt: HashMap<String, String> = cipher.decrypt(ct, ()).await.expect("decrypt");
 
     assert_eq!(pt.get("name"), Some(&"alice".to_string()));
@@ -93,7 +99,8 @@ async fn map_roundtrips() {
 #[tokio::test]
 async fn option_some_roundtrips() {
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt(Some("present".to_string()), ())
         .await
         .expect("encrypt");
@@ -104,7 +111,8 @@ async fn option_some_roundtrips() {
 #[tokio::test]
 async fn option_none_roundtrips() {
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt(Option::<String>::None, ())
         .await
         .expect("encrypt");
@@ -118,8 +126,9 @@ async fn protected_roundtrip() {
     // (`Vec<u8>` would encrypt element-wise as a sequence of `u8`, not as bytes,
     // so a string leaf is used here.)
     let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
     let secret = Protected::new("classified".to_string());
-    let ct = cipher.encrypt(secret, ()).await.expect("encrypt");
+    let ct = keyset.encrypt(secret, ()).await.expect("encrypt");
     let pt: Protected<String> = cipher.decrypt(ct, ()).await.expect("decrypt");
     assert_eq!(pt.risky_unwrap(), "classified".to_string());
 }
@@ -127,11 +136,12 @@ async fn protected_roundtrip() {
 #[tokio::test]
 async fn nested_vec_roundtrips() {
     let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
     let nested = vec![
         vec!["a".to_string(), "b".to_string()],
         vec!["c".to_string()],
     ];
-    let ct = cipher.encrypt(nested.clone(), ()).await.expect("encrypt");
+    let ct = keyset.encrypt(nested.clone(), ()).await.expect("encrypt");
     let pt: Vec<Vec<String>> = cipher.decrypt(ct, ()).await.expect("decrypt");
     assert_eq!(pt, nested);
 }
@@ -139,7 +149,8 @@ async fn nested_vec_roundtrips() {
 #[tokio::test]
 async fn context_tag_binds_and_roundtrips() {
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt(ContextTag::new("token".to_string(), "user:42"), ())
         .await
         .expect("encrypt");
@@ -155,7 +166,8 @@ async fn context_tag_binds_and_roundtrips() {
 #[tokio::test]
 async fn context_tag_wrong_context_fails() {
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt(ContextTag::new("token".to_string(), "user:42"), ())
         .await
         .expect("encrypt");
@@ -168,7 +180,8 @@ async fn context_tag_wrong_context_fails() {
 async fn empty_vec_roundtrips() {
     // An empty sequence seals an authenticated marker, so emptiness is provable.
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt(Vec::<String>::new(), ())
         .await
         .expect("encrypt");
@@ -179,7 +192,8 @@ async fn empty_vec_roundtrips() {
 #[tokio::test]
 async fn empty_map_roundtrips() {
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt(HashMap::<&'static str, String>::new(), ())
         .await
         .expect("encrypt");
@@ -190,7 +204,8 @@ async fn empty_map_roundtrips() {
 #[tokio::test]
 async fn empty_marker_does_not_decode_under_wrong_aad() {
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt(Vec::<String>::new(), b"bound".as_slice())
         .await
         .expect("encrypt");
@@ -203,10 +218,11 @@ async fn renamed_map_key_fails() {
     // Map keys travel in the clear but are bound into their value's AAD, so
     // renaming a key in the stored ciphertext must fail decryption.
     let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
     let mut input: HashMap<&'static str, String> = HashMap::new();
     input.insert("name", "alice".to_string());
 
-    let ct = cipher.encrypt(input, ()).await.expect("encrypt");
+    let ct = keyset.encrypt(input, ()).await.expect("encrypt");
     let tampered = match ct {
         CipherText::Map(entries) => CipherText::Map(
             entries
@@ -226,7 +242,8 @@ async fn sequence_element_cannot_be_rehomed_as_scalar() {
     // Elements are sealed under the `for_sequence_element` derivation, so a
     // leaf spliced out of a sequence must not verify as a top-level scalar.
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt(vec!["a".to_string()], ())
         .await
         .expect("encrypt");
@@ -248,7 +265,8 @@ async fn element_roundtrips_under_bare_caller_aad() {
     // impls. Both sides must honour that derivation: the decipher opens the leaf
     // under the AAD the Decrypt drive supplies, not a pre-derived one.
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt(Element("row".to_string()), b"users".as_slice())
         .await
         .expect("encrypt");
@@ -265,9 +283,10 @@ async fn element_interchanges_with_vec_element() {
     // under the same caller AAD (Element's documented use-case), and a lone
     // `Element` ciphertext decrypts as a one-element `Vec`.
     let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
     let aad = b"users".as_slice();
 
-    let ct = cipher
+    let ct = keyset
         .encrypt(vec!["a".to_string(), "b".to_string()], aad)
         .await
         .expect("encrypt");
@@ -281,7 +300,7 @@ async fn element_interchanges_with_vec_element() {
         .expect("spliced element must decrypt as Element");
     assert_eq!(pt.into_inner(), "b");
 
-    let lone = cipher
+    let lone = keyset
         .encrypt(Element("c".to_string()), aad)
         .await
         .expect("encrypt");
@@ -296,7 +315,8 @@ async fn element_interchanges_with_vec_element() {
 #[tokio::test]
 async fn element_fails_under_wrong_caller_aad() {
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt(Element("row".to_string()), b"users".as_slice())
         .await
         .expect("encrypt");
@@ -307,46 +327,32 @@ async fn element_fails_under_wrong_caller_aad() {
     );
 }
 
+/// The derivation that binds a sequence element to its position is the
+/// library's, applied by `Element<T>` itself — there is no entry point that
+/// lets a caller retrieve keys under one context and authenticate under
+/// another, so a batched row is read back by naming the type, not by
+/// reconstructing the AAD.
 #[tokio::test]
-async fn decipher_can_be_driven_directly() {
-    // `StackCipher::decipher` mirrors `Aes256Cipher::decipher`: the returned
-    // Decipher is driven via `Decrypt::decrypt_with_aad` with a caller-chosen
-    // AAD, so manual derivations work too.
+async fn a_batched_element_opens_by_naming_the_type() {
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt(Element("row".to_string()), b"users".as_slice())
         .await
         .expect("encrypt");
-    let decipher = cipher
-        .decipher(ct, b"users".as_slice())
+    let opened: Element<String> = cipher
+        .decrypt(ct, b"users".as_slice())
         .await
-        .expect("retrieve keys");
-    let pt = <String as stack_encrypt::Decrypt>::decrypt_with_aad(
-        decipher,
-        Aad::from_slice(b"users").for_sequence_element(),
-    )
-    .expect("manual element derivation must open the leaf");
-    assert_eq!(pt, "row");
-
-    // And a plain scalar opens under the bare AAD through the same path.
-    let ct = cipher
-        .encrypt("scalar".to_string(), b"ctx".as_slice())
-        .await
-        .expect("encrypt");
-    let decipher = cipher
-        .decipher(ct, b"ctx".as_slice())
-        .await
-        .expect("retrieve keys");
-    let pt = <String as stack_encrypt::Decrypt>::decrypt_with_aad(decipher, b"ctx".into_aad())
-        .expect("decrypt");
-    assert_eq!(pt, "scalar");
+        .expect("Element applies its own derivation on open");
+    assert_eq!(opened.into_inner(), "row");
 }
 
 #[tokio::test]
 async fn wrong_shape_fails() {
     // A scalar ciphertext must not decode as a sequence.
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt("scalar".to_string(), ())
         .await
         .expect("encrypt");
@@ -356,10 +362,12 @@ async fn wrong_shape_fails() {
 
 #[tokio::test]
 async fn leaf_survives_persistence_via_parts() {
-    // A leaf can be decomposed into (iv, tag, ciphertext), stored, and rebuilt
+    // A leaf can be decomposed into (keyset_id, iv, tag, ciphertext), stored,
+    // and rebuilt
     // — the in-memory original need not be retained to decrypt.
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt("durable".to_string(), b"ctx".as_slice())
         .await
         .expect("encrypt");
@@ -367,8 +375,8 @@ async fn leaf_survives_persistence_via_parts() {
         CipherText::Single(leaf) => leaf,
         other => panic!("expected a Single leaf, got {other:?}"),
     };
-    let (iv, tag, bytes) = leaf.into_parts();
-    let rebuilt = SealedValue::from_parts(iv, tag, bytes).expect("rebuild leaf");
+    let (keyset_id, iv, tag, bytes) = leaf.into_parts();
+    let rebuilt = SealedValue::from_parts(keyset_id, iv, tag, bytes).expect("rebuild leaf");
 
     let pt: String = cipher
         .decrypt(CipherText::Single(rebuilt), b"ctx".as_slice())
@@ -380,7 +388,8 @@ async fn leaf_survives_persistence_via_parts() {
 #[tokio::test]
 async fn leaf_survives_persistence_via_serde() {
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt("durable".to_string(), ())
         .await
         .expect("encrypt");
@@ -390,6 +399,7 @@ async fn leaf_survives_persistence_via_serde() {
     };
     let json = serde_json::to_string(&leaf).expect("serialise leaf");
     let restored: SealedValue = serde_json::from_str(&json).expect("deserialise leaf");
+    assert_eq!(restored.keyset_id(), leaf.keyset_id());
     assert_eq!(restored.iv(), leaf.iv());
     assert_eq!(restored.tag(), leaf.tag());
     assert_eq!(restored.ciphertext(), leaf.ciphertext());
@@ -404,7 +414,8 @@ async fn leaf_survives_persistence_via_serde() {
 #[tokio::test]
 async fn tampered_leaf_bytes_fail() {
     let cipher = cipher().await;
-    let ct = cipher
+    let keyset = cipher.default_keyset();
+    let ct = keyset
         .encrypt("durable".to_string(), ())
         .await
         .expect("encrypt");
@@ -412,10 +423,10 @@ async fn tampered_leaf_bytes_fail() {
         CipherText::Single(leaf) => leaf,
         other => panic!("expected a Single leaf, got {other:?}"),
     };
-    let (iv, tag, mut bytes) = leaf.into_parts();
+    let (keyset_id, iv, tag, mut bytes) = leaf.into_parts();
     let last = bytes.len() - 1;
     bytes[last] ^= 0x01;
-    let tampered = SealedValue::from_parts(iv, tag, bytes).expect("rebuild leaf");
+    let tampered = SealedValue::from_parts(keyset_id, iv, tag, bytes).expect("rebuild leaf");
 
     let result: Result<String, _> = cipher.decrypt(CipherText::Single(tampered), ()).await;
     assert!(result.is_err(), "a flipped ciphertext bit must not decrypt");

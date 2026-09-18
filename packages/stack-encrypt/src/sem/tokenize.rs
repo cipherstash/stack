@@ -17,7 +17,7 @@ pub enum Tokenizer {
     /// (whitespace included). Text shorter than `length` yields **no tokens**,
     /// exactly like the v1 match indexer — so a probe shorter than the gram
     /// length is rejected by
-    /// [`match_terms`](crate::StackCipher::match_terms) rather than
+    /// [`match_terms`](crate::KeysetCipher::match_terms) rather than
     /// silently never matching. This is the default, matching the existing
     /// match indexer's 3-gram configuration.
     Ngram { length: usize },

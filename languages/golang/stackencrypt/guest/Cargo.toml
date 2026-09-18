@@ -35,8 +35,8 @@ zerokms-protocol = { path = "../../../../packages/zerokms-protocol" }
 # (see the comment in packages/stack-encrypt/Cargo.toml). A different
 # version here fails at the `FfiValue: Decrypt` bound, since the aead crate
 # would be duplicated.
-vitaminc-aead-value = "0.3.0"
-vitaminc-protected = "0.3.0"
+vitaminc-aead-value = "0.4.0"
+vitaminc-protected = "0.4.0"
 
 futures = { version = "0.3", default-features = false, features = ["executor"] }
 serde = "1"

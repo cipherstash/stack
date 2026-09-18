@@ -78,8 +78,8 @@ impl Descriptor {
 
     /// Render `context` — anything that encodes as AAD — from its parts.
     ///
-    /// [`StackCipher::encrypt`](crate::StackCipher::encrypt) /
-    /// [`decrypt`](crate::StackCipher::decrypt) and the target-directed
+    /// [`KeysetCipher::encrypt`](crate::KeysetCipher::encrypt) /
+    /// [`StackCipher::decrypt`](crate::StackCipher::decrypt) and the target-directed
     /// leaves render the descriptor themselves; call this to see what a
     /// context will look like in the ZeroKMS log, or to check that it
     /// [`fits`](Self::fits) before sealing a large batch under it.

@@ -26,7 +26,10 @@ use stack_encrypt::{nonempty, EncryptFrom, StackCipher, StackCipherText};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `StackCipher::new()` builds a ZeroKMS client from the environment and
     // loads the keyset's index key once, during construction.
-    let terms = StackCipher::new().await?;
+    let cipher = StackCipher::new().await?;
+    // Terms bind to a keyset: this handle derives every term under the
+    // default keyset's index key.
+    let terms = cipher.default_keyset();
     println!("cipher ready on keyset {}", terms.keyset_id());
 
     // One cipher serves write time and query time; terms are deterministic

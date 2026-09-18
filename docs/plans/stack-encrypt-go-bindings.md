@@ -21,8 +21,10 @@ matrix. The proof is a Go program that, against a real ZeroKMS:
 1. encrypts a slice of records (ciphertext + equality + ORE term per field)
    in **one** `generate-data-key` call,
 2. decrypts them back in one `retrieve-data-key` call,
-3. builds a query probe term locally (no ZeroKMS call) that equals the stored
-   term, and
+3. builds a query probe term that equals the stored term (under the local
+   HMAC backend that derivation needs no ZeroKMS call; under a backend that
+   derives terms at the server — ZeroKMS v2 — the probe settles through the
+   same batched call the record path uses), and
 4. round-trips ciphertexts and terms with the native Rust example
    (`encrypted_record.rs`) in both directions.
 
@@ -386,7 +388,7 @@ via the registry, packed `u64` results, status in the low word on error):
 | `se_encrypt_element` / `se_decrypt_element` | as vitaminc; row-at-a-time interop with batch-encrypted slices |
 | `se_encrypt_record(handle, source, plan, aad)` | the runtime form of `#[derive(EncryptFrom)]`: `plan` is an `FfiValue` object `{ field → { context, outputs: [c \| eq \| match(opts) \| ore \| ope] } }`; per field the guest dispatches on the source `FfiValue` variant to the typed `EncryptFrom` impls (`u32`/`u64`/`i64`/`f64`/`String`), zips the pendings, `Pending::all` across an array source, and returns `{ field → { c: leaf, hm: bytes, ob: bytes, … } }`. One `generate_keys` call per invocation regardless of row count. |
 | `se_decrypt_record(handle, record, plan, aad)` | inverse; only the `c` outputs participate |
-| `se_term(handle, value, context, kind)` | query probe; `context` is codec-encoded in the plan-field grammar — one part (a string, bytes, or an `i32`/`i64`/`u32`/`u64`) or an array of parts, nested as deep as the transport codec allows (`vitaminc_aead_value::transport::MAX_DEPTH`, 128 levels from the root of the encoded value; deeper is `STATUS_ENCODING` before the context is parsed, not an interop bug). Shape is identity: `[x]` is not `x`, so a probe passes the context in exactly the shape the field was sealed under (the guest's `context` module is the one home of the grammar and of which Rust context each shape spells). Local PRF/ORE only, never touches ZeroKMS |
+| `se_term(handle, value, context, kind)` | query probe; `context` is codec-encoded in the plan-field grammar — one part (a string, bytes, or an `i32`/`i64`/`u32`/`u64`) or an array of parts, nested as deep as the transport codec allows (`vitaminc_aead_value::transport::MAX_DEPTH`, 128 levels from the root of the encoded value; deeper is `STATUS_ENCODING` before the context is parsed, not an interop bug). Shape is identity: `[x]` is not `x`, so a probe passes the context in exactly the shape the field was sealed under (the guest's `context` module is the one home of the grammar and of which Rust context each shape spells). PRF/ORE derivation: no ZeroKMS traffic under the local HMAC backend, a batched request under one that derives terms at the server |
 
 Host imports (two, both from the `cipherstash_transport` module #2099
 defined):
