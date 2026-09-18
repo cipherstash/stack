@@ -62,6 +62,27 @@ use crate::{AadPiece, NonEmpty};
 /// `[]` and `[""]` are, `["", 7]` is not) — the rule its `Option` and tuple
 /// impls follow.
 ///
+/// # Examples
+///
+/// The list a binding spells and the tuple a Rust caller writes are one
+/// context:
+///
+/// ```
+/// use stack_encrypt::dynamic::{context, FfiValue};
+/// use stack_encrypt::{nonempty, IntoAad};
+///
+/// let parsed = context(FfiValue::Array(vec![
+///     FfiValue::String("users/age".into()),
+///     FfiValue::UInt64(7),
+/// ]))?;
+/// let typed = nonempty!("users/age").with(7u64);
+/// assert_eq!(
+///     parsed.into_inner().into_aad().as_bytes(),
+///     typed.into_aad().as_bytes()
+/// );
+/// # Ok::<(), stack_encrypt::dynamic::Error>(())
+/// ```
+///
 /// # Errors
 ///
 /// [`Error::Context`] for anything outside the shape above, and for a
@@ -143,10 +164,15 @@ mod tests {
     #[test]
     fn a_bare_string_is_the_flat_context() {
         let parsed = context(s("users/age")).expect("flat context");
-        assert_eq!(parsed.get(), &AadPiece::Text(Cow::Borrowed("users/age")));
+        assert_eq!(
+            parsed.get(),
+            &AadPiece::Text(Cow::Borrowed("users/age")),
+            "a bare string is one text part, not a one-element list"
+        );
         assert_eq!(
             parsed.into_inner().into_aad().as_bytes(),
-            "users/age".into_aad().as_bytes()
+            "users/age".into_aad().as_bytes(),
+            "the AAD is the string's own, unframed"
         );
     }
 
@@ -157,11 +183,13 @@ mod tests {
         let tuple = nonempty!("users/age").with(7u64);
         assert_eq!(
             parsed.clone().into_inner().into_aad().as_bytes(),
-            tuple.into_aad().as_bytes()
+            tuple.into_aad().as_bytes(),
+            "a two-element list is the pair on the AAD side"
         );
         assert_eq!(
             parsed.into_inner().into_prf_context().as_bytes(),
-            tuple.into_prf_context().as_bytes()
+            tuple.into_prf_context().as_bytes(),
+            "a two-element list is the pair on the PRF side"
         );
     }
 
@@ -171,11 +199,13 @@ mod tests {
             .expect("extended context");
         assert_eq!(
             Descriptor::of(parsed.into_inner()).as_str(),
-            "users/age|7u64"
+            "users/age|7u64",
+            "the list renders its parts joined by `|`"
         );
         assert_eq!(
             Descriptor::of(nonempty!("users/age").with(7u64)).as_str(),
-            "users/age|7u64"
+            "users/age|7u64",
+            "the tuple renders the same descriptor"
         );
     }
 
@@ -189,11 +219,13 @@ mod tests {
         let tuple = ("users/age", ("t", -3i32));
         assert_eq!(
             parsed.clone().into_inner().into_aad().as_bytes(),
-            tuple.into_aad().as_bytes()
+            tuple.into_aad().as_bytes(),
+            "a nested list is the nested tuple on the AAD side"
         );
         assert_eq!(
             parsed.into_inner().into_prf_context().as_bytes(),
-            tuple.into_prf_context().as_bytes()
+            tuple.into_prf_context().as_bytes(),
+            "a nested list is the nested tuple on the PRF side"
         );
     }
 
@@ -291,11 +323,13 @@ mod tests {
         let bare = context(s("a")).expect("bare");
         assert_ne!(
             list.clone().into_inner().into_aad().as_bytes(),
-            bare.clone().into_inner().into_aad().as_bytes()
+            bare.clone().into_inner().into_aad().as_bytes(),
+            "[x] is PAE-framed and x is not, so their AAD differs"
         );
         assert_ne!(
             list.into_inner().into_prf_context().as_bytes(),
-            bare.into_inner().into_prf_context().as_bytes()
+            bare.into_inner().into_prf_context().as_bytes(),
+            "[x] is PAE-framed and x is not, so their PRF context differs"
         );
     }
 
@@ -307,11 +341,13 @@ mod tests {
             .into_inner();
         assert_eq!(
             text.clone().into_aad().as_bytes(),
-            bytes.clone().into_aad().as_bytes()
+            bytes.clone().into_aad().as_bytes(),
+            "text and bytes of the same content share AAD bytes"
         );
         assert_ne!(
             text.into_prf_context().as_bytes(),
-            bytes.into_prf_context().as_bytes()
+            bytes.into_prf_context().as_bytes(),
+            "text and bytes are distinct PRF encodings"
         );
     }
 

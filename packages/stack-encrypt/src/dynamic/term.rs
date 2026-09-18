@@ -12,13 +12,13 @@
 //! Same caveat as [`crate::sem`]: a term derived here is bound to the
 //! context you pass and to nothing else. Use it to *query*. A term that is
 //! going to be **stored** should come from the record path, where it shares
-//! one context with the ciphertext beside it by construction (ADR-0004).
+//! one context with the ciphertext beside it (ADR-0004).
 
 use std::fmt;
 
 use stack_kms::DataKeySource;
 use vitaminc_aead_value::FfiValue;
-use vitaminc_protected::{Controlled, Protected};
+use vitaminc_protected::{Controlled, OpaqueDebug, Protected};
 use zeroize::Zeroizing;
 
 use super::{utf8, Error};
@@ -27,8 +27,8 @@ use crate::{IntoPrfContext, KeysetCipher, NonEmpty};
 
 /// Which index term to derive.
 ///
-/// The `key` strings are wire format — see the [module docs](super) on
-/// stability.
+/// The `key` strings are wire format, and that is why this enum is
+/// exhaustive — see the [module docs](super#stability).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum TermKind {
     /// `"eq"` — equality (exact match). Raw 32 PRF bytes.
@@ -84,7 +84,10 @@ impl fmt::Display for TermKind {
 /// Lifting is a copy, so the value it came from stays movable into the
 /// ciphertext path beside it. The owned text and bytes copies wipe on drop;
 /// the PRF and CLLW layers move them into [`Protected`] internally.
-#[derive(Clone)]
+///
+/// It is plaintext, so its `Debug` is opaque: the variant is named, the
+/// value is masked.
+#[derive(Clone, OpaqueDebug)]
 #[non_exhaustive]
 pub enum Scalar {
     /// From [`FfiValue::Bool`].
@@ -136,6 +139,31 @@ impl Scalar {
 }
 
 /// Derive one index term's frozen byte encoding.
+///
+/// # Examples
+///
+/// A probe for a value a binding decoded derives the bytes the typed path
+/// derives for the same value under the same context:
+///
+/// ```
+/// use stack_encrypt::dynamic::{context, term, FfiValue, Scalar, TermKind};
+/// use stack_encrypt::StackCipher;
+/// use stack_kms::FakeDataKeySource;
+///
+/// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+/// let cipher = StackCipher::builder()
+///     .kms(FakeDataKeySource::new())
+///     .init()
+///     .await?;
+/// let keyset = cipher.default_keyset();
+///
+/// let ctx = context(FfiValue::String("users/age".into()))?;
+/// let probe = term(&keyset, Scalar::U32(34), TermKind::Equality, ctx.clone()).await?;
+/// let typed = keyset.equality_term(34u32, ctx).await?;
+/// assert_eq!(probe, typed.into_bytes().to_vec());
+/// # Ok::<(), stack_encrypt::dynamic::Error>(())
+/// # }).unwrap();
+/// ```
 ///
 /// # Errors
 ///
@@ -247,4 +275,294 @@ where
         .ope_term(value, context)
         .await
         .map(|t| t.as_ref().to_vec())?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dynamic::{context, Output};
+    use crate::{nonempty, StackCipher};
+    use stack_kms::FakeDataKeySource;
+
+    async fn cipher() -> StackCipher<FakeDataKeySource> {
+        StackCipher::builder()
+            .kms(FakeDataKeySource::new())
+            .init()
+            .await
+            .expect("build cipher")
+    }
+
+    fn s(value: &str) -> FfiValue {
+        FfiValue::String(value.into())
+    }
+
+    fn bytes(value: &[u8]) -> FfiValue {
+        FfiValue::Bytes(Protected::new(value.to_vec()))
+    }
+
+    /// Every scalar variant, from the leaf it lifts out of.
+    fn every_scalar() -> Vec<(&'static str, FfiValue)> {
+        vec![
+            ("a bool", FfiValue::Bool(true)),
+            ("an i32", FfiValue::Int32(-3)),
+            ("an i64", FfiValue::Int64(-4)),
+            ("a u32", FfiValue::UInt32(34)),
+            ("a u64", FfiValue::UInt64(35)),
+            ("an f32", FfiValue::Float32(1.5)),
+            ("an f64", FfiValue::Float64(2.5)),
+            ("text", s("alice")),
+            ("bytes", bytes(b"ab")),
+        ]
+    }
+
+    mod given_a_scalar_the_scheme_defines_the_term_for {
+        use super::*;
+
+        /// The contract the dispatch exists for: the bytes are the typed
+        /// path's, so a probe from any language finds a Rust-written term.
+        #[tokio::test]
+        async fn derives_the_bytes_the_typed_path_derives() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let ctx = context(s("users/x")).expect("context");
+            let dynamic = |value: &FfiValue, kind: TermKind| {
+                let scalar = Scalar::of(value, kind).expect("a scalar");
+                term(&keyset, scalar, kind, ctx.clone())
+            };
+            let eq = |t: crate::sem::EqualityTerm| t.into_bytes().to_vec();
+
+            // Equality, per PRF-encodable variant.
+            let typed = keyset.equality_term(-3i32, nonempty!("users/x")).await;
+            assert_eq!(
+                dynamic(&FfiValue::Int32(-3), TermKind::Equality)
+                    .await
+                    .expect("eq"),
+                eq(typed.expect("typed")),
+                "i32 equality"
+            );
+            let typed = keyset.equality_term(-4i64, nonempty!("users/x")).await;
+            assert_eq!(
+                dynamic(&FfiValue::Int64(-4), TermKind::Equality)
+                    .await
+                    .expect("eq"),
+                eq(typed.expect("typed")),
+                "i64 equality"
+            );
+            let typed = keyset.equality_term(34u32, nonempty!("users/x")).await;
+            assert_eq!(
+                dynamic(&FfiValue::UInt32(34), TermKind::Equality)
+                    .await
+                    .expect("eq"),
+                eq(typed.expect("typed")),
+                "u32 equality"
+            );
+            let typed = keyset.equality_term(35u64, nonempty!("users/x")).await;
+            assert_eq!(
+                dynamic(&FfiValue::UInt64(35), TermKind::Equality)
+                    .await
+                    .expect("eq"),
+                eq(typed.expect("typed")),
+                "u64 equality"
+            );
+            let typed = keyset
+                .equality_term("alice".to_string(), nonempty!("users/x"))
+                .await;
+            assert_eq!(
+                dynamic(&s("alice"), TermKind::Equality).await.expect("eq"),
+                eq(typed.expect("typed")),
+                "text equality"
+            );
+            let typed = keyset
+                .equality_term(Protected::new(b"ab".to_vec()), nonempty!("users/x"))
+                .await;
+            assert_eq!(
+                dynamic(&bytes(b"ab"), TermKind::Equality)
+                    .await
+                    .expect("eq"),
+                eq(typed.expect("typed")),
+                "bytes equality"
+            );
+
+            // Match, text only.
+            let typed = keyset
+                .match_terms::<DefaultMatch>("alice smith", nonempty!("users/x"))
+                .await
+                .expect("typed");
+            assert_eq!(
+                dynamic(&s("alice smith"), TermKind::Match)
+                    .await
+                    .expect("match"),
+                typed.to_bytes(),
+                "text match"
+            );
+
+            // The ordering schemes take every scalar; the typed side is
+            // spelled once per variant because each is its own type.
+            macro_rules! ordered {
+                ($value:expr, $leaf:expr, $label:literal) => {
+                    let typed = keyset.ore_term($value, nonempty!("users/x")).await;
+                    assert_eq!(
+                        dynamic(&$leaf, TermKind::Ore).await.expect("ore"),
+                        typed.expect("typed").as_ref().to_vec(),
+                        concat!($label, " ore")
+                    );
+                    let typed = keyset.ope_term($value, nonempty!("users/x")).await;
+                    assert_eq!(
+                        dynamic(&$leaf, TermKind::Ope).await.expect("ope"),
+                        typed.expect("typed").as_ref().to_vec(),
+                        concat!($label, " ope")
+                    );
+                };
+            }
+            ordered!(true, FfiValue::Bool(true), "bool");
+            ordered!(-3i32, FfiValue::Int32(-3), "i32");
+            ordered!(-4i64, FfiValue::Int64(-4), "i64");
+            ordered!(34u32, FfiValue::UInt32(34), "u32");
+            ordered!(35u64, FfiValue::UInt64(35), "u64");
+            ordered!(1.5f32, FfiValue::Float32(1.5), "f32");
+            ordered!(2.5f64, FfiValue::Float64(2.5), "f64");
+            ordered!("alice".to_string(), s("alice"), "text");
+            ordered!(b"ab".to_vec(), bytes(b"ab"), "bytes");
+        }
+
+        #[test]
+        fn supports_is_true() {
+            for (label, leaf) in every_scalar() {
+                let scalar = Scalar::of(&leaf, TermKind::Ore).expect("a scalar");
+                assert!(TermKind::Ore.supports(&scalar), "{label} takes an ore term");
+                assert!(TermKind::Ope.supports(&scalar), "{label} takes an ope term");
+            }
+            for (label, leaf) in every_scalar() {
+                let scalar = Scalar::of(&leaf, TermKind::Equality).expect("a scalar");
+                let prf_encodable = !matches!(
+                    leaf,
+                    FfiValue::Bool(_) | FfiValue::Float32(_) | FfiValue::Float64(_)
+                );
+                assert_eq!(
+                    TermKind::Equality.supports(&scalar),
+                    prf_encodable,
+                    "{label} takes an equality term exactly when it has a PRF encoding"
+                );
+                assert_eq!(
+                    TermKind::Match.supports(&scalar),
+                    matches!(leaf, FfiValue::String(_)),
+                    "{label} takes a match term exactly when it is text"
+                );
+            }
+        }
+    }
+
+    mod given_a_pair_the_scheme_refuses {
+        use super::*;
+
+        /// The arms of `term` are unreachable for a pair `supports` refuses,
+        /// and they say so with the same error the table would have let a
+        /// binding raise at its boundary.
+        #[tokio::test]
+        async fn term_is_error_term_naming_the_kind() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let ctx = context(s("users/x")).expect("context");
+            let refused = [
+                ("a bool", FfiValue::Bool(true), TermKind::Equality),
+                ("an f32", FfiValue::Float32(1.5), TermKind::Equality),
+                ("an f64", FfiValue::Float64(2.5), TermKind::Equality),
+                ("a bool", FfiValue::Bool(true), TermKind::Match),
+                ("a u32", FfiValue::UInt32(34), TermKind::Match),
+                ("bytes", bytes(b"ab"), TermKind::Match),
+            ];
+            for (label, leaf, kind) in refused {
+                let scalar = Scalar::of(&leaf, kind).expect("a scalar");
+                assert!(
+                    !kind.supports(&scalar),
+                    "{label} must not take a {kind} term"
+                );
+                let result = term(&keyset, scalar, kind, ctx.clone()).await;
+                assert!(
+                    matches!(result, Err(Error::Term { kind: k }) if k == kind),
+                    "{label} asked for a {kind} term must be refused as that kind: {result:?}"
+                );
+            }
+        }
+    }
+
+    mod given_a_value_that_is_not_a_scalar {
+        use super::*;
+
+        #[test]
+        fn lifting_is_error_term_naming_the_kind() {
+            let not_scalars = [
+                ("null", FfiValue::Null),
+                ("undefined", FfiValue::Undefined),
+                ("an array", FfiValue::Array(vec![FfiValue::UInt32(1)])),
+                (
+                    "an object",
+                    FfiValue::Object(vec![("k".to_string(), FfiValue::UInt32(1))]),
+                ),
+                (
+                    "a passthrough",
+                    FfiValue::Passthrough(Box::new(FfiValue::UInt32(1))),
+                ),
+            ];
+            for (label, value) in not_scalars {
+                for kind in [
+                    TermKind::Equality,
+                    TermKind::Match,
+                    TermKind::Ore,
+                    TermKind::Ope,
+                ] {
+                    let result = Scalar::of(&value, kind);
+                    assert!(
+                        matches!(result, Err(Error::Term { kind: k }) if k == kind),
+                        "{label} has no {kind} term: {result:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    mod given_a_term_kind {
+        use super::*;
+
+        #[test]
+        fn its_key_is_how_a_plan_spells_it() {
+            for kind in [
+                TermKind::Equality,
+                TermKind::Match,
+                TermKind::Ore,
+                TermKind::Ope,
+            ] {
+                assert_eq!(
+                    Output::parse(kind.key()),
+                    Some(Output::Term(kind)),
+                    "a plan spelling {kind} by its key names that term"
+                );
+                assert_eq!(
+                    kind.to_string(),
+                    kind.key(),
+                    "the display form is the key, for error messages"
+                );
+            }
+        }
+    }
+
+    mod given_a_scalar_holding_plaintext {
+        use super::*;
+
+        #[test]
+        fn debug_prints_none_of_it() {
+            let rendered = format!(
+                "{:?}",
+                Scalar::of(&s("hunter2"), TermKind::Equality).expect("a scalar")
+            );
+            assert!(
+                !rendered.contains("hunter2"),
+                "a scalar's Debug must not print its plaintext: {rendered}"
+            );
+            assert!(
+                rendered.contains("Text"),
+                "a scalar's Debug names the variant, which is not secret: {rendered}"
+            );
+        }
+    }
 }

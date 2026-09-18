@@ -95,11 +95,13 @@ mod tests {
         ]);
         assert_eq!(
             std::str::from_utf8(&buffer).unwrap(),
-            "authorization: Bearer tok\ncontent-type: application/json"
+            "authorization: Bearer tok\ncontent-type: application/json",
+            "headers encode one per line, lower-cased, without a trailing newline"
         );
         assert_eq!(
             header_value(&buffer, "Content-Type"),
-            Some("application/json")
+            Some("application/json"),
+            "a header is found whatever the case it is asked for in"
         );
         assert_eq!(header_value(&buffer, "authorization"), Some("Bearer tok"));
         assert_eq!(header_value(&buffer, "x-missing"), None);
@@ -109,11 +111,24 @@ mod tests {
     fn tolerates_whitespace_and_skips_malformed_lines() {
         assert_eq!(
             header_value(b"Content-Type:  text/html \ngarbage-line", "content-type"),
-            Some("text/html")
+            Some("text/html"),
+            "surrounding whitespace is trimmed and a line without a colon is skipped"
         );
-        assert_eq!(header_value(b"no colon here", "content-type"), None);
-        assert_eq!(header_value(&[0xff, 0xfe], "content-type"), None);
-        assert_eq!(header_value(b"", "content-type"), None);
+        assert_eq!(
+            header_value(b"no colon here", "content-type"),
+            None,
+            "a buffer with no well-formed line has no headers"
+        );
+        assert_eq!(
+            header_value(&[0xff, 0xfe], "content-type"),
+            None,
+            "a buffer that is not UTF-8 has no headers"
+        );
+        assert_eq!(
+            header_value(b"", "content-type"),
+            None,
+            "an empty buffer has no headers"
+        );
     }
 
     /// The edge in front of production ZeroKMS answers a request with no
@@ -133,10 +148,15 @@ mod tests {
             !ua.contains("Go-http-client"),
             "a host runtime's default user-agent is refused by the edge"
         );
-        assert_eq!(header_value(&headers, "authorization"), Some("Bearer tok"));
+        assert_eq!(
+            header_value(&headers, "authorization"),
+            Some("Bearer tok"),
+            "the credential travels with the user-agent"
+        );
         assert_eq!(
             header_value(&headers, "content-type"),
-            Some("application/json")
+            Some("application/json"),
+            "the content type travels with the user-agent"
         );
     }
 
@@ -147,7 +167,8 @@ mod tests {
         buffer.extend_from_slice(b"\ncontent-type: application/json");
         assert_eq!(
             header_value(&buffer, "content-type"),
-            Some("application/json")
+            Some("application/json"),
+            "a header after a non-UTF-8 line is still found"
         );
     }
 }
