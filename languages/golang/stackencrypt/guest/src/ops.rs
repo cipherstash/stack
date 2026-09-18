@@ -70,7 +70,7 @@ type BytesTree = CipherText<Vec<u8>, BoxedPassthrough>;
 /// the plain AEAD use `Aes256Cipher` allows, opened symmetrically by
 /// [`decrypt_value`] — and is the Go caller's choice to make. The record and
 /// term paths ([`encrypt_record`], [`decrypt_record`], [`term`]) are the
-/// ones that bind fields: each takes a [`NonEmpty`] context, proven once at
+/// ones that bind fields: each takes a [`NonEmpty`](stack_encrypt::NonEmpty) context, proven once at
 /// the boundary when the plan or the term's context is parsed, and refused
 /// as [`STATUS_ENCODING`] when empty.
 pub async fn encrypt_value<K>(
@@ -154,7 +154,7 @@ where
 /// — or an array of parts, nested as deep as the transport codec allows
 /// ([`codec::MAX_DEPTH`] levels from the root of the encoded value; deeper
 /// is [`STATUS_ENCODING`] before the context is parsed), exactly as a plan
-/// field's; [`crate::context`] is the one home of that grammar. Shape is identity:
+/// field's; [`dynamic::context`] is the one home of that grammar. Shape is identity:
 /// `[x]` is a PAE-framed list and `x` is not, so a probe takes the context
 /// in the shape the field was sealed under — a plan field's context
 /// verbatim, a bare part for a Rust leaf sealed under that part, and the
@@ -262,7 +262,7 @@ where
 /// The static checks the ABI runs on every operation input *before* it
 /// consults the cipher, so a malformed call is [`STATUS_ENCODING`] whether
 /// or not the instance is initialised, and never costs a keyset load. Each
-/// runs the same parser the operation itself runs — [`parse_term`],
+/// runs the same parser the operation itself runs — `parse_term`,
 /// [`dynamic::record::check_source`], [`dynamic::record::check_record`] —
 /// so the two cannot disagree on what is malformed; the second pass is
 /// cheap next to the AEAD and buys a stable status precedence.

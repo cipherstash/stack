@@ -540,7 +540,7 @@ fn run_decrypt(
 /// — or an array of parts, which may nest as deep as the transport codec
 /// allows (`vitaminc_aead_value::transport::MAX_DEPTH` levels, counted from
 /// the root of the encoded value; deeper is refused as `STATUS_ENCODING`
-/// before the context is parsed). [`crate::context`] is the one home of
+/// before the context is parsed). [`stack_encrypt::dynamic::context`] is the one home of
 /// that grammar and of which Rust context each shape spells.
 /// A part and the one-element array holding it are *different* contexts
 /// (`[x]` is PAE-framed, `x` is not), so a probe must pass the context in
