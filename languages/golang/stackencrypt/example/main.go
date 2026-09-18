@@ -62,9 +62,13 @@ func run() error {
 	// error paths below.
 	defer func() { _ = client.Close(context.Background()) }()
 
-	fmt.Printf("default keyset %s\n\n", client.DefaultKeysetID())
+	cipher := client.DefaultKeyset()
+	keysetID, err := cipher.KeysetID(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("default keyset %s\n\n", keysetID)
 
-	cipher := client.DefaultCipher()
 	if err := values(ctx, cipher); err != nil {
 		return err
 	}
