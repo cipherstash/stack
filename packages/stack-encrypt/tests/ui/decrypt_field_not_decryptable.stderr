@@ -5,7 +5,7 @@ error[E0277]: the trait bound `Opaque: DecryptField<u32, CallerContext>` is not 
   |          ^^^^^^^^^^^ the trait `DecryptField<u32, CallerContext>` is not implemented for `Opaque`
   |
   = help: the following other types implement trait `DecryptField<P, Ctx>`:
-            `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` implements `DecryptField<P, Ctx>`
+            `CipherText<SealedValue, Box<(dyn std::any::Any + Send + 'static)>>` implements `DecryptField<P, Ctx>`
             `EqualityTerm` implements `DecryptField<P, Ctx>`
             `MatchTerm<O>` implements `DecryptField<P, Ctx>`
             `OpeTerm<T>` implements `DecryptField<P, Ctx>`
@@ -23,7 +23,7 @@ error[E0277]: the trait bound `Opaque: Decryptable` is not satisfied
    |        ^^^^^^ the trait `Decryptable` is not implemented for `Opaque`
    |
    = help: the following other types implement trait `Decryptable`:
-             CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>
+             CipherText<SealedValue, Box<(dyn std::any::Any + Send + 'static)>>
              EqualityTerm
              MatchTerm<O>
              OpeTerm<T>
