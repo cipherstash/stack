@@ -54,7 +54,7 @@ mod term;
 use std::fmt;
 
 pub use context::{borrowed, context};
-pub use record::{FieldPlan, Output};
+pub use record::{FieldPlan, Output, Plan};
 pub use term::{term, Scalar, TermKind};
 /// vitaminc's language-neutral value tree — the runtime value every binding
 /// funnels through. Its transport codec is `vitaminc_aead_value::transport`,

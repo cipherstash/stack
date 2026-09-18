@@ -165,6 +165,48 @@ impl FieldPlan {
     }
 }
 
+/// A record plan: the fields a record has, each with what to call it, what
+/// context to bind it under, and what to produce for it.
+///
+/// Opaque, because the operations over a plan rely on two properties of the
+/// whole that no single [`FieldPlan`] can carry: there is at least one
+/// field, and no two fields share a name. With a repeated name the source
+/// check would accept a row that names the field once, and [`encrypt`]
+/// would write a map with the same key twice — a stored record no reader
+/// can take apart. Both the parser ([`plan`]) and the manual constructor
+/// ([`Plan::new`]) go through the one check, so a plan in hand is a plan
+/// that holds them, whichever way it was built.
+#[derive(Clone, Debug)]
+pub struct Plan {
+    fields: Vec<FieldPlan>,
+}
+
+impl Plan {
+    /// A plan over `fields`, in the order given — which is the order of the
+    /// fields in every result.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Plan`] if `fields` is empty or names a field twice.
+    pub fn new(fields: Vec<FieldPlan>) -> Result<Self, Error> {
+        if fields.is_empty() {
+            return Err(Error::Plan);
+        }
+        for (at, field) in fields.iter().enumerate() {
+            if fields[..at].iter().any(|prior| prior.name == field.name) {
+                return Err(Error::Plan);
+            }
+        }
+        Ok(Self { fields })
+    }
+
+    /// The plan's fields, in result order. Never empty, and no two share a
+    /// name.
+    pub fn fields(&self) -> &[FieldPlan] {
+        &self.fields
+    }
+}
+
 /// Read a record plan from a decoded value.
 ///
 /// The plan is an [`FfiValue::Object`]:
@@ -198,10 +240,10 @@ impl FieldPlan {
 ///     ]),
 /// )]))?;
 ///
-/// assert_eq!(plan.len(), 1);
-/// assert_eq!(plan[0].name(), "age");
+/// assert_eq!(plan.fields().len(), 1);
+/// assert_eq!(plan.fields()[0].name(), "age");
 /// assert_eq!(
-///     plan[0].outputs(),
+///     plan.fields()[0].outputs(),
 ///     [Output::Ciphertext, Output::Term(TermKind::Equality)]
 /// );
 /// # Ok::<(), stack_encrypt::dynamic::Error>(())
@@ -220,18 +262,12 @@ impl FieldPlan {
 /// value reaches here, but an [`FfiValue`] can be built with them directly
 /// and this is a public parser, so it refuses them itself rather than
 /// letting the last one win.
-pub fn plan(value: FfiValue) -> Result<Vec<FieldPlan>, Error> {
+pub fn plan(value: FfiValue) -> Result<Plan, Error> {
     let FfiValue::Object(entries) = value else {
         return Err(Error::Plan);
     };
-    if entries.is_empty() {
-        return Err(Error::Plan);
-    }
     let mut fields: Vec<FieldPlan> = Vec::with_capacity(entries.len());
     for (name, spec) in entries {
-        if fields.iter().any(|field| field.name == name) {
-            return Err(Error::Plan);
-        }
         let FfiValue::Object(spec) = spec else {
             return Err(Error::Plan);
         };
@@ -264,7 +300,9 @@ pub fn plan(value: FfiValue) -> Result<Vec<FieldPlan>, Error> {
             outputs.ok_or(Error::Plan)?,
         )?);
     }
-    Ok(fields)
+    // The whole-plan rules — non-empty, no name twice — are `Plan::new`'s,
+    // so a parsed plan and a hand-built one are refused alike.
+    Plan::new(fields)
 }
 
 /// Encrypt a record — or a batch of records — per a plan.
@@ -339,7 +377,7 @@ pub fn plan(value: FfiValue) -> Result<Vec<FieldPlan>, Error> {
 pub async fn encrypt<K>(
     cipher: &KeysetCipher<'_, K>,
     source: FfiValue,
-    plan: &[FieldPlan],
+    plan: &Plan,
 ) -> Result<StackCipherText, Error>
 where
     K: DataKeySource + Sync,
@@ -411,13 +449,14 @@ where
 pub async fn decrypt<K>(
     scope: Scope<'_, K>,
     record: StackCipherText,
-    plan: &[FieldPlan],
+    plan: &Plan,
 ) -> Result<FfiValue, Error>
 where
     K: DataKeySource + Sync + 'static,
 {
     let Rows { rows, batched } = record_leaves(record, plan)?;
     let contexts = plan
+        .fields
         .iter()
         .filter(|field| field.has_ciphertext())
         .map(FieldPlan::view)
@@ -481,7 +520,7 @@ where
 /// # Errors
 ///
 /// As [`encrypt`], minus the cipher.
-pub fn check_source(source: FfiValue, plan: &[FieldPlan]) -> Result<(), Error> {
+pub fn check_source(source: FfiValue, plan: &Plan) -> Result<(), Error> {
     source_rows(source, plan).map(drop)
 }
 
@@ -491,7 +530,7 @@ pub fn check_source(source: FfiValue, plan: &[FieldPlan]) -> Result<(), Error> {
 /// # Errors
 ///
 /// As [`decrypt`], minus the cipher.
-pub fn check_record(record: StackCipherText, plan: &[FieldPlan]) -> Result<(), Error> {
+pub fn check_record(record: StackCipherText, plan: &Plan) -> Result<(), Error> {
     record_leaves(record, plan).map(drop)
 }
 
@@ -687,12 +726,13 @@ fn reject_passthrough<T: RecordTree>(tree: &T) -> Result<(), Error> {
 /// row and no row carries a field the plan does not name (silently dropping
 /// a field on either side would lose data or index nothing), and each value
 /// fits its field's outputs ([`check_field`]).
-fn source_rows(source: FfiValue, plan: &[FieldPlan]) -> Result<Rows<Vec<FfiValue>>, Error> {
+fn source_rows(source: FfiValue, plan: &Plan) -> Result<Rows<Vec<FfiValue>>, Error> {
     rows(source)?.try_map(|mut row| {
-        if row.len() != plan.len() {
+        if row.len() != plan.fields.len() {
             return Err(Error::Source);
         }
-        plan.iter()
+        plan.fields
+            .iter()
             .map(|field| {
                 let (_, value) = take(&mut row, &field.name).ok_or(Error::Source)?;
                 check_field(&value, field)?;
@@ -765,18 +805,18 @@ impl<T> Settled<T> {
 async fn build_row<'c, K>(
     cipher: &'c KeysetCipher<'_, K>,
     row: Vec<FfiValue>,
-    plan: &[FieldPlan],
+    plan: &Plan,
     pendings: &mut Vec<Pending<'c, StackCipherText, K>>,
 ) -> Result<Vec<FieldSkeleton>, Error>
 where
     K: DataKeySource + Sync,
 {
     // A row `source_rows` did not align is a bug here, not caller input.
-    if row.len() != plan.len() {
+    if row.len() != plan.fields.len() {
         return Err(Error::Internal);
     }
-    let mut skeleton = Vec::with_capacity(plan.len());
-    for (field, value) in plan.iter().zip(row) {
+    let mut skeleton = Vec::with_capacity(plan.fields.len());
+    for (field, value) in plan.fields.iter().zip(row) {
         let name = field.name.clone();
         // The one context this field has, cloned per output: this variable
         // is what reaches the ciphertext and every term (ADR-0004), and
@@ -835,10 +875,11 @@ where
 #[allow(clippy::type_complexity)]
 fn record_leaves(
     tree: StackCipherText,
-    plan: &[FieldPlan],
+    plan: &Plan,
 ) -> Result<Rows<Vec<(String, StackCipherText)>>, Error> {
     rows(tree)?.try_map(|mut row| {
-        plan.iter()
+        plan.fields
+            .iter()
             .filter(|field| field.has_ciphertext())
             .map(|field| {
                 let (name, node) = take(&mut row, &field.name).ok_or(Error::Record)?;
@@ -970,7 +1011,7 @@ mod tests {
         ])
     }
 
-    fn the_plan() -> Vec<FieldPlan> {
+    fn the_plan() -> Plan {
         plan(plan_value()).expect("the shared plan parses")
     }
 
@@ -1062,12 +1103,15 @@ mod tests {
         fn parses_each_field_in_order_with_its_context_and_outputs() {
             let plan = the_plan();
             assert_eq!(
-                plan.iter().map(FieldPlan::name).collect::<Vec<_>>(),
+                plan.fields()
+                    .iter()
+                    .map(FieldPlan::name)
+                    .collect::<Vec<_>>(),
                 ["age", "email", "nick"],
                 "fields keep the plan's order"
             );
             assert_eq!(
-                plan[0].outputs(),
+                plan.fields()[0].outputs(),
                 [
                     Output::Ciphertext,
                     Output::Term(TermKind::Equality),
@@ -1076,21 +1120,23 @@ mod tests {
                 "outputs keep their spelled order"
             );
             assert_eq!(
-                plan[1].outputs(),
+                plan.fields()[1].outputs(),
                 [Output::Ciphertext],
                 "a field can be sealed alone"
             );
             assert_eq!(
-                plan[2].outputs(),
+                plan.fields()[2].outputs(),
                 [Output::Term(TermKind::Match)],
                 "a field can be indexed and never sealed"
             );
             assert!(
-                plan[0].has_ciphertext() && plan[1].has_ciphertext() && !plan[2].has_ciphertext(),
+                plan.fields()[0].has_ciphertext()
+                    && plan.fields()[1].has_ciphertext()
+                    && !plan.fields()[2].has_ciphertext(),
                 "has_ciphertext follows the outputs"
             );
             assert_eq!(
-                plan[1].context(),
+                plan.fields()[1].context(),
                 &context(FfiValue::Array(vec![s("users/email"), FfiValue::UInt64(7)]))
                     .expect("context"),
                 "a field's context is the one its spec spelled, read by `context`"
@@ -1230,6 +1276,41 @@ mod tests {
             assert!(
                 FieldPlan::new("age", ctx, vec![Output::Ciphertext]).is_ok(),
                 "one output is a plan"
+            );
+        }
+
+        /// The whole-plan rules hold for a plan built by hand, not only for
+        /// a parsed one: a hand-built plan reaches the same `encrypt` and
+        /// `check_source`, which rely on them.
+        #[test]
+        fn a_hand_built_plan_refuses_no_fields_and_a_repeated_name() {
+            let field = |name: &str| {
+                FieldPlan::new(
+                    name,
+                    context(s("users/age")).expect("context"),
+                    vec![Output::Ciphertext],
+                )
+                .expect("field")
+            };
+            assert!(
+                matches!(Plan::new(vec![]), Err(Error::Plan)),
+                "a plan must have a field"
+            );
+            assert!(
+                matches!(
+                    Plan::new(vec![field("age"), field("age")]),
+                    Err(Error::Plan)
+                ),
+                "a field cannot be planned twice"
+            );
+            let plan = Plan::new(vec![field("age"), field("email")]).expect("a plan");
+            assert_eq!(
+                plan.fields()
+                    .iter()
+                    .map(FieldPlan::name)
+                    .collect::<Vec<_>>(),
+                ["age", "email"],
+                "the fields keep the order given"
             );
         }
     }
@@ -1444,8 +1525,8 @@ mod tests {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let plan = the_plan();
-            let age_ctx = plan[0].context().clone();
-            let nick_ctx = plan[2].context().clone();
+            let age_ctx = plan.fields()[0].context().clone();
+            let nick_ctx = plan.fields()[2].context().clone();
 
             let mut fields = map(encrypt(&keyset, row(34), &plan).await.expect("encrypt"));
             let mut age = map(node(&mut fields, "age"));
@@ -1800,7 +1881,7 @@ mod tests {
     fn the_plan_context_is_the_typed_context() {
         use crate::IntoAad;
         assert_eq!(
-            the_plan()[0]
+            the_plan().fields()[0]
                 .context()
                 .clone()
                 .into_inner()
