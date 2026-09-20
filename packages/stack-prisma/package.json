@@ -92,7 +92,7 @@
 		"@cipherstash/test-kit": "workspace:*",
 		"@prisma/orm-target-postgres": "0.17.0",
 		"dotenv": "17.4.2",
-		"fast-check": "^4.8.0",
+		"fast-check": "^4.10.0",
 		"pathe": "^2.0.3",
 		"postgres": "^3.4.8",
 		"tsup": "catalog:repo",
