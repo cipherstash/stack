@@ -62,7 +62,7 @@ pub(crate) fn seal_pending<'a, K>(
         return Pending::ready(cipher, Err(e));
     }
     let keyset_id = cipher.keyset_id();
-    let requests = std::iter::repeat_with(|| Request::generate_data_key(descriptor.clone()))
+    let requests = std::iter::repeat_with(|| Request::generate_under(descriptor.clone()))
         .take(tree.key_count())
         .collect();
     Pending::request(cipher, requests, move |responses| {
@@ -118,7 +118,7 @@ fn collect_retrieve_requests(
         | CipherText::None(leaf)
         | CipherText::EmptySequence(leaf)
         | CipherText::EmptyMap(leaf) => {
-            out.push(Request::retrieve_data_key(
+            out.push(Request::retrieve_under(
                 *leaf.iv(),
                 leaf.tag().to_vec(),
                 descriptor.clone(),

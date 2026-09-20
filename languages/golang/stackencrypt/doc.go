@@ -37,10 +37,12 @@
 // [Cipher.EncryptRecords] is the runtime form of the Rust derive: a struct's
 // `stash` tags say, per field, which context to bind and which index terms
 // to produce, and one call seals every row of a slice from batched key
-// requests. Key requests are batched 500 keys at a time, in both
-// directions: one request for any ordinary value or batch, one more per
-// 500 sealed leaves beyond that. Terms ([EqualityTerm], [MatchTerm],
-// [OreTerm], [OpeTerm]) are
+// requests. The same plan is a value ([Plan]): [PlanFromTags] is what the
+// tags parse to, [NewPlan] builds one for a struct that cannot carry tags
+// (generated code), and [WithPlan] runs a record call under it. Key
+// requests are batched 500 keys at a time, in both directions: one request
+// for any ordinary value or batch, one more per 500 sealed leaves beyond
+// that. Terms ([EqualityTerm], [MatchTerm], [OreTerm], [OpeTerm]) are
 // byte-equal to the ones the Rust crate derives, so a probe from
 // [Cipher.Term] compares against a stored term from any language.
 // [Cipher.Term] takes a context and returns an error from day one: term

@@ -52,8 +52,8 @@
 //!
 //! Split into:
 //!
-//! - [`ops`], [`context`], [`options`], [`config`], [`response`],
-//!   [`headers`], [`status`] — everything that is pure logic over
+//! - [`ops`], [`options`], [`config`], [`response`], [`headers`],
+//!   [`status`] — everything that is pure logic over
 //!   `StackCipher<K>` / `KeysetCipher<K>` / bytes. Compiles and unit-tests
 //!   on the native host target (`cargo test` here, no wasm toolchain
 //!   needed) against `stack_kms::FakeDataKeySource`.
@@ -69,7 +69,6 @@
 //! out of a tree is exactly what a database column holds.
 
 pub mod config;
-pub mod context;
 pub mod headers;
 pub mod ops;
 pub mod options;

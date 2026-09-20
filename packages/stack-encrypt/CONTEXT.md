@@ -21,7 +21,17 @@ _Avoid_: typed path, high-level path
 **Operation description**:
 The target's declaration of the ciphertext and term operations, source selections,
 and context requirements needed to produce it.
-_Avoid_: user-supplied encryption callback, caller-supplied plan
+_Avoid_: user-supplied encryption callback, caller-supplied plan (a **plan**
+is the runtime form of a record's description, not a callback)
+
+**Plan**:
+A record's operation description given as data rather than as a type, per
+field: the context to bind and the outputs (`"c"`, `"eq"`, `"match"`, `"ore"`,
+`"ope"`) to produce. What a binding has instead of a `struct = T` derive;
+`stack_encrypt::dynamic::record` drives one. Its contexts are proven
+nonempty once, when it is built, and its output keys are wire format.
+_Avoid_: schema (that is the source's shape, which a plan does not describe),
+mapping, config
 
 **Ciphertext transcoding**:
 Construction or inspection of an encrypted target through its native encrypted
@@ -31,18 +41,33 @@ _Avoid_: plaintext serialization, re-encryption
 
 **Context**:
 The value a ciphertext is authenticated under and a term is derived under. A
-leaf requires a nonempty context, validated by Vitamin C and owned in an
-`AeadContext` or `CallerContext` declaration; a `nonempty!("users/email")` literal, a
-`NonEmpty::new(value)?` at runtime, or a bare integer. It becomes the
-ciphertext's associated data, the term's PRF context, and the ZeroKMS
-descriptor of the data key.
+leaf requires a nonempty context, validated by Vitamin C and owned in a
+`CallerContext` (both encodings — what a term is derived under, and what a
+record deriving terms threads to every field) or an `AeadContext` (the AAD
+encoding alone — what a ciphertext is sealed and opened under; a record
+deriving terms hands its ciphertext fields that half of its `CallerContext`);
+a `nonempty!("users/email")` literal, a `NonEmpty::new(value)?` at runtime,
+or a bare integer. It becomes the ciphertext's associated data,
+the term's PRF context, and the ZeroKMS descriptor of the data key.
 _Avoid_: AAD (that is one of its encodings, not the concept), lock context
 
 **Own context**:
 The context a field carries itself: a `context = ".."` literal, or the one a
 `struct = ..` derive infers as `<struct context>/<field>`. A caller's context
-*extends* it (`("users/age", id)`); it is never discarded.
+*extends* it (`("users/age", id)`); it is never discarded. A subtree of a
+declaration is given one with `under` (the caller's is then optional) or
+`extend` (the caller's stays required).
 _Avoid_: default context, field prefix
+
+**Threaded context**:
+The one context a target's declaration tree hands to every operation beneath
+it (ADR-0004): a type parameter of `Encryption`, so a target cannot route what
+it is handed to one operation and something else to another, and two subtrees
+needing different kinds of context do not zip. `under` and `extend` are the
+only ways to change it; each covers a whole subtree and is written in the
+declaration, and the tree does not tell a record's two fields from a target's
+two halves.
+_Avoid_: scope (that is a `Pending`'s), shared context, per-operation context
 
 **Descriptor**:
 The context, rendered as the string ZeroKMS binds into every data key and
@@ -105,10 +130,11 @@ sub-cipher, tenant cipher
 What a `Pending` was built through, and therefore what it is allowed to do:
 a `KeysetCipher` scope mints under its keyset and opens leaves from no
 other; a `StackCipher` scope mints nothing and opens leaves from any keyset.
-`CipherScope` is the sealed trait both references implement. Two pendings
-merge when their scopes agree on a keyset — which cipher *value* each came
-from is not part of the rule.
-_Avoid_: binding (that is a name's), context (that is the AAD's)
+`CipherScope` is the sealed trait both references implement; `dynamic::Scope`
+is the same choice as a runtime value, for a binding whose caller makes it
+per call. Two pendings merge when their scopes agree on a keyset — which
+cipher *value* each came from is not part of the rule.
+_Avoid_: binding (that is a name's), context (that is the AAD's), opener
 
 **Name binding**:
 The cache's record that a keyset name resolved to a keyset id, and when.

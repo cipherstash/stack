@@ -11,6 +11,7 @@
 //! the response-scoping rules that keep one fulfilment from consuming a
 //! sibling's key material are unit-testable on their own.
 
+use super::context::AeadContext;
 use std::collections::VecDeque;
 
 use stack_kms::{DataKey, DataKeyWithTag, Iv};
@@ -41,21 +42,57 @@ pub(super) enum RequestKind {
 }
 
 impl Request {
-    /// Request one fresh data key (encrypt side), bound to `descriptor` —
-    /// the [`Descriptor`] of the context the leaf is sealed under. ZeroKMS
-    /// HMACs it into the key `tag`, so the key re-derives only under the
-    /// same descriptor.
-    pub fn generate_data_key(descriptor: Descriptor) -> Self {
-        Self(RequestKind::GenerateDataKey { descriptor })
+    /// Request one fresh data key (encrypt side), minted under `context`.
+    ///
+    /// The [`Descriptor`] is rendered here rather than supplied, so a request
+    /// cannot carry a descriptor that disagrees with its own `context`
+    /// (ADR-0004, decision 4). ZeroKMS HMACs the descriptor into the key
+    /// `tag`, so the key re-derives only under the same one. What this does
+    /// not relate is the request to the leaf sealed with the key: a
+    /// [`SealedValue`](crate::SealedValue) is still assembled from raw parts
+    /// at the extension point, and its AEAD context is the caller's to keep
+    /// in agreement with this one.
+    ///
+    /// A descriptor is rendered from the AEAD encoding alone, so the context
+    /// need only convert into an [`AeadContext`]: the `IntoAad`-only type a
+    /// [`StackCipherText`](crate::StackCipherText) seals under can request
+    /// the key it seals with, and a [`CallerContext`](super::CallerContext)
+    /// converts as it is.
+    pub fn generate_data_key(context: impl Into<AeadContext>) -> Self {
+        Self::generate_under(Descriptor::of(context.into()))
     }
 
     /// Request re-derivation of the data key identified by `iv` + `tag`
-    /// (decrypt side), under `descriptor` — which must be the one the key
-    /// was generated with, or ZeroKMS refuses — from `keyset_id`, the
-    /// keyset it was minted under (a [`SealedValue`] carries it).
+    /// (decrypt side), under `context` — which must be the one the key was
+    /// generated under, or ZeroKMS refuses — from `keyset_id`, the keyset it
+    /// was minted under (a [`SealedValue`] carries it).
     ///
     /// [`SealedValue`]: crate::SealedValue
     pub fn retrieve_data_key(
+        iv: Iv,
+        tag: Vec<u8>,
+        context: impl Into<AeadContext>,
+        keyset_id: Uuid,
+    ) -> Self {
+        Self::retrieve_under(iv, tag, Descriptor::of(context.into()), keyset_id)
+    }
+
+    /// [`generate_data_key`](Self::generate_data_key) over a descriptor that
+    /// has already been rendered.
+    ///
+    /// Crate-internal: the batching paths derive one descriptor from one
+    /// context and reuse it across every leaf of a tree, and re-rendering it
+    /// per request would cost a context encoding per leaf. The public
+    /// constructor takes the context so that a request's descriptor and the
+    /// context it was asked for under cannot disagree.
+    pub(crate) fn generate_under(descriptor: Descriptor) -> Self {
+        Self(RequestKind::GenerateDataKey { descriptor })
+    }
+
+    /// [`retrieve_data_key`](Self::retrieve_data_key) over an already
+    /// rendered descriptor. Crate-internal, as
+    /// [`generate_under`](Self::generate_under).
+    pub(crate) fn retrieve_under(
         iv: Iv,
         tag: Vec<u8>,
         descriptor: Descriptor,
@@ -168,6 +205,7 @@ mod tests {
     use stack_kms::{DataKeySource, FakeDataKeySource, GenerateKeyPayload, RetrieveKeyPayload};
 
     use super::*;
+    use crate::{Aad, IntoAad, MaybeEmpty, NonEmpty};
 
     fn d() -> Descriptor {
         Descriptor::of("test/field")
@@ -220,18 +258,70 @@ mod tests {
     #[test]
     fn tally_separates_the_two_kinds() {
         let requests = vec![
-            Request::generate_data_key(d()),
-            Request::retrieve_data_key(Iv::default(), vec![1], d(), ks()),
-            Request::generate_data_key(d()),
-            Request::retrieve_data_key(Iv::default(), vec![2], d(), ks()),
-            Request::generate_data_key(d()),
+            Request::generate_under(d()),
+            Request::retrieve_under(Iv::default(), vec![1], d(), ks()),
+            Request::generate_under(d()),
+            Request::retrieve_under(Iv::default(), vec![2], d(), ks()),
+            Request::generate_under(d()),
         ];
         assert_eq!(tally(&requests), (3, 2));
     }
 
+    /// The public constructors render the descriptor themselves, from the
+    /// context, so a request cannot carry one that disagrees with its own
+    /// context (ADR-0004, decision 4) — and rendering through an
+    /// `AeadContext` preserves the context's structured identity.
+    #[test]
+    fn a_public_request_renders_its_descriptor_from_its_context() {
+        let context = crate::nonempty!("users/email").with(7u64);
+        let expected = Descriptor::of(context);
+        match Request::generate_data_key(context).into_kind() {
+            RequestKind::GenerateDataKey { descriptor } => assert_eq!(descriptor, expected),
+            RequestKind::RetrieveDataKey { .. } => panic!("expected a generate request"),
+        }
+        match Request::retrieve_data_key(Iv::default(), vec![1], context, ks()).into_kind() {
+            RequestKind::RetrieveDataKey { descriptor, .. } => assert_eq!(descriptor, expected),
+            RequestKind::GenerateDataKey { .. } => panic!("expected a retrieve request"),
+        }
+    }
+
+    /// AEAD only: no `IntoPrfContext`, so it can seal but not derive a term.
+    #[derive(Clone)]
+    struct Tenant(String);
+    impl MaybeEmpty for Tenant {
+        fn is_empty(&self) -> bool {
+            self.0.is_empty()
+        }
+    }
+    impl<'a> IntoAad<'a> for Tenant {
+        fn into_aad(self) -> Aad<'a> {
+            self.0.into_aad()
+        }
+    }
+
+    /// A descriptor is rendered from the AEAD encoding alone, so the context
+    /// a `StackCipherText` seals under — one with `IntoAad` and nothing else
+    /// — can request the data key it seals with. Requiring a PRF-capable
+    /// context here would shut an `AeadContext`-only target out of the
+    /// `Pending::request` extension point for no reason.
+    #[test]
+    fn an_aead_only_context_can_request_a_data_key() {
+        let context = NonEmpty::new(Tenant("acme".into())).unwrap();
+        match Request::generate_data_key(context.clone()).into_kind() {
+            RequestKind::GenerateDataKey { descriptor } => assert_eq!(descriptor.as_str(), "acme"),
+            RequestKind::RetrieveDataKey { .. } => panic!("expected a generate request"),
+        }
+        match Request::retrieve_data_key(Iv::default(), vec![1], context, ks()).into_kind() {
+            RequestKind::RetrieveDataKey { descriptor, .. } => {
+                assert_eq!(descriptor.as_str(), "acme")
+            }
+            RequestKind::GenerateDataKey { .. } => panic!("expected a retrieve request"),
+        }
+    }
+
     #[test]
     fn a_generate_request_carries_its_descriptor() {
-        match Request::generate_data_key(d()).into_kind() {
+        match Request::generate_under(d()).into_kind() {
             RequestKind::GenerateDataKey { descriptor } => assert_eq!(descriptor, d()),
             RequestKind::RetrieveDataKey { .. } => panic!("expected a generate request"),
         }
@@ -239,7 +329,7 @@ mod tests {
 
     #[test]
     fn a_retrieve_request_carries_its_iv_tag_and_descriptor() {
-        let request = Request::retrieve_data_key(Iv::default(), vec![7, 8, 9], d(), ks());
+        let request = Request::retrieve_under(Iv::default(), vec![7, 8, 9], d(), ks());
         match request.into_kind() {
             RequestKind::RetrieveDataKey {
                 iv,

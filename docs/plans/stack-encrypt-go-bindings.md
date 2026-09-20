@@ -431,8 +431,9 @@ temporary until publishing). It imports `vcffi` + `vcvalue` from vitaminc
 `go:stackencrypt:test` in `test-wasi.yml`. Where the shipped surface
 differs from the sketch below, the shipped one follows CIP-4037: one
 instance per `Client` and no cipher handle, so `NewClient` takes the
-ZeroKMS credentials and initialises the cipher, `Client.Cipher(selector)`
-is the keyset-bound view (the Rust `KeysetCipher`), `Client.Decrypt*`
+ZeroKMS credentials and initialises the cipher, `Client.Keyset(selector)`
+is the keyset-bound view (the Rust `StackCipher::keyset`, returning its
+`KeysetCipher`) and `Client.DefaultKeyset()` its `default_keyset`, `Client.Decrypt*`
 opens any keyset, and `Term` takes a `Context` and returns an error.
 
 Original sketch: `bindings/go/stackencrypt` (module path TBD — see

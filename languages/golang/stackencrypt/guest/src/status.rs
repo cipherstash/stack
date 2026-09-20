@@ -109,6 +109,35 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
     }
 }
 
+/// A dynamic-path error as a status code.
+///
+/// The split the library draws is the one the ABI needs: `Context`, `Term`,
+/// `Plan`, `Source` and `Record` are each a statement about the caller's
+/// input, decided before any key is minted or retrieved, so they are
+/// [`STATUS_ENCODING`] — named one by one, because that verdict is the
+/// host's to act on and must be given deliberately. `Cipher` defers to
+/// [`status_for_error`]; `Internal` is the library's own invariant failing
+/// — a slot count that did not line up, a re-proof that could not fail —
+/// and is [`STATUS_INTERNAL`], never a verdict on the input.
+///
+/// The catch-all is required (`Error` is `#[non_exhaustive]`, so a variant
+/// added upstream cannot fail this match at compile time) and it goes to
+/// [`STATUS_INTERNAL`]: an unclassified failure is reported as ours until
+/// someone reads the new variant and says otherwise here. The one wrong
+/// default would be the other way round — telling a host to fix its input
+/// over a fault that is not in its input.
+pub fn status_for_dynamic(error: &stack_encrypt::dynamic::Error) -> u32 {
+    use stack_encrypt::dynamic::Error;
+    match error {
+        Error::Context | Error::Term { .. } | Error::Plan | Error::Source | Error::Record => {
+            STATUS_ENCODING
+        }
+        Error::Cipher(e) => status_for_error(e),
+        Error::Internal => STATUS_INTERNAL,
+        _ => STATUS_INTERNAL,
+    }
+}
+
 // These matches are deliberately exhaustive — no `_` arms. None of the
 // stack-kms error enums is `#[non_exhaustive]`, so exhaustiveness is free
 // compiler coverage: `GenerateKeyError` already grew `Unauthorized` /
@@ -314,6 +343,39 @@ mod tests {
         assert_eq!(
             status_for_error(&stack_encrypt::Error::NoKeyset),
             STATUS_INTERNAL
+        );
+    }
+
+    #[test]
+    fn dynamic_input_errors_are_encoding_and_a_library_bug_is_internal() {
+        use stack_encrypt::dynamic::{Error, TermKind};
+        for (label, err) in [
+            ("a bad context", Error::Context),
+            (
+                "a bad term request",
+                Error::Term {
+                    kind: TermKind::Match,
+                },
+            ),
+            ("a bad plan", Error::Plan),
+            ("a bad source", Error::Source),
+            ("a bad record", Error::Record),
+        ] {
+            assert_eq!(
+                status_for_dynamic(&err),
+                STATUS_ENCODING,
+                "{label} is the caller's input"
+            );
+        }
+        assert_eq!(
+            status_for_dynamic(&Error::Internal),
+            STATUS_INTERNAL,
+            "a library invariant failing is never the caller's fault"
+        );
+        assert_eq!(
+            status_for_dynamic(&Error::Cipher(stack_encrypt::Error::Aead)),
+            STATUS_AUTH,
+            "a cipher failure keeps its own status"
         );
     }
 

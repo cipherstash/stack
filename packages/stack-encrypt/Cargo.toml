@@ -30,6 +30,8 @@ stack-encrypt-derive = { path = "../stack-encrypt-derive" }
 # (#318), all of which this crate relies on. All five must share one
 # version or the aead crate is duplicated.
 vitaminc-aead = { workspace = true }
+# `dynamic`: the runtime value model every language binding funnels through.
+vitaminc-aead-value = { workspace = true, optional = true }
 vitaminc-encrypt = { workspace = true }
 vitaminc-hmac = { workspace = true }
 vitaminc-prf = { workspace = true }
@@ -51,6 +53,10 @@ default = ["http"]
 # (`StackCipher::builder().kms(..)`) and no HTTP client or TLS stack is in
 # the dependency graph — the shape the WASI/wazero guest builds against.
 http = ["dep:stack-auth", "stack-auth/http", "stack-kms/http"]
+# `stack_encrypt::dynamic`: encrypt and decrypt values whose types are known
+# only at runtime, as an FFI binding's are. Off by default — it is only of
+# use to a binding author, and it pulls `vitaminc-aead-value` in.
+dynamic = ["dep:vitaminc-aead-value"]
 
 [dev-dependencies]
 serde_json = { workspace = true }
@@ -67,6 +73,15 @@ zerokms-protocol = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 # Compile-fail tests for the derive diagnostics (`tests/ui`).
 trybuild = "1"
+
+# The derive diagnostics are recorded with every feature on, as `test:unit`
+# and CI run them. They cannot hold under both feature sets — rustc lists a
+# trait's other implementors in its help, and the `dynamic` feature's
+# `FfiValue` joins one such list and pushes another entry off it — so the
+# test is only built with that feature rather than skipped at runtime.
+[[test]]
+name = "ui"
+required-features = ["dynamic"]
 
 [[example]]
 name = "encrypted_record"

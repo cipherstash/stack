@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 
@@ -12,7 +13,11 @@ import (
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
-// Record plans from struct tags — the Go stand-in for the Rust derive.
+// Record plans: per field, which context to bind and which outputs to
+// derive. A plan is a value ([Plan]) with two sources: `stash` struct tags
+// ([PlanFromTags], the default, and the Go stand-in for the Rust derive), or
+// an explicit plan built with [NewPlan] and passed through [WithPlan] — for
+// structs whose source cannot carry a tag, such as generated code.
 //
 // A struct field's `stash` tag says what to do with it:
 //
@@ -30,10 +35,34 @@ import (
 // all, is not part of the record: it never crosses the boundary, and stays
 // the caller's to store. Unexported fields are ignored.
 //
-// Every planned field is sealed (the `"c"` output) and the plan is built
-// once per type. The context each field binds is its tag's part, extended
-// by [ExtendContext] parts exactly as the Rust derive extends a field's
-// context by the caller's: NewContext(tag).With(p1).With(p2).
+// The same plan, built by hand:
+//
+//	plan, err := stackencrypt.NewPlan(
+//	    stackencrypt.FieldPlan{
+//	        Field:   "Age",
+//	        Context: "users/age",
+//	        Terms: []stackencrypt.TermKind{
+//	            stackencrypt.Equality, stackencrypt.Ore,
+//	        },
+//	    },
+//	    stackencrypt.FieldPlan{
+//	        Field:   "Email",
+//	        Context: "users/email",
+//	        Terms: []stackencrypt.TermKind{
+//	            stackencrypt.Equality, stackencrypt.Match,
+//	        },
+//	    },
+//	    stackencrypt.FieldPlan{Field: "Notes", Context: "users/notes"},
+//	)
+//	records, err := cipher.EncryptRecords(
+//	    ctx, users, stackencrypt.WithPlan(plan),
+//	)
+//
+// Every planned field is sealed (the `"c"` output). What the guest receives
+// is the same object whichever way the plan was built. The context each
+// field binds is the plan's part, extended by [ExtendContext] parts exactly
+// as the Rust derive extends a field's context by the caller's:
+// NewContext(part).With(p1).With(p2).
 
 // EncryptedField is one field's outputs from EncryptRecords: the sealed
 // ciphertext and whichever index terms the plan asked for (nil otherwise).
@@ -55,6 +84,7 @@ type RecordOption func(*recordOptions)
 
 type recordOptions struct {
 	extension []any
+	plan      Plan
 }
 
 // ExtendContext extends every field's context by parts, in order, the way
@@ -66,26 +96,153 @@ func ExtendContext(parts ...any) RecordOption {
 	return func(o *recordOptions) { o.extension = append(o.extension, parts...) }
 }
 
-// fieldPlan is one planned struct field.
-type fieldPlan struct {
-	index   int    // struct field index
-	name    string // wire name
-	context string // the field's own context part
-	outputs []string
+// WithPlan encrypts or decrypts records under an explicit plan instead of
+// the struct's `stash` tags.
+//
+// What decryption needs from the encrypting plan is what names and keys
+// the ciphertext: each field's record Name, its Context (extended by the
+// same [ExtendContext] parts), and the set of fields that carry a
+// ciphertext. Field only selects which Go field the plaintext is written
+// to, so it may differ between the two sides: a record encrypted from a
+// generated struct may be decrypted into a domain struct under a plan
+// with the same Names and Contexts. Terms are one-way outputs, derived on
+// encryption and never sent to decrypt, so they need not match either.
+func WithPlan(p Plan) RecordOption {
+	return func(o *recordOptions) { o.plan = p }
 }
 
-var plans sync.Map // reflect.Type → []fieldPlan
+// FieldPlan is one planned field of a record.
+type FieldPlan struct {
+	// Field is the Go struct field name. It must be exported.
+	Field string
+	// Name is the record key the field's outputs are stored under: the
+	// column name, in EQL terms. Field when empty.
+	Name string
+	// Context is the field's own encryption context, a string part; the
+	// record call extends it by any ExtendContext parts. Required.
+	Context string
+	// Terms lists the terms to derive beside the ciphertext, in order.
+	Terms []TermKind
+}
 
-// planFor parses (and caches) a struct type's plan.
-func planFor(t reflect.Type) ([]fieldPlan, error) {
-	if cached, ok := plans.Load(t); ok {
-		return cached.([]fieldPlan), nil
+// Plan is a record plan: which fields of a struct to seal, under which
+// context, with which terms. It is an immutable value; the zero Plan
+// means "the struct's tags". Build one with [NewPlan] or [PlanFromTags].
+type Plan struct {
+	d *planData
+}
+
+// planData is the validated, shared body of a Plan. Every copy of the Plan
+// points at the same body, so it is never mutated after NewPlan returns.
+type planData struct {
+	fields []planField
+}
+
+// planField is a validated FieldPlan: Name filled in, every term kind
+// known and named once.
+type planField struct {
+	field   string
+	name    string
+	context string
+	terms   []TermKind
+}
+
+// outputs spells the field's outputs the way the guest reads them: the
+// ciphertext first, then each term.
+func (f planField) outputs() []string {
+	out := make([]string, 1, 1+len(f.terms))
+	out[0] = "c"
+	for _, k := range f.terms {
+		out = append(out, k.String())
+	}
+	return out
+}
+
+// NewPlan validates the fields and returns the plan. Every field needs a
+// Field and a Context; Go field names must be unique, and so must record
+// names (Name, or Field); Terms must be kinds this package defines, each
+// at most once per field. A plan is built once and reused across calls,
+// like the type it describes.
+func NewPlan(fields ...FieldPlan) (Plan, error) {
+	p, err := newPlan(fields)
+	if err != nil {
+		return Plan{}, fmt.Errorf("stackencrypt: %w", err)
+	}
+	return p, nil
+}
+
+// newPlan is the one validation both constructors go through; its errors
+// name the field, and the caller adds the prefix and, for tags, the type.
+func newPlan(fields []FieldPlan) (Plan, error) {
+	if len(fields) == 0 {
+		return Plan{}, errors.New("a plan needs at least one field")
+	}
+	d := &planData{fields: make([]planField, 0, len(fields))}
+	seenField := make(map[string]bool, len(fields))
+	seenName := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		if f.Field == "" {
+			return Plan{}, errors.New("plan field without a Field name")
+		}
+		if seenField[f.Field] {
+			return Plan{}, fmt.Errorf("plan field %s: the Go field is planned twice", f.Field)
+		}
+		seenField[f.Field] = true
+		if f.Context == "" {
+			return Plan{}, fmt.Errorf("plan field %s: a planned field needs a context", f.Field)
+		}
+		pf := planField{field: f.Field, name: f.Field, context: f.Context}
+		if f.Name != "" {
+			pf.name = f.Name
+		}
+		for _, k := range f.Terms {
+			if !k.valid() {
+				return Plan{}, fmt.Errorf("plan field %s: unknown term kind %s", f.Field, k)
+			}
+			if slices.Contains(pf.terms, k) {
+				return Plan{}, fmt.Errorf("plan field %s: term kind %s given twice", f.Field, k)
+			}
+			pf.terms = append(pf.terms, k)
+		}
+		if seenName[pf.name] {
+			return Plan{}, fmt.Errorf("two plan fields share the record name %q", pf.name)
+		}
+		seenName[pf.name] = true
+		d.fields = append(d.fields, pf)
+	}
+	return Plan{d: d}, nil
+}
+
+// Fields returns the plan's fields, in order, as they were given to NewPlan
+// (Name filled in). A copy: mutating it does not touch the plan.
+func (p Plan) Fields() []FieldPlan {
+	if p.d == nil {
+		return nil
+	}
+	out := make([]FieldPlan, len(p.d.fields))
+	for i, f := range p.d.fields {
+		out[i] = FieldPlan{Field: f.field, Name: f.name, Context: f.context, Terms: slices.Clone(f.terms)}
+	}
+	return out
+}
+
+var tagPlans sync.Map // reflect.Type → Plan
+
+// PlanFromTags parses (and caches) the plan a struct type's `stash` tags
+// describe. This is the plan the record calls use when no WithPlan option
+// is given. The tag grammar is checked here; what the fields mean is
+// checked by the same validation NewPlan runs.
+func PlanFromTags(t reflect.Type) (Plan, error) {
+	if t == nil {
+		return Plan{}, errors.New("stackencrypt: records must be structs, not a nil type")
+	}
+	if cached, ok := tagPlans.Load(t); ok {
+		return cached.(Plan), nil
 	}
 	if t.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("stackencrypt: records must be structs, not %s", t)
+		return Plan{}, fmt.Errorf("stackencrypt: records must be structs, not %s", t)
 	}
-	var plan []fieldPlan
-	seen := map[string]bool{}
+	var fields []FieldPlan
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		if !f.IsExported() {
@@ -95,46 +252,80 @@ func planFor(t reflect.Type) ([]fieldPlan, error) {
 		if !ok || tag == "-" || tag == "plain" {
 			continue
 		}
-		fp := fieldPlan{index: i, name: f.Name, outputs: []string{"c"}}
+		pf := FieldPlan{Field: f.Name, Name: f.Name}
 		for _, opt := range strings.Split(tag, ",") {
 			key, value, _ := strings.Cut(opt, "=")
 			switch key {
 			case "context":
-				if value == "" {
-					return nil, fmt.Errorf("stackencrypt: field %s.%s: context must not be empty", t, f.Name)
-				}
-				fp.context = value
+				pf.Context = value
 			case "name":
 				if value == "" {
-					return nil, fmt.Errorf("stackencrypt: field %s.%s: name must not be empty", t, f.Name)
+					return Plan{}, fmt.Errorf("stackencrypt: field %s.%s: name must not be empty", t, f.Name)
 				}
-				fp.name = value
+				pf.Name = value
 			case "index":
 				for _, k := range strings.Split(value, ";") {
 					kind, ok := parseTermKind(k)
 					if !ok {
-						return nil, fmt.Errorf("stackencrypt: field %s.%s: unknown index kind %q", t, f.Name, k)
+						return Plan{}, fmt.Errorf("stackencrypt: field %s.%s: unknown term kind %q", t, f.Name, k)
 					}
-					fp.outputs = append(fp.outputs, kind.String())
+					pf.Terms = append(pf.Terms, kind)
 				}
 			default:
-				return nil, fmt.Errorf("stackencrypt: field %s.%s: unknown stash tag option %q", t, f.Name, opt)
+				return Plan{}, fmt.Errorf("stackencrypt: field %s.%s: unknown stash tag option %q", t, f.Name, opt)
 			}
 		}
-		if fp.context == "" {
-			return nil, fmt.Errorf("stackencrypt: field %s.%s: a planned field needs context=", t, f.Name)
-		}
-		if seen[fp.name] {
-			return nil, fmt.Errorf("stackencrypt: %s: two fields share the record name %q", t, fp.name)
-		}
-		seen[fp.name] = true
-		plan = append(plan, fp)
+		fields = append(fields, pf)
 	}
-	if len(plan) == 0 {
-		return nil, fmt.Errorf("stackencrypt: %s has no fields tagged for encryption", t)
+	if len(fields) == 0 {
+		return Plan{}, fmt.Errorf("stackencrypt: %s has no fields tagged for encryption", t)
 	}
-	plans.Store(t, plan)
+	plan, err := newPlan(fields)
+	if err != nil {
+		return Plan{}, fmt.Errorf("stackencrypt: %s: %w", t, err)
+	}
+	tagPlans.Store(t, plan)
 	return plan, nil
+}
+
+// fieldPlan is one planned field bound to a struct type: the plan's field
+// resolved to its index.
+type fieldPlan struct {
+	index   int    // struct field index
+	name    string // wire name
+	context string // the field's own context part
+	outputs []string
+}
+
+// bind resolves the plan's fields against a struct type. Not cached: a
+// name lookup per field is far below the cost of the call it precedes, and
+// a cache keyed by plan would grow with every plan a caller ever built.
+func (p Plan) bind(t reflect.Type) ([]fieldPlan, error) {
+	if t.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("stackencrypt: records must be structs, not %s", t)
+	}
+	bound := make([]fieldPlan, len(p.d.fields))
+	for i, f := range p.d.fields {
+		sf, ok := t.FieldByName(f.field)
+		if !ok || !sf.IsExported() || len(sf.Index) != 1 {
+			return nil, fmt.Errorf("stackencrypt: plan field %s is not an exported field of %s", f.field, t)
+		}
+		bound[i] = fieldPlan{index: sf.Index[0], name: f.name, context: f.context, outputs: f.outputs()}
+	}
+	return bound, nil
+}
+
+// planFor binds the plan a record call runs under: the option's, or the
+// struct's tags.
+func planFor(t reflect.Type, o recordOptions) ([]fieldPlan, error) {
+	p := o.plan
+	if p.d == nil {
+		var err error
+		if p, err = PlanFromTags(t); err != nil {
+			return nil, err
+		}
+	}
+	return p.bind(t)
 }
 
 // planValue renders the plan object for the guest, each field's context
@@ -172,15 +363,17 @@ func applyOptions(opts []RecordOption) recordOptions {
 }
 
 // EncryptRecords seals every row of a slice of structs (or a pointer to
-// one) per the struct's `stash` tags: all rows and fields from batched
-// ZeroKMS key requests (one per 500 sealed fields), terms derived under
-// this keyset's index key. One EncryptedRecord per row, in order.
+// one) per the struct's `stash` tags, or per [WithPlan]: all rows and
+// fields from batched ZeroKMS key requests (one per 500 sealed fields),
+// terms derived under this keyset's index key. One EncryptedRecord per
+// row, in order.
 func (cph *Cipher) EncryptRecords(ctx context.Context, rows any, opts ...RecordOption) ([]EncryptedRecord, error) {
 	v := reflect.Indirect(reflect.ValueOf(rows))
 	if !v.IsValid() || v.Kind() != reflect.Slice {
 		return nil, fmt.Errorf("stackencrypt: EncryptRecords takes a slice of structs, not %T", rows)
 	}
-	plan, err := planFor(v.Type().Elem())
+	o := applyOptions(opts)
+	plan, err := planFor(v.Type().Elem(), o)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +381,7 @@ func (cph *Cipher) EncryptRecords(ctx context.Context, rows any, opts ...RecordO
 	for i := range source {
 		source[i] = sourceRow(v.Index(i), plan)
 	}
-	tree, err := cph.encryptRecords(ctx, plan, source, applyOptions(opts))
+	tree, err := cph.encryptRecords(ctx, plan, source, o)
 	if err != nil {
 		return nil, err
 	}
@@ -206,17 +399,18 @@ func (cph *Cipher) EncryptRecords(ctx context.Context, rows any, opts ...RecordO
 }
 
 // EncryptRecord seals one struct (or a pointer to one) per its `stash`
-// tags; see EncryptRecords.
+// tags, or per [WithPlan]; see EncryptRecords.
 func (cph *Cipher) EncryptRecord(ctx context.Context, row any, opts ...RecordOption) (EncryptedRecord, error) {
 	v := reflect.Indirect(reflect.ValueOf(row))
 	if !v.IsValid() {
 		return nil, fmt.Errorf("stackencrypt: EncryptRecord takes a struct, not %T", row)
 	}
-	plan, err := planFor(v.Type())
+	o := applyOptions(opts)
+	plan, err := planFor(v.Type(), o)
 	if err != nil {
 		return nil, err
 	}
-	tree, err := cph.encryptRecords(ctx, plan, sourceRow(v, plan), applyOptions(opts))
+	tree, err := cph.encryptRecords(ctx, plan, sourceRow(v, plan), o)
 	if err != nil {
 		return nil, err
 	}
@@ -335,8 +529,8 @@ func (c *Client) decryptRecords(ctx context.Context, sel KeysetSelector, records
 	if ptr.Kind() != reflect.Pointer || ptr.IsNil() || ptr.Elem().Kind() != reflect.Slice {
 		return fmt.Errorf("stackencrypt: DecryptRecords writes into a pointer to a slice of structs, not %T", out)
 	}
-	elem := ptr.Elem().Type().Elem()
-	plan, err := planFor(elem)
+	o := applyOptions(opts)
+	plan, err := planFor(ptr.Elem().Type().Elem(), o)
 	if err != nil {
 		return err
 	}
@@ -346,7 +540,7 @@ func (c *Client) decryptRecords(ctx context.Context, sel KeysetSelector, records
 			return err
 		}
 	}
-	values, err := c.decryptRecordTree(ctx, sel, plan, tree, applyOptions(opts))
+	values, err := c.decryptRecordTree(ctx, sel, plan, tree, o)
 	if err != nil {
 		return err
 	}
@@ -393,7 +587,8 @@ func (c *Client) decryptRecord(ctx context.Context, sel KeysetSelector, record E
 	if ptr.Kind() != reflect.Pointer || ptr.IsNil() || ptr.Elem().Kind() != reflect.Struct {
 		return fmt.Errorf("stackencrypt: DecryptRecord writes into a pointer to a struct, not %T", out)
 	}
-	plan, err := planFor(ptr.Elem().Type())
+	o := applyOptions(opts)
+	plan, err := planFor(ptr.Elem().Type(), o)
 	if err != nil {
 		return err
 	}
@@ -401,7 +596,7 @@ func (c *Client) decryptRecord(ctx context.Context, sel KeysetSelector, record E
 	if err != nil {
 		return err
 	}
-	value, err := c.decryptRecordTree(ctx, sel, plan, tree, applyOptions(opts))
+	value, err := c.decryptRecordTree(ctx, sel, plan, tree, o)
 	if err != nil {
 		return err
 	}

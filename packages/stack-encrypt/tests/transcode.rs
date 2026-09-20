@@ -60,11 +60,11 @@ impl Transcode for StoredLeaf {
 }
 impl<S: Encrypt + Clone> EncryptFrom<S> for StoredLeaf {
     type Context = CallerContext;
-    fn encryption<'s, K: 'static>(context: Self::Context) -> Encryption<'s, S, Self, K>
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
-        target::ciphertext(context).transcode()
+        target::ciphertext().accepting().transcode()
     }
 }
 impl<P: stack_encrypt::Decrypt<'static> + 'static> DecryptInto<P> for StoredLeaf {
@@ -293,13 +293,17 @@ async fn scalar_destination_refuses_a_sequence() {
 struct FixedLeaf(StoredLeaf);
 impl<S: Encrypt + Clone> EncryptFrom<S> for FixedLeaf {
     type Context = ();
-    fn encryption<'s, K: 'static>((): ()) -> Encryption<'s, S, Self, K>
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
-        target::ciphertext(nonempty!("fixed/leaf"))
+        // The declaration names its own context with `under`; `()` then
+        // satisfies the `DeclaredContext` that leaves.
+        target::ciphertext()
             .transcode()
             .map(Self)
+            .under(nonempty!("fixed/leaf"))
+            .accepting()
     }
 }
 impl<P: stack_encrypt::Decrypt<'static> + 'static> DecryptInto<P> for FixedLeaf {

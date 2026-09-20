@@ -1,5 +1,5 @@
 //! Emit operation declarations; only core code receives plaintext and a cipher.
-use crate::shape::{fresh_lifetime, trait_impl, zip, Field, Kind, Record};
+use crate::shape::{fresh_lifetime, trait_impl, zip_chain, Field, Kind, Record};
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
 use syn::spanned::Spanned;
@@ -18,25 +18,31 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         if generic {
             generics.params.push(parse_quote!(__S));
         }
-        generics
-            .make_where_clause()
-            .predicates
-            .push(parse_quote!(Self: 'static));
+        let predicates = &mut generics.make_where_clause().predicates;
+        predicates.push(parse_quote!(Self: 'static));
+        // ADR-0004: one context is threaded to every field, and `zip` will
+        // not combine two subtrees that need different types — so every
+        // field's declaration is brought to the type the record's tree
+        // carries (`Record::threaded_context`) by `Record::field_threading`,
+        // and the where-clause says what that asks of the field's type.
+        //
+        // The bounds name concrete types rather than adding a fresh impl
+        // parameter, deliberately: a parameter constrained only by an
+        // associated-type binding in a where-clause is E0207, and the user
+        // is told "unconstrained type parameter" instead of their mistake.
         for field in fields.iter().filter(|f| f.from().is_none()) {
-            let ty = &field.ty;
-            let context = record.field_context_type(field);
-            let where_ = &mut generics.make_where_clause().predicates;
-            where_.push(parse_quote!(#ty: #krate::target::EncryptFrom<#source>));
-            where_.push(parse_quote!(#context: Into<<#ty as #krate::target::EncryptFrom<#source>>::Context>));
+            predicates.extend(record.field_bounds(field, &source));
         }
         let operations = fields.iter().map(|field| {
             let ty = &field.ty;
-            let context = record.context_expr(field, false);
+            let threading = record.field_threading(field);
+            // Spanned at the field type: what the field's type refuses is
+            // reported there, not at the derive.
             let operation = if let Some(from) = field.from() {
-                quote_spanned!(ty.span()=> <#ty as #krate::target::EncryptFrom<_>>::encryption::<__K>(#context.into())
-                    .project(|__source: &#source| &__source.#from))
+                quote_spanned!(ty.span()=> <#ty as #krate::target::EncryptFrom<_>>::encryption::<__K>()
+                    .project(|__source: &#source| &__source.#from) #threading)
             } else {
-                quote_spanned!(ty.span()=> <#ty as #krate::target::EncryptFrom<#source>>::encryption::<__K>(#context.into()))
+                quote_spanned!(ty.span()=> <#ty as #krate::target::EncryptFrom<#source>>::encryption::<__K>() #threading)
             };
             (operation, field.local.clone())
         }).collect();
@@ -49,18 +55,27 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                 }
                 Kind::Default(Some(expr)) => quote!(#expr),
                 Kind::Default(None) => quote!(::core::default::Default::default()),
-                Kind::Context => quote!(__stored_context),
+                Kind::Context => quote!(__context.clone().into_inner()),
             };
             quote!(#member: #value)
         });
-        let stored = record
-            .context_field()
-            .map(|_| quote!(let __stored_context = __context.clone().into_inner();));
-        let body = zip(operations, quote!(Self { #(#assignments),* }));
+        let result = quote!(Self { #(#assignments),* });
+        // The tree carries the threaded context; the record declares
+        // `Self::Context`, converted into it once at the root — a record
+        // storing its own context declares the `NonEmpty<T>` it stores while
+        // its operations need a `CallerContext`. Such a record fills the
+        // stored field here too: under threading the context arrives when
+        // the description runs, not when it is built.
+        let (chain, pattern) = zip_chain(operations);
+        let chain = quote!(#chain.accepting::<Self::Context>());
+        let body = if record.context_field().is_some() {
+            quote!(#chain.map_with_context(move |#pattern, __context| #result))
+        } else {
+            quote!(#chain.map(move |#pattern| #result))
+        };
         impls.push(trait_impl(&input, &generics, quote!(#krate::target::EncryptFrom<#source>), quote! {
             type Context = #context;
-            fn encryption<#source_lifetime,__K: 'static>(__context: Self::Context) -> #krate::target::Encryption<#source_lifetime,#source, Self, __K> where #source:#source_lifetime {
-                #stored
+            fn encryption<#source_lifetime,__K: 'static>() -> #krate::target::Encryption<#source_lifetime,#source, Self, __K, Self::Context> where #source:#source_lifetime {
                 #body
             }
         }));

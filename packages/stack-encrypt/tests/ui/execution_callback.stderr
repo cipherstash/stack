@@ -1,7 +1,7 @@
 error[E0451]: field `build` of struct `Encryption` is private
- --> tests/ui/execution_callback.rs:5:9
+ --> tests/ui/execution_callback.rs:6:9
   |
-4 |     let _: Encryption<'_, u32, StackCipherText, ()> = Encryption {
-  |                                                       ---------- in this type
-5 |         build: Box::new(|_, cipher| stack_encrypt::Pending::failed(cipher, stack_encrypt::Error::Aead)),
+5 |     let _: Encryption<'_, u32, StackCipherText, (), CallerContext> = Encryption {
+  |                                                                      ---------- in this type
+6 |         build: Box::new(|_, cipher, _| {
   |         ^^^^^ private field

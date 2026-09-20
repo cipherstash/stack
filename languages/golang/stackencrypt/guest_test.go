@@ -502,6 +502,23 @@ type recordRow struct {
 	Email string `stash:"context=users/email,index=eq;match"`
 }
 
+// A record decrypted under a plan that names a field it does not carry is
+// refused on the host, with the field named, before the guest is asked.
+func TestMismatchedPlanIsRefusedBeforeTheGuest(t *testing.T) {
+	ctx := context.Background()
+	c := rawInstance(t)
+	record := EncryptedRecord{"Age": {Ciphertext: Sealed(fixtureLeaf)}}
+	plan, err := NewPlan(FieldPlan{Field: "Email", Name: "email", Context: "users/email"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []struct{ Email string }
+	err = c.DecryptRecords(ctx, []EncryptedRecord{record}, &out, WithPlan(plan))
+	if err == nil || errors.Is(err, ErrState) || !strings.Contains(err.Error(), `no ciphertext for field "email"`) {
+		t.Fatalf("mismatched plan: %v, want the host's refusal naming the field", err)
+	}
+}
+
 // Every encoding the package builds reaches the guest's own parsers and
 // passes them: the uninitialised instance answers ErrState only after it
 // has validated all inputs.
@@ -519,6 +536,18 @@ func TestGuestAcceptsEveryEncodingThisPackageBuilds(t *testing.T) {
 	rows := []recordRow{{Age: 1, Email: "a@b.c"}}
 	var out []recordRow
 	var one recordRow
+	type untaggedRow struct {
+		Age   uint32
+		Email string
+	}
+	plan, err := NewPlan(
+		FieldPlan{Field: "Age", Context: "users/age", Terms: []TermKind{Equality, Ore}},
+		FieldPlan{Field: "Email", Context: "users/email", Terms: []TermKind{Equality, Match}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var planned []untaggedRow
 	calls := map[string]func() error{
 		"KeysetID by name":   func() error { _, err := named.KeysetID(ctx); return err },
 		"KeysetID by id":     func() error { _, err := byID.KeysetID(ctx); return err },
@@ -542,6 +571,13 @@ func TestGuestAcceptsEveryEncodingThisPackageBuilds(t *testing.T) {
 		"DecryptRecords bound": func() error { return def.DecryptRecords(ctx, []EncryptedRecord{record}, &out) },
 		"DecryptRecords any":   func() error { return c.DecryptRecords(ctx, []EncryptedRecord{record, record}, &out) },
 		"DecryptRecord any":    func() error { return c.DecryptRecord(ctx, record, &one, ExtendContext("x")) },
+		"EncryptRecords plan": func() error {
+			_, err := def.EncryptRecords(ctx, []untaggedRow{{Age: 1, Email: "a@b.c"}}, WithPlan(plan))
+			return err
+		},
+		"DecryptRecords plan": func() error {
+			return c.DecryptRecords(ctx, []EncryptedRecord{record}, &planned, WithPlan(plan), ExtendContext(uint64(7)))
+		},
 	}
 	for name, call := range calls {
 		if err := call(); !errors.Is(err, ErrState) {
