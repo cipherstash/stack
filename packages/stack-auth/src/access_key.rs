@@ -41,7 +41,6 @@ pub struct AccessKey(
     #[cfg_attr(not(feature = "http"), allow(dead_code))] SecretToken,
 );
 
-#[cfg(feature = "http")]
 impl AccessKey {
     /// Expose the underlying [`SecretToken`].
     pub(crate) fn into_secret_token(self) -> SecretToken {
@@ -136,7 +135,6 @@ mod tests {
         assert!(matches!(err, InvalidAccessKey::MissingPrefix));
     }
 
-    #[cfg(feature = "http")]
     #[test]
     fn into_secret_token() {
         let key: AccessKey = "CSAKmyKeyId.myKeySecret".parse().unwrap();

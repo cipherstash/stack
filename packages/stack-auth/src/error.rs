@@ -629,7 +629,6 @@ impl AuthError {
     /// Matched exhaustively, like `is_retryable`, so a new variant has to
     /// declare which side of this boundary it's on rather than silently not
     /// being cached.
-    #[cfg(feature = "http")]
     pub(crate) fn is_account_refusal(&self) -> bool {
         match self {
             Self::UsageLimitExceeded(_) | Self::OrgNotProvisioned(_) => true,
@@ -756,7 +755,6 @@ fn workspace_mismatch_from_payload(
 /// indistinguishable from a genuine authorization refusal — so the status, not
 /// the body, decides. `cs_code` is checked when present so that a future 402
 /// with a different meaning does not silently inherit this classification.
-#[cfg(feature = "http")]
 pub(crate) fn classify_issuance_failure(status: u16, body: &str) -> Option<AuthError> {
     if status != 402 {
         return None;
@@ -837,7 +835,6 @@ pub(crate) fn classify_issuance_failure(status: u16, body: &str) -> Option<AuthE
 }
 
 /// Which account-level refusal a 402 body describes.
-#[cfg(feature = "http")]
 enum Refusal {
     UsageLimit,
     NotProvisioned,

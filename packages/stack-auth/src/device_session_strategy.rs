@@ -6,7 +6,8 @@ use stack_profile::ProfileStore;
 
 use crate::auto_refresh::AutoRefresh;
 use crate::device_session_refresher::DeviceSessionRefresher;
-use crate::{ensure_trailing_slash, AuthError, AuthStrategy, ServiceToken, Token};
+use crate::transport::{self, SharedTransport};
+use crate::{ensure_trailing_slash, AuthError, AuthStrategy, HttpTransport, ServiceToken, Token};
 
 /// An [`AuthStrategy`] that renews a CTS session minted by an interactive
 /// OAuth login (the device-code flow), using its OAuth refresh token.
@@ -55,6 +56,7 @@ impl DeviceSessionStrategy {
                 token,
             },
             base_url_override: None,
+            transport: None,
         }
     }
 
@@ -64,13 +66,14 @@ impl DeviceSessionStrategy {
     /// The builder allows further configuration (e.g. overriding the base URL) before building.
     ///
     /// The token must have `region` and `client_id` set (as saved by
-    /// [`DeviceCodeStrategy`](crate::DeviceCodeStrategy) or a prior
+    /// `DeviceCodeStrategy` (native, with the `http` feature) or a prior
     /// `DeviceSessionStrategy`). The store is used for persisting refreshed tokens.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn with_profile(store: ProfileStore) -> DeviceSessionStrategyBuilder {
         DeviceSessionStrategyBuilder {
             source: OAuthTokenSource::Store(store),
             base_url_override: None,
+            transport: None,
         }
     }
 
@@ -105,9 +108,30 @@ enum OAuthTokenSource {
 pub struct DeviceSessionStrategyBuilder {
     source: OAuthTokenSource,
     base_url_override: Option<url::Url>,
+    transport: Option<SharedTransport>,
 }
 
 impl DeviceSessionStrategyBuilder {
+    /// Send this strategy's requests through `transport` instead of the
+    /// bundled `reqwest` client.
+    ///
+    /// Without the `http` feature there is no bundled client, so this is
+    /// required; with it, this is how a host with its own HTTP stack (or a
+    /// test with a stub) takes over the wire without changing anything else
+    /// about the strategy.
+    pub fn transport(mut self, transport: impl HttpTransport) -> Self {
+        self.transport = Some(transport::share(transport));
+        self
+    }
+
+    /// [`transport`](Self::transport), for a caller that may or may not
+    /// have one — the auto strategy hands its own through. Native-only,
+    /// because on wasm32 the auto strategy has no profile to detect from.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn maybe_transport(mut self, transport: Option<SharedTransport>) -> Self {
+        self.transport = transport;
+        self
+    }
     /// Override the CTS base URL resolved for this strategy.
     ///
     /// Takes precedence over both the `CS_CTS_HOST` environment variable and
@@ -132,15 +156,19 @@ impl DeviceSessionStrategyBuilder {
         let Self {
             source,
             base_url_override,
+            transport,
         } = self;
+        let transport = transport::resolve(transport)?;
         match source {
             OAuthTokenSource::Token {
                 region,
                 client_id,
                 token,
-            } => Self::build_from_token(region, client_id, token, base_url_override),
+            } => Self::build_from_token(region, client_id, token, base_url_override, transport),
             #[cfg(not(target_arch = "wasm32"))]
-            OAuthTokenSource::Store(store) => Self::build_from_store(store, base_url_override),
+            OAuthTokenSource::Store(store) => {
+                Self::build_from_store(store, base_url_override, transport)
+            }
         }
     }
 
@@ -150,6 +178,7 @@ impl DeviceSessionStrategyBuilder {
         client_id: String,
         mut token: Token,
         base_url_override: Option<url::Url>,
+        transport: SharedTransport,
     ) -> Result<DeviceSessionStrategy, AuthError> {
         let base_url = match base_url_override {
             Some(url) => url,
@@ -178,6 +207,7 @@ impl DeviceSessionStrategyBuilder {
             &client_id,
             &region_id,
             device_instance_id,
+            transport,
         );
         Ok(DeviceSessionStrategy {
             crn,
@@ -190,6 +220,7 @@ impl DeviceSessionStrategyBuilder {
     fn build_from_store(
         store: ProfileStore,
         base_url_override: Option<url::Url>,
+        transport: SharedTransport,
     ) -> Result<DeviceSessionStrategy, AuthError> {
         let ws_store = store.current_workspace_store()?;
         let token: Token = ws_store.load_profile()?;
@@ -222,6 +253,7 @@ impl DeviceSessionStrategyBuilder {
             &client_id,
             &region_str,
             device_instance_id,
+            transport,
         );
         Ok(DeviceSessionStrategy {
             crn,
@@ -230,7 +262,9 @@ impl DeviceSessionStrategyBuilder {
     }
 }
 
-#[cfg(test)]
+// These build strategies with no transport of their own, which needs the
+// bundled one.
+#[cfg(all(test, feature = "http"))]
 mod tests {
     use super::*;
     use crate::test_support::{claims_with_workspace, jwt_token, raw_token};

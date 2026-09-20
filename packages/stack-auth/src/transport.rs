@@ -1,0 +1,652 @@
+//! The HTTP seam: how a strategy's requests reach the network.
+//!
+//! Every exchange this crate makes has one shape — post a body to a URL,
+//! read the status and body back — and that is the whole of
+//! [`HttpTransport`]. Its request and response are the ones the Go
+//! binding's guest already carries across its `transport_send` host
+//! import: method, URL, headers and body in; status, headers and body out;
+//! all bytes, no streaming. So a host with its own HTTP client implements
+//! the trait, and the strategies run unchanged over it — inside a wasm
+//! module with no TLS stack of its own, or anywhere else `reqwest` is the
+//! wrong choice.
+//!
+//! With the `http` feature, [`ReqwestTransport`] is the implementation
+//! every builder uses unless told otherwise, so native callers see no
+//! difference. Without it, a builder must be handed a transport.
+//!
+//! Bodies are wiped on drop on both halves: a request carries an access key
+//! or a refresh token, and a response carries the token that was minted.
+
+use std::future::Future;
+use std::sync::Arc;
+
+use url::Url;
+use zeroize::Zeroizing;
+
+use crate::error::RequestError;
+use crate::AuthError;
+
+/// One HTTP request, as a transport receives it.
+///
+/// The shape is the guest host import's, deliberately: a transport that
+/// can carry this can carry every request the crate makes, and nothing the
+/// crate makes needs more.
+#[derive(Debug)]
+pub struct HttpRequest {
+    method: &'static str,
+    url: Url,
+    headers: Vec<(String, String)>,
+    body: Zeroizing<Vec<u8>>,
+}
+
+impl HttpRequest {
+    /// The HTTP method, upper-case (`"POST"`).
+    pub fn method(&self) -> &str {
+        self.method
+    }
+
+    /// The absolute URL to send to.
+    pub fn url(&self) -> &Url {
+        &self.url
+    }
+
+    /// The request headers, in order. Names are lower-case.
+    pub fn headers(&self) -> &[(String, String)] {
+        &self.headers
+    }
+
+    /// The request body. Wiped when the request is dropped.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+}
+
+/// One HTTP response, as a transport returns it.
+#[derive(Debug)]
+pub struct HttpResponse {
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: Zeroizing<Vec<u8>>,
+}
+
+impl HttpResponse {
+    /// A response with `status`, `headers` and `body`. The body is wiped
+    /// when the response is dropped.
+    pub fn new(status: u16, headers: Vec<(String, String)>, body: Vec<u8>) -> Self {
+        Self {
+            status,
+            headers,
+            body: Zeroizing::new(body),
+        }
+    }
+
+    /// The HTTP status code.
+    pub fn status(&self) -> u16 {
+        self.status
+    }
+
+    /// The response headers, in order.
+    pub fn headers(&self) -> &[(String, String)] {
+        &self.headers
+    }
+
+    /// The response body.
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    pub(crate) fn is_success(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
+
+    /// The body as text, for logging and for the error classifiers.
+    pub(crate) fn text(&self) -> String {
+        String::from_utf8_lossy(&self.body).into_owned()
+    }
+
+    /// The body decoded as JSON. A body that does not decode is reported as
+    /// a request failure, as it was when the HTTP client did the decoding.
+    pub(crate) fn json<T: serde::de::DeserializeOwned>(&self) -> Result<T, AuthError> {
+        serde_json::from_slice(&self.body)
+            .map_err(|e| AuthError::Request(RequestError(Box::new(e))))
+    }
+}
+
+/// Carries one HTTP request and returns its response.
+///
+/// On native targets the trait carries `Send + Sync` bounds so a strategy
+/// holding a transport can be driven from `tokio::spawn` background work.
+/// On wasm32 the bounds are dropped — a fetch-backed future is not `Send`
+/// and edge runtimes are single-threaded anyway — matching every other
+/// async trait in this crate.
+///
+/// A failure to get any response at all (the host is unreachable, the
+/// connection dropped) is a [`RequestError`]. A response with an error
+/// status is not a failure of the transport: return it, and the strategy
+/// classifies it.
+#[cfg(not(target_arch = "wasm32"))]
+pub trait HttpTransport: Send + Sync + 'static {
+    /// Send `request` and return the response.
+    fn send(
+        &self,
+        request: HttpRequest,
+    ) -> impl Future<Output = Result<HttpResponse, RequestError>> + Send;
+}
+
+/// Wasm32 variant of [`HttpTransport`] — drops the `Send + Sync` bounds.
+#[cfg(target_arch = "wasm32")]
+pub trait HttpTransport: 'static {
+    /// Send `request` and return the response.
+    fn send(
+        &self,
+        request: HttpRequest,
+    ) -> impl Future<Output = Result<HttpResponse, RequestError>>;
+}
+
+// ---------------------------------------------------------------------------
+// The crate-internal, object-safe view.
+//
+// `HttpTransport` returns `impl Future`, which is the crate's convention and
+// the easiest thing to implement — and not object-safe. The strategies want
+// one concrete type for "whatever transport was configured" rather than a
+// type parameter on every public strategy, so this adapter boxes the future
+// once, at construction, and nothing else in the crate names the transport's
+// concrete type again.
+// ---------------------------------------------------------------------------
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) trait DynTransport: Send + Sync {
+    fn send_dyn<'a>(
+        &'a self,
+        request: HttpRequest,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<HttpResponse, RequestError>> + Send + 'a>>;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: HttpTransport> DynTransport for T {
+    fn send_dyn<'a>(
+        &'a self,
+        request: HttpRequest,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<HttpResponse, RequestError>> + Send + 'a>>
+    {
+        Box::pin(self.send(request))
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) trait DynTransport {
+    fn send_dyn<'a>(
+        &'a self,
+        request: HttpRequest,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<HttpResponse, RequestError>> + 'a>>;
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<T: HttpTransport> DynTransport for T {
+    fn send_dyn<'a>(
+        &'a self,
+        request: HttpRequest,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<HttpResponse, RequestError>> + 'a>> {
+        Box::pin(self.send(request))
+    }
+}
+
+/// The transport a strategy holds: whichever implementation it was built
+/// with, behind one type.
+pub(crate) type SharedTransport = Arc<dyn DynTransport>;
+
+/// Box `transport` once, for the strategies to share.
+pub(crate) fn share(transport: impl HttpTransport) -> SharedTransport {
+    Arc::new(transport)
+}
+
+/// The transport a builder ends up with: the one it was given, else the
+/// bundled `reqwest` client, else an error — a strategy cannot exist
+/// without a way to send.
+pub(crate) fn resolve(configured: Option<SharedTransport>) -> Result<SharedTransport, AuthError> {
+    match configured {
+        Some(transport) => Ok(transport),
+        #[cfg(feature = "http")]
+        None => Ok(default_transport()),
+        #[cfg(not(feature = "http"))]
+        None => Err(AuthError::Request(RequestError(Box::new(NoTransport)))),
+    }
+}
+
+/// No transport was configured and the crate was built without `http`.
+#[cfg(not(feature = "http"))]
+#[derive(Debug)]
+pub(crate) struct NoTransport;
+
+#[cfg(not(feature = "http"))]
+impl std::fmt::Display for NoTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "no HTTP transport: this build of stack-auth has no `http` feature, \
+             so the strategy must be given one with `.transport(..)`",
+        )
+    }
+}
+
+#[cfg(not(feature = "http"))]
+impl std::error::Error for NoTransport {}
+
+// ---------------------------------------------------------------------------
+// The two request shapes the crate makes.
+// ---------------------------------------------------------------------------
+
+/// `POST` a JSON body.
+pub(crate) async fn post_json<B: serde::Serialize>(
+    transport: &SharedTransport,
+    url: Url,
+    body: &B,
+) -> Result<HttpResponse, AuthError> {
+    let body = Zeroizing::new(
+        serde_json::to_vec(body).map_err(|e| AuthError::Request(RequestError(Box::new(e))))?,
+    );
+    post(transport, url, "application/json", Vec::new(), body).await
+}
+
+/// `POST` a form (`application/x-www-form-urlencoded`) body.
+pub(crate) async fn post_form<B: serde::Serialize>(
+    transport: &SharedTransport,
+    url: Url,
+    body: &B,
+) -> Result<HttpResponse, AuthError> {
+    let body = Zeroizing::new(
+        serde_urlencoded::to_string(body)
+            .map_err(|e| AuthError::Request(RequestError(Box::new(e))))?
+            .into_bytes(),
+    );
+    post(
+        transport,
+        url,
+        "application/x-www-form-urlencoded",
+        Vec::new(),
+        body,
+    )
+    .await
+}
+
+/// `POST` `body` as `content_type`, with `extra` headers first.
+pub(crate) async fn post(
+    transport: &SharedTransport,
+    url: Url,
+    content_type: &str,
+    mut extra: Vec<(String, String)>,
+    body: Zeroizing<Vec<u8>>,
+) -> Result<HttpResponse, AuthError> {
+    extra.push(("content-type".to_string(), content_type.to_string()));
+    let request = HttpRequest {
+        method: "POST",
+        url,
+        headers: extra,
+        body,
+    };
+    transport
+        .send_dyn(request)
+        .await
+        .map_err(AuthError::Request)
+}
+
+// ---------------------------------------------------------------------------
+// The bundled implementation.
+// ---------------------------------------------------------------------------
+
+/// [`HttpTransport`] over a [`reqwest::Client`]: what every strategy uses
+/// unless a builder is given something else.
+///
+/// [`Default`] builds the client with the crate's standard timeouts and
+/// pool settings; [`ReqwestTransport::new`] takes a client configured by
+/// the caller.
+#[cfg(feature = "http")]
+#[derive(Debug, Clone)]
+pub struct ReqwestTransport {
+    client: reqwest::Client,
+}
+
+#[cfg(feature = "http")]
+impl ReqwestTransport {
+    /// A transport over `client`.
+    pub fn new(client: reqwest::Client) -> Self {
+        Self { client }
+    }
+}
+
+#[cfg(feature = "http")]
+impl Default for ReqwestTransport {
+    fn default() -> Self {
+        Self::new(http_client())
+    }
+}
+
+#[cfg(feature = "http")]
+impl HttpTransport for ReqwestTransport {
+    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, RequestError> {
+        let method = reqwest::Method::from_bytes(request.method.as_bytes())
+            .map_err(|e| RequestError(Box::new(e)))?;
+        let mut builder = self.client.request(method, request.url);
+        for (name, value) in &request.headers {
+            builder = builder.header(name.as_str(), value.as_str());
+        }
+        let response = builder.body(request.body.to_vec()).send().await?;
+        let status = response.status().as_u16();
+        let headers = response
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.as_str().to_string(),
+                    String::from_utf8_lossy(value.as_bytes()).into_owned(),
+                )
+            })
+            .collect();
+        let body = response.bytes().await?.to_vec();
+        Ok(HttpResponse::new(status, headers, body))
+    }
+}
+
+/// The bundled transport, boxed for the strategies.
+#[cfg(feature = "http")]
+pub(crate) fn default_transport() -> SharedTransport {
+    share(ReqwestTransport::default())
+}
+
+/// Create a [`reqwest::Client`] with standard timeouts.
+///
+/// In test builds, timeouts are omitted so that `tokio::test(start_paused = true)`
+/// does not auto-advance time past the connect timeout before the mock server
+/// can respond. On wasm32, reqwest's fetch backend doesn't expose
+/// `connect_timeout`/`pool_*` — the host runtime owns those concerns.
+#[cfg(all(feature = "http", any(test, feature = "test-utils")))]
+fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+#[cfg(all(
+    feature = "http",
+    not(any(test, feature = "test-utils")),
+    not(target_arch = "wasm32")
+))]
+fn http_client() -> reqwest::Client {
+    use std::time::Duration;
+
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .pool_idle_timeout(Duration::from_secs(5))
+        .pool_max_idle_per_host(10)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+#[cfg(all(
+    feature = "http",
+    not(any(test, feature = "test-utils")),
+    target_arch = "wasm32"
+))]
+fn http_client() -> reqwest::Client {
+    // Wasm32 reqwest uses the host's `fetch`; timeouts and pooling are owned
+    // by the runtime, so `ClientBuilder` doesn't expose them here.
+    reqwest::Client::builder()
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::access_key_refresher::AccessKeyRefresher;
+    use crate::oidc_refresher::{OidcProviderFn, OidcRefresher};
+    use crate::refresher::Refresher;
+    use crate::{SecretToken, Token};
+
+    /// What the stub saw: method, URL, headers, body.
+    type Seen = (String, String, Vec<(String, String)>, Vec<u8>);
+
+    /// A transport that answers every request with one canned response and
+    /// remembers what it was asked, so a test can pin the wire shape without
+    /// an HTTP client in the build.
+    struct Stub {
+        response: Mutex<Option<Result<(u16, &'static str), &'static str>>>,
+        seen: Mutex<Vec<Seen>>,
+    }
+
+    impl Stub {
+        fn replying(status: u16, body: &'static str) -> Self {
+            Self {
+                response: Mutex::new(Some(Ok((status, body)))),
+                seen: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn failing(message: &'static str) -> Self {
+            Self {
+                response: Mutex::new(Some(Err(message))),
+                seen: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl HttpTransport for Stub {
+        async fn send(&self, request: HttpRequest) -> Result<HttpResponse, RequestError> {
+            self.seen.lock().unwrap().push((
+                request.method().to_string(),
+                request.url().to_string(),
+                request.headers().to_vec(),
+                request.body().to_vec(),
+            ));
+            match self.response.lock().unwrap().take().expect("one request") {
+                Ok((status, body)) => Ok(HttpResponse::new(status, Vec::new(), body.into())),
+                Err(message) => Err(RequestError(Box::new(std::io::Error::other(message)))),
+            }
+        }
+    }
+
+    fn base_url() -> Url {
+        "https://cts.example.com/".parse().unwrap()
+    }
+
+    fn workspace_id() -> cts_common::WorkspaceId {
+        "ZVATKW3VHMFG27DY".parse().unwrap()
+    }
+
+    fn seen(stub: &Arc<Stub>) -> Seen {
+        stub.seen.lock().unwrap().remove(0)
+    }
+
+    #[tokio::test]
+    async fn refresh_posts_a_form_and_reads_the_token() {
+        let stub = Arc::new(Stub::replying(
+            200,
+            r#"{"access_token":"new","token_type":"Bearer","expires_in":3600,"refresh_token":"rotated"}"#,
+        ));
+        let transport: SharedTransport = stub.clone();
+
+        let token = Token::refresh_with(
+            &transport,
+            &SecretToken::new("rt"),
+            &base_url(),
+            "cli",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(token.access_token().as_str(), "new");
+        assert_eq!(token.refresh_token().unwrap().as_str(), "rotated");
+        let (method, url, headers, body) = seen(&stub);
+        assert_eq!(method, "POST");
+        assert_eq!(url, "https://cts.example.com/oauth/token");
+        assert!(headers.contains(&(
+            "content-type".to_string(),
+            "application/x-www-form-urlencoded".to_string()
+        )));
+        assert_eq!(
+            body, b"grant_type=refresh_token&client_id=cli&refresh_token=rt",
+            "an absent device id is omitted, not sent empty"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_classifies_the_oauth_error_body() {
+        for (error, check) in [
+            (
+                "invalid_grant",
+                (|e| matches!(e, AuthError::InvalidGrant(_))) as fn(&AuthError) -> bool,
+            ),
+            ("invalid_client", |e| {
+                matches!(e, AuthError::InvalidClient(_))
+            }),
+            ("access_denied", |e| matches!(e, AuthError::AccessDenied(_))),
+        ] {
+            let body: &'static str = match error {
+                "invalid_grant" => r#"{"error":"invalid_grant"}"#,
+                "invalid_client" => r#"{"error":"invalid_client"}"#,
+                _ => r#"{"error":"access_denied"}"#,
+            };
+            let transport: SharedTransport = Arc::new(Stub::replying(400, body));
+            let err = Token::refresh_with(
+                &transport,
+                &SecretToken::new("rt"),
+                &base_url(),
+                "cli",
+                None,
+            )
+            .await
+            .unwrap_err();
+            assert!(check(&err), "{error}: {err:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn access_key_posts_json_and_maps_the_response() {
+        let stub = Arc::new(Stub::replying(
+            200,
+            r#"{"accessToken":"svc","expiry":4102444800}"#,
+        ));
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("CSAKid.secret"),
+            base_url(),
+            Some("aud".into()),
+            stub.clone(),
+        );
+
+        let token = refresher.refresh(&()).await.unwrap();
+
+        assert_eq!(token.access_token().as_str(), "svc");
+        let (method, url, headers, body) = seen(&stub);
+        assert_eq!(method, "POST");
+        assert_eq!(url, "https://cts.example.com/api/authorise");
+        assert!(headers.contains(&("content-type".to_string(), "application/json".to_string())));
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({"accessKey": "CSAKid.secret", "audience": "aud"})
+        );
+    }
+
+    #[tokio::test]
+    async fn a_bare_402_is_a_usage_limit_on_every_exchange() {
+        let transport: SharedTransport = Arc::new(Stub::replying(402, ""));
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("CSAKid.secret"),
+            base_url(),
+            None,
+            transport,
+        );
+        let err = refresher.refresh(&()).await.unwrap_err();
+        assert!(matches!(err, AuthError::UsageLimitExceeded(_)), "{err:?}");
+
+        let transport: SharedTransport = Arc::new(Stub::replying(402, ""));
+        let provider = OidcProviderFn::new(|| async { Ok(SecretToken::new("h.p.s")) });
+        let refresher = OidcRefresher::new(provider, workspace_id(), base_url(), transport);
+        let err = refresher.refresh(&()).await.unwrap_err();
+        assert!(matches!(err, AuthError::UsageLimitExceeded(_)), "{err:?}");
+
+        let transport: SharedTransport = Arc::new(Stub::replying(402, ""));
+        let err = Token::refresh_with(
+            &transport,
+            &SecretToken::new("rt"),
+            &base_url(),
+            "cli",
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, AuthError::UsageLimitExceeded(_)), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn an_unclassified_failure_is_a_server_error_with_the_body() {
+        let transport: SharedTransport = Arc::new(Stub::replying(500, "boom"));
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("CSAKid.secret"),
+            base_url(),
+            None,
+            transport,
+        );
+        let err = refresher.refresh(&()).await.unwrap_err();
+        match err {
+            AuthError::Server(e) => {
+                assert!(e.to_string().contains("500") && e.to_string().contains("boom"))
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_transport_failure_is_a_request_error() {
+        let transport: SharedTransport = Arc::new(Stub::failing("connection refused"));
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("CSAKid.secret"),
+            base_url(),
+            None,
+            transport,
+        );
+        let err = refresher.refresh(&()).await.unwrap_err();
+        match err {
+            AuthError::Request(e) => assert!(e.to_string().contains("connection refused")),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_undecodable_success_body_is_a_request_error() {
+        let transport: SharedTransport = Arc::new(Stub::replying(200, "not json"));
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("CSAKid.secret"),
+            base_url(),
+            None,
+            transport,
+        );
+        let err = refresher.refresh(&()).await.unwrap_err();
+        assert!(matches!(err, AuthError::Request(_)), "{err:?}");
+    }
+
+    #[cfg(not(feature = "http"))]
+    #[test]
+    fn a_builder_without_a_transport_is_refused_when_there_is_no_bundled_one() {
+        let crn: cts_common::Crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse().unwrap();
+        let key: crate::AccessKey = "CSAKtestKeyId.testKeySecret".parse().unwrap();
+        let Err(err) = crate::AccessKeyStrategy::new(crn, key) else {
+            panic!("built a strategy with nothing to send through");
+        };
+        assert!(matches!(err, AuthError::Request(_)), "{err:?}");
+        assert!(err.to_string().contains("`.transport(..)`"), "{err}");
+    }
+
+    #[cfg(not(feature = "http"))]
+    #[test]
+    fn a_builder_with_a_transport_builds_without_the_bundled_one() {
+        let crn: cts_common::Crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse().unwrap();
+        let key: crate::AccessKey = "CSAKtestKeyId.testKeySecret".parse().unwrap();
+        assert!(crate::AccessKeyStrategy::builder(crn, key)
+            .transport(Stub::replying(200, ""))
+            .build()
+            .is_ok());
+    }
+}

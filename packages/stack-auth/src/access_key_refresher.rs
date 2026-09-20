@@ -1,10 +1,9 @@
-use std::sync::Arc;
-
 use url::Url;
 
 use crate::authorize_dto::AuthoriseResponse;
 use crate::refresher::Refresher;
-use crate::{http_client, AuthError, SecretToken, Token};
+use crate::transport::{self, SharedTransport};
+use crate::{AuthError, SecretToken, Token};
 
 /// A [`Refresher`] that uses a static access key to authenticate.
 ///
@@ -15,16 +14,21 @@ pub(crate) struct AccessKeyRefresher {
     access_key: SecretToken,
     base_url: Url,
     audience: Option<String>,
-    http_client: Arc<reqwest::Client>,
+    transport: SharedTransport,
 }
 
 impl AccessKeyRefresher {
-    pub(crate) fn new(access_key: SecretToken, base_url: Url, audience: Option<String>) -> Self {
+    pub(crate) fn new(
+        access_key: SecretToken,
+        base_url: Url,
+        audience: Option<String>,
+        transport: SharedTransport,
+    ) -> Self {
         Self {
             access_key,
             base_url,
             audience,
-            http_client: Arc::new(http_client()),
+            transport,
         }
     }
 }
@@ -49,21 +53,21 @@ impl Refresher for AccessKeyRefresher {
 
         tracing::debug!(url = %url, "authenticating with access key");
 
-        let resp = self
-            .http_client
-            .post(url)
-            .json(&AuthoriseRequest {
+        let resp = transport::post_json(
+            &self.transport,
+            url,
+            &AuthoriseRequest {
                 access_key: self.access_key.as_str(),
                 audience: self.audience.as_deref(),
-            })
-            .send()
-            .await?;
+            },
+        )
+        .await?;
 
-        if !resp.status().is_success() {
+        if !resp.is_success() {
             let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
+            let body = resp.text();
             tracing::debug!(%status, %body, "access key auth failed");
-            if let Some(err) = crate::error::classify_issuance_failure(status.as_u16(), &body) {
+            if let Some(err) = crate::error::classify_issuance_failure(status, &body) {
                 return Err(err);
             }
             return Err(AuthError::Server(crate::error::ServerError(format!(
@@ -71,7 +75,7 @@ impl Refresher for AccessKeyRefresher {
             ))));
         }
 
-        let auth_resp: AuthoriseResponse = resp.json().await?;
+        let auth_resp: AuthoriseResponse = resp.json()?;
 
         // The response → Token mapping (including the absolute-epoch `expiry`
         // handling that CIP-3233 fixed) lives on `From<AuthoriseResponse>`.
@@ -87,10 +91,11 @@ struct AuthoriseRequest<'a> {
     audience: Option<&'a str>,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "http"))]
 mod tests {
     use super::*;
     use crate::auto_refresh::{AutoRefresh, AutoRefreshError};
+    use crate::transport::default_transport;
     use crate::TokenStore;
     use mocktail::prelude::*;
     use std::sync::Arc;
@@ -121,6 +126,7 @@ mod tests {
             SecretToken::new("test-access-key"),
             server.url(""),
             Some("test-audience".to_string()),
+            default_transport(),
         );
         AutoRefresh::with_store(refresher, crate::NoStore)
     }
@@ -181,8 +187,12 @@ mod tests {
         });
         let server = start_server(mocks).await;
 
-        let refresher =
-            AccessKeyRefresher::new(SecretToken::new("CSAKid.secret"), server.url(""), None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("CSAKid.secret"),
+            server.url(""),
+            None,
+            default_transport(),
+        );
         let token = refresher.refresh(&()).await.unwrap();
 
         assert!(
@@ -311,8 +321,12 @@ mod tests {
         let store = Arc::new(crate::InMemoryTokenStore::new());
         store.save(&make_fresh_token("from-store")).await;
 
-        let refresher =
-            AccessKeyRefresher::new(SecretToken::new("test-access-key"), server.url(""), None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            server.url(""),
+            None,
+            default_transport(),
+        );
         let strategy = AutoRefresh::with_store(refresher, Arc::clone(&store));
 
         let token = strategy.get_token().await.unwrap();
@@ -338,8 +352,12 @@ mod tests {
             "store should be empty before initial auth"
         );
 
-        let refresher =
-            AccessKeyRefresher::new(SecretToken::new("test-access-key"), server.url(""), None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            server.url(""),
+            None,
+            default_transport(),
+        );
         let strategy = AutoRefresh::with_store(refresher, Arc::clone(&store));
 
         let token = strategy.get_token().await.unwrap();
@@ -374,8 +392,12 @@ mod tests {
         let store = Arc::new(crate::InMemoryTokenStore::new());
 
         // First strategy — does the HTTP exchange and writes to the store.
-        let refresher_a =
-            AccessKeyRefresher::new(SecretToken::new("test-access-key"), server.url(""), None);
+        let refresher_a = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            server.url(""),
+            None,
+            default_transport(),
+        );
         let strategy_a = AutoRefresh::with_store(refresher_a, Arc::clone(&store));
         let token_a = strategy_a.get_token().await.unwrap();
         assert_eq!(
@@ -393,8 +415,12 @@ mod tests {
         });
 
         // Second strategy — fresh instance, same store. Should load from store.
-        let refresher_b =
-            AccessKeyRefresher::new(SecretToken::new("test-access-key"), server.url(""), None);
+        let refresher_b = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            server.url(""),
+            None,
+            default_transport(),
+        );
         let strategy_b = AutoRefresh::with_store(refresher_b, Arc::clone(&store));
         let token_b = strategy_b.get_token().await.unwrap();
         assert_eq!(
@@ -416,8 +442,12 @@ mod tests {
         let store = Arc::new(crate::InMemoryTokenStore::new());
         store.save(&make_expired_token("stale-from-store")).await;
 
-        let refresher =
-            AccessKeyRefresher::new(SecretToken::new("test-access-key"), server.url(""), None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            server.url(""),
+            None,
+            default_transport(),
+        );
         let strategy = AutoRefresh::with_store(refresher, Arc::clone(&store));
 
         let token = strategy.get_token().await.unwrap();
@@ -450,8 +480,12 @@ mod tests {
         });
         let server = start_server(mocks).await;
 
-        let refresher =
-            AccessKeyRefresher::new(SecretToken::new("test-access-key"), server.url(""), None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            server.url(""),
+            None,
+            default_transport(),
+        );
         let strategy = AutoRefresh::with_token(refresher, make_expired_token("old-token"));
 
         let token = strategy.get_token().await.unwrap();
@@ -487,8 +521,12 @@ mod tests {
         });
         let server = start_server(mocks).await;
 
-        let refresher =
-            AccessKeyRefresher::new(SecretToken::new("test-access-key"), server.url(""), None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            server.url(""),
+            None,
+            default_transport(),
+        );
         let strategy = AutoRefresh::with_token(refresher, make_expired_token("old-token"));
 
         let err = strategy.get_token().await.unwrap_err();
@@ -514,8 +552,12 @@ mod tests {
         });
         let server = start_server(mocks).await;
 
-        let refresher =
-            AccessKeyRefresher::new(SecretToken::new("test-access-key"), server.url(""), None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            server.url(""),
+            None,
+            default_transport(),
+        );
         let strategy = AutoRefresh::with_token(refresher, make_expired_token("old-token"));
 
         let AutoRefreshError::Auth(err) = strategy.get_token().await.unwrap_err() else {
@@ -570,7 +612,12 @@ mod tests {
         )
         .await;
 
-        let refresher = AccessKeyRefresher::new(SecretToken::new("test-access-key"), url, None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            url,
+            None,
+            default_transport(),
+        );
         let strategy = AutoRefresh::with_token(refresher, make_expired_token("old-token"));
 
         for call in 1..=5 {
@@ -673,7 +720,12 @@ mod tests {
         let start = now_secs();
         let clock = crate::clock::TestClock::new(start);
 
-        let refresher = AccessKeyRefresher::new(SecretToken::new("test-access-key"), url, None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            url,
+            None,
+            default_transport(),
+        );
         let strategy = AutoRefresh::with_token_and_clock(
             refresher,
             make_token_expiring_at("old-token", start - 3600),
@@ -705,7 +757,12 @@ mod tests {
         let start = now_secs();
         let clock = crate::clock::TestClock::new(start);
 
-        let refresher = AccessKeyRefresher::new(SecretToken::new("test-access-key"), url, None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            url,
+            None,
+            default_transport(),
+        );
         let strategy = AutoRefresh::with_token_and_clock(
             refresher,
             make_token_expiring_at("old-token", start - 3600),
@@ -739,7 +796,12 @@ mod tests {
         let start = now_secs();
         let clock = crate::clock::TestClock::new(start);
 
-        let refresher = AccessKeyRefresher::new(SecretToken::new("test-access-key"), url, None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            url,
+            None,
+            default_transport(),
+        );
         let strategy = AutoRefresh::with_token_and_clock(
             refresher,
             make_token_expiring_at("old-token", start - 3600),
@@ -774,7 +836,12 @@ mod tests {
         let start = now_secs();
         let clock = crate::clock::TestClock::new(start);
 
-        let refresher = AccessKeyRefresher::new(SecretToken::new("test-access-key"), url, None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            url,
+            None,
+            default_transport(),
+        );
         // Expired well before `start`, so it is still expired after the rewind
         // — otherwise the token-expiry check short-circuits and the refusal is
         // never consulted, and the test would prove nothing.
@@ -808,7 +875,12 @@ mod tests {
         )
         .await;
 
-        let refresher = AccessKeyRefresher::new(SecretToken::new("test-access-key"), url, None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            url,
+            None,
+            default_transport(),
+        );
         let strategy = AutoRefresh::with_token(refresher, make_expired_token("old-token"));
 
         for _ in 0..3 {
@@ -857,8 +929,12 @@ mod tests {
         });
         let server = start_server(mocks).await;
 
-        let refresher =
-            AccessKeyRefresher::new(SecretToken::new("test-access-key"), server.url(""), None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            server.url(""),
+            None,
+            default_transport(),
+        );
         let strategy = Arc::new(AutoRefresh::with_token(
             refresher,
             make_expired_token("old-token"),
@@ -903,8 +979,12 @@ mod tests {
             device_instance_id: None,
         };
 
-        let refresher =
-            AccessKeyRefresher::new(SecretToken::new("test-access-key"), server.url(""), None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            server.url(""),
+            None,
+            default_transport(),
+        );
         let strategy = Arc::new(AutoRefresh::with_token(refresher, expiring_token));
 
         let s1 = Arc::clone(&strategy);
@@ -1018,8 +1098,12 @@ mod tests {
         };
         let (base_url, stats) = start_axum_server(state).await;
 
-        let refresher =
-            AccessKeyRefresher::new(SecretToken::new("test-access-key"), base_url, None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            base_url,
+            None,
+            default_transport(),
+        );
         let strategy = Arc::new(AutoRefresh::with_store(refresher, crate::NoStore));
 
         let start = Instant::now();
@@ -1060,8 +1144,12 @@ mod tests {
         let (base_url, stats) = start_axum_server(state).await;
 
         // Pre-authenticate.
-        let refresher =
-            AccessKeyRefresher::new(SecretToken::new("test-access-key"), base_url, None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            base_url,
+            None,
+            default_transport(),
+        );
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -1126,8 +1214,12 @@ mod tests {
             client_id: None,
             device_instance_id: None,
         };
-        let refresher =
-            AccessKeyRefresher::new(SecretToken::new("test-access-key"), base_url, None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            base_url,
+            None,
+            default_transport(),
+        );
         let strategy = Arc::new(AutoRefresh::with_token(refresher, expiring_token));
 
         let start = Instant::now();
@@ -1183,8 +1275,12 @@ mod tests {
         };
         let (base_url, stats) = start_axum_server(state).await;
 
-        let refresher =
-            AccessKeyRefresher::new(SecretToken::new("test-access-key"), base_url, None);
+        let refresher = AccessKeyRefresher::new(
+            SecretToken::new("test-access-key"),
+            base_url,
+            None,
+            default_transport(),
+        );
         let strategy = Arc::new(AutoRefresh::with_token(
             refresher,
             make_expired_token("old-token"),

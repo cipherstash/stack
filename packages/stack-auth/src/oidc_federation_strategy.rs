@@ -3,6 +3,8 @@ use cts_common::{Crn, CtsServiceDiscovery, ServiceDiscovery, WorkspaceId};
 use crate::auto_refresh::AutoRefresh;
 use crate::oidc_refresher::{OidcProvider, OidcRefresher};
 use crate::token_store::{NoStore, TokenStore};
+use crate::transport::{self, SharedTransport};
+use crate::HttpTransport;
 use crate::{ensure_trailing_slash, AuthError, AuthStrategy, ServiceToken};
 
 /// An [`AuthStrategy`] that federates a third-party OIDC JWT (Clerk, Supabase,
@@ -78,6 +80,7 @@ impl<P: OidcProvider> OidcFederationStrategy<P> {
             oidc_provider,
             base_url_override: None,
             token_store: NoStore,
+            transport: None,
         }
     }
 }
@@ -99,9 +102,21 @@ pub struct OidcFederationStrategyBuilder<P, S = NoStore> {
     oidc_provider: P,
     base_url_override: Option<url::Url>,
     token_store: S,
+    transport: Option<SharedTransport>,
 }
 
 impl<P, S> OidcFederationStrategyBuilder<P, S> {
+    /// Send this strategy's requests through `transport` instead of the
+    /// bundled `reqwest` client.
+    ///
+    /// Without the `http` feature there is no bundled client, so this is
+    /// required; with it, this is how a host with its own HTTP stack (or a
+    /// test with a stub) takes over the wire without changing anything else
+    /// about the strategy.
+    pub fn transport(mut self, transport: impl HttpTransport) -> Self {
+        self.transport = Some(transport::share(transport));
+        self
+    }
     /// Override the base URL resolved by service discovery.
     ///
     /// Takes precedence over both the `CS_CTS_HOST` environment variable and
@@ -149,6 +164,7 @@ impl<P, S> OidcFederationStrategyBuilder<P, S> {
             oidc_provider: self.oidc_provider,
             base_url_override: self.base_url_override,
             token_store: store,
+            transport: self.transport,
         }
     }
 }
@@ -174,6 +190,7 @@ impl<P: OidcProvider, S: TokenStore> OidcFederationStrategyBuilder<P, S> {
             self.oidc_provider,
             expected_workspace,
             ensure_trailing_slash(base_url),
+            transport::resolve(self.transport)?,
         );
         Ok(OidcFederationStrategy {
             inner: AutoRefresh::with_store(refresher, self.token_store),
@@ -182,7 +199,7 @@ impl<P: OidcProvider, S: TokenStore> OidcFederationStrategyBuilder<P, S> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "http"))]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use std::sync::Arc;

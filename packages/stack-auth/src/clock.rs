@@ -13,7 +13,6 @@
 
 // `Arc` only backs the shared handles (`SharedClock`, `TestClock`); the bare
 // `Clock`/`SystemClock` used by `Token` expiry need no sharing.
-#[cfg(feature = "http")]
 use std::sync::Arc;
 
 use web_time::{SystemTime, UNIX_EPOCH};
@@ -28,7 +27,6 @@ pub(crate) trait Clock: Send + Sync {
 ///
 /// Type-erased (rather than a generic parameter on `AutoRefresh`) so injecting a
 /// clock doesn't ripple a third generic through every strategy wrapper.
-#[cfg(feature = "http")]
 pub(crate) type SharedClock = Arc<dyn Clock>;
 
 /// The default [`Clock`]: the system wall clock.
@@ -50,7 +48,6 @@ impl Clock for SystemClock {
 ///
 /// Returns clones of one process-wide handle: `SystemClock` is a stateless ZST,
 /// so there's no reason to allocate a fresh `Arc` per `AutoRefresh`.
-#[cfg(feature = "http")]
 pub(crate) fn system_clock() -> SharedClock {
     static CLOCK: std::sync::LazyLock<SharedClock> =
         std::sync::LazyLock::new(|| Arc::new(SystemClock));
