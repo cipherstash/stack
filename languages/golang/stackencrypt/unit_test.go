@@ -323,7 +323,7 @@ func TestNewPlanRefusesMalformedFields(t *testing.T) {
 		"no context":     {{Field: "A"}},
 		"unknown kind":   {{Field: "A", Context: "c", Terms: []TermKind{TermKind(9)}}},
 		"duplicate name": {{Field: "A", Context: "c", Name: "x"}, {Field: "B", Context: "c", Name: "x"}},
-		"field twice":    {{Field: "A", Context: "c"}, {Field: "A", Context: "d"}},
+		"field twice":    {{Field: "A", Name: "x", Context: "c"}, {Field: "A", Name: "y", Context: "d"}},
 		"term twice":     {{Field: "A", Context: "c", Terms: []TermKind{Equality, Equality}}},
 	} {
 		if _, err := NewPlan(fields...); err == nil {

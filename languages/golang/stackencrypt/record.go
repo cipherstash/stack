@@ -97,9 +97,16 @@ func ExtendContext(parts ...any) RecordOption {
 }
 
 // WithPlan encrypts or decrypts records under an explicit plan instead of
-// the struct's `stash` tags. Records encrypted under a plan must be
-// decrypted under the same plan (field names, contexts and outputs), the
-// same way tags must not change between the two.
+// the struct's `stash` tags.
+//
+// What decryption needs from the encrypting plan is what names and keys
+// the ciphertext: each field's record Name, its Context (extended by the
+// same [ExtendContext] parts), and the set of fields that carry a
+// ciphertext. Field only selects which Go field the plaintext is written
+// to, so it may differ between the two sides: a record encrypted from a
+// generated struct may be decrypted into a domain struct under a plan
+// with the same Names and Contexts. Terms are one-way outputs, derived on
+// encryption and never sent to decrypt, so they need not match either.
 func WithPlan(p Plan) RecordOption {
 	return func(o *recordOptions) { o.plan = p }
 }
@@ -152,9 +159,10 @@ func (f planField) outputs() []string {
 }
 
 // NewPlan validates the fields and returns the plan. Every field needs a
-// Field and a Context; record names (Name, or Field) must be unique; Terms
-// must be kinds this package defines, each at most once per field. A plan
-// is built once and reused across calls, like the type it describes.
+// Field and a Context; Go field names must be unique, and so must record
+// names (Name, or Field); Terms must be kinds this package defines, each
+// at most once per field. A plan is built once and reused across calls,
+// like the type it describes.
 func NewPlan(fields ...FieldPlan) (Plan, error) {
 	p, err := newPlan(fields)
 	if err != nil {
@@ -170,11 +178,16 @@ func newPlan(fields []FieldPlan) (Plan, error) {
 		return Plan{}, errors.New("a plan needs at least one field")
 	}
 	d := &planData{fields: make([]planField, 0, len(fields))}
-	seen := make(map[string]bool, len(fields))
+	seenField := make(map[string]bool, len(fields))
+	seenName := make(map[string]bool, len(fields))
 	for _, f := range fields {
 		if f.Field == "" {
 			return Plan{}, errors.New("plan field without a Field name")
 		}
+		if seenField[f.Field] {
+			return Plan{}, fmt.Errorf("plan field %s: the Go field is planned twice", f.Field)
+		}
+		seenField[f.Field] = true
 		if f.Context == "" {
 			return Plan{}, fmt.Errorf("plan field %s: a planned field needs a context", f.Field)
 		}
@@ -191,10 +204,10 @@ func newPlan(fields []FieldPlan) (Plan, error) {
 			}
 			pf.terms = append(pf.terms, k)
 		}
-		if seen[pf.name] {
+		if seenName[pf.name] {
 			return Plan{}, fmt.Errorf("two plan fields share the record name %q", pf.name)
 		}
-		seen[pf.name] = true
+		seenName[pf.name] = true
 		d.fields = append(d.fields, pf)
 	}
 	return Plan{d: d}, nil
