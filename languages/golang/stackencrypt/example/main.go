@@ -57,10 +57,10 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("connecting to ZeroKMS: %w", err)
 	}
-	// Close wipes the client key and every loaded index key inside the
-	// wasm instance. It is the point of the method, so it runs even on the
-	// error paths below.
-	defer func() { _ = client.Close(context.Background()) }()
+	// Close runs the guest's own wipe of the client key and every loaded
+	// index key. The memory's protection does not wait on it (see the
+	// package docs); this is ordinary resource hygiene.
+	defer client.Close()
 
 	cipher := client.DefaultKeyset()
 	keysetID, err := cipher.KeysetID(ctx)
