@@ -85,9 +85,10 @@ func guestModuleConfig() wazero.ModuleConfig {
 }
 
 // newInstance instantiates wasm with the transport as its host module and
-// its linear memory from this package's allocator. With strict set, memory
-// that cannot be locked fails instantiation with ErrMemoryLock.
-func newInstance(ctx context.Context, wasm []byte, t *transport, strict bool) (*instance, error) {
+// its linear memory from this package's allocator. Under the strict
+// policy, memory that cannot be locked fails instantiation with
+// ErrMemoryLock.
+func newInstance(ctx context.Context, wasm []byte, t *transport, policy lockPolicy) (*instance, error) {
 	// WithCloseOnContextDone lets a caller's deadline or cancellation
 	// interrupt an in-flight guest call — which otherwise holds the Client's
 	// lock against every other user. An interrupted call closes the module,
@@ -113,18 +114,18 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, strict bool) (*
 	// The guest's linear memory comes from this package, not wazero's
 	// default slice: reserved once, locked and non-dumpable where the
 	// platform allows, wiped on release. See memory.go.
-	mem := newMemoryAllocator(strict)
+	mem := newMemoryAllocator(policy)
 	// The guest is a reactor (cdylib): no _start. wazero runs _initialize
 	// when present.
 	module, err := runtime.InstantiateWithConfig(experimental.WithMemoryAllocator(ctx, mem), wasm, guestModuleConfig())
 	if err != nil {
 		_ = runtime.Close(ctx)
-		if strict && mem.growthRefusals() != 0 {
+		if mem.growthRefusals() != 0 {
 			return nil, fmt.Errorf("%w: %w", memoryLockError(mem.lockError()), err)
 		}
 		return nil, fmt.Errorf("stackencrypt: instantiating guest: %w", err)
 	}
-	if strict {
+	if policy == strict {
 		if lerr := mem.lockError(); lerr != nil {
 			_ = runtime.Close(ctx)
 			return nil, memoryLockError(lerr)

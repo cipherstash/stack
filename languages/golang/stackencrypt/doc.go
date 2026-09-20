@@ -92,7 +92,17 @@
 // limit to raise (ulimit -l, a systemd LimitMEMLOCK=, a pod's
 // securityContext). [Config.RequireLockedMemory] turns a refusal into a
 // [NewClient] failure with [ErrMemoryLock], for deployments that would
-// rather not start than run unlocked. An embedder running the guest under
-// its own wazero configuration gets none of this unless it supplies an
-// allocator of its own.
+// rather not start than run unlocked; it also refuses any later growth of
+// the guest's memory that cannot be locked, so the limit granted must
+// leave the guest room to grow. A Client prints its memory state
+// ([Client.String]) and logs it ([Client.LogValue]). An embedder running
+// the guest under its own wazero configuration gets none of this unless
+// it supplies an allocator of its own.
+//
+// Between calls the guest holds the client key and its keyset cache (each
+// keyset's index key) and nothing else: data keys are per-call values in
+// the guest's Rust code, wiped by their ZeroizeOnDrop when the export
+// returns, and every buffer staged for a call is wiped by se_dealloc
+// before the call's result is returned. The residency tests pin the
+// second; the first is the Rust crate's own guarantee.
 package stackencrypt

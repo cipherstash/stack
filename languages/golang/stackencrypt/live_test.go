@@ -1,6 +1,7 @@
 package stackencrypt
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"reflect"
@@ -164,5 +165,26 @@ func TestLiveForeignKeysetIsRefusedBeforeRetrieval(t *testing.T) {
 	}
 	if pt, err := c.Decrypt(ctx, ct, nil); err != nil || pt != "tenant b" {
 		t.Fatalf("client decrypt of the other keyset: %v %v", pt, err)
+	}
+}
+
+// Per-call hygiene on a real round trip: once Encrypt has returned, the
+// plaintext it was given is nowhere in guest memory — the staged input was
+// wiped by se_dealloc — so between calls the guest holds only the client
+// key and its keyset cache.
+func TestPlaintextDoesNotRemainInGuestMemoryAfterEncrypt(t *testing.T) {
+	c := liveClient(t)
+	ctx := t.Context()
+	const plaintext = "residency-probe-4111-b1c2d3e4f5"
+	if _, err := c.DefaultKeyset().Encrypt(ctx, plaintext, nil); err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	mem := c.inst.module.Memory()
+	view, ok := mem.Read(0, mem.Size())
+	if !ok {
+		t.Fatal("cannot read guest memory")
+	}
+	if n := bytes.Count(view, []byte(plaintext)); n != 0 {
+		t.Fatalf("plaintext found %d times in guest memory after Encrypt returned", n)
 	}
 }

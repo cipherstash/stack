@@ -476,7 +476,7 @@ func TestConfigValidation(t *testing.T) {
 func rawInstance(t *testing.T) *Client {
 	t.Helper()
 	ctx := context.Background()
-	inst, err := newInstance(ctx, guestOrSkip(t), &transport{rt: http.DefaultTransport, token: StaticToken("t")}, false)
+	inst, err := newInstance(ctx, guestOrSkip(t), &transport{rt: http.DefaultTransport, token: StaticToken("t")}, bestEffort)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -660,7 +660,9 @@ func TestHostilePointerLengthPairsAreStatusesNotTraps(t *testing.T) {
 // linear memory after NewClient returns — success or failure.
 func TestClientKeyDoesNotRemainInGuestMemory(t *testing.T) {
 	guestOrSkip(t)
-	stub := newStub(t, http.StatusUnauthorized, "", "nope")
+	// A body long enough that a hit is not a coincidence of four bytes.
+	const errorBody = "refused-4111-9f8e7d6c5b4a-residency-probe"
+	stub := newStub(t, http.StatusUnauthorized, "", errorBody)
 	// Keep the instance to scan it: build the client by hand so a failed
 	// init does not tear it down first.
 	ctx := context.Background()
@@ -669,7 +671,7 @@ func TestClientKeyDoesNotRemainInGuestMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr := &transport{rt: http.DefaultTransport, token: StaticToken("stub-token")}
-	inst, err := newInstance(ctx, guestOrSkip(t), tr, false)
+	inst, err := newInstance(ctx, guestOrSkip(t), tr, bestEffort)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -683,10 +685,15 @@ func TestClientKeyDoesNotRemainInGuestMemory(t *testing.T) {
 	if !ok {
 		t.Fatal("cannot read guest memory")
 	}
+	// The response body is what ZeroKMS answered, placed in guest memory
+	// by the transport and wiped by the guest's registry when the call
+	// returns; the bearer token and the response headers travel the same
+	// way. Nothing a call staged may outlive it.
 	for name, needle := range map[string][]byte{
-		"key hex":   []byte(testClientKey),
-		"key bytes": mustHex(testClientKey),
-		"bearer":    []byte("stub-token"),
+		"key hex":       []byte(testClientKey),
+		"key bytes":     mustHex(testClientKey),
+		"bearer":        []byte("stub-token"),
+		"response body": []byte(errorBody),
 	} {
 		if n := bytes.Count(view, needle); n != 0 {
 			t.Errorf("%s found %d times in guest memory after init", name, n)
@@ -699,7 +706,7 @@ func TestTransportSendCounterAndResponseHeaders(t *testing.T) {
 	stub := newStub(t, http.StatusUnauthorized, "text/plain", "nope")
 	tr := &transport{rt: http.DefaultTransport, token: StaticToken("stub-token")}
 	ctx := context.Background()
-	inst, err := newInstance(ctx, guestOrSkip(t), tr, false)
+	inst, err := newInstance(ctx, guestOrSkip(t), tr, bestEffort)
 	if err != nil {
 		t.Fatal(err)
 	}

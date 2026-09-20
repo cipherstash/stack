@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -79,10 +80,10 @@ func probeMemory(t *testing.T, alloc *memoryAllocator) (base func() uintptr, gro
 // reservation, so the buffer's address is the same before and after, and
 // the guest's keys are never copied to a new slice.
 func TestGuestMemoryDoesNotMoveOnGrowth(t *testing.T) {
-	alloc := newMemoryAllocator(false)
+	alloc := newMemoryAllocator(bestEffort)
 	base, grow, done := probeMemory(t, alloc)
 	defer done()
-	if isHeapFallback(alloc) {
+	if alloc.isFallback() {
 		t.Skipf("heap fallback in use on this host: %v", alloc.lockError())
 	}
 	t.Logf("lock state on this host: %v", alloc.lockError())
@@ -97,10 +98,56 @@ func TestGuestMemoryDoesNotMoveOnGrowth(t *testing.T) {
 	}
 }
 
+// The same property on the real guest: a host-staged buffer larger than
+// the guest's initial memory makes it grow, and its memory stays where it
+// was. On Linux with the lock granted the guest's own mapping is then
+// checked in smaps, as the probe's is below.
+func TestGuestGrowsInPlace(t *testing.T) {
+	c := rawInstance(t)
+	ctx := context.Background()
+	mem := c.inst.module.Memory()
+	base := func() uintptr {
+		view, ok := mem.Read(0, 1)
+		if !ok {
+			t.Fatal("reading guest memory")
+		}
+		return uintptr(unsafe.Pointer(unsafe.SliceData(view)))
+	}
+	if c.inst.mem.isFallback() {
+		t.Skipf("heap fallback in use on this host: %v", c.inst.mem.lockError())
+	}
+	before, pagesBefore := base(), mem.Size()/wasmPage
+	staged, err := c.inst.allocWrite(ctx, make([]byte, 2<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.inst.free(ctx, staged)
+	if after := base(); after != before {
+		t.Fatalf("guest memory moved on growth: %#x -> %#x", before, after)
+	}
+	if pagesAfter := mem.Size() / wasmPage; pagesAfter <= pagesBefore {
+		t.Fatalf("guest memory did not grow: %d pages before, %d after", pagesBefore, pagesAfter)
+	}
+	if runtime.GOOS != "linux" {
+		return
+	}
+	lockOrSkip(t, c.inst.mem)
+	mapping, err := smapsEntry(base())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(" "+mapping.vmFlags+" ", " dd ") || !strings.Contains(" "+mapping.vmFlags+" ", " lo ") {
+		t.Errorf("guest mapping VmFlags = %q, want dd and lo", mapping.vmFlags)
+	}
+	if mapping.lockedKB == 0 || mapping.lockedKB != mapping.rssKB {
+		t.Errorf("guest mapping Locked = %d kB, Rss = %d kB", mapping.lockedKB, mapping.rssKB)
+	}
+}
+
 // Free wipes then unmaps: the allocator reports the release, and the
 // runtime close is what triggers it.
 func TestGuestMemoryIsFreedOnRuntimeClose(t *testing.T) {
-	alloc := newMemoryAllocator(false)
+	alloc := newMemoryAllocator(bestEffort)
 	_, grow, done := probeMemory(t, alloc)
 	if _, ok := grow(3); !ok {
 		t.Fatal("grow refused")
@@ -117,26 +164,32 @@ func TestGuestMemoryIsFreedOnRuntimeClose(t *testing.T) {
 // The heap fallback keeps the two properties it can: growth wipes the
 // slice it abandons, and Free wipes.
 func TestHeapMemoryWipesWhatItAbandons(t *testing.T) {
-	m := newHeapMemory(wasmPage, 4*wasmPage, errNoLockSupport)
-	first := m.Reallocate(wasmPage)
+	m := newHeapMemory(wasmPage, 4*wasmPage)
+	first, _ := m.commit(wasmPage)
 	first[0], first[wasmPage-1] = 0xAA, 0xBB
-	second := m.Reallocate(3 * wasmPage)
+	second, _ := m.commit(3 * wasmPage)
 	if second[0] != 0xAA || second[wasmPage-1] != 0xBB {
 		t.Fatal("growth lost the contents")
 	}
 	if first[0] != 0 || first[wasmPage-1] != 0 {
 		t.Fatal("growth left the abandoned slice unwiped")
 	}
-	if m.Reallocate(5*wasmPage) != nil {
+	if buf, _ := m.commit(5 * wasmPage); buf != nil {
 		t.Fatal("grew past max")
 	}
-	second[7] = 0xCC
-	m.Free()
-	if second[7] != 0 {
-		t.Fatal("Free left the slice unwiped")
+	// A size no slice on this host can hold is a refused growth, not a
+	// panic. Only a 32-bit host can ask without the request being a real
+	// allocation, so that is where it runs (CI's GOARCH=386 pass).
+	if uint64(math.MaxInt) < 1<<40 {
+		huge := newHeapMemory(0, 1<<40)
+		if buf, _ := huge.commit(1 << 40); buf != nil {
+			t.Fatal("a growth past the addressable size was granted")
+		}
 	}
-	if m.lockError() == nil {
-		t.Fatal("a heap memory claims to be locked")
+	second[7] = 0xCC
+	m.free()
+	if second[7] != 0 {
+		t.Fatal("free left the slice unwiped")
 	}
 }
 
@@ -152,7 +205,7 @@ func lockOrSkip(t *testing.T, alloc *memoryAllocator) {
 	if err == nil {
 		return
 	}
-	if isHeapFallback(alloc) {
+	if alloc.isFallback() {
 		// Not a refused lock: there was no reservation to lock (a 32-bit
 		// host), which CI exercises on purpose under GOARCH=386.
 		t.Skipf("heap fallback in use on this host: %v", err)
@@ -163,18 +216,13 @@ func lockOrSkip(t *testing.T, alloc *memoryAllocator) {
 	t.Skipf("lock refused on this host: %v", err)
 }
 
-func isHeapFallback(alloc *memoryAllocator) bool {
-	_, heap := alloc.mem.(*observed).guestMemory.(*heapMemory)
-	return heap
-}
-
 // The lock is observable from the kernel's side: the mapping backing the
 // probe shows as locked and, on Linux, non-dumpable, in /proc/self/smaps.
 func TestGuestMemoryIsLockedAndNotDumpable(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("smaps is Linux")
 	}
-	alloc := newMemoryAllocator(false)
+	alloc := newMemoryAllocator(bestEffort)
 	base, grow, done := probeMemory(t, alloc)
 	defer done()
 	// Grow past the initial commit so the flags are checked on a range
@@ -292,14 +340,14 @@ func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
 	// Can the lock be refused at all here? Root and CAP_IPC_LOCK ignore
 	// the limit. On a 32-bit host there is no reservation to lock, and the
 	// strict refusal is the reservation's, not the limit's.
-	probe := newMemoryAllocator(false)
+	probe := newMemoryAllocator(bestEffort)
 	_, _, done := probeMemory(t, probe)
 	done()
 	if probe.lockError() == nil {
 		fmt.Println("case skipped: mlock succeeds under RLIMIT_MEMLOCK=0")
 		return
 	}
-	limited := !isHeapFallback(probe)
+	limited := !probe.isFallback()
 	cfg := Config{
 		ClientID:            "6a70bd18-99ac-4650-b104-37eec3a15b09",
 		ClientKey:           "00",
@@ -314,12 +362,10 @@ func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
 	if limited && !strings.Contains(err.Error(), "RLIMIT_MEMLOCK") {
 		t.Fatalf("the error does not name the limit: %v", err)
 	}
-	// Best effort under the same refusal: the client exists and says so.
-	cfg.RequireLockedMemory = false
-	cfg.Guest = nil
+	// Best effort under the same refusal: the client exists, says so, and
+	// shows it wherever it is printed or logged.
 	if wasm, gerr := embeddedGuest(); gerr == nil {
-		cfg.Guest = wasm
-		inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: cfg.Token}, false)
+		inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: cfg.Token}, bestEffort)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -330,6 +376,12 @@ func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
 		}
 		if err := c.MemoryLockError(); !errors.Is(err, ErrMemoryLock) {
 			t.Fatalf("MemoryLockError = %v, want ErrMemoryLock", err)
+		}
+		if s := fmt.Sprint(c); !strings.Contains(s, "unlocked") || (limited && !strings.Contains(s, "RLIMIT_MEMLOCK")) {
+			t.Fatalf("Client prints as %q: no memory state", s)
+		}
+		if v := c.LogValue().String(); !strings.Contains(v, "memory_locked=false") {
+			t.Fatalf("Client logs as %q: no memory state", v)
 		}
 	}
 	fmt.Println("case ok")
@@ -370,7 +422,7 @@ var reentrantProbe = []byte{
 func TestMemoryOutlivesACallClosedDuringAHostImport(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	alloc := newMemoryAllocator(false)
+	alloc := newMemoryAllocator(bestEffort)
 	rt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().WithCloseOnContextDone(true))
 	defer rt.Close(context.Background())
 	var freedDuringImport, nestedFailed bool
@@ -412,7 +464,7 @@ func TestMemoryOutlivesACallClosedDuringAHostImport(t *testing.T) {
 // exit.
 func TestUnreachableClientIsReleased(t *testing.T) {
 	wasm := guestOrSkip(t)
-	inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: StaticToken("t")}, false)
+	inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: StaticToken("t")}, bestEffort)
 	if err != nil {
 		t.Fatal(err)
 	}

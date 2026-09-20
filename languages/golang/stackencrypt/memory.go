@@ -42,38 +42,67 @@ import (
 // operator can see it and raise the limit; Config.RequireLockedMemory
 // turns it into a NewClient failure.
 
-// guestMemory is one instance's linear memory, as this package supplies it
-// to wazero: the LinearMemory contract plus what the Client reports about
-// it. Reallocate is called by wazero under the Client's lock, and Free
-// from wherever wazero closes the module (see observed.Free); lockError is
-// read from any goroutine.
-type guestMemory interface {
-	experimental.LinearMemory
-	// lockError is nil while every committed byte is locked (and, on Linux,
-	// excluded from dumps); otherwise it names what was refused and why.
-	// It never clears: a lock refused once is reported for the life of
-	// the instance, even if a later growth locks.
-	lockError() error
+// lockPolicy is what a refused lock means for an instance.
+type lockPolicy uint8
+
+const (
+	// bestEffort records a refused lock and carries on with unlocked
+	// memory.
+	bestEffort lockPolicy = iota
+	// strict refuses growth that cannot be locked. The first commit is the
+	// exception: wazero cannot instantiate on a nil buffer, so it is
+	// granted with the refusal recorded, and newInstance turns that into
+	// the ErrMemoryLock the caller asked for.
+	strict
+)
+
+func policyFor(requireLockedMemory bool) lockPolicy {
+	if requireLockedMemory {
+		return strict
+	}
+	return bestEffort
+}
+
+// backend is one platform's linear memory behind a memoryAllocator: a
+// reservation committed from the front. It is used from the guest's
+// goroutine only; the allocator does the bookkeeping other goroutines
+// read.
+type backend interface {
+	// commit grows the memory to size bytes and returns the buffer wazero
+	// will use, whose base never changes. A nil buffer means the growth
+	// failed. lockErr, when set, is a refused lock on the newly committed
+	// range: with a buffer, the range was kept unlocked (best effort);
+	// without one, the growth was refused because of it (strict).
+	commit(size uint64) (buf []byte, lockErr error)
+	// free wipes the committed range and releases the reservation.
+	free()
 }
 
 // memoryAllocator is the experimental.MemoryAllocator handed to wazero for
-// one guest instance. wazero calls Allocate once per memory, and the guest
-// has exactly one, so this is where the Client finds the memory it was
-// given.
+// one guest instance, and the experimental.LinearMemory it returns: wazero
+// calls Allocate once per memory, and the guest has exactly one. It
+// records what the Client reports about the memory, and holds the memory
+// mapped while a guest call is in flight (see enter, exit and Free).
 type memoryAllocator struct {
-	// strict refuses growth it cannot lock (see Reallocate in each
-	// backend) instead of recording the refusal and carrying on.
-	strict bool
+	policy lockPolicy
 
 	mu  sync.Mutex
-	mem guestMemory
+	mem backend
+	// fallback is set when the memory is a heap slice rather than a
+	// reservation: no lock is possible, growth may copy (and wipes what
+	// it abandons).
+	fallback bool
+	// err is the first refusal of any kind — the reservation, the dump
+	// exclusion, a lock — and never clears: a lock refused once is
+	// reported for the life of the instance.
+	err error
 	// refusals counts strict growths refused. Client.call compares it
 	// across a call to name the real cause when the guest reports only a
 	// failed allocation.
 	refusals uint64
-	// inFlight counts guest calls in progress on this memory (see enter and
-	// exit); pending records a Free that arrived while one was, to be
-	// honoured when the outermost call returns.
+	// inFlight counts guest calls in progress (see enter and exit);
+	// pending records a Free that arrived while one was, to be honoured
+	// when the outermost call returns.
 	inFlight int
 	pending  bool
 	// freed is set once the memory is gone, its contents wiped first.
@@ -82,8 +111,8 @@ type memoryAllocator struct {
 	freed bool
 }
 
-func newMemoryAllocator(strict bool) *memoryAllocator {
-	return &memoryAllocator{strict: strict}
+func newMemoryAllocator(policy lockPolicy) *memoryAllocator {
+	return &memoryAllocator{policy: policy}
 }
 
 // Allocate implements experimental.MemoryAllocator.
@@ -96,32 +125,48 @@ func (a *memoryAllocator) Allocate(capacity, max uint64) experimental.LinearMemo
 		// rather than letting two memories share one report.
 		panic("stackencrypt: guest memory allocated twice")
 	}
-	a.mem = &observed{guestMemory: reserveMemory(capacity, max, a.strict), owner: a}
-	return a.mem
+	mem, err := reserveMemory(capacity, max, a.policy)
+	a.mem = mem
+	a.err = err
+	_, a.fallback = mem.(*heapMemory)
+	return a
 }
 
-// lockError reports the memory's lock state, or nil before the memory
-// exists.
-func (a *memoryAllocator) lockError() error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.mem == nil {
-		return nil
+// Reallocate implements experimental.LinearMemory.
+func (a *memoryAllocator) Reallocate(size uint64) []byte {
+	buf, lockErr := a.mem.commit(size)
+	if lockErr != nil {
+		a.mu.Lock()
+		if a.err == nil {
+			a.err = lockErr
+		}
+		if buf == nil {
+			a.refusals++
+		}
+		a.mu.Unlock()
 	}
-	return a.mem.lockError()
+	return buf
 }
 
-// growthRefusals counts the strict growths refused so far.
-func (a *memoryAllocator) growthRefusals() uint64 {
+// Free implements experimental.LinearMemory. wazero calls it when the
+// module's resources are closed, and that can happen while the guest is
+// still running: a call whose context ends during a host import closes
+// the module on wazero's watcher goroutine with its resources deferred,
+// and the next call into the module — the host import re-entering the
+// guest through se_alloc to place its result — closes them. With wazero's
+// default allocator that was harmless, the Go slice outlived the module;
+// here it would unmap the memory under a guest suspended in the import,
+// whose next store then faults in compiled code. So a Free that arrives
+// during a call is recorded and performed by the outermost exit, when no
+// guest code can be running. A Free with no call in flight is immediate.
+func (a *memoryAllocator) Free() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.refusals
-}
-
-func (a *memoryAllocator) isFreed() bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.freed
+	if a.inFlight > 0 {
+		a.pending = true
+		return
+	}
+	a.freeLocked()
 }
 
 // enter marks a guest call in progress: the memory must stay mapped until
@@ -143,108 +188,89 @@ func (a *memoryAllocator) exit() {
 	}
 }
 
-// freeLocked wipes and releases the memory. Called with mu held, once.
+// freeLocked wipes and releases the memory, once. Called with mu held.
 func (a *memoryAllocator) freeLocked() {
 	if a.freed {
 		return
 	}
 	a.freed = true
-	a.mem.(*observed).guestMemory.Free()
+	a.mem.free()
 }
 
-// observed wraps the backend memory so the allocator sees the events the
-// Client needs to report: a refused strict growth, and the release.
-type observed struct {
-	guestMemory
-	owner *memoryAllocator
+// lockError is nil while every committed byte is locked (and, on Linux,
+// excluded from dumps); otherwise it names what was refused and why.
+func (a *memoryAllocator) lockError() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.err
 }
 
-func (o *observed) Reallocate(size uint64) []byte {
-	buf := o.guestMemory.Reallocate(size)
-	if buf == nil && o.owner.strict {
-		// In strict mode a nil is a lock refusal (a backend refuses no
-		// other growth below the maximum); in best-effort mode it is
-		// the maximum, which is the guest's own failure to report.
-		o.owner.mu.Lock()
-		o.owner.refusals++
-		o.owner.mu.Unlock()
-	}
-	return buf
+// growthRefusals counts the strict growths refused so far.
+func (a *memoryAllocator) growthRefusals() uint64 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.refusals
 }
 
-// Free implements experimental.LinearMemory. wazero calls it when the
-// module's resources are closed, and that can happen while the guest is
-// still running: a call whose context ends during a host import closes
-// the module on wazero's watcher goroutine with its resources deferred,
-// and the next call into the module — the host import re-entering the
-// guest through se_alloc to place its result — closes them. With wazero's
-// default allocator that was harmless, the Go slice outlived the module;
-// here it would unmap the memory under a guest suspended in the import,
-// whose next store then faults in compiled code. So a Free that arrives
-// during a call is recorded and performed by the outermost exit, when no
-// guest code can be running. A Free with no call in flight is immediate.
-func (o *observed) Free() {
-	o.owner.mu.Lock()
-	defer o.owner.mu.Unlock()
-	if o.owner.inFlight > 0 {
-		o.owner.pending = true
-		return
-	}
-	o.owner.freeLocked()
+func (a *memoryAllocator) isFallback() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.fallback
+}
+
+func (a *memoryAllocator) isFreed() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.freed
 }
 
 // heapMemory backs the guest with an ordinary Go slice, for platforms with
 // no reservation primitive this package uses and for a reservation that
 // failed (a 4 GiB address-space reservation on a 32-bit host, say). It
 // keeps two of the four properties above: growth wipes the slice it
-// abandons, and Free wipes before releasing. It cannot lock or exclude
-// from dumps, and says so.
+// abandons, and free wipes before releasing. It cannot lock or exclude
+// from dumps; the allocator carries the reason.
 type heapMemory struct {
-	buf    []byte
-	max    uint64
-	reason error
+	buf []byte
+	max uint64
 }
 
-// newHeapMemory returns a heap-backed memory whose lockError is reason,
-// which must not be nil: a heap memory is never locked.
-func newHeapMemory(capacity, max uint64, reason error) *heapMemory {
+func newHeapMemory(capacity, max uint64) *heapMemory {
 	if capacity > max {
 		capacity = max
 	}
 	if capacity > math.MaxInt {
 		capacity = 0
 	}
-	return &heapMemory{buf: make([]byte, 0, int(capacity)), max: max, reason: reason}
+	return &heapMemory{buf: make([]byte, 0, int(capacity)), max: max}
 }
 
-func (m *heapMemory) Reallocate(size uint64) []byte {
-	if size > m.max {
-		return nil
+func (m *heapMemory) commit(size uint64) ([]byte, error) {
+	if size > m.max || size > math.MaxInt {
+		return nil, nil
 	}
 	if size <= uint64(cap(m.buf)) {
 		m.buf = m.buf[:size]
-		return m.buf
+		return m.buf, nil
 	}
 	grown := make([]byte, size)
 	copy(grown, m.buf)
 	// The abandoned slice held everything the guest had, keys included.
 	clear(m.buf[:cap(m.buf)])
 	m.buf = grown
-	return m.buf
+	return m.buf, nil
 }
 
-func (m *heapMemory) Free() {
+func (m *heapMemory) free() {
 	clear(m.buf[:cap(m.buf)])
 	m.buf = nil
 }
-
-func (m *heapMemory) lockError() error { return m.reason }
 
 // errNoLockSupport is the heap fallback's reason on platforms where this
 // package has no lock implementation.
 var errNoLockSupport = errors.New("guest memory cannot be locked on this platform")
 
-// memoryLockError wraps a backend's lock refusal as ErrMemoryLock.
+// memoryLockError wraps a lock refusal as ErrMemoryLock.
 func memoryLockError(err error) error {
 	return fmt.Errorf("%w: %w", ErrMemoryLock, err)
 }
@@ -252,8 +278,8 @@ func memoryLockError(err error) error {
 func byteCount(n uint64) string {
 	const kib, mib, gib = 1 << 10, 1 << 20, 1 << 30
 	switch {
-	case n >= gib && n%gib == 0:
-		return fmt.Sprintf("%d GiB", n/gib)
+	case n >= gib:
+		return fmt.Sprintf("%.1f GiB", float64(n)/gib)
 	case n >= mib:
 		return fmt.Sprintf("%.1f MiB", float64(n)/mib)
 	case n >= kib:

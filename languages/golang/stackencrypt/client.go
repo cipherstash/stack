@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"runtime"
 	"strconv"
@@ -39,8 +40,12 @@ type Config struct {
 	// RequireLockedMemory makes NewClient fail with ErrMemoryLock when the
 	// guest's memory cannot be locked in RAM, instead of continuing with
 	// memory that may be swapped and reporting so through
-	// Client.MemoryLocked. Set it where swap is a real exposure and the
-	// deployment can be relied on to grant the lock; see [Client.MemoryLocked].
+	// Client.MemoryLocked. It holds for the life of the client: a later
+	// growth of the guest's memory that cannot be locked is refused too,
+	// and the call that needed it fails with ErrMemoryLock. Set it where
+	// swap is a real exposure and the deployment grants a lock limit with
+	// room for the guest to grow (RLIMIT_MEMLOCK on Linux); see
+	// [Client.MemoryLocked].
 	RequireLockedMemory bool
 }
 
@@ -102,7 +107,7 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 	defer wipe(encoded)
 
 	t := &transport{rt: rt, token: cfg.Token}
-	inst, err := newInstance(ctx, wasm, t, cfg.RequireLockedMemory)
+	inst, err := newInstance(ctx, wasm, t, policyFor(cfg.RequireLockedMemory))
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +154,26 @@ func (c *Client) MemoryLockError() error {
 		return memoryLockError(err)
 	}
 	return nil
+}
+
+// String implements fmt.Stringer so that a Client printed with %v or %s
+// shows its memory state: "locked", or the refusal. Nothing secret is
+// printed. The state is what an operator reading a startup log needs to
+// see, and [Client.LogValue] gives it structured form.
+func (c *Client) String() string {
+	if err := c.inst.mem.lockError(); err != nil {
+		return fmt.Sprintf("stackencrypt.Client{memory: unlocked: %v}", err)
+	}
+	return "stackencrypt.Client{memory: locked}"
+}
+
+// LogValue implements slog.LogValuer: a group with memory_locked and, when
+// false, memory_lock_error.
+func (c *Client) LogValue() slog.Value {
+	if err := c.inst.mem.lockError(); err != nil {
+		return slog.GroupValue(slog.Bool("memory_locked", false), slog.String("memory_lock_error", err.Error()))
+	}
+	return slog.GroupValue(slog.Bool("memory_locked", true))
 }
 
 // encodeConfig renders the se_cipher_init object. The result holds the
