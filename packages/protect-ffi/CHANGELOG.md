@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.33.0
+
+### Minor Changes
+
+- 8839d5a: Carry `stack-auth` diagnostics across the JavaScript boundary. Errors that
+  originate in `stack-auth` now expose `authCode`, `help`, and `url` on both the
+  native and WASM bindings, alongside protect-ffi's existing `code` field.
+
+  The boundary remains deliberately thin: `Error::Auth` and `Error::ZeroKMS` are
+  transparent miette diagnostics, so stack-auth continues to own the message,
+  instructions, and destination URL. Protect-ffi only serializes those fields and
+  reads the stable auth code from the typed `AuthError`; it does not classify the
+  message or maintain its own remedy taxonomy.
+
+  `getAuthErrorCode(err)` reads the new field and `ProtectAuthErrorCode` types it.
+  The auth taxonomy is separate from protect-ffi's closed `ProtectErrorCode` set.
+
+### Patch Changes
+
+- 8839d5a: Move the CipherStash client crates to `0.42.3` — `cipherstash-client`,
+  `cts-common`, `stack-auth` and `stack-profile`, which release in lockstep.
+
+  This is the release that raises the usage-denial taxonomy. `stack-auth` gained
+  typed `UsageLimitExceeded` / `OrgNotProvisioned` errors with a `help` and a
+  `url` on each, a shared classifier for a `402` from any credential-issuance
+  path, and a 60-second sticky cache so a refused organisation stops re-issuing
+  the same doomed request at its own request rate. Together they are what makes
+  `authCode` on a failure report a billing refusal as one, rather than as a
+  generic server error a retry loop will hammer.
+
+  It also carries a ZeroKMS change requiring `org_id` on every token. The client
+  side decodes claims without requiring it, so this is transparent here.
+
+- 4422d5c: Compile `eql-bindings` from this repository rather than from crates.io.
+
+  The native binding pinned `eql-bindings = "=3.0.2"` from the registry. It now
+  resolves by path from `packages/eql/crates/eql-bindings`, which ships at 3.0.5
+  alongside the `@cipherstash/eql` SQL bundle.
+
+  **No behaviour change.** `eql-bindings` is the Rust half of EQL — it EMITS the
+  encrypted payloads that the SQL half STORES and queries — and its Rust source is
+  byte-identical across 3.0.2, 3.0.4 and 3.0.5 (`src/`, `bindings/` and `schema/`
+  compared directly). What 3.0.3 through 3.0.5 changed was SQL, carried on the
+  shared lockstep version number. So the payloads this binding produces are the
+  same bytes before and after; what moves is the version stamped on the crate
+  compiled into `index.node`, from 3.0.2 to 3.0.5.
+
+  **Why it is worth a release anyway.** A registry pin let the two halves of EQL
+  drift apart silently. Nothing asserted they agreed: a mismatched pair compiles,
+  passes every suite, and fails in a database — because the failure is a payload
+  the installed SQL cannot read, which no unit test holds both sides of. Resolving
+  from the tree makes the skew unrepresentable: the emitter and the SQL are now
+  the same commit, and `pnpm run lint:eql-pins` fails any change that reintroduces
+  a registry pin on either.
+
+  The flip was taken while it was a no-op deliberately. Waiting for the first
+  release where the two halves genuinely diverge would have turned a provenance
+  change into a behaviour change that had to be argued under credentialed test.
+
+  Verified without credentials: `cargo build -p protect-ffi` clean, the crate test
+  suite green (310 passed) with `cargo fmt --check` clean, and a
+  `wasm32-unknown-unknown` build clean — the last of those being the target where a
+  cross-workspace path dependency would break first, since the EQL workspace never
+  otherwise builds for wasm32.
+
+- Bump `cipherstash-client`, `cts-common`, `stack-auth`, and `stack-profile` to 0.42.2, which moves the transitive `jsonwebtoken` dependency from 9.3.1 to 10.4.0, resolving [CVE-2026-25537](https://github.com/advisories/GHSA-h395-gr6q-cpjc) (a JWT claim-validation type-confusion bug that could allow bypassing `nbf`/`exp` checks). No API changes.
+
 ## 0.32.0
 
 ### Minor Changes
@@ -122,7 +189,7 @@ clientKey: expected a hex-encoded key`. Re-encode as hex, or read the key
 
 - **A key an options object doesn't declare is now an error, not a silent
   drop.** Every options struct rejects unrecognised fields, naming the
-  offender — `` unknown field `clientId`  `` — instead of discarding them on the
+  offender — ``unknown field `clientId` `` — instead of discarding them on the
   way in. A misspelling, a stale key, or a value in the wrong place fails
   loudly. ([#144])
 
@@ -156,8 +223,8 @@ clientKey: expected a hex-encoded key`. Re-encode as hex, or read the key
     `Object.defineProperty({enumerable: false})` is dropped. Neon has always
     been `JSON.stringify`, which is own-enumerable too.
   - **A misspelled _required_ field now reports it as missing, not unknown.**
-    `encrypt(client, {plaintext, column, tabel: 'users'})` says `` missing
-field `table`  `` and never names `tabel`; it used to say both. Serde's
+    `encrypt(client, {plaintext, column, tabel: 'users'})` says ``missing
+field `table` `` and never names `tabel`; it used to say both. Serde's
     flatten path buffers the map and reports at its closing brace, which also
     drops the `expected one of ...` list from every rejection. Neon-only —
     the wasm path had no error to lose.
