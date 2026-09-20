@@ -339,9 +339,16 @@ impl ProfileStore {
                 "target path has no file name",
             ))
         })?;
+        // The process id keeps two processes' staging files apart; the UUID
+        // keeps two threads' apart. On wasm32-wasip1 `std::process::id()`
+        // aborts the module ("unsupported"), and a wasm instance is the only
+        // process there is, so the UUID alone carries the uniqueness.
+        #[cfg(not(target_arch = "wasm32"))]
+        let pid = std::process::id();
+        #[cfg(target_arch = "wasm32")]
+        let pid = 0u32;
         let tmp_path = parent.join(format!(
-            ".{file_name}.tmp.{}.{}",
-            std::process::id(),
+            ".{file_name}.tmp.{pid}.{}",
             uuid::Uuid::new_v4().simple()
         ));
 
@@ -487,9 +494,8 @@ impl ProfileStore {
     /// causes silent state corruption (in the auth case: refresh-token
     /// rotation replay).
     pub fn lock_exclusive(&self, filename: &str) -> Result<FileLockGuard, ProfileError> {
-        Self::validate_filename(filename)?;
+        let lock_path = self.lock_path(filename)?;
         std::fs::create_dir_all(&self.dir)?;
-        let lock_path = self.dir.join(format!(".{filename}.lock"));
         let file = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -497,6 +503,19 @@ impl ProfileStore {
             .open(&lock_path)?;
         file.lock()?;
         Ok(FileLockGuard { file })
+    }
+
+    /// The path of the lock file [`lock_exclusive`](Self::lock_exclusive)
+    /// takes for `filename`: a sibling `.<filename>.lock` in this store's
+    /// directory. Nothing is created or locked.
+    ///
+    /// This is for a host that must hold the lock on the crate's behalf.
+    /// WASI preview 1 has no file locking, so the Go binding's credential
+    /// guest cannot take it; the Go side takes the same lock on the path
+    /// this names, and never composes a profile path itself.
+    pub fn lock_path(&self, filename: &str) -> Result<PathBuf, ProfileError> {
+        Self::validate_filename(filename)?;
+        Ok(self.dir.join(format!(".{filename}.lock")))
     }
 
     /// Save a [`ProfileData`] value using its declared filename and mode.
@@ -542,6 +561,40 @@ mod tests {
     struct TestData {
         name: String,
         value: u32,
+    }
+
+    mod lock_path {
+        use super::*;
+
+        #[test]
+        fn names_the_file_lock_exclusive_takes() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = ProfileStore::new(dir.path());
+
+            let path = store.lock_path("auth.json").unwrap();
+            assert_eq!(path, dir.path().join(".auth.json.lock"));
+            assert!(!path.exists(), "naming the lock file must not create it");
+
+            let _guard = store.lock_exclusive("auth.json").unwrap();
+            assert!(
+                path.exists(),
+                "lock_exclusive locks the file lock_path names"
+            );
+        }
+
+        #[test]
+        fn rejects_an_invalid_filename() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = ProfileStore::new(dir.path());
+
+            for bad in ["", "../auth.json", "/etc/auth.json"] {
+                let err = store.lock_path(bad).unwrap_err();
+                assert!(
+                    matches!(err, ProfileError::InvalidFilename(_)),
+                    "{bad:?}: {err}"
+                );
+            }
+        }
     }
 
     #[test]
