@@ -94,7 +94,7 @@
     "@biomejs/biome": "^2.5.9",
     "@neon-rs/cli": "^0.2.6",
     "@tsconfig/node22": "^22.0.6",
-    "@types/node": "^22.20.1",
+    "@types/node": "^22.20.2",
     "typescript": "catalog:repo",
     "vitest": "catalog:repo"
   },
