@@ -3,7 +3,7 @@
 //! Index terms are stored alongside a
 //! [`StackCipherText`](crate::StackCipherText) so encrypted values can be
 //! queried without decryption. Each term type implements
-//! [`EncryptFrom`], so the usual entry point is
+//! [`EncryptFrom`](crate::EncryptFrom), so the usual entry point is
 //! target-directed:
 //!
 //! ```text
@@ -22,9 +22,9 @@
 //!
 //! Every term type here is built on exactly one thing the cipher exposes
 //! publicly — its PRF ([`KeysetCipher::prf`], keyed by the index key of the
-//! keyset the handle is bound to) — with no privileged access, so they
-//! double as worked examples for defining your own term types in another
-//! crate (see [`target`](crate::target#extending-with-your-own-sem-type)).
+//! keyset the handle is bound to). These core implementations own term
+//! generation; downstream storage types can wrap the supported operations or
+//! consume their native output with a visitor (see [`target`](crate::target)).
 //! Terms bind to a keyset the way sealed values do: a term derived through
 //! one tenant's [`KeysetCipher`] compares only against terms derived through
 //! the same keyset.
@@ -52,7 +52,7 @@
 //! [`HmacSha256Prf`] — keyed by the
 //! deterministic per-keyset [`IndexKey`](stack_kms::IndexKey) from
 //! [`stack_kms::IndexKeySource`], loaded when the keyset is selected — so
-//! every derivation completes with no I/O and an [`EncryptFrom`] term
+//! every derivation completes with no I/O and an [`EncryptFrom`](crate::EncryptFrom) term
 //! carries **no requests** in its [`Pending`]. That is the backend's
 //! property, not the API's: the term is a `Pending` either way. The next
 //! ZeroKMS release adds 2-party PRF generation; under
@@ -146,8 +146,9 @@ use zeroize::Zeroize;
 
 use stack_kms::MaybeSend;
 
-use crate::target::{DecryptField, Decryptable, EncryptFrom, Pending};
-use crate::{Error, KeysetCipher, StackCipher};
+use crate::target::core::Term;
+use crate::target::{DecryptField, Decryptable, Decryption};
+use crate::{Error, KeysetCipher, Pending};
 
 // The `/v1` suffix versions the *derivation* (domain + input framing), not the
 // crate. Any change to the bytes a term derives from must bump it: a changed
@@ -338,17 +339,16 @@ where
 /// An equality term of any [`PrfValue`] source. Under the local HMAC
 /// backend, derived during the synchronous build — the returned [`Pending`]
 /// carries no requests.
-impl<'c, 'k, S, K, T> EncryptFrom<S, KeysetCipher<'k, K>, NonEmpty<T>> for EqualityTerm
+impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for EqualityTerm
 where
     S: PrfValue + Clone,
     T: IntoPrfContext<'c>,
 {
     // Derived locally: no data key, no descriptor.
-    const KEYED: bool = false;
 
     fn encrypt_from<'a>(
-        source: &'a S,
-        cipher: &'a KeysetCipher<'k, K>,
+        source: &S,
+        cipher: &'a KeysetCipher<'_, K>,
         context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
     where
@@ -651,18 +651,17 @@ fn match_term<O>(
 /// the local HMAC backend, derived during the synchronous build — the
 /// returned [`Pending`] carries no requests (tokenize makes the one
 /// necessary copy of the text).
-impl<'c, 'k, S, K, O, T> EncryptFrom<S, KeysetCipher<'k, K>, NonEmpty<T>> for MatchTerm<O>
+impl<'c, S, K, O, T> Term<S, K, NonEmpty<T>> for MatchTerm<O>
 where
     S: AsRef<str>,
     O: MatchConfig,
     T: IntoPrfContext<'c>,
 {
     // Derived locally: no data key, no descriptor.
-    const KEYED: bool = false;
 
     fn encrypt_from<'a>(
-        source: &'a S,
-        cipher: &'a KeysetCipher<'k, K>,
+        source: &S,
+        cipher: &'a KeysetCipher<'_, K>,
         context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
     where
@@ -700,21 +699,8 @@ macro_rules! index_term {
         impl<$($param: $bound)?> Decryptable for $ty {
             const DECRYPTABLE: bool = false;
         }
-
-        // Over `StackCipher` only: the `KeysetCipher` form is the blanket
-        // in `target`, as for every `DecryptField`.
-        impl<__P, __K, __Ctx $(, $param: $bound)?> DecryptField<__P, StackCipher<__K>, __Ctx>
-            for $ty
-        {
-            fn decrypt_field<'a>(
-                self,
-                _cipher: &'a StackCipher<__K>,
-                _context: __Ctx,
-            ) -> Option<Pending<'a, __P, __K>>
-            where
-                Self: 'a,
-                __P: 'a,
-            {
+        impl<P, Ctx $(, $param: $bound)?> DecryptField<P, Ctx> for $ty {
+            fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
                 None
             }
         }
@@ -954,18 +940,17 @@ where
 /// An ORE term of any [`CllwOreEncrypt`] source. Under the local HMAC
 /// backend, derived during the synchronous build — the returned [`Pending`]
 /// carries no requests.
-impl<'c, 'k, S, K, T> EncryptFrom<S, KeysetCipher<'k, K>, NonEmpty<T>> for OreTerm<S>
+impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for OreTerm<S>
 where
     S: CllwOreEncrypt + Clone + Send + 'static,
     S::Output: Send + 'static,
     T: IntoPrfContext<'c>,
 {
     // Derived locally: no data key, no descriptor.
-    const KEYED: bool = false;
 
     fn encrypt_from<'a>(
-        source: &'a S,
-        cipher: &'a KeysetCipher<'k, K>,
+        source: &S,
+        cipher: &'a KeysetCipher<'_, K>,
         context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
     where
@@ -980,18 +965,17 @@ where
 /// An OPE term of any [`CllwOpeEncrypt`] source. Under the local HMAC
 /// backend, derived during the synchronous build — the returned [`Pending`]
 /// carries no requests.
-impl<'c, 'k, S, K, T> EncryptFrom<S, KeysetCipher<'k, K>, NonEmpty<T>> for OpeTerm<S>
+impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for OpeTerm<S>
 where
     S: CllwOpeEncrypt + Clone + Send + 'static,
     S::Output: Send + 'static,
     T: IntoPrfContext<'c>,
 {
     // Derived locally: no data key, no descriptor.
-    const KEYED: bool = false;
 
     fn encrypt_from<'a>(
-        source: &'a S,
-        cipher: &'a KeysetCipher<'k, K>,
+        source: &S,
+        cipher: &'a KeysetCipher<'_, K>,
         context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
     where

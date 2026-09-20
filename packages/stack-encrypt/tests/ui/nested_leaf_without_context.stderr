@@ -1,24 +1,39 @@
-error[E0277]: `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` is not an encrypted form of `_` under a `()` context
-  --> tests/ui/nested_leaf_without_context.rs:15:12
+error[E0277]: the trait bound `AeadContext: From<DeclaredContext>` is not satisfied
+  --> tests/ui/nested_leaf_without_context.rs:11:10
    |
+11 | #[derive(EncryptFrom, DecryptInto)]
+   |          ^^^^^^^^^^^ the trait `From<DeclaredContext>` is not implemented for `AeadContext`
+...
 15 |     email: StackCipherText,
-   |            ^^^^^^^^^^^^^^^ not `EncryptFrom<_, _, ()>`
+   |            --------------- required by a bound introduced by this call
    |
-   = note: a leaf — a ciphertext or an index term — exists only under a `NonEmpty<_>` context: `encrypt_into` passes `()`, so use `encrypt_into_with_context(&cipher, context)`, or give the field a `context = ".."` of its own
-   = note: a context is anything vitaminc encodes (`&str`, `String`, bytes, integers, `Option`s and pairs of those), proven non-empty: `nonempty!("users/email")` for a literal, `NonEmpty::new(value)?` for a runtime value, a bare integer for an id
-   = help: the trait `EncryptFrom<_, KeysetCipher<'__k, __K>, ()>` is not implemented for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>`
-           but trait `EncryptFrom<_, KeysetCipher<'_, __K>, NonEmpty<_>>` is implemented for it
-   = help: for that trait implementation, expected `NonEmpty<_>`, found `()`
+   = help: the following other types implement trait `From<T>`:
+             `AeadContext` implements `From<CallerContext>`
+             `AeadContext` implements `From<NonEmpty<T>>`
+             `AeadContext` implements `From<i128>`
+             `AeadContext` implements `From<i16>`
+             `AeadContext` implements `From<i32>`
+             `AeadContext` implements `From<i64>`
+             `AeadContext` implements `From<i8>`
+             `AeadContext` implements `From<u128>`
+           and $N others
+   = note: required for `DeclaredContext` to implement `Into<AeadContext>`
 
-error[E0277]: `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` cannot be a field of an automatically decrypted record
+error[E0277]: the trait bound `AeadContext: From<DeclaredContext>` is not satisfied
   --> tests/ui/nested_leaf_without_context.rs:15:12
    |
 15 |     email: StackCipherText,
-   |            ^^^^^^^^^^^^^^^ no `DecryptField<_, ..>` implementation
+   |            ^^^^^^^^^^^^^^^ the trait `From<DeclaredContext>` is not implemented for `AeadContext`
    |
-   = note: a term-only bundle — `#[derive(EncryptFrom)]` alone, nothing to open — has no `DecryptField`: mark the outer record's real ciphertext `#[stash(decrypt)]` so only the marked fields are considered
-   = note: a hand-written term type implements `DecryptField` (returning `None`) alongside `Decryptable`; a hand-written ciphertext type wraps its `DecryptInto`
-   = help: the trait `DecryptInto<_, StackCipher<__K>, ()>` is not implemented for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>`
-           but trait `DecryptInto<_, StackCipher<__K>, NonEmpty<_>>` is implemented for it
-   = help: for that trait implementation, expected `NonEmpty<_>`, found `()`
-   = note: required for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` to implement `DecryptField<_, StackCipher<__K>, ()>`
+   = help: the following other types implement trait `From<T>`:
+             `AeadContext` implements `From<CallerContext>`
+             `AeadContext` implements `From<NonEmpty<T>>`
+             `AeadContext` implements `From<i128>`
+             `AeadContext` implements `From<i16>`
+             `AeadContext` implements `From<i32>`
+             `AeadContext` implements `From<i64>`
+             `AeadContext` implements `From<i8>`
+             `AeadContext` implements `From<u128>`
+           and $N others
+   = note: required for `DeclaredContext` to implement `Into<AeadContext>`
+   = note: required for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` to implement `DecryptField<_, DeclaredContext>`

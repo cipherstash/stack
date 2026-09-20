@@ -1,0 +1,9 @@
+error[E0308]: mismatched types
+  --> tests/ui/wrong_target_context.rs:12:64
+   |
+12 |     let _ = keyset.encrypt_as::<_,Target>(&"value".to_owned(), nonempty!("wrong type"));
+   |                                                                ^^^^^^^^^^^^^^^^^^^^^^^ expected `NonEmpty<u32>`, found `NonEmpty<&str>`
+   |
+   = note: expected struct `NonEmpty<u32>`
+              found struct `NonEmpty<&'static str>`
+   = note: this error originates in the macro `nonempty` (in Nightly builds, run with -Z macro-backtrace for more info)

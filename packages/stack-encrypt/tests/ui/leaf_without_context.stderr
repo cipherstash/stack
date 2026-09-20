@@ -1,138 +1,91 @@
-error[E0277]: `EqualityTerm` is not an encrypted form of `&str` under a `()` context
+error[E0277]: the trait bound `CallerContext: Default` is not satisfied
   --> tests/ui/leaf_without_context.rs:17:39
    |
 17 |     let _term: EqualityTerm = "alice".encrypt_into(cipher).await.unwrap();
-   |                                       ^^^^^^^^^^^^ not `EncryptFrom<&str, _, ()>`
+   |                                       ^^^^^^^^^^^^ the trait `Default` is not implemented for `CallerContext`
    |
-   = note: a leaf — a ciphertext or an index term — exists only under a `NonEmpty<_>` context: `encrypt_into` passes `()`, so use `encrypt_into_with_context(&cipher, context)`, or give the field a `context = ".."` of its own
-   = note: a context is anything vitaminc encodes (`&str`, `String`, bytes, integers, `Option`s and pairs of those), proven non-empty: `nonempty!("users/email")` for a literal, `NonEmpty::new(value)?` for a runtime value, a bare integer for an id
-   = help: the trait `EncryptFrom<&str, KeysetCipher<'_, FakeDataKeySource>, ()>` is not implemented for `EqualityTerm`
-           but trait `EncryptFrom<&str, KeysetCipher<'_, FakeDataKeySource>, NonEmpty<_>>` is implemented for it
-   = help: for that trait implementation, expected `NonEmpty<_>`, found `()`
 note: required by a bound in `encrypt_into`
-  --> src/target/mod.rs
+  --> src/target/operations.rs
    |
-   |     fn encrypt_into<'a, T, C>(&'a self, cipher: &'a C) -> C::Output<'a, T>
+   |     fn encrypt_into<'a, T, K: 'static>(&self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
    |        ------------ required by a bound in this associated function
 ...
-   |         T: EncryptFrom<Self, C, ()> + 'a,
-   |            ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
+   |         T::Context: Default,
+   |                     ^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
 
-error[E0277]: `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` is not an encrypted form of `u32` under a `()` context
+error[E0277]: the trait bound `CallerContext: Default` is not satisfied
   --> tests/ui/leaf_without_context.rs:18:39
    |
 18 |     let _record: EncryptedAge = 42u32.encrypt_into(cipher).await.unwrap();
-   |                                       ^^^^^^^^^^^^ not `EncryptFrom<u32, _, ()>`
+   |                                       ^^^^^^^^^^^^ the trait `Default` is not implemented for `CallerContext`
    |
-   = note: a leaf — a ciphertext or an index term — exists only under a `NonEmpty<_>` context: `encrypt_into` passes `()`, so use `encrypt_into_with_context(&cipher, context)`, or give the field a `context = ".."` of its own
-   = note: a context is anything vitaminc encodes (`&str`, `String`, bytes, integers, `Option`s and pairs of those), proven non-empty: `nonempty!("users/email")` for a literal, `NonEmpty::new(value)?` for a runtime value, a bare integer for an id
-   = help: the trait `EncryptFrom<u32, KeysetCipher<'_, FakeDataKeySource>, ()>` is not implemented for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>`
-           but trait `EncryptFrom<u32, KeysetCipher<'_, FakeDataKeySource>, NonEmpty<_>>` is implemented for it
-   = help: for that trait implementation, expected `NonEmpty<_>`, found `()`
-note: required for `EncryptedAge` to implement `EncryptFrom<u32, KeysetCipher<'_, FakeDataKeySource>, ()>`
-  --> tests/ui/leaf_without_context.rs:9:10
-   |
- 9 | #[derive(EncryptFrom, DecryptInto)]
-   |          ^^^^^^^^^^^ unsatisfied trait bound introduced in this `derive` macro
-10 | #[stash(plaintext = u32)]
-11 | struct EncryptedAge {
-   |        ^^^^^^^^^^^^
 note: required by a bound in `encrypt_into`
-  --> src/target/mod.rs
+  --> src/target/operations.rs
    |
-   |     fn encrypt_into<'a, T, C>(&'a self, cipher: &'a C) -> C::Output<'a, T>
+   |     fn encrypt_into<'a, T, K: 'static>(&self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
    |        ------------ required by a bound in this associated function
 ...
-   |         T: EncryptFrom<Self, C, ()> + 'a,
-   |            ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
-   = note: this error originates in the derive macro `EncryptFrom` (in Nightly builds, run with -Z macro-backtrace for more info)
+   |         T::Context: Default,
+   |                     ^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
 
-error[E0277]: `EqualityTerm` is not an encrypted form of `u32` under a `()` context
-  --> tests/ui/leaf_without_context.rs:18:39
-   |
-18 |     let _record: EncryptedAge = 42u32.encrypt_into(cipher).await.unwrap();
-   |                                       ^^^^^^^^^^^^ not `EncryptFrom<u32, _, ()>`
-   |
-   = note: a leaf — a ciphertext or an index term — exists only under a `NonEmpty<_>` context: `encrypt_into` passes `()`, so use `encrypt_into_with_context(&cipher, context)`, or give the field a `context = ".."` of its own
-   = note: a context is anything vitaminc encodes (`&str`, `String`, bytes, integers, `Option`s and pairs of those), proven non-empty: `nonempty!("users/email")` for a literal, `NonEmpty::new(value)?` for a runtime value, a bare integer for an id
-   = help: the trait `EncryptFrom<u32, KeysetCipher<'_, FakeDataKeySource>, ()>` is not implemented for `EqualityTerm`
-           but trait `EncryptFrom<u32, KeysetCipher<'_, FakeDataKeySource>, NonEmpty<_>>` is implemented for it
-   = help: for that trait implementation, expected `NonEmpty<_>`, found `()`
-note: required for `EncryptedAge` to implement `EncryptFrom<u32, KeysetCipher<'_, FakeDataKeySource>, ()>`
-  --> tests/ui/leaf_without_context.rs:9:10
-   |
- 9 | #[derive(EncryptFrom, DecryptInto)]
-   |          ^^^^^^^^^^^ unsatisfied trait bound introduced in this `derive` macro
-10 | #[stash(plaintext = u32)]
-11 | struct EncryptedAge {
-   |        ^^^^^^^^^^^^
-note: required by a bound in `encrypt_into`
-  --> src/target/mod.rs
-   |
-   |     fn encrypt_into<'a, T, C>(&'a self, cipher: &'a C) -> C::Output<'a, T>
-   |        ------------ required by a bound in this associated function
-...
-   |         T: EncryptFrom<Self, C, ()> + 'a,
-   |            ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
-   = note: this error originates in the derive macro `EncryptFrom` (in Nightly builds, run with -Z macro-backtrace for more info)
-
-error[E0277]: `CipherText<SealedValue, Box<dyn Any + Send>>` is not an encrypted form of `u32` under a `()` context
+error[E0277]: the trait bound `AeadContext: Default` is not satisfied
   --> tests/ui/leaf_without_context.rs:19:41
    |
 19 |     let _column: Vec<StackCipherText> = vec![1u32].encrypt_into(cipher).await.unwrap();
    |                                         ^^^^^^^^^^ ------------ required by a bound introduced by this call
    |                                         |
-   |                                         not `EncryptFrom<u32, _, ()>`
+   |                                         the trait `Default` is not implemented for `AeadContext`
    |
-   = note: a leaf — a ciphertext or an index term — exists only under a `NonEmpty<_>` context: `encrypt_into` passes `()`, so use `encrypt_into_with_context(&cipher, context)`, or give the field a `context = ".."` of its own
-   = note: a context is anything vitaminc encodes (`&str`, `String`, bytes, integers, `Option`s and pairs of those), proven non-empty: `nonempty!("users/email")` for a literal, `NonEmpty::new(value)?` for a runtime value, a bare integer for an id
-   = help: the trait `EncryptFrom<u32, KeysetCipher<'_, FakeDataKeySource>, ()>` is not implemented for `CipherText<SealedValue, Box<dyn Any + Send>>`
-           but trait `EncryptFrom<u32, KeysetCipher<'_, FakeDataKeySource>, NonEmpty<_>>` is implemented for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>`
-   = help: for that trait implementation, expected `NonEmpty<_>`, found `()`
-   = note: required for `Vec<CipherText<SealedValue, Box<dyn Any + Send>>>` to implement `EncryptFrom<Vec<u32>, KeysetCipher<'_, FakeDataKeySource>, ()>`
 note: required by a bound in `encrypt_into`
-  --> src/target/mod.rs
+  --> src/target/operations.rs
    |
-   |     fn encrypt_into<'a, T, C>(&'a self, cipher: &'a C) -> C::Output<'a, T>
+   |     fn encrypt_into<'a, T, K: 'static>(&self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
    |        ------------ required by a bound in this associated function
 ...
-   |         T: EncryptFrom<Self, C, ()> + 'a,
-   |            ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
+   |         T::Context: Default,
+   |                     ^^^^^^^ required by this bound in `EncryptInto::encrypt_into`
 
-error[E0277]: `EncryptedAge` does not decrypt to `u32` under a `()` context
+error[E0277]: the trait bound `CallerContext: Default` is not satisfied
   --> tests/ui/leaf_without_context.rs:23:34
    |
 23 |     let _age = u32::decrypt_from(record, cipher).await.unwrap();
-   |                ----------------- ^^^^^^ not `DecryptInto<u32, _, ()>`
+   |                ----------------- ^^^^^^ the trait `Default` is not implemented for `CallerContext`
    |                |
    |                required by a bound introduced by this call
    |
-   = help: the trait `DecryptInto<u32, _, ()>` is not implemented for `EncryptedAge`
-   = note: a leaf decrypts only under a `NonEmpty<_>` context — the one it was encrypted under (`decrypt_into(&cipher, context)` / `decrypt_from_with_context`); an output whose fields carry their own opens under `()` (`decrypt_from`) as well
-   = help: the following other types implement trait `DecryptInto<P, C, Ctx>`:
-             `EncryptedAge` implements `DecryptInto<u32, StackCipher<__K>, ()>`
-             `EncryptedAge` implements `DecryptInto<u32, StackCipher<__K>, NonEmpty<__T>>`
 note: required by a bound in `decrypt_from`
-  --> src/target/mod.rs
+  --> src/target/operations.rs
    |
-   |     fn decrypt_from<'a, S, C>(source: S, cipher: &'a C) -> C::Output<'a, Self>
+   |     fn decrypt_from<'a, S, K: 'static>(
    |        ------------ required by a bound in this associated function
 ...
-   |         S: DecryptInto<Self, C, ()> + 'a,
-   |            ^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `DecryptFrom::decrypt_from`
+   |         S::Context: Default,
+   |                     ^^^^^^^ required by this bound in `DecryptFrom::decrypt_from`
 
-error[E0308]: mismatched types
+error[E0277]: the trait bound `CallerContext: From<()>` is not satisfied
   --> tests/ui/leaf_without_context.rs:27:49
    |
 27 |     let _age: u32 = record.decrypt_into(cipher, ()).await.unwrap();
-   |                            ------------         ^^ expected `NonEmpty<_>`, found `()`
+   |                            ------------         ^^ the trait `From<()>` is not implemented for `CallerContext`
    |                            |
-   |                            arguments to this method are incorrect
+   |                            required by a bound introduced by this call
    |
-   = note: expected struct `NonEmpty<_>`
-           found unit type `()`
-note: method defined here
-  --> src/target/mod.rs
+   = help: the following other types implement trait `From<T>`:
+             `CallerContext` implements `From<NonEmpty<T>>`
+             `CallerContext` implements `From<i128>`
+             `CallerContext` implements `From<i16>`
+             `CallerContext` implements `From<i32>`
+             `CallerContext` implements `From<i64>`
+             `CallerContext` implements `From<i8>`
+             `CallerContext` implements `From<u128>`
+             `CallerContext` implements `From<u16>`
+           and $N others
+   = note: required for `()` to implement `Into<CallerContext>`
+note: required by a bound in `decrypt_into`
+  --> src/target/operations.rs
    |
-   |     fn decrypt_into<'a>(self, cipher: &'a C, context: Ctx) -> C::Output<'a, P>
-   |        ^^^^^^^^^^^^
+   |     fn decrypt_into<'a, P: 'static, K: 'static>(
+   |        ------------ required by a bound in this associated function
+...
+   |         context: impl Into<<Self as DecryptInto<P>>::Context>,
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `DecryptFrom::decrypt_into`

@@ -24,10 +24,19 @@ pub(crate) struct ContainerAttrs {
     /// it is given explicitly rather than inferred from a name a refactor
     /// can change. Only meaningful with `struct`.
     pub(crate) context: Option<LitStr>,
+    /// `#[stash(context_type = Type)]`: the record's associated `Context`,
+    /// when its fields take the caller's context. The default,
+    /// `CallerContext`, derives ciphertext and terms alike and so needs both
+    /// Vitamin C encodings; `AeadContext` needs only the AEAD one, and a
+    /// record whose fields are all ciphertexts declares it to accept the
+    /// same contexts the canonical `StackCipherText` path does. Excludes
+    /// `context_field` and `struct`.
+    pub(crate) context_type: Option<Type>,
 }
 
 const CONTAINER_KEYS: &str = "unsupported container attribute; expected `plaintext = Type`, \
-     `struct = Type`, `context = \"...\"` (with `struct`) or `crate = \"...\"`";
+     `struct = Type`, `context = \"...\"` (with `struct`), `context_type = Type` or \
+     `crate = \"...\"`";
 
 impl ContainerAttrs {
     pub(crate) fn parse(attrs: &[Attribute]) -> Result<Self> {
@@ -35,6 +44,7 @@ impl ContainerAttrs {
         let mut plaintexts: Vec<Type> = Vec::new();
         let mut by_field: Option<Type> = None;
         let mut context: Option<LitStr> = None;
+        let mut context_type: Option<Type> = None;
 
         for attr in attrs.iter().filter(|a| a.path().is_ident("stash")) {
             // `struct` and `crate` are keywords, but a nested-meta path is
@@ -54,6 +64,15 @@ impl ContainerAttrs {
                         return Err(meta.error("`context` is given twice; a struct has one prefix"));
                     }
                     context = Some(meta.value()?.parse()?);
+                    return Ok(());
+                }
+                if meta.path.is_ident("context_type") {
+                    if context_type.is_some() {
+                        return Err(meta.error(
+                            "`context_type` is given twice; a record has one associated context",
+                        ));
+                    }
+                    context_type = Some(meta.value()?.parse()?);
                     return Ok(());
                 }
                 if meta.path.is_ident("struct") {
@@ -155,11 +174,23 @@ impl ContainerAttrs {
             }
         }
 
+        if let (Some(by_field), Some(context_type)) = (&by_field, &context_type) {
+            let mut err = syn::Error::new_spanned(
+                context_type,
+                "`context_type` names what the caller passes to a record whose fields take the \
+                 caller's context; a `struct` derive's fields carry their own, so the record \
+                 takes `DeclaredContext` and a caller's context extends them",
+            );
+            err.combine(syn::Error::new_spanned(by_field, "`struct` given here"));
+            return Err(err);
+        }
+
         Ok(Self {
             krate: krate.unwrap_or_else(|| syn::parse_quote!(::stack_encrypt)),
             plaintexts,
             by_field,
             context,
+            context_type,
         })
     }
 }
@@ -167,6 +198,7 @@ impl ContainerAttrs {
 /// Field-level options, from `#[stash(...)]` on a field.
 #[derive(Default)]
 pub(crate) struct FieldAttrs {
+    pub(crate) context_field: bool,
     /// `#[stash(context = "...")]`: derive this field under exactly this
     /// context instead of the one a `struct` derive would infer, or the one
     /// the caller passes for the record. Extended by a caller's context like
@@ -194,6 +226,13 @@ impl FieldAttrs {
 
         for attr in attrs.iter().filter(|a| a.path().is_ident("stash")) {
             attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("context_field") {
+                    if parsed.context_field {
+                        return Err(meta.error("`context_field` is given twice"));
+                    }
+                    parsed.context_field = true;
+                    return Ok(());
+                }
                 if meta.path.is_ident("context") {
                     // Each of these is singular by meaning, so a repeat is a
                     // mistake: rejected rather than silently overwritten. A
@@ -241,8 +280,8 @@ impl FieldAttrs {
                     return Ok(());
                 }
                 Err(meta.error(
-                    "unsupported field attribute; expected `context = \"...\"`, `from = field`, \
-                     `default`, `default = expr`, `decrypt` or `nested`",
+                    "unsupported field attribute; expected `context_field`, `context = \"...\"`, \
+                     `from = field`, `default`, `default = expr`, `decrypt` or `nested`",
                 ))
             })?;
         }

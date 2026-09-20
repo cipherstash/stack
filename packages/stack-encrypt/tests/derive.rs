@@ -11,10 +11,10 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 use cllw_ore::CllwOreEncrypt;
 use common::{counting_cipher, stack_cipher};
 use stack_encrypt::sem::{EqualityTerm, MatchTerm, OreTerm};
-use stack_encrypt::target::{DecryptFrom, EncryptInto};
+use stack_encrypt::target::{AeadContext, DecryptFrom, EncryptInto};
 use stack_encrypt::{
-    nonempty, DecryptField, DecryptInto, Decryptable, EncryptFrom, Error, KeysetCipher, Pending,
-    StackCipher, StackCipherText,
+    nonempty, Aad, DecryptField, DecryptInto, Decryptable, EncryptFrom, Error, IntoAad, MaybeEmpty,
+    NonEmpty, StackCipherText,
 };
 
 // --- Records: every field from one plaintext, under one context -------------
@@ -76,8 +76,8 @@ struct SearchableText {
 #[derive(EncryptFrom)]
 struct Pair(StackCipherText, EqualityTerm);
 
-/// A record may declare `'__k` itself; the derive's keyset lifetime steps
-/// aside rather than colliding with it. Compiling is the test.
+/// A record may declare `'__k` itself; the declaration API no longer adds
+/// a keyset lifetime. Compiling is the test.
 #[derive(EncryptFrom)]
 #[stash(plaintext = u32)]
 #[allow(dead_code)]
@@ -85,6 +85,19 @@ struct Borrowed<'__k> {
     c: StackCipherText,
     #[stash(default)]
     label: Option<&'__k str>,
+}
+
+/// The declaration's source lifetime steps aside for the record's own,
+/// including when the first fallback name is also taken.
+#[derive(EncryptFrom)]
+#[stash(plaintext = u32)]
+#[allow(dead_code)]
+struct BorrowedSource<'__source, '__source_> {
+    c: StackCipherText,
+    #[stash(default)]
+    label: Option<&'__source str>,
+    #[stash(default)]
+    other: Option<&'__source_ str>,
 }
 
 /// The record's own generics (and their bounds) are carried through, and the
@@ -228,19 +241,18 @@ async fn decrypt_marks_the_field_when_the_types_cannot_choose() {
 #[derive(PartialEq)]
 struct OpaqueTerm(EqualityTerm);
 
-impl<'k, S, K, Ctx> EncryptFrom<S, KeysetCipher<'k, K>, Ctx> for OpaqueTerm
+impl<S> EncryptFrom<S> for OpaqueTerm
 where
-    EqualityTerm: EncryptFrom<S, KeysetCipher<'k, K>, Ctx>,
+    EqualityTerm: EncryptFrom<S>,
 {
-    fn encrypt_from<'a>(
-        source: &'a S,
-        cipher: &'a KeysetCipher<'k, K>,
-        context: Ctx,
-    ) -> Pending<'a, Self, K>
+    type Context = <EqualityTerm as EncryptFrom<S>>::Context;
+    fn encryption<'s, K: 'static>(
+        context: Self::Context,
+    ) -> stack_encrypt::Encryption<'s, S, Self, K>
     where
-        Self: 'a,
+        S: 's,
     {
-        EqualityTerm::encrypt_from(source, cipher, context).map(OpaqueTerm)
+        EqualityTerm::encryption(context).map(OpaqueTerm)
     }
 }
 
@@ -292,16 +304,11 @@ impl Decryptable for Lying {
     const DECRYPTABLE: bool = true;
 }
 
-impl<P, K, Ctx> DecryptField<P, StackCipher<K>, Ctx> for Lying {
-    fn decrypt_field<'a>(
+impl<P, Ctx> DecryptField<P, Ctx> for Lying {
+    fn decryption_field<K: 'static>(
         self,
-        _cipher: &'a StackCipher<K>,
         _context: Ctx,
-    ) -> Option<Pending<'a, P, K>>
-    where
-        Self: 'a,
-        P: 'a,
-    {
+    ) -> Option<stack_encrypt::Decryption<P, K>> {
         None
     }
 }
@@ -372,6 +379,66 @@ async fn listed_plaintexts_each_get_their_own_impl() {
         .unwrap();
     let text: String = text.decrypt_into(&cipher, nonempty!("t/t")).await.unwrap();
     assert_eq!((number, text.as_str()), (7, "seven"));
+}
+
+/// A context type with the AEAD encoding alone: enough to seal, not to
+/// derive a term. `WorkspaceId` in `cts-common` is the production shape.
+#[derive(Clone, Debug, PartialEq)]
+struct Tenant(String);
+impl MaybeEmpty for Tenant {
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+impl<'a> IntoAad<'a> for Tenant {
+    fn into_aad(self) -> Aad<'a> {
+        self.0.into_aad()
+    }
+}
+
+/// Ciphertext only, so it declares the ciphertext operation's own context
+/// type rather than the default `CallerContext`, which would demand a PRF
+/// encoding no field here uses.
+#[derive(EncryptFrom, DecryptInto)]
+#[stash(plaintext = String, context_type = AeadContext)]
+struct SealedName {
+    c: StackCipherText,
+}
+
+fn tenant() -> NonEmpty<Tenant> {
+    NonEmpty::new(Tenant("acme".into())).unwrap()
+}
+
+#[tokio::test]
+async fn a_ciphertext_only_record_accepts_an_aead_only_context_like_the_leaf_does() {
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let name = "alice".to_owned();
+
+    // The derived record and the canonical leaf accept the same context
+    // and produce interchangeable ciphertext: each opens the other's.
+    let record: SealedName = name
+        .encrypt_into_with_context(&keyset, tenant())
+        .await
+        .unwrap();
+    let opened: String = cipher.decrypt(record.c, tenant()).await.unwrap();
+    assert_eq!(opened, name);
+
+    let leaf = keyset.encrypt(name.clone(), tenant()).await.unwrap();
+    let opened: String = SealedName { c: leaf }
+        .decrypt_into(&cipher, tenant())
+        .await
+        .unwrap();
+    assert_eq!(opened, name);
+
+    // Bound to the context like any other leaf.
+    let record: SealedName = name
+        .encrypt_into_with_context(&keyset, tenant())
+        .await
+        .unwrap();
+    let other = NonEmpty::new(Tenant("other".into())).unwrap();
+    let result: Result<String, _> = record.decrypt_into(&cipher, other).await;
+    assert!(matches!(result, Err(Error::Aead)), "{result:?}");
 }
 
 #[tokio::test]

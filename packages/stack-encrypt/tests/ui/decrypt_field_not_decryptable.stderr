@@ -1,3 +1,21 @@
+error[E0277]: the trait bound `Opaque: DecryptField<u32, CallerContext>` is not satisfied
+ --> tests/ui/decrypt_field_not_decryptable.rs:6:10
+  |
+6 | #[derive(DecryptInto)]
+  |          ^^^^^^^^^^^ the trait `DecryptField<u32, CallerContext>` is not implemented for `Opaque`
+  |
+  = help: the following other types implement trait `DecryptField<P, Ctx>`:
+            `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` implements `DecryptField<P, Ctx>`
+            `EqualityTerm` implements `DecryptField<P, Ctx>`
+            `MatchTerm<O>` implements `DecryptField<P, Ctx>`
+            `OpeTerm<T>` implements `DecryptField<P, Ctx>`
+            `Option<T>` implements `DecryptField<Option<P>, Ctx>`
+            `OreTerm<T>` implements `DecryptField<P, Ctx>`
+            `Rec` implements `DecryptField<__P, __Ctx>`
+            `Vec<T>` implements `DecryptField<Vec<P>, Ctx>`
+  = help: see issue #48214
+  = note: this error originates in the derive macro `DecryptInto` (in Nightly builds, run with -Z macro-backtrace for more info)
+
 error[E0277]: the trait bound `Opaque: Decryptable` is not satisfied
   --> tests/ui/decrypt_field_not_decryptable.rs:10:8
    |
@@ -9,6 +27,6 @@ error[E0277]: the trait bound `Opaque: Decryptable` is not satisfied
              EqualityTerm
              MatchTerm<O>
              OpeTerm<T>
-             Option<S>
+             Option<T>
              OreTerm<T>
-             Vec<S>
+             Vec<T>
