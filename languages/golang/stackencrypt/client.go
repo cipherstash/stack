@@ -42,9 +42,10 @@ type Config struct {
 	// memory that may be swapped and reporting so through
 	// Client.MemoryLocked. It holds for the life of the client: a later
 	// growth of the guest's memory that cannot be locked is refused too,
-	// and the call that needed it fails with ErrMemoryLock. Set it where
-	// swap is a real exposure and the deployment grants a lock limit with
-	// room for the guest to grow (RLIMIT_MEMLOCK on Linux); see
+	// and the call that needed it fails with ErrMemoryLock, while what the
+	// guest already holds stays locked and MemoryLocked stays true. Set it
+	// where swap is a real exposure and the deployment grants a lock limit
+	// with room for the guest to grow (RLIMIT_MEMLOCK on Linux); see
 	// [Client.MemoryLocked].
 	RequireLockedMemory bool
 }
@@ -304,7 +305,7 @@ func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([
 		c.closed = true
 		return nil, ErrState
 	}
-	refusals := c.inst.mem.growthRefusals()
+	refusals, _ := c.inst.mem.growthRefusals()
 	out, err := f(c.inst)
 	if c.inst.module.IsClosed() {
 		c.closed = true
@@ -315,8 +316,10 @@ func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([
 	}
 	// Under RequireLockedMemory a growth that cannot be locked is refused,
 	// and the guest sees only a failed allocation. Name the real cause.
-	if err != nil && c.inst.mem.growthRefusals() != refusals {
-		err = fmt.Errorf("%w (growth refused under RequireLockedMemory): %w", memoryLockError(c.inst.mem.lockError()), err)
+	// The refusal is this call's, not the client's: the range went back
+	// unused, so MemoryLocked still holds.
+	if n, gerr := c.inst.mem.growthRefusals(); err != nil && n != refusals {
+		err = fmt.Errorf("%w (growth refused under RequireLockedMemory): %w", memoryLockError(gerr), err)
 	}
 	if err != nil {
 		return nil, err

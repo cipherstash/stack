@@ -4,4 +4,4 @@ package stackencrypt
 
 import "errors"
 
-func dropMemlockLimit() error { return errors.New("no RLIMIT_MEMLOCK on this platform") }
+func setMemlockLimit(uint64) error { return errors.New("no RLIMIT_MEMLOCK on this platform") }

@@ -92,14 +92,19 @@ type memoryAllocator struct {
 	// reservation: no lock is possible, growth may copy (and wipes what
 	// it abandons).
 	fallback bool
-	// err is the first refusal of any kind — the reservation, the dump
-	// exclusion, a lock — and never clears: a lock refused once is
-	// reported for the life of the instance.
+	// err is the first refusal that left the guest holding unprotected
+	// memory — the reservation, the dump exclusion, a lock on a range that
+	// was kept — and never clears: a lock refused once is reported for
+	// the life of the instance.
 	err error
-	// refusals counts strict growths refused. Client.call compares it
-	// across a call to name the real cause when the guest reports only a
-	// failed allocation.
-	refusals uint64
+	// refusals counts strict growths refused, and growthErr is the lock
+	// refusal behind the latest. Neither is err: a refused growth gives
+	// its range back before the guest sees it, so every byte the guest
+	// holds is still locked and the instance still reports so. Client.call
+	// compares refusals across a call to name the real cause when the
+	// guest reports only a failed allocation.
+	refusals  uint64
+	growthErr error
 	// inFlight counts guest calls in progress (see enter and exit);
 	// pending records a Free that arrived while one was, to be honoured
 	// when the outermost call returns.
@@ -137,11 +142,13 @@ func (a *memoryAllocator) Reallocate(size uint64) []byte {
 	buf, lockErr := a.mem.commit(size)
 	if lockErr != nil {
 		a.mu.Lock()
-		if a.err == nil {
-			a.err = lockErr
-		}
 		if buf == nil {
+			// Strict: the range was given back, so nothing unlocked was
+			// admitted and the lock report stands.
 			a.refusals++
+			a.growthErr = lockErr
+		} else if a.err == nil {
+			a.err = lockErr
 		}
 		a.mu.Unlock()
 	}
@@ -205,11 +212,12 @@ func (a *memoryAllocator) lockError() error {
 	return a.err
 }
 
-// growthRefusals counts the strict growths refused so far.
-func (a *memoryAllocator) growthRefusals() uint64 {
+// growthRefusals counts the strict growths refused so far, with the lock
+// refusal behind the latest (nil while the count is zero).
+func (a *memoryAllocator) growthRefusals() (uint64, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.refusals
+	return a.refusals, a.growthErr
 }
 
 func (a *memoryAllocator) isFallback() bool {

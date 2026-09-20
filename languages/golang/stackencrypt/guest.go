@@ -120,8 +120,8 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy lockPoli
 	module, err := runtime.InstantiateWithConfig(experimental.WithMemoryAllocator(ctx, mem), wasm, guestModuleConfig())
 	if err != nil {
 		_ = runtime.Close(ctx)
-		if mem.growthRefusals() != 0 {
-			return nil, fmt.Errorf("%w: %w", memoryLockError(mem.lockError()), err)
+		if n, gerr := mem.growthRefusals(); n != 0 {
+			return nil, fmt.Errorf("%w: %w", memoryLockError(gerr), err)
 		}
 		return nil, fmt.Errorf("stackencrypt: instantiating guest: %w", err)
 	}
@@ -233,7 +233,7 @@ func (inst *instance) call(ctx context.Context, fn api.Function, args ...arg) ([
 	// The memory stays mapped for the whole call, the deferred frees
 	// included: a close that lands mid-call (an expired context during a
 	// host import) is honoured by this exit, not under running guest
-	// code. See observed.Free.
+	// code. See memoryAllocator.Free.
 	inst.mem.enter()
 	defer inst.mem.exit()
 	var bufs []guestBuf

@@ -311,30 +311,42 @@ func smapsKB(value string) uint64 {
 	return n
 }
 
-// Strict mode is a NewClient failure, not a report. The refusal is
-// provoked by lowering RLIMIT_MEMLOCK to zero, which is process-wide and
-// irreversible for a non-root process, so it runs in a child.
-func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
+// inChild re-runs the calling test in a child process, for tests that
+// lower RLIMIT_MEMLOCK: the change is process-wide and irreversible for a
+// non-root process. It returns true in the child, which prints "case ok"
+// when done or "case skipped: <why>" when the host cannot provoke the
+// condition; the parent judges that output and returns false.
+func inChild(t *testing.T) bool {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("no RLIMIT_MEMLOCK on Windows")
 	}
 	const child = "STACKENCRYPT_TEST_CHILD"
-	if os.Getenv(child) == "" {
-		cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$", "-test.v")
-		cmd.Env = append(os.Environ(), child+"=1")
-		out, err := cmd.CombinedOutput()
-		switch {
-		case strings.Contains(string(out), "case skipped:"):
-			if os.Getenv(requireLock) != "" {
-				t.Fatalf("%s is set and the refusal could not be provoked:\n%s", requireLock, out)
-			}
-			t.Skipf("refusal could not be provoked on this host:\n%s", out)
-		case err != nil || !strings.Contains(string(out), "case ok"):
-			t.Fatalf("child failed: %v\n%s", err, out)
+	if os.Getenv(child) != "" {
+		return true
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$", "-test.v")
+	cmd.Env = append(os.Environ(), child+"=1")
+	out, err := cmd.CombinedOutput()
+	switch {
+	case strings.Contains(string(out), "case skipped:"):
+		if os.Getenv(requireLock) != "" {
+			t.Fatalf("%s is set and the refusal could not be provoked:\n%s", requireLock, out)
 		}
+		t.Skipf("refusal could not be provoked on this host:\n%s", out)
+	case err != nil || !strings.Contains(string(out), "case ok"):
+		t.Fatalf("child failed: %v\n%s", err, out)
+	}
+	return false
+}
+
+// Strict mode is a NewClient failure, not a report. The refusal is
+// provoked by lowering RLIMIT_MEMLOCK to zero.
+func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
+	if !inChild(t) {
 		return
 	}
-	if err := dropMemlockLimit(); err != nil {
+	if err := setMemlockLimit(0); err != nil {
 		t.Fatalf("lowering RLIMIT_MEMLOCK: %v", err)
 	}
 	// Can the lock be refused at all here? Root and CAP_IPC_LOCK ignore
@@ -385,6 +397,171 @@ func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
 		}
 	}
 	fmt.Println("case ok")
+}
+
+// The same refusal on a growth, from the kernel: with RLIMIT_MEMLOCK at
+// two pages the probe's first page locks and a growth by two more cannot.
+// Strict refuses the growth and gives the range back, so the page the
+// probe holds is still locked and the allocator still says so; the
+// refusal is reported on its own, naming the limit.
+func TestRequireLockedMemoryRefusesAnUnlockableGrowth(t *testing.T) {
+	if !inChild(t) {
+		return
+	}
+	const limit = 2 * wasmPage
+	if err := setMemlockLimit(limit); err != nil {
+		t.Fatalf("lowering RLIMIT_MEMLOCK: %v", err)
+	}
+	alloc := newMemoryAllocator(strict)
+	_, grow, done := probeMemory(t, alloc)
+	defer done()
+	if alloc.isFallback() {
+		fmt.Printf("case skipped: heap fallback in use on this host: %v\n", alloc.lockError())
+		return
+	}
+	if err := alloc.lockError(); err != nil {
+		fmt.Printf("case skipped: the first page did not lock under RLIMIT_MEMLOCK=%d: %v\n", limit, err)
+		return
+	}
+	if _, ok := grow(2); ok {
+		fmt.Println("case skipped: mlock succeeds past RLIMIT_MEMLOCK")
+		return
+	}
+	if err := alloc.lockError(); err != nil {
+		t.Fatalf("a refused growth changed the lock report: %v", err)
+	}
+	n, gerr := alloc.growthRefusals()
+	if n != 1 || gerr == nil {
+		t.Fatalf("growthRefusals = %d, %v; want 1 and the refusal", n, gerr)
+	}
+	if !strings.Contains(gerr.Error(), "RLIMIT_MEMLOCK") {
+		t.Fatalf("the refusal does not name the limit: %v", gerr)
+	}
+	fmt.Println("case ok")
+}
+
+// refusingBackend stands in front of a real backend and refuses, as
+// strict does, any commit past a size: nil buffer, the reason as the lock
+// error, nothing admitted. Lifted, it delegates again. It exercises the
+// allocator's and the Client's bookkeeping of a refused growth without a
+// lock limit, so it runs on every host.
+type refusingBackend struct {
+	backend
+	past    uint64
+	reason  error
+	refuse  bool
+	refused int
+}
+
+func (b *refusingBackend) commit(size uint64) ([]byte, error) {
+	if b.refuse && size > b.past {
+		b.refused++
+		return nil, b.reason
+	}
+	return b.backend.commit(size)
+}
+
+// A refused growth is the growth's failure, not the memory's: the
+// allocator counts it and keeps its reason, and the lock report — nil,
+// or whatever this host refused at the start — is exactly what it was.
+// Once the growth is let through the report is still unchanged.
+func TestRefusedGrowthLeavesTheLockReportAlone(t *testing.T) {
+	alloc := newMemoryAllocator(strict)
+	base, grow, done := probeMemory(t, alloc)
+	defer done()
+	before := alloc.lockError()
+	refusing := &refusingBackend{backend: alloc.mem, past: uint64(alloc.mem.(sized).size()), reason: errors.New("refused for the test"), refuse: true}
+	alloc.mem = refusing
+	at := base()
+	if _, ok := grow(1); ok {
+		t.Fatal("the refused growth was granted")
+	}
+	if after := alloc.lockError(); after != before {
+		t.Fatalf("the refused growth changed the lock report: %v -> %v", before, after)
+	}
+	if n, gerr := alloc.growthRefusals(); n != 1 || gerr != refusing.reason {
+		t.Fatalf("growthRefusals = %d, %v; want 1 and the refusal", n, gerr)
+	}
+	refusing.refuse = false
+	if _, ok := grow(1); !ok {
+		t.Fatal("growth refused once the backend lets it through")
+	}
+	if after := alloc.lockError(); after != before {
+		t.Fatalf("a later growth changed the lock report: %v -> %v", before, after)
+	}
+	if n, _ := alloc.growthRefusals(); n != 1 {
+		t.Fatalf("growthRefusals = %d after a granted growth, want 1", n)
+	}
+	if base() != at {
+		t.Fatal("memory moved across the refused growth")
+	}
+}
+
+// sized is what the test needs of a backend to know where it stands.
+type sized interface{ size() uint64 }
+
+func (m *mappedMemory) size() uint64 { return m.committed }
+func (m *heapMemory) size() uint64   { return uint64(len(m.buf)) }
+
+// The same, through the Client: the call that needed the growth fails
+// with ErrMemoryLock naming the refusal, the client is still open, and
+// it still reports locked memory everywhere it is asked — the method,
+// the error, the print and the log.
+func TestRequireLockedMemoryFailsTheCallThatCannotGrow(t *testing.T) {
+	ctx := context.Background()
+	inst, err := newInstance(ctx, guestOrSkip(t), &transport{rt: http.DefaultTransport, token: StaticToken("t")}, strict)
+	if errors.Is(err, ErrMemoryLock) {
+		if os.Getenv(requireLock) != "" {
+			t.Fatalf("%s is set and the lock was refused: %v", requireLock, err)
+		}
+		t.Skipf("lock refused on this host: %v", err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newClient(inst, nil)
+	defer c.Close()
+	if !c.MemoryLocked() {
+		t.Fatalf("a strict client reports unlocked memory: %v", c.MemoryLockError())
+	}
+	refusing := &refusingBackend{backend: inst.mem.mem, past: inst.mem.mem.(sized).size(), reason: errors.New("refused for the test"), refuse: true}
+	inst.mem.mem = refusing
+	// Larger than the guest's initial memory, so the guest must grow.
+	stage := func(inst *instance) ([]byte, error) {
+		staged, err := inst.allocWrite(ctx, make([]byte, 2<<20))
+		if err != nil {
+			return nil, err
+		}
+		inst.free(ctx, staged)
+		return nil, nil
+	}
+	_, err = c.call(ctx, stage)
+	if !errors.Is(err, ErrMemoryLock) || !strings.Contains(err.Error(), "growth refused") || !strings.Contains(err.Error(), refusing.reason.Error()) {
+		t.Fatalf("call needing a refused growth: %v; want ErrMemoryLock naming the refusal", err)
+	}
+	if refusing.refused == 0 {
+		t.Fatal("the guest did not grow; the test proves nothing")
+	}
+	if !c.MemoryLocked() {
+		t.Fatalf("a refused growth unlocked the report: %v", c.MemoryLockError())
+	}
+	if err := c.MemoryLockError(); err != nil {
+		t.Fatalf("MemoryLockError = %v after a refused growth, want nil", err)
+	}
+	if s := fmt.Sprint(c); !strings.HasSuffix(s, "memory: locked}") {
+		t.Fatalf("Client prints as %q after a refused growth", s)
+	}
+	if v := c.LogValue().String(); !strings.Contains(v, "memory_locked=true") {
+		t.Fatalf("Client logs as %q after a refused growth", v)
+	}
+	// The client is still open, and grows once it can.
+	refusing.refuse = false
+	if _, err := c.call(ctx, stage); err != nil {
+		t.Fatalf("the next call, growth allowed: %v", err)
+	}
+	if !c.MemoryLocked() {
+		t.Fatalf("the report changed on a granted growth: %v", c.MemoryLockError())
+	}
 }
 
 // reentrantProbe is a hand-assembled module reproducing the shape of the
