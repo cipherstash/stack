@@ -48,9 +48,9 @@ catalogs:
     '@cipherstash/auth-linux-x64-gnu': 0.44.0
     '@cipherstash/auth-linux-x64-musl': 0.44.0
     '@cipherstash/auth-win32-x64-msvc': 0.44.0
-    '@types/node': 22.20.1
+    '@types/node': 22.20.2
     tsup: 8.5.1
-    tsx: 4.23.12
+    tsx: 4.23.13
     typescript: 5.9.3
     vitest: 4.1.11
     # Must track `vitest` exactly: the coverage provider is versioned in
@@ -61,9 +61,9 @@ catalogs:
     # groups both under `dev-dependencies` and will otherwise move one alone.
     '@vitest/coverage-v8': 4.1.11
   security:
-    '@clerk/nextjs': 7.7.7
-    next: 15.5.24
-    vite: 8.2.1
+    '@clerk/nextjs': 7.9.2
+    next: 15.5.25
+    vite: 8.3.0
 
 # Security overrides for Dependabot alerts on transitive deps that Dependabot
 # cannot PR against (it only PRs direct dependencies). Each selector is scoped

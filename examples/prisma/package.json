@@ -19,7 +19,7 @@
     "dotenv": "^17.4.2"
   },
   "devDependencies": {
-    "@types/node": "^22.20.1",
+    "@types/node": "^22.20.2",
     "pathe": "^2.0.3",
     "tsx": "catalog:repo",
     "typescript": "catalog:repo",
