@@ -78,6 +78,19 @@ func memoryBase(t *testing.T, mem api.Memory) uintptr {
 	return uintptr(unsafe.Pointer(unsafe.SliceData(view)))
 }
 
+// hostReserves reports whether this host can back the guest with a
+// reservation at all. Where it cannot (a 32-bit host asked for wasm's
+// 4 GiB default, which CI exercises on purpose under GOARCH=386) the heap
+// fallback is in use, no lock is possible, and the tests of a lock granted
+// or refused have nothing to test: they skip, whatever requireLock says.
+func hostReserves(t *testing.T) bool {
+	t.Helper()
+	probe := newMemoryAllocator(bestEffort)
+	_, _, done := probeMemory(t, probe)
+	done()
+	return !probe.isFallback()
+}
+
 // stageLarge stages a buffer larger than the guest's initial memory, so
 // the guest must grow, and frees it again.
 func stageLarge(ctx context.Context, inst *instance) error {
@@ -304,6 +317,9 @@ func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
 // probe holds is still locked and the allocator still says so; the
 // refusal is reported on its own, naming the limit.
 func TestRequireLockedMemoryRefusesAnUnlockableGrowth(t *testing.T) {
+	if !hostReserves(t) {
+		t.Skip("heap fallback in use on this host: no reservation to lock")
+	}
 	if !inChild(t) {
 		return
 	}
@@ -314,10 +330,6 @@ func TestRequireLockedMemoryRefusesAnUnlockableGrowth(t *testing.T) {
 	alloc := newMemoryAllocator(strict)
 	_, grow, done := probeMemory(t, alloc)
 	defer done()
-	if alloc.isFallback() {
-		fmt.Printf("case skipped: heap fallback in use on this host: %v\n", alloc.lockError())
-		return
-	}
 	if err := alloc.lockError(); err != nil {
 		fmt.Printf("case skipped: the first page did not lock under RLIMIT_MEMLOCK=%d: %v\n", limit, err)
 		return
@@ -405,7 +417,9 @@ func TestRefusedGrowthLeavesTheLockReportAlone(t *testing.T) {
 	if g := alloc.growthRefusal(); g.refused != 1 {
 		t.Fatalf("growthRefusal = %+v after a granted growth, want one", g)
 	}
-	if base() != at {
+	// The heap fallback may copy on growth, and says so; a reservation
+	// never does.
+	if !alloc.isFallback() && base() != at {
 		t.Fatal("memory moved across the refused growth")
 	}
 }
@@ -414,6 +428,9 @@ func TestRefusedGrowthLeavesTheLockReportAlone(t *testing.T) {
 // or a skip where this host refuses the lock.
 func strictClient(t *testing.T) *Client {
 	t.Helper()
+	if !hostReserves(t) {
+		t.Skip("heap fallback in use on this host: a strict client cannot exist")
+	}
 	inst, err := newInstance(context.Background(), guestOrSkip(t), &transport{rt: http.DefaultTransport, token: StaticToken("t")}, strict)
 	if errors.Is(err, ErrMemoryLock) {
 		skipUnlessLockRequired(t, "the lock was refused", err)
