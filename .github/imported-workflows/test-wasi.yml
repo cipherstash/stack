@@ -102,4 +102,13 @@ jobs:
       # amd64 and 386. Live round trips through ZeroKMS are the phase 5
       # harness's.
       - name: Go binding
-        run: mise run go:stackencrypt:test
+        env:
+          # The guest's memory lock (bindings/go/stackencrypt/memory.go) is
+          # best effort, so its test skips where RLIMIT_MEMLOCK refuses it —
+          # a developer laptop's default. CI raises the limit and sets this
+          # so the skip is an error here and the lock is really exercised.
+          STACKENCRYPT_TESTS_REQUIRE_LOCK: "1"
+        run: |
+          ulimit -l "$(ulimit -H -l)"
+          echo "RLIMIT_MEMLOCK: $(ulimit -l) KiB"
+          mise run go:stackencrypt:test

@@ -47,6 +47,13 @@ var (
 	// under another keyset, before any key is retrieved. Open it through the
 	// Client, which is not bound to one keyset.
 	ErrForeignKeyset = errors.New("stackencrypt: ciphertext belongs to another keyset")
+	// ErrMemoryLock is guest memory that could not be locked in RAM (or,
+	// on Linux, excluded from core dumps). NewClient returns it when
+	// Config.RequireLockedMemory is set; otherwise Client.MemoryLockError
+	// reports it and the client works on with unlocked memory. The wrapped
+	// error names the limit that refused the lock: on Linux, RLIMIT_MEMLOCK
+	// (ulimit -l, a systemd LimitMEMLOCK=, or a pod's securityContext).
+	ErrMemoryLock = errors.New("stackencrypt: guest memory is not locked")
 )
 
 // Guest status codes (guest/src/status.rs). Part of the guest/host

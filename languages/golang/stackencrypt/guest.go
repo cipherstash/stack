@@ -10,6 +10,7 @@ import (
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 )
 
@@ -53,6 +54,9 @@ func compilationCache() wazero.CompilationCache {
 type instance struct {
 	runtime wazero.Runtime
 	module  api.Module
+	// mem supplied the module's linear memory (see memory.go) and reports
+	// on it.
+	mem *memoryAllocator
 
 	alloc, dealloc               api.Function
 	cipherInit, shutdown, keyset api.Function
@@ -80,8 +84,10 @@ func guestModuleConfig() wazero.ModuleConfig {
 		WithSysWalltime()
 }
 
-// newInstance instantiates wasm with the transport as its host module.
-func newInstance(ctx context.Context, wasm []byte, t *transport) (*instance, error) {
+// newInstance instantiates wasm with the transport as its host module and
+// its linear memory from this package's allocator. With strict set, memory
+// that cannot be locked fails instantiation with ErrMemoryLock.
+func newInstance(ctx context.Context, wasm []byte, t *transport, strict bool) (*instance, error) {
 	// WithCloseOnContextDone lets a caller's deadline or cancellation
 	// interrupt an in-flight guest call — which otherwise holds the Client's
 	// lock against every other user. An interrupted call closes the module,
@@ -104,14 +110,27 @@ func newInstance(ctx context.Context, wasm []byte, t *transport) (*instance, err
 		_ = runtime.Close(ctx)
 		return nil, err
 	}
+	// The guest's linear memory comes from this package, not wazero's
+	// default slice: reserved once, locked and non-dumpable where the
+	// platform allows, wiped on release. See memory.go.
+	mem := newMemoryAllocator(strict)
 	// The guest is a reactor (cdylib): no _start. wazero runs _initialize
 	// when present.
-	module, err := runtime.InstantiateWithConfig(ctx, wasm, guestModuleConfig())
+	module, err := runtime.InstantiateWithConfig(experimental.WithMemoryAllocator(ctx, mem), wasm, guestModuleConfig())
 	if err != nil {
 		_ = runtime.Close(ctx)
+		if strict && mem.growthRefusals() != 0 {
+			return nil, fmt.Errorf("%w: %w", memoryLockError(mem.lockError()), err)
+		}
 		return nil, fmt.Errorf("stackencrypt: instantiating guest: %w", err)
 	}
-	inst := &instance{runtime: runtime, module: module}
+	if strict {
+		if lerr := mem.lockError(); lerr != nil {
+			_ = runtime.Close(ctx)
+			return nil, memoryLockError(lerr)
+		}
+	}
+	inst := &instance{runtime: runtime, module: module, mem: mem}
 	exports := map[string]*api.Function{
 		"se_alloc":           &inst.alloc,
 		"se_dealloc":         &inst.dealloc,
@@ -135,7 +154,18 @@ func newInstance(ctx context.Context, wasm []byte, t *transport) (*instance, err
 	return inst, nil
 }
 
-func (inst *instance) close(ctx context.Context) error {
+// release runs the guest's shutdown — the client key and every loaded
+// index key wiped inside the instance — and closes the runtime, which
+// frees the linear memory through the allocator's wipe. It is what Close
+// does, and what the cleanup on an unreachable Client does. A module an
+// interrupted call or a trap already closed cannot run se_shutdown; the
+// runtime close still wipes and frees its memory, so nothing is left
+// behind either way.
+func (inst *instance) release() error {
+	ctx := context.Background()
+	if !inst.module.IsClosed() {
+		_, _ = inst.shutdown.Call(ctx)
+	}
 	return inst.runtime.Close(ctx)
 }
 

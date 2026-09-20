@@ -12,6 +12,7 @@
 // free crosses the boundary. [Client.Close] runs the guest's shutdown so the
 // client key and every loaded index key are wiped before the instance is
 // freed — closing a wasm instance runs no Rust destructors on its own.
+// Close is hygiene, not the security story: see Memory below.
 //
 // A [Cipher] is the client bound to one keyset ([Client.Keyset] and
 // [Client.DefaultKeyset], the Rust crate's StackCipher::keyset and
@@ -61,4 +62,37 @@
 // instance is configured with the process CSPRNG ([crypto/rand.Reader])
 // and the system clocks. An embedder that instantiates the guest module
 // under its own wazero configuration must do the same.
+//
+// # Memory
+//
+// Every key the guest holds — the client key, each loaded index key, each
+// data key for the length of a call — lives in the guest's linear memory,
+// and the package supplies that memory itself rather than taking wazero's
+// default Go slice. It is reserved once at the module's declared maximum,
+// so growth never copies it (wazero's default grows with append, which
+// would leave an unwiped copy of every key to the garbage collector);
+// locked in RAM (mlock, VirtualLock) so it is never written to swap;
+// excluded from core dumps on Linux (MADV_DONTDUMP); and wiped before it
+// is released, on every release path.
+//
+// That is deliberately done at allocation, where the caller cannot get it
+// wrong, and not at exit, where they cannot be relied on: no deferred
+// [Client.Close] runs on SIGTERM without a handler, SIGKILL, the OOM
+// killer, a panic on another goroutine or os.Exit, and the package installs
+// no signal handler — that is the application's to own, and covers only
+// the first of those anyway. The kernel zeroes a dead process's pages
+// before anyone else sees them; the lock and the dump exclusion close the
+// two places a copy could otherwise outlive the process.
+//
+// The lock is best effort: RLIMIT_MEMLOCK defaults to 64 KiB on many
+// Linux hosts and the guest is larger, so it is commonly refused, and a
+// client then works on with memory that may be swapped — which is all
+// that is lost, and nothing on a host without swap. [Client.MemoryLocked]
+// reports the outcome and [Client.MemoryLockError] the reason, naming the
+// limit to raise (ulimit -l, a systemd LimitMEMLOCK=, a pod's
+// securityContext). [Config.RequireLockedMemory] turns a refusal into a
+// [NewClient] failure with [ErrMemoryLock], for deployments that would
+// rather not start than run unlocked. An embedder running the guest under
+// its own wazero configuration gets none of this unless it supplies an
+// allocator of its own.
 package stackencrypt

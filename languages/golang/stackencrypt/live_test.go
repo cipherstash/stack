@@ -1,7 +1,6 @@
 package stackencrypt
 
 import (
-	"context"
 	"errors"
 	"os"
 	"reflect"
@@ -28,7 +27,7 @@ func liveClient(t *testing.T) *Client {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	t.Cleanup(func() { _ = c.Close(context.Background()) })
+	t.Cleanup(func() { _ = c.Close() })
 	return c
 }
 
