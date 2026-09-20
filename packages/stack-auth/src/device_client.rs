@@ -103,8 +103,7 @@ pub async fn bind_client_device(store: &ProfileStore) -> Result<(), DeviceClient
 
     let url = zerokms_url.join(CreateClientRequest::ENDPOINT)?;
 
-    // Provisioning is native-only, so it always uses the bundled transport:
-    // a request failure surfaces as `Request`, never as `Auth`.
+    // Provisioning is native-only, so it always uses the bundled transport.
     let body = zeroize::Zeroizing::new(
         serde_json::to_vec(&request).map_err(|e| RequestError(Box::new(e)))?,
     );
@@ -121,11 +120,7 @@ pub async fn bind_client_device(store: &ProfileStore) -> Result<(), DeviceClient
         ],
         body,
     )
-    .await
-    .map_err(|e| match e {
-        crate::AuthError::Request(e) => DeviceClientError::Request(e),
-        other => DeviceClientError::Auth(other),
-    })?;
+    .await?;
 
     let status = response.status();
 
@@ -142,8 +137,7 @@ pub async fn bind_client_device(store: &ProfileStore) -> Result<(), DeviceClient
         });
     }
 
-    let created: CreateClientResponse = serde_json::from_slice(response.body())
-        .map_err(|e| DeviceClientError::Request(RequestError(Box::new(e))))?;
+    let created: CreateClientResponse = response.json()?;
 
     let secret_key = SecretKeyFile {
         client_id: created.id,

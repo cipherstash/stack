@@ -203,11 +203,8 @@ pub mod auth {
 /// builder — it does *not* replace the strategy. For full token acquisition
 /// (custom fetcher, FFI-hosted strategy), see [`crate::auth`].
 ///
-// The example names a strategy builder, which only exists with `http`.
-#[cfg_attr(
-    feature = "http",
-    doc = "For example, [`AccessKeyStrategyBuilder::with_token_store`](crate::AccessKeyStrategyBuilder::with_token_store).\n"
-)]
+/// For example, [`AccessKeyStrategyBuilder::with_token_store`](crate::AccessKeyStrategyBuilder::with_token_store).
+///
 /// All items in this module are also re-exported at the crate root.
 pub mod store {
     pub use crate::{InMemoryTokenStore, NoStore, Token, TokenStore, TokenStoreFn};
@@ -417,17 +414,15 @@ mod tests {
     use super::*;
 
     /// The `error_code` strings are a stable contract surfaced across FFI
-    /// (JS `Error.code`, Node-API codes), so pin every variant's code. Covers
-    /// all variants except `Request`, whose inner `reqwest::Error` has no public
-    /// constructor; if a new variant is added without a code, `error_code`'s
-    /// exhaustive `kind()` dispatch fails to compile, so the contract can't
-    /// silently drift.
+    /// (JS `Error.code`, Node-API codes), so pin every variant's code. If a
+    /// new variant is added without a code, `error_code`'s exhaustive `kind()`
+    /// dispatch fails to compile, so the contract can't silently drift.
     ///
     /// Also pins [`AuthError::ERROR_CODES`] against what `error_code` actually
     /// returns: every constructed variant's code must be declared there, and
-    /// `ERROR_CODES` must hold exactly those codes plus `REQUEST_ERROR` (the one
-    /// variant with no public constructor). So the list can't grow stale entries
-    /// or omit a real one — which is what the binding crates' union tests trust.
+    /// `ERROR_CODES` must hold exactly those codes. So the list can't grow
+    /// stale entries or omit a real one — which is what the binding crates'
+    /// union tests trust.
     #[test]
     #[allow(clippy::unwrap_used)]
     fn auth_error_code_is_stable_for_every_variant() {
@@ -495,6 +490,12 @@ mod tests {
                 "CUSTOM",
             ),
             (
+                AuthError::Request(crate::error::RequestError(Box::new(std::io::Error::other(
+                    "connection refused",
+                )))),
+                "REQUEST_ERROR",
+            ),
+            (
                 AuthError::from("not a url".parse::<url::Url>().unwrap_err()),
                 "INVALID_URL",
             ),
@@ -539,10 +540,6 @@ mod tests {
             );
             from_variants.insert(expected);
         }
-
-        // `Request` has no public constructor, so it can't appear above; add its
-        // code explicitly so the set-equality below stays exact.
-        from_variants.insert("REQUEST_ERROR");
 
         assert_eq!(
             declared, from_variants,

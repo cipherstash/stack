@@ -163,8 +163,10 @@ let strategy = AccessKeyStrategy::builder(crn, key)
 # }
 ```
 
-Without the `http` feature there is no bundled transport, so `.transport(..)`
-is required rather than optional; nothing else about the strategies changes.
+One transport can serve several strategies: `Arc<T>` implements the trait
+whenever `T` does, so hand each builder a clone of the `Arc`. Without the
+`http` feature there is no bundled transport, so `.transport(..)` is required
+rather than optional; nothing else about the strategies changes.
 
 Module paths mirror this split: [`stack_auth::auth`](crate::auth) groups the
 acquisition layer, [`stack_auth::store`](crate::store) groups the persistence

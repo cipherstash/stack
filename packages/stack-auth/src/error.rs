@@ -80,8 +80,10 @@ pub(crate) mod codes {
 /// The payload is always boxed, never a concrete `reqwest::Error`: Cargo
 /// features are additive, so a type whose shape changes with `http` breaks any
 /// no-http consumer the moment something else in the graph turns the feature
-/// on. With `http` the box holds the `reqwest::Error`; without it, whatever
-/// the host's own transport reports.
+/// on. The box holds whatever the [`HttpTransport`](crate::HttpTransport) in
+/// use reported — the bundled one's `reqwest::Error`, or a host transport's
+/// own — or the encoder's or decoder's error for a body that did not
+/// serialize or parse.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Request to the auth server failed: {0}")]
 pub struct RequestError(pub Box<dyn std::error::Error + Send + Sync + 'static>);
@@ -889,13 +891,6 @@ impl From<reqwest::Error> for RequestError {
     }
 }
 
-#[cfg(feature = "http")]
-impl From<reqwest::Error> for AuthError {
-    fn from(e: reqwest::Error) -> Self {
-        Self::Request(e.into())
-    }
-}
-
 impl From<url::ParseError> for AuthError {
     fn from(e: url::ParseError) -> Self {
         Self::InvalidUrl(InvalidUrl(e))
@@ -1439,11 +1434,8 @@ mod tests {
         assert!(json.get("actual").is_none());
     }
 
-    /// Every constructable `DeviceClientError` variant maps to its canonical
-    /// `AuthError` code so `bind_client_device` failures share the one envelope
-    /// path. (`Request` wraps a `reqwest::Error`, which has no public
-    /// constructor, so it can't be built here — the same gap the exhaustive
-    /// `error_code` test documents.)
+    /// Every `DeviceClientError` variant maps to its canonical `AuthError`
+    /// code so `bind_client_device` failures share the one envelope path.
     #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
     #[test]
     fn device_client_error_maps_to_canonical_auth_error() {
@@ -1453,6 +1445,15 @@ mod tests {
         assert_eq!(
             AuthError::from(E::Auth(AuthError::AccessDenied(AccessDenied))).error_code(),
             codes::ACCESS_DENIED,
+        );
+        // `Request` carries the transport's error through as `REQUEST_ERROR`.
+        let request = AuthError::from(E::Request(RequestError(Box::new(std::io::Error::other(
+            "connection refused",
+        )))));
+        assert_eq!(request.error_code(), codes::REQUEST_ERROR);
+        assert!(
+            request.to_string().contains("connection refused"),
+            "{request}"
         );
         // Non-`Auth` variants route to their canonical `AuthError` equivalent.
         assert_eq!(

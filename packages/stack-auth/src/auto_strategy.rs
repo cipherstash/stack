@@ -256,13 +256,12 @@ impl AuthStrategy for &AutoStrategy {
     }
 }
 
-// Detection builds strategies with no transport of their own, which needs
-// the bundled one.
 #[cfg(test)]
-#[cfg(feature = "http")]
 mod tests {
     use super::*;
+    #[cfg(feature = "http")]
     use crate::{SecretToken, Token};
+    #[cfg(feature = "http")]
     use std::time::{SystemTime, UNIX_EPOCH};
 
     const VALID_CRN: &str = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY";
@@ -271,6 +270,7 @@ mod tests {
         VALID_CRN.parse().unwrap()
     }
 
+    #[cfg(feature = "http")] // only the strategy-building tests use it
     fn make_oauth_token() -> Token {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -302,6 +302,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "http")] // only the strategy-building tests use it
     fn write_token_store(dir: &std::path::Path) -> ProfileStore {
         let store = ProfileStore::new(dir);
         store.init_workspace("ZVATKW3VHMFG27DY").unwrap();
@@ -314,6 +315,7 @@ mod tests {
         use super::*;
 
         #[test]
+        #[cfg(feature = "http")] // builds a strategy with no transport of its own
         fn access_key_with_valid_crn() {
             let result = AutoStrategy::detect_inner(
                 Some("CSAKtestKeyId.testKeySecret".into()),
@@ -351,6 +353,7 @@ mod tests {
         }
 
         #[test]
+        #[cfg(feature = "http")] // builds a strategy with no transport of its own
         fn oauth_store_with_valid_token() {
             let dir = tempfile::tempdir().unwrap();
             let store = write_token_store(dir.path());
@@ -379,6 +382,7 @@ mod tests {
         }
 
         #[test]
+        #[cfg(feature = "http")] // builds a strategy with no transport of its own
         fn access_key_takes_priority_over_oauth_store() {
             let dir = tempfile::tempdir().unwrap();
             let store = write_token_store(dir.path());
@@ -399,6 +403,7 @@ mod tests {
         use super::*;
 
         #[test]
+        #[cfg(feature = "http")] // builds a strategy with no transport of its own
         fn explicit_access_key_and_crn() {
             let result = AutoStrategy::builder()
                 .with_access_key("CSAKtestKeyId.testKeySecret")
@@ -409,38 +414,27 @@ mod tests {
             assert!(matches!(result.unwrap(), AutoStrategy::AccessKey(_)));
         }
 
+        // Both tests below set process environment. `temp_env` serialises
+        // them (and restores the variable afterwards), which matters under
+        // plain `cargo test`, where tests share one process.
         #[test]
         fn explicit_access_key_without_crn_and_no_env_returns_missing_workspace_crn() {
-            // Save and clear env to ensure no fallback
-            let saved_crn = std::env::var("CS_WORKSPACE_CRN").ok();
-            std::env::remove_var("CS_WORKSPACE_CRN");
-
-            let result = AutoStrategy::builder()
-                .with_access_key("CSAKtestKeyId.testKeySecret")
-                .detect();
-
-            // Restore env
-            if let Some(val) = saved_crn {
-                std::env::set_var("CS_WORKSPACE_CRN", val);
-            }
+            let result = temp_env::with_var_unset("CS_WORKSPACE_CRN", || {
+                AutoStrategy::builder()
+                    .with_access_key("CSAKtestKeyId.testKeySecret")
+                    .detect()
+            });
 
             assert!(matches!(result, Err(AuthError::MissingWorkspaceCrn(_))));
         }
 
         #[test]
         fn invalid_crn_env_var_returns_invalid_crn() {
-            let saved_crn = std::env::var("CS_WORKSPACE_CRN").ok();
-            std::env::set_var("CS_WORKSPACE_CRN", "not-a-crn");
-
-            let result = AutoStrategy::builder()
-                .with_access_key("CSAKtestKeyId.testKeySecret")
-                .detect();
-
-            // Restore env
-            match saved_crn {
-                Some(val) => std::env::set_var("CS_WORKSPACE_CRN", val),
-                None => std::env::remove_var("CS_WORKSPACE_CRN"),
-            }
+            let result = temp_env::with_var("CS_WORKSPACE_CRN", Some("not-a-crn"), || {
+                AutoStrategy::builder()
+                    .with_access_key("CSAKtestKeyId.testKeySecret")
+                    .detect()
+            });
 
             assert!(matches!(result, Err(AuthError::InvalidCrn(_))));
         }

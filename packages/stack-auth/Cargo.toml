@@ -19,6 +19,9 @@ base64 = { workspace = true }
 cts-common = { workspace = true }
 miette = { workspace = true }
 reqwest = { workspace = true, optional = true }
+# `Bytes::from_owner` lends reqwest a buffer this crate still owns, so the
+# request body is wiped when reqwest is done rather than copied.
+bytes = { version = "1.9", optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 # Form bodies for the OAuth token endpoints, encoded exactly as reqwest's
@@ -68,7 +71,7 @@ default = ["http"]
 # native-only and keep the bundled transport, so they need this feature.
 # `StaticTokenStrategy` is a test double behind `test-utils`, not part of
 # the production surface.
-http = ["dep:reqwest"]
+http = ["dep:reqwest", "dep:bytes"]
 test-utils = []
 # Exposes fuzz-only entry points (e.g. `fuzz_decode_claims`) for the cargo-fuzz
 # harnesses in `fuzz/`. A Cargo feature (not `#[cfg(fuzzing)]`) so it is a known

@@ -14,9 +14,14 @@
 //! every builder uses unless told otherwise, so native callers see no
 //! difference. Without it, a builder must be handed a transport.
 //!
-//! Bodies are wiped on drop on both halves: a request carries an access key
-//! or a refresh token, and a response carries the token that was minted.
+//! Bodies and header values are wiped on drop on both halves: a request
+//! carries an access key or a refresh token and a bearer credential, and a
+//! response carries the token that was minted. Neither type prints any of
+//! that: `Debug` reports the method, URL, header names and body length.
+//! The wipe covers this crate's buffers; what an HTTP client copies into
+//! its own is that client's, and [`ReqwestTransport`] says what it does.
 
+use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
 
@@ -31,15 +36,31 @@ use crate::AuthError;
 /// The shape is the guest host import's, deliberately: a transport that
 /// can carry this can carry every request the crate makes, and nothing the
 /// crate makes needs more.
-#[derive(Debug)]
 pub struct HttpRequest {
     method: &'static str,
     url: Url,
-    headers: Vec<(String, String)>,
+    headers: Zeroizing<Vec<(String, String)>>,
     body: Zeroizing<Vec<u8>>,
 }
 
 impl HttpRequest {
+    /// A request. `method` is upper-case (`"POST"`); header names are
+    /// lower-case. This is what the crate builds internally; a transport
+    /// implementation outside the crate needs it only to test itself.
+    pub fn new(
+        method: &'static str,
+        url: Url,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+    ) -> Self {
+        Self {
+            method,
+            url,
+            headers: Zeroizing::new(headers),
+            body: Zeroizing::new(body),
+        }
+    }
+
     /// The HTTP method, upper-case (`"POST"`).
     pub fn method(&self) -> &str {
         self.method
@@ -50,7 +71,9 @@ impl HttpRequest {
         &self.url
     }
 
-    /// The request headers, in order. Names are lower-case.
+    /// The request headers, in order. Names are lower-case. Values are
+    /// wiped when the request is dropped: one of them is the bearer
+    /// credential.
     pub fn headers(&self) -> &[(String, String)] {
         &self.headers
     }
@@ -61,21 +84,33 @@ impl HttpRequest {
     }
 }
 
+/// Names only: a request or response carries credentials in its body and
+/// its header values, and `{:?}` in a log line is how those leak.
+impl fmt::Debug for HttpRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HttpRequest")
+            .field("method", &self.method)
+            .field("url", &self.url.as_str())
+            .field("headers", &HeaderNames(&self.headers))
+            .field("body_len", &self.body.len())
+            .finish()
+    }
+}
+
 /// One HTTP response, as a transport returns it.
-#[derive(Debug)]
 pub struct HttpResponse {
     status: u16,
-    headers: Vec<(String, String)>,
+    headers: Zeroizing<Vec<(String, String)>>,
     body: Zeroizing<Vec<u8>>,
 }
 
 impl HttpResponse {
-    /// A response with `status`, `headers` and `body`. The body is wiped
-    /// when the response is dropped.
+    /// A response with `status`, `headers` and `body`. The body and the
+    /// header values are wiped when the response is dropped.
     pub fn new(status: u16, headers: Vec<(String, String)>, body: Vec<u8>) -> Self {
         Self {
             status,
-            headers,
+            headers: Zeroizing::new(headers),
             body: Zeroizing::new(body),
         }
     }
@@ -106,9 +141,29 @@ impl HttpResponse {
 
     /// The body decoded as JSON. A body that does not decode is reported as
     /// a request failure, as it was when the HTTP client did the decoding.
-    pub(crate) fn json<T: serde::de::DeserializeOwned>(&self) -> Result<T, AuthError> {
-        serde_json::from_slice(&self.body)
-            .map_err(|e| AuthError::Request(RequestError(Box::new(e))))
+    pub(crate) fn json<T: serde::de::DeserializeOwned>(&self) -> Result<T, RequestError> {
+        serde_json::from_slice(&self.body).map_err(|e| RequestError(Box::new(e)))
+    }
+}
+
+impl fmt::Debug for HttpResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HttpResponse")
+            .field("status", &self.status)
+            .field("headers", &HeaderNames(&self.headers))
+            .field("body_len", &self.body.len())
+            .finish()
+    }
+}
+
+/// The names of a header list, for the `Debug` impls above.
+struct HeaderNames<'a>(&'a [(String, String)]);
+
+impl fmt::Debug for HeaderNames<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list()
+            .entries(self.0.iter().map(|(name, _)| name))
+            .finish()
     }
 }
 
@@ -141,6 +196,28 @@ pub trait HttpTransport: 'static {
         &self,
         request: HttpRequest,
     ) -> impl Future<Output = Result<HttpResponse, RequestError>>;
+}
+
+/// One transport can serve several strategies: hand each an `Arc` of it.
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: HttpTransport> HttpTransport for Arc<T> {
+    fn send(
+        &self,
+        request: HttpRequest,
+    ) -> impl Future<Output = Result<HttpResponse, RequestError>> + Send {
+        (**self).send(request)
+    }
+}
+
+/// One transport can serve several strategies: hand each an `Arc` of it.
+#[cfg(target_arch = "wasm32")]
+impl<T: HttpTransport> HttpTransport for Arc<T> {
+    fn send(
+        &self,
+        request: HttpRequest,
+    ) -> impl Future<Output = Result<HttpResponse, RequestError>> {
+        (**self).send(request)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -240,10 +317,8 @@ pub(crate) async fn post_json<B: serde::Serialize>(
     transport: &SharedTransport,
     url: Url,
     body: &B,
-) -> Result<HttpResponse, AuthError> {
-    let body = Zeroizing::new(
-        serde_json::to_vec(body).map_err(|e| AuthError::Request(RequestError(Box::new(e))))?,
-    );
+) -> Result<HttpResponse, RequestError> {
+    let body = Zeroizing::new(serde_json::to_vec(body).map_err(|e| RequestError(Box::new(e)))?);
     post(transport, url, "application/json", Vec::new(), body).await
 }
 
@@ -252,10 +327,10 @@ pub(crate) async fn post_form<B: serde::Serialize>(
     transport: &SharedTransport,
     url: Url,
     body: &B,
-) -> Result<HttpResponse, AuthError> {
+) -> Result<HttpResponse, RequestError> {
     let body = Zeroizing::new(
         serde_urlencoded::to_string(body)
-            .map_err(|e| AuthError::Request(RequestError(Box::new(e))))?
+            .map_err(|e| RequestError(Box::new(e)))?
             .into_bytes(),
     );
     post(
@@ -268,25 +343,24 @@ pub(crate) async fn post_form<B: serde::Serialize>(
     .await
 }
 
-/// `POST` `body` as `content_type`, with `extra` headers first.
+/// `POST` `body` as `content_type`, with `extra` headers first. A failure
+/// here is the transport's (or the encoder's); the caller lifts it into
+/// its own error type, which for a strategy is `AuthError::Request`.
 pub(crate) async fn post(
     transport: &SharedTransport,
     url: Url,
     content_type: &str,
     mut extra: Vec<(String, String)>,
     body: Zeroizing<Vec<u8>>,
-) -> Result<HttpResponse, AuthError> {
+) -> Result<HttpResponse, RequestError> {
     extra.push(("content-type".to_string(), content_type.to_string()));
     let request = HttpRequest {
         method: "POST",
         url,
-        headers: extra,
+        headers: Zeroizing::new(extra),
         body,
     };
-    transport
-        .send_dyn(request)
-        .await
-        .map_err(AuthError::Request)
+    transport.send_dyn(request).await
 }
 
 // ---------------------------------------------------------------------------
@@ -299,6 +373,14 @@ pub(crate) async fn post(
 /// [`Default`] builds the client with the crate's standard timeouts and
 /// pool settings; [`ReqwestTransport::new`] takes a client configured by
 /// the caller.
+///
+/// What it does with the secrets it is handed: the request body is given
+/// to reqwest as a buffer this crate still owns, so it is wiped when reqwest
+/// is done with it rather than copied into an ordinary allocation; the
+/// `authorization` header is marked sensitive, so reqwest's and hyper's
+/// own `Debug` output redact it. What it cannot do: reach the buffers
+/// reqwest and hyper allocate for themselves while sending and receiving.
+/// Those are theirs, and this crate's wipe guarantee stops at its own.
 #[cfg(feature = "http")]
 #[derive(Debug, Clone)]
 pub struct ReqwestTransport {
@@ -323,13 +405,27 @@ impl Default for ReqwestTransport {
 #[cfg(feature = "http")]
 impl HttpTransport for ReqwestTransport {
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, RequestError> {
-        let method = reqwest::Method::from_bytes(request.method.as_bytes())
+        use reqwest::header::HeaderValue;
+
+        let HttpRequest {
+            method,
+            url,
+            headers,
+            body,
+        } = request;
+        let method = reqwest::Method::from_bytes(method.as_bytes())
             .map_err(|e| RequestError(Box::new(e)))?;
-        let mut builder = self.client.request(method, request.url);
-        for (name, value) in &request.headers {
-            builder = builder.header(name.as_str(), value.as_str());
+        let mut builder = self.client.request(method, url);
+        for (name, value) in headers.iter() {
+            let mut value = HeaderValue::from_str(value).map_err(|e| RequestError(Box::new(e)))?;
+            if name.eq_ignore_ascii_case("authorization") {
+                value.set_sensitive(true);
+            }
+            builder = builder.header(name.as_str(), value);
         }
-        let response = builder.body(request.body.to_vec()).send().await?;
+        // `from_owner` lends reqwest the buffer instead of copying it: the
+        // `Zeroizing` is dropped, and wiped, when the body is.
+        let response = builder.body(bytes::Bytes::from_owner(body)).send().await?;
         let status = response.status().as_u16();
         let headers = response
             .headers()
@@ -412,21 +508,21 @@ mod tests {
     /// remembers what it was asked, so a test can pin the wire shape without
     /// an HTTP client in the build.
     struct Stub {
-        response: Mutex<Option<Result<(u16, &'static str), &'static str>>>,
+        response: Result<(u16, &'static str), &'static str>,
         seen: Mutex<Vec<Seen>>,
     }
 
     impl Stub {
         fn replying(status: u16, body: &'static str) -> Self {
             Self {
-                response: Mutex::new(Some(Ok((status, body)))),
+                response: Ok((status, body)),
                 seen: Mutex::new(Vec::new()),
             }
         }
 
         fn failing(message: &'static str) -> Self {
             Self {
-                response: Mutex::new(Some(Err(message))),
+                response: Err(message),
                 seen: Mutex::new(Vec::new()),
             }
         }
@@ -440,7 +536,7 @@ mod tests {
                 request.headers().to_vec(),
                 request.body().to_vec(),
             ));
-            match self.response.lock().unwrap().take().expect("one request") {
+            match self.response {
                 Ok((status, body)) => Ok(HttpResponse::new(status, Vec::new(), body.into())),
                 Err(message) => Err(RequestError(Box::new(std::io::Error::other(message)))),
             }
@@ -457,6 +553,62 @@ mod tests {
 
     fn seen(stub: &Arc<Stub>) -> Seen {
         stub.seen.lock().unwrap().remove(0)
+    }
+
+    #[test]
+    fn debug_output_names_headers_and_never_prints_a_secret() {
+        let request = HttpRequest::new(
+            "POST",
+            base_url(),
+            vec![
+                ("authorization".into(), "Bearer SECRET-TOKEN".into()),
+                ("content-type".into(), "application/json".into()),
+            ],
+            br#"{"accessKey":"CSAK-SECRET"}"#.to_vec(),
+        );
+        let shown = format!("{request:?}");
+        assert!(
+            shown.contains("authorization") && shown.contains("content-type"),
+            "{shown}"
+        );
+        assert!(shown.contains("body_len: 27"), "{shown}");
+        assert!(!shown.contains("SECRET"), "{shown}");
+
+        let response = HttpResponse::new(
+            200,
+            vec![("set-cookie".into(), "session=SECRET".into())],
+            br#"{"accessToken":"SECRET"}"#.to_vec(),
+        );
+        let shown = format!("{response:?}");
+        assert!(
+            shown.contains("status: 200") && shown.contains("set-cookie"),
+            "{shown}"
+        );
+        assert!(!shown.contains("SECRET"), "{shown}");
+    }
+
+    #[tokio::test]
+    async fn a_shared_transport_serves_more_than_one_strategy() {
+        let stub = Arc::new(Stub::replying(
+            200,
+            r#"{"accessToken":"svc","expiry":4102444800}"#,
+        ));
+        let one: SharedTransport = share(Arc::clone(&stub));
+        let two: SharedTransport = share(stub.clone());
+        for transport in [one, two] {
+            let refresher = AccessKeyRefresher::new(
+                SecretToken::new("CSAKid.secret"),
+                base_url(),
+                None,
+                transport,
+            );
+            let _ = refresher.refresh(&()).await;
+        }
+        assert_eq!(
+            stub.seen.lock().unwrap().len(),
+            2,
+            "both strategies reached the one transport"
+        );
     }
 
     #[tokio::test]

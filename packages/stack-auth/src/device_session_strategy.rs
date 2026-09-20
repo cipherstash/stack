@@ -262,8 +262,8 @@ impl DeviceSessionStrategyBuilder {
     }
 }
 
-// These build strategies with no transport of their own, which needs the
-// bundled one.
+// Every test here builds a strategy with no transport of its own, which
+// needs the bundled one.
 #[cfg(test)]
 #[cfg(feature = "http")]
 mod tests {

@@ -58,8 +58,7 @@ pub(crate) fn claims_with_workspace(workspace: &str) -> serde_json::Value {
 /// A workspace [`Crn`] in the standard test region (`ap-southeast-2.aws`)
 /// carrying the given `workspace` ID.
 ///
-/// Only the http-gated CRN-bound strategies have tests that need one.
-// Only the mock-server tests, which need the bundled transport, mint these.
+/// Only the mock-server tests, which need the bundled transport, mint one.
 #[cfg(feature = "http")]
 pub(crate) fn crn_with_workspace(workspace: &str) -> Crn {
     format!("crn:ap-southeast-2.aws:{workspace}")
@@ -72,7 +71,8 @@ pub(crate) fn crn_with_workspace(workspace: &str) -> Crn {
 /// workspace verification that CRN-bound strategies run. Unlike
 /// [`claims_with_workspace`], whose `exp` is a fixed past epoch, the token this
 /// mints reads as valid.
-// Only the mock-server tests, which need the bundled transport, mint these.
+///
+/// Only the mock-server tests, which need the bundled transport, mint one.
 #[cfg(feature = "http")]
 pub(crate) fn jwt_with_workspace(workspace: &str) -> String {
     use jsonwebtoken::{encode, EncodingKey, Header};
