@@ -12,10 +12,10 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-vitaminc-aead-derive = { version = "0.4.0", path = "../aead-derive" }
-vitaminc-context = { version = "0.4.0", path = "../context" }
-vitaminc-protected = { version = "0.4.0", path = "../protected" }
-vitaminc-random = { version = "0.4.0", path = "../random" }
+vitaminc-aead-derive = { version = "0.5.0", path = "../aead-derive" }
+vitaminc-context = { version = "0.5.0", path = "../context" }
+vitaminc-protected = { version = "0.5.0", path = "../protected" }
+vitaminc-random = { version = "0.5.0", path = "../random" }
 
 bytes = { version = "^1", features = ["serde"] }
 serde = { workspace = true }
