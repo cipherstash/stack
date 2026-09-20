@@ -100,8 +100,9 @@ use crate::buffers;
 use crate::config::parse_config;
 use crate::host::{HostTokenStrategy, WasiHostConnection};
 use crate::ops;
-use crate::options::{parse_options, parse_selector, KeysetSelector, Opener, Side};
+use crate::options::{parse_options, parse_selector, scope_for, KeysetSelector, Side};
 use crate::status::{STATUS_ENCODING, STATUS_INTERNAL, STATUS_KMS_TRANSPORT, STATUS_STATE};
+use stack_encrypt::dynamic::Scope;
 
 /// The instance's cipher: `stack-encrypt` over the host-transport ZeroKMS
 /// client with host-supplied tokens.
@@ -249,16 +250,16 @@ fn with_keyset<R>(
     })
 }
 
-/// Run `f` with the opener the open-side options in `opts` select: the
+/// Run `f` with the scope the open-side options in `opts` select: the
 /// client for `{"any"}`, one keyset's cipher otherwise.
-fn with_opener<R>(
+fn with_scope<R>(
     opts: &[u8],
-    f: impl FnOnce(Opener<'_, StackKms<HostTokenStrategy, WasiHostConnection>>) -> Result<R, u32>,
+    f: impl FnOnce(Scope<'_, StackKms<HostTokenStrategy, WasiHostConnection>>) -> Result<R, u32>,
 ) -> Result<R, u32> {
     let options = parse_options(decode(opts)?, Side::Open)?;
     with_cipher(|cipher| {
-        let opener = block_on(Opener::for_selector(cipher, &options.keyset))?;
-        f(opener)
+        let scope = block_on(scope_for(cipher, &options.keyset))?;
+        f(scope)
     })
 }
 
@@ -521,8 +522,8 @@ fn run_decrypt(
         let aad = input(aad_ptr, aad_len)?;
         let opts = input(opt_ptr, opt_len)?;
         ops::validate::tree(ciphertext)?;
-        with_opener(opts, |opener| {
-            block_on(ops::decrypt_value(opener, ciphertext, aad, as_element))
+        with_scope(opts, |scope| {
+            block_on(ops::decrypt_value(scope, ciphertext, aad, as_element))
         })
     }))
     .unwrap_or(Err(STATUS_INTERNAL))
@@ -539,7 +540,7 @@ fn run_decrypt(
 /// — or an array of parts, which may nest as deep as the transport codec
 /// allows (`vitaminc_aead_value::transport::MAX_DEPTH` levels, counted from
 /// the root of the encoded value; deeper is refused as `STATUS_ENCODING`
-/// before the context is parsed). [`crate::context`] is the one home of
+/// before the context is parsed). [`stack_encrypt::dynamic::context`] is the one home of
 /// that grammar and of which Rust context each shape spells.
 /// A part and the one-element array holding it are *different* contexts
 /// (`[x]` is PAE-framed, `x` is not), so a probe must pass the context in
@@ -630,8 +631,8 @@ pub unsafe extern "C" fn se_decrypt_record(
         let plan = input(plan_ptr, plan_len)?;
         let opts = input(opt_ptr, opt_len)?;
         ops::validate::record_tree(record, plan)?;
-        with_opener(opts, |opener| {
-            block_on(ops::decrypt_record(opener, record, plan))
+        with_scope(opts, |scope| {
+            block_on(ops::decrypt_record(scope, record, plan))
         })
     }))
     .unwrap_or(Err(STATUS_INTERNAL))

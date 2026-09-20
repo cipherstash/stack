@@ -89,13 +89,14 @@
 //!     const DECRYPTABLE: bool = true;
 //! }
 //! // The declaration: the canonical ciphertext operation, read into this type.
+//! // It seals under the AEAD half of the context the record threads to it.
 //! impl<S: Encrypt + Clone> EncryptFrom<S> for LeafBytes {
 //!     type Context = CallerContext;
-//!     fn encryption<'s, K: 'static>(context: CallerContext) -> Encryption<'s, S, Self, K>
+//!     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
 //!     where
 //!         S: 's,
 //!     {
-//!         target::ciphertext(context).transcode()
+//!         target::ciphertext().accepting().transcode()
 //!     }
 //! }
 //!

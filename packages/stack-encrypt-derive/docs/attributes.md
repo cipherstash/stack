@@ -77,7 +77,7 @@ what they declare. The type you name must convert into every field's own
 `Context` (`AeadContext` does not convert into `CallerContext`, so a term
 field beside it is a compile error at the record, which is the point), and a
 field with a `context = ".."` of its own is derived under that literal
-extended by the caller's context through the type's `under` — `AeadContext`
+extended by the caller's context through the type's `extend` — `AeadContext`
 and `CallerContext` both have one. A record with a `context_field`, or a
 `struct` derive, settles its context itself and refuses the attribute.
 

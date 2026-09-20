@@ -1001,7 +1001,30 @@ where
 /// during the synchronous build and the pending carries no requests —
 /// awaiting it does no I/O — but that is the backend's property, not the
 /// API's: a backend that derives terms at ZeroKMS settles them the way it
-/// settles data keys, through the same pending. The descriptor is a context
+/// settles data keys, through the same pending.
+///
+/// # These are the query-probe path
+///
+/// A term derived here is bound to the descriptor you pass and to nothing
+/// else: it builds no [`Descriptor`](crate::Descriptor), makes no ZeroKMS
+/// request, and has no relation to the ciphertext of the field it indexes.
+/// Nothing checks that the two agree, and the two mistakes fail differently —
+/// a ciphertext under the wrong context is refused at first read, while a
+/// term under the wrong context is a valid term in another domain that
+/// matches nothing, forever, with no error anywhere.
+///
+/// So derive a term here to *query*: a probe has no ciphertext to agree with,
+/// and needs the field's context because that is what it is matching against.
+/// A term that is going to be **stored** should come from a target instead,
+/// where the one context the target is handed reaches the ciphertext and the
+/// term beside it alike, and giving either a context of its own is written
+/// in the declaration rather than plumbed (ADR-0004). A derived record does
+/// this per field and cannot get it wrong; a hand-written target can still
+/// put a subtree under its own context, but has to say so. The bytes are
+/// identical either way; what differs is whether anything holds the two in
+/// agreement.
+///
+/// The descriptor is a context
 /// as the target-directed leaves take it — a [`NonEmpty<T>`]:
 /// `nonempty!("users/email")`, `NonEmpty::new(column)?`,
 /// `nonempty!("users/email").with(row_id)` — and each method is

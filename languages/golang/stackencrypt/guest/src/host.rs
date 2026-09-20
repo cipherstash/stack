@@ -45,7 +45,7 @@ use zeroize::Zeroizing;
 use zerokms_protocol::{ViturRequest, ViturRequestError};
 
 use crate::buffers;
-use crate::headers::{encode_headers, header_value};
+use crate::headers::{header_value, request_headers};
 use crate::response::map_response;
 
 #[link(wasm_import_module = "cipherstash_transport")]
@@ -158,10 +158,7 @@ impl ZeroKMSConnection for WasiHostConnection {
         );
         // The bearer token is a credential; wipe the header buffer on drop.
         let auth = Zeroizing::new(format!("Bearer {access_token}"));
-        let headers = Zeroizing::new(encode_headers(&[
-            ("authorization", auth.as_str()),
-            ("content-type", "application/json"),
-        ]));
+        let headers = Zeroizing::new(request_headers(auth.as_str()));
 
         let method = b"POST";
         let mut resp_headers_ptr: u32 = 0;

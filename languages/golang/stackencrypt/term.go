@@ -25,35 +25,36 @@ const (
 	Ope TermKind = 4
 )
 
+// termKindNames is the one table of plan-tag spellings: TermKind.String,
+// parseTermKind and TermKind.valid all read it.
+var termKindNames = map[TermKind]string{
+	Equality: "eq",
+	Match:    "match",
+	Ore:      "ore",
+	Ope:      "ope",
+}
+
 func (k TermKind) String() string {
-	switch k {
-	case Equality:
-		return "eq"
-	case Match:
-		return "match"
-	case Ore:
-		return "ore"
-	case Ope:
-		return "ope"
-	default:
-		return fmt.Sprintf("TermKind(%d)", uint32(k))
+	if name, ok := termKindNames[k]; ok {
+		return name
 	}
+	return fmt.Sprintf("TermKind(%d)", uint32(k))
+}
+
+// valid reports whether k is a kind this package defines.
+func (k TermKind) valid() bool {
+	_, ok := termKindNames[k]
+	return ok
 }
 
 // parseTermKind maps a plan-tag spelling to its kind.
 func parseTermKind(s string) (TermKind, bool) {
-	switch s {
-	case "eq":
-		return Equality, true
-	case "match":
-		return Match, true
-	case "ore":
-		return Ore, true
-	case "ope":
-		return Ope, true
-	default:
-		return 0, false
+	for k, name := range termKindNames {
+		if name == s {
+			return k, true
+		}
 	}
+	return 0, false
 }
 
 // EqualityTerm is a PRF equality term. Two terms derived under the same

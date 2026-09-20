@@ -75,12 +75,12 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                 let field = fields[0];
                 let ty = &field.ty;
                 let member = &field.member;
-                let ctx = record.context_expr(field, true);
+                let ctx = record.context_expr(field);
                 quote_spanned!(ty.span()=> <#ty as #krate::target::DecryptInto<#output>>::decryption::<__K>(self.#member, #ctx.into()))
             } else {
                 let calls: Vec<_> = fields.iter().map(|field| {
                     let ty = &field.ty; let member = &field.member;
-                    let ctx = record.context_expr(field, true);
+                    let ctx = record.context_expr(field);
                     let ctx_ty = record.field_context_type(field);
                     quote_spanned!(ty.span()=> <#ty as #krate::target::DecryptField<#output, #ctx_ty>>::decryption_field::<__K>(self.#member, #ctx))
                 }).collect();

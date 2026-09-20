@@ -1,94 +1,104 @@
-//! Structured contexts for the record and term paths.
-//!
-//! A plan field's context, and a term probe's, arrives as an [`FfiValue`]
-//! and becomes an [`AadPiece`] tree: vitaminc's runtime form of a context,
-//! and the *identity* of one. vitaminc's law (pinned there by quickcheck
-//! over every built-in context type) is that a context's two derivations
-//! each equal the same derivation of its parts view:
-//!
-//! ```text
-//! x.into_aad()         == x.into_aad_piece().into_aad()
-//! x.into_prf_context() == x.into_aad_piece().into_prf_context()
-//! ```
-//!
-//! So a Rust `#[derive(EncryptFrom)]` row sealed with
-//! `encrypt_into_with_context(row, 7u64)`, which binds each field under
-//! `("users/age", 7u64)` — a `NonEmpty<(&str, u64)>` — and a plan that
-//! spells the same context as `["users/age", 7u64]` agree byte for byte on
-//! the AAD (the ciphertext binding and the ZeroKMS descriptor rendered from
-//! its parts) *and* on the PRF context (the index terms' domain separation).
-//! Nothing is re-derived in this crate: the tree is handed to vitaminc's own
-//! impls. The unit tests below pin the agreement against
-//! `nonempty!(..).with(..)` on both sides, and `tests/native_ops.rs` pins it
-//! end to end: a plan's stored terms equal native probes under the tuple,
-//! and its `"c"` leaf opens natively under the tuple.
-//!
-//! # Shape
-//!
-//! ```text
-//! context := <string> | <bytes> | <i32> | <i64> | <u32> | <u64> | [ context, ... ]
-//! ```
-//!
-//! This module is the one home of that grammar; the plan parser, the ABI
-//! docs and the Go bindings plan point here.
-//!
-//! A bare string is the flat form every plan used before this module: one
-//! text part, the field's whole context, same bytes as before. An array is
-//! a list; it may nest as deep as the transport codec allows
-//! ([`MAX_DEPTH`](vitaminc_aead_value::transport::MAX_DEPTH) levels,
-//! counted from the root of the encoded value — a plan's field context
-//! starts two levels down), and a deeper value is refused as
-//! [`STATUS_ENCODING`] by the codec before this module sees it. Text and
-//! bytes with the same content are distinct on the PRF side (UTF-8 versus
-//! bytes encodings) though they share AAD bytes — the same distinction the
-//! Rust types make. Booleans, floats, null, undefined, objects and
-//! passthroughs are not contexts and are refused as [`STATUS_ENCODING`].
-//!
-//! # Which Rust contexts a list spells
-//!
-//! * `["users/age", 7u64]` is `nonempty!("users/age").with(7u64)`: a
-//!   two-element list is the pair.
-//! * `NonEmpty::with` nests to the **left**: `nonempty!("a").with(7u64)
-//!   .with("eu")` is `(("a", 7u64), "eu")`, spelled `[["a", 7u64], "eu"]`.
-//!   A flat three-element list is a different context (a three-part PAE)
-//!   that no `.with()` chain produces; `a_left_nested_list_is_the_with_chain`
-//!   pins both facts.
-//! * `[x]` is `Some(x)` and `[]` is `None`, on both derivations. A
-//!   one-element list is *not* the bare part: it is PAE-framed, the bare
-//!   part is not; `a_one_element_list_is_some` and
-//!   `a_one_element_list_is_not_the_bare_part` pin both.
-//!
-//! # Emptiness
-//!
-//! [`parse_context`] returns a [`NonEmpty`], proven once at the boundary by
-//! vitaminc's own rule for the tree: an empty string or byte string is
-//! empty, an integer never is, and a list is empty when every part is (so
-//! `[]` and `[""]` are, `["", 7]` is not) — the rule its `Option` and tuple
-//! impls follow.
+//! An [`FfiValue`] read as an encryption context. See [`context`](context()).
 
 use std::borrow::Cow;
 
-use stack_encrypt::{AadPiece, NonEmpty};
 use vitaminc_aead_value::FfiValue;
 use vitaminc_protected::Controlled;
 
-use crate::status::STATUS_ENCODING;
+use super::Error;
+use crate::{AadPiece, NonEmpty};
 
-/// Parse a context from its decoded [`FfiValue`] form and prove it
-/// non-empty. Anything outside the shape in the [module docs](self), and
-/// an empty context, is [`STATUS_ENCODING`].
-pub fn parse_context(value: FfiValue) -> Result<NonEmpty<AadPiece<'static>>, u32> {
-    NonEmpty::new(piece_of(value)?).map_err(|_| STATUS_ENCODING)
+/// A context arrives from a binding as a value and becomes an [`AadPiece`]
+/// tree: vitaminc's runtime form of a context, and the *identity* of one.
+/// vitaminc's law (pinned there by quickcheck over every built-in context
+/// type) is that a context's two derivations each equal the same derivation
+/// of its parts view:
+///
+/// ```text
+/// x.into_aad()         == x.into_aad_piece().into_aad()
+/// x.into_prf_context() == x.into_aad_piece().into_prf_context()
+/// ```
+///
+/// So a `#[derive(EncryptFrom)]` row sealed with
+/// `encrypt_into_with_context(row, 7u64)`, which binds each field under
+/// `("users/age", 7u64)` — a `NonEmpty<(&str, u64)>` — and a binding that
+/// spells the same context as `["users/age", 7u64]` agree byte for byte on
+/// the AAD (the ciphertext binding and the ZeroKMS descriptor rendered from
+/// its parts) *and* on the PRF context (the index terms' domain separation).
+/// Nothing is re-derived here: the tree is handed to vitaminc's own impls.
+///
+/// # Shape
+///
+/// ```text
+/// context := <string> | <bytes> | <i32> | <i64> | <u32> | <u64> | [ context, ... ]
+/// ```
+///
+/// A bare string is one text part. An array is a list, and may nest as deep
+/// as the transport codec allows
+/// ([`MAX_DEPTH`](vitaminc_aead_value::transport::MAX_DEPTH) levels, counted
+/// from the root of the encoded value); a deeper value is refused by the
+/// codec before this module sees it. Text and bytes with the same content
+/// are distinct on the PRF side (UTF-8 versus bytes encodings) though they
+/// share AAD bytes — the same distinction the Rust types make. Booleans,
+/// floats, null, undefined, objects and passthroughs are not contexts.
+///
+/// # Which Rust contexts a list spells
+///
+/// * `["users/age", 7u64]` is `nonempty!("users/age").with(7u64)`: a
+///   two-element list is the pair.
+/// * `NonEmpty::with` nests to the **left**: `nonempty!("a").with(7u64)
+///   .with("eu")` is `(("a", 7u64), "eu")`, spelled `[["a", 7u64], "eu"]`.
+///   A flat three-element list is a different context (a three-part PAE)
+///   that no `.with()` chain produces.
+/// * `[x]` is `Some(x)` and `[]` is `None`, on both derivations. A
+///   one-element list is *not* the bare part: it is PAE-framed, the bare
+///   part is not.
+///
+/// # Emptiness
+///
+/// [`context`](context()) returns a [`NonEmpty`], proven once here by
+/// vitaminc's own rule for the tree: an empty string or byte string is
+/// empty, an integer never is, and a list is empty when every part is (so
+/// `[]` and `[""]` are, `["", 7]` is not) — the rule its `Option` and tuple
+/// impls follow.
+///
+/// # Examples
+///
+/// The list a binding spells and the tuple a Rust caller writes are one
+/// context:
+///
+/// ```
+/// use stack_encrypt::dynamic::{context, FfiValue};
+/// use stack_encrypt::{nonempty, IntoAad};
+///
+/// let parsed = context(FfiValue::Array(vec![
+///     FfiValue::String("users/age".into()),
+///     FfiValue::UInt64(7),
+/// ]))?;
+/// let typed = nonempty!("users/age").with(7u64);
+/// assert_eq!(
+///     parsed.into_inner().into_aad().as_bytes(),
+///     typed.into_aad().as_bytes()
+/// );
+/// # Ok::<(), stack_encrypt::dynamic::Error>(())
+/// ```
+///
+/// # Errors
+///
+/// [`Error::Context`] for anything outside the shape above, and for a
+/// context that renders empty.
+pub fn context(value: FfiValue) -> Result<NonEmpty<AadPiece<'static>>, Error> {
+    NonEmpty::new(piece_of(value)?).map_err(|_| Error::Context)
 }
 
-fn piece_of(value: FfiValue) -> Result<AadPiece<'static>, u32> {
+fn piece_of(value: FfiValue) -> Result<AadPiece<'static>, Error> {
     Ok(match value {
         // Valid UTF-8 by `Utf8String`'s construction invariant; checked
         // rather than assumed because this is boundary code. The payload
         // moves out of its `Protected` rather than being copied: a context
         // is not secret, and the copy would only be wiped and freed.
         FfiValue::String(s) => AadPiece::Text(Cow::Owned(
-            String::from_utf8(s.into_inner().risky_unwrap()).map_err(|_| STATUS_ENCODING)?,
+            String::from_utf8(s.into_inner().risky_unwrap()).map_err(|_| Error::Context)?,
         )),
         FfiValue::Bytes(bytes) => AadPiece::Bytes(Cow::Owned(bytes.risky_unwrap())),
         FfiValue::Int32(v) => AadPiece::I32(v),
@@ -101,7 +111,7 @@ fn piece_of(value: FfiValue) -> Result<AadPiece<'static>, u32> {
             items
                 .into_iter()
                 .map(piece_of)
-                .collect::<Result<Vec<_>, u32>>()?,
+                .collect::<Result<Vec<_>, Error>>()?,
         ),
         FfiValue::Null
         | FfiValue::Undefined
@@ -109,19 +119,19 @@ fn piece_of(value: FfiValue) -> Result<AadPiece<'static>, u32> {
         | FfiValue::Float32(_)
         | FfiValue::Float64(_)
         | FfiValue::Object(_)
-        | FfiValue::Passthrough(_) => return Err(STATUS_ENCODING),
+        | FfiValue::Passthrough(_) => return Err(Error::Context),
     })
 }
 
-/// A view of a context tree that borrows its text and bytes, so a plan's
-/// context — parsed and proven once — can be handed to every output of
-/// every row without copying the payloads. Integers are copied (they are
-/// the payload); the list spine is rebuilt, which is the cost of a tree of
-/// `Cow`s rather than a tree of references.
+/// A view of a context tree that borrows its text and bytes, so a context
+/// parsed and proven once can be handed to every output of every row without
+/// copying the payloads. Integers are copied (they are the payload); the
+/// list spine is rebuilt, which is the cost of a tree of `Cow`s rather than
+/// a tree of references.
 ///
-/// `AadPiece` is `#[non_exhaustive]`, so a variant this crate does not know
-/// is cloned whole rather than refused: the view must be the same context,
-/// and a clone is.
+/// [`AadPiece`] is `#[non_exhaustive]`, so a variant this crate does not
+/// know is cloned whole rather than refused: the view must be the same
+/// context, and a clone is.
 pub fn borrowed<'b>(piece: &'b AadPiece<'_>) -> AadPiece<'b> {
     match piece {
         AadPiece::Text(text) => AadPiece::Text(Cow::Borrowed(text.as_ref())),
@@ -144,7 +154,7 @@ pub fn borrowed<'b>(piece: &'b AadPiece<'_>) -> AadPiece<'b> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use stack_encrypt::{nonempty, IntoAad, IntoPrfContext};
+    use crate::{nonempty, Descriptor, IntoAad, IntoPrfContext};
     use vitaminc_protected::Protected;
 
     fn s(value: &str) -> FfiValue {
@@ -153,47 +163,55 @@ mod tests {
 
     #[test]
     fn a_bare_string_is_the_flat_context() {
-        let parsed = parse_context(s("users/age")).expect("flat context");
-        assert_eq!(parsed.get(), &AadPiece::Text(Cow::Borrowed("users/age")));
+        let parsed = context(s("users/age")).expect("flat context");
+        assert_eq!(
+            parsed.get(),
+            &AadPiece::Text(Cow::Borrowed("users/age")),
+            "a bare string is one text part, not a one-element list"
+        );
         assert_eq!(
             parsed.into_inner().into_aad().as_bytes(),
-            "users/age".into_aad().as_bytes()
+            "users/age".into_aad().as_bytes(),
+            "the AAD is the string's own, unframed"
         );
     }
 
     #[test]
     fn a_list_encodes_as_the_tuple_on_both_sides() {
-        let parsed = parse_context(FfiValue::Array(vec![s("users/age"), FfiValue::UInt64(7)]))
+        let parsed = context(FfiValue::Array(vec![s("users/age"), FfiValue::UInt64(7)]))
             .expect("extended context");
         let tuple = nonempty!("users/age").with(7u64);
         assert_eq!(
             parsed.clone().into_inner().into_aad().as_bytes(),
-            tuple.into_aad().as_bytes()
+            tuple.into_aad().as_bytes(),
+            "a two-element list is the pair on the AAD side"
         );
         assert_eq!(
             parsed.into_inner().into_prf_context().as_bytes(),
-            tuple.into_prf_context().as_bytes()
+            tuple.into_prf_context().as_bytes(),
+            "a two-element list is the pair on the PRF side"
         );
     }
 
     #[test]
     fn a_list_renders_the_descriptor_the_tuple_does() {
-        use stack_encrypt::Descriptor;
-        let parsed = parse_context(FfiValue::Array(vec![s("users/age"), FfiValue::UInt64(7)]))
+        let parsed = context(FfiValue::Array(vec![s("users/age"), FfiValue::UInt64(7)]))
             .expect("extended context");
         assert_eq!(
             Descriptor::of(parsed.into_inner()).as_str(),
-            "users/age|7u64"
+            "users/age|7u64",
+            "the list renders its parts joined by `|`"
         );
         assert_eq!(
             Descriptor::of(nonempty!("users/age").with(7u64)).as_str(),
-            "users/age|7u64"
+            "users/age|7u64",
+            "the tuple renders the same descriptor"
         );
     }
 
     #[test]
     fn a_nested_list_encodes_as_the_nested_tuple() {
-        let parsed = parse_context(FfiValue::Array(vec![
+        let parsed = context(FfiValue::Array(vec![
             s("users/age"),
             FfiValue::Array(vec![s("t"), FfiValue::Int32(-3)]),
         ]))
@@ -201,18 +219,20 @@ mod tests {
         let tuple = ("users/age", ("t", -3i32));
         assert_eq!(
             parsed.clone().into_inner().into_aad().as_bytes(),
-            tuple.into_aad().as_bytes()
+            tuple.into_aad().as_bytes(),
+            "a nested list is the nested tuple on the AAD side"
         );
         assert_eq!(
             parsed.into_inner().into_prf_context().as_bytes(),
-            tuple.into_prf_context().as_bytes()
+            tuple.into_prf_context().as_bytes(),
+            "a nested list is the nested tuple on the PRF side"
         );
     }
 
     /// The borrowed view is the same context as the owned tree.
     #[test]
     fn the_borrowed_view_encodes_as_the_owned_tree() {
-        let parsed = parse_context(FfiValue::Array(vec![
+        let parsed = context(FfiValue::Array(vec![
             s("users/age"),
             FfiValue::Array(vec![
                 FfiValue::Bytes(Protected::new(b"k".to_vec())),
@@ -241,13 +261,13 @@ mod tests {
     #[test]
     fn a_left_nested_list_is_the_with_chain() {
         let chain = nonempty!("a").with(7u64).with("eu");
-        let nested = parse_context(FfiValue::Array(vec![
+        let nested = context(FfiValue::Array(vec![
             FfiValue::Array(vec![s("a"), FfiValue::UInt64(7)]),
             s("eu"),
         ]))
         .expect("nested")
         .into_inner();
-        let flat = parse_context(FfiValue::Array(vec![s("a"), FfiValue::UInt64(7), s("eu")]))
+        let flat = context(FfiValue::Array(vec![s("a"), FfiValue::UInt64(7), s("eu")]))
             .expect("flat")
             .into_inner();
         assert_eq!(
@@ -276,8 +296,7 @@ mod tests {
     /// (vitaminc 0.4.0 made the `Option` PRF context follow its parts view).
     #[test]
     fn a_one_element_list_is_some() {
-        use stack_encrypt::Descriptor;
-        let list = parse_context(FfiValue::Array(vec![FfiValue::UInt64(7)]))
+        let list = context(FfiValue::Array(vec![FfiValue::UInt64(7)]))
             .expect("list")
             .into_inner();
         let some = Some(7u64);
@@ -300,31 +319,35 @@ mod tests {
 
     #[test]
     fn a_one_element_list_is_not_the_bare_part() {
-        let list = parse_context(FfiValue::Array(vec![s("a")])).expect("list");
-        let bare = parse_context(s("a")).expect("bare");
+        let list = context(FfiValue::Array(vec![s("a")])).expect("list");
+        let bare = context(s("a")).expect("bare");
         assert_ne!(
             list.clone().into_inner().into_aad().as_bytes(),
-            bare.clone().into_inner().into_aad().as_bytes()
+            bare.clone().into_inner().into_aad().as_bytes(),
+            "[x] is PAE-framed and x is not, so their AAD differs"
         );
         assert_ne!(
             list.into_inner().into_prf_context().as_bytes(),
-            bare.into_inner().into_prf_context().as_bytes()
+            bare.into_inner().into_prf_context().as_bytes(),
+            "[x] is PAE-framed and x is not, so their PRF context differs"
         );
     }
 
     #[test]
     fn text_and_bytes_share_aad_bytes_but_not_prf_encoding() {
-        let text = parse_context(s("ab")).expect("text").into_inner();
-        let bytes = parse_context(FfiValue::Bytes(Protected::new(b"ab".to_vec())))
+        let text = context(s("ab")).expect("text").into_inner();
+        let bytes = context(FfiValue::Bytes(Protected::new(b"ab".to_vec())))
             .expect("bytes")
             .into_inner();
         assert_eq!(
             text.clone().into_aad().as_bytes(),
-            bytes.clone().into_aad().as_bytes()
+            bytes.clone().into_aad().as_bytes(),
+            "text and bytes of the same content share AAD bytes"
         );
         assert_ne!(
             text.into_prf_context().as_bytes(),
-            bytes.into_prf_context().as_bytes()
+            bytes.into_prf_context().as_bytes(),
+            "text and bytes are distinct PRF encodings"
         );
     }
 
@@ -340,9 +363,8 @@ mod tests {
                 FfiValue::Array(vec![FfiValue::Array(vec![]), s("")]),
             ),
         ] {
-            assert_eq!(
-                parse_context(empty).err(),
-                Some(STATUS_ENCODING),
+            assert!(
+                matches!(context(empty), Err(Error::Context)),
                 "{label} is empty by the tuple rule and must be refused"
             );
         }
@@ -358,7 +380,7 @@ mod tests {
             ),
         ] {
             assert!(
-                parse_context(non_empty).is_ok(),
+                context(non_empty).is_ok(),
                 "{label} carries bytes and must be accepted"
             );
         }
@@ -381,9 +403,8 @@ mod tests {
                 FfiValue::Array(vec![s("ok"), FfiValue::Bool(false)]),
             ),
         ] {
-            assert_eq!(
-                parse_context(bad).err(),
-                Some(STATUS_ENCODING),
+            assert!(
+                matches!(context(bad), Err(Error::Context)),
                 "{label} is not a context and must be refused"
             );
         }
