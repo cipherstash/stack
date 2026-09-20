@@ -44,8 +44,9 @@ import (
 
 // guestMemory is one instance's linear memory, as this package supplies it
 // to wazero: the LinearMemory contract plus what the Client reports about
-// it. Reallocate and Free are called by wazero under the Client's lock;
-// lockError is read from any goroutine.
+// it. Reallocate is called by wazero under the Client's lock, and Free
+// from wherever wazero closes the module (see observed.Free); lockError is
+// read from any goroutine.
 type guestMemory interface {
 	experimental.LinearMemory
 	// lockError is nil while every committed byte is locked (and, on Linux,
@@ -70,9 +71,14 @@ type memoryAllocator struct {
 	// across a call to name the real cause when the guest reports only a
 	// failed allocation.
 	refusals uint64
-	// freed is set once Free has run: the mapping is gone and its
-	// contents were wiped first. Tests read it to observe release paths
-	// the caller never sees, such as the cleanup on an unreachable Client.
+	// inFlight counts guest calls in progress on this memory (see enter and
+	// exit); pending records a Free that arrived while one was, to be
+	// honoured when the outermost call returns.
+	inFlight int
+	pending  bool
+	// freed is set once the memory is gone, its contents wiped first.
+	// Tests read it to observe release paths the caller never sees, such
+	// as the cleanup on an unreachable Client.
 	freed bool
 }
 
@@ -118,6 +124,34 @@ func (a *memoryAllocator) isFreed() bool {
 	return a.freed
 }
 
+// enter marks a guest call in progress: the memory must stay mapped until
+// the matching exit, whatever wazero asks in between.
+func (a *memoryAllocator) enter() {
+	a.mu.Lock()
+	a.inFlight++
+	a.mu.Unlock()
+}
+
+// exit ends a guest call and performs a Free that arrived during it.
+func (a *memoryAllocator) exit() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.inFlight--
+	if a.inFlight == 0 && a.pending {
+		a.pending = false
+		a.freeLocked()
+	}
+}
+
+// freeLocked wipes and releases the memory. Called with mu held, once.
+func (a *memoryAllocator) freeLocked() {
+	if a.freed {
+		return
+	}
+	a.freed = true
+	a.mem.(*observed).guestMemory.Free()
+}
+
 // observed wraps the backend memory so the allocator sees the events the
 // Client needs to report: a refused strict growth, and the release.
 type observed struct {
@@ -138,11 +172,25 @@ func (o *observed) Reallocate(size uint64) []byte {
 	return buf
 }
 
+// Free implements experimental.LinearMemory. wazero calls it when the
+// module's resources are closed, and that can happen while the guest is
+// still running: a call whose context ends during a host import closes
+// the module on wazero's watcher goroutine with its resources deferred,
+// and the next call into the module — the host import re-entering the
+// guest through se_alloc to place its result — closes them. With wazero's
+// default allocator that was harmless, the Go slice outlived the module;
+// here it would unmap the memory under a guest suspended in the import,
+// whose next store then faults in compiled code. So a Free that arrives
+// during a call is recorded and performed by the outermost exit, when no
+// guest code can be running. A Free with no call in flight is immediate.
 func (o *observed) Free() {
-	o.guestMemory.Free()
 	o.owner.mu.Lock()
-	o.owner.freed = true
-	o.owner.mu.Unlock()
+	defer o.owner.mu.Unlock()
+	if o.owner.inFlight > 0 {
+		o.owner.pending = true
+		return
+	}
+	o.owner.freeLocked()
 }
 
 // heapMemory backs the guest with an ordinary Go slice, for platforms with

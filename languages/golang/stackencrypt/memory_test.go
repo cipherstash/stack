@@ -16,7 +16,9 @@ import (
 	"unsafe"
 
 	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
+	"github.com/tetratelabs/wazero/sys"
 )
 
 // growProbe is a hand-assembled module with one page of memory and one
@@ -331,6 +333,77 @@ func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
 		}
 	}
 	fmt.Println("case ok")
+}
+
+// reentrantProbe is a hand-assembled module reproducing the shape of the
+// guest's transport import: "run" calls the host function h, then stores
+// to memory. h re-enters the guest (as transport_send does through
+// se_alloc) with a context that has ended, which is how wazero comes to
+// free the module's memory while the guest is suspended in the import:
+//
+//	(module
+//	  (import "env" "h" (func $h))
+//	  (memory (export "memory") 1)
+//	  (func (export "run") call $h i32.const 0 i32.const 1 i32.store)
+//	  (func (export "nop")))
+var reentrantProbe = []byte{
+	0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+	0x01, 0x04, 0x01, 0x60, 0x00, 0x00, // type: () -> ()
+	0x02, 0x09, 0x01, 0x03, 'e', 'n', 'v', 0x01, 'h', 0x00, 0x00, // import env.h
+	0x03, 0x03, 0x02, 0x00, 0x00, // two functions of type 0
+	0x05, 0x03, 0x01, 0x00, 0x01, // memory: min 1, no max
+	0x07, 0x16, 0x03,
+	0x06, 'm', 'e', 'm', 'o', 'r', 'y', 0x02, 0x00,
+	0x03, 'r', 'u', 'n', 0x00, 0x01,
+	0x03, 'n', 'o', 'p', 0x00, 0x02,
+	0x0a, 0x10, 0x02,
+	0x0b, 0x00, 0x10, 0x00, 0x41, 0x00, 0x41, 0x01, 0x36, 0x02, 0x00, 0x0b, // run
+	0x02, 0x00, 0x0b, // nop
+}
+
+// The sequence that crashed in CI: a call's context ends during a host
+// import, the import re-enters the guest, and wazero frees the memory in
+// that nested call while the outer guest frame is still live and about to
+// store. The memory must survive until the outer call has returned; an
+// unmapped store here is a fault in compiled code that takes the process
+// down, so this test cannot fail gently.
+func TestMemoryOutlivesACallClosedDuringAHostImport(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	alloc := newMemoryAllocator(false)
+	rt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().WithCloseOnContextDone(true))
+	defer rt.Close(context.Background())
+	var freedDuringImport, nestedFailed bool
+	_, err := rt.NewHostModuleBuilder("env").NewFunctionBuilder().
+		WithFunc(func(ctx context.Context, m api.Module) {
+			cancel()
+			_, nested := m.ExportedFunction("nop").Call(ctx)
+			nestedFailed = nested != nil
+			freedDuringImport = alloc.isFreed()
+		}).Export("h").Instantiate(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod, err := rt.InstantiateWithConfig(experimental.WithMemoryAllocator(ctx, alloc), reentrantProbe, wazero.NewModuleConfig())
+	if err != nil {
+		t.Fatalf("instantiating reentrant probe: %v", err)
+	}
+	alloc.enter()
+	_, err = mod.ExportedFunction("run").Call(ctx)
+	alloc.exit()
+	var exit *sys.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != sys.ExitCodeContextCanceled {
+		t.Fatalf("run: %v, want the cancellation exit", err)
+	}
+	if !nestedFailed {
+		t.Fatal("the nested call did not see the closed module")
+	}
+	if freedDuringImport {
+		t.Fatal("memory freed while the guest was suspended in a host import")
+	}
+	if !alloc.isFreed() {
+		t.Fatal("memory not freed once the outer call returned")
+	}
 }
 
 // A Client that becomes unreachable without Close is released by its

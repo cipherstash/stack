@@ -164,7 +164,9 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, strict bool) (*
 func (inst *instance) release() error {
 	ctx := context.Background()
 	if !inst.module.IsClosed() {
+		inst.mem.enter()
 		_, _ = inst.shutdown.Call(ctx)
+		inst.mem.exit()
 	}
 	return inst.runtime.Close(ctx)
 }
@@ -227,6 +229,12 @@ func scalar(v uint64) arg { return arg{scalar: v} }
 // order, and copies the output out before every buffer — inputs and output
 // — is wiped and freed.
 func (inst *instance) call(ctx context.Context, fn api.Function, args ...arg) ([]byte, error) {
+	// The memory stays mapped for the whole call, the deferred frees
+	// included: a close that lands mid-call (an expired context during a
+	// host import) is honoured by this exit, not under running guest
+	// code. See observed.Free.
+	inst.mem.enter()
+	defer inst.mem.exit()
 	var bufs []guestBuf
 	defer func() {
 		for _, b := range bufs {
