@@ -205,7 +205,7 @@ func TestPlanFromTags(t *testing.T) {
 		"nothing tagged": struct{ A int }{},
 		"not a struct":   42,
 		"nil type":       nil,
-		"index twice": struct {
+		"term twice": struct {
 			A int `stash:"context=c,index=eq;eq"`
 		}{},
 		"duplicate name": struct {
@@ -224,9 +224,9 @@ func TestPlanFromTags(t *testing.T) {
 func TestExplicitPlanIsTheTagPlan(t *testing.T) {
 	typ := reflect.TypeOf(taggedUser{})
 	explicit, err := NewPlan(
-		PlanField{Field: "Age", Context: "users/age", Index: []TermKind{Equality, Ore}},
-		PlanField{Field: "Email", Name: "email", Context: "users/email", Index: []TermKind{Equality, Match}},
-		PlanField{Field: "Notes", Context: "users/notes"},
+		FieldPlan{Field: "Age", Context: "users/age", Terms: []TermKind{Equality, Ore}},
+		FieldPlan{Field: "Email", Name: "email", Context: "users/email", Terms: []TermKind{Equality, Match}},
+		FieldPlan{Field: "Notes", Context: "users/notes"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -287,7 +287,7 @@ func TestPlanBindsByFieldName(t *testing.T) {
 	if _, err := PlanFromTags(typ); err == nil {
 		t.Fatal("untagged struct has a tag plan")
 	}
-	ok, err := NewPlan(PlanField{Field: "Email", Context: "c"})
+	ok, err := NewPlan(FieldPlan{Field: "Email", Context: "c"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestPlanBindsByFieldName(t *testing.T) {
 		"unexported": "hidden",
 		"promoted":   "Inner",
 	} {
-		p, err := NewPlan(PlanField{Field: field, Context: "c"})
+		p, err := NewPlan(FieldPlan{Field: field, Context: "c"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -316,15 +316,15 @@ func TestPlanBindsByFieldName(t *testing.T) {
 	}
 }
 
-func TestNewPlanValidates(t *testing.T) {
-	for name, fields := range map[string][]PlanField{
+func TestNewPlanRefusesMalformedFields(t *testing.T) {
+	for name, fields := range map[string][]FieldPlan{
 		"no fields":      nil,
 		"no field name":  {{Context: "c"}},
 		"no context":     {{Field: "A"}},
-		"unknown kind":   {{Field: "A", Context: "c", Index: []TermKind{TermKind(9)}}},
+		"unknown kind":   {{Field: "A", Context: "c", Terms: []TermKind{TermKind(9)}}},
 		"duplicate name": {{Field: "A", Context: "c", Name: "x"}, {Field: "B", Context: "c", Name: "x"}},
 		"field twice":    {{Field: "A", Context: "c"}, {Field: "A", Context: "d"}},
-		"index twice":    {{Field: "A", Context: "c", Index: []TermKind{Equality, Equality}}},
+		"term twice":     {{Field: "A", Context: "c", Terms: []TermKind{Equality, Equality}}},
 	} {
 		if _, err := NewPlan(fields...); err == nil {
 			t.Errorf("%s: plan accepted", name)

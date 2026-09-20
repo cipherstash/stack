@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
@@ -142,6 +143,60 @@ func TestLiveRecordsAndTerms(t *testing.T) {
 	}
 	if err := cipher.DecryptRecords(ctx, ext, &back, ExtendContext(uint64(7))); err != nil {
 		t.Fatalf("extended record with its extension: %v", err)
+	}
+}
+
+// An explicit plan round-trips a struct that carries no tags, and a record
+// is only readable under the plan it was written under.
+func TestLiveExplicitPlanRoundTrip(t *testing.T) {
+	c := liveClient(t)
+	ctx := t.Context()
+	cipher := c.DefaultKeyset()
+	type generated struct { // no tags, as protobuf output has none
+		Age   uint32
+		Email string
+	}
+	plan, err := NewPlan(
+		FieldPlan{Field: "Age", Context: "users/age", Terms: []TermKind{Equality, Ore}},
+		FieldPlan{Field: "Email", Context: "users/email", Terms: []TermKind{Equality, Match}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := []generated{{34, "alice@example.com"}, {29, "bob@example.com"}}
+
+	records, err := cipher.EncryptRecords(ctx, users, WithPlan(plan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 || len(records[0]["Age"].Equality) != 32 || records[0]["Email"].Match == nil {
+		t.Fatalf("records = %+v", records)
+	}
+	var back []generated
+	if err := cipher.DecryptRecords(ctx, records, &back, WithPlan(plan)); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(back, users) {
+		t.Fatalf("decrypted %+v, want %+v", back, users)
+	}
+	var one generated
+	if err := c.DecryptRecord(ctx, records[1], &one, WithPlan(plan)); err != nil || one.Email != "bob@example.com" {
+		t.Fatalf("DecryptRecord: %v %+v", err, one)
+	}
+
+	// A plan naming a field the record does not carry is refused before
+	// any key is requested.
+	other, err := NewPlan(FieldPlan{Field: "Email", Name: "email", Context: "users/email"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.transport.sends.Store(0)
+	err = cipher.DecryptRecords(ctx, records, &back, WithPlan(other))
+	if err == nil || !strings.Contains(err.Error(), `no ciphertext for field "email"`) {
+		t.Fatalf("mismatched plan: %v", err)
+	}
+	if n := c.transport.sends.Load(); n != 0 {
+		t.Errorf("mismatched plan made %d ZeroKMS calls, want 0", n)
 	}
 }
 

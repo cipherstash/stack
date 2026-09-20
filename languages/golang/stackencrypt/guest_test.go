@@ -502,6 +502,23 @@ type recordRow struct {
 	Email string `stash:"context=users/email,index=eq;match"`
 }
 
+// A record decrypted under a plan that names a field it does not carry is
+// refused on the host, with the field named, before the guest is asked.
+func TestMismatchedPlanIsRefusedBeforeTheGuest(t *testing.T) {
+	ctx := context.Background()
+	c := rawInstance(t)
+	record := EncryptedRecord{"Age": {Ciphertext: Sealed(fixtureLeaf)}}
+	plan, err := NewPlan(FieldPlan{Field: "Email", Name: "email", Context: "users/email"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []struct{ Email string }
+	err = c.DecryptRecords(ctx, []EncryptedRecord{record}, &out, WithPlan(plan))
+	if err == nil || errors.Is(err, ErrState) || !strings.Contains(err.Error(), `no ciphertext for field "email"`) {
+		t.Fatalf("mismatched plan: %v, want the host's refusal naming the field", err)
+	}
+}
+
 // Every encoding the package builds reaches the guest's own parsers and
 // passes them: the uninitialised instance answers ErrState only after it
 // has validated all inputs.
@@ -524,8 +541,8 @@ func TestGuestAcceptsEveryEncodingThisPackageBuilds(t *testing.T) {
 		Email string
 	}
 	plan, err := NewPlan(
-		PlanField{Field: "Age", Context: "users/age", Index: []TermKind{Equality, Ore}},
-		PlanField{Field: "Email", Context: "users/email", Index: []TermKind{Equality, Match}},
+		FieldPlan{Field: "Age", Context: "users/age", Terms: []TermKind{Equality, Ore}},
+		FieldPlan{Field: "Email", Context: "users/email", Terms: []TermKind{Equality, Match}},
 	)
 	if err != nil {
 		t.Fatal(err)
