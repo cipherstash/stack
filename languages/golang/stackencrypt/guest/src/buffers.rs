@@ -108,6 +108,27 @@ pub(crate) unsafe fn take(ptr: *mut u8, len: usize) -> Option<Vec<u8>> {
     unsafe { reclaim(ptr, len) }
 }
 
+/// Wipe and free every buffer the registry still holds — what `se_shutdown`
+/// does after dropping the cipher, so a host that tears the instance down
+/// without releasing an output first still leaves no plaintext behind.
+/// Empties carry no bytes; their count is simply reset.
+///
+/// This path allocates nothing: the registry is moved out whole (an empty
+/// `HashMap` does not allocate) and walked in place, so a shutdown under
+/// linear-memory pressure cannot fail before the wipe on an allocation the
+/// wipe itself made.
+pub(crate) fn wipe_all() {
+    let live = BUFFERS.with(|b| core::mem::take(&mut *b.borrow_mut()));
+    for (ptr, len) in live {
+        // SAFETY: every entry was registered by `register`, which leaked a
+        // boxed slice of exactly `len` bytes at `ptr`, and it was removed
+        // above so nothing else can reclaim it.
+        let mut buf = unsafe { Vec::from_raw_parts(ptr as *mut u8, len, len) };
+        buf.zeroize();
+    }
+    EMPTY_BUFFERS.with(|c| c.set(0));
+}
+
 unsafe fn reclaim(ptr: *mut u8, len: usize) -> Option<Vec<u8>> {
     if ptr.is_null() {
         return None;
@@ -170,6 +191,27 @@ mod tests {
         assert_eq!(unsafe { take(sized, 0) }, None);
         assert_eq!(unsafe { take(empty, 0) }, Some(Vec::new()));
         assert_eq!(unsafe { take(sized, 3) }, Some(vec![0, 0, 0]));
+    }
+
+    /// Shutdown's invariant: after `wipe_all`, nothing the registry handed
+    /// out is live — sized or empty — so a host that forgot to release an
+    /// output cannot reclaim it, and the bytes were zeroized on the way
+    /// out.
+    #[test]
+    fn wipe_all_leaves_no_live_buffer() {
+        let sized = register(vec![7, 7, 7]);
+        let host_written = alloc(2);
+        let empty = alloc(0);
+
+        wipe_all();
+
+        assert_eq!(unsafe { take(sized, 3) }, None);
+        assert_eq!(unsafe { take(host_written, 2) }, None);
+        assert_eq!(unsafe { take(empty, 0) }, None);
+        // The registry is usable afterwards: a fresh allocation is tracked
+        // as before.
+        let again = alloc(1);
+        assert_eq!(unsafe { take(again, 1) }, Some(vec![0]));
     }
 
     #[test]

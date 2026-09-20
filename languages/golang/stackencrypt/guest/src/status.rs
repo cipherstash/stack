@@ -6,12 +6,16 @@
 //! they are part of the guest/host contract and must not be renumbered.
 //!
 //! Codes 1–4 are byte-for-byte the vitaminc guest's codes (`vcencrypt`'s
-//! `status.rs`), so the two guests read identically from the host side.
-//! Codes 5–10 map the ZeroKMS request outcomes
+//! `status.rs`), so the two guests read identically from the host side;
+//! code 3 there is "unknown handle", and here — where there is no handle —
+//! it is the call-order violation that means the same thing to a host: no
+//! cipher for this call. Codes 5–10 map the ZeroKMS request outcomes
 //! ([`ViturRequestErrorKind`]-shaped) so a Go caller can distinguish a bad
 //! token from a tampered ciphertext without parsing strings. Code 11 is a
 //! term-derivation failure (a caller-input condition, e.g. match text that
-//! yields no tokens).
+//! yields no tokens). Code 12 is a keyset-scoped open refusing a leaf whose
+//! keyset id is not the scope's — a host's own constraint, checked before
+//! the leaf is authenticated and so not a statement about tampering.
 
 use stack_auth::AuthError;
 use stack_kms::{GenerateKeyError, LoadKeysetError, RetrieveKeyError};
@@ -28,9 +32,12 @@ pub const STATUS_AUTH: u32 = 1;
 /// cipher config, an empty encryption context, or a pointer/length pair that
 /// fails validation against linear memory.
 pub const STATUS_ENCODING: u32 = 2;
-/// The cipher handle is unknown (never issued, or already freed).
-pub const STATUS_BAD_HANDLE: u32 = 3;
-/// A caught panic, handle-id exhaustion, a response that did not match its
+/// The call is out of order: an operation before `se_cipher_init`, or
+/// after `se_shutdown`, or `se_cipher_init` twice. A host fixes its call
+/// sequence; nothing here is a guest bug. (The vitaminc guest's code 3 is
+/// "unknown handle", the same condition under a handle scheme.)
+pub const STATUS_STATE: u32 = 3;
+/// A caught panic, a response that did not match its
 /// requests, or any other unexpected internal failure.
 pub const STATUS_INTERNAL: u32 = 4;
 /// ZeroKMS (or the auth strategy) rejected the *credential*: an expired or
@@ -67,18 +74,33 @@ pub const STATUS_KMS_OTHER: u32 = 10;
 /// An index term failed to derive: e.g. match text that yields no tokens, or
 /// a value/scheme combination the term does not support.
 pub const STATUS_TERM: u32 = 11;
+/// An opening export was constrained to one keyset (`{"name"}`, `{"id"}` or
+/// `{"default"}` in its options) and the leaf named another. Refused before
+/// any key is retrieved. A host that means "whichever keyset" opens with
+/// `{"any"}`.
+///
+/// A constraint failure, and only that — never provenance. The comparison
+/// reads the keyset id *out of the leaf*, before anything is retrieved and
+/// so before anything is authenticated, which means a flipped byte in that
+/// field arrives here exactly as a genuinely misrouted row does. The id is
+/// bound into the leaf AAD, so the tampered leaf cannot go on to open —
+/// it fails as [`STATUS_AUTH`] — but that verdict is only reached on the
+/// path where the constraint let it through. Read this status as "not this
+/// keyset's row", never as "an untampered row".
+pub const STATUS_FOREIGN_KEYSET: u32 = 12;
 
 /// Map a sealing/opening error onto the ABI status word.
 ///
 /// Total over [`stack_encrypt::Error`] (which is `#[non_exhaustive]`, so the
 /// catch-all arm is required as well as convenient): composition-bug variants
-/// (`ResponseShape`, `KeysetMismatch`, `KeyCountMismatch`) and everything
-/// else unexpected collapse into [`STATUS_INTERNAL`] — statuses distinguish
-/// what a host can act on, not what it can only log.
+/// (`ResponseShape`, `KeysetMismatch`, `NoKeyset`, `KeyCountMismatch`) and
+/// everything else unexpected collapse into [`STATUS_INTERNAL`] — statuses
+/// distinguish what a host can act on, not what it can only log.
 pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
     match error {
         stack_encrypt::Error::Aead => STATUS_AUTH,
         stack_encrypt::Error::Term(_) => STATUS_TERM,
+        stack_encrypt::Error::ForeignKeyset { .. } => STATUS_FOREIGN_KEYSET,
         stack_encrypt::Error::Kms(kms) => status_for_kms(kms),
         // A context that renders past ZeroKMS's descriptor limit is the
         // caller's input, refused before any request is sent.
@@ -272,6 +294,26 @@ mod tests {
         assert_eq!(
             status_for_error(&stack_encrypt::Error::Kms(stack_kms::Error::Auth(err))),
             STATUS_KMS_UNAUTHORIZED
+        );
+    }
+
+    #[test]
+    fn a_foreign_keyset_is_its_own_status_and_scope_bugs_are_internal() {
+        let (a, b) = (uuid::Uuid::from_u128(1), uuid::Uuid::from_u128(2));
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::ForeignKeyset {
+                expected: a,
+                found: b
+            }),
+            STATUS_FOREIGN_KEYSET
+        );
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::KeysetMismatch { left: a, right: b }),
+            STATUS_INTERNAL
+        );
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::NoKeyset),
+            STATUS_INTERNAL
         );
     }
 
