@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 
@@ -127,8 +128,8 @@ type planField struct {
 
 // NewPlan validates the fields and returns the plan. Every field needs a
 // Field and a Context; record names (Name, or Field) must be unique; Index
-// kinds must be ones this package defines. A plan is built once and reused
-// across calls, like the type it describes.
+// kinds must be ones this package defines, each at most once per field. A
+// plan is built once and reused across calls, like the type it describes.
 func NewPlan(fields ...PlanField) (Plan, error) {
 	if len(fields) == 0 {
 		return Plan{}, errors.New("stackencrypt: a plan needs at least one field")
@@ -150,6 +151,9 @@ func NewPlan(fields ...PlanField) (Plan, error) {
 		for _, k := range f.Index {
 			if _, ok := parseTermKind(k.String()); !ok {
 				return Plan{}, fmt.Errorf("stackencrypt: plan field %s: unknown index kind %s", f.Field, k)
+			}
+			if slices.Contains(pf.outputs, k.String()) {
+				return Plan{}, fmt.Errorf("stackencrypt: plan field %s: index kind %s given twice", f.Field, k)
 			}
 			pf.outputs = append(pf.outputs, k.String())
 		}
@@ -185,6 +189,9 @@ var tagPlans sync.Map // reflect.Type → Plan
 // describe. This is the plan the record calls use when no WithPlan option
 // is given.
 func PlanFromTags(t reflect.Type) (Plan, error) {
+	if t == nil {
+		return Plan{}, errors.New("stackencrypt: records must be structs, not a nil type")
+	}
 	if cached, ok := tagPlans.Load(t); ok {
 		return cached.(Plan), nil
 	}

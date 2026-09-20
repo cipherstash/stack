@@ -204,6 +204,10 @@ func TestPlanFromTags(t *testing.T) {
 		}{},
 		"nothing tagged": struct{ A int }{},
 		"not a struct":   42,
+		"nil type":       nil,
+		"index twice": struct {
+			A int `stash:"context=c,index=eq;eq"`
+		}{},
 		"duplicate name": struct {
 			A int `stash:"context=c,name=x"`
 			B int `stash:"context=c,name=x"`
@@ -320,6 +324,7 @@ func TestNewPlanValidates(t *testing.T) {
 		"unknown kind":   {{Field: "A", Context: "c", Index: []TermKind{TermKind(9)}}},
 		"duplicate name": {{Field: "A", Context: "c", Name: "x"}, {Field: "B", Context: "c", Name: "x"}},
 		"field twice":    {{Field: "A", Context: "c"}, {Field: "A", Context: "d"}},
+		"index twice":    {{Field: "A", Context: "c", Index: []TermKind{Equality, Equality}}},
 	} {
 		if _, err := NewPlan(fields...); err == nil {
 			t.Errorf("%s: plan accepted", name)
