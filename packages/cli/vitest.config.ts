@@ -33,7 +33,9 @@ export default defineConfig({
         test: {
           name: 'live',
           include: ['src/**/*.live.test.ts'],
-          poolOptions: { forks: { singleFork: true } },
+          // Vitest 4 removed `poolOptions.forks.singleFork`; running one file
+          // at a time is what serialises the live suites.
+          fileParallelism: false,
         },
       },
     ],

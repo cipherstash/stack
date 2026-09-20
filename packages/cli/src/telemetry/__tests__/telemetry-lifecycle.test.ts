@@ -38,10 +38,10 @@ describe('telemetry lifecycle (emitter + flush)', () => {
   beforeEach(() => {
     h.capture.mockReset()
     h.shutdown.mockReset().mockResolvedValue(undefined)
-    h.PostHog.mockReset().mockImplementation(() => ({
-      capture: h.capture,
-      shutdown: h.shutdown,
-    }))
+    // biome-ignore lint/complexity/useArrowFunction: Vitest 4 mocks called with `new` need a constructible (non-arrow) implementation.
+    h.PostHog.mockReset().mockImplementation(function () {
+      return { capture: h.capture, shutdown: h.shutdown }
+    })
     h.writeState.mockReset()
     h.state.value = { ...ENABLED }
     // Enabled by default; neutralize every gate so status is { enabled: true }.

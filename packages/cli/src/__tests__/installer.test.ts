@@ -10,21 +10,24 @@ const mockEnd = vi.fn()
 
 vi.mock('pg', () => ({
   default: {
-    Client: vi.fn(() => ({
-      connect: mockConnect,
-      query: async (...args: unknown[]) => {
-        const result = await mockQuery(...args)
-        if (
-          typeof args[0] === 'string' &&
-          args[0].includes('pg_try_advisory') &&
-          result?.rows?.[0]?.acquired === undefined
-        ) {
-          return { ...result, rows: [{ acquired: true }] }
-        }
-        return result
-      },
-      end: mockEnd,
-    })),
+    // biome-ignore lint/complexity/useArrowFunction: Vitest 4 mocks called with `new` need a constructible (non-arrow) implementation.
+    Client: vi.fn(function () {
+      return {
+        connect: mockConnect,
+        query: async (...args: unknown[]) => {
+          const result = await mockQuery(...args)
+          if (
+            typeof args[0] === 'string' &&
+            args[0].includes('pg_try_advisory') &&
+            result?.rows?.[0]?.acquired === undefined
+          ) {
+            return { ...result, rows: [{ acquired: true }] }
+          }
+          return result
+        },
+        end: mockEnd,
+      }
+    }),
   },
 }))
 

@@ -78,7 +78,10 @@ afterEach(() => {
   })
   // restoreAllMocks (not clearAllMocks) is what fully reverts spies on
   // global objects like `process.exit`. Without restoration the spy stays
-  // attached and bleeds into later tests.
+  // attached and bleeds into later tests. Since Vitest 4, restoreAllMocks only
+  // reverts vi.spyOn spies; resetAllMocks is what clears the module-mock
+  // vi.fn()s' calls and per-test implementations.
+  vi.resetAllMocks()
   vi.restoreAllMocks()
   if (tmpDir && fs.existsSync(tmpDir)) {
     fs.rmSync(tmpDir, { recursive: true, force: true })
