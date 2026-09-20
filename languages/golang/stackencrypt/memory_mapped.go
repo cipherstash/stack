@@ -49,6 +49,10 @@ func (m *mappedMemory) commit(size uint64) ([]byte, error) {
 			return nil, nil
 		}
 		if err := lockRange(fresh); err != nil {
+			// The platform names the range it could not lock; the
+			// operator sizing a limit needs the whole of what the guest
+			// holds with it.
+			err = fmt.Errorf("%w; the guest needs at least %s locked", err, byteCount(size))
 			if m.policy == strict && m.committed > 0 {
 				// Nothing was written to the range yet; giving it back
 				// leaves the guest exactly where it was.

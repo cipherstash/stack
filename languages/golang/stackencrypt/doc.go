@@ -94,8 +94,11 @@
 // [NewClient] failure with [ErrMemoryLock], for deployments that would
 // rather not start than run unlocked; it also refuses any later growth of
 // the guest's memory that cannot be locked, so the limit granted must
-// leave the guest room to grow. A Client prints its memory state
-// ([Client.String]) and logs it ([Client.LogValue]). An embedder running
+// leave the guest room to grow: a refused growth fails the call with
+// [ErrMemoryLock], and closes the client when the growth was the guest's
+// own allocation rather than a host-staged buffer. A Client prints its
+// memory state ([Client.String]) and logs it ([Client.LogValue]). An
+// embedder running
 // the guest under its own wazero configuration gets none of this unless
 // it supplies an allocator of its own.
 //

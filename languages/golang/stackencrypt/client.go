@@ -38,14 +38,18 @@ type Config struct {
 	// Guest overrides the embedded wasm module. Nil means the embedded one.
 	Guest []byte
 	// RequireLockedMemory makes NewClient fail with ErrMemoryLock when the
-	// guest's memory cannot be locked in RAM, instead of continuing with
-	// memory that may be swapped and reporting so through
-	// Client.MemoryLocked. It holds for the life of the client: a later
-	// growth of the guest's memory that cannot be locked is refused too,
-	// and the call that needed it fails with ErrMemoryLock, while what the
-	// guest already holds stays locked and MemoryLocked stays true. Set it
-	// where swap is a real exposure and the deployment grants a lock limit
-	// with room for the guest to grow (RLIMIT_MEMLOCK on Linux); see
+	// guest's memory cannot be locked in RAM or, on Linux, excluded from
+	// core dumps, instead of continuing with memory that may be swapped or
+	// dumped and reporting so through Client.MemoryLocked. It holds for
+	// the life of the client: a later growth of the guest's memory that
+	// cannot be locked is refused too, and what the guest already holds
+	// stays locked. When the growth was for a buffer the host is staging,
+	// the call fails with ErrMemoryLock and the client goes on. When it
+	// was for the guest's own allocation, the guest cannot report it: it
+	// aborts, and the client is closed with its keys wiped, the call still
+	// failing with ErrMemoryLock. Set it where swap is a real exposure and
+	// the deployment grants a lock limit with room for the guest to grow
+	// (RLIMIT_MEMLOCK on Linux; the error names the size held so far); see
 	// [Client.MemoryLocked].
 	RequireLockedMemory bool
 }
@@ -162,20 +166,12 @@ func (c *Client) MemoryLockError() error {
 // printed. The state is what an operator reading a startup log needs to
 // see, and [Client.LogValue] gives it structured form.
 func (c *Client) String() string {
-	if err := c.inst.mem.lockError(); err != nil {
-		return fmt.Sprintf("stackencrypt.Client{memory: unlocked: %v}", err)
-	}
-	return "stackencrypt.Client{memory: locked}"
+	return fmt.Sprintf("stackencrypt.Client{memory: %s}", c.inst.mem)
 }
 
 // LogValue implements slog.LogValuer: a group with memory_locked and, when
 // false, memory_lock_error.
-func (c *Client) LogValue() slog.Value {
-	if err := c.inst.mem.lockError(); err != nil {
-		return slog.GroupValue(slog.Bool("memory_locked", false), slog.String("memory_lock_error", err.Error()))
-	}
-	return slog.GroupValue(slog.Bool("memory_locked", true))
-}
+func (c *Client) LogValue() slog.Value { return c.inst.mem.LogValue() }
 
 // encodeConfig renders the se_cipher_init object. The result holds the
 // client key; the caller wipes it.
@@ -298,6 +294,9 @@ func (c *Client) DecryptRecord(ctx context.Context, record EncryptedRecord, out 
 // its key material is gone with its memory and no further call can run.
 // The client is then closed, so later calls are ErrState rather than a
 // runtime error, and Close releases the runtime without a shutdown call.
+// A guest that trapped is closed the same way, by this method: the guest
+// builds with panic-as-abort, so a trap is an abort mid-export, after
+// which its state is unknown and its keys are better wiped than reused.
 func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -305,21 +304,29 @@ func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([
 		c.closed = true
 		return nil, ErrState
 	}
-	refusals, _ := c.inst.mem.growthRefusals()
+	growth := c.inst.mem.growthRefusal()
 	out, err := f(c.inst)
-	if c.inst.module.IsClosed() {
+	switch {
+	case c.inst.module.IsClosed():
 		c.closed = true
 		if err == nil {
 			err = ErrState
 		}
 		err = fmt.Errorf("%w: interrupted call closed the client", err)
+	case errors.Is(err, errGuestTrap):
+		// No guest code is running (f has returned), so the close is
+		// immediate: the module's memory is wiped and freed here.
+		c.closed = true
+		_ = c.inst.module.Close(context.Background())
+		err = fmt.Errorf("%w; the client is closed", err)
 	}
 	// Under RequireLockedMemory a growth that cannot be locked is refused,
-	// and the guest sees only a failed allocation. Name the real cause.
-	// The refusal is this call's, not the client's: the range went back
-	// unused, so MemoryLocked still holds.
-	if n, gerr := c.inst.mem.growthRefusals(); err != nil && n != refusals {
-		err = fmt.Errorf("%w (growth refused under RequireLockedMemory): %w", memoryLockError(gerr), err)
+	// and the guest sees only a failed allocation — or, for an allocation
+	// of its own, aborts, and the trap closed the client above. Name the
+	// real cause either way. The refusal is this call's, not the client's:
+	// the range went back unused, so MemoryLocked still holds.
+	if g := c.inst.mem.growthRefusal(); err != nil && g.refused != growth.refused {
+		err = fmt.Errorf("%w (growth refused under RequireLockedMemory): %w", memoryLockError(g.reason), err)
 	}
 	if err != nil {
 		return nil, err

@@ -28,6 +28,13 @@ const guestPath = "wasm/stack_encrypt_guest.wasm"
 // embedded and none was supplied in Config.Guest.
 var ErrGuestNotBuilt = errors.New("stackencrypt: guest module not built — run `mise run wasm:guest:build`")
 
+// errGuestTrap marks a guest export that did not return: a trap (the
+// guest builds with panic-as-abort, so an allocation it cannot make or an
+// invariant it cannot keep ends in `unreachable`), or a module closed
+// under it. Client.call closes the client on it: the guest's state after
+// an abort is unknown, and its keys are better wiped than reused.
+var errGuestTrap = errors.New("stackencrypt: guest did not return")
+
 func embeddedGuest() ([]byte, error) {
 	wasm, err := guestFS.ReadFile(guestPath)
 	if err != nil {
@@ -120,8 +127,8 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy lockPoli
 	module, err := runtime.InstantiateWithConfig(experimental.WithMemoryAllocator(ctx, mem), wasm, guestModuleConfig())
 	if err != nil {
 		_ = runtime.Close(ctx)
-		if n, gerr := mem.growthRefusals(); n != 0 {
-			return nil, fmt.Errorf("%w: %w", memoryLockError(gerr), err)
+		if g := mem.growthRefusal(); g.refused != 0 {
+			return nil, fmt.Errorf("%w: %w", memoryLockError(g.reason), err)
 		}
 		return nil, fmt.Errorf("stackencrypt: instantiating guest: %w", err)
 	}
@@ -182,7 +189,7 @@ type guestBuf struct {
 func (inst *instance) allocWrite(ctx context.Context, data []byte) (guestBuf, error) {
 	res, err := inst.alloc.Call(ctx, uint64(len(data)))
 	if err != nil {
-		return guestBuf{}, fmt.Errorf("stackencrypt: guest alloc: %w", err)
+		return guestBuf{}, fmt.Errorf("%w: guest alloc: %w", errGuestTrap, err)
 	}
 	buf := guestBuf{ptr: uint32(res[0]), len: uint32(len(data))}
 	if buf.ptr == 0 {
@@ -255,13 +262,9 @@ func (inst *instance) call(ctx context.Context, fn api.Function, args ...arg) ([
 		bufs = append(bufs, staged)
 		params = append(params, uint64(staged.ptr), uint64(staged.len))
 	}
-	res, err := fn.Call(ctx, params...)
+	out, err := inst.invoke(ctx, fn, params...)
 	if err != nil {
-		return nil, fmt.Errorf("stackencrypt: guest call: %w", err)
-	}
-	out, cerr := packedResult(res[0])
-	if cerr != nil {
-		return nil, cerr
+		return nil, err
 	}
 	bufs = append(bufs, out)
 	view, ok := inst.module.Memory().Read(out.ptr, out.len)
@@ -272,6 +275,16 @@ func (inst *instance) call(ctx context.Context, fn api.Function, args ...arg) ([
 	result := make([]byte, len(view))
 	copy(result, view)
 	return result, nil
+}
+
+// invoke calls one guest export and decodes its packed result. A guest
+// that did not return is errGuestTrap.
+func (inst *instance) invoke(ctx context.Context, fn api.Function, params ...uint64) (guestBuf, error) {
+	res, err := fn.Call(ctx, params...)
+	if err != nil {
+		return guestBuf{}, fmt.Errorf("%w: guest call: %w", errGuestTrap, err)
+	}
+	return packedResult(res[0])
 }
 
 func wipe(b []byte) {
