@@ -208,7 +208,8 @@ impl<S: TokenStore> AccessKeyStrategyBuilder<S> {
     }
 }
 
-#[cfg(all(test, feature = "http"))]
+#[cfg(test)]
+#[cfg(feature = "http")]
 mod workspace_verification_tests {
     use super::*;
     use crate::test_support::{crn_with_workspace, jwt_with_workspace};

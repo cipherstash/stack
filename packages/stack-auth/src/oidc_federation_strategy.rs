@@ -199,7 +199,8 @@ impl<P: OidcProvider, S: TokenStore> OidcFederationStrategyBuilder<P, S> {
     }
 }
 
-#[cfg(all(test, feature = "http"))]
+#[cfg(test)]
+#[cfg(feature = "http")]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use std::sync::Arc;

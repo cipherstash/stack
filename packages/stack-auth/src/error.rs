@@ -958,7 +958,8 @@ impl From<Infallible> for AuthError {
     }
 }
 
-#[cfg(all(test, feature = "http"))]
+#[cfg(test)]
+#[cfg(feature = "http")]
 mod classify_issuance_failure_tests {
     use super::*;
 

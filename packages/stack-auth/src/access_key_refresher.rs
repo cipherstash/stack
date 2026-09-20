@@ -91,7 +91,8 @@ struct AuthoriseRequest<'a> {
     audience: Option<&'a str>,
 }
 
-#[cfg(all(test, feature = "http"))]
+#[cfg(test)]
+#[cfg(feature = "http")]
 mod tests {
     use super::*;
     use crate::auto_refresh::{AutoRefresh, AutoRefreshError};

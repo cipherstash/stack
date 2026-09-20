@@ -190,7 +190,8 @@ struct OidcAuthoriseRequest<'a> {
     workspace_id: &'a str,
 }
 
-#[cfg(all(test, feature = "http"))]
+#[cfg(test)]
+#[cfg(feature = "http")]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use crate::transport::default_transport;

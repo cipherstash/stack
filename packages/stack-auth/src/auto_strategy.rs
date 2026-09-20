@@ -258,7 +258,8 @@ impl AuthStrategy for &AutoStrategy {
 
 // Detection builds strategies with no transport of their own, which needs
 // the bundled one.
-#[cfg(all(test, feature = "http"))]
+#[cfg(test)]
+#[cfg(feature = "http")]
 mod tests {
     use super::*;
     use crate::{SecretToken, Token};

@@ -250,7 +250,8 @@ impl<R> AutoRefresh<R, NoStore> {
 
     /// Like [`with_token`](Self::with_token) but with an injected clock, so tests
     /// can drive token expiry deterministically.
-    #[cfg(all(test, feature = "http"))]
+    #[cfg(test)]
+    #[cfg(feature = "http")]
     pub(crate) fn with_token_and_clock(refresher: R, token: Token, clock: SharedClock) -> Self {
         Self {
             refresher,
@@ -585,7 +586,8 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
     }
 }
 
-#[cfg(all(test, feature = "http"))]
+#[cfg(test)]
+#[cfg(feature = "http")]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
@@ -1262,7 +1264,8 @@ mod tests {
     }
 }
 
-#[cfg(all(test, feature = "http"))]
+#[cfg(test)]
+#[cfg(feature = "http")]
 #[allow(clippy::unwrap_used)]
 mod stress_tests {
     use super::*;
@@ -1897,7 +1900,8 @@ mod stress_tests {
 /// instrumentation. This version drives expiry with a [`TestClock`] and gates
 /// the refresh with a [`Notify`], so it is fully deterministic: no real sleeps,
 /// no network.
-#[cfg(all(test, feature = "http"))]
+#[cfg(test)]
+#[cfg(feature = "http")]
 #[allow(clippy::unwrap_used)]
 mod expiry_crossing_regression {
     use super::*;
@@ -2391,7 +2395,8 @@ mod expiry_crossing_regression {
     }
 }
 
-#[cfg(all(test, feature = "http"))]
+#[cfg(test)]
+#[cfg(feature = "http")]
 #[allow(clippy::unwrap_used)]
 mod regression_cip_3159 {
     use super::*;

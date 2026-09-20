@@ -192,7 +192,8 @@ impl DeviceSessionRefresher {
     }
 }
 
-#[cfg(all(test, feature = "http", not(target_arch = "wasm32")))]
+#[cfg(test)]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use crate::transport::default_transport;

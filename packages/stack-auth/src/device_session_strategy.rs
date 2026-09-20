@@ -264,7 +264,8 @@ impl DeviceSessionStrategyBuilder {
 
 // These build strategies with no transport of their own, which needs the
 // bundled one.
-#[cfg(all(test, feature = "http"))]
+#[cfg(test)]
+#[cfg(feature = "http")]
 mod tests {
     use super::*;
     use crate::test_support::{claims_with_workspace, jwt_token, raw_token};
