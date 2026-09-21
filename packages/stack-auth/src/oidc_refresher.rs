@@ -1,12 +1,12 @@
 use std::future::Future;
-use std::sync::Arc;
 
 use cts_common::WorkspaceId;
 use url::Url;
 
 use crate::authorize_dto::AuthoriseResponse;
 use crate::refresher::Refresher;
-use crate::{http_client, AuthError, SecretToken, Token};
+use crate::transport::{self, SharedTransport};
+use crate::{AuthError, SecretToken, Token};
 
 /// Asynchronously supplies the *current* third-party OIDC JWT to federate.
 ///
@@ -111,16 +111,21 @@ pub(crate) struct OidcRefresher<P> {
     oidc_provider: P,
     workspace_id: WorkspaceId,
     base_url: Url,
-    http_client: Arc<reqwest::Client>,
+    transport: SharedTransport,
 }
 
 impl<P> OidcRefresher<P> {
-    pub(crate) fn new(oidc_provider: P, workspace_id: WorkspaceId, base_url: Url) -> Self {
+    pub(crate) fn new(
+        oidc_provider: P,
+        workspace_id: WorkspaceId,
+        base_url: Url,
+        transport: SharedTransport,
+    ) -> Self {
         Self {
             oidc_provider,
             workspace_id,
             base_url,
-            http_client: Arc::new(http_client()),
+            transport,
         }
     }
 }
@@ -148,21 +153,21 @@ impl<P: OidcProvider> Refresher for OidcRefresher<P> {
         let url = self.base_url.join("api/authorise")?;
         tracing::debug!(url = %url, "federating OIDC token");
 
-        let resp = self
-            .http_client
-            .post(url)
-            .json(&OidcAuthoriseRequest {
+        let resp = transport::post_json(
+            &self.transport,
+            url,
+            &OidcAuthoriseRequest {
                 oidc_token: oidc_token.as_str(),
                 workspace_id: self.workspace_id.as_str(),
-            })
-            .send()
-            .await?;
+            },
+        )
+        .await?;
 
-        if !resp.status().is_success() {
+        if !resp.is_success() {
             let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
+            let body = resp.text();
             tracing::debug!(%status, %body, "OIDC federation failed");
-            if let Some(err) = crate::error::classify_issuance_failure(status.as_u16(), &body) {
+            if let Some(err) = crate::error::classify_issuance_failure(status, &body) {
                 return Err(err);
             }
             return Err(AuthError::Server(crate::error::ServerError(format!(
@@ -170,7 +175,7 @@ impl<P: OidcProvider> Refresher for OidcRefresher<P> {
             ))));
         }
 
-        let auth_resp: AuthoriseResponse = resp.json().await?;
+        let auth_resp: AuthoriseResponse = resp.json()?;
 
         // The response → Token mapping (including the absolute-epoch `expiry`
         // handling that CIP-3233 fixed) lives on `From<AuthoriseResponse>`.
@@ -186,8 +191,10 @@ struct OidcAuthoriseRequest<'a> {
 }
 
 #[cfg(test)]
+#[cfg(feature = "http")]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use crate::transport::default_transport;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -243,7 +250,12 @@ mod tests {
         server: &MockServer,
         provider: P,
     ) -> AutoRefresh<OidcRefresher<P>> {
-        let refresher = OidcRefresher::new(provider, workspace_id(), server.url(""));
+        let refresher = OidcRefresher::new(
+            provider,
+            workspace_id(),
+            server.url(""),
+            default_transport(),
+        );
         AutoRefresh::with_store(refresher, crate::NoStore)
     }
 
@@ -293,7 +305,12 @@ mod tests {
         let server = start_server(mocks).await;
 
         let (_calls, provider) = counting_provider();
-        let refresher = OidcRefresher::new(provider, workspace_id(), server.url(""));
+        let refresher = OidcRefresher::new(
+            provider,
+            workspace_id(),
+            server.url(""),
+            default_transport(),
+        );
         let token = refresher.refresh(&()).await.unwrap();
 
         assert!(
@@ -386,7 +403,12 @@ mod tests {
         let store = Arc::new(crate::InMemoryTokenStore::new());
         store.save(&make_token("stale-cts-token", 0)).await;
 
-        let refresher = OidcRefresher::new(provider, workspace_id(), server.url(""));
+        let refresher = OidcRefresher::new(
+            provider,
+            workspace_id(),
+            server.url(""),
+            default_transport(),
+        );
         let strategy = AutoRefresh::with_store(refresher, Arc::clone(&store));
 
         let token = strategy.get_token().await.unwrap();
@@ -488,7 +510,12 @@ mod tests {
         store.save(&make_token("from-store", 3600)).await;
 
         let (calls, provider) = counting_provider();
-        let refresher = OidcRefresher::new(provider, workspace_id(), server.url(""));
+        let refresher = OidcRefresher::new(
+            provider,
+            workspace_id(),
+            server.url(""),
+            default_transport(),
+        );
         let strategy = AutoRefresh::with_store(refresher, Arc::clone(&store));
 
         let token = strategy.get_token().await.unwrap();
@@ -511,7 +538,12 @@ mod tests {
 
         let store = Arc::new(crate::InMemoryTokenStore::new());
         let (_calls, provider) = counting_provider();
-        let refresher = OidcRefresher::new(provider, workspace_id(), server.url(""));
+        let refresher = OidcRefresher::new(
+            provider,
+            workspace_id(),
+            server.url(""),
+            default_transport(),
+        );
         let strategy = AutoRefresh::with_store(refresher, Arc::clone(&store));
 
         let token = strategy.get_token().await.unwrap();

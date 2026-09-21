@@ -9,7 +9,9 @@ use stack_profile::{DeviceIdentity, ProfileStore};
 use uuid::Uuid;
 use zerokms_protocol::{CreateClientRequest, CreateClientResponse, ViturKeyMaterial, ViturRequest};
 
-use crate::{ensure_trailing_slash, http_client, ServiceToken, Token};
+use crate::error::RequestError;
+use crate::transport::{self, ReqwestTransport};
+use crate::{ensure_trailing_slash, ServiceToken, Token};
 
 fn user_agent() -> String {
     format!(
@@ -53,9 +55,9 @@ pub enum DeviceClientError {
     #[error("Auth error: {0}")]
     Auth(#[from] crate::AuthError),
 
-    /// The HTTP request to ZeroKMS failed.
+    /// The HTTP request to ZeroKMS failed, or its response did not decode.
     #[error("ZeroKMS request failed: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(#[from] RequestError),
 
     /// ZeroKMS returned a non-success, non-conflict status.
     #[error("ZeroKMS returned {status}: {body}")]
@@ -101,31 +103,41 @@ pub async fn bind_client_device(store: &ProfileStore) -> Result<(), DeviceClient
 
     let url = zerokms_url.join(CreateClientRequest::ENDPOINT)?;
 
-    let response = http_client()
-        .post(url)
-        .header(reqwest::header::USER_AGENT, user_agent())
-        .bearer_auth(service_token.as_str())
-        .json(&request)
-        .send()
-        .await?;
+    // Provisioning is native-only, so it always uses the bundled transport.
+    let body = zeroize::Zeroizing::new(
+        serde_json::to_vec(&request).map_err(|e| RequestError(Box::new(e)))?,
+    );
+    let response = transport::post(
+        &transport::share(ReqwestTransport::default()),
+        url,
+        "application/json",
+        vec![
+            ("user-agent".to_string(), user_agent()),
+            (
+                "authorization".to_string(),
+                format!("Bearer {}", service_token.as_str()),
+            ),
+        ],
+        body,
+    )
+    .await?;
 
     let status = response.status();
 
-    if status == reqwest::StatusCode::CONFLICT {
+    if status == 409 {
         // Another client was already provisioned server-side.
         tracing::debug!("device client already exists, skipping");
         return Ok(());
     }
 
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+    if !response.is_success() {
         return Err(DeviceClientError::Server {
-            status: status.as_u16(),
-            body,
+            status,
+            body: response.text(),
         });
     }
 
-    let created: CreateClientResponse = response.json().await?;
+    let created: CreateClientResponse = response.json()?;
 
     let secret_key = SecretKeyFile {
         client_id: created.id,

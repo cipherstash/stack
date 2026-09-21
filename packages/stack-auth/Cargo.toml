@@ -19,8 +19,15 @@ base64 = { workspace = true }
 cts-common = { workspace = true }
 miette = { workspace = true }
 reqwest = { workspace = true, optional = true }
+# `Bytes::from_owner` lends reqwest a buffer this crate still owns, so the
+# request body is wiped when reqwest is done rather than copied.
+bytes = { version = "1.9", optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Form bodies for the OAuth token endpoints, encoded exactly as reqwest's
+# `.form()` does (it uses this crate), so the bundled transport and a host's
+# own transport send byte-identical requests.
+serde_urlencoded = "0.7"
 thiserror = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
@@ -55,14 +62,16 @@ tokio = { version = "1.47.1", default-features = false, features = ["sync"] }
 
 [features]
 default = ["http"]
-# Everything that talks HTTP: the access-key, device-session, OIDC-federation
-# and auto strategies, device binding and the device-code flow, and `Token::
-# refresh`. Off, the crate is the token model plus the `AuthStrategy` trait
-# (with `AuthStrategyFn` to implement it), and reqwest and its native TLS
-# stack are not in the dependency graph at all — the shape a host with its own
-# transport (the WASI/wazero guest) builds against. `StaticTokenStrategy` is a
-# test double behind `test-utils`, not part of that production surface.
-http = ["dep:reqwest"]
+# The bundled HTTP transport: `ReqwestTransport`, which every strategy
+# builder uses unless given another `HttpTransport`. Off, reqwest and its
+# native TLS stack are not in the dependency graph at all — the shape a host
+# with its own transport (the WASI/wazero guest) builds against — and the
+# strategies (access-key, device-session, OIDC-federation, auto) still exist
+# but must be handed a transport. Device binding and the device-code flow are
+# native-only and keep the bundled transport, so they need this feature.
+# `StaticTokenStrategy` is a test double behind `test-utils`, not part of
+# the production surface.
+http = ["dep:reqwest", "dep:bytes"]
 test-utils = []
 # Exposes fuzz-only entry points (e.g. `fuzz_decode_claims`) for the cargo-fuzz
 # harnesses in `fuzz/`. A Cargo feature (not `#[cfg(fuzzing)]`) so it is a known

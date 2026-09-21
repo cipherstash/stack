@@ -131,6 +131,43 @@ end-to-end — typically because the strategy lives across an FFI boundary
 (e.g. a JS `getToken()` reached via `protect-ffi`). The closure runs every
 time a token is needed.
 
+Beneath both sits the **transport**: every strategy sends its requests
+through an [`HttpTransport`], and the bundled [`ReqwestTransport`] is only
+the default. Implement the trait to run the real strategies over an HTTP
+client that is not reqwest — a host runtime's, or a stub in a test — and hand
+it to the strategy's builder. The trait is one method, in the shape of a
+plain request and response:
+
+```rust,no_run
+use stack_auth::{AccessKey, AccessKeyStrategy, HttpRequest, HttpResponse, HttpTransport, RequestError};
+use cts_common::Crn;
+
+struct MyTransport;
+
+impl HttpTransport for MyTransport {
+    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, RequestError> {
+        // `request.method()`, `request.url()`, `request.headers()`, `request.body()`
+        let (status, headers, body) = my_http_client(request).await?;
+        Ok(HttpResponse::new(status, headers, body))
+    }
+}
+# async fn my_http_client(_: HttpRequest) -> Result<(u16, Vec<(String, String)>, Vec<u8>), RequestError> { unimplemented!() }
+
+# fn run() -> Result<(), Box<dyn std::error::Error>> {
+let crn: Crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse()?;
+let key: AccessKey = "CSAKmyKeyId.myKeySecret".parse()?;
+let strategy = AccessKeyStrategy::builder(crn, key)
+    .transport(MyTransport)
+    .build()?;
+# Ok(())
+# }
+```
+
+One transport can serve several strategies: `Arc<T>` implements the trait
+whenever `T` does, so hand each builder a clone of the `Arc`. Without the
+`http` feature there is no bundled transport, so `.transport(..)` is required
+rather than optional; nothing else about the strategies changes.
+
 Module paths mirror this split: [`stack_auth::auth`](crate::auth) groups the
 acquisition layer, [`stack_auth::store`](crate::store) groups the persistence
 layer. All items are also re-exported at the crate root.

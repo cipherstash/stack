@@ -251,6 +251,7 @@ impl<R> AutoRefresh<R, NoStore> {
     /// Like [`with_token`](Self::with_token) but with an injected clock, so tests
     /// can drive token expiry deterministically.
     #[cfg(test)]
+    #[cfg(feature = "http")]
     pub(crate) fn with_token_and_clock(refresher: R, token: Token, clock: SharedClock) -> Self {
         Self {
             refresher,
@@ -586,6 +587,7 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
 }
 
 #[cfg(test)]
+#[cfg(feature = "http")]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
@@ -674,6 +676,7 @@ mod tests {
             "cli",
             "ap-southeast-2.aws",
             None,
+            crate::transport::default_transport(),
         );
         AutoRefresh::with_token(refresher, token)
     }
@@ -691,6 +694,7 @@ mod tests {
                 "cli",
                 "ap-southeast-2.aws",
                 None,
+                crate::transport::default_transport(),
             );
             let strategy = AutoRefresh::with_store(refresher, NoStore);
 
@@ -1261,6 +1265,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg(feature = "http")]
 #[allow(clippy::unwrap_used)]
 mod stress_tests {
     use super::*;
@@ -1399,6 +1404,7 @@ mod stress_tests {
             "cli",
             "ap-southeast-2.aws",
             None,
+            crate::transport::default_transport(),
         );
         AutoRefresh::with_token(refresher, token)
     }
@@ -1802,6 +1808,7 @@ mod stress_tests {
                 "cli",
                 "ap-southeast-2.aws",
                 None,
+                crate::transport::default_transport(),
             );
             // Slow async save — cancellation reliably lands here, in the
             // post-HTTP / pre-install window.
@@ -1894,6 +1901,7 @@ mod stress_tests {
 /// the refresh with a [`Notify`], so it is fully deterministic: no real sleeps,
 /// no network.
 #[cfg(test)]
+#[cfg(feature = "http")]
 #[allow(clippy::unwrap_used)]
 mod expiry_crossing_regression {
     use super::*;
@@ -2388,6 +2396,7 @@ mod expiry_crossing_regression {
 }
 
 #[cfg(test)]
+#[cfg(feature = "http")]
 #[allow(clippy::unwrap_used)]
 mod regression_cip_3159 {
     use super::*;
@@ -2458,6 +2467,7 @@ mod regression_cip_3159 {
                 SecretToken::new("CSAKtestKeyId.testKeySecret"),
                 base_url,
                 None,
+                crate::transport::default_transport(),
             ),
             expiring_but_usable_token("old-usable", 2),
         ));

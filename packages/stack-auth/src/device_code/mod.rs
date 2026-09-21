@@ -9,13 +9,20 @@ use std::path::PathBuf;
 
 use stack_profile::ProfileStore;
 
-use crate::{ensure_trailing_slash, http_client, AuthError, DeviceIdentity, Token};
+use crate::transport::{self, ReqwestTransport, SharedTransport};
+use crate::{ensure_trailing_slash, AuthError, DeviceIdentity, Token};
 use protocol::{
     DeviceCode, DeviceCodeRequest, DeviceCodeResponse, ErrorResponse, TokenRequest, TokenResponse,
 };
 
 #[cfg(test)]
 mod tests;
+
+/// The device-code flow is interactive and native-only, so it always runs
+/// over the bundled transport.
+fn bundled_transport() -> SharedTransport {
+    transport::share(ReqwestTransport::default())
+}
 
 /// Authenticates with CipherStash using the
 /// [device code flow (RFC 8628)](https://datatracker.ietf.org/doc/html/rfc8628).
@@ -84,7 +91,7 @@ impl DeviceCodeStrategy {
     /// Returns [`AuthError::InvalidClient`] if the client ID is not recognized,
     /// or [`AuthError::Request`] if the server is unreachable.
     pub async fn begin(&self) -> Result<PendingDeviceCode, AuthError> {
-        let client = http_client();
+        let transport = bundled_transport();
 
         let code_url = self.base_url.join("oauth/device/code")?;
 
@@ -95,21 +102,22 @@ impl DeviceCodeStrategy {
             .as_ref()
             .map(|d| d.device_instance_id.to_string());
 
-        let code_resp = client
-            .post(code_url)
-            .form(&DeviceCodeRequest {
+        let code_resp = transport::post_form(
+            &transport,
+            code_url,
+            &DeviceCodeRequest {
                 client_id: &self.client_id,
                 device_instance_id: device_instance_id.as_deref(),
                 device_name: self
                     .device_identity
                     .as_ref()
                     .map(|d| d.device_name.as_str()),
-            })
-            .send()
-            .await?;
+            },
+        )
+        .await?;
 
-        if !code_resp.status().is_success() {
-            let err: ErrorResponse = code_resp.json().await?;
+        if !code_resp.is_success() {
+            let err: ErrorResponse = code_resp.json()?;
             tracing::debug!(error = %err.error, "device code request failed");
             return Err(match err.error.as_str() {
                 "invalid_client" => AuthError::InvalidClient(crate::error::InvalidClient),
@@ -117,7 +125,7 @@ impl DeviceCodeStrategy {
             });
         }
 
-        let code: DeviceCodeResponse = code_resp.json().await?;
+        let code: DeviceCodeResponse = code_resp.json()?;
 
         let token_url = self.base_url.join("oauth/device/token")?;
 
@@ -293,7 +301,7 @@ impl PendingDeviceCode {
     ///   authorized.
     /// - [`AuthError::Request`] — a network error occurred while polling.
     pub async fn poll_for_token(self) -> Result<Token, AuthError> {
-        let client = http_client();
+        let transport = bundled_transport();
         let mut interval = tokio::time::Duration::from_secs(5);
         let deadline =
             tokio::time::Instant::now() + tokio::time::Duration::from_secs(self.expires_in);
@@ -310,19 +318,20 @@ impl PendingDeviceCode {
                 return Err(AuthError::TokenExpired(crate::error::TokenExpired));
             }
 
-            let resp = client
-                .post(self.token_url.clone())
-                .form(&TokenRequest {
+            let resp = transport::post_form(
+                &transport,
+                self.token_url.clone(),
+                &TokenRequest {
                     client_id: &self.client_id,
                     device_code: &self.device_code,
                     grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-                })
-                .send()
-                .await?;
+                },
+            )
+            .await?;
 
-            if resp.status().is_success() {
+            if resp.is_success() {
                 tracing::debug!("token received");
-                let token_resp: TokenResponse = resp.json().await?;
+                let token_resp: TokenResponse = resp.json()?;
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
@@ -365,8 +374,8 @@ impl PendingDeviceCode {
             // their limit that they were denied access — and a bodyless 402
             // would surface as a JSON decode error rather than either.
             let status = resp.status();
-            let body = resp.text().await?;
-            if let Some(err) = crate::error::classify_issuance_failure(status.as_u16(), &body) {
+            let body = resp.text();
+            if let Some(err) = crate::error::classify_issuance_failure(status, &body) {
                 return Err(err);
             }
 

@@ -2,8 +2,7 @@ use cts_common::claims::ClientClaims;
 use cts_common::{Crn, Region, WorkspaceId};
 use url::Url;
 
-#[cfg(feature = "http")]
-use crate::http_client;
+use crate::transport::{self, SharedTransport};
 use crate::{AuthError, SecretToken};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -128,13 +127,11 @@ impl Token {
     }
 
     /// Set the region identifier on this token.
-    #[cfg(feature = "http")]
     pub(crate) fn set_region(&mut self, region: impl Into<String>) {
         self.region = Some(region.into());
     }
 
     /// Set the client ID on this token.
-    #[cfg(feature = "http")]
     pub(crate) fn set_client_id(&mut self, client_id: impl Into<String>) {
         self.client_id = Some(client_id.into());
     }
@@ -145,7 +142,6 @@ impl Token {
     }
 
     /// Set the device instance ID on this token.
-    #[cfg(feature = "http")]
     pub(crate) fn set_device_instance_id(&mut self, id: impl Into<String>) {
         self.device_instance_id = Some(id.into());
     }
@@ -243,22 +239,42 @@ impl Token {
         client_id: &str,
         device_instance_id: Option<&str>,
     ) -> Result<Token, AuthError> {
+        Self::refresh_with(
+            &transport::default_transport(),
+            refresh_token,
+            base_url,
+            client_id,
+            device_instance_id,
+        )
+        .await
+    }
+
+    /// [`refresh`](Self::refresh) over a given transport: the form every
+    /// build has, and the one the device-session refresher calls.
+    pub(crate) async fn refresh_with(
+        transport: &SharedTransport,
+        refresh_token: &SecretToken,
+        base_url: &Url,
+        client_id: &str,
+        device_instance_id: Option<&str>,
+    ) -> Result<Token, AuthError> {
         let token_url = base_url.join("oauth/token")?;
 
         tracing::debug!(url = %token_url, "refreshing token");
 
-        let resp = http_client()
-            .post(token_url)
-            .form(&RefreshRequest {
+        let resp = transport::post_form(
+            transport,
+            token_url,
+            &RefreshRequest {
                 grant_type: "refresh_token",
                 client_id,
                 refresh_token: refresh_token.as_str(),
                 device_instance_id,
-            })
-            .send()
-            .await?;
+            },
+        )
+        .await?;
 
-        if !resp.status().is_success() {
+        if !resp.is_success() {
             let status = resp.status();
 
             // Read the body once as text and offer it to the shared classifier
@@ -268,10 +284,10 @@ impl Token {
             // through one classifier is what stops `/oauth/token` — the path
             // `DeviceSessionRefresher` delegates to — from disagreeing with
             // `/api/authorize` about what the same response means.
-            let body = resp.text().await?;
+            let body = resp.text();
             tracing::debug!(%status, %body, "token refresh failed");
 
-            if let Some(err) = crate::error::classify_issuance_failure(status.as_u16(), &body) {
+            if let Some(err) = crate::error::classify_issuance_failure(status, &body) {
                 return Err(err);
             }
 
@@ -289,7 +305,7 @@ impl Token {
             });
         }
 
-        let token_resp: RefreshResponse = resp.json().await?;
+        let token_resp: RefreshResponse = resp.json()?;
 
         Ok(Token {
             access_token: token_resp.access_token,
@@ -306,7 +322,6 @@ impl Token {
     }
 }
 
-#[cfg(feature = "http")]
 #[derive(serde::Serialize)]
 struct RefreshRequest<'a> {
     grant_type: &'a str,
@@ -316,7 +331,6 @@ struct RefreshRequest<'a> {
     device_instance_id: Option<&'a str>,
 }
 
-#[cfg(feature = "http")]
 #[derive(serde::Deserialize)]
 struct RefreshResponse {
     access_token: SecretToken,
@@ -331,7 +345,6 @@ struct RefreshResponse {
 /// `cs_code` is deliberately absent: `classify_issuance_failure` inspects it
 /// on the raw body before this type is ever constructed, so duplicating the
 /// field here would create a second place for the two to disagree.
-#[cfg(feature = "http")]
 #[derive(serde::Deserialize)]
 struct RefreshErrorResponse {
     error: String,

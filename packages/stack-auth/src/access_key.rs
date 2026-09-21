@@ -33,15 +33,8 @@ const ACCESS_KEY_PREFIX: &str = "CSAK";
 /// assert!("CSAKno-secret.".parse::<AccessKey>().is_err());
 /// ```
 #[derive(OpaqueDebug)]
-pub struct AccessKey(
-    // Parsing an access key (and rejecting a malformed one) is part of the
-    // token model, so the struct is unconditional — but only the http-gated
-    // `AccessKeyStrategy` ever *consumes* the secret, so without `http` this
-    // field is held but never read.
-    #[cfg_attr(not(feature = "http"), allow(dead_code))] SecretToken,
-);
+pub struct AccessKey(SecretToken);
 
-#[cfg(feature = "http")]
 impl AccessKey {
     /// Expose the underlying [`SecretToken`].
     pub(crate) fn into_secret_token(self) -> SecretToken {
@@ -136,7 +129,6 @@ mod tests {
         assert!(matches!(err, InvalidAccessKey::MissingPrefix));
     }
 
-    #[cfg(feature = "http")]
     #[test]
     fn into_secret_token() {
         let key: AccessKey = "CSAKmyKeyId.myKeySecret".parse().unwrap();

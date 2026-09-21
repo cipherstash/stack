@@ -10,12 +10,15 @@
 )]
 #![cfg_attr(
     not(feature = "http"),
-    doc = "\nWithout the `http` feature this crate is the token model plus the\
- [`AuthStrategy`] trait — [`AuthStrategyFn`] and [`TokenStoreFn`] are how a host\
- with its own transport plugs in acquisition and persistence. Enable the `http`\
- feature for the bundled strategies (`AutoStrategy`, `AccessKeyStrategy`,\
- `DeviceSessionStrategy`, `DeviceCodeStrategy`), the refresh engine, and the\
- crate's full documentation."
+    doc = "\nWithout the `http` feature this crate has no HTTP client of its own: the\
+ strategies (`AutoStrategy`, `AccessKeyStrategy`, `DeviceSessionStrategy`,\
+ `OidcFederationStrategy`) and the refresh engine are all here, and each\
+ builder must be given an [`HttpTransport`] — how a host with its own\
+ transport (a wasm module, say) runs them. [`AuthStrategyFn`] and\
+ [`TokenStoreFn`] remain the escape hatches for acquisition and persistence\
+ done entirely on the host's side. Enable the `http` feature for the bundled\
+ `ReqwestTransport`, the native device-code flow, and the crate's full\
+ documentation."
 )]
 // Security lints
 #![deny(unsafe_code)]
@@ -33,13 +36,12 @@
 #![warn(unused_results)]
 #![warn(clippy::todo)]
 #![warn(clippy::unimplemented)]
-// Without `http` the crate is the token model plus the `AuthStrategy` trait.
-// The crate-internal helpers that only the HTTP strategies call (refusal
-// classification, clock sharing, URL massaging, token setters) each carry
-// their own `#[cfg(feature = "http")]` gate rather than a crate-wide
-// `allow(dead_code)`: the compiler then verifies the partition in both
-// directions — no-http code reaching an http helper fails to compile, and
-// code that goes dead in the no-http build warns instead of being silenced.
+// Without `http` the crate has no HTTP client, not no strategies: `http` is
+// the bundled `ReqwestTransport` and the two native flows that use it
+// unconditionally (device binding, device code). Everything that needs
+// reqwest by name carries its own `#[cfg(feature = "http")]` gate rather
+// than a crate-wide `allow(dead_code)`, so the compiler verifies the
+// partition in both directions.
 // Relax in tests
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 #![cfg_attr(test, allow(clippy::expect_used))]
@@ -47,13 +49,6 @@
 #![cfg_attr(test, allow(unused_results))]
 
 use std::future::Future;
-#[cfg(all(
-    feature = "http",
-    not(any(test, feature = "test-utils")),
-    not(target_arch = "wasm32")
-))]
-use std::time::Duration;
-
 use vitaminc::protected::OpaqueDebug;
 use zeroize::ZeroizeOnDrop;
 
@@ -64,30 +59,21 @@ mod error;
 mod service_token;
 mod token;
 mod token_store;
+mod transport;
 
 // The strategies that acquire and refresh tokens over HTTP, and the refresh
-// engine they share. Behind the `http` feature: without it the crate is the
-// token model plus the `AuthStrategy` trait, for hosts that source tokens
-// through their own transport.
-#[cfg(feature = "http")]
+// engine they share. In every build: they send through whatever
+// `HttpTransport` their builder was given, and only the bundled
+// `ReqwestTransport` (their default) is behind the `http` feature.
 mod access_key_refresher;
-#[cfg(feature = "http")]
 mod access_key_strategy;
-#[cfg(feature = "http")]
 mod authorize_dto;
-#[cfg(feature = "http")]
 mod auto_refresh;
-#[cfg(feature = "http")]
 mod auto_strategy;
-#[cfg(feature = "http")]
 mod device_session_refresher;
-#[cfg(feature = "http")]
 mod device_session_strategy;
-#[cfg(feature = "http")]
 mod oidc_federation_strategy;
-#[cfg(feature = "http")]
 mod oidc_refresher;
-#[cfg(feature = "http")]
 mod refresher;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -115,22 +101,20 @@ mod static_token_strategy;
 mod test_support;
 
 pub use access_key::{AccessKey, InvalidAccessKey};
-#[cfg(feature = "http")]
 pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
 pub use auth_strategy_fn::AuthStrategyFn;
-#[cfg(feature = "http")]
 pub use auto_strategy::{AutoStrategy, AutoStrategyBuilder};
-#[cfg(feature = "http")]
 pub use device_session_strategy::{DeviceSessionStrategy, DeviceSessionStrategyBuilder};
-#[cfg(feature = "http")]
 pub use oidc_federation_strategy::{OidcFederationStrategy, OidcFederationStrategyBuilder};
-#[cfg(feature = "http")]
 pub use oidc_refresher::{OidcProvider, OidcProviderFn};
 pub use service_token::ServiceToken;
 #[cfg(any(test, feature = "test-utils"))]
 pub use static_token_strategy::StaticTokenStrategy;
 pub use token::Token;
 pub use token_store::{InMemoryTokenStore, NoStore, TokenStore, TokenStoreFn};
+#[cfg(feature = "http")]
+pub use transport::ReqwestTransport;
+pub use transport::{HttpRequest, HttpResponse, HttpTransport};
 
 /// Deprecated alias for [`DeviceSessionStrategy`].
 ///
@@ -138,12 +122,10 @@ pub use token_store::{InMemoryTokenStore, NoStore, TokenStore, TokenStoreFn};
 /// ([`OidcFederationStrategy`]) distinction explicit. The old name still
 /// resolves so existing code keeps compiling; it will be removed in a future
 /// major release.
-#[cfg(feature = "http")]
 #[deprecated(since = "0.36.0", note = "renamed to `DeviceSessionStrategy`")]
 pub type OAuthStrategy = DeviceSessionStrategy;
 
 /// Deprecated alias for [`DeviceSessionStrategyBuilder`].
-#[cfg(feature = "http")]
 #[deprecated(since = "0.36.0", note = "renamed to `DeviceSessionStrategyBuilder`")]
 pub type OAuthStrategyBuilder = DeviceSessionStrategyBuilder;
 
@@ -179,11 +161,13 @@ pub use cts_common::Crn;
 /// All items in this module are also re-exported at the crate root.
 pub mod auth {
     pub use crate::{
-        AccessKey, AuthError, AuthStrategy, AuthStrategyBounds, AuthStrategyFn, InvalidAccessKey,
-        SecretToken, ServiceToken,
+        AccessKey, AuthError, AuthStrategy, AuthStrategyBounds, AuthStrategyFn, HttpRequest,
+        HttpResponse, HttpTransport, InvalidAccessKey, SecretToken, ServiceToken,
     };
 
     #[cfg(feature = "http")]
+    pub use crate::ReqwestTransport;
+
     pub use crate::{
         AccessKeyStrategy, AccessKeyStrategyBuilder, AutoStrategy, AutoStrategyBuilder,
         DeviceSessionStrategy, DeviceSessionStrategyBuilder, OidcFederationStrategy,
@@ -205,7 +189,6 @@ pub mod auth {
     // Deprecated aliases, re-exported here too so `stack_auth::auth::OAuthStrategy`
     // consumers keep compiling alongside the crate-root aliases. See the
     // `OAuthStrategy` / `OAuthStrategyBuilder` definitions at the crate root.
-    #[cfg(feature = "http")]
     #[allow(deprecated)]
     pub use crate::{OAuthStrategy, OAuthStrategyBuilder};
 }
@@ -220,11 +203,8 @@ pub mod auth {
 /// builder — it does *not* replace the strategy. For full token acquisition
 /// (custom fetcher, FFI-hosted strategy), see [`crate::auth`].
 ///
-// The example names a strategy builder, which only exists with `http`.
-#[cfg_attr(
-    feature = "http",
-    doc = "For example, [`AccessKeyStrategyBuilder::with_token_store`](crate::AccessKeyStrategyBuilder::with_token_store).\n"
-)]
+/// For example, [`AccessKeyStrategyBuilder::with_token_store`](crate::AccessKeyStrategyBuilder::with_token_store).
+///
 /// All items in this module are also re-exported at the crate root.
 pub mod store {
     pub use crate::{InMemoryTokenStore, NoStore, Token, TokenStore, TokenStoreFn};
@@ -382,7 +362,6 @@ impl SecretToken {
 /// Returns `Ok(None)` if the variable is not set or empty.
 /// Returns `Ok(Some(url))` if the variable is set and valid.
 /// Returns `Err(_)` if the variable is set but not a valid URL.
-#[cfg(feature = "http")]
 pub(crate) fn cts_base_url_from_env() -> Result<Option<url::Url>, AuthError> {
     match std::env::var("CS_CTS_HOST") {
         Ok(val) if !val.is_empty() => Ok(Some(val.parse()?)),
@@ -392,7 +371,6 @@ pub(crate) fn cts_base_url_from_env() -> Result<Option<url::Url>, AuthError> {
 
 /// Ensure a URL has a trailing slash so that `Url::join` with relative paths
 /// appends to the path rather than replacing the last segment.
-#[cfg(feature = "http")]
 pub(crate) fn ensure_trailing_slash(mut url: url::Url) -> url::Url {
     if !url.path().ends_with('/') {
         url.set_path(&format!("{}/", url.path()));
@@ -431,63 +409,20 @@ where
     })
 }
 
-/// Create a [`reqwest::Client`] with standard timeouts.
-///
-/// In test builds, timeouts are omitted so that `tokio::test(start_paused = true)`
-/// does not auto-advance time past the connect timeout before the mock server
-/// can respond. On wasm32, reqwest's fetch backend doesn't expose
-/// `connect_timeout`/`pool_*` — the host runtime owns those concerns.
-#[cfg(all(feature = "http", any(test, feature = "test-utils")))]
-pub(crate) fn http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
-}
-
-#[cfg(all(
-    feature = "http",
-    not(any(test, feature = "test-utils")),
-    not(target_arch = "wasm32")
-))]
-pub(crate) fn http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(30))
-        .pool_idle_timeout(Duration::from_secs(5))
-        .pool_max_idle_per_host(10)
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
-}
-
-#[cfg(all(
-    feature = "http",
-    not(any(test, feature = "test-utils")),
-    target_arch = "wasm32"
-))]
-pub(crate) fn http_client() -> reqwest::Client {
-    // Wasm32 reqwest uses the host's `fetch`; timeouts and pooling are owned
-    // by the runtime, so `ClientBuilder` doesn't expose them here.
-    reqwest::Client::builder()
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// The `error_code` strings are a stable contract surfaced across FFI
-    /// (JS `Error.code`, Node-API codes), so pin every variant's code. Covers
-    /// all variants except `Request`, whose inner `reqwest::Error` has no public
-    /// constructor; if a new variant is added without a code, `error_code`'s
-    /// exhaustive `kind()` dispatch fails to compile, so the contract can't
-    /// silently drift.
+    /// (JS `Error.code`, Node-API codes), so pin every variant's code. If a
+    /// new variant is added without a code, `error_code`'s exhaustive `kind()`
+    /// dispatch fails to compile, so the contract can't silently drift.
     ///
     /// Also pins [`AuthError::ERROR_CODES`] against what `error_code` actually
     /// returns: every constructed variant's code must be declared there, and
-    /// `ERROR_CODES` must hold exactly those codes plus `REQUEST_ERROR` (the one
-    /// variant with no public constructor). So the list can't grow stale entries
-    /// or omit a real one — which is what the binding crates' union tests trust.
+    /// `ERROR_CODES` must hold exactly those codes. So the list can't grow
+    /// stale entries or omit a real one — which is what the binding crates'
+    /// union tests trust.
     #[test]
     #[allow(clippy::unwrap_used)]
     fn auth_error_code_is_stable_for_every_variant() {
@@ -555,6 +490,12 @@ mod tests {
                 "CUSTOM",
             ),
             (
+                AuthError::Request(crate::error::RequestError(Box::new(std::io::Error::other(
+                    "connection refused",
+                )))),
+                "REQUEST_ERROR",
+            ),
+            (
                 AuthError::from("not a url".parse::<url::Url>().unwrap_err()),
                 "INVALID_URL",
             ),
@@ -599,10 +540,6 @@ mod tests {
             );
             from_variants.insert(expected);
         }
-
-        // `Request` has no public constructor, so it can't appear above; add its
-        // code explicitly so the set-equality below stays exact.
-        from_variants.insert("REQUEST_ERROR");
 
         assert_eq!(
             declared, from_variants,

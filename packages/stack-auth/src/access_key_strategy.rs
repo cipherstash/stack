@@ -4,6 +4,8 @@ use crate::access_key::AccessKey;
 use crate::access_key_refresher::AccessKeyRefresher;
 use crate::auto_refresh::AutoRefresh;
 use crate::token_store::{NoStore, TokenStore};
+use crate::transport::{self, SharedTransport};
+use crate::HttpTransport;
 use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, ServiceToken};
 
 /// An [`AuthStrategy`] that uses a static access key to authenticate against
@@ -87,6 +89,7 @@ impl AccessKeyStrategy {
             audience: None,
             base_url_override: None,
             token_store: NoStore,
+            transport: None,
         }
     }
 }
@@ -109,9 +112,28 @@ pub struct AccessKeyStrategyBuilder<S = NoStore> {
     audience: Option<String>,
     base_url_override: Option<url::Url>,
     token_store: S,
+    transport: Option<SharedTransport>,
 }
 
 impl<S> AccessKeyStrategyBuilder<S> {
+    /// Send this strategy's requests through `transport` instead of the
+    /// bundled `reqwest` client.
+    ///
+    /// Without the `http` feature there is no bundled client, so this is
+    /// required; with it, this is how a host with its own HTTP stack (or a
+    /// test with a stub) takes over the wire without changing anything else
+    /// about the strategy.
+    pub fn transport(mut self, transport: impl HttpTransport) -> Self {
+        self.transport = Some(transport::share(transport));
+        self
+    }
+
+    /// [`transport`](Self::transport), for a caller that may or may not
+    /// have one — the auto strategy hands its own through.
+    pub(crate) fn maybe_transport(mut self, transport: Option<SharedTransport>) -> Self {
+        self.transport = transport;
+        self
+    }
     /// Set the audience for token requests.
     pub fn audience(mut self, audience: impl Into<String>) -> Self {
         self.audience = Some(audience.into());
@@ -151,6 +173,7 @@ impl<S> AccessKeyStrategyBuilder<S> {
             audience: self.audience,
             base_url_override: self.base_url_override,
             token_store: store,
+            transport: self.transport,
         }
     }
 }
@@ -176,6 +199,7 @@ impl<S: TokenStore> AccessKeyStrategyBuilder<S> {
             self.access_key,
             ensure_trailing_slash(base_url),
             self.audience,
+            transport::resolve(self.transport)?,
         );
         Ok(AccessKeyStrategy {
             inner: AutoRefresh::with_store(refresher, self.token_store),
@@ -185,6 +209,7 @@ impl<S: TokenStore> AccessKeyStrategyBuilder<S> {
 }
 
 #[cfg(test)]
+#[cfg(feature = "http")]
 mod workspace_verification_tests {
     use super::*;
     use crate::test_support::{crn_with_workspace, jwt_with_workspace};

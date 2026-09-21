@@ -4,6 +4,7 @@ use url::Url;
 use stack_profile::{FileLockGuard, ProfileData, ProfileStore};
 
 use crate::refresher::Refresher;
+use crate::transport::SharedTransport;
 use crate::{AuthError, SecretToken, Token};
 
 /// Implements [`Refresher`] using OAuth refresh tokens.
@@ -18,6 +19,7 @@ pub(crate) struct DeviceSessionRefresher {
     client_id: String,
     region: String,
     device_instance_id: Option<String>,
+    transport: SharedTransport,
 }
 
 impl DeviceSessionRefresher {
@@ -28,6 +30,7 @@ impl DeviceSessionRefresher {
         client_id: impl Into<String>,
         region: impl Into<String>,
         device_instance_id: Option<String>,
+        transport: SharedTransport,
     ) -> Self {
         Self {
             store,
@@ -35,6 +38,7 @@ impl DeviceSessionRefresher {
             client_id: client_id.into(),
             region: region.into(),
             device_instance_id,
+            transport,
         }
     }
 
@@ -45,12 +49,14 @@ impl DeviceSessionRefresher {
         client_id: impl Into<String>,
         region: impl Into<String>,
         device_instance_id: Option<String>,
+        transport: SharedTransport,
     ) -> Self {
         Self {
             base_url,
             client_id: client_id.into(),
             region: region.into(),
             device_instance_id,
+            transport,
         }
     }
 }
@@ -102,7 +108,8 @@ impl Refresher for DeviceSessionRefresher {
             return Ok(disk_token);
         }
 
-        let mut token = Token::refresh(
+        let mut token = Token::refresh_with(
+            &self.transport,
             credential,
             &self.base_url,
             &self.client_id,
@@ -185,9 +192,11 @@ impl DeviceSessionRefresher {
     }
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(test)]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use crate::transport::default_transport;
     use mocktail::prelude::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -227,7 +236,14 @@ mod tests {
         store.init_workspace(WORKSPACE_ID).unwrap();
         let ws_store = store.current_workspace_store().unwrap();
         ws_store.save_profile(&on_disk).unwrap();
-        DeviceSessionRefresher::new(Some(ws_store), base_url, "cli", "ap-southeast-2.aws", None)
+        DeviceSessionRefresher::new(
+            Some(ws_store),
+            base_url,
+            "cli",
+            "ap-southeast-2.aws",
+            None,
+            default_transport(),
+        )
     }
 
     /// If disk holds a different refresh token than the credential we're
@@ -360,6 +376,7 @@ mod tests {
             "cli",
             "ap-southeast-2.aws",
             None,
+            default_transport(),
         ));
         let r2 = Arc::new(DeviceSessionRefresher::new(
             Some(ws_store),
@@ -367,6 +384,7 @@ mod tests {
             "cli",
             "ap-southeast-2.aws",
             None,
+            default_transport(),
         ));
 
         let cred1 = SecretToken::new("shared-refresh");
