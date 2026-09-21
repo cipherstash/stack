@@ -28,6 +28,14 @@ impl DeviceIdentity {
     ///
     /// When creating, generates a UUIDv4 and uses the system hostname as the
     /// default device name. The file is written with mode 0600 on Unix.
+    ///
+    /// Native targets only. Creating an identity is what the CLI does when it
+    /// provisions a client at login; a wasm32 build of this crate (the Go
+    /// binding's credential guest) reads the identity the CLI wrote and must
+    /// not be able to mint one — it has no hostname to name it after, and a
+    /// made-up name would be worse than none. Use [`DeviceIdentity::load`]
+    /// there.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_or_create(store: &ProfileStore) -> Result<Self, ProfileError> {
         match store.load_profile::<Self>() {
             Ok(identity) => Ok(identity),

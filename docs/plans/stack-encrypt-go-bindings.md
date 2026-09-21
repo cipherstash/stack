@@ -518,6 +518,57 @@ probe, _ := cipher.Term(ctx, uint32(34), "users/age", stackencrypt.Equality)
   — this monorepo is private, so the proof's module path is temporary.
 - Retire `goencryption`'s cgo static-library matrix once parity is reached.
 
+## Credential guest — `stack-profile` and `stack-auth` for Go
+
+**Status:** decided 2026-09-20, not started. The decision and its rationale
+are [ADR-0005](../../packages/stack-encrypt/docs/adr/0005-a-separate-credential-guest-for-the-profile-and-auth.md);
+this section is the sequencing only.
+
+Go gets the profile and auth crates through a **second** WASI module, the
+credential guest, in its own package `stackauth`. The crypto guest is not
+widened: it keeps no filesystem and no environment. The credential guest is
+given one mounted directory (the profile root, at a fixed guest path) and,
+once the auth half lands, the same `cipherstash_transport` import the crypto
+guest has. The cross-process refresh lock stays on the Go side, taken around
+the whole refresh export with the same `flock` / `LockFileEx` the CLI uses,
+on a path the guest names.
+
+The steps, in order; each is a Linear issue under CIP-3764, with the
+blocked-by relations set there:
+
+1. **`stack-profile` builds for wasm32-wasip1.** Two gates found by the
+   spike: `gethostname` has no wasip1 body (the creating half of
+   `DeviceIdentity` becomes native-only; provisioning is CLI territory), and
+   `std::process::id()` in the atomic write's temp name aborts the module.
+   Plus a public accessor for the lock file's path, and the crate joins
+   `wasm:wasi-check`.
+2. **Shared guest ABI crate** (CIP-3997): allocator, buffer registry, the
+   one status table both guests use, and the transport import, extracted
+   into `packages/stack-guest-abi` before the second guest is written.
+3. **One Go module at `bindings/go`** with an `internal` package for the
+   locked guest memory (CIP-4111), the status decoder and the opaque
+   `ClientKey` type, which both public packages expose as an alias.
+   `stackencrypt.Config.ClientKey` becomes that type.
+4. **Credential guest + `stackauth`, profile half** (CIP-4053): the full
+   napi profile surface as methods on `ProfileStore`, a `TokenSource` that
+   re-reads the auth file per call and refuses at the real expiry, and tests
+   pinning wazero's 0600 create mode and the outside-mount refusal.
+5. **Transport seam in `stack-auth`**: a trait mirroring the host import
+   (method, URL, headers, body → status, headers, body), reqwest behind
+   `http`, the guest import as the other impl. This is what CIP-3553
+   anticipated and is the long pole.
+6. **Strategies in the guest** (CIP-4054): access key, device session, OIDC
+   federation (Go callback for the IdP token) and auto, with the detection
+   order run in Go against the environment Go owns. Exchanges tested against
+   an in-process `httptest` server, including two goroutines racing a refresh
+   under the lock.
+7. **CI on three platforms**: Linux builds both guests once; macOS and
+   Windows runners take the artifacts and run both packages' suites. Needed
+   before step 6 ships, since the lock has a Windows implementation.
+
+Steps 1, 2, 5 and 7 have no prerequisites among themselves and can run in
+parallel. Step 3 stacks on CIP-4111.
+
 ## Decisions to make first
 
 1. **Where the Go FFI codec lives.** `vcvalue`'s README deliberately
