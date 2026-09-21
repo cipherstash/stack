@@ -109,11 +109,17 @@ func TestGuestModuleConfigHostSources(t *testing.T) {
 		}
 	}
 
-	// The fake clock advances 1ms per read regardless of elapsed time.
+	// The fake clock advances 1ms per read regardless of elapsed time, so
+	// two reads around a sleep are 1ms apart on it and the whole sleep
+	// apart on the host's. The floor is half the sleep, not all of it: on
+	// Windows the sleep timer and the monotonic source are different
+	// clocks, and a sleep can return a fraction of a millisecond before
+	// the monotonic clock says the interval has passed. Half still leaves
+	// an order of magnitude between the two answers.
 	const sleep = 20 * time.Millisecond
 	before := monotonicA()
 	time.Sleep(sleep)
-	if elapsed := monotonicA() - before; elapsed < sleep {
+	if elapsed := monotonicA() - before; elapsed < sleep/2 {
 		t.Fatalf("monotonic clock advanced %v across a %v sleep: not the host clock", elapsed, sleep)
 	}
 }

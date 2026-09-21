@@ -17,6 +17,7 @@ on:
       # job is their only gate.
       - bindings/go/stackencrypt/**
       - scripts/check-wasm-imports.py
+      - scripts/go-binding-test.sh
       - Cargo.toml
       - Cargo.lock
       - .cargo/**
@@ -34,6 +35,7 @@ on:
       # job is their only gate.
       - bindings/go/stackencrypt/**
       - scripts/check-wasm-imports.py
+      - scripts/go-binding-test.sh
       - Cargo.toml
       - Cargo.lock
       - .cargo/**
@@ -95,6 +97,25 @@ jobs:
       - name: Guest release build and import-surface gate
         run: mise run wasm:guest:build
 
+      # The module checked above is what every platform tests. Its checksum
+      # travels with it so the other jobs can prove they got the same bytes,
+      # not a stale or rebuilt guest.
+      - name: Record the guest's checksum
+        run: |
+          cd bindings/go/stackencrypt/wasm
+          openssl dgst -sha256 stack_encrypt_guest.wasm | awk '{print $NF}' > stack_encrypt_guest.wasm.sha256
+          echo "stack_encrypt_guest.wasm sha256 $(cat stack_encrypt_guest.wasm.sha256)"
+
+      - name: Hand the guest to the other platforms
+        uses: actions/upload-artifact@v7
+        with:
+          name: wasm-guests
+          path: |
+            bindings/go/stackencrypt/wasm/stack_encrypt_guest.wasm
+            bindings/go/stackencrypt/wasm/stack_encrypt_guest.wasm.sha256
+          if-no-files-found: error
+          retention-days: 1
+
       # The Go binding (bindings/go/stackencrypt) embeds the module built
       # above: format, vet and hermetic tests (import surface, transport
       # bridge against an httptest ZeroKMS, guest-parser acceptance of every
@@ -103,3 +124,72 @@ jobs:
       # harness's.
       - name: Go binding
         run: mise run go:stackencrypt:test
+
+  # The same Go binding on macOS and Windows, against the guest Linux built.
+  # Today that is the crypto binding, which had never run on either. The
+  # reason to have the platforms in place now is what comes next: the
+  # credential guest (ADR-0005, CIP-4054) puts the cross-process refresh
+  # lock on the Go side with a Unix and a Windows implementation, and a Go
+  # developer sharing a profile with the CLI is the scenario the lock exists
+  # for, so those tests need somewhere to run before they are written. They
+  # gate the way wasi-check does: a red run on the PR, not branch protection.
+  # main's ruleset requires no status check today, and this workflow is path
+  # filtered, so a required check here would never run on a PR outside the
+  # filter and block it forever. If either job is ever made required, pair it
+  # with a same-named job in a workflow triggered on the complementary paths
+  # that always succeeds, as GitHub documents. Nothing Rust runs here — Go
+  # plus the artifact is the whole toolchain, which is what keeps them quick.
+  go-binding-cross:
+    name: Go binding (${{ matrix.os }})
+    needs: wasi-check
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # Git for Windows defaults to CRLF on checkout, and gofmt would then
+      # report every file. Set this before checkout, where it takes effect.
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v6
+
+      # One source of truth for the Go version: the mise pin the Linux job
+      # runs under. The sed matches one shape of that line; if the pin is
+      # ever written another way, fail here by name rather than hand
+      # setup-go an empty version.
+      - name: Go version from mise.toml
+        id: go
+        run: |
+          version=$(sed -n 's/^go = "\(.*\)"/\1/p' mise.toml)
+          if [ -z "$version" ]; then
+            echo 'no `go = "..."` line in mise.toml; the Go version pin has changed shape' >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+          cache-dependency-path: bindings/go/stackencrypt/go.sum
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: wasm-guests
+          path: bindings/go/stackencrypt/wasm
+
+      - name: The guest is the one Linux built and checked
+        run: |
+          cd bindings/go/stackencrypt/wasm
+          want=$(cat stack_encrypt_guest.wasm.sha256)
+          got=$(openssl dgst -sha256 stack_encrypt_guest.wasm | awk '{print $NF}')
+          if [ "$want" != "$got" ]; then
+            echo "guest checksum mismatch: artifact says $want, file is $got" >&2
+            exit 1
+          fi
+          echo "stack_encrypt_guest.wasm sha256 $got"
+
+      - name: Go binding
+        run: scripts/go-binding-test.sh bindings/go/stackencrypt
