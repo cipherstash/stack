@@ -131,9 +131,13 @@ jobs:
   # credential guest (ADR-0005, CIP-4054) puts the cross-process refresh
   # lock on the Go side with a Unix and a Windows implementation, and a Go
   # developer sharing a profile with the CLI is the scenario the lock exists
-  # for, so those tests need somewhere to run before they are written. These
-  # jobs are blocking, the same as wasi-check: add them to the branch
-  # protection's required checks alongside it. Nothing Rust runs here — Go
+  # for, so those tests need somewhere to run before they are written. They
+  # gate the way wasi-check does: a red run on the PR, not branch protection.
+  # main's ruleset requires no status check today, and this workflow is path
+  # filtered, so a required check here would never run on a PR outside the
+  # filter and block it forever. If either job is ever made required, pair it
+  # with a same-named job in a workflow triggered on the complementary paths
+  # that always succeeds, as GitHub documents. Nothing Rust runs here — Go
   # plus the artifact is the whole toolchain, which is what keeps them quick.
   go-binding-cross:
     name: Go binding (${{ matrix.os }})
@@ -153,10 +157,18 @@ jobs:
       - uses: actions/checkout@v6
 
       # One source of truth for the Go version: the mise pin the Linux job
-      # runs under.
+      # runs under. The sed matches one shape of that line; if the pin is
+      # ever written another way, fail here by name rather than hand
+      # setup-go an empty version.
       - name: Go version from mise.toml
         id: go
-        run: echo "version=$(sed -n 's/^go = "\(.*\)"/\1/p' mise.toml)" >> "$GITHUB_OUTPUT"
+        run: |
+          version=$(sed -n 's/^go = "\(.*\)"/\1/p' mise.toml)
+          if [ -z "$version" ]; then
+            echo 'no `go = "..."` line in mise.toml; the Go version pin has changed shape' >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-go@v5
         with:
