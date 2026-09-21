@@ -179,3 +179,46 @@ handle's point of view. Handing it a leaf sealed under one is
 `Error::ForeignKeyset`, refused before any key is retrieved — the
 guarantee a tenant-scoped handler asked for by taking a handle.
 _Avoid_: wrong keyset, other tenant
+
+## Guest memory (Go host)
+
+**Reservation**:
+The guest's whole linear memory, address space of the module's declared
+maximum taken once (`mmap PROT_NONE`, `VirtualAlloc MEM_RESERVE`) so the
+memory never moves. Growth commits more of it from the front.
+_Avoid_: buffer (that is wazero's view of the committed part), allocation
+
+**Commit**:
+Making a range of the reservation readable and writable as the guest grows,
+and locking it. A commit is what a lock is granted or refused on.
+_Avoid_: grow (that is the guest's request; the commit is the host's answer)
+
+**Lock**:
+Pinning committed memory in RAM (`mlock`, `VirtualLock`) so it is never
+written to swap, and on Linux excluding the reservation from core dumps
+(`MADV_DONTDUMP`). "Locked", of a client, means both held.
+_Avoid_: pinned, wired
+
+**Lock policy**:
+What a refused lock means for a client. *Best effort*, the default: the
+refusal is recorded and reported (`MemoryLocked`, `MemoryLockError`) and
+the client works on with memory that may be swapped. *Strict*
+(`RequireLockedMemory`): `NewClient` fails with `ErrMemoryLock`, and so
+does any later call whose growth cannot be locked.
+_Avoid_: mode, hard/soft
+
+**Growth refusal**:
+Under the strict policy, a commit whose lock was refused and was therefore
+given back before the guest saw it. It fails the call that needed it and
+leaves the client's lock report unchanged, since nothing unlocked was
+admitted. A refusal of the guest's own allocation aborts the guest and
+closes the client.
+_Avoid_: lock failure (that is the report of memory admitted unlocked)
+
+**Heap fallback**:
+A Go slice standing in for a reservation where none can be made: a
+platform with no primitive this package uses, or a 32-bit host asked for
+wasm's 4 GiB default. It still wipes on growth and release; it cannot be
+locked, and the client reports so.
+_Avoid_: default allocator (wazero's, which is never used), unlocked mode
+

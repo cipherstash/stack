@@ -257,7 +257,7 @@ func TestInterruptedCallClosesTheClient(t *testing.T) {
 		if _, err := c.Keyset(KeysetName("k")).KeysetID(ctx); !errors.Is(err, ErrState) {
 			t.Fatalf("Keyset on a closed module: %v, want ErrState", err)
 		}
-		if err := c.Close(ctx); err != nil {
+		if err := c.Close(); err != nil {
 			t.Fatalf("Close after interruption: %v", err)
 		}
 		// The close must reach the runtime. An interrupted call closes the
@@ -271,7 +271,7 @@ func TestInterruptedCallClosesTheClient(t *testing.T) {
 			t.Errorf("host module %s is still registered after Close", transportModule)
 		}
 		// Still idempotent.
-		if err := c.Close(ctx); err != nil {
+		if err := c.Close(); err != nil {
 			t.Fatalf("second Close: %v", err)
 		}
 	})
@@ -476,12 +476,12 @@ func TestConfigValidation(t *testing.T) {
 func rawInstance(t *testing.T) *Client {
 	t.Helper()
 	ctx := context.Background()
-	inst, err := newInstance(ctx, guestOrSkip(t), &transport{rt: http.DefaultTransport, token: StaticToken("t")})
+	inst, err := newInstance(ctx, guestOrSkip(t), &transport{rt: http.DefaultTransport, token: StaticToken("t")}, bestEffort)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &Client{inst: inst, transport: nil}
-	t.Cleanup(func() { _ = c.Close(context.Background()) })
+	c := newClient(inst, nil)
+	t.Cleanup(func() { _ = c.Close() })
 	return c
 }
 
@@ -632,10 +632,10 @@ func TestGuestRefusesMalformedInputsBeforeState(t *testing.T) {
 func TestClosedClientIsState(t *testing.T) {
 	ctx := context.Background()
 	c := rawInstance(t)
-	if err := c.Close(ctx); err != nil {
+	if err := c.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Close(ctx); err != nil {
+	if err := c.Close(); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
 	if _, err := c.DefaultKeyset().Encrypt(ctx, "x", nil); !errors.Is(err, ErrState) {
@@ -696,7 +696,9 @@ func TestHostilePointerLengthPairsAreStatusesNotTraps(t *testing.T) {
 // linear memory after NewClient returns — success or failure.
 func TestClientKeyDoesNotRemainInGuestMemory(t *testing.T) {
 	guestOrSkip(t)
-	stub := newStub(t, http.StatusUnauthorized, "", "nope")
+	// A body long enough that a hit is not a coincidence of four bytes.
+	const errorBody = "refused-4111-9f8e7d6c5b4a-residency-probe"
+	stub := newStub(t, http.StatusUnauthorized, "", errorBody)
 	// Keep the instance to scan it: build the client by hand so a failed
 	// init does not tear it down first.
 	ctx := context.Background()
@@ -705,11 +707,11 @@ func TestClientKeyDoesNotRemainInGuestMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr := &transport{rt: http.DefaultTransport, token: StaticToken("stub-token")}
-	inst, err := newInstance(ctx, guestOrSkip(t), tr)
+	inst, err := newInstance(ctx, guestOrSkip(t), tr, bestEffort)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer inst.close(ctx)
+	defer inst.release()
 	_, err = inst.call(ctx, inst.cipherInit, buf(encoded))
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("init: %v", err)
@@ -719,10 +721,15 @@ func TestClientKeyDoesNotRemainInGuestMemory(t *testing.T) {
 	if !ok {
 		t.Fatal("cannot read guest memory")
 	}
+	// The response body is what ZeroKMS answered, placed in guest memory
+	// by the transport and wiped by the guest's registry when the call
+	// returns; the bearer token and the response headers travel the same
+	// way. Nothing a call staged may outlive it.
 	for name, needle := range map[string][]byte{
-		"key hex":   []byte(testClientKey),
-		"key bytes": mustHex(testClientKey),
-		"bearer":    []byte("stub-token"),
+		"key hex":       []byte(testClientKey),
+		"key bytes":     mustHex(testClientKey),
+		"bearer":        []byte("stub-token"),
+		"response body": []byte(errorBody),
 	} {
 		if n := bytes.Count(view, needle); n != 0 {
 			t.Errorf("%s found %d times in guest memory after init", name, n)
@@ -735,11 +742,11 @@ func TestTransportSendCounterAndResponseHeaders(t *testing.T) {
 	stub := newStub(t, http.StatusUnauthorized, "text/plain", "nope")
 	tr := &transport{rt: http.DefaultTransport, token: StaticToken("stub-token")}
 	ctx := context.Background()
-	inst, err := newInstance(ctx, guestOrSkip(t), tr)
+	inst, err := newInstance(ctx, guestOrSkip(t), tr, bestEffort)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer inst.close(ctx)
+	defer inst.release()
 	encoded, _ := encodeConfig(testConfig(stub.URL))
 	if _, err := inst.call(ctx, inst.cipherInit, buf(encoded)); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("init: %v", err)
