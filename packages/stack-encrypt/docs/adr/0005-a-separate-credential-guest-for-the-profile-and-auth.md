@@ -85,10 +85,12 @@ call time, after acquisition, by construction.
 So the guest has no lock calls at all. Go takes the same lock the Rust CLI
 takes — `flock(LOCK_EX)` on Unix, `LockFileEx` with the exclusive flag over
 offset zero and a length of all ones on Windows, on the sibling lock file the
-guest names — around the device-session refresh export, and nowhere else. The
-refresher's wasm32 arm documents that the host holds it. No lock state crosses
-the ABI, no guest code path can forget to release, and the import surface
-stays filesystem plus transport. Go never spells a profile path: the lock
+guest names — around the device-session refresh export, and nowhere else.
+Today the refresher's wasm32 arm only compiles the lock out and says nothing
+about who holds it; the auth half (CIP-4054) rewrites that arm to document
+that the host does, when the strategies move into the guest. No lock state
+crosses the ABI, no guest code path can forget to release, and the import
+surface stays filesystem plus transport. Go never spells a profile path: the lock
 file's path comes from a `stack-profile` accessor exposed through the guest.
 
 Go acquires with a try-lock and backoff under the caller's context, where the
@@ -168,8 +170,12 @@ closes CIP-4053 and unblocks the env-plus-profile part of CIP-4052.
 Then `stack-auth` gains a transport trait mirroring the host import exactly —
 method, URL, headers and body in, status, headers and body out, bytes, no
 streaming — with reqwest as one implementation behind the `http` feature and
-the guest's import as the other, using the crate's existing async-trait
-convention. Then the strategies run inside the guest: access key, device
+the guest's import as the other (CIP-4116). The trait returns `impl Future`,
+the crate's convention for async traits, so it is not object-safe; a
+crate-internal adapter boxes the future once at construction, so no public
+strategy type grows a type parameter and the concrete transport is never
+named again after the builder's `.transport(..)`. Then the strategies run
+inside the guest: access key, device
 session, OIDC federation with a Go callback for the identity-provider token,
 and auto. `AutoStrategy`'s detection order runs in Go against the environment
 Go already owns, pinned against the Rust order by a test; the guest stays
