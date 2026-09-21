@@ -123,8 +123,17 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy lockPoli
 	// platform allows, wiped on release. See memory.go.
 	mem := newMemoryAllocator(policy)
 	// The guest is a reactor (cdylib): no _start. wazero runs _initialize
-	// when present.
-	module, err := runtime.InstantiateWithConfig(experimental.WithMemoryAllocator(ctx, mem), wasm, guestModuleConfig())
+	// when present, so guest code runs here too, and the memory must stay
+	// mapped until it returns, the same as around a call. Today nothing in
+	// _initialize re-enters the guest from Go, which is the only path that
+	// frees memory under a suspended guest; the bracket makes that a
+	// property of this code rather than of what the guest's constructors
+	// happen to call. See memoryAllocator.Free.
+	mem.enter()
+	module, err := func() (api.Module, error) {
+		defer mem.exit()
+		return runtime.InstantiateWithConfig(experimental.WithMemoryAllocator(ctx, mem), wasm, guestModuleConfig())
+	}()
 	if err != nil {
 		_ = runtime.Close(ctx)
 		if g := mem.growthRefusal(); g.refused != 0 {
