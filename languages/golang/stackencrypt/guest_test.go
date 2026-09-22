@@ -707,36 +707,36 @@ func TestHostilePointerLengthPairsAreStatusesNotTraps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init with null pointer trapped: %v", err)
 	}
-	if _, cerr := packedResult(res[0]); !errors.Is(cerr, ErrEncoding) {
+	if _, _, cerr := guest.PackedResult(res[0]); !errors.Is(cerr, ErrEncoding) {
 		t.Fatalf("null pointer: %v, want ErrEncoding", cerr)
 	}
-	staged, err := inst.allocWrite(ctx, bytes.Repeat([]byte{0x2a}, 64))
+	staged, err := inst.exports.AllocWrite(ctx, inst.module, bytes.Repeat([]byte{0x2a}, 64))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer inst.free(ctx, staged)
+	defer inst.exports.Free(ctx, staged)
 	for _, hostile := range []uint64{0x7FFF_FFF0, 0xFFFF_FFFF} {
 		for name, fn := range map[string]func() ([]uint64, error){
-			"se_cipher_init": func() ([]uint64, error) { return inst.cipherInit.Call(ctx, uint64(staged.ptr), hostile) },
-			"se_keyset":      func() ([]uint64, error) { return inst.keyset.Call(ctx, uint64(staged.ptr), hostile) },
+			"se_cipher_init": func() ([]uint64, error) { return inst.cipherInit.Call(ctx, uint64(staged.Ptr), hostile) },
+			"se_keyset":      func() ([]uint64, error) { return inst.keyset.Call(ctx, uint64(staged.Ptr), hostile) },
 			"se_encrypt": func() ([]uint64, error) {
-				return inst.encrypt.Call(ctx, uint64(staged.ptr), hostile, 0, 0, uint64(staged.ptr), 4)
+				return inst.encrypt.Call(ctx, uint64(staged.Ptr), hostile, 0, 0, uint64(staged.Ptr), 4)
 			},
 		} {
 			res, err := fn()
 			if err != nil {
 				t.Fatalf("%s with len %#x trapped: %v", name, hostile, err)
 			}
-			if _, cerr := packedResult(res[0]); !errors.Is(cerr, ErrEncoding) {
+			if _, _, cerr := guest.PackedResult(res[0]); !errors.Is(cerr, ErrEncoding) {
 				t.Errorf("%s with len %#x: %v, want ErrEncoding", name, hostile, cerr)
 			}
 		}
 	}
 	// An unknown or mismatched free is a no-op, not a trap.
-	if _, err := inst.dealloc.Call(ctx, uint64(staged.ptr)+1, 1); err != nil {
+	if _, err := inst.exports.Dealloc.Call(ctx, uint64(staged.Ptr)+1, 1); err != nil {
 		t.Fatalf("dealloc of an unknown pointer trapped: %v", err)
 	}
-	if _, err := inst.dealloc.Call(ctx, uint64(staged.ptr), 1); err != nil {
+	if _, err := inst.exports.Dealloc.Call(ctx, uint64(staged.Ptr), 1); err != nil {
 		t.Fatalf("dealloc with a mismatched length trapped: %v", err)
 	}
 	// The instance still works.

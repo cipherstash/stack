@@ -2,7 +2,7 @@
 # Format check, vet and test one Go binding module against its embedded guest.
 #
 # One definition of "the Go binding passes", run on three platforms: the mise
-# task `go:stackencrypt:test` (Linux CI, and locally) and the macOS/Windows
+# task `go:test` (Linux CI, and locally) and the macOS/Windows
 # jobs in .github/workflows/test-wasi.yml both call this, so they cannot
 # drift apart. The guest module itself is built once, on Linux, and handed to
 # the other platforms as an artifact — the wasm is platform-independent and

@@ -62,7 +62,10 @@ refuses a token at its real expiry with `stackauth.ErrTokenExpired`.
 Exactly one directory, mounted read-write at a fixed guest path, and no
 environment. It cannot name a path outside it: every path is built by the
 Rust crate from the store's directory and a validated filename or
-workspace id. Files it creates are mode 0600. It takes no file lock (WASI
+workspace id, and the mount itself is confined — a symlink inside the
+profile that leads outside it is refused, for reads and for the one write,
+rather than followed with the process's permissions as a plain directory
+mount would. Files it creates are mode 0600. It takes no file lock (WASI
 preview 1 has none); the cross-process refresh lock the CLI holds is Go's
 to take, on the path `ProfileStore.LockPath` names, once refreshing lands.
 
@@ -73,7 +76,7 @@ existing: it still has no filesystem and no environment.
 
 ```
 mise run wasm:auth-guest:build   # the guest, with its import-surface gate
-mise run go:stackencrypt:test    # the whole Go module, both packages
+mise run go:test                 # the whole Go module, both packages
 ```
 
 The guest module is embedded from `wasm/` and not committed; without it,

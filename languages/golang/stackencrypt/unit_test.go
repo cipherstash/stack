@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
 	"io"
 	"net/http"
 	"os"
@@ -536,11 +537,11 @@ func TestStatusMappingIsTotal(t *testing.T) {
 		5: ErrUnauthorized, 6: ErrForbidden, 7: ErrNotFound, 8: ErrConflict,
 		9: ErrTransport, 10: ErrKMS, 11: ErrTerm, 12: ErrForeignKeyset,
 	} {
-		if _, got := packedResult(uint64(status)); !errors.Is(got, want) {
+		if _, _, got := guest.PackedResult(uint64(status)); !errors.Is(got, want) {
 			t.Errorf("status %d: %v", status, got)
 		}
 	}
-	if _, got := packedResult(99); !errors.Is(got, ErrInternal) {
+	if _, _, got := guest.PackedResult(99); !errors.Is(got, ErrInternal) {
 		t.Errorf("unknown status: %v", got)
 	}
 }

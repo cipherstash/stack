@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/tetratelabs/wazero/api"
 	"net/http"
 	"runtime"
 	"strings"
@@ -21,12 +22,24 @@ import (
 // stageLarge stages a buffer larger than the guest's initial memory, so
 // the guest must grow, and frees it again.
 func stageLarge(ctx context.Context, inst *instance) error {
-	staged, err := inst.allocWrite(ctx, make([]byte, 2<<20))
+	staged, err := inst.exports.AllocWrite(ctx, inst.module, make([]byte, 2<<20))
 	if err != nil {
 		return err
 	}
-	inst.free(ctx, staged)
+	inst.exports.Free(ctx, staged)
 	return nil
+}
+
+// invoke calls one export on already-staged arguments and decodes its
+// packed result, for the tests that need to refuse growth between staging
+// and the call.
+func invoke(ctx context.Context, fn api.Function, params ...uint64) error {
+	res, err := fn.Call(ctx, params...)
+	if err != nil {
+		return fmt.Errorf("%w: guest call: %w", guest.ErrTrap, err)
+	}
+	_, _, err = guest.PackedResult(res[0])
+	return err
 }
 
 // A host-staged buffer larger than the guest's initial memory makes it
@@ -187,14 +200,13 @@ func TestRequireLockedMemoryClosesTheClientOnARefusedInternalGrowth(t *testing.T
 	}
 	var refusing *guest.Refusing
 	_, err = c.call(ctx, func(inst *instance) ([]byte, error) {
-		staged, err := inst.allocWrite(ctx, encoded)
+		staged, err := inst.exports.AllocWrite(ctx, inst.module, encoded)
 		if err != nil {
 			return nil, err
 		}
-		defer inst.free(ctx, staged)
+		defer inst.exports.Free(ctx, staged)
 		refusing = guest.RefuseGrowth(inst.mem, errors.New("refused for the test"))
-		_, err = inst.invoke(ctx, inst.cipherInit, uint64(staged.ptr), uint64(staged.len))
-		return nil, err
+		return nil, invoke(ctx, inst.cipherInit, uint64(staged.Ptr), uint64(staged.Len))
 	})
 	if !errors.Is(err, ErrMemoryLock) || !strings.Contains(err.Error(), "growth refused") {
 		t.Fatalf("init needing a refused internal growth: %v; want ErrMemoryLock naming the refusal", err)

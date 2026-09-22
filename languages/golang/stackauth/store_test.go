@@ -14,6 +14,7 @@ import (
 
 	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
 	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/api"
 )
 
 const (
@@ -129,13 +130,34 @@ func TestResolveHonoursConfigPath(t *testing.T) {
 		t.Fatalf("Dir = %q, want %q", s.Dir(), dir)
 	}
 	t.Setenv("CS_CONFIG_PATH", "  ")
-	t.Setenv("HOME", filepath.Join(t.TempDir(), "nohome"))
+	// os.UserHomeDir reads HOME on Unix and USERPROFILE on Windows.
+	nohome := filepath.Join(t.TempDir(), "nohome")
+	t.Setenv("HOME", nohome)
+	t.Setenv("USERPROFILE", nohome)
 	if _, err := Resolve(context.Background()); !errors.Is(err, ErrNoProfile) {
 		t.Fatalf("Resolve with a blank CS_CONFIG_PATH and no ~/.cipherstash: %v, want ErrNoProfile", err)
 	}
+	// A non-blank value is used as it is, as the crate uses it: a directory
+	// whose name carries whitespace is the directory it names. (Windows
+	// trims a trailing space off a directory name itself.)
+	if runtime.GOOS != "windows" {
+		spaced := filepath.Join(t.TempDir(), " spaced ")
+		if err := os.Mkdir(spaced, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("CS_CONFIG_PATH", spaced)
+		s, err := Resolve(context.Background())
+		if err != nil {
+			t.Fatalf("Resolve with CS_CONFIG_PATH naming a directory with spaces in its name: %v", err)
+		}
+		defer s.Close()
+		if s.Dir() != spaced {
+			t.Fatalf("Dir = %q, want the value verbatim, %q", s.Dir(), spaced)
+		}
+	}
 }
 
-func TestWorkspaceSelection(t *testing.T) {
+func TestWorkspaceSelectionRoundTripsAndLists(t *testing.T) {
 	ctx := context.Background()
 	_, s := profile(t)
 	if _, err := s.CurrentWorkspace(ctx); !errors.Is(err, ErrNoCurrentWorkspace) {
@@ -210,7 +232,7 @@ func TestWorkspaceStoresAreScopedAndShareTheGuest(t *testing.T) {
 	}
 }
 
-func TestTypedReads(t *testing.T) {
+func TestTypedReadsReturnTheFilesFields(t *testing.T) {
 	ctx := context.Background()
 	dir, s := profile(t)
 	ws, err := s.WorkspaceStore(ctx, wsA)
@@ -237,14 +259,17 @@ func TestTypedReads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The access token is a credential; a failure names what was wrong
+	// with it rather than printing it.
 	if !strings.HasPrefix(tok.AccessToken, "tok-") || tok.TokenType != "Bearer" || tok.Region != "ap-southeast-2" {
-		t.Errorf("Token = %+v", tok)
+		t.Errorf("Token: access token has the stub's prefix = %t, type = %q, region = %q",
+			strings.HasPrefix(tok.AccessToken, "tok-"), tok.TokenType, tok.Region)
 	}
 	if !tok.Usable(time.Now()) || tok.ExpiresAt.Before(time.Now().Add(50*time.Minute)) {
 		t.Errorf("ExpiresAt = %s, want about an hour away", tok.ExpiresAt)
 	}
 	if tok.ClientID != "" || tok.DeviceInstanceID != "" {
-		t.Errorf("absent optional fields decoded as %+v", tok)
+		t.Errorf("absent optional fields decoded as client_id = %q, device_instance_id = %q", tok.ClientID, tok.DeviceInstanceID)
 	}
 
 	identity, err := s.DeviceIdentity(ctx)
@@ -331,7 +356,10 @@ func TestLockPathIsTheCratesAndValidated(t *testing.T) {
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("naming the lock file created it: %v", err)
 	}
-	for _, bad := range []string{"", "../auth.json", "/etc/auth.json", "a/b"} {
+	// The host's separator is refused as well as the guest's: on Windows a
+	// backslash passes the crate's check (its separator is `/` on wasm32)
+	// and would become a path once mapped back to the host.
+	for _, bad := range []string{"", ".", "..", "../auth.json", "/etc/auth.json", "a/b", `a\b`, `x\..\..\outside`} {
 		if _, err := ws.LockPath(ctx, bad); !errors.Is(err, ErrInvalidFilename) {
 			t.Errorf("LockPath(%q) = %v, want ErrInvalidFilename", bad, err)
 		}
@@ -384,7 +412,7 @@ func TestTheGuestCannotSeeOutsideTheMount(t *testing.T) {
 
 // The guest's memory is the shared allocator's: the store reports its lock
 // state like a client does, and RequireLockedMemory is honoured.
-func TestMemoryIsReported(t *testing.T) {
+func TestMemoryStateIsReportedAndStrictIsHonoured(t *testing.T) {
 	_, s := profile(t)
 	if s.MemoryLocked() != (s.MemoryLockError() == nil) {
 		t.Fatal("MemoryLocked and MemoryLockError disagree")
@@ -436,5 +464,120 @@ func TestGuestRootMatchesTheGuest(t *testing.T) {
 	}
 	if guest.PolicyFor(false) != guest.BestEffort {
 		t.Fatal("the default policy is not best effort")
+	}
+}
+
+// The mount is confined to the directory it names, symlinks included: a
+// symlink inside the profile that leads outside it is refused, for a read
+// and for the one write the guest makes, while a symlink that stays inside
+// is the file it names. wazero's own directory mount would follow all of
+// them with the process's permissions.
+func TestASymlinkOutOfTheMountIsRefused(t *testing.T) {
+	ctx := context.Background()
+	dir, s := profile(t)
+	outside := t.TempDir()
+	symlink := func(target, link string) {
+		t.Helper()
+		if err := os.Symlink(target, link); err != nil {
+			t.Skipf("cannot create a symlink here: %v", err)
+		}
+	}
+
+	// A read through a symlinked file: device.json leads outside.
+	elsewhere := filepath.Join(outside, "device.json")
+	write(t, elsewhere, deviceJSON)
+	if err := os.Remove(filepath.Join(dir, "device.json")); err != nil {
+		t.Fatal(err)
+	}
+	symlink(elsewhere, filepath.Join(dir, "device.json"))
+	if _, err := s.DeviceIdentity(ctx); err == nil {
+		t.Fatal("the guest read a file outside the mount through a symlink")
+	} else if !errors.Is(err, ErrIO) {
+		t.Fatalf("reading through an escaping symlink: %v, want ErrIO", err)
+	}
+
+	// A read through a symlinked directory: workspaces/<id> leads outside.
+	escapedWorkspace := filepath.Join(outside, "ws")
+	if err := os.Mkdir(escapedWorkspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(escapedWorkspace, "auth.json"), authJSON(time.Now().Add(time.Hour).Unix()))
+	const wsC = "CCCCCCCCCCCCCCCC"
+	symlink(escapedWorkspace, filepath.Join(dir, "workspaces", wsC))
+	ws, err := s.WorkspaceStore(ctx, wsC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.Token(ctx); !errors.Is(err, ErrIO) {
+		t.Fatalf("reading through an escaping symlinked directory: %v, want ErrIO", err)
+	}
+
+	// The one write, through a symlinked file: current_workspace leads to
+	// a file outside, which must be left as it was.
+	victim := filepath.Join(outside, "victim")
+	write(t, victim, "untouched")
+	symlink(victim, filepath.Join(dir, "current_workspace"))
+	if err := s.SetCurrentWorkspace(ctx, wsA); !errors.Is(err, ErrIO) {
+		t.Fatalf("writing through an escaping symlink: %v, want ErrIO", err)
+	}
+	if got, err := os.ReadFile(victim); err != nil || string(got) != "untouched" {
+		t.Fatalf("the guest wrote outside the mount through a symlink: %q, %v", got, err)
+	}
+
+	// A symlink that stays inside the mount is the directory it names.
+	const wsD = "DDDDDDDDDDDDDDDD"
+	symlink(wsA, filepath.Join(dir, "workspaces", wsD))
+	same, err := s.WorkspaceStore(ctx, wsD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := same.Token(ctx); err != nil {
+		t.Fatalf("reading through a symlink that stays inside the mount: %v", err)
+	}
+}
+
+// The profile directory itself may be a symlink — a dotfiles manager's
+// usual arrangement — and is opened as the directory it names.
+func TestAProfileDirectoryThatIsASymlinkOpens(t *testing.T) {
+	ctx := context.Background()
+	dir, _ := profile(t)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Skipf("cannot create a symlink here: %v", err)
+	}
+	s, err := Open(ctx, link)
+	if err != nil {
+		t.Fatalf("Open of a symlinked profile directory: %v", err)
+	}
+	defer s.Close()
+	if _, err := s.DeviceIdentity(ctx); err != nil {
+		t.Fatalf("reading through a symlinked profile directory: %v", err)
+	}
+}
+
+// Under RequireLockedMemory a growth the lock limit refuses is reported as
+// ErrMemoryLock naming the refusal, as a client reports it, and the store
+// stays open and locked: the range went back unused.
+func TestARefusedGrowthIsReportedAsMemoryLock(t *testing.T) {
+	ctx := context.Background()
+	_, s := profile(t)
+	refusing := guest.RefuseGrowth(s.root.inst.mem, errors.New("refused for the test"))
+	// Staging a 2 MiB argument into guest memory needs a growth, before the
+	// guest can refuse it as a workspace id.
+	huge := strings.Repeat("A", 2<<20)
+	_, err := s.call(ctx, func(i *instance) api.Function { return i.setCurrentWorkspace }, huge)
+	if !errors.Is(err, ErrMemoryLock) || !strings.Contains(err.Error(), "growth refused") || !strings.Contains(err.Error(), refusing.Reason().Error()) {
+		t.Fatalf("a call needing a refused growth: %v; want ErrMemoryLock naming the refusal", err)
+	}
+	if refusing.Refused() == 0 {
+		t.Fatal("the guest did not grow; the test proves nothing")
+	}
+	if !s.MemoryLocked() || s.MemoryLockError() != nil {
+		t.Fatalf("a refused growth changed the lock report: %v", s.MemoryLockError())
+	}
+	// The store is still open, and grows once it can.
+	refusing.Allow()
+	if _, err := s.CurrentWorkspace(ctx); !errors.Is(err, ErrNoCurrentWorkspace) {
+		t.Fatalf("the next call, growth allowed: %v", err)
 	}
 }

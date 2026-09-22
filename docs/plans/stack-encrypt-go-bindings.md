@@ -430,7 +430,7 @@ package, with `internal/guest` holding what the guest packages share,
 temporary until publishing). It imports `vcffi` + `vcvalue` from vitaminc
 (pseudo-versioned to a main commit; no fork), embeds the guest from
 `wasm/` (copied by `wasm:guest:build`, gitignored), and is gated by
-`go:stackencrypt:test` in `test-wasi.yml`. Where the shipped surface
+`go:test` in `test-wasi.yml`. Where the shipped surface
 differs from the sketch below, the shipped one follows CIP-4037: one
 instance per `Client` and no cipher handle, so `NewClient` takes the
 ZeroKMS credentials and initialises the cipher, `Client.Keyset(selector)`

@@ -69,8 +69,11 @@ type root struct {
 // when set and not blank, else ~/.cipherstash. The directory must exist;
 // `stash auth login` creates it.
 func Resolve(ctx context.Context, opts ...Option) (*ProfileStore, error) {
-	dir := strings.TrimSpace(os.Getenv("CS_CONFIG_PATH"))
-	if dir == "" {
+	// Blankness is tested on the trimmed value and the value itself is
+	// used, as ProfileStore::resolve does: a directory named with a space
+	// in it is the directory it names.
+	dir := os.Getenv("CS_CONFIG_PATH")
+	if strings.TrimSpace(dir) == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil, fmt.Errorf("stackauth: no home directory and CS_CONFIG_PATH is unset: %w", err)
@@ -179,6 +182,7 @@ func (s *ProfileStore) call(ctx context.Context, fn export, args ...string) ([]b
 		r.closed = true
 		return nil, ErrState
 	}
+	growth := r.inst.mem.GrowthRefusal()
 	out, err := r.inst.call(ctx, fn(r.inst), append([]string{s.dir}, args...)...)
 	switch {
 	case r.inst.module.IsClosed():
@@ -191,6 +195,15 @@ func (s *ProfileStore) call(ctx context.Context, fn export, args ...string) ([]b
 		r.closed = true
 		_ = r.inst.module.Close(context.Background())
 		err = fmt.Errorf("%w; the profile is closed", err)
+	}
+	// Under RequireLockedMemory a growth that cannot be locked is refused,
+	// and the guest sees only a failed allocation — or, for an allocation
+	// of its own, aborts, and the trap closed the profile above. Name the
+	// real cause either way, as stackencrypt's Client.call does. The
+	// refusal is this call's, not the store's: the range went back unused,
+	// so MemoryLocked still holds.
+	if g := r.inst.mem.GrowthRefusal(); err != nil && g.Refused != growth.Refused {
+		err = fmt.Errorf("%w (growth refused under RequireLockedMemory): %w", guest.MemoryLockError(g.Reason), err)
 	}
 	if err != nil {
 		return nil, err
@@ -273,11 +286,24 @@ func (s *ProfileStore) CurrentWorkspaceStore(ctx context.Context) (*ProfileStore
 // refresh, once this package refreshes — since the guest cannot; this
 // package never composes a profile path itself.
 func (s *ProfileStore) LockPath(ctx context.Context, filename string) (string, error) {
+	// The guest validates the filename as the crate does, against the
+	// guest's separator, which is `/`. The host's is checked here: on
+	// Windows a backslash passes the guest and would become a separator
+	// once the answer is mapped back. And the mapped answer is checked to
+	// be a direct child of this store before it is returned, so the
+	// sibling-lock contract holds whatever the guest said.
+	if filename == "" || filename == "." || filename == ".." || strings.ContainsAny(filename, `/\`) {
+		return "", fmt.Errorf("%w: %q", ErrInvalidFilename, filename)
+	}
 	out, err := s.call(ctx, func(i *instance) api.Function { return i.lockPath }, filename)
 	if err != nil {
 		return "", err
 	}
-	return s.hostPath(string(out)), nil
+	mapped := s.hostPath(string(out))
+	if rel, err := filepath.Rel(s.Dir(), mapped); err != nil || filepath.Dir(rel) != "." || rel == "." || rel == ".." {
+		return "", fmt.Errorf("%w: %q does not name a file beside %s", ErrInvalidFilename, filename, s.Dir())
+	}
+	return mapped, nil
 }
 
 // SecretKey reads secretkey.json in this store (a workspace store; the
@@ -299,13 +325,14 @@ func (s *ProfileStore) SecretKey(ctx context.Context) (clientID string, key *Cli
 	if err != nil {
 		return "", nil, err
 	}
-	material, err := fields.text("client_key")
+	// The key crosses as bytes, not text, so the decoder hands back a
+	// slice this package owns: the ClientKey takes it, and wipes it when
+	// it is consumed. No string copy of the material is ever made here.
+	material, err := fields.bytes("client_key")
 	if err != nil {
 		return "", nil, err
 	}
-	// The one string copy the codec made is the collector's; the bytes the
-	// key holds are wiped when it is consumed.
-	return clientID, guest.NewClientKey([]byte(material)), nil
+	return clientID, guest.NewClientKey(material), nil
 }
 
 // DeviceIdentity is the identity the CLI created for this machine, read
@@ -373,6 +400,20 @@ func (f fields) text(key string) (string, error) {
 		return "", fmt.Errorf("%w: %s is not a string", ErrInternal, key)
 	}
 	return s, nil
+}
+
+// bytes is a bytes field that must be present. The decoder allocates the
+// slice, so it is the caller's to keep or wipe.
+func (f fields) bytes(key string) ([]byte, error) {
+	v, ok := f.get(key)
+	if !ok {
+		return nil, fmt.Errorf("%w: the guest's result has no %s", ErrInternal, key)
+	}
+	b, ok := v.([]byte)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s is not bytes", ErrInternal, key)
+	}
+	return b, nil
 }
 
 // optionalText is a string field that may be null or absent.

@@ -1777,6 +1777,7 @@ dependencies = [
  "tempfile",
  "vitaminc-aead-value",
  "vitaminc-protected",
+ "zeroize",
 ]
 
 [[package]]

@@ -12,6 +12,7 @@ import (
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
+	"github.com/tetratelabs/wazero/experimental/sysfs"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 )
 
@@ -62,6 +63,8 @@ type instance struct {
 	module  api.Module
 	mem     *guest.Allocator
 	exports guest.Exports
+	// mount is the one directory the guest sees, confined to itself.
+	mount *confinedFS
 
 	shutdown                                                     api.Function
 	currentWorkspace, setCurrentWorkspace, clearCurrentWorkspace api.Function
@@ -70,18 +73,19 @@ type instance struct {
 }
 
 // guestModuleConfig is the module configuration every guest instance runs
-// under: the one directory mount, and nothing else that grants a
-// capability. No environment: the guest is told its directory, it never
-// looks one up. random_get is wired to crypto/rand because the crate's
-// atomic rewrite names its staging file with a UUID drawn through it;
-// wazero's default is a fixed seed, which would make two instances agree
-// on that name. The clocks are the system's for the same reason they are
-// in stackencrypt: a deterministic default is the wrong default for
-// anything that reads time. Each is pinned by a test.
-func guestModuleConfig(hostDir string) wazero.ModuleConfig {
+// under: the one directory mount, confined to itself (see confinedFS), and
+// nothing else that grants a capability. No environment: the guest is told
+// its directory, it never looks one up. random_get is wired to crypto/rand
+// because wazero's default is a fixed seed: the Rust runtime draws through
+// it (its hash maps are seeded from it, for one), and nothing a guest does
+// should be predictable across instances. The clocks are the system's for
+// the same reason they are in stackencrypt: a deterministic default is the
+// wrong default for anything that reads time. Each is pinned by a test.
+func guestModuleConfig(mount *confinedFS) wazero.ModuleConfig {
+	fsConfig := wazero.NewFSConfig().(sysfs.FSConfig).WithSysFSMount(mount, guestRoot)
 	return wazero.NewModuleConfig().
 		WithName("stack_auth_guest").
-		WithFSConfig(wazero.NewFSConfig().WithDirMount(hostDir, guestRoot)).
+		WithFSConfig(fsConfig).
 		WithRandSource(rand.Reader).
 		WithSysNanotime().
 		WithSysWalltime()
@@ -92,13 +96,21 @@ func guestModuleConfig(hostDir string) wazero.ModuleConfig {
 // policy, memory that cannot be locked fails instantiation with
 // ErrMemoryLock.
 func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.LockPolicy) (*instance, error) {
+	mount, err := newConfinedFS(hostDir)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", ErrNoProfile, hostDir, err)
+	}
 	config := wazero.NewRuntimeConfig().
 		WithCompilationCache(compilationCache()).
 		WithCloseOnContextDone(true)
 	runtime := wazero.NewRuntimeWithConfig(ctx, config)
-	if _, err := wasi_snapshot_preview1.Instantiate(ctx, runtime); err != nil {
+	fail := func(err error) (*instance, error) {
 		_ = runtime.Close(ctx)
-		return nil, fmt.Errorf("stackauth: instantiating WASI: %w", err)
+		_ = mount.Close()
+		return nil, err
+	}
+	if _, err := wasi_snapshot_preview1.Instantiate(ctx, runtime); err != nil {
+		return fail(fmt.Errorf("stackauth: instantiating WASI: %w", err))
 	}
 	mem := guest.NewAllocator(policy)
 	// The guest is a reactor (cdylib): no _start. wazero runs _initialize
@@ -107,22 +119,20 @@ func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.
 	mem.Enter()
 	module, err := func() (api.Module, error) {
 		defer mem.Exit()
-		return runtime.InstantiateWithConfig(experimental.WithMemoryAllocator(ctx, mem), wasm, guestModuleConfig(hostDir))
+		return runtime.InstantiateWithConfig(experimental.WithMemoryAllocator(ctx, mem), wasm, guestModuleConfig(mount))
 	}()
 	if err != nil {
-		_ = runtime.Close(ctx)
 		if g := mem.GrowthRefusal(); g.Refused != 0 {
-			return nil, fmt.Errorf("%w: %w", guest.MemoryLockError(g.Reason), err)
+			return fail(fmt.Errorf("%w: %w", guest.MemoryLockError(g.Reason), err))
 		}
-		return nil, fmt.Errorf("stackauth: instantiating guest: %w", err)
+		return fail(fmt.Errorf("stackauth: instantiating guest: %w", err))
 	}
 	if policy == guest.Strict {
 		if lerr := mem.LockError(); lerr != nil {
-			_ = runtime.Close(ctx)
-			return nil, guest.MemoryLockError(lerr)
+			return fail(guest.MemoryLockError(lerr))
 		}
 	}
-	inst := &instance{runtime: runtime, module: module, mem: mem}
+	inst := &instance{runtime: runtime, module: module, mem: mem, mount: mount}
 	exports := map[string]*api.Function{
 		"se_alloc":                   &inst.exports.Alloc,
 		"se_dealloc":                 &inst.exports.Dealloc,
@@ -139,8 +149,7 @@ func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.
 	}
 	for name, slot := range exports {
 		if *slot = module.ExportedFunction(name); *slot == nil {
-			_ = runtime.Close(ctx)
-			return nil, fmt.Errorf("stackauth: guest is missing export %s", name)
+			return fail(fmt.Errorf("stackauth: guest is missing export %s", name))
 		}
 	}
 	return inst, nil
@@ -148,9 +157,9 @@ func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.
 
 // release runs the guest's shutdown — every buffer it still holds wiped —
 // and closes the runtime, which frees the linear memory through the
-// allocator's wipe. A module an interrupted call or a trap already closed
-// cannot run sa_shutdown; the runtime close still wipes and frees its
-// memory.
+// allocator's wipe, then the directory handle the mount holds. A module an
+// interrupted call or a trap already closed cannot run sa_shutdown; the
+// runtime close still wipes and frees its memory.
 func (inst *instance) release() error {
 	ctx := context.Background()
 	if !inst.module.IsClosed() {
@@ -158,7 +167,11 @@ func (inst *instance) release() error {
 		_, _ = inst.shutdown.Call(ctx)
 		inst.mem.Exit()
 	}
-	return inst.runtime.Close(ctx)
+	err := inst.runtime.Close(ctx)
+	if cerr := inst.mount.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // call drives one export with string arguments, through the shared

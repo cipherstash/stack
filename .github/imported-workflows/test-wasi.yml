@@ -143,7 +143,7 @@ jobs:
         run: |
           ulimit -l "$(ulimit -H -l)"
           echo "RLIMIT_MEMLOCK: $(ulimit -l) KiB"
-          mise run go:stackencrypt:test
+          mise run go:test
 
   # The same Go binding on macOS and Windows, against the guest Linux built.
   # Today that is the crypto binding, which had never run on either. The

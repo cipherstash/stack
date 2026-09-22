@@ -31,15 +31,19 @@ use serde::Deserialize;
 use stack_auth::Token;
 use stack_profile::{DeviceIdentity, ProfileStore};
 use vitaminc_aead_value::{transport as codec, FfiValue};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::status::{status_for_profile, STATUS_ENCODING, STATUS_INTERNAL};
 
 /// The file `secretkey.json`, as `stack-auth`'s device client writes it
 /// and `stack-kms`'s `SecretKey` reads it: the ZeroKMS client id and the
-/// client key material, standard padded base64. Read here as text on both
-/// sides — the key crosses to the host in the form the file holds, which
-/// is one of the two forms `stackencrypt`'s config takes.
-#[derive(Deserialize)]
+/// client key material, standard padded base64. The key crosses to the
+/// host in the form the file holds, which is one of the two forms
+/// `stackencrypt`'s config takes — as bytes, so the host gets a slice it
+/// can wipe rather than a string it cannot. What is deserialized here is
+/// wiped when it drops; what is moved out of it into the codec value is
+/// wiped by the codec's own protected types.
+#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
 struct SecretKeyFile {
     client_id: String,
     client_key: String,
@@ -150,15 +154,22 @@ fn path_bytes(path: &std::path::Path) -> Result<Vec<u8>, u32> {
 }
 
 /// `secretkey.json` in this store, as a codec object `{client_id,
-/// client_key}` of two strings: the client id, and the key material as the
-/// file holds it.
+/// client_key}`: the client id as a string, and the key material as
+/// bytes, in the form the file holds it.
 pub fn secret_key(dir: &[u8]) -> Result<Vec<u8>, u32> {
-    let file: SecretKeyFile = store(dir)?
+    let mut file: SecretKeyFile = store(dir)?
         .load(SECRET_KEY_FILENAME)
         .map_err(|e| status_for_profile(&e))?;
+    // Moved out rather than copied: `SecretKeyFile` wipes on drop, so its
+    // fields cannot be moved out of it directly.
+    let client_id = std::mem::take(&mut file.client_id);
+    let client_key = std::mem::take(&mut file.client_key);
     encode(FfiValue::Object(vec![
-        ("client_id".to_string(), string(file.client_id)),
-        ("client_key".to_string(), string(file.client_key)),
+        ("client_id".to_string(), string(client_id)),
+        (
+            "client_key".to_string(),
+            FfiValue::Bytes(client_key.into_bytes().into()),
+        ),
     ]))
 }
 
@@ -237,6 +248,14 @@ mod tests {
             panic!("not a string");
         };
         String::from_utf8(s.risky_ref().to_vec()).unwrap()
+    }
+
+    fn as_bytes(value: &FfiValue) -> Vec<u8> {
+        use vitaminc_protected::Controlled;
+        let FfiValue::Bytes(b) = value else {
+            panic!("not bytes");
+        };
+        b.risky_ref().to_vec()
     }
 
     /// The names this guest spells are the crates' own.
@@ -359,7 +378,11 @@ mod tests {
             as_text(field(&key, "client_id")),
             "6a70bd18-99ac-4650-b104-37eec3a15b09"
         );
-        assert_eq!(as_text(field(&key, "client_key")), "AAECAw==");
+        assert_eq!(
+            as_bytes(field(&key, "client_key")),
+            b"AAECAw==",
+            "the key crosses as bytes, in the form the file holds"
+        );
 
         std::fs::write(
             t.path().join("auth.json"),

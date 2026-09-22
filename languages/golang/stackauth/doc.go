@@ -9,7 +9,9 @@
 // A [ProfileStore] is one guest instance over one mounted directory. [Resolve]
 // finds the profile directory the way the Rust crate does (CS_CONFIG_PATH,
 // then ~/.cipherstash); [Open] takes one. The guest is given that directory
-// and nothing else: no environment, no other path, no network. Everything
+// and nothing else: no environment, no other path, no network, and no way
+// out through a symlink inside it, which the mount refuses to follow.
+// Everything
 // the napi binding of stack-profile exposes is a method here, named as in
 // Rust: the current workspace ([ProfileStore.CurrentWorkspace],
 // [ProfileStore.SetCurrentWorkspace], [ProfileStore.ClearCurrentWorkspace]),
