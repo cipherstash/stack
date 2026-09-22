@@ -14,8 +14,12 @@ license-file = "LICENSE"
 publish = false
 
 [dependencies]
-thiserror = { workspace = true }
-# `OpaqueDebug` for the transport response: its body can carry wrapped key
-# material or a credential, so it never prints.
-vitaminc-protected = { workspace = true }
 zeroize = { workspace = true }
+
+# Only `transport` (wasm32-only) needs these: the import's error type and
+# `OpaqueDebug` for its response, whose body can carry wrapped key material
+# or a credential and so never prints. Declared for that target alone, so a
+# native build carries nothing it does not use and `cargo udeps` sees none.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+thiserror = { workspace = true }
+vitaminc-protected = { workspace = true }
