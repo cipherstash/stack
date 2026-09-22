@@ -97,27 +97,38 @@ jobs:
       - name: Guest release build and import-surface gate
         run: mise run wasm:guest:build
 
+      # The credential guest (ADR-0005): the same lint and native tests,
+      # then the release build and its own import gate — filesystem
+      # allowed, sockets denied, no transport import until the auth half.
+      - name: Credential guest lint and tests
+        run: mise run wasm:auth-guest:test
+
+      - name: Credential guest release build and import-surface gate
+        run: mise run wasm:auth-guest:build
+
       # The module checked above is what every platform tests. Its checksum
       # travels with it so the other jobs can prove they got the same bytes,
       # not a stale or rebuilt guest.
-      - name: Record the guest's checksum
+      - name: Record the guests' checksums
         run: |
-          cd bindings/go/stackencrypt/wasm
-          openssl dgst -sha256 stack_encrypt_guest.wasm | awk '{print $NF}' > stack_encrypt_guest.wasm.sha256
-          echo "stack_encrypt_guest.wasm sha256 $(cat stack_encrypt_guest.wasm.sha256)"
+          for guest in stackencrypt/wasm/stack_encrypt_guest.wasm stackauth/wasm/stack_auth_guest.wasm; do
+            (cd bindings/go && openssl dgst -sha256 "$guest" | awk '{print $NF}' > "$guest.sha256" && echo "$guest sha256 $(cat "$guest.sha256")")
+          done
 
-      - name: Hand the guest to the other platforms
+      - name: Hand the guests to the other platforms
         uses: actions/upload-artifact@v7
         with:
           name: wasm-guests
           path: |
             bindings/go/stackencrypt/wasm/stack_encrypt_guest.wasm
             bindings/go/stackencrypt/wasm/stack_encrypt_guest.wasm.sha256
+            bindings/go/stackauth/wasm/stack_auth_guest.wasm
+            bindings/go/stackauth/wasm/stack_auth_guest.wasm.sha256
           if-no-files-found: error
           retention-days: 1
 
-      # The Go module (bindings/go; the stackencrypt package embeds the
-      # guest built above): format, vet and hermetic tests (import surface, transport
+      # The Go module (bindings/go; stackencrypt and stackauth embed the
+      # guests built above): format, vet and hermetic tests (import surface, transport
       # bridge against an httptest ZeroKMS, guest-parser acceptance of every
       # encoding the package builds, hostile ABI inputs, key residency), on
       # amd64 and 386. Live round trips through ZeroKMS are the phase 5
@@ -184,21 +195,26 @@ jobs:
           go-version: ${{ steps.go.outputs.version }}
           cache-dependency-path: bindings/go/go.sum
 
+      # The artifact keeps the paths it was uploaded with, relative to their
+      # common root (bindings/go), so both guests land where the packages
+      # embed them.
       - uses: actions/download-artifact@v8
         with:
           name: wasm-guests
-          path: bindings/go/stackencrypt/wasm
+          path: bindings/go
 
-      - name: The guest is the one Linux built and checked
+      - name: The guests are the ones Linux built and checked
         run: |
-          cd bindings/go/stackencrypt/wasm
-          want=$(cat stack_encrypt_guest.wasm.sha256)
-          got=$(openssl dgst -sha256 stack_encrypt_guest.wasm | awk '{print $NF}')
-          if [ "$want" != "$got" ]; then
-            echo "guest checksum mismatch: artifact says $want, file is $got" >&2
-            exit 1
-          fi
-          echo "stack_encrypt_guest.wasm sha256 $got"
+          cd bindings/go
+          for guest in stackencrypt/wasm/stack_encrypt_guest.wasm stackauth/wasm/stack_auth_guest.wasm; do
+            want=$(cat "$guest.sha256")
+            got=$(openssl dgst -sha256 "$guest" | awk '{print $NF}')
+            if [ "$want" != "$got" ]; then
+              echo "$guest checksum mismatch: artifact says $want, file is $got" >&2
+              exit 1
+            fi
+            echo "$guest sha256 $got"
+          done
 
       - name: Go binding
-        run: scripts/go-binding-test.sh bindings/go stackencrypt/wasm/stack_encrypt_guest.wasm
+        run: scripts/go-binding-test.sh bindings/go

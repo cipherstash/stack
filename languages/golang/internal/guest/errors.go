@@ -46,6 +46,25 @@ var (
 	// ErrForeignKeyset is a keyset-bound cipher refusing a ciphertext sealed
 	// under another keyset, before any key is retrieved.
 	ErrForeignKeyset = errors.New("cipherstash: ciphertext belongs to another keyset")
+	// ErrProfileIO is a profile file that could not be read or written.
+	ErrProfileIO = errors.New("cipherstash: profile file could not be read or written")
+	// ErrProfileJSON is a profile file that is not the JSON its type expects.
+	ErrProfileJSON = errors.New("cipherstash: profile file is not valid")
+	// ErrProfileNotFound is a profile file that does not exist in the store
+	// asked: no secretkey.json, auth.json or device.json there.
+	ErrProfileNotFound = errors.New("cipherstash: profile file not found")
+	// ErrInvalidFilename is a filename the store refuses: empty, absolute,
+	// or naming a path.
+	ErrInvalidFilename = errors.New("cipherstash: invalid profile filename")
+	// ErrNoCurrentWorkspace is a workspace-scoped operation with no current
+	// workspace set.
+	ErrNoCurrentWorkspace = errors.New("cipherstash: no current workspace; run `stash auth login`")
+	// ErrInvalidWorkspaceID is a workspace id that is not sixteen base32
+	// characters.
+	ErrInvalidWorkspaceID = errors.New("cipherstash: invalid workspace id")
+	// ErrWorkspaceNotFound is a workspace with no local profile data: nothing
+	// has logged in to it on this machine.
+	ErrWorkspaceNotFound = errors.New("cipherstash: workspace has no local profile; log in to it first")
 	// ErrMemoryLock is guest memory that could not be locked in RAM (or,
 	// on Linux, excluded from core dumps). A constructor returns it when
 	// asked for locked memory and refused, and so does any later call under

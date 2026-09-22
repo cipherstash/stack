@@ -15,13 +15,14 @@
 //! run this call against. Codes 5–10 are the outcomes of a request to
 //! ZeroKMS, so a host can distinguish a refused credential from a tampered
 //! ciphertext without parsing strings; 11 and 12 were appended by the
-//! crypto guest.
+//! crypto guest, 13–19 by the credential guest.
 //!
 //! Each code is documented here as the *verdict* it carries to a host — the
 //! thing the host can act on. Which of a library's errors reach which code,
 //! and what each verdict means for a particular export, is each guest's own
-//! (`status_for_error` and friends in the crypto guest's `status` module):
-//! this module names the numbers, not the libraries.
+//! (`status_for_error` and friends in the crypto guest's `status` module,
+//! `status_for_profile` in the credential guest's): this module names the
+//! numbers, not the libraries.
 
 /// AEAD open failure: the ciphertext, or the context it is being opened
 /// under, is not what it was sealed with. A tampered ciphertext, a wrong
@@ -73,10 +74,35 @@ pub const STATUS_TERM: u32 = 11;
 /// only that — never a verdict on the value's integrity.
 pub const STATUS_FOREIGN_KEYSET: u32 = 12;
 
+// ---- The credential guest's codes (ADR-0005): `stack-profile`'s errors,
+// one number each, so a Go caller can tell a missing workspace from a
+// malformed file without parsing strings. `HomeDirNotFound` has no code:
+// the guest is given its directory and never resolves one.
+
+/// A profile file could not be read or written: the I/O error underneath
+/// `stack_profile::ProfileError::Io`.
+pub const STATUS_PROFILE_IO: u32 = 13;
+/// A profile file held something other than the JSON its type expects.
+pub const STATUS_PROFILE_JSON: u32 = 14;
+/// The profile file asked for does not exist: no `secretkey.json`,
+/// `auth.json` or `device.json` in that store.
+pub const STATUS_PROFILE_NOT_FOUND: u32 = 15;
+/// A filename the store refuses: empty, absolute, or naming a path
+/// (separators, `..`). Refused before anything is opened.
+pub const STATUS_PROFILE_INVALID_FILENAME: u32 = 16;
+/// No current workspace is set; a workspace-scoped operation needs one.
+pub const STATUS_PROFILE_NO_CURRENT_WORKSPACE: u32 = 17;
+/// A workspace id that is not sixteen base32 characters. Refused before
+/// any path is built from it.
+pub const STATUS_PROFILE_INVALID_WORKSPACE_ID: u32 = 18;
+/// The workspace has no directory under `workspaces/`: nothing has logged
+/// in to it on this machine.
+pub const STATUS_PROFILE_WORKSPACE_NOT_FOUND: u32 = 19;
+
 /// The last code in the table. A guest appending a code of its own starts
 /// at `LAST_STATUS + 1` and moves this constant with it, so two guests can
 /// never claim one number.
-pub const LAST_STATUS: u32 = STATUS_FOREIGN_KEYSET;
+pub const LAST_STATUS: u32 = STATUS_PROFILE_WORKSPACE_NOT_FOUND;
 
 #[cfg(test)]
 mod tests {
@@ -99,6 +125,13 @@ mod tests {
             STATUS_KMS_OTHER,
             STATUS_TERM,
             STATUS_FOREIGN_KEYSET,
+            STATUS_PROFILE_IO,
+            STATUS_PROFILE_JSON,
+            STATUS_PROFILE_NOT_FOUND,
+            STATUS_PROFILE_INVALID_FILENAME,
+            STATUS_PROFILE_NO_CURRENT_WORKSPACE,
+            STATUS_PROFILE_INVALID_WORKSPACE_ID,
+            STATUS_PROFILE_WORKSPACE_NOT_FOUND,
         ];
         for (i, code) in codes.iter().enumerate() {
             assert_eq!(*code, i as u32 + 1, "code {i} is out of sequence");

@@ -1,0 +1,440 @@
+package stackauth
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
+	"github.com/tetratelabs/wazero"
+)
+
+const (
+	wsA = "AAAAAAAAAAAAAAAA"
+	wsB = "BBBBBBBBBBBBBBBB"
+
+	secretKeyJSON = `{"client_id":"6a70bd18-99ac-4650-b104-37eec3a15b09","client_key":"AAECAwQFBgc="}`
+	deviceJSON    = `{"device_instance_id":"0f4a4fd7-4a1a-4c5e-9d3e-7a4c8e3a9c11","device_name":"laptop"}`
+)
+
+func authJSON(expiresAt int64) string {
+	return fmt.Sprintf(`{"access_token":"tok-%d","refresh_token":"refresh","token_type":"Bearer","expires_at":%d,"region":"ap-southeast-2"}`, expiresAt, expiresAt)
+}
+
+// guestOrSkip is the embedded guest, or a skip where it is not built.
+func guestOrSkip(t *testing.T) []byte {
+	t.Helper()
+	wasm, err := embeddedGuest()
+	if err != nil {
+		t.Skip(err)
+	}
+	return wasm
+}
+
+// profile is a fresh profile directory with two workspaces and the files a
+// login writes into the first, opened as a store.
+func profile(t *testing.T) (dir string, s *ProfileStore) {
+	t.Helper()
+	guestOrSkip(t)
+	dir = t.TempDir()
+	for _, ws := range []string{wsA, wsB} {
+		if err := os.MkdirAll(filepath.Join(dir, "workspaces", ws), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(t, filepath.Join(dir, "workspaces", wsA, "secretkey.json"), secretKeyJSON)
+	write(t, filepath.Join(dir, "workspaces", wsA, "auth.json"), authJSON(time.Now().Add(time.Hour).Unix()))
+	write(t, filepath.Join(dir, "device.json"), deviceJSON)
+	s, err := Open(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	return dir, s
+}
+
+func write(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The guest may reach the filesystem — that is what it is for — and
+// nothing else: no sockets, no transport import (the auth half adds one),
+// and only the exports this package resolves.
+func TestImportSurfaceIsWASIWithoutSockets(t *testing.T) {
+	ctx := context.Background()
+	r := wazero.NewRuntime(ctx)
+	defer r.Close(ctx)
+	compiled, err := r.CompileModule(ctx, guestOrSkip(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer compiled.Close(ctx)
+	sawPathOpen := false
+	for _, imp := range compiled.ImportedFunctions() {
+		module, name, _ := imp.Import()
+		if module != "wasi_snapshot_preview1" {
+			t.Errorf("guest imports %s::%s, outside WASI", module, name)
+			continue
+		}
+		if strings.HasPrefix(name, "sock_") {
+			t.Errorf("guest imports socket function %s", name)
+		}
+		if name == "path_open" {
+			sawPathOpen = true
+		}
+	}
+	if !sawPathOpen {
+		t.Error("guest does not import path_open; it cannot be reading a profile")
+	}
+	for _, name := range []string{"se_alloc", "se_dealloc", "sa_shutdown", "sa_current_workspace", "sa_set_current_workspace", "sa_clear_current_workspace", "sa_list_workspaces", "sa_workspace_dir", "sa_lock_path", "sa_secret_key", "sa_token", "sa_device_identity"} {
+		if _, ok := compiled.ExportedFunctions()[name]; !ok {
+			t.Errorf("guest does not export %s", name)
+		}
+	}
+}
+
+func TestOpenRequiresAnExistingDirectory(t *testing.T) {
+	guestOrSkip(t)
+	ctx := context.Background()
+	if _, err := Open(ctx, filepath.Join(t.TempDir(), "missing")); !errors.Is(err, ErrNoProfile) {
+		t.Fatalf("Open of a missing directory: %v, want ErrNoProfile", err)
+	}
+	file := filepath.Join(t.TempDir(), "file")
+	write(t, file, "")
+	if _, err := Open(ctx, file); !errors.Is(err, ErrNoProfile) {
+		t.Fatalf("Open of a file: %v, want ErrNoProfile", err)
+	}
+}
+
+// Resolve finds the directory the Rust crate would: CS_CONFIG_PATH first.
+func TestResolveHonoursConfigPath(t *testing.T) {
+	dir, _ := profile(t)
+	t.Setenv("CS_CONFIG_PATH", dir)
+	s, err := Resolve(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if s.Dir() != dir {
+		t.Fatalf("Dir = %q, want %q", s.Dir(), dir)
+	}
+	t.Setenv("CS_CONFIG_PATH", "  ")
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "nohome"))
+	if _, err := Resolve(context.Background()); !errors.Is(err, ErrNoProfile) {
+		t.Fatalf("Resolve with a blank CS_CONFIG_PATH and no ~/.cipherstash: %v, want ErrNoProfile", err)
+	}
+}
+
+func TestWorkspaceSelection(t *testing.T) {
+	ctx := context.Background()
+	_, s := profile(t)
+	if _, err := s.CurrentWorkspace(ctx); !errors.Is(err, ErrNoCurrentWorkspace) {
+		t.Fatalf("no workspace set: %v, want ErrNoCurrentWorkspace", err)
+	}
+	if _, err := s.CurrentWorkspaceStore(ctx); !errors.Is(err, ErrNoCurrentWorkspace) {
+		t.Fatalf("no workspace set: %v, want ErrNoCurrentWorkspace", err)
+	}
+	if err := s.SetCurrentWorkspace(ctx, "CCCCCCCCCCCCCCCC"); !errors.Is(err, ErrWorkspaceNotFound) {
+		t.Fatalf("setting a workspace with no directory: %v, want ErrWorkspaceNotFound", err)
+	}
+	if err := s.SetCurrentWorkspace(ctx, "../escape"); !errors.Is(err, ErrInvalidWorkspaceID) {
+		t.Fatalf("setting a path as the workspace: %v, want ErrInvalidWorkspaceID", err)
+	}
+	if err := s.SetCurrentWorkspace(ctx, wsA); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.CurrentWorkspace(ctx); err != nil || got != wsA {
+		t.Fatalf("CurrentWorkspace = %q, %v; want %q", got, err, wsA)
+	}
+	ids, err := s.ListWorkspaces(ctx)
+	if err != nil || !reflect.DeepEqual(ids, []string{wsA, wsB}) {
+		t.Fatalf("ListWorkspaces = %v, %v; want [%s %s]", ids, err, wsA, wsB)
+	}
+	if err := s.ClearCurrentWorkspace(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CurrentWorkspace(ctx); !errors.Is(err, ErrNoCurrentWorkspace) {
+		t.Fatalf("after clearing: %v, want ErrNoCurrentWorkspace", err)
+	}
+	if err := s.ClearCurrentWorkspace(ctx); err != nil {
+		t.Fatalf("clearing twice: %v", err)
+	}
+}
+
+func TestWorkspaceStoresAreScopedAndShareTheGuest(t *testing.T) {
+	ctx := context.Background()
+	dir, s := profile(t)
+	ws, err := s.WorkspaceStore(ctx, wsA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "workspaces", wsA); ws.Dir() != want {
+		t.Fatalf("workspace Dir = %q, want %q", ws.Dir(), want)
+	}
+	if s.Dir() != dir {
+		t.Fatalf("root Dir = %q, want %q", s.Dir(), dir)
+	}
+	if _, err := s.WorkspaceStore(ctx, "not-an-id"); !errors.Is(err, ErrInvalidWorkspaceID) {
+		t.Fatalf("WorkspaceStore of a bad id: %v, want ErrInvalidWorkspaceID", err)
+	}
+	// The root holds no secret key; the workspace does.
+	if _, _, err := s.SecretKey(ctx); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("SecretKey at the root: %v, want ErrNotFound", err)
+	}
+	if err := s.SetCurrentWorkspace(ctx, wsA); err != nil {
+		t.Fatal(err)
+	}
+	current, err := s.CurrentWorkspaceStore(ctx)
+	if err != nil || current.Dir() != ws.Dir() {
+		t.Fatalf("CurrentWorkspaceStore = %v, %v; want %s", current, err, ws.Dir())
+	}
+	// One guest: closing the workspace store closes the profile.
+	if err := ws.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CurrentWorkspace(ctx); !errors.Is(err, ErrState) {
+		t.Fatalf("after Close: %v, want ErrState", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("a second Close: %v", err)
+	}
+}
+
+func TestTypedReads(t *testing.T) {
+	ctx := context.Background()
+	dir, s := profile(t)
+	ws, err := s.WorkspaceStore(ctx, wsA)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	clientID, key, err := ws.SecretKey(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clientID != "6a70bd18-99ac-4650-b104-37eec3a15b09" {
+		t.Errorf("client id = %q", clientID)
+	}
+	if string(guest.KeyBytes(key)) != "AAECAwQFBgc=" {
+		t.Errorf("client key material = %q, want the file's base64", guest.KeyBytes(key))
+	}
+	if out := fmt.Sprintf("%v %+v %#v %s", key, key, key, key); strings.Contains(out, "AAECAw") {
+		t.Errorf("the key prints its material: %q", out)
+	}
+	key.Wipe()
+
+	tok, err := ws.Token(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(tok.AccessToken, "tok-") || tok.TokenType != "Bearer" || tok.Region != "ap-southeast-2" {
+		t.Errorf("Token = %+v", tok)
+	}
+	if !tok.Usable(time.Now()) || tok.ExpiresAt.Before(time.Now().Add(50*time.Minute)) {
+		t.Errorf("ExpiresAt = %s, want about an hour away", tok.ExpiresAt)
+	}
+	if tok.ClientID != "" || tok.DeviceInstanceID != "" {
+		t.Errorf("absent optional fields decoded as %+v", tok)
+	}
+
+	identity, err := s.DeviceIdentity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity != (DeviceIdentity{DeviceInstanceID: "0f4a4fd7-4a1a-4c5e-9d3e-7a4c8e3a9c11", DeviceName: "laptop"}) {
+		t.Errorf("DeviceIdentity = %+v", identity)
+	}
+
+	// The other workspace has nothing: not found, not a trap.
+	other, err := s.WorkspaceStore(ctx, wsB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.Token(ctx); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Token of an empty workspace: %v, want ErrNotFound", err)
+	}
+	// A malformed file is ErrInvalid.
+	write(t, filepath.Join(dir, "workspaces", wsB, "auth.json"), "{not json")
+	if _, err := other.Token(ctx); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Token from a malformed file: %v, want ErrInvalid", err)
+	}
+}
+
+// The token source re-reads the file on every call, so a login in another
+// terminal is picked up, and refuses the token at its real expiry.
+func TestTokenSourceRereadsAndRefusesAtExpiry(t *testing.T) {
+	ctx := context.Background()
+	dir, s := profile(t)
+	ws, err := s.WorkspaceStore(ctx, wsA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := ws.TokenSource()
+	first, err := src.Token(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(2 * time.Hour).Unix()
+	write(t, filepath.Join(dir, "workspaces", wsA, "auth.json"), authJSON(later))
+	second, err := src.Token(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == first || second != fmt.Sprintf("tok-%d", later) {
+		t.Fatalf("the rewritten token was not picked up: %q then %q", first, second)
+	}
+	// At the expiry timestamp itself the token is refused: the crate's
+	// is_usable is strictly before it. No refresh-ahead margin here.
+	src.now = func() time.Time { return time.Unix(later, 0) }
+	if _, err := src.Token(ctx); !errors.Is(err, ErrTokenExpired) || !strings.Contains(err.Error(), "stash auth login") {
+		t.Fatalf("token at its expiry: %v, want ErrTokenExpired naming stash auth login", err)
+	}
+	src.now = func() time.Time { return time.Unix(later-1, 0) }
+	if _, err := src.Token(ctx); err != nil {
+		t.Fatalf("token one second before expiry: %v", err)
+	}
+	// An expired file on disk is refused too, whatever the clock.
+	write(t, filepath.Join(dir, "workspaces", wsA, "auth.json"), authJSON(time.Now().Add(-time.Minute).Unix()))
+	src.now = nil
+	if _, err := src.Token(ctx); !errors.Is(err, ErrTokenExpired) {
+		t.Fatalf("an expired stored token: %v, want ErrTokenExpired", err)
+	}
+}
+
+// The lock file is the crate's sibling `.<filename>.lock`, named by the
+// guest and mapped back to the host, never composed here; a filename that
+// is a path is refused before any path is built.
+func TestLockPathIsTheCratesAndValidated(t *testing.T) {
+	ctx := context.Background()
+	dir, s := profile(t)
+	ws, err := s.WorkspaceStore(ctx, wsA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := ws.LockPath(ctx, "auth.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dir, "workspaces", wsA, ".auth.json.lock"); path != want {
+		t.Fatalf("LockPath = %q, want %q", path, want)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("naming the lock file created it: %v", err)
+	}
+	for _, bad := range []string{"", "../auth.json", "/etc/auth.json", "a/b"} {
+		if _, err := ws.LockPath(ctx, bad); !errors.Is(err, ErrInvalidFilename) {
+			t.Errorf("LockPath(%q) = %v, want ErrInvalidFilename", bad, err)
+		}
+	}
+}
+
+// Two runtime properties the crate does not own on wasm32 and the package
+// therefore pins: a file the guest creates is mode 0600 (wazero's create
+// mode; the crate's own mode handling is unix-only and skipped), and the
+// guest cannot read outside the one directory it was given.
+func TestFilesTheGuestCreatesAreOwnerOnly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no Unix modes on Windows")
+	}
+	ctx := context.Background()
+	dir, s := profile(t)
+	if err := s.SetCurrentWorkspace(ctx, wsA); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(dir, "current_workspace"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Fatalf("current_workspace is mode %o, want 0600", mode)
+	}
+}
+
+func TestTheGuestCannotSeeOutsideTheMount(t *testing.T) {
+	ctx := context.Background()
+	_, s := profile(t)
+	// A perfectly good auth.json, outside the directory the guest was
+	// given. Naming its directory to the guest directly — which no method
+	// of this package does — must not read it.
+	outside := t.TempDir()
+	write(t, filepath.Join(outside, "auth.json"), authJSON(time.Now().Add(time.Hour).Unix()))
+	escaped := &ProfileStore{root: s.root, dir: outside}
+	if _, err := escaped.Token(ctx); err == nil {
+		t.Fatal("the guest read a file outside its mount")
+	} else if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrIO) {
+		t.Fatalf("reading outside the mount: %v, want ErrNotFound or ErrIO", err)
+	}
+	// The same through the guest's own root: the mount is the only root
+	// it has, and `..` above it goes nowhere.
+	escaped = &ProfileStore{root: s.root, dir: guestRoot + "/.."}
+	if _, err := escaped.DeviceIdentity(ctx); err == nil {
+		t.Fatal("the guest read above its mount")
+	}
+}
+
+// The guest's memory is the shared allocator's: the store reports its lock
+// state like a client does, and RequireLockedMemory is honoured.
+func TestMemoryIsReported(t *testing.T) {
+	_, s := profile(t)
+	if s.MemoryLocked() != (s.MemoryLockError() == nil) {
+		t.Fatal("MemoryLocked and MemoryLockError disagree")
+	}
+	if err := s.MemoryLockError(); err != nil && !errors.Is(err, ErrMemoryLock) {
+		t.Fatalf("MemoryLockError = %v, want ErrMemoryLock or nil", err)
+	}
+	if !strings.Contains(fmt.Sprint(s), "memory:") {
+		t.Fatalf("String = %q, no memory state", s)
+	}
+	if !s.MemoryLocked() {
+		if _, err := Open(context.Background(), s.Dir(), RequireLockedMemory()); !errors.Is(err, ErrMemoryLock) {
+			t.Fatalf("RequireLockedMemory under a refused lock: %v, want ErrMemoryLock", err)
+		}
+	}
+}
+
+// A ProfileStore that becomes unreachable without Close is released by
+// its cleanup, as a Client is.
+func TestUnreachableStoreIsReleased(t *testing.T) {
+	dir, _ := profile(t)
+	s, err := Open(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alloc := s.root.inst.mem
+	s = nil
+	deadline := time.Now().Add(10 * time.Second)
+	for !alloc.IsFreed() {
+		if time.Now().After(deadline) {
+			t.Fatal("an unreachable store's memory was not released")
+		}
+		runtime.GC()
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// The guest root this package mounts at is the one the guest builds every
+// path under.
+func TestGuestRootMatchesTheGuest(t *testing.T) {
+	ctx := context.Background()
+	_, s := profile(t)
+	ws, err := s.WorkspaceStore(ctx, wsA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(ws.dir, guestRoot+"/") {
+		t.Fatalf("the guest named %q, not under %q", ws.dir, guestRoot)
+	}
+	if guest.PolicyFor(false) != guest.BestEffort {
+		t.Fatal("the default policy is not best effort")
+	}
+}

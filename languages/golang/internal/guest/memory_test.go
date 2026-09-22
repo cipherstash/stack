@@ -210,18 +210,25 @@ func TestMemoryOutlivesACallClosedDuringAHostImport(t *testing.T) {
 // is an internal failure that keeps the number.
 func TestStatusDecodesToTheSharedSentinels(t *testing.T) {
 	want := map[uint32]error{
-		guest.StatusAuth:            guest.ErrAuthentication,
-		guest.StatusEncoding:        guest.ErrEncoding,
-		guest.StatusState:           guest.ErrState,
-		guest.StatusInternal:        guest.ErrInternal,
-		guest.StatusKMSUnauthorized: guest.ErrUnauthorized,
-		guest.StatusKMSForbidden:    guest.ErrForbidden,
-		guest.StatusKMSNotFound:     guest.ErrNotFound,
-		guest.StatusKMSConflict:     guest.ErrConflict,
-		guest.StatusKMSTransport:    guest.ErrTransport,
-		guest.StatusKMSOther:        guest.ErrKMS,
-		guest.StatusTerm:            guest.ErrTerm,
-		guest.StatusForeignKeyset:   guest.ErrForeignKeyset,
+		guest.StatusAuth:                      guest.ErrAuthentication,
+		guest.StatusEncoding:                  guest.ErrEncoding,
+		guest.StatusState:                     guest.ErrState,
+		guest.StatusInternal:                  guest.ErrInternal,
+		guest.StatusKMSUnauthorized:           guest.ErrUnauthorized,
+		guest.StatusKMSForbidden:              guest.ErrForbidden,
+		guest.StatusKMSNotFound:               guest.ErrNotFound,
+		guest.StatusKMSConflict:               guest.ErrConflict,
+		guest.StatusKMSTransport:              guest.ErrTransport,
+		guest.StatusKMSOther:                  guest.ErrKMS,
+		guest.StatusTerm:                      guest.ErrTerm,
+		guest.StatusForeignKeyset:             guest.ErrForeignKeyset,
+		guest.StatusProfileIO:                 guest.ErrProfileIO,
+		guest.StatusProfileJSON:               guest.ErrProfileJSON,
+		guest.StatusProfileNotFound:           guest.ErrProfileNotFound,
+		guest.StatusProfileInvalidFilename:    guest.ErrInvalidFilename,
+		guest.StatusProfileNoCurrentWorkspace: guest.ErrNoCurrentWorkspace,
+		guest.StatusProfileInvalidWorkspaceID: guest.ErrInvalidWorkspaceID,
+		guest.StatusProfileWorkspaceNotFound:  guest.ErrWorkspaceNotFound,
 	}
 	for code, sentinel := range want {
 		if got := guest.StatusError(code); got != sentinel {

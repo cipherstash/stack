@@ -19,6 +19,14 @@ const (
 	StatusKMSOther        = 10
 	StatusTerm            = 11
 	StatusForeignKeyset   = 12
+	// The credential guest's profile conditions.
+	StatusProfileIO                 = 13
+	StatusProfileJSON               = 14
+	StatusProfileNotFound           = 15
+	StatusProfileInvalidFilename    = 16
+	StatusProfileNoCurrentWorkspace = 17
+	StatusProfileInvalidWorkspaceID = 18
+	StatusProfileWorkspaceNotFound  = 19
 )
 
 // StatusError is the sentinel a guest status decodes to. A status this host
@@ -50,6 +58,20 @@ func StatusError(status uint32) error {
 		return ErrTerm
 	case StatusForeignKeyset:
 		return ErrForeignKeyset
+	case StatusProfileIO:
+		return ErrProfileIO
+	case StatusProfileJSON:
+		return ErrProfileJSON
+	case StatusProfileNotFound:
+		return ErrProfileNotFound
+	case StatusProfileInvalidFilename:
+		return ErrInvalidFilename
+	case StatusProfileNoCurrentWorkspace:
+		return ErrNoCurrentWorkspace
+	case StatusProfileInvalidWorkspaceID:
+		return ErrInvalidWorkspaceID
+	case StatusProfileWorkspaceNotFound:
+		return ErrWorkspaceNotFound
 	default:
 		return fmt.Errorf("%w (unrecognized guest status %d)", ErrInternal, status)
 	}
