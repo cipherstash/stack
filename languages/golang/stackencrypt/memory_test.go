@@ -74,7 +74,7 @@ func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
 	limited := !probe.IsFallback()
 	cfg := Config{
 		ClientID:            "6a70bd18-99ac-4650-b104-37eec3a15b09",
-		ClientKey:           "00",
+		ClientKey:           NewClientKey([]byte("00")),
 		Token:               StaticToken("t"),
 		Guest:               wasiProbe,
 		RequireLockedMemory: true,
@@ -180,7 +180,7 @@ func TestRequireLockedMemoryFailsTheCallThatCannotGrow(t *testing.T) {
 func TestRequireLockedMemoryClosesTheClientOnARefusedInternalGrowth(t *testing.T) {
 	ctx := context.Background()
 	c := strictClient(t)
-	cfg := Config{ClientID: strings.Repeat("a", 2<<20), ClientKey: "00", Token: StaticToken("t")}
+	cfg := Config{ClientID: strings.Repeat("a", 2<<20), ClientKey: NewClientKey([]byte("00")), Token: StaticToken("t")}
 	encoded, err := encodeConfig(cfg)
 	if err != nil {
 		t.Fatal(err)

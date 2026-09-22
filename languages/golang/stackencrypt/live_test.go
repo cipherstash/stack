@@ -24,7 +24,7 @@ func liveClient(t *testing.T) *Client {
 		t.Skip("STACK_ENCRYPT_TEST_{CLIENT_ID,CLIENT_KEY,ACCESS_TOKEN} not set")
 	}
 	c, err := NewClient(t.Context(), Config{
-		ClientID: clientID, ClientKey: clientKey, ZeroKMSURL: url, Token: StaticToken(token),
+		ClientID: clientID, ClientKey: NewClientKey([]byte(clientKey)), ZeroKMSURL: url, Token: StaticToken(token),
 	})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

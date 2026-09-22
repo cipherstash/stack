@@ -36,7 +36,7 @@ import (
 func run(ctx context.Context) error {
     client, err := stackencrypt.NewClient(ctx, stackencrypt.Config{
         ClientID:  os.Getenv("CS_CLIENT_ID"),
-        ClientKey: os.Getenv("CS_CLIENT_KEY"),
+        ClientKey: stackencrypt.NewClientKey([]byte(os.Getenv("CS_CLIENT_KEY"))),
         Token:     stackencrypt.StaticToken(os.Getenv("CS_CLIENT_ACCESS_KEY")),
     })
     if err != nil {

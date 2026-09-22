@@ -20,11 +20,13 @@ type Config struct {
 	// ClientID is the ZeroKMS client id (a UUID string). Required.
 	ClientID string
 	// ClientKey is the v1 client key material: hex (the CS_CLIENT_KEY form,
-	// either case) or standard padded base64 (the secretkey.json form).
-	// Required. It enters guest memory once and is wiped from the config
-	// buffer before any request is made; the Go-side copy this package
-	// makes is wiped too. The caller's own string is the caller's.
-	ClientKey string
+	// either case) or standard padded base64 (the secretkey.json form),
+	// wrapped by [NewClientKey] or read from the developer profile by
+	// stackauth. Required. It is consumed: NewClient marshals it into the
+	// config buffer, wipes the key, and wipes the buffer once the guest has
+	// the key, so after NewClient returns the ClientKey is empty and the
+	// bytes it was built from are zero. A key is for one client.
+	ClientKey *ClientKey
 	// ZeroKMSURL pins the ZeroKMS endpoint. When empty the endpoint is
 	// resolved from the access token's services claim on first use.
 	ZeroKMSURL string
@@ -111,6 +113,11 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, err
 	}
 	defer wipe(encoded)
+	// The key is consumed: it is in the config buffer now, and the buffer
+	// is wiped once the guest has it. Wiping the key here rather than after
+	// the init call keeps the exposure to one copy from this point on,
+	// whatever the init's outcome.
+	cfg.ClientKey.Wipe()
 
 	t := &transport{rt: rt, token: cfg.Token}
 	inst, err := newInstance(ctx, wasm, t, guest.PolicyFor(cfg.RequireLockedMemory))
@@ -175,14 +182,20 @@ func (c *Client) String() string {
 func (c *Client) LogValue() slog.Value { return c.inst.mem.LogValue() }
 
 // encodeConfig renders the se_cipher_init object. The result holds the
-// client key; the caller wipes it.
+// client key; the caller wipes it, and the key it was read from.
 func encodeConfig(cfg Config) ([]byte, error) {
-	if cfg.ClientID == "" || cfg.ClientKey == "" {
+	if cfg.ClientID == "" || cfg.ClientKey.IsZero() {
 		return nil, errors.New("stackencrypt: Config.ClientID and Config.ClientKey are required")
 	}
+	// The key crosses as text: the guest's config parser takes the hex or
+	// base64 form as the CS_CLIENT_KEY variable and secretkey.json hold it.
+	// The string is a copy the marshaller reads once; the encoded buffer
+	// that results is what the caller wipes. A string cannot be wiped, and
+	// this one lives until the collector takes it: the one copy of the key
+	// this package cannot zero, accepted for the length of NewClient.
 	fields := vcvalue.Object{
 		{Key: "client_id", Value: cfg.ClientID},
-		{Key: "client_key", Value: cfg.ClientKey},
+		{Key: "client_key", Value: string(cfg.ClientKey.Bytes())},
 	}
 	if cfg.ZeroKMSURL != "" {
 		fields = append(fields, vcvalue.Field{Key: "zerokms_url", Value: cfg.ZeroKMSURL})

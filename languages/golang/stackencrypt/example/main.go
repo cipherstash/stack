@@ -47,7 +47,7 @@ func run() error {
 	ctx := context.Background()
 	client, err := stackencrypt.NewClient(ctx, stackencrypt.Config{
 		ClientID:  creds.ClientID,
-		ClientKey: creds.ClientKey,
+		ClientKey: stackencrypt.NewClientKey([]byte(creds.ClientKey)),
 		// Asked on every request, so the client follows the profile
 		// rather than pinning one token; see profile.go.
 		Token: creds.token(),
