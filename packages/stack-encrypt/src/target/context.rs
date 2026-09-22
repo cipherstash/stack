@@ -4,9 +4,10 @@
 //! `decrypt_as` alongside the value. The types here are the core-owned ones:
 //! each holds the parts view of a nonempty context — the one tree both the
 //! AEAD and the PRF encode from — so the structured identity of its
-//! descriptor survives the trip into a boxed operation description. A record that stores its own identifier declares
-//! `NonEmpty<T>` instead, and a target whose declaration carries every
-//! context it needs declares `()`.
+//! descriptor survives the trip into a boxed operation description. A
+//! record that stores its own identifier declares `NonEmpty<T>` instead,
+//! and a target whose declaration carries every context it needs declares
+//! `()`.
 use crate::{ContextPiece, Descriptor, Error, IntoContext, MaybeEmpty, NonEmpty};
 
 /// Prove a context nonempty at the point it is used. The core-owned types

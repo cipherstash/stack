@@ -379,8 +379,9 @@ async fn listed_plaintexts_each_get_their_own_impl() {
     assert_eq!((number, text.as_str()), (7, "seven"));
 }
 
-/// A context type with the AEAD encoding alone: enough to seal, not to
-/// derive a term. `WorkspaceId` in `cts-common` is the production shape.
+/// A plain `IntoContext` type, declared through `AeadContext`: enough to
+/// seal, not to derive a term. `WorkspaceId` in `cts-common` is the
+/// production shape.
 #[derive(Clone, Debug, PartialEq)]
 struct Tenant(String);
 impl MaybeEmpty for Tenant {

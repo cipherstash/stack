@@ -8,7 +8,7 @@ use vitaminc_protected::Controlled;
 use super::Error;
 use crate::{ContextPiece, NonEmpty};
 
-/// A context arrives from a binding as a value and becomes an [`ContextPiece`]
+/// A context arrives from a binding as a value and becomes a [`ContextPiece`]
 /// tree: vitaminc's runtime form of a context, and the *identity* of one.
 /// vitaminc's law (pinned there by quickcheck over every built-in context
 /// type) is that a context's two derivations each equal the same derivation

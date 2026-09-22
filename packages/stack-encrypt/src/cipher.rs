@@ -97,7 +97,7 @@ use stack_kms::{EnvKeyProvider, StackKms, StackKmsBuilder};
 use stack_kms::{FallbackKeyProvider, KeyProvider, KeyProviderError, ProfileStore};
 use uuid::Uuid;
 use vitaminc_aead::{
-    Cipher, CipherText, Context, Decipher, DecipherVisitor, Decrypt, Encrypt, IntoAad,
+    Cipher, CipherText, Context, Decipher, DecipherVisitor, Decrypt, Encrypt, IntoAad, IntoContext,
     LocalCipherText, MapAccess, MapCipher, SeqAccess, SeqCipher, Unspecified,
 };
 use vitaminc_encrypt::{Aes256Cipher, AesCipherText, Key as AesKey};
@@ -686,11 +686,11 @@ impl<K: DataKeySource> KeysetCipher<'_, K> {
     pub async fn encrypt<'a, T, A>(&self, value: T, aad: A) -> Result<StackCipherText, Error>
     where
         T: Encrypt,
-        A: IntoAad<'a>,
+        A: IntoContext<'a>,
     {
-        let aad = aad.into_context();
-        let pending = value.encrypt_with_aad(self, aad.clone().into_aad())?;
-        pending.seal(self, aad).await
+        let context = aad.into_context();
+        let pending = value.encrypt_with_aad(self, context.clone().into_aad())?;
+        pending.seal(self, context).await
     }
 
     /// [`StackCipher::decrypt`], constrained to this keyset: a leaf sealed
@@ -699,7 +699,7 @@ impl<K: DataKeySource> KeysetCipher<'_, K> {
     pub async fn decrypt<'a, T, A>(&self, ciphertext: StackCipherText, aad: A) -> Result<T, Error>
     where
         T: Decrypt<'static> + 'static,
-        A: IntoAad<'a>,
+        A: IntoContext<'a>,
     {
         decrypt_through(self, ciphertext, aad).await
     }
@@ -722,7 +722,7 @@ impl<K: DataKeySource> KeysetCipher<'_, K> {
 async fn decipher_through<'s, 'a, K: DataKeySource + 's>(
     scope: impl crate::target::CipherScope<'s, K>,
     ciphertext: StackCipherText,
-    aad: impl IntoAad<'a>,
+    aad: impl IntoContext<'a>,
 ) -> Result<StackDecipher, Error> {
     crate::target::decipher_pending(scope, ciphertext, Descriptor::of(aad))
         .settle()
@@ -734,14 +734,14 @@ async fn decipher_through<'s, 'a, K: DataKeySource + 's>(
 async fn decrypt_through<'s, 'a, T, K: DataKeySource + 's>(
     scope: impl crate::target::CipherScope<'s, K>,
     ciphertext: StackCipherText,
-    aad: impl IntoAad<'a>,
+    aad: impl IntoContext<'a>,
 ) -> Result<T, Error>
 where
     T: Decrypt<'static> + 'static,
 {
-    let aad = aad.into_context();
-    let decipher = decipher_through(scope, ciphertext, aad.clone()).await?;
-    T::decrypt_with_aad(decipher, aad.into_aad()).map_err(Error::from)
+    let context = aad.into_context();
+    let decipher = decipher_through(scope, ciphertext, context.clone()).await?;
+    T::decrypt_with_aad(decipher, context.into_aad()).map_err(Error::from)
 }
 
 impl<K: DataKeySource> StackCipher<K> {
@@ -774,7 +774,7 @@ impl<K: DataKeySource> StackCipher<K> {
     pub async fn decrypt<'a, T, A>(&self, ciphertext: StackCipherText, aad: A) -> Result<T, Error>
     where
         T: Decrypt<'static> + 'static,
-        A: IntoAad<'a>,
+        A: IntoContext<'a>,
     {
         decrypt_through(self, ciphertext, aad).await
     }
@@ -1180,7 +1180,7 @@ impl PendingStackCipherText {
     pub async fn seal<'a, K: DataKeySource>(
         self,
         cipher: &KeysetCipher<'_, K>,
-        aad: impl IntoAad<'a>,
+        aad: impl IntoContext<'a>,
     ) -> Result<StackCipherText, Error> {
         self.into_pending(cipher, aad).settle().await
     }
@@ -1205,13 +1205,13 @@ impl PendingStackCipherText {
     /// [`decrypt_into`](crate::target::DecryptInto) — a per-field record
     /// assembly in an FFI front-end, say — is bound by that layer's rule: it
     /// opens only under a [`NonEmpty`](crate::NonEmpty) context, so seal
-    /// under one here (a `NonEmpty<T>` is an [`IntoAad`] like any other, and
+    /// under one here (a `NonEmpty<T>` is an [`IntoContext`] like any other, and
     /// encodes exactly as `T` does) or the ciphertext can never be read that
     /// way.
     pub fn into_pending<'c, 'a, K>(
         self,
         cipher: &'a KeysetCipher<'_, K>,
-        aad: impl IntoAad<'c>,
+        aad: impl IntoContext<'c>,
     ) -> crate::target::Pending<'a, StackCipherText, K> {
         crate::target::seal_pending(cipher, self, Descriptor::of(aad))
     }
