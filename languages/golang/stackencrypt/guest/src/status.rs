@@ -15,6 +15,39 @@
 //! open refusing a leaf whose keyset id is not the scope's — a host's own
 //! constraint, checked before the leaf is authenticated and so not a
 //! statement about tampering.
+//!
+//! # What each verdict means for this guest
+//!
+//! The shared table documents each code as the verdict a host acts on;
+//! what follows is how this guest's exports arrive at them.
+//!
+//! - [`STATUS_AUTH`] is an AEAD open failure. Against ZeroKMS a wrong
+//!   context does not get that far — every data key is bound to its
+//!   context's descriptor, so the retrieve is refused first, as
+//!   [`STATUS_KMS_FORBIDDEN`]: that is the production form of a
+//!   wrong-context open. Only a key source that ignores descriptors (the
+//!   native tests' fake) reports a wrong context as `STATUS_AUTH`.
+//! - [`STATUS_ENCODING`] covers, besides malformed transport bytes and a
+//!   bad pointer/length pair, a malformed config and an empty context on
+//!   the record and term exports.
+//! - [`STATUS_KMS_UNAUTHORIZED`] is kept to a refused credential. A token
+//!   with no ZeroKMS `services` claim, or a host `token_get` that failed,
+//!   arrives through the auth strategy too but is [`STATUS_KMS_TRANSPORT`]:
+//!   no number of refreshes can fix it (`status_for_auth` draws the line).
+//! - [`STATUS_KMS_TRANSPORT`] also covers an endpoint that could not be
+//!   resolved: no `zerokms_url` in the config *and* no ZeroKMS entry in the
+//!   token's `services` claim.
+//! - [`STATUS_FOREIGN_KEYSET`] is an opening export constrained to one
+//!   keyset (`{"name"}`, `{"id"}` or `{"default"}` in its options) whose
+//!   leaf named another. A host that means "whichever keyset" opens with
+//!   `{"any"}`. The comparison reads the keyset id *out of the leaf*, before
+//!   anything is retrieved and so before anything is authenticated, which
+//!   means a flipped byte in that field arrives here exactly as a genuinely
+//!   misrouted row does. The id is bound into the leaf's context, so the
+//!   tampered leaf cannot go on to open — it fails as [`STATUS_AUTH`] — but
+//!   that verdict is only reached on the path where the constraint let it
+//!   through. Read this status as "not this keyset's row", never as "an
+//!   untampered row".
 
 use stack_auth::AuthError;
 use stack_kms::{GenerateKeyError, LoadKeysetError, RetrieveKeyError};

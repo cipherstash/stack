@@ -15,7 +15,13 @@
 //!   pointer; `take` reclaims ownership under the same registry discipline.
 //!
 //! Wasm is single-threaded, so a thread-local `RefCell` is a plain owner of
-//! the map — no `Send`/`Sync` bounds required.
+//! the map — no `Send`/`Sync` bounds required. That premise is the one
+//! thing in this crate a native cdylib backend (CIP-3997's original scope,
+//! deferred) could not keep: a library called from several host threads
+//! would register on one thread and release on another, and a release the
+//! registry does not know is a silent no-op that never wipes. The backend
+//! replaces this owner with a `Mutex`-guarded table; the entry points and
+//! their discipline stay as they are.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;

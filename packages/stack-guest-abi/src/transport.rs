@@ -28,8 +28,7 @@
 //! [`Response`] wipes its body on drop; the buffers the host wrote are
 //! reclaimed via the registry, which the ABI's `se_dealloc` also wipes.
 
-use std::fmt;
-
+use vitaminc_protected::OpaqueDebug;
 use zeroize::Zeroizing;
 
 use crate::buffers;
@@ -54,21 +53,23 @@ extern "C" {
 
 /// The host stored an out-slot pointer the guest's buffer registry does not
 /// know (or with a mismatched length) — a host-side bookkeeping bug.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("host returned an unregistered or mismatched buffer")]
 pub struct HostBufferError;
 
-impl fmt::Display for HostBufferError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "host returned an unregistered or mismatched buffer")
-    }
-}
-
-impl std::error::Error for HostBufferError {}
-
 /// What the host handed back for one request, both buffers reclaimed.
+///
+/// Only [`send`] builds one, and `Debug` shows the status alone: the body
+/// can carry wrapped key material or a credential, and the headers are
+/// treated the same way rather than audited per name.
+#[derive(OpaqueDebug)]
+#[non_exhaustive]
 pub struct Response {
     /// The HTTP status code, or negative for a transport-level failure —
-    /// then `body` is the host's error text.
+    /// then `body` is the host's error text. Kept as the import returns it:
+    /// the sign convention is the wire contract with the Go host, and each
+    /// guest maps it onto its own library's response type.
+    #[non_sensitive]
     pub status: i32,
     /// The response headers in the [`crate::headers`] line format.
     pub headers: Vec<u8>,
@@ -86,7 +87,7 @@ pub struct Response {
 /// of the instance. A slot the host did not fill (or filled with a pointer
 /// the registry does not know) is [`HostBufferError`].
 pub fn send(
-    method: &[u8],
+    method: &str,
     url: &str,
     headers: &[u8],
     body: &[u8],

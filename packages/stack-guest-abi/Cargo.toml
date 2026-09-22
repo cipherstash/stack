@@ -14,4 +14,8 @@ license-file = "LICENSE"
 publish = false
 
 [dependencies]
+thiserror = { workspace = true }
+# `OpaqueDebug` for the transport response: its body can carry wrapped key
+# material or a credential, so it never prints.
+vitaminc-protected = { workspace = true }
 zeroize = { workspace = true }

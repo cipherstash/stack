@@ -80,7 +80,10 @@
 //! build has an ABI: on any other target the export and import modules do
 //! not exist, so a native library built over this crate exports no `se_*`
 //! symbol at all rather than a silently wrong one (the packed result would
-//! truncate a 64-bit pointer).
+//! truncate a 64-bit pointer). A native backend, when it comes, adds its own
+//! export and import modules beside these and swaps the registry's
+//! thread-local owner for a locked one (see [`buffers`]); nothing else here
+//! assumes wasm.
 
 pub mod buffers;
 pub mod headers;

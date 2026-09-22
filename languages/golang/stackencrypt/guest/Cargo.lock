@@ -2022,6 +2022,8 @@ dependencies = [
 name = "stack-guest-abi"
 version = "0.0.0"
 dependencies = [
+ "thiserror 1.0.69",
+ "vitaminc-protected",
  "zeroize",
 ]
 

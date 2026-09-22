@@ -1,10 +1,9 @@
 //! The headers this guest's ZeroKMS requests carry, over the wire format
-//! every guest shares ([`stack_guest_abi::headers`]: `name: value` lines,
-//! re-exported here for the modules that read a response).
+//! every guest shares ([`stack_guest_abi::headers`]: `name: value` lines).
 
 use std::sync::OnceLock;
 
-pub use stack_guest_abi::headers::{encode_headers, header_value};
+use stack_guest_abi::headers::encode_headers;
 
 /// The host this guest is driven by, as it appears in [`user_agent`].
 ///
@@ -55,6 +54,7 @@ pub fn request_headers(authorization: &str) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stack_guest_abi::headers::header_value;
 
     /// The edge in front of production ZeroKMS answers a request with no
     /// `user-agent` with a bare nginx 403, before the application sees it.

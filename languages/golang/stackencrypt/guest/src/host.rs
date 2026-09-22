@@ -33,12 +33,13 @@ use std::sync::Mutex;
 
 use stack_auth::{AuthError, AuthStrategy, CustomError, SecretToken, ServiceToken};
 use stack_guest_abi::buffers;
+use stack_guest_abi::headers::header_value;
 use stack_guest_abi::transport;
 use stack_kms::{BaseUrlUnresolved, ZeroKMSConnection, ZeroKMSConnectionInit, ZeroKmsEndpoint};
 use zeroize::Zeroizing;
 use zerokms_protocol::{ViturRequest, ViturRequestError};
 
-use crate::headers::{header_value, request_headers};
+use crate::headers::request_headers;
 use crate::response::map_response;
 
 #[link(wasm_import_module = "cipherstash_transport")]
@@ -128,7 +129,7 @@ impl ZeroKMSConnection for WasiHostConnection {
         // The shared import reclaims both response slots before judging
         // either, and the body it hands back wipes on drop (it carries
         // wrapped key material).
-        let response = transport::send(b"POST", url.as_str(), &headers, &body)
+        let response = transport::send("POST", url.as_str(), &headers, &body)
             .map_err(|e| ViturRequestError::parse("Host response buffer failed validation", e))?;
 
         let content_type = header_value(&response.headers, "content-type");

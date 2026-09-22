@@ -163,7 +163,9 @@ pub unsafe extern "C" fn se_cipher_init(cfg_ptr: *mut u8, cfg_len: u32) -> u64 {
         // that fails here returns before anything touches the range, which
         // is `wipe_input`'s precondition. Only a validated buffer is decoded
         // and, whatever the decode outcome, wiped.
-        let bytes = input(cfg_ptr, cfg_len)?;
+        // SAFETY: host-owned ranges the export was handed; the borrows end
+        // before it returns and before any wipe of an overlapping range.
+        let bytes = unsafe { input(cfg_ptr, cfg_len)? };
         let decoded = decode(bytes);
         // The borrow of the raw buffer ends with `decoded` owned; wipe the
         // buffer now — it holds the client-key hex — before parsing (and
@@ -249,7 +251,9 @@ pub extern "C" fn se_shutdown() {
 #[no_mangle]
 pub unsafe extern "C" fn se_keyset(sel_ptr: *const u8, sel_len: u32) -> u64 {
     catch_unwind(AssertUnwindSafe(|| {
-        let selector = parse_selector(decode(input(sel_ptr, sel_len)?)?)?;
+        // SAFETY: host-owned ranges the export was handed; the borrows end
+        // before it returns and before any wipe of an overlapping range.
+        let selector = parse_selector(decode(unsafe { input(sel_ptr, sel_len)? })?)?;
         if selector == KeysetSelector::Any {
             return Err(STATUS_ENCODING);
         }
@@ -371,8 +375,10 @@ fn run_encrypt(
         // may be borrowed from linear memory yet.
         let value = unsafe { take_plaintext(val_ptr, val_len)? };
         let value = value.as_slice();
-        let aad = input(aad_ptr, aad_len)?;
-        let opts = input(opt_ptr, opt_len)?;
+        // SAFETY: host-owned ranges the export was handed; the borrows end
+        // before it returns and before any wipe of an overlapping range.
+        let aad = unsafe { input(aad_ptr, aad_len)? };
+        let opts = unsafe { input(opt_ptr, opt_len)? };
         ops::validate::value(value)?;
         with_keyset(opts, |keyset| {
             block_on(ops::encrypt_value(keyset, value, aad, as_element))
@@ -393,9 +399,11 @@ fn run_decrypt(
     as_element: bool,
 ) -> u64 {
     catch_unwind(AssertUnwindSafe(|| {
-        let ciphertext = input(ct_ptr, ct_len)?;
-        let aad = input(aad_ptr, aad_len)?;
-        let opts = input(opt_ptr, opt_len)?;
+        // SAFETY: host-owned ranges the export was handed; the borrows end
+        // before it returns and before any wipe of an overlapping range.
+        let ciphertext = unsafe { input(ct_ptr, ct_len)? };
+        let aad = unsafe { input(aad_ptr, aad_len)? };
+        let opts = unsafe { input(opt_ptr, opt_len)? };
         ops::validate::tree(ciphertext)?;
         with_scope(opts, |scope| {
             block_on(ops::decrypt_value(scope, ciphertext, aad, as_element))
@@ -438,8 +446,10 @@ pub unsafe extern "C" fn se_term(
     catch_unwind(AssertUnwindSafe(|| {
         let value = unsafe { take_plaintext(val_ptr, val_len)? };
         let value = value.as_slice();
-        let context = input(ctx_ptr, ctx_len)?;
-        let opts = input(opt_ptr, opt_len)?;
+        // SAFETY: host-owned ranges the export was handed; the borrows end
+        // before it returns and before any wipe of an overlapping range.
+        let context = unsafe { input(ctx_ptr, ctx_len)? };
+        let opts = unsafe { input(opt_ptr, opt_len)? };
         ops::validate::term(value, context, kind)?;
         with_keyset(opts, |keyset| {
             block_on(ops::term(keyset, value, context, kind))
@@ -471,8 +481,10 @@ pub unsafe extern "C" fn se_encrypt_record(
     catch_unwind(AssertUnwindSafe(|| {
         let source = unsafe { take_plaintext(src_ptr, src_len)? };
         let source = source.as_slice();
-        let plan = input(plan_ptr, plan_len)?;
-        let opts = input(opt_ptr, opt_len)?;
+        // SAFETY: host-owned ranges the export was handed; the borrows end
+        // before it returns and before any wipe of an overlapping range.
+        let plan = unsafe { input(plan_ptr, plan_len)? };
+        let opts = unsafe { input(opt_ptr, opt_len)? };
         ops::validate::record(source, plan)?;
         with_keyset(opts, |keyset| {
             block_on(ops::encrypt_record(keyset, source, plan))
@@ -502,9 +514,11 @@ pub unsafe extern "C" fn se_decrypt_record(
     opt_len: u32,
 ) -> u64 {
     catch_unwind(AssertUnwindSafe(|| {
-        let record = input(rec_ptr, rec_len)?;
-        let plan = input(plan_ptr, plan_len)?;
-        let opts = input(opt_ptr, opt_len)?;
+        // SAFETY: host-owned ranges the export was handed; the borrows end
+        // before it returns and before any wipe of an overlapping range.
+        let record = unsafe { input(rec_ptr, rec_len)? };
+        let plan = unsafe { input(plan_ptr, plan_len)? };
+        let opts = unsafe { input(opt_ptr, opt_len)? };
         ops::validate::record_tree(record, plan)?;
         with_scope(opts, |scope| {
             block_on(ops::decrypt_record(scope, record, plan))

@@ -34,10 +34,12 @@
 //!
 //! As the vitaminc guest: every export validates its pointer/length pairs
 //! against linear memory before any unsafe construction ([`input`]; null
-//! with nonzero length rejected), invalid input yields `STATUS_ENCODING`
-//! rather than a trap, and a `catch_unwind` at each export is
-//! belt-and-braces for a hypothetical unwind build — wasm32-wasip1 aborts on
-//! panic. Statuses are the only detail leaked.
+//! with nonzero length rejected), and invalid input yields `STATUS_ENCODING`
+//! rather than a trap. A guest wraps each of its *own* exports in a
+//! `catch_unwind`, belt-and-braces for a hypothetical unwind build —
+//! wasm32-wasip1 aborts on panic; the two exports here need none, since
+//! neither has a panic path (allocation goes through `try_reserve_exact`
+//! and release through the registry). Statuses are the only detail leaked.
 //!
 //! Wasm modules are single-threaded; the host must serialize calls into one
 //! instance.
@@ -87,7 +89,7 @@ pub fn err_status(status: u32) -> u64 {
 
 /// Current linear-memory size in bytes. `u64` because a full 4 GiB memory
 /// (65536 pages) overflows a 32-bit `usize`.
-pub fn linear_memory_bytes() -> u64 {
+fn linear_memory_bytes() -> u64 {
     core::arch::wasm32::memory_size::<0>() as u64 * 65536
 }
 
@@ -99,12 +101,19 @@ pub fn linear_memory_bytes() -> u64 {
 /// pair that passes can still name the wrong bytes — the host owns its
 /// pointers — but can never fault or over-read past linear memory.
 ///
-/// Safe to call with any pointer, which is the point: the validation above
-/// is what a caller would otherwise have to promise, so the function is not
-/// `unsafe` and the lint that asks for it is answered here rather than at
-/// every export.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn input<'a>(ptr: *const u8, len: u32) -> Result<&'a [u8], u32> {
+/// # Safety
+///
+/// The bounds check is what keeps the read inside linear memory; it cannot
+/// see who owns the range or for how long, and that is what the caller
+/// promises. `ptr`/`len` must name a buffer the host wrote and still owns
+/// (one it obtained from [`se_alloc`], or an empty range), and that buffer
+/// must stay allocated and unwritten for the whole of `'a` — in practice,
+/// the borrow must end before the export returns and before any wipe of an
+/// overlapping range ([`wipe_input`], [`take_plaintext`]). The lifetime is
+/// otherwise unconstrained, so a caller choosing `'static` over a range it
+/// is about to free would read freed memory: that is the promise, not a
+/// property this function can check.
+pub unsafe fn input<'a>(ptr: *const u8, len: u32) -> Result<&'a [u8], u32> {
     let len = len as usize;
     if len == 0 {
         return Ok(&[]);
@@ -118,7 +127,8 @@ pub fn input<'a>(ptr: *const u8, len: u32) -> Result<&'a [u8], u32> {
     }
     // SAFETY: non-null, in-bounds of linear memory, and under `isize::MAX`;
     // wasm linear memory is fully initialized (fresh pages are zero), so
-    // reading the range as bytes is defined.
+    // reading the range as bytes is defined. That it stays allocated and
+    // unwritten for `'a` is the caller's contract, above.
     Ok(unsafe { std::slice::from_raw_parts(ptr, len) })
 }
 
@@ -155,7 +165,9 @@ pub unsafe fn wipe_input(ptr: *mut u8, len: u32) {
 /// `ptr`/`len` must name a host buffer the caller is done with; it is zeroed
 /// before this returns.
 pub unsafe fn take_plaintext(ptr: *mut u8, len: u32) -> Result<Zeroizing<Vec<u8>>, u32> {
-    let taken = Zeroizing::new(input(ptr, len)?.to_vec());
+    // SAFETY: the borrow lives only for the copy on this line, inside the
+    // call, over a buffer the caller has promised is the host's and live.
+    let taken = Zeroizing::new(unsafe { input(ptr, len)? }.to_vec());
     unsafe { wipe_input(ptr, len) };
     Ok(taken)
 }
