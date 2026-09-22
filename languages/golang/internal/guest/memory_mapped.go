@@ -21,6 +21,9 @@ type mappedMemory struct {
 	policy    LockPolicy
 }
 
+// size implements sized, for the testing seam.
+func (m *mappedMemory) size() uint64 { return m.committed }
+
 // reserveMemory returns a mapped memory for the reservation, or a heap
 // memory when the reservation itself is impossible: max exceeds what this
 // process can address (a 32-bit host asked for wasm's 4 GiB default), or

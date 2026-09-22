@@ -39,9 +39,10 @@ import (
 // many Linux hosts and the guest's memory is larger, so the lock is
 // commonly refused, with nothing else lost: the pages can be swapped, and
 // on a host with no swap not even that. The refusal is recorded and
-// reported through Client.MemoryLocked and Client.MemoryLockError so an
-// operator can see it and raise the limit; Config.RequireLockedMemory
-// turns it into a NewClient failure.
+// reported through LockError, which each public package surfaces on its
+// client (stackencrypt: Client.MemoryLocked and Client.MemoryLockError) so
+// an operator can see it and raise the limit; Strict turns it into a
+// constructor failure (stackencrypt: Config.RequireLockedMemory).
 
 // LockPolicy is what a refused lock means for an instance.
 type LockPolicy uint8
@@ -52,11 +53,13 @@ const (
 	BestEffort LockPolicy = iota
 	// Strict refuses growth that cannot be locked. The first commit is the
 	// exception: wazero cannot instantiate on a nil buffer, so it is
-	// granted with the refusal recorded, and newInstance turns that into
-	// the ErrMemoryLock the caller asked for.
+	// granted with the refusal recorded, and the public package's
+	// constructor turns that into the ErrMemoryLock the caller asked for.
 	Strict
 )
 
+// PolicyFor is the policy a caller's "require locked memory" setting
+// means: Strict when set, BestEffort otherwise.
 func PolicyFor(requireLockedMemory bool) LockPolicy {
 	if requireLockedMemory {
 		return Strict
@@ -64,7 +67,7 @@ func PolicyFor(requireLockedMemory bool) LockPolicy {
 	return BestEffort
 }
 
-// backend is one platform's linear memory behind a Allocator: a
+// backend is one platform's linear memory behind an Allocator: a
 // reservation committed from the front. It is used from the guest's
 // goroutine only; the allocator does the bookkeeping other goroutines
 // read.
@@ -82,8 +85,9 @@ type backend interface {
 // Allocator is the experimental.MemoryAllocator handed to wazero for
 // one guest instance, and the experimental.LinearMemory it returns: wazero
 // calls Allocate once per memory, and the guest has exactly one. It
-// records what the Client reports about the memory, and holds the memory
-// mapped while a guest call is in flight (see enter, exit and Free).
+// records what the public package reports about the memory, and holds the
+// memory mapped while a guest call is in flight (see Enter, Exit and
+// Free).
 type Allocator struct {
 	policy LockPolicy
 
@@ -114,14 +118,17 @@ type Allocator struct {
 }
 
 // GrowthRefusal is the Strict growths an allocator has refused: how many,
-// and the lock refusal behind the latest. Client.call compares the count
-// across a call to name the real cause when the guest reports only a
-// failed allocation.
+// and the lock refusal behind the latest. A caller compares the count
+// across a guest call to name the real cause when the guest reports only
+// a failed allocation.
 type GrowthRefusal struct {
 	Refused uint64
 	Reason  error
 }
 
+// NewAllocator is an allocator for one guest instance under policy. Hand
+// it to wazero as the instance's experimental.MemoryAllocator; it
+// allocates when the guest's memory is first instantiated.
 func NewAllocator(policy LockPolicy) *Allocator {
 	return &Allocator{policy: policy}
 }
@@ -134,7 +141,7 @@ func (a *Allocator) Allocate(capacity, max uint64) experimental.LinearMemory {
 		// The guest has one memory; a second would mean wazero's contract
 		// changed under us. Refusing here fails instantiation loudly
 		// rather than letting two memories share one report.
-		panic("stackencrypt: guest memory allocated twice")
+		panic("cipherstash: guest memory allocated twice")
 	}
 	backing, err := reserveMemory(capacity, max, a.policy)
 	a.backing = backing
@@ -182,15 +189,15 @@ func (a *Allocator) Free() {
 	a.freeLocked()
 }
 
-// enter marks a guest call in progress: the memory must stay mapped until
-// the matching exit, whatever wazero asks in between.
+// Enter marks a guest call in progress: the memory must stay mapped until
+// the matching Exit, whatever wazero asks in between.
 func (a *Allocator) Enter() {
 	a.mu.Lock()
 	a.inFlight++
 	a.mu.Unlock()
 }
 
-// exit ends a guest call and performs a Free that arrived during it.
+// Exit ends a guest call and performs a Free that arrived during it.
 func (a *Allocator) Exit() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -210,7 +217,7 @@ func (a *Allocator) freeLocked() {
 	a.backing.free()
 }
 
-// lockError is nil while every committed byte is locked (and, on Linux,
+// LockError is nil while every committed byte is locked (and, on Linux,
 // excluded from dumps); otherwise it names what was refused and why.
 func (a *Allocator) LockError() error {
 	a.mu.Lock()
@@ -243,12 +250,16 @@ func (a *Allocator) LogValue() slog.Value {
 	return slog.GroupValue(slog.Bool("memory_locked", true))
 }
 
+// IsFallback reports whether the guest runs on the heap fallback rather
+// than a reservation: nothing is locked, and growth may copy.
 func (a *Allocator) IsFallback() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.fallback
 }
 
+// IsFreed reports whether the memory has been wiped and released. Tests
+// read it to observe release paths a caller never sees.
 func (a *Allocator) IsFreed() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -265,6 +276,9 @@ type heapMemory struct {
 	buf []byte
 	max uint64
 }
+
+// size implements sized, for the testing seam.
+func (m *heapMemory) size() uint64 { return uint64(len(m.buf)) }
 
 func newHeapMemory(capacity, max uint64) *heapMemory {
 	if capacity > max {

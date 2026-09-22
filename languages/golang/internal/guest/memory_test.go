@@ -240,20 +240,40 @@ func TestStatusDecodesToTheSharedSentinels(t *testing.T) {
 	}
 }
 
-// The client key never prints its bytes, and is empty once wiped.
+// The client key never prints its bytes — as a pointer, as a value, or
+// inside a struct held either way, under any verb — and is empty once
+// wiped.
 func TestClientKeyIsOpaqueAndWipes(t *testing.T) {
 	material := []byte("key material that must not print")
 	key := guest.NewClientKey(material)
-	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%x", "%q"} {
-		if out := fmt.Sprintf(verb, key); strings.Contains(out, "material") {
-			t.Errorf("%s printed the key: %q", verb, out)
+	type holder struct {
+		ByPointer *guest.ClientKey
+		ByValue   guest.ClientKey
+	}
+	subjects := map[string]any{
+		"pointer":           key,
+		"value":             *key,
+		"struct":            holder{ByPointer: key, ByValue: *key},
+		"pointer to struct": &holder{ByPointer: key, ByValue: *key},
+	}
+	// %d and %x reach a struct's fields without asking a Stringer; only a
+	// Formatter answers for them.
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d"} {
+		for name, subject := range subjects {
+			out := fmt.Sprintf(verb, subject)
+			if strings.Contains(out, "material") || strings.Contains(out, "6d6174657269616c") || strings.Contains(out, "109 97 116") {
+				t.Errorf("%s of the %s printed the key: %q", verb, name, out)
+			}
 		}
 	}
-	if string(key.Bytes()) != "key material that must not print" {
-		t.Fatal("Bytes did not return the material")
+	if fmt.Sprint(key) != "ClientKey(***)" || key.String() != "ClientKey(***)" || key.GoString() != "ClientKey(***)" {
+		t.Errorf("the redaction is not the documented one: %s", key)
+	}
+	if string(guest.KeyBytes(key)) != "key material that must not print" {
+		t.Fatal("KeyBytes did not return the material")
 	}
 	key.Wipe()
-	if !key.IsZero() || key.Bytes() != nil {
+	if !key.IsZero() || guest.KeyBytes(key) != nil {
 		t.Fatal("a wiped key still holds material")
 	}
 	for _, b := range material {
@@ -263,7 +283,10 @@ func TestClientKeyIsOpaqueAndWipes(t *testing.T) {
 	}
 	key.Wipe() // a second wipe is a no-op
 	var none *guest.ClientKey
-	if !none.IsZero() || none.Bytes() != nil || fmt.Sprint(none) == "<nil>" {
-		t.Fatal("a nil key is not the empty, redacted key")
+	if !none.IsZero() || guest.KeyBytes(none) != nil {
+		t.Fatal("a nil key is not the empty key")
+	}
+	if out := fmt.Sprint(none); out != "<nil>" && out != "ClientKey(***)" {
+		t.Fatalf("a nil key printed %q", out)
 	}
 }
