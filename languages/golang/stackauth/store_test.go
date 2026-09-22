@@ -557,10 +557,13 @@ func TestAProfileDirectoryThatIsASymlinkOpens(t *testing.T) {
 
 // Under RequireLockedMemory a growth the lock limit refuses is reported as
 // ErrMemoryLock naming the refusal, as a client reports it, and the store
-// stays open and locked: the range went back unused.
+// stays open with its lock report as it was: the range went back unused.
+// (The report is whatever this host gave at Open — locked, or the heap
+// fallback's refusal on a 32-bit host — and must not move.)
 func TestARefusedGrowthIsReportedAsMemoryLock(t *testing.T) {
 	ctx := context.Background()
 	_, s := profile(t)
+	before := s.MemoryLockError()
 	refusing := guest.RefuseGrowth(s.root.inst.mem, errors.New("refused for the test"))
 	// Staging a 2 MiB argument into guest memory needs a growth, before the
 	// guest can refuse it as a workspace id.
@@ -572,8 +575,8 @@ func TestARefusedGrowthIsReportedAsMemoryLock(t *testing.T) {
 	if refusing.Refused() == 0 {
 		t.Fatal("the guest did not grow; the test proves nothing")
 	}
-	if !s.MemoryLocked() || s.MemoryLockError() != nil {
-		t.Fatalf("a refused growth changed the lock report: %v", s.MemoryLockError())
+	if after := s.MemoryLockError(); fmt.Sprint(after) != fmt.Sprint(before) {
+		t.Fatalf("a refused growth changed the lock report: %v -> %v", before, after)
 	}
 	// The store is still open, and grows once it can.
 	refusing.Allow()
