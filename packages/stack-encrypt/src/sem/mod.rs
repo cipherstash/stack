@@ -138,7 +138,7 @@ use std::marker::PhantomData;
 pub use cllw_ore::{CllwOpeEncrypt, CllwOreEncrypt};
 use vitaminc_hmac::HmacSha256Prf;
 use vitaminc_prf::{
-    BlockVisitor, IntoPrfContext, MapAccess, PrfContext, PrfError, PrfValue, PrfVisitor,
+    BlockVisitor, Context, IntoPrfContext, MapAccess, PrfError, PrfValue, PrfVisitor,
     PrfVisitorError, SeqAccess,
 };
 use vitaminc_protected::NonEmpty;
@@ -324,12 +324,12 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for EqualityVisitor {
 fn equality<T>(
     prf: &HmacSha256Prf,
     value: T,
-    context: PrfContext<'_>,
+    context: Context<'_>,
 ) -> Result<EqualityTerm, TermError>
 where
     T: PrfValue,
 {
-    let context = PrfContext::pae(&[EQUALITY_DOMAIN, context.as_bytes()]);
+    let context = Context::pae(&[EQUALITY_DOMAIN, context.as_bytes()]);
     value
         .prf_visit_with_context(prf, context, EqualityVisitor)
         .into_result()
@@ -628,7 +628,7 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for BloomVisitor {
 fn match_term<O>(
     prf: &HmacSha256Prf,
     text: &str,
-    context: PrfContext<'_>,
+    context: Context<'_>,
     options: MatchOptions,
 ) -> Result<MatchTerm<O>, TermError> {
     let mask = options.validate()?;
@@ -636,7 +636,7 @@ fn match_term<O>(
     if tokens.is_empty() {
         return Err(TermError::EmptyTermText);
     }
-    let context = PrfContext::pae(&[MATCH_DOMAIN, context.as_bytes()]);
+    let context = Context::pae(&[MATCH_DOMAIN, context.as_bytes()]);
 
     let positions = tokens
         .prf_visit_with_context(prf, context, BloomVisitor { k: options.k, mask })
@@ -899,7 +899,7 @@ where
 /// PRF — never the plaintext, which rides in the visitor and is encrypted
 /// there. Deterministic, so write-time and query-time terms agree; under a
 /// 2-party PRF backend this derivation is a visible ZeroKMS event.
-fn ore<T>(prf: &HmacSha256Prf, value: T, context: PrfContext<'_>) -> Result<OreTerm<T>, TermError>
+fn ore<T>(prf: &HmacSha256Prf, value: T, context: Context<'_>) -> Result<OreTerm<T>, TermError>
 where
     T: CllwOreEncrypt + Send + 'static,
     T::Output: Send + 'static,
@@ -908,7 +908,7 @@ where
     context_bytes
         .prf_visit_with_context(
             prf,
-            PrfContext::pae(&[ORE_KEY_DOMAIN, context_bytes]),
+            Context::pae(&[ORE_KEY_DOMAIN, context_bytes]),
             OreVisitor(value),
         )
         .into_result()
@@ -919,7 +919,7 @@ where
 
 /// Derive an OPE term — as [`ore`], under the OPE domain so the two schemes
 /// never share a key.
-fn ope<T>(prf: &HmacSha256Prf, value: T, context: PrfContext<'_>) -> Result<OpeTerm<T>, TermError>
+fn ope<T>(prf: &HmacSha256Prf, value: T, context: Context<'_>) -> Result<OpeTerm<T>, TermError>
 where
     T: CllwOpeEncrypt + Send + 'static,
     T::Output: Send + 'static,
@@ -928,7 +928,7 @@ where
     context_bytes
         .prf_visit_with_context(
             prf,
-            PrfContext::pae(&[OPE_KEY_DOMAIN, context_bytes]),
+            Context::pae(&[OPE_KEY_DOMAIN, context_bytes]),
             OpeVisitor(value),
         )
         .into_result()

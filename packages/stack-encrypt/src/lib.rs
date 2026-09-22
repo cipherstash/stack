@@ -79,7 +79,7 @@ assert_eq!(plaintext, "secret message");
 //! module docs lay out the model.
 //!
 //! The second argument is the *associated data* (AAD): anything that implements
-//! [`IntoAad`] — `()`, `&[u8]`, `&str`, a tuple, or a derived [`Aad`]. It is
+//! [`IntoAad`] — `()`, `&[u8]`, `&str`, a tuple, or a derived [`Context`]. It is
 //! authenticated, not encrypted, and must be supplied identically on decrypt.
 //! Use it to bind a ciphertext to its context (a table name, a tenant, a record
 //! id) so it cannot be replayed elsewhere:
@@ -289,16 +289,24 @@ pub use target::{
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they
-// don't have to depend on `vitaminc-aead` directly for the common path.
+// don't have to depend on `vitaminc-aead` directly for the common path. A
+// context type of your own implements `IntoContext` once; `IntoAad` and
+// `IntoPrfContext` are vitaminc's blankets over it, so both derivations see
+// the same bytes.
 pub use vitaminc_aead::{
-    Aad, AadPiece, Cipher, CipherText, ContextTag, Decipher, Decrypt, Element, Encrypt, IntoAad,
-    Unspecified,
+    Cipher, CipherText, Context, ContextPiece, ContextTag, Decipher, Decrypt, Element, Encrypt,
+    IntoAad, IntoContext, Unspecified,
 };
+// The vitaminc 0.4 names, deprecated there; re-exported for one transition so
+// a caller that spelled them keeps compiling with a warning.
+#[allow(deprecated)]
+pub use vitaminc_aead::{Aad, AadPiece};
 
-// Likewise the PRF context surface: a context type of your own implements
-// `IntoPrfContext` alongside `IntoAad`, and should not need a direct
-// `vitaminc-prf` dependency for it.
-pub use vitaminc_prf::{IntoPrfContext, PrfContext};
+// Likewise the PRF context surface, so a caller who needs the PRF view of a
+// context has no direct `vitaminc-prf` dependency for it.
+pub use vitaminc_prf::IntoPrfContext;
+#[allow(deprecated)]
+pub use vitaminc_prf::PrfContext;
 
 // And the proof every target-directed leaf asks for: a `NonEmpty<T>` is what
 // `encrypt_into_with_context` / `decrypt_into` take, built with `nonempty!`

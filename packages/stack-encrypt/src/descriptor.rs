@@ -14,7 +14,7 @@
 //! that stack-encrypt does not yet use.
 //!
 //! The descriptor is a string on the wire; a context is a value with parts
-//! (its [`AadPiece`] tree — text, bytes, integers, lists of those).
+//! (its [`ContextPiece`] tree — text, bytes, integers, lists of those).
 //! [`Descriptor::from_piece`] is the one rendering of those parts as a
 //! string, and it is **frozen**: ZeroKMS binds the rendered string into the
 //! tag, so changing the rendering strands every key issued under the old
@@ -27,20 +27,20 @@
 //! cases, where contexts with identical AAD bytes get different
 //! descriptors and ZeroKMS refuses what the AEAD would open:
 //!
-//! * A pre-encoded [`Aad`](vitaminc_aead::Aad) is one opaque bytes part.
+//! * A pre-encoded [`Context`](vitaminc_aead::Context) is one opaque bytes part.
 //!   `("tenant", 7u64)` renders `tenant|7u64`; the same tuple passed
 //!   through `into_aad()` first renders `b64:` + its encoded bytes.
-//! * Different shapes can encode alike: `None::<&str>` (an empty list) and
-//!   `0u64` are both eight zero bytes, and render `()` and `0u64`.
+//! * Shapes that encode alike render alike: text and bytes with the same
+//!   content render the same, and `7i64` renders as `7u64`.
 //!
 //! So a value must be opened under the context in the same **shape** it was
-//! sealed under — the structured value both times, or the encoded `Aad`
+//! sealed under — the structured value both times, or the encoded `Context`
 //! both times — not merely one with the same bytes.
 
 use std::sync::Arc;
 
 use base64ct::{Base64, Encoding};
-use vitaminc_aead::{AadPiece, IntoAad};
+use vitaminc_aead::{ContextPiece, IntoAad};
 
 /// A context rendered as the string sent to ZeroKMS with every data-key
 /// request. See the [module docs](self).
@@ -103,7 +103,7 @@ impl Descriptor {
     /// assert_eq!(Descriptor::of("a|b").as_str(), "b64:YXxi");
     /// ```
     pub fn of<'a>(context: impl IntoAad<'a>) -> Self {
-        Self::from_piece(&context.into_aad_piece())
+        Self::from_piece(&context.into_context())
     }
 
     /// Render a context's parts.
@@ -119,7 +119,8 @@ impl Descriptor {
     ///   part renders as `b64:` followed by the standard (padded) base64 of
     ///   its bytes; an **empty** part is therefore the bare prefix, `b64:`,
     ///   so `Some("")` is `(b64:)` and `None` is `()`. Text and bytes with
-    ///   the same bytes render the same, as they encode the same.
+    ///   the same bytes render the same, though since vitaminc 0.5 they
+    ///   encode differently: the rendering is of the parts, not the bytes.
     /// * An **integer** part renders as its encoded bytes read as an
     ///   unsigned number, with the width as a suffix: `7u64`. Integers
     ///   encode as untagged little-endian bytes, so the width is part of the
@@ -136,32 +137,34 @@ impl Descriptor {
     ///
     /// The rendering is injective over encodings (the plain-text rule
     /// reserves exactly the characters the other forms begin with or
-    /// contain), and finer than the encoding for a pre-encoded `Aad` and for
+    /// contain), and finer than the encoding for a pre-encoded `Context` and for
     /// shapes that happen to encode alike — see the [module docs](self).
-    pub fn from_piece(piece: &AadPiece<'_>) -> Self {
+    pub fn from_piece(piece: &ContextPiece<'_>) -> Self {
         let mut out = String::new();
         Self::render(piece, true, &mut out);
         Self(Arc::from(out))
     }
 
-    fn render(piece: &AadPiece<'_>, root: bool, out: &mut String) {
+    fn render(piece: &ContextPiece<'_>, root: bool, out: &mut String) {
         match piece {
-            AadPiece::Text(text) => Self::render_bytes(text.as_bytes(), root, out),
-            AadPiece::Bytes(bytes) => Self::render_bytes(bytes, root, out),
+            ContextPiece::Text(text) => Self::render_bytes(text.as_bytes(), root, out),
+            ContextPiece::Bytes(bytes) => Self::render_bytes(bytes, root, out),
             // Signed and unsigned of one width encode to the same
             // little-endian bytes; `as` reinterprets, so they render the
             // same too.
-            AadPiece::U8(v) => Self::render_int(v, "u8", out),
-            AadPiece::U16(v) => Self::render_int(v, "u16", out),
-            AadPiece::U32(v) => Self::render_int(v, "u32", out),
-            AadPiece::U64(v) => Self::render_int(v, "u64", out),
-            AadPiece::U128(v) => Self::render_int(v, "u128", out),
-            AadPiece::I8(v) => Self::render_int(&(*v as u8), "u8", out),
-            AadPiece::I16(v) => Self::render_int(&(*v as u16), "u16", out),
-            AadPiece::I32(v) => Self::render_int(&(*v as u32), "u32", out),
-            AadPiece::I64(v) => Self::render_int(&(*v as u64), "u64", out),
-            AadPiece::I128(v) => Self::render_int(&(*v as u128), "u128", out),
-            AadPiece::List(parts) => {
+            ContextPiece::U8(v) => Self::render_int(v, "u8", out),
+            ContextPiece::U16(v) => Self::render_int(v, "u16", out),
+            ContextPiece::U32(v) => Self::render_int(v, "u32", out),
+            ContextPiece::U64(v) => Self::render_int(v, "u64", out),
+            ContextPiece::U128(v) => Self::render_int(v, "u128", out),
+            ContextPiece::I8(v) => Self::render_int(&(*v as u8), "u8", out),
+            ContextPiece::I16(v) => Self::render_int(&(*v as u16), "u16", out),
+            ContextPiece::I32(v) => Self::render_int(&(*v as u32), "u32", out),
+            ContextPiece::I64(v) => Self::render_int(&(*v as u64), "u64", out),
+            ContextPiece::I128(v) => Self::render_int(&(*v as u128), "u128", out),
+            // A pre-encoded context is one opaque part: its bytes, escaped.
+            ContextPiece::Encoded(bytes) => Self::render_bytes(bytes, root, out),
+            ContextPiece::List(parts) => {
                 let bare = root && parts.len() >= 2;
                 if !bare {
                     out.push('(');
@@ -176,7 +179,7 @@ impl Descriptor {
                     out.push(')');
                 }
             }
-            // `AadPiece` is `#[non_exhaustive]`: a part this crate does not
+            // `ContextPiece` is `#[non_exhaustive]`: a part this crate does not
             // know renders by its bytes, which is still injective (the
             // base64 form is reserved) and still binds.
             other => Self::render_bytes(other.clone().into_aad().as_bytes(), root, out),
@@ -264,7 +267,7 @@ impl AsRef<str> for Descriptor {
 
 #[cfg(test)]
 mod tests {
-    use vitaminc_aead::Aad;
+    use vitaminc_aead::Context;
     use vitaminc_protected::{nonempty, NonEmpty};
 
     use super::*;
@@ -286,7 +289,7 @@ mod tests {
             "bytes that are text render as the text they encode to"
         );
         assert_eq!(
-            Descriptor::of(Aad::from_slice(b"users/email")).as_str(),
+            Descriptor::of(Context::from_encoded(b"users/email")).as_str(),
             "users/email",
             "already-encoded AAD renders by its bytes"
         );
@@ -371,8 +374,8 @@ mod tests {
     }
 
     #[test]
-    fn the_descriptor_is_finer_than_the_encoding_in_two_named_cases() {
-        // A pre-encoded `Aad` is one opaque bytes part: the descriptor
+    fn the_descriptor_is_finer_than_the_encoding_for_a_pre_encoded_context() {
+        // A pre-encoded `Context` is one opaque bytes part: the descriptor
         // cannot recover the parts it was built from, so it renders the
         // bytes. Seal and open must present the context in the same shape.
         let structured = Descriptor::of(("tenant", 7u64));
@@ -381,10 +384,11 @@ mod tests {
         assert!(encoded.as_str().starts_with(Descriptor::BASE64_PREFIX));
         assert_ne!(structured, encoded);
 
-        // Different shapes can encode to the same bytes — an empty list is
-        // a zero count, which is eight zero bytes, which is `0u64`. The
-        // AEAD cannot tell them apart; the descriptor does.
-        assert_eq!(
+        // Before vitaminc 0.5, different shapes could encode to the same
+        // bytes (an empty list was a zero count, eight zero bytes, `0u64`).
+        // Typed leaves closed that: the two now differ on the AEAD side as
+        // they always did on the descriptor.
+        assert_ne!(
             None::<&str>.into_aad().as_bytes(),
             0u64.into_aad().as_bytes()
         );

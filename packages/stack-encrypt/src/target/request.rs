@@ -205,7 +205,7 @@ mod tests {
     use stack_kms::{DataKeySource, FakeDataKeySource, GenerateKeyPayload, RetrieveKeyPayload};
 
     use super::*;
-    use crate::{Aad, IntoAad, MaybeEmpty, NonEmpty};
+    use crate::{ContextPiece, IntoContext, MaybeEmpty, NonEmpty};
 
     fn d() -> Descriptor {
         Descriptor::of("test/field")
@@ -293,9 +293,9 @@ mod tests {
             self.0.is_empty()
         }
     }
-    impl<'a> IntoAad<'a> for Tenant {
-        fn into_aad(self) -> Aad<'a> {
-            self.0.into_aad()
+    impl<'a> IntoContext<'a> for Tenant {
+        fn into_context(self) -> ContextPiece<'a> {
+            self.0.into_context()
         }
     }
 

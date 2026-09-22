@@ -164,10 +164,10 @@ async fn a_column_renders_an_over_long_context_once() -> Result<(), Error> {
     #[derive(Clone)]
     struct Counted(Arc<AtomicUsize>);
 
-    impl<'a> stack_encrypt::IntoAad<'a> for Counted {
-        fn into_aad(self) -> stack_encrypt::Aad<'a> {
+    impl<'a> stack_encrypt::IntoContext<'a> for Counted {
+        fn into_context(self) -> stack_encrypt::ContextPiece<'a> {
             self.0.fetch_add(1, Ordering::SeqCst);
-            stack_encrypt::Aad::new_owned("a".repeat(Descriptor::MAX_LEN + 1).into_bytes())
+            stack_encrypt::ContextPiece::Text("a".repeat(Descriptor::MAX_LEN + 1).into())
         }
     }
     impl stack_encrypt::MaybeEmpty for Counted {

@@ -5,9 +5,9 @@ use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::transcode::{MapReader, Reader, SequenceReader, Transcode, Visitor};
 use stack_encrypt::target::{self, CallerContext, ExpectedContext};
 use stack_encrypt::{
-    nonempty, Aad, AadPiece, Cipher, CipherText, DecryptField, DecryptInto, Decryptable,
-    Decryption, Encrypt, EncryptFrom, Encryption, Error, IntoAad, IntoPrfContext, MaybeEmpty,
-    NonEmpty, PrfContext, SealedValue, StackCipherText,
+    nonempty, Cipher, CipherText, ContextPiece, DecryptField, DecryptInto, Decryptable, Decryption,
+    Encrypt, EncryptFrom, Encryption, Error, IntoAad, IntoContext, MaybeEmpty, NonEmpty,
+    SealedValue, StackCipherText,
 };
 use std::sync::atomic::Ordering;
 
@@ -30,17 +30,9 @@ impl MaybeEmpty for Identifier {
         self.table.is_empty() || self.column.is_empty()
     }
 }
-impl<'a> IntoAad<'a> for Identifier {
-    fn into_aad(self) -> Aad<'a> {
-        (self.table, self.column).into_aad()
-    }
-    fn into_aad_piece(self) -> AadPiece<'a> {
-        (self.table, self.column).into_aad_piece()
-    }
-}
-impl<'a> IntoPrfContext<'a> for Identifier {
-    fn into_prf_context(self) -> PrfContext<'a> {
-        (self.table, self.column).into_prf_context()
+impl<'a> IntoContext<'a> for Identifier {
+    fn into_context(self) -> ContextPiece<'a> {
+        (self.table, self.column).into_context()
     }
 }
 

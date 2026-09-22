@@ -2,14 +2,12 @@
 //!
 //! A target's associated `Context` is what a caller hands `encrypt_as` and
 //! `decrypt_as` alongside the value. The types here are the core-owned ones:
-//! each holds Vitamin C's encodings of a nonempty context, so the structured
-//! identity of its descriptor survives the trip into a boxed operation
-//! description. A record that stores its own identifier declares
+//! each holds the parts view of a nonempty context — the one tree both the
+//! AEAD and the PRF encode from — so the structured identity of its
+//! descriptor survives the trip into a boxed operation description. A record that stores its own identifier declares
 //! `NonEmpty<T>` instead, and a target whose declaration carries every
 //! context it needs declares `()`.
-use crate::{
-    Aad, AadPiece, Descriptor, Error, IntoAad, IntoPrfContext, MaybeEmpty, NonEmpty, PrfContext,
-};
+use crate::{ContextPiece, Descriptor, Error, IntoContext, MaybeEmpty, NonEmpty};
 
 /// Prove a context nonempty at the point it is used. The core-owned types
 /// are nonempty by construction, so for them this cannot fail; the one
@@ -21,23 +19,19 @@ pub(super) fn nonempty<T: MaybeEmpty>(value: T) -> Result<NonEmpty<T>, Error> {
 /// An owned, validated context for a target that accepts any Vitamin C
 /// context and derives both ciphertext and terms from it.
 ///
-/// Built from a `NonEmpty<T>` (or a bare integer), it holds the AEAD and PRF
-/// encodings of that context, so the descriptor's structured identity is
-/// preserved. Concrete records declare their own context type instead.
+/// Built from a `NonEmpty<T>` (or a bare integer), it holds the parts view
+/// of that context. The AEAD and the PRF encode the same tree to the same
+/// bytes, so one tree serves both derivations and the descriptor's
+/// structured identity is preserved. Concrete records declare their own
+/// context type instead.
 #[derive(Clone, Debug)]
-pub struct CallerContext {
-    aad: AadPiece<'static>,
-    prf: PrfContext<'static>,
-}
+pub struct CallerContext(ContextPiece<'static>);
 impl<'c, T> From<NonEmpty<T>> for CallerContext
 where
-    T: IntoAad<'c> + IntoPrfContext<'c> + Clone,
+    T: IntoContext<'c>,
 {
     fn from(context: NonEmpty<T>) -> Self {
-        Self {
-            aad: context.clone().into_aad_piece().into_owned(),
-            prf: context.into_prf_context().into_owned(),
-        }
+        Self(context.into_context().into_owned())
     }
 }
 impl MaybeEmpty for CallerContext {
@@ -45,17 +39,9 @@ impl MaybeEmpty for CallerContext {
         false
     }
 }
-impl<'a> IntoAad<'a> for CallerContext {
-    fn into_aad(self) -> Aad<'a> {
-        self.aad.into_aad()
-    }
-    fn into_aad_piece(self) -> AadPiece<'a> {
-        self.aad
-    }
-}
-impl<'a> IntoPrfContext<'a> for CallerContext {
-    fn into_prf_context(self) -> PrfContext<'a> {
-        self.prf
+impl<'a> IntoContext<'a> for CallerContext {
+    fn into_context(self) -> ContextPiece<'a> {
+        self.0
     }
 }
 impl CallerContext {
@@ -65,7 +51,7 @@ impl CallerContext {
     /// The own context `own`, extended by this caller context: the field's
     /// literal is the prefix, this context the extension, exactly as a
     /// `struct = T` derive composes them — `("users/age", id)`. The own
-    /// context is never discarded, and both encodings are preserved.
+    /// context is never discarded.
     pub fn extend(self, own: NonEmpty<&'static str>) -> Self {
         own.with(self).into()
     }
@@ -73,22 +59,25 @@ impl CallerContext {
 
 /// An owned nonempty context for ciphertext-only operations.
 ///
-/// Sealing needs only the AEAD encoding, so a type that implements `IntoAad`
-/// without `IntoPrfContext` is enough here where it would not be for a
-/// [`CallerContext`]. A derived record whose fields are all ciphertexts
-/// declares it with `#[stash(context_type = AeadContext)]`, and then accepts
-/// the same contexts the canonical [`StackCipherText`](crate::StackCipherText)
-/// path does.
+/// Since vitaminc 0.5 every context type implements one trait,
+/// [`IntoContext`], and the AEAD and PRF derivations are both blankets over
+/// it, so this type accepts exactly the contexts a [`CallerContext`] does.
+/// It is kept as a distinct declaration because it says something a
+/// `CallerContext` does not: the record it is declared on derives no terms.
+/// A derived record whose fields are all ciphertexts declares it with
+/// `#[stash(context_type = AeadContext)]`, and then accepts the same
+/// contexts the canonical [`StackCipherText`](crate::StackCipherText) path
+/// does.
 #[derive(Clone, Debug)]
-pub struct AeadContext(AadPiece<'static>);
-impl<'a, T: IntoAad<'a>> From<NonEmpty<T>> for AeadContext {
+pub struct AeadContext(ContextPiece<'static>);
+impl<'a, T: IntoContext<'a>> From<NonEmpty<T>> for AeadContext {
     fn from(value: NonEmpty<T>) -> Self {
-        Self(value.into_aad_piece().into_owned())
+        Self(value.into_context().into_owned())
     }
 }
 impl From<CallerContext> for AeadContext {
     fn from(value: CallerContext) -> Self {
-        Self(value.aad)
+        Self(value.0)
     }
 }
 impl MaybeEmpty for AeadContext {
@@ -96,11 +85,8 @@ impl MaybeEmpty for AeadContext {
         false
     }
 }
-impl<'a> IntoAad<'a> for AeadContext {
-    fn into_aad(self) -> Aad<'a> {
-        self.0.into_aad()
-    }
-    fn into_aad_piece(self) -> AadPiece<'a> {
+impl<'a> IntoContext<'a> for AeadContext {
+    fn into_context(self) -> ContextPiece<'a> {
         self.0
     }
 }
@@ -163,7 +149,7 @@ impl From<CallerContext> for DeclaredContext {
         Self(Some(value))
     }
 }
-impl<'a, T: IntoAad<'a> + IntoPrfContext<'a> + Clone> From<NonEmpty<T>> for DeclaredContext {
+impl<'a, T: IntoContext<'a>> From<NonEmpty<T>> for DeclaredContext {
     fn from(value: NonEmpty<T>) -> Self {
         Self(Some(value.into()))
     }
@@ -221,7 +207,7 @@ impl<T> From<NonEmpty<T>> for ExpectedContext<T> {
         Self(Some(value))
     }
 }
-impl<'c, T: MaybeEmpty + PartialEq + IntoAad<'c>> ExpectedContext<T> {
+impl<'c, T: MaybeEmpty + PartialEq + IntoContext<'c>> ExpectedContext<T> {
     /// Check the stored context against this expectation and prove it
     /// nonempty, yielding the context the record is opened under.
     ///
@@ -235,7 +221,7 @@ impl<'c, T: MaybeEmpty + PartialEq + IntoAad<'c>> ExpectedContext<T> {
     pub fn validate(self, stored: T) -> Result<NonEmpty<T>, Error> {
         if let Some(expected) = self.0 {
             if expected.into_inner() != stored {
-                let stored = Descriptor::from_piece(&stored.into_aad_piece());
+                let stored = Descriptor::from_piece(&stored.into_context());
                 return Err(Error::ContextMismatch { stored });
             }
         }

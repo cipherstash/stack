@@ -13,8 +13,8 @@ use common::{counting_cipher, stack_cipher};
 use stack_encrypt::sem::{EqualityTerm, MatchTerm, OreTerm};
 use stack_encrypt::target::{AeadContext, DecryptFrom, EncryptInto};
 use stack_encrypt::{
-    nonempty, Aad, DecryptField, DecryptInto, Decryptable, EncryptFrom, Error, IntoAad, MaybeEmpty,
-    NonEmpty, StackCipherText,
+    nonempty, ContextPiece, DecryptField, DecryptInto, Decryptable, EncryptFrom, Error,
+    IntoContext, MaybeEmpty, NonEmpty, StackCipherText,
 };
 
 // --- Records: every field from one plaintext, under one context -------------
@@ -388,9 +388,9 @@ impl MaybeEmpty for Tenant {
         self.0.is_empty()
     }
 }
-impl<'a> IntoAad<'a> for Tenant {
-    fn into_aad(self) -> Aad<'a> {
-        self.0.into_aad()
+impl<'a> IntoContext<'a> for Tenant {
+    fn into_context(self) -> ContextPiece<'a> {
+        self.0.into_context()
     }
 }
 

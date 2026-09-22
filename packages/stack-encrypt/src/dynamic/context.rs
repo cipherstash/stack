@@ -6,17 +6,17 @@ use vitaminc_aead_value::FfiValue;
 use vitaminc_protected::Controlled;
 
 use super::Error;
-use crate::{AadPiece, NonEmpty};
+use crate::{ContextPiece, NonEmpty};
 
-/// A context arrives from a binding as a value and becomes an [`AadPiece`]
+/// A context arrives from a binding as a value and becomes an [`ContextPiece`]
 /// tree: vitaminc's runtime form of a context, and the *identity* of one.
 /// vitaminc's law (pinned there by quickcheck over every built-in context
 /// type) is that a context's two derivations each equal the same derivation
 /// of its parts view:
 ///
 /// ```text
-/// x.into_aad()         == x.into_aad_piece().into_aad()
-/// x.into_prf_context() == x.into_aad_piece().into_prf_context()
+/// x.into_aad()         == x.into_context().into_aad()
+/// x.into_prf_context() == x.into_context().into_prf_context()
 /// ```
 ///
 /// So a `#[derive(EncryptFrom)]` row sealed with
@@ -38,9 +38,9 @@ use crate::{AadPiece, NonEmpty};
 /// ([`MAX_DEPTH`](vitaminc_aead_value::transport::MAX_DEPTH) levels, counted
 /// from the root of the encoded value); a deeper value is refused by the
 /// codec before this module sees it. Text and bytes with the same content
-/// are distinct on the PRF side (UTF-8 versus bytes encodings) though they
-/// share AAD bytes — the same distinction the Rust types make. Booleans,
-/// floats, null, undefined, objects and passthroughs are not contexts.
+/// are distinct contexts (UTF-8 versus bytes typed leaves) — the same
+/// distinction the Rust types make. Booleans, floats, null, undefined,
+/// objects and passthroughs are not contexts.
 ///
 /// # Which Rust contexts a list spells
 ///
@@ -87,27 +87,27 @@ use crate::{AadPiece, NonEmpty};
 ///
 /// [`Error::Context`] for anything outside the shape above, and for a
 /// context that renders empty.
-pub fn context(value: FfiValue) -> Result<NonEmpty<AadPiece<'static>>, Error> {
+pub fn context(value: FfiValue) -> Result<NonEmpty<ContextPiece<'static>>, Error> {
     NonEmpty::new(piece_of(value)?).map_err(|_| Error::Context)
 }
 
-fn piece_of(value: FfiValue) -> Result<AadPiece<'static>, Error> {
+fn piece_of(value: FfiValue) -> Result<ContextPiece<'static>, Error> {
     Ok(match value {
         // Valid UTF-8 by `Utf8String`'s construction invariant; checked
         // rather than assumed because this is boundary code. The payload
         // moves out of its `Protected` rather than being copied: a context
         // is not secret, and the copy would only be wiped and freed.
-        FfiValue::String(s) => AadPiece::Text(Cow::Owned(
+        FfiValue::String(s) => ContextPiece::Text(Cow::Owned(
             String::from_utf8(s.into_inner().risky_unwrap()).map_err(|_| Error::Context)?,
         )),
-        FfiValue::Bytes(bytes) => AadPiece::Bytes(Cow::Owned(bytes.risky_unwrap())),
-        FfiValue::Int32(v) => AadPiece::I32(v),
-        FfiValue::Int64(v) => AadPiece::I64(v),
-        FfiValue::UInt32(v) => AadPiece::U32(v),
-        FfiValue::UInt64(v) => AadPiece::U64(v),
+        FfiValue::Bytes(bytes) => ContextPiece::Bytes(Cow::Owned(bytes.risky_unwrap())),
+        FfiValue::Int32(v) => ContextPiece::I32(v),
+        FfiValue::Int64(v) => ContextPiece::I64(v),
+        FfiValue::UInt32(v) => ContextPiece::U32(v),
+        FfiValue::UInt64(v) => ContextPiece::U64(v),
         // Nesting depth is bounded by the codec's `MAX_DEPTH` before the
         // value reaches here.
-        FfiValue::Array(items) => AadPiece::List(
+        FfiValue::Array(items) => ContextPiece::List(
             items
                 .into_iter()
                 .map(piece_of)
@@ -129,24 +129,25 @@ fn piece_of(value: FfiValue) -> Result<AadPiece<'static>, Error> {
 /// list spine is rebuilt, which is the cost of a tree of `Cow`s rather than
 /// a tree of references.
 ///
-/// [`AadPiece`] is `#[non_exhaustive]`, so a variant this crate does not
+/// [`ContextPiece`] is `#[non_exhaustive]`, so a variant this crate does not
 /// know is cloned whole rather than refused: the view must be the same
 /// context, and a clone is.
-pub fn borrowed<'b>(piece: &'b AadPiece<'_>) -> AadPiece<'b> {
+pub fn borrowed<'b>(piece: &'b ContextPiece<'_>) -> ContextPiece<'b> {
     match piece {
-        AadPiece::Text(text) => AadPiece::Text(Cow::Borrowed(text.as_ref())),
-        AadPiece::Bytes(bytes) => AadPiece::Bytes(Cow::Borrowed(bytes.as_ref())),
-        AadPiece::U8(v) => AadPiece::U8(*v),
-        AadPiece::U16(v) => AadPiece::U16(*v),
-        AadPiece::U32(v) => AadPiece::U32(*v),
-        AadPiece::U64(v) => AadPiece::U64(*v),
-        AadPiece::U128(v) => AadPiece::U128(*v),
-        AadPiece::I8(v) => AadPiece::I8(*v),
-        AadPiece::I16(v) => AadPiece::I16(*v),
-        AadPiece::I32(v) => AadPiece::I32(*v),
-        AadPiece::I64(v) => AadPiece::I64(*v),
-        AadPiece::I128(v) => AadPiece::I128(*v),
-        AadPiece::List(parts) => AadPiece::List(parts.iter().map(borrowed).collect()),
+        ContextPiece::Text(text) => ContextPiece::Text(Cow::Borrowed(text.as_ref())),
+        ContextPiece::Bytes(bytes) => ContextPiece::Bytes(Cow::Borrowed(bytes.as_ref())),
+        ContextPiece::U8(v) => ContextPiece::U8(*v),
+        ContextPiece::U16(v) => ContextPiece::U16(*v),
+        ContextPiece::U32(v) => ContextPiece::U32(*v),
+        ContextPiece::U64(v) => ContextPiece::U64(*v),
+        ContextPiece::U128(v) => ContextPiece::U128(*v),
+        ContextPiece::I8(v) => ContextPiece::I8(*v),
+        ContextPiece::I16(v) => ContextPiece::I16(*v),
+        ContextPiece::I32(v) => ContextPiece::I32(*v),
+        ContextPiece::I64(v) => ContextPiece::I64(*v),
+        ContextPiece::I128(v) => ContextPiece::I128(*v),
+        ContextPiece::Encoded(bytes) => ContextPiece::Encoded(Cow::Borrowed(bytes.as_ref())),
+        ContextPiece::List(parts) => ContextPiece::List(parts.iter().map(borrowed).collect()),
         other => other.clone().into_owned(),
     }
 }
@@ -166,7 +167,7 @@ mod tests {
         let parsed = context(s("users/age")).expect("flat context");
         assert_eq!(
             parsed.get(),
-            &AadPiece::Text(Cow::Borrowed("users/age")),
+            &ContextPiece::Text(Cow::Borrowed("users/age")),
             "a bare string is one text part, not a one-element list"
         );
         assert_eq!(
@@ -333,16 +334,18 @@ mod tests {
         );
     }
 
+    /// Text and bytes are typed leaves, so the same content is two contexts
+    /// on both sides (vitaminc 0.5; before it they shared AAD bytes).
     #[test]
-    fn text_and_bytes_share_aad_bytes_but_not_prf_encoding() {
+    fn text_and_bytes_are_distinct_contexts_on_both_sides() {
         let text = context(s("ab")).expect("text").into_inner();
         let bytes = context(FfiValue::Bytes(Protected::new(b"ab".to_vec())))
             .expect("bytes")
             .into_inner();
-        assert_eq!(
+        assert_ne!(
             text.clone().into_aad().as_bytes(),
             bytes.clone().into_aad().as_bytes(),
-            "text and bytes of the same content share AAD bytes"
+            "text and bytes of the same content are distinct AAD"
         );
         assert_ne!(
             text.into_prf_context().as_bytes(),

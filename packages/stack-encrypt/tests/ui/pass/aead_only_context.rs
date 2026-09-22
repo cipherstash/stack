@@ -5,7 +5,7 @@
 //! accepts. `tests/ui/aead_context_with_term.rs` pins the record such a
 //! context cannot declare.
 use stack_encrypt::target::{AeadContext, DecryptFrom, EncryptInto};
-use stack_encrypt::{Aad, DecryptInto, EncryptFrom, IntoAad, KeysetCipher, MaybeEmpty, NonEmpty, StackCipherText};
+use stack_encrypt::{ContextPiece, DecryptInto, EncryptFrom, IntoContext, KeysetCipher, MaybeEmpty, NonEmpty, StackCipherText};
 use stack_kms::FakeDataKeySource;
 
 /// AEAD only: no `IntoPrfContext`, so it cannot derive a term.
@@ -16,9 +16,9 @@ impl MaybeEmpty for Tenant {
         self.0.is_empty()
     }
 }
-impl<'a> IntoAad<'a> for Tenant {
-    fn into_aad(self) -> Aad<'a> {
-        self.0.into_aad()
+impl<'a> IntoContext<'a> for Tenant {
+    fn into_context(self) -> ContextPiece<'a> {
+        self.0.into_context()
     }
 }
 
