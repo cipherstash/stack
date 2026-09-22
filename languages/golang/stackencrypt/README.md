@@ -60,9 +60,23 @@ keyset, and `ctx` bounds that request. It has nothing to do with an
 `Token` supplies the bearer token for every request. `StaticToken` is the
 simplest source; a `TokenFunc` can fetch or refresh one.
 
+`ClientKey` is an opaque type, not a string: it prints a redaction under
+every verb, so a logged `Config` never shows the key. `NewClientKey` takes
+ownership of the slice it is given, and `NewClient` consumes the key —
+whatever the outcome, even a config it refuses, the key is empty afterwards
+and that slice is zero. A key is for one client; build another for another
+client. What the SDK cannot reach is what the key was built *from*: the
+`os.Getenv` string above is Go's, immutable, and lives until collected.
+Read the key from the developer profile through `stackauth` where you can,
+and where an environment variable is the source, treat the process
+environment as holding the key for the life of the process.
+
 ### Key material in memory
 
-The client key, every loaded index key and every data key in use live in
+The client key enters the instance once, in `NewClient`: it is marshalled
+into the config buffer, the `ClientKey` is wiped, the guest copies the key
+into its own memory, and the buffer is wiped. From then on the client key,
+every loaded index key and every data key in use live in
 the wasm instance's memory, and the package owns that memory rather than
 leaving it to the runtime's default. It is reserved once and never moves,
 so growth never copies a key to somewhere it is not wiped; it is locked in

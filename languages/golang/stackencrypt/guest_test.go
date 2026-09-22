@@ -441,16 +441,24 @@ func (z *zeros) Read(p []byte) (int, error) {
 
 func TestConfigValidation(t *testing.T) {
 	ctx := context.Background()
+	wiped := NewClientKey([]byte(testClientKey))
+	wiped.Wipe()
 	for name, cfg := range map[string]Config{
 		"no token":     {ClientID: testClientID, ClientKey: NewClientKey([]byte(testClientKey))},
 		"no client id": {ClientKey: NewClientKey([]byte(testClientKey)), Token: StaticToken("t")},
 		"no key":       {ClientID: testClientID, Token: StaticToken("t")},
-		"wiped key":    {ClientID: testClientID, ClientKey: NewClientKey(nil), Token: StaticToken("t")},
+		"empty key":    {ClientID: testClientID, ClientKey: NewClientKey(nil), Token: StaticToken("t")},
+		"wiped key":    {ClientID: testClientID, ClientKey: wiped, Token: StaticToken("t")},
 		"negative cache": {ClientID: testClientID, ClientKey: NewClientKey([]byte(testClientKey)), Token: StaticToken("t"),
 			KeysetCacheSize: -1},
 	} {
 		if _, err := NewClient(ctx, cfg); err == nil {
 			t.Errorf("%s: NewClient succeeded", name)
+		}
+		// A refused config consumes the key too: the caller is never handed
+		// live material back with the error.
+		if !cfg.ClientKey.IsZero() {
+			t.Errorf("%s: the key still holds material after NewClient refused the config", name)
 		}
 	}
 	// Malformed values the guest refuses: no request is made.
@@ -476,16 +484,26 @@ func TestConfigValidation(t *testing.T) {
 // The client key is consumed by NewClient: whatever the outcome, the bytes
 // it was built from are zero once NewClient returns, the key reports
 // itself empty, and a Config never prints the material under any verb.
+//
+// The outcome exercised here is the guest's init failing (a refused
+// token); the refused-config outcomes are in TestConfigValidation, and
+// the successful one in the live test, which is the only place a client
+// can be built against a real load-keyset response. The wipe precedes the
+// init call, so the three paths share it.
 func TestClientKeyIsConsumedAndNeverPrinted(t *testing.T) {
-	guestOrSkip(t)
 	material := []byte(testClientKey)
-	cfg := testConfig(newStub(t, http.StatusUnauthorized, "", "nope").URL)
+	stub := newStub(t, http.StatusUnauthorized, "", "nope")
+	cfg := testConfig(stub.URL)
 	cfg.ClientKey = NewClientKey(material)
-	for _, verb := range []string{"%v", "%+v", "%#v"} {
-		if out := fmt.Sprintf(verb, cfg); strings.Contains(out, testClientKey[:16]) {
+	// %x and %d reach a struct's fields without asking a Stringer; the
+	// key's Formatter answers for them.
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d"} {
+		out := fmt.Sprintf(verb, cfg)
+		if strings.Contains(out, testClientKey[:16]) || strings.Contains(out, hex.EncodeToString(material[:8])) {
 			t.Errorf("Config under %s prints the key: %q", verb, out)
 		}
 	}
+	guestOrSkip(t)
 	if _, err := NewClient(context.Background(), cfg); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("NewClient: %v, want ErrUnauthorized", err)
 	}
@@ -497,9 +515,14 @@ func TestClientKeyIsConsumedAndNeverPrinted(t *testing.T) {
 			t.Fatalf("byte %d of the key material was not wiped", i)
 		}
 	}
-	// A consumed key does not make a second client.
+	// A consumed key does not make a second client, and asks nothing of
+	// ZeroKMS trying.
+	before := len(stub.requests)
 	if _, err := NewClient(context.Background(), cfg); err == nil || errors.Is(err, ErrUnauthorized) {
 		t.Errorf("NewClient with a consumed key: %v, want a config error before any request", err)
+	}
+	if len(stub.requests) != before {
+		t.Errorf("a consumed key made %d request(s)", len(stub.requests)-before)
 	}
 }
 

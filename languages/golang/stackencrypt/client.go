@@ -24,8 +24,9 @@ type Config struct {
 	// wrapped by [NewClientKey] or read from the developer profile by
 	// stackauth. Required. It is consumed: NewClient marshals it into the
 	// config buffer, wipes the key, and wipes the buffer once the guest has
-	// the key, so after NewClient returns the ClientKey is empty and the
-	// bytes it was built from are zero. A key is for one client.
+	// the key, so after NewClient returns — whatever the outcome, a config
+	// it refused included — the ClientKey is empty and the bytes it was
+	// built from are zero. A key is for one client.
 	ClientKey *ClientKey
 	// ZeroKMSURL pins the ZeroKMS endpoint. When empty the endpoint is
 	// resolved from the access token's services claim on first use.
@@ -94,6 +95,10 @@ type Client struct {
 // the default keyset — one ZeroKMS round trip. The returned client is ready
 // to seal.
 func NewClient(ctx context.Context, cfg Config) (*Client, error) {
+	// The key is consumed whatever happens below: a config refused before
+	// the key is marshalled must not hand it back live. Nil-safe, and a
+	// no-op after the wipe on the accepted path.
+	defer cfg.ClientKey.Wipe()
 	if cfg.Token == nil {
 		return nil, errors.New("stackencrypt: Config.Token is required")
 	}
@@ -187,21 +192,25 @@ func encodeConfig(cfg Config) ([]byte, error) {
 	if cfg.ClientID == "" || cfg.ClientKey.IsZero() {
 		return nil, errors.New("stackencrypt: Config.ClientID and Config.ClientKey are required")
 	}
+	// Every refusal comes before the key is copied, so a rejected config
+	// leaves nothing but the key itself, which the caller wipes.
+	if cfg.KeysetCacheSize < 0 {
+		return nil, errors.New("stackencrypt: Config.KeysetCacheSize must not be negative")
+	}
 	// The key crosses as text: the guest's config parser takes the hex or
 	// base64 form as the CS_CLIENT_KEY variable and secretkey.json hold it.
-	// The string is a copy the marshaller reads once; the encoded buffer
-	// that results is what the caller wipes. A string cannot be wiped, and
-	// this one lives until the collector takes it: the one copy of the key
-	// this package cannot zero, accepted for the length of NewClient.
+	// The string is a copy the marshaller reads once — and copies once more
+	// into its own scratch before appending — and the encoded buffer that
+	// results is what the caller wipes. A string cannot be wiped, and
+	// neither can the marshaller's copy; both live until the collector takes
+	// them: the copies of the key this package cannot zero, accepted for the
+	// length of NewClient. A marshaller that took bytes would remove both.
 	fields := vcvalue.Object{
 		{Key: "client_id", Value: cfg.ClientID},
-		{Key: "client_key", Value: string(cfg.ClientKey.Bytes())},
+		{Key: "client_key", Value: string(guest.KeyBytes(cfg.ClientKey))},
 	}
 	if cfg.ZeroKMSURL != "" {
 		fields = append(fields, vcvalue.Field{Key: "zerokms_url", Value: cfg.ZeroKMSURL})
-	}
-	if cfg.KeysetCacheSize < 0 {
-		return nil, errors.New("stackencrypt: Config.KeysetCacheSize must not be negative")
 	}
 	if cfg.KeysetCacheSize > 0 {
 		fields = append(fields, vcvalue.Field{Key: "keyset_cache_size", Value: strconv.Itoa(cfg.KeysetCacheSize)})

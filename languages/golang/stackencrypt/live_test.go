@@ -23,13 +23,26 @@ func liveClient(t *testing.T) *Client {
 	if clientID == "" || clientKey == "" || token == "" {
 		t.Skip("STACK_ENCRYPT_TEST_{CLIENT_ID,CLIENT_KEY,ACCESS_TOKEN} not set")
 	}
+	material := []byte(clientKey)
+	key := NewClientKey(material)
 	c, err := NewClient(t.Context(), Config{
-		ClientID: clientID, ClientKey: NewClientKey([]byte(clientKey)), ZeroKMSURL: url, Token: StaticToken(token),
+		ClientID: clientID, ClientKey: key, ZeroKMSURL: url, Token: StaticToken(token),
 	})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
+	// The successful outcome of the consumption contract, which only a
+	// real load-keyset response can reach: the key is empty and the bytes
+	// it was built from are zero once the client exists.
+	if !key.IsZero() {
+		t.Error("the key still holds material after NewClient succeeded")
+	}
+	for i, b := range material {
+		if b != 0 {
+			t.Fatalf("byte %d of the key material was not wiped by a successful NewClient", i)
+		}
+	}
 	return c
 }
 
