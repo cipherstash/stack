@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
@@ -112,7 +113,7 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 	defer wipe(encoded)
 
 	t := &transport{rt: rt, token: cfg.Token}
-	inst, err := newInstance(ctx, wasm, t, policyFor(cfg.RequireLockedMemory))
+	inst, err := newInstance(ctx, wasm, t, guest.PolicyFor(cfg.RequireLockedMemory))
 	if err != nil {
 		return nil, err
 	}
@@ -149,14 +150,14 @@ func newClient(inst *instance, t *transport) *Client {
 // memory the kernel may swap out. Nothing else changes. A production
 // checklist should assert this, or set [Config.RequireLockedMemory] and
 // let NewClient refuse. [Client.MemoryLockError] says why.
-func (c *Client) MemoryLocked() bool { return c.inst.mem.lockError() == nil }
+func (c *Client) MemoryLocked() bool { return c.inst.mem.LockError() == nil }
 
 // MemoryLockError is why MemoryLocked is false: an error wrapping
 // ErrMemoryLock that names what was refused and the limit that refused it.
 // Nil while the memory is locked.
 func (c *Client) MemoryLockError() error {
-	if err := c.inst.mem.lockError(); err != nil {
-		return memoryLockError(err)
+	if err := c.inst.mem.LockError(); err != nil {
+		return guest.MemoryLockError(err)
 	}
 	return nil
 }
@@ -304,7 +305,7 @@ func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([
 		c.closed = true
 		return nil, ErrState
 	}
-	growth := c.inst.mem.growthRefusal()
+	growth := c.inst.mem.GrowthRefusal()
 	out, err := f(c.inst)
 	switch {
 	case c.inst.module.IsClosed():
@@ -325,8 +326,8 @@ func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([
 	// of its own, aborts, and the trap closed the client above. Name the
 	// real cause either way. The refusal is this call's, not the client's:
 	// the range went back unused, so MemoryLocked still holds.
-	if g := c.inst.mem.growthRefusal(); err != nil && g.refused != growth.refused {
-		err = fmt.Errorf("%w (growth refused under RequireLockedMemory): %w", memoryLockError(g.reason), err)
+	if g := c.inst.mem.GrowthRefusal(); err != nil && g.Refused != growth.Refused {
+		err = fmt.Errorf("%w (growth refused under RequireLockedMemory): %w", guest.MemoryLockError(g.Reason), err)
 	}
 	if err != nil {
 		return nil, err

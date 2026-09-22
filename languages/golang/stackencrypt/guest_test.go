@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/sys"
@@ -476,7 +477,7 @@ func TestConfigValidation(t *testing.T) {
 func rawInstance(t *testing.T) *Client {
 	t.Helper()
 	ctx := context.Background()
-	inst, err := newInstance(ctx, guestOrSkip(t), &transport{rt: http.DefaultTransport, token: StaticToken("t")}, bestEffort)
+	inst, err := newInstance(ctx, guestOrSkip(t), &transport{rt: http.DefaultTransport, token: StaticToken("t")}, guest.BestEffort)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -707,7 +708,7 @@ func TestClientKeyDoesNotRemainInGuestMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr := &transport{rt: http.DefaultTransport, token: StaticToken("stub-token")}
-	inst, err := newInstance(ctx, guestOrSkip(t), tr, bestEffort)
+	inst, err := newInstance(ctx, guestOrSkip(t), tr, guest.BestEffort)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -742,7 +743,7 @@ func TestTransportSendCounterAndResponseHeaders(t *testing.T) {
 	stub := newStub(t, http.StatusUnauthorized, "text/plain", "nope")
 	tr := &transport{rt: http.DefaultTransport, token: StaticToken("stub-token")}
 	ctx := context.Background()
-	inst, err := newInstance(ctx, guestOrSkip(t), tr, bestEffort)
+	inst, err := newInstance(ctx, guestOrSkip(t), tr, guest.BestEffort)
 	if err != nil {
 		t.Fatal(err)
 	}

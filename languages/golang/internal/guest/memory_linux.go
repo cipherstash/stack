@@ -1,4 +1,4 @@
-package stackencrypt
+package guest
 
 import (
 	"fmt"

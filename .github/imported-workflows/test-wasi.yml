@@ -12,10 +12,10 @@ on:
       # Trigger on all of packages/ rather than enumerating the closure,
       # which would silently drift.
       - packages/**
-      # The guest is a detached workspace and the Go binding a separate
-      # module, so nothing else in CI compiles, tests or links them — this
-      # job is their only gate.
-      - bindings/go/stackencrypt/**
+      # The guest is a detached workspace and the Go module (bindings/go:
+      # stackencrypt and the internal packages) a separate module, so nothing
+      # else in CI compiles, tests or links them — this job is their only gate.
+      - bindings/go/**
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh
       - Cargo.toml
@@ -30,10 +30,10 @@ on:
   pull_request:
     paths:
       - packages/**
-      # The guest is a detached workspace and the Go binding a separate
-      # module, so nothing else in CI compiles, tests or links them — this
-      # job is their only gate.
-      - bindings/go/stackencrypt/**
+      # The guest is a detached workspace and the Go module (bindings/go:
+      # stackencrypt and the internal packages) a separate module, so nothing
+      # else in CI compiles, tests or links them — this job is their only gate.
+      - bindings/go/**
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh
       - Cargo.toml
@@ -116,8 +116,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      # The Go binding (bindings/go/stackencrypt) embeds the module built
-      # above: format, vet and hermetic tests (import surface, transport
+      # The Go module (bindings/go; the stackencrypt package embeds the
+      # guest built above): format, vet and hermetic tests (import surface, transport
       # bridge against an httptest ZeroKMS, guest-parser acceptance of every
       # encoding the package builds, hostile ABI inputs, key residency), on
       # amd64 and 386. Live round trips through ZeroKMS are the phase 5
@@ -182,7 +182,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ steps.go.outputs.version }}
-          cache-dependency-path: bindings/go/stackencrypt/go.sum
+          cache-dependency-path: bindings/go/go.sum
 
       - uses: actions/download-artifact@v8
         with:
@@ -201,4 +201,4 @@ jobs:
           echo "stack_encrypt_guest.wasm sha256 $got"
 
       - name: Go binding
-        run: scripts/go-binding-test.sh bindings/go/stackencrypt
+        run: scripts/go-binding-test.sh bindings/go stackencrypt/wasm/stack_encrypt_guest.wasm

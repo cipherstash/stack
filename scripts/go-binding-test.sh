@@ -12,7 +12,7 @@
 set -euo pipefail
 
 dir=${1:?usage: go-binding-test.sh <module dir> [<guest path>]}
-guest=${2:-wasm/stack_encrypt_guest.wasm}
+guest=${2:-stackencrypt/wasm/stack_encrypt_guest.wasm}
 
 cd "$dir"
 if [ ! -f "$guest" ]; then

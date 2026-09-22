@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
@@ -61,9 +62,9 @@ func compilationCache() wazero.CompilationCache {
 type instance struct {
 	runtime wazero.Runtime
 	module  api.Module
-	// mem supplied the module's linear memory (see memory.go) and reports
+	// mem supplied the module's linear memory (internal/guest) and reports
 	// on it.
-	mem *memoryAllocator
+	mem *guest.Allocator
 
 	alloc, dealloc               api.Function
 	cipherInit, shutdown, keyset api.Function
@@ -92,10 +93,10 @@ func guestModuleConfig() wazero.ModuleConfig {
 }
 
 // newInstance instantiates wasm with the transport as its host module and
-// its linear memory from this package's allocator. Under the strict
-// policy, memory that cannot be locked fails instantiation with
+// its linear memory from the guest packages' shared allocator. Under the
+// strict policy, memory that cannot be locked fails instantiation with
 // ErrMemoryLock.
-func newInstance(ctx context.Context, wasm []byte, t *transport, policy lockPolicy) (*instance, error) {
+func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.LockPolicy) (*instance, error) {
 	// WithCloseOnContextDone lets a caller's deadline or cancellation
 	// interrupt an in-flight guest call — which otherwise holds the Client's
 	// lock against every other user. An interrupted call closes the module,
@@ -118,33 +119,33 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy lockPoli
 		_ = runtime.Close(ctx)
 		return nil, err
 	}
-	// The guest's linear memory comes from this package, not wazero's
-	// default slice: reserved once, locked and non-dumpable where the
-	// platform allows, wiped on release. See memory.go.
-	mem := newMemoryAllocator(policy)
+	// The guest's linear memory comes from the guest packages' allocator,
+	// not wazero's default slice: reserved once, locked and non-dumpable
+	// where the platform allows, wiped on release. See internal/guest.
+	mem := guest.NewAllocator(policy)
 	// The guest is a reactor (cdylib): no _start. wazero runs _initialize
 	// when present, so guest code runs here too, and the memory must stay
 	// mapped until it returns, the same as around a call. Today nothing in
 	// _initialize re-enters the guest from Go, which is the only path that
 	// frees memory under a suspended guest; the bracket makes that a
 	// property of this code rather than of what the guest's constructors
-	// happen to call. See memoryAllocator.Free.
-	mem.enter()
+	// happen to call. See guest.Allocator.Free.
+	mem.Enter()
 	module, err := func() (api.Module, error) {
-		defer mem.exit()
+		defer mem.Exit()
 		return runtime.InstantiateWithConfig(experimental.WithMemoryAllocator(ctx, mem), wasm, guestModuleConfig())
 	}()
 	if err != nil {
 		_ = runtime.Close(ctx)
-		if g := mem.growthRefusal(); g.refused != 0 {
-			return nil, fmt.Errorf("%w: %w", memoryLockError(g.reason), err)
+		if g := mem.GrowthRefusal(); g.Refused != 0 {
+			return nil, fmt.Errorf("%w: %w", guest.MemoryLockError(g.Reason), err)
 		}
 		return nil, fmt.Errorf("stackencrypt: instantiating guest: %w", err)
 	}
-	if policy == strict {
-		if lerr := mem.lockError(); lerr != nil {
+	if policy == guest.Strict {
+		if lerr := mem.LockError(); lerr != nil {
 			_ = runtime.Close(ctx)
-			return nil, memoryLockError(lerr)
+			return nil, guest.MemoryLockError(lerr)
 		}
 	}
 	inst := &instance{runtime: runtime, module: module, mem: mem}
@@ -181,9 +182,9 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy lockPoli
 func (inst *instance) release() error {
 	ctx := context.Background()
 	if !inst.module.IsClosed() {
-		inst.mem.enter()
+		inst.mem.Enter()
 		_, _ = inst.shutdown.Call(ctx)
-		inst.mem.exit()
+		inst.mem.Exit()
 	}
 	return inst.runtime.Close(ctx)
 }
@@ -221,14 +222,15 @@ func (inst *instance) free(ctx context.Context, buf guestBuf) {
 	}
 }
 
-// packedResult decodes the guest's packed u64: a non-zero high half is an
-// output pointer with the length in the low half; a zero high half carries
-// a status code in the low half.
+// packedResult decodes the guest's packed u64 (guest.PackedResult): a
+// non-zero high half is an output pointer with the length in the low half;
+// a zero high half carries a status code, decoded to its sentinel.
 func packedResult(packed uint64) (guestBuf, error) {
-	if packed>>32 == 0 {
-		return guestBuf{}, statusError(uint32(packed))
+	ptr, n, err := guest.PackedResult(packed)
+	if err != nil {
+		return guestBuf{}, err
 	}
-	return guestBuf{ptr: uint32(packed >> 32), len: uint32(packed)}, nil
+	return guestBuf{ptr: ptr, len: n}, nil
 }
 
 // arg is one guest-call argument: a buffer (staged into guest memory and
@@ -249,9 +251,9 @@ func (inst *instance) call(ctx context.Context, fn api.Function, args ...arg) ([
 	// The memory stays mapped for the whole call, the deferred frees
 	// included: a close that lands mid-call (an expired context during a
 	// host import) is honoured by this exit, not under running guest
-	// code. See memoryAllocator.Free.
-	inst.mem.enter()
-	defer inst.mem.exit()
+	// code. See guest.Allocator.Free.
+	inst.mem.Enter()
+	defer inst.mem.Exit()
 	var bufs []guestBuf
 	defer func() {
 		for _, b := range bufs {

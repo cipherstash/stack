@@ -16,7 +16,7 @@ Or, if you would rather drive it yourself:
 
 ```bash
 mise run wasm:guest:build
-cd bindings/go/stackencrypt && go run ./example
+cd bindings/go && go run ./stackencrypt/example
 ```
 
 The guest build is not optional. This package embeds

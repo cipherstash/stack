@@ -423,8 +423,10 @@ for the proof; the Go side pools instances later.
 
 ### Phase 4 — the Go module
 
-**Status (2026-09-12): implemented in `bindings/go/stackencrypt`** (module
-path `github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt`,
+**Status (2026-09-12): implemented in `bindings/go/stackencrypt`** (package
+path `github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt`; since
+CIP-4115 the Go module is rooted at `bindings/go`, one module for every Go
+package, with `internal/guest` holding what the guest packages share,
 temporary until publishing). It imports `vcffi` + `vcvalue` from vitaminc
 (pseudo-versioned to a main commit; no fork), embeds the guest from
 `wasm/` (copied by `wasm:guest:build`, gitignored), and is gated by
